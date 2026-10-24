@@ -28,6 +28,10 @@ button.side-nav__link { border: 0; background: none; font: inherit; cursor: poin
 
 .env-banner .input { width: 5rem; }
 .menu__note, .menu__id { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); padding: var(--space-2) var(--space-3); font-size: var(--text-sm); }
+/* The ID's label on its own line, then the ID and its Copy button side by side. */
+.menu__id { display: grid; grid-template-columns: minmax(0, 1fr) auto; }
+.menu__id > span { grid-column: 1 / -1; }
+.menu__id > code { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .menu .disclosure { padding: 0 var(--space-3); }
 
 /* Vertical rhythm in the app: every block in a view sits a step below the one before it. */
@@ -103,7 +107,13 @@ details.card[open] > summary { border-bottom: 1px solid var(--border); }
 .capture-step .card__body > * + * { margin-top: var(--space-4); }
 .capture-modes { margin-top: var(--space-2); }
 .capture-actions { display: grid; gap: var(--space-3); justify-items: start; margin-top: var(--space-6); }
-.input--file { padding-block: 0.4rem; }
+/* The file picker reads as a secondary button with the chosen file's name beside it, not the browser's bare control. */
+.input--file { padding: 0.3125rem; color: var(--text-secondary); font-size: var(--text-sm); cursor: pointer; }
+.input--file::file-selector-button {
+  margin-right: var(--space-3); padding: 0.375rem 0.875rem; border: 1px solid var(--border-strong); border-radius: var(--radius-sm);
+  background: var(--surface); color: var(--text); font: inherit; font-weight: var(--weight-semibold); cursor: pointer;
+}
+.input--file:hover::file-selector-button { background: var(--surface-hover); }
 
 /* Business case, decisions */
 .range-pair--single { grid-template-columns: minmax(0, 1fr) !important; }
@@ -147,18 +157,28 @@ details.card[open] > summary { border-bottom: 1px solid var(--border); }
 .quote--checked { border-left-color: var(--success); }
 .quote--unchecked { border-left-color: var(--danger); }
 
-/* Three-point inputs (Business case) */
-.tri { display: grid; gap: var(--space-2); grid-template-columns: repeat(3, minmax(0, 1fr)); align-items: center; padding: var(--space-3) 0; border-bottom: 1px solid var(--border); }
+/* Three-point inputs (Business case). Each number carries its own caption (Low / Likely / High) wherever the
+   column headings are not shown; numbers are right-aligned in tabular figures so a range reads down a column. */
+.tri { display: grid; gap: var(--space-2); grid-template-columns: repeat(3, minmax(0, 1fr)); align-items: end; padding: var(--space-3) 0; border-bottom: 1px solid var(--border); }
 .tri .input, .tri .select { min-height: 2.5rem; padding-block: 0.375rem; font-size: var(--text-sm); }
+.tri__num { display: flex; flex-direction: column; gap: 0.125rem; min-width: 0; }
+.tri__cap { color: var(--text-tertiary); font-size: var(--text-xs); font-weight: var(--weight-semibold); letter-spacing: 0.04em; text-transform: uppercase; }
+.tri__input { text-align: right; font-variant-numeric: tabular-nums; }
 .tri-group { margin-top: var(--space-4); font-weight: var(--weight-semibold); }
 .tri__label { grid-column: 1 / -1; font-size: var(--text-sm); font-weight: var(--weight-semibold); }
 .tri > .select, .tri > .tri__note, .tri > .tri__link, .tri > .badge { grid-column: 1 / -1; }
 .tri--head { display: none; }
 @media (min-width: 75em) {
-  .tri { grid-template-columns: minmax(9rem, 1.5fr) repeat(3, minmax(3.75rem, 0.45fr)) minmax(8.5rem, 1.15fr) minmax(5.5rem, 0.8fr) minmax(5.5rem, 0.8fr); }
-  .tri__label, .tri > .select, .tri > .tri__note, .tri > .tri__link { grid-column: auto; }
-  .tri > .badge { grid-column: 2 / -1; }
+  /* Wide enough for "8000" or "0.03" in every number: label, Low, Likely, High and Source on the first row; note and link under the numbers. */
+  .tri { grid-template-columns: minmax(10rem, 1.6fr) repeat(3, minmax(6rem, 1fr)) minmax(9.5rem, 1.2fr); align-items: center; }
+  .tri__label { grid-column: 1; grid-row: 1 / span 2; align-self: start; padding-top: 0.5rem; }
+  .tri > .select { grid-column: 5; }
+  .tri > .tri__note { grid-column: 2 / 4; }
+  .tri > .tri__link { grid-column: 4 / -1; }
+  .tri > .badge { grid-column: 2 / -1; justify-self: start; }
+  .tri__cap { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
   .tri--head { display: grid; padding-bottom: 0; border: 0; color: var(--text-tertiary); font-size: var(--text-xs); font-weight: var(--weight-semibold); letter-spacing: 0.04em; text-transform: uppercase; }
+  .tri--head > span:nth-child(2), .tri--head > span:nth-child(3), .tri--head > span:nth-child(4) { text-align: right; padding-right: 2.25rem; }
 }
 
 /* Sensitivity bars (widths set through the CSSOM) and paired ranges */
@@ -213,7 +233,8 @@ details.card[open] > summary { border-bottom: 1px solid var(--border); }
 .steps--compact .step__text { padding-top: 0.25rem; }
 .assistants { align-items: start; }
 .assistants__subtitle { margin-top: var(--space-8); font-size: var(--text-lg); }
-.connector-url { display: inline-block; margin-top: var(--space-1); user-select: all; }
+/* The connector address stays whole: on a narrow screen it scrolls sideways instead of breaking inside a word. */
+.connector-url { display: inline-block; max-width: 100%; margin-top: var(--space-1); overflow-x: auto; white-space: nowrap; vertical-align: bottom; user-select: all; }
 .trust-signin { margin-top: var(--space-6); }
 .site-footer__links li > .mono { display: inline-block; margin-top: var(--space-2); }
 .trust-signin > .icon { grid-row: 1 / span 2; color: var(--text-secondary); }
@@ -239,7 +260,27 @@ details.card[open] > summary { border-bottom: 1px solid var(--border); }
 .help-section h3 { margin: var(--space-6) 0 var(--space-2); }
 
 /* Print */
+.print-record__fact { min-width: 0; }
+.print-record > p { margin-top: 8pt; font-size: 9pt; }
 @media print {
   .print-record .note { border: 1px solid #000; background: #fff; color: #000; }
   .print-record .table-wrap { border: 0; box-shadow: none; }
+  /* Paper has nothing to open: technical details stay on screen. */
+  .print-record details { display: none !important; }
 }
+
+/* Lists a form check and the signing panel show */
+.field-errors { margin: var(--space-2) 0 0; padding-left: 1.25rem; font-size: var(--text-sm); }
+.field-errors li + li { margin-top: var(--space-1); }
+.field-errors .btn--link { white-space: normal; text-align: left; }
+.fill-list { margin: var(--space-1) 0 0; padding-left: 1.25rem; font-size: var(--text-sm); color: var(--text-secondary); }
+.health__list { display: grid; gap: var(--space-2); margin: 0; padding: 0; list-style: none; }
+.health__plain { padding-left: var(--space-3); border-left: 3px solid var(--warning); font-size: var(--text-sm); color: var(--text); }
+.health__plain--danger { border-left-color: var(--danger); }
+
+/* Site pages' menu on phones: the header's section links, in a popover (no script). */
+.site-menu-button { display: inline-flex; anchor-name: --site-menu; }
+@media (min-width: 48em) { .site-menu-button { display: none; } }
+/* On the narrowest phones the guide's header keeps the brand and the menu; the menu opens the app. */
+@media (max-width: 23.99em) { .site-header-cta { display: none; } }
+@supports (anchor-name: --a) { .site-menu { position-anchor: --site-menu; } }

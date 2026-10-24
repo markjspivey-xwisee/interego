@@ -23,27 +23,28 @@ import { createVerticalBridge } from '../../_shared/vertical-bridge/index.js';
 import { listenLoopback, type TestListener } from '../../_shared/vertical-bridge/listen-loopback.js';
 import { wrdAffordances, wrdDemoAffordances } from '../affordances.js';
 import { createWrdHandlers } from '../bridge/handlers.js';
-import { attachUi, hostAllowlistGuard, parseEveryQueryPair, servedHostNames, UI_CSP } from '../bridge/ui.js';
-import { SIBLING, INTEREGO_DEFAULTS } from '../bridge/landing.js';
+import { attachUi, hostAllowlistGuard, parseEveryQueryPair, servedHostNames, UI_CSP, type UiReads } from '../bridge/ui.js';
+import { SIBLING, INTEREGO_DEFAULTS, type LandingOptions } from '../bridge/landing.js';
 import { demoClock, memoryPod, DEMO_POD, DEMO_RECORD_KEY } from '../demo/run.js';
 
 const APP_JS = readFileSync(new URL('../bridge/ui/app.js', import.meta.url), 'utf8');
+const must = <T>(v: T | null | undefined, what: string): T => { if (v === null || v === undefined) throw new Error(`missing ${what}`); return v; };
 const BROWSER = 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8';
 const listeners: TestListener[] = [];
 afterAll(async () => { for (const l of listeners) await l.close(); });
 
 /** A production composition, as bridge/server.ts composes it (its entry point names the pod it serves): no demo signer, no sign-in. */
-async function production(): Promise<TestListener> {
+async function production(o: { readonly landing?: LandingOptions; readonly reads?: UiReads } = {}): Promise<TestListener> {
   const l = await listenLoopback(createVerticalBridge({
     verticalName: 'work-redesign', affordances: wrdAffordances, deploymentUrl: 'http://127.0.0.1', defaultPodUrl: DEMO_POD,
     handlers: createWrdHandlers({ defaultPodUrl: DEMO_POD }),
-    middleware: (a) => { attachUi(a, { base: 'http://127.0.0.1' }); parseEveryQueryPair(a); },
+    middleware: (a) => { attachUi(a, { base: 'http://127.0.0.1', ...o }); parseEveryQueryPair(a); },
   }));
   listeners.push(l);
   return l;
 }
 
-/** The demo composition of the UI's DOM test: Ana a process lead and team member named on one unsorted task, Zed in no role. */
+/** The demo composition of the UI's DOM test: Ana a process lead and team member named on one unsorted task, Zed in no role, and the admin. */
 async function minimalDemo(): Promise<TestListener> {
   const pod = memoryPod();
   const clock = demoClock();
@@ -54,7 +55,7 @@ async function minimalDemo(): Promise<TestListener> {
   const handlers = createWrdHandlers({
     fetchFn: pod.fetchFn, defaultPodUrl: DEMO_POD, now: () => clock.now(), platform: { wallet: seed('platform'), keyKind: 'demo' }, adminAddresses: [admin.address],
     recordKey: DEMO_RECORD_KEY,
-    demoPersonas: new Map([['ana', { id: 'ana', label: 'Ana (demo)', wallet: ana }], ['zed', { id: 'zed', label: 'Zed (demo)', wallet: zed }]]),
+    demoPersonas: new Map([['ana', { id: 'ana', label: 'Ana (demo)', wallet: ana }], ['zed', { id: 'zed', label: 'Zed (demo)', wallet: zed }], ['admin', { id: 'admin', label: 'Admin (demo)', wallet: admin }]]),
   });
   const registry = {
     intent: 'wrd:update-registry', podUrl: DEMO_POD, issuedAt: clock.now().toISOString(), nonce: 'customer-site-registry-1',
@@ -112,6 +113,7 @@ interface Page {
   text(): string;
   visible(): string;
   click(buttonText: string): void;
+  fill(sel: string, value: string): void;
   select(sel: string, value: string): void;
   until<T>(fn: () => T | null | undefined | false, what: string, ms?: number): Promise<T>;
 }
@@ -145,6 +147,12 @@ async function openUi(base: string, hash = ''): Promise<Page> {
       const b = [...d.querySelectorAll('button')].find((x) => x.textContent === buttonText);
       if (!b) throw new Error(`no button "${buttonText}"`);
       b.click();
+    },
+    fill: (sel, value) => {
+      const el = d.querySelector(sel) as HTMLInputElement | null;
+      if (!el) throw new Error(`no ${sel}`);
+      el.value = value;
+      el.dispatchEvent(new w.Event('input', { bubbles: true }));
     },
     select: (sel, value) => {
       const el = d.querySelector(sel) as HTMLSelectElement | null;
@@ -198,9 +206,10 @@ describe('work-redesign customer site', () => {
     expect(body).not.toContain('{{');
   });
 
-  it('keeps the entry point for agents: JSON-LD for no Accept, */*, JSON-LD, JSON and a weighted HTML ask; HMD for Markdown; ?format= always wins', async () => {
+  it('keeps the entry point for agents: JSON-LD for no Accept, */*, JSON-LD, JSON ranked at or above HTML and a weighted HTML ask; HMD for any list naming Markdown; ?format= always wins', async () => {
     const l = await production();
-    for (const accept of [null, '*/*', 'application/ld+json', 'application/json', 'text/html;q=0.5, application/ld+json']) {
+    for (const accept of [null, '*/*', 'application/ld+json', 'application/json', 'text/html;q=0.5, application/ld+json',
+      'application/json, text/html;q=0.9', 'text/html, application/json', 'application/ld+json, text/html', 'text/html;q=0, */*', 'text/*']) {
       const r = await fetch(`${l.base}/`, accept === null ? {} : { headers: { accept } });
       expect([accept, r.status]).toEqual([accept, 200]);
       expect([accept, r.headers.get('content-type')]).toEqual([accept, expect.stringContaining('application/ld+json')]);
@@ -213,10 +222,48 @@ describe('work-redesign customer site', () => {
     expect(md.headers.get('content-type')).toContain('text/markdown');
     expect(md.headers.get('link')).toContain('hmd');
     expect(md.headers.get('vary')).toContain('Accept');
+    // A program that lists Markdown beside HTML, in either order, keeps the HMD it got before the landing page existed.
+    for (const accept of ['text/html, text/markdown', 'text/markdown;q=0.5, text/html', 'text/html;q=0.9, text/markdown;q=0.8, */*;q=0.1']) {
+      const r = await fetch(`${l.base}/`, { headers: { accept } });
+      expect([accept, r.headers.get('content-type')]).toEqual([accept, expect.stringContaining('text/markdown')]);
+    }
+    // Every major browser's own Accept gets the landing page.
+    for (const accept of [BROWSER, 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8', 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7']) {
+      const r = await fetch(`${l.base}/`, { headers: { accept } });
+      expect([accept, r.headers.get('content-type')]).toEqual([accept, expect.stringContaining('text/html')]);
+    }
     const forcedMd = await fetch(`${l.base}/?format=markdown`, { headers: { accept: BROWSER } });
     expect(forcedMd.headers.get('content-type')).toContain('text/markdown');
     const forcedLd = await fetch(`${l.base}/?format=jsonld`, { headers: { accept: BROWSER } });
     expect(forcedLd.headers.get('content-type')).toContain('application/ld+json');
+  });
+
+  it('promises no walkthrough when no contact is set, and says what this server does with record contents', async () => {
+    const page = async (o: { readonly landing?: LandingOptions } = {}): Promise<{ landing: string; help: string }> => {
+      const l = await production(o);
+      return { landing: await (await fetch(`${l.base}/`, { headers: { accept: BROWSER } })).text(), help: await (await fetch(`${l.base}/ui/help`)).text() };
+    };
+    // No contact named: no walkthrough is promised, the closing band offers the guide, and the guide's contact section links to making an account.
+    const plain = await page();
+    expect(plain.landing).not.toMatch(/walk you through|talk to us/i);
+    expect(plain.landing).toContain('<a class="btn btn--secondary btn--lg" href="/ui/help">Read the guide</a>');
+    expect(plain.landing).toContain('Ask the person who sent you this link, or your Interego contact, for a quote.');
+    expect(plain.help).toContain(`create your Interego account</a> now`);
+    expect(plain.help).toContain(`href="${INTEREGO_DEFAULTS.identityUrl}"`);
+    // A contact named: the walkthrough and the Contact us button come back, pointing at it.
+    const named = await page({ landing: { contactHref: 'https://example.org/book' } });
+    expect(named.landing).toContain('<a class="btn btn--secondary btn--lg" href="https://example.org/book">Contact us</a>');
+    expect(named.landing).toContain('we’ll walk you through it');
+    expect(named.help).toContain('<a href="https://example.org/book">Contact us</a>');
+    // Encryption: untold, only what a workspace with a record key gets; told, what this server does. Never "every record".
+    for (const html of [plain.landing, plain.help]) expect(html).toContain('Record contents are encrypted in storage when your workspace has a record key (our hosted service always does).');
+    expect((await page({ landing: { recordsSealed: true } })).landing).toContain('Record contents are encrypted in storage on this workspace.');
+    expect((await page({ landing: { recordsSealed: false } })).landing).toContain('This server has no record key, so the records it writes are stored unencrypted.');
+    for (const html of [plain.landing, plain.help, named.landing]) {
+      expect(html).not.toContain('The content of every record is encrypted');
+      expect(html).toContain('who signed it and in what role, when, and how records link to each other');
+      expect(html).not.toMatch(/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[a-z]{2,}/);
+    }
   });
 
   it('serves the guide and the favicon with the UI headers', async () => {
@@ -303,6 +350,21 @@ describe('work-redesign customer site', () => {
     expect(page.errors).toEqual([]);
   });
 
+  it('asks for no unsigned read a bridge that signs its reads would refuse, so a first visit logs no error', async () => {
+    const l = await production({ reads: 'signed' });
+    const shell = await (await fetch(`${l.base}/ui`)).text();
+    expect(shell).toContain('<meta name="wrd-reads" content="signed">');
+    const page = await openUi(l.base);
+    await page.until(() => page.text().includes('Welcome to Work Redesign'), 'the welcome');
+    expect(page.log.filter((r) => r.path.startsWith('/wrd/'))).toEqual([]);
+    expect(page.text()).toContain('This bridge answers signed reads only');
+    expect(page.visible()).not.toMatch(/Refused|HTTP 40\d|WRD_/);
+    expect(page.errors).toEqual([]);
+    // A bridge that opened its reads still answers the unsigned read.
+    const open = await openUi((await production({ reads: 'public' })).base);
+    await open.until(() => open.log.some((r) => r.path === '/wrd/list_records'), 'the unsigned read');
+  });
+
   it('tells a signed-out visitor who followed a task link that the task opens after sign-in', async () => {
     const l = await production();
     const page = await openUi(l.base, '#task=urn%3Awrd%3Atask%3Ax');
@@ -382,6 +444,79 @@ describe('work-redesign customer site', () => {
     expect(page.text()).toContain('Only an admin or a key in this pod');
     expect(page.doc.querySelector('#persona')).not.toBeNull();
     expect([...page.doc.querySelectorAll('button')].some((b) => b.textContent === 'Download my record')).toBe(true);
+    expect(page.errors).toEqual([]);
+  }, 60_000);
+
+  it('offers People & roles\' changes only to an admin, and removes someone only once the admin confirms', async () => {
+    const l = await minimalDemo();
+    const page = await openUi(l.base);
+    await page.until(() => page.text().includes('Match invoices'), 'the demo');
+    const buttons = (label: string): HTMLButtonElement[] => [...page.doc.querySelectorAll('main button')].filter((b) => b.textContent === label) as HTMLButtonElement[];
+    page.click('People & roles');
+    await page.until(() => page.text().includes('Types of task'), 'the roles view');
+    // Ana leads the process but is no admin: no "Add a person", and every change is disabled with the reason.
+    expect(buttons('Add a person')).toEqual([]);
+    expect(buttons('Remove').length).toBeGreaterThan(0);
+    for (const b of [...buttons('Remove'), ...buttons('Edit'), ...buttons('Retire'), ...buttons('Add type of task')]) expect([b.textContent, b.disabled]).toEqual([b.textContent, true]);
+    expect(page.visible()).toContain('Only an admin can change people and roles.');
+    // The admin: the changes are offered, and Remove asks first. Nothing is signed or sent until the danger button.
+    page.select('#persona', 'admin');
+    await page.until(() => buttons('Add a person').length === 1, 'the admin\'s roles view');
+    const before = page.log.length;
+    must(buttons('Remove')[0], 'a Remove button').click();
+    await page.until(() => page.doc.getElementById('panel-title')?.textContent === 'Remove Ana?', 'the confirmation');
+    expect(page.visible()).toContain('Ana loses their roles in this workspace. They keep the right to download their record');
+    page.click('Cancel');
+    await page.until(() => !page.doc.getElementById('panel-title'), 'the panel closed');
+    expect(page.log.slice(before).filter((r) => r.method === 'POST')).toEqual([]);
+    expect(page.errors).toEqual([]);
+  }, 60_000);
+
+  it('checks a process map before signing: nothing is sent, each missing field is named as the form labels it, and the bridge\'s own field refusals read the same way', async () => {
+    const l = await minimalDemo();
+    const page = await openUi(l.base);
+    await page.until(() => page.text().includes('Match invoices'), 'the demo');
+    page.click('Map a process');
+    await page.until(() => page.doc.querySelector('[data-path="workflow.title"]'), 'the capture form');
+    page.fill('[data-path="workflow.title"]', 'Supplier invoices');
+    const before = page.log.length;
+    page.click('Sign and record the process');
+    await page.until(() => page.visible().includes('Please check the form'), 'the form check');
+    expect(page.log.slice(before).filter((r) => r.path.startsWith('/wrd/'))).toEqual([]);
+    const listed = [...page.doc.querySelectorAll('.result .field-errors button')].map((b) => b.textContent);
+    expect(listed).toEqual(['Unit of work is required', 'Task 1: Task name is required', 'Task 1: Description is required', 'Task 1: choose the person who does it', 'Task 1: choose its type of task']);
+    expect(page.doc.querySelector('[data-path="workflow.unitLabel"]')?.getAttribute('aria-invalid')).toBe('true');
+    expect(page.doc.querySelector('[data-path="workflow.title"]')?.getAttribute('aria-invalid')).toBeNull();
+    expect((page.doc.querySelector('[data-path="workflow.title"]') as HTMLInputElement).value).toBe('Supplier invoices');
+    // The answer is the element in focus, so a person at the bottom of the form is taken to it.
+    expect(page.doc.activeElement?.classList.contains('result')).toBe(true);
+    // The bridge's refusal of a field reads as the form labels it, never as its payload path.
+    const refusalField = page.window.eval('refusalField') as (b: unknown) => { path: string; message: string } | null;
+    expect(refusalField({ 'iep:refusalReason': 'workflow.unitLabel is required text' })).toEqual({ path: 'workflow.unitLabel', message: 'Unit of work is required' });
+    expect(refusalField({ 'iep:refusalReason': 'tasks[2].taskKind must be a registered task kind slug' })).toEqual({ path: 'tasks[2].taskKind', message: 'Task 3: Type of task isn\'t valid' });
+    expect(refusalField({ 'iep:refusalReason': 'the plan is stale' })).toBeNull();
+    const friendly = page.window.eval('friendly') as (r: unknown) => { title: string; body: string };
+    expect(friendly({ tool: 'wrd.capture_workflow', status: 400, body: { error: 'The envelope payload is malformed.', 'iep:refusalReason': 'workflow.unitLabel is required text' } }).body).toMatch(/^Unit of work is required\./);
+    // The fields still to fill before signing are named in words, never as paths or task IRIs.
+    const fillSummary = page.window.eval('fillSummary') as (f: string[]) => string[];
+    const summary = fillSummary(['inputs.currency', 'inputs.unitsPerWeek.current.low', 'inputs.tasks.urn:wrd:task:k1:a:b.runsPerUnit.low', 'note', 'answers.q1']);
+    expect(summary).toEqual(['Your business case inputs: 3 values you enter on this page', 'Your note', 'Your answers']);
+    expect(summary.join(' ')).not.toMatch(/urn:|inputs\./);
+    expect(page.errors).toEqual([]);
+  }, 60_000);
+
+  it('says where an AI permission stands from the bridge\'s own reason first: withdrawn, a changed model, then the bar', async () => {
+    const l = await minimalDemo();
+    const page = await openUi(l.base);
+    await page.until(() => page.text().includes('Match invoices'), 'the demo');
+    const state = page.window.eval('grantStateText') as (agent: string, kind: string, g: unknown, cell: unknown) => string;
+    const met = { samples: 25, acceptedShare: 0.92, distinctConfirmers: 5, readyClaims: 24, readyClaimPrecision: 0.958, currentModel: true };
+    expect(state('0xa', 'k', { active: true, why: null }, met)).toBe('');
+    expect(state('0xa', 'k', { active: false, why: 'revoked at 2027-01-28T09:07:00.000Z' }, met)).toBe('Withdrawn on 28 Jan 2027. Re-earning counts only work reviewed after that.');
+    expect(state('0xa', 'k', { active: false, why: "the agent's declared model changed since the grant (was a, now b)" }, met)).toMatch(/^Its AI model changed/);
+    expect(state('0xa', 'k', { active: false, why: 'no grant' }, met)).toMatch(/meets the bar/);
+    expect(state('0xa', 'k', { active: false, why: 'no grant' }, { ...met, readyClaims: 12, readyClaimPrecision: 0.5 })).toBe('Not earned yet: 12 of 20 pieces it called "ready"; people agreed with 50.0% of its "ready" claims, below 90.0%.');
+    expect(state('0xa', 'k', { active: null, why: 'sealed' }, met)).toMatch(/^Can't be checked/);
     expect(page.errors).toEqual([]);
   }, 60_000);
 

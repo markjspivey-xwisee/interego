@@ -24,7 +24,9 @@
     </nav>
     <div class="app-header__actions">
       <a class="product-switch" href="{{sibling_url}}"><span class="product-switch__dot" aria-hidden="true"></span><span class="product-switch__prefix">Also from Interego:</span> {{sibling_name}}</a>
-      <a class="btn btn--primary btn--sm" href="/ui">Open Work Redesign</a>
+      <a class="btn btn--primary btn--sm site-header-cta" href="/ui">Open the app</a>
+      <button type="button" class="btn btn--ghost btn--icon site-menu-button" popovertarget="site-menu" aria-label="Menu">{{icon:menu}}</button>
+      <nav class="menu site-menu" id="site-menu" popover aria-label="Site menu"><a class="menu__item" href="/ui">Open the app</a><a class="menu__item" href="#start">Getting started</a><a class="menu__item" href="#roles">By role</a><a class="menu__item" href="#data">Your data</a><a class="menu__item" href="#glossary">Glossary</a><a class="menu__item" href="#contact">Contact us</a><a class="menu__item" href="/">About Work Redesign</a><a class="menu__item" href="{{sibling_url}}">Also from Interego: {{sibling_name}}</a></nav>
     </div>
   </div>
 </header>
@@ -181,7 +183,7 @@
         <h3>Where records live</h3>
         <p>Records are kept in the data store your workspace is set up with, as signed files you can copy, not inside a closed database.</p>
         <h3>Encryption, and what stays visible</h3>
-        <p>The content of every record is encrypted in storage. Some facts stay visible to anyone who can read that storage: that a record exists, what type it is, who signed it and when.</p>
+        <p>{{encryption_text}}</p>
         <h3>Downloading and verifying your record</h3>
         <p>Under <strong>My record</strong>, download every record that names you or that you signed, each with its original signature. The page shows the workspace signature ID; your IT team can use it to verify a downloaded record offline, without us. Your downloaded copy isn’t encrypted, so store it somewhere safe.</p>
         <h3>Signing in with Interego, or with a wallet</h3>

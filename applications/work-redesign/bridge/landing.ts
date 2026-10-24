@@ -7,8 +7,13 @@
 import type { Request } from 'express';
 import type { UiSignIn } from './ui.js';   // type-only import: no runtime cycle
 
-/** What a deployment may set on its pages: the "Contact us" link, the legal name on the © line, the sibling product's address. */
-export interface LandingOptions { readonly contactHref?: string; readonly legalName?: string; readonly siblingUrl?: string }
+/**
+ * What a deployment may set on its pages: the "Contact us" link, the legal name on the © line, the
+ * sibling product's address, and whether this bridge seals the records it writes (WRD_RECORD_KEY):
+ * the pages' sentence on encryption says what this server does, and, when it is not told, only
+ * what a workspace with a record key gets.
+ */
+export interface LandingOptions { readonly contactHref?: string; readonly legalName?: string; readonly siblingUrl?: string; readonly recordsSealed?: boolean }
 
 /** The other Interego product, linked from every page's product switch and footer. */
 export const SIBLING = { name: 'Practice Evidence', url: 'https://pev-bridge-production.up.railway.app/' } as const;
@@ -17,9 +22,38 @@ export const INTEREGO_DEFAULTS = { identityUrl: 'https://identity.interego.xwise
 /** Where "Contact us" goes when the deployment names no contact: the guide's contact section. */
 const DEFAULT_CONTACT = '/ui/help#contact';
 
-/** A browser asking for the root gets the landing page; an agent, curl or fetch() (no Accept, star-slash-star, JSON-LD, Markdown) keeps the entry point. */
-export const prefersHtml = (req: Request): boolean =>
-  req.accepts(['application/ld+json', 'text/turtle', 'text/markdown', 'text/html']) === 'text/html';
+/** Media types only a program asks for: JSON (JSON-LD among them), RDF and Markdown. A browser lists none of them. */
+const AGENT_TYPE = /^(application\/(json|ld\+json|[a-z0-9.+-]+\+json|n-triples|n-quads|trig|rdf\+xml)|text\/(turtle|n3|markdown|x-markdown))$/;
+const MARKDOWN_TYPE = /^text\/(markdown|x-markdown)$/;
+
+/** An Accept header's media ranges, lower-cased, each with its q (1 when absent; 0 when unreadable). */
+function acceptRanges(header: string): Array<{ readonly type: string; readonly q: number }> {
+  return header.split(',').map((part) => {
+    const [type = '', ...params] = part.split(';');
+    let q = 1;
+    for (const param of params) {
+      const m = /^\s*q\s*=\s*([0-9]+(?:\.[0-9]*)?)\s*$/i.exec(param);
+      if (m) q = Number(m[1]);
+    }
+    return { type: type.trim().toLowerCase(), q: Number.isFinite(q) ? q : 0 };
+  }).filter((r) => r.type !== '');
+}
+
+/**
+ * A browser asking for the root gets the landing page; everyone else keeps the entry point. HTML
+ * is served only when the Accept header names text/html (or application/xhtml+xml) itself, names
+ * no Markdown, and ranks no JSON, RDF or Markdown type as high as HTML. So no Accept header,
+ * star-slash-star, JSON-LD, application/json ranked above or level with HTML, and any list that
+ * names Markdown all fall through to the factory's JSON-LD or HMD, as they did before the landing
+ * page existed; a browser's Accept names none of those and gets the page.
+ */
+export function prefersHtml(req: Request): boolean {
+  const ranges = acceptRanges(String(req.headers.accept ?? ''));
+  const html = Math.max(0, ...ranges.filter((r) => r.type === 'text/html' || r.type === 'application/xhtml+xml').map((r) => r.q));
+  if (html <= 0) return false;
+  if (ranges.some((r) => MARKDOWN_TYPE.test(r.type) && r.q > 0)) return false;
+  return !ranges.some((r) => AGENT_TYPE.test(r.type) && r.q >= html);
+}
 
 /** The design system's icon set (24x24, stroked), plus the two the app's navigation adds. */
 export const ICON_PATHS: Readonly<Record<string, readonly string[]>> = {
@@ -61,7 +95,7 @@ const BRAND = `<a class="brand" href="/">${BRAND_MARK}<span class="brand__name">
 const htmlText = (s: string): string => s.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
 
 /** Tokens whose value is markup this module built (every interpolated part already escaped); every other token is escaped text. */
-const MARKUP_TOKENS = new Set(['contact_line']);
+const MARKUP_TOKENS = new Set(['contact_line', 'pricing_answer']);
 
 /** One icon as inline SVG, or a throw for a name the set does not have. */
 function iconSvg(name: string, size: string | undefined): string {
@@ -78,18 +112,39 @@ export function siteValues(o: { readonly base: string; readonly signIn?: UiSignI
   try { relayOrigin = new URL(relayUrl).origin; } catch { relayOrigin = INTEREGO_DEFAULTS.relayUrl; }
   const identityHost = o.signIn?.policy?.identityHost;
   const contactHref = o.landing?.contactHref ?? DEFAULT_CONTACT;
+  const contacted = contactHref !== DEFAULT_CONTACT;
+  const identityUrl = identityHost ? `https://${identityHost}/` : INTEREGO_DEFAULTS.identityUrl;
   const securityTxt = `${relayOrigin}/.well-known/security.txt`;
+  const sealed = o.landing?.recordsSealed;
+  const stillVisible = 'Some facts stay visible to anyone who can read that storage: each record’s type, who signed it and in what role, when, and how records link to each other.';
   return {
     base: o.base.replace(/\/$/, ''),
     sibling_name: SIBLING.name,
     sibling_url: o.landing?.siblingUrl ?? SIBLING.url,
-    identity_url: identityHost ? `https://${identityHost}/` : INTEREGO_DEFAULTS.identityUrl,
+    identity_url: identityUrl,
     connector_url: `${relayUrl}/mcp`,
     security_txt: securityTxt,
     contact_href: contactHref,
-    contact_line: contactHref === DEFAULT_CONTACT
-      ? 'Ask the person who sent you this link, or your Interego contact.'
-      : `To talk to us about Work Redesign for your team, or to book a walkthrough with sample data: <a href="${htmlText(contactHref)}">Contact us</a>.`,
+    // With no contact named, nothing promises a walkthrough: the guide is what a visitor can open now.
+    contact_line: contacted
+      ? `To talk to us about Work Redesign for your team, or to book a walkthrough with sample data: <a href="${htmlText(contactHref)}">Contact us</a>.`
+      : `Ask the person who sent you this link, or your Interego contact. You can also <a href="${htmlText(identityUrl)}">create your Interego account</a> now, so you can sign in as soon as a workspace admin adds you.`,
+    pricing_answer: contacted
+      ? `Pricing depends on your team size and how you want it hosted. <a href="${htmlText(contactHref)}">Contact us</a> and we’ll walk you through it, along with a demo using sample data.`
+      : 'Pricing depends on your team size and how you want it hosted. Ask the person who sent you this link, or your Interego contact, for a quote. To see what you’d be getting first, read <a href="/ui/help">the guide</a>.',
+    cta_text: contacted
+      ? 'Sign in with your Interego account, or talk to us about a walkthrough with sample data.'
+      : 'Sign in with your Interego account, or read the guide to see how it works, step by step.',
+    cta_secondary_href: contacted ? contactHref : '/ui/help',
+    cta_secondary_label: contacted ? 'Contact us' : 'Read the guide',
+    // What this server does with record contents: told by bridge/server.ts; untold, only what a workspace with a record key gets.
+    encryption_title: sealed === false ? 'Encryption at rest' : 'Encrypted at rest',
+    encryption_text: sealed === true
+      ? `Record contents are encrypted in storage on this workspace. ${stillVisible} Records written before the workspace had its record key stay unencrypted, and the app says so.`
+      : sealed === false
+        ? `This server has no record key, so the records it writes are stored unencrypted. Record contents are encrypted in storage when a workspace has a record key (our hosted service always does). ${stillVisible}`
+        : `Record contents are encrypted in storage when your workspace has a record key (our hosted service always does). ${stillVisible}`,
+    encryption_short: sealed === true ? 'Record contents are encrypted in storage' : 'Record contents are encrypted in storage when your workspace has a record key (our hosted service always does)',
     legal_name: o.landing?.legalName ?? 'Interego',
     year: String(new Date().getUTCFullYear()),
   };

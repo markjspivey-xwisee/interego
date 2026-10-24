@@ -274,9 +274,11 @@ const app = createVerticalBridge({
       ontologyTurtle: readOntologyTurtle, shapesTurtle: readShapesTurtle,
     });
     // "Sign in with your Interego account" in the web UI, through WRD_RELAY_URL; it names a person only through a relay this bridge trusts.
+    // The pages say whether this server seals records, and the app asks for no unsigned read it knows is refused.
     attachUi(a, {
       base, ...(signIn.relayUrl !== null ? { signIn: { relayUrl: signIn.relayUrl, policy: uiRelayPolicy } } : {}),
-      ...(contactUrl || legalName ? { landing: { ...(contactUrl ? { contactHref: contactUrl } : {}), ...(legalName ? { legalName } : {}) } } : {}),
+      landing: { ...(contactUrl ? { contactHref: contactUrl } : {}), ...(legalName ? { legalName } : {}), recordsSealed: recordKey !== undefined },
+      reads: publicReads ? 'public' : 'signed',
     });
   },
 });
@@ -297,6 +299,9 @@ if (signIn.relayUrl !== null && uiRelayPolicy !== null) {
     ? `work-redesign: web UI sign-in limits count each caller by the address ${proxyHops} proxy hop(s) in front saw (X-Forwarded-For; ${proxyHopsValue !== undefined ? `WRD_TRUST_PROXY_HOPS=${proxyHops}` : 'off loopback'})\n`
     : `work-redesign: web UI sign-in limits count each caller by the address that connects to the bridge (no proxy hop trusted${proxyHopsValue !== undefined ? ', WRD_TRUST_PROXY_HOPS=0' : ' on loopback'}); behind a reverse proxy every caller is the proxy's address, so set WRD_TRUST_PROXY_HOPS to the hops in front\n`);
 }
+process.stdout.write(contactUrl
+  ? `work-redesign: "Contact us" on the pages goes to ${contactUrl} (WRD_CONTACT_URL)\n`
+  : 'work-redesign: WRD_CONTACT_URL is not set: "Contact us" goes to the guide\'s contact section (/ui/help#contact), and the pages offer no walkthrough; set it to a page or mailto: link that reaches you\n');
 process.stdout.write(`work-redesign: reads: ${publicReads ? 'PUBLIC (WRD_PUBLIC_READS=1): anyone who can reach this bridge reads every record' : 'signed reads only (wrd.read_records, wrd.read_calibration); unsigned GETs answer 401'}\n`);
 
 // Express 5 hands a failed bind to this callback rather than throwing, so it is handled here:

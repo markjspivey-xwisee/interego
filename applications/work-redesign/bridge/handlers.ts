@@ -729,12 +729,13 @@ export function createWrdHandlers(deps: WrdDeps = {}): Record<string, WrdHandler
    * A read changes nothing, so its nonce is not claimed: the same envelope reads again until its
    * issuedAt leaves the window, which is what lets the web UI sign one read and reuse it.
    */
-  async function openRead(args: Obj, tool: 'read_records' | 'read_calibration'): Promise<Call> {
+  async function openRead(args: Obj, tool: 'read_records' | 'read_calibration'): Promise<{ readonly call: Call; readonly signer: string }> {
     const form = relayFormIn(args, 'envelope');
     const raw = form ? undefined : args['envelope'];
     const call = await openCall(args, form ? relayPodCarrier(form) : raw, false);
-    await authoriseRead(call, await openAuthorising(call, form, raw, 'wrd:read-records'), tool);
-    return call;
+    const opened = await openAuthorising(call, form, raw, 'wrd:read-records');
+    await authoriseRead(call, opened, tool);
+    return { call, signer: opened.ok ? opened.signer : '' };
   }
 
   /**
@@ -3093,7 +3094,10 @@ export function createWrdHandlers(deps: WrdDeps = {}): Record<string, WrdHandler
     'wrd.read_records': async (args) => {
       const bad = badListKind(args);
       if (bad) return bad;
-      return listRecords(await openRead(args, 'read_records'), args);
+      const { call, signer } = await openRead(args, 'read_records');
+      const listed = await listRecords(call, args);
+      // Who read: whether the signer is an admin, so a client offers registry changes only to one (every change is checked again).
+      return listed['status'] === 'listed' ? { ...listed, reader: { admin: isAdmin(signer) } } : listed;
     },
 
     'wrd.calibration': async (args) => {
@@ -3106,7 +3110,7 @@ export function createWrdHandlers(deps: WrdDeps = {}): Record<string, WrdHandler
     'wrd.read_calibration': async (args) => {
       const bad = badCalibrationKind(args);
       if (bad) return bad;
-      return calibrate(await openRead(args, 'read_calibration'), args);
+      return calibrate((await openRead(args, 'read_calibration')).call, args);
     },
   };
 

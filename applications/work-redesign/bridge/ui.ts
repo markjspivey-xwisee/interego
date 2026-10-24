@@ -2,9 +2,10 @@
  * The work-redesign web pages: static assets served from the bridge itself, each read once when
  * the UI is attached.
  *
- *   GET /                 for a browser (Accept prefers text/html, no ?format=): the landing page
- *                         (./ui/landing.html, filled by landing.ts); everyone else falls through to
- *                         the factory's JSON-LD / HMD entry point, unchanged
+ *   GET /                 for a browser (an Accept that names text/html, names no Markdown and ranks
+ *                         no JSON or RDF type as high; no ?format=): the landing page
+ *                         (./ui/landing.html, filled by landing.ts, prefersHtml); everyone else falls
+ *                         through to the factory's JSON-LD / HMD entry point, unchanged
  *   GET /ui               the HTML shell of the app — no inline script, no inline style, no style attribute
  *   GET /ui/app.js        the browser client (./ui/app.js)
  *   GET /ui/app.css       the design system plus bridge/ui/app.css, including the print layout for one decision
@@ -90,7 +91,7 @@ export const UI_CSP = "default-src 'none'; script-src 'self'; style-src 'self'; 
 /** HTML-safe text for an attribute or element body (the shell interpolates the base URL, its loading line and the sibling's address). */
 const htmlText = (s: string): string => s.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
 
-function shell(base: string, loading = 'Loading Work Redesign…', siblingUrl: string = SIBLING.url): string {
+function shell(base: string, loading = 'Loading Work Redesign…', siblingUrl: string = SIBLING.url, reads?: UiReads): string {
   const b = htmlText(base);
   return [
     '<!doctype html>',
@@ -103,6 +104,8 @@ function shell(base: string, loading = 'Loading Work Redesign…', siblingUrl: s
     '<meta name="color-scheme" content="light dark">',
     `<meta name="wrd-sibling-name" content="${htmlText(SIBLING.name)}">`,
     `<meta name="wrd-sibling-url" content="${htmlText(siblingUrl)}">`,
+    // Told how this bridge answers reads, the page asks for no unsigned read it knows is refused (401).
+    reads ? `<meta name="wrd-reads" content="${reads}">` : null,
     '<link rel="icon" href="/ui/favicon.svg" type="image/svg+xml">',
     '<link rel="stylesheet" href="/ui/app.css">',
     `<link rel="alternate" type="text/turtle" href="${b}/affordances" title="Action manifest for AI agents">`,
@@ -118,7 +121,7 @@ function shell(base: string, loading = 'Loading Work Redesign…', siblingUrl: s
     '</body>',
     '</html>',
     '',
-  ].join('\n');
+  ].filter((line) => line !== null).join('\n');
 }
 
 
@@ -129,15 +132,19 @@ function secure(res: Response): void {
   res.setHeader('Cache-Control', 'no-store');
 }
 
+/** How this bridge answers reads: 'signed' when unsigned reads are refused (no WRD_PUBLIC_READS), 'public' when its operator opened them. */
+export type UiReads = 'signed' | 'public';
+
 /**
  * Mount the web pages and the sign-in routes (attachInteregoSignIn): GET /ui (the app), /ui/app.js,
  * /ui/app.css (the design system plus bridge/ui/app.css), /ui/help (the guide), /ui/favicon.svg,
  * and GET / for a browser (the landing page; an agent's request falls through to the factory's
  * entry point). `base` is the bridge's public base URL; `signIn`, the relay a person signs in
  * through (absent: every sign-in route says it is not set up, and the page offers no sign-in);
- * `landing`, the contact link, legal name and sibling address the pages show (defaults in landing.ts).
+ * `landing`, the contact link, legal name, sibling address and record sealing the pages show (defaults
+ * in landing.ts); `reads`, how the bridge answers reads (absent: the page asks, as before).
  */
-export function attachUi(app: Express, opts: { readonly base: string; readonly signIn?: UiSignIn; readonly landing?: LandingOptions }): void {
+export function attachUi(app: Express, opts: { readonly base: string; readonly signIn?: UiSignIn; readonly landing?: LandingOptions; readonly reads?: UiReads }): void {
   const appJs = readFileSync(new URL('./ui/app.js', import.meta.url), 'utf8');
   const appCss = `${designSystemCss()}\n${readFileSync(new URL('./ui/app.css', import.meta.url), 'utf8')}`;
   const base = opts.base.replace(/\/$/, '');
@@ -145,7 +152,7 @@ export function attachUi(app: Express, opts: { readonly base: string; readonly s
   const siblingUrl = values['sibling_url'] ?? SIBLING.url;
   const landingPage = renderSitePage(readFileSync(new URL('./ui/landing.html', import.meta.url), 'utf8'), values);
   const helpPage = renderSitePage(readFileSync(new URL('./ui/help.html', import.meta.url), 'utf8'), values);
-  const html = shell(base, undefined, siblingUrl);
+  const html = shell(base, undefined, siblingUrl, opts.reads);
   app.get('/ui', (_req, res) => { secure(res); res.type('text/html; charset=utf-8').send(html); });
   app.get('/ui/app.js', (_req, res) => { secure(res); res.type('text/javascript; charset=utf-8').send(appJs); });
   app.get('/ui/app.css', (_req, res) => { secure(res); res.type('text/css; charset=utf-8').send(appCss); });
@@ -159,7 +166,7 @@ export function attachUi(app: Express, opts: { readonly base: string; readonly s
     secure(res);
     res.type('text/html; charset=utf-8').send(landingPage);
   });
-  attachInteregoSignIn(app, { base, ...(opts.signIn ? { signIn: opts.signIn } : {}), siblingUrl });
+  attachInteregoSignIn(app, { base, ...(opts.signIn ? { signIn: opts.signIn } : {}), siblingUrl, ...(opts.reads ? { reads: opts.reads } : {}) });
 }
 
 // ── Sign in with your Interego account ───────────────────────────────────────────────────
@@ -506,13 +513,13 @@ function refusedPost(req: Request, res: Response, max: number, baseHost: string)
  * tokens are never logged, stored or put in a URL; a relay's error text is repeated with each of
  * them withheld.
  */
-export function attachInteregoSignIn(app: Express, opts: { readonly base: string; readonly signIn?: UiSignIn; readonly siblingUrl?: string }): void {
+export function attachInteregoSignIn(app: Express, opts: { readonly base: string; readonly signIn?: UiSignIn; readonly siblingUrl?: string; readonly reads?: UiReads }): void {
   const base = opts.base.replace(/\/$/, '');
   const clientDocUrl = `${base}${SIGN_IN_PATHS.client}`;
   let baseHost = '';
   try { baseHost = new URL(base).host.toLowerCase(); } catch { baseHost = ''; }
   const callbackUrl = `${base}${SIGN_IN_PATHS.callback}`;
-  const callbackHtml = shell(base, 'Finishing sign-in with your Interego account…', opts.siblingUrl ?? SIBLING.url);
+  const callbackHtml = shell(base, 'Finishing sign-in with your Interego account…', opts.siblingUrl ?? SIBLING.url, opts.reads);
   app.get(SIGN_IN_PATHS.callback, (_req, res) => { secure(res); res.type('text/html; charset=utf-8').send(callbackHtml); });
 
   const signIn = opts.signIn;

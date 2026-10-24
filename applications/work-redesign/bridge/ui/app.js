@@ -73,6 +73,7 @@ const WALLET_STEPS_TECH = [
 ];
 const chainCuts = (n) => `${n} record chain(s) do not read back to their first version: an earlier version is missing, or is not trusted. Their history is shown as incomplete, never as whole.`;
 const trustCuts = (n, keys) => `${n} of them reach a version signed by a platform key this bridge no longer trusts (${keys.join(', ')}). Every change to them is refused (409) until the operator lists that address in WRD_TRUSTED_PLATFORM_ADDRESSES again: an address that signed records on this pod stays trusted for as long as the pod is used.`;
+const SIGNED_READS_ONLY = 'This bridge answers signed reads only (its operator has not opened reads, WRD_PUBLIC_READS), so this page reads nothing until you sign in.';
 const HOLDER_WITHOUT_READ = 'Your read was refused, but anyone named in a record, or who signed one, can still take a copy of every record about their work, registered here or not. The copy keeps the platform\'s original signature; verify a download against the platform address you expect (the README gives the command).';
 
 // What a customer reads.
@@ -120,9 +121,8 @@ const DECISION_STATUS = { submitted: ['Waiting for approval', 'pending'], counte
 const VERDICT_NAMES = { 'in-band': ['Within prediction', 'success'], 'out-of-band': ['Outside prediction', 'warning'], inconclusive: ['Inconclusive', ''] };
 const OUTCOME_NAMES = { kept: 'Kept', reverted: 'Reversed', 'stopped-early': 'Stopped early' };
 const FREED_NAMES = { redeployed: 'Moved to other work', absorbed: 'Absorbed by the team', unfilled: 'Left unfilled (cash saving)', undecided: 'Not decided yet' };
-const BASIS_NAMES = { measured: 'Measured', document: 'From a document', 'performer-reported': 'Reported by the person doing it', estimate: 'Estimate', 'not-applicable': 'Doesn\'t apply (zero)' };
-/** The same sources, short enough for the narrow Source column of the inputs grid. */
-const BASIS_SHORT = { measured: 'Measured', document: 'From a document', 'performer-reported': 'Self-reported', estimate: 'Estimate', 'not-applicable': 'Doesn\'t apply (0)' };
+/** Where an input came from, in the same words on the inputs, the results and the landing page. */
+const BASIS_NAMES = { measured: 'Measured', document: 'From a document', 'performer-reported': 'Self-reported', estimate: 'Estimate', 'not-applicable': 'Doesn\'t apply (0)' };
 const COMPARISON_NAMES = { 'before-after': 'Before vs. after (no comparison group)', holdout: 'Compared with a held-back group', staggered: 'Phased rollout' };
 const METRIC_NAMES = { 'weekly-cash-delta': 'Weekly cash impact', 'weekly-delta-if-redeployed': 'Weekly impact if freed time is redeployed' };
 const metricName = (m) => METRIC_NAMES[m] ?? m;
@@ -130,7 +130,7 @@ const ASSIGNMENT_STATE = { 'not-acknowledged': ['Waiting for their response', 'p
 const PLAN_KIND = { valued: 'Priced change', probe: 'Trial plan' };
 const SIGNAL_NAMES = { amplify: 'Scale up', dampen: 'Scale back', neither: 'No clear signal' };
 const RUN_VERDICTS = [['accepted', 'Accept'], ['reworked', 'Needs rework'], ['critical-failure', 'Critical failure']];
-const CAL_STATUS = { Asserted: ['Established', 'success'], Hypothetical: ['Early: fewer than 20 results', 'pending'] };
+const CAL_STATUS = { Asserted: ['20+ results', ''], Hypothetical: ['Early: fewer than 20 results', 'pending'] };
 const SOURCE_NAMES = { 'approved-decision': 'Now: approved change, being measured', 'measured-decision': 'From a measured, kept decision' };
 // The classification options as the bridge's vocabulary spells them. Values sent are unchanged; only the option text is plain.
 const OPTION_NAMES = {
@@ -406,13 +406,19 @@ const viewSection = (title, lede, ...kids) => h('section', { class: 'view-sectio
 
 let fieldSeq = 0;
 /** A labelled control: the control gets an id and its design-system class; a hint is tied to it. */
-function field(label, control, { hint: help = '', optional = false } = {}) {
+function field(label, control, { hint: help = '', optional = false, path = '' } = {}) {
   fieldSeq += 1;
   const id = control.id || `f-${fieldSeq}`;
   control.id = id;
   if (!control.className) control.className = control.tagName === 'SELECT' ? 'select' : control.tagName === 'TEXTAREA' ? 'textarea' : 'input';
-  if (help) control.setAttribute('aria-describedby', `${id}-hint`);
+  // `path` names the field as a payload (and a refusal) does, so an error found before signing, or named by the bridge, marks it.
+  const error = path ? S.invalid.get(path) ?? '' : '';
+  if (path) control.setAttribute('data-path', path);
+  if (error) control.setAttribute('aria-invalid', 'true');
+  const described = [help ? `${id}-hint` : '', error ? `${id}-error` : ''].filter(Boolean).join(' ');
+  if (described) control.setAttribute('aria-describedby', described);
   return h('div', { class: 'field' }, h('label', { class: 'label', for: id }, label, optional ? h('span', { class: 'label__optional', text: '(optional)' }) : null), control,
+    error ? h('p', { class: 'error-text', id: `${id}-error` }, icon('warning', 'sm'), h('span', { text: error })) : null,
     help ? h('p', { class: 'hint', id: `${id}-hint`, text: help }) : null);
 }
 const select = (options, value, on, props) => h('select', { class: 'select', ...(props || {}), on: on ? { change: on } : undefined },
@@ -471,6 +477,8 @@ const S = {
   demoNow: '',                  // the demo server's clock, once moved here
   showSubmit: false,            // the Decisions view's submit form is open
   openKinds: false,             // People & roles opens its "Add a type of task" form once
+  invalid: new Map(),           // fields to fix, by payload path: found before signing, or named by the bridge's refusal
+  scrollToResult: false,        // the answer to the person's last action is brought into view (and focused) when drawn
 };
 
 // ── Who is who, from the read model ─────────────────────────────────────────────────────
@@ -499,8 +507,14 @@ const can = (role) => roles(actor()).includes(role) && !member(actor())?.softwar
 const myRef = () => member(actor())?.personRef ?? '';
 /** Roles in plain words, in a fixed order ("Process lead, Approver"). */
 const rolesPlain = (list) => [...(list ?? [])].sort((a, b) => ROLE_ORDER.indexOf(a) - ROLE_ORDER.indexOf(b)).map((r) => ROLE_NAMES[r] ?? r);
-/** Only an admin or a registered key gets a signed read; a signer who is no member and still read signed is an admin (the bridge checks everything again). */
-const isAdmin = () => S.readSigned && actor() !== '' && !member(actor());
+/**
+ * Whether the person signed in is an admin: the bridge says so with a signed read (reader.admin). A
+ * bridge that does not say gets the old reading: a signer who is no member and still read signed is
+ * an admin. Either way the bridge checks every change again.
+ */
+const isAdmin = () => (S.data?.reader && typeof S.data.reader.admin === 'boolean' ? S.readSigned && S.data.reader.admin : S.readSigned && actor() !== '' && !member(actor()));
+/** The page was told this bridge answers signed reads only, so an unsigned read would be refused (401) and is not sent. */
+const readsSignedOnly = () => document.querySelector('meta[name="wrd-reads"]')?.getAttribute('content') === 'signed';
 /** Every record here is sample data: then "Sample data" is said once per page, not on every row. */
 const allDemo = () => { const d = data(); return d.demoRecords > 0 && d.demoRecords === d.records; };
 const sampleBadge = (row) => (row && row.demo && !allDemo() ? badge('Sample data', 'demo') : null);
@@ -630,6 +644,7 @@ async function act(toolName, intent, fields, extra) {
   if (S.busy) return null;
   S.busy = true;
   S.result = { pending: true, tool: toolName };
+  S.scrollToResult = true;
   render();
   let r;
   try {
@@ -644,6 +659,7 @@ async function act(toolName, intent, fields, extra) {
   }
   S.busy = false;
   S.result = { tool: toolName, ...r };
+  markRefusedField(r);
   if (r.ok) S.panel = null;
   await refresh();
   return r.ok ? r.body : null;
@@ -653,16 +669,24 @@ async function send(toolName, body) {
   if (S.busy) return null;
   S.busy = true;
   S.result = { pending: true, tool: toolName };
+  S.scrollToResult = true;
   render();
   const r = await call(toolName, body);
   S.busy = false;
   S.result = { tool: toolName, ...r };
+  markRefusedField(r);
   if (r.ok) S.panel = null;
   await refresh();
   return r.ok ? r.body : null;
 }
 
-function showResult(tool, r) { S.result = { tool, ...r }; render(); }
+/** Show an answer the person's action produced, and bring it into view. */
+function showResult(tool, r) { S.result = { tool, ...r }; S.scrollToResult = true; render(); }
+/** After an answer: the field a refusal names is marked; a success clears every mark. */
+function markRefusedField(r) {
+  const f = r.ok ? null : refusalField(r.body);
+  S.invalid = new Map(f ? [[f.path, f.message]] : []);
+}
 
 /** One field of a template, as a person reads it: names for what the page knows, a short form for the rest. */
 function plainValue(key, v) {
@@ -674,6 +698,9 @@ function plainValue(key, v) {
   if (/decisionIri$/.test(key)) { const d = (data().decisions ?? []).find((x) => x.decisionIri === v); return d ? planBy(d.planIri)?.title ?? 'A decision' : 'A decision'; }
   if (/Sha256$|Digest$|Hash$/.test(key)) return 'A fingerprint of the current version';
   if (/descriptorUrl|recordId/.test(key)) return 'The current version of this record';
+  if (/Address$/.test(key) && typeof v === 'string') return labelOf(v);
+  if (/grantIri$/.test(key)) return 'An AI permission';
+  if (/valuationIri$/.test(key)) return 'The business case you chose';
   if (Array.isArray(v)) return plural(v.length, 'item');
   if (typeof v === 'object') return plural(Object.keys(v).length, 'detail');
   return short(String(v));
@@ -682,7 +709,27 @@ const FIELD_NAMES = {
   intent: 'What you are doing', podUrl: 'Workspace', taskIri: 'Task', planIri: 'Plan', decisionIri: 'Decision', taskTextSha256: 'The task description you read',
   answers: 'Your answers', notes: 'Your note', note: 'Your note', verdict: 'Your verdict', inputs: 'Your business case inputs', descriptorUrl: 'Version',
   graphDigest: 'Version fingerprint', recordId: 'Record', valuationHash: 'Business case', measurementPlan: 'How it will be measured',
+  valuationIri: 'Business case', objectionsConsidered: 'Objections you approve over', unacknowledgedConsidered: 'Silence you approve over',
+  measured: 'What was measured', probeResults: 'Trial results', disposition: 'What happened to the change', dispositionNote: 'Your reason',
+  entries: 'People and AI agents', taskKinds: 'Types of task', podPolicy: 'Workspace rules', workflow: 'The process', tasks: 'The tasks',
+  document: 'The document', draftedBy: 'Who drafted it', changes: 'The changes', title: 'Name', subject: 'What you respond to', why: 'Your reason',
+  agentAddress: 'AI agent', taskKind: 'Type of task', grantIri: 'AI permission', targetTemplate: 'Where to copy', targetPodUrl: 'Where to copy',
 };
+/** A payload key in words, when the page has no name for it ("windowWeeks" → "Window weeks"). */
+const keyWords = (k) => String(k).replace(/([a-z0-9])([A-Z])/g, '$1 $2').toLowerCase().replace(/^./, (c) => c.toUpperCase());
+const fieldName = (k) => FIELD_NAMES[k] ?? keyWords(k);
+/**
+ * The fields a person still fills in before signing, as they read them: grouped by what they belong
+ * to ("Your business case inputs: 34 values you enter on this page"), never as payload paths or IRIs.
+ */
+function fillSummary(fill) {
+  const groups = new Map();
+  for (const f of fill) {
+    const top = String(f).split(/[.[]/)[0];
+    groups.set(top, (groups.get(top) ?? 0) + 1);
+  }
+  return [...groups].map(([top, n]) => (n > 1 ? `${fieldName(top)}: ${n} values you enter on this page` : fieldName(top)));
+}
 
 /**
  * Show exactly what a write signs: the payload's schema and a template the bridge fills from the
@@ -702,8 +749,9 @@ async function showPayload(intent, args) {
   const fill = r.body.fill ?? [];
   openPanel('Exactly what you\'re signing', h('div', { class: 'stack' },
     h('p', { text: 'Nothing is sent until you press the main button. Your signature will cover:' }),
-    kv(Object.entries(tpl).filter(([k]) => k !== 'issuedAt' && k !== 'nonce').map(([k, v]) => [FIELD_NAMES[k] ?? k.replace(/([A-Z])/g, ' $1').replace(/^./, (c) => c.toUpperCase()), plainValue(k, v)])),
-    h('p', { class: 'hint', text: `Fields you still decide: ${fill.length ? fill.map((f) => FIELD_NAMES[f] ?? f).join(', ') : 'none'}.` }),
+    kv(Object.entries(tpl).filter(([k]) => k !== 'issuedAt' && k !== 'nonce').map(([k, v]) => [fieldName(k), plainValue(k, v)])),
+    fill.length ? [h('p', { class: 'hint', text: 'What you still decide, on this page:' }), h('ul', { class: 'fill-list' }, fillSummary(fill).map((t) => h('li', { text: t })))]
+      : hint('Nothing is left for you to fill in.'),
     r.body.contextWithheld ? note(r.body.contextWithheld, 'warning') : null,
     techDetails('Technical details',
       `${r.body.signing ?? ''} Sent to ${r.body.toolName ?? ''}. Fields still yours to decide: ${fill.join(', ') || 'none'}.`,
@@ -756,10 +804,20 @@ async function signedRead(send) {
 async function refresh(quiet = false) {
   const pod = S.pod || undefined;
   let signed = readSigner() !== '';
+  // Nothing signs, and this bridge was said to refuse unsigned reads: none is asked for (the welcome says why in Technical details).
+  if (!signed && readsSignedOnly()) {
+    S.readRefused = false;
+    S.readSigned = false;
+    S.data = null;
+    S.cal = null;
+    if (!quiet) S.result = null;
+    render();
+    return;
+  }
   let r = signed
     ? await signedRead((envelope) => call('wrd.read_records', { envelope, pod_url: pod }))
     : await call('wrd.list_records', { pod_url: pod });
-  if (signed && r.status === 403) {
+  if (signed && r.status === 403 && !readsSignedOnly()) {
     // A signer with no role here still reads where the operator opened reads to anyone.
     const open = await call('wrd.list_records', { pod_url: pod });
     if (open.ok) { r = open; signed = false; }
@@ -996,6 +1054,16 @@ function render() {
   root.replaceChildren(...nodes.flat(Infinity).filter(Boolean));
   document.title = `${title} · Work Redesign`;
   if (S.panel?.focus) { S.panel.focus = false; document.getElementById('panel-title')?.focus(); }
+  // The answer to an action shows at the top of the view, often above the button pressed: bring it into view, and focus it once it is in.
+  const shown = S.scrollToResult && S.result ? root.querySelector('.result') : null;
+  if (shown) {
+    shown.scrollIntoView?.({ block: 'center', behavior: 'smooth' });
+    if (!S.result.pending) {
+      S.scrollToResult = false;
+      shown.setAttribute('tabindex', '-1');
+      shown.focus?.({ preventScroll: true });
+    }
+  }
 }
 
 function appFrame(content) {
@@ -1015,13 +1083,14 @@ function envBanner() {
     const rs = roles(p.address);
     return h('option', { value: p.id, selected: p.id === S.persona, text: `${p.label} — ${rs.length ? rolesPlain(rs).join(', ') : p.id === 'admin' ? 'Admin' : 'not in this workspace'}` });
   };
-  const weeks = input('4', null, { type: 'number', min: 1, max: 104, 'aria-label': 'Weeks to skip' });
+  const weeks = input('4', null, { type: 'number', min: 1, max: 104, 'aria-label': 'Weeks to skip ahead' });
   return h('div', { class: 'env-banner', role: 'note' },
     h('span', { class: 'env-banner__label', text: 'Demo' }),
     h('span', { text: DEMO_SENTENCE }),
     h('span', { class: 'env-banner__field' }, h('label', { for: 'persona', text: 'View as' }),
-      h('select', { id: 'persona', class: 'select', on: { change: (e) => { S.persona = e.target.value; S.panel = null; S.result = null; refresh(); } } }, personas().map(option))),
-    S.data && S.tools.has('wrd.demo_advance_clock') ? h('span', { class: 'env-banner__field' }, 'Demo time: ', h('code', { text: S.demoNow ? when(S.demoNow) : 'scripted' }), weeks,
+      h('select', { id: 'persona', class: 'select', on: { change: (e) => { S.persona = e.target.value; S.panel = null; S.result = null; S.invalid = new Map(); refresh(); } } }, personas().map(option))),
+    S.data && S.tools.has('wrd.demo_advance_clock') ? h('span', { class: 'env-banner__field' }, 'Demo time: ', h('strong', { text: S.demoNow ? day(S.demoNow) : 'as scripted' }), weeks,
+      h('span', { text: 'weeks' }),
       btn('Skip ahead', { size: 'sm', on: async () => {
         const out = await send('wrd.demo_advance_clock', { weeks: Number(weeks.value) });
         if (out) { S.demoNow = out.now; render(); }
@@ -1097,7 +1166,15 @@ function sideNav() {
     h('div', { class: 'side-nav__footer' }, h('a', { class: 'side-nav__link', href: '/ui/help', target: '_blank', rel: 'noopener' }, icon('info'), 'Help')));
 }
 
-/** Integrity notices, for every signed-in viewer: what failed, in a calm callout; the exact sentences collapsed. */
+/** What each section of the read model that can be marked unreadable is, in plain words. */
+const UNREADABLE_NAMES = { runs: 'the counts of AI work', awaitingReview: 'the AI work waiting for review', contraryEvidence: 'how often reviewed AI work on a task is rejected' };
+const was = (n) => (n === 1 ? 'was' : 'were');
+
+/**
+ * Integrity notices, for every signed-in viewer: what failed, in a calm callout. Each item is a plain
+ * sentence; the bridge's exact sentences sit in a Technical details inside it (p.health__item, as
+ * the tests and a workspace provider read them).
+ */
 function health() {
   const d = data();
   const platform = d.bridge?.platform ?? {};
@@ -1107,15 +1184,26 @@ function health() {
   // Every graph whose line is cut, whatever its kind (a bridge that reports chainCuts), else the decisions and grants that say so.
   const cuts = Array.isArray(d.chainCuts) ? d.chainCuts.length : [...(d.decisions ?? []), ...(d.grants ?? [])].filter((x) => x.chainUnreadable).length;
   const byKey = (d.chainCuts ?? []).filter((c) => c.untrustedKey);
+  const unreadable = Object.entries(d.unreadable ?? {}).map(([k, why]) => {
+    if (k !== 'currentNotPermitted') return UNREADABLE_NAMES[k] ?? 'some figures';
+    const n = Number(/^(\d+) task/.exec(String(why))?.[1]);
+    return Number.isFinite(n) ? `whether the way ${plural(n, 'task')} ${n === 1 ? 'is' : 'are'} done now is allowed` : 'whether the way some tasks are done now is allowed';
+  });
+  // [tone, the plain sentence, the bridge's exact sentence]
   const items = [
-    altered + forked + untrusted > 0 ? ['warning', `${altered} graph(s) altered after signing, ${forked} forked, ${untrusted} descriptor(s) set aside as untrusted. Altered or forked records are never used as a current version.`] : null,
-    cuts > 0 ? ['danger', chainCuts(cuts)] : null,
-    byKey.length > 0 ? ['danger', trustCuts(byKey.length, [...new Set(byKey.map((c) => c.untrustedKey))])] : null,
-    (d.sealed ?? []).length > 0 ? ['danger', `${d.sealed.length} record(s) are sealed and this bridge cannot open them. ${d.sealedNote ?? ''}`] : null,
-    d.recordKeyMismatch ? ['danger', `Another record key: ${d.recordKeyMismatch.why}`] : null,
-    d.plaintext ? ['warning', `${d.plaintext.versions} record version(s) written before the record key are plaintext on the pod. ${d.plaintext.why}`] : null,
-    d.unreadable ? ['danger', `Marked, not worked out without them, because records they depend on cannot be read: ${Object.keys(d.unreadable).join(', ')}.`] : null,
-    platform.keyKind === 'ephemeral' ? ['warning', EPHEMERAL] : null,
+    altered + forked + untrusted > 0 ? ['warning', [
+      altered ? `${plural(altered, 'record')} ${was(altered)} changed outside the app` : '',
+      forked ? `${plural(forked, 'record')} ${forked === 1 ? 'has' : 'have'} two versions that both claim to be current` : '',
+      untrusted ? `${plural(untrusted, 'record')} ${was(untrusted)} not signed by this workspace` : '',
+    ].filter(Boolean).join('; ').replace(/^./, (c) => c.toUpperCase()).concat('. These are ignored, never used as the current version.'),
+    `${altered} graph(s) altered after signing, ${forked} forked, ${untrusted} descriptor(s) set aside as untrusted. Altered or forked records are never used as a current version.`] : null,
+    cuts > 0 ? ['danger', `The history of ${plural(cuts, 'record')} is incomplete: an earlier version is missing, or can't be trusted.`, chainCuts(cuts)] : null,
+    byKey.length > 0 ? ['danger', `${plural(byKey.length, 'record')} can't be changed until your workspace provider trusts an earlier signing key again.`, trustCuts(byKey.length, [...new Set(byKey.map((c) => c.untrustedKey))])] : null,
+    (d.sealed ?? []).length > 0 ? ['danger', `${plural(d.sealed.length, 'record')} can't be opened with this workspace's key.`, `${d.sealed.length} record(s) are sealed and this bridge cannot open them. ${d.sealedNote ?? ''}`] : null,
+    d.recordKeyMismatch ? ['danger', 'Some records were sealed with a different key than this workspace\'s, so they can\'t be opened.', `Another record key: ${d.recordKeyMismatch.why}`] : null,
+    d.plaintext ? ['warning', `${plural(d.plaintext.versions, 'record version')} from before this workspace had its record key ${d.plaintext.versions === 1 ? 'is' : 'are'} stored unencrypted.`, `${d.plaintext.versions} record version(s) written before the record key are plaintext on the pod. ${d.plaintext.why}`] : null,
+    d.unreadable ? ['danger', `Some things can't be worked out, because records they depend on can't be read: ${unreadable.join('; ')}.`, `Marked, not worked out without them, because records they depend on cannot be read: ${Object.keys(d.unreadable).join(', ')}.`] : null,
+    platform.keyKind === 'ephemeral' ? ['warning', 'This workspace signs with a temporary key: records written now won\'t be trusted after the server restarts.', EPHEMERAL] : null,
   ].filter(Boolean);
   if (items.length === 0) return null;
   const danger = items.some(([t]) => t === 'danger');
@@ -1125,7 +1213,9 @@ function health() {
     h('p', { class: 'callout__title', id: 'health-title', text: danger ? 'Some records in this workspace failed an integrity check' : 'Notices about this workspace' }),
     h('p', { class: 'callout__body', text: `${danger ? 'They\'re shown as incomplete and are never used as a current version. Your admin or workspace provider should look into it.' : 'Nothing is wrong with your own work. Your admin or workspace provider may want to look at these.'}${isAdmin() ? ' Send the details below to your workspace provider.' : ''}` }),
     h('details', { class: 'disclosure' }, h('summary', { text: `What we found (${items.length})` }),
-      h('div', { class: 'disclosure__body health__items' }, items.map(([tone, text]) => h('p', { class: `health__item health__item--${tone}`, text })))));
+      h('div', { class: 'disclosure__body health__items' },
+        h('ul', { class: 'health__list' }, items.map(([tone, plain]) => h('li', { class: `health__plain health__plain--${tone}`, text: plain }))),
+        techDetails('Technical details', items.map(([tone, , exact]) => h('p', { class: `health__item health__item--${tone}`, text: exact }))))));
 }
 
 /** How actions are signed, who can read, and every protocol fact about this workspace, one click away. */
@@ -1225,6 +1315,7 @@ function welcomeView() {
           techDetails('Technical details',
             enabled && !wallet ? NOT_SIGNED_IN : wallet ? READ_SIGNING : READ_ONLY,
             !enabled && S.signIn?.why ? S.signIn.why : null,
+            !readSigner() && readsSignedOnly() ? SIGNED_READS_ONLY : null,
             isExpectedSignedOutRead(r) ? refusalTech(r) : null))),
       h('p', { class: 'welcome__links' }, h('a', { href: '/ui/help', text: 'How Work Redesign works' }), ' · ', h('a', { href: '/', text: 'About Work Redesign' })))),
   ];
@@ -1276,6 +1367,7 @@ function openPanel(title, node) { S.panel = { title, node, focus: true }; render
 function goTab(id) {
   S.tab = id;
   S.panel = null;
+  S.invalid = new Map();
   if (taskFromHash()) history.replaceState(null, '', `${location.pathname}${location.search}`);
   render();
   window.scrollTo({ top: 0 });
@@ -1331,15 +1423,54 @@ function plainSummary(tool, b) {
   }
 }
 const doneTitle = (tool, b) => (tool === SIGN_IN_TOOL ? 'You\'re signed out' : tool === 'wrd.holder_copy' ? (b.status === 'copied' ? 'Copied to your storage' : 'Your record is downloading') : DONE_TITLES[tool] ?? 'Done');
-/** Why an agent has not earned permission yet, in plain words. */
-function plainGrantReason(e) {
-  if (!e) return 'its reviewed work doesn\'t meet the bar yet';
+/**
+ * The parts of the bar for AI permission an agent's reviewed work misses (empty: it meets it), from
+ * the grant policy the bridge publishes: reviewed work, acceptance, different reviewers, "ready"
+ * claims and how often people agreed with them, and no critical failure among those.
+ */
+function missesBar(e) {
+  if (!e) return [];
   const gp = data().vocabulary?.grantPolicy ?? {};
   const parts = [];
   if (gp.minSamples && e.samples < gp.minSamples) parts.push(`${e.samples} of ${gp.minSamples} pieces of work reviewed`);
-  if (gp.floor && e.acceptedShare < gp.floor) parts.push(`${pct(e.acceptedShare)} accepted, below ${pct(gp.floor)}`);
+  if (gp.floor && typeof e.acceptedShare === 'number' && e.acceptedShare < gp.floor) parts.push(`${pct(e.acceptedShare)} accepted, below ${pct(gp.floor)}`);
   if (gp.minDistinctConfirmers && e.distinctConfirmers < gp.minDistinctConfirmers) parts.push(`${e.distinctConfirmers} of ${gp.minDistinctConfirmers} different reviewers`);
-  return parts.length ? parts.join('; ') : 'its reviewed work doesn\'t meet the bar yet';
+  if (gp.minSamples && typeof e.readyClaims === 'number' && e.readyClaims < gp.minSamples) parts.push(`${e.readyClaims} of ${gp.minSamples} pieces it called "ready"`);
+  if (gp.minReadyClaimPrecision && typeof e.readyClaimPrecision === 'number' && e.readyClaimPrecision < gp.minReadyClaimPrecision) parts.push(`people agreed with ${pct(e.readyClaimPrecision)} of its "ready" claims, below ${pct(gp.minReadyClaimPrecision)}`);
+  if (e.criticalFailuresOnReadyClaims > 0) parts.push(`${plural(e.criticalFailuresOnReadyClaims, 'critical failure')} among the work it called "ready"`);
+  return parts;
+}
+/** Why an agent has not earned permission yet, in plain words. */
+function plainGrantReason(e) {
+  const parts = missesBar(e);
+  return parts.length ? parts.join('; ') : 'its reviewed work doesn\'t meet the bar yet (Technical details says which part)';
+}
+/**
+ * Where an agent's permission on one type of task stands, in plain words: the bridge's own reason
+ * first (withdrawn, expired, a changed model…), and only then the bar its reviewed work (`cell`, a
+ * track-record cell, when there is one) is measured against. '' when the permission is active.
+ */
+function grantStateText(agent, kind, g, cell) {
+  if (g?.active === true) return '';
+  if (g?.active === null) return 'Can\'t be checked: its record can\'t be opened with this workspace\'s key.';
+  const row = (data().grants ?? []).find((x) => x.agentAddress === agent && x.taskKind === kind);
+  const why = String(g?.why ?? row?.why ?? '');
+  const revoked = /^revoked at (.+)$/.exec(why);
+  if (revoked || row?.revokedAt) {
+    return `Withdrawn on ${day(row?.revokedAt ?? revoked?.[1])}${row?.revocationWhy ? `: ${row.revocationWhy}` : ''}. Re-earning counts only work reviewed after that.`;
+  }
+  const expired = /^expired at (.+)$/.exec(why);
+  if (expired) return `Expired on ${day(expired[1])}.`;
+  if (/declared model changed/.test(why)) return 'Its AI model changed after the permission was granted, so it must be earned again on the new model.';
+  if (/agent no longer registered/.test(why)) return 'The agent is no longer in this workspace.';
+  if (/principal is no longer registered/.test(why)) return 'Its accountable owner is no longer in this workspace.';
+  if (/kind of task is no longer registered/.test(why)) return 'This type of task was retired.';
+  if (/altered|more than one version|not signed by|holds no grant|not asserted/.test(why)) return 'Its record failed an integrity check, so it isn\'t used.';
+  if (!cell) return 'Not in force.';
+  if (cell.currentModel === false) return 'This isn\'t the agent\'s current AI model, so this work doesn\'t count toward permission.';
+  const parts = missesBar(cell);
+  if (parts.length) return `Not earned yet: ${parts.join('; ')}.`;
+  return 'Its reviewed work meets the bar. An approver who isn\'t its owner can grant permission under AI agents.';
 }
 
 /** The bridge's answer as it said it (kept word for word in Technical details). */
@@ -1401,6 +1532,48 @@ const CLIENT_ERRORS = [
   ['The run envelope is not JSON.', 'That work record isn\'t in the expected format', 'Paste the signed work record exactly as the AI agent produced it.'],
   ['The bridge named another agent than the relay signed for.', 'We couldn\'t confirm who signed', 'Please sign out and sign in again.'],
 ];
+/** What a form check found before anything was signed (S.invalid holds each field and what to fix). */
+const FORM_CHECK = 'form check';
+const TASK_FIELD_NAMES = {
+  name: 'Task name', description: 'Description', taskKind: 'Type of task', personAddress: 'Person', agentAddress: 'AI agent', currentLevel: 'Who does it today',
+  externalTaskTerm: 'Standard task reference', sourceQuotes: 'Quotes from the draft',
+};
+const PATH_NAMES = {
+  'workflow.title': 'Process name', 'workflow.unitLabel': 'Unit of work', 'workflow.description': 'Description of the process', 'document.title': 'Document title',
+  'document.text': 'The document', 'dispositionNote': 'Reason', 'measured.weeklyValueDelta': 'Measured value per week', 'measured.method': 'How it was measured',
+  'measured.windowStart': 'Period start', 'measured.windowEnd': 'Period end', 'measured.comparisonBasis': 'How it was compared', 'title': 'Plan name',
+  'name': 'Task name', 'description': 'Description', 'taskKind': 'Type of task', 'why': 'Why', 'note': 'Note',
+};
+/** A payload path as the form labels it ("tasks[0].taskKind" → "Task 1: Type of task"), or '' when the page has no field for it. */
+function pathFieldLabel(path) {
+  const p = String(path).replace(/^payload\./, '');
+  if (PATH_NAMES[p]) return PATH_NAMES[p];
+  let m = /^tasks\[(\d+)\]\.(\w+)$/.exec(p);
+  if (m) return TASK_FIELD_NAMES[m[2]] ? `Task ${Number(m[1]) + 1}: ${TASK_FIELD_NAMES[m[2]]}` : '';
+  m = /^task\.(\w+)$/.exec(p);
+  if (m) return TASK_FIELD_NAMES[m[1]] ?? '';
+  m = /^probeResults\[(\d+)\]\.(\w+)$/.exec(p);
+  if (m) return { observed: `Trial ${Number(m[1]) + 1}: What you observed`, windowStart: `Trial ${Number(m[1]) + 1}: Period start`, windowEnd: `Trial ${Number(m[1]) + 1}: Period end` }[m[2]] ?? '';
+  return '';
+}
+/** The field a refusal names ("workflow.unitLabel is required text"), as the form labels it: { path, message }, or null. */
+function refusalField(b) {
+  const why = String(b?.['iep:refusalReason'] ?? '');
+  const m = /^((?:payload\.)?[A-Za-z]\w*(?:\[\d+\])?(?:\.[A-Za-z]\w*(?:\[\d+\])?)*) (is required|is longer than|must)\b/.exec(why);
+  if (!m) return null;
+  const path = m[1].replace(/^payload\./, '');
+  const label = pathFieldLabel(path);
+  if (!label) return null;
+  return { path, message: `${label} ${m[2] === 'is required' ? 'is required' : m[2] === 'is longer than' ? 'is too long' : 'isn\'t valid'}` };
+}
+/** Check a form before signing: [path, what to fix] for each problem. Problems found: nothing is signed, the fields are marked, and the answer lists them. */
+function formProblems(problems) {
+  S.invalid = new Map(problems);
+  if (problems.length === 0) return false;
+  showResult(FORM_CHECK, { ok: false, status: 0, body: { error: 'The form is not complete.', problems: problems.map(([path, message]) => ({ path, message })) } });
+  return true;
+}
+
 const STATUS_TITLES = { 400: 'Something in this form isn\'t right', 401: 'Please sign in', 403: 'Your role doesn\'t include this', 404: 'We couldn\'t find that', 409: 'This can\'t be done yet', 422: 'Something didn\'t check out', 429: 'Busy right now' };
 
 /**
@@ -1416,6 +1589,10 @@ function friendly(r) {
   const go = (label, tab) => btn(label, { size: 'sm', on: () => goTab(tab) });
   const fx = (tone, title, body, action = null) => ({ tone, title, body, action });
   const busy = () => fx('warning', 'Busy right now', `Please wait ${b.retryAfterSeconds ?? 60} seconds and try again.`);
+  if (r?.tool === FORM_CHECK) {
+    const n = (b.problems ?? []).length;
+    return fx('warning', 'Please check the form', `Nothing was signed or sent. ${n === 1 ? 'One thing needs' : `${n} things need`} your attention:`);
+  }
   const unreachable = () => fx('danger', 'We can\'t reach Work Redesign right now', 'Check your connection and try again in a minute.', btn('Try again', { size: 'sm', on: () => refresh() }));
   if (code === 'interego-sign-in-expired' || code === 'interego-sign-in-refused' || e === SIGN_IN_ENDED) {
     return fx('warning', 'Your sign-in has ended', 'For your security, sign-ins last about an hour. Sign in again to continue. Your drafts in Map a process and Business case are kept in this browser.', signInButton('sm'));
@@ -1459,7 +1636,10 @@ function friendly(r) {
   }
   if (s === 409 && /already used/.test(e)) return fx('info', 'Already done', 'This was already sent, so we didn\'t record it twice.');
   if (s === 401 && /stale or from the future/.test(e)) return fx('warning', 'That took a little too long', 'For security, actions must be sent within 15 minutes. Please try again.');
-  if (s === 400 && /payload is malformed|not well-formed/.test(e)) return fx('warning', 'Something in this form isn\'t right', 'Please check the fields and try again.');
+  if (s === 400 && /payload is malformed|not well-formed/.test(e)) {
+    const f = refusalField(b);
+    return fx('warning', 'Something in this form isn\'t right', f ? `${f.message}. Nothing was recorded: fix it and try again.` : 'Please check the fields and try again.');
+  }
   if (s === 400 && /^Say why/.test(e)) return fx('warning', 'Please add a reason', 'A dispute or objection needs a short note so the team knows what to fix.');
   if (s === 400 && /No evidence places this task/.test(e)) return fx('warning', 'These answers don\'t fit a category yet', 'Replace some "Unknown" answers, or run a small trial to find out. We never guess a category.');
   if (s === 409 && /propose again|stale/.test(e)) return fx('warning', 'This plan is out of date', 'A task changed after the plan was made. Make a new plan from the current tasks.', go('Go to Plans', 'plan'));
@@ -1514,7 +1694,14 @@ function resultNode() {
       tech: techDetails('Technical details', summaryOf(r.tool, b), h('details', { class: 'disclosure' }, h('summary', { text: 'The full answer' }), h('pre', { text: JSON.stringify(b, null, 2) }))) }));
   }
   const f = friendly(r);
-  return callout({ tone: f.tone, title: f.title, body: f.body, actions: [f.action], alert: true, onClose: dismiss, tech: techDetails('Technical details', refusalTech(r)), cls: 'result' });
+  const toFix = [...S.invalid].map(([path, message]) => h('li', null, h('button', { type: 'button', class: 'btn btn--link', on: { click: () => {
+    const el = [...document.querySelectorAll('[data-path]')].find((x) => x.getAttribute('data-path') === path);
+    el?.scrollIntoView?.({ block: 'center' });
+    el?.focus?.({ preventScroll: true });
+  } } }, message)));
+  return callout({ tone: f.tone, title: f.title, body: f.body, actions: [f.action], alert: true, onClose: () => { S.invalid = new Map(); dismiss(); },
+    extra: toFix.length ? h('ul', { class: 'field-errors' }, toFix) : null,
+    tech: r.tool === FORM_CHECK ? null : techDetails('Technical details', refusalTech(r)), cls: 'result' });
 }
 
 // ── Home: what waits for you, and a checklist for each of your roles ─────────────────────
@@ -1538,12 +1725,28 @@ function windowEnds(d) {
   const weeks = d.measurementPlan?.windowWeeks ?? Math.max(0, ...(d.probes ?? []).map((p) => Number(p.timeboxWeeks) || 0));
   return at + weeks * 7 * 86400000;
 }
-function canRecordResults(d) {
+function canRecordResults(d) { return d.status === 'countersigned' && recordWhy(d) === ''; }
+/** Why this person can't record a decision's results now ('' when they can), in the words the form shows. */
+function recordWhy(d) {
   const ref = myRef();
-  if (d.status !== 'countersigned' || !(can('operator') || can('approver'))) return false;
-  if (!(windowEnds(d) <= nowMs())) return false;
+  if (!(can('operator') || can('approver'))) return 'Only process leads and approvers can record results.';
   const prepared = [...(d.preparedBy ?? []).map((x) => x.personRef), d.submittedBy?.personRef].filter(Boolean);
-  return !(ref && (prepared.includes(ref) || d.countersign?.personRef === ref));
+  if (ref && prepared.includes(ref)) return 'You helped prepare this decision, so someone who didn\'t records its results.';
+  if (ref && d.countersign?.personRef === ref) return 'You approved this decision, so someone else records its results.';
+  const ends = windowEnds(d);
+  if (!(ends <= nowMs())) return Number.isFinite(ends) ? `The measurement period ends ${day(new Date(ends).toISOString())}.` : 'The measurement period hasn\'t started.';
+  return '';
+}
+/** Why this person can't approve or decline a submitted decision ('' when they can): the rules canApprove applies. */
+function approveWhy(d) {
+  if (!can('approver')) return WHY.approver;
+  if (canApprove(d)) return '';
+  const me = actor();
+  const ref = myRef();
+  const prepared = [...(d.preparedBy ?? []).map((x) => x.personRef), d.submittedBy?.personRef].filter(Boolean);
+  if (ref && prepared.includes(ref)) return 'You helped prepare this plan, so another approver decides.';
+  if ((d.subjects ?? []).some((x) => x.address === me || (ref && x.personRef === ref))) return 'This plan changes your own work, so another approver decides.';
+  return 'This plan uses an AI agent you own, so another approver decides.';
 }
 const ownsAgent = (a) => { const me = actor(); const owner = member(a)?.principal; return Boolean(owner) && (owner === me || (myRef() && member(owner)?.personRef === myRef())); };
 
@@ -1822,7 +2025,7 @@ function tasksView() {
       td(null, h('span', { text: allocationText(e) }), e.source && e.source !== 'captured' ? h('span', { class: 'table__secondary', text: SOURCE_NAMES[e.source] ?? e.source }) : null),
       td(null, h('div', { class: 'stack stack--sm' }, taskStatus(t.status),
         t.namedParties.map((p) => person(p, false)), (t.owedRatification ?? []).map((p) => person(p, true)),
-        t.revision ? h('span', { class: 'table__secondary', text: `Updated: answers ${plural(t.revision.answers.length, 'dispute')}` }) : null,
+        t.revision ? h('span', { class: 'table__secondary', text: `Answers ${plural(t.revision.answers.length, 'dispute')}` }) : null,
         (named || owed) && !myResponse(t, me) && t.status !== 'retired' ? h('div', null, btn('Confirm or dispute', { variant: 'link', size: 'sm', on: () => ratifyPanel(t, 'description') })) : null)),
       td(null, predictabilityCell(t, canSort)),
       td({ class: 'actions' }, h('div', { class: 'row-actions' }, btn('Open', { size: 'sm', on: () => { location.hash = `task=${encodeURIComponent(t.taskIri)}`; } }),
@@ -2011,16 +2214,25 @@ function retirePanel(t) {
 
 function addTaskPanel(wf) {
   const st = blankTask();
+  const problems = () => {
+    const out = [];
+    if (!st.name.trim()) out.push(['task.name', 'Task name is required']);
+    if (!st.description.trim()) out.push(['task.description', 'Description is required']);
+    if (!st.taskKind) out.push(['task.taskKind', 'Choose its type of task']);
+    if (levelRule(st.currentLevel).requiresPerson !== false && !st.personAddress) out.push(['task.personAddress', 'Choose the person who does it']);
+    if (levelRule(st.currentLevel).requiresAgent && !st.agentAddress) out.push(['task.agentAddress', 'Choose the AI agent']);
+    return out;
+  };
   openPanel(`Add a task to "${wf.title}"`, h('div', { class: 'stack' },
-    field('Name', input('', (e) => { st.name = e.target.value; }), { hint: 'Start with a verb, for example "Match each invoice to its purchase order".' }),
-    field('Description', textarea('', (e) => { st.description = e.target.value; })),
+    field('Name', input('', (e) => { st.name = e.target.value; }), { hint: 'Start with a verb, for example "Match each invoice to its purchase order".', path: 'task.name' }),
+    field('Description', textarea('', (e) => { st.description = e.target.value; }), { path: 'task.description' }),
     h('div', { class: 'form-row' },
       field('Who does it today', select(captureLevels(), st.currentLevel, (e) => { st.currentLevel = e.target.value; })),
-      field('Type of task', select(kindOptions(), '', (e) => { st.taskKind = e.target.value; }))),
+      field('Type of task', select(kindOptions(), '', (e) => { st.taskKind = e.target.value; }), { path: 'task.taskKind' })),
     h('div', { class: 'form-row' },
-      field('Person', select(personOptions('Nobody'), '', (e) => { st.personAddress = e.target.value; })),
-      field('AI agent', select(agentOptions('None'), '', (e) => { st.agentAddress = e.target.value; }))),
-    h('div', null, btn('Sign and add the task', { variant: 'primary', on: () => act('wrd.revise_task', 'wrd:revise-task', {
+      field('Person', select(personOptions('Nobody'), '', (e) => { st.personAddress = e.target.value; }), { path: 'task.personAddress' }),
+      field('AI agent', select(agentOptions('None'), '', (e) => { st.agentAddress = e.target.value; }), { path: 'task.agentAddress' })),
+    h('div', null, btn('Sign and add the task', { variant: 'primary', on: () => formProblems(problems()) || act('wrd.revise_task', 'wrd:revise-task', {
       op: 'add', workflowIri: wf.workflowIri, descriptorUrl: wf.head.descriptorUrl, graphDigest: wf.head.graphDigest,
       task: { name: st.name, description: st.description, currentLevel: st.currentLevel, taskKind: st.taskKind,
         ...(st.personAddress ? { personAddress: st.personAddress } : {}), ...(st.agentAddress ? { agentAddress: st.agentAddress } : {}) },
@@ -2106,16 +2318,16 @@ function captureView() {
     h('div', { class: 'card__body' },
       h('div', { class: 'form-row' },
         h('div', { class: 'stack' },
-          field('Task name', input(t.name, (e) => { t.name = e.target.value; save(); }), { hint: 'Start with a verb, for example "Match each invoice to its purchase order".' }),
-          field('Description', textarea(t.description, (e) => { t.description = e.target.value; save(); }))),
+          field('Task name', input(t.name, (e) => { t.name = e.target.value; save(); }), { hint: 'Start with a verb, for example "Match each invoice to its purchase order".', path: `tasks[${i}].name` }),
+          field('Description', textarea(t.description, (e) => { t.description = e.target.value; save(); }), { path: `tasks[${i}].description` })),
         h('div', { class: 'stack' },
           field('Who does it today', select(captureLevels(), t.currentLevel, (e) => { t.currentLevel = e.target.value; rerender(); })),
-          levelRule(t.currentLevel).requiresPerson !== false ? field('Person', select(personOptions('Choose a person'), t.personAddress, (e) => { t.personAddress = e.target.value; save(); })) : null,
+          levelRule(t.currentLevel).requiresPerson !== false ? field('Person', select(personOptions('Choose a person'), t.personAddress, (e) => { t.personAddress = e.target.value; save(); }), { path: `tasks[${i}].personAddress` }) : null,
           levelRule(t.currentLevel).requiresAgent || t.currentLevel === 'person-with-agent-assist'
-            ? field(t.currentLevel === 'person-with-agent-assist' ? 'Assisting AI agent' : 'AI agent', select(agentOptions('None'), t.agentAddress, (e) => { t.agentAddress = e.target.value; save(); }), { optional: t.currentLevel === 'person-with-agent-assist' }) : null,
-          field('Type of task', select(kindOptions(), t.taskKind, (e) => { t.taskKind = e.target.value; save(); }), { hint: t.suggestedTaskKind ? `The draft suggests "${t.suggestedTaskKind}".` : '' }))),
+            ? field(t.currentLevel === 'person-with-agent-assist' ? 'Assisting AI agent' : 'AI agent', select(agentOptions('None'), t.agentAddress, (e) => { t.agentAddress = e.target.value; save(); }), { optional: t.currentLevel === 'person-with-agent-assist', path: `tasks[${i}].agentAddress` }) : null,
+          field('Type of task', select(kindOptions(), t.taskKind, (e) => { t.taskKind = e.target.value; save(); }), { hint: t.suggestedTaskKind ? `The draft suggests "${t.suggestedTaskKind}".` : '', path: `tasks[${i}].taskKind` }))),
       field('Standard task reference', input(t.externalTaskTerm, (e) => { t.externalTaskTerm = e.target.value.trim(); save(); }), { optional: true, hint: 'For example an O*NET task statement.' }),
-      docMode ? h('div', { class: 'stack stack--sm' }, h('p', { class: 'label', text: 'Quotes from the draft' }),
+      docMode ? h('div', { class: 'stack stack--sm', 'data-path': `tasks[${i}].sourceQuotes`, tabindex: '-1' }, h('p', { class: 'label', text: 'Quotes from the draft' }),
         t.sourceQuotes.length === 0 ? (t.name ? note(QUOTES_NEEDED, 'warning') : hint(QUOTES_NEEDED)) : null,
         t.sourceQuotes.map((q) => { const p = previewQuote(normDoc, q); return h('blockquote', { class: `quote quote--${p.status === 'verified' ? 'checked' : 'unchecked'}` },
           badge(p.status === 'verified' ? 'Source checked (preview)' : 'Source not found in the document (preview)', p.status === 'verified' ? 'success' : 'danger'), h('p', { class: 'quote__text', text: `“${q}”` })); }),
@@ -2152,7 +2364,33 @@ function captureView() {
     S.packet = r.body;
     render();
   };
+  // What the bridge would refuse, found before anything is signed: each field named as the form labels it.
+  const problems = () => {
+    const out = [];
+    const need = (path, v) => { if (!String(v ?? '').trim()) out.push([path, `${pathFieldLabel(path)} is required`]); };
+    if (docMode) {
+      need('document.title', st.doc.title);
+      if (!String(st.doc.text ?? '').trim()) out.push(['document.text', 'Add the document: load a file or paste its text']);
+    }
+    need('workflow.title', st.workflow.title);
+    need('workflow.unitLabel', st.workflow.unitLabel);
+    const names = new Map();
+    st.tasks.forEach((t, i) => {
+      need(`tasks[${i}].name`, t.name);
+      need(`tasks[${i}].description`, t.description);
+      const rule = levelRule(t.currentLevel);
+      if (rule.requiresPerson !== false && !t.personAddress) out.push([`tasks[${i}].personAddress`, `Task ${i + 1}: choose the person who does it`]);
+      if (rule.requiresAgent && !t.agentAddress) out.push([`tasks[${i}].agentAddress`, `Task ${i + 1}: choose the AI agent`]);
+      if (!t.taskKind) out.push([`tasks[${i}].taskKind`, `Task ${i + 1}: choose its type of task`]);
+      if (docMode && t.sourceQuotes.length === 0) out.push([`tasks[${i}].sourceQuotes`, `Task ${i + 1}: cite at least one quote from the document`]);
+      const k = t.name.trim().toLowerCase();
+      if (k && names.has(k)) out.push([`tasks[${i}].name`, `Task ${i + 1}: has the same name as task ${names.get(k) + 1}`]);
+      else if (k) names.set(k, i);
+    });
+    return out;
+  };
   const signCapture = async () => {
+    if (formProblems(problems())) return;
     const taskPayload = st.tasks.map((t) => ({
       name: t.name, description: t.description, currentLevel: t.currentLevel, taskKind: t.taskKind,
       ...(t.personAddress ? { personAddress: t.personAddress } : {}), ...(t.agentAddress ? { agentAddress: t.agentAddress } : {}),
@@ -2189,9 +2427,10 @@ function captureView() {
         choice('radio', 'capture-mode', 'From a procedure document', { checked: docMode, card: true, help: 'Your own AI drafts the map; we check every quote', on: () => { st.mode = 'document'; rerender(); } }))),
     docMode ? h('ol', { class: 'capture-steps' },
       step(1, 'Add the document',
-        field('Document title', input(st.doc.title, (e) => { st.doc.title = e.target.value; save(); })),
-        field('Load a .txt or .md file', h('input', { type: 'file', class: 'input input--file', accept: '.txt,.md,text/plain,text/markdown', on: { change: loadFile } })),
-        field('Or paste the text', textarea(st.doc.text, (e) => { st.doc.text = e.target.value; save(); }, { class: 'textarea textarea--tall' }))),
+        field('Document title', input(st.doc.title, (e) => { st.doc.title = e.target.value; save(); }), { path: 'document.title' }),
+        field('Load a .txt or .md file', h('input', { type: 'file', class: 'input input--file', accept: '.txt,.md,text/plain,text/markdown', on: { change: loadFile } }),
+          { hint: st.doc.text ? `Loaded: ${plural(st.doc.text.length, 'character')}. Loading another file replaces it.` : '' }),
+        field('Or paste the text', textarea(st.doc.text, (e) => { st.doc.text = e.target.value; save(); }, { class: 'textarea textarea--tall' }), { path: 'document.text' })),
       step(2, 'Get instructions for your AI',
         h('p', { class: 'text-secondary', text: 'Copy these into your own AI assistant (Claude, ChatGPT…), together with the document. Work Redesign doesn\'t draft anything itself.' }),
         S.packet ? h('div', { class: 'stack stack--sm' }, callout({ tone: 'success', title: 'Instructions ready', body: 'Copy them into your AI assistant with the document.' }),
@@ -2211,8 +2450,8 @@ function captureView() {
       h('div', { class: 'card__header' }, h('h2', { class: 'card__title', id: 'process-draft-title', text: 'The process' })),
       h('div', { class: 'card__body' },
         h('div', { class: 'form-row' },
-          field('Process name', input(st.workflow.title, (e) => { st.workflow.title = e.target.value; save(); }), { hint: 'For example "Supplier invoice processing".' }),
-          field('Unit of work', input(st.workflow.unitLabel, (e) => { st.workflow.unitLabel = e.target.value; save(); }), { hint: 'What one run handles, for example "invoice".' })),
+          field('Process name', input(st.workflow.title, (e) => { st.workflow.title = e.target.value; save(); }), { hint: 'For example "Supplier invoice processing".', path: 'workflow.title' }),
+          field('Unit of work', input(st.workflow.unitLabel, (e) => { st.workflow.unitLabel = e.target.value; save(); }), { hint: 'What one run handles, for example "invoice".', path: 'workflow.unitLabel' })),
         field('Description', textarea(st.workflow.description, (e) => { st.workflow.description = e.target.value; save(); }), { optional: true }))),
     h('h2', { class: 'view-section__title view-block', text: `Tasks (${st.tasks.length})` }),
     h('ol', { class: 'capture-steps capture-tasks' }, st.tasks.map(taskCard)),
@@ -2369,15 +2608,17 @@ function objectPanel(p, taskIri) {
 /** A three-point input: low / likely / high, its source, a note and a link. One number in "likely" alone is kept as one number, marked "no range given". */
 function triEditor(label, t, save) {
   const one = t.likely !== '' && t.low === '' && t.high === '';
-  const num3 = (k, which) => input(t[k], (e) => { t[k] = e.target.value; save(); }, { type: 'number', step: 'any', placeholder: which, 'aria-label': `${label} ${which.toLowerCase()}` });
+  // Each number keeps its own small caption (shown wherever the column headings are not), so a stacked row is never three unlabelled boxes.
+  const num3 = (k, which) => h('label', { class: 'tri__num' }, h('span', { class: 'tri__cap', text: which }),
+    input(t[k], (e) => { t[k] = e.target.value; save(); }, { type: 'number', step: 'any', inputMode: 'decimal', class: 'input tri__input', 'aria-label': `${label} ${which.toLowerCase()}` }));
   return h('div', { class: 'tri' }, h('span', { class: 'tri__label', text: label }),
     num3('low', 'Low'), num3('likely', 'Likely'), num3('high', 'High'),
-    select(Object.entries(BASIS_SHORT), t.basis, (e) => { t.basis = e.target.value; save(); }, { 'aria-label': `${label} source` }),
+    select(Object.entries(BASIS_NAMES), t.basis, (e) => { t.basis = e.target.value; save(); }, { 'aria-label': `${label} source` }),
     input(t.note, (e) => { t.note = e.target.value; save(); }, { class: 'input tri__note', placeholder: 'Note', 'aria-label': `${label} note` }),
     input(t.source, (e) => { t.source = e.target.value.trim(); save(); }, { class: 'input tri__link', placeholder: 'Where it was measured (link)', 'aria-label': `${label} link` }),
     one ? badge('Single number: no range given', 'warning') : null);
 }
-const triHead = () => h('div', { class: 'tri tri--head', 'aria-hidden': 'true' }, ['', 'Low', 'Likely', 'High', 'Source', 'Note', 'Link'].map((x) => h('span', { text: x })));
+const triHead = () => h('div', { class: 'tri tri--head', 'aria-hidden': 'true' }, ['', 'Low', 'Likely', 'High', 'Source'].map((x) => h('span', { text: x })));
 
 /** An input's path in the valuation, as a person names it. */
 function pathLabel(path) {
@@ -2394,9 +2635,10 @@ function valueView() {
   const plans = (data().plans ?? []).filter((p) => p.planKind === 'valued');
   // Default to the plan valued most recently (else the first valued plan); the person's own choice sticks.
   if (!S.plan || !plans.some((p) => p.planIri === S.plan)) {
-    const newest = [...(data().valuations ?? [])].sort((a, b) => String(b.head.validFrom).localeCompare(String(a.head.validFrom)))
-      .find((v) => plans.some((p) => p.planIri === v.planIri));
-    S.plan = newest?.planIri ?? plans[0]?.planIri ?? '';
+    // The newest priced plan that is current and can be read in full; else the newest that can be read; a plan that can't be read only when none can.
+    const byNewest = [...(data().valuations ?? [])].sort((a, b) => String(b.head.validFrom).localeCompare(String(a.head.validFrom)));
+    const newestOf = (ok) => byNewest.find((v) => plans.some((p) => p.planIri === v.planIri && ok(p)))?.planIri;
+    S.plan = newestOf((p) => !p.stale && !p.unreadable) ?? newestOf((p) => !p.unreadable) ?? plans.find((p) => !p.unreadable)?.planIri ?? plans[0]?.planIri ?? '';
   }
   const p = planBy(S.plan);
   const op = can('operator');
@@ -2536,7 +2778,7 @@ function valuationNode(v) {
         stat('Likely weekly cash impact', m(sc.cash.weeklyDelta?.p50), `Low ${m(sc.cash.weeklyDelta?.p10)} · High ${m(sc.cash.weeklyDelta?.p90)}`),
         stat('Net present value (likely)', m(sc.cash.npv?.p50), 'Cash, over the time horizon'),
         stat('Chance it pays off', pct(sc.cash.probabilityNpvPositive), 'Net present value above zero'),
-        stat('Payback month (likely)', sc.cash.payback.p50Month ? `Month ${sc.cash.payback.p50Month}` : 'None', sc.cash.payback.p50Month ? 'Cash' : 'Not within the time horizon (cash)')),
+        stat('Payback month (likely)', sc.cash.payback.p50Month ? `Month ${sc.cash.payback.p50Month}` : 'Not within the time horizon', 'Cash')),
       h('div', { class: 'split' }, h('h3', { text: 'Weekly impact' }), h('span', { class: 'text-sm text-tertiary', title: 'There\'s an 80% chance the result falls between Low and High; Likely is the middle.', text: '80% range' })),
       rangePair([['Weekly cash impact', sc.cash.weeklyDelta, m], ['Weekly impact if freed time is redeployed', sc.redeployed.weeklyDelta, m]]),
       hint('There\'s an 80% chance the result falls between Low and High; Likely is the middle.'),
@@ -2553,7 +2795,7 @@ function valuationNode(v) {
       table(['', '#Now', '#Proposed'], breakdownRows, { label: 'Weekly breakdown', compact: true, cls: 'table--label' }),
       h('p', { class: 'text-sm' }, h('strong', { text: 'Value for money ' }), '(value minus expected loss, divided by cost): ',
         r.valueToCost.why ? r.valueToCost.why : `now ${band(r.valueToCost.current, (n) => num(n, 2))}; proposed ${band(r.valueToCost.proposed, (n) => num(n, 2))}`),
-      h('div', { class: 'grid-2' }, h('div', null, h('h3', { text: 'Biggest drivers: cash' }), sens(sc.cash)), h('div', null, h('h3', { text: 'Biggest drivers: if freed time is redeployed' }), sens(sc.redeployed))),
+      h('div', { class: 'grid-2' }, h('div', null, h('h3', { text: 'What moves the result most: cash' }), sens(sc.cash)), h('div', null, h('h3', { text: 'What moves the result most: if freed time is redeployed' }), sens(sc.redeployed))),
       h('h3', { text: 'Where the inputs came from' }),
       h('div', { class: 'cluster' }, byBasis.map(([b, n]) => badge(`${BASIS_NAMES[b] ?? b}: ${n}`, b === 'estimate' ? 'warning' : b === 'measured' ? 'success' : ''))),
       r.inputs.noRange.length ? h('p', { class: 'text-sm', text: `Single number, no range given (${r.inputs.noRange.length}): ${r.inputs.noRange.map(pathLabel).join('; ')}` }) : null,
@@ -2696,7 +2938,11 @@ function decisionCard(d, v) {
         ['Whose work it changes', d.subjects.map((s) => labelOf(s.address)).join(', ') || 'No one'],
         ['Level', LEVEL_NAMES[d.decisionLevel] ?? d.decisionLevel ?? '—'],
         d.assignments.length ? ['Assignments', h('div', { class: 'stack stack--sm' }, d.assignments.map((a) => { const [t, tone] = ASSIGNMENT_STATE[a.state] ?? [a.state, '']; return h('div', { class: 'assignment' }, h('span', { text: `${labelOf(a.personAddress)} on ${taskName(a.taskIri)}` }), status(t, tone), a.note ? h('span', { class: 'text-sm text-secondary', text: `“${a.note}”` }) : null); }))] : null,
-        d.grantChecks.length ? ['AI permissions', h('div', { class: 'stack stack--sm' }, d.grantChecks.map((g) => h('div', { class: 'assignment' }, h('span', { text: `${taskName(g.taskIri)}: ${g.active ? 'active' : 'not active'}` }), g.evidenceFromThisTask ? null : badge('Earned on other tasks', 'warning'))))] : null,
+        d.grantChecks.length ? [`AI permissions when ${cs ? (cs.verdict === 'approve' ? 'approved' : 'declined') : 'submitted'}`, h('div', { class: 'stack stack--sm' }, d.grantChecks.map((g) => {
+          const now = (data().grants ?? []).find((x) => x.grantIri === g.grantIri);
+          return h('div', { class: 'assignment' }, h('span', { text: `${taskName(g.taskIri)}: ${g.active ? 'active' : 'not active'}` }), g.evidenceFromThisTask ? null : badge('Earned on other tasks', 'warning'),
+            now && now.active !== g.active ? badge(now.active ? 'Active now' : now.revokedAt || now.status === 'revoked' ? `Withdrawn ${day(now.revokedAt)}` : 'Not in force now', now.active ? 'success' : 'warning') : null);
+        }))] : null,
         ['Approval', approval],
       ]),
       d.outcome ? outcomeNode(d, fmt) : null,
@@ -2709,14 +2955,14 @@ function decisionCard(d, v) {
         liveSilent.map((a) => choice('checkbox', '', `Approve anyway, noting that ${labelOf(a.personAddress)} hasn't responded on ${taskName(a.taskIri)}`, { on: (e) => { if (e.target.checked) overSilence.add(a.taskIri); else overSilence.delete(a.taskIri); } })),
         field('Note', csNote, { optional: true }),
         h('div', { class: 'btn-group' },
-          btn('Approve', { variant: 'primary', disabled: !can('approver'), why: WHY.approver, on: () => act('wrd.countersign_decision', 'wrd:countersign-decision', { ...binding, verdict: 'approve', objectionsConsidered: [...considered], unacknowledgedConsidered: [...overSilence], ...(csNote.value ? { note: csNote.value } : {}) }) }),
-          btn('Decline', { variant: 'danger-quiet', disabled: !can('approver'), why: WHY.approver, on: () => act('wrd.countersign_decision', 'wrd:countersign-decision', { ...binding, verdict: 'decline', ...(csNote.value ? { note: csNote.value } : {}) }) }),
+          btn('Approve', { variant: 'primary', disabled: approveWhy(d) !== '', why: approveWhy(d), on: () => act('wrd.countersign_decision', 'wrd:countersign-decision', { ...binding, verdict: 'approve', objectionsConsidered: [...considered], unacknowledgedConsidered: [...overSilence], ...(csNote.value ? { note: csNote.value } : {}) }) }),
+          btn('Decline', { variant: 'danger-quiet', disabled: approveWhy(d) !== '', why: approveWhy(d), on: () => act('wrd.countersign_decision', 'wrd:countersign-decision', { ...binding, verdict: 'decline', ...(csNote.value ? { note: csNote.value } : {}) }) }),
           payloadButton('wrd:countersign-decision', { decision_iri: d.decisionIri })),
-        footnote())) : null,
+        approveWhy(d) ? whyNot(approveWhy(d)) : footnote())) : null,
       d.status === 'countersigned' ? outcomeForm(d, binding) : null,
       h('h3', { class: 'decision__history-title', text: d.chainUnreadable ? CHAIN_CUT : CHAIN_WHOLE }),
       d.chainUnreadable ? note(d.chainUnreadable, 'danger') : null,
-      table(['#', 'Status', 'Signed by', 'When'], d.chain.map((c) => h('tr', null, td({ class: 'num' }, String(c.version)), td(null, CHAIN_STATUS[c.status] ?? c.status), td(null, c.signedBy.map((x) => shortName(labelOf(addrOfDid(x)))).join(', ')), td(null, day(c.at)))),
+      table(['#Version', 'Status', 'Signed by', 'When'], d.chain.map((c) => h('tr', null, td({ class: 'num' }, String(c.version)), td(null, CHAIN_STATUS[c.status] ?? c.status), td(null, c.signedBy.map((x) => shortName(labelOf(addrOfDid(x)))).join(', ')), td(null, day(c.at)))),
         { label: 'History', compact: true }),
       techDetails('Technical details', `status ${d.status} · ${d.statusLabel}`, d.basisLabel ? `basis ${d.basisLabel}` : null, d.prediction ? `prediction ${d.prediction.status}` : null,
         d.chain.map((c) => `Version ${c.version}: Modal status ${c.modalStatus} · ${c.descriptorUrl} · ${when(c.at)}`))),
@@ -2742,12 +2988,33 @@ function outcomeNode(d, fmt = (n) => num(n, 0)) {
     h('p', { class: 'text-sm', text: `What happened: ${dispo}. Recorded by ${personOf(o)}.` }));
 }
 
+/** An instant as a date input holds it (YYYY-MM-DD, UTC), and back: the default instant is kept when its date is left as it was. */
+const dateOf = (iso) => (Number.isFinite(Date.parse(iso)) ? new Date(Date.parse(iso)).toISOString().slice(0, 10) : '');
+const instantOf = (date, keep) => (date && date === dateOf(keep) ? keep : date ? `${date}T00:00:00.000Z` : '');
+
 function outcomeForm(d, binding) {
   const cs = d.countersign?.at ?? '';
-  const st = { disposition: 'kept', note: '', measured: '', low: '', high: '', basis: d.measurementPlan?.comparisonBasis ?? 'staggered',
+  const key = `outcome|${d.decisionIri}`;
+  // The form's values live in state, so a check before signing (or a refusal) redraws it with every value kept.
+  const st = S.planForm[key] ??= { disposition: 'kept', note: '', measured: '', low: '', high: '', basis: d.measurementPlan?.comparisonBasis ?? 'staggered',
     windowStart: cs, windowEnd: d.measurementPlan ? plusWeeks(cs, d.measurementPlan.windowWeeks) : cs, method: '', runs: '', critical: '',
     probes: (d.probes ?? []).map((p) => ({ taskIri: p.taskIri, index: p.index, signal: 'neither', observed: '', windowStart: cs, windowEnd: plusWeeks(cs, p.timeboxWeeks) })) };
+  const why = recordWhy(d);
+  const problems = () => {
+    const out = [];
+    if (st.disposition !== 'kept' && !st.note.trim()) out.push(['dispositionNote', 'Reason is required unless the change was kept']);
+    if (d.decisionKind === 'valued') {
+      if (String(st.measured).trim() === '' || !Number.isFinite(Number(st.measured))) out.push(['measured.weeklyValueDelta', 'Measured value per week is required']);
+      if (!st.windowStart) out.push(['measured.windowStart', 'Period start is required']);
+      if (!st.windowEnd) out.push(['measured.windowEnd', 'Period end is required']);
+      if (!st.method.trim()) out.push(['measured.method', 'How it was measured is required']);
+    } else {
+      st.probes.forEach((p, i) => { if (!p.observed.trim()) out.push([`probeResults[${i}].observed`, `Trial ${i + 1}: What you observed is required`]); });
+    }
+    return out;
+  };
   const send = () => {
+    if (formProblems(problems())) return;
     const common = { ...binding, disposition: st.disposition, ...(st.note ? { dispositionNote: st.note } : {}) };
     if (d.decisionKind === 'valued') {
       act('wrd.record_outcome', 'wrd:record-outcome', { ...common, measured: {
@@ -2759,37 +3026,32 @@ function outcomeForm(d, binding) {
       act('wrd.record_outcome', 'wrd:record-outcome', { ...common, probeResults: st.probes.map((p) => ({ ...p })) });
     }
   };
-  const due = windowEnds(d) <= nowMs();
-  const dateHint = 'Date and time, for example 2027-03-01T00:00:00Z';
+  const dateIn = (obj, k, start, path) => field(start ? 'Period start' : 'Period end', input(dateOf(obj[k]), (e) => { obj[k] = instantOf(e.target.value, obj[k]); }, { type: 'date' }),
+    { hint: start ? 'The day the measurement started (on or after the approval).' : 'The last day measured.', path });
   return h('div', { class: 'card decision__record' }, h('div', { class: 'card__body stack' },
     h('h3', { text: 'Record results' }),
     h('p', { text: 'Record what actually happened over the whole measurement period. If the change was reversed or stopped early, say why.' }),
     hint('Only someone who neither prepared nor approved this decision, after the measurement period has ended.'),
-    due ? null : note(`The measurement period ends on ${day(new Date(windowEnds(d)).toISOString())}.`, 'info'),
     h('div', { class: 'form-row' },
       field('What happened to the change', select((data().vocabulary?.dispositions?.outcome ?? Object.keys(OUTCOME_NAMES)).map((x) => [x, OUTCOME_NAMES[x] ?? x]), st.disposition, (e) => { st.disposition = e.target.value; })),
-      field('Reason', input('', (e) => { st.note = e.target.value; }), { hint: 'Needed unless the change was kept.' })),
+      field('Reason', input(st.note, (e) => { st.note = e.target.value; }), { hint: 'Needed unless the change was kept.', path: 'dispositionNote' })),
     d.decisionKind === 'valued' ? [
       h('div', { class: 'form-row form-row--3' },
-        field(`Measured ${metricName(d.prediction?.metric ?? '').toLowerCase()} per week`, input('', (e) => { st.measured = e.target.value; }, { type: 'number', step: 'any' })),
-        field('Range low', input('', (e) => { st.low = e.target.value; }, { type: 'number', step: 'any' }), { optional: true }),
-        field('Range high', input('', (e) => { st.high = e.target.value; }, { type: 'number', step: 'any' }), { optional: true })),
+        field(`Measured ${metricName(d.prediction?.metric ?? 'weekly-cash-delta').toLowerCase()}`, input(st.measured, (e) => { st.measured = e.target.value; }, { type: 'number', step: 'any' }), { path: 'measured.weeklyValueDelta' }),
+        field('Range low', input(st.low, (e) => { st.low = e.target.value; }, { type: 'number', step: 'any' }), { optional: true }),
+        field('Range high', input(st.high, (e) => { st.high = e.target.value; }, { type: 'number', step: 'any' }), { optional: true })),
       field('How it was compared', select((data().vocabulary?.comparisonBases ?? []).map((x) => [x, COMPARISON_NAMES[x] ?? x]), st.basis, (e) => { st.basis = e.target.value; })),
+      h('div', { class: 'form-row' }, dateIn(st, 'windowStart', true, 'measured.windowStart'), dateIn(st, 'windowEnd', false, 'measured.windowEnd')),
+      field('How it was measured', input(st.method, (e) => { st.method = e.target.value; }), { path: 'measured.method' }),
       h('div', { class: 'form-row' },
-        field('Period start', input(st.windowStart, (e) => { st.windowStart = e.target.value.trim(); }), { hint: dateHint }),
-        field('Period end', input(st.windowEnd, (e) => { st.windowEnd = e.target.value.trim(); }), { hint: dateHint })),
-      field('How it was measured', input('', (e) => { st.method = e.target.value; })),
-      h('div', { class: 'form-row' },
-        field('AI runs seen (as declared)', input('', (e) => { st.runs = e.target.value; }, { type: 'number', min: 0 }), { optional: true }),
-        field('Critical failures seen (as declared)', input('', (e) => { st.critical = e.target.value; }, { type: 'number', min: 0 }), { optional: true })),
-    ] : st.probes.map((p) => h('div', { class: 'card trial' }, h('div', { class: 'card__body stack stack--sm' }, h('h4', { text: `Trial ${p.index} on ${taskName(p.taskIri)}` }),
+        field('AI runs seen (as declared)', input(st.runs, (e) => { st.runs = e.target.value; }, { type: 'number', min: 0 }), { optional: true }),
+        field('Critical failures seen (as declared)', input(st.critical, (e) => { st.critical = e.target.value; }, { type: 'number', min: 0 }), { optional: true })),
+    ] : st.probes.map((p, i) => h('div', { class: 'card trial' }, h('div', { class: 'card__body stack stack--sm' }, h('h4', { text: `Trial ${p.index} on ${taskName(p.taskIri)}` }),
       field('What happened', select(['amplify', 'dampen', 'neither'].map((x) => [x, SIGNAL_NAMES[x]]), p.signal, (e) => { p.signal = e.target.value; })),
-      field('What you observed', input('', (e) => { p.observed = e.target.value; })),
-      h('div', { class: 'form-row' },
-        field('Period start', input(p.windowStart, (e) => { p.windowStart = e.target.value.trim(); }), { hint: dateHint }),
-        field('Period end', input(p.windowEnd, (e) => { p.windowEnd = e.target.value.trim(); }), { hint: dateHint }))))),
-    h('div', null, btn('Sign and record results', { variant: 'primary', on: send, disabled: !(can('operator') || can('approver')), why: 'Only process leads and approvers can record results.' })),
-    footnote()));
+      field('What you observed', input(p.observed, (e) => { p.observed = e.target.value; }), { path: `probeResults[${i}].observed` }),
+      h('div', { class: 'form-row' }, dateIn(p, 'windowStart', true, ''), dateIn(p, 'windowEnd', false, ''))))),
+    h('div', null, btn('Sign and record results', { variant: 'primary', on: send, disabled: why !== '' || S.busy, why })),
+    why ? whyNot(why) : footnote()));
 }
 
 function printDecision(d, v) {
@@ -2798,12 +3060,22 @@ function printDecision(d, v) {
   const r = v?.result;
   const [st] = DECISION_STATUS[d.status] ?? [d.statusLabel];
   const fmt = (n) => (r ? money(n, r.currency) : num(n, 0));
+  const cs = d.countersign;
+  // One cell per fact, its label over its value, so the grid never splits a label from its value.
+  const meta = (pairs) => h('dl', { class: 'print-record__meta' }, pairs.filter(Boolean).map(([k, val]) => h('div', { class: 'print-record__fact' }, h('dt', { text: k }), h('dd', { text: val }))));
+  // The page's own words: people by name, dates as people read them; identifiers only in the fine print.
   target.replaceChildren(h('article', { class: 'print-record' },
     h('div', { class: 'print-record__head' }, h('div', null, h('p', { class: 'print-record__brand', text: 'Interego · Work Redesign' }), h('h1', { class: 'print-record__title', text: `Decision: ${decisionTitle(d)}` })),
       h('span', { class: 'print-record__status', text: st })),
     d.demo ? note('Demo workspace: sample data, not real signatures.', 'warning') : null,
-    h('dl', { class: 'print-record__meta' }, h('dt', { text: 'Workspace' }), h('dd', { text: workspaceLabel(data().podUrl) }), h('dt', { text: 'Kind' }), h('dd', { text: PLAN_KIND[d.decisionKind] ?? d.decisionKind }),
-      h('dt', { text: 'Measurement' }), h('dd', { text: d.measurementPlan ? `${plural(d.measurementPlan.windowWeeks, 'week')} · ${COMPARISON_NAMES[d.measurementPlan.comparisonBasis] ?? d.basisLabel}` : 'Trials' })),
+    meta([
+      ['Workspace', workspaceLabel(data().podUrl)],
+      ['Kind', PLAN_KIND[d.decisionKind] ?? d.decisionKind],
+      ['Measurement', d.measurementPlan ? `${plural(d.measurementPlan.windowWeeks, 'week')} · ${COMPARISON_NAMES[d.measurementPlan.comparisonBasis] ?? d.basisLabel}` : 'Trials'],
+      ['Prepared by', preparedNames(d) || personOf(d.submittedBy)],
+      ['Whose work it changes', d.subjects.map((x) => shortName(labelOf(x.address))).join(', ') || 'No one'],
+      ['Approval', cs ? `${cs.verdict === 'approve' ? 'Approved' : 'Declined'} by ${shortName(personOf(cs))}, ${day(cs.at)}` : 'Not yet'],
+    ]),
     h('section', { class: 'print-record__section' }, h('h2', { text: 'Prediction' }),
       d.prediction ? h('p', { text: `${metricName(d.prediction.metric)}: ${band(d.prediction.band, fmt)} a week; ramp-up ${plural(d.prediction.rampMonths, 'month')}.` }) : h('p', { text: 'A trial decision: never priced.' }),
       r ? h('p', { text: `Weekly cash impact ${band(r.scenarios.cash.weeklyDelta, fmt)}; if freed time is redeployed ${band(r.scenarios.redeployed.weeklyDelta, fmt)}. Net present value (cash) ${band(r.scenarios.cash.npv, fmt)}.` }) : null),
@@ -2811,9 +3083,10 @@ function printDecision(d, v) {
     h('section', { class: 'print-record__section' },
       h('h2', { text: d.chainUnreadable ? CHAIN_CUT : CHAIN_WHOLE }),
       d.chainUnreadable ? note(`${CHAIN_CUT_PRINT} ${d.chainUnreadable}`, 'danger') : null,
-      table(['#', 'Status', 'Signed by', 'When'], d.chain.map((c) => h('tr', null, td(null, String(c.version)), td(null, CHAIN_STATUS[c.status] ?? c.status), td(null, c.signedBy.join(', ')), td(null, when(c.at)))), { label: 'History', stack: false })),
+      table(['#Version', 'Status', 'Signed by', 'When'], d.chain.map((c) => h('tr', null, td({ class: 'num' }, String(c.version)), td(null, CHAIN_STATUS[c.status] ?? c.status),
+        td(null, c.signedBy.map((x) => shortName(labelOf(addrOfDid(x)))).join(', ')), td(null, day(c.at)))), { label: 'History', stack: false })),
     h('p', { text: NO_TOTALS }),
-    h('div', { class: 'print-record__foot', text: `Workspace ${data().podUrl} · Decision ${d.decisionIri}${r ? ` · Reproducibility code: seed ${r.seed}, ${r.draws} runs` : ''}. Verify a downloaded record against the workspace signature ID ${data().bridge?.platform?.address ?? ''}.` })));
+    h('div', { class: 'print-record__foot', text: `Record ID ${d.decisionIri} · Workspace storage ${data().podUrl}${r ? ` · Reproducibility code: seed ${r.seed}, ${r.draws} runs` : ''}. Verify a downloaded record against the workspace signature ID ${data().bridge?.platform?.address ?? ''}.` })));
   window.print();
 }
 
@@ -2821,7 +3094,7 @@ function printDecision(d, v) {
 
 const calStatus = (s, min) => {
   const [t, tone] = CAL_STATUS[s] ?? [s, ''];
-  return status(s === 'Hypothetical' && min ? `Early: fewer than ${min} results` : t, tone);
+  return status(s === 'Hypothetical' && min ? `Early: fewer than ${min} results` : s === 'Asserted' && min ? `${min}+ results` : t, tone);
 };
 
 /** One figure in a row of figures: label, value, and a short line under it. */
@@ -2872,7 +3145,7 @@ function calibrationView() {
             tile('Judged itself correctly', pct(x.hitRate), 'For information only'),
             tile('Said "ready"', String(x.readyClaims ?? '—'), `People agreed ${pct(x.readyClaimPrecision)}`),
             tile('Different reviewers', String(x.distinctConfirmers), 'Your admin vouches that these are different people. Work Redesign can\'t check that.')),
-          h('p', { class: 'track-card__permission' }, h('strong', { text: 'AI permission: ' }), x.grant.active ? status('Active', 'success') : h('span', { class: 'text-secondary', text: plainGrantReason(x.grant.evaluation ?? x) })))))),
+          h('p', { class: 'track-card__permission' }, h('strong', { text: 'AI permission: ' }), x.grant.active ? status('Active', 'success') : h('span', { class: 'text-secondary', text: grantStateText(x.agentAddress, x.taskKind, x.grant, x) })))))),
         techDetails('Technical details', agents.map((x) => `${labelOf(x.agentAddress)} on ${x.taskKind}: Mean Brier ${num(x.meanBrier, 3)}; ${x.distinctConfirmers} ${x.distinctConfirmersNote}; permission ${x.grant.active ? 'active' : x.grant.why}${x.scriptedLabel ? `; ${x.scriptedLabel}` : ''}`))]),
     (c.awaitingAPerson ?? []).length ? note(`${plural(c.awaitingAPerson.length, 'piece')} of AI work done on its own ${c.awaitingAPerson.length === 1 ? 'is' : 'are'} waiting for review. They count toward nothing until a person reviews them.`, 'warning') : null,
   ];
@@ -2885,7 +3158,7 @@ function agentsView() {
   const header = pageHeader({ title: 'AI agents', lede: 'Record the work your AI agents do, have people review it, and grant or withdraw permission to work alone on one type of task.', meta: [allDemo() ? badge('Sample data', 'demo') : null] });
   if (agentsList().length === 0) {
     return [header, emptyState({ icon: 'sparkle', title: 'No AI agents yet', text: 'Your admin adds each agent with its accountable owner and AI model.',
-      actions: [btn('Add an AI agent', { variant: 'primary', on: () => { goTab('roles'); memberPanel(null, 'agent'); } })] })];
+      actions: [isAdmin() ? btn('Add an AI agent', { variant: 'primary', on: () => { goTab('roles'); memberPanel(null, 'agent'); } }) : null] })];
   }
   const agentPersonas = personas().filter((p) => member(p.address)?.softwareAgent);
   const st = { persona: agentPersonas[0]?.id ?? '', taskIri: tasks().find((t) => t.status !== 'retired')?.taskIri ?? '', runId: `run-${randomHex(4)}`, output: '', answer: 'accepted',
@@ -2894,6 +3167,8 @@ function agentsView() {
   const logRun = async () => {
     let run;
     const t = taskBy(st.taskIri);
+    if (S.mode === 'demo' && formProblems([...(t ? [] : [['run.taskIri', 'Choose the task the AI worked on']]), ...(st.persona ? [] : [['run.persona', 'Choose the AI agent that did the work']])])) return;
+    if (S.mode !== 'demo' && formProblems(st.pasted.trim() ? [] : [['run.pasted', 'Paste the AI agent\'s signed work record']])) return;
     if (S.mode === 'demo') {
       const agent = personas().find((p) => p.id === st.persona)?.address ?? '';
       const g = activeGrant(agent, t?.taskKind);
@@ -2947,12 +3222,13 @@ function agentsView() {
     viewSection('AI permissions', 'Permission to work alone on one type of task, earned from reviewed work and re-checked on every use.',
       (d.grants ?? []).length === 0
         ? emptyState({ icon: 'shield', title: 'No AI permissions yet', text: 'An agent earns permission on one type of task from reviewed work: at least 20 pieces accepted at 90% or better, from at least 5 different reviewers.', plain: true })
-        : table(['AI agent', 'Accountable owner', 'Status', 'Track record', ''], (d.grants ?? []).map((g) => h('tr', null,
+        : table(['AI agent', 'Accountable owner', 'Status', 'Track record when granted', ''], (d.grants ?? []).map((g) => h('tr', null,
           td(null, h('span', { class: 'table__primary', text: labelOf(g.agentAddress) }), h('span', { class: 'table__secondary', text: `${kindLabel(g.taskKind)} · ${g.model}` })),
           td(null, labelOf(g.principal)),
-          td(null, status(g.active ? 'Active' : 'Withdrawn', g.active ? 'success' : 'danger'), g.active ? null : h('span', { class: 'table__secondary', text: g.revokedAt ? `Withdrawn ${day(g.revokedAt)}${g.revocationWhy ? `: ${g.revocationWhy}` : ''}` : 'Not in force' }), sampleBadge(g),
+          td(null, status(g.active ? 'Active' : g.revokedAt || g.status === 'revoked' ? 'Withdrawn' : 'Not in force', g.active ? 'success' : g.revokedAt || g.status === 'revoked' ? 'danger' : 'warning'),
+            g.active ? null : h('span', { class: 'table__secondary', text: grantStateText(g.agentAddress, g.taskKind, { active: g.active, why: g.why }, null) }), sampleBadge(g),
             g.chainUnreadable ? note(g.chainUnreadable, 'danger', 'div') : null),
-          td(null, h('span', { class: 'text-sm', text: `${g.evaluation.samples} reviewed · ${pct(g.evaluation.acceptedShare)} accepted · ${g.evaluation.distinctConfirmers} different reviewers · ${g.evaluation.readyClaims ?? '—'} "ready" claims, ${pct(g.evaluation.readyClaimPrecision)} agreed` }),
+          td(null, h('span', { class: 'text-sm', text: `When granted: ${g.evaluation.samples} reviewed · ${pct(g.evaluation.acceptedShare)} accepted · ${g.evaluation.distinctConfirmers} different reviewers · ${g.evaluation.readyClaims ?? '—'} "ready" claims, ${pct(g.evaluation.readyClaimPrecision)} agreed` }),
             h('span', { class: 'table__secondary', text: `From ${g.evidenceTaskIris.map(taskName).join(', ')}` })),
           td({ class: 'actions' }, g.status === 'granted' ? btn('Withdraw…', { variant: 'danger-quiet', size: 'sm', on: () => revokePanel(g), disabled: !can('approver'), why: WHY.approver }) : null))), { label: 'AI permissions' }),
       (d.grants ?? []).length ? techDetails('Technical details', (d.grants ?? []).map((g) => `${labelOf(g.agentAddress)} on ${g.taskKind}: ${g.status}; ${g.why}${g.revokedAt ? `; revoked ${when(g.revokedAt)}: ${g.revocationWhy}` : ''}`)) : null),
@@ -2968,14 +3244,14 @@ function agentsView() {
       h('div', { class: 'card__body stack' },
         S.mode === 'demo' ? [
           h('div', { class: 'form-row' },
-            field('Signed by the AI agent (demo person)', select(agentPersonas.map((p) => [p.id, p.label]), st.persona, (e) => { st.persona = e.target.value; })),
-            field('Task', select(tasks().filter((t) => t.status !== 'retired').map((t) => [t.taskIri, `${t.name} (${kindLabel(t.taskKind)})`]), st.taskIri, (e) => { st.taskIri = e.target.value; }))),
+            field('Signed by the AI agent (demo person)', select(agentPersonas.map((p) => [p.id, p.label]), st.persona, (e) => { st.persona = e.target.value; }), { path: 'run.persona' }),
+            field('Task', select(tasks().filter((t) => t.status !== 'retired').map((t) => [t.taskIri, `${t.name} (${kindLabel(t.taskKind)})`]), st.taskIri, (e) => { st.taskIri = e.target.value; }), { path: 'run.taskIri' })),
           field('Work ID', input(st.runId, (e) => { st.runId = e.target.value; })),
           field('The output (only its fingerprint is recorded)', textarea('', (e) => { st.output = e.target.value; })),
           field('The AI\'s own verdict', select([['accepted', 'Ready to accept'], ['reworked', 'Needs rework'], ['critical-failure', 'Critical failure']], st.answer, (e) => { st.answer = e.target.value; })),
           h('div', { class: 'form-row' }, field('Cost of this work', input('', (e) => { st.cost = e.target.value; }, { type: 'number', step: 'any', min: 0 }), { optional: true }), field('Currency', input(st.currency, (e) => { st.currency = e.target.value.toUpperCase(); }))),
           choice('checkbox', '', 'The agent did this on its own, under its permission', { help: 'Only work it calls ready, on a task an approved decision put under the permission.', on: (e) => { st.underGrant = e.target.checked; } }),
-        ] : field('Paste the AI agent\'s signed work record', textarea('', (e) => { st.pasted = e.target.value; }, { class: 'textarea textarea--tall textarea--mono' }), { hint: 'The agent signs each work record with its own key; Work Redesign never holds it. Paste the JSON it produced.' }),
+        ] : field('Paste the AI agent\'s signed work record', textarea('', (e) => { st.pasted = e.target.value; }, { class: 'textarea textarea--tall textarea--mono' }), { hint: 'The agent signs each work record with its own key; Work Redesign never holds it. Paste the JSON it produced.', path: 'run.pasted' }),
         choice('checkbox', '', 'Review it now, as me', { checked: true, on: (e) => { st.review = e.target.checked; } }),
         h('div', { class: 'form-row' },
           field('Your verdict', select(RUN_VERDICTS, st.verdict, (e) => { st.verdict = e.target.value; })),
@@ -3013,37 +3289,50 @@ function rolesView() {
   const gp = v.grantPolicy ?? {};
   const pp = v.podPolicy ?? null;
   const admins = data().bridge?.admins ?? 0;
-  const remove = (m) => act('wrd.update_registry', 'wrd:update-registry', { entries: [{ address: m.address, roles: [] }] });
+  const admin = isAdmin();
+  const NOT_ADMIN = 'Only an admin can change people and roles.';
+  // Removing someone, or retiring a type of task, is signed and sent only once the admin confirms it.
+  const remove = (m) => confirmPanel(`Remove ${shortName(m.label)}?`,
+    m.softwareAgent
+      ? `${m.label} loses its role in this workspace, so it can no longer record work or act here. Its records are kept.`
+      : `${shortName(m.label)} loses their roles in this workspace. They keep the right to download their record, and their records are kept.`,
+    'Remove', () => act('wrd.update_registry', 'wrd:update-registry', { entries: [{ address: m.address, roles: [] }] }));
+  const retire = (k) => confirmPanel(`Retire "${k.label}"?`,
+    'It can no longer be chosen for a task. Tasks and records that already use it keep it.',
+    'Retire', () => act('wrd.update_registry', 'wrd:update-registry', { taskKinds: [{ slug: k.slug, retire: true }] }));
+  const rowActions = (m) => h('div', { class: 'row-actions row-actions--inline' }, btn('Edit', { variant: 'ghost', size: 'sm', on: () => memberPanel(m), disabled: !admin, why: NOT_ADMIN }),
+    btn('Remove', { variant: 'danger-quiet', size: 'sm', on: () => remove(m), disabled: !admin, why: NOT_ADMIN }));
   const ppNames = { maxLevel: 'Highest level allowed', floor: 'Minimum acceptance rate', minSamples: 'Reviewed pieces of work needed', minHumanConfirmations: 'People confirmations needed', minDistinctConfirmers: 'Different reviewers needed' };
   return [
     pageHeader({ title: 'People & roles', lede: 'Who\'s in this workspace, what each person may do, the types of task you work with, and the rules for AI permission.',
       meta: [allDemo() ? badge('Sample data', 'demo') : null],
-      actions: [btn('Add a person', { variant: 'primary', icon: 'people', on: () => memberPanel(null) }), btn('Add an AI agent', { icon: 'sparkle', on: () => memberPanel(null, 'agent') })] }),
-    hint(`Only an admin's signature changes this page. Your workspace has ${plural(admins, 'admin')}.`),
+      actions: admin ? [btn('Add a person', { variant: 'primary', icon: 'people', on: () => memberPanel(null) }), btn('Add an AI agent', { icon: 'sparkle', on: () => memberPanel(null, 'agent') })] : [] }),
+    admin ? hint(`Only an admin's signature changes this page. Your workspace has ${plural(admins, 'admin')}.`)
+      : whyNot(`${NOT_ADMIN} Your workspace has ${plural(admins, 'admin')}; ask one if something here should change.`),
     viewSection('People', '', people().length === 0
-      ? emptyState({ icon: 'people', title: 'Add your team', text: 'Add the people who do, lead and approve the work, then your AI agents and your types of task.', actions: [btn('Add a person', { variant: 'primary', on: () => memberPanel(null) })] })
+      ? emptyState({ icon: 'people', title: admin ? 'Add your team' : 'No people yet', text: admin ? 'Add the people who do, lead and approve the work, then your AI agents and your types of task.' : 'Your admin adds the people who do, lead and approve the work.', actions: [admin ? btn('Add a person', { variant: 'primary', on: () => memberPanel(null) }) : null] })
       : table(['Name', 'Signs in with', 'Roles', ''], people().map((m) => h('tr', null,
         td(null, h('span', { class: 'table__primary', text: m.label }), m.personRef ? h('span', { class: 'table__secondary', text: `Person ID ${m.personRef}` }) : null),
         td(null, signsInWith(m.address)),
         td(null, h('div', { class: 'cluster' }, rolesPlain(m.roles).map((x) => badge(x, 'accent')))),
-        td({ class: 'actions' }, h('div', { class: 'row-actions row-actions--inline' }, btn('Edit', { variant: 'ghost', size: 'sm', on: () => memberPanel(m) }), btn('Remove', { variant: 'danger-quiet', size: 'sm', on: () => remove(m) }))))), { label: 'People' })),
+        td({ class: 'actions' }, rowActions(m)))), { label: 'People' })),
     viewSection('AI agents', '', agentsList().length === 0
       ? emptyState({ icon: 'sparkle', title: 'No AI agents yet', text: 'Add each agent with its accountable owner and the AI model it runs on.', plain: true })
       : table(['Name', 'Accountable owner', 'AI model in use', 'Signs with', ''], agentsList().map((m) => h('tr', null,
         td(null, h('span', { class: 'table__primary', text: m.label })), td(null, m.principal ? labelOf(m.principal) : '—'), td(null, m.model ?? '—'), td(null, h('code', { text: short(m.address) })),
-        td({ class: 'actions' }, h('div', { class: 'row-actions row-actions--inline' }, btn('Edit', { variant: 'ghost', size: 'sm', on: () => memberPanel(m) }), btn('Remove', { variant: 'danger-quiet', size: 'sm', on: () => remove(m) }))))), { label: 'AI agents' })),
+        td({ class: 'actions' }, rowActions(m)))), { label: 'AI agents' })),
     viewSection('Types of task', 'Types of task group similar work. AI permissions are earned one type at a time.',
       r.taskKinds.length === 0 ? emptyState({ icon: 'clipboard', title: 'No types of task yet', text: 'Types of task group similar work, for example "Invoice matching". AI permissions are earned one type at a time.', plain: true })
         : table(['Name', 'Definition', 'Status', ''], r.taskKinds.map((k) => h('tr', null,
           td(null, h('span', { class: 'table__primary', text: k.label }), h('span', { class: 'table__secondary', text: `ID: ${k.slug}` })), td(null, k.definition),
           td(null, k.retired ? badge('Retired') : status('In use', 'success')),
-          td({ class: 'actions' }, k.retired ? null : btn('Retire', { variant: 'ghost', size: 'sm', on: () => act('wrd.update_registry', 'wrd:update-registry', { taskKinds: [{ slug: k.slug, retire: true }] }) })))), { label: 'Types of task' }),
-      kindForm()),
+          td({ class: 'actions' }, k.retired ? null : btn('Retire', { variant: 'ghost', size: 'sm', on: () => retire(k), disabled: !admin, why: NOT_ADMIN })))), { label: 'Types of task' }),
+      kindForm(admin)),
     viewSection('Rules for earning AI permission', '',
       h('p', { text: `An AI agent earns permission on one type of task from at least ${gp.minSamples} pieces of work people reviewed on its current AI model, accepted at ${Math.round((gp.floor ?? 0) * 100)}% or better, confirmed by at least ${gp.minHumanConfirmations} people from at least ${gp.minDistinctConfirmers} different reviewers, and with "ready" claims accepted at ${Math.round((gp.minReadyClaimPrecision ?? 0) * 100)}% or better. Critical work needs ${gp.criticalWorkFailureCeiling ? Math.ceil(3 / gp.criticalWorkFailureCeiling) : '—'} clean runs.` }),
       h('h3', { class: 'rules-title', text: 'Workspace rules (stricter than standard)' }),
       pp && Object.keys(pp).length ? kv(Object.entries(pp).map(([k, x]) => [ppNames[k] ?? k, k === 'maxLevel' ? LEVEL_NAMES[x] ?? String(x) : k === 'floor' ? pct(x) : String(x)])) : h('p', { class: 'text-secondary', text: 'None: the standard rules apply.' }),
-      policyForm(),
+      policyForm(admin),
       techDetails('Technical details', r.head ? `Registry version ${r.head.versions}` : 'No registry yet', `Pod policy: ${pp ? JSON.stringify(pp) : 'none (the published policy applies)'}`, v.distinctPeopleNote ?? null)),
   ];
 }
@@ -3085,7 +3374,14 @@ function memberPanel(m, kind) {
   openPanel(m ? `Change ${m.label}` : isAgentNow ? 'Add an AI agent' : 'Add a person', body);
 }
 
-function kindForm() {
+/** A change that takes something away: said in a panel first, signed and sent only on its danger button. */
+function confirmPanel(title, text, label, onConfirm) {
+  openPanel(title, h('div', { class: 'stack' }, h('p', { text }),
+    h('div', { class: 'btn-group' }, btn(label, { variant: 'danger', on: onConfirm }), btn('Cancel', { on: () => { S.panel = null; render(); } })),
+    footnote()));
+}
+
+function kindForm(admin) {
   const st = { slug: '', label: '', definition: '' };
   const open = Boolean(S.openKinds);
   S.openKinds = false;
@@ -3095,10 +3391,11 @@ function kindForm() {
         field('Name', input('', (e) => { st.label = e.target.value; }), { hint: 'For example "Invoice matching".' }),
         field('Short ID', input('', (e) => { st.slug = e.target.value.trim(); }), { hint: 'Lowercase letters, digits and hyphens, for example invoice-matching.' })),
       field('Definition', input('', (e) => { st.definition = e.target.value; }), { hint: 'One sentence.' }),
-      h('div', null, btn('Add type of task', { variant: 'primary', on: () => act('wrd.update_registry', 'wrd:update-registry', { taskKinds: [{ ...st }] }) }))));
+      h('div', null, btn('Add type of task', { variant: 'primary', on: () => act('wrd.update_registry', 'wrd:update-registry', { taskKinds: [{ ...st }] }), disabled: !admin, why: 'Only an admin can add a type of task.' })),
+      admin ? null : whyNot('Only an admin can add a type of task.')));
 }
 
-function policyForm() {
+function policyForm(admin) {
   const st = {};
   const n = (key, label) => field(label, input('', (e) => { if (e.target.value === '') delete st[key]; else st[key] = Number(e.target.value); }, { type: 'number', step: key === 'floor' ? '0.01' : '1' }), { optional: true });
   return h('details', { class: 'card policy-form' }, h('summary', { text: 'Make the rules stricter (admin)' }),
@@ -3108,8 +3405,9 @@ function policyForm() {
       h('div', { class: 'form-row' }, n('floor', 'Minimum acceptance rate'), n('minSamples', 'Reviewed pieces of work needed')),
       h('div', { class: 'form-row' }, n('minHumanConfirmations', 'People confirmations needed'), n('minDistinctConfirmers', 'Different reviewers needed')),
       h('div', { class: 'btn-group' },
-        btn('Save stricter rules', { variant: 'primary', on: () => act('wrd.update_registry', 'wrd:update-registry', { podPolicy: { ...st } }) }),
-        btn('Go back to standard rules', { on: () => act('wrd.update_registry', 'wrd:update-registry', { podPolicy: null }) }))));
+        btn('Save stricter rules', { variant: 'primary', on: () => act('wrd.update_registry', 'wrd:update-registry', { podPolicy: { ...st } }), disabled: !admin, why: 'Only an admin can change the rules.' }),
+        btn('Go back to standard rules', { on: () => act('wrd.update_registry', 'wrd:update-registry', { podPolicy: null }), disabled: !admin, why: 'Only an admin can change the rules.' })),
+      admin ? null : whyNot('Only an admin can change the rules.')));
 }
 
 // ── My record ────────────────────────────────────────────────────────────────────────────
@@ -3164,6 +3462,7 @@ function holderCard(podUrl) {
     }
     S.busy = true;
     S.result = { pending: true, tool: 'wrd.holder_copy' };
+    S.scrollToResult = true;
     render();
     let r;
     try {

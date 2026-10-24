@@ -913,6 +913,9 @@ describe('work-redesign offline demo and web UI', () => {
     // The health callout counts every chain cut short, as a danger item.
     const CUTS = '2 record chain(s) do not read back to their first version: an earlier version is missing, or is not trusted. Their history is shown as incomplete, never as whole.';
     expect(page.all('.health p.health__item--danger').map((p) => p.textContent)).toContain(CUTS);
+    // Each notice reads as a plain sentence first; the exact sentence above stays in the Technical details nested inside it.
+    expect(page.all('.health li.health__plain--danger').map((p) => p.textContent)).toContain('The history of 2 records is incomplete: an earlier version is missing, or can\'t be trusted.');
+    expect(page.all('.health p.health__item--danger').every((p) => p.closest('details')?.querySelector('summary')?.textContent === 'Technical details')).toBe(true);
 
     // The cut decision's card: the heading says the history is incomplete, and why sits beside it in a danger note.
     const CUT_HEADING = 'History so far: some earlier versions cannot be read, so this history is incomplete';
@@ -946,6 +949,11 @@ describe('work-redesign offline demo and web UI', () => {
     page.click('Print summary');
     await page.until(() => page.all('#print h2').some((x) => x.textContent === WHOLE_HEADING), 'the whole chain printed');
     expect(page.all('#print .note--danger')).toEqual([]);
+    // The handout names people and dates as the screen does; identifiers only in the fine print, labelled.
+    const printedHistory = must(page.all('#print table')[0], 'the printed history').textContent ?? '';
+    expect(printedHistory).not.toMatch(/did:|0x[0-9a-f]{6}|\d{4}-\d{2}-\d{2}T/);
+    expect(page.all('#print .print-record__foot')[0]?.textContent).toMatch(/^Record ID urn:wrd:decision:/);
+    expect(page.all('#print .print-record__meta > div').map((x) => x.firstElementChild?.tagName)).toEqual(['DT', 'DT', 'DT', 'DT', 'DT', 'DT']);
 
     // The grant's row says why its grantedAt may be missing.
     page.click('AI agents');
@@ -1110,7 +1118,7 @@ describe('work-redesign offline demo and web UI', () => {
     expect(server).toMatch(/^\s*if \(proxyHops > 0\) a\.set\('trust proxy', proxyHops\);$/m);
     expect(server.match(/trust proxy/g)).toHaveLength(1);
     expect(demo).not.toMatch(/trust proxy/);
-    expect(demo).toMatch(/middleware: \(a\) => \{\n(?:\s*\/\/[^\n]*\n)*\s*a\.use\(hostAllowlistGuard\(servedHostNames\(port, base\)\)\);\n\s*attachUi\(a, \{ base \}\);/);
+    expect(demo).toMatch(/middleware: \(a\) => \{\n(?:\s*\/\/[^\n]*\n)*\s*a\.use\(hostAllowlistGuard\(servedHostNames\(port, base\)\)\);\n(?:\s*\/\/[^\n]*\n)*\s*attachUi\(a, \{ base(?:, [^\n]*)? \}\);/);
     // Both parse every query parameter, so the GET template's signed-read check sees past the default parser's first 1000 pairs.
     for (const src of [server, demo]) expect(/middleware: \(a\) => \{\n([\s\S]*?)\n\s*\},\n/.exec(src)?.[1]).toMatch(/^\s*parseEveryQueryPair\(a\);$/m);
     // One composition each, so there is no second app without the guard.
