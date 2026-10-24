@@ -2495,6 +2495,9 @@ app.post('/auth/siwe', authEnrollLimiter, async (req, res) => {
       m => { m.walletAddresses.push(recoveredAddress); });
     if (outcome.kind === 'unreadable' || outcome.kind === 'unconfirmed') {
       log(`WARN: first-time SIWE sign-in to ${targetUserId} not completed (${outcome.kind}): ${outcome.reason}`);
+      // Nothing was written, so a bootstrap invite spent by resolveTargetUserId is still
+      // unused: give it back, or every retry is refused as "already consumed".
+      if (resolved.mode === 'bootstrap') CONSUMED_INVITES.delete(targetUserId);
       res.status(503).json({
         error: 'Could not read this account just now',
         detail: 'The pod holding this account did not answer. Nothing was changed; try signing in again in a minute.',
@@ -3104,7 +3107,9 @@ app.post('/auth/did', authEnrollLimiter, async (req, res) => {
     // credentials (first-sign-in.ts). FIX A deferred this write off the response path; it is
     // synchronous now, because the deferred write was blind and could replace a whole account.
     const outcome = await claimFirstSignInOnPod(targetUserId, agentId, displayName,
-      m => m.didKeys.some(k => k.did === did),
+      // A did:key is its own key. Any other DID was verified against a key the caller supplied,
+      // so the pod must list that key for the DID, or this is someone else's account.
+      m => m.didKeys.some(k => k.did === did && (did.startsWith('did:key:') || k.publicKeyMultibase === canonicalPublicKeyMultibase)),
       m => {
         m.didKeys.push({
           did,
@@ -3115,6 +3120,9 @@ app.post('/auth/did', authEnrollLimiter, async (req, res) => {
       });
     if (outcome.kind === 'unreadable' || outcome.kind === 'unconfirmed') {
       log(`WARN: first-time DID sign-in to ${targetUserId} not completed (${outcome.kind}): ${outcome.reason}`);
+      // Nothing was written, so a bootstrap invite spent by resolveTargetUserId is still
+      // unused: give it back, or every retry is refused as "already consumed".
+      if (resolved.mode === 'bootstrap') CONSUMED_INVITES.delete(targetUserId);
       res.status(503).json({
         error: 'Could not read this account just now',
         detail: 'The pod holding this account did not answer. Nothing was changed; try signing in again in a minute.',

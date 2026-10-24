@@ -20,8 +20,8 @@
  *     document is created with a write that fails when one has appeared since the read
  *     (`If-None-Match: *`); on that failure the pod is read again and the decision taken
  *     again, so a concurrent creator is never overwritten.
- * A document without credentials is kept (its session epoch, name and agent) and the
- * credential is added to it.
+ * A document without credentials is kept (its session epoch and name; the caller sets the
+ * agent) and the credential is added to it.
  *
  * The caller runs this under the per-user pod mutex. No server state and no I/O: the read,
  * the record to write and the write are injected, so it is tested without starting server.ts.

@@ -44,13 +44,24 @@ function base58(bytes: Uint8Array): string {
   for (const b of bytes) { if (b !== 0) break; out = `1${out}`; }
   return out;
 }
-function didKey() {
+function ed25519() {
   const { publicKey, privateKey } = crypto.generateKeyPairSync('ed25519');
   const raw = Buffer.from(publicKey.export({ format: 'jwk' }).x!, 'base64url');
-  return { did: `did:key:z${base58(Buffer.concat([Buffer.from([0xed, 0x01]), raw]))}`, privateKey };
+  return { multibase: `z${base58(Buffer.concat([Buffer.from([0xed, 0x01]), raw]))}`, privateKey };
 }
-const dids = { passkeyOnly: didKey(), unloaded: didKey(), unreadable: didKey(), fresh: didKey() };
+function didKey() {
+  const { multibase, privateKey } = ed25519();
+  return { did: `did:key:${multibase}`, privateKey };
+}
+const dids = { passkeyOnly: didKey(), unloaded: didKey(), unreadable: didKey(), fresh: didKey(), bootstrap: didKey() };
 const didUser = (k: { did: string }) => deriveUserIdFromDid(k.did);
+// A did:web is checked against the key the caller sends, so its account must list that key.
+const didWeb = { did: 'did:web:owner.example', owner: ed25519(), other: ed25519() };
+
+// Seeded legacy accounts claimed with a bootstrap invite (mode B).
+const invites = { wallet: { userId: 'seeded-wallet', token: crypto.randomBytes(16).toString('hex') },
+  did: { userId: 'seeded-did', token: crypto.randomBytes(16).toString('hex') } };
+const bootstrapWallet = Wallet.createRandom();
 
 // ── Pods ──
 const pods = new Map<string, Record<string, unknown>>([
@@ -63,10 +74,14 @@ const pods = new Map<string, Record<string, unknown>>([
   [didUser(dids.unloaded), { userId: didUser(dids.unloaded), name: 'DID unloaded', walletAddresses: [],
     webAuthnCredentials: [passkey('cred-did-unloaded')],
     didKeys: [{ did: dids.unloaded.did, publicKeyMultibase: 'z', keyType: 'Ed25519VerificationKey2020', createdAt: now }] }],
+  [didUser(didWeb), { userId: didUser(didWeb), name: 'did:web owner', walletAddresses: [], webAuthnCredentials: [],
+    didKeys: [{ did: didWeb.did, publicKeyMultibase: didWeb.owner.multibase, keyType: 'Ed25519VerificationKey2020', createdAt: now }] }],
 ]);
 // Only these are in the root listing, so only these load at startup.
 const listed = new Set([walletUser(wallets.passkeyOnly), didUser(dids.passkeyOnly)]);
 const unreadable = new Set([walletUser(wallets.unreadable), didUser(dids.unreadable)]);
+// Pods a test makes unreadable for a while (a CSS blip), after startup has loaded the rest.
+const blipping = new Set<string>();
 // GET once answers 404, and the document then appears as another writer's.
 const racedUser = walletUser(wallets.raced);
 const racedDoc = { userId: racedUser, name: 'Other writer', walletAddresses: [], didKeys: [], webAuthnCredentials: [passkey('cred-other-writer')] };
@@ -83,7 +98,7 @@ function servePods(req: http.IncomingMessage, res: http.ServerResponse): void {
   const m = /^\/([^/]+)\/auth-methods\.jsonld$/.exec(path);
   if (m && req.method === 'GET') {
     const userId = m[1]!;
-    if (unreadable.has(userId)) { res.writeHead(502).end(); return; }
+    if (unreadable.has(userId) || blipping.has(userId)) { res.writeHead(502).end(); return; }
     if (userId === racedUser && racedReads++ === 0) {
       pods.set(racedUser, racedDoc);
       res.writeHead(404).end();
@@ -132,16 +147,16 @@ async function post(path: string, body: unknown): Promise<{ status: number; json
   return { status: r.status, json: await r.json() as Record<string, unknown> };
 }
 
-async function siwe(w: { address: string; signMessage(message: string): Promise<string> }) {
+async function siwe(w: { address: string; signMessage(message: string): Promise<string> }, extra: Record<string, unknown> = {}) {
   const { nonce } = (await post('/challenges', { purpose: 'siwe' })).json as { nonce: string };
   const message = `example.test wants you to sign in with your Ethereum account:\n${w.address}\n\nSign in.\n\nNonce: ${nonce}`;
-  return post('/auth/siwe', { message, signature: await w.signMessage(message), nonce, name: 'New' });
+  return post('/auth/siwe', { message, signature: await w.signMessage(message), nonce, name: 'New', ...extra });
 }
 
-async function didSignIn(k: ReturnType<typeof didKey>) {
+async function didSignIn(k: { did: string; privateKey: crypto.KeyObject }, extra: Record<string, unknown> = {}) {
   const { nonce } = (await post('/challenges', { purpose: 'did-sig' })).json as { nonce: string };
   const signature = crypto.sign(null, Buffer.from(nonce, 'utf8'), k.privateKey).toString('base64url');
-  return post('/auth/did', { did: k.did, nonce, signature, name: 'New' });
+  return post('/auth/did', { did: k.did, nonce, signature, name: 'New', ...extra });
 }
 
 const writesTo = (userId: string) => writes.filter(w => w.userId === userId);
@@ -157,6 +172,7 @@ before(async () => {
   Object.assign(env, {
     PORT: String(port), BASE_URL: base, CSS_URL: `http://127.0.0.1:${podPort}/`, RELAY_URL: 'http://relay.invalid',
     TOKEN_SIGNING_KEY: crypto.randomBytes(32).toString('base64'), JANITOR_INTERVAL_MS: '0',
+    BOOTSTRAP_INVITES: Object.values(invites).map(i => `${i.userId}:${i.token}`).join(','),
   });
   identity = spawn(process.execPath, ['--import', 'tsx', 'server.ts'], {
     cwd: fileURLToPath(new URL('..', import.meta.url)), env, stdio: ['ignore', 'pipe', 'pipe'],
@@ -249,4 +265,30 @@ test('the same for a DID: refused beside a passkey, signed in when listed, 503 w
   assert.deepEqual(writesTo(userId), [{ userId, ifNoneMatch: '*' }]);
   assert.equal((await didSignIn(dids.fresh)).status, 200);
   assert.equal(writesTo(userId).length, 1);
+});
+
+test('a bootstrap claim that meets an unreadable pod keeps its invite, so the retry succeeds', async () => {
+  for (const [kind, attempt] of [
+    ['wallet', () => siwe(bootstrapWallet, { bootstrapUserId: invites.wallet.userId, bootstrapInvite: invites.wallet.token })],
+    ['did', () => didSignIn(dids.bootstrap, { bootstrapUserId: invites.did.userId, bootstrapInvite: invites.did.token })],
+  ] as const) {
+    const { userId } = invites[kind];
+    blipping.add(userId);
+    const down = await attempt();
+    assert.equal(down.status, 503, `${kind}: ${JSON.stringify(down.json)}`);
+    assert.deepEqual(writesTo(userId), []);
+    blipping.delete(userId);
+    const retry = await attempt();
+    assert.equal(retry.status, 200, `${kind}: ${JSON.stringify(retry.json)}\n${output}`);
+    assert.equal(retry.json['userId'], userId);
+  }
+});
+
+test('a did:web the index missed signs in only with the key its pod lists for it', async () => {
+  const userId = didUser(didWeb);
+  const impostor = await didSignIn({ did: didWeb.did, privateKey: didWeb.other.privateKey }, { publicKeyMultibase: didWeb.other.multibase });
+  assert.equal(impostor.status, 401, JSON.stringify(impostor.json));
+  assert.equal(impostor.json['token'], undefined);
+  assert.deepEqual(writesTo(userId), []);
+  assert.equal((pods.get(userId)!['didKeys'] as Array<{ publicKeyMultibase: string }>)[0]!.publicKeyMultibase, didWeb.owner.multibase);
 });
