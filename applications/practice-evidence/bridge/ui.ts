@@ -2,9 +2,23 @@
  * The web UI and the browser-facing protection of a practice-evidence bridge.
  *
  * `attachUi` serves a static HTML shell at /ui, the client at /ui/app.js and its styles at
- * /ui/app.css. The client is a Path-A client: it reads this bridge's affordance manifest and
- * invokes every act at the target the manifest names. It holds no key (demo role keys stay in the
- * bridge; wallet keys stay in the wallet) and computes nothing the record does not already say.
+ * /ui/app.css (the shared Interego design system, then this product's own rules). The client is a
+ * Path-A client: it reads this bridge's affordance manifest and invokes every act at the target the
+ * manifest names. It holds no key (demo role keys stay in the bridge; wallet keys stay in the
+ * wallet) and computes nothing the record does not already say.
+ *
+ * It also serves the pages a person reads before signing in, each a constant under the same policy:
+ *
+ *   GET  /                      the landing page, to a browser only: a request whose best match
+ *                               among the types / serves is text/html, with no ?format=. Every
+ *                               other request (agents, curl, fetch's `*\/*`, ?format=…) falls
+ *                               through to the factory's JSON-LD or Markdown, unchanged.
+ *   GET  /ui/help               the guide, and /ui/help.js, the few lines that show this
+ *                               workspace's address on it
+ *   GET  /ui/favicon.svg        the mark
+ *
+ * Their "Contact" links go to the guide's contact section, or to the operator's own contact page
+ * when server.ts passes one (PEV_CONTACT_URL, https only: no page carries an email address).
  *
  * Interego sign-in (`attachUi(app, { interego })`, on when the operator sets PEV_RELAY_URL and
  * trusts a relay): a person with no key of their own signs in with their Interego account on the
@@ -58,6 +72,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import type { Express, NextFunction, Request, Response } from 'express';
 import { guardedFetchFn } from '@interego/core';
+import { designSystemCss } from '../../_shared/design-system/index.js';
 import { refuse } from '../../_shared/vertical-bridge/refusal.js';
 import { openRelayDelegated, type RelayDelegationPolicy } from '../src/relay-delegated.js';
 import { cappedFetch } from './pod-helpers.js';
@@ -66,7 +81,17 @@ export const UI_CSP = "default-src 'none'; script-src 'self'; style-src 'self'; 
 
 const readUiFile = (name: string): string => readFileSync(new URL(`./ui/${name}`, import.meta.url), 'utf8');
 const APP_JS = readUiFile('app.js');
-const APP_CSS = readUiFile('app.css');
+/** The Interego design system (shared with work-redesign), then this product's own rules. */
+const APP_CSS = `${designSystemCss()}\n${readUiFile('app.css')}`;
+const LANDING_HTML = readUiFile('landing.html');
+const HELP_HTML = readUiFile('help.html');
+/** Where the landing page's "Contact" links go by default: the guide's contact section. */
+const LANDING_CONTACT_HREF = 'href="ui/help#contact"';
+/** The guide's own "Contact us" link (its table of contents still goes to the section), and the paragraph its contact section ends with by default. */
+const HELP_CONTACT_LINK = '<a href="#contact">Contact us</a>';
+const HELP_CONTACT_DEFAULT = /<p id="contact-interego">[^<]*<\/p>/;
+const HELP_JS = readUiFile('help.js');
+const FAVICON_SVG = readUiFile('favicon.svg');
 
 /**
  * A shell: a constant, with no interpolation and no inline script or style. Relative URLs, so a
@@ -80,16 +105,24 @@ const shell = (up: string): string => [
   '<meta charset="utf-8">',
   '<meta name="viewport" content="width=device-width, initial-scale=1">',
   '<meta name="referrer" content="no-referrer">',
-  '<title>Practice evidence</title>',
+  '<meta name="color-scheme" content="light dark">',
+  '<title>Practice Evidence</title>',
+  `<link rel="icon" href="${up}ui/favicon.svg" type="image/svg+xml">`,
   `<link rel="stylesheet" href="${up}ui/app.css">`,
   `<script type="module" src="${up}ui/app.js"></script>`,
   '</head>',
-  '<body>',
-  '<header id="bar"><p class="muted">Practice evidence: loading…</p></header>',
-  '<nav id="tabs" aria-label="Views"></nav>',
+  '<body class="product-pev">',
+  '<a class="skip-link" href="#main">Skip to content</a>',
+  '<div id="bar"><header class="app-header"><div class="app-header__inner"><span class="brand"><span class="brand__name"><span class="brand__company">Interego</span><span class="brand__product">Practice Evidence</span></span></span></div></header></div>',
+  '<div class="app-shell">',
+  '<nav id="tabs" class="side-nav" aria-label="Practice Evidence"></nav>',
+  '<main id="main" class="app-main" tabindex="-1">',
   '<section id="signing" aria-live="polite"></section>',
-  '<main id="view"></main>',
-  `<noscript><p>This page needs JavaScript. Everything it offers is also an affordance: see the manifest at <a href="${up}affordances">affordances</a>.</p></noscript>`,
+  '<div id="view"><div class="stack" aria-busy="true"><span class="visually-hidden">Loading Practice Evidence…</span><span class="skeleton skeleton--title"></span><span class="skeleton skeleton--text"></span><span class="skeleton skeleton--block"></span></div></div>',
+  `<noscript><div class="callout callout--warning"><p class="callout__title">Practice Evidence needs JavaScript</p><p class="callout__body">Turn on JavaScript to use the app. You can still read <a href="${up}ui/help">how it works</a>. For developers: <a href="${up}affordances">the action list</a>.</p></div></noscript>`,
+  '</main>',
+  '</div>',
+  '<div id="toasts" class="toast-region" role="status" aria-live="polite" aria-label="Notifications"></div>',
   '</body>',
   '</html>',
   '',
@@ -841,8 +874,66 @@ function uiBodyErrors(err: unknown, _req: Request, res: Response, next: NextFunc
   res.status(status).json(refuse(status, status === 413 ? 'The request body is over this bridge\'s limit.' : 'The request body is not JSON this route can read.', status === 413 ? 'payload-too-large' : 'body-unreadable'));
 }
 
-/** Mount GET /ui, /ui/app.js and /ui/app.css, and the Interego sign-in routes (or their refusals). */
-export function attachUi(app: Express, o: { readonly interego?: InteregoUiOptions } = {}): void {
+/**
+ * A browser asking for a page: no ?format=, and text/html is its best match among what this bridge
+ * serves at /. `*\/*`, a missing Accept and Node fetch's default all resolve to JSON-LD, the first
+ * listed, so agents keep the factory's entry point; a browser's Accept resolves to text/html.
+ */
+export function wantsLandingPage(req: Request): boolean {
+  if (req.query['format'] !== undefined) return false;
+  return req.accepts(['application/ld+json', 'application/json', 'text/turtle', 'text/markdown', 'text/html']) === 'text/html';
+}
+
+/**
+ * The operator's contact page (PEV_CONTACT_URL), as the pages may link it: an https URL with no
+ * user name, password or `@` anywhere (no page carries an email address, so no mailto: and no
+ * address in a query either), normalised. Null for anything else, which leaves the default links.
+ */
+export function contactUrlOf(raw: string): string | null {
+  if (raw.includes('@') || raw.length > 500) return null;
+  let u: URL;
+  try { u = new URL(raw); } catch { return null; }
+  if (u.protocol !== 'https:' || u.username !== '' || u.password !== '' || u.hostname === '') return null;
+  return u.href;
+}
+
+const attr = (s: string): string => s.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+/**
+ * The landing page and the guide, with the operator's contact page when it set one: every
+ * "Contact" link on the landing page and the guide's own "Contact us" go there, and the guide's
+ * contact section links it. Without one, both pages are the files as they are.
+ */
+export function contactPages(contactUrl?: string): { readonly landing: string; readonly help: string } {
+  if (contactUrl === undefined) return { landing: LANDING_HTML, help: HELP_HTML };
+  const url = contactUrlOf(contactUrl);
+  if (url === null) throw new Error('contactPages: the contact URL must be https, with no @ in it.');
+  if (!LANDING_HTML.includes(LANDING_CONTACT_HREF) || !HELP_HTML.includes(HELP_CONTACT_LINK) || !HELP_CONTACT_DEFAULT.test(HELP_HTML)) {
+    throw new Error('contactPages: the landing page or the guide no longer has the contact links this replaces.');
+  }
+  const href = `href="${attr(url)}"`;
+  return {
+    landing: LANDING_HTML.split(LANDING_CONTACT_HREF).join(href),
+    help: HELP_HTML.split(HELP_CONTACT_LINK).join(`<a ${href}>Contact us</a>`)
+      .replace(HELP_CONTACT_DEFAULT, () => `<p id="contact-interego">To talk about pricing, a pilot or a new workspace, <a ${href}>contact Interego</a>.</p>`),
+  };
+}
+
+/**
+ * Mount the landing page at / (browsers only), GET /ui, /ui/app.js, /ui/app.css, the guide at
+ * /ui/help, its script and the favicon, and the Interego sign-in routes (or their refusals).
+ * `contactUrl` (PEV_CONTACT_URL, checked with contactUrlOf) is where the pages' Contact links go.
+ */
+export function attachUi(app: Express, o: { readonly interego?: InteregoUiOptions; readonly contactUrl?: string } = {}): void {
+  const pages = contactPages(o.contactUrl);
+  // First, so it runs before the factory's own GET / (registered after this hook); anything but a
+  // browser's page request falls through to it unchanged.
+  app.get('/', (req: Request, res: Response, next: NextFunction) => {
+    if (!wantsLandingPage(req)) { next(); return; }
+    secure(res);
+    res.vary('Accept');
+    res.type('text/html; charset=utf-8').send(pages.landing);
+  });
   app.get('/ui', (req: Request, res: Response) => {
     // The shell's URLs are relative to /ui; at /ui/ they would resolve one level too deep.
     if (req.path.endsWith('/')) { res.redirect(301, '../ui'); return; }
@@ -851,6 +942,14 @@ export function attachUi(app: Express, o: { readonly interego?: InteregoUiOption
   });
   app.get('/ui/app.js', (_req: Request, res: Response) => { secure(res); res.type('text/javascript; charset=utf-8').send(APP_JS); });
   app.get('/ui/app.css', (_req: Request, res: Response) => { secure(res); res.type('text/css; charset=utf-8').send(APP_CSS); });
+  app.get('/ui/help', (req: Request, res: Response) => {
+    // Its URLs are relative to /ui/help, as the shell's are to /ui.
+    if (req.path.endsWith('/')) { res.redirect(301, '../help'); return; }
+    secure(res);
+    res.type('text/html; charset=utf-8').send(pages.help);
+  });
+  app.get('/ui/help.js', (_req: Request, res: Response) => { secure(res); res.type('text/javascript; charset=utf-8').send(HELP_JS); });
+  app.get('/ui/favicon.svg', (_req: Request, res: Response) => { secure(res); res.type('image/svg+xml').send(FAVICON_SVG); });
   attachInteregoSignIn(app, o.interego);
   app.use('/ui', uiBodyErrors);
 }
