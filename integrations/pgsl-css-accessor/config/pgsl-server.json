@@ -54,6 +54,22 @@
   ],
   "@graph": [
     {
+      "comment": "The internal value storage walks every document under /.internal/, including keyless reader counts left in /.internal/locks/ from when LockStorage was pod-backed. Skipping keyless entries keeps them from crashing the hourly expired-entry sweep.",
+      "@type": "Override",
+      "overrideInstance": {
+        "@id": "urn:solid-server:default:KeyValueStorage"
+      },
+      "overrideParameters": {
+        "@type": "KeyedEntriesStorage",
+        "source": {
+          "@type": "MaxKeyLengthStorage",
+          "source": {
+            "@id": "urn:solid-server:default:JsonResourceStorage"
+          }
+        }
+      }
+    },
+    {
       "comment": "Memory mutexes require process-local reader counters. Native cross-process commits remain conditional transactions in PGSL.",
       "@type": "Override",
       "overrideInstance": {
