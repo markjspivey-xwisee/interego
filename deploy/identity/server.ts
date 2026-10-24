@@ -1220,6 +1220,14 @@ async function ensureAccountLoaded(userId: string): Promise<'loaded' | 'absent' 
   }
 }
 
+// A first-time sign-in or passkey registration whose credential-derived id already names an
+// account that does not hold that credential. The answer is the same for a DID, a wallet and
+// a passkey, and nothing is written.
+const CREDENTIAL_NOT_ON_ITS_ACCOUNT = {
+  error: 'This credential is not registered to the account its id names',
+  detail: 'An account with this credential\'s id exists but does not hold this credential. Nothing was changed. Sign in with a credential that account holds, then add this one from there.',
+};
+
 /**
  * Promise-cached initial-rebuild handle.
  *
@@ -2433,7 +2441,8 @@ app.post('/auth/siwe', authEnrollLimiter, async (req, res) => {
     const targetUserId = resolved.targetUserId;
     // ★ Same as /auth/did: the derived id may name an account already on its pod that this
     // server has not loaded, and the fresh document below would replace its
-    // auth-methods.jsonld. An account on the pod gets the add-wallet path below instead.
+    // auth-methods.jsonld. An account that holds this wallet signs in as a returning user;
+    // one that does not is refused (u-eth- ids keep only 48 bits of the address).
     const account = resolved.mode === 'derive' ? await ensureAccountLoaded(targetUserId) : 'absent';
     if (account === 'unreadable') {
       res.status(503).json({
@@ -2443,8 +2452,13 @@ app.post('/auth/siwe', authEnrollLimiter, async (req, res) => {
       return;
     }
     if (account === 'loaded') {
+      if (!(await readAuthMethods(targetUserId)).walletAddresses.includes(recoveredAddress)) {
+        log(`Refused wallet ${recoveredAddress}: its account ${targetUserId} exists and does not hold it`);
+        res.status(409).json(CREDENTIAL_NOT_ON_ITS_ACCOUNT);
+        return;
+      }
       user = identities.get(targetUserId)!;
-      log(`Wallet ${recoveredAddress} was not in the index; its account ${targetUserId} is on file, so it is not registered afresh`);
+      log(`Wallet ${recoveredAddress} was not in the index; its account ${targetUserId} holds it, so it is not registered afresh`);
     } else {
       registered = true;
       if (!identities.has(targetUserId)) {
@@ -2474,7 +2488,7 @@ app.post('/auth/siwe', authEnrollLimiter, async (req, res) => {
   }
   if (!registered) {
     // A returning sign-in or an added wallet: the indexed account, the bearer's, or the one
-    // found on its pod above. Append the wallet if it is not already bound.
+    // found above holding it. Append the wallet if it is not already bound.
     try {
       await commitCredentialEnrollment(user.id, 'siwe-add-wallet', methods => {
         if (methods.walletAddresses.includes(recoveredAddress)) return false;
@@ -2726,6 +2740,23 @@ app.post('/auth/webauthn/register', authEnrollLimiter, async (req, res) => {
   } else {
     // Mode (A) fresh user — derive userId from the credential itself.
     targetUserId = deriveUserIdFromCredentialId(credentialId);
+    // ★ The credential id is new here, so an account already under its id holds other
+    // credentials: a u-pk- id keeps 48 bits of a hash of the credential id, which a
+    // software authenticator chooses. Enrolling would add this passkey to that account,
+    // so it is refused, as /auth/did and /auth/siwe refuse a credential its account lacks.
+    const account = await ensureAccountLoaded(targetUserId);
+    if (account === 'unreadable') {
+      res.status(503).json({
+        error: 'Could not read this account just now',
+        detail: 'The pod holding this account did not answer. Nothing was changed; try registering again in a minute.',
+      });
+      return;
+    }
+    if (account === 'loaded') {
+      log(`Refused passkey ${credentialId}: its account ${targetUserId} exists and does not hold it`);
+      res.status(409).json(CREDENTIAL_NOT_ON_ITS_ACCOUNT);
+      return;
+    }
   }
 
   // Ensure an Identity shell exists for the target. Seeded users already
@@ -3051,8 +3082,10 @@ app.post('/auth/did', authEnrollLimiter, async (req, res) => {
     // loaded, as when every account's index entry was missing after the 2026-10-23 listing
     // bug. The fresh document below would replace that account's auth-methods.jsonld: its
     // other credentials, its name, and the sessionEpoch that keeps signed-out tokens
-    // revoked. So the pod is asked first, and an account on it gets the add-did path below,
-    // which reads that document and appends the DID to it if it is not there.
+    // revoked. So the pod is asked first. An account that holds this DID signs in as a
+    // returning user. One that does not is refused, never given the DID: the DID was
+    // removed from it, or it is another credential's account, since an id keeps only 48
+    // bits of a hash the caller can search for. Adding a DID takes a credential on file.
     const account = resolved.mode === 'derive' ? await ensureAccountLoaded(targetUserId) : 'absent';
     if (account === 'unreadable') {
       res.status(503).json({
@@ -3062,8 +3095,13 @@ app.post('/auth/did', authEnrollLimiter, async (req, res) => {
       return;
     }
     if (account === 'loaded') {
+      if (!(await readAuthMethods(targetUserId)).didKeys.some(k => k.did === did)) {
+        log(`Refused DID ${did}: its account ${targetUserId} exists and does not hold it`);
+        res.status(409).json(CREDENTIAL_NOT_ON_ITS_ACCOUNT);
+        return;
+      }
       user = identities.get(targetUserId)!;
-      log(`DID ${did} was not in the index; its account ${targetUserId} is on file, so it is not registered afresh`);
+      log(`DID ${did} was not in the index; its account ${targetUserId} holds it, so it is not registered afresh`);
     } else {
       registered = true;
       if (!identities.has(targetUserId)) {
@@ -3100,7 +3138,7 @@ app.post('/auth/did', authEnrollLimiter, async (req, res) => {
   }
   if (!registered) {
     // A returning sign-in or an added DID: the indexed account, the bearer's, or the one
-    // found on its pod above. Append the DID if it is not already bound.
+    // found above holding it. Append the DID if it is not already bound.
     try {
       await commitCredentialEnrollment(user.id, 'did-add-did', methods => {
         if (methods.didKeys.some(k => k.did === did)) return false;

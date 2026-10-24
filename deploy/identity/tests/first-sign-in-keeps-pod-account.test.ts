@@ -10,8 +10,10 @@
  *
  * server.ts is started as a child process against a stand-in pod server. Its root lists
  * one ordinary account; the accounts under test are on their pods but missing from the
- * listing, so the server has not loaded them, as in the incident. The bearer tokens are
- * minted here with the server's TOKEN_SIGNING_KEY, in its `cg2_` format.
+ * listing, so the server has not loaded them, as in the incident. An account under a
+ * credential's derived id that does not hold that credential refuses it (DID, wallet and
+ * passkey alike) rather than gaining it. The bearer tokens are minted here with the server's
+ * TOKEN_SIGNING_KEY, in its `cg2_` format.
  *
  * Run:
  *   node --test --import tsx tests/first-sign-in-keeps-pod-account.test.ts
@@ -25,7 +27,8 @@ import * as http from 'node:http';
 import * as net from 'node:net';
 import { fileURLToPath } from 'node:url';
 import { Wallet, encodeBase58 } from 'ethers';
-import { deriveUserIdFromDid, deriveUserIdFromWallet } from '../derive-userid.js';
+import { isoCBOR } from '@simplewebauthn/server/helpers';
+import { deriveUserIdFromCredentialId, deriveUserIdFromDid, deriveUserIdFromWallet } from '../derive-userid.js';
 
 interface DidKey { did: string; privateKey: crypto.KeyObject }
 
@@ -50,6 +53,9 @@ const WALLET_ACCOUNT = deriveUserIdFromWallet(wallet.address.toLowerCase());
 // Its id is derived from `stray`, but its document does not hold `stray`.
 const stray = didKey();
 const STRAY_ACCOUNT = deriveUserIdFromDid(stray.did);
+// The same for a wallet: its u-eth- id names an account that holds another wallet.
+const strayWallet = Wallet.createRandom();
+const STRAY_WALLET_ACCOUNT = deriveUserIdFromWallet(strayWallet.address.toLowerCase());
 // Pods that cannot be read.
 const blockedDid = didKey();
 const BLOCKED_DID_ACCOUNT = deriveUserIdFromDid(blockedDid.did);
@@ -58,6 +64,11 @@ const BLOCKED_WALLET_ACCOUNT = deriveUserIdFromWallet(blockedWallet.address.toLo
 // No pod at all.
 const newcomer = didKey();
 const NEW_ACCOUNT = deriveUserIdFromDid(newcomer.did);
+// A passkey whose credential id derives to an account that holds a different passkey (as a
+// software authenticator could choose one), and a passkey with no account.
+const collidingPasskeyId = crypto.randomBytes(16).toString('base64url');
+const PASSKEY_ACCOUNT = deriveUserIdFromCredentialId(collidingPasskeyId);
+const freshPasskeyId = crypto.randomBytes(16).toString('base64url');
 
 const pods = new Map<string, Record<string, unknown>>([
   [LISTED, { userId: LISTED, name: 'Listed', walletAddresses: [], didKeys: [],
@@ -76,6 +87,10 @@ const pods = new Map<string, Record<string, unknown>>([
     walletAddresses: [], webAuthnCredentials: [], didKeys: [didEntry(blockedDid.did), didEntry(otherDid.did)] }],
   [BLOCKED_WALLET_ACCOUNT, { userId: BLOCKED_WALLET_ACCOUNT, name: 'Bea', sessionEpoch: 3,
     walletAddresses: [blockedWallet.address.toLowerCase()], webAuthnCredentials: [], didKeys: [didEntry(otherDid.did)] }],
+  [STRAY_WALLET_ACCOUNT, { userId: STRAY_WALLET_ACCOUNT, name: 'Sam', sessionEpoch: 1,
+    walletAddresses: ['0x5555555555555555555555555555555555555555'], webAuthnCredentials: [], didKeys: [] }],
+  [PASSKEY_ACCOUNT, { userId: PASSKEY_ACCOUNT, name: 'Pat', sessionEpoch: 2, walletAddresses: [], didKeys: [],
+    webAuthnCredentials: [{ id: 'cred-pat', publicKey: 'AA', counter: 9, createdAt: now }] }],
 ]);
 const seeded = new Map([...pods].map(([id, doc]) => [id, structuredClone(doc)]));
 // The root lists only LISTED, so the server loads no other account at startup.
@@ -171,6 +186,41 @@ async function signInWithWallet(w: Pick<Wallet, 'address' | 'signMessage'>) {
   return post('/auth/siwe', { message, signature: await w.signMessage(message), nonce: n, name: 'Someone else' });
 }
 
+/**
+ * A passkey registration as a software authenticator makes it: "none" attestation, an ES256
+ * key, user present and verified, and a credential id the caller chooses.
+ */
+async function registerPasskey(credentialId: string) {
+  const options = await post('/auth/webauthn/register-options', { name: 'Someone else' });
+  assert.equal(options.status, 200, JSON.stringify(options.json));
+  const challenge = options.json['challenge'] as string;
+  const rpId = (options.json['rp'] as { id: string }).id;
+  const { publicKey } = crypto.generateKeyPairSync('ec', { namedCurve: 'P-256' });
+  const jwk = publicKey.export({ format: 'jwk' });
+  const coseKey = isoCBOR.encode(new Map<number, number | Uint8Array>([
+    [1, 2], [3, -7], [-1, 1], [-2, Buffer.from(jwk.x!, 'base64url')], [-3, Buffer.from(jwk.y!, 'base64url')],
+  ]));
+  const id = Buffer.from(credentialId, 'base64url');
+  const length = Buffer.alloc(2);
+  length.writeUInt16BE(id.length);
+  const authData = Buffer.concat([
+    crypto.createHash('sha256').update(rpId).digest(), Buffer.from([0x45]), Buffer.alloc(4), Buffer.alloc(16),
+    length, id, Buffer.from(coseKey),
+  ]);
+  const attestationObject = isoCBOR.encode(new Map<string, Parameters<typeof isoCBOR.encode>[0]>([
+    ['fmt', 'none'], ['attStmt', new Map()], ['authData', new Uint8Array(authData)],
+  ]));
+  const clientDataJSON = JSON.stringify({ type: 'webauthn.create', challenge, origin: base, crossOrigin: false });
+  return post('/auth/webauthn/register', { response: {
+    id: credentialId, rawId: credentialId, type: 'public-key', clientExtensionResults: {},
+    response: {
+      clientDataJSON: Buffer.from(clientDataJSON).toString('base64url'),
+      attestationObject: Buffer.from(attestationObject).toString('base64url'),
+      transports: ['internal'],
+    },
+  } });
+}
+
 const writesTo = (userId: string) => writes.filter(w => w.split(' ')[1]!.startsWith(`/${userId}/`));
 
 /** Long enough for a write the server deferred past its response to reach the pod. */
@@ -260,20 +310,44 @@ test('a wallet sign-in to an account the index missed leaves its auth-methods.js
   assert.match(String(stale.json['reason']), /revoked/);
 });
 
-test('an account whose document lacks the DID its id derives from gets the DID appended, not a fresh document', async () => {
-  const r = await signInWithDid(stray);
-  assert.equal(r.status, 200, `${JSON.stringify(r.json)}\n${output}`);
-  assert.equal(r.json['userId'], STRAY_ACCOUNT);
-  assert.equal(r.json['name'], 'Stella');
-  await until(() => writesTo(STRAY_ACCOUNT).some(w => w.endsWith('/auth-methods.jsonld')), 'the appended DID to be written');
-  const stored = pods.get(STRAY_ACCOUNT)!;
-  const before = seeded.get(STRAY_ACCOUNT)!;
-  assert.deepEqual((stored['didKeys'] as Array<{ did: string }>).map(k => k.did), [otherDid.did, stray.did]);
-  for (const field of ['userId', 'name', 'sessionEpoch', 'walletAddresses', 'webAuthnCredentials']) {
-    assert.deepEqual(stored[field], before[field], field);
+test('an account whose document lacks the DID its id derives from refuses that DID and is left alone', async () => {
+  // Twice: first while the account is only on its pod, then once that first try has loaded it.
+  for (const attempt of ['on the pod', 'in memory']) {
+    const r = await signInWithDid(stray);
+    assert.equal(r.status, 409, `${attempt}: ${JSON.stringify(r.json)}`);
+    assert.equal(r.json['token'], undefined, attempt);
+    await settle();
+    assert.deepEqual(writesTo(STRAY_ACCOUNT), [], attempt);
+    assert.deepEqual(pods.get(STRAY_ACCOUNT), seeded.get(STRAY_ACCOUNT), attempt);
   }
+  // The DID was not added: the account's own credentials are still all it has.
   const stale = await post('/tokens/verify', { token: token(STRAY_ACCOUNT, `mcp-client-${STRAY_ACCOUNT}`, 4) });
   assert.equal(stale.json['valid'], false, JSON.stringify(stale.json));
+});
+
+test('an account whose document lacks the wallet its id derives from refuses that wallet and is left alone', async () => {
+  const r = await signInWithWallet(strayWallet);
+  assert.equal(r.status, 409, JSON.stringify(r.json));
+  assert.equal(r.json['token'], undefined);
+  await settle();
+  assert.deepEqual(writesTo(STRAY_WALLET_ACCOUNT), []);
+  assert.deepEqual(pods.get(STRAY_WALLET_ACCOUNT), seeded.get(STRAY_WALLET_ACCOUNT));
+});
+
+test('a passkey whose credential id derives to an existing account is refused, and a new one still registers', async () => {
+  const refused = await registerPasskey(collidingPasskeyId);
+  assert.equal(refused.status, 409, `${JSON.stringify(refused.json)}\n${output}`);
+  assert.equal(refused.json['token'], undefined);
+  await settle();
+  assert.deepEqual(writesTo(PASSKEY_ACCOUNT), []);
+  assert.deepEqual(pods.get(PASSKEY_ACCOUNT), seeded.get(PASSKEY_ACCOUNT));
+
+  const fresh = await registerPasskey(freshPasskeyId);
+  assert.equal(fresh.status, 200, `${JSON.stringify(fresh.json)}\n${output}`);
+  const freshAccount = deriveUserIdFromCredentialId(freshPasskeyId);
+  assert.equal(fresh.json['userId'], freshAccount);
+  await until(() => ((pods.get(freshAccount)?.['webAuthnCredentials'] as unknown[] | undefined) ?? []).length > 0, 'the new passkey to be written');
+  assert.deepEqual((pods.get(freshAccount)!['webAuthnCredentials'] as Array<{ id: string }>).map(c => c.id), [freshPasskeyId]);
 });
 
 test('a pod that cannot be read gets a 503 and no write, and the account signs in once it can be read', async () => {
