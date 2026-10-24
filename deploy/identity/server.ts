@@ -63,6 +63,7 @@ import {
 } from './surface-agent-restore.js';
 import { enrollProvisionalCredential } from './provisional-play-enrollment.js';
 import { clientIp, createLimiter, rateLimit, sendRateLimited } from './rate-limit.js';
+import { forwardAsyncRouteErrors, installProcessSafetyNet, routeErrorHandler } from './route-errors.js';
 
 // ── Lazy heavy imports ──────────────────────────────────────
 //
@@ -142,6 +143,9 @@ const IDENTITY_INTROSPECTION_SECRET = process.env['IDENTITY_INTROSPECTION_SECRET
 const ALLOW_OPEN_INTROSPECTION = process.env['ALLOW_OPEN_INTROSPECTION'] === '1';
 
 function log(msg: string) { console.log(`[identity] ${msg}`); }
+
+// A failure nothing awaited is logged and the server keeps serving; see route-errors.ts.
+installProcessSafetyNet(log);
 
 // ── Bootstrap invites ───────────────────────────────────────
 //
@@ -1953,6 +1957,9 @@ function buildWebIdProfile(identity: Identity): string {
 
 const app = express();
 app.set('trust proxy', 1);
+// An async handler that throws reaches routeErrorHandler (registered last, above
+// app.listen) instead of ending the process. See route-errors.ts.
+forwardAsyncRouteErrors(log);
 
 /**
  * Transport-security headers.
@@ -5147,6 +5154,9 @@ function prewarmColdPaths(): void {
     }
   })();
 }
+
+// The last middleware, after every route: a request that fails answers JSON, with no stack.
+app.use(routeErrorHandler(log));
 
 // ── Start ───────────────────────────────────────────────────
 

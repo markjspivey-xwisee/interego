@@ -116,6 +116,7 @@
  */
 import { createWallet, deriveEncryptionKeyPair, importWallet, type EncryptionKeyPair, type Wallet } from '@interego/core';
 import { createVerticalBridge } from '../../_shared/vertical-bridge/index.js';
+import { installProcessSafetyNet } from '../../_shared/vertical-bridge/route-errors.js';
 import { attachOntologyServing } from '../../_shared/ontology-serve/index.js';
 import { pevAffordances } from '../affordances.js';
 import { anthropicTextModel, type TextModel } from '../src/model.js';
@@ -370,6 +371,9 @@ async function main(): Promise<void> {
   const allowedHosts = [`127.0.0.1:${PORT}`, `localhost:${PORT}`, `[::1]:${PORT}`];
   try { allowedHosts.push(new URL(base).host); } catch { /* the base is not a URL; the loopback names remain */ }
 
+  // The last resort for a rejection nothing awaits (a call a handler starts and does not
+  // wait for): logged, and the bridge keeps serving. See route-errors.ts.
+  installProcessSafetyNet(warn);
   const app = createVerticalBridge({
     verticalName: 'practice-evidence',
     affordances: pevAffordances,

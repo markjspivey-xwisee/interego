@@ -19,6 +19,7 @@ RUN npm ci
 
 COPY deploy/validator/tsconfig.json ./
 COPY deploy/validator/server.ts ./
+COPY deploy/validator/route-errors.ts ./
 RUN npx tsc
 
 # ────────────────────────────────────────────────────────────
