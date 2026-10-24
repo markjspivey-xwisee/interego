@@ -114,6 +114,7 @@
  */
 import { createWallet, importWallet, deriveEncryptionKeyPair, type EncryptionKeyPair, type FetchFn } from '@interego/core';
 import { createVerticalBridge } from '../../_shared/vertical-bridge/index.js';
+import { installProcessSafetyNet } from '../../_shared/vertical-bridge/route-errors.js';
 import { attachOntologyServing } from '../../_shared/ontology-serve/index.js';
 import { wrdAffordances } from '../affordances.js';
 import { WRD_NS, WRD_ONTOLOGY_IRI, readOntologyTurtle, readShapesTurtle } from '../src/ontology.js';
@@ -233,6 +234,9 @@ const identityHost = signIn.identityHost;
 const fetchDidDocument = didDocumentFetcher(baseFetch);
 const uiRelayPolicy = identityHost !== null && signIn.relayAddresses.length > 0
   ? { relayAddresses: signIn.relayAddresses, identityHost, fetchDidDocument } : null;
+// The last resort for a rejection nothing awaits (a call a handler starts and does not
+// wait for): logged, and the bridge keeps serving. See route-errors.ts.
+installProcessSafetyNet((msg) => { process.stderr.write(`[work-redesign-bridge] ${msg}\n`); });
 const app = createVerticalBridge({
   verticalName: 'work-redesign',
   affordances: wrdAffordances,

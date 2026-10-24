@@ -14,7 +14,9 @@
 import { describe, it, expect } from 'vitest';
 import type { AddressInfo } from 'node:net';
 import type { Server } from 'node:http';
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync, existsSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import { createVerticalBridge } from '../vertical-bridge/index.js';
 
 const read = (p: string): string => readFileSync(new URL(`../../../${p}`, import.meta.url), 'utf8');
@@ -26,6 +28,39 @@ describe('the vertical-bridge factory', () => {
 
   it('installs no process-level handler (tests import it)', () => {
     expect(read('applications/_shared/vertical-bridge/index.ts')).not.toMatch(/installProcessSafetyNet|process\.on\(/);
+  });
+});
+
+describe('each bridge entry point has a last resort for a rejection nothing awaits', () => {
+  // A call a handler starts and does not await is outside the route's promise, so neither
+  // express nor the factory sees it fail; without a listener Node ends the bridge and its
+  // in-memory sessions with it. The factory cannot install one (tests import it), so each
+  // entry point does, or keeps its own (foxxi-bridge's).
+  const entryPoints = readdirSync(new URL('../../', import.meta.url), { withFileTypes: true })
+    .filter(d => d.isDirectory() && existsSync(new URL(`../../${d.name}/bridge/server.ts`, import.meta.url)))
+    .map(d => `applications/${d.name}/bridge/server.ts`);
+
+  it('finds the bridges', () => {
+    expect(entryPoints.length).toBeGreaterThanOrEqual(10);
+  });
+
+  it.each(entryPoints)('%s', (path) => {
+    expect(read(path)).toMatch(/installProcessSafetyNet\(|process\.on\('unhandledRejection'/);
+  });
+
+  it('logs the rejection and keeps the process running', () => {
+    const script = [
+      "const { installProcessSafetyNet } = await import('./route-errors.ts');",
+      'installProcessSafetyNet((m) => { process.stdout.write(m + "\\n"); });',
+      "void Promise.reject(new Error('nobody awaited this'));",
+      "setTimeout(() => { process.stdout.write('still serving\\n'); }, 50);",
+    ].join('\n');
+    const run = spawnSync(process.execPath, ['--import', 'tsx', '--input-type=module', '-e', script], {
+      cwd: fileURLToPath(new URL('../vertical-bridge/', import.meta.url)), encoding: 'utf8', timeout: 60_000,
+    });
+    expect(run.status, run.stderr).toBe(0);
+    expect(run.stdout).toMatch(/^ERROR: unhandled_rejection Error: nobody awaited this/);
+    expect(run.stdout).toMatch(/still serving\n$/);
   });
 });
 

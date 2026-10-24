@@ -16,7 +16,7 @@
 
 import { test, before, after } from 'node:test';
 import { strict as assert } from 'node:assert';
-import { spawn, type ChildProcess } from 'node:child_process';
+import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
 import * as http from 'node:http';
 import * as net from 'node:net';
 import { fileURLToPath } from 'node:url';
@@ -143,6 +143,51 @@ test('a handler that already started its response is not answered twice', async 
   } finally {
     await srv.close();
   }
+});
+
+test('a rejection with a non-Error value is answered as a throw of that value would be, and logged with its content', async () => {
+  forwardAsyncRouteErrors(logForward);
+  const logged: string[] = [];
+  const app = express();
+  app.get('/object-sync', () => { throw { status: 400, message: 'bad' }; });
+  app.get('/object-async', async () => { throw { status: 400, message: 'bad' }; });
+  app.get('/string-async', () => Promise.reject('ECONNREFUSED pod'));
+  app.use(routeErrorHandler(m => logged.push(m)));
+  const srv = await listen(app);
+  try {
+    for (const path of ['/object-sync', '/object-async']) {
+      const r = await fetch(srv.base + path, { signal: AbortSignal.timeout(5_000) });
+      assert.equal(r.status, 400, path);
+      assert.deepEqual(await r.json(), { error: 'Bad Request' }, path);
+    }
+    const s = await fetch(srv.base + '/string-async', { signal: AbortSignal.timeout(5_000) });
+    assert.equal(s.status, 500);
+    assert.deepEqual(await s.json(), { error: 'Internal Server Error' });
+    assert.deepEqual(logged, ['ERROR: route_error GET /string-async non-Error string "ECONNREFUSED pod"']);
+  } finally {
+    await srv.close();
+  }
+});
+
+test('an express 4 whose Layer cannot be patched is logged and left as it was, not a failed start', () => {
+  // A fresh process, since this one's Layer is already patched.
+  const script = [
+    "import { createRequire } from 'node:module';",
+    "const require = createRequire(process.cwd() + '/');",
+    "delete require('express/lib/router/layer.js').prototype.handle_error;",
+    "const { forwardAsyncRouteErrors } = await import('./route-errors.ts');",
+    'const logged = [];',
+    'const result = forwardAsyncRouteErrors(m => logged.push(m));',
+    'process.stdout.write(JSON.stringify({ result, logged }));',
+  ].join('\n');
+  const run = spawnSync(process.execPath, ['--import', 'tsx', '--input-type=module', '-e', script], {
+    cwd: fileURLToPath(new URL('..', import.meta.url)), encoding: 'utf8', timeout: 60_000,
+  });
+  assert.equal(run.status, 0, run.stderr);
+  const out = JSON.parse(run.stdout) as { result: string; logged: string[] };
+  assert.equal(out.result, 'unpatched');
+  assert.equal(out.logged.length, 1);
+  assert.match(out.logged[0]!, /^ERROR: route_errors_unpatched express 4\.\S+: Error: no Layer\.handle_request\/handle_error to patch/);
 });
 
 // ── Part 2: the identity server itself ────────────────────────────────────

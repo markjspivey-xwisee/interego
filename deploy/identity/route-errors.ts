@@ -52,16 +52,29 @@ const FORWARDS = Symbol.for('interego.routeErrors.forwardsRejections');
  * A handler that has already called next() and then rejects is logged rather than passed
  * on: a second next() would run the rest of the chain twice. Applies to the whole
  * process, once; repeated calls do nothing, and the first call's `log` is the one used.
+ *
+ * If this express 4 has no Layer methods to patch, it logs `ERROR: route_errors_unpatched`
+ * and returns 'unpatched' rather than throwing, so the service still starts.
  */
-export function forwardAsyncRouteErrors(log: (msg: string) => void): 'patched' | 'native' {
-  const require = createRequire(import.meta.url);
-  const { version } = require('express/package.json') as { version: string };
-  if (Number(version.split('.')[0]) >= 5) return 'native';
-  const proto = (require('express/lib/router/layer.js') as { prototype: LayerPrototype }).prototype;
-  if ((proto as unknown as Record<symbol, unknown>)[FORWARDS] === true) return 'patched';
-  if (typeof proto.handle_request !== 'function' || typeof proto.handle_error !== 'function') {
-    throw new Error(`route-errors: express ${version} has no Layer.handle_request/handle_error to patch`);
+export function forwardAsyncRouteErrors(log: (msg: string) => void): 'patched' | 'native' | 'unpatched' {
+  let version = 'unknown';
+  let proto: LayerPrototype;
+  try {
+    const require = createRequire(import.meta.url);
+    version = (require('express/package.json') as { version: string }).version;
+    if (Number(version.split('.')[0]) >= 5) return 'native';
+    proto = (require('express/lib/router/layer.js') as { prototype: LayerPrototype }).prototype;
+    if (typeof proto?.handle_request !== 'function' || typeof proto.handle_error !== 'function') {
+      throw new Error('no Layer.handle_request/handle_error to patch');
+    }
+  } catch (err) {
+    // An express 4.x whose internals moved (the relay installs without a lockfile) must not
+    // stop the service from starting: it keeps express's own behaviour, the terminal JSON
+    // handler and the process safety net, and says so once in the log.
+    log(`ERROR: route_errors_unpatched express ${version}: ${describe(err)}`);
+    return 'unpatched';
   }
+  if ((proto as unknown as Record<symbol, unknown>)[FORWARDS] === true) return 'patched';
   // Each is express 4's own body (lib/router/layer.js) with the promise passed to settle().
   proto.handle_request = function handleRequest(this: LayerPrototype, req, res, next) {
     const fn = this.handle;
@@ -91,12 +104,14 @@ function settle(log: (msg: string) => void, next: Next, call: (onward: Next) => 
   const then = (result as { then?: unknown }).then;
   if (typeof then !== 'function') return;
   then.call(result, undefined, (reason: unknown) => {
-    const err = reason instanceof Error ? reason : new Error('async route handler rejected with a non-Error value');
     if (handedOn) {
-      log(`ERROR: route_rejected_after_next ${describe(err)}`);
+      log(`ERROR: route_rejected_after_next ${describe(reason)}`);
       return;
     }
-    next(err);
+    // The reason itself, as a synchronous throw of the same value would pass it (and as
+    // express 5 does), so a status it carries still counts. Only an empty reason is replaced:
+    // next() with nothing would not be an error at all.
+    next(reason || new Error(`async route handler rejected with ${String(reason)}`));
   });
 }
 
@@ -163,7 +178,21 @@ export function installProcessSafetyNet(log: (msg: string) => void): void {
   });
 }
 
+/** A log line for any thrown value: an Error's stack, otherwise a short, bounded rendering. */
 function describe(value: unknown): string {
   if (value instanceof Error) return value.stack ?? `${value.name}: ${value.message}`;
-  return `non-Error ${typeof value}`;
+  const bounded = (v: unknown): string => JSON.stringify(String(v).slice(0, 200));
+  try {
+    if (typeof value === 'string') return `non-Error string ${bounded(value)}`;
+    if (typeof value === 'function') return 'non-Error function';
+    if (value === null || typeof value !== 'object') return `non-Error ${typeof value} ${String(value)}`;
+    // Only the fields that identify a failure; an object's other fields may hold anything.
+    const o = value as Record<string, unknown>;
+    const fields = ['name', 'code', 'status', 'statusCode', 'message']
+      .filter(k => typeof o[k] === 'string' || typeof o[k] === 'number')
+      .map(k => `${k}=${typeof o[k] === 'number' ? String(o[k]) : bounded(o[k])}`);
+    return `non-Error object${fields.length > 0 ? ` ${fields.join(' ')}` : ''}`;
+  } catch {
+    return `non-Error ${typeof value}`;
+  }
 }
