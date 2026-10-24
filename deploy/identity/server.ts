@@ -61,6 +61,7 @@ import {
   type DelegationScope,
 } from './surface-agent-restore.js';
 import { enrollProvisionalCredential } from './provisional-play-enrollment.js';
+import { clientIp, createLimiter, rateLimit, sendRateLimited } from './rate-limit.js';
 
 // ── Lazy heavy imports ──────────────────────────────────────
 //
@@ -1921,60 +1922,11 @@ app.use(corsMiddleware({
 //   - Challenge nonces: minted as part of every auth ceremony. 60/min
 //     accommodates retries + multiple methods.
 //   - Token issue / verify: per-session, low volume.
+//   - GET /auth-methods/me: per verified account, not per IP (see the
+//     route). The relay reads it with each user's bearer from its one
+//     address, so a per-IP cap there is one budget for every relay user.
 //
-// In-memory implementation is fine for a single-container Azure
-// Container Apps deployment. For multi-instance deployments, replace
-// with a Redis-backed counter so limits are shared across replicas.
-
-interface RateLimitEntry {
-  count: number;
-  resetAt: number;
-}
-
-const rateLimitBuckets = new Map<string, Map<string, RateLimitEntry>>();
-
-function rateLimit(bucketName: string, opts: { windowMs: number; max: number }) {
-  if (!rateLimitBuckets.has(bucketName)) rateLimitBuckets.set(bucketName, new Map());
-  const bucket = rateLimitBuckets.get(bucketName)!;
-  return (req: express.Request, res: express.Response, next: express.NextFunction): void => {
-    // req.ip honors trust-proxy when set; for Container Apps deployments
-    // the platform terminates TLS at the ingress and the real client IP
-    // is in X-Forwarded-For. Trust the first hop only (set above in
-    // app.set('trust proxy', 1) when configured at deploy time).
-    const ip = req.ip ?? req.socket.remoteAddress ?? 'unknown';
-    const now = Date.now();
-    let entry = bucket.get(ip);
-    if (!entry || entry.resetAt < now) {
-      entry = { count: 0, resetAt: now + opts.windowMs };
-      bucket.set(ip, entry);
-    }
-    entry.count++;
-    if (entry.count > opts.max) {
-      const retryAfterSec = Math.ceil((entry.resetAt - now) / 1000);
-      res.setHeader('Retry-After', String(retryAfterSec));
-      res.status(429).json({
-        error: 'rate_limit_exceeded',
-        title: 'Too many requests',
-        detail: `${opts.max} requests in a ${opts.windowMs / 1000}s window for ${bucketName} on this IP. Retry in ${retryAfterSec}s.`,
-        retryAfterSeconds: retryAfterSec,
-      });
-      return;
-    }
-    next();
-  };
-}
-
-// Periodic cleanup of expired entries so a long-lived process doesn't
-// accumulate entries from one-off attackers. Runs every 5 minutes;
-// `unref` keeps Node from holding the event loop open for it.
-setInterval(() => {
-  const now = Date.now();
-  for (const bucket of rateLimitBuckets.values()) {
-    for (const [ip, entry] of bucket) {
-      if (entry.resetAt < now) bucket.delete(ip);
-    }
-  }
-}, 5 * 60 * 1000).unref();
+// The counters live in rate-limit.ts (in-memory, per process).
 
 const authEnrollLimiter = rateLimit('auth-enroll', { windowMs: 60_000, max: 30 });
 const challengeLimiter = rateLimit('challenges', { windowMs: 60_000, max: 60 });
@@ -1984,6 +1936,14 @@ const tokenLimiter = rateLimit('tokens', { windowMs: 60_000, max: 60 });
 // the table.
 const siweVerifyLimiter = rateLimit('siwe-verify', { windowMs: 60_000, max: 10 });
 const webfingerLimiter = rateLimit('webfinger', { windowMs: 60_000, max: 120 });
+// GET /auth-methods/me. A verified caller counts against their own account: the relay reads
+// a user's registered signing keys once for every client-signed write it makes for them, so
+// 120/min (two a second, sustained) is well above what one person's surfaces produce together
+// while still bounding one token's pod reads. Requests without a valid bearer count against
+// the IP at the auth-enroll rate, and an IP that has used that up is refused before its next
+// token is verified, so the route cannot be used to hammer token verification.
+const authMethodsUserLimiter = createLimiter('auth-methods-me', { windowMs: 60_000, max: 120 });
+const authMethodsFailureLimiter = createLimiter('auth-methods-me-unauthenticated', { windowMs: 60_000, max: 30 });
 
 // ── Browser-friendly landing page ─────────────────────────────────
 //
@@ -3818,15 +3778,25 @@ app.post('/wallet/link', authEnrollLimiter, async (req, res) => {
  * admin dump. No userId path parameter, no lookup by arbitrary id;
  * the token's userId is authoritative.
  */
-app.get('/auth-methods/me', authEnrollLimiter, async (req, res) => {
+app.get('/auth-methods/me', async (req, res) => {
+  const ip = clientIp(req);
+  const blockedFor = authMethodsFailureLimiter.exhausted(ip);
+  if (blockedFor !== null) { sendRateLimited(res, authMethodsFailureLimiter, blockedFor); return; }
   const authHeader = req.headers.authorization;
   if (!authHeader?.startsWith('Bearer ')) {
+    authMethodsFailureLimiter.hit(ip);
     res.status(401).json({ error: 'Bearer token required' });
     return;
   }
   const tr = await verifyToken(authHeader.slice(7));
-  if (!tr.valid) { res.status(401).json({ error: `Invalid bearer token: ${tr.reason}` }); return; }
+  if (!tr.valid) {
+    authMethodsFailureLimiter.hit(ip);
+    res.status(401).json({ error: `Invalid bearer token: ${tr.reason}` });
+    return;
+  }
   const userId = tr.record!.userId;
+  const userWait = authMethodsUserLimiter.hit(userId);
+  if (userWait !== null) { sendRateLimited(res, authMethodsUserLimiter, userWait, 'for this account'); return; }
   const methods = await readAuthMethods(userId);
   const forSigning = req.query.purpose === 'client-signature';
   res.json({

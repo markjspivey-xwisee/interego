@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-10-24 — Identity: reading your signing keys is limited per account, not per address
+
+The relay reads a person's registered signing keys from the identity server once for every client-signed write it makes for them, with that person's own token. Those reads were limited to 30 a minute per IP address, and every one of them comes from the relay's address, so all relay users shared one 30-a-minute budget, which they also shared with the relay's other enrollment calls. The scheduled client-signature live check ran three signers at once and failed with "registered signing keys could not be read (429)". `GET /auth-methods/me` now counts a request with a valid token against that person's account, 120 a minute, and a request that goes over still gets a 429 with `Retry-After`. Requests with no token or an invalid one still count against the IP, 30 a minute, and an address that has used that up is refused before its next token is checked. Enrollment, challenge and token routes keep their limits, and the counters moved into `deploy/identity/rate-limit.ts`.
+
+The relay does not cache a person's keys between writes: a key removed from the account would go on verifying signatures until the cache expired, and with the per-account limit one read per write fits comfortably.
+
 ## 2026-10-24 — Practice Evidence: the scenario list fits a phone
 
 On a phone, Practice Evidence's scenario list was 33 px wider than the screen whenever a scenario showed the badge "Rubric awaiting approval: results won't count as evidence yet". A badge never wrapped, and the list's one column grew to fit it, so the whole page scrolled sideways. In the shared design system a badge now wraps when it is too long for its container, and never grows wider than it. Work Redesign already did this for badges in its stacked tables. The scenario list's column is now capped at the screen's width. Measured on the live site at 390 px, every Practice Evidence view now fits, and nothing changes at desktop width.
