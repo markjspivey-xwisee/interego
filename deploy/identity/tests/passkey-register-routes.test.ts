@@ -10,7 +10,9 @@
  * may only CREATE an account: it is refused when the derived account already holds
  * credentials, whether the index has not loaded that account yet, its owner removed this
  * passkey, or another credential id lands on the same derived id. It used to append the
- * passkey to whatever account lived there and hand back that account's token.
+ * passkey to whatever account lived there and hand back that account's token. After a
+ * refusal, or a create the pod applied without confirming, the account the pod holds is
+ * loaded (no token), so its own passkey can sign in.
  *
  * Run:
  *   node --test --import tsx tests/passkey-register-routes.test.ts
@@ -43,12 +45,12 @@ function cbor(v: unknown): Buffer {
 
 /** A passkey: a credential id (any bytes the authenticator chooses) and its own P-256 key. */
 function softPasskey(rawId: Buffer = crypto.randomBytes(16)) {
-  const { publicKey } = crypto.generateKeyPairSync('ec', { namedCurve: 'P-256' });
+  const { publicKey, privateKey } = crypto.generateKeyPairSync('ec', { namedCurve: 'P-256' });
   const jwk = publicKey.export({ format: 'jwk' });
   const cose = cbor(new Map<number, unknown>([[1, 2], [3, -7], [-1, 1],
     [-2, Buffer.from(jwk.x!, 'base64url')], [-3, Buffer.from(jwk.y!, 'base64url')]]));
   const id = rawId.toString('base64url');
-  return { id, rawId, cose, userId: deriveUserIdFromCredentialId(id) };
+  return { id, rawId, cose, privateKey, userId: deriveUserIdFromCredentialId(id) };
 }
 type SoftPasskey = ReturnType<typeof softPasskey>;
 
@@ -82,6 +84,8 @@ const keys = {
   unreadable: softPasskey(), // its derived pod answers 502 for a while
   fresh: softPasskey(),      // no pod
   raced: softPasskey(),      // no pod when read; another writer creates it before the write
+  lost: softPasskey(),       // no pod; the pod stores the create but answers 504
+  owner: softPasskey(),      // its own unloaded account lists it with its key
   added: softPasskey(),      // added to an existing account with its bearer (mode C)
   bootstrap: softPasskey(),  // claims a seeded account with an invite (mode B)
 };
@@ -94,10 +98,13 @@ const pods = new Map<string, Record<string, unknown>>([
     walletAddresses: ['0x00000000000000000000000000000000000000aa'], webAuthnCredentials: [passkey('cred-kept')] }],
   [keys.collision.userId, { userId: keys.collision.userId, name: 'Collided', walletAddresses: [], didKeys: [],
     webAuthnCredentials: [passkey('cred-victim')] }],
+  [keys.owner.userId, { userId: keys.owner.userId, name: 'Owner', walletAddresses: [], didKeys: [],
+    webAuthnCredentials: [{ ...passkey(keys.owner.id), publicKey: keys.owner.cose.toString('base64url') }] }],
 ]);
 // Only these are in the root listing, so only these load at startup.
 const listed = new Set([keys.removed.userId, keys.collision.userId]);
 const blipping = new Set<string>([keys.unreadable.userId]);
+const lossy = new Set<string>([keys.lost.userId]);
 const racedDoc = { userId: keys.raced.userId, name: 'Other writer', walletAddresses: [], didKeys: [],
   webAuthnCredentials: [passkey('cred-other-writer')] };
 let racedReads = 0;
@@ -135,6 +142,7 @@ function servePods(req: http.IncomingMessage, res: http.ServerResponse): void {
       if (ifNoneMatch === '*' && pods.has(userId)) { res.writeHead(412).end(); return; }
       writes.push({ userId, ifNoneMatch });
       pods.set(userId, JSON.parse(body) as Record<string, unknown>);
+      if (lossy.delete(userId)) { res.writeHead(504).end(); return; }
       res.writeHead(201).end();
     });
     return;
@@ -171,6 +179,23 @@ async function register(key: SoftPasskey, opts: { bearer?: string; bootstrap?: t
   assert.equal(options.status, 200, JSON.stringify(options.json));
   const rpId = (options.json['rp'] as { id: string }).id;
   return post('/auth/webauthn/register', { response: attest(key, String(options.json['challenge']), base, rpId) });
+}
+
+/** A usernameless passkey sign-in: the server finds the account from the credential id. */
+let signCount = 0;
+async function signIn(key: SoftPasskey) {
+  const ch = await post('/challenges', { purpose: 'webauthn-authenticate' });
+  assert.equal(ch.status, 200, JSON.stringify(ch.json));
+  const rpId = String(ch.json['rpId'] ?? new URL(base).hostname);
+  const counter = Buffer.alloc(4);
+  counter.writeUInt32BE(++signCount);
+  const authData = Buffer.concat([crypto.createHash('sha256').update(rpId).digest(), Buffer.from([0x05]), counter]);
+  const clientDataJSON = Buffer.from(JSON.stringify({ type: 'webauthn.get', challenge: String(ch.json['nonce']), origin: base, crossOrigin: false }));
+  const signature = crypto.sign('sha256',
+    Buffer.concat([authData, crypto.createHash('sha256').update(clientDataJSON).digest()]), key.privateKey);
+  return post('/auth/webauthn/authenticate', { response: { id: key.id, rawId: key.id, type: 'public-key', clientExtensionResults: {},
+    response: { clientDataJSON: clientDataJSON.toString('base64url'), authenticatorData: authData.toString('base64url'),
+      signature: signature.toString('base64url') } } });
 }
 
 const writesTo = (userId: string) => writes.filter(w => w.userId === userId);
@@ -266,6 +291,32 @@ test('a derived pod that cannot be read is a 503 with nothing written; once read
   assert.equal(retry.json['userId'], userId);
   assert.ok(retry.json['token']);
   assert.deepEqual(credentialIds(userId), [keys.unreadable.id]);
+});
+
+test('a create the pod applied without confirming it is not reported as unchanged, and the passkey then signs in', async () => {
+  const { userId } = keys.lost;
+  const r = await register(keys.lost);
+  assert.equal(r.status, 503, `${JSON.stringify(r.json)}\n${output}`);
+  assert.equal(r.json['token'], undefined);
+  assert.doesNotMatch(JSON.stringify(r.json), /Nothing was changed/);
+  assert.deepEqual(credentialIds(userId), [keys.lost.id]);
+  // Registering it again is refused (the account exists now) and makes nothing new.
+  const again = await register(keys.lost);
+  assert.equal(again.status, 409, JSON.stringify(again.json));
+  assert.equal(writesTo(userId).length, 1);
+  // The account the pod holds is reachable by signing in with the passkey, as both answers say.
+  const signedIn = await signIn(keys.lost);
+  assert.equal(signedIn.status, 200, `${JSON.stringify(signedIn.json)}\n${output}`);
+  assert.equal(signedIn.json['userId'], userId);
+  assert.ok(signedIn.json['token']);
+});
+
+test('a refused registration loads the account it found, so the owner\'s passkey signs in to it', async () => {
+  const { owner } = keys;
+  await assertRefused(softPasskey(owner.rawId));   // the owner's id, someone else's key
+  const signedIn = await signIn(owner);
+  assert.equal(signedIn.status, 200, `${JSON.stringify(signedIn.json)}\n${output}`);
+  assert.equal(signedIn.json['userId'], owner.userId);
 });
 
 let freshToken = '';

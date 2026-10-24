@@ -2814,8 +2814,8 @@ app.post('/auth/webauthn/register', authEnrollLimiter, async (req, res) => {
         if (!m.name || m.name === targetUserId) m.name = displayName;
         m.webAuthnCredentials.push(record);
       });
-    if (outcome.kind === 'unreadable' || outcome.kind === 'unconfirmed') {
-      log(`WARN: passkey registration of ${targetUserId} not completed (${outcome.kind}): ${outcome.reason}`);
+    if (outcome.kind === 'unreadable') {
+      log(`WARN: passkey registration of ${targetUserId} not completed (unreadable): ${outcome.reason}`);
       res.status(503).json({
         error: 'Could not read this account just now',
         detail: 'The pod for this passkey did not answer. Nothing was changed; try registering again in a minute.',
@@ -2823,6 +2823,17 @@ app.post('/auth/webauthn/register', authEnrollLimiter, async (req, res) => {
       return;
     }
     if (outcome.kind !== 'created') {
+      // Load what the pod holds, with no token: a create the pod applied without confirming
+      // it, or an account the indexes missed, can then be signed in to, as both answers say.
+      await ensureAccountLoaded(targetUserId);
+      if (outcome.kind === 'unconfirmed') {
+        log(`WARN: passkey registration of ${targetUserId} not confirmed: ${outcome.reason}`);
+        res.status(503).json({
+          error: 'Your passkey could not be confirmed as saved',
+          detail: 'The pod did not confirm the write, so it may or may not have been saved. Try signing in with this passkey; if that does not work, register again.',
+        });
+        return;
+      }
       res.status(409).json({ error: 'This passkey cannot be registered as a new account; sign in, then add it from your account' });
       return;
     }
