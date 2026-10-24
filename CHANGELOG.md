@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-10-24 — Practice Evidence: the scenario list fits a phone
+
+On a phone, Practice Evidence's scenario list was 33 px wider than the screen whenever a scenario showed the badge "Rubric awaiting approval: results won't count as evidence yet". A badge never wrapped, and the list's one column grew to fit it, so the whole page scrolled sideways. In the shared design system a badge now wraps when it is too long for its container, and never grows wider than it. Work Redesign already did this for badges in its stacked tables. The scenario list's column is now capped at the screen's width. Measured on the live site at 390 px, every Practice Evidence view now fits, and nothing changes at desktop width.
+
 ## 2026-10-24 — Work Redesign: the customer site, after its first review
 
 `GET /` now serves the landing page only to an `Accept` that names `text/html` itself, names no Markdown, and ranks no JSON, JSON-LD or RDF type as high as HTML. A client that sent `application/json, text/html;q=0.9`, or listed Markdown beside HTML, had been getting the landing page; it gets the JSON-LD or HMD it got before the site existed. Every major browser's own header still gets the page.
