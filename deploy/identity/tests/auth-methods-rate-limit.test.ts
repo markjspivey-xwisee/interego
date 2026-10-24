@@ -25,6 +25,11 @@ import { fileURLToPath } from 'node:url';
 const ALICE = 'u-pk-aaaaaaaaaaaa';
 const BOB = 'u-pk-bbbbbbbbbbbb';
 const CAROL = 'u-pk-cccccccccccc';
+// An account the pod does not hold (deleted, say) whose token this server still signed. Its
+// verification reads the pod, slowly, so a burst of its requests is in flight together.
+const GHOST = 'u-pk-dddddddddddd';
+const GHOST_READ_DELAY_MS = 300;
+let ghostReads = 0;
 const now = new Date().toISOString();
 const pods = new Map<string, Record<string, unknown>>([ALICE, BOB, CAROL].map(userId => [userId, {
   userId, name: userId, walletAddresses: [], didKeys: [],
@@ -45,6 +50,11 @@ function servePods(req: http.IncomingMessage, res: http.ServerResponse): void {
     return;
   }
   const m = /^\/([^/]+)\/auth-methods\.jsonld$/.exec(path);
+  if (m && req.method === 'GET' && m[1] === GHOST) {
+    ghostReads++;
+    setTimeout(() => res.writeHead(404).end(), GHOST_READ_DELAY_MS);
+    return;
+  }
   if (m && req.method === 'GET' && pods.has(m[1]!)) {
     res.writeHead(200, { 'Content-Type': 'application/ld+json' });
     res.end(JSON.stringify(pods.get(m[1]!)));
@@ -150,7 +160,20 @@ test('verified reads leave the address\'s enrollment budget alone', async () => 
   assert.equal(r.status, 200, await r.text());
 });
 
-test('requests without a valid token are still limited per IP, before verification', async () => {
+test('a concurrent burst is counted before verification awaits the pod', async () => {
+  // Every request is in flight while the first one's pod read is still pending, so a count
+  // taken only after verification would let all of them through to the pod.
+  const burst = PER_USER + 60;
+  const statuses = (await Promise.all(Array.from({ length: burst }, () => readKeys(RELAY_IP, token(GHOST))))).map(r => r.status);
+  assert.equal(statuses.filter(s => s === 429).length, burst - PER_USER, `statuses: ${statuses.join(',')}`);
+  assert.equal(statuses.filter(s => s === 401).length, PER_USER);
+  assert.ok(ghostReads <= PER_USER, `${ghostReads} pod reads for one account's tokens`);
+  // The failures counted against that account, not the address: another relay user's read
+  // from the same address still succeeds.
+  assert.equal((await readKeys(RELAY_IP, token(BOB))).status, 200);
+});
+
+test('requests without a signed token are still limited per IP', async () => {
   const attacker = '192.0.2.66';
   const forged = `cg2_${Buffer.from('{}').toString('base64url')}.not-a-signature`;
   for (let i = 1; i <= FAILURES_PER_IP; i++) {
@@ -160,8 +183,9 @@ test('requests without a valid token are still limited per IP, before verificati
   const limited = await fetch(`${base}/auth-methods/me`, { headers: { 'X-Forwarded-For': attacker, Authorization: `Bearer ${forged}` } });
   assert.equal(limited.status, 429);
   assert.ok(Number(limited.headers.get('retry-after')) > 0);
-  // The address is refused before its next token is looked at, even a valid one.
-  assert.equal((await readKeys(attacker, token(BOB))).status, 429);
+  // A token this server signed is counted against its account instead, so a forger sharing
+  // an address (the relay's, say) cannot lock that address's real users out.
+  assert.equal((await readKeys(attacker, token(BOB))).status, 200);
   // Other addresses are unaffected, and so is the relay's: its verified reads used none of it.
   assert.equal((await readKeys(RELAY_IP, forged)).status, 401);
   assert.equal((await readKeys(RELAY_IP, token(BOB))).status, 200);

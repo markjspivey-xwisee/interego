@@ -1936,12 +1936,12 @@ const tokenLimiter = rateLimit('tokens', { windowMs: 60_000, max: 60 });
 // the table.
 const siweVerifyLimiter = rateLimit('siwe-verify', { windowMs: 60_000, max: 10 });
 const webfingerLimiter = rateLimit('webfinger', { windowMs: 60_000, max: 120 });
-// GET /auth-methods/me. A verified caller counts against their own account: the relay reads
-// a user's registered signing keys once for every client-signed write it makes for them, so
-// 120/min (two a second, sustained) is well above what one person's surfaces produce together
-// while still bounding one token's pod reads. Requests without a valid bearer count against
-// the IP at the auth-enroll rate, and an IP that has used that up is refused before its next
-// token is verified, so the route cannot be used to hammer token verification.
+// GET /auth-methods/me. A token this server signed counts against the account it names: the
+// relay reads a user's registered signing keys once for every client-signed write it makes for
+// them, so 120/min (two a second, sustained) is well above what one person's surfaces produce
+// together while still bounding the verifications and pod reads one account's tokens cause.
+// A missing bearer or one this server did not sign counts against the IP at the auth-enroll
+// rate, so forged tokens cannot be used to hammer the route either.
 const authMethodsUserLimiter = createLimiter('auth-methods-me', { windowMs: 60_000, max: 120 });
 const authMethodsFailureLimiter = createLimiter('auth-methods-me-unauthenticated', { windowMs: 60_000, max: 30 });
 
@@ -3779,24 +3779,28 @@ app.post('/wallet/link', authEnrollLimiter, async (req, res) => {
  * the token's userId is authoritative.
  */
 app.get('/auth-methods/me', async (req, res) => {
-  const ip = clientIp(req);
-  const blockedFor = authMethodsFailureLimiter.exhausted(ip);
-  if (blockedFor !== null) { sendRateLimited(res, authMethodsFailureLimiter, blockedFor); return; }
-  const authHeader = req.headers.authorization;
-  if (!authHeader?.startsWith('Bearer ')) {
-    authMethodsFailureLimiter.hit(ip);
-    res.status(401).json({ error: 'Bearer token required' });
+  // Every request is counted, synchronously, before anything here awaits, so a concurrent
+  // burst cannot slip past a count that lands only after verification. A bearer this server
+  // did not sign (or none) counts against the address; the HMAC check that decides that is
+  // the only work it gets. A signed token counts against the account it names, revoked or
+  // expired ones included, so one account's stale tokens cannot use up the address's budget
+  // that every other relay user's reads arrive under.
+  const bearer = req.headers.authorization?.startsWith('Bearer ') ? req.headers.authorization.slice(7) : undefined;
+  const signed = bearer === undefined ? undefined : parseAndVerifySignature(bearer);
+  if (bearer === undefined || signed?.valid !== true) {
+    const ipWait = authMethodsFailureLimiter.hit(clientIp(req));
+    if (ipWait !== null) { sendRateLimited(res, authMethodsFailureLimiter, ipWait); return; }
+    res.status(401).json({ error: signed ? `Invalid bearer token: ${(signed as { reason: string }).reason}` : 'Bearer token required' });
     return;
   }
-  const tr = await verifyToken(authHeader.slice(7));
+  const userWait = authMethodsUserLimiter.hit(signed.payload.userId);
+  if (userWait !== null) { sendRateLimited(res, authMethodsUserLimiter, userWait, 'for this account'); return; }
+  const tr = await verifyToken(bearer);
   if (!tr.valid) {
-    authMethodsFailureLimiter.hit(ip);
     res.status(401).json({ error: `Invalid bearer token: ${tr.reason}` });
     return;
   }
   const userId = tr.record!.userId;
-  const userWait = authMethodsUserLimiter.hit(userId);
-  if (userWait !== null) { sendRateLimited(res, authMethodsUserLimiter, userWait, 'for this account'); return; }
   const methods = await readAuthMethods(userId);
   const forSigning = req.query.purpose === 'client-signature';
   res.json({

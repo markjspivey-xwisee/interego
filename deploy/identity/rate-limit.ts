@@ -3,7 +3,7 @@
  *
  * `rateLimit()` is the per-IP middleware the auth routes use. `createLimiter()` is the
  * counter underneath it, for a route that can only name its key after it has looked at the
- * request: GET /auth-methods/me counts a verified caller against their own account, because
+ * request: GET /auth-methods/me counts a signed token against the account it names, because
  * every read the relay makes on its users' behalf arrives from the relay's one address.
  *
  * In-memory, so the counts are per process. For a multi-instance deployment, replace with a
@@ -21,8 +21,6 @@ export interface Limiter {
   readonly opts: RateLimitOptions;
   /** Count one request against `key`: the seconds to wait when that is over the cap, else null. */
   hit(key: string): number | null;
-  /** The seconds to wait when `key` has already used its whole budget, without counting; else null. */
-  exhausted(key: string): number | null;
 }
 
 const buckets = new Map<string, Map<string, RateLimitEntry>>();
@@ -47,11 +45,6 @@ export function createLimiter(bucketName: string, opts: RateLimitOptions): Limit
       }
       entry.count++;
       return entry.count > opts.max ? wait(entry, now) : null;
-    },
-    exhausted(key) {
-      const now = Date.now();
-      const entry = current(key, now);
-      return entry && entry.count >= opts.max ? wait(entry, now) : null;
     },
   };
 }
