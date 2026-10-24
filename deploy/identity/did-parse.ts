@@ -17,9 +17,10 @@
  *     content-addressed, the public key is encoded INTO the DID itself,
  *     so a given did:key string can never refer to a different key.
  *   - did:web entries are bounded to 60s so a key rotation surfaces
- *     within a minute (this module doesn't fetch the DID document — the
- *     handler still has to supply publicKeyMultibase — but if it later
- *     does, the TTL is already wired).
+ *     within a minute. `/auth/did` stores none today: it does not fetch
+ *     DID documents, so a did:web key is the caller's claim, and caching
+ *     it served one caller's key to the next sign-in with that DID. The
+ *     TTL is kept for when the server resolves did:web documents itself.
  *
  * Bounded — cap at MAX_ENTRIES via insertion-order LRU eviction (the
  * native Map already preserves insertion order, so dropping the first

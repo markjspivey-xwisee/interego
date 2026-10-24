@@ -341,6 +341,28 @@ function encodeEd25519Multibase(rawKey: Buffer): string {
 }
 
 /**
+ * The raw 32-byte Ed25519 key in a `publicKeyMultibase`: the W3C form
+ * 'z' + base58btc(0xed 0x01 || key) first, then the legacy 'z' + base64url(key)
+ * this server once wrote. Null when neither yields a key (or the value is not a string,
+ * as in a malformed auth-methods document).
+ */
+function decodeEd25519Multibase(multibase: unknown): { key: Buffer; format: 'base58btc' | 'base64url-legacy' } | null {
+  if (typeof multibase !== 'string' || !multibase.startsWith('z')) return null;
+  const encoded = multibase.slice(1);
+  try {
+    const decoded = base58btcDecode(encoded);
+    if (decoded.length === 34
+      && decoded[0] === ED25519_MULTICODEC[0]
+      && decoded[1] === ED25519_MULTICODEC[1]) {
+      return { key: Buffer.from(decoded.subarray(2)), format: 'base58btc' };
+    }
+  } catch { /* try the legacy form */ }
+  const legacy = Buffer.from(encoded, 'base64url');
+  if (legacy.length >= 32) return { key: Buffer.from(legacy.subarray(legacy.length - 32)), format: 'base64url-legacy' };
+  return null;
+}
+
+/**
  * Encode a 32-byte raw X25519 public key as a W3C-spec multibase string:
  *   'z' + base58btc(0xec 0x01 || rawKey)
  * Canonical form for `publicKeyMultibase` on `X25519KeyAgreementKey2020`
@@ -1219,6 +1241,14 @@ async function ensureAccountLoaded(userId: string): Promise<'loaded' | 'absent' 
     return 'unreadable';
   }
 }
+
+// A first-time sign-in or passkey registration whose credential-derived id already names an
+// account that does not hold that credential. The answer is the same for a DID, a wallet and
+// a passkey, and nothing is written.
+const CREDENTIAL_NOT_ON_ITS_ACCOUNT = {
+  error: 'This credential is not registered to the account its id names',
+  detail: 'An account with this credential\'s id exists but does not hold this credential. Nothing was changed. Sign in with a credential that account holds, then add this one from there.',
+};
 
 /**
  * Promise-cached initial-rebuild handle.
@@ -2404,6 +2434,8 @@ app.post('/auth/siwe', authEnrollLimiter, async (req, res) => {
     }
   }
 
+  // True once this request has registered a new account; otherwise the wallet is appended below.
+  let registered = false;
   if (!user) {
     // Choose the target userId using the same three-mode logic as WebAuthn.
     // Mode (C) add-device is handled upstream (bearer token already
@@ -2429,32 +2461,56 @@ app.post('/auth/siwe', authEnrollLimiter, async (req, res) => {
       return;
     }
     const targetUserId = resolved.targetUserId;
-
-    if (!identities.has(targetUserId)) {
-      const displayName = String(name ?? targetUserId);
-      seedIdentity(targetUserId, 'user', displayName);
-      const def = defaultAgentForRegistration(targetUserId, displayName, surfaceAgent);
-      seedIdentity(def.agentId, 'agent', def.label, targetUserId, 'ReadWrite');
+    // ★ Same as /auth/did: the derived id may name an account already on its pod that this
+    // server has not loaded, and the fresh document below would replace its
+    // auth-methods.jsonld. An account that holds this wallet signs in as a returning user;
+    // one that does not is refused (u-eth- ids keep only 48 bits of the address).
+    const account = resolved.mode === 'derive' ? await ensureAccountLoaded(targetUserId) : 'absent';
+    if (account === 'unreadable') {
+      res.status(503).json({
+        error: 'Could not read this account just now',
+        detail: 'The pod holding this account did not answer. Nothing was changed; try signing in again in a minute.',
+      });
+      return;
     }
-    user = identities.get(targetUserId)!;
-    const agentId = [...identities.values()].find(i => i.type === 'agent' && i.owner === targetUserId)?.id
-      ?? defaultAgentForRegistration(targetUserId, user.name, surfaceAgent).agentId;
-    const methods = emptyAuthMethods(user.id, user.name, agentId);
-    methods.walletAddresses.push(recoveredAddress);
-    inlineApplyAuthMethods(user.id, methods);
-    scheduleDeferredAuthMethodsWrite(user.id, methods, 'siwe-first-time');
-    if (timingEnabled()) logTiming('siwe-pod-write-scheduled', requestStart, { branch: 'first-time' });
-    // FIX A: identity-server no longer mirrors /profile/card or /<id>/agents.
-    // The relay is now the single authoritative writer for both pod-side
-    // documents and does so synchronously inside /oauth/verify before
-    // returning the OAuth code — see deploy/mcp-relay/server.ts. Two
-    // writers were previously racing each other on every OAuth completion,
-    // causing CSS file-backend HTTP 500s on the second OAuth ("Read counter
-    // would become negative" on /profile/card) and a ~10s 404 window for
-    // any client polling those URLs immediately after auth.
-    log(`First-time SIWE registration: ${targetUserId} wallet=${recoveredAddress} defaultAgent=${agentId} (surfaceHint=${surfaceAgent ?? 'none'})`);
-  } else {
-    // Add-wallet (authenticated) path — append if not already bound.
+    if (account === 'loaded') {
+      if (!(await readAuthMethods(targetUserId)).walletAddresses.includes(recoveredAddress)) {
+        log(`Refused wallet ${recoveredAddress}: its account ${targetUserId} exists and does not hold it`);
+        res.status(409).json(CREDENTIAL_NOT_ON_ITS_ACCOUNT);
+        return;
+      }
+      user = identities.get(targetUserId)!;
+      log(`Wallet ${recoveredAddress} was not in the index; its account ${targetUserId} holds it, so it is not registered afresh`);
+    } else {
+      registered = true;
+      if (!identities.has(targetUserId)) {
+        const displayName = String(name ?? targetUserId);
+        seedIdentity(targetUserId, 'user', displayName);
+        const def = defaultAgentForRegistration(targetUserId, displayName, surfaceAgent);
+        seedIdentity(def.agentId, 'agent', def.label, targetUserId, 'ReadWrite');
+      }
+      user = identities.get(targetUserId)!;
+      const agentId = [...identities.values()].find(i => i.type === 'agent' && i.owner === targetUserId)?.id
+        ?? defaultAgentForRegistration(targetUserId, user.name, surfaceAgent).agentId;
+      const methods = emptyAuthMethods(user.id, user.name, agentId);
+      methods.walletAddresses.push(recoveredAddress);
+      inlineApplyAuthMethods(user.id, methods);
+      scheduleDeferredAuthMethodsWrite(user.id, methods, 'siwe-first-time');
+      if (timingEnabled()) logTiming('siwe-pod-write-scheduled', requestStart, { branch: 'first-time' });
+      // FIX A: identity-server no longer mirrors /profile/card or /<id>/agents.
+      // The relay is now the single authoritative writer for both pod-side
+      // documents and does so synchronously inside /oauth/verify before
+      // returning the OAuth code — see deploy/mcp-relay/server.ts. Two
+      // writers were previously racing each other on every OAuth completion,
+      // causing CSS file-backend HTTP 500s on the second OAuth ("Read counter
+      // would become negative" on /profile/card) and a ~10s 404 window for
+      // any client polling those URLs immediately after auth.
+      log(`First-time SIWE registration: ${targetUserId} wallet=${recoveredAddress} defaultAgent=${agentId} (surfaceHint=${surfaceAgent ?? 'none'})`);
+    }
+  }
+  if (!registered) {
+    // A returning sign-in or an added wallet: the indexed account, the bearer's, or the one
+    // found above holding it. Append the wallet if it is not already bound.
     try {
       await commitCredentialEnrollment(user.id, 'siwe-add-wallet', methods => {
         if (methods.walletAddresses.includes(recoveredAddress)) return false;
@@ -2706,6 +2762,23 @@ app.post('/auth/webauthn/register', authEnrollLimiter, async (req, res) => {
   } else {
     // Mode (A) fresh user — derive userId from the credential itself.
     targetUserId = deriveUserIdFromCredentialId(credentialId);
+    // ★ The credential id is new here, so an account already under its id holds other
+    // credentials: a u-pk- id keeps 48 bits of a hash of the credential id, which a
+    // software authenticator chooses. Enrolling would add this passkey to that account,
+    // so it is refused, as /auth/did and /auth/siwe refuse a credential its account lacks.
+    const account = await ensureAccountLoaded(targetUserId);
+    if (account === 'unreadable') {
+      res.status(503).json({
+        error: 'Could not read this account just now',
+        detail: 'The pod holding this account did not answer. Nothing was changed; try registering again in a minute.',
+      });
+      return;
+    }
+    if (account === 'loaded') {
+      log(`Refused passkey ${credentialId}: its account ${targetUserId} exists and does not hold it`);
+      res.status(409).json(CREDENTIAL_NOT_ON_ITS_ACCOUNT);
+      return;
+    }
   }
 
   // Ensure an Identity shell exists for the target. Seeded users already
@@ -2876,13 +2949,18 @@ app.post('/auth/did', authEnrollLimiter, async (req, res) => {
   // arithmetic per character that's redundant after the first call.
   let publicKeyRaw: Buffer;
   let didKeyFormat: 'base58btc' | 'base64url-legacy' | null = null;
+  // Only a did:key names its key. For any other DID the key is the caller's claim, and on
+  // an account it must be the key stored with the DID (checked before a token is issued).
+  const keyInDid = did.startsWith('did:key:z') && did.length > 10;
   const parseStart = timingEnabled() ? startTiming() : 0;
-  const cached = getCachedParsedDid(did);
+  // Only a did:key is cached by its DID. A caller-supplied key cached under a did:web DID
+  // was served to the next sign-in with that DID, whoever made it, for the cache's 60s.
+  const cached = keyInDid ? getCachedParsedDid(did) : undefined;
   if (cached) {
     publicKeyRaw = cached.publicKeyRaw;
     didKeyFormat = cached.format;
     if (timingEnabled()) logTiming('did-parse', parseStart, { did: did.slice(0, 24), cache: 'hit' });
-  } else if (did.startsWith('did:key:z') && did.length > 10) {
+  } else if (keyInDid) {
     // Per W3C did:key spec: 'z' + base58btc(0xed 0x01 || rawKey32) for
     // Ed25519. We accept the spec form first and the legacy
     // 'z' + base64url(rawKey32) shape this server originally emitted as
@@ -2899,39 +2977,17 @@ app.post('/auth/did', authEnrollLimiter, async (req, res) => {
     if (timingEnabled()) logTiming('did-parse', parseStart, { did: did.slice(0, 24), cache: 'miss', format: didKeyFormat });
   } else if (publicKeyMultibase?.startsWith('z')) {
     // Caller-supplied publicKeyMultibase for non-did:key DIDs (did:web, etc.).
-    // Try W3C base58btc-with-multicodec first; fall back to the legacy
-    // base64url form for back-compat.
-    const encoded = publicKeyMultibase.slice(1);
-    let resolved: Buffer | null = null;
-    let resolvedFormat: 'base58btc' | 'base64url-legacy' | null = null;
-    try {
-      const decoded = base58btcDecode(encoded);
-      if (decoded.length === 34
-        && decoded[0] === ED25519_MULTICODEC[0]
-        && decoded[1] === ED25519_MULTICODEC[1]) {
-        resolved = Buffer.from(decoded.subarray(2));
-        resolvedFormat = 'base58btc';
-      }
-    } catch { /* fall through */ }
-    if (!resolved) {
-      try {
-        const legacy = Buffer.from(encoded, 'base64url');
-        if (legacy.length >= 32) {
-          resolved = Buffer.from(legacy.subarray(legacy.length - 32));
-          resolvedFormat = 'base64url-legacy';
-          log(`[did-key-legacy] accepted base64url-encoded publicKeyMultibase for ${did}; client should migrate to W3C base58btc encoding`);
-        }
-      } catch { /* fall through */ }
-    }
-    if (!resolved || !resolvedFormat) {
+    // W3C base58btc-with-multicodec first; the legacy base64url form for back-compat.
+    const decoded = decodeEd25519Multibase(publicKeyMultibase);
+    if (!decoded) {
       res.status(400).json({ error: 'Could not decode publicKeyMultibase — tried W3C base58btc(0xed 0x01 || key) and legacy base64url(rawKey); neither yielded a 32-byte Ed25519 public key' });
       return;
     }
-    publicKeyRaw = resolved;
-    // Cache the parsed result for did:web too — TTL is 60s per the
-    // did-parse module so a rotated did:web key still surfaces quickly.
-    setCachedParsedDid(did, publicKeyRaw, resolvedFormat);
-    if (timingEnabled()) logTiming('did-parse', parseStart, { did: did.slice(0, 24), cache: 'miss', format: resolvedFormat, source: 'multibase' });
+    if (decoded.format === 'base64url-legacy') {
+      log(`[did-key-legacy] accepted base64url-encoded publicKeyMultibase for ${did}; client should migrate to W3C base58btc encoding`);
+    }
+    publicKeyRaw = decoded.key;
+    if (timingEnabled()) logTiming('did-parse', parseStart, { did: did.slice(0, 24), cache: 'miss', format: decoded.format, source: 'multibase' });
   } else {
     res.status(400).json({ error: 'Supply publicKeyMultibase alongside non-did:key DIDs' });
     return;
@@ -3002,6 +3058,8 @@ app.post('/auth/did', authEnrollLimiter, async (req, res) => {
   // first-time registration and add-did paths.
   const canonicalPublicKeyMultibase = encodeEd25519Multibase(publicKeyRaw);
 
+  // True once this request has registered a new account; otherwise the DID is appended below.
+  let registered = false;
   if (!user) {
     // Mode (C) add-device handled upstream (bearer populated `user`);
     // resolveTargetUserId covers (A) derive and (B) bootstrap-claim with
@@ -3025,39 +3083,79 @@ app.post('/auth/did', authEnrollLimiter, async (req, res) => {
       return;
     }
     const targetUserId = resolved.targetUserId;
-
-    if (!identities.has(targetUserId)) {
-      const displayName = String(name ?? targetUserId);
-      seedIdentity(targetUserId, 'user', displayName);
-      const def = defaultAgentForRegistration(targetUserId, displayName, surfaceAgent);
-      seedIdentity(def.agentId, 'agent', def.label, targetUserId, 'ReadWrite');
+    // ★ The derived id may name an account already on its pod that this server has not
+    // loaded, as when every account's index entry was missing after the 2026-10-23 listing
+    // bug. The fresh document below would replace that account's auth-methods.jsonld: its
+    // other credentials, its name, and the sessionEpoch that keeps signed-out tokens
+    // revoked. So the pod is asked first. An account that holds this DID signs in as a
+    // returning user. One that does not is refused, never given the DID: the DID was
+    // removed from it, or it is another credential's account, since an id keeps only 48
+    // bits of a hash the caller can search for. Adding a DID takes a credential on file.
+    const account = resolved.mode === 'derive' ? await ensureAccountLoaded(targetUserId) : 'absent';
+    if (account === 'unreadable') {
+      res.status(503).json({
+        error: 'Could not read this account just now',
+        detail: 'The pod holding this account did not answer. Nothing was changed; try signing in again in a minute.',
+      });
+      return;
     }
-    user = identities.get(targetUserId)!;
-    const agentId = [...identities.values()].find(i => i.type === 'agent' && i.owner === targetUserId)?.id
-      ?? defaultAgentForRegistration(targetUserId, user.name, surfaceAgent).agentId;
-    const methods = emptyAuthMethods(user.id, user.name, agentId);
-    methods.didKeys.push({
-      did,
-      publicKeyMultibase: canonicalPublicKeyMultibase,
-      keyType: 'Ed25519VerificationKey2020',
-      createdAt: new Date().toISOString(),
-    });
-    // FIX A: defer the pod-side PUT off the hot response path. The
-    // in-memory record (cache + didIndex + walletIndex + credentialIndex)
-    // is updated SYNCHRONOUSLY first so any concurrent /auth/did or
-    // verifyToken from this user immediately sees the new credential —
-    // no pod read required for the new user's first token to verify.
-    // The actual ~2.5s CSS PUT runs in the background under the per-
-    // userId mutex; failures retry + log at ERROR for operator alerting.
-    inlineApplyAuthMethods(user.id, methods);
-    scheduleDeferredAuthMethodsWrite(user.id, methods, 'did-first-time');
-    if (timingEnabled()) logTiming('did-pod-write-scheduled', requestStart, { branch: 'first-time' });
-    // FIX A: identity-server no longer mirrors /profile/card or /<id>/agents.
-    // Single authoritative pod-side writer is the relay's /oauth/verify
-    // handler. See SIWE first-touch comment above for background.
-    log(`First-time DID registration: ${targetUserId} did=${did} defaultAgent=${agentId} (surfaceHint=${surfaceAgent ?? 'none'})`);
-  } else {
-    // Add-did (authenticated) path — append if not already bound.
+    if (account === 'loaded') {
+      if (!(await readAuthMethods(targetUserId)).didKeys.some(k => k.did === did)) {
+        log(`Refused DID ${did}: its account ${targetUserId} exists and does not hold it`);
+        res.status(409).json(CREDENTIAL_NOT_ON_ITS_ACCOUNT);
+        return;
+      }
+      user = identities.get(targetUserId)!;
+      log(`DID ${did} was not in the index; its account ${targetUserId} holds it, so it is not registered afresh`);
+    } else {
+      registered = true;
+      if (!identities.has(targetUserId)) {
+        const displayName = String(name ?? targetUserId);
+        seedIdentity(targetUserId, 'user', displayName);
+        const def = defaultAgentForRegistration(targetUserId, displayName, surfaceAgent);
+        seedIdentity(def.agentId, 'agent', def.label, targetUserId, 'ReadWrite');
+      }
+      user = identities.get(targetUserId)!;
+      const agentId = [...identities.values()].find(i => i.type === 'agent' && i.owner === targetUserId)?.id
+        ?? defaultAgentForRegistration(targetUserId, user.name, surfaceAgent).agentId;
+      const methods = emptyAuthMethods(user.id, user.name, agentId);
+      methods.didKeys.push({
+        did,
+        publicKeyMultibase: canonicalPublicKeyMultibase,
+        keyType: 'Ed25519VerificationKey2020',
+        createdAt: new Date().toISOString(),
+      });
+      // FIX A: defer the pod-side PUT off the hot response path. The
+      // in-memory record (cache + didIndex + walletIndex + credentialIndex)
+      // is updated SYNCHRONOUSLY first so any concurrent /auth/did or
+      // verifyToken from this user immediately sees the new credential —
+      // no pod read required for the new user's first token to verify.
+      // The actual ~2.5s CSS PUT runs in the background under the per-
+      // userId mutex; failures retry + log at ERROR for operator alerting.
+      inlineApplyAuthMethods(user.id, methods);
+      scheduleDeferredAuthMethodsWrite(user.id, methods, 'did-first-time');
+      if (timingEnabled()) logTiming('did-pod-write-scheduled', requestStart, { branch: 'first-time' });
+      // FIX A: identity-server no longer mirrors /profile/card or /<id>/agents.
+      // Single authoritative pod-side writer is the relay's /oauth/verify
+      // handler. See SIWE first-touch comment above for background.
+      log(`First-time DID registration: ${targetUserId} did=${did} defaultAgent=${agentId} (surfaceHint=${surfaceAgent ?? 'none'})`);
+    }
+  }
+  if (!registered) {
+    // ★ A DID that does not name its key signs in to an account only with the key stored
+    // when the DID was added. The signature above was checked against whatever key the
+    // caller sent, so without this anyone who knew such a DID could sign in as its account
+    // with a key of their own.
+    if (!keyInDid) {
+      const onFile = (await readAuthMethods(user.id)).didKeys.find(k => k.did === did);
+      if (onFile && !decodeEd25519Multibase(onFile.publicKeyMultibase)?.key.equals(publicKeyRaw)) {
+        log(`Refused DID ${did} for ${user.id}: signed with a key other than the one on file`);
+        res.status(401).json({ error: 'This DID is registered with a different key' });
+        return;
+      }
+    }
+    // A returning sign-in or an added DID: the indexed account, the bearer's, or the one
+    // found above holding it. Append the DID if it is not already bound.
     try {
       await commitCredentialEnrollment(user.id, 'did-add-did', methods => {
         if (methods.didKeys.some(k => k.did === did)) return false;
