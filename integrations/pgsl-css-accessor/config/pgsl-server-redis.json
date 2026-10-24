@@ -212,7 +212,12 @@
       "pod": "css"
     },
     {
-      "comment": "Shared Redis read-write/resource locker across replicas (ephemeral, atomic).",
+      "comment": [
+        "Shared Redis read-write/resource locker across replicas (ephemeral, atomic).",
+        "expiration 90000 ms, not 6000, for the reason given on the ResourceLocker override in",
+        "pgsl-server.json: css-gate waits up to 90 s for a response head, and an expiry that fires",
+        "first answers 500 while the operation carries on without its lock."
+      ],
       "@id": "urn:solid-server:default:ResourceLocker",
       "@type": "WrappedExpiringReadWriteLocker",
       "locker": {
@@ -220,7 +225,7 @@
         "@type": "RedisLocker",
         "redisClient": "__REDIS_ADDR__"
       },
-      "expiration": 6000
+      "expiration": 90000
     },
     {
       "comment": "Start the RedisLocker (and clear any stale locks) on boot.",
