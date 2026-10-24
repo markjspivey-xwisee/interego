@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-10-24 — Identity: a first-time wallet or DID sign-in no longer overwrites an existing account
+
+A wallet or DID that the identity server's in-memory indexes did not know was treated as a brand-new account: the server derived the account id from it (`u-eth-…`, `u-did-…`) and wrote that account's `auth-methods.jsonld` holding only the new credential, without reading the pod first. The indexes miss credentials for reasons that say nothing about the pod — it was unreadable or not yet loaded when the container started, or the owner had removed that wallet or DID — and each time the write replaced the account's passkeys, other wallets and DIDs with the one credential, and gave a removed credential its access back.
+
+The first-time path now reads the account's pod first, under the per-user lock. A pod that lists this credential is a sign-in to that account, and nothing is written; a pod holding other credentials refuses it (401: sign in with an existing credential and add this one from there); a pod that cannot be read answers 503 and nothing is written. Only a pod with no credentials gets an account, written with `If-None-Match: *` when no document existed, so a document another writer created meanwhile is read again rather than overwritten. That write is now part of the response rather than deferred, which adds a pod round trip to a first sign-in only.
+
 ## 2026-10-24 — Practice Evidence: the scenario list fits a phone
 
 On a phone, Practice Evidence's scenario list was 33 px wider than the screen whenever a scenario showed the badge "Rubric awaiting approval: results won't count as evidence yet". A badge never wrapped, and the list's one column grew to fit it, so the whole page scrolled sideways. In the shared design system a badge now wraps when it is too long for its container, and never grows wider than it. Work Redesign already did this for badges in its stacked tables. The scenario list's column is now capped at the screen's width. Measured on the live site at 390 px, every Practice Evidence view now fits, and nothing changes at desktop width.

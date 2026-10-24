@@ -46,6 +46,7 @@ import {
   deriveUserIdFromDid,
 } from './derive-userid.js';
 import { resolveTargetUserId } from './resolve-target-userid.js';
+import { claimFirstSignIn, type FirstSignInOutcome } from './first-sign-in.js';
 import { authenticatePasskey, PasskeyPersistenceError } from './passkey-authentication.js';
 import { listPods, loadAccounts, readPodJson, type AccountLoadReport, type FetchLike } from './account-index.js';
 import { createProvisionalPlayProvider } from './provisional-play-provider.js';
@@ -713,7 +714,10 @@ async function fetchPodAuthMethods(
   return normaliseAuthMethods(body, userId);
 }
 
-async function putPodAuthMethods(userId: string, methods: AuthMethods): Promise<void> {
+// `ifAbsent`: write only if the pod has no auth-methods document yet (If-None-Match: *); when
+// it has one, nothing is written and this throws PodDocumentExistsError.
+class PodDocumentExistsError extends Error {}
+async function putPodAuthMethods(userId: string, methods: AuthMethods, opts: { ifAbsent?: boolean } = {}): Promise<void> {
   const url = podAuthMethodsUrl(userId);
   // Ensure pod container exists first (idempotent).
   try {
@@ -728,9 +732,10 @@ async function putPodAuthMethods(userId: string, methods: AuthMethods): Promise<
   } catch { /* best-effort */ }
   const r = await fetch(url, {
     method: 'PUT',
-    headers: { 'Content-Type': 'application/ld+json' },
+    headers: { 'Content-Type': 'application/ld+json', ...(opts.ifAbsent ? { 'If-None-Match': '*' } : {}) },
     body: JSON.stringify(methods, null, 2),
   });
+  if (opts.ifAbsent && r.status === 412) throw new PodDocumentExistsError(`${url} exists`);
   if (!r.ok && r.status !== 205) {
     throw new Error(`PUT ${url} failed: ${r.status} ${r.statusText}`);
   }
@@ -740,6 +745,48 @@ async function putPodAuthMethods(userId: string, methods: AuthMethods): Promise<
   // Record that auth-methods.jsonld now exists on the pod so future
   // restarts can short-circuit re-writes (relay's bootstrappedPods pattern).
   bootstrapUserIds.add(userId);
+}
+
+/**
+ * A first-time wallet or DID sign-in to `userId` (first-sign-in.ts): read the account's pod
+ * under its mutex and create the account only if the pod holds no credentials, so a
+ * credential the indexes missed never replaces the ones the account already has. A
+ * 'returning' account is loaded into the indexes; nothing else is touched unless 'created'.
+ */
+async function claimFirstSignInOnPod(
+  userId: string,
+  agentId: string,
+  displayName: string,
+  holds: (methods: AuthMethods) => boolean,
+  add: (methods: AuthMethods) => void,
+): Promise<FirstSignInOutcome<AuthMethods>> {
+  const outcome = await withIdentityPodMutex(userId, () => claimFirstSignIn<AuthMethods>({
+    read: async () => {
+      // A deferred write still queued behind this mutex is what the pod is about to hold.
+      const pending = identityPendingPodWrites.has(userId) ? authMethodsCache.get(userId) : undefined;
+      if (pending) return pending.value;
+      const body = await readPodJson(podFetch, podAuthMethodsUrl(userId));
+      return body === null ? null : normaliseAuthMethods(body, userId);
+    },
+    holds,
+    build: existing => {
+      // A document without credentials keeps what it records (its session epoch above all).
+      const methods = existing ? { ...structuredClone(existing), agentId } : emptyAuthMethods(userId, displayName, agentId);
+      add(methods);
+      return methods;
+    },
+    create: async (methods, ifAbsent) => {
+      try {
+        await putPodAuthMethods(userId, methods, { ifAbsent });
+        return true;
+      } catch (err) {
+        if (err instanceof PodDocumentExistsError) return false;
+        throw err;
+      }
+    },
+  }));
+  if (outcome.kind === 'returning') adoptAccount(userId, outcome.methods);
+  return outcome;
 }
 
 async function commitCredentialEnrollment(
@@ -1160,10 +1207,15 @@ async function loadAccountFromPod(userId: string): Promise<boolean> {
       if (provisionalPlay.open(m.provisionalPlayAnchor, true).userId !== userId) return false;
     } catch { return false; }
   }
+  adoptAccount(userId, m);
+  return true;
+}
+
+// An account read from its pod becomes known: identity shell, auth-methods cache, indexes.
+function adoptAccount(userId: string, m: AuthMethods): void {
   hydrateFromAuthMethods(m);
   authMethodsCache.set(userId, { value: m, fetchedAt: Date.now() });
   rebuildIndexesForUser(userId, m);
-  return true;
 }
 
 // What the last pass over the pods found, for /health: the accounts loaded, and the pods
@@ -2429,21 +2481,39 @@ app.post('/auth/siwe', authEnrollLimiter, async (req, res) => {
       return;
     }
     const targetUserId = resolved.targetUserId;
+    const displayName = identities.get(targetUserId)?.name ?? String(name ?? targetUserId);
+    const def = defaultAgentForRegistration(targetUserId, displayName, surfaceAgent);
+    const agentId = [...identities.values()].find(i => i.type === 'agent' && i.owner === targetUserId)?.id ?? def.agentId;
 
-    if (!identities.has(targetUserId)) {
-      const displayName = String(name ?? targetUserId);
+    // Not in the wallet index is not "no such account": the pod may be one that was not
+    // loaded, or this wallet may have been removed from it. Read the pod before writing, and
+    // create the account only if it holds no credentials (first-sign-in.ts). This costs the
+    // first sign-in a pod read and a synchronous write, which FIX A had deferred; a blind
+    // deferred write is what replaced whole accounts with one wallet.
+    const outcome = await claimFirstSignInOnPod(targetUserId, agentId, displayName,
+      m => m.walletAddresses.some(a => a.toLowerCase() === recoveredAddress),
+      m => { m.walletAddresses.push(recoveredAddress); });
+    if (outcome.kind === 'unreadable' || outcome.kind === 'unconfirmed') {
+      log(`WARN: first-time SIWE sign-in to ${targetUserId} not completed (${outcome.kind}): ${outcome.reason}`);
+      res.status(503).json({
+        error: 'Could not read this account just now',
+        detail: 'The pod holding this account did not answer. Nothing was changed; try signing in again in a minute.',
+      });
+      return;
+    }
+    if (outcome.kind === 'refused') {
+      res.status(401).json({ error: 'This wallet is not registered. Sign in with an existing credential for this account and add this wallet from there.' });
+      return;
+    }
+    if (outcome.kind === 'returning') {
+      // adoptAccount loaded it; this is a sign-in, and nothing was written.
+      log(`Wallet ${recoveredAddress} signed in to ${targetUserId}, loaded from its pod (not in the wallet index)`);
+    } else if (!identities.has(targetUserId)) {
       seedIdentity(targetUserId, 'user', displayName);
-      const def = defaultAgentForRegistration(targetUserId, displayName, surfaceAgent);
       seedIdentity(def.agentId, 'agent', def.label, targetUserId, 'ReadWrite');
     }
     user = identities.get(targetUserId)!;
-    const agentId = [...identities.values()].find(i => i.type === 'agent' && i.owner === targetUserId)?.id
-      ?? defaultAgentForRegistration(targetUserId, user.name, surfaceAgent).agentId;
-    const methods = emptyAuthMethods(user.id, user.name, agentId);
-    methods.walletAddresses.push(recoveredAddress);
-    inlineApplyAuthMethods(user.id, methods);
-    scheduleDeferredAuthMethodsWrite(user.id, methods, 'siwe-first-time');
-    if (timingEnabled()) logTiming('siwe-pod-write-scheduled', requestStart, { branch: 'first-time' });
+    if (timingEnabled()) logTiming('siwe-pod-write-completed', requestStart, { branch: 'first-time' });
     // FIX A: identity-server no longer mirrors /profile/card or /<id>/agents.
     // The relay is now the single authoritative writer for both pod-side
     // documents and does so synchronously inside /oauth/verify before
@@ -2452,7 +2522,7 @@ app.post('/auth/siwe', authEnrollLimiter, async (req, res) => {
     // causing CSS file-backend HTTP 500s on the second OAuth ("Read counter
     // would become negative" on /profile/card) and a ~10s 404 window for
     // any client polling those URLs immediately after auth.
-    log(`First-time SIWE registration: ${targetUserId} wallet=${recoveredAddress} defaultAgent=${agentId} (surfaceHint=${surfaceAgent ?? 'none'})`);
+    if (outcome.kind === 'created') log(`First-time SIWE registration: ${targetUserId} wallet=${recoveredAddress} defaultAgent=${agentId} (surfaceHint=${surfaceAgent ?? 'none'})`);
   } else {
     // Add-wallet (authenticated) path — append if not already bound.
     try {
@@ -3025,37 +3095,49 @@ app.post('/auth/did', authEnrollLimiter, async (req, res) => {
       return;
     }
     const targetUserId = resolved.targetUserId;
+    const displayName = identities.get(targetUserId)?.name ?? String(name ?? targetUserId);
+    const def = defaultAgentForRegistration(targetUserId, displayName, surfaceAgent);
+    const agentId = [...identities.values()].find(i => i.type === 'agent' && i.owner === targetUserId)?.id ?? def.agentId;
 
-    if (!identities.has(targetUserId)) {
-      const displayName = String(name ?? targetUserId);
+    // As for SIWE: a DID missing from didIndex may still be on its account's pod, or have
+    // been removed from it. Read the pod first and create the account only if it holds no
+    // credentials (first-sign-in.ts). FIX A deferred this write off the response path; it is
+    // synchronous now, because the deferred write was blind and could replace a whole account.
+    const outcome = await claimFirstSignInOnPod(targetUserId, agentId, displayName,
+      m => m.didKeys.some(k => k.did === did),
+      m => {
+        m.didKeys.push({
+          did,
+          publicKeyMultibase: canonicalPublicKeyMultibase,
+          keyType: 'Ed25519VerificationKey2020',
+          createdAt: new Date().toISOString(),
+        });
+      });
+    if (outcome.kind === 'unreadable' || outcome.kind === 'unconfirmed') {
+      log(`WARN: first-time DID sign-in to ${targetUserId} not completed (${outcome.kind}): ${outcome.reason}`);
+      res.status(503).json({
+        error: 'Could not read this account just now',
+        detail: 'The pod holding this account did not answer. Nothing was changed; try signing in again in a minute.',
+      });
+      return;
+    }
+    if (outcome.kind === 'refused') {
+      res.status(401).json({ error: 'This DID is not registered. Sign in with an existing credential for this account and add this DID from there.' });
+      return;
+    }
+    if (outcome.kind === 'returning') {
+      // adoptAccount loaded it; this is a sign-in, and nothing was written.
+      log(`DID ${did} signed in to ${targetUserId}, loaded from its pod (not in the DID index)`);
+    } else if (!identities.has(targetUserId)) {
       seedIdentity(targetUserId, 'user', displayName);
-      const def = defaultAgentForRegistration(targetUserId, displayName, surfaceAgent);
       seedIdentity(def.agentId, 'agent', def.label, targetUserId, 'ReadWrite');
     }
     user = identities.get(targetUserId)!;
-    const agentId = [...identities.values()].find(i => i.type === 'agent' && i.owner === targetUserId)?.id
-      ?? defaultAgentForRegistration(targetUserId, user.name, surfaceAgent).agentId;
-    const methods = emptyAuthMethods(user.id, user.name, agentId);
-    methods.didKeys.push({
-      did,
-      publicKeyMultibase: canonicalPublicKeyMultibase,
-      keyType: 'Ed25519VerificationKey2020',
-      createdAt: new Date().toISOString(),
-    });
-    // FIX A: defer the pod-side PUT off the hot response path. The
-    // in-memory record (cache + didIndex + walletIndex + credentialIndex)
-    // is updated SYNCHRONOUSLY first so any concurrent /auth/did or
-    // verifyToken from this user immediately sees the new credential —
-    // no pod read required for the new user's first token to verify.
-    // The actual ~2.5s CSS PUT runs in the background under the per-
-    // userId mutex; failures retry + log at ERROR for operator alerting.
-    inlineApplyAuthMethods(user.id, methods);
-    scheduleDeferredAuthMethodsWrite(user.id, methods, 'did-first-time');
-    if (timingEnabled()) logTiming('did-pod-write-scheduled', requestStart, { branch: 'first-time' });
+    if (timingEnabled()) logTiming('did-pod-write-completed', requestStart, { branch: 'first-time' });
     // FIX A: identity-server no longer mirrors /profile/card or /<id>/agents.
     // Single authoritative pod-side writer is the relay's /oauth/verify
     // handler. See SIWE first-touch comment above for background.
-    log(`First-time DID registration: ${targetUserId} did=${did} defaultAgent=${agentId} (surfaceHint=${surfaceAgent ?? 'none'})`);
+    if (outcome.kind === 'created') log(`First-time DID registration: ${targetUserId} did=${did} defaultAgent=${agentId} (surfaceHint=${surfaceAgent ?? 'none'})`);
   } else {
     // Add-did (authenticated) path — append if not already bound.
     try {
