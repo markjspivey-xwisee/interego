@@ -100,6 +100,12 @@ jobs:
           PGSL_INMEM: '1'
         run: npm run test:contract
 
+      - name: Expired-entry sweep survives keyless /.internal/ documents — in-memory backend
+        working-directory: ${{ runner.temp }}/app/integrations/pgsl-css-accessor
+        env:
+          PGSL_INMEM: '1'
+        run: npm run test:expiry
+
       - name: Full CSS server over PGSL — REAL PostgreSQL (proves the deploy backend)
         working-directory: ${{ runner.temp }}/app/integrations/pgsl-css-accessor
         env:
