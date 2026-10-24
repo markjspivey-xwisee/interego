@@ -262,6 +262,103 @@ describe('the web UI is served under a strict content policy', () => {
     expect(await js.text()).toBe(read('bridge/ui/app.js'));
   });
 
+  /** What a browser sends for a page: text/html first, with `*\/*` at a lower weight. */
+  const BROWSER = 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8';
+  const NO_INLINE_SCRIPT = /<script(?![^>]*\ssrc=)[^>]*>/i;
+  const NO_INLINE_STYLE = /\sstyle=|<style/i;
+  const ASSET_ELSEWHERE = /(?:src|<link[^>]+href)="(?:https?:)?\/\//i;
+
+  it('serves the landing page to a browser at / as a constant, under the UI policy, in customer words', async () => {
+    const r = await fetch(`${demo.base}/`, { headers: { accept: BROWSER } });
+    expect(r.status).toBe(200);
+    expect(r.headers.get('content-type')).toMatch(/^text\/html/);
+    expect(r.headers.get('content-security-policy')).toBe(UI_CSP);
+    expect([r.headers.get('x-content-type-options'), r.headers.get('referrer-policy'), r.headers.get('cache-control')]).toEqual(['nosniff', 'no-referrer', 'no-store']);
+    expect(r.headers.get('vary')).toMatch(/accept/i);
+    const html = await r.text();
+    expect(html).toBe(read('bridge/ui/landing.html'));
+    expect(html).not.toMatch(/<script/i);
+    expect(html).not.toMatch(NO_INLINE_STYLE);
+    for (const s of [
+      '<link rel="stylesheet" href="ui/app.css">', 'href="ui#/signin"', 'href="https://wrd-bridge-production.up.railway.app/"',
+      'Conversation practice <em>your reviewers can stand behind.</em>', 'AI role-play is easy to buy. Its scores are hard to trust.',
+      'From first sign-in to a result you can stand behind', 'Built for trust, not just for scoring', 'Use it from Claude or ChatGPT',
+      'https://relay.interego.xwisee.com/mcp', 'When Practice Evidence isn\'t the right fit (yet)', 'Practice Evidence records practice, not a credential.',
+    ]) expect(html).toContain(s);
+    // No protocol words, codes or statuses reach a visitor.
+    const visible = html.replace(/<[^>]+>/g, ' ');
+    expect(visible).not.toMatch(/\b(affordance|bridge|envelope|nonce|EIP-191|Hypothetical|DID)\b/);
+    expect(visible).not.toMatch(/HTTP \d{3}/);
+  });
+
+  it('keeps the agent view at / for agents, for ?format= and for every Accept that is not a browser asking for a page', async () => {
+    const agentView = (body: string, what: string): void => {
+      const j = JSON.parse(body) as Out;
+      expect(['pod' in j, Array.isArray(j['affordances'])], what).toEqual([true, true]);
+    };
+    // No Accept header at all, as a bare HTTP client sends.
+    const bare = await rawGet(demo.port, '/', `127.0.0.1:${demo.port}`);
+    expect(bare.status).toBe(200);
+    agentView(bare.body, 'no accept');
+    for (const [path, accept] of [['/', '*/*'], ['/', 'application/ld+json'], ['/', 'application/json'], ['/?format=jsonld', BROWSER]] as const) {
+      const r = await fetch(`${demo.base}${path}`, { headers: { accept } });
+      expect(r.headers.get('content-type'), `${path} ${accept}`).not.toMatch(/^text\/html/);
+      agentView(await r.text(), `${path} ${accept}`);
+    }
+    // Node fetch's own default Accept, as the demos' readiness probe sends it.
+    agentView(await (await fetch(`${demo.base}/`)).text(), 'fetch default');
+    expect((await fetch(`${demo.base}/`, { headers: { accept: 'text/markdown' } })).headers.get('content-type')).toMatch(/^text\/markdown/);
+    expect((await fetch(`${demo.base}/?format=markdown`, { headers: { accept: BROWSER } })).headers.get('content-type')).toMatch(/^text\/markdown/);
+    expect(await (await fetch(`${demo.base}/`, { headers: { accept: BROWSER } })).text()).not.toContain('"affordances"');
+  });
+
+  it('serves the guide and its script under the same policy', async () => {
+    const r = await fetch(`${demo.base}/ui/help`);
+    expect(r.status).toBe(200);
+    expect(r.headers.get('content-type')).toMatch(/^text\/html/);
+    expect(r.headers.get('content-security-policy')).toBe(UI_CSP);
+    const html = await r.text();
+    expect(html).toBe(read('bridge/ui/help.html'));
+    expect(html).not.toMatch(NO_INLINE_SCRIPT);
+    expect(html).not.toMatch(NO_INLINE_STYLE);
+    for (const s of ['How to use Practice Evidence', 'id="claude-chatgpt"', 'https://relay.interego.xwisee.com/mcp', 'href="../affordances"', '<script type="module" src="help.js"></script>']) {
+      expect(html).toContain(s);
+    }
+    const slash = await fetch(`${demo.base}/ui/help/`, { redirect: 'manual' });
+    expect([slash.status, slash.headers.get('location')]).toEqual([301, '../help']);
+    const js = await fetch(`${demo.base}/ui/help.js`);
+    expect([js.status, js.headers.get('content-security-policy')]).toEqual([200, UI_CSP]);
+    expect(js.headers.get('content-type')).toMatch(/^text\/javascript/);
+    const src = await js.text();
+    expect(src).toBe(read('bridge/ui/help.js'));
+    expect(src).not.toMatch(/innerHTML|outerHTML|insertAdjacentHTML|document\.write|\beval\(|new Function|setAttribute\(\s*['"]on/);
+    expect(src).not.toMatch(/fetch\(\s*['"`]https?:|import\(|<script/);
+  });
+
+  it('serves the mark as the favicon under the same policy', async () => {
+    const r = await fetch(`${demo.base}/ui/favicon.svg`);
+    expect([r.status, r.headers.get('content-security-policy')]).toEqual([200, UI_CSP]);
+    expect(r.headers.get('content-type')).toMatch(/^image\/svg\+xml/);
+    expect((await r.text()).startsWith('<svg')).toBe(true);
+  });
+
+  it('no page it serves has inline script or style, or loads an asset from another origin', async () => {
+    for (const path of ['/', '/ui', '/ui/help']) {
+      const html = await (await fetch(`${demo.base}${path}`, { headers: { accept: BROWSER } })).text();
+      expect(html, path).not.toMatch(NO_INLINE_SCRIPT);
+      expect(html, path).not.toMatch(NO_INLINE_STYLE);
+      expect(html, path).not.toMatch(ASSET_ELSEWHERE);
+    }
+  });
+
+  it('serves one shared stylesheet: the design system, then this product\'s own rules, with nothing from another origin', async () => {
+    const css = await (await fetch(`${demo.base}/ui/app.css`)).text();
+    expect(css.startsWith(readFileSync(join(REPO, 'applications/_shared/design-system/design-system.css'), 'utf8'))).toBe(true);
+    expect(css.endsWith(read('bridge/ui/app.css'))).toBe(true);
+    // Rules only: the design system's own header comment says, in words, that it has no @import.
+    expect(css.replace(/\/\*[\s\S]*?\*\//g, '')).not.toMatch(/@import|url\(\s*['"]?https?:|@font-face/i);
+  });
+
   it('refuses a request whose Host header names another site (DNS rebinding) and answers its own names', async () => {
     const bad = await rawGet(demo.port, '/ui', 'attacker.example');
     expect(bad.status).toBe(421);

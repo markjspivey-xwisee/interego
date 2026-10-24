@@ -2,9 +2,20 @@
  * The web UI and the browser-facing protection of a practice-evidence bridge.
  *
  * `attachUi` serves a static HTML shell at /ui, the client at /ui/app.js and its styles at
- * /ui/app.css. The client is a Path-A client: it reads this bridge's affordance manifest and
- * invokes every act at the target the manifest names. It holds no key (demo role keys stay in the
- * bridge; wallet keys stay in the wallet) and computes nothing the record does not already say.
+ * /ui/app.css (the shared Interego design system, then this product's own rules). The client is a
+ * Path-A client: it reads this bridge's affordance manifest and invokes every act at the target the
+ * manifest names. It holds no key (demo role keys stay in the bridge; wallet keys stay in the
+ * wallet) and computes nothing the record does not already say.
+ *
+ * It also serves the pages a person reads before signing in, each a constant under the same policy:
+ *
+ *   GET  /                      the landing page, to a browser only: a request whose best match
+ *                               among the types / serves is text/html, with no ?format=. Every
+ *                               other request (agents, curl, fetch's `*\/*`, ?format=…) falls
+ *                               through to the factory's JSON-LD or Markdown, unchanged.
+ *   GET  /ui/help               the guide, and /ui/help.js, the few lines that show this
+ *                               workspace's address on it
+ *   GET  /ui/favicon.svg        the mark
  *
  * Interego sign-in (`attachUi(app, { interego })`, on when the operator sets PEV_RELAY_URL and
  * trusts a relay): a person with no key of their own signs in with their Interego account on the
@@ -58,6 +69,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import type { Express, NextFunction, Request, Response } from 'express';
 import { guardedFetchFn } from '@interego/core';
+import { designSystemCss } from '../../_shared/design-system/index.js';
 import { refuse } from '../../_shared/vertical-bridge/refusal.js';
 import { openRelayDelegated, type RelayDelegationPolicy } from '../src/relay-delegated.js';
 import { cappedFetch } from './pod-helpers.js';
@@ -66,7 +78,12 @@ export const UI_CSP = "default-src 'none'; script-src 'self'; style-src 'self'; 
 
 const readUiFile = (name: string): string => readFileSync(new URL(`./ui/${name}`, import.meta.url), 'utf8');
 const APP_JS = readUiFile('app.js');
-const APP_CSS = readUiFile('app.css');
+/** The Interego design system (shared with work-redesign), then this product's own rules. */
+const APP_CSS = `${designSystemCss()}\n${readUiFile('app.css')}`;
+const LANDING_HTML = readUiFile('landing.html');
+const HELP_HTML = readUiFile('help.html');
+const HELP_JS = readUiFile('help.js');
+const FAVICON_SVG = readUiFile('favicon.svg');
 
 /**
  * A shell: a constant, with no interpolation and no inline script or style. Relative URLs, so a
@@ -841,8 +858,29 @@ function uiBodyErrors(err: unknown, _req: Request, res: Response, next: NextFunc
   res.status(status).json(refuse(status, status === 413 ? 'The request body is over this bridge\'s limit.' : 'The request body is not JSON this route can read.', status === 413 ? 'payload-too-large' : 'body-unreadable'));
 }
 
-/** Mount GET /ui, /ui/app.js and /ui/app.css, and the Interego sign-in routes (or their refusals). */
+/**
+ * A browser asking for a page: no ?format=, and text/html is its best match among what this bridge
+ * serves at /. `*\/*`, a missing Accept and Node fetch's default all resolve to JSON-LD, the first
+ * listed, so agents keep the factory's entry point; a browser's Accept resolves to text/html.
+ */
+export function wantsLandingPage(req: Request): boolean {
+  if (req.query['format'] !== undefined) return false;
+  return req.accepts(['application/ld+json', 'application/json', 'text/turtle', 'text/markdown', 'text/html']) === 'text/html';
+}
+
+/**
+ * Mount the landing page at / (browsers only), GET /ui, /ui/app.js, /ui/app.css, the guide at
+ * /ui/help, its script and the favicon, and the Interego sign-in routes (or their refusals).
+ */
 export function attachUi(app: Express, o: { readonly interego?: InteregoUiOptions } = {}): void {
+  // First, so it runs before the factory's own GET / (registered after this hook); anything but a
+  // browser's page request falls through to it unchanged.
+  app.get('/', (req: Request, res: Response, next: NextFunction) => {
+    if (!wantsLandingPage(req)) { next(); return; }
+    secure(res);
+    res.vary('Accept');
+    res.type('text/html; charset=utf-8').send(LANDING_HTML);
+  });
   app.get('/ui', (req: Request, res: Response) => {
     // The shell's URLs are relative to /ui; at /ui/ they would resolve one level too deep.
     if (req.path.endsWith('/')) { res.redirect(301, '../ui'); return; }
@@ -851,6 +889,14 @@ export function attachUi(app: Express, o: { readonly interego?: InteregoUiOption
   });
   app.get('/ui/app.js', (_req: Request, res: Response) => { secure(res); res.type('text/javascript; charset=utf-8').send(APP_JS); });
   app.get('/ui/app.css', (_req: Request, res: Response) => { secure(res); res.type('text/css; charset=utf-8').send(APP_CSS); });
+  app.get('/ui/help', (req: Request, res: Response) => {
+    // Its URLs are relative to /ui/help, as the shell's are to /ui.
+    if (req.path.endsWith('/')) { res.redirect(301, '../help'); return; }
+    secure(res);
+    res.type('text/html; charset=utf-8').send(HELP_HTML);
+  });
+  app.get('/ui/help.js', (_req: Request, res: Response) => { secure(res); res.type('text/javascript; charset=utf-8').send(HELP_JS); });
+  app.get('/ui/favicon.svg', (_req: Request, res: Response) => { secure(res); res.type('image/svg+xml').send(FAVICON_SVG); });
   attachInteregoSignIn(app, o.interego);
   app.use('/ui', uiBodyErrors);
 }

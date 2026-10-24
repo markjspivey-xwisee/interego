@@ -511,6 +511,15 @@ afterAll(async () => { for (const l of listeners) await l.close(); });
 // ═════════════════════════════════════════════════════════════════════════════════════════════
 
 describe('the sign-in routes: the client document, the start, and their refusals', () => {
+  it('the callback page, like every page the bridge serves, has no inline script or style and loads nothing from another origin', async () => {
+    const r = await fetch(`${bridge.base}/ui/oauth/callback?code=abc&state=def`);
+    expect([r.status, r.headers.get('content-security-policy')]).toEqual([200, UI_CSP]);
+    const html = await r.text();
+    expect(html).not.toMatch(/<script(?![^>]*\ssrc=)[^>]*>/i);
+    expect(html).not.toMatch(/\sstyle=|<style/i);
+    expect(html).not.toMatch(/(?:src|<link[^>]+href)="(?:https?:)?\/\//i);
+  });
+
   it('serves a Client ID Metadata Document whose client_id is its own URL on the deployment URL', async () => {
     const r = await fetch(`${bridge.base}/ui/oauth/client.json`);
     expect([r.status, r.headers.get('content-type')]).toEqual([200, expect.stringMatching(/^application\/json/)]);
