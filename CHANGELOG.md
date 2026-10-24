@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-10-24 — Practice Evidence: the scenario list fits a phone
+
+On a phone, Practice Evidence's scenario list was 33 px wider than the screen whenever a scenario showed the badge "Rubric awaiting approval: results won't count as evidence yet". A badge never wrapped, and the list's one column grew to fit it, so the whole page scrolled sideways. In the shared design system a badge now wraps when it is too long for its container, and never grows wider than it. Work Redesign already did this for badges in its stacked tables. The scenario list's column is now capped at the screen's width. Measured on the live site at 390 px, every Practice Evidence view now fits, and nothing changes at desktop width.
+
 ## 2026-10-24 — Work Redesign: a change stopped early or reversed can be recorded before its planned end
 
 The Record results form had kept "Sign and record results" disabled until the planned measurement period ended, whatever was chosen under "What happened to the change". The bridge already accepts a change stopped early or reversed over the period it actually ran, and checks those dates itself, so the form now holds back only a kept change. The button and its "Why can't I?" line follow the choice as it changes. Home's "Results due" list still waits for the planned end, which is when a kept change's results fall due.

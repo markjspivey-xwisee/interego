@@ -58,7 +58,7 @@
 .settings__section > h3 { margin-bottom: var(--space-3); font-size: var(--text-md); }
 .settings__section > * + * { margin-top: var(--space-3); }
 .author-actions .card__body > * + * { margin-top: var(--space-3); }
-.scenario-list, .attempt { display: grid; gap: var(--space-6); }
+.scenario-list, .attempt { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--space-6); }
 .attempt, .review-form { max-width: 56rem; }
 .card__footer.scenario__start { justify-content: flex-start; align-items: flex-end; gap: var(--space-4); }
 .scenario__start .field { flex: 1 1 14rem; }
