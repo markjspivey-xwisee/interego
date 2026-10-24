@@ -500,7 +500,9 @@ export class NativeCommitStore implements NativeCommitClient {
     this.checkpointScope();
     const artifact = validateNativeArtifact({ topUri: input.topUri, nodes: input.pgsl.nodes });
     const body = readNativeByteArtifact(artifact);
-    if (body.owner !== this.scope.owner || body.contentType !== 'application/vnd.interego.rolling-checkpoint+gzip') fail('Atomic checkpoint ownership or type changed.', 400);
+    const rollingCheckpointType = body.contentType === 'application/vnd.interego.rolling-checkpoint+gzip'
+      || body.contentType === 'application/vnd.interego.rolling-checkpoint-delta-v1+br';
+    if (body.owner !== this.scope.owner || !rollingCheckpointType) fail('Atomic checkpoint ownership or type changed.', 400);
     const pgsl = createPGSL({ wasAttributedTo: this.scope.owner, generatedAtTime: new Date().toISOString() });
     for (const [id, node] of artifact.nodes) pgsl.nodes.set(id, node);
     const topUri = ingest(pgsl, [ATOMIC, this.scope.owner, this.scope.pod, this.scope.headUrl, this.scope.artifactContainer]
