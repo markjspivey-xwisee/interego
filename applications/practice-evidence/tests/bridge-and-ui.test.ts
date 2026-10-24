@@ -357,6 +357,7 @@ describe('the web UI is served under a strict content policy', () => {
     expect(css.endsWith(read('bridge/ui/app.css'))).toBe(true);
     // Rules only: the design system's own header comment says, in words, that it has no @import.
     expect(css.replace(/\/\*[\s\S]*?\*\//g, '')).not.toMatch(/@import|url\(\s*['"]?https?:|@font-face/i);
+    expect(await (await fetch(`${demo.base}/ui`)).text()).toContain('<body class="product-pev">');
   });
 
   it('refuses a request whose Host header names another site (DNS rebinding) and answers its own names', async () => {
@@ -437,6 +438,21 @@ async function openUi(l: TestListener, setup?: (w: JSDOM['window']) => void): Pr
   return page;
 }
 
+/**
+ * The text a person sees: closed disclosures, menus, dialogs, hidden text and options left out, and
+ * so is what authors, learners and the AI wrote (bubbles, scenario fields, quotes, rationales, the
+ * rubric, card titles), which this product cannot word.
+ */
+function visibleText(root: Element | null): string {
+  if (!root) return '';
+  const c = root.cloneNode(true) as Element;
+  for (const sel of ['details:not([open]) > :not(summary)', 'dialog:not([open])', '[popover]', '.visually-hidden', '[hidden]', 'option',
+    '.chat__bubble', '.kv dd', 'q', '.rationale p:not(.rationale__label)', '.rubric-view', '.card__title']) {
+    for (const el of [...c.querySelectorAll(sel)]) el.remove();
+  }
+  return c.textContent ?? '';
+}
+
 async function asRole(p: Page, role: DemoRoleName): Promise<void> {
   const sel = await p.until(() => p.q('#role'), 'the role picker');
   p.set(sel, role);
@@ -456,7 +472,7 @@ describe('the web UI works, driven in a DOM against the real handlers', () => {
     expect(p.text('#bar')).toContain('SCRIPTED: offline fixture, no model ran');
     await asRole(p, 'learner');
     const card = await p.until(() => p.all('article.scenario').find((c) => (c.textContent ?? '').includes('missed deadline')), 'the scenario card');
-    expect(card.textContent).toContain('Rubric ratified by a reviewer');
+    expect(card.textContent).toContain('Rubric approved by a reviewer');
     card.querySelector<HTMLInputElement>('input[type=radio][value=no]')!.checked = true;
     card.querySelector<HTMLElement>(button(PEV_ACTION.startAttempt))!.click();
     await p.until(() => p.q('#line'), 'the conversation');
@@ -474,28 +490,29 @@ describe('the web UI works, driven in a DOM against the real handlers', () => {
     expect(replies.map((b) => b.querySelector('.text')?.textContent)).toEqual(DEMO_LINES.sam.map((x) => x.replace(' (end of conversation)', '')));
     expect(replies.every((b) => (b.textContent ?? '').includes('scripted fixture: no model ran'))).toBe(true);
     await p.until(() => p.q('#end-proposed'), 'the end proposal');
-    expect(p.text('#state')).toBe('in conversation');
-    p.click('#end-proposed button.primary');
-    await p.until(() => p.text('#state') === 'ended: not judged yet', 'the ended state');
+    expect(p.text('#state')).toBe('In conversation');
+    p.click('#end-proposed .btn--primary');
+    await p.until(() => p.text('#state') === 'Finished: not assessed yet', 'the ended state');
     p.click(button(PEV_ACTION.judgeAttempt));
     await p.until(() => p.q('#assessment'), 'the assessment');
     const assessment = p.text('#assessment');
-    for (const s of ['Platform-computed', 'provisional, not reviewed', '400 of 600 points · 66.7 %', 'Would not meet the pass rule (provisional, not reviewed)', 'agrees-next-step needs at least partial']) expect(assessment).toContain(s);
+    for (const s of ['Calculated by Practice Evidence', 'Provisional: not yet reviewed', '400 of 600 points · 66.7%', 'Would not meet the pass mark (provisional)', 'agrees-next-step needs at least partial']) expect(assessment).toContain(s);
     const fabricated = p.all('.quote.bad').find((x) => (x.textContent ?? '').includes(FABRICATED_QUOTE));
     expect(fabricated?.textContent).toContain('not found verbatim in any learner turn');
     expect(p.all('mark').map((m) => m.textContent)).toEqual(['The quarterly report was due Thursday at noon', 'what got in the way this time from your side?', 'send me a status note by Tuesday at 10am']);
-    expect(p.text('.judgments')).toContain('The judge\'s words: not part of the score');
+    expect(p.text('.judgments')).toContain('The AI\'s explanation (not part of the score)');
     const projections = p.all(button(PEV_ACTION.projectAttempt)) as HTMLButtonElement[];
     expect(projections.map((b) => b.disabled)).toEqual([true, true]);
     expect(projections[0]!.title).toContain('a qualified reviewer has not countersigned');
     const attemptIri = decodeURIComponent(p.w.location.hash.slice('#/attempt/'.length));
+    S['attempt'] = attemptIri;
 
     // The reviewer: the queue, then the review form (blind first when the attempt is in the audit sample).
     await asRole(p, 'reviewer');
     p.w.location.hash = '#/review';
     const entry = await p.until(() => p.all('article.queue-entry').find((x) => x.dataset['attempt'] === attemptIri), 'the queue entry');
-    expect(entry.textContent).toContain('priority');
-    expect(entry.textContent).toContain('a quote did not check out');
+    expect(entry.textContent).toContain('Why this is near the top');
+    expect(entry.textContent).toContain('A quote didn\'t match');
     p.w.location.hash = `#/review/${encodeURIComponent(attemptIri)}`;
     await p.until(() => p.q('#review-form select'), 'the review form');
     const blind = inAuditSample(attemptIri);
@@ -511,18 +528,18 @@ describe('the web UI works, driven in a DOM against the real handlers', () => {
       await p.until(() => p.q('#submit-review'), 'the judge revealed');
       expect(p.q('.judgments')).not.toBeNull();
     }
-    expect(p.text('#review-form')).toContain('The judge\'s quote did not check out here');
+    expect(p.text('#review-form')).toContain('The AI\'s quote didn\'t match here');
     p.set(p.q('#review-form textarea[data-why="agrees-next-step"]'), 'Ana agreed a status note by Tuesday at 10am with Sam as its owner; the second quote is not in the transcript.');
-    expect(p.text('#submit-review')).toBe('Sign my levels (override)');
+    expect(p.text('#submit-review')).toBe('Sign off my levels');
     p.click('#submit-review');
     await p.until(() => p.q('#review-form p.recorded') ?? p.q('#review-form .refusal'), 'the review outcome');
-    expect(p.text('#review-form .outcome')).toContain('Recorded: levels set by a reviewer. 100.0 %, meets the pass rule.');
+    expect(p.text('#review-form .outcome')).toContain('Review saved. Final result: 100.0%, meets the pass mark.');
 
     // The learner again: reviewed, ratified, so the statement can be built.
     await asRole(p, 'learner');
     p.w.location.hash = `#/attempt/${encodeURIComponent(attemptIri)}`;
-    await p.until(() => p.text('#state') === 'levels set by a reviewer', 'the reviewed state');
-    expect(p.text('#assessment')).toContain('Final: a qualified reviewer stated every level.');
+    await p.until(() => p.text('#state') === 'Levels set by a reviewer', 'the reviewed state');
+    expect(p.text('#assessment')).toContain('Final: a qualified reviewer signed off every level.');
     const xapi = p.q(button(PEV_ACTION.projectAttempt, '[data-format="xapi"]')) as HTMLButtonElement;
     expect(xapi.disabled).toBe(false);
     xapi.click();
@@ -531,6 +548,45 @@ describe('the web UI works, driven in a DOM against the real handlers', () => {
     expect((statement['verb'] as Out)['id']).toBe('http://adlnet.gov/expapi/verbs/completed');
     expect(((statement['context'] as Out)['extensions'] as Out)[`${PEV_NS}practiceEvidence`]).toBe(true);
     expect(p.text('#projection')).toContain('Nothing was sent anywhere.');
+    expect(p.errors).toEqual([]);
+  }, SLOW);
+
+  it('the main screens speak to customers: no protocol words, codes or statuses outside Technical details', async () => {
+    const attemptIri = S['attempt'];
+    expect(attemptIri, 'the first driven test leaves a judged and reviewed attempt').toBeTruthy();
+    const p = await openUi(demo);
+    await p.until(() => p.text('#bar').includes('DEMO MODE'), 'the demo banner');
+    const JARGON = /\b(pod|bridge|affordance|envelope|nonce|hypothetical|ratif\w*|countersign\w*)\b/i;
+    // Case-sensitive, kept apart: a case-insensitive DID would match "didn't".
+    const CODES = /\b(EIP-191|IRI|DID)\b|HTTP \d{3}/;
+    const clean = (where: string): void => {
+      const text = `${visibleText(p.q('#bar'))} ${visibleText(p.q('#view'))}`;
+      expect([text.match(JARGON)?.[0] ?? null, text.match(CODES)?.[0] ?? null], where).toEqual([null, null]);
+    };
+    await asRole(p, 'learner');
+    p.w.location.hash = '#/practice';
+    await p.until(() => p.text('#view h1') === 'Practice scenarios' && p.q('article.scenario'), 'the scenarios');
+    clean('practice');
+    p.w.location.hash = `#/attempt/${encodeURIComponent(attemptIri ?? '')}`;
+    await p.until(() => p.q('#assessment') && p.q('.judgments'), 'the session');
+    clean('the session');
+    p.w.location.hash = '#/mine';
+    await p.until(() => p.q('#view table.mine'), 'my practice');
+    clean('my practice');
+    p.w.location.hash = '#/calibration';
+    await p.until(() => p.text('#view h1') === 'AI judge quality' && (p.q('#view table.calibration') ?? p.q('#view .empty')), 'AI judge quality');
+    clean('AI judge quality');
+    await asRole(p, 'second-reviewer');
+    p.w.location.hash = '#/review';
+    await p.until(() => p.text('#view h1') === 'To review' && (p.q('#view article.queue-entry') ?? p.q('#view .empty')), 'the review list');
+    clean('to review');
+    // A learner opening To review gets a plain access message, never the bridge's refusal.
+    await asRole(p, 'learner');
+    await p.until(() => p.q('#view .refusal'), 'the access message');
+    clean('the access message');
+    const refusal = visibleText(p.q('#view .refusal'));
+    expect(refusal).toContain('Reviewing is for reviewers.');
+    expect(refusal).not.toContain('Refused');
     expect(p.errors).toEqual([]);
   }, SLOW);
 
@@ -563,26 +619,26 @@ describe('the web UI works, driven in a DOM against the real handlers', () => {
     const p = await openUi(l);
     const view = (): string => p.text('#view');
     const shows = async (heading: string, empty: string): Promise<void> => {
-      await p.until(() => p.text('#view h2') === heading && p.q('#view .incomplete'), `${heading}, marked incomplete`);
-      expect(view(), heading).toContain('Not the whole pod: some records on it could not be read');
-      expect(view(), heading).toContain('could not be read or are not signed by a platform key this bridge trusts');
+      await p.until(() => p.text('#view h1') === heading && p.q('#view .incomplete'), `${heading}, marked incomplete`);
+      expect(view(), heading).toContain('Some records couldn\'t be opened, so this list may be incomplete.');
+      expect(view(), heading).toContain('were skipped because their signature couldn\'t be verified');
       expect(view().includes(empty), heading).toBe(false);
     };
-    await shows('Practise a scenario', 'No published scenarios on this pod yet');
+    await shows('Practice scenarios', 'No practice scenarios yet');
     p.w.location.hash = '#/calibration';
-    await shows('Calibration of the judges', 'No reviewed outcomes yet.');
+    await shows('AI judge quality', 'No data yet');
     await asRole(p, 'learner');
     p.w.location.hash = '#/mine';
-    await shows('Attempts', 'No attempts yet.');
+    await shows('My practice', 'You haven\'t practiced yet');
     await asRole(p, 'reviewer');
     p.w.location.hash = '#/review';
-    await shows('Review queue', 'Nothing waits for you.');
-    expect(view()).toContain('At least 0 attempt(s) await review.');
+    await shows('To review', 'You\'re all caught up');
+    expect(view()).toContain('At least 0 sessions waiting for review.');
     // Once the pod answers for them (they are not there: the manifest names nothing it holds), the
     // answers are whole again, and the empty prompts come back.
     unreadable.clear();
     p.w.location.hash = '#/practice';
-    await p.until(() => p.text('#view h2') === 'Practise a scenario' && view().includes('No published scenarios on this pod yet'), 'the whole, empty list');
+    await p.until(() => p.text('#view h1') === 'Practice scenarios' && view().includes('No practice scenarios yet'), 'the whole, empty list');
     expect(p.q('#view .incomplete')).toBeNull();
     expect(p.errors).toEqual([]);
   }, SLOW);
@@ -593,7 +649,7 @@ describe('the web UI works, driven in a DOM against the real handlers', () => {
     await asRole(p, 'author');
     p.w.location.hash = '#/author';
     await p.until(() => p.q(button(PEV_ACTION.draftScenario)), 'the author form');
-    p.set(p.q('textarea[aria-label="Brief"]'), 'A project manager tells a client sponsor that two defects block the payment flow.');
+    p.set(p.q('#draft-brief'), 'A project manager tells a client sponsor that two defects block the payment flow.');
     p.click(button(PEV_ACTION.draftScenario));
     await p.until(() => (p.q('[data-field="title"] input') as HTMLInputElement | null)?.value, 'the drafted form');
     expect((p.q('[data-field="title"] input') as HTMLInputElement).value).toBe('Renegotiating a deadline with a client');
@@ -609,13 +665,13 @@ describe('the web UI works, driven in a DOM against the real handlers', () => {
     };
     choose('assessmentUse', 'pass-gate');
     choose('workRegime', 'emergent');
-    expect(p.text('#view')).toContain('A pass gate assumes a knowable good answer');
+    expect(p.text('#view')).toContain('A pass mark assumes a clear-cut good answer');
     expect(p.q('[data-field="passGateWhy"]')).not.toBeNull();
     choose('assessmentUse', 'feedback-only');
     expect(p.q('[data-field="passGateWhy"]')).toBeNull();
     p.click(button(PEV_ACTION.authorScenario, '[data-status="published"]'));
-    await p.until(() => p.text('#author-result').includes('Saved version') || p.q('#author-result .refusal'), 'the saved scenario');
-    expect(p.text('#author-result')).toContain('Saved version 1 as published (Hypothetical).');
+    await p.until(() => p.text('#author-result').includes('version 1') || p.q('#author-result .refusal'), 'the saved scenario');
+    expect(p.text('#author-result')).toContain('Published version 1.');
     const listed = (await demoHandlers['pev.list_scenarios']!({})) as { scenarios: Out[] };
     const rs = listed.scenarios.find((s) => s['scenarioKey'] === 'renegotiate-scope');
     expect([(rs?.['draftAssistance'] as Out)['measured'], (rs?.['draftAssistance'] as Out)['editedAfterDraft'], rs?.['assessmentUse']]).toEqual([true, false, 'feedback-only']);
@@ -623,19 +679,19 @@ describe('the web UI works, driven in a DOM against the real handlers', () => {
     await asRole(p, 'admin');
     p.w.location.hash = '#/roles';
     await p.until(() => p.q(button(PEV_ACTION.registerRole)), 'the roles form');
-    p.set(p.q('input[aria-label="Address"]'), W['judge-agent'].address);
-    p.set(p.q('select[aria-label="Role"]'), 'agent');
+    p.set(p.q('#member-id'), W['judge-agent'].address);
+    p.set(p.q('#member-role'), 'agent');
     p.click(button(PEV_ACTION.registerRole));
     await p.until(() => p.q('#view .outcome table') ?? p.q('#view .refusal'), 'the registry');
     expect(p.all('#view .outcome tr').some((tr) => (tr.textContent ?? '').includes(W['judge-agent'].address) && (tr.textContent ?? '').includes('agent'))).toBe(true);
     // A member can be a person's Interego DID, for someone who signs in with their Interego account.
     const person = `did:web:${IDH}:users:u-pk-00000000aa01`;
-    p.set(p.q('input[aria-label="Address"]'), person);
-    p.set(p.q('select[aria-label="Role"]'), 'reviewer');
+    p.set(p.q('#member-id'), person);
+    p.set(p.q('#member-role'), 'reviewer');
     p.click(button(PEV_ACTION.registerRole));
     await p.until(() => p.all('#view .outcome tr').some((tr) => (tr.textContent ?? '').includes(person)) || p.q('#view .refusal'), 'the registry with the DID');
-    expect(p.all('#view .outcome tr').some((tr) => (tr.textContent ?? '').includes(person) && (tr.textContent ?? '').includes('reviewer'))).toBe(true);
-    expect((p.q('input[aria-label="Address"]') as HTMLInputElement).placeholder).toContain('did:web:');
+    expect(p.all('#view .outcome tr').some((tr) => (tr.textContent ?? '').includes(person) && (tr.textContent ?? '').includes('Reviewer'))).toBe(true);
+    expect((p.q('#member-id') as HTMLInputElement).placeholder).toContain('did:web:');
 
     await asRole(p, 'second-learner');
     p.w.location.hash = '#/practice';
@@ -656,7 +712,7 @@ describe('the web UI works, driven in a DOM against the real handlers', () => {
     await p.until(() => p.q('table.distribution') ?? p.q('#view .refusal'), 'the results');
     expect(p.text('#view')).toContain('Practice results: what happened in practice. They do not show what caused it.');
     p.w.location.hash = '#/calibration';
-    await p.until(() => p.text('#view h2') === 'Calibration of the judges', 'the calibration view');
+    await p.until(() => p.text('#view h1') === 'AI judge quality', 'the calibration view');
     await p.until(() => p.text('#view').includes('This is not accuracy against a known answer.'), 'the metric note');
     expect(p.errors).toEqual([]);
   }, SLOW);
@@ -677,13 +733,13 @@ describe('the web UI works, driven in a DOM against the real handlers', () => {
       };
     });
     await wallet.until(() => wallet.q('article.scenario'), 'the scenarios');
-    expect(wallet.text('#acting-as')).toBe('whoever signs (paste mode)');
-    wallet.all('#bar button').find((b) => b.textContent === 'Connect wallet')!.click();
-    await wallet.until(() => wallet.text('#acting-as').startsWith('your wallet'), 'the connected wallet');
+    expect(wallet.text('#acting-as')).toBe('Not signed in');
+    wallet.q('#connect-wallet')!.click();
+    await wallet.until(() => wallet.text('#acting-as').startsWith('Signed in with wallet'), 'the connected wallet');
     const card = await wallet.until(() => wallet.q('article.scenario'), 'the scenarios, again');
     card.querySelector<HTMLInputElement>('input[type=radio][value=no]')!.checked = true;
     const help = 'Read the café guide — naïvely, “twice”';
-    wallet.set(card.querySelector('input[aria-label="Assistance"]'), help);
+    wallet.set(card.querySelector('input[name="assistance"]'), help);
     card.querySelector<HTMLElement>(button(PEV_ACTION.startAttempt))!.click();
     await wallet.until(() => wallet.q('#line') ?? wallet.q('#view .refusal'), 'the conversation');
     expect(wallet.q('#line')).not.toBeNull();

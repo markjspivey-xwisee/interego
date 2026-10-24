@@ -13,7 +13,7 @@
 </head>
 <body class="product-pev">
 <a class="skip-link" href="#main">Skip to content</a>
-<header class="app-header"><div class="app-header__inner">
+<header class="app-header app-header--site"><div class="app-header__inner">
   <a class="brand" href="../"><svg class="brand__mark" viewBox="0 0 32 32" aria-hidden="true" focusable="false"><rect class="mark-tile" x="0" y="0" width="32" height="32" rx="9"/><path class="mark-edge" d="M10.5 11.5 21.5 11.5 16 21.5Z"/><circle class="mark-node" cx="10.5" cy="11.5" r="3"/><circle class="mark-node" cx="21.5" cy="11.5" r="3"/><circle class="mark-node" cx="16" cy="21.5" r="3"/></svg><span class="brand__name"><span class="brand__company">Interego</span><span class="brand__product">Practice Evidence</span></span></a>
   <div class="app-header__actions">
     <a class="product-switch" href="https://wrd-bridge-production.up.railway.app/"><span class="product-switch__dot" aria-hidden="true"></span><span class="product-switch__prefix">Also from Interego:</span> Work Redesign</a>
@@ -47,7 +47,6 @@
         <h1 class="page-title">How to use Practice Evidence</h1>
         <p class="page-lede">Step-by-step guides for learners, authors, reviewers, admins and judges.</p>
       </div>
-      <div class="page-header__actions"><a class="btn btn--primary" href="../ui"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M15 3h3a3 3 0 0 1 3 3v12a3 3 0 0 1-3 3h-3"/><path d="M10 17l5-5-5-5"/><path d="M15 12H3"/></svg>Open the app</a></div>
     </header>
 
     <details class="disclosure help-toc-mobile">
@@ -159,12 +158,12 @@
         <div class="input-group"><code id="workspace-address">the address of this site, up to (not including) /ui/help</code><button id="copy-workspace-address" class="btn btn--secondary btn--sm" type="button" hidden>Copy</button></div>
       </div></div>
       <h3>Things to ask</h3>
-      <dl class="kv">
-        <dt>Learners</dt><dd>"List the practice scenarios." · "Start a practice session on 'Following up on a missed deadline' and play the other person." · "Show me my feedback." · "Download my signed record."</dd>
-        <dt>Authors</dt><dd>"Draft a practice scenario about a project manager telling a client sponsor that two defects block the payment flow." · "Show me the results for my scenario."</dd>
-        <dt>Reviewers</dt><dd>"What's waiting for my review, and why is each one near the top?" · "Show me how often the AI judge agrees with reviewers."</dd>
-        <dt>Judges</dt><dd>"Get the judge hand-off for this session, assess it, and save my assessment." (Paste the session link you were sent.)</dd>
-      </dl>
+      <div class="ask-grid">
+        <div><p class="label">Learners</p><ul class="try-asking"><li>"List the practice scenarios."</li><li>"Start a practice session on 'Following up on a missed deadline' and play the other person."</li><li>"Show me my feedback."</li><li>"Download my signed record."</li></ul></div>
+        <div><p class="label">Authors</p><ul class="try-asking"><li>"Draft a practice scenario about a project manager telling a client sponsor that two defects block the payment flow."</li><li>"Show me the results for my scenario."</li></ul></div>
+        <div><p class="label">Reviewers</p><ul class="try-asking"><li>"What's waiting for my review, and why is each one near the top?"</li><li>"Show me how often the AI judge agrees with reviewers."</li></ul></div>
+        <div><p class="label">Appointed judges</p><ul class="try-asking"><li>"Get the judge hand-off for this session, assess it, and save my assessment." Paste the session link you were sent.</li></ul></div>
+      </div>
       <h3>Which steps stay in the web app</h3>
       <p>Approving a rubric, signing off a review, changing someone's role and withdrawing a review all put a person's name behind a result. These are done in the Practice Evidence web app, not from a chat assistant, unless your admin allows otherwise.</p>
     </section>

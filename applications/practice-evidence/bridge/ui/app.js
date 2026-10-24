@@ -1,16 +1,19 @@
-// practice-evidence web client.
+// Practice Evidence web client.
 //
 // A Path-A client: it reads this bridge's affordance manifest (GET affordances?format=jsonld),
 // indexes it by action IRI, and invokes every act at the path the manifest names, on this page's
 // own origin. It adds no endpoint of its own and decides nothing the bridge does not: which
 // controls an attempt shows comes from the attempt's own `nextActions`, every refusal is the
-// bridge's, and every score on the page was computed by the bridge from the rubric.
+// bridge's (shown in plain words, with the bridge's own text under "Technical details"), and every
+// score on the page was computed by the bridge from the rubric.
 //
 // Signing. Every act that changes or reveals a person's record is signed by that person:
 //   · demo mode: the bridge holds demo role keys and signs as the role picked here (and every
 //     record it writes says so); detected by asking pev.sign_as_demo_role for its roles;
 //   · wallet mode: an EIP-191 personal_sign over canonicalJson(payload) by the connected wallet;
-//   · paste mode: the page shows the exact text to sign; the person pastes the signature;
+//   · paste mode: the page shows the exact text to sign; the person pastes the signature. It is
+//     opt-in ("Sign manually (advanced)") wherever another way to sign in exists; until then a
+//     signed act shows a sign-in screen and sends nothing;
 //   · interego mode: the person signs in with their Interego account on the relay's own sign-in
 //     page (PKCE S256, a random state checked on return), and the relay signs every act for the
 //     agent of that session, through this bridge's ui/relay/sign (relay-attested, not user-held).
@@ -19,7 +22,8 @@
 // The page never holds a private key. Every request it makes goes to this bridge's own origin.
 //
 // Untrusted text (everything that came from a pod, a person or a model) is rendered through
-// textContent only. No markup is ever parsed from a string anywhere in this file.
+// textContent only. No markup is ever parsed from a string anywhere in this file, and every icon
+// is built with createElementNS.
 
 const ACT = {
   registerRole: 'urn:iep:action:pev:register-role',
@@ -57,6 +61,7 @@ const S = {
   needPod: false,
   bridge: null,                 // list_scenarios' `bridge`: routes, key kind, platform address, demo signing
   mode: 'paste',                // 'demo' | 'wallet' | 'paste' | 'interego'
+  manual: false,                // paste mode chosen on purpose ("Sign manually (advanced)"); until then a signed act asks to sign in
   interego: null,               // { accessToken, at, expiresAt, agentId, principal } while signed in with an Interego account
   demoRoles: [],
   role: 'learner',
@@ -72,52 +77,103 @@ const S = {
   pooled: false,
   author: null,
   seq: 0,
+  lastRoute: '',
+  copiedMemberId: false,        // memory only: ticks the checklist's Member ID step
+  queueCount: null,             // memory only: the To review count in the navigation
+  checklistRole: null,          // which role's Getting started steps are shown
+  checklistAll: false,          // every step shown, not just the next few
 };
 
 const READ_ENVELOPE_MS = 9 * 60 * 1000;
+const DEMO_SENTENCE = 'DEMO MODE: this bridge holds these role keys and signs as whichever role you pick. Records it writes say so. Do not run demo mode on a shared deployment.';
+const SIBLING = { name: 'Work Redesign', href: 'https://wrd-bridge-production.up.railway.app/' };
 const STATE_WORDS = {
-  'in-conversation': 'in conversation',
-  'ended': 'ended: not judged yet',
-  'judged': 'judged by AI: provisional, not reviewed',
-  'countersigned': 'confirmed by a reviewer',
-  'overridden': 'levels set by a reviewer',
-  'contested': 'contested: waiting for another reviewer',
-  'review-retracted': 'review withdrawn',
-  'redacted': 'transcript removed',
+  'in-conversation': 'In conversation', 'ended': 'Finished: not assessed yet', 'judged': 'Assessed by AI: provisional',
+  'countersigned': 'Confirmed by a reviewer', 'overridden': 'Levels set by a reviewer', 'contested': 'Second review requested',
+  'review-retracted': 'Review withdrawn', 'redacted': 'Conversation text deleted',
 };
-const REGIME_WORDS = {
-  evident: 'Evident: the good answer is obvious to anyone in the role',
-  knowable: 'Knowable: people with expertise can say what good looks like',
-  emergent: 'Emergent: what works only shows in hindsight',
-  turbulent: 'Turbulent: no stable pattern to judge against yet',
-  unclassified: 'Not classified yet',
+const STATE_TONE = { 'in-conversation': 'accent', 'ended': 'pending', 'judged': 'warning', 'countersigned': 'success',
+  'overridden': 'success', 'contested': 'warning', 'review-retracted': 'warning', 'redacted': 'danger' };
+const REGIME_WORDS = {   // [label, hint]
+  evident: ['Obvious', 'Anyone in the role would recognize a good answer.'],
+  knowable: ['Expert-judged', 'Experienced people can say what good looks like.'],
+  emergent: ['Situational', 'What works only becomes clear afterwards.'],
+  turbulent: ['Unsettled', 'No stable pattern to judge against yet.'],
+  unclassified: ['Not decided yet', ''],
 };
-const CHOSEN_BY_WORDS = {
-  'bridge-config': 'this bridge\'s configured model',
-  'judge-registry': 'a judge registered by the admin',
-  'learner': 'the learner, with their own key',
-  'reviewer': 'a reviewer, with their own key',
+const CHOSEN_BY_WORDS = { 'bridge-config': "this workspace's settings", 'judge-registry': 'an appointed judge',
+  'learner': 'the learner, with their own key', 'reviewer': 'a reviewer, with their own key' };
+const FACTOR_WORDS = { unverified: "A quote didn't match", notQuoted: 'Criteria at the lowest level with nothing checked',
+  disagreement: 'AI assessments disagree', nearThreshold: 'Close to the pass mark', uncertainty: 'The AI was unsure',
+  cellNeed: 'Few reviewed sessions for this AI judge', learnerControlled: "The learner's own AI played a part", auditSample: 'Blind check' };
+const QUOTE_STATUS = { verified: ['success', 'Quote checked'], unverified: ['danger', "Quote didn't match"],
+  'no-quote-needed': ['pending', 'Lowest level, nothing to check'] };
+const ROLE_WORDS = { reviewer: 'Reviewer', author: 'Author', judge: 'Judge', agent: 'AI agent (not a person)', learner: 'Learner', admin: 'Admin' };
+const ROLE_HINTS = {
+  reviewer: "Reviewers approve rubrics they didn't write and sign off practice sessions.",
+  author: 'Authors write, try and publish scenarios.',
+  judge: 'Judges assess the sessions they are given. A reviewer always has the final say.',
+  agent: 'Marks a member as software. Software can never approve a rubric or sign off a review.',
+  learner: "Learners practice. On some workspaces the built-in AI is only for people on the team.",
 };
-const FACTOR_WORDS = {
-  unverified: 'a quote did not check out',
-  notQuoted: 'criteria put at the lowest level with no quote (nothing was checked)',
-  disagreement: 'the judgments disagree',
-  nearThreshold: 'close to the pass mark',
-  uncertainty: 'the judge\'s own uncertainty',
-  cellNeed: 'few reviewed outcomes for this judge and criterion',
-  learnerControlled: 'the learner controlled the other person or chose the judge',
-  auditSample: 'in the audit sample (blind first)',
+const KEY_WORDS = { configured: 'Permanent', ephemeral: "Temporary (records won't be trusted after a restart)", 'demo-fixture': 'Demo key (records prove nothing outside this demo)' };
+const NEXT_WORDS = {   // client labels for nextActions, keyed by ACT key; the server's label and why move to Technical details
+  judgeAttempt: ['Get AI assessment', 'The AI suggests a level for each criterion and quotes your words. Practice Evidence checks every quote and works out the result.'],
+  judgePacket: ['Hand-off for an independent judge', 'Gives an appointed judge, or their AI assistant, what they need to assess this session.'],
+  exportRecord: ['Download my record', 'Every saved version with its signature, so you can check it on your own.'],
+  holderCopy: ['Copy to my storage', 'Works only with storage that accepts copies from this service. Otherwise, download.'],
+  contestReview: ['Request another review', 'A different reviewer will look again. You can ask up to twice.'],
+  retractReview: ['Withdraw the review (admin)', 'The learner sees your reason, and the session goes back to To review.'],
+  redactAttempt: ['Delete conversation text', "Deletes the words from this workspace. Levels and fingerprints stay, so a downloaded copy still checks out. This can't be undone."],
+  countersignAttempt: ['Review this session', 'Choose a level for every criterion and sign off.'],
+  overrideAttempt: ['Review this session', 'Choose a level for every criterion and sign off.'],
 };
-
-const STATUS_WORDS = {
-  verified: 'verified',
-  unverified: 'unverified',
-  'no-quote-needed': 'no quote needed: lowest level, nothing checked',
+const ACTION_WORDS = {  // the paste panel's plain "What you're confirming"
+  registerRole: 'Change a role', authorScenario: 'Save a scenario', draftScenario: 'Draft a scenario with AI', ratifyScenario: 'Approve a rubric',
+  startAttempt: 'Start practice', say: 'Send your line', counterpartPacket: 'Get instructions for your AI', recordTurns: 'Save both lines',
+  endConversation: 'Finish the conversation', judgeAttempt: 'Get AI assessment', judgePacket: 'Get the judge hand-off', reviewQueue: 'Open your review list',
+  countersignAttempt: "Confirm the AI's levels", overrideAttempt: 'Sign off your levels', contestReview: 'Request another review',
+  retractReview: 'Withdraw a review', scenarioResults: 'Open results', projectAttempt: 'Create a learning record', holderCopy: 'Copy to your storage',
+  exportRecord: 'Download your record', redactAttempt: 'Delete conversation text', getAttempt: 'Open your practice sessions',
 };
-/** A criterion's verification status as a chip: green only when a quote really checked out. */
-function statusChip(status) {
-  return chip(STATUS_WORDS[status] || status, status === 'verified' ? 'ok' : status === 'unverified' ? 'bad' : '');
-}
+const EVIDENCE_PLAIN = {  // the server's reasons a session cannot leave as evidence yet, in plain words
+  'an author trying their own scenario is a test; it never leaves as evidence': "it's a test run",
+  'the transcript was removed from this pod, so this attempt no longer leaves as evidence': 'the conversation text was deleted',
+  'a qualified reviewer has not countersigned or set the levels of this attempt': "it hasn't been reviewed yet",
+  'the standing review does not check out against the record and the role registry as it stood when it was signed': "the review couldn't be verified",
+  'the rubric version this attempt used has not been ratified by a reviewer': "the rubric hasn't been approved",
+};
+const ACCESS = {
+  'not-a-reviewer': 'Reviewing is for reviewers.',
+  'not-an-author': 'Writing scenarios is for authors.',
+  'not-an-admin': 'Only admins can change roles.',
+  'not-a-judge': 'Assessing sessions is for appointed judges.',
+  'not-entitled': 'Results are for reviewers, authors and admins.',
+  'not-the-learner': 'Only the learner can do this for their own session.',
+  'not-learner-or-reviewer': 'Only the learner or a reviewer can open this session.',
+  'not-learner-or-admin': 'Only the learner or an admin can do this.',
+};
+const SOMEONE_ELSE = {
+  'reviewer-is-the-learner': "You can't review your own practice.",
+  'reviewer-is-the-judge': "You can't review a session you assessed.",
+  'reviewer-requested-the-judgment': "You can't review a session you asked to have assessed.",
+  'reviewer-already-reviewed': "You've already reviewed this session; a different reviewer will look again.",
+  'ratifier-is-the-author': "You can't approve a rubric you wrote.",
+  'judge-is-the-learner': "You can't assess your own practice.",
+  'agent-cannot-countersign': 'Approving and signing off must be done by a person.',
+  'agent-cannot-ratify': 'Approving and signing off must be done by a person.',
+};
+const NOT_AVAILABLE = "This action isn't available on this workspace.";
+const NEED_STORAGE = "Choose this workspace's storage first (Workspace settings).";
+const CLIENT_TITLES = {   // a message the client itself throws → [title, body]
+  'Signing was cancelled; nothing was sent.': ['Cancelled', 'Nothing was sent.'],
+  'No wallet was found in this browser.': ['No crypto wallet found', 'Install a wallet extension, or sign in with Interego.'],
+  'Connect a wallet first.': ['Connect your wallet first', 'Choose Use a crypto wallet from the sign-in menu, then try again.'],
+  'The wallet offered no account.': ['Your wallet offered no account', 'Unlock your wallet or choose an account in it, then try again.'],
+  [NEED_STORAGE]: ["Choose this workspace's storage first", 'Open Workspace settings and enter the storage address your admin gave you.'],
+  [NOT_AVAILABLE]: ["This isn't available here", "This workspace doesn't offer this step. If you expected it, tell your admin."],
+};
+const BY = { 'own-agent': 'their own AI assistant', model: 'another AI', person: 'another person' };
 
 // ════════════════════════════════════════════════════════════════════════════════════════════
 //  DOM: elements are built, never parsed from strings
@@ -153,10 +209,9 @@ const short = (s) => {
 };
 const shortHash = (s) => String(s || '').slice(0, 12);
 const toolOf = (action) => `pev.${String(action || '').replace('urn:iep:action:pev:', '').replace(/-/g, '_')}`;
-const pct = (x) => (typeof x === 'number' ? `${Math.round(x * 100)} %` : 'n/a');
+const actKey = (action) => Object.keys(ACT).find((k) => ACT[k] === action);
+const pct = (x) => (typeof x === 'number' ? `${Math.round(x * 100)}%` : 'n/a');
 const num = (x) => (typeof x === 'number' ? (Math.round(x * 1000) / 1000).toString() : 'n/a');
-const muted = (text) => h('p', { class: 'muted', text });
-const chip = (text, cls) => h('span', { class: `chip ${cls || ''}`.trim(), text });
 let uid = 0;
 const nextId = (p) => `${p}-${++uid}`;
 
@@ -164,6 +219,11 @@ function levelLabel(rubric, criterionId, levelId) {
   const c = (rubric && rubric.criteria || []).find((x) => x.id === criterionId);
   const l = c && c.levels.find((x) => x.id === levelId);
   return l ? l.label : String(levelId);
+}
+
+function criterionTitle(rubric, criterionId) {
+  const c = (rubric && rubric.criteria || []).find((x) => x.id === criterionId);
+  return c ? c.title : String(criterionId);
 }
 
 function hasNext(view, key) { return (view.nextActions || []).some((n) => n.action === ACT[key]); }
@@ -180,6 +240,244 @@ function download(name, text, type) {
 }
 
 function jsonBlock(value) { return h('pre', { class: 'json', text: JSON.stringify(value, null, 2) }); }
+
+function fmtDate(iso) {
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime()) ? String(iso || '') : d.toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
+}
+
+/** A member's short name: the user id of an Interego Member ID, or a shortened address. */
+function memberShort(did) {
+  const s = String(did || '');
+  const i = s.indexOf(':users:');
+  return i >= 0 ? s.slice(i + ':users:'.length) : short(s);
+}
+
+/** Which app signed for a person, from the agent the relay named. */
+function agentWords(id) {
+  if (!id) return 'Interego';
+  const s = String(id);
+  const i = s.indexOf(':agents:');
+  const slug = i >= 0 ? s.slice(i + ':agents:'.length) : s;
+  if (slug.startsWith('practice-evidence-')) return 'the Practice Evidence web app';
+  if (slug.startsWith('claude-')) return 'Claude';
+  if (slug.startsWith('chatgpt-')) return 'ChatGPT';
+  if (slug.startsWith('openai-codex-')) return 'Codex';
+  if (slug.startsWith('cursor-')) return 'Cursor';
+  return 'another app';
+}
+
+/** Who an AI judge is, in plain words; the raw id stays in Technical details. */
+function judgeWords(id, kind) {
+  const s = String(id || '');
+  if (s.startsWith('model:scripted')) return 'Sample AI judge (demo)';
+  const m = /^model:[^/]+\/(.+)$/.exec(s);
+  if (m) return `${m[1]} (AI)`;
+  return kind === 'agent' ? 'An appointed AI judge' : 'An appointed judge';
+}
+
+/** The visible label on the other person's line: who wrote it. */
+function replyWords(t) {
+  if (t.source === 'authored-first-line') return { text: "Opening line, written by the scenario's author", tone: '' };
+  const d = t.disclosure;
+  if (!d) return null;
+  if (d.route === 'scripted') return { text: 'Sample reply: no AI ran', tone: 'demo' };
+  if (d.route === 'client-packet') return { text: `Written by your own AI (${[d.provider, d.model].filter(Boolean).join(' ')}), as you declared`, tone: 'warning' };
+  if (d.keySource === 'per-request-byok') return { text: `Reply by ${d.model || d.requestedModel}, with your own key`, tone: '' };
+  return { text: `Reply by ${d.model || d.requestedModel}, via Practice Evidence`, tone: '' };
+}
+
+/** Which AI drafted a scenario, in plain words. */
+function draftWords(d) {
+  if (!d) return 'an AI';
+  if (d.route === 'scripted') return 'the sample AI (demo; no AI ran)';
+  return [d.provider, d.model || d.requestedModel].filter(Boolean).join(' ') || 'an AI';
+}
+
+// ════════════════════════════════════════════════════════════════════════════════════════════
+//  Design-system pieces: icons, the mark, badges, callouts, page headers, fields, toasts
+// ════════════════════════════════════════════════════════════════════════════════════════════
+
+const ICONS = {
+  'sign-in':      ['M15 3h3a3 3 0 0 1 3 3v12a3 3 0 0 1-3 3h-3', 'M10 17l5-5-5-5', 'M15 12H3'],
+  'user':         ['M8 8a4 4 0 1 0 8 0a4 4 0 1 0-8 0', 'M4 21v-1a6 6 0 0 1 6-6h4a6 6 0 0 1 6 6v1'],
+  'check':        ['M5 12.5l4.5 4.5L19 7.5'],
+  'warning':      ['M10.27 3.98 2.3 17.8A2 2 0 0 0 4.03 20.8h15.94a2 2 0 0 0 1.73-3L13.73 3.98a2 2 0 0 0-3.46 0Z', 'M12 9.5v4', 'M12 17h.01'],
+  'info':         ['M3 12a9 9 0 1 0 18 0a9 9 0 1 0-18 0', 'M12 11v5', 'M12 8h.01'],
+  'document':     ['M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8Z', 'M14 3v5h5', 'M9 13h6', 'M9 17h4'],
+  'people':       ['M5.5 8a3.5 3.5 0 1 0 7 0a3.5 3.5 0 1 0-7 0', 'M3 20v-1a5 5 0 0 1 5-5h2a5 5 0 0 1 5 5v1', 'M16 4.2a3.8 3.8 0 0 1 0 7.6', 'M18 14.2a5 5 0 0 1 3 4.6V20'],
+  'chart':        ['M3 3v18h18', 'M8 17v-5', 'M12.5 17V7', 'M17 17v-8'],
+  'shield':       ['M12 3l7 3v5.5c0 4.4-3 8.2-7 9.5-4-1.3-7-5.1-7-9.5V6Z', 'M9 12l2 2 4-4'],
+  'sparkle':      ['M12 3l1.8 5.2a3 3 0 0 0 1.9 1.9L21 12l-5.3 1.8a3 3 0 0 0-1.9 1.9L12 21l-1.8-5.3a3 3 0 0 0-1.9-1.9L3 12l5.3-1.9a3 3 0 0 0 1.9-1.9Z', 'M19 2.5v3', 'M17.5 4h3'],
+  'arrow-right':  ['M5 12h14', 'M13 6l6 6-6 6'],
+  'external':     ['M14 4h6v6', 'M20 4l-9 9', 'M18 14v4a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4'],
+  'download':     ['M12 4v11', 'M7 10l5 5 5-5', 'M4 19h16'],
+  'chat':         ['M20 12a8 8 0 0 1-11.8 7L4 20l1-4.2A8 8 0 1 1 20 12Z'],
+  'clipboard':    ['M9 3.5h6a1 1 0 0 1 1 1V6a1 1 0 0 1-1 1H9a1 1 0 0 1-1-1V4.5a1 1 0 0 1 1-1Z', 'M16 5h1a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2h1', 'M9 14l2 2 4-4'],
+  'close':        ['M6 6l12 12', 'M18 6 6 18'],
+  'chevron-down': ['M6 9l6 6 6-6'],
+  'menu':         ['M4 7h16', 'M4 12h16', 'M4 17h16'],
+};
+const SVG_NS = 'http://www.w3.org/2000/svg';
+
+function svgEl(tag, attrs) {
+  const e = document.createElementNS(SVG_NS, tag);
+  for (const [k, v] of Object.entries(attrs)) e.setAttribute(k, String(v));
+  return e;
+}
+
+/** A decorative icon (the text beside it carries the meaning). */
+function icon(name, size) {
+  const svg = svgEl('svg', { viewBox: '0 0 24 24', class: size ? `icon icon--${size}` : 'icon', 'aria-hidden': 'true', focusable: 'false' });
+  for (const d of ICONS[name] || []) svg.append(svgEl('path', { d }));
+  return svg;
+}
+
+/** The Interego mark: three connected nodes on an accent tile. */
+function brandMark() {
+  const svg = svgEl('svg', { viewBox: '0 0 32 32', class: 'brand__mark', 'aria-hidden': 'true', focusable: 'false' });
+  svg.append(
+    svgEl('rect', { class: 'mark-tile', x: 0, y: 0, width: 32, height: 32, rx: 9 }),
+    svgEl('path', { class: 'mark-edge', d: 'M10.5 11.5 21.5 11.5 16 21.5Z' }),
+    svgEl('circle', { class: 'mark-node', cx: 10.5, cy: 11.5, r: 3 }),
+    svgEl('circle', { class: 'mark-node', cx: 21.5, cy: 11.5, r: 3 }),
+    svgEl('circle', { class: 'mark-node', cx: 16, cy: 21.5, r: 3 }),
+  );
+  return svg;
+}
+
+function badge(text, tone, title, iconName) {
+  return h('span', { class: tone ? `badge badge--${tone}` : 'badge', title }, iconName ? icon(iconName, 'sm') : null, text);
+}
+
+function statusPill(text, tone, id) { return h('span', { class: `status status--${tone || 'pending'}`, id, text }); }
+
+function para(text, cls) { return h('p', { class: cls === undefined ? 'text-secondary' : cls, text }); }
+
+/** Protocol detail, one click away: text only. */
+function tech(lines) {
+  const shown = (lines || []).filter((x) => x !== null && x !== undefined && x !== '');
+  return h('details', { class: 'disclosure' }, h('summary', { text: 'Technical details' }),
+    h('div', { class: 'disclosure__body disclosure__body--tech' }, shown.map((x) => h('div', { text: String(x) }))));
+}
+
+function callout(o) {
+  const tone = o.tone || 'info';
+  const ic = icon(tone === 'success' ? 'check' : tone === 'danger' || tone === 'warning' ? 'warning' : 'info');
+  ic.classList.add('callout__icon');
+  const box = h('div', { class: `callout callout--${tone}${o.extraClass ? ` ${o.extraClass}` : ''}`, role: o.alert ? 'alert' : o.role, id: o.id, dataset: o.dataset }, ic);
+  if (o.title) box.append(h('p', { class: o.titleClass ? `callout__title ${o.titleClass}` : 'callout__title', text: o.title }));
+  if (o.body) box.append(typeof o.body === 'string' ? h('p', { class: 'callout__body', text: o.body }) : o.body);
+  for (const k of o.kids || []) if (k) box.append(k);
+  const actions = (o.actions || []).filter(Boolean);
+  if (actions.length) box.append(h('div', { class: 'callout__actions' }, actions));
+  if (o.techLines && o.techLines.filter(Boolean).length) box.append(tech(o.techLines));
+  return box;
+}
+
+function pageHeader(o) {
+  document.title = `${o.title} · Practice Evidence`;
+  const text = h('div', { class: 'page-header__text' });
+  if (o.crumbs) {
+    text.append(h('nav', { class: 'breadcrumbs', 'aria-label': 'Breadcrumb' }, h('ol', {}, o.crumbs.map(([href, label]) => h('li', {},
+      href ? h('a', { href, text: label }) : h('span', { 'aria-current': 'page', text: label }))))));
+  }
+  text.append(h('h1', { class: 'page-title', text: o.title }));
+  if (o.lede) text.append(h('p', { class: 'page-lede', text: o.lede }));
+  if (o.meta && o.meta.length) text.append(h('div', { class: 'page-header__meta' }, o.meta));
+  const head = h('header', { class: 'page-header' }, text);
+  if (o.actions && o.actions.length) head.append(h('div', { class: 'page-header__actions' }, o.actions));
+  return head;
+}
+
+function emptyState(o) {
+  return h('div', { class: 'empty' }, h('span', { class: 'empty__icon' }, icon(o.icon)), h('h2', { class: 'empty__title', text: o.title }),
+    o.text ? h('p', { class: 'empty__text', text: o.text }) : null, o.actions && o.actions.length ? h('div', { class: 'empty__actions' }, o.actions) : null);
+}
+
+/** A labelled control: label → control → hint. */
+function formField(o) {
+  if (!o.control.id) o.control.id = o.id || nextId('f');
+  const f = h('div', { class: 'field', dataset: o.dataField ? { field: o.dataField } : undefined },
+    h('label', { class: o.hideLabel ? 'label visually-hidden' : 'label', for: o.control.id }, o.label, o.optional ? h('span', { class: 'label__optional', text: '(optional)' }) : null),
+    o.control);
+  if (o.hint) {
+    const hid = `${o.control.id}-hint`;
+    f.append(h('p', { class: 'hint', id: hid, text: o.hint }));
+    o.control.setAttribute('aria-describedby', hid);
+  }
+  return f;
+}
+
+function errorText(text) { return h('p', { class: 'error-text', role: 'alert' }, icon('warning'), text); }
+
+function linkButton(href, label, cls, iconName) {
+  const ic = iconName ? icon(iconName, 'sm') : null;
+  return h('a', { class: `btn ${cls || 'btn--secondary'}`, href }, iconName === 'arrow-right' ? null : ic, label, iconName === 'arrow-right' ? ic : null);
+}
+
+/** A short confirmation in the corner. Errors never use one: they get a callout where they happened. */
+function toast(o) {
+  const region = document.getElementById('toasts');
+  if (!region) return;
+  const tone = o.tone || 'info';
+  const ic = icon(tone === 'success' ? 'check' : tone === 'warning' || tone === 'danger' ? 'warning' : 'info');
+  ic.classList.add('toast__icon');
+  const close = h('button', { type: 'button', class: 'btn btn--ghost btn--icon btn--sm toast__close', 'aria-label': 'Dismiss notification' }, icon('close'));
+  const t = h('div', { class: `toast toast--${tone}` }, ic, h('p', { class: 'toast__title', text: o.title }), close);
+  if (o.text) t.append(h('p', { class: 'toast__text', text: o.text }));
+  let timer = 0;
+  const dismiss = () => { clearTimeout(timer); t.classList.add('is-leaving'); setTimeout(() => t.remove(), 400); };
+  const arm = () => { timer = setTimeout(dismiss, 6000); };
+  close.addEventListener('click', dismiss);
+  t.addEventListener('mouseenter', () => clearTimeout(timer));
+  t.addEventListener('mouseleave', arm);
+  t.addEventListener('focusin', () => clearTimeout(timer));
+  region.append(t);
+  arm();
+}
+
+function openDialog(d) { if (typeof d.showModal === 'function') d.showModal(); else d.setAttribute('open', ''); }
+function closeDialog(d) { if (typeof d.close === 'function') d.close(); else d.removeAttribute('open'); }
+
+/** Close the menu a control sits in (a native popover), where the browser has the popover API. */
+function closeMenuOf(el) {
+  const m = el && el.closest ? el.closest('[popover]') : null;
+  if (m && typeof m.hidePopover === 'function') { try { m.hidePopover(); } catch { /* it was not open */ } }
+}
+
+/** Where the browser has no CSS anchor positioning, place each menu under its button when it opens. */
+function placeMenus() {
+  if (typeof CSS !== 'undefined' && CSS.supports && CSS.supports('anchor-name: --a')) return;
+  for (const menu of document.querySelectorAll('.menu[popover]')) {
+    const place = () => {
+      if (!menu.isConnected) return;
+      const btn = document.querySelector(`[popovertarget="${menu.id}"]`);
+      if (!btn) return;
+      const r = btn.getBoundingClientRect();
+      menu.style.setProperty('--menu-top', `${Math.round(r.bottom + 4)}px`);
+      menu.style.setProperty('--menu-right', `${Math.round(document.documentElement.clientWidth - r.right)}px`);
+    };
+    menu.addEventListener('beforetoggle', (e) => {
+      if (e.newState === 'open') { place(); addEventListener('scroll', place, { passive: true }); addEventListener('resize', place); }
+      else { removeEventListener('scroll', place); removeEventListener('resize', place); }
+    });
+  }
+}
+
+async function copyText(text, what) {
+  try {
+    await navigator.clipboard.writeText(text);
+    toast({ tone: 'success', title: `${what} copied` });
+  } catch {
+    toast({ tone: 'warning', title: 'Select the text and copy it yourself' });
+  }
+}
+
+function scrollToEl(sel) {
+  const el = $(sel);
+  if (el && typeof el.scrollIntoView === 'function') el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
 
 // ════════════════════════════════════════════════════════════════════════════════════════════
 //  Canonical JSON (the same rule as @interego/core canonicalJson), nonces, hex
@@ -218,6 +516,9 @@ class Refused extends Error {
   }
 }
 
+/** A signed act asked of a visitor who has not signed in: nothing is signed and nothing is sent. */
+class NeedsSignIn extends Error { constructor() { super('Sign in to continue.'); } }
+
 async function loadManifest() {
   const r = await fetch('affordances?format=jsonld', { headers: { accept: 'application/ld+json' } });
   if (!r.ok) throw new Error(`The affordance manifest answered HTTP ${r.status}.`);
@@ -231,7 +532,7 @@ async function loadManifest() {
 
 async function invoke(action, args) {
   const a = S.manifest.get(action);
-  if (!a) throw new Error(`This bridge does not offer ${toolOf(action)}.`);
+  if (!a) { const e = new Error(NOT_AVAILABLE); e.detail = `This bridge does not offer ${toolOf(action)}.`; throw e; }
   const init = { method: a.method, headers: { accept: 'application/json' } };
   let url = a.path;
   if (a.method === 'GET') {
@@ -258,7 +559,8 @@ function signerKey() {
 }
 
 async function sign(action, fields, read) {
-  if (!S.pod) throw new Error('Choose the pod to work with first (in the bar at the top).');
+  if (!S.pod) throw new Error(NEED_STORAGE);
+  if (S.mode === 'paste' && !S.manual) throw new NeedsSignIn();
   const payload = { v: 1, action, podUrl: S.pod, ...fields };
   const cacheKey = read ? `${signerKey()}|${S.pod}|${canonicalJson(payload)}` : null;
   if (cacheKey) {
@@ -308,33 +610,41 @@ async function connectWallet() {
   S.readEnvelopes.clear();
 }
 
-/** Paste mode: show the exact text to sign, wait for the signature. */
+/** Paste mode (chosen on purpose): show the exact text to sign, wait for the signature. */
 function pasteSign(payload) {
   return new Promise((resolve, reject) => {
     const sec = clear($('#signing'));
     const text = canonicalJson(payload);
-    const pasted = h('textarea', { rows: 3, placeholder: '0x… (the signature), or {"payload": …, "signature": "0x…"}', 'aria-label': 'Signature' });
-    const problem = h('p', { class: 'refusal-inline' });
+    const key = actKey(payload.action);
+    const exact = h('textarea', { class: 'textarea textarea--mono', rows: 3, readOnly: true, value: text });
+    const pasted = h('textarea', { id: 'paste-signature', class: 'textarea textarea--mono', rows: 3, placeholder: '0x… (the signature), or {"payload": …, "signature": "0x…"}', 'aria-label': 'Signature' });
+    const problem = h('p', { class: 'error-text' });
     const done = () => clear(sec);
-    sec.append(h('div', { class: 'panel signing' },
-      h('h3', { text: 'Sign this act' }),
-      h('p', { text: 'Sign the exact text below with EIP-191 personal_sign (a wallet, or any tool that signs a message that way), then paste the signature here. The signer is who acts: nothing else names you.' }),
-      h('details', {}, h('summary', { text: 'How to get a key' }),
-        h('p', { text: 'You need an Ethereum-style key held in a wallet that supports personal_sign, or a tool that signs the text shown with EIP-191. This page links to nothing outside this bridge and never sees your key.' })),
-      h('p', { class: 'label', text: 'The payload' }), jsonBlock(payload),
-      h('label', {}, 'The exact text to sign', h('textarea', { rows: 3, readOnly: true, value: text })),
-      pasted, problem,
-      h('div', { class: 'row' },
-        h('button', { type: 'button', class: 'primary', text: 'Use this signature', onclick: () => {
-          const raw = pasted.value.trim();
-          if (/^0x[0-9a-fA-F]{130}$/.test(raw)) { done(); resolve({ payload, signature: raw }); return; }
-          try {
-            const j = JSON.parse(raw);
-            if (j && typeof j.signature === 'string' && j.payload && typeof j.payload === 'object') { done(); resolve({ payload: j.payload, signature: j.signature }); return; }
-          } catch { /* not JSON: said below */ }
-          problem.textContent = 'Paste a 0x signature of 130 hex digits, or {"payload": …, "signature": "0x…"}.';
-        } }),
-        h('button', { type: 'button', text: 'Cancel', onclick: () => { done(); reject(new Error('Signing was cancelled; nothing was sent.')); } }))));
+    const use = h('button', { type: 'button', class: 'btn btn--primary', text: 'Use this signature', onclick: () => {
+      const raw = pasted.value.trim();
+      if (/^0x[0-9a-fA-F]{130}$/.test(raw)) { done(); resolve({ payload, signature: raw }); return; }
+      try {
+        const j = JSON.parse(raw);
+        if (j && typeof j.signature === 'string' && j.payload && typeof j.payload === 'object') { done(); resolve({ payload: j.payload, signature: j.signature }); return; }
+      } catch { /* not JSON: said below */ }
+      problem.textContent = 'Paste a 0x signature of 130 hex digits, or {"payload": …, "signature": "0x…"}.';
+    } });
+    const cancel = h('button', { type: 'button', class: 'btn btn--ghost', text: 'Cancel', onclick: () => { done(); reject(new Error('Signing was cancelled; nothing was sent.')); } });
+    sec.append(h('section', { class: 'card card--highlight signing', 'aria-labelledby': 'signing-title' },
+      h('div', { class: 'card__header' }, h('div', {},
+        h('h2', { class: 'card__title', id: 'signing-title', text: 'Confirm this step with your signature' }),
+        h('p', { class: 'card__subtitle', text: 'Manual signing (advanced): sign the exact text below with a tool that supports EIP-191 personal_sign, then paste the signature.' }))),
+      h('div', { class: 'card__body' },
+        h('p', {}, "What you're confirming: ", h('strong', { text: ACTION_WORDS[key] || 'This step' })),
+        formField({ label: 'Exact text to sign', control: exact }),
+        h('div', { class: 'btn-group' }, h('button', { type: 'button', class: 'btn btn--secondary btn--sm', text: 'Copy text', onclick: () => copyText(text, 'Text to sign') })),
+        h('details', { class: 'disclosure' }, h('summary', { text: 'Show the request as JSON' }), jsonBlock(payload)),
+        h('details', { class: 'disclosure' }, h('summary', { text: 'How to get a key' }),
+          h('div', { class: 'disclosure__body' }, h('p', { text: 'You need an Ethereum-style key held in a wallet that supports personal_sign, or a tool that signs the text shown with EIP-191. This page links to nothing outside this service and never sees your key.' }))),
+        formField({ label: 'Signature', control: pasted }),
+        problem),
+      h('div', { class: 'card__footer' }, cancel, use)));
+    if (typeof sec.scrollIntoView === 'function') sec.scrollIntoView({ block: 'nearest' });
   });
 }
 
@@ -345,6 +655,7 @@ function pasteSign(payload) {
 // sessionStorage only: the token ends with the tab, and no other page of this origin keeps it.
 const SESSION_KEY = 'pev.interego.session';
 const PENDING_KEY = 'pev.interego.pending';
+const CHECKLIST_HIDDEN_KEY = 'pev.checklist.hidden';
 const PENDING_MS = 15 * 60 * 1000;
 /** The longest this tab keeps a sign-in, whatever it is told: the relay's access tokens last an hour. */
 const SIGN_IN_MAX_MS = 60 * 60 * 1000;
@@ -395,7 +706,7 @@ async function startInteregoSignIn() {
   const verifier = randomB64url(32);
   const state = randomB64url(24);
   const challenge = await s256(verifier);
-  const back = /^#\/[a-z]/.test(location.hash) ? location.hash : '#/practice';
+  const back = /^#\/[a-z]/.test(location.hash) && location.hash !== '#/signin' ? location.hash : '#/practice';
   if (!sessionPut(PENDING_KEY, JSON.stringify({ verifier, state, back, at: Date.now() }))) {
     throw new Error('This browser keeps no session storage for this page (a private window may block it), so it could not finish a sign-in.');
   }
@@ -405,10 +716,18 @@ async function startInteregoSignIn() {
     state, scope: cfg.scope, resource: cfg.resource,
   };
   for (const [k, v] of Object.entries(query)) u.searchParams.set(k, String(v));
-  clear($('#signing')).append(h('div', { class: 'panel signing' },
-    h('p', { text: `Taking you to ${u.host} to sign in with your Interego account (your passkey, on the relay's own page). Nothing is signed until you come back here.` }),
-    h('a', { id: 'interego-continue', href: u.href, rel: 'noreferrer', text: `Continue to sign in at ${u.host}` })));
+  clear($('#signing')).append(callout({
+    tone: 'info', title: 'Taking you to Interego to sign in',
+    body: `You're going to Interego to sign in (${u.host}). Practice Evidence never sees your passkey.`,
+    actions: [h('a', { id: 'interego-continue', class: 'btn btn--primary btn--sm', href: u.href, rel: 'noreferrer', text: 'Continue to Interego' })],
+  }));
   location.assign(u.href);
+}
+
+/** A note about a sign-in that did not finish: plain words, today's exact sentence under Technical details. */
+function signInNote(body, sentence) {
+  return callout({ tone: 'warning', title: "Sign-in didn't finish", body, alert: true, extraClass: 'refusal',
+    actions: [signInButton('interego', 'Sign in again', 'sm')], techLines: [sentence] });
 }
 
 /**
@@ -432,15 +751,19 @@ async function finishInteregoSignIn() {
   const back = pending && typeof pending.back === 'string' && /^#\/[a-z]/.test(pending.back) ? pending.back : '#/practice';
   // Back to the page itself: the code leaves the address bar and the history before anything else.
   history.replaceState(null, '', `${new URL('../../ui', location.href).pathname}${back}`);
-  const note = (text) => h('div', { class: 'refusal', role: 'alert' }, h('p', { text }));
   if (!waiting) {
-    return note('Interego sign-in did not finish: this tab did not start a sign-in in the last 15 minutes, so this answer is not one it is waiting for. Nothing was kept; sign in again.');
+    return signInNote("This tab didn't start a sign-in in the last 15 minutes, so we ignored this one. Nothing was saved.",
+      'Interego sign-in did not finish: this tab did not start a sign-in in the last 15 minutes, so this answer is not one it is waiting for. Nothing was kept; sign in again.');
   }
   if (!ours) {
-    return note('Interego sign-in was refused: the answer did not carry the state this tab sent, so it may not be the sign-in you started. Nothing was kept, and the sign-in this tab started is still waiting for its own answer.');
+    return signInNote("This sign-in wasn't started from this tab, so we ignored it for your safety. Nothing was saved.",
+      'Interego sign-in was refused: the answer did not carry the state this tab sent, so it may not be the sign-in you started. Nothing was kept, and the sign-in this tab started is still waiting for its own answer.');
   }
-  if (error) return note(`Interego sign-in did not finish: the relay answered "${error.slice(0, 80)}". Nothing was kept; sign in again to try once more.`);
-  if (!code) return note('Interego sign-in did not finish: the relay sent no code back. Sign in again.');
+  if (error) {
+    return signInNote("Interego didn't complete the sign-in. Nothing was saved. Please try again.",
+      `Interego sign-in did not finish: the relay answered "${error.slice(0, 80)}". Nothing was kept; sign in again to try once more.`);
+  }
+  if (!code) return signInNote('Please sign in again.', 'Interego sign-in did not finish: the relay sent no code back. Sign in again.');
   try {
     const r = await uiCall('ui/oauth/exchange', {
       method: 'POST', headers: { 'content-type': 'application/json', accept: 'application/json' },
@@ -448,15 +771,17 @@ async function finishInteregoSignIn() {
     });
     const expiresIn = Number(r.expiresIn);
     if (typeof r.accessToken !== 'string' || !r.accessToken || !Number.isFinite(expiresIn) || expiresIn <= 0) {
-      return note('Interego sign-in did not finish: this bridge gave back no access token.');
+      return signInNote('Please sign in again.', 'Interego sign-in did not finish: this bridge gave back no access token.');
     }
     const at = Date.now();
     const kept = { accessToken: r.accessToken, at, expiresAt: at + Math.min(expiresIn * 1000, SIGN_IN_MAX_MS) };
-    if (!sessionPut(SESSION_KEY, JSON.stringify(kept))) return note('This browser keeps no session storage for this page, so the sign-in cannot be kept.');
+    if (!sessionPut(SESSION_KEY, JSON.stringify(kept))) {
+      return signInNote('Please sign in again.', 'This browser keeps no session storage for this page, so the sign-in cannot be kept.');
+    }
     keepInterego(kept);
     return null;
   } catch (e) {
-    return refusalBox(e);
+    return problemCallout(e, { alert: true });
   }
 }
 
@@ -465,6 +790,11 @@ function keepInterego(k) {
   S.interego = { accessToken: k.accessToken, at: k.at, expiresAt: k.expiresAt, agentId: null, principal: null };
   if (signInTimer !== null) clearTimeout(signInTimer);
   signInTimer = setTimeout(() => { signInTimer = null; interegoEnded(); }, Math.max(0, k.expiresAt - Date.now()));
+}
+
+function sessionEndedCallout() {
+  return callout({ tone: 'warning', title: 'Your session has ended', body: 'Sessions last up to an hour. Sign in again to pick up where you left off.',
+    alert: true, extraClass: 'refusal', actions: [signInButton('interego', 'Sign in again', 'sm')], techLines: [SIGN_IN_ENDED] });
 }
 
 /** A sign-in kept in this tab, if any. One past its expiry, or claiming to last past an hour from now, is forgotten here. */
@@ -479,7 +809,7 @@ function restoreInteregoSession() {
   }
   if (expiresAt <= now) {
     sessionDrop(SESSION_KEY);
-    return h('div', { class: 'refusal', role: 'alert' }, h('p', { text: SIGN_IN_ENDED }));
+    return sessionEndedCallout();
   }
   keepInterego({ accessToken: k.accessToken, at: Number(k.at) || 0, expiresAt });
   return null;
@@ -492,7 +822,7 @@ function interegoEnded() {
   if (!pageReady) return;
   renderHeader();
   route();
-  clear($('#signing')).append(h('div', { class: 'refusal', role: 'alert' }, h('p', { text: SIGN_IN_ENDED })));
+  clear($('#signing')).append(sessionEndedCallout());
 }
 
 /** Have the relay sign one unsigned act, through this bridge (the page reaches nothing else). */
@@ -533,7 +863,7 @@ async function confirmInteregoSignIn() {
     const who = r.signedAs;
     if (S.interego && who && who.authority === 'relay-delegated' && typeof who.principal === 'string') S.interego.principal = who.principal;
   } catch (e) {
-    $('#signing').append(refusalBox(e));
+    $('#signing').append(problemCallout(e, {}));
   }
   renderHeader();
 }
@@ -562,19 +892,199 @@ function signOutInterego() {
   forgetInterego();
   renderHeader();
   route();
-  clear($('#signing')).append(h('div', { class: 'panel', id: 'interego-signed-out', role: 'status' }, h('p', { text: signedOutWords(expiresAt) })));
+  clear($('#signing')).append(callout({
+    tone: 'neutral', id: 'interego-signed-out', role: 'status', title: "You're signed out of this tab",
+    body: "Your Interego session isn't ended early: it stays valid until it expires (within an hour), and anyone with a copy could use it until then. Practice Evidence keeps no copy.",
+    kids: [h('details', { class: 'disclosure' }, h('summary', { text: 'What this means' }), h('div', { class: 'disclosure__body' }, h('p', { text: signedOutWords(expiresAt) })))],
+  }));
 }
 
 // ════════════════════════════════════════════════════════════════════════════════════════════
-//  Refusals and outcomes
+//  Signing in: the buttons, the screens and the callout a signed-out visitor sees
 // ════════════════════════════════════════════════════════════════════════════════════════════
 
-function refusalBox(err) {
-  if (!(err instanceof Refused)) return h('div', { class: 'refusal', role: 'alert' }, h('p', { text: String(err && err.message || err) }));
+/** A sign-in button; one document-level click handler acts on every [data-sign-in]. */
+function signInButton(how, label, size, variant, block) {
+  return h('button', { type: 'button', class: `btn ${variant || 'btn--primary'}${size ? ` btn--${size}` : ''}${block ? ' btn--block' : ''}`, dataset: { signIn: how } },
+    how === 'interego' ? icon('sign-in') : null, label);
+}
+
+function onSignInClick(e) {
+  const t = e.target && typeof e.target.closest === 'function' ? e.target.closest('[data-sign-in]') : null;
+  if (!t) return;
+  e.preventDefault();
+  const how = t.getAttribute('data-sign-in');
+  closeMenuOf(t);
+  if (how === 'interego') {
+    t.setAttribute('aria-busy', 'true');
+    t.disabled = true;
+    startInteregoSignIn().catch((err) => {
+      t.removeAttribute('aria-busy');
+      t.disabled = false;
+      clear($('#signing')).append(problemCallout(err, { alert: true }));
+    });
+  } else if (how === 'wallet') {
+    connectWallet().then(() => { renderHeader(); route(); }, (err) => clear($('#signing')).append(problemCallout(err, { alert: true })));
+  } else if (how === 'manual') {
+    S.manual = true;
+    S.readEnvelopes.clear();
+    renderHeader();
+    route();
+  }
+}
+
+const GATE_TITLES = {
+  mine: 'Sign in to see your practice sessions', review: 'Sign in to review sessions', results: 'Sign in to see results',
+  attempt: 'Sign in to open this session', roles: 'Sign in to manage your team', signin: 'Sign in to Practice Evidence',
+};
+
+/** The screen a signed-out visitor sees in place of a view that needs to know who they are. */
+function signInGate(view) {
+  const full = view === 'signin';
+  const card = h('div', { class: 'auth__card' }, brandMark(), h(full ? 'h1' : 'h2', { class: 'auth__title', text: GATE_TITLES[view] || 'Sign in to continue' }));
+  card.append(h('p', { class: 'auth__text', text: interegoOffered()
+    ? "Use your Interego account. You'll confirm it's you with your passkey on Interego's sign-in page."
+    : 'Sign each step with a crypto wallet, or sign it manually with your own key.' }));
+  const actions = h('div', { class: 'auth__actions' });
+  if (interegoOffered()) actions.append(signInButton('interego', 'Sign in with Interego', 'lg', 'btn--primary', true), h('div', { class: 'auth__divider', text: 'or' }));
+  if (S.hasWallet) actions.append(signInButton('wallet', 'Use a crypto wallet', '', interegoOffered() ? 'btn--secondary' : 'btn--primary', true));
+  actions.append(signInButton('manual', 'Sign manually (advanced)', '', 'btn--ghost', true));
+  card.append(actions);
+  if (interegoOffered()) card.append(h('p', { class: 'auth__fine', text: "First time? You'll create your Interego account during sign-in. No password, no email." }));
+  return h('div', { class: full ? 'auth' : 'auth auth--inline' }, card);
+}
+
+/** Shown where an action was pressed by a visitor who has not signed in. Nothing was signed or sent. */
+function signInCallout() {
+  const actions = [];
+  if (interegoOffered()) actions.push(signInButton('interego', 'Sign in with Interego', 'sm'));
+  if (S.hasWallet) actions.push(signInButton('wallet', 'Use a crypto wallet', 'sm', actions.length ? 'btn--secondary' : 'btn--primary'));
+  actions.push(signInButton('manual', 'Sign manually (advanced)', 'sm', 'btn--ghost'));
+  return callout({ tone: 'accent', title: 'Sign in to continue', alert: true, extraClass: 'signin-needed', actions,
+    body: interegoOffered() ? "Use your Interego account. You'll come straight back here." : 'Choose how to sign this step.' });
+}
+
+// ════════════════════════════════════════════════════════════════════════════════════════════
+//  Problems and outcomes: plain words first, the bridge's own words under Technical details
+// ════════════════════════════════════════════════════════════════════════════════════════════
+
+function waitWords(s) {
+  const n = Number(s);
+  if (!Number.isFinite(n) || n <= 0) return 'a few minutes';
+  if (n < 90) return `${Math.ceil(n)} ${Math.ceil(n) === 1 ? 'second' : 'seconds'}`;
+  const m = Math.round(n / 60);
+  return `${m} ${m === 1 ? 'minute' : 'minutes'}`;
+}
+
+function memberIdButton() {
+  const principal = S.interego && S.interego.principal;
+  if (!principal) return null;
+  return h('button', { type: 'button', class: 'btn btn--secondary btn--sm', text: 'Copy my Member ID', onclick: () => { S.copiedMemberId = true; copyText(principal, 'Member ID'); } });
+}
+
+function retryButton(o, label) {
+  return o.retry ? h('button', { type: 'button', class: 'btn btn--primary btn--sm', text: label || 'Try again', onclick: () => o.retry() }) : null;
+}
+
+const OUT_OF_DATE = ['turn-out-of-order', 'record-changed', 'chain-moved', 'scenario-revised', 'scenario-changed'];
+const MODEL_FAULT = ['model-unreachable', 'model-rate-limited', 'model-output-empty', 'model-output-cut-off', 'model-declined', 'model-billing'];
+const STEP_ORDER = {
+  'attempt-not-ended': ['Finish the conversation first', ''], 'no-learner-turns': ['Say something first', "There's nothing to assess yet."],
+  'attempt-not-judged': ["This session hasn't been assessed yet", ''], 'scenario-not-published': ['This scenario is still a draft', ''],
+  'attempt-already-reviewed': ['This session has been reviewed', 'To reopen it, request another review.'],
+};
+const FORM_CHECKS = {
+  'coached-undeclared': 'Please say whether anyone helped you prepare.', 'draft-assistance-undeclared': 'Please say who helped write this scenario.',
+  'why-too-short': 'Please add a reason (at least 10 characters).', 'override-why-missing': 'Please add a reason (at least 10 characters).',
+  'levels-differ-from-judge': "Your levels differ from the AI's, so this is \"Sign off my levels\" with reasons.",
+  'override-changes-nothing': "Your levels match the AI's: use Confirm all levels.",
+};
+
+/** A refusal's plain title, message and the one action that resolves it. */
+function friendly(err, o) {
+  const code = err.code || '';
+  const b = err.body || {};
+  if (code === 'envelope-missing' || code === 'signature-unrecoverable') {
+    return { tone: 'accent', title: 'Please sign in to continue', message: "This step needs to know it's you.",
+      actions: [interegoOffered() ? signInButton('interego', 'Sign in with Interego', 'sm') : null] };
+  }
+  if (code === 'interego-sign-in-expired' || code === 'interego-bearer-missing') {
+    return { tone: 'warning', title: 'Your session has ended', message: 'Sessions last up to an hour. Sign in again to pick up where you left off.',
+      actions: [signInButton('interego', 'Sign in again', 'sm')] };
+  }
+  if (code === 'envelope-expired') {
+    return { tone: 'warning', title: 'That took a little too long', message: 'For your security, each step has to be confirmed within a few minutes. Please try again.', actions: [retryButton(o)] };
+  }
+  if (ACCESS[code]) {
+    return { tone: 'neutral', title: "You don't have access to this", message: `${ACCESS[code]} Ask your admin to add you, and share your Member ID with them.`, actions: [memberIdButton()] };
+  }
+  if (code === 'chat-agent-may-not-decide') {
+    return { tone: 'neutral', title: 'Please do this in the web app',
+      message: 'Approving rubrics, signing off reviews, changing roles and withdrawing reviews are done in the Practice Evidence web app, so a person makes those decisions directly.' };
+  }
+  if (SOMEONE_ELSE[code]) {
+    return { tone: 'neutral', title: 'Someone else needs to do this', message: SOMEONE_ELSE[code],
+      actions: [code.startsWith('reviewer-') ? linkButton('#/review', 'Back to To review', 'btn--secondary btn--sm') : null] };
+  }
+  if (code === 'no-model-route') {
+    return { tone: 'info', title: "AI isn't available for this step",
+      message: 'This workspace has no built-in AI. Use your own AI assistant for this step, or add your own AI provider key in Workspace settings.',
+      actions: [h('button', { type: 'button', class: 'btn btn--secondary btn--sm', text: 'Workspace settings', onclick: () => openSettings('') })] };
+  }
+  if (code === 'bridge-model-for-registered-only') {
+    return { tone: 'info', title: "AI isn't available for this step", message: 'The built-in AI is for people on your team. Ask your admin to add you, or use your own AI.', actions: [memberIdButton()] };
+  }
+  if (code === 'model-budget-spent' || code === 'attempt-budget-spent') {
+    return { tone: 'warning', title: 'Please wait a moment', message: `You've reached the hourly limit for this. Try again in ${waitWords(b.retryAfterSeconds)}.`, actions: [retryButton(o)] };
+  }
+  if (code === 'relay-calls-limited' || code === 'relay-busy') {
+    return { tone: 'warning', title: 'Please wait a moment', message: `Lots of people are signing in right now. Try again in ${waitWords(b.retryAfterSeconds)}.`, actions: [retryButton(o)] };
+  }
+  if (OUT_OF_DATE.includes(code)) {
+    return { tone: 'warning', title: 'This page is out of date', message: 'Something changed since you opened this page. Refresh it, check, and try again. Your unsent line is kept.',
+      actions: [h('button', { type: 'button', class: 'btn btn--primary btn--sm', text: 'Refresh', onclick: () => route() })] };
+  }
+  if (MODEL_FAULT.includes(code)) {
+    return { tone: 'danger', title: "The AI didn't respond properly", message: 'Nothing was saved. Please try again in a moment.', actions: [retryButton(o)] };
+  }
+  if (code === 'judge-output-unusable' || code === 'draft-output-unusable') {
+    return { tone: 'danger', title: "The AI didn't respond properly",
+      message: "The AI's answer didn't follow the rules, so we didn't save it or patch it up. Try again, or ask for a second opinion.", actions: [retryButton(o)] };
+  }
+  if (code === 'pod-unreachable' || code === 'pod-refused-read' || code === 'pod-refused-write') {
+    return { tone: 'danger', title: "We couldn't reach this workspace's storage", message: 'Nothing was saved. Please try again; if it keeps happening, tell your admin.', actions: [retryButton(o)] };
+  }
+  if (code === 'record-key-mismatch' || code === 'record-not-trusted' || code === 'records-sealed') {
+    return { tone: 'danger', title: "Some records here can't be opened", message: "Some records here can't be opened by this service. Please contact your admin." };
+  }
+  if (STEP_ORDER[code]) return { tone: 'warning', title: STEP_ORDER[code][0], message: STEP_ORDER[code][1] };
+  if (code === 'unverified-criteria-need-override') {
+    const rb = b['iep:resolvedBy'];
+    const which = rb && Array.isArray(rb.criteria) ? rb.criteria.join(', ') : 'some criteria';
+    return { tone: 'warning', title: `A quote didn't match for ${which}. Set those levels yourself and add a reason.`, message: '' };
+  }
+  if (FORM_CHECKS[code]) return { tone: 'warning', title: FORM_CHECKS[code], message: '' };
+  return { tone: 'danger', title: 'Something went wrong', message: 'Nothing was saved. Please try again. If it keeps happening, contact us and include the details below.', actions: [retryButton(o)] };
+}
+
+/** Every failure, as a callout: what happened and what to do, then the bridge's own words under Technical details. */
+function problemCallout(err, o) {
+  const opt = o || {};
+  if (err instanceof NeedsSignIn) return signInCallout();
+  if (!(err instanceof Refused)) {
+    const msg = String(err && err.message || err);
+    if (msg === SIGN_IN_ENDED) return sessionEndedCallout();
+    const t = CLIENT_TITLES[msg];
+    return callout({ tone: 'neutral', title: t ? t[0] : 'Something went wrong', body: t ? t[1] : msg, alert: opt.alert, extraClass: 'refusal',
+      techLines: err && err.detail ? [err.detail] : [] });
+  }
+  const f = friendly(err, opt);
   const b = err.body;
-  const box = h('div', { class: 'refusal', role: 'alert', dataset: { code: err.code || '' } },
-    h('p', { class: 'refusal-head', text: `Refused (HTTP ${err.status})${err.code ? `: ${err.code}` : ''}` }),
-    h('p', { text: err.message }));
+  let message = f.message || '';
+  if (opt.write && !/nothing was saved/i.test(message)) {
+    message = message ? `${message} Nothing was saved.` : 'Nothing was saved.';
+  }
+  const lines = [`Code: ${err.code || 'none'} · Status: HTTP ${err.status}`, err.message];
   const rb = b['iep:resolvedBy'];
   if (rb && typeof rb === 'object') {
     const parts = [];
@@ -582,27 +1092,28 @@ function refusalBox(err) {
     if (rb.then) parts.push(`then ${toolOf(rb.then)}`);
     if (rb.env) parts.push(`the operator sets ${rb.env}`);
     if (Array.isArray(rb.criteria)) parts.push(`criteria: ${rb.criteria.join(', ')}`);
-    if (parts.length) box.append(h('p', { class: 'muted', text: `What resolves it: ${parts.join('; ')}.` }));
+    if (parts.length) lines.push(`What resolves it: ${parts.join('; ')}.`);
   }
-  if (Array.isArray(b.problems) && b.problems.length) {
-    box.append(h('ul', {}, b.problems.map((p) => h('li', { text: typeof p === 'string' ? p : (p.message || JSON.stringify(p)) }))));
-  }
-  if (b.disclosure) box.append(h('p', { class: 'muted', text: `The model call that was made: ${disclosureWords(b.disclosure)}. Nothing was recorded.` }));
-  return box;
+  if (b.disclosure) lines.push(`The model call that was made: ${disclosureWords(b.disclosure)}. Nothing was recorded.`);
+  const problems = Array.isArray(b.problems) && b.problems.length
+    ? h('ul', { class: 'callout__body' }, b.problems.map((p) => h('li', { text: typeof p === 'string' ? p : (p.message || JSON.stringify(p)) }))) : null;
+  return callout({ tone: f.tone, title: f.title, body: message || null, kids: [problems], actions: f.actions, techLines: lines,
+    alert: opt.alert, extraClass: 'refusal', dataset: { code: err.code || '' } });
 }
 
-/** Run an act from a button: disable it, show progress, then the outcome or the refusal. */
-async function busy(btn, out, fn) {
-  if (btn) btn.disabled = true;
-  clear(out).append(muted('Working…'));
+/** Run an act from a button: disable it, show progress, then the outcome or the problem. */
+async function busy(btn, out, fn, opts) {
+  const o = opts || {};
+  if (btn) { btn.disabled = true; btn.setAttribute('aria-busy', 'true'); }
+  clear(out).append(h('p', { class: 'text-tertiary busy-line' }, h('span', { class: 'spinner', 'aria-hidden': 'true' }), o.progress || 'One moment…'));
   try {
     const node = await fn();
     clear(out);
     if (node) out.append(node);
   } catch (e) {
-    clear(out).append(refusalBox(e));
+    clear(out).append(problemCallout(e, { alert: true, write: true, retry: () => busy(btn, out, fn, opts) }));
   } finally {
-    if (btn && btn.isConnected) btn.disabled = false;
+    if (btn && btn.isConnected) { btn.disabled = false; btn.removeAttribute('aria-busy'); }
   }
 }
 
@@ -615,7 +1126,7 @@ function disclosureWords(d) {
 }
 
 // ════════════════════════════════════════════════════════════════════════════════════════════
-//  Header and tabs
+//  Header, settings and navigation
 // ════════════════════════════════════════════════════════════════════════════════════════════
 
 function routeWords(route, b) {
@@ -624,94 +1135,249 @@ function routeWords(route, b) {
   return `this bridge's model: ${b.provider || '?'} ${b.requestedModel || ''}`.trim();
 }
 
+function routePlain(route, b) {
+  if (route === 'scripted') return 'Sample replies (demo; no AI is running)';
+  if (route === 'none') return 'None built in: use your own AI assistant';
+  return `${b.provider || ''} ${b.requestedModel || ''}`.trim();
+}
+
+const demoLabel = (r) => String(r.label || r.role).replace(/ \(demo key\)$/, '');
+
 function actingAs() {
   if (S.mode === 'demo') {
     const r = S.demoRoles.find((x) => x.role === S.role);
-    return r ? `${r.label} ${short(r.address)}` : S.role;
+    return r ? `Viewing as ${r.label}` : `Viewing as ${S.role}`;
   }
-  if (S.mode === 'wallet') return `your wallet ${short(S.account)}`;
+  if (S.mode === 'wallet') return `Signed in with wallet ${short(S.account)}`;
   if (S.mode === 'interego') {
     const i = S.interego;
-    if (i && i.principal) return `Signed in as ${i.principal} via ${i.agentId || 'the Interego relay'}`;
-    return 'Signed in with your Interego account: asking this bridge who that is…';
+    if (i && i.principal) return `Signed in as ${memberShort(i.principal)} via ${agentWords(i.agentId)}`;
+    return 'Signed in with Interego. Checking your Member ID…';
   }
-  return 'whoever signs (paste mode)';
+  return S.manual ? 'Signing manually' : 'Not signed in';
+}
+
+function userShort() {
+  if (S.mode === 'demo') {
+    const r = S.demoRoles.find((x) => x.role === S.role);
+    return r ? demoLabel(r).split(',')[0] : S.role;
+  }
+  if (S.mode === 'wallet') return short(S.account);
+  const i = S.interego;
+  return i && i.principal ? memberShort(i.principal) : 'Checking…';
+}
+
+function openSettings(focusId) {
+  const d = $('#workspace-settings');
+  if (!d) return;
+  openDialog(d);
+  if (focusId) { const el = document.getElementById(focusId); if (el) el.focus(); }
+}
+
+function productSwitch() {
+  return h('a', { class: 'product-switch', href: SIBLING.href }, h('span', { class: 'product-switch__dot', 'aria-hidden': 'true' }),
+    h('span', { class: 'product-switch__prefix', text: 'Also from Interego:' }), ` ${SIBLING.name}`);
+}
+
+function menuItem(label, iconName, onclick, extra) {
+  return h('button', { type: 'button', class: 'menu__item', onclick: (e) => { closeMenuOf(e.currentTarget); onclick(); }, ...(extra || {}) }, icon(iconName), label);
+}
+
+function menuLink(label, iconName, href) { return h('a', { class: 'menu__item', href }, icon(iconName), label); }
+
+function demoBanner() {
+  const r = S.demoRoles.find((x) => x.role === S.role);
+  const sel = h('select', { id: 'role', class: 'select', 'aria-label': 'Demo role', onchange: (e) => {
+    S.role = e.target.value; remember('pev.role', S.role); S.readEnvelopes.clear(); S.checklistRole = null; S.queueCount = null; renderHeader(); route();
+  } }, S.demoRoles.map((x) => h('option', { value: x.role, text: demoLabel(x) })));
+  sel.value = S.role;
+  return h('div', { class: 'env-banner', role: 'note' },
+    h('span', { class: 'env-banner__label', text: 'Demo' }),
+    h('span', { text: 'Demo workspace: sample people and sample replies. Nothing here counts outside this demo.' }),
+    h('label', { class: 'env-banner__picker' }, 'View as', sel),
+    tech([DEMO_SENTENCE, r ? `Signing as ${r.label} ${r.address}` : null]));
+}
+
+function signedOutActions() {
+  const out = [h('span', { id: 'acting-as', class: S.manual ? 'badge' : 'visually-hidden', text: actingAs() })];
+  if (interegoOffered()) {
+    out.push(h('button', { type: 'button', id: 'interego-sign-in', class: 'btn btn--primary btn--sm', dataset: { signIn: 'interego' } },
+      icon('sign-in'), h('span', {}, 'Sign in', h('span', { class: 'hide-below-md', text: ' with Interego' }))));
+  } else if (S.hasWallet) {
+    out.push(h('button', { type: 'button', id: 'connect-wallet', class: 'btn btn--primary btn--sm', dataset: { signIn: 'wallet' }, text: 'Use a crypto wallet' }));
+  }
+  out.push(h('button', { type: 'button', id: 'signin-other', class: 'btn btn--ghost btn--icon btn--sm', popovertarget: 'signin-menu', 'aria-haspopup': 'menu', 'aria-label': 'Other ways to sign in' }, icon('chevron-down')));
+  out.push(h('div', { class: 'menu', id: 'signin-menu', popover: true },
+    h('div', { class: 'menu__header' }, h('strong', { text: 'Other ways to sign in' }), h('span', { class: 'text-sm text-tertiary', text: 'For people who sign with their own key.' })),
+    interegoOffered() && S.hasWallet ? h('button', { type: 'button', id: 'connect-wallet', class: 'menu__item', dataset: { signIn: 'wallet' } }, icon('shield'), 'Use a crypto wallet') : null,
+    h('button', { type: 'button', id: 'sign-manually', class: 'menu__item', dataset: { signIn: 'manual' } }, icon('document'), 'Sign manually (advanced)'),
+    h('hr', { class: 'menu__sep' }),
+    menuLink('How signing in works', 'info', 'ui/help#before'),
+    menuItem('Workspace settings', 'clipboard', () => openSettings('')),
+    menuLink(SIBLING.name, 'external', SIBLING.href)));
+  return out;
+}
+
+function accountActions() {
+  const name = userShort();
+  const r = S.demoRoles.find((x) => x.role === S.role);
+  const avatar = h('span', { class: 'avatar', 'aria-hidden': 'true' }, S.mode === 'demo' ? (r ? demoLabel(r) : S.role).slice(0, 1) : icon('user', 'sm'));
+  const btn = h('button', { type: 'button', class: 'user-button', popovertarget: 'user-menu', 'aria-haspopup': 'menu', 'aria-label': `Account: ${name}` },
+    avatar, h('span', { class: 'user-button__name', text: name }), icon('chevron-down', 'sm'));
+  const how = S.mode === 'interego' ? "Interego confirms it's you on each step." : S.mode === 'wallet' ? 'Your wallet asks you to approve each step.' : 'Sample people with demo keys.';
+  const menu = h('div', { class: 'menu', id: 'user-menu', popover: true },
+    h('div', { class: 'menu__header' }, h('strong', { id: 'acting-as', text: actingAs() }), h('span', { class: 'text-sm text-tertiary', text: how })));
+  const i = S.interego;
+  if (S.mode === 'interego' && i) {
+    if (i.principal) {
+      menu.append(h('div', { class: 'menu__field' },
+        h('label', { class: 'label', for: 'interego-did', text: 'Your Member ID' }),
+        h('div', { class: 'input-group' },
+          h('input', { type: 'text', id: 'interego-did', class: 'input input--mono', readOnly: true, value: i.principal, 'aria-label': 'Your Member ID' }),
+          h('button', { type: 'button', id: 'copy-member-id', class: 'btn btn--secondary btn--sm', text: 'Copy', onclick: () => {
+            S.copiedMemberId = true;
+            copyText(i.principal, 'Member ID');
+          } })),
+        h('p', { class: 'hint', text: 'Send it to your admin so they can give you a role.' })));
+    }
+    const until = new Date(i.expiresAt).toLocaleTimeString();
+    menu.append(h('p', { class: 'menu__text', text: `Signed in until ${until}.` }),
+      h('details', { class: 'disclosure' }, h('summary', { text: 'About this sign-in' }),
+        h('div', { class: 'disclosure__body disclosure__body--tech' },
+          h('p', { text: `Relay-attested, not user-held: the Interego relay signs each act for this agent and this bridge reads it as you. This tab holds the relay's access token for this sign-in until ${until} (an hour at most): it passes through this bridge on every act it signs, and while it lasts whoever holds it can call the relay's tools as you.` }),
+          h('p', { text: `Member ID: ${i.principal || 'not known yet'}` }),
+          h('p', {}, 'Signed by agent: ', h('span', { id: 'interego-agent', text: i.agentId || 'not known yet' })))));
+  }
+  if (S.mode === 'wallet') menu.append(h('p', { class: 'menu__text mono', text: S.account }));
+  menu.append(...(S.mode === 'demo' ? [] : [h('hr', { class: 'menu__sep' })]),
+    menuItem('Getting started', 'check', () => { sessionDrop(CHECKLIST_HIDDEN_KEY); go('#/practice'); }),
+    menuItem('Use my own AI provider key', 'sparkle', () => openSettings('byok')),
+    menuItem('Workspace settings', 'clipboard', () => openSettings('')),
+    menuLink('Help and guides', 'info', 'ui/help'),
+    menuLink(SIBLING.name, 'external', SIBLING.href));
+  if (S.mode === 'interego') {
+    menu.append(h('hr', { class: 'menu__sep' }),
+      h('button', { type: 'button', id: 'interego-sign-out', class: 'menu__item menu__item--danger', onclick: () => signOutInterego() }, icon('sign-in'), 'Sign out'));
+  }
+  return [btn, menu];
+}
+
+function workspaceDialog() {
+  const d = h('dialog', { id: 'workspace-settings', class: 'modal', 'aria-labelledby': 'ws-title', 'aria-describedby': 'ws-desc' });
+  const b = S.bridge;
+  const podInput = h('input', { type: 'url', id: 'pod-url', class: 'input', value: S.pod, placeholder: 'https://storage.example/practice/' });
+  const useStorage = h('button', { type: 'button', class: 'btn btn--secondary btn--sm', text: 'Use this storage', onclick: () => {
+    S.pod = podInput.value.trim(); S.needPod = !S.pod; S.readEnvelopes.clear();
+    if (S.mode === 'interego' && S.interego && !S.interego.principal) confirmInteregoSignIn();
+    closeDialog(d);
+    route();
+  } });
+  const key = h('input', { type: 'password', class: 'input', autocomplete: 'off', value: S.byok.key, 'aria-label': 'Your model key', oninput: (e) => { S.byok.key = e.target.value; } });
+  const model = h('input', { type: 'text', class: 'input', value: S.byok.model, 'aria-label': 'Your model id', oninput: (e) => { S.byok.model = e.target.value; } });
+  const fields = h('div', { class: 'form', hidden: !S.byok.on },
+    formField({ label: 'API key', control: key, hint: 'Kept in this tab only, and sent only with the step you press.' }),
+    formField({ label: 'Model ID', control: model }));
+  const toggle = h('input', { type: 'checkbox', id: 'byok', class: 'switch', role: 'switch', checked: S.byok.on, onchange: (e) => {
+    S.byok.on = e.target.checked;
+    fields.hidden = !S.byok.on;
+    renderStatusLines();
+  } });
+  const about = [];
+  if (b) {
+    about.push(h('dl', { class: 'kv' },
+      h('dt', { text: 'AI role-player' }), h('dd', { text: routePlain(b.counterpartRoute, b) }),
+      h('dt', { text: 'AI judge' }), h('dd', { text: routePlain(b.judgeRoute, b) }),
+      h('dt', { text: 'Service signing key' }), h('dd', { text: KEY_WORDS[b.keyKind] || b.keyKind })));
+    about.push(tech([`other person: ${routeWords(b.counterpartRoute, b)}`, `judge: ${routeWords(b.judgeRoute, b)}`, `platform key: ${b.keyKind} ${b.platformAddress}`,
+      `pod: ${S.pod}`, `served pods: ${Array.isArray(b.servedPods) ? b.servedPods.join(', ') : b.servedPods}`,
+      b.attemptsPerHour ? `attempts per hour: ${JSON.stringify(b.attemptsPerHour)}` : null]));
+  }
+  d.append(
+    h('div', { class: 'modal__header' }, h('div', {},
+      h('h2', { class: 'modal__title', id: 'ws-title', text: 'Workspace settings' }),
+      h('p', { class: 'modal__desc', id: 'ws-desc', text: 'These settings apply to this browser tab only.' })),
+    h('button', { type: 'button', class: 'btn btn--ghost btn--icon modal__close', 'aria-label': 'Close', onclick: () => closeDialog(d) }, icon('close'))),
+    h('div', { class: 'modal__body settings' },
+      h('section', { class: 'settings__section' }, h('h3', { text: 'Storage' }),
+        formField({ label: 'Storage address', control: podInput, hint: 'Where this workspace keeps its records. Interego calls this a pod.' }), useStorage),
+      about.length ? h('section', { class: 'settings__section' }, h('h3', { text: 'About this workspace' }), about) : null,
+      h('section', { class: 'settings__section', id: 'byok-section' }, h('h3', { text: 'Your own AI provider key (advanced)' }),
+        h('label', { class: 'choice' }, toggle, h('span', { class: 'choice__text' }, 'Use my own AI provider key for AI steps in this tab',
+          h('span', { class: 'choice__hint', text: 'AI steps this workspace offers: replies, assessments and drafts. Sent with each one, used once, never stored.' }))),
+        fields)),
+    h('div', { class: 'modal__footer' }, h('button', { type: 'button', class: 'btn btn--primary', text: 'Done', onclick: () => closeDialog(d) })));
+  d.addEventListener('click', (e) => { if (e.target === d) closeDialog(d); });
+  return d;
+}
+
+function statusLines() {
+  const b = S.bridge;
+  const out = [];
+  if (S.byok.on) {
+    out.push(h('div', { class: 'status-line' }, h('span', {}, icon('sparkle', 'sm'), 'Your own AI key is on for this tab.'),
+      h('button', { type: 'button', class: 'btn btn--link', text: 'Turn off', onclick: () => { S.byok.on = false; renderHeader(); } })));
+  }
+  if (!b) return out;
+  if (b.counterpartRoute === 'none') {
+    out.push(h('div', { class: 'status-line' }, h('span', {}, icon('info', 'sm'), 'AI role-player: use your own AI assistant.'), h('a', { href: 'ui/help#claude-chatgpt', text: 'How?' })));
+  }
+  if (b.keyKind === 'ephemeral') {
+    out.push(h('div', { class: 'status-line status-line--warning' },
+      h('span', {}, icon('warning', 'sm'), "This service's signing key is temporary, so records written now won't be trusted after it restarts. Tell your workspace administrator."),
+      tech(['This bridge\'s signing key is ephemeral: records it writes now become untrusted after it restarts, unless the operator adds its address to PEV_TRUSTED_PLATFORM_ADDRESSES.'])));
+  }
+  if (b.keyKind === 'demo-fixture' && S.mode !== 'demo') {
+    out.push(h('div', { class: 'status-line status-line--warning' }, h('span', {}, icon('warning', 'sm'), 'This service signs with a public demo key, so its records prove nothing outside this demo.')));
+  }
+  return out;
+}
+
+function renderStatusLines() {
+  const box = $('#status-lines');
+  if (box) clear(box).append(...statusLines());
 }
 
 function renderHeader() {
   const bar = clear($('#bar'));
-  if (S.mode === 'demo') {
-    bar.append(h('p', { class: 'demo-banner', role: 'note', text: 'DEMO MODE: this bridge holds these role keys and signs as whichever role you pick. Records it writes say so. Do not run demo mode on a shared deployment.' }));
-  }
-  const podInput = h('input', { type: 'url', value: S.pod, placeholder: 'https://your-pod.example/practice/', 'aria-label': 'Pod', size: 34 });
-  const row1 = h('div', { class: 'row' },
-    h('strong', { class: 'brand', text: 'Practice evidence' }),
-    h('label', { class: 'inline' }, 'Pod ', podInput),
-    h('button', { type: 'button', text: 'Use this pod', onclick: () => {
-      S.pod = podInput.value.trim(); S.needPod = !S.pod; S.readEnvelopes.clear();
-      if (S.mode === 'interego' && S.interego && !S.interego.principal) confirmInteregoSignIn();
-      route();
-    } }));
-  bar.append(row1);
-  if (S.needPod) bar.append(h('p', { class: 'warn', text: 'This bridge has no default pod: enter the pod to work with.' }));
-
-  const b = S.bridge;
-  if (b) {
-    const facts = h('p', { class: 'facts' });
-    facts.append(chip(`other person: ${routeWords(b.counterpartRoute, b)}`, b.counterpartRoute === 'scripted' ? 'scripted' : b.counterpartRoute === 'none' ? 'warn' : ''));
-    facts.append(chip(`judge: ${routeWords(b.judgeRoute, b)}`, b.judgeRoute === 'scripted' ? 'scripted' : b.judgeRoute === 'none' ? 'warn' : ''));
-    facts.append(chip(`platform key: ${b.keyKind} ${short(b.platformAddress)}`, b.keyKind === 'configured' ? '' : 'warn'));
-    bar.append(facts);
-    if (b.keyKind === 'ephemeral') bar.append(h('p', { class: 'warn', text: 'This bridge\'s signing key is ephemeral: records it writes now become untrusted after it restarts, unless the operator adds its address to PEV_TRUSTED_PLATFORM_ADDRESSES.' }));
-    if (b.keyKind === 'demo-fixture') bar.append(h('p', { class: 'warn', text: 'This bridge signs with a public demo key: its records prove nothing outside this demo.' }));
-  }
-
-  const who = h('div', { class: 'row' }, h('span', { class: 'label', text: 'Acting as: ' }), h('span', { id: 'acting-as', text: actingAs() }));
-  if (S.mode === 'demo') {
-    const sel = h('select', { id: 'role', 'aria-label': 'Demo role', onchange: (e) => { S.role = e.target.value; remember('pev.role', S.role); S.readEnvelopes.clear(); renderHeader(); route(); } },
-      S.demoRoles.map((r) => h('option', { value: r.role, text: r.label })));
-    sel.value = S.role;
-    who.append(sel);
-  } else if (S.mode === 'interego') {
-    who.append(h('button', { type: 'button', id: 'interego-sign-out', text: 'Sign out', onclick: () => signOutInterego() }));
-  } else {
-    if (S.hasWallet && S.mode !== 'wallet') {
-      const out = h('span');
-      const btn = h('button', { type: 'button', text: 'Connect wallet', onclick: () => busy(btn, out, async () => { await connectWallet(); renderHeader(); route(); return null; }) });
-      who.append(btn, out);
-    }
-    if (interegoOffered()) {
-      const out = h('span');
-      const btn = h('button', { type: 'button', id: 'interego-sign-in', text: 'Sign in with your Interego account', onclick: () => busy(btn, out, async () => { await startInteregoSignIn(); return null; }) });
-      who.append(btn, out);
-    }
-  }
-  bar.append(who);
-  if (S.mode === 'interego' && S.interego && S.interego.principal) {
-    // Where a wallet shows its address: the DID a person gives an admin to be given a role here.
-    bar.append(h('div', { class: 'row' }, h('label', { class: 'inline' }, 'Your Interego DID, for an admin to give you a role: ',
-      h('input', { type: 'text', id: 'interego-did', readOnly: true, value: S.interego.principal, size: 60, 'aria-label': 'Your Interego DID' }))));
-    const until = new Date(S.interego.expiresAt).toLocaleTimeString();
-    bar.append(muted(`Relay-attested, not user-held: the Interego relay signs each act for this agent and this bridge reads it as you. This tab holds the relay's access token for this sign-in until ${until} (an hour at most): it passes through this bridge on every act it signs, and while it lasts whoever holds it can call the relay's tools as you.`));
-  }
-
-  const key = h('input', { type: 'password', autocomplete: 'off', placeholder: 'API key', value: S.byok.key, 'aria-label': 'Your model key', oninput: (e) => { S.byok.key = e.target.value; } });
-  const model = h('input', { type: 'text', placeholder: 'model id', value: S.byok.model, 'aria-label': 'Your model id', oninput: (e) => { S.byok.model = e.target.value; } });
-  const toggle = h('input', { type: 'checkbox', id: 'byok', checked: S.byok.on, onchange: (e) => { S.byok.on = e.target.checked; renderHeader(); } });
-  const byok = h('div', { class: 'row byok' }, h('label', { class: 'inline' }, toggle, ' Use my own key for this request: sent to this bridge, used once, never stored'));
-  if (S.byok.on) byok.append(key, model, muted('This page keeps the key in memory only and sends it only with the act you press.'));
-  bar.append(byok);
+  if (S.mode === 'demo') bar.append(demoBanner());
+  const actions = h('div', { class: 'app-header__actions' }, productSwitch(), S.mode === 'paste' ? signedOutActions() : accountActions());
+  const brand = h('a', { class: 'brand', href: '#/practice' }, brandMark(),
+    h('span', { class: 'brand__name' }, h('span', { class: 'brand__company', text: 'Interego' }), h('span', { class: 'brand__product', text: 'Practice Evidence' })));
+  bar.append(h('header', { class: 'app-header' }, h('div', { class: 'app-header__inner' }, brand, actions)));
+  bar.append(workspaceDialog());
+  bar.append(h('div', { id: 'status-lines' }, statusLines()));
+  placeMenus();
 }
 
 function remember(k, v) { try { localStorage.setItem(k, v); } catch { /* storage is optional */ } }
 function recall(k) { try { return localStorage.getItem(k); } catch { return null; } }
 
-const TABS = [['#/practice', 'Practise'], ['#/mine', 'My attempts'], ['#/review', 'Review queue'], ['#/calibration', 'Calibration'], ['#/author', 'Author'], ['#/roles', 'Roles']];
+const NAV = [
+  ['Practice', [['practice', '#/practice', 'Practice', 'chat'], ['mine', '#/mine', 'My practice', 'user']]],
+  ['Review', [['review', '#/review', 'To review', 'clipboard'], ['calibration', '#/calibration', 'AI judge quality', 'chart']]],
+  ['Author', [['author', '#/author', 'Write a scenario', 'document']]],
+  ['Admin', [['roles', '#/roles', 'Team', 'people']]],
+];
+
+/** Which navigation item a hash belongs to. */
+function navOf(hash) {
+  const [, name] = /^#\/([a-z]+)/.exec(hash || '') || [];
+  if (name === 'signin') return null;
+  if (name === 'mine' || name === 'attempt') return 'mine';
+  if (name === 'review' || name === 'calibration' || name === 'author' || name === 'roles') return name;
+  return 'practice';
+}
 
 function renderTabs() {
   const nav = clear($('#tabs'));
-  const here = location.hash || '#/practice';
-  for (const [href, label] of TABS) nav.append(h('a', { href, class: here.startsWith(href) ? 'tab active' : 'tab', text: label }));
+  const here = navOf(location.hash);
+  for (const [group, items] of NAV) {
+    nav.append(h('div', { class: 'side-nav__group' }, h('span', { class: 'side-nav__label', text: group }), items.map(([key, href, label, ic]) => h('a', {
+      class: 'side-nav__link', href, 'aria-current': key === here ? 'page' : null,
+    }, icon(ic), label, key === 'review' && typeof S.queueCount === 'number' ? h('span', { class: 'side-nav__count', text: String(S.queueCount) }) : null))));
+  }
+  nav.append(h('div', { class: 'side-nav__footer' }, h('a', { class: 'side-nav__link', href: 'ui/help' }, icon('info'), 'Help')));
+  nav.append(h('a', { class: 'side-nav__link side-nav__mobile-only', href: 'ui/help' }, icon('info'), 'Help'));
 }
 
 // ════════════════════════════════════════════════════════════════════════════════════════════
@@ -727,9 +1393,16 @@ async function route() {
   const hash = location.hash || '#/practice';
   const [, name, arg] = /^#\/([a-z]+)(?:\/(.*))?$/.exec(hash) || [];
   const param = arg ? decodeURIComponent(arg) : '';
+  // A new view starts at the top; the same view drawn again keeps its place.
+  if (hash !== S.lastRoute) {
+    S.lastRoute = hash;
+    const se = document.scrollingElement || document.documentElement;
+    if (se) se.scrollTop = 0;
+  }
   try {
-    if (S.needPod && name !== 'roles') { root.append(muted('Enter the pod to work with at the top of the page.')); return; }
-    if (name === 'attempt' && param) await viewAttempt(root, param, seq);
+    if (S.needPod && name !== 'roles' && name !== 'signin') { root.append(needStorageNote()); return; }
+    if (name === 'signin') viewSignIn(root);
+    else if (name === 'attempt' && param) await viewAttempt(root, param, seq);
     else if (name === 'review' && param) await viewReview(root, param, seq);
     else if (name === 'review') await viewQueue(root);
     else if (name === 'results' && param) await viewResults(root, param);
@@ -739,7 +1412,9 @@ async function route() {
     else if (name === 'mine') await viewMine(root);
     else await viewPractice(root);
   } catch (e) {
-    if (seq === S.seq) root.append(refusalBox(e));
+    if (seq !== S.seq) return;
+    if (e instanceof NeedsSignIn) root.append(signInGate(name || 'practice'));
+    else root.append(problemCallout(e, { retry: () => route() }));
   }
 }
 
@@ -747,21 +1422,170 @@ const go = (hash) => { if (location.hash === hash) route(); else location.hash =
 const attemptHash = (iri) => `#/attempt/${encodeURIComponent(iri)}`;
 const podArgs = (extra) => ({ ...(S.pod ? { pod_url: S.pod } : {}), ...(extra || {}) });
 
+function needStorageNote() {
+  document.title = 'Choose storage · Practice Evidence';
+  return callout({ tone: 'warning', title: "Choose this workspace's storage", body: 'This workspace has no storage set up yet. Enter the storage address your admin gave you in Workspace settings.',
+    actions: [h('button', { type: 'button', class: 'btn btn--primary btn--sm', text: 'Workspace settings', onclick: () => openSettings('pod-url') })] });
+}
+
+function viewSignIn(root) {
+  if (S.mode !== 'paste') { go('#/practice'); return; }
+  document.title = 'Sign in · Practice Evidence';
+  root.append(signInGate('signin'));
+}
+
 // ════════════════════════════════════════════════════════════════════════════════════════════
-//  Practise: the scenarios
+//  Practice: the scenarios, the welcome and the Getting started checklist
 // ════════════════════════════════════════════════════════════════════════════════════════════
 
+function welcomeCard() {
+  const primary = interegoOffered() ? signInButton('interego', 'Sign in with Interego', 'lg')
+    : S.hasWallet ? signInButton('wallet', 'Use a crypto wallet', 'lg') : signInButton('manual', 'Sign manually (advanced)', 'lg');
+  const point = (ic, lead, rest) => h('li', {}, h('span', { class: 'icon-tile' }, icon(ic)), h('p', {}, h('strong', { text: lead }), rest));
+  const card = h('section', { class: 'card card--highlight welcome', 'aria-labelledby': 'welcome-title' },
+    h('h2', { class: 'welcome__title', id: 'welcome-title', text: 'Welcome to Practice Evidence' }),
+    h('p', { class: 'welcome__lede', text: 'Rehearse real workplace conversations, get feedback against a clear rubric, and keep a signed record of your progress.' }),
+    h('h3', { class: 'visually-hidden', text: 'What you can do here' }),
+    h('ul', { class: 'welcome__list' },
+      point('chat', 'Practice', " a conversation you're preparing for, with an AI playing the other person."),
+      point('check', 'Get feedback', ' that quotes your own words, then a sign-off from a qualified reviewer.'),
+      point('document', 'Keep your record.', ' Download it, check it, or ask for another review.')),
+    h('div', { class: 'welcome__actions' }, primary, h('a', { class: 'btn btn--secondary btn--lg', href: 'ui/help', text: 'See how it works' })));
+  if (interegoOffered()) {
+    card.append(h('p', { class: 'welcome__fine', text: "First time? You'll create your Interego account with a passkey (your device's fingerprint, face or PIN) during sign-in. No password, no email." }));
+  }
+  if (primary.dataset.signIn !== 'manual') {
+    const other = h('p', { class: 'text-sm text-secondary welcome__other' }, 'Other ways to sign in: ');
+    if (S.hasWallet && primary.dataset.signIn !== 'wallet') other.append(signInButton('wallet', 'Use a crypto wallet', '', 'btn--link'), ' · ');
+    other.append(signInButton('manual', 'Sign manually (advanced)', '', 'btn--link'));
+    card.append(other);
+  }
+  return card;
+}
+
+function manualNote() {
+  const other = interegoOffered() || S.hasWallet;
+  return callout({ tone: 'neutral', title: "You're signing each step manually.", body: 'Each step shows the exact text to sign.',
+    actions: other ? [h('button', { type: 'button', class: 'btn btn--link', text: 'Stop signing manually', onclick: () => { S.manual = false; renderHeader(); route(); } })] : [] });
+}
+
+const DEMO_CHECKLIST_ROLE = { learner: 'learner', 'second-learner': 'learner', reviewer: 'reviewer', 'second-reviewer': 'reviewer', author: 'author', admin: 'admin', 'judge-agent': 'judge' };
+const CHECKLIST_ROLES = [['learner', 'Learner'], ['reviewer', 'Reviewer'], ['author', 'Author'], ['admin', 'Admin'], ['judge', 'Judge']];
+const MEMBER_STEP = { member: true, title: 'Send your Member ID to your admin', text: 'Your admin uses it to give you a role.' };
+/** Each role's first steps: [title, text, target] where the target is a link, a scroll, or nothing. */
+const CHECKLISTS = {
+  learner: [
+    { signIn: true, title: 'Sign in with Interego', text: "Your Interego account is how Practice Evidence knows it's you." },
+    { member: true, title: 'Copy your Member ID and send it to your admin', text: 'Your admin uses this to give you a role.' },
+    { title: 'Pick a scenario', text: "Read what you're practicing and open the rubric.", scroll: '#scenarios', label: 'See scenarios' },
+    { title: 'Start', text: 'Say whether anyone helped you prepare, then press Start practice.' },
+    { title: 'Have the conversation', text: 'Type your line and press Send, or let your own AI play the other person. Finish when you are ready.' },
+    { title: 'Get your feedback', text: 'Press Get AI assessment when the workspace has built-in AI. Otherwise, your appointed judge will assess the session.' },
+    { title: 'After review', text: 'Download your record, request another review, or share it as a learning record.' },
+    { title: 'Practice again', text: 'Start again from the session page whenever you like.', href: '#/mine', label: 'My practice' },
+  ],
+  reviewer: [
+    { ...MEMBER_STEP, text: 'Done when your admin has added you as a Reviewer.' },
+    { title: 'Approve a rubric', text: "Open a scenario and choose Approve this rubric. You can approve only versions you didn't write.", scroll: '#scenarios', label: 'See scenarios' },
+    { title: 'Open your review list', text: 'To review lists the sessions waiting for a person, most urgent first.', href: '#/review', label: 'To review' },
+    { title: 'Review your first session', text: "Choose a level for every criterion, and give a reason where yours differs or a quote didn't match." },
+    { title: 'Sign off', text: 'Confirm all levels, or Sign off my levels.' },
+    { title: 'See results and AI judge quality', text: 'Spot patterns across sessions and AI judges.', href: '#/calibration', label: 'AI judge quality' },
+  ],
+  author: [
+    { ...MEMBER_STEP, text: 'Done when your admin has added you as an Author.' },
+    { title: 'Write your first scenario', text: 'Describe the situation, the person to practice with, and the rubric.', href: '#/author', label: 'Write a scenario' },
+    { title: 'Optional: start from an AI draft', text: 'Draft with AI, draft with your own AI, or paste a draft.' },
+    { title: 'Make the two decisions', text: 'How it will be used, and how clear-cut good performance is.' },
+    { title: 'Write the rubric', text: 'Up to 12 criteria, each with 2 to 6 levels from lowest to highest.' },
+    { title: 'Say who helped write it', text: "Required: saying nothing isn't the same as \"no one\"." },
+    { title: 'Save a draft, then try it yourself', text: 'Your own sessions are test runs: never reviewed, counted or shared.' },
+    { title: 'Publish', text: 'Learners can start it once it is published.' },
+    { title: 'Ask a reviewer to approve the rubric', text: "Results won't count as evidence until a reviewer who didn't write it approves it." },
+    { title: 'Check results', text: 'Each scenario card has a Results link.' },
+  ],
+  admin: [
+    { title: "Check you're an admin", text: 'Admin access is set up with your workspace. If Team says only an admin can change roles, ask the person who set it up.', href: '#/roles', label: 'Team' },
+    { title: 'Add your authors', text: 'Team: paste their Member ID, choose Author, then Save change.', href: '#/roles', label: 'Team' },
+    { title: 'Add at least two reviewers', text: "Two or more, so a rubric can be approved by someone who didn't write it, and a re-review can go to a different person." },
+    { title: 'Add your learners', text: "Recommended. If your workspace has a built-in AI, it's usually available only to people on your team." },
+    { title: 'Optional: appoint a judge', text: "Needed if your workspace has no built-in AI. A judge can't assess their own practice, or review a session they assessed." },
+    { title: 'Know your admin tools', text: 'On any session: Withdraw the review (the learner sees your reason) and Delete conversation text (a reason is required).' },
+    { title: 'Check AI judge quality', text: 'How often each AI judge agrees with your reviewers.', href: '#/calibration', label: 'AI judge quality' },
+  ],
+  judge: [
+    { ...MEMBER_STEP, text: 'Done when your admin has added you as a Judge.' },
+    { title: 'Connect Claude or ChatGPT', text: 'Add the Interego connector, then sign in.', href: 'ui/help#claude-chatgpt', label: 'How to connect' },
+    { title: "Assess a session you've been given", text: "Ask your assistant for the judge hand-off, assess, and save it. You can't assess your own practice, and a reviewer has the final say." },
+  ],
+};
+
+function checklistVisible() { return S.mode !== 'paste' && sessionGet(CHECKLIST_HIDDEN_KEY) !== '1'; }
+
+function checklist() {
+  const role = S.checklistRole || (S.mode === 'demo' ? DEMO_CHECKLIST_ROLE[S.role] : null) || 'learner';
+  const steps = CHECKLISTS[role];
+  const isDone = (s) => (s.signIn && S.mode !== 'paste') || (s.member && (S.copiedMemberId || S.mode === 'demo'));
+  const done = steps.filter(isDone).length;
+  const current = steps.findIndex((s) => !isDone(s));
+  const picker = h('div', { class: 'segmented', role: 'group', 'aria-label': 'Show steps for' }, CHECKLIST_ROLES.map(([k, label]) => h('button', {
+    type: 'button', 'aria-pressed': k === role ? 'true' : 'false', text: label, onclick: () => { S.checklistRole = k; route(); },
+  })));
+  const memberText = S.mode === 'demo' ? 'Demo people already have roles.' : null;
+  const item = (s, i) => {
+    const d = isDone(s);
+    const state = d ? 'done' : i === current ? 'current' : null;
+    const cls = state === 'current' ? 'btn btn--primary btn--sm' : 'btn btn--secondary btn--sm';
+    let action = null;
+    if (!d && s.member) {
+      const principal = S.interego && S.interego.principal;
+      const value = principal || S.account;
+      if (value) action = h('button', { type: 'button', class: cls, text: principal ? 'Copy my Member ID' : 'Copy my wallet address', onclick: () => { S.copiedMemberId = true; copyText(value, principal ? 'Member ID' : 'Wallet address'); route(); } });
+    } else if (s.href) action = h('a', { class: cls, href: s.href, text: s.label });
+    else if (s.scroll) action = h('button', { type: 'button', class: cls, text: s.label, onclick: () => scrollToEl(s.scroll) });
+    return h('li', { class: 'checklist__item', 'data-state': state },
+      h('span', { class: 'checklist__mark' }, d ? icon('check') : null),
+      h('p', { class: 'checklist__title-item' }, h('span', { class: 'visually-hidden', text: d ? 'Done: ' : i === current ? 'Next step: ' : '' }), s.title),
+      h('p', { class: 'checklist__text', text: s.member && memberText ? memberText : s.text }),
+      action ? h('div', { class: 'checklist__action' }, action) : null);
+  };
+  const limit = S.checklistAll || current < 0 ? steps.length : current + 3;
+  const hidden = steps.length - Math.min(limit, steps.length);
+  return h('section', { class: 'checklist', 'aria-labelledby': 'gs-title' },
+    h('div', { class: 'checklist__header' },
+      h('div', { class: 'split' }, h('h2', { class: 'checklist__title', id: 'gs-title', text: 'Getting started' }),
+        h('button', { type: 'button', class: 'btn btn--ghost btn--sm', text: 'Hide', onclick: () => { sessionPut(CHECKLIST_HIDDEN_KEY, '1'); route(); } })),
+      h('div', { class: 'checklist__picker' }, h('span', { text: 'Show steps for' }), picker),
+      h('p', { class: 'checklist__meta', text: `${done} of ${steps.length} done` }),
+      h('progress', { class: 'progress', max: steps.length, value: done, 'aria-label': 'Setup progress' }, `${done} of ${steps.length}`)),
+    h('ol', { class: 'checklist__list' }, steps.slice(0, limit).map(item)),
+    hidden > 0 || S.checklistAll ? h('div', { class: 'checklist__footer' }, h('button', { type: 'button', class: 'btn btn--link',
+      text: S.checklistAll ? 'Show fewer steps' : `Show all ${steps.length} steps`, onclick: () => { S.checklistAll = !S.checklistAll; route(); } })) : null);
+}
+
 async function viewPractice(root) {
-  const drafts = h('input', { type: 'checkbox', checked: S.showDrafts, onchange: (e) => { S.showDrafts = e.target.checked; route(); } });
-  root.append(h('div', { class: 'toolbar' }, h('h2', { text: 'Practise a scenario' }), h('label', { class: 'inline' }, drafts, ' show drafts (an author can try their own)')));
+  const drafts = h('input', { type: 'checkbox', class: 'switch', role: 'switch', checked: S.showDrafts, onchange: (e) => { S.showDrafts = e.target.checked; route(); } });
+  root.append(pageHeader({ title: 'Practice scenarios', lede: 'Pick a scenario, read what it asks of you, and have the conversation. AI plays the other person.',
+    actions: [h('label', { class: 'choice' }, drafts, h('span', { class: 'choice__text', text: 'Include drafts (authors can try their own)' }))] }));
+  if (S.mode === 'paste' && !S.manual) root.append(welcomeCard(), para("Browse the scenarios below. You'll need to sign in to start one."));
+  else if (S.mode === 'paste') root.append(manualNote());
+  else if (checklistVisible()) root.append(checklist());
   const r = await invoke(ACT.listScenarios, podArgs({ include_drafts: S.showDrafts ? 'true' : undefined }));
   S.pod = r.podUrl;
   S.bridge = r.bridge;
   renderHeader();
+  if (r.bridge && r.bridge.counterpartRoute === 'none') {
+    root.append(callout({ tone: 'info', title: 'This workspace has no built-in AI role-player',
+      body: 'You can still practice: start a scenario and choose Let my AI play the other person, using Claude or ChatGPT with the Interego connector.',
+      actions: [linkButton('ui/help#claude-chatgpt', 'How to use Claude or ChatGPT', 'btn--secondary btn--sm')] }));
+  }
   // A scenario this bridge cannot open (sealed to another record key, or not read) is never shown as absent.
   root.append(...coverageNotes(r));
-  if (!r.scenarios.length && whole(r)) root.append(muted('No published scenarios on this pod yet. An author publishes one under Author.'));
-  for (const s of r.scenarios) root.append(scenarioCard(s));
+  if (!r.scenarios.length && whole(r)) {
+    root.append(emptyState({ icon: 'chat', title: 'No practice scenarios yet', text: "Your team's authors haven't published one yet. Check back soon.",
+      actions: [linkButton('#/author', 'Write the first one (authors)')] }));
+  }
+  if (r.scenarios.length) root.append(h('div', { class: 'scenario-list', id: 'scenarios' }, r.scenarios.map(scenarioCard)));
 }
 
 /**
@@ -773,96 +1597,117 @@ async function viewPractice(root) {
 function coverageNotes(r) {
   const out = [];
   if (!whole(r)) {
-    out.push(h('p', { class: 'warn incomplete', role: 'status',
-      text: 'Not the whole pod: some records on it could not be read, so this shows only what could be. Something missing here may be among them.' }));
+    out.push(callout({ tone: 'warning', role: 'status', extraClass: 'incomplete', title: 'This list may be incomplete',
+      body: "Some records couldn't be opened, so this list may be incomplete. If something you expect is missing, tell your admin." }));
   }
-  if (r.readLimitReached) out.push(muted(r.readLimitReached.note));
-  if (r.untrustedRecordsSkipped) out.push(muted(`${r.untrustedRecordsSkipped} record(s) on this pod could not be read or are not signed by a platform key this bridge trusts; they are not shown.`));
-  if (r.sealedRecords) out.push(muted(r.sealedRecords.note));
-  if (r.recordKeyMismatch) out.push(muted(r.recordKeyMismatch.note));
+  if (r.untrustedRecordsSkipped) out.push(para(`${r.untrustedRecordsSkipped} records were skipped because their signature couldn't be verified.`, 'text-sm text-secondary'));
+  const notes = [r.readLimitReached && r.readLimitReached.note, r.sealedRecords && r.sealedRecords.note, r.recordKeyMismatch && r.recordKeyMismatch.note].filter(Boolean);
+  if (notes.length) out.push(tech(notes));
   return out;
 }
 
 /** True unless the answer says it is not the whole pod. */
 function whole(r) { return r.complete !== false; }
 
-function rubricTable(rubric, use) {
+function rubricView(rubric, use) {
   const gate = use === 'pass-gate';
   const wrap = h('div', { class: 'rubric' });
   for (const c of rubric.criteria) {
     wrap.append(h('div', { class: 'criterion' },
-      h('p', {}, h('strong', { text: c.title }), gate && c.weight !== null ? ` · weight ${c.weight}` : '', h('span', { class: 'muted', text: ` (${c.id})` })),
-      c.description ? muted(c.description) : null,
-      h('ol', { class: 'levels' }, c.levels.map((l) => h('li', {},
-        h('strong', { text: l.label }), gate && l.value !== null ? ` (${l.value})` : '', `: ${l.descriptor}`)))));
+      h('h4', {}, c.title, gate && c.weight !== null && c.weight !== undefined ? badge(`Weight ${c.weight}`, '', 'How much this criterion counts toward the score.') : null),
+      c.description ? para(c.description) : null,
+      h('ol', {}, c.levels.map((l) => h('li', {}, h('strong', { text: l.label }), gate && l.value !== null && l.value !== undefined ? ` (${l.value} points)` : '', `: ${l.descriptor}`)))));
   }
   if (gate && rubric.passRule) {
     const req = Object.entries(rubric.passRule.requiredLevels || {});
-    wrap.append(h('p', { class: 'label', text: `Pass rule: at least ${rubric.passRule.minPercent} %${req.length ? `, and ${req.map(([c, l]) => `${c} at least ${levelLabel(rubric, c, l)}`).join(', ')}` : ''}.` }));
+    wrap.append(h('p', { class: 'label', text: `Pass mark: at least ${rubric.passRule.minPercent}%${req.length ? `, and ${req.map(([c, l]) => `${criterionTitle(rubric, c)} at least ${levelLabel(rubric, c, l)}`).join(', ')}` : ''}.` }));
   }
   return wrap;
 }
 
+/** "Did anyone help you prepare?", then Start. The radios are read when Start is pressed. */
 function startForm(scenarioIri, versionOf, label) {
   const name = nextId('coached');
   const yes = h('input', { type: 'radio', name, value: 'yes' });
   const no = h('input', { type: 'radio', name, value: 'no' });
-  const help = h('input', { type: 'text', maxlength: 300, placeholder: 'what help, if any (optional)', 'aria-label': 'Assistance' });
+  const help = h('input', { type: 'text', class: 'input', name: 'assistance', maxlength: 300, placeholder: 'For example: a coach helped me' });
   const out = h('div', { class: 'outcome' });
-  const btn = h('button', { type: 'button', class: 'primary', text: label, dataset: { action: ACT.startAttempt }, onclick: () => busy(btn, out, async () => {
-    if (!yes.checked && !no.checked) return h('p', { class: 'refusal-inline', text: 'Say whether you are coached: silence is not the same as unassisted.' });
+  const legendId = nextId('coached-legend');
+  const btn = h('button', { type: 'button', class: 'btn btn--primary', dataset: { action: ACT.startAttempt }, onclick: () => busy(btn, out, async () => {
+    if (!yes.checked && !no.checked) return errorText('Please say whether anyone helped you prepare.');
     const version = await versionOf();
     const r = await act(ACT.startAttempt, { scenarioIri, scenarioVersion: version, coached: yes.checked, ...(help.value.trim() ? { assistance: help.value.trim() } : {}) });
     go(attemptHash(r.attemptIri));
     return null;
-  }) });
-  return h('div', { class: 'start' },
-    h('fieldset', { class: 'inline' }, h('legend', { text: 'Are you coached for this attempt?' }),
-      h('label', { class: 'inline' }, yes, ' yes'), h('label', { class: 'inline' }, no, ' no')),
-    help, btn, out);
+  }, { progress: 'Starting…' }) }, icon('chat'), label);
+  return [
+    h('fieldset', { class: 'fieldset', 'aria-describedby': legendId },
+      h('legend', { class: 'legend', text: 'Did anyone help you prepare for this session?' }),
+      h('p', { class: 'hint', id: legendId, text: "This is recorded with your result. Saying nothing isn't the same as \"no help\"." }),
+      h('div', { class: 'choice-group choice-group--inline' },
+        h('label', { class: 'choice' }, no, h('span', { class: 'choice__text', text: 'No' })),
+        h('label', { class: 'choice' }, yes, h('span', { class: 'choice__text', text: 'Yes' })))),
+    formField({ label: 'What help?', optional: true, control: help }),
+    btn, out,
+  ];
 }
 
 function scenarioCard(s) {
   const card = h('article', { class: 'card scenario', dataset: { scenario: s.scenarioIri } });
-  card.append(h('h3', {}, s.title, h('span', { class: 'muted', text: ` · version ${s.version} · ${s.status}` })));
-  card.append(h('dl', {},
-    h('dt', { text: 'What you are practising' }), h('dd', { text: s.learnerGoal }),
+  const gate = s.assessmentUse === 'pass-gate';
+  const regime = REGIME_WORDS[s.workRegime] || [s.workRegime, ''];
+  card.append(h('div', { class: 'card__header' },
+    h('div', {}, h('h2', { class: 'card__title', text: s.title }), h('p', { class: 'card__subtitle', text: `Version ${s.version} · You'll talk with ${s.counterpart.name}` })),
+    s.status === 'draft' ? statusPill('Draft', 'pending') : statusPill('Published', 'success')));
+  const body = h('div', { class: 'card__body' });
+  body.append(h('dl', { class: 'kv' },
+    h('dt', { text: "What you're practicing" }), h('dd', { text: s.learnerGoal }),
     h('dt', { text: 'Your part' }), h('dd', { text: s.learnerPart }),
     h('dt', { text: 'The situation' }), h('dd', { text: s.situation }),
-    h('dt', { text: 'You practise with' }), h('dd', { text: s.counterpart.name }),
-    h('dt', { text: 'Their first line' }), h('dd', { text: s.firstLine })));
-  const use = s.assessmentUse === 'pass-gate'
-    ? `Pass rule: ${s.rubric.passRule ? s.rubric.passRule.minPercent : '?'} %`
-    : 'Feedback only: no score';
-  card.append(h('p', { class: 'facts' }, chip(use), chip(`How knowable: ${s.workRegime}`), s.ratified ? chip(`Rubric ratified by a reviewer ${short(s.ratifiedBy)}`, 'ok') : chip('Rubric not yet ratified: results cannot leave as evidence', 'warn')));
-  if (s.passGateWhy) card.append(muted(`Why a pass gate fits: ${s.passGateWhy}`));
+    h('dt', { text: "You'll talk with" }), h('dd', { text: s.counterpart.name }),
+    h('dt', { text: 'How they open' }), h('dd', { text: `“${s.firstLine}”` })));
+  body.append(h('div', { class: 'cluster' },
+    gate ? badge(`Scored · pass mark ${s.rubric.passRule ? s.rubric.passRule.minPercent : '?'}%`, '', 'Only for scored scenarios: how much each criterion counts, and how many points each level is worth.') : badge('Feedback only (no score)'),
+    badge(`Good performance is: ${regime[0]}`, '', regime[1] || "How clear-cut it is to say what good looks like here."),
+    s.ratified ? badge('Rubric approved by a reviewer', 'success', 'A reviewer who did not write it approved the rubric, so results can count as evidence.', 'check')
+      : badge("Rubric awaiting approval: results won't count as evidence yet", 'warning')));
+  if (s.passGateWhy) body.append(para(`Why a pass mark fits: ${s.passGateWhy}`, 'text-sm text-secondary'));
   const da = s.draftAssistance || {};
-  card.append(muted(da.used
-    ? (da.measured ? `Drafted with ${da.provider}/${da.model} (measured by a receipt; ${da.editedAfterDraft ? 'edited by the author afterwards' : 'not edited afterwards'}).` : `The author declared help from ${da.by}${da.provider ? ` (${da.provider}${da.model ? `/${da.model}` : ''})` : ''}.`)
-    : 'The author declared no AI help.'));
-  card.append(h('details', {}, h('summary', { text: `The rubric (hash ${shortHash(s.rubricHash)}…)` }), rubricTable(s.rubric, s.assessmentUse)));
-  card.append(muted(s.evidenceNote));
+  body.append(para(da.measured
+    ? `Drafted with ${da.provider === 'scripted' ? 'the sample AI (demo)' : `AI (${[da.provider, da.model].filter(Boolean).join(' ')})`}; ${da.editedAfterDraft ? 'edited by the author afterwards' : 'not edited afterwards'}.`
+    : da.used ? `The author declared help from ${BY[da.by] || da.by}${da.provider ? ` (${da.provider}${da.model ? ` ${da.model}` : ''})` : ''}.`
+      : 'The author declared no AI help.', 'text-sm text-secondary'));
+  body.append(h('details', { class: 'disclosure rubric-view' }, h('summary', { text: `Read the rubric (${s.rubric.criteria.length} ${s.rubric.criteria.length === 1 ? 'criterion' : 'criteria'})` }),
+    h('div', { class: 'disclosure__body' }, rubricView(s.rubric, s.assessmentUse),
+      tech([`Rubric fingerprint ${s.rubricHash}`, `Scenario ${s.scenarioIri}`, `Status ${s.status}`, s.ratifiedBy ? `Approved by ${s.ratifiedBy}` : null,
+        `Criterion ids: ${s.rubric.criteria.map((c) => c.id).join(', ')}`]))));
+  body.append(h('div', { class: 'evidence-note' }, para(s.ratified ? 'Reviewed results on this version can count as practice evidence.'
+    : 'Results on this version will count as evidence once a reviewer approves the rubric.', 'text-sm text-tertiary'), tech([s.evidenceNote])));
+  card.append(body);
   if (s.status !== 'draft' || S.showDrafts) {
-    card.append(startForm(s.scenarioIri, async () => s.version, s.status === 'draft' ? 'Try this draft (author test)' : 'Start'));
+    card.append(h('div', { class: 'card__footer scenario__start' },
+      startForm(s.scenarioIri, async () => s.version, s.status === 'draft' ? 'Try it yourself (test run)' : 'Start practice')));
   }
   const out = h('div', { class: 'outcome' });
-  const row = h('div', { class: 'row' },
-    h('a', { href: `#/results/${encodeURIComponent(s.scenarioIri)}`, text: 'Results' }),
-    h('a', { href: `#/author/${encodeURIComponent(s.scenarioIri)}`, text: 'Edit (new version)' }));
+  const links = h('div', { class: 'card__footer scenario__links' },
+    linkButton(`#/results/${encodeURIComponent(s.scenarioIri)}`, 'Results', 'btn--ghost btn--sm', 'chart'),
+    linkButton(`#/author/${encodeURIComponent(s.scenarioIri)}`, 'Edit (new version)', 'btn--ghost btn--sm', 'document'));
   if (s.status === 'published') {
-    const rat = h('button', { type: 'button', text: 'Ratify this version (reviewers)', dataset: { action: ACT.ratifyScenario }, onclick: () => busy(rat, out, async () => {
+    const rat = h('button', { type: 'button', class: 'btn btn--secondary btn--sm', text: 'Approve this rubric (reviewers)', dataset: { action: ACT.ratifyScenario }, onclick: () => busy(rat, out, async () => {
       const r = await act(ACT.ratifyScenario, { scenarioIri: s.scenarioIri, version: s.version, scenarioHash: s.scenarioHash });
+      toast({ tone: 'success', title: 'Rubric approved', text: `Version ${r.version} is approved.` });
       setTimeout(route, 0);
-      return h('p', { class: 'ok', text: `Ratified version ${r.version}.` });
-    }) });
-    row.append(rat);
+      return callout({ tone: 'success', title: 'Rubric approved', body: `Version ${r.version} is approved. Reviewed results on it can now count as evidence.` });
+    }, { progress: 'Saving…' }) });
+    links.append(rat);
   }
-  card.append(row, out);
+  links.append(out);
+  card.append(links);
   return card;
 }
 
 // ════════════════════════════════════════════════════════════════════════════════════════════
-//  An attempt: conversation, evidence, review history, projections, the learner's record
+//  A practice session: conversation, feedback, result, reviews, sharing, the learner's record
 // ════════════════════════════════════════════════════════════════════════════════════════════
 
 async function viewAttempt(root, iri, seq) {
@@ -871,95 +1716,144 @@ async function viewAttempt(root, iri, seq) {
   root.append(renderAttempt(v, {}));
 }
 
+function attemptLede(v) {
+  const name = v.counterpartName;
+  const withdrawn = [...(v.reopenings || [])].reverse().find((r) => r.kind === 'retract-for-cause');
+  switch (v.state) {
+    case 'in-conversation': return `Talk it through with ${name}. Finish when you're ready.`;
+    case 'ended': return 'The conversation is finished. Next: get your feedback.';
+    case 'judged': return 'The AI has suggested levels. A reviewer still needs to sign off before this counts.';
+    case 'countersigned': case 'overridden': return 'A reviewer has signed off. This is your final result.';
+    case 'contested': return 'You asked for another review. A different reviewer will look at it.';
+    case 'review-retracted': return `The review was withdrawn: ${(withdrawn && withdrawn.why) || 'no reason given'}. The session is back in the review list.`;
+    case 'redacted': return 'The conversation text was deleted from this workspace.';
+    default: return '';
+  }
+}
+
+function attemptMeta(v) {
+  const scored = v.assessmentUse === 'pass-gate';
+  return [
+    statusPill(STATE_WORDS[v.state] || v.state, STATE_TONE[v.state] || 'pending', 'state'),
+    badge(`Session ${v.attemptNumber}`, '', 'Counted per person per scenario. Starting over with a different sign-in (a new wallet, say) restarts the count.'),
+    badge(v.coached ? 'Had help preparing' : 'No help preparing'),
+    badge(scored ? 'Scored · pass mark' : 'Feedback only'),
+    v.modalStatus === 'Asserted' ? badge('Final: reviewed', 'success', 'A qualified reviewer stood behind every level.') : badge('Provisional', '', 'Not yet reviewed by a person.'),
+    v.scenario.rubricRatified ? badge('Rubric approved', 'success') : badge('Rubric awaiting approval', 'warning'),
+  ];
+}
+
 function renderAttempt(v, o) {
   const frag = h('div', { class: 'attempt', dataset: { attempt: v.attemptIri, state: v.state } });
-  const withdrawn = [...(v.reopenings || [])].reverse().find((r) => r.kind === 'retract-for-cause');
-  const stateText = v.state === 'review-retracted' && withdrawn ? `review withdrawn: ${withdrawn.why || '(reason removed)'}` : (STATE_WORDS[v.state] || v.state);
-  frag.append(h('h2', {}, v.scenario.title, ' ', h('span', { class: `state state-${v.state}`, id: 'state', text: stateText })));
-  frag.append(h('p', { class: 'facts' },
-    chip(`attempt ${v.attemptNumber}`), chip(v.coached ? 'coached' : 'not coached'), chip(`learner ${short(v.learner.did)} (${v.learner.kind})`),
-    chip(v.assessmentUse === 'pass-gate' ? 'pass gate' : 'feedback only'), chip(`modal status: ${v.modalStatus}`),
-    v.scenario.rubricRatified ? chip('rubric ratified', 'ok') : chip('rubric not ratified', 'warn')));
-  frag.append(h('p', { class: 'label', text: 'Practice evidence: rehearsal, not a credential.' }));
-  if (v.assistance) frag.append(muted(`Help declared at the start: ${v.assistance}`));
-  if (v.authorTest) frag.append(h('p', { class: 'warn', text: 'An author test: it is never reviewed, counted or projected.' }));
-  if (v.counterpartControlledBy === 'learner') frag.append(h('p', { class: 'warn', text: 'Their lines in this attempt were written by the learner\'s own agent.' }));
-  if (v.counterpartControlledBy === 'learner-model') frag.append(muted('Their lines were produced with a model the learner chose (their own key), under this bridge\'s prompt.'));
-  if (v.redaction) frag.append(h('p', { class: 'warn', text: 'The text of this attempt was removed from this pod. Hashes remain, so a copy you hold can still be checked against this record.' }));
+  if (!o.review) {
+    frag.append(pageHeader({ crumbs: [['#/mine', 'My practice'], [null, v.scenario.title]], title: v.scenario.title, lede: attemptLede(v), meta: attemptMeta(v) }));
+  }
+  const notes = h('div', { class: 'attempt__notes' }, h('p', { class: 'integrity' }, icon('shield', 'sm'), 'Practice record: rehearsal, not a credential.'));
+  if (v.assistance) notes.append(para(`Help declared at the start: ${v.assistance}`));
+  frag.append(notes);
+  if (v.authorTest) frag.append(callout({ tone: 'neutral', title: 'This is a test run', body: 'Your own sessions on your scenario are never reviewed, counted or shared.' }));
+  if (v.counterpartControlledBy === 'learner') frag.append(callout({ tone: 'warning', title: "Your own AI wrote the other person's lines", body: 'The record says so, and reviewers can see it.' }));
+  if (v.counterpartControlledBy === 'learner-model') frag.append(callout({ tone: 'neutral', title: "The other person's lines came from an AI you chose (your own key), following Practice Evidence's instructions." }));
+  if (v.redaction) frag.append(callout({ tone: 'warning', title: 'The conversation text was deleted', body: 'Levels and fingerprints remain, so a copy you downloaded still checks out.' }));
 
-  if (v.state === 'in-conversation') frag.append(conversationPanel(v));
-  else {
+  if (v.state === 'in-conversation') {
+    frag.append(conversationPanel(v));
+    const more = actionsPanel(v, o, true);
+    if (more) frag.append(more);
+  } else {
+    if (o.hideJudge) {
+      frag.append(h('section', { class: 'card' }, h('div', { class: 'card__body' }, h('h2', { class: 'card__title', text: "The AI's levels" }),
+        para("Hidden until you've chosen a level for every criterion. This session is a blind check."))));
+    } else {
+      const a = assessmentPanel(v);
+      if (a) frag.append(a);
+    }
+    const next = actionsPanel(v, o, false);
+    if (next) frag.append(next);
     frag.append(transcriptPanel(v, o));
     if (!o.hideJudge) frag.append(judgmentsPanel(v));
-    else frag.append(h('section', { class: 'panel' }, h('h3', { text: 'The judge\'s levels' }), muted('Hidden until you have chosen a level for every criterion: this attempt is in the audit sample.')));
-    if (!o.hideJudge) { const a = assessmentPanel(v); if (a) frag.append(a); }
     frag.append(reviewsPanel(v));
     frag.append(projectionsPanel(v));
   }
-  frag.append(actionsPanel(v, o));
   frag.append(versionsPanel(v));
   return frag;
 }
 
-function disclosureChip(t) {
-  if (t.source === 'authored-first-line') return chip('the scenario\'s first line, written by its author');
-  if (!t.disclosure) return null;
-  return chip(disclosureWords(t.disclosure), t.disclosure.route === 'scripted' ? 'scripted' : t.disclosure.route === 'client-packet' ? 'warn' : '');
-}
-
 function bubble(v, t, textNode) {
   const mine = t.speaker === 'learner';
-  return h('div', { class: `bubble ${mine ? 'me' : 'them'}`, dataset: { turn: String(t.index) } },
-    h('div', { class: 'who', text: mine ? 'you' : v.counterpartName }),
-    h('div', { class: 'text' }, textNode || (t.text !== undefined ? t.text : '(text removed from this pod)')),
-    mine ? null : disclosureChip(t),
-    t.endSignal ? h('div', { class: 'muted', text: 'They signalled the conversation is over.' }) : null);
+  const side = mine ? 'me' : 'them';
+  const msg = h('div', { class: `chat__msg chat__msg--${side} bubble ${side}`, dataset: { turn: String(t.index) } },
+    h('span', { class: 'chat__who', text: mine ? 'You' : v.counterpartName }),
+    h('p', { class: 'chat__bubble text' }, textNode || (t.text !== undefined ? t.text : '(text deleted)')));
+  if (!mine) {
+    const rw = replyWords(t);
+    if (rw) {
+      const meta = h('div', { class: 'chat__meta' }, badge(rw.text, rw.tone));
+      if (t.disclosure) {
+        meta.append(h('details', { class: 'disclosure' }, h('summary', { text: 'Details' }),
+          h('div', { class: 'disclosure__body disclosure__body--tech', text: disclosureWords(t.disclosure) })));
+      }
+      msg.append(meta);
+    }
+  }
+  if (t.endSignal) msg.append(h('div', { class: 'chat__meta', text: "They signaled they're ready to wrap up." }));
+  return msg;
 }
 
 function conversationPanel(v) {
-  const sec = h('section', { class: 'panel conversation' }, h('h3', { text: `Talking with ${v.counterpartName}` }));
-  sec.append(h('div', { class: 'bubbles' }, v.turns.map((t) => bubble(v, t))));
+  const name = v.counterpartName;
   const learnerLines = v.turns.filter((t) => t.speaker === 'learner').length;
   const out = h('div', { class: 'outcome' });
   const turnIndex = v.turns.length;
   const end = () => act(ACT.endConversation, { attemptIri: v.attemptIri, turnIndex });
+  const body = h('div', { class: 'card__body' }, h('div', { class: 'chat bubbles' }, v.turns.map((t) => bubble(v, t))));
 
   if (v.endProposedAtTurn !== undefined && hasNext(v, 'endConversation')) {
-    const banner = h('div', { class: 'banner', id: 'end-proposed' });
-    const endBtn = h('button', { type: 'button', class: 'primary', text: 'End the conversation', dataset: { action: ACT.endConversation }, onclick: () => busy(endBtn, out, async () => { await end(); route(); return null; }) });
-    banner.append(h('p', { text: 'They signalled the conversation is over: end it, or keep going.' }), endBtn,
-      h('button', { type: 'button', text: 'Keep going', onclick: () => banner.remove() }));
-    sec.append(banner);
+    const banner = h('div', { class: 'callout callout--accent', id: 'end-proposed' });
+    const ic = icon('info');
+    ic.classList.add('callout__icon');
+    const endBtn = h('button', { type: 'button', class: 'btn btn--primary btn--sm', text: 'Finish conversation', dataset: { action: ACT.endConversation },
+      onclick: () => busy(endBtn, out, async () => { await end(); route(); return null; }, { progress: 'Finishing…' }) });
+    banner.append(ic, h('p', { class: 'callout__title', text: `${name} is ready to wrap up` }),
+      h('p', { class: 'callout__body', text: "They've signaled they're ready to wrap up. Finish now, or keep going." }),
+      h('div', { class: 'callout__actions' }, endBtn, h('button', { type: 'button', class: 'btn btn--ghost btn--sm', text: 'Keep going', onclick: () => banner.remove() })));
+    body.append(banner);
   }
 
   if (hasNext(v, 'say') || hasNext(v, 'recordTurns')) {
-    const box = h('textarea', { id: 'line', rows: 3, maxlength: 4000, placeholder: 'Your line', 'aria-label': 'Your line' });
+    const box = h('textarea', { id: 'line', class: 'textarea', rows: 3, maxlength: 4000, placeholder: "Type what you'd say…", 'aria-label': 'Your line' });
     box.value = S.unsent.get(v.attemptIri) || '';
     box.addEventListener('input', () => S.unsent.set(v.attemptIri, box.value));
-    sec.append(box, muted(`${learnerLines} of ${v.turnLimit} lines`));
+    const composer = h('div', { class: 'composer' }, h('div', { class: 'field' }, h('label', { class: 'label visually-hidden', for: 'line', text: 'Your line' }), box));
     const send = (endAfter) => async () => {
       const text = box.value;
-      if (!text.trim()) return h('p', { class: 'refusal-inline', text: 'Write your line first.' });
+      if (!text.trim()) return errorText('Write your line first.');
       const r = await act(ACT.say, { attemptIri: v.attemptIri, turnIndex, text, ...(endAfter ? { endAfter: true } : {}) }, { byok: true });
       S.unsent.delete(v.attemptIri);
       afterExchange(v, r);
       return null;
     };
     if (hasNext(v, 'say')) {
-      const sendBtn = h('button', { type: 'button', class: 'primary', id: 'send', text: 'Send', dataset: { action: ACT.say }, onclick: () => busy(sendBtn, out, send(false)) });
-      const sendEnd = h('button', { type: 'button', id: 'send-end', text: 'Send and end', dataset: { action: ACT.say }, onclick: () => busy(sendEnd, out, send(true)) });
-      sec.append(h('div', { class: 'row' }, sendBtn, sendEnd));
-    } else {
-      sec.append(muted('No model on this bridge answers as the other person: use your own agent below.'));
+      const sendBtn = h('button', { type: 'button', class: 'btn btn--primary', id: 'send', text: 'Send', dataset: { action: ACT.say }, onclick: () => busy(sendBtn, out, send(false), { progress: 'Getting a reply…' }) });
+      const sendEnd = h('button', { type: 'button', class: 'btn btn--secondary', id: 'send-end', text: 'Send and finish', dataset: { action: ACT.say }, onclick: () => busy(sendEnd, out, send(true), { progress: 'Getting a reply…' }) });
+      composer.append(h('div', { class: 'composer__actions' }, sendBtn, sendEnd));
     }
-    if (hasNext(v, 'counterpartPacket') && hasNext(v, 'recordTurns')) sec.append(packetTurnForm(v, box, out, turnIndex));
+    body.append(composer);
+    if (!hasNext(v, 'say') && hasNext(v, 'recordTurns')) {
+      body.append(callout({ tone: 'info', title: 'No built-in AI here', body: `Use Let my AI play the other person below to have ${name}'s lines written by Claude or ChatGPT.` }));
+    }
+    if (hasNext(v, 'counterpartPacket') && hasNext(v, 'recordTurns')) body.append(packetTurnForm(v, box, out, turnIndex));
   }
   if (hasNext(v, 'endConversation') && v.endProposedAtTurn === undefined) {
-    const endBtn = h('button', { type: 'button', text: 'End the conversation', dataset: { action: ACT.endConversation }, onclick: () => busy(endBtn, out, async () => { await end(); route(); return null; }) });
-    sec.append(h('div', { class: 'row' }, endBtn));
+    const endBtn = h('button', { type: 'button', class: 'btn btn--secondary', text: 'Finish conversation', dataset: { action: ACT.endConversation },
+      onclick: () => busy(endBtn, out, async () => { await end(); route(); return null; }, { progress: 'Finishing…' }) });
+    body.append(h('div', { class: 'split conversation__finish' }, para("Finish when you've said what you need to. Then you can get your feedback.", 'text-sm text-tertiary'), endBtn));
   }
-  sec.append(out);
-  return sec;
+  body.append(out);
+  return h('section', { class: 'card conversation' },
+    h('div', { class: 'card__header' }, h('div', {}, h('h2', { class: 'card__title', text: `Conversation with ${name}` }),
+      h('p', { class: 'card__subtitle', text: `${learnerLines} of ${v.turnLimit} lines used` }))),
+    body);
 }
 
 /**
@@ -984,20 +1878,24 @@ function afterExchange(v, r) {
   };
   if (r.endProposed) next.endProposedAtTurn = them.index; else delete next.endProposedAtTurn;
   shown.replaceWith(renderAttempt(next, {}));
+  const line = $('#line');
+  if (line && typeof line.focus === 'function') line.focus();
 }
 
 function packetTurnForm(v, box, out, turnIndex) {
   const packetOut = h('div', { class: 'outcome' });
-  const theirs = h('textarea', { rows: 2, maxlength: 4000, placeholder: 'Their line, as your agent wrote it (or "(end of conversation)")', 'aria-label': 'Their line' });
-  const provider = h('input', { type: 'text', maxlength: 60, placeholder: 'provider', 'aria-label': 'Provider' });
-  const model = h('input', { type: 'text', maxlength: 120, placeholder: 'model, as the provider returned it', 'aria-label': 'Model' });
+  const theirs = h('textarea', { class: 'textarea', rows: 2, maxlength: 4000, placeholder: 'Their line, as your AI wrote it (or "(end of conversation)")', 'aria-label': 'Their line' });
+  const provider = h('input', { type: 'text', class: 'input', maxlength: 60, placeholder: 'For example: Anthropic', 'aria-label': 'Provider' });
+  const model = h('input', { type: 'text', class: 'input', maxlength: 120, placeholder: 'As your AI app names it', 'aria-label': 'Model' });
   const endAfter = h('input', { type: 'checkbox' });
-  const getBtn = h('button', { type: 'button', text: 'Get a packet for your own agent', dataset: { action: ACT.counterpartPacket }, onclick: () => busy(getBtn, packetOut, async () => {
-    if (!box.value.trim()) return h('p', { class: 'refusal-inline', text: 'Write your line first: the packet includes it.' });
+  const getBtn = h('button', { type: 'button', class: 'btn btn--secondary', text: 'Get instructions for my AI', dataset: { action: ACT.counterpartPacket }, onclick: () => busy(getBtn, packetOut, async () => {
+    if (!box.value.trim()) return errorText('Write your line first: the instructions include it.');
     const p = await act(ACT.counterpartPacket, { attemptIri: v.attemptIri, turnIndex, learnerText: box.value }, { read: true });
-    return h('div', {}, muted(p.instructions), jsonBlock(p.request));
+    return callout({ tone: 'info', title: 'Instructions ready', body: p.instructions,
+      actions: [h('button', { type: 'button', class: 'btn btn--secondary btn--sm', text: 'Copy for my AI', onclick: () => copyText(JSON.stringify(p.request, null, 2), 'Instructions') })],
+      kids: [h('details', { class: 'disclosure' }, h('summary', { text: 'Show the request (JSON)' }), jsonBlock(p.request))] });
   }) });
-  const recBtn = h('button', { type: 'button', text: 'Record both lines', dataset: { action: ACT.recordTurns }, onclick: () => busy(recBtn, out, async () => {
+  const recBtn = h('button', { type: 'button', class: 'btn btn--primary', text: 'Save both lines', dataset: { action: ACT.recordTurns }, onclick: () => busy(recBtn, out, async () => {
     const r = await act(ACT.recordTurns, {
       attemptIri: v.attemptIri, turnIndex, learnerText: box.value, counterpartText: theirs.value,
       counterpartDisclosure: { provider: provider.value.trim(), model: model.value.trim() }, ...(endAfter.checked ? { endAfter: true } : {}),
@@ -1005,11 +1903,16 @@ function packetTurnForm(v, box, out, turnIndex) {
     S.unsent.delete(v.attemptIri);
     afterExchange(v, r);
     return null;
-  }) });
-  return h('details', { class: 'packet', open: !hasNext(v, 'say') },
-    h('summary', { text: 'Use your own agent as the other person' }),
-    muted('The record will say that your own agent wrote their lines in this attempt.'),
-    getBtn, packetOut, theirs, h('div', { class: 'row' }, provider, model, h('label', { class: 'inline' }, endAfter, ' end after this')), recBtn);
+  }, { progress: 'Saving…' }) });
+  return h('details', { class: 'disclosure packet', open: !hasNext(v, 'say') },
+    h('summary', { text: 'Let my AI play the other person' }),
+    h('div', { class: 'disclosure__body form' },
+      h('p', { text: 'Gives your AI assistant the exact instructions. The record will say your AI wrote their lines.' }),
+      h('div', {}, getBtn), packetOut,
+      formField({ label: 'Their line, as your AI wrote it', control: theirs }),
+      h('div', { class: 'form-row' }, formField({ label: 'AI provider', control: provider }), formField({ label: 'Model', control: model })),
+      h('label', { class: 'choice' }, endAfter, h('span', { class: 'choice__text', text: 'Finish after this' })),
+      h('div', {}, recBtn)));
 }
 
 function marked(text, ranges) {
@@ -1034,74 +1937,98 @@ function marked(text, ranges) {
 function transcriptPanel(v, o) {
   const shown = S.judgmentShown.get(v.attemptIri) || 0;
   const hl = o.hideJudge ? [] : (v.highlights || []).filter((x) => x.judgmentIndex === shown);
-  const sec = h('section', { class: 'panel transcript' }, h('h3', { text: 'The conversation' }));
+  const chat = h('div', { class: 'chat' });
   for (const t of v.turns) {
     const own = t.speaker === 'learner' && t.normalisedText !== undefined;
     const node = own ? marked(t.normalisedText, hl.filter((x) => x.turnIndex === t.index)) : null;
-    sec.append(bubble(v, t, node));
+    chat.append(bubble(v, t, node));
   }
+  const body = h('div', { class: 'card__body' }, chat);
   if (v.turns.some((t) => t.normalisedText !== undefined)) {
-    sec.append(muted('Your lines are shown normalised (quote marks straightened, runs of spaces folded) so the highlighted quotes line up exactly with what the platform checked.'));
+    body.append(h('p', { class: 'hint', text: 'Your lines are shown with quote marks and spacing tidied, so highlights line up exactly with what was checked.' }));
   }
-  if (v.transcriptHash) sec.append(muted(`Transcript hash ${shortHash(v.transcriptHash)}… (ended by ${v.endedBy || '?'}).`));
-  return sec;
+  if (v.transcriptHash) body.append(tech([`Conversation fingerprint ${v.transcriptHash} (ended by ${v.endedBy || '?'})`]));
+  return h('section', { class: 'card transcript' }, h('div', { class: 'card__header' }, h('h2', { class: 'card__title', text: 'Conversation' })), body);
 }
 
+const judgmentName = (j) => (j.index === 0 ? 'First AI assessment' : `Opinion ${j.index + 1}`);
+
 function judgmentsPanel(v) {
-  const sec = h('section', { class: 'panel judgments' }, h('h3', { text: 'Judging' }));
-  if (!v.judgments.length) { sec.append(muted(v.state === 'ended' ? 'Not judged yet.' : 'No judgment.')); return sec; }
+  const final = Boolean(v.finalAssessment);
+  const sec = h('section', { class: 'card judgments' },
+    h('div', { class: 'card__header' }, h('h2', { class: 'card__title', text: 'Feedback' }), statusPill(final ? 'Final' : 'Provisional', final ? 'success' : 'warning')));
+  const body = h('div', { class: 'card__body' });
+  sec.append(body);
+  if (!v.judgments.length) {
+    body.append(para(v.state === 'ended' && hasNext(v, 'judgeAttempt') ? 'Not assessed yet. Use Get AI assessment above.'
+      : v.state === 'ended' ? 'Waiting for an appointed judge to assess this session.' : 'No assessment.'));
+    return sec;
+  }
   const shown = S.judgmentShown.get(v.attemptIri) || 0;
   if (v.judgments.length > 1) {
-    sec.append(h('div', { class: 'row' }, h('span', { class: 'label', text: 'Highlight the quotes of: ' }), v.judgments.map((j) => h('button', {
-      type: 'button', class: j.index === shown ? 'active' : '', text: `judgment ${j.index + 1}${j.index === 0 ? ' (primary)' : ''}`,
-      onclick: () => { S.judgmentShown.set(v.attemptIri, j.index); route(); },
-    }))));
+    body.append(h('div', { class: 'cluster' }, h('span', { class: 'text-sm text-secondary', text: 'Show quotes from' }),
+      h('div', { class: 'segmented', role: 'group', 'aria-label': 'Show quotes from' }, v.judgments.map((j) => h('button', {
+        type: 'button', 'aria-pressed': j.index === shown ? 'true' : 'false', text: judgmentName(j),
+        onclick: () => { S.judgmentShown.set(v.attemptIri, j.index); route(); },
+      })))));
   }
   const sj = v.judgments.find((j) => j.index === shown) || v.judgments[0];
+  const list = h('div', { class: 'criteria-feedback' });
   for (const c of v.rubric.criteria) {
-    const block = h('div', { class: 'criterion', dataset: { criterion: c.id } }, h('h4', { text: c.title }));
-    for (const j of v.judgments) {
-      const cj = j.criteria.find((x) => x.criterionId === c.id);
-      if (!cj) continue;
-      block.append(h('p', { class: j.index === sj.index ? 'judged shown' : 'judged' },
-        `Judgment ${j.index + 1}: `, h('strong', { text: levelLabel(v.rubric, c.id, cj.levelId) }), ' ',
-        statusChip(cj.status)));
-    }
     const cj = sj.criteria.find((x) => x.criterionId === c.id);
+    const block = h('div', { class: 'criterion-feedback', dataset: { criterion: c.id } });
+    const head = h('div', { class: 'criterion-feedback__head' }, h('h3', { text: c.title }));
     if (cj) {
-      if (cj.status === 'unverified' && cj.why) block.append(h('p', { class: 'bad-text', text: `Not verified: ${cj.why}.` }));
+      const [tone, words] = QUOTE_STATUS[cj.status] || ['pending', cj.status];
+      head.append(badge(`Level: ${levelLabel(v.rubric, c.id, cj.levelId)}`, 'accent'), statusPill(words, tone));
+    }
+    block.append(head);
+    if (v.judgments.length > 1) {
+      for (const j of v.judgments) {
+        const x = j.criteria.find((y) => y.criterionId === c.id);
+        if (!x) continue;
+        const [tone, words] = QUOTE_STATUS[x.status] || ['pending', x.status];
+        block.append(h('p', { class: 'text-sm text-secondary' }, `${judgmentName(j)}: `, h('strong', { text: levelLabel(v.rubric, c.id, x.levelId) }), ' ', statusPill(words, tone)));
+      }
+    }
+    if (cj) {
+      if (cj.status === 'unverified' && cj.why) block.append(errorText(`Not counted: ${cj.why}.`));
       if (cj.quotes.length) {
         block.append(h('ul', { class: 'quotes' }, cj.quotes.map((q) => h('li', { class: q.verified ? 'quote ok' : 'quote bad' },
-          h('span', { class: 'mark', text: q.verified ? '✓ ' : '✗ ' }),
-          h('q', { text: q.text !== undefined ? q.text : '(removed with the transcript)' }),
-          q.verified ? (q.occurrences > 1 ? muted(`found ${q.occurrences} times; the first is highlighted`) : null) : h('span', { class: 'bad-text', text: ` ${q.why || ''}` }),
-          q.verified && q.declaredTurnIndex !== undefined ? muted(`the judge named turn ${q.declaredTurnIndex}; it was found in turn ${q.turnIndex}`) : null))));
-      } else block.append(muted('No quote given.'));
-      block.append(h('div', { class: 'rationale' }, h('p', { class: 'label', text: 'The judge\'s words: not part of the score' }),
-        h('p', { text: cj.rationale !== undefined ? cj.rationale : '(removed with the transcript)' })));
-      block.append(muted(cj.confidence !== null && cj.confidence !== undefined ? `declared confidence ${pct(cj.confidence)}` : 'confidence not declared'));
+          icon(q.verified ? 'check' : 'warning', 'sm'),
+          h('q', { text: q.text !== undefined ? q.text : '(deleted with the conversation text)' }),
+          q.verified
+            ? (q.occurrences > 1 || q.declaredTurnIndex !== undefined
+              ? h('span', { class: 'text-tertiary', text: [q.occurrences > 1 ? `Found ${q.occurrences} times; the first is highlighted.` : '',
+                q.declaredTurnIndex !== undefined ? `The AI named line ${q.declaredTurnIndex}; it was found in line ${q.turnIndex}.` : ''].filter(Boolean).join(' ') }) : null)
+            : h('span', { class: 'quote__why', text: `Didn't match: ${q.why || ''}` })))));
+      } else block.append(para('No quote given.'));
+      block.append(h('div', { class: 'rationale' }, h('p', { class: 'rationale__label', text: "The AI's explanation (not part of the score)" }),
+        h('p', { text: cj.rationale !== undefined ? cj.rationale : '(deleted with the conversation text)' })));
+      block.append(para(cj.confidence !== null && cj.confidence !== undefined ? `The AI's stated confidence: ${pct(cj.confidence)}` : "The AI didn't state its confidence.", 'text-sm text-tertiary'));
     }
     const step = (v.nextSteps || []).find((x) => x.criterionId === c.id);
-    if (step) block.append(h('p', { class: 'next-step', text: `To reach ${step.nextLevelLabel}, the rubric says: ${step.nextLevelDescriptor}${step.basis === 'provisional' ? ' (from the provisional levels)' : ''}` }));
+    if (step) block.append(h('p', { class: 'next-step', text: `To reach ${step.nextLevelLabel}: ${step.nextLevelDescriptor}${step.basis === 'provisional' ? ' (based on the provisional levels)' : ''}` }));
     if (v.standingReview) {
       const fl = v.standingReview.finalLevels.find((x) => x.criterionId === c.id);
       if (fl) {
-        block.append(h('p', { class: 'final' }, 'Final level: ', h('strong', { text: levelLabel(v.rubric, c.id, fl.levelId) }), fl.from === 'judge' ? ' (as the judge chose, confirmed by the reviewer)' : ' (set by the reviewer)'));
-        if (fl.why) block.append(h('p', { class: 'muted', text: `The reviewer's reason: ${fl.why}` }));
+        block.append(h('p', { class: 'final-level' }, 'Final level: ', h('strong', { text: levelLabel(v.rubric, c.id, fl.levelId) }),
+          fl.from === 'judge' ? " (the AI's level, confirmed by the reviewer)" : ' (set by the reviewer)'));
+        if (fl.why) block.append(para(`Reviewer's reason: ${fl.why}`));
       }
     }
-    sec.append(block);
+    list.append(block);
   }
+  body.append(list);
   if (v.judgments.length > 1) {
-    sec.append(h('h4', { text: 'Agreement between judgments' }), h('table', { class: 'agreement' },
-      h('thead', {}, h('tr', {}, h('th', { text: 'criterion' }), v.judgments.map((j) => h('th', { text: `judgment ${j.index + 1}` })), h('th', { text: 'spread' }))),
-      h('tbody', {}, (v.agreement || []).map((a) => h('tr', { class: a.agree ? '' : 'differ' },
-        h('td', { text: a.criterionId }), a.levels.map((l) => h('td', { text: levelLabel(v.rubric, a.criterionId, l) })),
-        h('td', { text: a.agree ? 'agree' : `${a.spread} level(s) apart` }))))));
+    body.append(h('h3', { text: 'How the AI assessments compare' }), h('div', { class: 'table-wrap', role: 'region', 'aria-label': 'How the AI assessments compare', tabindex: '0' },
+      h('table', { class: 'table table--compact agreement' },
+        h('thead', {}, h('tr', {}, h('th', { scope: 'col', text: 'Criterion' }), v.judgments.map((j) => h('th', { scope: 'col', text: judgmentName(j) })), h('th', { scope: 'col', text: 'Difference' }))),
+        h('tbody', {}, (v.agreement || []).map((a) => h('tr', {},
+          h('td', { text: criterionTitle(v.rubric, a.criterionId) }), a.levels.map((l) => h('td', { text: levelLabel(v.rubric, a.criterionId, l) })),
+          h('td', { text: a.agree ? 'Agree' : `${a.spread} ${a.spread === 1 ? 'level' : 'levels'} apart` })))))));
   }
-  sec.append(h('h4', { text: 'Who judged' }), h('ul', { class: 'disclosures' }, v.judgments.map((j) => h('li', {
-    text: `Judgment ${j.index + 1}${j.repeatOf !== null ? ` (repeat of ${j.repeatOf + 1})` : ''}: ${j.judge.id} (${j.judge.kind}); ${disclosureWords(j.disclosure)}; chosen by ${CHOSEN_BY_WORDS[j.chosenBy] || j.chosenBy}; prompt ${j.promptTemplateHash === 'own-prompt' ? 'the judge\'s own (declared)' : `${shortHash(j.promptTemplateHash)}…`}`,
-  }))));
+  body.append(tech(v.judgments.map((j) => `Who assessed: ${judgmentName(j)}${j.repeatOf !== null && j.repeatOf !== undefined ? ` (repeat of ${j.repeatOf + 1})` : ''}: ${j.judge.id} (${j.judge.kind}); ${disclosureWords(j.disclosure)}; chosen by ${CHOSEN_BY_WORDS[j.chosenBy] || j.chosenBy}; prompt ${j.promptTemplateHash === 'own-prompt' ? 'the judge\'s own (declared)' : `${shortHash(j.promptTemplateHash)}…`}`)));
   return sec;
 }
 
@@ -1109,174 +2036,257 @@ function assessmentPanel(v) {
   const final = v.finalAssessment;
   const a = final || v.provisional;
   if (!a) return null;
-  const sec = h('section', { class: 'panel assessment', id: 'assessment' }, h('h3', {}, 'Result ', h('span', { class: 'chip', text: 'Platform-computed' })));
-  sec.append(h('p', { class: 'label', text: final ? 'Final: a qualified reviewer stated every level.' : 'provisional, not reviewed' }));
+  const body = h('div', { class: 'card__body' },
+    statusPill(final ? 'Final: a qualified reviewer signed off every level.' : 'Provisional: not yet reviewed', final ? 'success' : 'warning'));
   if (a.use === 'pass-gate') {
-    sec.append(h('p', { class: 'score', text: `${a.points} of ${a.maxPoints} points · ${a.percent} %` }));
+    body.append(h('p', { class: 'result-score' }, h('span', { class: 'nowrap', text: `${a.points} of ${a.maxPoints} points` }), ' · ', h('span', { class: 'nowrap', text: `${a.percent}%` })));
     const verdict = final
-      ? (a.meetsPassRule ? 'Meets the pass rule' : 'Does not meet the pass rule')
-      : (a.meetsPassRule ? 'Would meet the pass rule (provisional, not reviewed)' : 'Would not meet the pass rule (provisional, not reviewed)');
-    sec.append(h('p', { class: 'verdict', text: `${verdict}: at least ${a.minPercent} % is needed.` }));
-    if (a.unmetRequirements.length) sec.append(h('ul', {}, a.unmetRequirements.map((x) => h('li', { text: x }))));
-    sec.append(h('table', {}, h('thead', {}, h('tr', {}, ['criterion', 'level', 'value × weight', 'points'].map((x) => h('th', { text: x })))),
-      h('tbody', {}, a.perCriterion.map((p) => h('tr', {}, h('td', { text: p.criterionId }), h('td', { text: levelLabel(v.rubric, p.criterionId, p.levelId) }),
-        h('td', { text: `${p.value} × ${p.weight}` }), h('td', { text: String(p.points) }))))));
+      ? (a.meetsPassRule ? 'Meets the pass mark' : 'Below the pass mark')
+      : (a.meetsPassRule ? 'Would meet the pass mark (provisional)' : 'Would not meet the pass mark (provisional)');
+    body.append(h('p', { class: 'verdict', text: `${verdict}: at least ${a.minPercent}% is needed.` }));
+    if (a.unmetRequirements.length) {
+      body.append(h('ul', {}, a.unmetRequirements.map((x) => {
+        const m = /^(\S+) needs at least (\S+)$/.exec(x);
+        return h('li', { text: m ? `${criterionTitle(v.rubric, m[1])} needs at least ${levelLabel(v.rubric, m[1], m[2])}.` : x });
+      })), tech(a.unmetRequirements));
+    }
+    body.append(h('div', { class: 'table-wrap', role: 'region', 'aria-label': 'Points by criterion', tabindex: '0' }, h('table', { class: 'table table--compact' },
+      h('thead', {}, h('tr', {}, h('th', { scope: 'col', text: 'Criterion' }), h('th', { scope: 'col', text: 'Level' }), h('th', { scope: 'col', class: 'num', text: 'Points' }))),
+      h('tbody', {}, a.perCriterion.map((p) => h('tr', {}, h('td', { text: criterionTitle(v.rubric, p.criterionId) }), h('td', { text: levelLabel(v.rubric, p.criterionId, p.levelId) }),
+        h('td', { class: 'num', title: `${p.value} × ${p.weight}`, text: String(p.points) })))))));
   } else {
-    sec.append(h('p', { class: 'verdict', text: 'Feedback only: levels, no score.' }));
-    sec.append(h('ul', {}, a.levels.map((l) => h('li', { text: `${l.criterionId}: ${levelLabel(v.rubric, l.criterionId, l.levelId)}` }))));
+    body.append(h('p', { class: 'verdict', text: 'Feedback only: levels, no score.' }));
+    body.append(h('ul', {}, a.levels.map((l) => h('li', { text: `${criterionTitle(v.rubric, l.criterionId)}: ${levelLabel(v.rubric, l.criterionId, l.levelId)}` }))));
   }
-  sec.append(muted('The judge chose levels only. This bridge computed the result from the rubric. Unverified criteria count at their lowest level until a reviewer sets them.'));
-  if (final && v.provisional && v.provisional.use === 'pass-gate') sec.append(muted(`Before review the provisional result was ${v.provisional.percent} %.`));
-  return sec;
+  body.append(para("The AI suggests levels only. Practice Evidence works out the result from the rubric. If a quote didn't match, that criterion counts at its lowest level until a reviewer sets it.", 'text-sm text-tertiary'));
+  if (final && v.provisional && v.provisional.use === 'pass-gate') body.append(para(`Before review, the provisional result was ${v.provisional.percent}%.`, 'text-sm text-tertiary'));
+  return h('section', { class: 'card assessment', id: 'assessment' },
+    h('div', { class: 'card__header' }, h('h2', { class: 'card__title', text: 'Result' }),
+      badge('Calculated by Practice Evidence', 'accent', 'Practice Evidence works out the result from the rubric. The AI only suggests levels.')),
+    body);
 }
 
 function reviewsPanel(v) {
-  const sec = h('section', { class: 'panel reviews' }, h('h3', { text: 'Reviews' }));
-  if (!v.reviews.length) sec.append(muted('No person has reviewed this attempt yet. Nothing leaves as evidence until one does.'));
+  const body = h('div', { class: 'card__body' });
+  if (!v.reviews.length) body.append(para("No one has reviewed this session yet. It won't count as evidence until a reviewer signs off."));
+  const items = [];
   for (const r of v.reviews) {
     const reopening = r.withdrawn ? (v.reopenings || []).find((x) => x.index === r.withdrawn.reopeningIndex) : null;
-    sec.append(h('p', {}, `Review ${r.index + 1}: ${r.outcome === 'countersigned' ? 'countersigned as judged' : 'levels set by the reviewer'} by ${short(r.reviewer.did)} at ${r.reviewedAt}; saw the judge's levels first: ${r.sawJudgeLevelsFirst ? 'yes' : 'no'}.`,
-      r.reviewer.serverHeldDemoKey ? chip('signed with a demo key held by the bridge', 'warn') : null,
-      r.withdrawn ? h('span', { class: 'bad-text', text: ` Withdrawn for cause: ${reopening && reopening.why ? reopening.why : '(reason removed)'}` }) : null));
+    items.push(h('li', {}, h('div', { class: 'list__item' },
+      h('span', { class: 'icon-tile icon-tile--success' }, icon('people')),
+      h('div', { class: 'list__main' }, h('span', { class: 'list__title', text: r.outcome === 'countersigned' ? "Confirmed the AI's levels" : 'Set different levels' }),
+        h('span', { class: 'list__meta', text: `By a reviewer · ${fmtDate(r.reviewedAt)} · ${r.sawJudgeLevelsFirst ? "saw the AI's levels first" : 'blind check: chose levels first'}` }),
+        r.withdrawn ? h('p', { class: 'text-sm', text: `Reason: ${reopening && reopening.why ? reopening.why : '(reason deleted)'}` }) : null),
+      h('div', { class: 'list__end' }, r.reviewer.serverHeldDemoKey ? badge('Demo key', 'demo') : null, r.withdrawn ? statusPill('Withdrawn', 'warning') : null))));
   }
   for (const r of v.reopenings || []) {
-    if (r.kind === 'contest') sec.append(muted(`Contested by the learner at ${r.at}: ${r.why || '(reason removed)'}`));
+    if (r.kind !== 'contest') continue;
+    items.push(h('li', {}, h('div', { class: 'list__item' }, h('span', { class: 'icon-tile' }, icon('user')),
+      h('div', { class: 'list__main' }, h('span', { class: 'list__title', text: 'You asked for another review' }),
+        h('span', { class: 'list__meta', text: `${fmtDate(r.at)} · ${r.why || '(reason deleted)'}` })))));
   }
-  return sec;
+  if (items.length) body.append(h('ul', { class: 'list' }, items));
+  if (v.reviews.length) body.append(tech(v.reviews.map((r) => `Review ${r.index + 1}: reviewer ${r.reviewer.did}`)));
+  return h('section', { class: 'card reviews' }, h('div', { class: 'card__header' }, h('h2', { class: 'card__title', text: 'Reviews' })), body);
 }
 
 function projectionsPanel(v) {
   const can = v.projectable && hasNext(v, 'projectAttempt');
-  const sec = h('section', { class: 'panel projections' }, h('h3', { text: 'Leave as practice evidence' }));
-  sec.append(muted(v.projectable ? v.projectableWhy : `Not yet: ${v.projectableWhy}.`));
+  const body = h('div', { class: 'card__body' });
+  if (v.projectable) body.append(para('A reviewer signed off on an approved rubric, so this can be shared as practice evidence.'));
+  else {
+    body.append(callout({ tone: 'neutral', title: `Not ready to share yet: ${EVIDENCE_PLAIN[v.projectableWhy] || 'see the details'}.`, techLines: [v.projectableWhy] }));
+  }
   const out = h('div', { class: 'outcome', id: 'projection' });
-  const button = (format, label) => {
-    const b = h('button', { type: 'button', text: label, disabled: !can, title: v.projectableWhy, dataset: { action: ACT.projectAttempt, format }, onclick: () => busy(b, out, async () => {
+  const button = (format, label, cls) => {
+    const b = h('button', { type: 'button', class: `btn ${cls}`, text: label, disabled: !can, title: v.projectableWhy, dataset: { action: ACT.projectAttempt, format }, onclick: () => busy(b, out, async () => {
       const r = await act(ACT.projectAttempt, { attemptIri: v.attemptIri, format });
       const text = JSON.stringify(r.statement, null, 2);
-      const dl = h('button', { type: 'button', text: 'Download statement', onclick: () => download(`statement-${r.statementId}.json`, text, 'application/json') });
-      return h('div', {},
-        h('p', { class: 'ok', text: `Statement ${r.statementId}, checked against the platform's rules; an audit row records it.` }),
-        h('pre', { class: 'json statement', text }), dl,
-        h('p', { class: 'label', text: 'What it loses' }), h('ul', {}, r.lossy.map((x) => h('li', { text: x }))),
-        h('p', { class: 'label', text: 'Nothing was sent anywhere. To record it in an LRS, send it with your own credentials:' }),
-        jsonBlock(r.lrsRequest));
-    }) });
+      return h('div', { class: 'stack' },
+        callout({ tone: 'success', title: 'Statement created', body: "It was checked against Practice Evidence's rules and logged. Nothing was sent anywhere.",
+          actions: [h('button', { type: 'button', class: 'btn btn--secondary btn--sm', onclick: () => download(`statement-${r.statementId}.json`, text, 'application/json') }, icon('download', 'sm'), 'Download statement')] }),
+        h('h3', { text: 'What this record leaves out' }), h('ul', {}, r.lossy.map((x) => h('li', { text: x }))),
+        h('details', { class: 'disclosure' }, h('summary', { text: 'Show the statement (JSON)' }), h('pre', { class: 'json statement', text })),
+        h('details', { class: 'disclosure' }, h('summary', { text: 'How to send it to your learning record store' }),
+          h('div', { class: 'disclosure__body' }, h('p', { text: 'Nothing was sent anywhere. To record it in your learning record store, send it with your own credentials:' }), jsonBlock(r.lrsRequest))),
+        tech([`Statement ${r.statementId}`]));
+    }, { progress: 'Creating…' }) });
     return b;
   };
-  sec.append(h('div', { class: 'row' }, button('xapi', 'xAPI statement'), button('cmi5', 'xAPI (cmi5-allowed context, no LMS launch)'),
-    h('button', { type: 'button', disabled: true, text: 'SCORM: not built (lossy)', title: 'A SCORM write is made by content in the browser, so it would carry a score without its provenance.' })), out);
-  return sec;
+  body.append(h('div', { class: 'btn-group' }, button('xapi', 'Create xAPI statement', 'btn--primary'), button('cmi5', 'xAPI statement (cmi5 style)', 'btn--secondary'),
+    h('button', { type: 'button', class: 'btn btn--secondary', disabled: true, text: 'SCORM: not supported', title: 'A SCORM result is written by content in the browser, so it would carry a score without its record.' })), out);
+  return h('section', { class: 'card projections' },
+    h('div', { class: 'card__header' }, h('div', {}, h('h2', { class: 'card__title', text: 'Share as a learning record' }),
+      h('p', { class: 'card__subtitle', text: 'xAPI is the standard format learning record stores accept. We create it; you send it.' }))),
+    body);
 }
 
-function whyBox(placeholder) { return h('textarea', { rows: 2, maxlength: 1000, placeholder, 'aria-label': placeholder }); }
+function reasonField(label, hint) {
+  const t = h('textarea', { class: 'textarea textarea--short', rows: 2, maxlength: 1000 });
+  return [t, formField({ label, control: t, hint })];
+}
 
-function actionsPanel(v, o) {
-  const sec = h('section', { class: 'panel actions' }, h('h3', { text: 'What you can do next' }));
+/** What can be done next, from the attempt's own nextActions; `inConversation` draws it only when there is something. */
+function actionsPanel(v, o, inConversation) {
   const handled = new Set([ACT.say, ACT.counterpartPacket, ACT.recordTurns, ACT.endConversation, ACT.projectAttempt]);
   const items = (v.nextActions || []).filter((n) => !handled.has(n.action));
-  if (!items.length) sec.append(muted(v.nextActions && v.nextActions.length ? 'The controls above are what you can do now.' : 'Nothing, as whoever you are acting as.'));
+  const again = !inConversation && v.state !== 'in-conversation' && !o.review && hasNext(v, 'exportRecord');
+  if (inConversation && !items.length) return null;
+  const list = h('ul', { class: 'list' });
   let reviewLinked = false;
   for (const n of items) {
+    const key = actKey(n.action);
+    const words = NEXT_WORDS[key] || [n.label, n.why];
     const out = h('div', { class: 'outcome' });
-    const item = h('div', { class: 'next', dataset: { action: n.action } }, h('p', {}, h('strong', { text: n.label }), ' ', h('span', { class: 'muted', text: n.why })));
-    const btn = (label, fn, cls) => { const b = h('button', { type: 'button', class: cls || '', text: label, dataset: { action: n.action }, onclick: () => busy(b, out, fn) }); return b; };
+    const end = h('div', { class: 'list__end' });
+    const after = [];
+    const btn = (label, fn, cls, progress, ic) => {
+      const b = h('button', { type: 'button', class: `btn ${cls || 'btn--secondary'}`, dataset: { action: n.action }, onclick: () => busy(b, out, fn, { progress }) }, ic ? icon(ic, 'sm') : null, label);
+      return b;
+    };
+    let title = words[0];
     if (n.action === ACT.judgeAttempt) {
-      item.append(btn(n.label, async () => { await act(ACT.judgeAttempt, { attemptIri: v.attemptIri }, { byok: true }); route(); return null; }, 'primary'));
+      title = v.judgments.length > 0 ? 'Get a second opinion' : 'Get AI assessment';
+      end.append(btn(title, async () => { await act(ACT.judgeAttempt, { attemptIri: v.attemptIri }, { byok: true }); route(); return null; }, 'btn--primary', 'Assessing…', 'sparkle'));
     } else if (n.action === ACT.judgePacket) {
-      item.append(btn('Get the packet', async () => {
+      end.append(btn('Get the hand-off', async () => {
         const p = await act(ACT.judgePacket, { attemptIri: v.attemptIri }, { read: true });
-        return h('div', {}, muted(p.instructions), jsonBlock(p));
-      }));
+        return callout({ tone: 'info', title: 'Hand-off ready', body: p.instructions,
+          actions: [h('button', { type: 'button', class: 'btn btn--secondary btn--sm', text: 'Copy hand-off', onclick: () => copyText(JSON.stringify(p, null, 2), 'Hand-off') })],
+          kids: [h('details', { class: 'disclosure' }, h('summary', { text: 'Show the request (JSON)' }), jsonBlock(p)),
+            h('p', { class: 'callout__body' }, "Send this session's link to your appointed judge. ",
+              h('button', { type: 'button', class: 'btn btn--link', text: 'Copy session link', onclick: () => copyText(location.href, 'Session link') }))] });
+      }, 'btn--secondary', 'One moment…'));
     } else if (n.action === ACT.exportRecord) {
-      item.append(btn(n.label, async () => {
+      end.append(btn('Download', async () => {
         const r = await act(ACT.exportRecord, { attemptIri: v.attemptIri }, { read: true });
         const text = JSON.stringify(r, null, 2);
         const saved = download(`pev-record-${v.attemptIri.split(':').pop()}.json`, text, 'application/json');
-        return h('p', { class: 'ok', text: `${r.versions.length} version(s) with their platform signatures${saved ? ', saved as a file' : ''}. Each pair can be checked offline: ${r.verify.join(' ')}` });
-      }));
+        const n2 = r.versions.length;
+        return callout({ tone: 'success', title: saved ? `Downloaded ${n2} saved versions.` : `Your record has ${n2} saved versions, but this browser couldn't save the file.`, techLines: r.verify });
+      }, 'btn--secondary', 'Preparing…', 'download'));
     } else if (n.action === ACT.holderCopy) {
-      const target = h('input', { type: 'url', placeholder: 'https://your-own-pod.example/', 'aria-label': 'Your pod', size: 34 });
-      item.append(target, btn(n.label, async () => {
+      const target = h('input', { type: 'url', class: 'input', placeholder: 'https://your-storage.example/', 'aria-label': 'Your storage address' });
+      end.append(formField({ label: 'Your storage address', control: target, hideLabel: true }), btn('Copy', async () => {
         const r = await act(ACT.holderCopy, { attemptIri: v.attemptIri, targetPodUrl: target.value.trim() });
-        return h('p', { class: 'ok', text: `${r.copies.length} version(s) copied to ${r.targetPodUrl}; ${r.copiesVerified} read back and verified${r.skippedContentDeleted ? `; ${r.skippedContentDeleted} skipped (text removed)` : ''}.` });
-      }), muted('This works only for pods that accept this bridge\'s writes. Otherwise download your record and write it with your own credentials.'));
+        return callout({ tone: 'success', title: `Copied ${r.copies.length} saved versions to your storage.`,
+          body: `${r.copiesVerified} checked after copying${r.skippedContentDeleted ? `; ${r.skippedContentDeleted} skipped because their text was deleted` : ''}.`, techLines: [`Copied to ${r.targetPodUrl}`] });
+      }, 'btn--secondary', 'Copying…'));
     } else if (n.action === ACT.contestReview) {
-      const why = whyBox('Why should another reviewer look again? (10 to 1000 characters)');
-      item.append(why, btn(n.label, async () => {
+      const [why, f] = reasonField('Why should another reviewer look again?', '10 to 1000 characters');
+      end.append(f, btn('Request another review', async () => {
         await act(ACT.contestReview, { attemptIri: v.attemptIri, target: v.currentTarget, why: why.value });
         route();
         return null;
-      }));
+      }, 'btn--secondary', 'Saving…'));
     } else if (n.action === ACT.retractReview) {
-      const why = whyBox('The cause, shown to the learner (10 to 1000 characters)');
-      item.append(why, btn(n.label, async () => {
+      const [why, f] = reasonField('Reason (shown to the learner)', '10 to 1000 characters');
+      end.append(f, btn('Withdraw review', async () => {
         await act(ACT.retractReview, { attemptIri: v.attemptIri, target: v.currentTarget, why: why.value });
         route();
         return null;
-      }));
+      }, 'btn--danger-quiet', 'Saving…'));
     } else if (n.action === ACT.redactAttempt) {
-      const why = whyBox('Why (required for an admin; optional for the learner)');
-      const confirm = h('div', { class: 'confirm', hidden: true },
-        h('p', { class: 'warn', text: 'Download your record first: after this, the full text exists only in copies you hold.' }), why,
-        btn('Remove it', async () => {
-          const r = await act(ACT.redactAttempt, { attemptIri: v.attemptIri, target: v.currentTarget, ...(why.value.trim() ? { why: why.value } : {}) });
-          setTimeout(route, 0);
-          return h('p', { class: 'ok', text: `${r.note} ${r.graphsDeleted} earlier version(s) deleted${r.graphsStillPresent.length ? `; still present: ${r.graphsStillPresent.join(', ')}` : ''}.` });
-        }, 'danger'));
-      const ask = h('button', { type: 'button', class: 'danger', text: n.label, onclick: () => { confirm.hidden = false; ask.disabled = true; } });
-      item.append(ask, confirm);
+      const [why, f] = reasonField('Reason (required for admins, optional for you)', '');
+      const ask = h('button', { type: 'button', class: 'btn btn--danger-quiet', text: 'Delete conversation text' });
+      const confirm = h('div', { class: 'redact-confirm', hidden: true });
+      confirm.append(callout({ tone: 'warning', title: 'Download your record first.', body: 'After this, the full text exists only in copies you hold.',
+        kids: [f], actions: [
+          btn('Delete it', async () => {
+            const r = await act(ACT.redactAttempt, { attemptIri: v.attemptIri, target: v.currentTarget, ...(why.value.trim() ? { why: why.value } : {}) });
+            setTimeout(route, 0);
+            return callout({ tone: 'success', title: 'The conversation text was deleted.',
+              techLines: [r.note, `${r.graphsDeleted} earlier versions deleted`, r.graphsStillPresent.length ? `still present: ${r.graphsStillPresent.join(', ')}` : null] });
+          }, 'btn--danger btn--sm', 'Deleting…'),
+          h('button', { type: 'button', class: 'btn btn--ghost btn--sm', text: 'Cancel', onclick: () => { confirm.hidden = true; ask.disabled = false; } })] }));
+      ask.addEventListener('click', () => { confirm.hidden = false; ask.disabled = true; });
+      end.append(ask);
+      after.push(confirm);
     } else if (n.action === ACT.countersignAttempt || n.action === ACT.overrideAttempt) {
       if (reviewLinked || o.review) continue;
       reviewLinked = true;
-      item.append(h('a', { href: `#/review/${encodeURIComponent(v.attemptIri)}`, class: 'button', text: 'Review this attempt' }));
+      end.append(linkButton(`#/review/${encodeURIComponent(v.attemptIri)}`, 'Review this session', 'btn--primary'));
     }
-    item.append(out);
-    sec.append(item);
+    list.append(h('li', {}, h('div', { class: 'list__item next', dataset: { action: n.action } },
+      h('div', { class: 'list__main' }, h('span', { class: 'list__title', text: title }), h('span', { class: 'list__meta', text: words[1] })),
+      end, after, out)));
   }
-  if (v.state !== 'in-conversation' && !o.review && hasNext(v, 'exportRecord')) {
-    sec.append(h('div', { class: 'next' }, h('p', {}, h('strong', { text: 'Practise again' }), ' ', h('span', { class: 'muted', text: 'A new attempt on the latest published version of this scenario.' })),
-      startForm(v.scenario.scenarioIri, async () => (await invoke(ACT.listScenarios, podArgs({ scenario_iri: v.scenario.scenarioIri }))).scenario.version, 'Start again')));
+  if (again) {
+    list.append(h('li', {}, h('div', { class: 'list__item next practice-again' },
+      h('div', { class: 'list__main' }, h('span', { class: 'list__title', text: 'Practice again' }), h('span', { class: 'list__meta', text: 'Start a new session on the latest published version of this scenario.' })),
+      h('div', { class: 'start-row' }, startForm(v.scenario.scenarioIri, async () => (await invoke(ACT.listScenarios, podArgs({ scenario_iri: v.scenario.scenarioIri }))).scenario.version, 'Start again')))));
   }
-  return sec;
+  const body = h('div', { class: 'card__body' });
+  if (list.children.length) body.append(list);
+  else body.append(para(v.nextActions && v.nextActions.length ? 'Use the controls above.' : 'Nothing more to do here for now.'));
+  if (items.length) body.append(tech(items.map((n) => `${n.label}: ${n.why}`)));
+  return h('section', { class: 'card actions' }, h('div', { class: 'card__header' }, h('h2', { class: 'card__title', text: 'What you can do next' })), body);
 }
 
 function versionsPanel(v) {
   const a = v.authorship || {};
   const bound = a.valid && a.contentBinding === 'bound' && a.platformKnown;
-  return h('section', { class: 'panel versions' },
-    h('p', {}, bound ? chip('platform signature bound to this content', 'ok') : chip(`platform signature does not check out (${a.contentBinding})`, 'bad'), ' ', chip(`key: ${v.keyKind}`)),
-    h('details', {}, h('summary', { text: `Versions on the pod (${v.versions.length})` }),
-      h('ol', {}, v.versions.map((x) => h('li', {}, `${x.state || 'text removed'} · ${x.modalStatus || ''} · `, h('code', { text: x.descriptorUrl }))))));
+  return h('section', { class: 'card versions' }, h('div', { class: 'card__header' }, h('h2', { class: 'card__title', text: 'Signed record' })), h('div', { class: 'card__body' },
+    h('div', { class: 'cluster' }, bound ? statusPill('Signature verified: unchanged since it was signed', 'success') : statusPill("Signature couldn't be verified", 'danger')),
+    bound ? null : para("This record doesn't match its signature. Don't rely on it; contact your admin.", 'text-sm'),
+    h('details', { class: 'disclosure' }, h('summary', { text: `History (${v.versions.length} saved versions)` }),
+      h('div', { class: 'disclosure__body' }, h('ol', { class: 'list' }, v.versions.map((x) => h('li', {}, h('div', { class: 'list__item' },
+        h('div', { class: 'list__main' }, h('span', { class: 'list__title', text: `${STATE_WORDS[x.state] || 'Text deleted'} · ${x.modalStatus === 'Asserted' ? 'Final' : 'Provisional'}` }),
+          h('code', { class: 'mono list__meta', text: x.descriptorUrl })))))))),
+    tech([`Session ${v.attemptIri}`, `Learner ${v.learner.did} (${v.learner.kind})`, `Modal status ${v.modalStatus}`, `Service signing key ${v.keyKind}`, `Content binding ${a.contentBinding}`])));
 }
 
 // ════════════════════════════════════════════════════════════════════════════════════════════
-//  Review queue and the review form
+//  To review and the review form
 // ════════════════════════════════════════════════════════════════════════════════════════════
 
 async function viewQueue(root) {
-  root.append(h('h2', { text: 'Review queue' }));
-  const q = await act(ACT.reviewQueue, { limit: 50 }, { read: true });
+  root.append(pageHeader({ title: 'To review', lede: 'Sessions waiting for a person to sign off, with the ones that most need a person first.' }));
+  let q;
+  try { q = await act(ACT.reviewQueue, { limit: 50 }, { read: true }); } catch (e) { S.queueCount = null; renderTabs(); throw e; }
   for (const e of q.entries) S.queueEntries.set(e.attemptIri, e);
+  S.queueCount = q.awaitingReview;
+  renderTabs();
   root.append(...coverageNotes(q));
-  root.append(muted(`${whole(q) ? '' : 'At least '}${q.awaitingReview} attempt(s) await review. ${q.excludedAsConflicted} left out because you are their learner, a judge of them or an earlier reviewer.`));
-  root.append(muted(`Priority = ${Object.entries(q.weights).map(([k, w]) => `${w} × ${FACTOR_WORDS[k] || k}`).join(' + ')}. Reopened attempts come first.`));
-  if (!q.entries.length && whole(q)) root.append(muted('Nothing waits for you.'));
-  for (const e of q.entries) {
-    const card = h('article', { class: 'card queue-entry', dataset: { attempt: e.attemptIri } },
-      h('h3', {}, e.scenarioTitle, ' ', h('span', { class: `state state-${e.state}`, text: STATE_WORDS[e.state] || e.state }), e.reopened ? chip('reopened', 'warn') : null),
-      h('p', {}, h('strong', { text: `priority ${e.priority}` }), e.blindFirst ? chip('blind first: choose your levels before you see the judge\'s', 'warn') : null));
-    card.append(h('table', { class: 'factors' }, h('tbody', {}, Object.entries(q.weights).map(([k, w]) => h('tr', {},
-      h('td', { text: FACTOR_WORDS[k] || k }), h('td', { text: num(e.why[k]) }), h('td', { text: `× ${w}` }),
-      h('td', { text: k === 'uncertainty' && !e.why.uncertaintyDeclared ? 'not declared: counted as 0.2' : '' }))))));
-    if (!e.blindFirst) {
-      if (e.unverifiedCriteria.length) card.append(h('p', { class: 'bad-text', text: `A quote did not check out for: ${e.unverifiedCriteria.join(', ')}.` }));
-      card.append(muted(`Judges: ${e.judges.map((j) => `${j.judgeId} (${j.kind}, chosen by ${CHOSEN_BY_WORDS[j.chosenBy] || j.chosenBy})`).join('; ')}`));
-    }
-    if (e.counterpartControlledBy === 'learner') card.append(h('p', { class: 'warn', text: 'The learner\'s own agent wrote the other person\'s lines.' }));
-    card.append(h('a', { href: `#/review/${encodeURIComponent(e.attemptIri)}`, class: 'button', text: 'Open and review' }));
-    root.append(card);
+  const n = q.awaitingReview;
+  const excluded = q.excludedAsConflicted;
+  root.append(para(`${whole(q) ? '' : 'At least '}${n} ${n === 1 ? 'session' : 'sessions'} waiting for review.${excluded > 0
+    ? ` ${excluded} ${excluded === 1 ? 'is' : 'are'} hidden because you can't review them (your own, or ones you assessed or reviewed before).` : ''}`));
+  root.append(h('details', { class: 'disclosure' }, h('summary', { text: 'How the order is worked out' }),
+    h('div', { class: 'disclosure__body disclosure__body--tech' },
+      h('div', { text: `Priority = ${Object.entries(q.weights).map(([k, w]) => `${w} × ${FACTOR_WORDS[k] || k}`).join(' + ')}.` }),
+      h('div', { text: 'Reopened sessions come first.' }))));
+  if (!q.entries.length && whole(q)) {
+    root.append(emptyState({ icon: 'clipboard', title: "You're all caught up", text: 'No sessions are waiting for your review.',
+      actions: [linkButton('#/calibration', 'See AI judge quality')] }));
   }
+  const cards = [];
+  for (const e of q.entries) {
+    const first = e.judges && e.judges[0];
+    const factors = Object.entries(q.weights).filter(([k]) => typeof e.why[k] === 'number' && e.why[k] > 0)
+      .sort(([a, wa], [b, wb]) => wb * e.why[b] - wa * e.why[a]);
+    const body = h('div', { class: 'card__body' });
+    if (e.reopened) body.append(h('div', {}, badge('Back for another look', 'warning')));
+    if (e.blindFirst) body.append(callout({ tone: 'accent', title: "Blind check: choose your levels before you see the AI's." }));
+    body.append(h('div', {}, h('p', { class: 'label', text: 'Why this is near the top' }),
+      h('div', { class: 'cluster' }, factors.length ? factors.map(([k]) => badge(FACTOR_WORDS[k] || k, k === 'unverified' ? 'danger' : '')) : badge('In the queue'))));
+    if (!e.blindFirst && e.unverifiedCriteria.length) {
+      body.append(errorText(`A quote didn't match for ${e.unverifiedCriteria.length} ${e.unverifiedCriteria.length === 1 ? 'criterion' : 'criteria'}.`));
+    }
+    if (e.counterpartControlledBy === 'learner') body.append(callout({ tone: 'warning', title: "The learner's own AI wrote the other person's lines." }));
+    body.append(tech([`priority score ${e.priority}`,
+      ...Object.entries(q.weights).map(([k, w]) => `${FACTOR_WORDS[k] || k}: ${num(e.why[k])} × ${w}${k === 'uncertainty' && !e.why.uncertaintyDeclared ? ' (not declared: counted as 0.2)' : ''}`),
+      ...(e.judges || []).map((j) => `judge ${j.judgeId} (${j.kind}, chosen by ${CHOSEN_BY_WORDS[j.chosenBy] || j.chosenBy})`),
+      e.unverifiedCriteria.length ? `Unverified: ${e.unverifiedCriteria.join(', ')}` : null, `Session ${e.attemptIri}`]));
+    cards.push(h('article', { class: 'card queue-entry', dataset: { attempt: e.attemptIri } },
+      h('div', { class: 'card__header' },
+        h('div', {}, h('h2', { class: 'card__title', text: e.scenarioTitle }),
+          h('p', { class: 'card__subtitle', text: e.blindFirst ? 'Blind check' : `Assessed by ${first ? judgeWords(first.judgeId, first.kind) : 'an AI judge'}` })),
+        statusPill(STATE_WORDS[e.state] || e.state, STATE_TONE[e.state] || 'pending')),
+      body,
+      h('div', { class: 'card__footer' }, linkButton(`#/review/${encodeURIComponent(e.attemptIri)}`, 'Open and review', 'btn--primary', 'arrow-right'))));
+  }
+  if (cards.length) root.append(h('div', { class: 'scenario-list' }, cards));
 }
 
 async function viewReview(root, iri, seq) {
@@ -1286,7 +2296,10 @@ async function viewReview(root, iri, seq) {
       const q = await act(ACT.reviewQueue, { limit: 100 }, { read: true });
       for (const e of q.entries) S.queueEntries.set(e.attemptIri, e);
       entry = S.queueEntries.get(iri);
-    } catch { /* not a reviewer: the attempt view below says what this caller can do */ }
+    } catch (e) {
+      // Not a reviewer, or not signed in: the attempt read below says what this caller can do.
+      if (e instanceof NeedsSignIn) throw e;
+    }
   }
   const v = await act(ACT.getAttempt, { attemptIri: iri }, { read: true });
   if (seq !== S.seq) return;
@@ -1296,13 +2309,23 @@ async function viewReview(root, iri, seq) {
     st = { picks: {}, whys: {}, revealed: !blind, target: v.currentTarget.descriptorUrl };
     S.reviewDrafts.set(iri, st);
   }
-  root.append(h('p', {}, h('a', { href: '#/review', text: '← the queue' })));
-  root.append(renderAttempt(v, { hideJudge: !st.revealed, review: true }));
-  if (!hasNext(v, 'overrideAttempt')) {
-    root.append(h('section', { class: 'panel' }, muted('You cannot review this attempt as whoever you are acting as: a reviewer who is not its learner, one of its judges or an earlier reviewer can.')));
+  const canReview = hasNext(v, 'overrideAttempt');
+  root.append(pageHeader({
+    crumbs: [['#/review', 'To review'], [null, v.scenario.title]], title: `Review: ${v.scenario.title}`,
+    lede: blind ? "Blind check: choose a level for every criterion first. Then you'll see the AI's levels."
+      : "Choose a level for every criterion. Where yours differs from the AI's, or a quote didn't match, say why.",
+    meta: attemptMeta(v),
+    actions: canReview ? [h('button', { type: 'button', class: 'btn btn--primary', text: 'Go to your review', onclick: () => scrollToEl('#review-form') })] : [],
+  }));
+  if (!canReview) {
+    root.append(callout({ tone: 'neutral', title: 'Someone else needs to review this session',
+      body: "Reviewers can't review their own practice, a session they assessed or asked to have assessed, or one they've already reviewed.",
+      actions: [linkButton('#/review', 'Back to To review', 'btn--secondary btn--sm')] }));
+    root.append(renderAttempt(v, { hideJudge: !st.revealed, review: true }));
     return;
   }
-  const form = h('section', { class: 'panel review-form', id: 'review-form' });
+  root.append(renderAttempt(v, { hideJudge: !st.revealed, review: true }));
+  const form = h('section', { class: 'card review-form', id: 'review-form' });
   root.append(form);
   paintReviewForm(form, v, st, blind);
 }
@@ -1311,31 +2334,36 @@ function paintReviewForm(form, v, st, blind) {
   clear(form);
   const primary = v.judgments[0];
   const criteria = v.rubric.criteria;
-  form.append(h('h3', { text: 'Your review' }), muted(blind
-    ? 'This attempt is in the audit sample: choose a level for every criterion before you see the judge\'s. Your review will say you did not see them first.'
-    : 'State a level for every criterion. Where yours differs from the judge\'s, or the judge\'s quote did not check out, say why.'));
+  form.append(h('div', { class: 'card__header' }, h('div', {}, h('h2', { class: 'card__title', text: 'Your review' }),
+    h('p', { class: 'card__subtitle', text: blind && !st.revealed ? "Choose your levels first. The AI's levels appear after." : 'Choose a level for every criterion.' }))));
+  const body = h('div', { class: 'card__body' });
+  form.append(body);
   const allPicked = criteria.every((c) => st.picks[c.id]);
   for (const c of criteria) {
     const cj = primary && primary.criteria.find((x) => x.criterionId === c.id);
-    const sel = h('select', { 'aria-label': `Level for ${c.title}`, dataset: { criterion: c.id }, onchange: (e) => { st.picks[c.id] = e.target.value; paintReviewForm(form, v, st, blind); } },
-      h('option', { value: '', text: 'choose a level' }), c.levels.map((l) => h('option', { value: l.id, text: `${l.label}: ${l.descriptor}` })));
+    const sel = h('select', { class: 'select', 'aria-label': `Level for ${c.title}`, dataset: { criterion: c.id }, onchange: (e) => { st.picks[c.id] = e.target.value; paintReviewForm(form, v, st, blind); } },
+      h('option', { value: '', text: 'Choose a level' }), c.levels.map((l) => h('option', { value: l.id, text: `${l.label}: ${l.descriptor}` })));
     sel.value = st.picks[c.id] || '';
-    const row = h('div', { class: 'criterion' }, h('h4', { text: c.title }), sel);
+    const row = h('div', { class: 'review-criterion criterion' }, h('h3', { text: c.title }), c.description ? para(c.description) : null, formField({ label: 'Your level', control: sel }));
     if (st.revealed && cj) {
-      row.append(h('p', {}, 'The judge chose ', h('strong', { text: levelLabel(v.rubric, c.id, cj.levelId) }), ' ', statusChip(cj.status)));
+      const [tone, words] = QUOTE_STATUS[cj.status] || ['pending', cj.status];
+      row.append(h('p', { class: 'cluster' }, h('span', {}, "The AI chose ", h('strong', { text: levelLabel(v.rubric, c.id, cj.levelId) })), statusPill(words, tone)));
       const needsWhy = Boolean(st.picks[c.id]) && (st.picks[c.id] !== cj.levelId || cj.status === 'unverified');
-      const why = h('textarea', { rows: 2, maxlength: 1000, dataset: { why: c.id }, placeholder: needsWhy ? 'Required: why (10 to 1000 characters)' : 'Optional note', oninput: (e) => { st.whys[c.id] = e.target.value; } });
+      const why = h('textarea', { class: 'textarea textarea--short', rows: 2, maxlength: 1000, dataset: { why: c.id },
+        placeholder: needsWhy ? 'Why your level stands (10 to 1000 characters)' : 'Anything the learner should know', oninput: (e) => { st.whys[c.id] = e.target.value; } });
       why.value = st.whys[c.id] || '';
-      row.append(why);
-      if (needsWhy) row.append(h('p', { class: 'warn', text: cj.status === 'unverified' ? 'The judge\'s quote did not check out here: say why your level stands.' : 'Your level differs from the judge\'s: say why.' }));
-      if (cj.status === 'no-quote-needed') row.append(muted('The judge put this at the lowest level and quoted nothing, so nothing was checked: read the learner\'s lines for anything that reaches higher.'));
+      row.append(formField({ label: needsWhy ? 'Reason (required)' : 'Note (optional)', control: why }));
+      if (needsWhy) row.append(h('p', { class: 'hint', text: cj.status === 'unverified' ? "The AI's quote didn't match here: say why your level stands." : "Your level differs from the AI's: say why." }));
+      if (cj.status === 'no-quote-needed') row.append(h('p', { class: 'hint', text: "The AI put this at the lowest level and quoted nothing, so nothing was checked. Read the learner's lines for anything that reaches higher." }));
     }
-    form.append(row);
+    body.append(row);
   }
   const out = h('div', { class: 'outcome' });
+  const footer = h('div', { class: 'card__footer review-form__footer' });
   if (!st.revealed) {
-    const reveal = h('button', { type: 'button', id: 'reveal', text: 'Reveal the judge\'s levels', disabled: !allPicked, onclick: () => { st.revealed = true; route(); } });
-    form.append(reveal, allPicked ? null : muted('Choose a level for every criterion first.'));
+    const reveal = h('button', { type: 'button', id: 'reveal', class: 'btn btn--primary', text: "Show the AI's levels", disabled: !allPicked, onclick: () => { st.revealed = true; route(); } });
+    footer.append(...(allPicked ? [] : [h('p', { class: 'hint', text: 'Choose a level for every criterion first.' })]), reveal);
+    form.append(footer);
     return;
   }
   const asJudged = primary && primary.unverifiedCriteria.length === 0 && criteria.every((c) => {
@@ -1343,8 +2371,8 @@ function paintReviewForm(form, v, st, blind) {
     return cj && st.picks[c.id] === cj.levelId;
   });
   const action = asJudged ? ACT.countersignAttempt : ACT.overrideAttempt;
-  const submit = h('button', { type: 'button', class: 'primary', id: 'submit-review', disabled: !allPicked, dataset: { action },
-    text: asJudged ? 'Countersign as judged' : 'Sign my levels (override)',
+  const submit = h('button', { type: 'button', class: 'btn btn--primary', id: 'submit-review', disabled: !allPicked, dataset: { action },
+    text: asJudged ? 'Confirm all levels' : 'Sign off my levels',
     onclick: () => busy(submit, out, async () => {
       const r = await act(action, {
         attemptIri: v.attemptIri, target: v.currentTarget, sawJudgeLevelsFirst: !blind,
@@ -1353,26 +2381,31 @@ function paintReviewForm(form, v, st, blind) {
       S.reviewDrafts.delete(v.attemptIri);
       S.queueEntries.delete(v.attemptIri);
       const x = r.assessment;
-      return h('div', {},
-        h('p', { class: 'ok recorded', text: `Recorded: ${STATE_WORDS[r.state] || r.state}. ${x.use === 'pass-gate' ? `${x.percent} %, ${x.meetsPassRule ? 'meets' : 'does not meet'} the pass rule.` : 'Feedback only: levels recorded.'}` }),
-        muted(r.projectable ? 'It can now leave as practice evidence.' : `It cannot leave as evidence yet: ${r.projectableWhy}.`),
-        h('a', { href: attemptHash(v.attemptIri), text: 'Open the attempt' }), ' ', h('a', { href: '#/review', text: 'Back to the queue' }));
-    }) });
-  form.append(muted(asJudged ? 'Every level equals the primary judgment and every quote checked out: this is a countersignature.' : 'Some level differs from the primary judgment, or a quote did not check out: this is an override, with your reasons.'), submit, out);
+      toast({ tone: 'success', title: 'Review saved' });
+      return callout({ tone: 'success', titleClass: 'recorded',
+        title: x.use === 'pass-gate' ? `Review saved. Final result: ${x.percent}%, ${x.meetsPassRule ? 'meets' : 'is below'} the pass mark.` : 'Review saved. Levels recorded (feedback only).',
+        body: r.projectable ? 'It can now be shared as a learning record.' : `It can't be shared as evidence yet: ${EVIDENCE_PLAIN[r.projectableWhy] || r.projectableWhy}.`,
+        actions: [linkButton(attemptHash(v.attemptIri), 'Open the session', 'btn--secondary btn--sm'), linkButton('#/review', 'Back to To review', 'btn--ghost btn--sm')] });
+    }, { progress: 'Saving…' }) });
+  footer.append(h('p', { class: 'hint', text: asJudged ? "Every level matches the AI's and every quote checked out, so this confirms its levels."
+    : "Some levels differ from the AI's, or a quote didn't match, so you're signing off your own levels with reasons." }), submit, out);
+  form.append(footer);
 }
 
 // ════════════════════════════════════════════════════════════════════════════════════════════
-//  Results and calibration
+//  Results and AI judge quality
 // ════════════════════════════════════════════════════════════════════════════════════════════
 
-function distributionTable(rows, k) {
-  return h('table', { class: 'distribution' }, h('tbody', {}, rows.map((d) => h('tr', {},
-    h('th', { text: `${d.title} (n = ${d.n})` }),
-    d.withheld
-      ? h('td', { text: `split withheld: one side has a count from 1 to ${k - 1}` })
-      : d.levels.some((l) => l.suppressed)
-        ? h('td', { text: `hidden: a count in this row is from 1 to ${k - 1}, so only the total shows` })
-        : d.levels.map((l) => h('td', { text: `${l.label}: ${l.count}` }))))));
+function distributionTable(rows, k, label) {
+  return h('div', { class: 'table-wrap', role: 'region', 'aria-label': label, tabindex: '0' }, h('table', { class: 'table distribution' },
+    h('thead', {}, h('tr', {}, h('th', { scope: 'col', text: 'Criterion' }), h('th', { scope: 'col', text: 'Levels' }))),
+    h('tbody', {}, rows.map((d) => h('tr', {},
+      h('td', {}, h('span', { class: 'table__primary', text: d.title }), h('span', { class: 'table__secondary', text: `${d.n} ${d.n === 1 ? 'session' : 'sessions'}` })),
+      h('td', {}, d.withheld
+        ? h('span', { class: 'text-tertiary', text: 'Split hidden to protect privacy' })
+        : d.levels.some((l) => l.suppressed)
+          ? h('span', { class: 'text-tertiary', text: `Hidden to protect privacy (a group has fewer than ${k})` })
+          : h('div', { class: 'cluster' }, d.levels.map((l) => badge(`${l.label} ${l.count}`)))))))));
 }
 
 function resultsCsv(r) {
@@ -1387,40 +2420,95 @@ function resultsCsv(r) {
   return `${lines.join('\n')}\n`;
 }
 
+function resultCard(title, kids) {
+  return h('section', { class: 'card' }, h('div', { class: 'card__header' }, h('h2', { class: 'card__title', text: title })), h('div', { class: 'card__body' }, kids));
+}
+
 async function viewResults(root, scenarioIri) {
-  const r = await act(ACT.scenarioResults, { scenarioIri }, { read: true });
-  root.append(h('h2', { text: 'Results' }), h('p', { class: 'label', text: r.label }), ...coverageNotes(r));
+  const titleP = invoke(ACT.listScenarios, podArgs({ scenario_iri: scenarioIri })).then((x) => x.scenario && x.scenario.title, () => null);
+  let r = null;
+  let failed = null;
+  try { r = await act(ACT.scenarioResults, { scenarioIri }, { read: true }); } catch (e) { failed = e; }
+  const title = await titleP;
+  root.append(pageHeader({
+    crumbs: [['#/practice', 'Practice scenarios'], [null, 'Results']], title: title ? `Results: ${title}` : 'Results',
+    lede: r ? r.label : 'What happened in practice on this scenario.',
+    actions: r ? [
+      h('button', { type: 'button', class: 'btn btn--secondary btn--sm', onclick: () => download('results.csv', resultsCsv(r), 'text/csv') }, icon('download', 'sm'), 'Download CSV'),
+      h('button', { type: 'button', class: 'btn btn--secondary btn--sm', onclick: () => download('results.json', JSON.stringify(r, null, 2), 'application/json') }, icon('download', 'sm'), 'Download JSON'),
+    ] : [],
+  }));
+  if (failed) throw failed;
+  root.append(...coverageNotes(r));
   const c = r.counts;
-  root.append(h('p', { text: `${c.attempts} attempt(s); ${c.authorTestExcluded} author test(s) left out; ${c.redacted} with the transcript removed.` }),
-    h('p', { class: 'facts' }, Object.entries(c.byState).filter(([, n]) => n > 0).map(([s, n]) => chip(`${STATE_WORDS[s] || s}: ${n}`))));
-  root.append(h('h3', { text: `Final levels (reviewed: ${r.final.reviewedAttempts})` }), distributionTable(r.final.perCriterion, r.k));
-  if (r.final.meetsPassRule) root.append(h('p', { text: `Met the pass rule: ${r.final.meetsPassRule.suppressed ? `hidden (it or the rest is from 1 to ${r.k - 1})` : r.final.meetsPassRule.count} of ${r.final.meetsPassRule.of}.` }));
-  root.append(h('h4', { text: 'Coached / not coached' }), distributionTable(r.final.byCoached.coached, r.k), distributionTable(r.final.byCoached.notCoached, r.k));
-  root.append(h('h4', { text: 'First attempt / later attempts' }), distributionTable(r.final.byAttemptNumber.first, r.k), distributionTable(r.final.byAttemptNumber.later, r.k));
-  root.append(h('h3', { text: `Provisional levels (judged: ${r.provisional.judgedAttempts}), ${r.provisional.label}` }), distributionTable(r.provisional.perCriterion, r.k));
-  root.append(h('h3', { text: r.reviewerChangesShown === 'each' ? 'What reviewers changed, and why' : 'What reviewers changed' }));
-  if (r.reviewerChangesShown === 'each') {
-    if (!r.reviewerChanges.length) root.append(muted('No reviewer set a level other than the judge\'s.'));
-    else root.append(h('ul', {}, r.reviewerChanges.map((x) => h('li', { text: `${x.criterionId}: ${x.judgeLevelId} → ${x.finalLevelId} (${x.reviewedAt}): ${x.why === null ? '(removed with the transcript)' : x.why}` }))));
-  } else {
-    root.append(muted('Each change and its reason are shown to reviewers and admins only; here they are counts.'));
-    root.append(h('ul', {}, r.reviewerChangeCounts.map((x) => h('li', { text: x.suppressed
-      ? `${x.criterionId}: hidden (a count from 1 to ${r.k - 1})` : `${x.criterionId}: raised in ${x.raised}, lowered in ${x.lowered}` }))));
+  const stat = (label, value, meta) => h('div', { class: 'stat' }, h('p', { class: 'stat__label', text: label }), h('p', { class: 'stat__value', text: String(value) }), meta ? h('p', { class: 'stat__meta', text: meta }) : null);
+  const mp = r.final.meetsPassRule;
+  root.append(h('div', { class: 'stat-grid' },
+    stat('Practice sessions', c.attempts, `${c.authorTestExcluded} test ${c.authorTestExcluded === 1 ? 'run' : 'runs'} not counted · ${c.redacted} with text deleted`),
+    stat('Reviewed', r.final.reviewedAttempts),
+    stat('Assessed by AI', r.provisional.judgedAttempts),
+    mp ? stat('Met the pass mark', mp.suppressed ? 'Hidden' : `${mp.count} of ${mp.of}`, mp.suppressed ? `Hidden to protect privacy (a group has fewer than ${r.k})` : null) : null));
+  const states = Object.entries(c.byState).filter(([, n]) => n > 0);
+  if (states.length) root.append(h('div', { class: 'cluster' }, states.map(([s, n]) => badge(`${STATE_WORDS[s] || s}: ${n}`))));
+  if (c.attempts === 0 && whole(r)) {
+    root.append(emptyState({ icon: 'chart', title: 'No practice sessions on this scenario yet', text: 'Results appear here once people practice and reviewers sign off.' }));
+    return;
   }
-  root.append(h('ul', {}, r.changedByReviewer.map((x) => h('li', { text: x.suppressed
-    ? `${x.criterionId}: changed in a hidden number of ${x.reviewedAttempts} reviewed attempt(s)`
-    : `${x.criterionId}: changed in ${x.changed} of ${x.reviewedAttempts} reviewed attempt(s)` }))));
-  root.append(muted(r.suppressionRule));
-  if (r.personJudgeCells && r.personJudgeCells.length) root.append(h('h3', { text: 'People who judged (only readers of results see this)' }), calibrationTable(r.personJudgeCells));
-  root.append(h('div', { class: 'row' },
-    h('button', { type: 'button', text: 'Download JSON', onclick: () => download('results.json', JSON.stringify(r, null, 2), 'application/json') }),
-    h('button', { type: 'button', text: 'Download CSV', onclick: () => download('results.csv', resultsCsv(r), 'text/csv') })));
+  const titles = Object.fromEntries(r.final.perCriterion.map((d) => [d.criterionId, d.title]));
+  const t = (id) => titles[id] || id;
+  root.append(resultCard('Final levels (reviewed sessions)', [distributionTable(r.final.perCriterion, r.k, 'Final levels')]));
+  root.append(h('div', { class: 'grid-2' },
+    resultCard('With help preparing', [distributionTable(r.final.byCoached.coached, r.k, 'With help preparing')]),
+    resultCard('Without help', [distributionTable(r.final.byCoached.notCoached, r.k, 'Without help')])));
+  root.append(h('div', { class: 'grid-2' },
+    resultCard('First session', [distributionTable(r.final.byAttemptNumber.first, r.k, 'First session')]),
+    resultCard('Later sessions', [distributionTable(r.final.byAttemptNumber.later, r.k, 'Later sessions')])));
+  root.append(resultCard(`Provisional levels (AI-assessed: ${r.provisional.judgedAttempts})`, [
+    para(r.provisional.label === 'provisional, not reviewed' ? 'Not yet reviewed by a person.' : r.provisional.label, 'text-sm text-secondary'),
+    distributionTable(r.provisional.perCriterion, r.k, 'Provisional levels')]));
+  const changes = [];
+  if (r.reviewerChangesShown === 'each') {
+    if (!r.reviewerChanges.length) changes.push(para("Reviewers haven't changed any AI levels on this scenario."));
+    else {
+      changes.push(h('ul', {}, r.reviewerChanges.map((x) => h('li', { text: `${t(x.criterionId)}: ${x.judgeLevelId} → ${x.finalLevelId} (${fmtDate(x.reviewedAt)}): ${x.why === null ? '(deleted with the conversation text)' : x.why}` }))));
+    }
+  } else {
+    changes.push(para('Each change and its reason are shown to reviewers and admins only.'));
+    changes.push(h('ul', {}, r.reviewerChangeCounts.map((x) => h('li', { text: x.suppressed
+      ? `${t(x.criterionId)}: hidden to protect privacy` : `${t(x.criterionId)}: raised in ${x.raised}, lowered in ${x.lowered}` }))));
+  }
+  changes.push(h('ul', {}, r.changedByReviewer.map((x) => h('li', { text: x.suppressed
+    ? `${t(x.criterionId)}: changed in a hidden number of ${x.reviewedAttempts} reviewed sessions`
+    : `${t(x.criterionId)}: changed in ${x.changed} of ${x.reviewedAttempts} reviewed sessions` }))));
+  root.append(resultCard('What reviewers changed', changes));
+  root.append(h('details', { class: 'disclosure' }, h('summary', { text: 'How small numbers are protected' }), h('div', { class: 'disclosure__body', text: r.suppressionRule })));
+  if (r.personJudgeCells && r.personJudgeCells.length) {
+    root.append(resultCard('People who assessed sessions', [calibrationSimple(r.personJudgeCells),
+      h('details', { class: 'disclosure' }, h('summary', { text: 'All measures' }), calibrationTable(r.personJudgeCells))]));
+  }
+}
+
+function calibrationSimple(cells) {
+  const td = (label, kids, cls) => h('td', { 'data-label': label, class: cls }, kids);
+  const rate = (x) => (typeof x === 'number' ? pct(x) : '—');
+  return h('div', { class: 'table-wrap', role: 'region', 'aria-label': 'AI judge agreement with reviewers', tabindex: '0' }, h('table', { class: 'table table--stack calibration' },
+    h('thead', {}, h('tr', {}, ['AI judge', 'Criterion', 'Reviewed sessions', 'Agreement with reviewers', 'Average gap (levels)', "Quote didn't match", 'Status']
+      .map((x, i) => h('th', { scope: 'col', class: i >= 2 && i <= 5 ? 'num' : null, text: x })))),
+    h('tbody', {}, cells.map((c) => h('tr', {},
+      td('AI judge', h('span', { class: 'table__primary', text: judgeWords(c.judgeId, c.judgeKind) })),
+      td('Criterion', c.criterionTitle),
+      td('Reviewed sessions', [h('span', { text: String(c.samples) }), h('span', { class: 'table__secondary', text: `from ${c.distinctHumanConfirmers} ${c.distinctHumanConfirmers === 1 ? 'reviewer' : 'reviewers'}` })], 'num'),
+      td('Agreement with reviewers', rate(c.agreementRate), 'num'),
+      td('Average gap (levels)', typeof c.meanLevelDistance === 'number' ? num(c.meanLevelDistance) : '—', 'num'),
+      td("Quote didn't match", rate(c.unverifiedRate), 'num'),
+      td('Status', [c.status === 'Asserted' ? statusPill('Established', 'success') : h('span', { title: 'Early: fewer than 20 reviewed sessions' }, statusPill('Early', 'pending')),
+        h('span', { class: 'table__secondary', text: `${c.status === 'Asserted' ? '' : 'Fewer than 20 reviewed sessions. '}Track record: ${c.standing && c.standing.evaluated ? (c.standing.clears ? 'meets the bar (for information only)' : 'not yet') : 'not evaluated'}` })]))))));
 }
 
 function calibrationTable(cells) {
   const head = ['judge', 'prompt', 'rubric', 'criterion', 'samples', 'distinct reviewers', 'agreement with the reviewer', 'mean Brier', 'mean level distance', 'unverified', 'blind agreement', 'test-retest', 'audit sample', 'status', 'standing'];
-  return h('div', { class: 'scroll' }, h('table', { class: 'calibration' },
-    h('thead', {}, h('tr', {}, head.map((x) => h('th', { text: x })))),
+  return h('div', { class: 'table-wrap', role: 'region', 'aria-label': 'All measures', tabindex: '0' }, h('table', { class: 'table table--compact calibration-all' },
+    h('thead', {}, h('tr', {}, head.map((x) => h('th', { scope: 'col', text: x })))),
     h('tbody', {}, cells.map((c) => h('tr', {},
       h('td', { text: `${c.judgeId} (${c.judgeKind})` }), h('td', { text: c.promptTemplateHash === 'own-prompt' ? 'own' : shortHash(c.promptTemplateHash) }),
       h('td', { text: c.rubricHash ? shortHash(c.rubricHash) : 'pooled' }), h('td', { text: c.criterionTitle }),
@@ -1433,20 +2521,28 @@ function calibrationTable(cells) {
 }
 
 async function viewCalibration(root) {
-  const pooled = h('input', { type: 'checkbox', checked: S.pooled, onchange: (e) => { S.pooled = e.target.checked; route(); } });
-  root.append(h('div', { class: 'toolbar' }, h('h2', { text: 'Calibration of the judges' }),
-    h('label', { class: 'inline' }, pooled, ' pool across rubric versions with the same criterion text (information only)')));
+  const pooled = h('input', { type: 'checkbox', class: 'switch', role: 'switch', checked: S.pooled, onchange: (e) => { S.pooled = e.target.checked; route(); } });
+  root.append(pageHeader({ title: 'AI judge quality',
+    lede: "How often each AI judge's levels match what reviewers decided, by criterion. This measures agreement, not accuracy: reviewers usually see the AI's levels first.",
+    actions: [h('label', { class: 'choice' }, pooled, h('span', { class: 'choice__text', text: 'Combine rubric versions with the same wording' }))] }));
   const r = await invoke(ACT.calibration, podArgs({ group_by: S.pooled ? 'criterion-content' : undefined }));
   root.append(...coverageNotes(r));
-  root.append(h('p', { class: 'label', text: r.metricNote }));
-  if (r.smallCountRule) root.append(muted(r.smallCountRule.replace(/k − 1/g, String(r.k - 1))));
-  root.append(muted(`Policy for standing: agreement of at least ${r.policy.floor} over at least ${r.policy.minSamples} reviewed outcomes, from at least ${r.policy.minDistinctHumanConfirmers} different people. A cell stays Hypothetical below ${r.minSamplesForAsserted} samples. ${r.attemptsRead} attempt(s) and ${r.outcomesRead} outcome row(s) read; ${r.personJudgeCellsWithheld} cell(s) of people who judged are left out here.`));
-  if (r.cells.length) root.append(calibrationTable(r.cells));
-  else if (whole(r)) root.append(muted('No reviewed outcomes yet.'));
+  if (r.cells.length) root.append(calibrationSimple(r.cells));
+  else if (whole(r)) {
+    root.append(emptyState({ icon: 'chart', title: 'No data yet', text: "Once reviewers sign off on sessions, you'll see how often each AI judge's levels matched theirs." }));
+  }
+  root.append(para(r.metricNote, 'text-sm text-secondary'));
+  if (r.cells.length) root.append(h('details', { class: 'disclosure' }, h('summary', { text: 'All measures (technical)' }), calibrationTable(r.cells)));
+  root.append(h('details', { class: 'disclosure' }, h('summary', { text: 'How to read this' }), h('div', { class: 'disclosure__body' },
+    h('p', { text: `Each row is one AI judge on one criterion. Agreement is how often the reviewer kept the AI's level. A row is Early until it rests on ${r.minSamplesForAsserted} reviewed sessions. The track record asks for agreement of at least ${pct(r.policy.floor)} over at least ${r.policy.minSamples} reviewed sessions, from at least ${r.policy.minDistinctHumanConfirmers} different reviewers. It is shown for information only and never lets an AI skip a human review.` }),
+    h('p', { text: `Figures that rest on fewer than ${r.k} reviewed sessions are hidden, so no one review can be read back. ${r.attemptsRead} sessions were read for this page.` }),
+    tech([`Policy for standing: agreement of at least ${r.policy.floor} over at least ${r.policy.minSamples} reviewed outcomes, from at least ${r.policy.minDistinctHumanConfirmers} different people. A cell stays Hypothetical below ${r.minSamplesForAsserted} samples.`,
+      r.smallCountRule ? r.smallCountRule.replace(/k − 1/g, String(r.k - 1)) : null,
+      `${r.attemptsRead} attempt(s) and ${r.outcomesRead} outcome row(s) read; ${r.personJudgeCellsWithheld} cell(s) of people who judged are left out here.`]))));
 }
 
 // ════════════════════════════════════════════════════════════════════════════════════════════
-//  Author: the scenario form, drafting, saving, publishing
+//  Write a scenario: drafting, the form, saving, publishing
 // ════════════════════════════════════════════════════════════════════════════════════════════
 
 const blankLevel = (id, label, value) => ({ id, label, descriptor: '', value });
@@ -1500,19 +2596,32 @@ function scenarioPayload(m) {
   };
 }
 
-function field(model, key, label, o) {
+/** A form field bound to one key of the model; `data-field` names the key. */
+function modelField(model, key, label, o) {
   const opts = o || {};
+  const id = nextId(`f-${key}`);
   const input = opts.long
-    ? h('textarea', { rows: opts.rows || 2, maxlength: opts.max, oninput: (e) => { model[key] = e.target.value; } })
-    : h('input', { type: opts.type || 'text', maxlength: opts.max, disabled: opts.disabled, oninput: (e) => { model[key] = e.target.value; } });
+    ? h('textarea', { id, class: opts.rows > 2 ? 'textarea' : 'textarea textarea--short', rows: opts.rows || 2, maxlength: opts.max, placeholder: opts.placeholder, oninput: (e) => { model[key] = e.target.value; } })
+    : h('input', { id, class: 'input', type: opts.type || 'text', maxlength: opts.max, placeholder: opts.placeholder, disabled: opts.disabled, oninput: (e) => { model[key] = e.target.value; } });
   input.value = model[key] === undefined || model[key] === null ? '' : String(model[key]);
-  return h('label', { class: 'field', dataset: { field: key } }, h('span', { class: 'label', text: label }), input);
+  const f = h('div', { class: 'field', dataset: { field: key } },
+    h('label', { class: 'label', for: id }, label, opts.optional ? h('span', { class: 'label__optional', text: '(optional)' }) : null), input);
+  if (opts.hint) f.append(h('p', { class: 'hint', text: opts.hint }));
+  return f;
 }
 
-function radios(model, key, legend, options, onchange) {
+function radios(model, key, legend, options, onchange, hint) {
   const name = nextId(key);
-  return h('fieldset', { class: 'radios', dataset: { field: key } }, h('legend', { text: legend }), options.map(([value, text]) => h('label', { class: 'block' },
-    h('input', { type: 'radio', name, value, checked: model[key] === value, onchange: () => { model[key] = value; if (onchange) onchange(); } }), ` ${text}`)));
+  return h('fieldset', { class: 'fieldset', dataset: { field: key } }, h('legend', { class: 'legend', text: legend }), hint ? h('p', { class: 'hint', text: hint }) : null,
+    h('div', { class: 'choice-group' }, options.map(([value, text, sub]) => h('label', { class: 'choice choice--card' },
+      h('input', { type: 'radio', name, value, checked: model[key] === value, onchange: () => { model[key] = value; if (onchange) onchange(); } }),
+      h('span', { class: 'choice__text' }, text, sub ? h('span', { class: 'choice__hint', text: sub }) : null)))));
+}
+
+function stepCard(n, title, kids, extraClass) {
+  return h('section', { class: `card${extraClass ? ` ${extraClass}` : ''}` },
+    h('div', { class: 'card__header' }, h('div', {}, h('span', { class: 'eyebrow', text: `Step ${n} of 5` }), h('h2', { class: 'card__title', text: title }))),
+    h('div', { class: 'card__body form' }, kids));
 }
 
 async function viewAuthor(root, scenarioIri) {
@@ -1537,15 +2646,27 @@ function authorForm(A, paint) {
   const m = A.model;
   const gate = m.assessmentUse === 'pass-gate';
   const out = [];
-  out.push(h('h2', { text: A.basedOnVersion ? `Edit: a change makes version ${A.basedOnVersion + 1}` : 'Write a practice scenario' }),
-    h('p', { class: 'facts' }, h('button', { type: 'button', text: 'Start a new scenario', onclick: () => { S.author = null; go('#/author'); } })));
+  const v = A.basedOnVersion;
+  out.push(pageHeader({
+    title: v ? `Edit: ${m.title || 'scenario'}` : 'Write a scenario',
+    lede: v ? `You're editing version ${v}. Saving creates version ${v + 1}; earlier results stay tied to the version they used. While your new draft is unpublished, learners can't start this scenario, so publish when you're ready.`
+      : "Describe a conversation your people need to get right. You decide how it's used and how it's assessed. AI can help draft, but it never makes those decisions.",
+    actions: [h('button', { type: 'button', class: 'btn btn--ghost', text: 'Start a new scenario', onclick: () => { S.author = null; go('#/author'); } })],
+  }));
+  if (S.mode === 'paste' && !S.manual) {
+    const actions = [];
+    if (interegoOffered()) actions.push(signInButton('interego', 'Sign in with Interego', 'sm'));
+    if (S.hasWallet) actions.push(signInButton('wallet', 'Use a crypto wallet', 'sm', actions.length ? 'btn--secondary' : 'btn--primary'));
+    actions.push(signInButton('manual', 'Sign manually (advanced)', 'sm', 'btn--ghost'));
+    out.push(callout({ tone: 'info', title: "You'll need to sign in, and be an author, to save", body: 'You can fill in the form now.', actions }));
+  }
 
   // Drafting help
-  const brief = h('textarea', { rows: 3, maxlength: 4000, placeholder: 'The performance situation to practise', 'aria-label': 'Brief' });
-  const source = h('textarea', { rows: 3, maxlength: 20000, placeholder: 'Material to draw on (optional)', 'aria-label': 'Source material' });
-  const pasted = h('textarea', { rows: 3, placeholder: 'Paste a draft as JSON', 'aria-label': 'Draft JSON' });
+  const brief = h('textarea', { id: 'draft-brief', class: 'textarea', rows: 3, maxlength: 4000, placeholder: 'For example: a project manager tells a client sponsor that two defects block the payment flow.' });
+  const source = h('textarea', { id: 'draft-source', class: 'textarea', rows: 3, maxlength: 20000 });
+  const pasted = h('textarea', { id: 'draft-json', class: 'textarea textarea--mono', rows: 3, 'aria-label': 'Draft JSON' });
   const draftOut = h('div', { class: 'outcome' });
-  const draftBtn = h('button', { type: 'button', text: 'Draft with this bridge\'s model', dataset: { action: ACT.draftScenario }, onclick: () => busy(draftBtn, draftOut, async () => {
+  const draftBtn = h('button', { type: 'button', class: 'btn btn--primary', dataset: { action: ACT.draftScenario }, onclick: () => busy(draftBtn, draftOut, async () => {
     const r = await act(ACT.draftScenario, { brief: brief.value, ...(source.value.trim() ? { sourceText: source.value } : {}) }, { byok: true });
     A.model = { ...modelFrom(r.draft), assessmentUse: '', workRegime: '', passGateWhy: '' };
     A.receipt = r.receipt;
@@ -1553,99 +2674,115 @@ function authorForm(A, paint) {
     A.assistance.choice = 'receipt';
     paint();
     return null;
-  }) });
-  const packetBtn = h('button', { type: 'button', text: 'Get a draft packet for my agent', dataset: { action: ACT.draftScenarioPacket }, onclick: () => busy(packetBtn, draftOut, async () => {
+  }, { progress: 'Drafting…' }) }, icon('sparkle'), 'Draft with AI');
+  const packetBtn = h('button', { type: 'button', class: 'btn btn--secondary', text: 'Draft with my own AI', dataset: { action: ACT.draftScenarioPacket }, onclick: () => busy(packetBtn, draftOut, async () => {
     const p = await invoke(ACT.draftScenarioPacket, { brief: brief.value, ...(source.value.trim() ? { source_text: source.value } : {}) });
-    return h('div', {}, muted(p.instructions), muted(p.recordWith.note), jsonBlock(p.request));
+    return callout({ tone: 'info', title: 'Instructions ready', body: p.instructions, techLines: [p.recordWith && p.recordWith.note],
+      actions: [h('button', { type: 'button', class: 'btn btn--secondary btn--sm', text: 'Copy for my AI', onclick: () => copyText(JSON.stringify(p.request, null, 2), 'Instructions') })],
+      kids: [h('details', { class: 'disclosure' }, h('summary', { text: 'Show the request (JSON)' }), jsonBlock(p.request))] });
   }) });
-  const pasteBtn = h('button', { type: 'button', text: 'Load the pasted draft', onclick: () => busy(pasteBtn, draftOut, async () => {
+  const pasteBtn = h('button', { type: 'button', class: 'btn btn--secondary btn--sm', text: 'Load the pasted draft', onclick: () => busy(pasteBtn, draftOut, async () => {
     let d;
-    try { d = JSON.parse(pasted.value); } catch { return h('p', { class: 'refusal-inline', text: 'That is not JSON.' }); }
+    try { d = JSON.parse(pasted.value); } catch { return errorText("That isn't a draft in JSON."); }
     A.model = { ...modelFrom(d), assessmentUse: '', workRegime: '', passGateWhy: '' };
     A.receipt = null;
     A.assistance.choice = '';
     paint();
     return null;
   }) });
-  out.push(h('details', { class: 'panel', open: !A.model.title },
-    h('summary', { text: 'Start from a draft (optional)' }),
-    muted('A model drafts the conversation, the other person and the criteria. It does not decide how the scenario is used, how knowable the work is or how it is scored: you do.'),
-    brief, source, h('div', { class: 'row' }, draftBtn, packetBtn), pasted, pasteBtn, draftOut));
-  if (A.receiptDisclosure) out.push(h('p', { class: 'warn', text: `This form holds a draft from ${disclosureWords(A.receiptDisclosure)}. The receipt will record that, and whether you changed it.` }));
+  out.push(h('details', { class: 'card disclosure draft-card', open: !A.model.title },
+    h('summary', {}, icon('sparkle'), 'Start from an AI draft (optional)'),
+    h('div', { class: 'card__body form' },
+      para("AI can draft the conversation, the other person and the criteria. It never decides how the scenario is used, how clear-cut good performance is, or how it's scored. You do."),
+      formField({ label: 'What should people practice?', control: brief }),
+      formField({ label: 'Material to draw on', optional: true, control: source }),
+      h('div', { class: 'btn-group' }, draftBtn, packetBtn),
+      h('details', { class: 'disclosure' }, h('summary', { text: 'Paste a draft (advanced)' }), h('div', { class: 'disclosure__body form' }, pasted, h('div', {}, pasteBtn))),
+      draftOut)));
+  if (A.receiptDisclosure) {
+    out.push(callout({ tone: 'accent', title: 'AI draft loaded',
+      body: `Drafted by ${draftWords(A.receiptDisclosure)}. Read and edit it. The record will note which AI drafted it and whether you changed it.`,
+      techLines: [disclosureWords(A.receiptDisclosure)] }));
+  }
 
-  // The scenario
-  out.push(h('section', { class: 'panel' }, h('h3', { text: 'The scenario' }),
-    field(m, 'scenarioKey', 'Short key (lowercase letters, digits and hyphens; it names the scenario)', { max: 64, disabled: Boolean(A.basedOnVersion) }),
-    field(m, 'title', 'Title', { max: 120 }),
-    field(m, 'learnerGoal', 'What you are practising', { long: true, max: 600 }),
-    field(m, 'learnerPart', 'Your part', { long: true, max: 300 }),
-    field(m, 'situation', 'The situation', { long: true, rows: 3, max: 2000 }),
-    field(m, 'language', 'Language (for example en)', { max: 20 })));
-  out.push(h('section', { class: 'panel' }, h('h3', { text: 'The person you practise with' }),
-    field(m.counterpart, 'name', 'Name', { max: 60 }),
-    field(m.counterpart, 'profile', 'Who they are', { long: true, max: 1500 }),
-    field(m.counterpart, 'wants', 'What they want', { long: true, max: 800 }),
-    field(m.counterpart, 'knows', 'What they know', { long: true, max: 1500 }),
-    field(m.counterpart, 'reactions', 'How they react', { long: true, max: 1500 }),
-    field(m, 'firstLine', 'Their first line', { long: true, max: 600 }),
-    field(m, 'endsWhen', 'The conversation ends when', { long: true, max: 600 }),
-    field(m, 'turnLimit', 'Turn limit (your lines, 1 to 40)', { type: 'number' })));
+  out.push(stepCard(1, 'The scenario', [
+    h('div', { class: 'form-row' },
+      modelField(m, 'scenarioKey', 'Short name', { max: 64, disabled: Boolean(A.basedOnVersion), hint: "Lowercase letters, digits and hyphens. It can't change after the first save." }),
+      modelField(m, 'title', 'Title', { max: 120 })),
+    modelField(m, 'learnerGoal', "What you're practicing", { long: true, max: 600 }),
+    modelField(m, 'learnerPart', 'Your part', { long: true, max: 300 }),
+    modelField(m, 'situation', 'The situation', { long: true, rows: 3, max: 2000 }),
+    h('div', { class: 'form-row' }, modelField(m, 'language', 'Language', { max: 20, hint: 'For example: en' })),
+  ]));
+  out.push(stepCard(2, 'The person you practice with', [
+    h('div', { class: 'form-row' }, modelField(m.counterpart, 'name', 'Name', { max: 60 }), modelField(m, 'turnLimit', 'Line limit', { type: 'number', hint: 'Your lines, 1 to 40' })),
+    modelField(m.counterpart, 'profile', 'Who they are', { long: true, max: 1500 }),
+    modelField(m.counterpart, 'wants', 'What they want', { long: true, max: 800 }),
+    modelField(m.counterpart, 'knows', 'What they know', { long: true, max: 1500 }),
+    modelField(m.counterpart, 'reactions', 'How they react', { long: true, max: 1500 }),
+    modelField(m, 'firstLine', 'How they open', { long: true, max: 600 }),
+    modelField(m, 'endsWhen', 'The conversation ends when', { long: true, max: 600 }),
+  ]));
 
   // Classify first
-  const decide = h('section', { class: 'panel' }, h('h3', { text: 'Before the rubric: two decisions' }),
-    radios(m, 'assessmentUse', 'How will this be used?', [['feedback-only', 'Feedback only: levels, no score'], ['pass-gate', 'Pass gate: a score and a pass rule']], paint),
-    radios(m, 'workRegime', 'How knowable is this work?', Object.entries(REGIME_WORDS), paint));
+  const decide = [
+    radios(m, 'assessmentUse', 'How will this be used?', [['feedback-only', 'Feedback only', 'Levels, no score.'], ['pass-gate', 'Scored, with a pass mark', 'A score and a pass mark.']], paint),
+    radios(m, 'workRegime', 'Good performance is…', Object.entries(REGIME_WORDS).map(([k, [label, sub]]) => [k, label, sub]), paint),
+  ];
   if (gate && m.workRegime && !['evident', 'knowable'].includes(m.workRegime)) {
-    decide.append(h('p', { class: 'warn', text: 'A pass gate assumes a knowable good answer, and you read this work otherwise. Give the reason a gate fits (it is recorded), or use feedback only.' }),
-      field(m, 'passGateWhy', 'Why a pass gate fits this work (10 to 600 characters)', { long: true, max: 600 }));
+    decide.push(callout({ tone: 'warning', title: 'A pass mark assumes a clear-cut good answer',
+      body: "You've said this work is situational or unsettled. Give the reason a pass mark fits (it's recorded), or use feedback only." }),
+    modelField(m, 'passGateWhy', 'Why a pass mark fits this work', { long: true, max: 600, hint: '10 to 600 characters' }));
   }
-  out.push(decide);
+  out.push(stepCard(3, 'Two decisions before the rubric', decide));
 
   // The rubric
-  const rub = h('section', { class: 'panel rubric-editor' }, h('h3', { text: 'The rubric' }),
-    muted(gate ? 'Levels from lowest to highest. A pass gate gives each criterion a weight (1 to 100) and each level a value (0 to 100, rising).' : 'Levels from lowest to highest. Feedback only: no weights, no values, no pass rule.'));
+  const rub = [h('p', { class: 'hint', text: gate ? 'Levels go from lowest to highest. Give each criterion a weight (1 to 100) and each level points (0 to 100, rising).'
+    : 'Levels go from lowest to highest. Feedback only: no weights, points or pass mark.' })];
   m.rubric.criteria.forEach((c, ci) => {
-    const box = h('div', { class: 'criterion' },
-      h('div', { class: 'row' }, field(c, 'id', 'Criterion id', { max: 40 }), field(c, 'title', 'Title', { max: 120 }), gate ? field(c, 'weight', 'Weight', { type: 'number' }) : null),
-      field(c, 'description', 'What it looks at', { long: true, max: 600 }));
+    const box = h('fieldset', { class: 'fieldset rubric-criterion' }, h('legend', { class: 'legend', text: `Criterion ${ci + 1}` }),
+      h('div', { class: 'form-row' }, modelField(c, 'title', 'Title', { max: 120 }), modelField(c, 'id', 'ID', { max: 40, hint: 'Used in exports, for example names-the-constraint' })),
+      gate ? h('div', { class: 'form-row' }, modelField(c, 'weight', 'Weight', { type: 'number' })) : null,
+      modelField(c, 'description', 'What it looks at', { long: true, max: 600 }));
     c.levels.forEach((l, li) => {
-      box.append(h('div', { class: 'row level' },
-        field(l, 'id', `Level ${li + 1} id`, { max: 40 }), field(l, 'label', 'Label', { max: 60 }), gate ? field(l, 'value', 'Value', { type: 'number' }) : null,
-        field(l, 'descriptor', 'What the learner\'s own words show at this level', { long: true, max: 600 }),
-        c.levels.length > 2 ? h('button', { type: 'button', text: 'Remove level', onclick: () => { c.levels.splice(li, 1); paint(); } }) : null));
+      box.append(h('div', { class: 'rubric-level' },
+        h('div', { class: gate ? 'form-row form-row--3' : 'form-row' },
+          modelField(l, 'label', `Level ${li + 1} name`, { max: 60 }), modelField(l, 'id', 'ID', { max: 40 }), gate ? modelField(l, 'value', 'Points', { type: 'number' }) : null),
+        modelField(l, 'descriptor', 'What this level looks like', { long: true, max: 600 }),
+        c.levels.length > 2 ? h('div', {}, h('button', { type: 'button', class: 'btn btn--ghost btn--sm', text: 'Remove level', onclick: () => { c.levels.splice(li, 1); paint(); } })) : null));
     });
-    box.append(h('div', { class: 'row' },
-      c.levels.length < 6 ? h('button', { type: 'button', text: 'Add a level', onclick: () => { c.levels.push(blankLevel('', '', '')); paint(); } }) : null,
-      m.rubric.criteria.length > 1 ? h('button', { type: 'button', text: 'Remove this criterion', onclick: () => { m.rubric.criteria.splice(ci, 1); paint(); } }) : null));
-    rub.append(box);
+    box.append(h('div', { class: 'btn-group' },
+      c.levels.length < 6 ? h('button', { type: 'button', class: 'btn btn--secondary btn--sm', text: 'Add a level', onclick: () => { c.levels.push(blankLevel('', '', '')); paint(); } }) : null,
+      m.rubric.criteria.length > 1 ? h('button', { type: 'button', class: 'btn btn--danger-quiet btn--sm', text: 'Remove criterion', onclick: () => { m.rubric.criteria.splice(ci, 1); paint(); } }) : null));
+    rub.push(box);
   });
-  if (m.rubric.criteria.length < 12) rub.append(h('button', { type: 'button', text: 'Add a criterion', onclick: () => { m.rubric.criteria.push(blankCriterion()); paint(); } }));
+  if (m.rubric.criteria.length < 12) rub.push(h('div', {}, h('button', { type: 'button', class: 'btn btn--secondary', text: 'Add a criterion', onclick: () => { m.rubric.criteria.push(blankCriterion()); paint(); } })));
   if (gate) {
     const pr = m.rubric.passRule;
-    rub.append(h('h4', { text: 'Pass rule' }), field(pr, 'minPercent', 'Minimum percent (0 to 100)', { type: 'number' }));
+    rub.push(h('h3', { text: 'Pass mark' }), h('div', { class: 'form-row' }, modelField(pr, 'minPercent', 'Pass mark (%)', { type: 'number' })));
     for (const c of m.rubric.criteria) {
-      const sel = h('select', { onchange: (e) => { pr.requiredLevels[c.id] = e.target.value; } },
-        h('option', { value: '', text: 'no required level' }), c.levels.map((l) => h('option', { value: l.id, text: l.label || l.id })));
+      const sel = h('select', { class: 'select', onchange: (e) => { pr.requiredLevels[c.id] = e.target.value; } },
+        h('option', { value: '', text: 'No minimum' }), c.levels.map((l) => h('option', { value: l.id, text: l.label || l.id })));
       sel.value = pr.requiredLevels[c.id] || '';
-      rub.append(h('label', { class: 'field' }, h('span', { class: 'label', text: `${c.title || c.id || 'criterion'}: at least` }), sel));
+      rub.push(formField({ label: `Minimum level for ${c.title || c.id || 'this criterion'}`, control: sel }));
     }
   }
-  out.push(rub);
+  out.push(stepCard(4, 'The rubric', rub));
 
   // Draft assistance (required)
   const as = A.assistance;
-  const choices = [['none', 'No AI helped draft this'], ['own-agent', 'My own agent helped'], ['model', 'Another model helped'], ['person', 'Another person helped']];
-  if (A.receipt) choices.unshift(['receipt', 'This bridge\'s model drafted it (the receipt is attached)']);
-  const assist = h('section', { class: 'panel' }, radios(as, 'choice', 'Did anyone or anything help draft this? (required: silence is not the same as unassisted)', choices, paint));
-  if (as.choice === 'own-agent' || as.choice === 'model') assist.append(h('div', { class: 'row' }, field(as, 'provider', 'Provider', { max: 60 }), field(as, 'model', 'Model', { max: 120 })));
-  if (as.choice && as.choice !== 'none' && as.choice !== 'receipt') assist.append(field(as, 'note', 'Note (optional)', { max: 300 }));
-  out.push(assist);
+  const choices = [['none', 'No one'], ['own-agent', 'My AI assistant'], ['model', 'Another AI'], ['person', 'Another person']];
+  if (A.receipt) choices.unshift(['receipt', "Practice Evidence's AI drafted it (record attached)"]);
+  const assist = [radios(as, 'choice', 'Who helped write this? (required)', choices, paint, "Saying nothing isn't the same as \"no one\".")];
+  if (as.choice === 'own-agent' || as.choice === 'model') assist.push(h('div', { class: 'form-row' }, modelField(as, 'provider', 'AI provider', { max: 60 }), modelField(as, 'model', 'Model', { max: 120 })));
+  if (as.choice && as.choice !== 'none' && as.choice !== 'receipt') assist.push(modelField(as, 'note', 'Note', { max: 300, optional: true }));
+  out.push(stepCard(5, 'Who helped write this?', assist));
 
   // Save / publish / try
   const result = h('div', { class: 'outcome', id: 'author-result' });
   const save = (status) => async () => {
-    if (!m.assessmentUse || !m.workRegime) return h('p', { class: 'refusal-inline', text: 'Decide how this will be used and how knowable the work is first.' });
-    if (!as.choice) return h('p', { class: 'refusal-inline', text: 'Say whether anyone or anything helped draft this.' });
+    if (!m.assessmentUse || !m.workRegime) return errorText('Decide how this will be used, and how clear-cut good performance is, before saving.');
+    if (!as.choice) return errorText('Please say who helped write this scenario.');
     const assistance = as.choice === 'receipt' ? { draftReceipt: A.receipt }
       : as.choice === 'none' ? { draftAssistance: { used: false } }
         : { draftAssistance: { used: true, by: as.choice, ...(as.provider.trim() ? { provider: as.provider.trim() } : {}), ...(as.model.trim() ? { model: as.model.trim() } : {}), ...(as.note.trim() ? { note: as.note.trim() } : {}) } };
@@ -1653,61 +2790,96 @@ function authorForm(A, paint) {
     A.basedOnVersion = r.version;
     A.saved = { scenarioIri: r.scenarioIri, version: r.version, status: r.status };
     A.loadedFrom = r.scenarioIri;
+    const lines = [`Modal status ${r.modalStatus}`, `Rubric fingerprint ${r.rubricHash}`, r.supersedes ? `Replaces ${r.supersedes}` : 'First version'];
     A.lastSaved = r.changed === false
-      ? [`Nothing changed: version ${r.version} is already ${r.status}.`]
-      : [`Saved version ${r.version} as ${r.status} (${r.modalStatus}).`, `Rubric hash ${r.rubricHash}${r.rubricChanged ? ' (the rubric changed: a new rubric version, with its own calibration)' : ''}.`,
-        r.supersedes ? `It supersedes ${r.supersedes}.` : 'The first version.', r.status === 'published' ? 'Results on it can leave as evidence once a reviewer ratifies it.' : 'A draft: learners cannot start it; you can try it yourself.'];
+      ? { title: `Nothing changed: version ${r.version} is already ${r.status === 'published' ? 'published' : 'a draft'}.`, lines }
+      : r.status === 'published'
+        ? { title: `Published version ${r.version}.`, body: "Results won't count as evidence until a reviewer who didn't write it approves the rubric.", lines, rubricChanged: r.rubricChanged }
+        : { title: `Saved version ${r.version} as a draft.`, body: "Learners can't start it; you can try it yourself.", lines, rubricChanged: r.rubricChanged };
+    toast({ tone: 'success', title: A.lastSaved.title });
     paint();
     return null;
   };
-  if (A.lastSaved) result.append(h('div', {}, A.lastSaved.map((x) => h('p', { class: 'ok', text: x }))));
-  const saveBtn = h('button', { type: 'button', text: 'Save draft', dataset: { action: ACT.authorScenario, status: 'draft' }, onclick: () => busy(saveBtn, result, save('draft')) });
-  const pubBtn = h('button', { type: 'button', class: 'primary', text: 'Publish', dataset: { action: ACT.authorScenario, status: 'published' }, onclick: () => busy(pubBtn, result, save('published')) });
-  const tryBtn = h('button', { type: 'button', text: 'Try it myself (not coached)', disabled: !A.saved, dataset: { action: ACT.startAttempt }, onclick: () => busy(tryBtn, result, async () => {
+  if (A.lastSaved) {
+    result.append(callout({ tone: 'success', title: A.lastSaved.title, body: A.lastSaved.body,
+      kids: [A.lastSaved.rubricChanged ? h('p', { class: 'callout__body', text: 'The rubric changed, so AI judge quality is tracked separately for this version.' }) : null],
+      techLines: A.lastSaved.lines }));
+  }
+  const saveBtn = h('button', { type: 'button', class: 'btn btn--secondary', text: 'Save draft', dataset: { action: ACT.authorScenario, status: 'draft' }, onclick: () => busy(saveBtn, result, save('draft'), { progress: 'Saving…' }) });
+  const pubBtn = h('button', { type: 'button', class: 'btn btn--primary', text: 'Publish', dataset: { action: ACT.authorScenario, status: 'published' }, onclick: () => busy(pubBtn, result, save('published'), { progress: 'Saving…' }) });
+  const tryBtn = h('button', { type: 'button', class: 'btn btn--ghost', text: 'Try it yourself (test run)', disabled: !A.saved, dataset: { action: ACT.startAttempt }, onclick: () => busy(tryBtn, result, async () => {
     const r = await act(ACT.startAttempt, { scenarioIri: A.saved.scenarioIri, scenarioVersion: A.saved.version, coached: false });
     go(attemptHash(r.attemptIri));
     return null;
-  }) });
-  out.push(h('div', { class: 'row' }, saveBtn, pubBtn, tryBtn), muted('Your own attempts on your scenario are tests: they are never reviewed, counted or projected.'), result);
+  }, { progress: 'Starting…' }) });
+  out.push(h('section', { class: 'card author-actions' }, h('div', { class: 'card__body' },
+    h('div', { class: 'btn-group' }, pubBtn, saveBtn, tryBtn),
+    h('p', { class: 'hint', text: 'Your own sessions on your scenario are test runs: never reviewed, counted or shared.' }),
+    result)));
   return out;
 }
 
 // ════════════════════════════════════════════════════════════════════════════════════════════
-//  Roles and my attempts
+//  Team and My practice
 // ════════════════════════════════════════════════════════════════════════════════════════════
 
 function viewRoles(root) {
-  root.append(h('h2', { text: 'Roles on this pod' }), muted('Only an admin configured on this bridge can change roles. Each change is a signed record that supersedes the registry\'s previous version. A member is an address, or a person\'s Interego DID (did:web:…:users:…) for someone who signs in with their Interego account.'));
-  const address = h('input', { type: 'text', placeholder: '0x… (40 hex digits) or did:web:…:users:…', 'aria-label': 'Address', size: 56 });
-  const role = h('select', { 'aria-label': 'Role' }, ['reviewer', 'author', 'judge', 'agent', 'learner'].map((r) => h('option', { value: r, text: r })));
-  const change = h('select', { 'aria-label': 'Change' }, h('option', { value: 'add', text: 'add' }), h('option', { value: 'remove', text: 'remove' }));
+  root.append(pageHeader({ title: 'Team', lede: 'Add people by their Member ID and choose their role. Only admins can make changes, and every change is recorded.' }));
+  if (S.mode === 'paste' && !S.manual) { root.append(signInGate('roles')); return; }
+  const address = h('input', { type: 'text', id: 'member-id', class: 'input input--mono', placeholder: 'did:web:identity.interego.xwisee.com:users:u-pk-… or 0x…' });
+  const role = h('select', { id: 'member-role', class: 'select', onchange: (e) => { const hint = $('#member-role-hint'); if (hint) hint.textContent = ROLE_HINTS[e.target.value] || ''; } },
+    ['reviewer', 'author', 'judge', 'agent', 'learner'].map((r) => h('option', { value: r, text: ROLE_WORDS[r] })));
+  const change = h('select', { id: 'member-change', class: 'select' }, h('option', { value: 'add', text: 'Add this role' }), h('option', { value: 'remove', text: 'Remove this role' }));
   const out = h('div', { class: 'outcome' });
-  const row = h('div', { class: 'row' }, address, role, change);
+  const form = h('div', { class: 'card__body form' },
+    h('div', { class: 'form-row' },
+      formField({ label: 'Member ID or wallet address', control: address, hint: 'Ask the person to copy it from their account menu.' }),
+      formField({ label: 'Role', control: role, hint: ROLE_HINTS.reviewer })),
+    h('div', { class: 'form-row' }, formField({ label: 'Change', control: change })));
   if (S.mode === 'demo') {
-    const pick = h('select', { 'aria-label': 'Fill from a demo role', onchange: (e) => { address.value = e.target.value; } },
-      h('option', { value: '', text: 'fill from a demo role…' }), S.demoRoles.map((r) => h('option', { value: r.address, text: r.label })));
-    row.append(pick);
+    const pick = h('select', { class: 'select', 'aria-label': 'Fill from a demo role', onchange: (e) => { address.value = e.target.value; } },
+      h('option', { value: '', text: 'Choose a demo person…' }), S.demoRoles.map((r) => h('option', { value: r.address, text: demoLabel(r) })));
+    form.lastChild.append(formField({ label: 'Fill from a demo person', control: pick }));
   }
-  const btn = h('button', { type: 'button', class: 'primary', text: 'Sign the change', dataset: { action: ACT.registerRole }, onclick: () => busy(btn, out, async () => {
+  const btn = h('button', { type: 'button', class: 'btn btn--primary', text: 'Save change', dataset: { action: ACT.registerRole }, onclick: () => busy(btn, out, async () => {
     const r = await act(ACT.registerRole, { address: address.value.trim(), role: role.value, change: change.value });
-    return h('div', {}, h('p', { class: r.changed ? 'ok' : 'muted', text: r.changed ? `Recorded: registry version ${r.seq}.` : 'Nothing changed: the registry already says so.' }),
-      h('table', {}, h('tbody', {}, r.entries.map((e) => h('tr', {}, h('td', {}, h('code', { text: e.address })), h('td', { text: e.roles.join(', ') }))))));
-  }) });
-  root.append(row, btn, out);
+    return h('div', { class: 'stack' },
+      r.changed ? callout({ tone: 'success', title: 'Saved' }) : callout({ tone: 'neutral', title: 'Nothing changed: they already had that.' }),
+      h('div', { class: 'table-wrap', role: 'region', 'aria-label': 'Team members', tabindex: '0' }, h('table', { class: 'table members' },
+        h('thead', {}, h('tr', {}, h('th', { scope: 'col', text: 'Member' }), h('th', { scope: 'col', text: 'Roles' }))),
+        h('tbody', {}, r.entries.map((e) => h('tr', {},
+          h('td', {}, h('code', { class: 'mono', text: e.address }), h('span', { class: 'table__secondary', text: String(e.address).startsWith('did:') ? 'Interego member' : 'Wallet' })),
+          h('td', {}, h('div', { class: 'cluster' }, e.roles.map((x) => badge(ROLE_WORDS[x] || x))))))))),
+      tech([`Team list version ${r.seq}`]));
+  }, { progress: 'Saving…' }) });
+  form.append(h('div', {}, btn), out);
+  root.append(h('section', { class: 'card' }, h('div', { class: 'card__header' }, h('h2', { class: 'card__title', text: 'Add or remove a person' })), form));
+  root.append(h('p', { class: 'hint', text: 'The member list appears after your first change.' }));
 }
 
 async function viewMine(root) {
-  root.append(h('h2', { text: 'Attempts' }));
+  root.append(pageHeader({ title: 'My practice', lede: "Your own practice sessions. Reviewers and admins see every session in the workspace, except authors' test runs." }));
   const r = await act(ACT.getAttempt, {}, { read: true });
   root.append(...coverageNotes(r));
-  root.append(muted('Your own attempts; a reviewer or an admin sees every attempt on the pod except authors\' tests.'));
-  if (!r.attempts.length) { if (whole(r)) root.append(muted('No attempts yet.')); return; }
-  root.append(h('table', { class: 'mine' }, h('thead', {}, h('tr', {}, ['scenario', 'attempt', 'state', 'started', 'result'].map((x) => h('th', { text: x })))),
+  if (!r.attempts.length) {
+    if (whole(r)) root.append(emptyState({ icon: 'chat', title: "You haven't practiced yet", text: 'Pick a scenario to start.', actions: [linkButton('#/practice', 'Browse scenarios', 'btn--primary')] }));
+    return;
+  }
+  const resultOf = (a) => {
+    if (a.finalPercent !== undefined) return `${a.finalPercent}% · ${a.finalMeetsPassRule ? 'meets the pass mark' : 'below the pass mark'}`;
+    if (a.provisionalPercent !== undefined) return `${a.provisionalPercent}% · provisional`;
+    if (['judged', 'countersigned', 'overridden', 'contested', 'review-retracted'].includes(a.state)) return 'Feedback only';
+    return '—';
+  };
+  root.append(h('div', { class: 'table-wrap', role: 'region', 'aria-label': 'Practice sessions', tabindex: '0' }, h('table', { class: 'table table--stack mine' },
+    h('thead', {}, h('tr', {}, ['Scenario', 'Status', 'Started', 'Result'].map((x) => h('th', { scope: 'col', text: x })), h('th', { scope: 'col', class: 'actions' }, h('span', { class: 'visually-hidden', text: 'Actions' })))),
     h('tbody', {}, r.attempts.map((a) => h('tr', {},
-      h('td', {}, h('a', { href: attemptHash(a.attemptIri), text: a.scenarioTitle })),
-      h('td', { text: `${a.attemptNumber}${a.authorTest ? ' (author test)' : ''}` }),
-      h('td', { text: STATE_WORDS[a.state] || a.state }), h('td', { text: a.startedAt }),
-      h('td', { text: a.finalPercent !== undefined ? `${a.finalPercent} %, ${a.finalMeetsPassRule ? 'meets' : 'does not meet'} the pass rule (reviewed)` : a.provisionalPercent !== undefined ? `${a.provisionalPercent} % (provisional, not reviewed)` : '' }))))));
+      h('td', { 'data-label': 'Scenario' }, h('a', { class: 'table__primary', href: attemptHash(a.attemptIri), text: a.scenarioTitle }),
+        h('span', { class: 'table__secondary', text: `Session ${a.attemptNumber}${a.authorTest ? ' · test run' : ''}` })),
+      h('td', { 'data-label': 'Status' }, statusPill(STATE_WORDS[a.state] || a.state, STATE_TONE[a.state] || 'pending')),
+      h('td', { 'data-label': 'Started', text: fmtDate(a.startedAt) }),
+      h('td', { 'data-label': 'Result', text: resultOf(a) }),
+      h('td', { class: 'actions' }, linkButton(attemptHash(a.attemptIri), 'Open', 'btn--secondary btn--sm'))))))));
 }
 
 // ════════════════════════════════════════════════════════════════════════════════════════════
@@ -1742,22 +2914,34 @@ async function loadBridge() {
 }
 
 async function main() {
+  document.addEventListener('click', onSignInClick);
+  const skip = document.querySelector('.skip-link');
+  // The skip link moves focus to the content; it never changes the route.
+  if (skip) skip.addEventListener('click', (e) => { e.preventDefault(); const m = $('#main'); if (m) m.focus(); });
   // The relay's answer to a sign-in arrives here; the page turns itself back into /ui first.
-  const signInNote = CALLBACK_PATH.test(location.pathname) ? await finishInteregoSignIn() : restoreInteregoSession();
+  const signInNoteNode = CALLBACK_PATH.test(location.pathname) ? await finishInteregoSignIn() : restoreInteregoSession();
   try {
     await loadManifest();
     await detectSigning();
     await loadBridge();
   } catch (e) {
-    clear($('#bar')).append(refusalBox(e));
+    renderHeader();
+    renderTabs();
+    document.title = 'Practice Evidence';
+    clear($('#view')).append(callout({ tone: 'danger', title: "We couldn't load Practice Evidence", body: 'Please try again in a moment. If it keeps happening, tell your admin.',
+      actions: [h('button', { type: 'button', class: 'btn btn--primary btn--sm', text: 'Try again', onclick: () => location.reload() })],
+      techLines: [e instanceof Refused ? `Code: ${e.code || 'none'} · Status: HTTP ${e.status}` : null, String(e && e.message || e)] }));
     return;
   }
+  // Signing manually is opt-in wherever another way to sign in exists; a bridge with none starts in it.
+  S.manual = !interegoOffered() && !S.hasWallet;
   if (S.interego && interegoOffered()) S.mode = 'interego';
   else if (S.interego) forgetInterego();
   renderHeader();
   pageReady = true;
-  if (signInNote) $('#signing').append(signInNote);
-  window.addEventListener('hashchange', route);
+  if (signInNoteNode) $('#signing').append(signInNoteNode);
+  // Only app routes re-route; an in-page anchor (the skip link, #scenarios) does not.
+  window.addEventListener('hashchange', () => { if (!location.hash || location.hash.startsWith('#/')) route(); });
   if (S.mode === 'interego') await confirmInteregoSignIn();
   await route();
 }
