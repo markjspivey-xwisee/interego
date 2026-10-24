@@ -1,0 +1,288 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>How to use Work Redesign · Work Redesign</title>
+<meta name="description" content="How to use Work Redesign, by role: getting started, team members, process leads, approvers, admins and AI agent owners.">
+<meta name="color-scheme" content="light dark">
+<link rel="icon" href="/ui/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/ui/app.css">
+<link rel="alternate" type="application/ld+json" href="/?format=jsonld" title="Entry point for AI agents">
+</head>
+<body class="product-wrd">
+<a class="skip-link" href="#main">Skip to content</a>
+
+<header class="app-header">
+  <div class="app-header__inner">
+    {{brand}}
+    <nav class="top-nav" aria-label="Site">
+      <a href="#start">Getting started</a>
+      <a href="#roles">By role</a>
+      <a href="#data">Your data</a>
+      <a href="#glossary">Glossary</a>
+    </nav>
+    <div class="app-header__actions">
+      <a class="product-switch" href="{{sibling_url}}"><span class="product-switch__dot" aria-hidden="true"></span><span class="product-switch__prefix">Also from Interego:</span> {{sibling_name}}</a>
+      <a class="btn btn--primary btn--sm" href="/ui">Open Work Redesign</a>
+    </div>
+  </div>
+</header>
+
+<main id="main" class="container help-main">
+  <header class="page-header help-header"><div class="page-header__text">
+    <span class="eyebrow">Help</span>
+    <h1 class="page-title">How to use Work Redesign</h1>
+    <p class="page-lede">Work Redesign helps your team decide, together, which work to hand to AI, and keeps a signed record of every step. Find your role below.</p>
+  </div></header>
+  <div class="help-layout">
+    <nav class="toc" aria-label="On this page"><p class="toc__title">On this page</p><ol>
+      <li><a href="#start">Getting started</a></li><li><a href="#team">Team members</a></li><li><a href="#leads">Process leads</a></li>
+      <li><a href="#approvers">Approvers</a></li><li><a href="#admins">Admins</a></li><li><a href="#owners">AI agent owners</a></li>
+      <li><a href="#assistants">Claude or ChatGPT</a></li><li><a href="#data">Your data and trust</a></li><li><a href="#limits">Limits to know</a></li>
+      <li><a href="#glossary">Glossary</a></li><li><a href="#contact">Contact us</a></li></ol></nav>
+    <div class="prose-wide">
+
+      <section class="help-section" id="start" aria-labelledby="start-title">
+        <h2 id="start-title">Getting started</h2>
+        <p>Everyone starts the same way. It takes about five minutes.</p>
+        <ol class="steps help-steps">
+          <li class="step"><p class="step__text">Create your Interego account at <a href="{{identity_url}}">Interego</a>. Choose a passkey (Face ID, Touch ID, Windows Hello or a security key). It takes about two minutes: no password, no credit card.</p></li>
+          <li class="step"><p class="step__text">Open your workspace link (the address your admin sent you) and press <strong>Sign in with your Interego account</strong>. You confirm with your passkey on Interego’s own page, then come straight back.</p></li>
+          <li class="step"><p class="step__text">If you see <strong>One more step</strong>, copy your Interego ID and send it to your admin. Once they’ve added you, refresh the page.</p></li>
+          <li class="step"><p class="step__text">Open <strong>Home</strong>. Your checklist shows what to do first for your role.</p></li>
+          <li class="step"><p class="step__text">Optional: connect Claude or ChatGPT (see <a href="#assistants">below</a>).</p></li>
+        </ol>
+        <div class="callout callout--info">{{icon:info}}<p class="callout__title">Got a link to a task?</p><p class="callout__body">Sign in from that link and we’ll open the task for you.</p></div>
+      </section>
+
+      <div id="roles" class="help-roles">
+      <section class="help-section" id="team" aria-labelledby="team-title">
+        <span class="eyebrow">By role</span>
+        <h2 id="team-title">Team members</h2>
+        <p>You do the work today. Work Redesign gives you a say in how it is described and in any change to it.</p>
+        <ol>
+          <li>Open a task link someone sent you, or go to <strong>My record › Tasks that name me</strong>.</li>
+          <li>Read the description and the quotes from the procedure document. “Source checked” means the quote was found in the document.</li>
+          <li><strong>Confirm</strong> if the description is right. <strong>Dispute</strong> it with a note if it isn’t. A disputed task can’t change until someone edits it and everyone named confirms again.</li>
+          <li>Check <strong>How predictable this work is</strong>, and confirm or dispute it. You can add your own answers to a dispute.</li>
+          <li>Under <strong>Plans</strong>, press <strong>Accept assignment</strong>, or <strong>Object</strong> with a note. An objection doesn’t block the plan, but an approver can approve over it only by naming it.</li>
+          <li>Download your record any time from <strong>My record</strong>.</li>
+        </ol>
+      </section>
+
+      <section class="help-section" id="leads" aria-labelledby="leads-title">
+        <h2 id="leads-title">Process leads</h2>
+        <p>You map a process, agree it with the team, and turn it into a priced plan that gets approved.</p>
+        <h3>1. Map a process</h3>
+        <p>Open <strong>Map a process</strong>. Choose <strong>By hand</strong> and type each step people actually do, starting each with a verb. Or choose <strong>From a procedure document</strong>:</p>
+        <ol>
+          <li>Paste the document, or load a .txt or .md file.</li>
+          <li>Press <strong>Get instructions for your AI</strong>, and give the instructions and the document to your own AI assistant.</li>
+          <li>Paste its answer, and press <strong>Fill the tasks from the draft</strong>.</li>
+          <li>Check that every quote shows “Source checked”, then sign.</li>
+        </ol>
+        <h3>2. Get confirmations</h3>
+        <p>Send each person named on a task its link (<strong>Processes › Copy link</strong>). The Status column shows who hasn’t responded yet.</p>
+        <h3>3. Sort each task by predictability</h3>
+        <p>Answer seven questions about each task as it’s done today. “Unknown” is a real answer. A published rule places the task in one of four categories, and the category decides what kind of change is allowed:</p>
+        <dl class="kv">
+          <dt>Routine</dt><dd>Same steps, same result; checkable; you find out fast. The only category where AI may work on its own.</dd>
+          <dt>Needs expertise</dt><dd>Priced only on expert answers. AI never works on its own here.</dd>
+          <dt>Exploratory</dt><dd>Changes only through small, safe-to-fail trials, never priced.</dd>
+          <dt>Unstable</dt><dd>Stabilise first; no change until it’s sorted again.</dd>
+        </dl>
+        <h3>4. Propose who does what</h3>
+        <p>Under <strong>Plans</strong>, choose who does each task next:</p>
+        <ul>
+          <li>A person</li>
+          <li>A person, with AI assisting</li>
+          <li>AI drafts, a person decides</li>
+          <li>AI acts, a person checks</li>
+          <li>AI on its own (earned permission): only for Routine work, and only once the agent has earned permission on that type of task.</li>
+        </ul>
+        <h3>5. Build the business case</h3>
+        <p>Under <strong>Business case</strong>, give every input as low / likely / high, with where it came from, and say what happens to the hours a change frees. Reading the results:</p>
+        <ul>
+          <li><strong>Low · Likely · High</strong> is an 80% range: there’s an 80% chance the result falls between Low and High.</li>
+          <li>The cash impact and the impact if freed time is redeployed are shown side by side, never blended.</li>
+          <li><strong>What moves the result most</strong> flags the inputs that are unmeasured estimates.</li>
+          <li><strong>Suggested pilot size</strong> says how many clean runs show the failure rate is below your ceiling.</li>
+        </ul>
+        <h3>6. Submit for approval</h3>
+        <p>Under <strong>Decisions</strong>, choose the plan and its business case, what will be measured, how it will be compared, and the measurement period. Once submitted, a decision can’t be withdrawn: an approver declines it instead.</p>
+        <h3>7. After approval</h3>
+        <p>When the measurement period ends, ask a colleague who neither prepared nor approved the decision to record the results.</p>
+        <h3>8. Review AI work</h3>
+        <p>If you’re asked to, review AI work under <strong>AI agents › Waiting for review</strong>.</p>
+      </section>
+
+      <section class="help-section" id="approvers" aria-labelledby="approvers-title">
+        <h2 id="approvers-title">Approvers</h2>
+        <p>You keep the decisions independent.</p>
+        <ul>
+          <li><strong>When you can approve.</strong> Not if you proposed, priced or submitted the plan; not if it changes your own work; not if it puts an AI agent you own on the work. The buttons say why when you can’t.</li>
+          <li><strong>Approving over objections and silence.</strong> If someone objected to their new assignment, or hasn’t responded, tick each one to approve anyway. Your approval names them.</li>
+          <li><strong>Recording results.</strong> Only someone who neither prepared nor approved a decision records its results, after the measurement period has ended. Say whether the change was kept, reversed or stopped early, with a reason unless it was kept. Before-and-after results are labelled “no comparison group”.</li>
+          <li><strong>Reviewing AI work.</strong> Choose Accept, Needs rework or Critical failure. Your verdict is what counts; the AI’s own verdict is for information.</li>
+          <li><strong>Granting AI permission.</strong> An agent earns permission from at least 20 pieces of work people reviewed and accepted at 90% or better, from at least 5 different reviewers, plus at least 20 pieces it called ready, accepted at 90% or better with no critical failure. Permission covers one type of task and one AI model. The agent’s owner can’t grant it.</li>
+          <li><strong>Withdrawing permission.</strong> Any time, with a reason. Every later use is refused, and re-earning counts only work reviewed after that.</li>
+          <li><strong>Reading the track record.</strong> We aim for about 80% of results landing within the prediction. Ratings stay “Early” until there are 20 results. Inconclusive results are left out, but counted.</li>
+        </ul>
+      </section>
+
+      <section class="help-section" id="admins" aria-labelledby="admins-title">
+        <h2 id="admins-title">Admins</h2>
+        <p>You set up the workspace under <strong>People &amp; roles</strong>.</p>
+        <ul>
+          <li><strong>Adding people.</strong> Use their Interego ID (it looks like <code>did:web:…:users:…</code>) or their wallet address (it starts with <code>0x</code>), their roles, and a Person ID that links one person’s different sign-ins.</li>
+          <li><strong>Adding AI agents.</strong> Give each its accountable owner and the AI model it runs on. Update the model when it changes: permission must then be earned again.</li>
+          <li><strong>Types of task.</strong> A name, a short ID and a one-sentence definition. Retire the ones you no longer use.</li>
+          <li><strong>Stricter rules.</strong> You can make the standard rules for earning AI permission stricter, never looser.</li>
+          <li><strong>Removing someone.</strong> Remove their roles. They keep the right to download their record.</li>
+          <li><strong>Workspace health notices.</strong> If records fail an integrity check (for example a record changed outside the app), the app says so to everyone and never uses those records as current. Send the details to your workspace provider.</li>
+        </ul>
+      </section>
+
+      <section class="help-section" id="owners" aria-labelledby="owners-title">
+        <h2 id="owners-title">AI agent owners</h2>
+        <ul>
+          <li>Ask your admin to register the agent, with you as its owner and the AI model it uses.</li>
+          <li>You can’t review your own agent’s work, approve plans that use it, or grant it permission.</li>
+          <li>The agent signs each work record with its own key; Work Redesign never holds it. If the agent doesn’t connect directly, paste its record under <strong>AI agents › Record AI work</strong>.</li>
+          <li>Watch its progress under <strong>Track record › AI agents</strong>.</li>
+          <li>Tell your admin when the agent’s model changes. Permission applies only to the model it was earned on.</li>
+        </ul>
+      </section>
+      </div>
+
+      <section class="help-section" id="assistants" aria-labelledby="assistants-title">
+        <h2 id="assistants-title">Using Claude or ChatGPT</h2>
+        <p>Add the Interego connector once, and your assistant can work in Work Redesign for you. There’s no API key and nothing to install.</p>
+        <ol class="steps steps--compact">
+          <li class="step"><p class="step__text">In Claude or ChatGPT, open <strong>Settings → Connectors → Add custom connector</strong>.</p></li>
+          <li class="step"><p class="step__text">Name it <strong>Interego</strong> and paste <code class="connector-url">{{connector_url}}</code></p></li>
+          <li class="step"><p class="step__text">Connect, then sign in with your passkey when asked.</p></li>
+          <li class="step"><p class="step__text">Tell your assistant the address of your Work Redesign workspace.</p></li>
+        </ol>
+        <h3>Things you can ask it</h3>
+        <ul>
+          <li>“Draft a process map from this procedure document and record it in Work Redesign.”</li>
+          <li>“Show me the tasks that name me, and confirm the description of the invoice-matching task.”</li>
+          <li>“Answer the seven questions for the GL coding task with me.”</li>
+          <li>“Propose a plan where an agent drafts the coding and Dee decides, then price it.”</li>
+          <li>“Submit the plan for approval.”</li>
+        </ul>
+        <div class="callout callout--neutral">{{icon:shield}}<p class="callout__title">What stays in the Work Redesign app</p><p class="callout__body">For safety, the actions that change who may do what can be taken only in the Work Redesign app, not from a chat assistant: approving or declining a decision, changing people and roles, recording results, and granting or withdrawing AI permissions. Your workspace provider can change this setting. When your assistant records a process map from chat, the document’s text is stored with the record.</p></div>
+      </section>
+
+      <section class="help-section" id="data" aria-labelledby="data-title">
+        <h2 id="data-title">Your data and trust</h2>
+        <h3>Where records live</h3>
+        <p>Records are kept in the data store your workspace is set up with, as signed files you can copy, not inside a closed database.</p>
+        <h3>Encryption, and what stays visible</h3>
+        <p>The content of every record is encrypted in storage. Some facts stay visible to anyone who can read that storage: that a record exists, what type it is, who signed it and when.</p>
+        <h3>Downloading and verifying your record</h3>
+        <p>Under <strong>My record</strong>, download every record that names you or that you signed, each with its original signature. The page shows the workspace signature ID; your IT team can use it to verify a downloaded record offline, without us. Your downloaded copy isn’t encrypted, so store it somewhere safe.</p>
+        <h3>Signing in with Interego, or with a wallet</h3>
+        <p>When you sign in with your Interego account, Interego signs each action for you. Your sign-in stays valid for about an hour, and it passes through this Work Redesign service each time you sign. While it’s valid, it could be used to act on your Interego account for up to a day, even after you sign out here. Signing out on this page doesn’t cancel it. “Sign out everywhere” on your Interego dashboard ends the day-long part; the hour-long part runs out on its own. If you need signatures only you can make, use a crypto wallet.</p>
+        <h3>Who sees what</h3>
+        <p>Everyone in a workspace can read all of its records, including dispute notes and valuations. Use separate workspaces for teams that must not see each other’s records.</p>
+      </section>
+
+      <section class="help-section" id="limits" aria-labelledby="limits-title">
+        <h2 id="limits-title">Limits to know</h2>
+        <ul>
+          <li><strong>Work nobody can measure.</strong> Work Redesign won’t put a value on it. Run small trials instead.</li>
+          <li><strong>One-off decisions.</strong> Track records and AI permissions need repetition.</li>
+          <li><strong>Changes you won’t measure.</strong> The decision will read “Approved, results not yet measured” for good.</li>
+          <li><strong>Deciding for you.</strong> Work Redesign doesn’t generate options or write plans. Your team proposes; Work Redesign checks, prices and records.</li>
+          <li><strong>Teams that must not see each other’s records.</strong> Use separate workspaces.</li>
+          <li><strong>Not available yet:</strong> importing from an HR or learning system, reading PDF or Word files directly, structured interviews, or withdrawing a decision once it’s submitted (an approver declines it instead).</li>
+          <li>Procedure documents are read as plain text or Markdown only.</li>
+          <li>Results are entered by people, not measured automatically.</li>
+          <li>AI costs are as the agent reports them, not metered.</li>
+          <li>The business case treats its inputs as independent of each other.</li>
+          <li>Ranges are never added across decisions: they can’t be summed honestly.</li>
+        </ul>
+      </section>
+
+      <section class="help-section" id="glossary" aria-labelledby="glossary-title">
+        <h2 id="glossary-title">Glossary</h2>
+        <dl class="kv glossary">
+          <dt>Workspace</dt><dd>Your team’s Work Redesign: its people, processes and records, kept in the storage your workspace is set up with.</dd>
+          <dt>Interego ID</dt><dd>Your unique ID in Interego. Send it to your admin so they can add you.</dd>
+          <dt>Wallet address</dt><dd>The address of the crypto wallet you sign with, if you sign with a wallet.</dd>
+          <dt>Signed via your Interego account</dt><dd>Interego signs on your behalf when you use your Interego account, and the record says so. For signatures only you can make, sign with a crypto wallet.</dd>
+          <dt>People &amp; roles</dt><dd>Who is in the workspace, and what each person may do.</dd>
+          <dt>Person ID</dt><dd>Links one person’s different sign-ins (say, a wallet and an Interego account), so the rules treat them as one person.</dd>
+          <dt>Accountable owner</dt><dd>The person who answers for an AI agent. They can’t review its work, approve plans that use it, or grant it permission.</dd>
+          <dt>AI model in use</dt><dd>The model an agent runs on. Its permission applies only to this model; a model change means earning it again.</dd>
+          <dt>Process lead</dt><dd>Maps processes, proposes changes and prices them.</dd>
+          <dt>Team member</dt><dd>Does the work; confirms or disputes how it’s described, and responds to new assignments.</dd>
+          <dt>Approver</dt><dd>Approves or declines plans they had no part in, and grants or withdraws AI permissions.</dd>
+          <dt>Admin</dt><dd>Adds people, AI agents and types of task. Set up by your Work Redesign provider.</dd>
+          <dt>Type of task</dt><dd>A category your admin defines, such as “Invoice matching”. AI permissions are earned for one type of task at a time.</dd>
+          <dt>Workspace rules</dt><dd>Rules for earning AI permission. Your admin can make the standard rules stricter, never looser.</dd>
+          <dt>Process</dt><dd>A piece of work your team runs again and again, such as supplier invoice processing, made of tasks.</dd>
+          <dt>Process map</dt><dd>The recorded list of a process’s tasks: who does each one and how.</dd>
+          <dt>Procedure document</dt><dd>Your written description of how the work is done, such as a standard operating procedure.</dd>
+          <dt>Instructions for your AI</dt><dd>What to give your own AI assistant, with the document, so it can draft a process map. Work Redesign doesn’t draft anything itself.</dd>
+          <dt>Sources checked</dt><dd>Each quote is matched against the document, ignoring spacing and quote-mark style. A quote that doesn’t match is flagged, never corrected.</dd>
+          <dt>Confirm / Dispute</dt><dd>Confirming signs that a description of your work is right. Disputing records why it isn’t, and blocks changes until it’s fixed.</dd>
+          <dt>Predictability</dt><dd>Seven questions about a task decide how predictable it is, and so what kind of change is allowed.</dd>
+          <dt>Routine</dt><dd>Same steps, same result; the output can be checked and you find out fast. The only category where AI may work on its own.</dd>
+          <dt>Needs expertise</dt><dd>Can be worked out by someone who knows the work. Changes are priced only on expert answers. AI never works on its own here.</dd>
+          <dt>Exploratory</dt><dd>Only clear in hindsight. Change happens through small, safe-to-fail trials, which are never priced.</dd>
+          <dt>Unstable</dt><dd>Things are unstable right now. Stabilise first; no change is allowed until it’s sorted again.</dd>
+          <dt>Trial</dt><dd>A small, safe-to-fail experiment with a time limit. Used for Exploratory work, and never priced.</dd>
+          <dt>Business case</dt><dd>The price of a plan: what it is likely to gain or cost, with honest ranges and where each number came from.</dd>
+          <dt>Low · Likely · High</dt><dd>An 80% range: there’s an 80% chance the result falls between Low and High; Likely is the middle.</dd>
+          <dt>Weekly cash impact</dt><dd>The change in cash each week. Freed hours count only where the work is left unfilled.</dd>
+          <dt>Net present value</dt><dd>Total value over the time horizon, in today’s money.</dd>
+          <dt>Chance it pays off</dt><dd>How likely the net present value is to be above zero.</dd>
+          <dt>Freed hours</dt><dd>Hours a change frees: moved to other work, absorbed by the team, left unfilled (a cash saving), or not decided yet.</dd>
+          <dt>Suggested pilot size</dt><dd>How many clean runs show the failure rate is below your ceiling, with 95% confidence.</dd>
+          <dt>Approve / Decline</dt><dd>An approver’s decision on a submitted plan, exactly as it was priced.</dd>
+          <dt>Record results</dt><dd>What happened, recorded by someone who neither prepared nor approved the decision, after the measurement period has ended.</dd>
+          <dt>Within / Outside prediction / Inconclusive</dt><dd>Whether the measured result fell inside the predicted range, adjusted for ramp-up. Inconclusive: the measured range straddles the edge of the prediction; left out of the track record, but counted.</dd>
+          <dt>History</dt><dd>Every signed version of a decision. If an earlier version can’t be read, the history says it is incomplete.</dd>
+          <dt>AI permission</dt><dd>Lets one AI agent do one type of task on its own, on the model it was checked on. Earned from reviewed work, re-checked on every use, and can be withdrawn at any time.</dd>
+          <dt>Track record</dt><dd>How your predictions landed, and how reliable each AI agent’s reviewed work has been.</dd>
+          <dt>Accuracy score</dt><dd>How close predictions were to what happened. Lower is better.</dd>
+          <dt>My record</dt><dd>Every record that names you or that you signed, with its original signature. Yours to keep.</dd>
+          <dt>Sample data</dt><dd>Made-up example data for a demo. Not real evidence.</dd>
+        </dl>
+      </section>
+
+      <section class="help-section" id="contact" aria-labelledby="contact-title">
+        <h2 id="contact-title">Contact us</h2>
+        <p>{{contact_line}}</p>
+        <p>Security issues: <a href="{{security_txt}}">security contact</a>.</p>
+      </section>
+
+    </div>
+  </div>
+</main>
+
+<footer class="site-footer">
+  <div class="container">
+    <div class="site-footer__grid">
+      <div>{{brand}}<p class="site-footer__about">Decide which work to hand to AI, price it honestly, and keep a record your people can check.</p></div>
+      <div><p class="site-footer__heading">Product</p><ul class="site-footer__links">
+        <li><a href="/#how-it-works">How it works</a></li><li><a href="/#trust">Built for trust</a></li>
+        <li><a href="#assistants">Use it from Claude or ChatGPT</a></li><li><a href="#limits">When not to use it</a></li>
+        <li><a href="{{sibling_url}}">Also from Interego: {{sibling_name}}</a></li></ul></div>
+      <div><p class="site-footer__heading">Get started</p><ul class="site-footer__links">
+        <li><a href="/ui">Sign in</a></li><li><a href="{{identity_url}}">Create an Interego account</a></li>
+        <li><a href="/ui/help">Help</a></li><li><a href="{{contact_href}}">Contact us</a></li></ul></div>
+      <div><p class="site-footer__heading">For developers</p><ul class="site-footer__links">
+        <li><a href="/affordances">Agent manifest</a></li><li><a href="/ns/wrd">Vocabulary</a></li>
+        <li><a href="{{security_txt}}">Security contact</a></li>
+        <li><span class="mono">{{base}}/mcp</span>&nbsp;(MCP endpoint)</li></ul></div>
+    </div>
+    <div class="site-footer__bottom"><span>Work Redesign is built on Interego. Work Redesign runs no AI model; drafting is done by your own AI assistant.</span><span>© {{year}} {{legal_name}}</span></div>
+  </div>
+</footer>
+</body>
+</html>

@@ -29,7 +29,7 @@
  * positions; the only instant two kinds share is a workflow version's with its tasks, the link
  * README and readExposure name. The production server refuses to start without a record key, or
  * without a platform key, when the image requires one. In the UI, a signer whose read is refused is
- * still offered their copy, and a line cut by a platform key no longer trusted is named in the header.
+ * still offered their copy, and a line cut by a platform key no longer trusted is named in the health callout.
  */
 import { describe, it, expect, afterAll } from 'vitest';
 import { spawn } from 'node:child_process';
@@ -809,10 +809,10 @@ describe('work-redesign offline demo and web UI', () => {
 
     // Re-reading, and the calibration view, reuse the same signed read: no new signature.
     const before = reads().length;
-    page.click('Re-read the pod');
+    page.click('Refresh');
     await page.until(() => reads().length >= before + 1, 'the re-read');
-    page.click('Calibration');
-    await page.until(() => reads().length >= before + 3 && page.text().includes('Calibration'), 'the calibration read');
+    page.click('Track record');
+    await page.until(() => reads().length >= before + 3 && page.text().includes('How our predictions landed'), 'the calibration read');
     const again = reads().slice(before);
     expect(again.map((r) => `${r.method} ${r.path}`)).toEqual(['POST /wrd/read_records', 'POST /wrd/read_records', 'POST /wrd/read_calibration']);
     expect(again.every((r) => JSON.stringify(r.body['envelope']) === firstEnvelope)).toBe(true);
@@ -830,12 +830,12 @@ describe('work-redesign offline demo and web UI', () => {
     expect(back.every((r) => JSON.stringify(r.body['envelope']) === firstEnvelope)).toBe(true);
 
     // "What this signs" with Ana's fresh read: the read goes in the POST body of wrd.read_envelope_template, and the template comes back filled.
-    page.click('Tasks');
+    page.click('Processes');
     await page.until(() => page.text().includes('Match invoices'), 'the task');
-    page.click('Classify');
+    page.click('Sort by predictability');
     await page.until(() => page.text().includes('Sign the answers'), 'the classify panel');
     const beforeTemplate = page.log.length;
-    page.click('What this signs');
+    page.click("See exactly what you're signing");
     await page.until(() => page.text().includes('Template, filled from the pod'), 'the template');
     const templateCalls = page.log.slice(beforeTemplate).filter((r) => /envelope_template/.test(r.path));
     expect(templateCalls.map((r) => `${r.method} ${r.path} ${r.status}`)).toEqual(['POST /wrd/read_envelope_template 200']);
@@ -861,7 +861,7 @@ describe('work-redesign offline demo and web UI', () => {
     expect(bare.errors).toEqual([]);
   }, 60_000);
 
-  it('the web UI never shows a chain cut short as whole: with a decision\'s and a grant\'s first versions gone, the decision card and its printed summary head the chain as incomplete with why in a badbox beside the heading, the grant\'s row says why, and the header counts both cuts; a whole chain is headed as every version', async () => {
+  it('the web UI never shows a chain cut short as whole: with a decision\'s and a grant\'s first versions gone, the decision card and its printed summary head the chain as incomplete with why in a danger note beside the heading, the grant\'s row says why, and the health callout counts both cuts; a whole chain is headed as every version', async () => {
     // The walked pod, copied, so the versions removed here are removed from this test's pod alone.
     const pod = memoryPod();
     for (const [url, body] of (await walked()).pod.bodies) await pod.fetchFn(url, { method: 'PUT', body });
@@ -910,33 +910,34 @@ describe('work-redesign offline demo and web UI', () => {
     listeners.push(l);
     const page = await openUi(l.base);
     await page.until(() => page.text().includes('Platform signer'), 'the records');
-    // The header counts every chain cut short, in a badbox.
+    // The health callout counts every chain cut short, as a danger item.
     const CUTS = '2 record chain(s) do not read back to their first version: an earlier version is missing, or is not trusted. Their history is shown as incomplete, never as whole.';
-    expect(page.all('header.strip p.badbox').map((p) => p.textContent)).toContain(CUTS);
+    expect(page.all('.health p.health__item--danger').map((p) => p.textContent)).toContain(CUTS);
 
-    // The cut decision's card: the heading says the chain is incomplete, and why sits beside it in a badbox.
-    const CUT_HEADING = 'Versions of this decision read so far: not every version (the chain is incomplete)';
-    const WHOLE_HEADING = 'Every version of this decision';
+    // The cut decision's card: the heading says the history is incomplete, and why sits beside it in a danger note.
+    const CUT_HEADING = 'History so far: some earlier versions cannot be read, so this history is incomplete';
+    const WHOLE_HEADING = 'History: every version of this decision';
     page.click('Decisions');
     await page.until(() => page.all('main table button').filter((b) => b.textContent === 'Open').length === decisions.length, 'the decisions');
     // The versions' table, as the UI's table() wraps it.
-    const versionsTable = (el: Element | null | undefined): boolean => el?.className === 'scroll' && el.firstElementChild?.tagName === 'TABLE';
+    const versionsTable = (el: Element | null | undefined): boolean => el?.className === 'table-wrap' && el.firstElementChild?.tagName === 'TABLE';
     const openAt = (i: number): void => { (must(page.all('main table button').filter((b) => b.textContent === 'Open' || b.textContent === 'Hide')[i], `decision ${i}`) as HTMLButtonElement).click(); };
     openAt(cutAt);
     const heading = await page.until(() => page.all('main .card h3').find((x) => x.textContent === CUT_HEADING), 'the cut chain\'s heading');
     expect(page.all('main .card h3').map((x) => x.textContent)).not.toContain(WHOLE_HEADING);
     const beside = must(heading.nextElementSibling, 'the element after the heading');
-    expect([beside.tagName, beside.className, beside.textContent]).toEqual(['P', 'badbox small', decisionWhy]);
+    expect([beside.tagName, beside.className, beside.textContent]).toEqual(['P', 'note note--danger', decisionWhy]);
     expect(versionsTable(beside.nextElementSibling)).toBe(true);
-    // Its printed summary says the same, before the versions it lists.
+    // Its printed summary says the same, before the versions it lists. The first "Print summary" is the open decision card's.
+    expect([...page.all('button')].find((b) => b.textContent === 'Print summary')?.closest('main .card') ?? null).not.toBeNull();
     page.click('Print summary');
     const printed = await page.until(() => page.all('#print h2').find((x) => x.textContent === CUT_HEADING), 'the printed heading');
     expect(page.all('#print h2').map((x) => x.textContent)).not.toContain(WHOLE_HEADING);
     const printedWhy = must(printed.nextElementSibling, 'the element after the printed heading');
-    expect([printedWhy.tagName, printedWhy.className, printedWhy.textContent]).toEqual(['P', 'badbox', `Not every version: the chain is incomplete. ${decisionWhy}`]);
+    expect([printedWhy.tagName, printedWhy.className, printedWhy.textContent]).toEqual(['P', 'note note--danger', `Incomplete history. ${decisionWhy}`]);
     expect(versionsTable(printedWhy.nextElementSibling)).toBe(true);
 
-    // A whole chain keeps its heading, with no badbox, on the card and in print.
+    // A whole chain keeps its heading, with no danger note, on the card and in print.
     openAt(cutAt);
     openAt(wholeAt);
     const whole = await page.until(() => page.all('main .card h3').find((x) => x.textContent === WHOLE_HEADING), 'the whole chain\'s heading');
@@ -944,16 +945,16 @@ describe('work-redesign offline demo and web UI', () => {
     expect(versionsTable(whole.nextElementSibling)).toBe(true);
     page.click('Print summary');
     await page.until(() => page.all('#print h2').some((x) => x.textContent === WHOLE_HEADING), 'the whole chain printed');
-    expect(page.all('#print .badbox')).toEqual([]);
+    expect(page.all('#print .note--danger')).toEqual([]);
 
     // The grant's row says why its grantedAt may be missing.
-    page.click('Agents & grants');
-    await page.until(() => page.text().includes('Evaluate and grant'), 'the grants');
-    expect(page.all('main table td .badbox').map((x) => x.textContent)).toEqual([grantWhy]);
+    page.click('AI agents');
+    await page.until(() => page.text().includes('Grant AI permission'), 'the grants');
+    expect(page.all('main table td .note--danger').map((x) => x.textContent)).toEqual([grantWhy]);
     expect(page.errors).toEqual([]);
   }, 180_000);
 
-  it('the web UI still offers a signer whose read is refused their copy: someone removed from the registry downloads every record about their work from the no-data screen; and a line cut by a platform key the bridge no longer trusts is named in the header', async () => {
+  it('the web UI still offers a signer whose read is refused their copy: someone removed from the registry downloads every record about their work from the no-data screen; and a line cut by a platform key the bridge no longer trusts is named in the health callout', async () => {
     const pod = memoryPod();
     const clock = demoClock();
     const seed = (id: string, type: 'human' | 'agent' = 'human') => importWallet(`0x${sha256Hex(`wrd-ui-holder:${id}`)}`, type, id);
@@ -997,7 +998,7 @@ describe('work-redesign offline demo and web UI', () => {
     };
     const page = await openUi(await serve(rotated));
     await page.until(() => page.text().includes('Platform signer'), 'the records');
-    expect(page.all('header.strip p.badbox').map((p) => p.textContent).join(' ')).not.toMatch(/no longer trusts/);
+    expect(page.all('.health p.health__item--danger').map((p) => p.textContent).join(' ')).not.toMatch(/no longer trusts/);
     // Cy: her read is refused, and the no-data screen still offers her copy.
     page.select('#persona', 'cy');
     await page.until(() => page.text().includes('Only an admin or a key in this pod'), 'the refusal');
@@ -1018,11 +1019,11 @@ describe('work-redesign offline demo and web UI', () => {
     expect(page.text()).not.toContain('Only an admin or a key in this pod');
     expect(page.errors).toEqual([]);
 
-    // The old address dropped: the registry's line is cut there, and the header says so, naming the address.
+    // The old address dropped: the registry's line is cut there, and the health callout says so, naming the address.
     const alone = await openUi(await serve(compose(newKey, [])));
     const TRUST = new RegExp(`^1 of them reach a version signed by a platform key this bridge no longer trusts \\(${oldKey.address.toLowerCase()}\\)\\. Every change to them is refused \\(409\\) until the operator lists that address in WRD_TRUSTED_PLATFORM_ADDRESSES again`);
     await alone.until(() => alone.text().includes('Platform signer'), 'the records');
-    const banners = alone.all('header.strip p.badbox').map((p) => p.textContent ?? '');
+    const banners = alone.all('.health p.health__item--danger').map((p) => p.textContent ?? '');
     expect(banners).toContain('1 record chain(s) do not read back to their first version: an earlier version is missing, or is not trusted. Their history is shown as incomplete, never as whole.');
     expect(banners.some((b) => TRUST.test(b))).toBe(true);
     expect(alone.errors).toEqual([]);
@@ -1050,7 +1051,7 @@ describe('work-redesign offline demo and web UI', () => {
     const refusedHosts = [`rebind.attacker.example:${p}`, 'rebind.attacker.example', `127.0.0.1.attacker.example:${p}`, `localhost:${p + 1}`, '127.0.0.1'];
     const routes: Array<['GET' | 'POST', string]> = [
       ['GET', '/affordances?format=jsonld'], ['GET', '/wrd/list_records'], ['POST', '/wrd/demo_envelope'], ['POST', '/wrd/update_registry'],
-      ['GET', '/ui'], ['GET', '/ui/app.js'], ['POST', '/mcp'], ['GET', '/'],
+      ['GET', '/ui'], ['GET', '/ui/app.js'], ['GET', '/ui/help'], ['GET', '/ui/favicon.svg'], ['POST', '/mcp'], ['GET', '/'],
     ];
     for (const host of refusedHosts) {
       for (const [method, path] of routes) {

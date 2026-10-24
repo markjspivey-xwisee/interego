@@ -432,6 +432,12 @@ describe('work-redesign web UI: sign in with your Interego account', () => {
     const first = await openPage(w.bridge, '/ui');
     const url = await startSignIn(first);
     expect(first.text()).toContain('No wallet, and not signed in');
+    // A signed-out visitor meets a welcome, with the way to create an account on the configured identity host.
+    expect(first.text()).toContain('Welcome to Work Redesign');
+    expect(first.text()).toContain('Create your account');
+    const create = [...first.window.document.querySelectorAll('a')].find((a) => a.textContent === 'Create your account');
+    expect(create?.getAttribute('href')).toMatch(/^https:\/\//);
+    expect(create?.getAttribute('href')).toContain(IDENTITY);
 
     // The authorize URL: the client is its metadata document, the redirect its callback, both on the deployment URL.
     const p = Object.fromEntries(url.searchParams);
@@ -504,15 +510,15 @@ describe('work-redesign web UI: sign in with your Interego account', () => {
     expect(page.text()).toContain('relay-attested, not a key you hold');
 
     // A decisive act from this UI's agent: an admin (by user DID) declares a kind of task. The relay signs; the signed form is the act's body.
-    page.click('Roles');
-    await page.until(() => page.text().includes('Declare a kind of task (admin)'), 'the roles view');
-    const form = [...page.window.document.querySelectorAll('details.card')].find((x) => x.querySelector('summary')?.textContent === 'Declare a kind of task (admin)');
+    page.click('People & roles');
+    await page.until(() => page.text().includes('Add a type of task'), 'the roles view');
+    const form = [...page.window.document.querySelectorAll('details.card')].find((x) => x.querySelector('summary')?.textContent === 'Add a type of task');
     const inputs = [...(form?.querySelectorAll('input') ?? [])];
     expect(inputs).toHaveLength(3);
-    page.fill(inputs[0]!, 'invoice-matching');
-    page.fill(inputs[1]!, 'Invoice matching');
+    page.fill(inputs[0]!, 'Invoice matching');
+    page.fill(inputs[1]!, 'invoice-matching');
     page.fill(inputs[2]!, 'Match an invoice to its purchase order.');
-    page.click('Sign');
+    page.click('Add type of task');
     await page.until(() => page.log.some((r) => r.path === '/wrd/update_registry'), 'the registry change');
     await page.until(() => page.text().includes('invoice-matching') && !page.text().includes('Signing and sending'), 'the kind of task');
     const change = page.log.filter((r) => r.path === '/wrd/update_registry');
@@ -548,6 +554,8 @@ describe('work-redesign web UI: sign in with your Interego account', () => {
     expect(page.text()).toContain('the relay will also trade it, at its /identity-token, for the identity-server token behind your sign-in: that one is good for up to a day and works on your account itself');
     expect(page.text()).not.toContain('never reaches');
     const before = page.log.length;
+    // The first button reading "Sign out" is the account menu's.
+    expect([...page.window.document.querySelectorAll('button')].find((b) => b.textContent === 'Sign out')?.closest('#account-menu') ?? null).not.toBeNull();
     page.click('Sign out');
     await page.until(() => page.text().includes('Signed out: this tab no longer holds the relay\'s access token for your sign-in.'), 'the sign-out');
     expect(page.text()).toContain('Nothing was revoked: the relay offers no way to revoke it, so the token stays good at the relay until it ends, about an hour after you signed in');

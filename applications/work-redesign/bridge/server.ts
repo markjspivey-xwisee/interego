@@ -153,6 +153,9 @@ const requirePlatformKeyValue = process.env['WRD_REQUIRE_PLATFORM_KEY'];
 const publicReads = env('WRD_PUBLIC_READS') === '1';
 const key = env('WRD_PLATFORM_KEY');
 const adminAddresses = list(env('WRD_ADMIN_ADDRESSES'));
+// The web pages' "Contact us" link and the legal name on their © line; unset, the guide's contact section and "Interego".
+const contactUrl = env('WRD_CONTACT_URL');
+const legalName = env('WRD_LEGAL_NAME');
 
 // Sign in with an Interego account (relay-delegated): every value is checked here, and a malformed
 // one stops the bridge, as a malformed key does, rather than switch the route off or on unseen.
@@ -271,7 +274,10 @@ const app = createVerticalBridge({
       ontologyTurtle: readOntologyTurtle, shapesTurtle: readShapesTurtle,
     });
     // "Sign in with your Interego account" in the web UI, through WRD_RELAY_URL; it names a person only through a relay this bridge trusts.
-    attachUi(a, { base, ...(signIn.relayUrl !== null ? { signIn: { relayUrl: signIn.relayUrl, policy: uiRelayPolicy } } : {}) });
+    attachUi(a, {
+      base, ...(signIn.relayUrl !== null ? { signIn: { relayUrl: signIn.relayUrl, policy: uiRelayPolicy } } : {}),
+      ...(contactUrl || legalName ? { landing: { ...(contactUrl ? { contactHref: contactUrl } : {}), ...(legalName ? { legalName } : {}) } } : {}),
+    });
   },
 });
 
