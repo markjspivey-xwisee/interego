@@ -6,6 +6,8 @@ A GET of the Solid server's root container read and decoded every stored record 
 
 The Solid server's resource locks now expire after 90 seconds instead of 6, in both the memory-locker and Redis-locker configurations. 90 seconds is how long the gateway in front of it waits for a response. A lock expiring sooner answered 500 to work that would still have been delivered, and the work carried on without its lock.
 
+The in-memory store used by tests and the in-memory dev modes now keeps its keys sorted, so a bounded range read costs what it returns. It had scanned and sorted every key on each read, and the new listing makes one such read per child, so a root listing over 200 pods of 100 records took 98 seconds there. It now takes 10 ms.
+
 ## 2026-10-24 — Practice Evidence: the scenario list fits a phone
 
 On a phone, Practice Evidence's scenario list was 33 px wider than the screen whenever a scenario showed the badge "Rubric awaiting approval: results won't count as evidence yet". A badge never wrapped, and the list's one column grew to fit it, so the whole page scrolled sideways. In the shared design system a badge now wraps when it is too long for its container, and never grows wider than it. Work Redesign already did this for badges in its stacked tables. The scenario list's column is now capped at the screen's width. Measured on the live site at 390 px, every Practice Evidence view now fits, and nothing changes at desktop width.

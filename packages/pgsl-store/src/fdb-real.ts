@@ -109,15 +109,14 @@ export async function openRealFdb(opts: FdbRealOptions = {}): Promise<FdbLike> {
     clear: (key) => { tn.clear(toBuf(key)); },
     clearRange: (begin, end) => { tn.clearRange(toBuf(begin), toBuf(end)); },
     getRange: async (begin, end, opts) => {
-      // ★ BOUNDED AFTER THE FETCH HERE, AND THAT IS A KNOWN COMPROMISE. `getRangeAll` is used
-      // deliberately (see the note above: the iterator-returning `getRange` was a live hazard), and
-      // it takes no limit, so this trims the materialised array. The bound is therefore honoured for
-      // the CALLER — pages are correct and the cursor works — while the range scan itself is not
-      // narrowed. Fixing that means moving to the binding's limited iterator with the streaming
-      // guarantees re-established; not worth doing blind, and this backend is not the deployed one.
-      // The limit IS passed as getRangeAll's standard range option, so a binding that honours it
-      // stops early (the direct-children skip-scan in store.ts issues many small bounded reads);
-      // the slice stays, so a binding that ignores it is still bounded for the caller.
+      // ★ THE BOUND IS PASSED TO THE BINDING AND ALSO APPLIED HERE. `getRangeAll` is used
+      // deliberately (see the note above: the iterator-returning `getRange` was a live hazard). It
+      // takes the standard range options, and in foundationdb@2 (2.0.1, what CI installs) it hands
+      // `limit` to the native range read batch by batch and stops once that many rows have come
+      // back, so a bounded read fetches only what it returns. That matters for the direct-children
+      // skip-scan in store.ts, which issues one small bounded read per child. The slice stays, so a
+      // binding that ignored the option would still be bounded for the CALLER (pages correct, the
+      // cursor works), only slower. This backend is not the deployed one; CI's FDB job runs it.
       const lim = opts?.limit;
       const limited = typeof lim === 'number' && Number.isFinite(lim) && lim > 0;
       const arr: FdbKeyValue[] = limited
