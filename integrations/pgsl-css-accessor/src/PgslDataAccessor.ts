@@ -95,7 +95,8 @@ export class PgslDataAccessor implements DataAccessor {
   async getMetadata(identifier: ResourceIdentifier): Promise<RepresentationMetadata> {
     if (identifier.path.endsWith('/')) {
       const st = await this.ldp.stat(this.pod, identifier.path);
-      const exists = st !== null || (await this.ldp.listChildren(this.pod, identifier.path)).length > 0;
+      // A container with no marker exists while anything lives under it; asking costs one row.
+      const exists = st !== null || await this.ldp.hasChildren(this.pod, identifier.path);
       if (!exists) throw new NotFoundHttpError();
       const md = await this.baseMetadata(identifier, st?.meta);
       md.add(RDF.terms.type, LDP.terms.Container);

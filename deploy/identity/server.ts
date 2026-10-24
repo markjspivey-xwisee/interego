@@ -46,6 +46,7 @@ import {
   deriveUserIdFromDid,
 } from './derive-userid.js';
 import { resolveTargetUserId } from './resolve-target-userid.js';
+import { claimFirstSignIn, type FirstSignInOutcome } from './first-sign-in.js';
 import { authenticatePasskey, PasskeyPersistenceError } from './passkey-authentication.js';
 import { listPods, loadAccounts, readPodJson, type AccountLoadReport, type FetchLike } from './account-index.js';
 import { createProvisionalPlayProvider } from './provisional-play-provider.js';
@@ -61,6 +62,7 @@ import {
   type DelegationScope,
 } from './surface-agent-restore.js';
 import { enrollProvisionalCredential } from './provisional-play-enrollment.js';
+import { clientIp, createLimiter, rateLimit, sendRateLimited } from './rate-limit.js';
 import { forwardAsyncRouteErrors, installProcessSafetyNet, routeErrorHandler } from './route-errors.js';
 
 // ── Lazy heavy imports ──────────────────────────────────────
@@ -402,6 +404,46 @@ function parseEd25519DidKey(did: string): { ok: true; publicKey: Buffer; format:
   };
 }
 
+/**
+ * The raw 32-byte Ed25519 key in a `publicKeyMultibase` value: the W3C form
+ * 'z' + base58btc(0xed 0x01 || key) first, then the legacy 'z' + base64url(key) this server
+ * once emitted, which clients still send and pods still hold. Null when neither yields a key.
+ */
+function decodeEd25519PublicKeyMultibase(value: unknown): { publicKey: Buffer; format: 'base58btc' | 'base64url-legacy' } | null {
+  if (typeof value !== 'string' || !value.startsWith('z')) return null;
+  const encoded = value.slice(1);
+  try {
+    const decoded = base58btcDecode(encoded);
+    if (decoded.length === 34
+      && decoded[0] === ED25519_MULTICODEC[0]
+      && decoded[1] === ED25519_MULTICODEC[1]) {
+      return { publicKey: Buffer.from(decoded.subarray(2)), format: 'base58btc' };
+    }
+  } catch { /* fall through */ }
+  try {
+    const legacy = Buffer.from(encoded, 'base64url');
+    if (legacy.length >= 32) return { publicKey: Buffer.from(legacy.subarray(legacy.length - 32)), format: 'base64url-legacy' };
+  } catch { /* fall through */ }
+  return null;
+}
+
+/**
+ * Whether an account lists `did` with this key. A did:key is its own key. Any other DID was
+ * verified against a key the caller supplied, so the account must hold that same key for it;
+ * keys are compared as raw bytes, so either encoding of one key matches.
+ */
+function accountHoldsDidKey(m: AuthMethods, did: string, keyFromDid: boolean, publicKeyRaw: Buffer): boolean {
+  return m.didKeys.some(k => k.did === did
+    && (keyFromDid || decodeEd25519PublicKeyMultibase(k.publicKeyMultibase)?.publicKey.equals(publicKeyRaw) === true));
+}
+
+/**
+ * The refusals of /auth/did. A DID that is not a did:key gets one answer whether or not some
+ * account lists it, so the answer does not say which DIDs are registered here.
+ */
+const DID_NOT_REGISTERED = 'This DID is not registered. Sign in with an existing credential for this account and add this DID from there.';
+const DID_KEY_NOT_REGISTERED = 'This DID is not registered with this key, and only a did:key can open an account by itself. Sign in with an existing credential and add this DID from there.';
+
 function generateEd25519(): KeyPair {
   // Ed25519 — signing / authentication / assertionMethod.
   const { publicKey, privateKey } = crypto.generateKeyPairSync('ed25519');
@@ -717,7 +759,10 @@ async function fetchPodAuthMethods(
   return normaliseAuthMethods(body, userId);
 }
 
-async function putPodAuthMethods(userId: string, methods: AuthMethods): Promise<void> {
+// `ifAbsent`: write only if the pod has no auth-methods document yet (If-None-Match: *); when
+// it has one, nothing is written and this throws PodDocumentExistsError.
+class PodDocumentExistsError extends Error {}
+async function putPodAuthMethods(userId: string, methods: AuthMethods, opts: { ifAbsent?: boolean } = {}): Promise<void> {
   const url = podAuthMethodsUrl(userId);
   // Ensure pod container exists first (idempotent).
   try {
@@ -732,9 +777,10 @@ async function putPodAuthMethods(userId: string, methods: AuthMethods): Promise<
   } catch { /* best-effort */ }
   const r = await fetch(url, {
     method: 'PUT',
-    headers: { 'Content-Type': 'application/ld+json' },
+    headers: { 'Content-Type': 'application/ld+json', ...(opts.ifAbsent ? { 'If-None-Match': '*' } : {}) },
     body: JSON.stringify(methods, null, 2),
   });
+  if (opts.ifAbsent && r.status === 412) throw new PodDocumentExistsError(`${url} exists`);
   if (!r.ok && r.status !== 205) {
     throw new Error(`PUT ${url} failed: ${r.status} ${r.statusText}`);
   }
@@ -744,6 +790,50 @@ async function putPodAuthMethods(userId: string, methods: AuthMethods): Promise<
   // Record that auth-methods.jsonld now exists on the pod so future
   // restarts can short-circuit re-writes (relay's bootstrappedPods pattern).
   bootstrapUserIds.add(userId);
+}
+
+/**
+ * A first-time wallet or DID sign-in to `userId` (first-sign-in.ts): read the account's pod
+ * under its mutex and create the account only if the pod holds no credentials, so a
+ * credential the indexes missed never replaces the ones the account already has. A
+ * 'returning' account is loaded into the indexes; nothing else is touched unless 'created'.
+ */
+async function claimFirstSignInOnPod(
+  userId: string,
+  agentId: string,
+  displayName: string,
+  holds: (methods: AuthMethods) => boolean,
+  add: (methods: AuthMethods) => void,
+  mayCreate = true,
+): Promise<FirstSignInOutcome<AuthMethods>> {
+  const outcome = await withIdentityPodMutex(userId, () => claimFirstSignIn<AuthMethods>({
+    mayCreate,
+    read: async () => {
+      // A deferred write still queued behind this mutex is what the pod is about to hold.
+      const pending = identityPendingPodWrites.has(userId) ? authMethodsCache.get(userId) : undefined;
+      if (pending) return pending.value;
+      const body = await readPodJson(podFetch, podAuthMethodsUrl(userId));
+      return body === null ? null : normaliseAuthMethods(body, userId);
+    },
+    holds,
+    build: existing => {
+      // A document without credentials keeps what it records (its session epoch above all).
+      const methods = existing ? { ...structuredClone(existing), agentId } : emptyAuthMethods(userId, displayName, agentId);
+      add(methods);
+      return methods;
+    },
+    create: async (methods, ifAbsent) => {
+      try {
+        await putPodAuthMethods(userId, methods, { ifAbsent });
+        return true;
+      } catch (err) {
+        if (err instanceof PodDocumentExistsError) return false;
+        throw err;
+      }
+    },
+  }));
+  if (outcome.kind === 'returning') adoptAccount(userId, outcome.methods);
+  return outcome;
 }
 
 async function commitCredentialEnrollment(
@@ -1164,10 +1254,15 @@ async function loadAccountFromPod(userId: string): Promise<boolean> {
       if (provisionalPlay.open(m.provisionalPlayAnchor, true).userId !== userId) return false;
     } catch { return false; }
   }
+  adoptAccount(userId, m);
+  return true;
+}
+
+// An account read from its pod becomes known: identity shell, auth-methods cache, indexes.
+function adoptAccount(userId: string, m: AuthMethods): void {
   hydrateFromAuthMethods(m);
   authMethodsCache.set(userId, { value: m, fetchedAt: Date.now() });
   rebuildIndexesForUser(userId, m);
-  return true;
 }
 
 // What the last pass over the pods found, for /health: the accounts loaded, and the pods
@@ -1928,60 +2023,11 @@ app.use(corsMiddleware({
 //   - Challenge nonces: minted as part of every auth ceremony. 60/min
 //     accommodates retries + multiple methods.
 //   - Token issue / verify: per-session, low volume.
+//   - GET /auth-methods/me: per verified account, not per IP (see the
+//     route). The relay reads it with each user's bearer from its one
+//     address, so a per-IP cap there is one budget for every relay user.
 //
-// In-memory implementation is fine for a single-container Azure
-// Container Apps deployment. For multi-instance deployments, replace
-// with a Redis-backed counter so limits are shared across replicas.
-
-interface RateLimitEntry {
-  count: number;
-  resetAt: number;
-}
-
-const rateLimitBuckets = new Map<string, Map<string, RateLimitEntry>>();
-
-function rateLimit(bucketName: string, opts: { windowMs: number; max: number }) {
-  if (!rateLimitBuckets.has(bucketName)) rateLimitBuckets.set(bucketName, new Map());
-  const bucket = rateLimitBuckets.get(bucketName)!;
-  return (req: express.Request, res: express.Response, next: express.NextFunction): void => {
-    // req.ip honors trust-proxy when set; for Container Apps deployments
-    // the platform terminates TLS at the ingress and the real client IP
-    // is in X-Forwarded-For. Trust the first hop only (set above in
-    // app.set('trust proxy', 1) when configured at deploy time).
-    const ip = req.ip ?? req.socket.remoteAddress ?? 'unknown';
-    const now = Date.now();
-    let entry = bucket.get(ip);
-    if (!entry || entry.resetAt < now) {
-      entry = { count: 0, resetAt: now + opts.windowMs };
-      bucket.set(ip, entry);
-    }
-    entry.count++;
-    if (entry.count > opts.max) {
-      const retryAfterSec = Math.ceil((entry.resetAt - now) / 1000);
-      res.setHeader('Retry-After', String(retryAfterSec));
-      res.status(429).json({
-        error: 'rate_limit_exceeded',
-        title: 'Too many requests',
-        detail: `${opts.max} requests in a ${opts.windowMs / 1000}s window for ${bucketName} on this IP. Retry in ${retryAfterSec}s.`,
-        retryAfterSeconds: retryAfterSec,
-      });
-      return;
-    }
-    next();
-  };
-}
-
-// Periodic cleanup of expired entries so a long-lived process doesn't
-// accumulate entries from one-off attackers. Runs every 5 minutes;
-// `unref` keeps Node from holding the event loop open for it.
-setInterval(() => {
-  const now = Date.now();
-  for (const bucket of rateLimitBuckets.values()) {
-    for (const [ip, entry] of bucket) {
-      if (entry.resetAt < now) bucket.delete(ip);
-    }
-  }
-}, 5 * 60 * 1000).unref();
+// The counters live in rate-limit.ts (in-memory, per process).
 
 const authEnrollLimiter = rateLimit('auth-enroll', { windowMs: 60_000, max: 30 });
 const challengeLimiter = rateLimit('challenges', { windowMs: 60_000, max: 60 });
@@ -1991,6 +2037,14 @@ const tokenLimiter = rateLimit('tokens', { windowMs: 60_000, max: 60 });
 // the table.
 const siweVerifyLimiter = rateLimit('siwe-verify', { windowMs: 60_000, max: 10 });
 const webfingerLimiter = rateLimit('webfinger', { windowMs: 60_000, max: 120 });
+// GET /auth-methods/me. A token this server signed counts against the account it names: the
+// relay reads a user's registered signing keys once for every client-signed write it makes for
+// them, so 120/min (two a second, sustained) is well above what one person's surfaces produce
+// together while still bounding the verifications and pod reads one account's tokens cause.
+// A missing bearer or one this server did not sign counts against the IP at the auth-enroll
+// rate, so forged tokens cannot be used to hammer the route either.
+const authMethodsUserLimiter = createLimiter('auth-methods-me', { windowMs: 60_000, max: 120 });
+const authMethodsFailureLimiter = createLimiter('auth-methods-me-unauthenticated', { windowMs: 60_000, max: 30 });
 
 // ── Browser-friendly landing page ─────────────────────────────────
 //
@@ -2436,21 +2490,42 @@ app.post('/auth/siwe', authEnrollLimiter, async (req, res) => {
       return;
     }
     const targetUserId = resolved.targetUserId;
+    const displayName = identities.get(targetUserId)?.name ?? String(name ?? targetUserId);
+    const def = defaultAgentForRegistration(targetUserId, displayName, surfaceAgent);
+    const agentId = [...identities.values()].find(i => i.type === 'agent' && i.owner === targetUserId)?.id ?? def.agentId;
 
-    if (!identities.has(targetUserId)) {
-      const displayName = String(name ?? targetUserId);
+    // Not in the wallet index is not "no such account": the pod may be one that was not
+    // loaded, or this wallet may have been removed from it. Read the pod before writing, and
+    // create the account only if it holds no credentials (first-sign-in.ts). This costs the
+    // first sign-in a pod read and a synchronous write, which FIX A had deferred; a blind
+    // deferred write is what replaced whole accounts with one wallet.
+    const outcome = await claimFirstSignInOnPod(targetUserId, agentId, displayName,
+      m => m.walletAddresses.some(a => a.toLowerCase() === recoveredAddress),
+      m => { m.walletAddresses.push(recoveredAddress); });
+    if (outcome.kind === 'unreadable' || outcome.kind === 'unconfirmed') {
+      log(`WARN: first-time SIWE sign-in to ${targetUserId} not completed (${outcome.kind}): ${outcome.reason}`);
+      // Nothing was written, so a bootstrap invite spent by resolveTargetUserId is still
+      // unused: give it back, or every retry is refused as "already consumed".
+      if (resolved.mode === 'bootstrap') CONSUMED_INVITES.delete(targetUserId);
+      res.status(503).json({
+        error: 'Could not read this account just now',
+        detail: 'The pod holding this account did not answer. Nothing was changed; try signing in again in a minute.',
+      });
+      return;
+    }
+    if (outcome.kind === 'refused') {
+      res.status(401).json({ error: 'This wallet is not registered. Sign in with an existing credential for this account and add this wallet from there.' });
+      return;
+    }
+    if (outcome.kind === 'returning') {
+      // adoptAccount loaded it; this is a sign-in, and nothing was written.
+      log(`Wallet ${recoveredAddress} signed in to ${targetUserId}, loaded from its pod (not in the wallet index)`);
+    } else if (!identities.has(targetUserId)) {
       seedIdentity(targetUserId, 'user', displayName);
-      const def = defaultAgentForRegistration(targetUserId, displayName, surfaceAgent);
       seedIdentity(def.agentId, 'agent', def.label, targetUserId, 'ReadWrite');
     }
     user = identities.get(targetUserId)!;
-    const agentId = [...identities.values()].find(i => i.type === 'agent' && i.owner === targetUserId)?.id
-      ?? defaultAgentForRegistration(targetUserId, user.name, surfaceAgent).agentId;
-    const methods = emptyAuthMethods(user.id, user.name, agentId);
-    methods.walletAddresses.push(recoveredAddress);
-    inlineApplyAuthMethods(user.id, methods);
-    scheduleDeferredAuthMethodsWrite(user.id, methods, 'siwe-first-time');
-    if (timingEnabled()) logTiming('siwe-pod-write-scheduled', requestStart, { branch: 'first-time' });
+    if (timingEnabled()) logTiming('siwe-pod-write-completed', requestStart, { branch: 'first-time' });
     // FIX A: identity-server no longer mirrors /profile/card or /<id>/agents.
     // The relay is now the single authoritative writer for both pod-side
     // documents and does so synchronously inside /oauth/verify before
@@ -2459,7 +2534,7 @@ app.post('/auth/siwe', authEnrollLimiter, async (req, res) => {
     // causing CSS file-backend HTTP 500s on the second OAuth ("Read counter
     // would become negative" on /profile/card) and a ~10s 404 window for
     // any client polling those URLs immediately after auth.
-    log(`First-time SIWE registration: ${targetUserId} wallet=${recoveredAddress} defaultAgent=${agentId} (surfaceHint=${surfaceAgent ?? 'none'})`);
+    if (outcome.kind === 'created') log(`First-time SIWE registration: ${targetUserId} wallet=${recoveredAddress} defaultAgent=${agentId} (surfaceHint=${surfaceAgent ?? 'none'})`);
   } else {
     // Add-wallet (authenticated) path — append if not already bound.
     try {
@@ -2846,7 +2921,10 @@ app.post('/auth/webauthn/authenticate', authEnrollLimiter, async (req, res) => {
 /**
  * POST /auth/did — verify an Ed25519 signature against a pre-registered
  * DID key. Supports did:key (self-sovereign, public-key-encoded-as-DID)
- * and did:web (DID document hosted at an https URL we can fetch).
+ * and other DIDs such as did:web, whose key the caller sends in
+ * publicKeyMultibase (no DID document is fetched). Such a DID signs in
+ * only to an account that lists it with that key, and cannot open an
+ * account by itself: add it with a bearer token (or bootstrap invite).
  *
  * Body: {
  *   did: string,              // did:key:z... or did:web:...
@@ -2854,7 +2932,7 @@ app.post('/auth/webauthn/authenticate', authEnrollLimiter, async (req, res) => {
  *   signature: string,        // base64url Ed25519 signature of nonce
  *   userId?: string,          // first-time: register this DID to this user
  *   name?: string,            // first-time display name
- *   publicKeyMultibase?: string,  // for did:key, or first-time registration
+ *   publicKeyMultibase?: string,  // required for a DID that is not a did:key
  * }
  */
 app.post('/auth/did', authEnrollLimiter, async (req, res) => {
@@ -2866,8 +2944,11 @@ app.post('/auth/did', authEnrollLimiter, async (req, res) => {
     bootstrapUserId, bootstrapInvite,
     surfaceAgent,
   } = req.body ?? {};
-  if (!did || !nonce || !signature) {
-    res.status(400).json({ error: 'did, nonce, and signature are required' });
+  // Strings only: a JSON array or object here threw in did.startsWith below, and an async
+  // handler's rejection is not caught, so one such body ended the process.
+  if (!did || !nonce || !signature
+    || typeof did !== 'string' || typeof nonce !== 'string' || typeof signature !== 'string') {
+    res.status(400).json({ error: 'did, nonce, and signature are required strings' });
     return;
   }
   const ch = consumeChallenge(nonce, 'did-sig');
@@ -2884,12 +2965,14 @@ app.post('/auth/did', authEnrollLimiter, async (req, res) => {
   let publicKeyRaw: Buffer;
   let didKeyFormat: 'base58btc' | 'base64url-legacy' | null = null;
   const parseStart = timingEnabled() ? startTiming() : 0;
-  const cached = getCachedParsedDid(did);
+  // A did:key names its own key; any other DID is verified against the key the caller sends.
+  const keyFromDid = did.startsWith('did:key:z') && did.length > 10;
+  const cached = keyFromDid ? getCachedParsedDid(did) : undefined;
   if (cached) {
     publicKeyRaw = cached.publicKeyRaw;
     didKeyFormat = cached.format;
     if (timingEnabled()) logTiming('did-parse', parseStart, { did: did.slice(0, 24), cache: 'hit' });
-  } else if (did.startsWith('did:key:z') && did.length > 10) {
+  } else if (keyFromDid) {
     // Per W3C did:key spec: 'z' + base58btc(0xed 0x01 || rawKey32) for
     // Ed25519. We accept the spec form first and the legacy
     // 'z' + base64url(rawKey32) shape this server originally emitted as
@@ -2904,41 +2987,20 @@ app.post('/auth/did', authEnrollLimiter, async (req, res) => {
     didKeyFormat = parsed.format;
     setCachedParsedDid(did, publicKeyRaw, didKeyFormat);
     if (timingEnabled()) logTiming('did-parse', parseStart, { did: did.slice(0, 24), cache: 'miss', format: didKeyFormat });
-  } else if (publicKeyMultibase?.startsWith('z')) {
-    // Caller-supplied publicKeyMultibase for non-did:key DIDs (did:web, etc.).
-    // Try W3C base58btc-with-multicodec first; fall back to the legacy
-    // base64url form for back-compat.
-    const encoded = publicKeyMultibase.slice(1);
-    let resolved: Buffer | null = null;
-    let resolvedFormat: 'base58btc' | 'base64url-legacy' | null = null;
-    try {
-      const decoded = base58btcDecode(encoded);
-      if (decoded.length === 34
-        && decoded[0] === ED25519_MULTICODEC[0]
-        && decoded[1] === ED25519_MULTICODEC[1]) {
-        resolved = Buffer.from(decoded.subarray(2));
-        resolvedFormat = 'base58btc';
-      }
-    } catch { /* fall through */ }
-    if (!resolved) {
-      try {
-        const legacy = Buffer.from(encoded, 'base64url');
-        if (legacy.length >= 32) {
-          resolved = Buffer.from(legacy.subarray(legacy.length - 32));
-          resolvedFormat = 'base64url-legacy';
-          log(`[did-key-legacy] accepted base64url-encoded publicKeyMultibase for ${did}; client should migrate to W3C base58btc encoding`);
-        }
-      } catch { /* fall through */ }
-    }
-    if (!resolved || !resolvedFormat) {
+  } else if (typeof publicKeyMultibase === 'string' && publicKeyMultibase.startsWith('z')) {
+    // Caller-supplied publicKeyMultibase for non-did:key DIDs (did:web, etc.). It proves only
+    // that the caller holds this key, so it is checked against the account below, and it is
+    // never cached: a key one caller sent must not stand in for another caller's request.
+    const decoded = decodeEd25519PublicKeyMultibase(publicKeyMultibase);
+    if (!decoded) {
       res.status(400).json({ error: 'Could not decode publicKeyMultibase — tried W3C base58btc(0xed 0x01 || key) and legacy base64url(rawKey); neither yielded a 32-byte Ed25519 public key' });
       return;
     }
-    publicKeyRaw = resolved;
-    // Cache the parsed result for did:web too — TTL is 60s per the
-    // did-parse module so a rotated did:web key still surfaces quickly.
-    setCachedParsedDid(did, publicKeyRaw, resolvedFormat);
-    if (timingEnabled()) logTiming('did-parse', parseStart, { did: did.slice(0, 24), cache: 'miss', format: resolvedFormat, source: 'multibase' });
+    if (decoded.format === 'base64url-legacy') {
+      log(`[did-key-legacy] accepted base64url-encoded publicKeyMultibase for ${did}; client should migrate to W3C base58btc encoding`);
+    }
+    publicKeyRaw = decoded.publicKey;
+    if (timingEnabled()) logTiming('did-parse', parseStart, { did: did.slice(0, 24), cache: 'none', format: decoded.format, source: 'multibase' });
   } else {
     res.status(400).json({ error: 'Supply publicKeyMultibase alongside non-did:key DIDs' });
     return;
@@ -2989,6 +3051,26 @@ app.post('/auth/did', authEnrollLimiter, async (req, res) => {
   let userId = didIndex.get(did);
   let user = userId ? identities.get(userId) : undefined;
   if (timingEnabled()) logTiming('did-index-lookup', indexLookupStart, { hit: !!user });
+  // The DID string names the account; for a DID that is not its own key, the signature proved
+  // only that the caller holds the key it sent. Sign in only if the account holds that key for
+  // this DID. An unreadable pod gives no keys, so it refuses rather than trusting the DID.
+  if (user && !keyFromDid && !accountHoldsDidKey(await readAuthMethods(user.id, /* allowStale */ true), did, keyFromDid, publicKeyRaw)) {
+    // The index names whichever account listing this DID was loaded last, which may not be its
+    // owner's (two accounts list it, or one bound it before keys were checked). Try the account
+    // derived from the DID before refusing; a pod that cannot be read signs nobody in.
+    const derivedId = deriveUserIdFromDid(did);
+    const derived = derivedId === user.id ? 'absent' : await ensureAccountLoaded(derivedId);
+    if (derived === 'unreadable') {
+      res.status(503).json({ error: 'Could not read this account just now', detail: 'Nothing was changed; try signing in again in a minute.' });
+      return;
+    }
+    if (derived !== 'loaded' || !accountHoldsDidKey(await readAuthMethods(derivedId, /* allowStale */ true), did, keyFromDid, publicKeyRaw)) {
+      res.status(401).json({ error: DID_KEY_NOT_REGISTERED });
+      return;
+    }
+    userId = derivedId;
+    user = identities.get(derivedId)!;
+  }
 
   // Authenticated add-did: bearer token binds this DID to the caller.
   if (!user) {
@@ -2998,6 +3080,21 @@ app.post('/auth/did', authEnrollLimiter, async (req, res) => {
       if (tr.valid) {
         userId = tr.record!.userId;
         user = identities.get(userId);
+      }
+    }
+    // A DID that is not a did:key is bound with a key the caller chose. Binding one another
+    // account lists would point the index at the binder and lock its owner out, so refuse it.
+    // The index may not have seen the owner's account yet: load the one derived from the DID.
+    if (user && !keyFromDid) {
+      const derivedId = deriveUserIdFromDid(did);
+      if (derivedId !== user.id && (await ensureAccountLoaded(derivedId)) === 'unreadable') {
+        res.status(503).json({ error: 'Could not check this DID just now', detail: 'Nothing was changed; try again in a minute.' });
+        return;
+      }
+      const holder = didIndex.get(did);
+      if (holder !== undefined && holder !== user.id) {
+        res.status(409).json({ error: 'This DID is registered to another account. Sign in to that account to manage it.' });
+        return;
       }
     }
   }
@@ -3032,37 +3129,56 @@ app.post('/auth/did', authEnrollLimiter, async (req, res) => {
       return;
     }
     const targetUserId = resolved.targetUserId;
+    const displayName = identities.get(targetUserId)?.name ?? String(name ?? targetUserId);
+    const def = defaultAgentForRegistration(targetUserId, displayName, surfaceAgent);
+    const agentId = [...identities.values()].find(i => i.type === 'agent' && i.owner === targetUserId)?.id ?? def.agentId;
 
-    if (!identities.has(targetUserId)) {
-      const displayName = String(name ?? targetUserId);
+    // As for SIWE: a DID missing from didIndex may still be on its account's pod, or have
+    // been removed from it. Read the pod first and create the account only if it holds no
+    // credentials (first-sign-in.ts). FIX A deferred this write off the response path; it is
+    // synchronous now, because the deferred write was blind and could replace a whole account.
+    // Only a did:key can open an account by itself: nothing here proves that a key the caller
+    // supplied belongs to any other DID (no DID document is fetched), so such a DID signs in
+    // to an account whose pod lists it with this key, or is added from a signed-in account.
+    const mayCreate = keyFromDid || resolved.mode !== 'derive';
+    const outcome = await claimFirstSignInOnPod(targetUserId, agentId, displayName,
+      m => accountHoldsDidKey(m, did, keyFromDid, publicKeyRaw),
+      m => {
+        m.didKeys.push({
+          did,
+          publicKeyMultibase: canonicalPublicKeyMultibase,
+          keyType: 'Ed25519VerificationKey2020',
+          createdAt: new Date().toISOString(),
+        });
+      }, mayCreate);
+    if (outcome.kind === 'unreadable' || outcome.kind === 'unconfirmed') {
+      log(`WARN: first-time DID sign-in to ${targetUserId} not completed (${outcome.kind}): ${outcome.reason}`);
+      // Nothing was written, so a bootstrap invite spent by resolveTargetUserId is still
+      // unused: give it back, or every retry is refused as "already consumed".
+      if (resolved.mode === 'bootstrap') CONSUMED_INVITES.delete(targetUserId);
+      res.status(503).json({
+        error: 'Could not read this account just now',
+        detail: 'The pod holding this account did not answer. Nothing was changed; try signing in again in a minute.',
+      });
+      return;
+    }
+    if (outcome.kind === 'refused') {
+      res.status(401).json({ error: keyFromDid ? DID_NOT_REGISTERED : DID_KEY_NOT_REGISTERED });
+      return;
+    }
+    if (outcome.kind === 'returning') {
+      // adoptAccount loaded it; this is a sign-in, and nothing was written.
+      log(`DID ${did} signed in to ${targetUserId}, loaded from its pod (not in the DID index)`);
+    } else if (!identities.has(targetUserId)) {
       seedIdentity(targetUserId, 'user', displayName);
-      const def = defaultAgentForRegistration(targetUserId, displayName, surfaceAgent);
       seedIdentity(def.agentId, 'agent', def.label, targetUserId, 'ReadWrite');
     }
     user = identities.get(targetUserId)!;
-    const agentId = [...identities.values()].find(i => i.type === 'agent' && i.owner === targetUserId)?.id
-      ?? defaultAgentForRegistration(targetUserId, user.name, surfaceAgent).agentId;
-    const methods = emptyAuthMethods(user.id, user.name, agentId);
-    methods.didKeys.push({
-      did,
-      publicKeyMultibase: canonicalPublicKeyMultibase,
-      keyType: 'Ed25519VerificationKey2020',
-      createdAt: new Date().toISOString(),
-    });
-    // FIX A: defer the pod-side PUT off the hot response path. The
-    // in-memory record (cache + didIndex + walletIndex + credentialIndex)
-    // is updated SYNCHRONOUSLY first so any concurrent /auth/did or
-    // verifyToken from this user immediately sees the new credential —
-    // no pod read required for the new user's first token to verify.
-    // The actual ~2.5s CSS PUT runs in the background under the per-
-    // userId mutex; failures retry + log at ERROR for operator alerting.
-    inlineApplyAuthMethods(user.id, methods);
-    scheduleDeferredAuthMethodsWrite(user.id, methods, 'did-first-time');
-    if (timingEnabled()) logTiming('did-pod-write-scheduled', requestStart, { branch: 'first-time' });
+    if (timingEnabled()) logTiming('did-pod-write-completed', requestStart, { branch: 'first-time' });
     // FIX A: identity-server no longer mirrors /profile/card or /<id>/agents.
     // Single authoritative pod-side writer is the relay's /oauth/verify
     // handler. See SIWE first-touch comment above for background.
-    log(`First-time DID registration: ${targetUserId} did=${did} defaultAgent=${agentId} (surfaceHint=${surfaceAgent ?? 'none'})`);
+    if (outcome.kind === 'created') log(`First-time DID registration: ${targetUserId} did=${did} defaultAgent=${agentId} (surfaceHint=${surfaceAgent ?? 'none'})`);
   } else {
     // Add-did (authenticated) path — append if not already bound.
     try {
@@ -3825,14 +3941,28 @@ app.post('/wallet/link', authEnrollLimiter, async (req, res) => {
  * admin dump. No userId path parameter, no lookup by arbitrary id;
  * the token's userId is authoritative.
  */
-app.get('/auth-methods/me', authEnrollLimiter, async (req, res) => {
-  const authHeader = req.headers.authorization;
-  if (!authHeader?.startsWith('Bearer ')) {
-    res.status(401).json({ error: 'Bearer token required' });
+app.get('/auth-methods/me', async (req, res) => {
+  // Every request is counted, synchronously, before anything here awaits, so a concurrent
+  // burst cannot slip past a count that lands only after verification. A bearer this server
+  // did not sign (or none) counts against the address; the HMAC check that decides that is
+  // the only work it gets. A signed token counts against the account it names, revoked or
+  // expired ones included, so one account's stale tokens cannot use up the address's budget
+  // that every other relay user's reads arrive under.
+  const bearer = req.headers.authorization?.startsWith('Bearer ') ? req.headers.authorization.slice(7) : undefined;
+  const signed = bearer === undefined ? undefined : parseAndVerifySignature(bearer);
+  if (bearer === undefined || signed?.valid !== true) {
+    const ipWait = authMethodsFailureLimiter.hit(clientIp(req));
+    if (ipWait !== null) { sendRateLimited(res, authMethodsFailureLimiter, ipWait); return; }
+    res.status(401).json({ error: signed ? `Invalid bearer token: ${(signed as { reason: string }).reason}` : 'Bearer token required' });
     return;
   }
-  const tr = await verifyToken(authHeader.slice(7));
-  if (!tr.valid) { res.status(401).json({ error: `Invalid bearer token: ${tr.reason}` }); return; }
+  const userWait = authMethodsUserLimiter.hit(signed.payload.userId);
+  if (userWait !== null) { sendRateLimited(res, authMethodsUserLimiter, userWait, 'for this account'); return; }
+  const tr = await verifyToken(bearer);
+  if (!tr.valid) {
+    res.status(401).json({ error: `Invalid bearer token: ${tr.reason}` });
+    return;
+  }
   const userId = tr.record!.userId;
   const methods = await readAuthMethods(userId);
   const forSigning = req.query.purpose === 'client-signature';

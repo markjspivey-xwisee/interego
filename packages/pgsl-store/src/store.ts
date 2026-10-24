@@ -42,6 +42,7 @@ import {
   ovrKey,
   prKey,
   rgtKey,
+  strinc,
 } from './keyspace.js';
 import { decodeJson, decodeNode, encodeJson, encodeNode, type StoredNode } from './node.js';
 import type { AtomAccessAttributes } from './attributes.js';
@@ -57,6 +58,32 @@ const dec = new TextDecoder();
 export interface PutResult { created: boolean; }
 export interface PutManyResult { created: number; dedup: number; }
 export interface ComposeResult { created: number; dedup: number; topUri: string; }
+/** One direct child of a control-plane id prefix, split at '/' (see `cpListChildren`). */
+export interface CpChild<T> {
+  /** A leaf's full id, or a branch's sub-prefix (ending in '/'). */
+  id: string;
+  /** True for a sub-prefix that has entries under it (an LDP child container). */
+  branch: boolean;
+  /** The leaf's document, or the branch's own entry stored at exactly `id`, if any. */
+  value: T | undefined;
+}
+const SLASH = 0x2f;
+// Batch sizes for the direct-children skip-scan. A batch restarts small after it met a branch,
+// because the rows after a branch's first row are mostly its subtree; it doubles over a run of
+// leaves. So no child costs more than CHILD_BATCH_MAX - 1 wasted rows, however deep it is.
+const CHILD_BATCH_FIRST = 8;
+const CHILD_BATCH_MAX = 256;
+function compareKeys(a: Uint8Array, b: Uint8Array): number {
+  const n = Math.min(a.length, b.length);
+  for (let i = 0; i < n; i++) if (a[i] !== b[i]) return a[i]! - b[i]!;
+  return a.length - b.length;
+}
+/** The first key strictly after `key` in bytewise order (the cursor rule in fdb-like.ts). */
+function keyAfter(key: Uint8Array): Uint8Array {
+  const out = new Uint8Array(key.length + 1);
+  out.set(key);
+  return out;
+}
 class ResourceWriteRace extends Error {}
 // Provenance is edge/context metadata; immutable node content must agree even
 // when the same bytes are projected with a different media type or attribution.
@@ -419,6 +446,57 @@ export class PgslStore {
       const rows = await txn.getRange(begin, end);
       return rows.map((r) => ({ id: cpIdFromKey(collection, r.key), value: decodeJson<T>(r.value) }));
     });
+  }
+
+  /**
+   * The DIRECT children of an id prefix, splitting ids at '/': a leaf is an id with no further
+   * '/', a branch is the sub-prefix up to and including the next '/'. Ascending bytewise by key.
+   *
+   * ★ BOUNDED BY THE CHILDREN, NOT BY THE DESCENDANTS. `cpList` over the prefix reads and decodes
+   * every row beneath it; for an LDP root that is every record of every pod on the server, and it
+   * was the 6-15 s root GET that outlived CSS's lock (2026-10-22). This walks the ordered keyspace
+   * instead: leaves are read in batches, and at a branch's first row the cursor jumps to
+   * strinc(branch prefix), past its whole subtree. A branch's subtree is one contiguous key range,
+   * and its own entry (the container marker), when present, is the first key in it.
+   */
+  async cpListChildren<T = unknown>(collection: string, idPrefix = ''): Promise<Array<CpChild<T>>> {
+    const { begin, end } = cpListRange(collection, idPrefix);
+    return this.fdb.transact(async (txn) => {
+      const out: Array<CpChild<T>> = [];
+      let cursor: Uint8Array = begin;
+      let limit = CHILD_BATCH_FIRST;
+      for (;;) {
+        const rows = await txn.getRange(cursor, end, { limit });
+        let skipTo: Uint8Array | undefined;
+        for (const { key, value } of rows) {
+          if (skipTo && compareKeys(key, skipTo) < 0) continue; // inside a branch already listed
+          if (key.length === begin.length) continue; // the prefix's own entry is not its child
+          // 0x2f never occurs inside a multi-byte UTF-8 sequence, so a byte search is exact.
+          const slash = key.indexOf(SLASH, begin.length);
+          if (slash === -1) {
+            out.push({ id: cpIdFromKey(collection, key), branch: false, value: decodeJson<T>(value) });
+            continue;
+          }
+          const branchKey = key.subarray(0, slash + 1);
+          out.push({
+            id: cpIdFromKey(collection, branchKey),
+            branch: true,
+            value: key.length === branchKey.length ? decodeJson<T>(value) : undefined,
+          });
+          skipTo = strinc(branchKey);
+        }
+        if (rows.length < limit) return out;
+        const next = keyAfter(rows[rows.length - 1]!.key);
+        cursor = skipTo && compareKeys(skipTo, next) > 0 ? skipTo : next;
+        limit = skipTo ? CHILD_BATCH_FIRST : Math.min(limit * 2, CHILD_BATCH_MAX);
+      }
+    });
+  }
+
+  /** Whether any entry has an id strictly extending `idPrefix` — one row read, at most. */
+  async cpHasUnder(collection: string, idPrefix: string): Promise<boolean> {
+    const { begin, end } = cpListRange(collection, idPrefix);
+    return this.fdb.transact(async (txn) => (await txn.getRange(keyAfter(begin), end, { limit: 1 })).length > 0);
   }
 }
 
