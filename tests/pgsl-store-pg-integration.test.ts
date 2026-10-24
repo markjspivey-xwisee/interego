@@ -258,6 +258,35 @@ describe.skipIf(!RUN)('pgsl-store: FULL stack over REAL PostgreSQL', () => {
     expect(new TextDecoder().decode(got!.bytes)).toBe(turtle);
   });
 
+  // The direct-children skip-scan leans on bytea ordering and LIMIT; tests/pgsl-store-ldp-listing
+  // holds the in-memory listing to the old full scan, and this holds Postgres to the in-memory one.
+  it('container listing over Postgres matches the in-memory listing, tricky names included', async () => {
+    const pod = `list-${ns}`;
+    const base = 'http://css.internal/';
+    const names = ['a', 'ab', 'a.b', 'a-b', 'a b', '日本', '😀', '', 'z'];
+    const ids: string[] = [base];
+    for (const n of names) {
+      ids.push(`${base}${n}`, `${base}${n}/`);
+      for (let i = 0; i < 12; i++) ids.push(`${base}${n}/x${i}`, `${base}${n}/deep/${i}/y`);
+    }
+    ids.push(`${base}nomarker/only/deep/z`);
+    const mem = openStore(new InMemoryFdb());
+    const pg = openStore(fdb);
+    for (const [i, id] of ids.entries()) {
+      const rec = { topUri: 'urn:x', opaqueUri: 'urn:x', contentType: id.endsWith('/') ? 'internal/container' : 'text/turtle', updatedAt: i, size: i };
+      await mem.cpSet(`ldp ${pod}`, id, rec);
+      await pg.cpSet(`ldp ${pod}`, id, rec);
+    }
+    const memLdp = new LdpStore(mem, new CodecRegistry());
+    const pgLdp = new LdpStore(pg, new CodecRegistry());
+    for (const probe of [base, `${base}a/`, `${base}a`, `${base}nomarker/`, `${base}absent/`, '']) {
+      const want = await memLdp.listChildren(pod, probe);
+      expect(await pgLdp.listChildren(pod, probe), probe).toStrictEqual(want);
+      expect(await pgLdp.hasChildren(pod, probe), probe).toBe(want.length > 0);
+    }
+    expect((await pgLdp.listChildren(pod, base)).length).toBe(2 * names.length + 1);
+  });
+
   // ★ THE ONE PROPERTY NO DOUBLE CAN CHECK. Everything else in this file would pass over
   // InMemoryFdb; these would not, because what is under test is an ISOLATION LEVEL — and
   // InMemoryFdb refuses the second write at either level, so it reports the guard as

@@ -25,6 +25,7 @@ export {
   type PutResult,
   type PutManyResult,
   type ComposeResult,
+  type CpChild,
 } from './store.js';
 export * from './attributes.js';
 export { clearancePdp, type Pdp, type Verdict } from './abac-pdp.js';
