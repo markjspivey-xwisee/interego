@@ -63,6 +63,7 @@
 
 import express from 'express';
 import { timingSafeEqual } from 'node:crypto';
+import { forwardAsyncRouteErrors, installProcessSafetyNet, routeErrorHandler } from './route-errors.js';
 
 const PORT = parseInt(process.env['PORT'] ?? '9090');
 const IDENTITY_URL = (process.env['IDENTITY_URL'] ?? '').replace(/\/?$/, '');
@@ -79,6 +80,9 @@ const SHAPES_URL = process.env['SHAPES_URL'] ?? '';
 function log(msg: string): void {
   console.log(`[validator] ${msg}`);
 }
+
+// A failure nothing awaited is logged and the validator keeps serving; see route-errors.ts.
+installProcessSafetyNet(log);
 
 // ── State ─────────────────────────────────────────────────────
 
@@ -322,6 +326,9 @@ async function validateAndPublish(descriptorUrl: string): Promise<ValidationResu
 // ── HTTP ──────────────────────────────────────────────────────
 
 const app = express();
+// An async handler that throws reaches routeErrorHandler (registered last, above
+// app.listen) instead of ending the process. See route-errors.ts.
+forwardAsyncRouteErrors(log);
 
 // ★ HSTS FIRST — BEFORE express.json(), and that ORDER is load-bearing. With the parser
 // registered first, a malformed body makes body-parser throw and express jumps to the error
@@ -449,6 +456,9 @@ app.post('/validate', async (req, res) => {
   const result = await validateAndPublish(descriptorUrl);
   res.json({ ok: true, eventsProcessed: state.eventsProcessed, result });
 });
+
+// The last middleware, after every route: a request that fails answers JSON, with no stack.
+app.use(routeErrorHandler(log));
 
 // ── Start ─────────────────────────────────────────────────────
 

@@ -132,6 +132,7 @@ import {
   reconstructRequestUrl,
 } from './dpop.js';
 import { corsMiddleware, MCP_ALLOW_HEADERS } from './cors-allowlist.js';
+import { forwardAsyncRouteErrors, installProcessSafetyNet, routeErrorHandler } from './route-errors.js';
 import { normalizeCssUrl, assertPublicPodUrl, publicStoreSpelling } from './url-rewrite.js';
 import { winnowDiscoverResults } from './discover-winnow.js';
 import { createConformanceGate } from './conformance-gate.js';
@@ -724,6 +725,9 @@ function resolveIpfsConfig(req: any): { provider: 'pinata' | 'web3storage' | 'lo
 function log(msg: string): void {
   console.log(`[mcp-relay] ${msg}`);
 }
+
+// A failure nothing awaited is logged and the relay keeps serving; see route-errors.ts.
+installProcessSafetyNet(log);
 
 // ── Auth Middleware ──────────────────────────────────────────
 
@@ -13222,6 +13226,9 @@ void randomBytes;
 // ── Express App ─────────────────────────────────────────────
 
 const app = express();
+// An async handler that throws, here or in any express.Router() the relay mounts, reaches
+// routeErrorHandler (registered last, above app.listen) instead of ending the process.
+forwardAsyncRouteErrors(log);
 // Public description of the generic authentication precondition used by HMD.
 app.get('/auth/relay-signature', (_req, res) => res.type('application/ld+json').json({
   '@context': { schema: 'https://schema.org/' },
@@ -17129,6 +17136,9 @@ const mcpGate: express.RequestHandler = (req, res, next) => {
 app.post('/mcp', mcpGate, handleMcp);
 app.get('/mcp', mcpGate, handleMcp);
 app.delete('/mcp', mcpGate, handleMcp);
+
+// The last middleware, after every route: a request that fails answers JSON, with no stack.
+app.use(routeErrorHandler(log));
 
 // ── Start ───────────────────────────────────────────────────
 
