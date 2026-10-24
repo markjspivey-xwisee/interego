@@ -119,7 +119,7 @@ A naïve implementation would let a caller type *any* userId on the enrollment p
 The current code closes this by removing user-supplied userId claims everywhere:
 
 - `/auth/webauthn/register-options` no longer accepts `userId`. It accepts a display `name` and optional bootstrap/bearer proof. The WebAuthn `userHandle` is a transient `u-pend-<rand>` unless mode (2) or (3) applies.
-- `/auth/webauthn/register` derives the final userId from the credential itself and binds it to a seeded userId *only* if a matching single-use bootstrap invite was already validated at options time.
+- `/auth/webauthn/register` derives the final userId from the credential itself and binds it to a seeded userId *only* if a matching single-use bootstrap invite was already validated at options time. A registration without a bearer or invite may only *create* the derived account: the server reads that pod first and answers `409` if it already holds any credential (credential ids are not secret, and the derived id is 48 bits), `503` if the pod cannot be read, and writes a missing account with `If-None-Match: *`. After a refusal, or a write the pod did not confirm, it loads whatever account the pod holds (no token), so a passkey whose write did land can still sign in.
 - `/auth/siwe` and `/auth/did` follow the same three-mode pattern — userId is derived from address / DID unless a bearer token or bootstrap invite authorises binding to a different user.
 - `/auth/webauthn/authenticate` resolves the user via `credentialIndex[response.id]`, ignoring any body-supplied userId hint.
 - `/register` now returns **410 Gone** — there is no reason to reserve a userId without proving key-ownership.

@@ -2710,7 +2710,8 @@ app.post('/auth/webauthn/register-options', authEnrollLimiter, async (req, res) 
  *
  *   - addDeviceUserId (mode C): bound at options-time by bearer token
  *   - bootstrapUserId (mode B): bound at options-time by valid invite
- *   - else (mode A): derived from the new credential's ID
+ *   - else (mode A): derived from the new credential's ID; may only create
+ *     that account, never join one that already holds credentials
  */
 app.post('/auth/webauthn/register', authEnrollLimiter, async (req, res) => {
   const { response, surfaceAgent } = req.body ?? {};
@@ -2764,9 +2765,20 @@ app.post('/auth/webauthn/register', authEnrollLimiter, async (req, res) => {
     return;
   }
 
+  const record: AuthMethods['webAuthnCredentials'][number] = {
+    id: credentialId,
+    publicKey: Buffer.from(credential.publicKey).toString('base64url'),
+    counter: credential.counter,
+    transports: (response.response?.transports as string[] | undefined) ?? [],
+    createdAt: new Date().toISOString(),
+    rpId: ch.rpId ?? RP_ID,
+    rpOrigin: ch.rpOrigin ?? RP_ORIGIN,
+  };
+
   // Resolve the target userId according to the mode established at
   // /register-options time (already authorised there).
   let targetUserId: string;
+  let created = false;
   const displayName = ch.displayName ?? credentialId.slice(0, 8);
   if (ch.addDeviceUserId) {
     // Mode (C) add-device — proven by bearer token at options time.
@@ -2788,6 +2800,44 @@ app.post('/auth/webauthn/register', authEnrollLimiter, async (req, res) => {
   } else {
     // Mode (A) fresh user — derive userId from the credential itself.
     targetUserId = deriveUserIdFromCredentialId(credentialId);
+    // This mode may only CREATE an account. Not being in the credential index says nothing
+    // about the derived account: it may not be loaded yet, its owner may have removed this
+    // passkey, or another credential id may derive to the same 48-bit id — and credential
+    // ids are not secret, so a software authenticator can present anyone's. Read the pod
+    // under its mutex and create the account only if it holds no credentials
+    // (first-sign-in.ts); a passkey for an existing account is added from inside it (mode C).
+    const agentId = [...identities.values()].find(i => i.type === 'agent' && i.owner === targetUserId)?.id
+      ?? defaultAgentForRegistration(targetUserId, displayName, surfaceAgent).agentId;
+    const outcome = await claimFirstSignInOnPod(targetUserId, agentId, displayName,
+      () => false,
+      m => {
+        if (!m.name || m.name === targetUserId) m.name = displayName;
+        m.webAuthnCredentials.push(record);
+      });
+    if (outcome.kind === 'unreadable') {
+      log(`WARN: passkey registration of ${targetUserId} not completed (unreadable): ${outcome.reason}`);
+      res.status(503).json({
+        error: 'Could not read this account just now',
+        detail: 'The pod for this passkey did not answer. Nothing was changed; try registering again in a minute.',
+      });
+      return;
+    }
+    if (outcome.kind !== 'created') {
+      // Load what the pod holds, with no token: a create the pod applied without confirming
+      // it, or an account the indexes missed, can then be signed in to, as both answers say.
+      await ensureAccountLoaded(targetUserId);
+      if (outcome.kind === 'unconfirmed') {
+        log(`WARN: passkey registration of ${targetUserId} not confirmed: ${outcome.reason}`);
+        res.status(503).json({
+          error: 'Your passkey could not be confirmed as saved',
+          detail: 'The pod did not confirm the write, so it may or may not have been saved. Try signing in with this passkey; if that does not work, register again.',
+        });
+        return;
+      }
+      res.status(409).json({ error: 'This passkey cannot be registered as a new account; sign in, then add it from your account' });
+      return;
+    }
+    created = true;
   }
 
   // Ensure an Identity shell exists for the target. Seeded users already
@@ -2805,27 +2855,22 @@ app.post('/auth/webauthn/register', authEnrollLimiter, async (req, res) => {
     log(`First-time WebAuthn registration: ${targetUserId} defaultAgent=${def.agentId} (surfaceHint=${surfaceAgent ?? 'none'})`);
   }
 
-  try {
-    await commitCredentialEnrollment(targetUserId, 'webauthn-register', methods => {
-      if (!methods.name || methods.name === targetUserId) methods.name = user.name;
-      if (!methods.agentId) {
-        const a = [...identities.values()].find(i => i.type === 'agent' && i.owner === targetUserId);
-        if (a) methods.agentId = a.id;
-      }
-      methods.webAuthnCredentials.push({
-        id: credentialId,
-        publicKey: Buffer.from(credential.publicKey).toString('base64url'),
-        counter: credential.counter,
-        transports: (response.response?.transports as string[] | undefined) ?? [],
-        createdAt: new Date().toISOString(),
-        rpId: ch.rpId ?? RP_ID,
-        rpOrigin: ch.rpOrigin ?? RP_ORIGIN,
+  // Mode (A) wrote its new account above; modes (B) and (C) append to theirs.
+  if (!created) {
+    try {
+      await commitCredentialEnrollment(targetUserId, 'webauthn-register', methods => {
+        if (!methods.name || methods.name === targetUserId) methods.name = user.name;
+        if (!methods.agentId) {
+          const a = [...identities.values()].find(i => i.type === 'agent' && i.owner === targetUserId);
+          if (a) methods.agentId = a.id;
+        }
+        methods.webAuthnCredentials.push(record);
       });
-    });
-  } catch (err) {
-    log(`WebAuthn credential enrollment not confirmed for ${targetUserId}: ${(err as Error).message}`);
-    res.status(503).json({ error: 'Credential enrollment could not be confirmed. No permanent session was issued.' });
-    return;
+    } catch (err) {
+      log(`WebAuthn credential enrollment not confirmed for ${targetUserId}: ${(err as Error).message}`);
+      res.status(503).json({ error: 'Credential enrollment could not be confirmed. No permanent session was issued.' });
+      return;
+    }
   }
   // FIX A: identity-server no longer mirrors /profile/card or /<id>/agents.
   // Single authoritative pod-side writer is the relay's /oauth/verify
