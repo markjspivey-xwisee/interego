@@ -2404,6 +2404,8 @@ app.post('/auth/siwe', authEnrollLimiter, async (req, res) => {
     }
   }
 
+  // True once this request has registered a new account; otherwise the wallet is appended below.
+  let registered = false;
   if (!user) {
     // Choose the target userId using the same three-mode logic as WebAuthn.
     // Mode (C) add-device is handled upstream (bearer token already
@@ -2429,32 +2431,50 @@ app.post('/auth/siwe', authEnrollLimiter, async (req, res) => {
       return;
     }
     const targetUserId = resolved.targetUserId;
-
-    if (!identities.has(targetUserId)) {
-      const displayName = String(name ?? targetUserId);
-      seedIdentity(targetUserId, 'user', displayName);
-      const def = defaultAgentForRegistration(targetUserId, displayName, surfaceAgent);
-      seedIdentity(def.agentId, 'agent', def.label, targetUserId, 'ReadWrite');
+    // ★ Same as /auth/did: the derived id may name an account already on its pod that this
+    // server has not loaded, and the fresh document below would replace its
+    // auth-methods.jsonld. An account on the pod gets the add-wallet path below instead.
+    const account = resolved.mode === 'derive' ? await ensureAccountLoaded(targetUserId) : 'absent';
+    if (account === 'unreadable') {
+      res.status(503).json({
+        error: 'Could not read this account just now',
+        detail: 'The pod holding this account did not answer. Nothing was changed; try signing in again in a minute.',
+      });
+      return;
     }
-    user = identities.get(targetUserId)!;
-    const agentId = [...identities.values()].find(i => i.type === 'agent' && i.owner === targetUserId)?.id
-      ?? defaultAgentForRegistration(targetUserId, user.name, surfaceAgent).agentId;
-    const methods = emptyAuthMethods(user.id, user.name, agentId);
-    methods.walletAddresses.push(recoveredAddress);
-    inlineApplyAuthMethods(user.id, methods);
-    scheduleDeferredAuthMethodsWrite(user.id, methods, 'siwe-first-time');
-    if (timingEnabled()) logTiming('siwe-pod-write-scheduled', requestStart, { branch: 'first-time' });
-    // FIX A: identity-server no longer mirrors /profile/card or /<id>/agents.
-    // The relay is now the single authoritative writer for both pod-side
-    // documents and does so synchronously inside /oauth/verify before
-    // returning the OAuth code — see deploy/mcp-relay/server.ts. Two
-    // writers were previously racing each other on every OAuth completion,
-    // causing CSS file-backend HTTP 500s on the second OAuth ("Read counter
-    // would become negative" on /profile/card) and a ~10s 404 window for
-    // any client polling those URLs immediately after auth.
-    log(`First-time SIWE registration: ${targetUserId} wallet=${recoveredAddress} defaultAgent=${agentId} (surfaceHint=${surfaceAgent ?? 'none'})`);
-  } else {
-    // Add-wallet (authenticated) path — append if not already bound.
+    if (account === 'loaded') {
+      user = identities.get(targetUserId)!;
+      log(`Wallet ${recoveredAddress} was not in the index; its account ${targetUserId} is on file, so it is not registered afresh`);
+    } else {
+      registered = true;
+      if (!identities.has(targetUserId)) {
+        const displayName = String(name ?? targetUserId);
+        seedIdentity(targetUserId, 'user', displayName);
+        const def = defaultAgentForRegistration(targetUserId, displayName, surfaceAgent);
+        seedIdentity(def.agentId, 'agent', def.label, targetUserId, 'ReadWrite');
+      }
+      user = identities.get(targetUserId)!;
+      const agentId = [...identities.values()].find(i => i.type === 'agent' && i.owner === targetUserId)?.id
+        ?? defaultAgentForRegistration(targetUserId, user.name, surfaceAgent).agentId;
+      const methods = emptyAuthMethods(user.id, user.name, agentId);
+      methods.walletAddresses.push(recoveredAddress);
+      inlineApplyAuthMethods(user.id, methods);
+      scheduleDeferredAuthMethodsWrite(user.id, methods, 'siwe-first-time');
+      if (timingEnabled()) logTiming('siwe-pod-write-scheduled', requestStart, { branch: 'first-time' });
+      // FIX A: identity-server no longer mirrors /profile/card or /<id>/agents.
+      // The relay is now the single authoritative writer for both pod-side
+      // documents and does so synchronously inside /oauth/verify before
+      // returning the OAuth code — see deploy/mcp-relay/server.ts. Two
+      // writers were previously racing each other on every OAuth completion,
+      // causing CSS file-backend HTTP 500s on the second OAuth ("Read counter
+      // would become negative" on /profile/card) and a ~10s 404 window for
+      // any client polling those URLs immediately after auth.
+      log(`First-time SIWE registration: ${targetUserId} wallet=${recoveredAddress} defaultAgent=${agentId} (surfaceHint=${surfaceAgent ?? 'none'})`);
+    }
+  }
+  if (!registered) {
+    // A returning sign-in or an added wallet: the indexed account, the bearer's, or the one
+    // found on its pod above. Append the wallet if it is not already bound.
     try {
       await commitCredentialEnrollment(user.id, 'siwe-add-wallet', methods => {
         if (methods.walletAddresses.includes(recoveredAddress)) return false;
@@ -3002,6 +3022,8 @@ app.post('/auth/did', authEnrollLimiter, async (req, res) => {
   // first-time registration and add-did paths.
   const canonicalPublicKeyMultibase = encodeEd25519Multibase(publicKeyRaw);
 
+  // True once this request has registered a new account; otherwise the DID is appended below.
+  let registered = false;
   if (!user) {
     // Mode (C) add-device handled upstream (bearer populated `user`);
     // resolveTargetUserId covers (A) derive and (B) bootstrap-claim with
@@ -3025,39 +3047,60 @@ app.post('/auth/did', authEnrollLimiter, async (req, res) => {
       return;
     }
     const targetUserId = resolved.targetUserId;
-
-    if (!identities.has(targetUserId)) {
-      const displayName = String(name ?? targetUserId);
-      seedIdentity(targetUserId, 'user', displayName);
-      const def = defaultAgentForRegistration(targetUserId, displayName, surfaceAgent);
-      seedIdentity(def.agentId, 'agent', def.label, targetUserId, 'ReadWrite');
+    // ★ The derived id may name an account already on its pod that this server has not
+    // loaded, as when every account's index entry was missing after the 2026-10-23 listing
+    // bug. The fresh document below would replace that account's auth-methods.jsonld: its
+    // other credentials, its name, and the sessionEpoch that keeps signed-out tokens
+    // revoked. So the pod is asked first, and an account on it gets the add-did path below,
+    // which reads that document and appends the DID to it if it is not there.
+    const account = resolved.mode === 'derive' ? await ensureAccountLoaded(targetUserId) : 'absent';
+    if (account === 'unreadable') {
+      res.status(503).json({
+        error: 'Could not read this account just now',
+        detail: 'The pod holding this account did not answer. Nothing was changed; try signing in again in a minute.',
+      });
+      return;
     }
-    user = identities.get(targetUserId)!;
-    const agentId = [...identities.values()].find(i => i.type === 'agent' && i.owner === targetUserId)?.id
-      ?? defaultAgentForRegistration(targetUserId, user.name, surfaceAgent).agentId;
-    const methods = emptyAuthMethods(user.id, user.name, agentId);
-    methods.didKeys.push({
-      did,
-      publicKeyMultibase: canonicalPublicKeyMultibase,
-      keyType: 'Ed25519VerificationKey2020',
-      createdAt: new Date().toISOString(),
-    });
-    // FIX A: defer the pod-side PUT off the hot response path. The
-    // in-memory record (cache + didIndex + walletIndex + credentialIndex)
-    // is updated SYNCHRONOUSLY first so any concurrent /auth/did or
-    // verifyToken from this user immediately sees the new credential —
-    // no pod read required for the new user's first token to verify.
-    // The actual ~2.5s CSS PUT runs in the background under the per-
-    // userId mutex; failures retry + log at ERROR for operator alerting.
-    inlineApplyAuthMethods(user.id, methods);
-    scheduleDeferredAuthMethodsWrite(user.id, methods, 'did-first-time');
-    if (timingEnabled()) logTiming('did-pod-write-scheduled', requestStart, { branch: 'first-time' });
-    // FIX A: identity-server no longer mirrors /profile/card or /<id>/agents.
-    // Single authoritative pod-side writer is the relay's /oauth/verify
-    // handler. See SIWE first-touch comment above for background.
-    log(`First-time DID registration: ${targetUserId} did=${did} defaultAgent=${agentId} (surfaceHint=${surfaceAgent ?? 'none'})`);
-  } else {
-    // Add-did (authenticated) path — append if not already bound.
+    if (account === 'loaded') {
+      user = identities.get(targetUserId)!;
+      log(`DID ${did} was not in the index; its account ${targetUserId} is on file, so it is not registered afresh`);
+    } else {
+      registered = true;
+      if (!identities.has(targetUserId)) {
+        const displayName = String(name ?? targetUserId);
+        seedIdentity(targetUserId, 'user', displayName);
+        const def = defaultAgentForRegistration(targetUserId, displayName, surfaceAgent);
+        seedIdentity(def.agentId, 'agent', def.label, targetUserId, 'ReadWrite');
+      }
+      user = identities.get(targetUserId)!;
+      const agentId = [...identities.values()].find(i => i.type === 'agent' && i.owner === targetUserId)?.id
+        ?? defaultAgentForRegistration(targetUserId, user.name, surfaceAgent).agentId;
+      const methods = emptyAuthMethods(user.id, user.name, agentId);
+      methods.didKeys.push({
+        did,
+        publicKeyMultibase: canonicalPublicKeyMultibase,
+        keyType: 'Ed25519VerificationKey2020',
+        createdAt: new Date().toISOString(),
+      });
+      // FIX A: defer the pod-side PUT off the hot response path. The
+      // in-memory record (cache + didIndex + walletIndex + credentialIndex)
+      // is updated SYNCHRONOUSLY first so any concurrent /auth/did or
+      // verifyToken from this user immediately sees the new credential —
+      // no pod read required for the new user's first token to verify.
+      // The actual ~2.5s CSS PUT runs in the background under the per-
+      // userId mutex; failures retry + log at ERROR for operator alerting.
+      inlineApplyAuthMethods(user.id, methods);
+      scheduleDeferredAuthMethodsWrite(user.id, methods, 'did-first-time');
+      if (timingEnabled()) logTiming('did-pod-write-scheduled', requestStart, { branch: 'first-time' });
+      // FIX A: identity-server no longer mirrors /profile/card or /<id>/agents.
+      // Single authoritative pod-side writer is the relay's /oauth/verify
+      // handler. See SIWE first-touch comment above for background.
+      log(`First-time DID registration: ${targetUserId} did=${did} defaultAgent=${agentId} (surfaceHint=${surfaceAgent ?? 'none'})`);
+    }
+  }
+  if (!registered) {
+    // A returning sign-in or an added DID: the indexed account, the bearer's, or the one
+    // found on its pod above. Append the DID if it is not already bound.
     try {
       await commitCredentialEnrollment(user.id, 'did-add-did', methods => {
         if (methods.didKeys.some(k => k.did === did)) return false;
