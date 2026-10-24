@@ -614,3 +614,73 @@ describe('opt-in immutable native artifact reuse', () => {
     expect(transport.headWrites()).toBe(0);
   });
 });
+
+describe('explicit bounded native rolling checkpoints', () => {
+  const mediaTypes = [
+    'application/vnd.interego.rolling-checkpoint+gzip',
+    'application/vnd.interego.rolling-checkpoint-delta-v1+br',
+  ];
+  const checkpoint = (contentType: string, bytes = Buffer.from('opaque reviewed rolling history'), checkpointOwner = scope.owner) =>
+    createNativeByteArtifact({ owner: checkpointOwner, contentType, bytes, provenance });
+
+  it.each(mediaTypes)('round-trips exact bytes and MIME through encrypted scoped CAS: %s', async contentType => {
+    const transport = new NativeTransport(), client = transport.client({ atomicCheckpoint: true });
+    const bytes = Buffer.from([0, 1, 127, 128, 255]), input = checkpoint(contentType, bytes);
+    const reserved = client.atomicCheckpointSize(input);
+    expect(reserved).toBeGreaterThan(0); expect(reserved).toBeLessThanOrEqual(1024 * 1024);
+    const committed = await client.commitAtomicCheckpoint(null, input, { maxEncryptedBytes: reserved });
+    const restored = await transport.client({ atomicCheckpoint: true }).readAtomicCheckpoint();
+    expect(restored.revision).toBe(committed.revision);
+    const body = readNativeByteArtifact(restored.artifact!);
+    expect(body.owner).toBe(scope.owner); expect(body.contentType).toBe(contentType);
+    expect(Buffer.from(body.bytes)).toEqual(bytes);
+    await expect(client.commitAtomicCheckpoint(null, input)).rejects.toBeInstanceOf(NativeCommitConflictError);
+    expect(transport.headWrites()).toBe(1);
+  });
+
+  it.each(mediaTypes)('still requires explicit composition and exact owner: %s', async contentType => {
+    const transport = new NativeTransport(), input = checkpoint(contentType);
+    const ordinary = transport.client();
+    expect(() => ordinary.atomicCheckpointSize(input)).toThrow('explicit composition');
+    await expect(ordinary.commitAtomicCheckpoint(null, input)).rejects.toMatchObject({ status: 400 });
+    const client = transport.client({ atomicCheckpoint: true });
+    const foreign = checkpoint(contentType, undefined, 'did:web:mallory.example' as IRI);
+    expect(() => client.atomicCheckpointSize(foreign)).toThrow('ownership or type');
+    await expect(client.commitAtomicCheckpoint(null, foreign)).rejects.toMatchObject({ status: 400 });
+    expect(transport.methods).toEqual([]);
+  });
+
+  it.each([
+    'application/json', 'application/octet-stream',
+    'application/vnd.interego.rolling-checkpoint+br',
+    'application/vnd.interego.rolling-checkpoint-delta-v2+br',
+    'application/vnd.interego.rolling-checkpoint-delta-v1+br; charset=utf-8',
+  ])('rejects unreviewed checkpoint MIME before I/O: %s', async contentType => {
+    const transport = new NativeTransport(), client = transport.client({ atomicCheckpoint: true }), input = checkpoint(contentType);
+    expect(() => client.atomicCheckpointSize(input)).toThrow('ownership or type');
+    await expect(client.commitAtomicCheckpoint(null, input)).rejects.toMatchObject({ status: 400 });
+    expect(transport.methods).toEqual([]);
+  });
+
+  it.each(mediaTypes)('preserves the 1 MiB hard limit and per-write reservation: %s', async contentType => {
+    const transport = new NativeTransport(), client = transport.client({ atomicCheckpoint: true });
+    const input = checkpoint(contentType), size = client.atomicCheckpointSize(input);
+    await expect(client.commitAtomicCheckpoint(null, input, { maxEncryptedBytes: size - 1 })).rejects.toMatchObject({ status: 413 });
+    for (const maximum of [0, -1, 1.5, 1024 * 1024 + 1]) {
+      await expect(client.commitAtomicCheckpoint(null, input, { maxEncryptedBytes: maximum })).rejects.toMatchObject({ status: 400 });
+    }
+    const oversized = checkpoint(contentType, Buffer.alloc(1024 * 1024));
+    expect(() => client.atomicCheckpointSize(oversized)).toThrow('1 MiB storage budget');
+    await expect(client.commitAtomicCheckpoint(null, oversized)).rejects.toMatchObject({ status: 413 });
+    expect(transport.methods).toEqual([]);
+    expect((await client.readAtomicCheckpoint()).revision).toBeNull();
+  });
+
+  it.each(mediaTypes)('rejects a checkpoint under a different artifact-container scope: %s', async contentType => {
+    const transport = new NativeTransport(), client = transport.client({ atomicCheckpoint: true });
+    await client.commitAtomicCheckpoint(null, checkpoint(contentType));
+    const changed = transport.client({ atomicCheckpoint: true, scope: { ...scope, artifactContainer: scope.pod + 'other/' } });
+    await expect(changed.readAtomicCheckpoint()).rejects.toThrow('scope changed');
+    expect(transport.headWrites()).toBe(1);
+  });
+});
