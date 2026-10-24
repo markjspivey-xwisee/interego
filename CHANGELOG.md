@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-10-24 — Solid server: listing the root no longer reads every pod
+
+A GET of the Solid server's root container read and decoded every stored record of every pod, then kept only the root's direct children, so it slowed down as the server filled up. On the live server it took 6 to 15 seconds after a quiet period, ran past the server's 6-second lock expiry and answered 500; every Fleet liveness run failed on it. A container listing now walks only the container's direct children and jumps over each child container's contents, and the "does this container exist" check reads a single row. The listing itself is unchanged. On a synthetic store of 600 pods with 1,000 records each, the root listing read 4,800 rows instead of 600,601 and took 0.3 s instead of 9 s against Postgres.
+
+The Solid server's resource locks now expire after 90 seconds instead of 6, in both the memory-locker and Redis-locker configurations. 90 seconds is how long the gateway in front of it waits for a response. A lock expiring sooner answered 500 to work that would still have been delivered, and the work carried on without its lock.
+
 ## 2026-10-24 — Practice Evidence: the scenario list fits a phone
 
 On a phone, Practice Evidence's scenario list was 33 px wider than the screen whenever a scenario showed the badge "Rubric awaiting approval: results won't count as evidence yet". A badge never wrapped, and the list's one column grew to fit it, so the whole page scrolled sideways. In the shared design system a badge now wraps when it is too long for its container, and never grows wider than it. Work Redesign already did this for badges in its stacked tables. The scenario list's column is now capped at the screen's width. Measured on the live site at 390 px, every Practice Evidence view now fits, and nothing changes at desktop width.

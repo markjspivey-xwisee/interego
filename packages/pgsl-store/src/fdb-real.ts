@@ -68,7 +68,7 @@ interface FdbTransaction {
   set(key: Buffer, value: Buffer): void;
   clear(key: Buffer): void;
   clearRange(begin: Buffer, end: Buffer): void;
-  getRangeAll(begin: Buffer, end: Buffer): Promise<FdbKeyValue[]>;
+  getRangeAll(begin: Buffer, end: Buffer, opts?: { limit?: number }): Promise<FdbKeyValue[]>;
 }
 
 /** The binding may yield [key, value] tuples or {key, value} objects — both are handled. */
@@ -115,10 +115,15 @@ export async function openRealFdb(opts: FdbRealOptions = {}): Promise<FdbLike> {
       // the CALLER — pages are correct and the cursor works — while the range scan itself is not
       // narrowed. Fixing that means moving to the binding's limited iterator with the streaming
       // guarantees re-established; not worth doing blind, and this backend is not the deployed one.
-      const arr: FdbKeyValue[] = await tn.getRangeAll(toBuf(begin), toBuf(end));
+      // The limit IS passed as getRangeAll's standard range option, so a binding that honours it
+      // stops early (the direct-children skip-scan in store.ts issues many small bounded reads);
+      // the slice stays, so a binding that ignores it is still bounded for the caller.
       const lim = opts?.limit;
-      const bounded = (typeof lim === 'number' && Number.isFinite(lim) && lim > 0)
-        ? arr.slice(0, Math.floor(lim)) : arr;
+      const limited = typeof lim === 'number' && Number.isFinite(lim) && lim > 0;
+      const arr: FdbKeyValue[] = limited
+        ? await tn.getRangeAll(toBuf(begin), toBuf(end), { limit: Math.floor(lim) })
+        : await tn.getRangeAll(toBuf(begin), toBuf(end));
+      const bounded = limited ? arr.slice(0, Math.floor(lim)) : arr;
       const out: KeyValue[] = [];
       for (const kv of bounded) {
         // The binding may yield [key, value] tuples or {key, value} objects.

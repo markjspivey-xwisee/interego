@@ -54,6 +54,26 @@
   ],
   "@graph": [
     {
+      "comment": [
+        "Resource-lock expiry: 90000 ms instead of css:config/util/resource-locker/memory.json's 6000.",
+        "The expiry is a stuck-lock release, not a deadline for the work: when it fires, CSS answers 500",
+        "and the locked operation keeps running without its lock (a write is not renewed while it drains",
+        "its body). Every request here arrives through css-gate, which waits up to 90 s for a response",
+        "head (UPSTREAM_QUEUE_TIMEOUT_MS; headersTimeout 60 s once connected), so a slower operation has",
+        "nobody waiting for it and 6 s cut off legitimate work the gate would still have delivered: a",
+        "cold root listing (2026-10-22) and any large PUT over a slow client. Same-type override, so only",
+        "the expiration changes; the memory locker underneath stays as memory.json defines it."
+      ],
+      "@type": "Override",
+      "overrideInstance": {
+        "@id": "urn:solid-server:default:ResourceLocker"
+      },
+      "overrideParameters": {
+        "@type": "WrappedExpiringReadWriteLocker",
+        "expiration": 90000
+      }
+    },
+    {
       "comment": "Memory mutexes require process-local reader counters. Native cross-process commits remain conditional transactions in PGSL.",
       "@type": "Override",
       "overrideInstance": {
