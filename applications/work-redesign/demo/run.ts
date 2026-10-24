@@ -344,7 +344,8 @@ export async function runDemo(opts: {
       // Always bound to 127.0.0.1, and its endpoints hold the personas' keys and sign for them:
       // refuse every Host but its own before any route (DNS rebinding), as bridge/server.ts does.
       a.use(hostAllowlistGuard(servedHostNames(port, base)));
-      attachUi(a, { base });
+      // Reads are signed (the personas sign them), and every graph is sealed to DEMO_RECORD_KEY.
+      attachUi(a, { base, reads: 'signed', landing: { recordsSealed: true } });
       // Every query parameter reaches the handlers, as in bridge/server.ts.
       parseEveryQueryPair(a);
     },
