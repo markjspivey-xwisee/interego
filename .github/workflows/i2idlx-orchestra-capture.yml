@@ -1,0 +1,79 @@
+name: I2IDL-X reviewed replay migration capture
+
+# Read-only evidence from the already completed candidate browser artifact.
+# This observes deterministic tool outputs; it does not create model history.
+on:
+  push:
+    branches: [fix/i2idlx-executable-checks]
+    paths: ['.github/workflows/i2idlx-orchestra-capture.yml']
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  capture:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: 3aea797c3fef2bacf98f9247b8b196eb7a26236c
+      - uses: actions/setup-node@v6
+        with: { node-version: '22' }
+      - name: Bind the artifact to the actual reviewed browser run
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          node --input-type=module <<'JS'
+          import assert from 'node:assert/strict';
+          const response = await fetch('https://api.github.com/repos/' + process.env.GITHUB_REPOSITORY + '/actions/runs/39186631837', {
+            headers: { Authorization: 'Bearer ' + process.env.GH_TOKEN, Accept: 'application/vnd.github+json' },
+          });
+          assert.equal(response.status, 200);
+          const run = await response.json();
+          assert.equal(run.head_sha, '3aea797c3fef2bacf98f9247b8b196eb7a26236c');
+          assert.equal(run.status, 'completed');
+          assert.equal(run.name, 'I2IDL-X browser and original client oracles');
+          JS
+      - uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: 39186631837
+          name: i2idlx-ui-oracle-39186631837
+          path: ${{ runner.temp }}/reviewed-replay
+      - name: Capture every actual result without changing the archived trace or oracle
+        run: |
+          ROOT=applications/foxxi-content-intelligence/i2idlx
+          npm ci --prefix "$ROOT/app"
+          REPLAY_DATA="$(find "$RUNNER_TEMP/reviewed-replay" -path '*/app/build/data.json' -type f)"
+          test -f "$REPLAY_DATA"
+          export REPLAY_DATA
+          cd "$ROOT/app"
+          node --input-type=module <<'JS'
+          import fs from 'node:fs';
+          import { createHash } from 'node:crypto';
+          import { execFileSync } from 'node:child_process';
+          import assert from 'node:assert/strict';
+          const source = fs.readFileSync('tools/orc_check.js', 'utf8');
+          const anchor = 'const rec = results.get(e.id);';
+          assert.equal(source.split(anchor).length, 2);
+          const capture = source.replace(anchor, anchor + '\n(report.observed ??= []).push({id:e.id,tool:e.tool,input:e.input,ok:out.ok,result:out.ok?out.result:out.error});');
+          fs.writeFileSync('tools/orc_capture.js', capture);
+          const banner = "globalThis.document={getElementById:()=>({textContent:require('fs').readFileSync(process.argv[2],'utf8')})};globalThis.window={};globalThis.React={createContext:()=>({}),useState:()=>[null,()=>{}],useEffect:()=>{},useRef:()=>({}),useCallback:(f)=>f,useMemo:(f)=>f(),useContext:()=>null,createElement:()=>null};";
+          execFileSync('node_modules/.bin/esbuild', ['tools/orc_capture.js', '--bundle', '--platform=node', '--format=cjs', '--outfile=build/orc-capture.cjs', '--log-level=warning', '--banner:js=' + banner]);
+          const traceFile = '../examples/orchestra/kestrel-point-run.json';
+          const data = fs.readFileSync(process.env.REPLAY_DATA);
+          const trace = fs.readFileSync(traceFile);
+          const parsed = JSON.parse(data);
+          assert.equal(parsed.meta.release, 'v0.0.93');
+          assert.equal(parsed.concepts.length, 420);
+          const report = JSON.parse(execFileSync('node', ['build/orc-capture.cjs', process.env.REPLAY_DATA, traceFile], {maxBuffer: 8*1024*1024, encoding:'utf8'}));
+          assert.equal(report.calls, 48);
+          assert.equal(report.observed.length, 48);
+          assert.equal(report.errors, 0);
+          const result = JSON.stringify({sourceHead:'3aea797c3fef2bacf98f9247b8b196eb7a26236c',dataSha256:createHash('sha256').update(data).digest('hex'),traceSha256:createHash('sha256').update(trace).digest('hex'),report});
+          const encoded = Buffer.from(result).toString('base64'), size=8192;
+          console.log('I2IDLX_REPLAY_MANIFEST=' + JSON.stringify({sha256:createHash('sha256').update(result).digest('hex'),bytes:Buffer.byteLength(result),chunks:Math.ceil(encoded.length/size)}));
+          for(let index=0; index<Math.ceil(encoded.length/size); index++) console.log('I2IDLX_REPLAY_CHUNK=' + JSON.stringify({index,base64:encoded.slice(index*size,(index+1)*size)}));
+          JS

@@ -30,6 +30,8 @@
     { "image": "interego-jev-harness-bridge", "dockerfile": "deploy/Dockerfile.jev-harness-bridge", "prebuild": "dist" },
     { "image": "interego-agp-bridge", "dockerfile": "deploy/Dockerfile.agp-bridge", "prebuild": "dist" },
     { "image": "interego-wsp-bridge", "dockerfile": "deploy/Dockerfile.wsp-bridge", "prebuild": "dist" },
+    { "image": "interego-wrd-bridge", "dockerfile": "deploy/Dockerfile.wrd-bridge", "prebuild": "dist" },
+    { "image": "interego-pev-bridge", "dockerfile": "deploy/Dockerfile.pev-bridge", "prebuild": "dist" },
     { "image": "interego-bridge", "dockerfile": "deploy/Dockerfile.interego-bridge" },
     { "image": "interego-dashboard", "dockerfile": "deploy/Dockerfile.dashboard" },
     { "image": "interego-pgsl-browser", "dockerfile": "deploy/Dockerfile.pgsl-browser" },

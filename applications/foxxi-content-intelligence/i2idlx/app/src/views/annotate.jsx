@@ -81,7 +81,7 @@ export function Annotate() {
                   <CopyBtn text={markdown} label="Copy as Markdown" small />
                   <CopyBtn text={() => ids.map(iriOf).join("\n")} label="Copy IRIs" small />
                 </div>
-                {ask ? <button className="btn sm" onClick={() => ask.open(`Here is a text I annotated with the I2IDL glossary:\n\n"""${t.slice(0, 4000)}"""\n\nIt names these terms: ${found.map((f) => byId.get(f.id).l).join(", ")}. Which other I2IDL concepts does the text imply without naming them? Search the glossary, cite each as [[concept-id]], and say which sentence implies it.`, ids.slice(0, 12))}><Icon name="sparkle" />Ask Claude for implied terms</button> : null}
+                {ask ? <button className="btn sm" onClick={() => ask.open(`Here is a text I annotated with the I2IDL glossary:\n\n"""${t.slice(0, 4000)}"""\n\nIt names these terms: ${found.map((f) => byId.get(f.id).l).join(", ")}. Which other I2IDL concepts does the text imply without naming them? Search the glossary, cite each as [[concept-id]], and say which sentence implies it.`, ids.slice(0, 12))}><Icon name="sparkle" />Ask about implied terms</button> : null}
               </>
             ) : <div className="small muted">Found terms appear here with how often each is used.</div>}
           </div>

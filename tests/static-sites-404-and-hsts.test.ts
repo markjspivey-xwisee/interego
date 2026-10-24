@@ -235,6 +235,10 @@ const HSTS_SOURCE: Record<string, string | typeof NOT_PUBLIC> = {
   // shared factory (it binds a repository and serves judgments, not a pod-backed vertical), so
   // it sets the header itself, before its body parser, in its own server.
   'interego-jev-harness-bridge': 'applications/jev-harness/bridge/server.ts',
+  // work-redesign and practice-evidence: two more bridges on the shared factory, listed per
+  // image for the reason given at wsp-bridge above.
+  'interego-wrd-bridge': 'applications/_shared/vertical-bridge/index.ts',
+  'interego-pev-bridge': 'applications/_shared/vertical-bridge/index.ts',
   'interego-microsite': SHARED_CONF,
   'interego-main': SHARED_CONF,
   'interego-foxxi-dashboard': SHARED_CONF,

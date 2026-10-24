@@ -501,13 +501,19 @@ mappings = Graph().parse(data=mappings_ttl, format="turtle")
 def snapshot(rev: str) -> dict:
     d = json.loads(sh(["git", "show", f"{rev}:{gpath}"], cwd=clone))
     snap = {"defs": {}, "related": 0, "broader": 0, "fieldMembers": 0, "version": "?"}
+    by_id = {n.get("@id"): n for n in d.get("@graph", [])}
     for n in d.get("@graph", []):
         ts = n.get("@type")
         ts = ts if isinstance(ts, list) else [ts]
         if "skos:ConceptScheme" in ts:
             snap["version"] = n.get("gs:publicationVersion", "?")
         if "skos:Concept" in ts:
-            snap["defs"][n["@id"]] = n.get("skos:definition", "")
+            active = n.get("gs:activeDefinition")
+            definition_id = active.get("@id") if isinstance(active, dict) else active
+            definition = n.get("skos:definition")
+            if definition is None:
+                definition = by_id.get(definition_id, {}).get("rdf:value")
+            snap["defs"][n["@id"]] = definition if definition is not None else ""
             for key, name in (("skos:related", "related"), ("skos:broader", "broader")):
                 v = n.get(key)
                 snap[name] += len(v) if isinstance(v, list) else (1 if v else 0)

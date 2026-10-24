@@ -105,6 +105,116 @@ async function textAt(transport: NativeTransport, snapshot: Awaited<ReturnType<N
 }
 
 describe('strict native encrypted PGSL commits', () => {
+  it.each([false, true])('stages identical aliases once and verifies them after restart (lost acknowledgement: %s)', async loseAck => {
+    const transport = new NativeTransport(), client = transport.client();
+    transport.loseStageAck = loseAck;
+    const result = await client.commit({ operationId: 'aliases', expected: await client.readHead(), changes: [
+      { key: 'statement:one', artifact: artifact('one exact statement') },
+      { key: 'query:one', artifact: artifact('one exact statement') },
+    ] });
+    const statement = result.snapshot.records.get('statement:one')!, query = result.snapshot.records.get('query:one')!;
+    expect(query).toEqual(statement);
+    expect(transport.writes.filter(write => write.url === statement.resourceUrl)).toHaveLength(1);
+    expect(transport.writes).toHaveLength(4); // payload, index, immutable commit, authoritative head
+    const restarted = await transport.client().readHead();
+    expect(await textAt(transport, restarted, 'statement:one')).toBe('one exact statement');
+    expect(await textAt(transport, restarted, 'query:one')).toBe('one exact statement');
+    expect(result.resourceReceipt?.resource).toBe(scope.headUrl);
+  });
+
+  it('keeps equal content with different provenance in distinct encrypted resources', async () => {
+    const transport = new NativeTransport(), client = transport.client(), first = artifact('same content'), second = artifact('same content');
+    for (const [id, node] of second.pgsl.nodes) second.pgsl.nodes.set(id, {
+      ...node, provenance: { ...node.provenance, generatedAtTime: '2026-10-16T00:00:00.000Z' },
+    });
+    expect(first.topUri).toBe(second.topUri);
+    const result = await client.commit({ operationId: 'provenance', expected: await client.readHead(), changes: [
+      { key: 'first', artifact: first }, { key: 'second', artifact: second },
+    ] });
+    const a = result.snapshot.records.get('first')!, b = result.snapshot.records.get('second')!;
+    expect(a.plaintextDigest).not.toBe(b.plaintextDigest); expect(a.resourceUrl).not.toBe(b.resourceUrl);
+    expect(await textAt(transport, result.snapshot, 'first')).toBe('same content');
+    expect(await textAt(transport, result.snapshot, 'second')).toBe('same content');
+  });
+
+  it.each(['provenance', 'node-map'])('refuses caller %s changes before head publication and permits the original intent to retry', async mode => {
+    const transport = new NativeTransport(), initial = await transport.client().readHead();
+    const input = () => createNativeByteArtifact({ owner: scope.owner, contentType: 'application/octet-stream',
+      bytes: Buffer.from('captured'), provenance: { ...provenance } });
+    const first = input(), second = input(), changes = [{ key: 'first', artifact: first }, { key: 'second', artifact: second }];
+    let changed = false;
+    const client = transport.client({ fetch: async (url, init) => {
+      if (!changed) {
+        changed = true; changes[1]!.key = 'changed';
+        const nested = second.pgsl.nodes.values().next().value!.provenance as { generatedAtTime: string };
+        nested.generatedAtTime = '2026-10-20T00:00:00.000Z';
+        if (mode === 'node-map') second.pgsl.nodes.clear();
+      }
+      return transport.fetch(url, init);
+    } });
+    await expect(client.commit({ operationId: 'captured', expected: initial, changes })).rejects.toThrow();
+    expect(transport.headWrites()).toBe(0); expect((await transport.client().readHead()).records.size).toBe(0);
+    const result = await client.commit({ operationId: 'captured', expected: initial, changes: [
+      { key: 'first', artifact: input() }, { key: 'second', artifact: input() },
+    ] });
+    expect([...result.snapshot.records.keys()].sort()).toEqual(['first', 'second']);
+    expect(result.snapshot.records.get('first')).toEqual(result.snapshot.records.get('second'));
+    expect(await textAt(transport, result.snapshot, 'second')).toBe('captured');
+    const before = transport.writes.length;
+    const replay = await client.commit({ operationId: 'captured', expected: initial, changes: [
+      { key: 'first', artifact: input() }, { key: 'second', artifact: input() },
+    ] });
+    expect(replay.replayed).toBe(true); expect(replay.head).toEqual(result.head); expect(transport.writes).toHaveLength(before);
+  });
+
+  it('captures record keys before I/O without retaining caller change objects', async () => {
+    const transport = new NativeTransport(), initial = await transport.client().readHead();
+    const changes = [{ key: 'first', artifact: artifact('same') }, { key: 'second', artifact: artifact('same') }];
+    const client = transport.client({ fetch: async (url, init) => {
+      changes[1]!.key = 'changed'; return transport.fetch(url, init);
+    } });
+    const result = await client.commit({ operationId: 'keys', expected: initial, changes });
+    expect([...result.snapshot.records.keys()].sort()).toEqual(['first', 'second']);
+    expect(result.snapshot.records.get('first')).toEqual(result.snapshot.records.get('second'));
+  });
+
+  it('refuses plaintext already beyond the existing encrypted-resource cap before I/O', async () => {
+    const transport = new NativeTransport(), initial = await transport.client().readHead(); transport.methods.length = 0;
+    const client = transport.client({ maxArtifactBytes: 1024 });
+    await expect(client.commit({ operationId: 'oversized', expected: initial, changes: [
+      { key: 'large', artifact: artifact('x'.repeat(2048)) },
+    ] })).rejects.toThrow('capacity');
+    expect(transport.methods).toHaveLength(0); expect(transport.writes).toHaveLength(0);
+  });
+
+  it('uses fresh randomized encryption for equal artifacts in a later commit', async () => {
+    const transport = new NativeTransport(), client = transport.client();
+    const changes = [{ key: 'first', artifact: artifact('same') }, { key: 'second', artifact: artifact('same') }];
+    const first = await client.commit({ operationId: 'one', expected: await client.readHead(), changes });
+    const second = await client.commit({ operationId: 'two', expected: await client.readHead(), changes });
+    const a = first.snapshot.records.get('first')!, b = second.snapshot.records.get('first')!;
+    expect(a.plaintextDigest).toBe(b.plaintextDigest); expect(a.resourceUrl).not.toBe(b.resourceUrl);
+    expect(second.snapshot.records.get('second')).toEqual(b);
+    expect(await textAt(transport, await client.readSnapshotAt(first.head), 'first')).toBe('same');
+  });
+
+  it('refuses alias publication when its first staged ciphertext cannot be verified', async () => {
+    const transport = new NativeTransport(); let corrupted = false;
+    const client = transport.client({ fetch: async (url, init) => {
+      const response = await transport.fetch(url, init);
+      if (!corrupted && init?.method === 'PUT' && String(url).includes('/artifact-')) {
+        corrupted = true; const row = transport.rows.get(String(url))!;
+        transport.rows.set(String(url), { ...row, bytes: Buffer.from('{}') });
+      }
+      return response;
+    } });
+    await expect(client.commit({ operationId: 'unverified', expected: await client.readHead(), changes: [
+      { key: 'first', artifact: artifact('same') }, { key: 'second', artifact: artifact('same') },
+    ] })).rejects.toThrow();
+    expect(transport.writes).toHaveLength(1); expect(transport.headWrites()).toBe(0);
+    expect((await transport.client().readHead()).records.size).toBe(0);
+  });
+
   it('bounds and detaches selected coverage before I/O, including proven absence at an empty head', async () => {
     const transport = new NativeTransport(), client = transport.client();
     for (const keys of [new Array(1001).fill('x'), [''], ['bad\nkey'], [null], 'key']) {
@@ -423,6 +533,86 @@ describe('strict native encrypted PGSL commits', () => {
     expect(await textAt(transport, await transport.client().readSnapshotAt(earliest.head), 'first')).toBe('first');
     expect(transport.methods.every(m => !m.startsWith('DELETE '))).toBe(true);
   }, 60_000);
+});
+
+describe('opt-in immutable native artifact reuse', () => {
+  it('reuses verified ciphertext but returns independent decrypted node maps', async () => {
+    const transport = new NativeTransport(), saved = await put(transport, 'cached', 'exact immutable content');
+    const reference = saved.snapshot.records.get('statement:cached')!;
+    const reader = transport.client({ cacheImmutableReads: true });
+    transport.methods.length = 0;
+    const first = await reader.readArtifact(reference);
+    expect(Buffer.from(readNativeByteArtifact(first).bytes).toString()).toBe('exact immutable content');
+    expect(transport.methods).toEqual(['GET ' + reference.resourceUrl]);
+    (first.nodes as Map<IRI, unknown>).clear();
+    const second = await reader.readArtifact(reference);
+    expect(Buffer.from(readNativeByteArtifact(second).bytes).toString()).toBe('exact immutable content');
+    expect(transport.methods).toEqual(['GET ' + reference.resourceUrl]);
+    expect(second.nodes).not.toBe(first.nodes);
+  });
+
+  it('does not share cached authority or content across reader instances', async () => {
+    const transport = new NativeTransport(), saved = await put(transport, 'private-cache');
+    const reference = saved.snapshot.records.get('statement:private-cache')!;
+    await transport.client({ cacheImmutableReads: true }).readArtifact(reference);
+    transport.methods.length = 0;
+    const restarted = transport.client({ cacheImmutableReads: true });
+    await restarted.readArtifact(reference);
+    expect(transport.methods).toEqual(['GET ' + reference.resourceUrl]);
+    const denied = transport.client({ cacheImmutableReads: true, fetch: async () => new Response(null, { status: 403 }) });
+    await expect(denied.readArtifact(reference)).rejects.toThrow('unreadable');
+  });
+
+  it('requires all reference bindings and does not retain a failed initial verification', async () => {
+    const transport = new NativeTransport(), saved = await put(transport, 'verified-cache');
+    const reference = saved.snapshot.records.get('statement:verified-cache')!;
+    const reader = transport.client({ cacheImmutableReads: true });
+    await expect(reader.readArtifact({ ...reference, plaintextDigest: sha('wrong plaintext') })).rejects.toThrow('plaintext binding');
+    await expect(reader.readArtifact({ ...reference, topUri: mintNodeId('atom', 'd'.repeat(40)) })).rejects.toThrow();
+    const original = transport.rows.get(reference.resourceUrl)!;
+    transport.rows.set(reference.resourceUrl, { ...original, bytes: Buffer.from('{}') });
+    transport.methods.length = 0;
+    await expect(reader.readArtifact(reference)).rejects.toThrow('unavailable or changed');
+    transport.rows.set(reference.resourceUrl, original);
+    await reader.readArtifact(reference);
+    expect(transport.methods).toEqual(['GET ' + reference.resourceUrl, 'GET ' + reference.resourceUrl]);
+    transport.rows.set(reference.resourceUrl, { ...original, bytes: Buffer.from('{}') });
+    await expect(transport.client({ cacheImmutableReads: true }).readArtifact(reference)).rejects.toThrow('unavailable or changed');
+  });
+
+  it('keeps head reads fresh while reusing exact immutable index artifacts', async () => {
+    const transport = new NativeTransport(); await put(transport, 'head-one');
+    const reader = transport.client({ cacheImmutableReads: true });
+    transport.methods.length = 0;
+    const first = await reader.readHead();
+    const firstReads = [...transport.methods];
+    const indexReads = firstReads.filter(method => method.includes('/artifact-'));
+    expect(indexReads.length).toBeGreaterThan(0);
+    transport.methods.length = 0;
+    expect((await reader.readHead()).revision).toBe(first.revision);
+    expect(transport.methods).toContain('GET ' + scope.headUrl);
+    expect(transport.methods.filter(method => method.includes('/artifact-'))).toEqual([]);
+    await put(transport, 'head-two');
+    const changed = await reader.readHead();
+    expect(changed.revision).not.toBe(first.revision);
+    expect(changed.records.has('statement:head-two')).toBe(true);
+  });
+
+  it('never substitutes a cached artifact for a required staging readback', async () => {
+    const transport = new NativeTransport(); let corrupted = false;
+    const client = transport.client({ cacheImmutableReads: true, fetch: async (url, init) => {
+      const response = await transport.fetch(url, init);
+      if (!corrupted && init?.method === 'PUT' && String(url).includes('/artifact-')) {
+        corrupted = true;
+        const row = transport.rows.get(String(url))!;
+        transport.rows.set(String(url), { ...row, bytes: Buffer.from('{}') });
+      }
+      return response;
+    } });
+    await expect(client.commit({ operationId: 'staging-cache', expected: await client.readHead(),
+      changes: [{ key: 'key', artifact: artifact('must read back') }] })).rejects.toThrow();
+    expect(transport.headWrites()).toBe(0);
+  });
 });
 
 describe('explicit bounded native rolling checkpoints', () => {

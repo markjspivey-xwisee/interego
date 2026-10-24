@@ -47,6 +47,7 @@ RUN node -e "const fs=require('fs');const p=JSON.parse(fs.readFileSync('./packag
 
 COPY examples/dashboard/tsconfig.json ./
 COPY examples/dashboard/server.ts ./
+COPY examples/dashboard/polling-demand.ts ./
 COPY examples/dashboard/index.html ./
 COPY examples/multi-agent/css-config.json ./css-config.json
 RUN npx tsc

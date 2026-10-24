@@ -804,9 +804,17 @@ describe('the registry names every shared live external, by rule rather than by 
       'applications/foxxi-content-intelligence/tests/native-lrs-store.test.ts',
       'applications/foxxi-content-intelligence/tests/xapi-durable-primary.test.ts',
     ];
-    const consumers = [...appConsumers, 'tests/pgsl-store-native-commit.test.ts'];
-    for (const name of ['TEST_NATIVE_POD_URL', 'TEST_NATIVE_CSS_ROOT', 'TEST_NATIVE_PG_URL', 'REQUIRE_LRS_NATIVE_TESTS']) {
-      const readers = name === 'TEST_NATIVE_PG_URL' || name === 'REQUIRE_LRS_NATIVE_TESTS' ? consumers : appConsumers;
+    const nativeConsumers = [...appConsumers, 'tests/pgsl-store-native-commit.test.ts'];
+    const inventory = 'tests/pgsl-store-inventory-pg.test.ts';
+    const consumers = [...nativeConsumers, inventory];
+    const expectedReaders: Record<string, string[]> = {
+      TEST_NATIVE_POD_URL: appConsumers,
+      TEST_NATIVE_CSS_ROOT: appConsumers,
+      TEST_NATIVE_PG_URL: consumers,
+      REQUIRE_LRS_NATIVE_TESTS: nativeConsumers,
+      REQUIRE_INVENTORY_PG_TESTS: [inventory],
+    };
+    for (const [name, readers] of Object.entries(expectedReaders)) {
       expect((ENV_READERS.get(name) ?? []).slice().sort()).toEqual(readers.slice().sort());
       expect(lrs!.armedBy).toContain(name);
       expect(SHARED_ONLY_THROUGH_IMPORTED_CODE.map(e => e.name)).not.toContain(name);
@@ -820,7 +828,7 @@ describe('the registry names every shared live external, by rule rather than by 
     expect(lrs!.armedInCi).toEqual(measured);
     // CI starts real CSS over the isolated PGSL engine. The optional external-pod retarget
     // is intentionally not supplied there; it cannot stand in for a restartable fixture.
-    for (const name of ['TEST_NATIVE_CSS_ROOT', 'TEST_NATIVE_PG_URL', 'REQUIRE_LRS_NATIVE_TESTS']) {
+    for (const name of ['TEST_NATIVE_CSS_ROOT', 'TEST_NATIVE_PG_URL', 'REQUIRE_LRS_NATIVE_TESTS', 'REQUIRE_INVENTORY_PG_TESTS']) {
       expect(setsVar(read(measured[0]!), name)).toBe(true);
     }
     // The selector is read through the existing typed environment alias and deliberately set

@@ -85,7 +85,13 @@
  */
 
 import { createServer } from 'http';
+import { createHash } from 'node:crypto';
 import { Pool } from 'undici';
+import { PROVISIONAL_BUDGET_DOCUMENT, provisionalLimits, verifiedProvisional,
+  checkProvisionalTarget, readProvisionalCommit, reserveProvisionalWrite, createProvisionalWriteLimiter } from './provisional-play.mjs';
+
+const PROVISIONAL_LIMITS = provisionalLimits();
+const acquireProvisionalWrite = createProvisionalWriteLimiter();
 
 const PORT = Number(process.env.PORT ?? 8080);
 // Fail-fast: CSS is internal-only (--ingress internal). The canonical
@@ -196,7 +202,7 @@ const WRITE_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
  * auxiliary resources, and a POST that names it as the Slug of the new resource are the
  * operator's alone. A user changes their credentials through the identity server's endpoints.
  */
-const PRIVATE_POD_DOCUMENTS = new Set(['auth-methods.jsonld']);
+const PRIVATE_POD_DOCUMENTS = new Set(['auth-methods.jsonld', PROVISIONAL_BUDGET_DOCUMENT]);
 
 /** A pod document name that is one of PRIVATE_POD_DOCUMENTS or one of its auxiliary resources. */
 function isPrivateDocumentName(name) {
@@ -324,7 +330,9 @@ export function corsHeadersFor(originHeader) {
     'Access-Control-Expose-Headers':
       'Link, ETag, Accept-Post, Accept-Patch, Accept-Put, Location, WAC-Allow, '
       + 'Last-Modified, Content-Type, Allow, Updates-Via, '
-      + 'Interego-Native-Commit, Interego-Revision, Interego-Body-Digest',
+      + 'Interego-Native-Commit, Interego-Revision, Interego-Body-Digest, '
+      + 'Interego-Provisional-Bytes-Remaining, Interego-Provisional-Writes-Remaining, Interego-Provisional-Expires-At, '
+      + 'Interego-Play-Budget-Exhausted',
     'Vary': 'Origin',
     // Deliberately no Access-Control-Allow-Credentials.
   };
@@ -445,11 +453,16 @@ async function probeVerifySource(url, token, opts = {}) {
     if (typeof data.userId !== 'string' || !data.userId) {
       return { kind: 'invalid', reason: 'verified token has no userId claim' };
     }
+    let provisionalPlay;
+    try { provisionalPlay = verifiedProvisional(data); }
+    catch (error) { return { kind: 'invalid', reason: error.message }; }
     return {
       kind: 'valid',
       userId: data.userId,
       agentId: typeof data.agentId === 'string' ? data.agentId : undefined,
       scope: typeof data.scope === 'string' ? data.scope : undefined,
+      ownerDid: typeof data.ownerDid === 'string' ? data.ownerDid : undefined,
+      provisionalPlay,
     };
   }
   return { kind: 'unknown', reason: data.reason ?? 'token not recognized' };
@@ -474,7 +487,13 @@ async function verifyUserBearer(token) {
   }
   const cached = cacheGet(token);
   if (cached) {
-    if (cached.valid) return { ok: true, userId: cached.userId, agentId: cached.agentId, scope: cached.scope };
+    if (cached.valid) {
+      if (cached.provisionalPlay && cached.provisionalPlay.expiresAt * 1000 <= Date.now()) {
+        return { ok: false, status: 401, reason: 'temporary play credential expired' };
+      }
+      return { ok: true, userId: cached.userId, agentId: cached.agentId, scope: cached.scope,
+        ownerDid: cached.ownerDid, provisionalPlay: cached.provisionalPlay };
+    }
     return { ok: false, status: 401, reason: cached.reason ?? 'invalid token' };
   }
 
@@ -490,8 +509,8 @@ async function verifyUserBearer(token) {
       IDENTITY_INTROSPECTION_SECRET ? { bearer: IDENTITY_INTROSPECTION_SECRET } : {},
     );
     if (r.kind === 'valid') {
-      cacheSet(token, { valid: true, userId: r.userId, agentId: r.agentId, scope: r.scope });
-      return { ok: true, userId: r.userId, agentId: r.agentId, scope: r.scope };
+      cacheSet(token, { valid: true, userId: r.userId, agentId: r.agentId, scope: r.scope, ownerDid: r.ownerDid, provisionalPlay: r.provisionalPlay });
+      return { ok: true, userId: r.userId, agentId: r.agentId, scope: r.scope, ownerDid: r.ownerDid, provisionalPlay: r.provisionalPlay };
     }
     if (r.kind === 'invalid') {
       cacheSet(token, { valid: false, reason: r.reason });
@@ -508,8 +527,8 @@ async function verifyUserBearer(token) {
       { bearer: RELAY_INTROSPECTION_SECRET },
     );
     if (r.kind === 'valid') {
-      cacheSet(token, { valid: true, userId: r.userId, agentId: r.agentId, scope: r.scope });
-      return { ok: true, userId: r.userId, agentId: r.agentId, scope: r.scope };
+      cacheSet(token, { valid: true, userId: r.userId, agentId: r.agentId, scope: r.scope, ownerDid: r.ownerDid, provisionalPlay: r.provisionalPlay });
+      return { ok: true, userId: r.userId, agentId: r.agentId, scope: r.scope, ownerDid: r.ownerDid, provisionalPlay: r.provisionalPlay };
     }
     if (r.kind === 'invalid' || r.kind === 'unknown') {
       // Both identity and relay say no — cache invalid.
@@ -699,6 +718,18 @@ function buildResponseHeaders(upstreamHeaders, corsHeaders) {
 const NATIVE_COMMIT_TYPE = 'application/vnd.interego.native-commit+json';
 const NATIVE_REVISION = /^sha256:[a-f0-9]{64}$/;
 const NATIVE_NODE = /^urn:pgsl:(?:atom|fragment):[a-f0-9]{40}$/;
+
+/** Native validators and digests describe exact bytes, even through an edge proxy. */
+function preventNativeTransformation(headers) {
+  const current = headers['cache-control'];
+  const policy = Array.isArray(current) ? current.join(', ') : current ?? '';
+  // Split directives without treating a quoted extension value as a directive.
+  const directives = policy.match(/(?:[^,"]|"(?:\\.|[^"\\])*")+/g) ?? [];
+  if (!directives.some(value => value.trim().toLowerCase() === 'no-transform')) {
+    headers['cache-control'] = policy ? `${policy}, no-transform` : 'no-transform';
+  }
+}
+
 function isNativeCommitType(value) {
   return typeof value === 'string' && value.split(';', 1)[0].trim().toLowerCase() === NATIVE_COMMIT_TYPE;
 }
@@ -742,6 +773,54 @@ async function mappedNativeReceipt(upstream, target, hostHeader, requestHeaders)
   }
   return Buffer.from(JSON.stringify({ ...receipt, resource: publicResource, path: publicResource,
     storageResource: receipt.resource, storagePath: receipt.path }));
+}
+
+/** A private native-CAS ledger bounds all immutable checkpoint history, including retries and restarts. */
+function provisionalBudgetStorage() {
+  const pool = _getUpstreamPool(CSS_INTERNAL_URL);
+  const host = CSS_HOST_HEADER ?? new URL(CSS_INTERNAL_URL).host;
+  const readBounded = async (response, maximum) => {
+    const chunks = []; let size = 0;
+    for await (const chunk of response.body) {
+      size += chunk.length;
+      if (size > maximum) throw new Error('budget representation exceeds its bound');
+      chunks.push(Buffer.from(chunk));
+    }
+    return Buffer.concat(chunks);
+  };
+  return {
+    async read(path) {
+      const response = await pool.request({ method: 'GET', path,
+        headers: { host, accept: 'application/json' }, signal: AbortSignal.timeout(10_000), maxRedirections: 0 });
+      if (response.statusCode === 404) { await response.body.dump(); return null; }
+      if (response.statusCode !== 200) { await response.body.dump(); throw new Error('budget read unavailable'); }
+      const body = await readBounded(response, 16_384);
+      const revision = response.headers['interego-revision'];
+      const digest = 'sha256:' + createHash('sha256').update(body).digest('hex');
+      if (!NATIVE_REVISION.test(revision) || response.headers['interego-body-digest'] !== digest) throw new Error('budget read has no exact native revision');
+      return { revision, value: JSON.parse(body.toString('utf8')) };
+    },
+    async compareAndSet(path, expectedRevision, value) {
+      const body = Buffer.from(JSON.stringify(value));
+      const command = Buffer.from(JSON.stringify({ version: 1, expectedRevision, contentType: 'application/json', bodyBase64: body.toString('base64') }));
+      const headers = { host, 'content-type': NATIVE_COMMIT_TYPE, accept: 'application/json', 'content-length': String(command.length),
+        ...(expectedRevision === null ? { 'if-none-match': '*' } : { 'if-match': `"${expectedRevision}"` }) };
+      const response = await pool.request({ method: 'PUT', path, headers, body: command,
+        signal: AbortSignal.timeout(10_000), maxRedirections: 0 });
+      if (response.statusCode === 409 || response.statusCode === 412) { await response.body.dump(); return false; }
+      if (response.statusCode < 200 || response.statusCode >= 300) { await response.body.dump(); throw new Error('budget reservation unavailable'); }
+      const receipt = JSON.parse((await mappedNativeReceipt(response, new URL(path, CSS_INTERNAL_URL), host, headers)).toString('utf8'));
+      if (receipt.bodyDigest !== 'sha256:' + createHash('sha256').update(body).digest('hex') || receipt.size !== body.length) throw new Error('budget reservation receipt mismatch');
+      return true;
+    },
+  };
+}
+
+function provisionalRemainingHeaders(res, remaining) {
+  if (!remaining) return;
+  res.setHeader('Interego-Provisional-Bytes-Remaining', String(remaining.bytesRemaining));
+  res.setHeader('Interego-Provisional-Writes-Remaining', String(remaining.writesRemaining));
+  res.setHeader('Interego-Provisional-Expires-At', String(remaining.expiresAt));
 }
 
 /**
@@ -851,6 +930,8 @@ function noteCaller(req) {
 }
 
 const server = createServer(async (req, res) => {
+  let releaseProvisionalWrite;
+  try {
   const method = (req.method ?? 'GET').toUpperCase();
   try { noteCaller(req); } catch { /* accounting must never fail a request */ }
 
@@ -918,6 +999,8 @@ const server = createServer(async (req, res) => {
       perUserBearers: Boolean(IDENTITY_URL) || Boolean(RELAY_VERIFY_URL && RELAY_INTROSPECTION_SECRET),
       identityVerify: Boolean(IDENTITY_URL),
       relayIntrospect: Boolean(RELAY_VERIFY_URL && RELAY_INTROSPECTION_SECRET),
+      provisionalPlay: { ...PROVISIONAL_LIMITS, accounting: 'durable-lifetime-before-write',
+        budgetDocument: PROVISIONAL_BUDGET_DOCUMENT, conditionalNativeCommit: true },
       // The git sha baked into the image, and the only field here that can distinguish one
       // deployment from another — everything above is derived from env vars that survive a
       // redeploy unchanged. ★ That is not hypothetical for this service: its HSTS fix sat
@@ -940,6 +1023,7 @@ const server = createServer(async (req, res) => {
     return;
   }
   const target = podPath(upstreamUrl);
+  let provisionalBody;
   const isWrite = WRITE_METHODS.has(method);
   // A read of a pod's private document is authorized as a write to that pod is.
   const privatePod = isWrite ? null : privateDocumentPod(target);
@@ -1023,6 +1107,29 @@ const server = createServer(async (req, res) => {
         }));
         return;
       }
+      if (isWrite && verified.provisionalPlay) {
+        try {
+          const expectedRevision = checkProvisionalTarget(verified.provisionalPlay, method, upstreamUrl, req.headers);
+          releaseProvisionalWrite = acquireProvisionalWrite(verified.userId);
+          const uploadDeadline = setTimeout(() => req.destroy(new Error('temporary checkpoint upload timed out')), 15_000);
+          uploadDeadline.unref();
+          let commit;
+          try { commit = await readProvisionalCommit(req, expectedRevision, PROVISIONAL_LIMITS); }
+          finally { clearTimeout(uploadDeadline); }
+          const remaining = await reserveProvisionalWrite(verified.provisionalPlay, commit.bytes, PROVISIONAL_LIMITS, provisionalBudgetStorage());
+          provisionalRemainingHeaders(res, remaining);
+          provisionalBody = commit.body;
+        } catch (error) {
+          provisionalRemainingHeaders(res, error.remaining);
+          if (error.status === 429) res.setHeader('Retry-After', '2');
+          if (error.code === 'provisional_play_storage_limit') res.setHeader('Interego-Play-Budget-Exhausted', '1');
+          res.writeHead(error.status ?? 503, { 'Content-Type': 'application/json', ...corsHeaders });
+          res.end(JSON.stringify({ error: error.code ?? 'provisional_play_budget_unavailable',
+            detail: error.status ? error.message : 'Temporary character storage could not be verified. Your previous checkpoint is preserved; retry saving.',
+            ...(error.remaining ? { remaining: error.remaining } : {}) }));
+          return;
+        }
+      }
       // Authorized per-user request. Fall through to strip + proxy.
     }
 
@@ -1077,7 +1184,11 @@ const server = createServer(async (req, res) => {
   //     path; kept for if a future ingress layer regresses).
   let upstreamBody;
   if (method !== 'GET' && method !== 'HEAD') {
-    if (UPSTREAM_REQUEST_BUFFER) {
+    if (provisionalBody) {
+      upstreamBody = provisionalBody;
+      headers['content-length'] = String(provisionalBody.length);
+      delete headers['transfer-encoding'];
+    } else if (UPSTREAM_REQUEST_BUFFER) {
       const chunks = [];
       for await (const chunk of req) chunks.push(chunk);
       const buf = Buffer.concat(chunks);
@@ -1151,6 +1262,7 @@ const server = createServer(async (req, res) => {
     try {
       const body = await mappedNativeReceipt(upstreamRes, upstreamUrl, hostHeader, req.headers);
       const receiptHeaders = buildResponseHeaders(upstreamRes.headers, corsHeaders);
+      preventNativeTransformation(receiptHeaders);
       delete receiptHeaders['content-encoding'];
       receiptHeaders['content-length'] = String(body.length);
       res.writeHead(upstreamRes.statusCode, receiptHeaders);
@@ -1164,6 +1276,11 @@ const server = createServer(async (req, res) => {
   }
 
   const responseHeaders = buildResponseHeaders(upstreamRes.headers, corsHeaders);
+  if (method === 'GET' && upstreamRes.statusCode === 200
+    && typeof responseHeaders['interego-revision'] === 'string' && NATIVE_REVISION.test(responseHeaders['interego-revision'])
+    && typeof responseHeaders['interego-body-digest'] === 'string' && NATIVE_REVISION.test(responseHeaders['interego-body-digest'])) {
+    preventNativeTransformation(responseHeaders);
+  }
   res.writeHead(upstreamRes.statusCode ?? 502, responseHeaders);
 
   // Stream the response body back. upstreamRes.body is a Node Readable.
@@ -1200,6 +1317,12 @@ const server = createServer(async (req, res) => {
   } else {
     res.end();
   }
+  } finally {
+    if (releaseProvisionalWrite) {
+      if (res.writableFinished || res.destroyed) releaseProvisionalWrite();
+      else { res.once('finish', releaseProvisionalWrite); res.once('close', releaseProvisionalWrite); }
+    }
+  }
 });
 
 // Export the bare http.Server so unit tests can drive it via
@@ -1226,3 +1349,4 @@ if (process.env.CSS_GATE_AUTOSTART !== '0') server.listen(PORT, () => {
   }
   console.log(`[css-gate] read methods (GET/HEAD/OPTIONS) pass through anonymously, except /<pod>/{${[...PRIVATE_POD_DOCUMENTS].join(',')}} (owner or operator bearer); writes to those are the operator's alone`);
 });
+

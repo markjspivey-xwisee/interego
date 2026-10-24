@@ -21,6 +21,7 @@ on:
       # naming them individually is how `tools/security-txt-expiry-check.mjs` came to be
       # wired into nothing at all.
       - 'tools/**'
+      - '.github/workflows/i2idlx-v93-release.yml'
       # The grounding count is stated in prose in spec/LAYERS.md and is now verified by
       # tools/derivation-lint.mjs. Without this entry a commit that only edits the number
       # never runs the gate that checks it — which is how it reached 41/41 against 97.
@@ -70,6 +71,7 @@ on:
       # naming them individually is how `tools/security-txt-expiry-check.mjs` came to be
       # wired into nothing at all.
       - 'tools/**'
+      - '.github/workflows/i2idlx-v93-release.yml'
       # The grounding count is stated in prose in spec/LAYERS.md and is now verified by
       # tools/derivation-lint.mjs. Without this entry a commit that only edits the number
       # never runs the gate that checks it — which is how it reached 41/41 against 97.

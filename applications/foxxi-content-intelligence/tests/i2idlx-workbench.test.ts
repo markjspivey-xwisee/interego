@@ -3,7 +3,8 @@ import express from 'express';
 import { Wallet } from 'ethers';
 import { createHash } from 'node:crypto';
 import type { AddressInfo } from 'node:net';
-import { generateKeyPair, openEncryptedEnvelope, createEncryptedEnvelope } from '@interego/core';
+import { generateKeyPair, openEncryptedEnvelope, createEncryptedEnvelope, extractAffordancesFromTurtle, followAffordance } from '@interego/core';
+import { Parser } from 'n3';
 import { recoverSignedRequest } from '../src/auth.js';
 import { attachWorkbenchRoutes, WorkbenchDocuments, workbenchUserId, workbenchEncryptionKeypair, validateWorkbenchDocument, type WorkbenchConfig } from '../src/i2idlx-workbench.js';
 
@@ -228,6 +229,44 @@ describe('I2IDL-X pod-backed workbench security', () => {
   });
 });
 describe('I2IDL-X live route contract (local fixture only)', () => {
+  it('discovers executable checks through JSON and a generic-follower-compatible Turtle descriptor', async () => {
+    const f = fixture(), app = express(); app.use(express.json());
+    attachWorkbenchRoutes(app, f.config);
+    const server = app.listen(0, '127.0.0.1');
+    await new Promise<void>(resolve => server.once('listening', resolve));
+    const local = 'http://127.0.0.1:' + (server.address() as AddressInfo).port;
+    try {
+      const jsonResponse = await fetch(local + '/i2idlx/capabilities');
+      expect(jsonResponse.headers.get('Content-Type')).toContain('application/json');
+      expect(jsonResponse.headers.get('Link')).toContain('<' + base + '/i2idlx/capabilities.ttl>');
+      const capabilities = await jsonResponse.json();
+      expect(capabilities.descriptor_url).toBe(base + '/i2idlx/capabilities.ttl');
+      expect(capabilities.ai.project_paid).toBe(false);
+      const descriptorResponse = await fetch(local + '/i2idlx/capabilities.ttl');
+      expect(descriptorResponse.headers.get('Content-Type')).toContain('text/turtle');
+      const descriptor = await descriptorResponse.text();
+      const quads = new Parser({ format: 'text/turtle' }).parse(descriptor);
+      const discovered = extractAffordancesFromTurtle(descriptor, capabilities.descriptor_url);
+      expect(discovered.length).toBe(capabilities._affordances.length);
+      const names = { classifier: 'classify', shacl: 'validate', peerTerm: 'peer-term', sourceVersion: 'source-version' };
+      for (const [name, suffix] of Object.entries(names)) {
+        const action = 'urn:iep:action:foxxi:i2idlx-' + suffix;
+        expect(capabilities.checkOperations[name]).toEqual({ action, href: base + '/i2idlx/api/' + suffix, method: 'POST' });
+        const operation = discovered.find(a => a.action.endsWith('i2idlx-' + suffix));
+        expect(operation).toMatchObject({ method: 'POST', target: base + '/i2idlx/api/' + suffix });
+        expect(quads.find(q => q.subject.value === operation!.action && q.predicate.value.endsWith('#readOnlyHint'))?.object.value).toBe('true');
+      }
+      const write = discovered.find(a => a.action.endsWith('i2idlx-write'))!;
+      expect(quads.find(q => q.subject.value === write.action && q.predicate.value.endsWith('#readOnlyHint'))?.object.value).toBe('false');
+      // The existing generic follower requests Turtle at the original JSON URL.
+      // Exercise that path against real local routes using the declared bridge base.
+      const transport = (async (url: string, init?: RequestInit) => fetch(url.replace(base, local), init)) as never;
+      const followed = await followAffordance(base + '/i2idlx/capabilities', 'urn:iep:action:foxxi:i2idlx-challenge', {}, { fetch: transport, expectedMethod: 'GET' });
+      expect(followed.status).toBe(200);
+      expect(JSON.parse(followed.body)).toMatchObject({ audience: base, nonce: expect.any(String) });
+      expect(f.requests).toEqual([]);
+    } finally { await new Promise<void>((resolve, reject) => server.close(e => e ? reject(e) : resolve())); }
+  });
   it('consumes a server-issued nonce, derives identity, and never advertises project-paid inference', async () => {
     const f = fixture(), app = express(); app.use(express.json());
     attachWorkbenchRoutes(app, f.config);

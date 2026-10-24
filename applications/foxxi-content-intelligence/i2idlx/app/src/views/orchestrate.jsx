@@ -211,6 +211,7 @@ function Intro({ orc, onLive }) {
         })}
       </ol>
       <p className="small muted">The inventory: {RECORDS.length} records from the academy's LMS, registry, credential platform and org chart. Some are harder than they look: one describes two kinds of thing at once, one has no concept in the glossary, and one is also published to a registry that speaks another vocabulary.</p>
+      <p className="small muted">The recorded example preserves a Claude transcript from I2IDL {orc.recordedRelease || "an unspecified release"}. Its tool calls run deterministically against the current embedded release, {META.release}, with differences marked. Watching it makes no new model calls.</p>
       <div className="row wrap">
         <button className="btn primary" onClick={() => orc.start("recorded")} disabled={!orc.trace}><Icon name="play" filled />Watch the recorded run</button>
         <button className="btn" onClick={onLive}><Icon name="sparkle" />Run it live with your model</button>
@@ -296,7 +297,7 @@ function Staged({ orc }) {
 }
 
 function Provenance({ orc }) {
-  const ttl = useMemo(() => provTurtle({ log: orc.log, world: orc.world, mode: orc.mode, recordedAt: orc.mode === "recorded" && orc.trace ? orc.trace.recordedAt : null }), [orc.log, orc.version, orc.mode]);
+  const ttl = useMemo(() => provTurtle({ log: orc.log, world: orc.world, mode: orc.mode, recordedAt: orc.mode === "recorded" && orc.trace ? orc.trace.recordedAt : null, recordedRelease: orc.recordedRelease }), [orc.log, orc.version, orc.mode, orc.recordedRelease]);
   const { save, downloads } = useCaps();
   const { toast } = useUI();
   const dl = async () => {

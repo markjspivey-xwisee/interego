@@ -1,0 +1,295 @@
+name: I2IDL-X v0.0.93 ChatGPT App controlled release
+
+# The authorized configured-backend correction after the ChatGPT GUI merge.
+# This caller only releases the inspected successor of the reviewed master.
+# It reuses the existing build/deploy implementation and does not merge PRs.
+on:
+  push:
+    branches: [fix/i2idlx-configured-backend-20261020]
+    paths:
+      - 'applications/foxxi-content-intelligence/i2idlx/publications.json'
+      - '.github/workflows/i2idlx-v93-release.yml'
+
+concurrency:
+  # Distinct from the called workflow's railway-deploy-foxxi-bridge lock.
+  group: i2idlx-v93-release
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  gate:
+    name: Verify the reviewed pin and wait for every CI result
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+      - uses: actions/setup-node@v6
+        with: { node-version: '20' }
+      - name: Require the reviewed canonical source and original graph owner
+        env:
+          # Fill this with the validated candidate's exact SHA in the final receipt
+          # commit. The placeholder deliberately fails closed if it is not filled.
+          EXPECTED_PREDECESSOR: 0cfc6089f9eab4b66a9e944d53ef52d890f8c4ad
+          PUSH_PREDECESSOR: ${{ github.event.before }}
+        run: |
+          node --input-type=module <<'NODE'
+          import assert from 'node:assert/strict';
+          import { readFileSync } from 'node:fs';
+          assert.match(process.env.EXPECTED_PREDECESSOR, /^[0-9a-f]{40}$/);
+          assert.equal(process.env.PUSH_PREDECESSOR, process.env.EXPECTED_PREDECESSOR,
+            'Only the authorized successor of the reviewed candidate can release.');
+          const root = 'applications/foxxi-content-intelligence/i2idlx/';
+          const config = JSON.parse(readFileSync(root + 'config.json', 'utf8'));
+          const pin = JSON.parse(readFileSync(root + 'typescript/upstream-pin.json', 'utf8'));
+          assert.equal(config.i2idl.release, 'v0.0.93');
+          assert.equal(config.i2idl.repo, 'https://github.com/blakeplock/i2idl-linked-data');
+          assert.equal(config.i2idl.graphPath, 'public/glossary.jsonld');
+          assert.equal(pin.release, config.i2idl.release);
+          assert.equal(pin.repository, config.i2idl.repo);
+          assert.equal(pin.graphPath, config.i2idl.graphPath);
+          assert.equal(pin.commit, '0754254be64f0562bab7e68d69583f2cc90aa945');
+          assert.equal(pin.graphSha256, 'db172a650fc34766b81a1d75ae0f351131fcd6a0623ddc4b7f2bdd3643a40e6a');
+          assert.equal(config.owner, 'u-pk-33d42e6b33dc');
+          assert.equal(config.relayNsRoot, 'https://relay.interego.xwisee.com/ns');
+          const publications = JSON.parse(readFileSync(root + 'publications.json', 'utf8'));
+          const slugs = ['i2idlx-shapes', 'i2idlx', 'i2idlx-rules', 'i2idlx-catalog',
+            'i2idlx-enactments', 'i2idlx-mappings', 'i2idlx-releases', 'i2idlx-changes',
+            'i2idlx-alignments', 'i2idlx-referents'];
+          assert.deepEqual(Object.keys(publications.descriptors).sort(), slugs.sort());
+          for (const url of Object.values(publications.descriptors)) {
+            assert.match(url, /^https:\/\/gate\.interego\.xwisee\.com\/u-pk-33d42e6b33dc\/context-graphs\/[0-9]+\.ttl$/);
+          }
+          console.log('Reviewed v0.0.93 source pin and original publication namespace verified.');
+          NODE
+      - name: Require the full release CI surface to register
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          SELF_WORKFLOW: I2IDL-X v0.0.93 ChatGPT App controlled release
+          RELEASE_SHA: ${{ github.sha }}
+        run: |
+          node --input-type=module <<'NODE'
+          import { runsForSha } from './tools/ci-green-for-sha.mjs';
+          const required = ['ESLint', 'Bridge Typecheck', 'Mutation Gate', 'Ontology Lint',
+            'Foxxi SHACL Agreement', 'Base without verticals', 'I2IDL-X TypeScript parity',
+            'I2IDL-X bounded native diagnostic', 'I2IDL-X complete golden parity',
+            'I2IDL-X shared-input closure diagnostic', 'I2IDL-X browser and original client oracles',
+            'jev-harness (System One judgments)', 'I2IDL-X historical orchestration oracle'];
+          const options = { repo: process.env.GITHUB_REPOSITORY, token: process.env.GITHUB_TOKEN,
+            self: process.env.SELF_WORKFLOW };
+          for (let attempt = 0; attempt < 20; attempt++) {
+            const runs = await runsForSha(process.env.RELEASE_SHA, options);
+            const names = new Set(runs.map(run => run.name));
+            const missing = required.filter(name => !names.has(name));
+            if (missing.length === 0) {
+              console.log('Every required release workflow is registered for this exact SHA.');
+              process.exit(0);
+            }
+            console.log('Waiting for required workflows: ' + missing.join(', '));
+            await new Promise(resolve => setTimeout(resolve, 15_000));
+          }
+          throw new Error('The required release CI surface did not register; refusing to deploy.');
+          NODE
+      - name: Wait for CI on this exact commit and refuse unless it is green
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          SELF_WORKFLOW: I2IDL-X v0.0.93 ChatGPT App controlled release
+          CI_GATE_TIMEOUT_MS: '3600000'
+        run: node tools/ci-green-for-sha.mjs "${{ github.sha }}"
+      - name: Refuse a candidate superseded while its checks ran
+        env:
+          EXPECTED_SHA: ${{ github.sha }}
+        run: |
+          ACTUAL_SHA="$(git ls-remote origin "$GITHUB_REF" | cut -f1)"
+          test "$ACTUAL_SHA" = "$EXPECTED_SHA" || {
+            echo 'This candidate is no longer the branch head; refusing its release.' >&2
+            exit 1
+          }
+
+  build:
+    name: Build the checked Foxxi bridge commit
+    needs: gate
+    permissions:
+      contents: read
+      packages: write
+    uses: ./.github/workflows/build-ghcr.yml
+    with:
+      image: interego-foxxi-bridge
+    secrets: inherit
+
+  deploy:
+    name: Deploy the checked Foxxi bridge image through existing guards
+    needs: [gate, build]
+    permissions: {}
+    uses: ./.github/workflows/deploy-railway.yml
+    with:
+      service: foxxi-bridge
+      tag: ${{ github.sha }}
+      set_registry_credentials: false
+    secrets: inherit
+
+  live-visitor:
+    name: Verify real public desktop and mobile visitor journeys
+    needs: deploy
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: Install the same pinned browser oracle as the candidate checks
+        run: |
+          python3 -m pip install 'playwright==1.56.0'
+          python3 -m playwright install --with-deps chromium
+      - name: Visit the deployed public workbench without host or model credentials
+        run: >-
+          python3 tools/i2idlx-live-visitor-smoke.py
+          --url https://foxxi-bridge.interego.xwisee.com/i2idlx/
+          --expected-build "${{ github.sha }}"
+      - name: Verify the deployed public ChatGPT MCP App contract
+        run: |
+          node --input-type=module <<'NODE'
+          import assert from 'node:assert/strict';
+          import { readFileSync } from 'node:fs';
+          const endpoint = 'https://foxxi-bridge.interego.xwisee.com/i2idlx/mcp';
+          let sequence = 0;
+          async function rpc(method, params = {}, modern = false) {
+            const response = await fetch(endpoint, {
+              method: 'POST', signal: AbortSignal.timeout(30000),
+              headers: { 'Content-Type': 'application/json', ...(modern ? { 'Mcp-Method': method } : {}) },
+              body: JSON.stringify({ jsonrpc: '2.0', id: ++sequence, method, params: { ...params,
+                ...(modern ? { _meta: { 'io.modelcontextprotocol/protocolVersion': '2026-07-28',
+                  'io.modelcontextprotocol/clientCapabilities': {} } } : {}) } }),
+            });
+            assert.equal(response.status, 200, method + ' HTTP status');
+            const body = await response.json();
+            assert.equal(body.error, undefined, method + ' JSON-RPC error');
+            return body.result;
+          }
+          async function call(name, args = {}) {
+            const result = await rpc('tools/call', { name, arguments: args });
+            assert.notEqual(result.isError, true, name + ' tool error');
+            return result.structuredContent;
+          }
+          const initialized = await rpc('initialize', { protocolVersion: '2025-11-25', capabilities: {},
+            clientInfo: { name: 'i2idlx-live-release-check', version: '1' } });
+          assert.ok(initialized.capabilities.tools && initialized.capabilities.resources);
+          assert.ok((await rpc('server/discover', {}, true)).supportedVersions.includes('2026-07-28'));
+          const tools = (await rpc('tools/list')).tools;
+          assert.deepEqual(tools.map(tool => tool.name).sort(), [
+            'i2idlx_ask', 'i2idlx_classify', 'i2idlx_intervention_ask', 'i2idlx_interventions',
+            'i2idlx_orchestrate', 'i2idlx_peer_term', 'i2idlx_search', 'i2idlx_source_version',
+            'i2idlx_validate', 'i2idlx_workbench',
+          ].sort());
+          assert.ok(tools.every(tool => tool.annotations.readOnlyHint && !tool.annotations.destructiveHint));
+          assert.ok(tools.find(tool => tool.name === 'i2idlx_workbench').inputSchema.properties.view.enum.includes('interventions'));
+          const workbench = await call('i2idlx_workbench');
+          assert.equal(workbench.source.release, 'v0.0.93');
+          assert.equal(workbench.source.concept_count, 420);
+          const uri = tools.find(tool => tool.name === 'i2idlx_workbench')._meta.ui.resourceUri;
+          const resource = (await rpc('resources/read', { uri })).contents[0];
+          assert.equal(resource.mimeType, 'text/html;profile=mcp-app');
+          assert.ok(resource.text.includes('window.__I2IDLX_CHATGPT_APP__=true'));
+          const source = JSON.parse(/<script\b[^>]*id="i2-data"[^>]*>([\s\S]*?)<\/script>/i.exec(resource.text)[1]);
+          assert.equal(source.meta.release, 'v0.0.93');
+          assert.equal(source.concepts.length, 420);
+          const ask = await call('i2idlx_ask', { question: 'How do an LMS and an LRS differ?',
+            concept_ids: ['learning-management-systems', 'learning-record-store-lrs'] });
+          assert.equal(ask.execution, 'client-required');
+          assert.deepEqual(ask.context.concepts.slice(0, 2).map(concept => concept.id),
+            ['learning-management-systems', 'learning-record-store-lrs']);
+          assert.ok(ask.context.concepts.length <= 14);
+          assert.ok(ask.context.concepts.every(concept => typeof concept.definition === 'string' && concept.definition.length));
+          const recipe = await call('i2idlx_orchestrate', { example: true });
+          assert.equal(recipe.workflow.steps.length, 12);
+          assert.ok(recipe.workflow.ledger.checks.every(check => check.status === 'pending'));
+
+          // Exercise actual publicly stored material without creating content or attempts.
+          // An empty catalog or unreadable first source is a failed check, never a skipped pass.
+          const catalog = await call('i2idlx_interventions');
+          assert.equal(catalog.bounded, true);
+          assert.equal(catalog.limit, 40);
+          assert.ok(Array.isArray(catalog.items) && catalog.items.length > 0 && catalog.items.length <= 40,
+            'A real public intervention source must be available for stored-source acceptance.');
+          assert.ok(catalog.items.every(item => ['authored-course', 'package'].includes(item.source)
+            && typeof item.id === 'string' && item.id.length
+            && typeof item.title === 'string' && item.title.length
+            && typeof item.kind === 'string' && item.kind.length));
+          const selected = catalog.items[0];
+          const stored = await call('i2idlx_intervention_ask', {
+            source: selected.source, intervention_id: selected.id, lens: 'analyze',
+            question: 'Explain the purpose and main content of ' + selected.title + '.',
+          });
+          assert.equal(stored.task, 'intervention-ask');
+          assert.equal(stored.execution, 'client-required');
+          assert.equal(stored.source_context.source, selected.source);
+          assert.equal(stored.source_context.id, selected.id);
+          assert.equal(stored.source_context.kind, selected.kind);
+          assert.ok(stored.source_context.sections.length > 0);
+          assert.ok(stored.source_context.sections.every(section => typeof section.body === 'string'
+            && section.body.trim().length && typeof section.citation_id === 'string'
+            && section.citation_id.startsWith('intervention:')));
+          assert.equal(stored.pinned_glossary.context.publication.release, 'v0.0.93');
+          assert.match(stored.source_context.evidence.source_projection_sha256, /^[0-9a-f]{64}$/);
+
+          // Use real committed reference prose to verify generalization beyond courses.
+          // This is packet preparation over documentation, not a learner or model result.
+          const referencePath = 'applications/foxxi-content-intelligence/i2idlx/CHATGPT-APP.md';
+          const referenceText = readFileSync(referencePath, 'utf8').split(/\r?\n/).slice(0, 28).join('\n').trim();
+          assert.ok(referenceText.length && Buffer.byteLength(referenceText, 'utf8') <= 6000);
+          assert.match(process.env.GITHUB_SHA, /^[0-9a-f]{40}$/);
+          const referenceUri = 'https://github.com/' + process.env.GITHUB_REPOSITORY
+            + '/blob/' + process.env.GITHUB_SHA + '/' + referencePath;
+          const material = {
+            id: 'release-workbench-reference', title: 'Interpretant inside ChatGPT', kind: 'Reference material',
+            source_uri: referenceUri, version: process.env.GITHUB_SHA,
+            sections: [{ id: 'opening', title: 'Opening documentation', body: referenceText }],
+          };
+          const reference = await call('i2idlx_intervention_ask', {
+            source: 'supplied', lens: 'analyze',
+            question: 'What does this reference say about the connected ChatGPT model and task context?',
+            intervention: material,
+          });
+          assert.equal(reference.source_context.kind, 'Reference material');
+          assert.equal(reference.source_context.source_uri, referenceUri);
+          assert.equal(reference.source_context.version, process.env.GITHUB_SHA);
+          assert.equal(reference.source_context.sections.length, 1);
+          assert.equal(reference.source_context.sections[0].body, referenceText);
+          assert.equal(reference.pinned_glossary.context.publication.release, 'v0.0.93');
+          for (const context of [stored, reference]) {
+            assert.equal(context.assessment_performed, false);
+            assert.equal(context.conversation_context.server_session_created, false);
+            assert.equal(context.conversation_context.persisted, false);
+          }
+
+          const hiddenField = await rpc('tools/call', { name: 'i2idlx_intervention_ask', arguments: {
+            source: 'supplied', question: 'Explain this reference.',
+            intervention: { ...material, answer_key: 'RELEASE_PRIVATE_FIELD_MUST_NOT_BE_RETURNED' },
+          } });
+          assert.equal(hiddenField.isError, true);
+          assert.equal(hiddenField.structuredContent.source_context, undefined);
+          assert.equal(hiddenField.structuredContent.writes_performed, false);
+          assert.equal(hiddenField.structuredContent.sampling_performed, false);
+          assert.ok(!JSON.stringify(hiddenField).includes('RELEASE_PRIVATE_FIELD_MUST_NOT_BE_RETURNED'));
+          assert.ok([workbench, ask, recipe, catalog, stored, reference].every(packet => packet.writes_performed === false && packet.sampling_performed === false));
+          console.log(JSON.stringify({ ok: true, checks: ['legacy initialization', 'modern discovery',
+            'ten exact read-only tools', 'intervention view declaration', 'v93 workbench', 'verified GUI resource', 'exact Ask context',
+            'pending twelve-step example recipe', 'real stored intervention context',
+            'committed reference as a non-course intervention', 'hidden assessment field rejected', 'no server model or writes'],
+            stored_source: { source: selected.source, id: selected.id, sections: stored.source_context.sections.length },
+            supplied_reference_source: referenceUri,
+            real_chatgpt_acceptance: false, model_calls: 0 }));
+          NODE

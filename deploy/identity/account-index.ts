@@ -77,8 +77,12 @@ export async function listPods(fetchFn: FetchLike, rootUrl: string): Promise<str
   if (!r.ok) throw new PodReadError(rootUrl, `${r.status} ${r.statusText}`.trim());
   const body = await r.text();
   const out: string[] = [];
-  // CSS writes `ldp:contains <a/>, <b/> ;` — the children are relative IRIs ending in '/'.
-  const re = /ldp:contains\s+([\s\S]*?)\s*(?:;|\.)/g;
+  // CSS writes `ldp:contains <a/>, <b/>, <c.json> .` — the children are relative IRIs, and
+  // the containers among them end in '/'. The object list is read as IRIs up to the
+  // statement's end, never up to the first '.' or ';': a child whose NAME holds one (the
+  // root's `provisional-play-admission.json`, which sorts before every `svc-` and `u-`
+  // pod) cut the listing there, and every account after it went unloaded at startup.
+  const re = /ldp:contains\s+((?:<[^>]*>\s*,\s*)*<[^>]*>)/g;
   let block: RegExpExecArray | null;
   while ((block = re.exec(body)) !== null) {
     for (const ref of block[1].match(/<([^>]+)>/g) ?? []) {

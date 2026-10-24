@@ -1,3 +1,4 @@
+import { identityCopy } from "../identity-copy.js";
 // Insights: the glossary's shape and health, its release history, I2IDL-X coverage and team activity.
 import { C, META, KINDS, COLLECTIONS, SOURCES, RELEASES, SUGGESTIONS, ITEMS, itemByKey, byId, kindById, fieldById, enactByConcept, mapsByConcept, reuseClass, RIGHTS, degree, kindPhrase } from "../data.js";
 import { OriginStrip } from "../origin.jsx";
@@ -62,7 +63,7 @@ export function Insights({ route }) {
       <div className="stack" style={{ gap: 6 }}>
         <div className="eyebrow">Insights · {META.scheme.title} {META.release}</div>
         <div className="row wrap" style={{ alignItems: "flex-end", gap: 18 }}>
-          <div><div className="hero-fig">{C.length}</div><div className="muted">approved concepts</div></div>
+          <div><div className="hero-fig">{C.length}</div><div className="muted">published concepts</div></div>
           <p className="lede" style={{ maxWidth: "52ch" }}>Built from commit <a href={`${META.repo}/commit/${META.commit}`} target="_blank" rel="noopener"><code>{META.commit.slice(0, 7)}</code></a> ({fmtDate(META.commitDate)}). Every number below is computed from that release and the I2IDL-X graphs published on Interego.</p>
         </div>
       </div>
@@ -145,7 +146,7 @@ export function Insights({ route }) {
 
       <section className="stack">
         <div className="sec-h"><h2>Team activity</h2><span className="meta">From this page's shared data</span></div>
-        {!signedIn ? <div className="note"><Icon name="lock" /><span>Sign in to claude.ai to see and add your team's votes, notes and usage.</span></div> : (
+        {!signedIn ? <div className="note"><Icon name="lock" /><span>{identityCopy("activity")}</span></div> : (
           <>
             <div className="stats">
               {[["Reviewers", team.reviewers], ["Votes cast", team.votes], ["Items decided", team.decided], ["Notes", team.notes], ["Terms in use", usageByConcept.size]].map(([l, v]) => <div className="stat" key={l}><span className="l">{l}</span><span className="v">{v}</span></div>)}

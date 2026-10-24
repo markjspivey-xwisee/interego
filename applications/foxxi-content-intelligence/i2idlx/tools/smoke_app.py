@@ -364,7 +364,27 @@ def run(stubbed: bool, width=1440, height=900, shots=False):
             page.wait_for_selector(".layers .vb.for")
             check(page.locator(".layers .vb.for").first.is_disabled(), "[bare] voting is disabled without an identity")
             check(page.locator(".layers textarea").count() == 0, "[bare] no note box without an identity")
-            check(page.locator(".nav a", has_text="Ask").count() == 0, "[bare] Ask is hidden when Claude is unavailable")
+            ask_nav = page.locator('.nav a[href="#ask"]:visible')
+            check(ask_nav.count() == 1, "[bare] Ask remains visible in navigation without a browser model")
+            ask_nav.click()
+            page.wait_for_selector("#main .empty b")
+            check(page.locator("#main .empty b").inner_text() == "Use Ask in your AI client",
+                  "[bare] the visible Ask entry opens the connected-client workflow")
+            controls_url = "https://foxxi-bridge.interego.xwisee.com/i2idlx/capabilities.ttl"
+            check(page.locator("#main a", has_text="Discoverable controls").get_attribute("href") == controls_url,
+                  "[bare] Ask links to the canonical discoverable controls")
+            page.evaluate("window.__copiedPrompts = []; Object.defineProperty(navigator, 'clipboard', "
+                          "{configurable:true, value:{writeText:async (text) => { window.__copiedPrompts.push(text); }}})")
+            for label in ("Copy Ask prompt", "Copy Orchestrate prompt"):
+                button = page.locator("#main").get_by_role("button", name=label, exact=True)
+                check(button.is_visible() and button.is_enabled(), f"[bare] {label} is available without a browser model")
+                button.click()
+            page.wait_for_function("window.__copiedPrompts.length === 2")
+            prompts = page.evaluate("window.__copiedPrompts")
+            check("I2IDL-X Ask operation" in prompts[0] and "[add your question]" in prompts[0]
+                  and "I2IDL-X Orchestrate" in prompts[1] and "check ledger" in prompts[1]
+                  and all(controls_url in prompt for prompt in prompts),
+                  "[bare] both copy controls deliver the actual task prompts and canonical discovery URL")
         b.close()
     real = [e for e in errors if "favicon" not in e]
     check(not real, f"[{tag}] no page errors" + ("" if not real else ": " + " | ".join(real[:6])))

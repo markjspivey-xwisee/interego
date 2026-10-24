@@ -41,7 +41,42 @@ try {
   const affordances = await fetch(`http://127.0.0.1:${port}/affordances`, { signal: AbortSignal.timeout(2000) });
   assert.equal(affordances.status, 200);
   assert.ok((await affordances.text()).length > 100);
+  // Exercise the packaged entrypoint's middleware and actual generated graphs.
+  // An isolated route fixture cannot detect transport fields injected here.
+  const base = `http://127.0.0.1:${port}`;
+  const discovery = await fetch(base + '/i2idlx/capabilities', { signal: AbortSignal.timeout(2000) });
+  assert.equal(discovery.status, 200);
+  const capabilities = await discovery.json();
+  const callCheck = async (name, payload, expectedStatus = 200) => {
+    const control = capabilities.checkOperations[name];
+    assert.equal(control.method, 'POST'); assert.equal(new URL(control.href).origin, base);
+    const response = await fetch(control.href, { method: control.method,
+      headers: { 'Content-Type': 'application/json', Authorization: 'Bearer synthetic-container-smoke-token' },
+      body: JSON.stringify(payload), signal: AbortSignal.timeout(30000) });
+    assert.equal(response.status, expectedStatus, name + ' must pass the actual HTTP middleware');
+    const packet = await response.json();
+    assert.equal(packet.sampling_performed, false); assert.equal(packet.writes_performed, false);
+    assert.ok(!JSON.stringify(packet).includes('synthetic-container-smoke-token'));
+    return packet;
+  };
+  const record = 'urn:example:container-smoke:lrs';
+  const graph = `<${record}> <https://relay.interego.xwisee.com/ns/u-pk-33d42e6b33dc/i2idlx#isClassifiedBy> <https://id.i2idl.org/concepts/learning-record-store-lrs> .`;
+  const classified = await callCheck('classifier', { graph_content: graph });
+  assert.equal(classified.execution, 'deterministic-read-only');
+  assert.ok(classified.result.types.some(row => row.subject === record));
+  assert.deepEqual(classified.result.clashes, []);
+  const validated = await callCheck('shacl', { graph_content: graph });
+  assert.equal(validated.result.conforms, true); assert.equal(validated.result.validation_applicable, true);
+  assert.deepEqual(validated.evidence.targeted_nodes, [record]);
+  assert.ok(validated.evidence.applied_targets.some(row => row.focus === record));
+  const peer = await callCheck('peerTerm', { iri: 'https://purl.org/ctdl/terms/Credential' });
+  assert.equal(peer.result.confirmed_in_snapshot, true); assert.equal(peer.evidence.network_fetch_performed, false);
+  // This build proof runs with --network=none: a source outage must be 503, not
+  // a 400 caused by middleware metadata or a fabricated successful comparison.
+  const source = await callCheck('sourceVersion', {}, 503);
+  assert.equal(source.status, 'unavailable'); assert.equal(source.result, undefined);
   console.log(JSON.stringify({ containerStartupSmoke: 'passed', health: true, affordances: true,
+    semanticHttp: { classifier: true, shacl: true, peerTerm: true, sourceVersionUnavailable: true },
     actualEntrypoint: true, backend: 'memory', productionDurabilityTest: false }));
 } finally {
   child.kill('SIGTERM');

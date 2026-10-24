@@ -185,7 +185,11 @@ const UNLINTED_FRONTIER = {
   // Both additions lint clean, so the error ceiling remains unchanged.
   // Private HMD auth/resolution brings the tracked census to 166; no added lint debt.
   // Derived-resource confidentiality adds a tracked module; the error ceiling stays fixed.
-  deploy: { errors: 356, files: 176 },
+  // The session-delegation repair module and wiring suite bring the committed
+  // census to 187. Bank coverage; the existing error pin remains unchanged.
+  // Progressive native play adds fourteen tracked deploy modules and regression suites.
+  // Record the committed file census; new lint debt remains forbidden at the same ceiling.
+  deploy: { errors: 356, files: 201 },
   // The bulk of these are `no-console` in vertical bridges and CLI entry points — one config
   // decision, not a thousand defects. See the note above.
   // ★ 320 -> 337, and the ratchet caught it in CI rather than locally, which is the interesting
@@ -264,7 +268,11 @@ const UNLINTED_FRONTIER = {
   //    All seven lint clean.
   // CI measured 808 application source files after the native I2IDL-X modules;
   // the error pin remains unchanged.
-  applications: { errors: 1452, files: 850 },
+  //    850 -> 909 files (2026-10-22), errors not raised: the practice-evidence and work-redesign
+  //    verticals (src, bridge, ui, demo and tests of each) took the root past the slack. All of
+  //    it lints clean (`npx eslint applications/practice-evidence applications/work-redesign`:
+  //    0 problems).
+  applications: { errors: 1452, files: 909 },
   // The controller comparison adds two lint-clean audit modules; the census is 46.
   // Re-pin the file floor to that measured count without raising the error ceiling.
   benchmarks: { errors: 193, files: 46 },
@@ -673,7 +681,7 @@ const BASELINE = {};
 // base-without-verticals tool and its test (#366) to 633; the gate named 603. The advertised-demos
 // lint and its declarations (#567 follow-up) brought it to 635; the gate named 604.
 // 2026-10-08: private HMD invocation coverage adds one file, so the floor is 605.
-export const MIN_FILES = 610;
+export const MIN_FILES = 647;
 
 /**
  * How far below the real linted-file count MIN_FILES may sit before that is itself a failure.
@@ -1042,4 +1050,5 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
   console.log(lintGateReport(result));
   process.exit(result.ok ? 0 : 1);
 }
+
 

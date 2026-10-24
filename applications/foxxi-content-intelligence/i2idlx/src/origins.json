@@ -21,7 +21,7 @@
       "group": "I2IDL",
       "what": "Labels and alternate labels, definitions, editorial notes, editorial status, the {nTypes} types, {nFields} fields and {nCurated} curated collections, broader / narrower / related links, evidence records and their direct / supporting classification, the {nSources} sources and their rights, I2IDL's own crosswalks to external vocabularies (UNESCO Thesaurus, schema.org), the release itself.",
       "where": "id.i2idl.org — I2IDL's JSON-LD graph, SPARQL service and concept pages. This page embeds {release} (commit {commit7}) unchanged.",
-      "trust": "Approved by I2IDL's editors. Canonical.",
+      "trust": "Canonical I2IDL publication. Editorial status is shown only when supplied by the source record.",
       "heldIn": [
         "https://id.i2idl.org/scheme",
         "https://id.i2idl.org/glossary.jsonld",

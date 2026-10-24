@@ -39,8 +39,8 @@
 # ── 1. Upstream contract ──────────────────────────────────────────────────────
 
 i2xsh:UpstreamConceptShape a sh:NodeShape ;
-    sh:targetSubjectsOf schema:inDefinedTermSet ;
-    rdfs:comment "Every I2IDL concept (targeted through schema:inDefinedTermSet, which only I2IDL concepts carry, so I2IDL-X's own SKOS vocabularies are never mistaken for glossary concepts): one IRI under /concepts/, one label, one slug identifier, one active definition, exactly one type collection, at least one field collection, in the scheme."@en ;
+    sh:targetSubjectsOf schema:inDefinedTermSet, gs:activeDefinition ;
+    rdfs:comment "Every I2IDL concept, including v0.0.93 concepts without the optional schema:inDefinedTermSet mirror: one IRI under /concepts/, one label, one slug identifier, one active definition, exactly one type collection, at least one field collection, in the scheme. Editorial status is checked when supplied; absence is not approval."@en ;
     sh:nodeKind sh:IRI ;
     sh:pattern "^https://id\\.i2idl\\.org/concepts/[a-z0-9][a-z0-9-]*$" ;
     sh:property [ sh:path skos:prefLabel ; sh:minCount 1 ; sh:maxCount 1 ; sh:minLength 1 ;
@@ -48,7 +48,7 @@ i2xsh:UpstreamConceptShape a sh:NodeShape ;
                 [ sh:path dct:identifier ; sh:minCount 1 ; sh:maxCount 1 ; sh:pattern "^[a-z0-9][a-z0-9-]*$" ;
                   sh:name "identifier" ; sh:description "The slug every templated control expands." ] ,
                 [ sh:path skos:inScheme ; sh:hasValue <https://id.i2idl.org/scheme> ] ,
-                [ sh:path schema:inDefinedTermSet ; sh:hasValue <https://id.i2idl.org/scheme> ] ,
+                [ sh:path schema:inDefinedTermSet ; sh:maxCount 1 ; sh:in ( <https://id.i2idl.org/scheme> ) ] ,
                 [ sh:path gs:activeDefinition ; sh:minCount 1 ; sh:maxCount 1 ; sh:nodeKind sh:IRI ;
                   sh:pattern "^https://id\\.i2idl\\.org/definitions/" ; sh:class gs:Definition ] ,
                 [ sh:path gs:typeCollection ; sh:minCount 1 ; sh:maxCount 1 ;
@@ -56,7 +56,7 @@ i2xsh:UpstreamConceptShape a sh:NodeShape ;
                   sh:description "Drives the agentic kind (i2x:kindForTypeCollection)." ] ,
                 [ sh:path gs:fieldCollection ; sh:minCount 1 ;
                   sh:pattern "^https://id\\.i2idl\\.org/collections/field/" ] ,
-                [ sh:path gs:editorialStatus ; sh:minCount 1 ; sh:maxCount 1 ] ,
+                [ sh:path gs:editorialStatus ; sh:maxCount 1 ; sh:nodeKind sh:Literal ; sh:minLength 1 ] ,
                 [ sh:path skos:broader ; sh:nodeKind sh:IRI ; sh:pattern "^https://id\\.i2idl\\.org/concepts/" ] ,
                 [ sh:path skos:related ; sh:nodeKind sh:IRI ; sh:pattern "^https://id\\.i2idl\\.org/concepts/" ] .
 
@@ -64,20 +64,27 @@ i2xsh:UpstreamCoverageShape a sh:NodeShape ;
     sh:targetClass skos:Concept ;
     rdfs:comment "Guard: no SKOS concept with an I2IDL concept IRI escapes the contract above."@en ;
     sh:or ( [ a sh:NodeShape ; sh:not [ a sh:NodeShape ; sh:pattern "^https://id\\.i2idl\\.org/concepts/" ] ]
-            [ a sh:NodeShape ; sh:property [ sh:path schema:inDefinedTermSet ; sh:minCount 1 ] ] ) ;
-    sh:message "An I2IDL concept must declare schema:inDefinedTermSet so the upstream contract applies to it." .
+            [ a sh:NodeShape ; sh:property [ sh:path gs:activeDefinition ; sh:minCount 1 ] ] ) ;
+    sh:message "An I2IDL concept must declare its active definition so the upstream contract applies to it." .
 
 i2xsh:UpstreamDefinitionShape a sh:NodeShape ;
     sh:targetClass gs:Definition ;
-    rdfs:comment "Every definition: a value, a language, and at least one classified evidence record citing a resolvable source."@en ;
+    rdfs:comment "Every definition: a value and at least one classified evidence record citing a resolvable source. Language is checked when supplied; v0.0.93 does not supply it on every definition. Neither language nor prov:Entity typing is invented."@en ;
     sh:property [ sh:path rdf:value ; sh:minCount 1 ; sh:maxCount 1 ; sh:minLength 1 ] ,
-                [ sh:path dct:language ; sh:minCount 1 ] ,
+                [ sh:path dct:language ; sh:maxCount 1 ; sh:minLength 1 ] ,
                 [ sh:path gs:evidence ; sh:minCount 1 ; sh:node i2xsh:UpstreamEvidenceShape ] .
 
 i2xsh:UpstreamEvidenceShape a sh:NodeShape ;
     sh:property [ sh:path gs:evidenceRelation ; sh:minCount 1 ; sh:maxCount 1 ; sh:in ( "direct" "supporting" ) ] ,
-                [ sh:path dct:source ; sh:minCount 1 ; sh:nodeKind sh:IRI ;
-                  sh:pattern "^https://id\\.i2idl\\.org/sources/" ] .
+                [ sh:path dct:source ; sh:minCount 1 ; sh:node i2xsh:UpstreamSourceShape ] .
+
+i2xsh:UpstreamSourceShape a sh:NodeShape ;
+    rdfs:comment "An evidence source must resolve in this graph to a bibliographic resource or CreativeWork with its own title and rights. A dangling source IRI is not evidence."@en ;
+    sh:nodeKind sh:IRI ;
+    sh:pattern "^https://id\\.i2idl\\.org/sources/" ;
+    sh:or ( [ sh:class dct:BibliographicResource ] [ sh:class schema:CreativeWork ] ) ;
+    sh:property [ sh:path dct:title ; sh:minCount 1 ; sh:maxCount 1 ; sh:minLength 1 ] ,
+                [ sh:path dct:rights ; sh:minCount 1 ; sh:maxCount 1 ; sh:minLength 1 ] .
 
 
 # ── 2. Superset records ───────────────────────────────────────────────────────

@@ -1,0 +1,11 @@
+{
+  "compilerOptions": {
+    "target": "ES2022", "module": "ESNext", "moduleResolution": "bundler",
+    "outDir": "./dist", "rootDir": "../..",
+    "strict": true, "esModuleInterop": true, "skipLibCheck": true,
+    "resolveJsonModule": true, "allowImportingTsExtensions": false
+  },
+  "include": ["server.ts", "handlers.ts", "pod-helpers.ts", "descriptor-rdf.ts", "ui.ts", "../affordances.ts", "../src/**/*.ts", "../demo/**/*.ts",
+    "../../_shared/affordance-mcp/**/*.ts", "../../_shared/vertical-bridge/**/*.ts", "../../_shared/judgment-kit/**/*.ts"],
+  "exclude": ["node_modules", "dist"]
+}

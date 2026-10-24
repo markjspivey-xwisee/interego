@@ -16,9 +16,15 @@ on:
       - 'package-lock.json'
       - 'tsconfig.base.json'
       - '.github/workflows/i2idlx-typescript.yml'
+      - '.github/workflows/i2idlx-v93-release.yml'
 
 permissions:
   contents: read
+
+env:
+  I2IDLX_BUILT_DATE: '2026-10-08'
+  I2IDLX_MODIFIED: '2026-10-19'
+  I2IDLX_NOW: '2026-10-19T00:51:00+00:00'
 
 concurrency:
   group: i2idlx-typescript-${{ github.event.pull_request.number }}
@@ -110,7 +116,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
-      I2IDL_CLONE: ${{ github.workspace }}/.cache/i2idl-linked-data
+      I2IDL_CLONE: ${{ github.workspace }}/.cache/i2idl-linked-data-v0.0.93
     steps:
       - uses: actions/checkout@v6
         with: { fetch-depth: 0 }
@@ -120,18 +126,23 @@ jobs:
       - run: npm run build
       - name: Native reasoning, semantic and history fixtures
         run: npx tsx --test applications/foxxi-content-intelligence/i2idlx/typescript/*.test.ts
+      - name: Compile the production visitor oracle before release
+        run: python3 -m py_compile tools/i2idlx-live-visitor-smoke.py
       - name: Independently reject invalid REST argument bindings with SHACL
         run: |
           python3 -m venv "$RUNNER_TEMP/i2idlx-rest-shacl"
           "$RUNNER_TEMP/i2idlx-rest-shacl/bin/pip" install rdflib==7.1.4 pyshacl==0.30.1
           "$RUNNER_TEMP/i2idlx-rest-shacl/bin/python" applications/foxxi-content-intelligence/i2idlx/tools/verify_rest_api_shapes.py
       - name: Independent RDF and workbench security checks
-        run: npx vitest run applications/foxxi-content-intelligence/tests/i2idlx-parity.test.ts applications/foxxi-content-intelligence/tests/i2idlx-workbench.test.ts applications/foxxi-content-intelligence/tests/workbench-owner-binding.test.ts
+        run: npx vitest run applications/foxxi-content-intelligence/tests/i2idlx-parity.test.ts applications/foxxi-content-intelligence/tests/i2idlx-workbench.test.ts applications/foxxi-content-intelligence/tests/workbench-owner-binding.test.ts applications/foxxi-content-intelligence/tests/i2idlx-client-tasks.test.ts applications/foxxi-content-intelligence/tests/i2idlx-semantic-tasks.test.ts applications/foxxi-content-intelligence/tests/i2idlx-capability-runner.test.ts applications/foxxi-content-intelligence/tests/i2idl-glossary.test.ts applications/foxxi-content-intelligence/tests/decorations.test.ts
+      - name: Public MCP App contracts and shared HTTP execution
+        run: npx vitest run applications/foxxi-content-intelligence/tests/i2idlx-mcp-app.test.ts
       - name: Checkout the pinned upstream source, including its history
         run: |
           mkdir -p .cache
           git clone https://github.com/blakeplock/i2idl-linked-data "$I2IDL_CLONE"
-          git -C "$I2IDL_CLONE" checkout 9f86599
+          git -C "$I2IDL_CLONE" checkout --detach 0754254be64f0562bab7e68d69583f2cc90aa945
+          test "$(git -C "$I2IDL_CLONE" rev-parse HEAD)" = 0754254be64f0562bab7e68d69583f2cc90aa945
       - name: Compare every native release snapshot and event with Python
         run: |
           ROOT=applications/foxxi-content-intelligence/i2idlx
@@ -150,7 +161,41 @@ jobs:
       - run: npm ci
       - run: npm run build
       - run: npx tsx applications/foxxi-content-intelligence/i2idlx/typescript/decoration-snapshot.ts
+      - name: Verify every shared decoration against its live RDF publications
+        run: |
+          node --import=tsx --input-type=module <<'JS'
+          import { readFileSync, writeFileSync } from 'node:fs';
+          import assert from 'node:assert/strict';
+          import { rdfFingerprint } from './applications/foxxi-content-intelligence/i2idlx/typescript/parity.ts';
+          const directory = 'applications/foxxi-content-intelligence/i2idlx/dist-ts/';
+          const snapshot = JSON.parse(readFileSync(directory + 'decoration-snapshot.json', 'utf8'));
+          assert.equal(snapshot.graphs.length, 10);
+          const checks = [];
+          for (const graph of snapshot.graphs) {
+            for (const [format, accept] of [['turtle', 'text/turtle'], ['jsonld', 'application/ld+json']]) {
+              const response = await fetch(graph.iri, {
+                headers: { Accept: accept, 'User-Agent': 'i2idlx-decoration-release-check/1.0' },
+                signal: AbortSignal.timeout(60000),
+              });
+              assert.equal(response.status, 200, graph.iri + ' ' + format);
+              const mediaType = response.headers.get('content-type')?.split(';')[0].trim();
+              assert.equal(mediaType, accept, graph.iri + ' negotiated representation');
+              const content = await response.text();
+              assert.ok(Buffer.byteLength(content) > 0 && Buffer.byteLength(content) <= 1048576);
+              const fingerprint = await rdfFingerprint(content, format, graph.iri);
+              assert.equal(fingerprint, graph.fingerprint, graph.iri + ' differs from its frozen input');
+              const check = { iri: graph.iri, format, status: response.status, mediaType, fingerprint };
+              checks.push(check);
+              process.stdout.write('I2IDLX_DECORATION_LIVE=' + JSON.stringify(check) + '\n');
+            }
+          }
+          writeFileSync(directory + 'decoration-live.json', JSON.stringify({
+            checkedAt: new Date().toISOString(), headSha: process.env.GITHUB_SHA, checks,
+          }, null, 2) + '\n');
+          JS
       - uses: actions/upload-artifact@v4
         with:
           name: decoration-snapshot
-          path: applications/foxxi-content-intelligence/i2idlx/dist-ts/decoration-snapshot.json
+          path: |
+            applications/foxxi-content-intelligence/i2idlx/dist-ts/decoration-snapshot.json
+            applications/foxxi-content-intelligence/i2idlx/dist-ts/decoration-live.json

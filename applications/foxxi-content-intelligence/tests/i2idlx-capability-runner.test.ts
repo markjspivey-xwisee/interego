@@ -65,7 +65,20 @@ describe('current workbench capability directory and bounded examples', () => {
         expect(row).toBeDefined(); expect(row.in.length).toBe(a.inputs.length);
         expect(row.input_schema?.required).toEqual(a.inputs.filter(i => i.required).map(i => i.name));
       }
-      expect(data.actions.filter(a => a.n.startsWith('foxxi.i2idlx_')).length).toBe(7);
+      expect(data.actions.filter(a => a.n.startsWith('foxxi.i2idlx_')).map(a => a.n).sort()).toEqual([
+        'foxxi.i2idlx_ask', 'foxxi.i2idlx_capabilities', 'foxxi.i2idlx_challenge', 'foxxi.i2idlx_classify',
+        'foxxi.i2idlx_intervention_ask', 'foxxi.i2idlx_interventions', 'foxxi.i2idlx_orchestrate',
+        'foxxi.i2idlx_peer_term', 'foxxi.i2idlx_read', 'foxxi.i2idlx_session', 'foxxi.i2idlx_source_version',
+        'foxxi.i2idlx_validate', 'foxxi.i2idlx_write',
+      ]);
+      expect(data.actions.find(a => a.n === 'foxxi.i2idlx_interventions')).toMatchObject({
+        m: 'GET', u: BASE + '/i2idlx/api/interventions', ro: true, xr: true,
+        input_schema: { required: [] }, execution: { mode: 'prepare-only' },
+      });
+      expect(data.actions.find(a => a.n === 'foxxi.i2idlx_intervention_ask')).toMatchObject({
+        m: 'POST', u: BASE + '/i2idlx/api/intervention-ask', ro: true, xr: true,
+        input_schema: { required: ['question', 'source'] }, execution: { mode: 'prepare-only' },
+      });
       expect(data.sources.map(s => s.count)).toEqual([production.length, 51]);
       expect(io.calls).toHaveLength(52); expect(io.stats().maxSchemas).toBeLessThanOrEqual(6);
       expect(io.calls.every(c => c.init?.method === 'GET' && c.init.redirect === 'manual')).toBe(true);
@@ -130,6 +143,14 @@ describe('current workbench capability directory and bounded examples', () => {
       const protectedRead = data.actions.find(a => a.n === 'foxxi.le_analyze_learning_curve')!;
       expect(protectedRead.ro).toBe(true); expect(protectedRead.execution.mode).toBe('prepare-only');
       expect((await run(base, protectedRead.iri, { concept_id: 'example', attempts: [] })).status).toBe(403);
+      for (const name of ['foxxi.i2idlx_interventions', 'foxxi.i2idlx_intervention_ask']) {
+        const intervention = data.actions.find(a => a.n === name)!;
+        expect(intervention.ro).toBe(true); expect(intervention.execution.mode).toBe('prepare-only');
+        const payload = name === 'foxxi.i2idlx_intervention_ask'
+          ? { question: 'Explain the fixture source.', source: 'authored-course', intervention_id: 'fixture-course' }
+          : {};
+        expect((await run(base, intervention.iri, payload)).status).toBe(403);
+      }
       expect((await run(base, 'urn:not-advertised', {})).status).toBe(404);
       expect(io.calls.length).toBe(before);
     }, { fetch: io.fetcher });

@@ -1,0 +1,27 @@
+name: Provision private PGSL sweep token
+on:
+  push:
+    branches: [master]
+    paths: ['.github/workflows/pgsl-sweep-provision.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: pgsl-sweep-secret-handoff
+  cancel-in-progress: false
+jobs:
+  provision:
+    if: github.repository == 'markjspivey-xwisee/interego' && github.ref == 'refs/heads/master'
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '20'
+      - name: Verify the redacted handoff helper
+        run: node --test tests/pgsl-sweep-provision.test.mjs
+      - name: Copy the existing token to the dedicated private service without deploying
+        env:
+          RAILWAY_PROJECT_TOKEN: ${{ secrets.RAILWAY_PROJECT_TOKEN }}
+        run: node tools/pgsl-sweep-provision.mjs

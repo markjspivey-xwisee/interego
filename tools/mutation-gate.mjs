@@ -113,6 +113,7 @@ function runScriptGate(file) {
   const okCount = (out.match(/^\s*(?:ok\s|✓)/gm) ?? []).length;
   const failCount = (out.match(/^\s*(?:FAIL\s|✗)/gm) ?? []).length;
   return {
+    diagnostics: out.slice(-32_768),
     exitedNonZero: r.status !== 0,
     assertionsFailed: failed,
     countsParsed: asserted,
@@ -130,6 +131,7 @@ function runGates(files) {
     // One script per gate entry; combine so the caller's three-state contract is unchanged.
     const each = files.map(runScriptGate);
     return {
+      diagnostics: each.map(x => x.diagnostics).join('\n').slice(-32_768),
       exitedNonZero: each.some(x => x.exitedNonZero),
       assertionsFailed: each.some(x => x.assertionsFailed),
       countsParsed: each.every(x => x.countsParsed),
@@ -151,6 +153,7 @@ function runGates(files) {
   const summaryLine = /Tests\s+.*$/m.exec(out)?.[0]?.trim();
   const ranAssertions = Boolean(summaryLine);
   return {
+    diagnostics: out.slice(-32_768),
     exitedNonZero: r.status !== 0,
     assertionsFailed: ranAssertions && /Tests\s+\d+\s+failed/.test(out),
     // Did the summary parse into COUNTS, not merely match as text? The whole harness reads a
@@ -171,6 +174,8 @@ const clean = runGates(allGateFiles);
 if (clean.exitedNonZero) {
   console.error('★ THE GATES ARE ALREADY RED before any mutation was applied.');
   console.error(`  ${clean.summary}`);
+  // Keep the actual pristine failure visible; a summary alone cannot identify the gate to fix.
+  if (clean.diagnostics) console.error(`\n  Pristine gate output (last 32 KiB):\n${clean.diagnostics}`);
   console.error('  Nothing below would prove anything. Fix the tree first.');
   process.exit(1);
 }
@@ -232,3 +237,4 @@ if (problems.length) {
   process.exit(1);
 }
 process.stdout.write(`\nmutation gate: ${selected.length}/${selected.length} defect(s) caught.\n`);
+

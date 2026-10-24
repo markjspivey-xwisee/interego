@@ -19,10 +19,10 @@ import { prepareBuildInputs } from './prepare-build-inputs.js';
 import { verifyPublished } from './verify-published.js';
 import { progress, progressStage } from './progress.js';
 
-export const UPSTREAM_COMMIT = '9f865995d879165d8fa49422915a5e53d2ecebf9';
-const FIXED_NOW = '2026-10-13T20:30:00+00:00';
+export const UPSTREAM_COMMIT = '0754254be64f0562bab7e68d69583f2cc90aa945';
+const FIXED_NOW = '2026-10-19T00:51:00+00:00';
 const FIXED_BUILT = '2026-10-08';
-const FIXED_MODIFIED = '2026-10-13';
+const FIXED_MODIFIED = '2026-10-19';
 const GRAPH_KEYS = ['shapes', 'ontology', 'rules', 'catalog', 'enactments', 'mappings', 'releases', 'changes', 'alignments', 'referents'] as const;
 type Json = null | boolean | number | string | Json[] | { [key: string]: Json };
 interface GoldenOptions { prepareInputs?: boolean; compareOnly?: boolean; python?: string; outputDir?: string }

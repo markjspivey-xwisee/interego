@@ -30,35 +30,66 @@
  *
  * Deleting tens of millions of rows leaves a table just as large until it is rewritten, and a
  * rewrite of a 45 GB table needs 45 GB free. The live set is small, so `rebuildTable` copies
- * the live rows into a new table under an ACCESS EXCLUSIVE lock on the old one (readers and
- * writers wait for the minutes it takes), swaps the names in the same transaction, and leaves
- * the old table for the operator to drop once the store has been checked. The collection runs
- * inside that lock, so nothing written during the copy can be missed. `tools/pgsl-store-gc.ts`
+ * the live rows into a new table under a budgeted ACCESS EXCLUSIVE attempt. The collection
+ * runs inside that lock, so nothing written during the copy can be missed. NOWAIT refuses
+ * contention; a short monotonic SQL work budget aborts a long traversal/copy. Only a completed
+ * attempt swaps the names and leaves the old table for later verified retirement. Large live
+ * graphs can therefore defer compaction; this is not an online collector. Durable COMMIT and
+ * network/scheduling latency are not an absolute wall-clock bound. `tools/pgsl-store-gc.ts`
  * drives it; a dry run only reads.
  */
 
 import { kindByte, nodeAddrFromUrn, type NodeAddr, type NodeKind } from './addressing.js';
+import { performance } from 'node:perf_hooks';
 import type { FdbLike } from './fdb-like.js';
 import {
   SUBSPACE_PAYLOAD_OFFSET, cbKey, ciKey, cpKey, lftKey, lvKey, nodeAddrBytes, nodeKey, prKey, rgtKey, subspaceRange, type SubspaceTag,
 } from './keyspace.js';
 import type { StoredNode } from './node.js';
+import { ATOM_HEADER_BYTES, atomTopologyFromPrefix } from './gc-atom-header.js';
 
 const dec = new TextDecoder();
-const NODE_URN = /^urn:pgsl:(atom|fragment):[0-9a-f]{40}$/;
+const nodeDec = new TextDecoder('utf-8', { fatal: true });
+// Root recognition must use the same dual-read codec as fragment edges.
+// Otherwise a current URL-form head would be omitted from the live closure.
+function isNodeIdentifier(value: string): boolean {
+  if (!value.startsWith('urn:pgsl:') && !value.includes('/ns/pgsl/')) return false;
+  try { nodeAddrFromUrn(value); return true; } catch { return false; }
+}
 const ADDR_BYTES = 21;
 const HASH_BYTES = 20;
 // Large opaque atoms are commonly ~700 KiB. A 2,000-node fetch can allocate
 // over a gigabyte before traversal starts; keep each fetch small instead.
 const TRAVERSAL_BATCH_SIZE = 32;
-type NodeTopology = Pick<StoredNode, 'kind' | 'level' | 'items' | 'left' | 'right'>;
+export type NodeTopology = Pick<StoredNode, 'kind' | 'level' | 'items' | 'left' | 'right'>;
+export interface NodeTopologyRecord {
+  /** Null records an unreadable node; collection must not authorize cleanup. */
+  readonly topology: NodeTopology | null;
+  /** Exact original stored value bytes, never the projected JSON length. */
+  readonly byteLength: number;
+}
 
-/** The two reads a collector needs; `readerFromFdb` serves tests, `readerFromPg` production. */
+/** Collector reads; `readerFromFdb` serves tests, `readerFromPg` production. */
 export interface KvReader {
   /** Every row of [begin, end) in key order, paged; `onRow` may be async. */
   scan(begin: Uint8Array, end: Uint8Array, onRow: (key: Uint8Array, value: Uint8Array) => void): Promise<void>;
   /** The values of the given keys, by hex key; absent keys are simply missing from the map. */
   getMany(keys: readonly Uint8Array[]): Promise<Map<string, Uint8Array>>;
+  /** Optional payload-free traversal; absent keys have no stored node row. */
+  getManyTopology?(keys: readonly Uint8Array[]): Promise<Map<string, NodeTopologyRecord>>;
+}
+
+function nodeTopology(value: unknown): NodeTopology | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const row = value as Record<string, unknown>;
+  if ((row.kind !== 'atom' && row.kind !== 'fragment') || !Number.isSafeInteger(row.level) || (row.level as number) < 0) return null;
+  if (row.kind === 'atom') return { kind: row.kind, level: row.level as number };
+  if ((row.items != null && (!Array.isArray(row.items) || row.items.some(item => typeof item !== 'string')))
+    || (row.left != null && typeof row.left !== 'string') || (row.right != null && typeof row.right !== 'string')) return null;
+  return { kind: row.kind, level: row.level as number,
+    ...(row.items != null ? { items: row.items as string[] } : {}),
+    ...(row.left != null ? { left: row.left as string } : {}),
+    ...(row.right != null ? { right: row.right as string } : {}) };
 }
 
 export const hex = (b: Uint8Array): string => Buffer.from(b.buffer, b.byteOffset, b.byteLength).toString('hex');
@@ -90,16 +121,22 @@ export function readerFromFdb(fdb: FdbLike, pageSize = 1000): KvReader {
   };
 }
 
-/** A reader over a `pg` client (or pool) for the store's table; batched so 100k nodes cost 50 queries. */
-export function readerFromPg(client: { query(sql: string, params?: unknown[]): Promise<{ rows: Array<{ k: Buffer; v: Buffer }> }> }, table = 'pgsl_kv', pageSize = 5000): KvReader {
+/** A reader over a `pg` client (or pool); traversal fetches at most 32 nodes per query. */
+export function readerFromPg(client: { query(sql: string, params?: unknown[]): Promise<{ rows: Array<{
+  k: Buffer; v?: Buffer; topology?: unknown; value_bytes?: unknown; needs_js_parse?: unknown; atom_header?: Buffer | null;
+}> }> }, table = 'pgsl_kv', pageSize = 5000, topologyBatchSize = TRAVERSAL_BATCH_SIZE): KvReader {
   const t = table.replace(/[^a-zA-Z0-9_]/g, '');
+  if (!Number.isSafeInteger(topologyBatchSize) || topologyBatchSize < 1 || topologyBatchSize > 4096) throw new Error('invalid topology batch size');
   return {
     async scan(begin, end, onRow) {
       let from = Buffer.from(begin);
       const endBuf = Buffer.from(end);
       for (;;) {
         const r = await client.query(`SELECT k, v FROM ${t} WHERE k >= $1 AND k < $2 ORDER BY k LIMIT $3`, [from, endBuf, pageSize]);
-        for (const row of r.rows) onRow(new Uint8Array(row.k), new Uint8Array(row.v));
+        for (const row of r.rows) {
+          if (!Buffer.isBuffer(row.v)) throw new Error('collector row value is unavailable');
+          onRow(new Uint8Array(row.k), new Uint8Array(row.v));
+        }
         if (r.rows.length < pageSize) return;
         from = Buffer.concat([r.rows[r.rows.length - 1]!.k, Buffer.from([0])]);
       }
@@ -109,7 +146,105 @@ export function readerFromPg(client: { query(sql: string, params?: unknown[]): P
       for (let i = 0; i < keys.length; i += 2000) {
         const batch = keys.slice(i, i + 2000).map((k) => Buffer.from(k));
         const r = await client.query(`SELECT k, v FROM ${t} WHERE k = ANY($1::bytea[])`, [batch]);
-        for (const row of r.rows) out.set(hex(new Uint8Array(row.k)), new Uint8Array(row.v));
+        for (const row of r.rows) {
+          if (!Buffer.isBuffer(row.v)) throw new Error('collector row value is unavailable');
+          out.set(hex(new Uint8Array(row.k)), new Uint8Array(row.v));
+        }
+      }
+      return out;
+    },
+    async getManyTopology(keys) {
+      const out = new Map<string, NodeTopologyRecord>();
+      // Ordinary atom values/provenance stay in PostgreSQL. JSON's native
+      // parser rejects escapes that JS JSON.stringify can legitimately emit
+      // (NUL and lone surrogates), even in ignored values. Divert every raw
+      // backslash-u sequence before parsing and read only that exceptional row
+      // with the native JS semantics. This conservative discriminator can
+      // produce harmless false positives, without poisoning a rebuild's SQL
+      // transaction or exporting the rest of its 32-node batch.
+      // The default stays at 32. Private maintenance may probe atom prefixes in
+      // larger groups; fragment groups are sized with TOAST metadata first and
+      // limited to 8MiB of stored JSON, so a wide frontier stays memory-bounded.
+      const batches: Buffer[][] = [];
+      try {
+        if (topologyBatchSize <= TRAVERSAL_BATCH_SIZE) {
+          for (let i = 0; i < keys.length; i += topologyBatchSize) batches.push(keys.slice(i, i + topologyBatchSize).map(k => Buffer.from(k)));
+        } else {
+          const atoms = keys.filter(k => k[SUBSPACE_PAYLOAD_OFFSET] === 1);
+          for (let i = 0; i < atoms.length; i += topologyBatchSize) batches.push(atoms.slice(i, i + topologyBatchSize).map(k => Buffer.from(k)));
+          const fragments = keys.filter(k => k[SUBSPACE_PAYLOAD_OFFSET] !== 1);
+          let fragmentBytes = 0;
+          for (let i = 0; i < fragments.length; i += topologyBatchSize) {
+            const requested = fragments.slice(i, i + topologyBatchSize).map(k => Buffer.from(k));
+            const sizes = await client.query(`SELECT k,octet_length(v) AS value_bytes FROM ${t} WHERE k=ANY($1::bytea[]) ORDER BY k`, [requested]);
+            const wanted = new Set(requested.map(k => k.toString('hex')));
+            let group: Buffer[] = [], bytes = 0;
+            for (const row of sizes.rows) {
+              if (!Buffer.isBuffer(row.k) || !wanted.delete(row.k.toString('hex')) || !Number.isSafeInteger(row.value_bytes)
+                || (row.value_bytes as number) < 0 || (row.value_bytes as number) > 8 * 1024 * 1024) throw new Error('unbounded fragment topology');
+              fragmentBytes += row.value_bytes as number;
+              if (fragmentBytes > 64 * 1024 * 1024) throw new Error('unbounded fragment frontier');
+              if (group.length && bytes + (row.value_bytes as number) > 8 * 1024 * 1024) {
+                batches.push(group); group = []; bytes = 0;
+              }
+              group.push(row.k); bytes += row.value_bytes as number;
+            }
+            if (group.length) batches.push(group);
+          }
+        }
+      } catch {
+        throw new Error('refusing collection: PostgreSQL node topology could not be read');
+      }
+      for (const batch of batches) {
+        try {
+          const result = await client.query(`SELECT source.k, octet_length(source.v) AS value_bytes,
+              substring(source.v FROM 1 FOR ${ATOM_HEADER_BYTES}) AS atom_header,
+              false AS needs_js_parse, NULL::json AS topology
+            FROM ${t} AS source
+            WHERE source.k = ANY($1::bytea[]) AND get_byte(source.k, ${SUBSPACE_PAYLOAD_OFFSET}) = 1
+            UNION ALL
+            SELECT source.k, octet_length(source.v) AS value_bytes, NULL::bytea AS atom_header,
+              position(decode('5c75', 'hex') in source.v) > 0 AS needs_js_parse,
+              json_build_object('uri', n.uri, 'kind', n.kind, 'level', n.level,
+                'items', CASE WHEN n.kind #>> '{}' = 'fragment' THEN n.items END,
+                'left', CASE WHEN n.kind #>> '{}' = 'fragment' THEN n."left" END,
+                'right', CASE WHEN n.kind #>> '{}' = 'fragment' THEN n."right" END) AS topology
+            FROM ${t} AS source
+            CROSS JOIN LATERAL json_to_record(CASE
+              WHEN position(decode('5c75', 'hex') in source.v) > 0 THEN '{}'::json
+              ELSE convert_from(source.v, 'UTF8')::json END)
+              AS n(uri text, kind json, level json, items json, "left" json, "right" json)
+            WHERE source.k = ANY($1::bytea[]) AND get_byte(source.k, ${SUBSPACE_PAYLOAD_OFFSET}) <> 1`, [batch]);
+          for (const row of result.rows) {
+            if (!Buffer.isBuffer(row.k) || !Number.isSafeInteger(row.value_bytes) || (row.value_bytes as number) < 0
+              || typeof row.needs_js_parse !== 'boolean') {
+              throw new Error('invalid topology record');
+            }
+            if (!row.needs_js_parse && row.topology && typeof row.topology === 'object' && 'uri' in row.topology) {
+              const storedUri = (row.topology as { uri?: unknown }).uri;
+              if (typeof storedUri !== 'string' || !row.k.equals(Buffer.from(nodeKey(nodeAddrFromUrn(storedUri))))) throw new Error('node body/key binding changed');
+            }
+            let topology: NodeTopology | null;
+            const atomTopology = row.atom_header === null || row.atom_header === undefined ? null
+              : atomTopologyFromPrefix(new Uint8Array(row.k), new Uint8Array(row.atom_header), row.value_bytes as number);
+            if (atomTopology) topology = atomTopology;
+            else if (row.needs_js_parse || row.atom_header !== null && row.atom_header !== undefined) {
+              const exceptional = await client.query(`SELECT k, v FROM ${t} WHERE k = ANY($1::bytea[])`, [[row.k]]);
+              const value = exceptional.rows[0];
+              if (exceptional.rows.length !== 1 || !value || !Buffer.isBuffer(value.k) || !value.k.equals(row.k)
+                || !Buffer.isBuffer(value.v) || value.v.length !== row.value_bytes) throw new Error('invalid exceptional topology record');
+              const decoded = JSON.parse(nodeDec.decode(value.v)) as StoredNode;
+              if (!value.k.equals(Buffer.from(nodeKey(nodeAddrFromUrn(decoded.uri))))) throw new Error('node body/key binding changed');
+              topology = nodeTopology(decoded);
+            } else topology = nodeTopology(row.topology);
+            out.set(hex(new Uint8Array(row.k)), { topology, byteLength: row.value_bytes as number });
+          }
+        } catch {
+          // PostgreSQL JSON/UTF8 error details can include private payload bytes.
+          // No caller receives that error or its cause, and no incomplete scan
+          // may advance to retirement or rebuilding.
+          throw new Error('refusing collection: PostgreSQL node topology could not be read');
+        }
       }
       return out;
     },
@@ -147,7 +282,7 @@ function addrOfBytes(b: Uint8Array): NodeAddr {
 }
 
 function urnsIn(value: unknown, out: Set<string>): void {
-  if (typeof value === 'string') { if (NODE_URN.test(value)) out.add(value); return; }
+  if (typeof value === 'string') { if (isNodeIdentifier(value)) out.add(value); return; }
   if (Array.isArray(value)) { for (const v of value) urnsIn(v, out); return; }
   if (value && typeof value === 'object') for (const v of Object.values(value as Record<string, unknown>)) urnsIn(v, out);
 }
@@ -156,8 +291,10 @@ function urnsIn(value: unknown, out: Set<string>): void {
  * Compute the live set. Reads only. Runs in memory proportional to the live set plus the
  * scanned subspaces' keys, which on the production store is a few million short keys.
  */
-export async function collectLive(reader: KvReader, opts: { readonly log?: (line: string) => void } = {}): Promise<LiveSet> {
+export async function collectLive(reader: KvReader, opts: { readonly log?: (line: string) => void; readonly traversalBatchSize?: number } = {}): Promise<LiveSet> {
   const log = opts.log ?? (() => undefined);
+  const traversalBatchSize = opts.traversalBatchSize ?? TRAVERSAL_BATCH_SIZE;
+  if (!Number.isSafeInteger(traversalBatchSize) || traversalBatchSize < 1 || traversalBatchSize > 4096) throw new Error('invalid traversal batch size');
   const keys = new Set<string>();
   const kept: Record<SubspaceTag, number> = { N: 0, I: 0, B: 0, L: 0, R: 0, V: 0, O: 0, W: 0, P: 0, A: 0, X: 0, C: 0 };
   const scanned: Partial<Record<SubspaceTag, number>> = {};
@@ -189,7 +326,7 @@ export async function collectLive(reader: KvReader, opts: { readonly log?: (line
     }
     keep('O', k);
     const urn = dec.decode(v);
-    if (NODE_URN.test(urn)) roots.add(urn);
+    if (isNodeIdentifier(urn)) roots.add(urn);
   });
   for (const tag of ['A', 'X'] as const) {
     await reader.scan(subspaceRange(tag).begin, subspaceRange(tag).end, (k) => {
@@ -218,23 +355,29 @@ export async function collectLive(reader: KvReader, opts: { readonly log?: (line
   const enqueue = (addr: NodeAddr): void => { const h = hex(nodeAddrBytes(addr)); if (!live.has(h)) { live.set(h, { addr, node: null }); frontier.push(addr); } };
   for (const urn of roots) { try { enqueue(nodeAddrFromUrn(urn)); } catch { dangling.push(urn); } }
   for (const a of rootAddrs) enqueue(addrOfBytes(unhex(a)));
-  while (frontier.length > 0) {
-    const batch = frontier.splice(0, TRAVERSAL_BATCH_SIZE);
-    const values = await reader.getMany(batch.map((a) => nodeKey(a)));
+  let frontierOffset = 0;
+  while (frontierOffset < frontier.length) {
+    // Shifting a six-figure frontier once per 32 nodes is quadratic work.
+    // A cursor plus occasional compaction preserves order with bounded storage.
+    const batch = frontier.slice(frontierOffset, frontierOffset + traversalBatchSize);
+    frontierOffset += batch.length;
+    const batchKeys = batch.map(a => nodeKey(a));
+    const values = reader.getManyTopology ? await reader.getManyTopology(batchKeys) : await reader.getMany(batchKeys);
     for (const addr of batch) {
       const k = nodeKey(addr);
       const v = values.get(hex(k));
       const h = hex(nodeAddrBytes(addr));
       if (v === undefined) { dangling.push(`urn:pgsl:${addr.kind}:${hex(addr.hash)}`); live.delete(h); continue; }
-      liveNodeBytes += v.length;
       let node: NodeTopology | null = null;
-      try {
-        const parsed = JSON.parse(dec.decode(v)) as StoredNode;
-        // Payload/provenance are not used for reachability or reconstructed keys.
-        // Keeping the parsed atom here retained the entire live payload in RAM.
-        node = { kind: parsed.kind, level: parsed.level,
-          ...(parsed.kind === 'fragment' ? { items: parsed.items, left: parsed.left, right: parsed.right } : {}) };
-      } catch { unreadable += 1; }
+      if (v instanceof Uint8Array) {
+        liveNodeBytes += v.length;
+        try { node = nodeTopology(JSON.parse(nodeDec.decode(v))); } catch { /* unreadable below */ }
+      } else {
+        if (!Number.isSafeInteger(v.byteLength) || v.byteLength < 0) throw new Error('refusing collection: invalid topology byte count');
+        liveNodeBytes += v.byteLength;
+        node = nodeTopology(v.topology);
+      }
+      if (!node || node.kind !== addr.kind) { node = null; unreadable += 1; }
       // Release fetched bytes as each node is consumed, not at the next batch.
       values.delete(hex(k));
       live.set(h, { addr, node });
@@ -243,7 +386,11 @@ export async function collectLive(reader: KvReader, opts: { readonly log?: (line
         for (const side of [node.left, node.right]) if (side) { try { enqueue(nodeAddrFromUrn(side)); } catch { /* not a node urn */ } }
       }
     }
-    log(`traversed ${live.size} live nodes, frontier ${frontier.length}`);
+    log(`traversed ${live.size} live nodes, frontier ${frontier.length - frontierOffset}`);
+    if (frontierOffset >= 16_384) {
+      frontier.splice(0, frontierOffset);
+      frontierOffset = 0;
+    }
   }
 
   // Reconstruct the rows compose() wrote for each live node.
@@ -303,6 +450,15 @@ export interface RebuildResult {
   readonly newRows: number;
 }
 
+/** Optional compaction was deferred; the original table remains authoritative. */
+export class RebuildDeferredError extends Error {
+  readonly code = 'REBUILD_DEFERRED';
+  constructor(readonly reason: 'sql-work-budget' | 'lock-unavailable') {
+    super(`rebuild deferred: ${reason === 'sql-work-budget' ? 'SQL work budget exhausted' : 'live table is busy'}; compaction is not confirmed`);
+    this.name = 'RebuildDeferredError';
+  }
+}
+
 /**
  * The storage parameters of `from`, applied to `to`: `CREATE TABLE ... (LIKE ... INCLUDING ALL)`
  * copies columns, constraints, indexes and column storage, but no relation options, so the
@@ -334,66 +490,143 @@ export async function copyStorageParameters(
 }
 /**
  * Copy the live rows into a fresh table and swap it in, inside one transaction that holds an
- * ACCESS EXCLUSIVE lock on the old table: every other session waits until the commit. The live
- * set is computed INSIDE the lock, so it is exact. The old table is renamed, not dropped; the
- * operator drops it after checking the store.
+ * ACCESS EXCLUSIVE lock on the old table: every other session waits until commit or rollback.
+ * The exact live set is computed INSIDE that lock. The entire SQL work has a five-second
+ * monotonic budget with a server statement timeout for each remaining slice. PostgreSQL 16
+ * cannot interrupt durable COMMIT, so the deadline is checked before dispatch but is not an
+ * absolute lock-hold guarantee. This is not online compaction or guaranteed reclamation.
  */
 export function rebuildOldTableSuffix(now = new Date()): string {
   const stamp = now.toISOString().replace(/[-:.TZ]/g, '');
   return `old_${stamp.slice(0, 8)}_${stamp.slice(8)}`;
 }
 
+/** Serialize collectors before PostgreSQL resolves the live relation's OID.
+ * A waiter on LOCK TABLE alone can acquire the renamed backup after another
+ * collector swaps it, then accidentally collect the new live table unlocked.
+ * Session advisory locks also cover CLI measurement/drop and are reentrant when
+ * that same session calls rebuildTable. A lost connection releases the lock. */
+export async function acquireCollectorLock(
+  client: { query(sql: string, params?: unknown[]): Promise<{ rows: Array<Record<string, unknown>> }> },
+  table: string,
+): Promise<() => Promise<void>> {
+  if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(table)) throw new Error('invalid collector table name');
+  const key = table.toLowerCase();
+  const acquired = await client.query("SELECT pg_try_advisory_lock(hashtextextended(current_database() || ':public.' || $1, 0)) AS acquired", [key]);
+  if (acquired.rows[0]?.['acquired'] !== true) throw new Error('refusing concurrent collector: another collector holds this database/table lock');
+  let released = false;
+  return async () => {
+    if (released) return;
+    const result = await client.query("SELECT pg_advisory_unlock(hashtextextended(current_database() || ':public.' || $1, 0)) AS released", [key]);
+    if (result.rows[0]?.['released'] !== true) throw new Error('collector advisory lock release was not confirmed');
+    released = true;
+  };
+}
+
 export async function rebuildTable(
   client: { query(sql: string, params?: unknown[]): Promise<{ rows: Array<Record<string, unknown>>; rowCount: number | null }> },
   table: string,
-  opts: { readonly log?: (line: string) => void; readonly batch?: number; readonly suffixOld?: string } = {},
+  opts: { readonly log?: (line: string) => void; readonly batch?: number; readonly suffixOld?: string;
+    /** Tests or a stricter caller may lower, but never lengthen, the live SQL work budget. */
+    readonly sqlWorkBudgetMs?: number } = {},
 ): Promise<RebuildResult> {
   const t = table.replace(/[^a-zA-Z0-9_]/g, '');
   const oldTable = `${t}_${opts.suffixOld ?? rebuildOldTableSuffix()}`;
   const newTable = `${t}_live`;
   const batch = opts.batch ?? 4000;
   const log = opts.log ?? (() => undefined);
-  await client.query('BEGIN');
+  const budget = opts.sqlWorkBudgetMs ?? 5000;
+  if (!Number.isSafeInteger(budget) || budget < 1 || budget > 5000) throw new Error('collector SQL work budget must be between 1 and 5000 milliseconds');
+  const release = await acquireCollectorLock(client, t);
+  let failure: unknown;
   try {
-    // ACCESS EXCLUSIVE from the start, not EXCLUSIVE upgraded at the rename: with EXCLUSIVE held,
-    // a store transaction that had already read (ACCESS SHARE) and now waited to write blocked on
-    // this transaction, whose RENAME then waited on that reader's ACCESS SHARE, and Postgres
-    // resolved the cycle by killing the rebuild after the copy (measured on the first production
-    // run, 2026-09-20). Taking the strongest lock first means readers wait too, for the minutes
-    // the copy takes, and nothing can deadlock against a lock that is never upgraded.
-    await client.query(`LOCK TABLE ${t} IN ACCESS EXCLUSIVE MODE`);
-    log('lock held: readers and writers wait until the swap commits');
-    const live = await collectLive(readerFromPg(client as never, t), { log });
-    if (live.keys.size === 0) throw new Error('refusing to rebuild: the live set is empty');
-    // A missing or unreadable retained node makes reachability incomplete.
-    // Preserve the existing table rather than collecting through uncertainty.
-    if (live.stats.danglingRoots.length > 0 || live.stats.unreadableNodes > 0) {
-      throw new Error(`refusing to rebuild: ${live.stats.danglingRoots.length} dangling roots and ${live.stats.unreadableNodes} unreadable nodes`);
+    // PostgreSQL 16 has no transaction_timeout. On newer servers, use its
+    // independent backstop in addition to the remaining-statement budget.
+    const setting = await client.query("SELECT current_setting('transaction_timeout', true) AS transaction_timeout");
+    const hasTransactionTimeout = typeof setting.rows[0]?.['transaction_timeout'] === 'string';
+    const deadline = performance.now() + budget;
+    let deferred: RebuildDeferredError | undefined;
+    const remaining = (): number => {
+      const ms = Math.floor(deadline - performance.now());
+      if (ms < 1) { deferred ??= new RebuildDeferredError('sql-work-budget'); throw deferred; }
+      return ms;
+    };
+    const bounded = { async query(sql: string, params?: unknown[]) {
+      const allowance = remaining();
+      try {
+        // A client-side query_timeout does not cancel PostgreSQL work. Use the
+        // server's timeout, reduced before EVERY query while the lock is held.
+        await client.query(`SET LOCAL statement_timeout = '${allowance}ms'`);
+        remaining();
+        const result = await client.query(sql, params);
+        // An acknowledged commit already released the lock and must never be
+        // reported as rolled back just because its reply crossed the deadline.
+        if (sql !== 'COMMIT') remaining();
+        return result;
+      } catch (error) {
+        const code = error !== null && typeof error === 'object' ? (error as { code?: string }).code : undefined;
+        if (code === '57014') deferred ??= new RebuildDeferredError('sql-work-budget');
+        if (code === '55P03') deferred ??= new RebuildDeferredError('lock-unavailable');
+        throw deferred ?? error;
+      }
+    } };
+    await client.query('BEGIN');
+    try {
+      // A stalled collector must not retain its transaction while waiting for
+      // another client query. This setting is local to this maintenance attempt.
+      await bounded.query("SET LOCAL idle_in_transaction_session_timeout = '1s'");
+      if (hasTransactionTimeout) await bounded.query(`SET LOCAL transaction_timeout = '${remaining()}ms'`);
+      // ACCESS EXCLUSIVE from the start, not EXCLUSIVE upgraded at the rename: with EXCLUSIVE held,
+      // a store transaction that had already read (ACCESS SHARE) and now waited to write blocked on
+      // this transaction, whose RENAME then waited on that reader's ACCESS SHARE, and Postgres
+      // resolved the cycle by killing the rebuild after the copy (measured on the first production
+      // run, 2026-09-20). Take the strongest lock without queuing, then keep the traversal and
+      // copy within the short budget; no lock upgrade can form that cycle.
+      await bounded.query(`LOCK TABLE ${t} IN ACCESS EXCLUSIVE MODE NOWAIT`);
+      log('lock held for a budgeted maintenance attempt; readers and writers resume on commit or rollback');
+      const live = await collectLive(readerFromPg(bounded as never, t), { log });
+      remaining();
+      if (live.keys.size === 0) throw new Error('refusing to rebuild: the live set is empty');
+      // A missing or unreadable retained node makes reachability incomplete.
+      // Preserve the existing table rather than collecting through uncertainty.
+      if (live.stats.danglingRoots.length > 0 || live.stats.unreadableNodes > 0) {
+        throw new Error(`refusing to rebuild: ${live.stats.danglingRoots.length} dangling roots and ${live.stats.unreadableNodes} unreadable nodes`);
+      }
+      await bounded.query(`CREATE TABLE ${newTable} (LIKE ${t} INCLUDING ALL)`);
+      await copyStorageParameters(bounded, t, newTable, log);
+      const all = [...live.keys];
+      let copied = 0;
+      for (let i = 0; i < all.length; i += batch) {
+        const chunk = all.slice(i, i + batch).map((h) => Buffer.from(h, 'hex'));
+        const r = await bounded.query(`INSERT INTO ${newTable} (k, v) SELECT k, v FROM ${t} WHERE k = ANY($1::bytea[]) ON CONFLICT DO NOTHING`, [chunk]);
+        copied += r.rowCount ?? 0;
+        if ((i / batch) % 25 === 0) log(`copied ${copied} of up to ${all.length} rows`);
+      }
+      const count = await bounded.query(`SELECT count(*)::bigint AS n FROM ${newTable}`);
+      const newRows = Number(count.rows[0]?.['n'] ?? 0);
+      // Reconstructed keys are promises of retained data. Both the INSERT row
+      // counts and an independent table count must confirm every promised key.
+      if (copied !== live.keys.size || newRows !== live.keys.size) {
+        throw new Error(`refusing to swap: expected ${live.keys.size} live keys, copied ${copied}, counted ${newRows}`);
+      }
+      await bounded.query(`ALTER TABLE ${t} RENAME TO ${oldTable}`);
+      await bounded.query(`ALTER TABLE ${newTable} RENAME TO ${t}`);
+      await bounded.query('COMMIT');
+      log(`swapped: ${t} now has ${newRows} rows; the previous table is ${oldTable}`);
+      return { copied, oldTable, newRows };
+    } catch (err) {
+      // Deliberately bypass the exhausted query wrapper so PostgreSQL releases
+      // the lock and rolls back any partially copied table or rename.
+      await client.query('ROLLBACK').catch(() => undefined);
+      throw deferred ?? err;
     }
-    await client.query(`CREATE TABLE ${newTable} (LIKE ${t} INCLUDING ALL)`);
-    await copyStorageParameters(client, t, newTable, log);
-    const all = [...live.keys];
-    let copied = 0;
-    for (let i = 0; i < all.length; i += batch) {
-      const chunk = all.slice(i, i + batch).map((h) => Buffer.from(h, 'hex'));
-      const r = await client.query(`INSERT INTO ${newTable} (k, v) SELECT k, v FROM ${t} WHERE k = ANY($1::bytea[]) ON CONFLICT DO NOTHING`, [chunk]);
-      copied += r.rowCount ?? 0;
-      if ((i / batch) % 25 === 0) log(`copied ${copied} of up to ${all.length} rows`);
-    }
-    const count = await client.query(`SELECT count(*)::bigint AS n FROM ${newTable}`);
-    const newRows = Number(count.rows[0]?.['n'] ?? 0);
-    // Reconstructed keys are promises of retained data. Both the INSERT row
-    // counts and an independent table count must confirm every promised key.
-    if (copied !== live.keys.size || newRows !== live.keys.size) {
-      throw new Error(`refusing to swap: expected ${live.keys.size} live keys, copied ${copied}, counted ${newRows}`);
-    }
-    await client.query(`ALTER TABLE ${t} RENAME TO ${oldTable}`);
-    await client.query(`ALTER TABLE ${newTable} RENAME TO ${t}`);
-    await client.query('COMMIT');
-    log(`swapped: ${t} now has ${newRows} rows; the previous table is ${oldTable}`);
-    return { copied, oldTable, newRows };
-  } catch (err) {
-    await client.query('ROLLBACK').catch(() => undefined);
-    throw err;
+  } catch (error) {
+    failure = error;
+    throw error;
+  } finally {
+    // A transaction/idle timeout on supported servers terminates the session,
+    // which already releases its advisory lock. Preserve the original failure.
+    if (failure) await release().catch(() => undefined);
+    else await release();
   }
 }

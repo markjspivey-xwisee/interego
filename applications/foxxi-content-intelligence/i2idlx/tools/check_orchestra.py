@@ -1,18 +1,24 @@
 """Check the recorded orchestrated run that Orchestrate replays (examples/orchestra/kestrel-point-run.json).
 
-python3 -I tools/check_orchestra.py <i2idlx-root>
+python3 -I tools/check_orchestra.py <i2idlx-root> [--migration <reviewed-expectations.json>]
 
 Every tool call is re-run, in order, against a fresh sandbox with the page's own tools (app/src/orc/world.js)
-and must return exactly what the recording holds; every call must belong to its step's agent and tools; every
-step must have finished; and the run must end with the staged writes approved. Needs app/build/data.json.
+and by default must return exactly what the recording holds. --migration instead requires every exact reviewed
+v93 result digest and reports historical drift separately. Every call must belong to its step's agent and tools;
+every step must have finished; and the run must end with the staged writes approved. Needs app/build/data.json.
 """
+import argparse
 import json
 import pathlib
 import re
 import subprocess
 import sys
 
-ROOT = pathlib.Path(sys.argv[1]).resolve()
+parser = argparse.ArgumentParser(description=__doc__)
+parser.add_argument("root")
+parser.add_argument("--migration", type=pathlib.Path, help="exact reviewed v93 replay expectations; the original trace remains unchanged")
+args = parser.parse_args()
+ROOT = pathlib.Path(args.root).resolve()
 APP = ROOT / "app"
 RUN = ROOT / "examples" / "orchestra" / "kestrel-point-run.json"
 BANNER = ("globalThis.document={getElementById:()=>({textContent:require('fs').readFileSync(process.argv[2],'utf8')})};globalThis.window={};"
@@ -20,8 +26,10 @@ BANNER = ("globalThis.document={getElementById:()=>({textContent:require('fs').r
           "useMemo:(f)=>f(),useContext:()=>null,createElement:()=>null};")
 subprocess.run([str(APP / "node_modules/.bin/esbuild"), "tools/orc_check.js", "--bundle", "--platform=node", "--format=cjs",
                 "--outfile=build/orc-check.cjs", "--log-level=warning", "--banner:js=" + BANNER], cwd=APP, check=True)
-r = json.loads(subprocess.run(["node", "build/orc-check.cjs", "build/data.json", str(RUN)], cwd=APP, check=True,
-                              capture_output=True, text=True).stdout)
+command = ["node", "build/orc-check.cjs", "build/data.json", str(RUN)]
+if args.migration:
+    command.append(str(args.migration.resolve()))
+r = json.loads(subprocess.run(command, cwd=APP, check=True, capture_output=True, text=True).stdout)
 
 failures = []
 
@@ -32,8 +40,16 @@ def check(ok, what):
         failures.append(what)
 
 
-check(r["calls"] > 0 and r["matched"] == r["calls"], f"{r['matched']} of {r['calls']} recorded tool results reproduced exactly"
-      + (f"; differ: {r['mismatches'][:6]}" if r["mismatches"] else ""))
+if args.migration:
+    print(f"INFO historical recording: {r['matched']} of {r['calls']} tool results reproduced exactly; differ: {r['mismatches']}")
+    migration = r["migration"]
+    check(migration["boundCalls"] == 48 and migration["reviewedChanges"] == 11 and migration["unchanged"] == 37,
+          "48 original call identities, inputs and recorded result digests bound; 11 reviewed changes and 37 identical expectations")
+    check(migration["matched"] == r["calls"] == 48, f"{migration['matched']} of {r['calls']} v0.0.93 migration tool results reproduced exactly"
+          + ("; actual digest mismatch: " + json.dumps(migration["mismatches"][:6]) if migration["mismatches"] else ""))
+else:
+    check(r["calls"] > 0 and r["matched"] == r["calls"], f"{r['matched']} of {r['calls']} recorded tool results reproduced exactly"
+          + (f"; differ: {r['mismatches'][:6]}" if r["mismatches"] else ""))
 # A result amended after recording is listed under amendments: the value it changed, what was recorded there, when and
 # why. The recording must hold the amended value, so each entry stays true of the file.
 trace = json.loads(RUN.read_text())

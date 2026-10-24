@@ -1,0 +1,34 @@
+{
+  "interface": {
+    "capabilities": [
+      "Interactive"
+    ],
+    "category": "Productivity",
+    "composerIcon": "./assets/icon.svg",
+    "defaultPrompt": "Open the I2IDL-X Workbench App.",
+    "developerName": "mark.spivey@xwisee.com",
+    "displayName": "I2IDL-X Workbench",
+    "logo": "./assets/icon.svg",
+    "longDescription": "Open the existing Interpretant workbench inside ChatGPT. Browse the reviewed v0.0.93 glossary, explore maps, compare and annotate concepts, and create glossary packs. Ask and Orchestrate send requests to the surrounding ChatGPT conversation; live read-only tools provide glossary context, classification, SHACL validation, peer-term lookup and source-version checks. I2IDL-X enrichment remains proposed. Independent work by Foxxi Mediums, not affiliated with or endorsed by I2IDL.",
+    "shortDescription": "Explore, map and ask"
+  },
+  "apps": "./.app.json",
+  "name": "i2idlx-workbench",
+  "version": "0.1.1",
+  "description": "The Interpretant I2IDL-X graphical workbench, with glossary exploration and ChatGPT conversation actions backed by Interego and Foxxi.",
+  "author": {
+    "name": "mark.spivey@xwisee.com",
+    "email": "mark.spivey@xwisee.com"
+  },
+  "keywords": [
+    "i2idl",
+    "glossary",
+    "learning",
+    "interego",
+    "foxxi",
+    "ontology"
+  ],
+  "homepage": "https://foxxi-bridge.interego.xwisee.com/i2idlx/",
+  "repository": "https://github.com/markjspivey-xwisee/interego",
+  "license": "MIT"
+}

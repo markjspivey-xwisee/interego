@@ -25,6 +25,8 @@ import { spawn } from 'node:child_process';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { railwayGql } from './railway-pins.mjs';
+import { collectorVolumeHeadroom } from './pgsl-store-gc-volume.mjs';
+import { attachCollectorHeadroomProvider } from './pgsl-store-gc-headroom-ipc.mjs';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -48,6 +50,13 @@ const vars = await gql('query($p:String!,$e:String!,$s:String!){ variables(proje
 const { POSTGRES_USER, POSTGRES_PASSWORD, POSTGRES_DB } = vars.variables;
 if (!POSTGRES_USER || !POSTGRES_PASSWORD || !POSTGRES_DB) { process.stderr.write('the postgres service does not carry POSTGRES_USER/POSTGRES_PASSWORD/POSTGRES_DB\n'); process.exit(2); }
 
+// Called only when the child is about to rebuild, after any lengthy dry scan.
+// The child's request cannot change these token-resolved selectors.
+const measureHeadroom = async () => {
+  const volumes = await gql('query($p:String!,$e:String!){ project(id:$p){ volumes{ edges{ node{ id volumeInstances{ edges{ node{ serviceId mountPath sizeMB currentSizeMB } } } } } } } environment(id:$e){ config(decryptVariables:false) } }', { p: projectId, e: environmentId });
+  return collectorVolumeHeadroom(volumes, pg.node.id);
+};
+
 const existing = await gql('query($e:String!,$s:String!){ tcpProxies(environmentId:$e, serviceId:$s){ id domain proxyPort applicationPort } }', { e: environmentId, s: pg.node.id });
 let proxy = existing.tcpProxies.find((p) => p.applicationPort === 5432);
 let createdId = null;
@@ -64,10 +73,17 @@ const conn = `postgres://${encodeURIComponent(POSTGRES_USER)}:${encodeURICompone
 let code = 1;
 try {
   code = await new Promise((resolve) => {
-    const child = spawn(process.platform === 'win32' ? 'npx.cmd' : 'npx', ['tsx', 'tools/pgsl-store-gc.ts', ...process.argv.slice(2)], {
-      cwd: ROOT, stdio: 'inherit', shell: process.platform === 'win32', env: { ...process.env, PGSL_PG_CONNSTR: conn },
+    const childEnv = { ...process.env, PGSL_PG_CONNSTR: conn };
+    delete childEnv.RAILWAY_PROJECT_TOKEN;
+    delete childEnv.PGSL_GC_VOLUME_CAPACITY_BYTES;
+    delete childEnv.PGSL_GC_VOLUME_USED_BYTES;
+    delete childEnv.PGSL_GC_VOLUME_SAMPLED_AT;
+    const child = spawn(process.execPath, ['--import', 'tsx', 'tools/pgsl-store-gc.ts', ...process.argv.slice(2)], {
+      cwd: ROOT, stdio: ['inherit', 'inherit', 'inherit', 'ipc'], env: childEnv,
     });
-    child.on('exit', (c) => resolve(c ?? 1));
+    const closeProvider = attachCollectorHeadroomProvider(child, measureHeadroom);
+    child.once('error', () => { closeProvider(); process.stderr.write('collector child could not be started\n'); resolve(2); });
+    child.once('exit', (c) => { closeProvider(); resolve(c ?? 1); });
   });
 } finally {
   if (createdId) {

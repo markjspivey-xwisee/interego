@@ -377,14 +377,17 @@ export async function generate(root = DEFAULT_ROOT, options: {outputDir?: string
 function compare(a: string,b: string): number { return a<b?-1:a>b?1:0; }
 function compactKind(iri: string,ns: string): string { return iri.startsWith(ns)?'i2x:'+iri.slice(ns.length):qn(iri); }
 interface FeedSnapshot {defs: Record<string,unknown>; related: number; broader: number; fieldMembers: number; version: string}
-function feedSnapshot(doc: {'@graph'?:Record<string,unknown>[]}): FeedSnapshot {
+export function feedSnapshot(doc: {'@graph'?:Record<string,unknown>[]}): FeedSnapshot {
   const out:FeedSnapshot={defs:{},related:0,broader:0,fieldMembers:0,version:'?'};
   const count=(value:unknown):number=>Array.isArray(value)?value.length:value?1:0;
+  const byId=new Map((doc['@graph']||[]).map(node=>[String(node['@id']),node]));
   for(const node of doc['@graph']||[]) {
     const ts=Array.isArray(node['@type'])?node['@type']:[node['@type']];
     if(ts.includes('skos:ConceptScheme'))out.version=String(node['gs:publicationVersion']||'?');
     if(ts.includes('skos:Concept')) {
-      out.defs[String(node['@id'])]=node['skos:definition']||'';
+      const active=node['gs:activeDefinition'];
+      const definitionId=active&&typeof active==='object'?(active as Record<string,unknown>)['@id']:active;
+      out.defs[String(node['@id'])]=node['skos:definition']??byId.get(String(definitionId))?.['rdf:value']??'';
       out.related+=count(node['skos:related']);out.broader+=count(node['skos:broader']);
     }
     if(ts.includes('skos:Collection')&&node['gs:facet']==='field')out.fieldMembers+=count(node['skos:member']);

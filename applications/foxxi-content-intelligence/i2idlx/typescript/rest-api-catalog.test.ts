@@ -17,8 +17,8 @@ const port = (id: string) => base + '#port-rest-' + id;
 test('committed decoration reproduces the pinned contract, independently of the canonical glossary pin', () => {
   assert.equal(text, readFileSync(new URL('src/i2idlx-rest-api.ttl.tmpl', root), 'utf8'));
   const canonical = JSON.parse(readFileSync(new URL('typescript/upstream-pin.json', root), 'utf8'));
-  assert.equal(canonical.commit, '9f865995d879165d8fa49422915a5e53d2ecebf9');
-  assert.equal(canonical.release, 'v0.0.86');
+  assert.equal(canonical.commit, '0754254be64f0562bab7e68d69583f2cc90aa945');
+  assert.equal(canonical.release, 'v0.0.93');
   assert.equal(value(base + '#rest-service', DCAT + 'version'), '1.0.0');
   assert.equal(value(base + '#rest-projection', DCAT + 'version'), 'v0.0.89');
 });

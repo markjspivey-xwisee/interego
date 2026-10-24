@@ -31,6 +31,7 @@ def route_handler(route):
 
 routes = [
     ("home", ".hero h1"), ("browse", ".lex-list .li"), ("c-learning-record-store-lrs", "#hw"),
+    ("c-learning-management-systems", "#hw"),
     ("whole", ".mapwrap svg circle"), ("review", ".rcard"), ("agents", ".qcard"),
     ("for-i2idl", ".fi-hero h1"), ("semantic", ".matrix tbody tr"), ("semantic-play", ".rescard"), ("ask", ".empty"),
 ]
@@ -52,6 +53,20 @@ with sync_playwright() as p:
                 assert page.locator(".mapwrap svg circle").count() == len(data["concepts"]), "every actual concept must be drawn"
             if name == "c-learning-record-store-lrs":
                 assert page.inner_text("#hw") == next(c["l"] for c in data["concepts"] if c["id"] == "learning-record-store-lrs")
+            if name == "c-learning-management-systems":
+                concept = next(c for c in data["concepts"] if c["id"] == "learning-management-systems")
+                page.wait_for_function("label => document.getElementById('hw')?.textContent === label", arg=concept["l"])
+                assert page.inner_text("#hw") == concept["l"]
+                assert concept["d"] in page.inner_text("body"), "active-only definition must be readable"
+                assert concept["ds"] is None and concept["dq"] is None and concept["dl"] is None
+                assert "Not supplied" in page.inner_text(".def-meta"), "absent status must not read as approval"
+                assert page.locator('[title*="editorial status is not supplied"]').count() == 1
+                assert "Definition" not in page.inner_text(".def-meta"), "absent sequence/language must not leave an empty metadata row"
+                page.keyboard.press("/")
+                search = page.locator('input[aria-label="Search"][role="combobox"]')
+                search.wait_for(state="visible")
+                assert str(len(data["concepts"])) in search.get_attribute("placeholder"), "search count must follow the loaded release"
+                page.keyboard.press("Escape")
             if name in ("home", "c-learning-record-store-lrs", "whole", "semantic", "ask"):
                 page.screenshot(path=str(shots / ("hosted-" + name + "-" + str(width) + ".png")), full_page=False)
             print("PASS hosted signed-out", width, name, selector)

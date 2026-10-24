@@ -26,6 +26,14 @@ COPY deploy/identity/derive-userid.ts ./
 COPY deploy/identity/resolve-target-userid.ts ./
 COPY deploy/identity/passkey-authentication.ts ./
 COPY deploy/identity/account-index.ts ./
+COPY deploy/identity/provisional-play.ts ./
+COPY deploy/identity/provisional-play-store.ts ./
+COPY deploy/identity/provisional-play-admission.ts ./
+COPY deploy/identity/provisional-play-provider.ts ./
+COPY deploy/identity/provisional-play-routes.ts ./
+COPY deploy/identity/provisional-play-cleanup.ts ./
+COPY deploy/identity/provisional-play-enrollment.ts ./
+COPY deploy/identity/surface-agent-restore.ts ./
 RUN npx tsc
 
 # ────────────────────────────────────────────────────────────
@@ -69,3 +77,4 @@ ARG GIT_SHA=unset
 ENV INTEREGO_BUILD_SHA=$GIT_SHA
 
 CMD ["dist/server.js"]
+

@@ -1,20 +1,27 @@
 name: Pod store collector
 
-# Every day, measure how much of the pod store's Postgres table is unreferenced history, rebuild
+# Manual recovery only. Scheduled reclamation uses the private Railway sweep worker after its
+# migration, measurement and one-hour warmup gates. This workflow never runs automatically.
+#
+# Measure how much of the pod store's Postgres table is unreferenced history, rebuild
 # the table from its live set when that share has crossed a line, and drop the copy a rebuild
-# left behind once the store has run on the new table for at least one day. Any mode can still be
+# left behind after one hour AND a complete current live-set check. Any mode can still be
 # dispatched by hand.
 #
-# ── WHY THIS RUNS ON A SCHEDULE ────────────────────────────────────────────────────────────
+# ── HISTORICAL RECOVERY CONTEXT ───────────────────────────────────────────────────────────
 #
 # The store is grow-only and content-addressed; every overwrite leaves the old nodes behind
 # (packages/pgsl-store/src/gc.ts says what "live" means). On 2026-09-20 that history reached
 # 45 GB against 666 MB of live data, the volume filled, and every pod answered 500. The dry run
-# reads only and prints the live set beside the table's size, so the gap is visible daily
-# instead of discovered by an outage. The rebuild holds an ACCESS EXCLUSIVE lock for the
-# minutes it takes (readers and writers wait), so the daily run takes it only above a line —
+# reads only and prints the live set beside the table's size, so the gap is visible hourly
+# instead of discovered by an outage. Rebuild uses ACCESS EXCLUSIVE NOWAIT with a short total
+# traversal/copy SQL budget and rollback on expiry; a large graph may defer compaction. The
+# budget is not an absolute wall-clock bound on durable COMMIT or network/scheduling latency.
+# The hourly run attempts it only above a line —
 # at least half of a table of at least two million rows unreferenced, the outage's shape and not
-# a normal week's — and at the quietest hour. Since compose stopped rewriting the projection
+# a normal week's. Fresh volume headroom, sampled just before the attempt even after a long
+# scan, must cover the copy and WAL before it starts. Deferral claims no physical reclamation.
+# Since compose stopped rewriting the projection
 # rows of existing nodes (2026-09-21) a normal week stays far below that line, so most runs
 # this is a measurement and nothing else. `rebuildDecision` in tools/pgsl-store-gc.ts is the
 # line, with its tests; the log says which way it went and why.
@@ -23,16 +30,14 @@ name: Pod store collector
 # opens a temporary TCP route with the project token for the run and deletes it afterwards.
 
 on:
-  schedule:
-    - cron: '30 6 * * *'
   workflow_dispatch:
     inputs:
       mode:
-        description: 'weekly (what the schedule runs: drop copies older than one day, measure, rebuild above the line), dry-run (reads only), rebuild (swap the live rows in; the previous table stays for drop), drop (drop the table named below), tune (autovacuum thresholds)'
+        description: 'hourly (verify current closure, retire copies older than one hour, rebuild only above existing thresholds with fresh headroom), dry-run (read only), rebuild (guarded copy), drop (explicit table), tune (autovacuum)'
         type: choice
         required: true
-        default: weekly
-        options: [weekly, dry-run, rebuild, drop, tune]
+        default: hourly
+        options: [hourly, weekly, dry-run, rebuild, drop, tune]
       drop_table:
         description: 'For mode=drop: the previous table to drop, e.g. pgsl_kv_old_20260920'
         required: false
@@ -47,7 +52,7 @@ concurrency:
 
 jobs:
   collect:
-    name: "${{ github.event.inputs.mode || 'weekly' }}"
+    name: "${{ github.event.inputs.mode || 'hourly' }}"
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
@@ -60,12 +65,12 @@ jobs:
       - name: Run the collector through a temporary route
         env:
           RAILWAY_PROJECT_TOKEN: ${{ secrets.RAILWAY_PROJECT_TOKEN }}
-          MODE: ${{ github.event.inputs.mode || 'weekly' }}
+          MODE: ${{ github.event.inputs.mode || 'hourly' }}
           DROP_TABLE: ${{ github.event.inputs.drop_table }}
         run: |
           set -o pipefail
           case "$MODE" in
-            weekly)  node tools/pgsl-store-gc-remote.mjs --drop-previous-older-than 1 --rebuild-above 0.5 --min-rows 2000000 2>&1 | tee collector.log ;;
+            hourly|weekly) node tools/pgsl-store-gc-remote.mjs --drop-previous-older-than-hours 1 --rebuild-above 0.5 --min-rows 2000000 2>&1 | tee collector.log ;;
             dry-run) node tools/pgsl-store-gc-remote.mjs 2>&1 | tee collector.log ;;
             rebuild) node tools/pgsl-store-gc-remote.mjs --rebuild ;;
             tune)    node tools/pgsl-store-gc-remote.mjs --tune ;;
@@ -75,18 +80,23 @@ jobs:
             *) echo "unknown mode $MODE" >&2; exit 2 ;;
           esac
 
-      # ★ THE DAILY MEASUREMENT IS THE QUARTER'S MONITORING REVIEW. What the dry run measured —
+      # The measurement is the quarter's monitoring review. What the dry run measured —
       # live keys against table rows, what a rebuild would keep — lands on the operator's pod as
       # this quarter's soc2:QuarterlyReviewEvent of kind monitoring, published by the fleet's
-      # delegate agent (tools/fleet-event.ts). The graph IRI is the quarter's, so each day's run
+      # delegate agent (tools/fleet-event.ts). The graph IRI is the quarter's, so each run
       # supersedes the last and the review is always the latest reading with the earlier ones
       # behind it in the chain. Only after a run that succeeded: a failed run measured nothing. The
-      # weekly run's log carries the rebuild decision and any rebuild, so the review says so too.
+      # automatic run's log carries the rebuild decision and any rebuild, so the review says so too.
+      # This workflow is manual-only; review publication remains an explicit dispatch effect.
       - name: Record the measurement as this quarter's monitoring review
-        if: ${{ contains(fromJSON('["weekly","dry-run"]'), github.event.inputs.mode || 'weekly') }}
+        if: ${{ contains(fromJSON('["hourly","weekly","dry-run"]'), github.event.inputs.mode || 'hourly') }}
         env:
           INTEREGO_FLEET_AGENT_KEY_JSON: ${{ secrets.INTEREGO_FLEET_AGENT_KEY_JSON }}
           INTEREGO_FLEET_POD_NAME: ${{ vars.INTEREGO_FLEET_POD_NAME }}
         run: |
+          if [ "${{ github.event_name }}" = "schedule" ] && [ "$(date -u +%H)" != "06" ]; then
+            echo "Hourly measurement complete; the daily monitoring review runs at hour 06 UTC."
+            exit 0
+          fi
           npm run build:core && npm run build --workspace @interego/compliance && npm run build --workspace @interego/ops
           npx tsx tools/fleet-event.ts review --kind monitoring --summary-file collector.log

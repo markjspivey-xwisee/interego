@@ -84,6 +84,19 @@ const descriptor = (v: unknown): boolean => object(v) && typeof v.id === 'string
   Array.isArray(v.facets) && v.facets.length <= 64 && v.facets.every(object);
 const short = (v: unknown, max: number) => typeof v === 'string' && v.trim().length > 0 && v.length <= max;
 const profiles: Readonly<Record<string, Profile>> = {
+  'foxxi.i2idlx_classify': { path: '/i2idlx/api/classify', method: 'POST',
+    payload: { graph_content: '<urn:example:inventory:lrs> <https://relay.interego.xwisee.com/ns/u-pk-33d42e6b33dc/i2idlx#isClassifiedBy> <https://id.i2idl.org/concepts/learning-record-store-lrs> .' },
+    label: 'Classify an explicitly fictional RDF draft against the pinned semantic build',
+    check: p => allowedKeys(p, ['graph_content']) && short(p.graph_content, 64000) },
+  'foxxi.i2idlx_validate': { path: '/i2idlx/api/validate', method: 'POST',
+    payload: { graph_content: '<urn:example:inventory:lrs> <https://relay.interego.xwisee.com/ns/u-pk-33d42e6b33dc/i2idlx#isClassifiedBy> <https://id.i2idl.org/concepts/learning-record-store-lrs> .' },
+    label: 'Run native SHACL and pinned concept-existence checks on a fictional draft',
+    check: p => allowedKeys(p, ['graph_content']) && short(p.graph_content, 64000) },
+  'foxxi.i2idlx_peer_term': { path: '/i2idlx/api/peer-term', method: 'POST', payload: { iri: 'https://purl.org/ctdl/terms/Credential' },
+    label: 'Look up the exact CTDL term in pinned peer evidence; no supplied URL is fetched',
+    check: p => allowedKeys(p, ['iri']) && short(p.iri, 2048) && /^https?:\/\//.test(String(p.iri)) },
+  'foxxi.i2idlx_source_version': { path: '/i2idlx/api/source-version', method: 'POST', payload: {},
+    label: 'Compare the pinned glossary release with the current canonical scheme', check: p => !Object.keys(p).length },
   'foxxi.discover_lrs': { path: '/xapi/about', method: 'GET', payload: {}, label: 'Read this deployment’s real LRS discovery document', check: p => !Object.keys(p).length },
   'foxxi.i2idlx_capabilities': { path: '/i2idlx/capabilities', method: 'GET', payload: {}, label: 'Inspect this workbench’s real connection options', check: p => !Object.keys(p).length },
   'foxxi.i2idlx_ask': { path: '/i2idlx/api/ask', method: 'POST', payload: { question: 'Which glossary concepts describe a learning record store?' }, label: 'Generate a grounded task packet for your connected model', task: true,

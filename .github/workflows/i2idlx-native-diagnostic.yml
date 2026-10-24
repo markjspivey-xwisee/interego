@@ -13,6 +13,7 @@ on:
       - 'package-lock.json'
       - 'tsconfig.base.json'
       - '.github/workflows/i2idlx-native-diagnostic.yml'
+      - '.github/workflows/i2idlx-v93-release.yml'
       - '.github/workflows/i2idlx-golden-parity.yml'
       - '.github/workflows/i2idlx-ui-oracle.yml'
       - 'tools/i2idlx-hosted-visitor-smoke.py'
@@ -34,7 +35,7 @@ jobs:
         shell: bash
     env:
       I2IDLX_ROOT: applications/foxxi-content-intelligence/i2idlx
-      I2IDL_CLONE: ${{ github.workspace }}/.cache/i2idl-linked-data
+      I2IDL_CLONE: ${{ github.workspace }}/.cache/i2idl-linked-data-v0.0.93
       INTEREGO_CORE_SRC: ${{ github.workspace }}/packages/core/src
       INTEREGO_TSX: ${{ github.workspace }}/node_modules/.bin/tsx
       I2IDLX_REASONER_JAR: ${{ github.workspace }}/applications/foxxi-content-intelligence/i2idlx/.cache/robot-1.9.11.jar
@@ -42,8 +43,8 @@ jobs:
       I2IDLX_PROGRESS_FILE: ${{ github.workspace }}/applications/foxxi-content-intelligence/i2idlx/.cache/native-diagnostic/progress.jsonl
       I2IDLX_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
       I2IDLX_BUILT_DATE: '2026-10-08'
-      I2IDLX_MODIFIED: '2026-10-13'
-      I2IDLX_NOW: '2026-10-13T20:30:00+00:00'
+      I2IDLX_MODIFIED: '2026-10-19'
+      I2IDLX_NOW: '2026-10-19T00:51:00+00:00'
       I2IDLX_HERMIT: '1'
       TZ: UTC
     steps:
@@ -85,7 +86,7 @@ jobs:
         timeout-minutes: 8
         run: |
           timeout --signal=TERM --kill-after=15s 240s npx --no-install tsx "$I2IDLX_ROOT/typescript/prepare-source.ts" "$I2IDLX_ROOT" "$I2IDL_CLONE"
-          test "$(git -C "$I2IDL_CLONE" rev-parse HEAD)" = 9f865995d879165d8fa49422915a5e53d2ecebf9
+          test "$(git -C "$I2IDL_CLONE" rev-parse HEAD)" = 0754254be64f0562bab7e68d69583f2cc90aa945
           test "$(git -C "$I2IDL_CLONE" rev-parse --is-shallow-repository)" = false
           timeout --signal=TERM --kill-after=15s 180s npx --no-install tsx "$I2IDLX_ROOT/typescript/prepare-build-inputs.ts" "$I2IDLX_ROOT"
           sha256sum "$I2IDLX_ROOT/evidence/xapi-ontology.ttl" "$I2IDLX_ROOT/evidence/xapi-profile-ontology.ttl" "$I2IDLX_ROOT/evidence/xapi-snapshots.json" > "$I2IDLX_DIAGNOSTIC/xapi-input-sha256.txt"
@@ -113,6 +114,32 @@ jobs:
           set -e
           printf '{"headSha":"%s","exitCode":%s,"budgetSeconds":%s}\n' "$I2IDLX_HEAD_SHA" "$status" "$budget" > "$I2IDLX_DIAGNOSTIC/native-outcome.json"
           exit "$status"
+      - name: Export the exact validated candidate publication inputs
+        run: |
+          node --input-type=module <<'JS'
+          import { readFileSync } from 'node:fs';
+          import { join } from 'node:path';
+          import { createHash } from 'node:crypto';
+          const directory = join(process.env.I2IDLX_DIAGNOSTIC, 'dist-native');
+          const plan = JSON.parse(readFileSync(join(directory, 'publish-plan.json'), 'utf8'));
+          for (const graph of plan.graphs) {
+            if (!/^[a-z0-9-]+\.ttl$/.test(graph.file)) throw new Error('Unexpected publication filename');
+            const bytes = readFileSync(join(directory, graph.file));
+            if (bytes.length !== graph.bytes) throw new Error('Publication byte count differs from plan');
+            const encoded = bytes.toString('base64');
+            const chunkSize = 8192, chunks = Math.ceil(encoded.length / chunkSize);
+            process.stdout.write('I2IDLX_PUBLICATION_MANIFEST=' + JSON.stringify({
+              headSha: process.env.I2IDLX_HEAD_SHA, graph,
+              sha256: createHash('sha256').update(bytes).digest('hex'),
+              chunks,
+            }) + '\n');
+            for (let index = 0; index < chunks; index++) {
+              process.stdout.write('I2IDLX_PUBLICATION_CHUNK=' + JSON.stringify({
+                file: graph.file, index, base64: encoded.slice(index * chunkSize, (index + 1) * chunkSize),
+              }) + '\n');
+            }
+          }
+          JS
       - name: Emit timing and progress evidence, including on timeout
         if: always()
         run: |

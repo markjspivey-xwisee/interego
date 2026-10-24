@@ -7,6 +7,44 @@ deterministically into RDF, enriches them with extracted concept maps +
 pedagogical relations, and publishes the result as federated pod
 artifacts that compose cleanly with the rest of the Interego substrate.
 
+## Private personal activity window
+
+`GET /agent/xapi-statements/own-subject/affordance` advertises signed read/write
+actions for the person who controls a native session agent. A write signs
+`{subject_did, purpose: "personal-performance", statements: [...]}`; a read signs
+the same subject/purpose with `query: {statementId}` or supported filters. The
+relay supplies the session agent, own-pod stamp and fresh signature timestamp.
+Foxxi independently verifies the configured native identity controller, storage,
+owner registry, signed delegation, current relay anchor and owner encryption key.
+The existing own-agent xAPI actions keep their separate actor semantics.
+
+The API uses the broader native discover/publish delegation the owner has already
+issued to that session agent; a signed purpose is an explicit request label, not
+a new server-issued consent token. Hallowmarch separately enforces its short-lived
+personal activity-recording choice in the game client. A gameplay unit-control grant
+does not authorize that client export. This API does not inspect or claim to
+enforce Hallowmarch's 15-minute browser journal, and it does not forward personal
+observations or publish their projections.
+
+This surface keeps cumulative observed-activity counts and a rolling hour of
+recent xAPI details in one encrypted native CAS resource in the person's pod.
+It writes no shared tenant copy, public descriptor or per-event archive. Up to
+512 recent details and 4096 UUID/body-digest receipts are retained for the hour;
+receipt capacity pauses new events until slots age out. Replaying an identical
+receipt performs no write. Observations older than the hour are refused rather
+than recounted. The response declares its coverage and pruned detail count;
+cumulative observations do not establish competency or learning achievement.
+
+Batches allow 1–20 statements, 128 KiB total and 16 KiB per statement. The native
+encrypted resource is capped at 1 MiB with a persisted 16 MiB rolling-hour write
+budget. Additional runtime throttles bound actual transport writes and concurrent
+requests. Queries never initialize a head. A 200 write confirms native persistence
+and read-back; a lost acknowledgement requires reconciliation of the same UUIDs.
+Read 404 means absent from the retained window, while 410 means known detail has
+expired or been pruned. Clients must show unresolved delivery honestly and never
+create replacement event IDs. See [`src/own-subject-activity-store.ts`](src/own-subject-activity-store.ts)
+and [`src/own-subject-xapi-auth.ts`](src/own-subject-xapi-auth.ts).
+
 **Origin.** Foxxi was built independently as a three-stratum
 vocabulary + parser + dashboard system (see [`imported/`](imported/)
 for the original scripts, dashboards, sample payloads, and the

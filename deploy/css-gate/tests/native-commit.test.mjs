@@ -1,6 +1,7 @@
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
+import { createHash } from 'node:crypto';
 import { Pool } from 'undici';
 import { listenLoopback } from './loopback.mjs';
 
@@ -27,6 +28,9 @@ const received = [];
 const revision = 'sha256:' + 'a'.repeat(64);
 let mutate = value => value;
 let responseType = 'application/json';
+let extraResponseHeaders = {};
+const opaqueBody = '{"ciphertext":"unchanged"}';
+const opaqueDigest = 'sha256:' + createHash('sha256').update(opaqueBody).digest('hex');
 const upstream = await listenLoopback(createServer((req, res) => {
   const chunks = [];
   req.on('data', chunk => chunks.push(chunk));
@@ -38,12 +42,14 @@ const upstream = await listenLoopback(createServer((req, res) => {
       res.end();
       return;
     }
-    if (req.method !== 'PUT') { res.writeHead(200, { 'Content-Type': 'application/json' }); res.end('{"ciphertext":"unchanged"}'); return; }
+    if (req.method !== 'PUT') {
+      res.writeHead(200, { 'Content-Type': 'application/json', ...extraResponseHeaders }); res.end(opaqueBody); return;
+    }
     const resource = 'http://native-canonical.invalid' + req.url;
     const receipt = mutate({ version: 1, status: 'committed', expectedRevision: null, resource, path: resource,
       pod: 'css', revision, bodyDigest: 'sha256:' + 'b'.repeat(64), contentType: 'application/json',
       updatedAt: 123456789, size: 7, topUri: 'urn:pgsl:atom:' + 'c'.repeat(40), opaqueUri: 'urn:pgsl:atom:' + 'c'.repeat(40) });
-    res.writeHead(200, { 'Content-Type': responseType, ETag: '"' + revision + '-0123456789abcdef"' });
+    res.writeHead(200, { 'Content-Type': responseType, ETag: '"' + revision + '-0123456789abcdef"', ...extraResponseHeaders });
     res.end(JSON.stringify(receipt));
   });
 }));
@@ -99,8 +105,65 @@ test('native PUT maps only its exact engine receipt and retains the physical eng
   assert.equal(receipt.storagePath, receipt.storageResource);
   assert.equal(receipt.revision, revision);
   assert.equal(receipt.bodyDigest, 'sha256:' + 'b'.repeat(64));
+  assert.equal(result.headers.get('Cache-Control'), 'no-transform');
   assert.equal(received[0].authorization, undefined);
   assert.equal(received[0].body, '{"opaque":"command"}');
+});
+
+test('native GETs prevent downstream transformation while preserving cache policy, validators and exact bytes', async () => {
+  const etag = '"' + revision + '-0123456789abcdef"';
+  try {
+    for (const [policy, expected] of [
+      [undefined, 'no-transform'],
+      ['private, max-age=0, must-revalidate', 'private, max-age=0, must-revalidate, no-transform'],
+      ['private, No-Transform', 'private, No-Transform'],
+      [['private', 'max-age=0'], 'private, max-age=0, no-transform'],
+      ['private, note="a, no-transform, b"', 'private, note="a, no-transform, b", no-transform'],
+      ['private, x-no-transform=1', 'private, x-no-transform=1, no-transform'],
+    ]) {
+      extraResponseHeaders = { ETag: etag, 'Interego-Revision': revision, 'Interego-Body-Digest': opaqueDigest,
+        ...(policy === undefined ? {} : { 'Cache-Control': policy }) };
+      const result = await fetch(gate.base + '/alice/head');
+      assert.equal(result.status, 200);
+      assert.equal(result.headers.get('Cache-Control'), expected);
+      assert.equal(result.headers.get('ETag'), etag);
+      assert.equal(result.headers.get('Interego-Revision'), revision);
+      assert.equal(result.headers.get('Interego-Body-Digest'), opaqueDigest);
+      assert.equal(await result.text(), opaqueBody);
+    }
+  } finally { extraResponseHeaders = {}; }
+});
+
+test('ordinary reads and incomplete or malformed native metadata retain their original cache policy', async () => {
+  try {
+    for (const metadata of [
+      {}, { 'Interego-Revision': revision }, { 'Interego-Body-Digest': opaqueDigest },
+      { 'Interego-Revision': 'sha256:bad', 'Interego-Body-Digest': opaqueDigest },
+      { 'Interego-Revision': revision, 'Interego-Body-Digest': 'sha256:bad' },
+      { 'Interego-Revision': [revision, revision], 'Interego-Body-Digest': opaqueDigest },
+    ]) {
+      extraResponseHeaders = { 'Cache-Control': 'private, max-age=30', ...metadata };
+      const result = await fetch(gate.base + '/alice/artifact.json');
+      assert.equal(result.status, 200);
+      assert.equal(result.headers.get('Cache-Control'), 'private, max-age=30');
+      assert.equal(await result.text(), opaqueBody);
+    }
+    extraResponseHeaders = {};
+    const ordinary = await fetch(gate.base + '/alice/artifact.json');
+    assert.equal(ordinary.headers.get('Cache-Control'), null);
+    await ordinary.arrayBuffer();
+  } finally { extraResponseHeaders = {}; }
+});
+
+test('native PUT receipt transformation protection preserves upstream cache restrictions', async () => {
+  try {
+    extraResponseHeaders = { 'Cache-Control': 'private, no-store' };
+    const result = await fetch(gate.base + '/alice/head', { method: 'PUT', headers: nativeHeaders, body: '{}' });
+    assert.equal(result.status, 200);
+    assert.equal(result.headers.get('Cache-Control'), 'private, no-store, no-transform');
+    assert.equal(result.headers.get('ETag'), '"' + revision + '-0123456789abcdef"');
+    assert.equal((await result.json()).revision, revision);
+  } finally { extraResponseHeaders = {}; }
 });
 
 test('a successful receipt for a different resource, malformed revision or oversized receipt is refused', async () => {
@@ -110,6 +173,7 @@ test('a successful receipt for a different resource, malformed revision or overs
     mutate = change;
     const result = await fetch(gate.base + '/alice/head', { method: 'PUT', headers: nativeHeaders, body: '{}' });
     assert.equal(result.status, 502);
+    assert.equal(result.headers.get('Cache-Control'), null);
     assert.deepEqual(await result.json(), { error: 'native commit receipt did not bind the forwarded resource' });
   }
   mutate = value => value;
@@ -120,6 +184,7 @@ test('ordinary JSON application bodies are byte-transparent even if they look li
   const result = await fetch(gate.base + '/alice/head', { method: 'PUT',
     headers: { Authorization: nativeHeaders.Authorization, 'Content-Type': 'application/json' }, body: '{"application":"bytes"}' });
   assert.equal(result.status, 200);
+  assert.equal(result.headers.get('Cache-Control'), null);
   const body = await result.json();
   assert.equal(body.resource, 'http://native-canonical.invalid/alice/head');
   assert.equal(body.storageResource, undefined);

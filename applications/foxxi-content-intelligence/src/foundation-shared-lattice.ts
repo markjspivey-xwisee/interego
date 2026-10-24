@@ -17,6 +17,7 @@
  *
  * Composes substrate primitives only (see [[feedback_compose_dont_reinvent]]).
  */
+import { latticeSnapshotDigest, confirmedSnapshotMatches, type ConfirmedLatticeSnapshot } from './lattice-checkpoint.js';
 import {
   createPGSL, ingest, resolve, ancestorFragments, projectHolon,
   projectHolonToCredential, projectHolonToActivity,
@@ -134,6 +135,7 @@ interface PodState {
   absent?: boolean;      // we last saw a 404 → create with If-None-Match: *
   nextRetryAt?: number;  // a failed load is retried only after this (backoff)
   retryStep?: number;
+  checkpoint?: ConfirmedLatticeSnapshot; // exact body last acknowledged at this resource/ETag
 }
 const podState = new Map<string, PodState>();              // resourceUrl -> state
 const podWriteTail = new Map<string, Promise<unknown>>();  // resourceUrl -> serialized write chain
@@ -333,10 +335,33 @@ async function casPersist(a: {
     else { s.etag = d.etag; instance = mergeReseat(a.label, instance, d.nodes!, a.agentDid); }
   }
 
+  // Replaying an accepted xAPI UUID can compose the same artifact again. Ingest
+  // deduplicates its nodes, but encrypting this whole instance again still creates
+  // different ciphertext and another large immutable store history. A successful
+  // content fingerprint is reusable only while the exact resource ETag still
+  // names the body we acknowledged; failures and remote changes never mark it clean.
+  const unchangedDigest = latticeSnapshotDigest(a.resourceUrl, a.holonUri, instance.nodes, a.recipients);
+  if (await confirmedSnapshotMatches(s.checkpoint, unchangedDigest, s.etag, async () => {
+    const head = await doFetch(a.resourceUrl, { method: 'HEAD', headers: { Accept: 'application/json' } });
+    return head.ok ? head.headers.get('etag') ?? undefined : undefined;
+  })) {
+    unreadable.delete(a.label);
+    return { ok: true, pgsl: instance };
+  }
+
   for (let attempt = 0; attempt < CAS_MAX_ATTEMPTS; attempt++) {
-    const precond = s.etag ? { ifMatch: s.etag } : (s.absent ? { ifNoneMatch: '*' as const } : {});
+    const fingerprint = latticeSnapshotDigest(a.resourceUrl, a.holonUri, instance.nodes, a.recipients);
+    const precond = { ...(s.etag ? { ifMatch: s.etag } : (s.absent ? { ifNoneMatch: '*' as const } : {})), confirmBody: true };
     const w = await promoteInstanceEncryptedCAS(instance, a.holonUri, a.resourceUrl, a.recipients, kpFull, doFetch, precond);
-    if (w.status === 'ok') { s.etag = w.etag; s.absent = false; unreadable.delete(a.label); return { ok: true, pgsl: instance }; }
+    if (w.status === 'ok') {
+      // A later HEAD may belong to another writer. Without proof of our exact
+      // body, leave the precondition unknown so the next compose reloads/merges.
+      s.etag = w.confirmedEtag; s.absent = false;
+      s.checkpoint = w.confirmedEtag ? { digest: fingerprint, etag: w.confirmedEtag } : undefined;
+      unreadable.delete(a.label);
+      return { ok: true, pgsl: instance };
+    }
+    s.checkpoint = undefined; // the durable outcome is no longer the checkpoint we confirmed
     if (w.status === 'conflict') {
       // Someone wrote since we loaded. Reload; enforce the fence on every reload.
       const d = await resolveLatticeFromPodDetailed(a.resourceUrl, kpFull, doFetch);

@@ -8,6 +8,7 @@ import { Icon } from "../icons.jsx";
 import { useUI, Seg } from "../ui.jsx";
 import { MiniMarkdown } from "../text.jsx";
 import { useStored } from "../util.js";
+import { AIClientTaskLinks } from "../connection.jsx";
 
 const { useState, useRef, useEffect, useCallback } = React;
 
@@ -169,8 +170,9 @@ export function Ask({ engine }) {
   if (!available) {
     return (
       <div className="page" style={{ maxWidth: 720 }}>
-        <div className="empty"><Icon name="sparkle" /><div><b>Ask isn't available here</b></div>
-          <div className="small">Use Connect for the real MCP-client Ask workflow. Running Ask inside this page requires an explicit host sampling adapter or your own API key. Browsing, exports and local packs work without a model.</div></div>
+        <div className="empty"><Icon name="sparkle" /><div><b>Use Ask in your AI client</b></div>
+          <div className="small">Your connected AI conversation can answer with the workbench's glossary context. Running Ask inside this page requires an explicit host sampling adapter or your own API key through Connect. Browsing, exports and local packs work without a model.</div></div>
+        <AIClientTaskLinks />
       </div>
     );
   }

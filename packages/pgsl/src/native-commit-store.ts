@@ -7,6 +7,7 @@ import { createEncryptedEnvelope, openEncryptedEnvelope, mintNodeId, isPgslNodeI
   type EncryptionKeyPair, type EncryptedEnvelope, type IRI } from '@interego/core';
 import { createPGSL, ingest, mintAtom } from './lattice.js';
 import type { PGSLInstance, Node, NodeProvenance } from './types.js';
+import { immutableArtifactCache } from './immutable-artifact-cache.js';
 
 export const NATIVE_COMMIT_MEDIA_TYPE = 'application/vnd.interego.native-commit+json';
 const JSON_TYPE = 'application/json';
@@ -74,6 +75,9 @@ export interface NativeCommitStoreOptions {
   /** Explicit opt-in for an application's bounded rolling checkpoint format.
    * Existing immutable clients refuse this format after a CAS migration. */
   readonly atomicCheckpoint?: boolean;
+  /** Reuse verified immutable artifacts within this client. Heads and staging
+   * readbacks remain fresh. Disabled by default for integrity-audit callers. */
+  readonly cacheImmutableReads?: boolean;
   /** Already resolved and authorized through the adapter's capability/Type Index contract. */
   readonly scope: NativeCommitScope;
   readonly fetch: typeof globalThis.fetch;
@@ -211,6 +215,7 @@ export class NativeCommitStore implements NativeCommitClient {
   private readonly scope: NativeCommitScope;
   private readonly recipients: readonly string[];
   private readonly limit: number;
+  private readonly artifactCacheNamespace = {};
   constructor(private readonly options: NativeCommitStoreOptions) {
     const pod = uri(options.scope.pod), head = uri(options.scope.headUrl), container = uri(options.scope.artifactContainer);
     if (!pod.pathname.endsWith('/') || !container.pathname.endsWith('/') || head.origin !== pod.origin || container.origin !== pod.origin
@@ -262,7 +267,10 @@ export class NativeCommitStore implements NativeCommitClient {
     return { bytes, revision };
   }
   private encrypt(artifact: NativeArtifact): Uint8Array {
-    const bytes = Buffer.from(JSON.stringify(createEncryptedEnvelope(Buffer.from(serializeArtifact(artifact)).toString('utf8'), this.recipients, this.options.senderKeyPair)));
+    return this.encryptPlaintext(serializeArtifact(artifact));
+  }
+  private encryptPlaintext(plaintext: Uint8Array): Uint8Array {
+    const bytes = Buffer.from(JSON.stringify(createEncryptedEnvelope(Buffer.from(plaintext).toString('utf8'), this.recipients, this.options.senderKeyPair)));
     if (bytes.length > this.limit) fail('Encrypted native artifact exceeds capacity.', 413);
     return bytes;
   }
@@ -328,17 +336,28 @@ export class NativeCommitStore implements NativeCommitClient {
     this.decrypt(existing.bytes, topUri);
   }
   private async persist(artifact: NativeArtifactInput): Promise<NativeArtifactReference> {
-    const native = { topUri: artifact.topUri, nodes: artifact.pgsl.nodes }, bytes = this.encrypt(native), bodyDigest = digest(bytes);
-    const reference = { resourceUrl: this.resourceUrl('artifact', bodyDigest), bodyDigest, plaintextDigest: digest(serializeArtifact(native)), topUri: artifact.topUri };
+    return this.persistPlaintext(artifact.topUri, serializeArtifact({ topUri: artifact.topUri, nodes: artifact.pgsl.nodes }));
+  }
+  private async persistPlaintext(topUri: IRI, plaintext: Uint8Array): Promise<NativeArtifactReference> {
+    const bytes = this.encryptPlaintext(plaintext), bodyDigest = digest(bytes);
+    const reference = { resourceUrl: this.resourceUrl('artifact', bodyDigest), bodyDigest, plaintextDigest: digest(plaintext), topUri };
     await this.stage(reference.resourceUrl, bytes, reference.topUri);
     return reference;
   }
   async readArtifact(reference: NativeArtifactReference): Promise<NativeArtifact> {
     this.checkReference(reference);
-    const stored = await this.readRepresentation(reference.resourceUrl);
-    if (!stored || digest(stored.bytes) !== reference.bodyDigest) return fail('Committed native artifact is unavailable or changed.');
-    const artifact = this.decrypt(stored.bytes, reference.topUri);
+    // All bindings are part of the key; an alias with a changed plaintext or
+    // top URI must not borrow the verification of a different reference.
+    const key = JSON.stringify([reference.resourceUrl, reference.bodyDigest, reference.plaintextDigest, reference.topUri]);
+    const cached = this.options.cacheImmutableReads === true
+      ? immutableArtifactCache.get(this.artifactCacheNamespace, key) : undefined;
+    const bytes = cached ?? (await this.readRepresentation(reference.resourceUrl))?.bytes;
+    if (!bytes || digest(bytes) !== reference.bodyDigest) return fail('Committed native artifact is unavailable or changed.');
+    // Cache ciphertext, never caller-visible mutable node maps. Decryption and
+    // both content bindings are checked on every read, including a warm hit.
+    const artifact = this.decrypt(bytes, reference.topUri);
     if (digest(serializeArtifact(artifact)) !== reference.plaintextDigest) fail('Native artifact plaintext binding changed.');
+    if (!cached && this.options.cacheImmutableReads === true) immutableArtifactCache.set(this.artifactCacheNamespace, key, bytes);
     return artifact;
   }
   private referenceTuple(pgsl: PGSLInstance, tag: string, key: string, reference: NativeArtifactReference): IRI {
@@ -581,18 +600,34 @@ export class NativeCommitStore implements NativeCommitClient {
     const selectedRecordKeys = request.resultRecordKeys === undefined ? undefined : recordSelection(request.resultRecordKeys);
     bounded(request.operationId, 200, 'operation ID');
     if (canonical(request.expected.scope) !== canonical(this.scope) || !Array.isArray(request.changes) || request.changes.length > 1000) fail('Native mutation scope or capacity is invalid.', 400);
-    const changes = [...request.changes].sort((a, b) => compareStrings(a.key, b.key)), keys = new Set<string>();
+    // Bind keys and canonical digests before I/O without retaining every plaintext buffer.
+    const changes = request.changes.map(change => {
+      if (!change.artifact) return { key: change.key, artifact: null };
+      const native = { topUri: change.artifact.topUri, nodes: change.artifact.pgsl.nodes }, plaintext = serializeArtifact(native);
+      if (plaintext.length > this.limit) fail('Encrypted native artifact exceeds capacity.', 413);
+      return { key: change.key, artifact: { ...native, plaintextDigest: digest(plaintext) } };
+    }).sort((a, b) => compareStrings(a.key, b.key)), keys = new Set<string>();
     for (const change of changes) {
       bounded(change.key, 4096, 'record key'); if (keys.has(change.key)) fail('Native mutation repeats a record key.', 400); keys.add(change.key);
-      if (change.artifact) validateNativeArtifact({ topUri: change.artifact.topUri, nodes: change.artifact.pgsl.nodes });
     }
-    const logicalDigest = digest(canonical({ scope: this.scope, changes: changes.map(c => ({ key: c.key, plaintextDigest: c.artifact ? digest(serializeArtifact({ topUri: c.artifact.topUri, nodes: c.artifact.pgsl.nodes })) : null })) }));
+    const logicalDigest = digest(canonical({ scope: this.scope, changes: changes.map(c => ({ key: c.key, plaintextDigest: c.artifact?.plaintextDigest ?? null })) }));
     const current = await this.current(), prior = await this.operation(request.operationId, current);
     if (prior) { if (prior.logicalDigest !== logicalDigest) fail('Native operation ID was already committed with different content.', 409); return this.result(prior, true, null, selectedRecordKeys); }
     if (current.revision !== request.expected.revision || canonical(current.reference) !== canonical(request.expected.reference)) throw new NativeCommitConflictError();
     await this.ready();
     const indexChanges = new Map<string, NativeArtifactReference | null>();
-    for (const change of changes) indexChanges.set('record:' + change.key, change.artifact ? await this.persist(change.artifact) : null);
+    // Digest reuse is local to this commit's fixed scope, encryption keys and recipients.
+    const staged = new Map<string, NativeArtifactReference>();
+    for (const change of changes) {
+      let reference: NativeArtifactReference | null = null;
+      if (change.artifact) {
+        const plaintext = serializeArtifact(change.artifact);
+        if (digest(plaintext) !== change.artifact.plaintextDigest) fail('Native artifact changed during commit.', 400);
+        reference = staged.get(change.artifact.plaintextDigest) ?? await this.persistPlaintext(change.artifact.topUri, plaintext);
+        staged.set(change.artifact.plaintextDigest, reference);
+      }
+      indexChanges.set('record:' + change.key, reference);
+    }
     if (current.reference) {
       const pgsl = createPGSL({ wasAttributedTo: this.scope.owner, generatedAtTime: new Date().toISOString() });
       const topUri = tuple(pgsl, [OPERATION, current.operationId!, current.logicalDigest, current.reference.revision, current.reference.commitUrl, current.reference.topUri]);

@@ -1,5 +1,6 @@
 // Small helpers shared by every view.
 /* global React */
+import { createNavigation } from "./navigation.js";
 const { useState, useEffect, useRef, useCallback, useContext, createContext } = React;
 
 export const cx = (...a) => a.filter(Boolean).join(" ");
@@ -43,6 +44,7 @@ export function parseHash(h) {
     case "insights": return { view: "insights", section: rest || null };
     case "agents": return { view: "agents", section: rest || null };
     case "ask": return { view: "ask" };
+    case "interventions": return { view: "interventions" };
     case "for": return { view: "fori2idl", section: rest || null };
     case "annotate": return { view: "annotate" };
     case "semantic": return { view: "semantic", section: rest || null };
@@ -53,20 +55,16 @@ export function parseHash(h) {
 // A view embedded in another (the workbench pane beside an orchestrated run) routes inside its frame:
 // while the viewer is working in that frame, go() navigates the frame instead of the page.
 let routeTarget = null;
+const navigation = createNavigation(typeof window === "undefined" ? undefined : window);
 export const setRouteTarget = (fn) => { routeTarget = fn; };
 export const go = (hash) => {
   const h = hash.startsWith("#") ? hash : "#" + hash;
   if (routeTarget) return routeTarget(h);
-  if (location.hash === h) window.dispatchEvent(new HashChangeEvent("hashchange"));
-  else location.hash = h;
+  navigation.go(h);
 };
 export function useRoute() {
-  const [route, setRoute] = useState(() => parseHash(location.hash));
-  useEffect(() => {
-    const on = () => setRoute(parseHash(location.hash));
-    window.addEventListener("hashchange", on);
-    return () => window.removeEventListener("hashchange", on);
-  }, []);
+  const [route, setRoute] = useState(() => parseHash(navigation.getHash()));
+  useEffect(() => navigation.subscribe(hash => setRoute(parseHash(hash))), []);
   return route;
 }
 

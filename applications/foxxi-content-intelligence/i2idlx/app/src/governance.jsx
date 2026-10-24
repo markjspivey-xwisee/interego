@@ -1,3 +1,4 @@
+import { identityCopy } from "./identity-copy.js";
 // Review governance: votes under Interego's ratification algebra (Asserted = for, Counterfactual = against,
 // Hypothetical = abstain), the workbench's consensus policy, and exports that close the loop on Interego.
 import { META, ITEMS, itemByKey, byId, ACTIONS, roleById, PORTS } from "./data.js";
@@ -16,7 +17,7 @@ export const VOTE = {
 
 export function ConsensusChip({ itemKey }) {
   const { tallies, policy, sharedReady } = useCaps();
-  if (!sharedReady) return <span className="chip" title="Connect an admitted account and verify shared pod data.">Team review unavailable</span>;
+  if (!sharedReady) return <span className="chip" title={identityCopy("reviewUnavailable")}>Team review unavailable</span>;
   const t = tallies.get(itemKey);
   const s = consensus(t, policy.quorum);
   const cls = s === "ratified" ? "asserted" : s === "rejected" ? "counterfactual" : "hypothetical";
@@ -32,7 +33,7 @@ export function VoteBar({ itemKey, compact }) {
   const mine = myBallot.v[itemKey];
   const [noteOpen, setNoteOpen] = useState(false);
   const [note, setNote] = useState(mine ? mine.note || "" : "");
-  const why = !resolved ? "Loading…" : !signedIn ? "Connect Interego to vote." : !sharedReady ? "Team reviews are unavailable until your admitted account can verify the shared pod." : !writable ? "Your access to this page is view-only; ask the workbench owner to admit your verified account to vote." : "";
+  const why = !resolved ? "Loading…" : !signedIn ? identityCopy("vote") : !sharedReady ? "Team reviews are unavailable until your admitted account can verify the shared pod." : !writable ? "Your access to this page is view-only; ask the workbench owner to admit your verified account to vote." : "";
   const cast = async (choice) => {
     const next = mine && mine.vote === choice ? null : choice;
     try {

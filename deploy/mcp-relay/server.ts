@@ -74,6 +74,9 @@ import { fileURLToPath } from 'node:url';
 import { interegoOAuthRouter } from './oauth-router.js';
 import { requireBearerAuth } from '@modelcontextprotocol/express';
 import { InteregoOAuthProvider, renewIdentityToken } from './oauth-provider.js';
+import { assertLivePlay, bootstrapProvisionalPod, chargeProvisionalExchange, claimProvisionalExchange, createProvisionalToolGuard, parseProvisionalPlay,
+  ProvisionalPlayError, validateProvisionalTool, verifyProvisionalExchange,
+  type ProvisionalPlay, type ProvisionalPrincipal } from './provisional-play.js';
 import {
   loadClients as loadOAuthClients,
   loadOneClient as loadOneOAuthClient,
@@ -251,6 +254,7 @@ import { CLIENT_CHECK_HTML, CLIENT_CHECK_CSP } from './client-check.js';
 import { canonicalSessionActorId } from './session-actor.js';
 import { selectDelegationSubject, cacheDelegationSubject, equivalentDelegationSubjects, canAutoRegisterPrincipal } from './delegation-subject.js';
 import { verifyPrincipalDelegation } from './principal-delegation.js';
+import { repairOnlySessionDelegation, isDelegationRepairRequest, writeRegistrationDelegationCredential } from './delegation-repair-only.js';
 import { INVOKE_AFFORDANCE_OUTPUT, loadResourceCompositions, resourceActionResponse, resourceInvocation, type ResourceContext, type ResourceDescriptor, type ResourceEntry, type ResourceReads, type ResourceWriteContext } from './resource-compositions.js';
 import { protectResourcePublication } from './resource-publication.js';
 import { readClientSigningKeys } from './client-signing-keys.js';
@@ -837,6 +841,10 @@ interface AuthResult {
   agentId?: string;
   scope?: string;
   error?: string;
+  provisionalPlay?: ProvisionalPlay;
+  ownerDid?: string;
+  ownerWebId?: string;
+  podUrl?: string;
 }
 
 async function verifyBearerToken(authHeader: string | undefined): Promise<AuthResult> {
@@ -848,13 +856,19 @@ async function verifyBearerToken(authHeader: string | undefined): Promise<AuthRe
   try {
     const resp = await fetch(`${IDENTITY_URL}/tokens/verify`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      redirect: 'error', signal: AbortSignal.timeout(15_000),
+      headers: { 'Content-Type': 'application/json', ...(process.env['IDENTITY_INTROSPECTION_SECRET']
+        ? { Authorization: `Bearer ${process.env['IDENTITY_INTROSPECTION_SECRET']}` } : {}) },
       body: JSON.stringify({ token }),
     });
     if (!resp.ok) return { authenticated: false, error: `Identity server error: ${resp.status}` };
-    const data = await resp.json() as { valid: boolean; userId?: string; agentId?: string; scope?: string; reason?: string };
+    const data = await resp.json() as { valid: boolean; userId?: string; agentId?: string; scope?: string; reason?: string;
+      provisionalPlay?: ProvisionalPlay; ownerDid?: string; ownerWebId?: string; webId?: string; podUrl?: string };
     if (data.valid) {
-      return { authenticated: true, userId: data.userId, agentId: data.agentId, scope: data.scope };
+      const provisionalPlay = parseProvisionalPlay(data.provisionalPlay);
+      if (provisionalPlay) assertLivePlay(provisionalPlay);
+      return { authenticated: true, userId: data.userId, agentId: data.agentId, scope: data.scope,
+        ...(provisionalPlay ? { provisionalPlay, ownerDid: data.ownerDid, ownerWebId: data.ownerWebId ?? data.webId, podUrl: data.podUrl } : {}) };
     }
     return { authenticated: false, error: data.reason ?? 'Invalid token' };
   } catch (err) {
@@ -1485,6 +1499,55 @@ oauthProvider = new InteregoOAuthProvider({
   lookupRefreshTokenByRaw: (token) => loadOAuthRefreshTokenByRaw(token, oauthTokenStoreCfg),
   log: (msg: string) => log(msg),
 });
+
+const provisionalStoreAliases = { internalStoreUrl: CSS_URL, publicStoreUrl: CSS_PUBLIC_URL };
+const provisionalTools = createProvisionalToolGuard({ podUrl: oauthStorePodUrl, fetch: solidFetch, withMutex: withPodMutex,
+  storeAliases: provisionalStoreAliases,
+  assertUnpublished: async (urn, principal) => {
+    const result = JSON.parse(await handleGetCurrentHead({ urn, pod_name: principal.userId }));
+    if (result.error || !Object.hasOwn(result, 'head')) throw new ProvisionalPlayError(503, 'provisional_head_unavailable');
+    if (result.head || result.forked) throw new ProvisionalPlayError(409, 'provisional_initial_binding_exists');
+  } });
+type PlayAuthContext = { agentId?: string; ownerWebId?: string; ownerDid?: string; userId?: string; podUrl?: string; provisionalPlay?: ProvisionalPlay };
+function playPrincipal(auth: PlayAuthContext): ProvisionalPrincipal {
+  if (!auth.provisionalPlay || !auth.userId || !auth.agentId || !auth.ownerDid || !auth.ownerWebId || !auth.podUrl) {
+    throw new ProvisionalPlayError(401, 'invalid_provisional_authority');
+  }
+  return { userId: auth.userId, agentId: canonicalSessionActorId(auth.agentId, IDENTITY_URL)!,
+    ownerDid: auth.ownerDid, ownerWebId: auth.ownerWebId, podUrl: auth.podUrl, provisionalPlay: auth.provisionalPlay };
+}
+async function callProvisionalTool(name: string, args: ToolArgs, auth: PlayAuthContext, invoke: () => Promise<string>): Promise<string> {
+  try { return await provisionalTools(name, args, playPrincipal(auth), invoke); }
+  catch (error) {
+    if (error instanceof ProvisionalPlayError) return JSON.stringify({ error: error.code, code: error.status });
+    throw error;
+  }
+}
+/** Guest identity bearers on REST receive the same restrictions as their OAuth exchange. */
+async function provisionalRestCall(name: string, args: Record<string, unknown>, authorization: string | undefined): Promise<string | undefined> {
+  if (!authorization?.startsWith('Bearer ')) return undefined;
+  // An unverified payload is ONLY a dispatch hint. Original REST authentication
+  // still verifies every credential before any authenticated action. This avoids
+  // adding a second introspection round trip to existing canonical REST traffic.
+  let hint = false;
+  try {
+    const encoded = authorization.slice(7).replace(/^cg2_/, '').split('.')[0];
+    hint = !!JSON.parse(Buffer.from(encoded, 'base64url').toString('utf8')).provisionalPlay;
+  } catch { /* opaque/canonical tokens take their unchanged authentication path */ }
+  if (!hint) return undefined;
+  const auth = await verifyBearerToken(authorization);
+  if (!auth.authenticated || !auth.provisionalPlay) return undefined;
+  const principal = playPrincipal(auth);
+  const tool = declaredTool(name);
+  if (!tool) throw new ProvisionalPlayError(403, 'provisional_tool_forbidden');
+  validateProvisionalTool(name, args, principal, provisionalStoreAliases);
+  if (!args.owner_webid) args.owner_webid = principal.ownerWebId;
+  injectRestVerifiedIdentity(args, auth, false);
+  args._identity_token = authorization.slice(7);
+  args._session_provisional_play = principal.provisionalPlay;
+  args._session_native_lifecycle = true;
+  return callProvisionalTool(name, args, principal, () => tool.handler(args as ToolArgs));
+}
 
 // ── Tool Handlers ───────────────────────────────────────────
 
@@ -5687,6 +5750,7 @@ async function handleGetPodStatus(args: ToolArgs): Promise<string> {
   // dashboard could keep showing primaryAgentId as the headline.
   const identityWithNote = identity ? {
     ...identity,
+    ...(args._session_native_lifecycle === true ? { provisionalPlay: !!args._session_provisional_play } : {}),
     ...(sessionAgent ? {
       sessionAgentNote: 'primaryAgentId is the first agent ever registered for this user; the current connection is using sessionAgent (see top-level field).',
     } : {}),
@@ -5696,6 +5760,7 @@ async function handleGetPodStatus(args: ToolArgs): Promise<string> {
   return JSON.stringify({
     pod: podUrl,
     css: CSS_URL,
+    capabilities: { register_agent_repair_only: true },
     ...(displayName ? { displayName } : {}),
     ...(webId ? { webId } : {}),
     ...(userId ? { userId } : {}),
@@ -5856,6 +5921,16 @@ async function handleRegisterAgent(args: ToolArgs): Promise<string> {
   // delegation VC on ANY pod, which verify_agent then reports as a
   // CryptographicallyVerified chain.
   { const denied = await requireOwnPod(args, podUrl, 'register_agent'); if (denied) return denied; }
+  if (Object.hasOwn(args, 'repair_only') && typeof args.repair_only !== 'boolean') {
+    return JSON.stringify({ error: 'delegation_repair_parameters_refused', repaired: false });
+  }
+  if (args.repair_only === true) {
+    return JSON.stringify(await repairOnlySessionDelegation(args, {
+      podUrl, ownPodUrl: await callerOwnPod(args), identityBaseUrl: IDENTITY_URL,
+      canonicalPodKey, fetch: solidFetch, getSigner: getDelegationSigner,
+      verifier: delegationVerifier,
+    }));
+  }
   const ownerWebId = (args.owner_webid as string) as IRI;
   const agentId = (args.agent_id as string) as IRI;
 
@@ -6017,8 +6092,7 @@ async function handleRegisterAgent(args: ToolArgs): Promise<string> {
 
   // Sign the credential with the relay's compliance wallet so
   // verify_agent can perform a cryptographic chain walk later.
-  // Registry + credential target distinct CSS paths — run the two
-  // PUTs concurrently.
+  // The registry and signed credential must describe the same explicit grant.
   let agent = profile.authorizedAgents.find(a => a.agentId === agentId);
   if (!agent) {
     return JSON.stringify({ error: `agent ${agentId} not present in registry after register` });
@@ -6030,22 +6104,12 @@ async function handleRegisterAgent(args: ToolArgs): Promise<string> {
   if (capabilities && capabilities.length && !capabilities.every(c => agent!.capabilities?.includes(c))) {
     agent = { ...agent, capabilities: [...new Set([...(agent.capabilities ?? []), ...capabilities])] };
   }
-  const credentialAndWrite = (async () => {
-    const signer = await getDelegationSigner();
-    const cred = await createSignedDelegationCredential(
-      profile,
-      agent,
-      podUrl as IRI,
-      signer,
-    );
-    const url = await writeDelegationCredential(cred, podUrl, { fetch: solidFetch });
-    return { cred, url };
-  })();
-  const [, { cred: credential, url: credUrl }] = await Promise.all([
-    writeAgentRegistry(profile, podUrl, { fetch: solidFetch }),
-    credentialAndWrite,
-  ]);
-  relayProfileCache.delete(podUrl);
+  const signer = await getDelegationSigner();
+  const credential = await createSignedDelegationCredential(profile, agent, podUrl as IRI, signer);
+  // Explicit full registration publishes its intended registry before the
+  // credential adapter verifies that exact grant. A later concurrent change
+  // cannot be reported as a completed registration.
+  await writeAgentRegistry(profile, podUrl, { fetch: solidFetch });
   // ★ AND THE NEW SCOPE HAS TO REACH THE GATE, NOT JUST THE POD. `runScopeGate` memoises
   // (agentId, podUrl) -> scope for 60s, and `handlePublishContext` memoises the
   // registration check for the same window. Writing a tightened row and leaving those
@@ -6054,8 +6118,18 @@ async function handleRegisterAgent(args: ToolArgs): Promise<string> {
   // was fixed for, just with a shorter fuse. Measured: a probe's first (refused) write
   // poisoned the gate cache with {scope:'Unknown'} and the NEXT write was refused from
   // cache after a registration that should have permitted it.
-  agentScopeCache.delete(`${podUrl}|${agentId}`);
-  agentRegistrationCache.delete(`${podUrl}|${agentId}`);
+  const invalidateRegistrationCaches = (): void => {
+    relayProfileCache.delete(podUrl);
+    agentScopeCache.delete(`${podUrl}|${agentId}`);
+    agentRegistrationCache.delete(`${podUrl}|${agentId}`);
+  };
+  invalidateRegistrationCaches();
+  let credUrl: string;
+  try {
+    credUrl = await writeRegistrationDelegationCredential(credential, podUrl, {
+      fetch: solidFetch, verifier: delegationVerifier, profile, agent,
+    });
+  } finally { invalidateRegistrationCaches(); }
 
   const effectiveScope = profile.authorizedAgents.find(a => a.agentId === agentId && !a.revoked)?.scope;
   return JSON.stringify({
@@ -6727,6 +6801,8 @@ function callerAgentId(args: ToolArgs): string | undefined {
 const RESERVED_WIRE_FIELDS = [
   '_session_bearer', '_session_principal', '_identity_token',
   '_session_agent_did', '_session_agent_id', '_session_user_id',
+  '_session_owner_webid',
+  '_session_provisional_play', '_session_native_lifecycle',
   // The pod-selector provenance markers. A dispatcher sets these when IT supplied
   // `pod_url` / `pod_name`, so a handler can tell "the caller named no pod" from "the
   // caller named this pod" — see pod-selector.ts. A forged marker is not an escalation
@@ -6937,6 +7013,7 @@ function injectRestVerifiedIdentity(
     const ownPod = ownPodSegment(addr) ?? `eth-${addr.slice(2, 14)}`;
     if (!target.pod_name) { target.pod_name = ownPod; target[POD_NAME_INJECTED] = true; }
     if (!target.owner_webid) target.owner_webid = auth.recoveredDid;
+    target._session_owner_webid = auth.recoveredDid;
     target._session_user_id = ownPod;
   } else {
     // Bearer introspection may return either the canonical agent IRI or its local
@@ -6950,6 +7027,7 @@ function injectRestVerifiedIdentity(
     // (callerAgentId), so set it whenever the bearer resolved an agent.
     if (sessionAgentIri) target._session_agent_did = sessionAgentIri;
     if (!target.owner_webid) target.owner_webid = `${IDENTITY_URL}/users/${auth.userId}/profile#me`;
+    if (auth.userId) target._session_owner_webid = `${IDENTITY_URL}/users/${auth.userId}/profile#me`;
     if (!target.pod_name) { target.pod_name = auth.userId; target[POD_NAME_INJECTED] = true; }
     // ★ THE FIX. The field requireOwnPod / callerOwnPod / recipientKeyFor read to prove the
     // caller's own pod. Without it, an authenticated own-pod write refused as if unauthenticated.
@@ -11304,6 +11382,10 @@ const GET_POD_STATUS_OUTPUT = mcpOutputSchema({
   properties: {
     pod: { type: 'string' },
     css: { type: 'string', description: 'CSS / pod-host base URL' },
+    capabilities: {
+      type: 'object',
+      properties: { register_agent_repair_only: { type: 'boolean', description: 'Missing-only native CAS credential repair for the authenticated session agent; never writes the registry.' } },
+    },
     registry: {
       type: 'object',
       properties: {
@@ -11865,6 +11947,7 @@ const TOOL_SCHEMAS = [
       type: 'object',
       properties: {
         agent_id: { type: 'string', description: 'Agent IRI, e.g. urn:agent:anthropic:claude-mobile:markj' },
+        repair_only: { type: 'boolean', description: 'When true, repair only the authenticated session agent\'s missing signed credential on its own pod. Requires a current live write-eligible owner-delegated registry row and native create-only CAS. Never creates, changes or revives a registry row, overwrites a credential, changes keys/scopes/labels, or grants capabilities. Omit scope, key and other mutation parameters; resolve uncertain acknowledgements by fresh status and verify_agent reads.' },
         encryption_public_key: { type: 'string', description: 'OPTIONAL base64 X25519 public key whose private half is held by this agent\'s client. Only the public half is registered. End-to-end encryption also requires the publisher to seal before sending, using sealed_payload; registering a key alone does not establish it. Read ciphertext with get_encrypted_graph and decrypt in the key-holding client. Omitting this key selects relay-managed key custody, which allows the relay to decrypt on the agent\'s behalf.' },
         pod_name: { type: 'string', description: 'Pod name (default: authenticated user\'s pod)' },
         owner_webid: { type: 'string', description: 'Owner WebID (default: authenticated user)' },
@@ -12640,7 +12723,7 @@ just demo a publish + discover round-trip on their own pod.`,
 // One Server instance per /mcp request (stateless mode). Wires ListTools
 // and CallTool to the same handler registry used by the REST routes.
 
-function buildMcpServer(authContext: { agentId: string; ownerWebId?: string; userId?: string; podUrl?: string; identityToken?: string; oauthScopes?: readonly string[]; accessToken?: string } | null): Server {
+function buildMcpServer(authContext: { agentId: string; ownerWebId?: string; ownerDid?: string; userId?: string; podUrl?: string; identityToken?: string; oauthScopes?: readonly string[]; accessToken?: string; provisionalPlay?: ProvisionalPlay } | null): Server {
   const server = new Server(
     { name: '@interego/mcp-relay', version: MCP_SERVER_VERSION },
     {
@@ -12830,6 +12913,14 @@ function buildMcpServer(authContext: { agentId: string; ownerWebId?: string; use
       return { content: [{ type: 'text' as const, text: `Unknown tool: ${name}` }], isError: true };
     }
 
+    if (authContext?.provisionalPlay) {
+      try { validateProvisionalTool(name, (rawArgs ?? {}) as Record<string, unknown>, playPrincipal(authContext), provisionalStoreAliases); }
+      catch (error) {
+        const code = error instanceof ProvisionalPlayError ? error.code : 'invalid_provisional_authority';
+        return { content: [{ type: 'text' as const, text: JSON.stringify({ error: code, code: 403 }) }], isError: true };
+      }
+    }
+
     // FIX D — OAuth-scope write gate. An OAuth bearer issued with only
     // `mcp:read` scope is refused by every write-side tool here, BEFORE
     // any pod state is touched and BEFORE the substrate-level scope
@@ -12850,6 +12941,7 @@ function buildMcpServer(authContext: { agentId: string; ownerWebId?: string; use
     // scope claim to gate on.
     if (
       authContext?.oauthScopes
+      && !authContext.provisionalPlay
       && isWriteSideTool(name, rawArgs ?? {})
       && !hasWriteOauthScope(authContext.oauthScopes)
     ) {
@@ -12889,8 +12981,11 @@ function buildMcpServer(authContext: { agentId: string; ownerWebId?: string; use
     // Applies to ALL tools, not just writes — lets reads like get_pod_status
     // and discover_context default to "your home pod".
     if (authContext) {
+      args._session_native_lifecycle = !!authContext.oauthScopes;
+      if (authContext.provisionalPlay) args._session_provisional_play = authContext.provisionalPlay;
       if (!args.agent_id) args.agent_id = authContext.agentId;
       if (!args.owner_webid && authContext.ownerWebId) args.owner_webid = authContext.ownerWebId;
+      if (authContext.ownerWebId) args._session_owner_webid = authContext.ownerWebId;
       if (!args.pod_name && authContext.userId) { args.pod_name = authContext.userId; args[POD_NAME_INJECTED] = true; }
       // Server-authoritative, non-forgeable (stripped from wire above). The
       // tenant_admin grant gate compares pod_name against THIS, so only the
@@ -12962,7 +13057,7 @@ function buildMcpServer(authContext: { agentId: string; ownerWebId?: string; use
       // project's own name — and an external agent looking for the maintainer in
       // `list_known_pods` picked it, reasonably. `claude-code-vscode-…` collapsed to
       // `claude` the same way. See the helper's header for the measured incident.
-      if (!isReadOnlyResourceCall(name, args)) {
+      if (!authContext.provisionalPlay && !isReadOnlyResourceCall(name, args) && !isDelegationRepairRequest(name, args)) {
         const sessId = (args._session_agent_id as string | undefined) ?? '';
         const surf = surfaceSlugFromAgentId(sessId);
         // ★ NO `?? args.agent_id` FALLBACK. `_session_agent_did` is assigned from
@@ -13000,7 +13095,7 @@ function buildMcpServer(authContext: { agentId: string; ownerWebId?: string; use
     // strict-DPoP environment, where AUTH_REQUIRED_TOOLS calls bubble
     // the bootstrap error to the tool handler shell so the client gets
     // a clear failure rather than a silent half-init write.
-    if (!isReadOnlyResourceCall(name, args) && authContext && authContext.podUrl && authContext.ownerWebId && authContext.userId) {
+    if (!isReadOnlyResourceCall(name, args) && !isDelegationRepairRequest(name, args) && authContext && authContext.podUrl && authContext.ownerWebId && authContext.userId) {
       const podAware = POD_AWARE_TOOLS.has(name);
       const strictRequired = RELAY_REQUIRE_DPOP && AUTH_REQUIRED_TOOLS.has(name);
       const initAuthCtx = {
@@ -13054,7 +13149,9 @@ function buildMcpServer(authContext: { agentId: string; ownerWebId?: string; use
           : await clientInteractions.existing(authContext.accessToken, operation.reference, operation.action, payload, owner!);
         if (pending && !['cancelled', 'expired'].includes(String(pending['status']))) return respond(pending);
       }
-      const text = await tool.handler(args);
+      const text = authContext?.provisionalPlay
+        ? await callProvisionalTool(name, args, authContext, () => tool.handler(args))
+        : await tool.handler(args);
       if (canResume) {
         const pending = await clientInteractions.existing(authContext.accessToken, operation.reference, operation.action, payload, owner!);
         if (pending) return respond(pending);
@@ -14128,6 +14225,31 @@ const oauthVerifyLimiter = rateLimit({
   limit: 30,
   standardHeaders: true,
   legacyHeaders: false,
+});
+const provisionalExchangeLimiter = rateLimit({ windowMs: 60_000, limit: 30, standardHeaders: true, legacyHeaders: false });
+app.post('/play/provisional/exchange', provisionalExchangeLimiter, async (req, res) => {
+  res.setHeader('Cache-Control', 'no-store');
+  try {
+    const identity = await verifyProvisionalExchange(req.body, { identityUrl: IDENTITY_URL, fetch });
+    await chargeProvisionalExchange(identity, { podUrl: oauthStorePodUrl, fetch: solidFetch, withMutex: withPodMutex });
+    await claimProvisionalExchange(identity.identityToken, identity.provisionalPlay.expiresAt, { podUrl: oauthStorePodUrl, fetch: solidFetch });
+    // The same registry/profile/delegation writer used by canonical OAuth. Await it
+    // so the first pinned browser SDK call sees a usable own pod.
+    await bootstrapProvisionalPod(identity, {
+      toInternalPodUrl, withMutex: withPodMutex,
+      bootstrap: podUrl => bootstrapPod({ podUrl,
+        ownerWebId: identity.ownerWebId as IRI, surfaceAgentIri: identity.agentId as IRI,
+        userName: identity.userId, agentLabel: 'Provisional browser player',
+        userId: identity.userId, identityWebId: identity.ownerWebId }),
+      markBootstrapped: podUrl => { bootstrappedPods.add(podUrl); },
+    });
+    const tokens = await oauthProvider.issueProvisionalAccessToken(identity);
+    const expiresAt = oauthProvider.introspectAccessToken(tokens.access_token)!.expiresAt;
+    res.json({ ...tokens, provisional: true, expiresAt: new Date(expiresAt * 1000).toISOString() });
+  } catch (error) {
+    if (error instanceof ProvisionalPlayError) { res.status(error.status).json({ error: error.code }); return; }
+    res.status(503).json({ error: 'provisional_exchange_unavailable' });
+  }
 });
 app.post('/oauth/verify', oauthVerifyLimiter, async (req, res) => {
   const { pending_id, method, ...proofBody } = req.body as {
@@ -15446,6 +15568,8 @@ app.post('/verify-token', verifyTokenLimiter, async (req, res) => {
     scope: intro.scope.join(' '),
     expiresAt: intro.expiresAt,
     clientId: intro.clientId,
+    ...(intro.ownerDid ? { ownerDid: intro.ownerDid } : {}),
+    ...(intro.provisionalPlay ? { provisionalPlay: intro.provisionalPlay } : {}),
   });
 });
 
@@ -16147,6 +16271,13 @@ app.post('/tool/:name', toolInvokeLimiter, async (req, res) => {
   // invoking a PUBLIC tool here could smuggle a forged _identity_token /
   // _session_user_id / _session_agent_did straight into the handler.
   stripReservedWireFields(req.body);
+  try {
+    const result = await provisionalRestCall(req.params.name as string, req.body ?? {}, req.headers.authorization);
+    if (result !== undefined) { res.type('application/ld+json').send(result); return; }
+  } catch (error) {
+    if (error instanceof ProvisionalPlayError) { res.status(error.status).json({ error: error.code }); return; }
+    res.status(503).json({ error: 'provisional_storage_unavailable' }); return;
+  }
   const toolName = req.params.name as string;
   const tool = declaredTool(toolName);
   if (!tool) {
@@ -16268,7 +16399,7 @@ app.post('/tool/:name', toolInvokeLimiter, async (req, res) => {
     // left ABSENT rather than filled with a placeholder when the id carries no surface —
     // `describeDirectoryEntry` reports an absent identity as absent, which is the honest
     // answer and the one a caller can act on.
-    if (!isReadOnlyResourceCall(toolName, req.body)) {
+    if (!isReadOnlyResourceCall(toolName, req.body) && !isDelegationRepairRequest(toolName, req.body)) {
       const sessionDid = req.body._session_agent_did as string | undefined;
       const sessionPod = req.body._session_user_id as string | undefined;
       autoRegisterAgentCard(
@@ -16611,6 +16742,13 @@ app.post('/messages', messagesLimiter, async (req, res) => {
 
   if (method === 'tools/call') {
     const toolName = params?.name;
+    try {
+      const result = await provisionalRestCall(toolName, { ...(params?.arguments ?? {}) }, req.headers.authorization);
+      if (result !== undefined) { res.json({ jsonrpc: '2.0', id, result: { content: [{ type: 'text', text: result }], structuredContent: toStructuredContent(result) } }); return; }
+    } catch (error) {
+      const code = error instanceof ProvisionalPlayError ? error.code : 'provisional_storage_unavailable';
+      res.status(error instanceof ProvisionalPlayError ? error.status : 503).json({ jsonrpc: '2.0', id, error: { code: -32000, message: code } }); return;
+    }
     const tool = declaredTool(toolName);
     if (!tool) {
       res.json({ jsonrpc: '2.0', id, error: { code: -32601, message: `Unknown tool: ${toolName}` } });
@@ -16709,14 +16847,16 @@ app.post('/messages', messagesLimiter, async (req, res) => {
 // would keep answering 200 while running every tool with no identity attached. Nothing
 // would throw and nothing would fail typecheck. So when a key IS configured and the
 // header is unreadable, refuse rather than degrade.
-function resolveAuthContext(ctx: { authInfo?: AuthInfo; requestInfo?: Request }): { agentId: string; ownerWebId: string; userId: string; podUrl?: string; identityToken?: string; oauthScopes?: readonly string[]; accessToken?: string } | null {
+function resolveAuthContext(ctx: { authInfo?: AuthInfo; requestInfo?: Request }): { agentId: string; ownerWebId: string; ownerDid?: string; userId: string; podUrl?: string; identityToken?: string; oauthScopes?: readonly string[]; accessToken?: string; provisionalPlay?: ProvisionalPlay } | null {
   // OAuth-verified request: requireBearerAuth set req.auth, toNodeHandler passed it here
-  const reqAuth = ctx.authInfo as (AuthInfo & { extra?: { agentId?: string; ownerWebId?: string; userId?: string; podUrl?: string; identityToken?: string } }) | undefined;
+  const reqAuth = ctx.authInfo as (AuthInfo & { extra?: { agentId?: string; ownerWebId?: string; ownerDid?: string; userId?: string; podUrl?: string; identityToken?: string; provisionalPlay?: ProvisionalPlay } }) | undefined;
   if (reqAuth?.extra?.agentId && reqAuth.extra.ownerWebId && reqAuth.extra.userId) {
     return {
       agentId: reqAuth.extra.agentId,
       ownerWebId: reqAuth.extra.ownerWebId,
       userId: reqAuth.extra.userId,
+      ...(reqAuth.extra.ownerDid ? { ownerDid: reqAuth.extra.ownerDid } : {}),
+      ...(reqAuth.extra.provisionalPlay ? { provisionalPlay: reqAuth.extra.provisionalPlay } : {}),
       // Thread the identity-server-provided podUrl through. Today identity
       // derives it from userId so this is equivalent to ${CSS_URL}${userId}/,
       // but when identity layer adds preferred-pod overlays (e.g. one user
@@ -17168,3 +17308,4 @@ if ((process.env['RELAY_PRUNE_DEAD_CLIENTS'] ?? '').trim() === '1') {
     }
   })();
 }
+

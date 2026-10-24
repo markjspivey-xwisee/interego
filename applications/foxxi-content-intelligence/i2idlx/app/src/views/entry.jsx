@@ -1,3 +1,4 @@
+import { identityCopy } from "../identity-copy.js";
 // One dictionary entry, in two zones that never mix: the I2IDL record exactly as I2IDL publishes it,
 // and what I2IDL-X layers on top (derived reading aids, history, proposals, live capabilities, team use).
 import {
@@ -126,7 +127,7 @@ function EntryHead({ c, onBack }) {
         <a className="btn sm" href={"#cmp-" + c.id}><Icon name="compare" />Compare</a>
         <a className="btn sm" href={"#map-" + c.id}><Icon name="graph" />Neighborhood</a>
         <CiteButton c={c} />
-        {ask ? <button className="btn sm" onClick={() => ask.open(`Explain “${c.l}” for someone new to the field, then say how it differs from its closest related terms.`, [c.id])}><Icon name="sparkle" />Ask Claude</button> : null}
+        {ask ? <button className="btn sm" onClick={() => ask.open(`Explain “${c.l}” for someone new to the field, then say how it differs from its closest related terms.`, [c.id])}><Icon name="sparkle" />Ask about this term</button> : null}
         <ShareButton c={c} />
         <a className="btn sm ghost" href={META.human + "#" + c.id} target="_blank" rel="noopener"><Icon name="external" />Open on i2idl.org</a>
       </div>
@@ -204,11 +205,15 @@ export function AddToPack({ ids, label = "Add to pack", small = true }) {
 
 function DefMeta({ c, x }) {
   const nd = c.ev.filter((e) => e.r === "d").length, ns = c.ev.length - nd;
+  const definitionMeta = [c.dq != null ? `Definition ${c.dq}` : null, c.dl || null].filter(Boolean).join(" · ");
+  const editorialTitle = c.ds === "approved" ? "I2IDL's published definition, marked approved in its editorial metadata."
+    : c.ds ? "I2IDL's published definition; editorial status is shown as supplied by the source."
+      : "I2IDL's published definition; editorial status is not supplied in this record.";
   return (
     <div className="stack" style={{ gap: 8 }}>
       <div className="def-meta">
-        <ModalChip status="Asserted" title="I2IDL's approved definition: published as fact.">I2IDL · {c.ds}</ModalChip>
-        <span>Definition {c.dq} · {c.dl}</span>
+        <ModalChip status={c.ds === "approved" ? "Asserted" : "Hypothetical"} title={editorialTitle}>I2IDL · {c.ds || "Not supplied"}</ModalChip>
+        {definitionMeta ? <span>{definitionMeta}</span> : null}
         <span>{plural(nd, "direct evidence record")}{ns ? `, ${ns} supporting` : ""}</span>
       </div>
       {x ? (
@@ -585,7 +590,7 @@ function Usage({ c }) {
   const [ctx, setCtx] = useState("");
   const [text, setText] = useState("");
   const [xapi, setXapi] = useState(false);
-  const why = !resolved ? "" : !signedIn ? "Sign in to claude.ai to add notes and usage." : !writable ? "View-only access: you can read the team's notes." : "";
+  const why = !resolved ? "" : !signedIn ? identityCopy("usage") : !writable ? "View-only access: you can read the team's notes." : "";
   const doUse = async (close) => {
     try { await setUse(c.id, ctx.trim()); setCtx(""); close(); toast("Marked as in use", { icon: "check" }); }
     catch { toast(why || "That didn't save. Try again.", { icon: "warn" }); }
