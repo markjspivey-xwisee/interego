@@ -292,6 +292,24 @@ test('adding a device with the account\'s bearer still appends the passkey to it
   assert.equal(pods.get(keys.added.userId), undefined);
 });
 
+test('registration options for a bootstrap invite write nothing to the seeded pod, and an unreadable one starts no ceremony', async () => {
+  // The options read the seeded pod to check it holds no credential. That read used to write an
+  // empty document when the pod had none, before any credential was verified, and left it there
+  // when the ceremony was abandoned; a pod that could not be read was taken as an empty account.
+  const body = { name: 'New', bootstrapUserId: invite.userId, bootstrapInvite: invite.token };
+  blipping.add(invite.userId);
+  const down = await post('/auth/webauthn/register-options', body);
+  blipping.delete(invite.userId);
+  assert.equal(down.status, 503, `${JSON.stringify(down.json)}\n${output}`);
+  assert.equal(down.json['challenge'], undefined);
+  const abandoned = await post('/auth/webauthn/register-options', body);
+  assert.equal(abandoned.status, 200, `${JSON.stringify(abandoned.json)}\n${output}`);
+  // A deferred write would land after the response; give it the time one takes.
+  await new Promise(resolve => setTimeout(resolve, 300));
+  assert.deepEqual(writesTo(invite.userId), []);
+  assert.equal(pods.has(invite.userId), false);
+});
+
 test('a bootstrap invite still claims its seeded account with a passkey', async () => {
   const r = await register(keys.bootstrap, { bootstrap: invite });
   assert.equal(r.status, 200, `${JSON.stringify(r.json)}\n${output}`);

@@ -3068,7 +3068,17 @@ app.post('/auth/webauthn/register-options', authEnrollLimiter, async (req, res) 
   if (bootstrapUserId) {
     // Additional guard: if the seeded user already has any credential on
     // file, the invite flow is locked out regardless of invite validity.
-    const existing = await readAuthMethods(bootstrapUserId, /* allowStale */ true);
+    // Read from the pod as /register reads it, creating nothing: no ceremony has run yet, and
+    // one abandoned now would leave an empty document behind. An unreadable pod is not an
+    // account without credentials.
+    let existing: AuthMethods;
+    try {
+      existing = await withIdentityPodMutex(bootstrapUserId, () => fetchPodAuthMethods(bootstrapUserId, { createIfMissing: false }));
+    } catch (err) {
+      log(`WARN: bootstrap passkey registration options for ${bootstrapUserId} not issued (unreadable): ${(err as Error).message}`);
+      res.status(503).json({ error: 'Could not read this account just now', detail: 'Nothing was changed; try registering again in a minute.' });
+      return;
+    }
     if (isTombstone(existing)) {
       res.status(409).json({ error: ACCOUNT_DELETED_MESSAGE });
       return;
