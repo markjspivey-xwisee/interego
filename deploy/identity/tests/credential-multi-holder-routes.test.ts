@@ -80,6 +80,10 @@ const derivedOwner = softPasskey();
 const adder = { id: 'u-eth-00000000000e', key: softPasskey() };
 // A passkey only the account derived from its id lists, not in this server's listing.
 const derivedOnly = softPasskey();
+// A passkey whose account is the one derived from its id, not in this server's listing, and a
+// listed account holding a later copy of its key under its id (registered before registrations
+// waited for every account): until the owner's account loads, the copy is the only holder.
+const derivedCopied = { owner: softPasskey(), copyId: 'u-eth-00000000000f' };
 // A Play owner's passkey, and a later copy of its key under its id on another account. The Play
 // owner's record is read again from its pod at sign-in.
 const play = { key: softPasskey(), id: 'u-try-play-0000000000aa', copyId: 'zz-play-copy' };
@@ -107,11 +111,14 @@ const pods = new Map<string, Record<string, unknown>>([
   [derivedOwner.userId, enrolled(derivedOwner.userId, derivedOwner, earlier)],
   [adder.id, enrolled(adder.id, adder.key, earlier)],
   [derivedOnly.userId, enrolled(derivedOnly.userId, derivedOnly, earlier)],
+  [derivedCopied.owner.userId, enrolled(derivedCopied.owner.userId, derivedCopied.owner, earlier)],
+  [derivedCopied.copyId, enrolled(derivedCopied.copyId, derivedCopied.owner, now)],
 ]);
 // Only these are in the root listing, so only these load at startup. The others load when a
 // targeted sign-in names them (POST /challenges with a userId).
 const listed = new Set([pair.victimId, flaky.victimId, crowded.ownerId, ...crowd.map(c => c.id), ...eightIds, doomed.id, survivor.id,
-  counted.earliestId, counted.laterId, play.id, play.copyId, ...recodedCopies.flatMap(c => [c.earliestId, c.laterId]), adder.id]);
+  counted.earliestId, counted.laterId, play.id, play.copyId, ...recodedCopies.flatMap(c => [c.earliestId, c.laterId]), adder.id,
+  derivedCopied.copyId]);
 const failingPuts = new Set<string>([flaky.victimId]);
 // Pods whose auth-methods.jsonld a test makes answer 502 for a while, after startup loaded them.
 const failingGets = new Set<string>();
@@ -413,4 +420,14 @@ test('a passkey id its unlisted derived account holds is not added to another ac
 test('a passkey no loaded account lists signs in to the account derived from its id, which lists it but was not loaded', async () => {
   await signsInTo(derivedOnly, derivedOnly.userId);
   await signsInTo(derivedOnly, derivedOnly.userId);
+});
+
+test('a passkey whose unlisted derived account holds it signs in there, not to a loaded copy of its key on another account', async () => {
+  // The copy is the only loaded holder, and its key verifies the owner's signature; the owner's
+  // account is loaded first, and enrolled the id first.
+  const before = { copy: writesTo(derivedCopied.copyId), owner: writesTo(derivedCopied.owner.userId) };
+  await signsInTo(derivedCopied.owner, derivedCopied.owner.userId);
+  await signsInTo(derivedCopied.owner, derivedCopied.owner.userId);
+  assert.equal(writesTo(derivedCopied.copyId), before.copy);
+  assert.equal(writesTo(derivedCopied.owner.userId), before.owner + 2);
 });

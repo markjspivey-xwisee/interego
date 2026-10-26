@@ -98,6 +98,10 @@ const bootstrapWallet = Wallet.createRandom();
 const notYetOpened = { wallet: Wallet.createRandom(), didKey: didKey() };
 // A listed account whose pod holds a document naming another id, as such a claim planted.
 const planted = Wallet.createRandom();
+// A wallet a passkey account linked, and the account derived from the wallet, which lists that
+// wallet only: what a first sign-in opened before sign-ins waited for every account to load,
+// while the passkey account was not loaded. Both are listed.
+const openedBeside = { wallet: Wallet.createRandom(), ownerId: 'u-pk-0000000000a1' };
 
 // ── Pods ──
 const pods = new Map<string, Record<string, unknown>>([
@@ -142,11 +146,16 @@ const pods = new Map<string, Record<string, unknown>>([
     walletAddresses: [strandedWallet.address.toLowerCase()] }] as [string, Record<string, unknown>]),
   [walletUser(planted), { userId: `x/../${walletUser(planted)}`, name: `x/../${walletUser(planted)}`, didKeys: [],
     webAuthnCredentials: [], walletAddresses: [planted.address.toLowerCase()] }],
+  [openedBeside.ownerId, { userId: openedBeside.ownerId, name: 'Owner', didKeys: [],
+    walletAddresses: [openedBeside.wallet.address.toLowerCase()], webAuthnCredentials: [passkey('cred-opened-beside')] }],
+  [walletUser(openedBeside.wallet), { userId: walletUser(openedBeside.wallet), name: 'New', didKeys: [], webAuthnCredentials: [],
+    walletAddresses: [openedBeside.wallet.address.toLowerCase()] }],
 ]);
 // Only these are in the root listing, so only these load at startup.
 const listed = new Set([walletUser(wallets.passkeyOnly), didUser(dids.passkeyOnly), sharedWeb.ownerId, walletUser(sharedWallet),
   didUser(sharedDidKey), crowdedWeb.ownerId, ...crowdedWeb.others.map(o => o.id), ...strandedHolders, walletUser(planted),
-  ...[derivedUnreadable, derivedUnlisted].flatMap(d => [d.walletOther, d.didKeyOther])]);
+  ...[derivedUnreadable, derivedUnlisted].flatMap(d => [d.walletOther, d.didKeyOther]),
+  openedBeside.ownerId, walletUser(openedBeside.wallet)]);
 const unreadable = new Set([walletUser(wallets.unreadable), didUser(dids.unreadable),
   walletUser(derivedUnreadable.wallet), didUser(derivedUnreadable.didKey)]);
 // Pods a test makes unreadable for a while (a CSS blip), after startup has loaded the rest.
@@ -506,6 +515,24 @@ test('a did:key a loaded account lists signs in to the account derived from it, 
   }
   assert.deepEqual(writesTo(didKeyOther), []);
   assert.deepEqual(writesTo(didUser(k)), []);
+});
+
+test('a derived account a first sign-in opened beside the wallet\'s owner keeps the wallet; deleting it hands the wallet back', async () => {
+  // Every holder is loaded, and the derived account is preferred.
+  const { wallet, ownerId } = openedBeside;
+  const derived = await siwe(wallet);
+  assert.equal(derived.status, 200, `${JSON.stringify(derived.json)}\n${output}`);
+  assert.equal(derived.json['userId'], walletUser(wallet));
+  // The wallet is its only credential, so it cannot be removed from it.
+  const headers = { Authorization: `Bearer ${String(derived.json['token'])}`, 'Content-Type': 'application/json', 'X-Forwarded-For': `198.51.100.${clientAddr}` };
+  const unlink = await fetch(`${base}/auth-methods/me/wallet/${wallet.address.toLowerCase()}`, { method: 'DELETE', headers });
+  assert.equal(unlink.status, 409, await unlink.text());
+  const del = await fetch(`${base}/users/me/delete`, { method: 'POST', headers, body: '{}' });
+  assert.equal(del.status, 200, await del.text());
+  const owner = await siwe(wallet);
+  assert.equal(owner.status, 200, `${JSON.stringify(owner.json)}\n${output}`);
+  assert.equal(owner.json['userId'], ownerId);
+  assert.deepEqual(writesTo(ownerId), []);
 });
 
 test('a wallet signature replayed to the retired /siwe/verify gets no token', async () => {

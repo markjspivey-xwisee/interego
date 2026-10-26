@@ -1,7 +1,7 @@
 /**
  * Sign-ins and registrations while the account index is incomplete, through the routes: server.ts
- * is started as a child process against a stand-in pod server (no live pod) that lists one
- * account whose pod answers 502 for the whole run, so the startup scan never completes.
+ * is started as a child process against a stand-in pod server (no live pod) that lists
+ * accounts whose pods answer 502 for the whole run, so the startup scan never completes.
  *
  * The sign-in indexes hold the accounts loaded so far, and the order that keeps a credential
  * with its owner (credential-index.ts) ranks only those. While the owner's account was not
@@ -12,8 +12,10 @@
  * about the private key), after which the owner's usernameless sign-in found only the copy and
  * signed in to it. Now, until every account is loaded, a credential no loaded account holds
  * opens no account, and no passkey joins one (503 "still loading", nothing written, no
- * bootstrap invite spent), while an account that already lists it still signs in. A passkey or
- * did:web sign-in no loaded holder verifies is told to wait rather than refused.
+ * bootstrap invite spent), while an account that already lists it still signs in. A passkey
+ * registration is refused when it asks for its options, before the browser has created a
+ * passkey no account would list. A passkey or did:web sign-in no loaded holder verifies is told
+ * to wait rather than refused, and a passkey sign-in waits for the account derived from its id.
  *
  * Run:
  *   node --test --import tsx tests/incomplete-index-routes.test.ts
@@ -68,6 +70,11 @@ const linked = Wallet.createRandom();
 const returning = Wallet.createRandom();
 // A did:web no loaded account lists.
 const didWeb = { did: 'did:web:loading.example', ...ed25519() };
+// A passkey whose account is the one derived from its id (a fresh registration opened it),
+// listed but unreadable, and a loaded account that lists its id with a later copy of its key
+// (registered before registrations waited for every account).
+const derivedOwner = softPasskey();
+const copyHolder = 'u-eth-00000000c0b1';
 
 // Seeded legacy accounts claimed with a bootstrap invite (mode B), one per credential kind.
 const invites = {
@@ -92,10 +99,13 @@ const pods = new Map<string, Record<string, unknown>>([
   })],
   [walletUser(linked), account(walletUser(linked), { walletAddresses: [linked.address.toLowerCase()] })],
   [walletUser(returning), account(walletUser(returning), { walletAddresses: [returning.address.toLowerCase()] })],
+  [derivedOwner.userId, account(derivedOwner.userId, { webAuthnCredentials: [stored(derivedOwner, earlier)] })],
+  [copyHolder, account(copyHolder, { webAuthnCredentials: [stored(derivedOwner, now)] })],
 ]);
-const listed = new Set([ownerId, contestedOther.id, walletUser(linked)]);
-const unreadable = new Set([ownerId]);
+const listed = new Set([ownerId, contestedOther.id, walletUser(linked), derivedOwner.userId, copyHolder]);
+const unreadable = new Set([ownerId, derivedOwner.userId]);
 const writes: string[] = [];
+const reads: string[] = [];
 const snapshot = (userId: string) => JSON.stringify(pods.get(userId) ?? null);
 
 function servePods(req: http.IncomingMessage, res: http.ServerResponse): void {
@@ -106,6 +116,7 @@ function servePods(req: http.IncomingMessage, res: http.ServerResponse): void {
     return;
   }
   const m = /^\/([^/]+)\/auth-methods\.jsonld$/.exec(path);
+  if (m && req.method === 'GET') reads.push(m[1]!);
   if (m && unreadable.has(m[1]!)) { res.writeHead(502).end(); return; }
   if (m && req.method === 'GET') {
     const doc = pods.get(m[1]!);
@@ -174,15 +185,14 @@ function registerOptions(opts: { bearer?: string; bootstrap?: { userId: string; 
   const extra = opts.bootstrap ? { bootstrapUserId: opts.bootstrap.userId, bootstrapInvite: opts.bootstrap.token } : {};
   return post('/auth/webauthn/register-options', { name: 'New', ...extra }, opts.bearer);
 }
-/** Finish a registration whose options were fetched (and checked) already. */
-function finishRegistration(key: SoftPasskey, options: { json: Record<string, unknown> }) {
-  const rpId = (options.json['rp'] as { id: string }).id;
-  return post('/auth/webauthn/register', { response: attest(key, String(options.json['challenge']), base, rpId) });
-}
-async function register(key: SoftPasskey, opts: { bearer?: string } = {}) {
-  const options = await registerOptions(opts);
-  assert.equal(options.status, 200, JSON.stringify(options.json));
-  return finishRegistration(key, options);
+/**
+ * A fresh registration with a challenge from POST /challenges, which a client can take without
+ * the options: /register refuses it on its own.
+ */
+async function registerWithoutOptions(key: SoftPasskey) {
+  const ch = await post('/challenges', { purpose: 'webauthn-register' });
+  assert.equal(ch.status, 200, JSON.stringify(ch.json));
+  return post('/auth/webauthn/register', { response: attest(key, String(ch.json['nonce']), base, new URL(base).hostname) });
 }
 
 let signCount = 0;
@@ -202,6 +212,7 @@ function assertStillLoading(r: { status: number; json: Record<string, unknown> }
   assert.equal(r.json['userId'], undefined);
 }
 const writesTo = (userId: string) => writes.filter(w => w === userId).length;
+const readsOf = (userId: string) => reads.filter(r => r === userId).length;
 
 before(async () => {
   podServer = http.createServer(servePods);
@@ -228,7 +239,7 @@ before(async () => {
   for (;;) {
     if (identity.exitCode !== null) throw new Error(`identity server exited ${identity.exitCode}:\n${output}`);
     try {
-      const loaded = await Promise.all([contestedOther.id, walletUser(linked)]
+      const loaded = await Promise.all([contestedOther.id, walletUser(linked), copyHolder]
         .map(async id => (await fetch(`${base}/users/${id}/profile`)).status === 200));
       if (loaded.every(Boolean)) break;
     } catch { /* not listening yet */ }
@@ -284,10 +295,14 @@ test('while accounts are loading, a did:web whose loaded holders list other keys
   assert.equal(own.json['userId'], contestedOther.id);
 });
 
-/** A spent invite is refused at registration options as consumed; an unspent one is not. */
+/**
+ * A spent invite is refused at registration options as consumed (409), before they are refused
+ * for loading; an unspent one is told to wait, and reads no pod.
+ */
 async function assertInviteUnspent(invite: { userId: string; token: string }): Promise<void> {
-  const options = await registerOptions({ bootstrap: invite });
-  assert.equal(options.status, 200, `${invite.userId}: ${JSON.stringify(options.json)}`);
+  const before = readsOf(invite.userId);
+  assertStillLoading(await registerOptions({ bootstrap: invite }));
+  assert.equal(readsOf(invite.userId), before);
 }
 
 test('while accounts are loading, a wallet bootstrap claim opens nothing and keeps its invite', async () => {
@@ -320,8 +335,11 @@ test('while accounts are loading, an account that already lists its wallet still
 test('while accounts are loading, an unloaded owner\'s passkey id with a copy of its key is not registered, so its sign-in finds no copy', async () => {
   // The copy's account would have been created, and the owner's usernameless sign-in would
   // have found only it, verified the owner's signature with the copied key, and signed in to it.
+  // The options are refused, so the browser starts no ceremony; a challenge taken without them
+  // is refused at /register.
+  assertStillLoading(await registerOptions());
   const copy = { ...owner.copied };
-  assertStillLoading(await register(copy));
+  assertStillLoading(await registerWithoutOptions(copy));
   assert.equal(writesTo(copy.userId), 0);
   assert.equal(pods.has(copy.userId), false);
   assertStillLoading(await signIn(owner.copied));
@@ -332,23 +350,24 @@ test('while accounts are loading, a passkey is not added to a loaded account wit
   assert.equal(opened.status, 200, `${JSON.stringify(opened.json)}\n${output}`);
   assert.equal(opened.json['userId'], walletUser(linked));
   const before = snapshot(walletUser(linked));
-  assertStillLoading(await register(softPasskey(), { bearer: String(opened.json['token']) }));
+  assertStillLoading(await registerOptions({ bearer: String(opened.json['token']) }));
   await new Promise(resolve => setTimeout(resolve, 300));   // a deferred write would land by now
   assert.equal(snapshot(walletUser(linked)), before);
   assert.equal(writesTo(walletUser(linked)), 0);
 });
 
-test('while accounts are loading, a passkey bootstrap claim registers nothing and keeps its invite', async () => {
-  // Fetching the options reads the seeded pod, which writes it an empty document; finishing the
-  // registration must add nothing to it.
-  const options = await registerOptions({ bootstrap: invites.passkey });
-  assert.equal(options.status, 200, JSON.stringify(options.json));
-  const before = { writes: writesTo(invites.passkey.userId), doc: snapshot(invites.passkey.userId) };
-  assertStillLoading(await finishRegistration(softPasskey(), options));
+test('while accounts are loading, a passkey bootstrap claim starts no ceremony, touches no pod and keeps its invite', async () => {
+  // The options used to read the seeded pod, which wrote it an empty document, and hand out a
+  // ceremony /register then refused.
+  assertStillLoading(await registerOptions({ bootstrap: invites.passkey }));
   await new Promise(resolve => setTimeout(resolve, 300));   // a deferred write would land by now
-  assert.equal(writesTo(invites.passkey.userId), before.writes);
-  assert.equal(snapshot(invites.passkey.userId), before.doc);
+  assert.equal(readsOf(invites.passkey.userId), 0);
+  assert.equal(writesTo(invites.passkey.userId), 0);
+  assert.equal(pods.has(invites.passkey.userId), false);
   await assertInviteUnspent(invites.passkey);
+  // A wrong invite is still refused as one, and a spent one would be 409: neither waits.
+  const wrong = await registerOptions({ bootstrap: { userId: invites.passkey.userId, token: 'x'.repeat(32) } });
+  assert.equal(wrong.status, 401, JSON.stringify(wrong.json));
 });
 
 test('while accounts are loading, a passkey no loaded holder verifies is told to wait, not refused', async () => {
@@ -362,4 +381,18 @@ test('while accounts are loading, a passkey no loaded holder verifies is told to
   assert.equal(scoped.status, 401, JSON.stringify(scoped.json));
   assert.equal(scoped.json['token'], undefined);
   assert.equal(writesTo(contestedOther.id), 0);
+});
+
+test('while accounts are loading, a passkey whose derived account is unreadable does not sign in to a loaded copy of its key', async () => {
+  // The owner is the account a fresh registration of the id opened; a loaded account lists the
+  // id with a later copy of its key. Tried alone, the copy verified the owner's signature and
+  // took the sign-in.
+  const r = await signIn(derivedOwner);
+  assert.equal(r.status, 503, `${JSON.stringify(r.json)}\n${output}`);
+  assert.match(String(r.json['detail']), /Nothing was changed/);
+  assert.equal(r.json['token'], undefined);
+  assert.equal(r.json['userId'], undefined);
+  await new Promise(resolve => setTimeout(resolve, 300));   // a deferred write would land by now
+  assert.equal(writesTo(copyHolder), 0);
+  assert.equal(writesTo(derivedOwner.userId), 0);
 });

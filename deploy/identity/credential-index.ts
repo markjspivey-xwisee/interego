@@ -32,12 +32,16 @@
  * loads, so the server opens no account and registers no passkey for a credential no loaded
  * account holds while any account is still unloaded (refuseWhileLoading in server.ts). That
  * stops new second holders only. Two kinds remain (AUTH-ARCHITECTURE.md, While accounts are
- * loading): those that already exist (a passkey copy registered before that check, a wallet
- * linked before /wallet/link needed the server's nonce), which a sign-in finds without their
- * owner during every startup scan and while the owner's pod is unreadable; and what the other
- * instance writes while a deploy overlaps the two after this one has read the pods (an account
- * it opens, a credential it adds to an account this one loaded), unseen here until something
- * reads that account again or the next restart.
+ * loading). Those that already exist: a passkey copy registered before that check, a wallet
+ * linked before /wallet/link needed the server's nonce, and the account derived from a wallet
+ * or did:key that its first sign-in opened before that check while the account listing it was
+ * not loaded. A passkey, wallet or did:key sign-in loads the account derived from the
+ * credential before it picks another holder, but finds the others without their owner during
+ * every startup scan and while the owner's pod is unreadable; and a derived account opened
+ * beside the owner's keeps the wallet's or did:key's sign-ins even once both are loaded, since
+ * the server prefers it. And what the other instance writes while a deploy overlaps the two
+ * after this one has read the pods (an account it opens, a credential it adds to an account
+ * this one loaded), unseen here until something reads that account again or the next restart.
  *
  * Pure: no server state, so it is unit-tested directly (tests/credential-index.test.ts).
  */

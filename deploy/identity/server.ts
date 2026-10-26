@@ -1261,7 +1261,8 @@ function rebuildIndexesForUser(userId: string, m: AuthMethods): void {
     // the accounts loaded the owner's is tried before a later copy. While the owner's account
     // is not loaded a copy is tried alone, so no copy is enrolled then (refuseWhileLoading);
     // a copy enrolled before that check, or during a deploy's overlap, is still tried alone
-    // until the owner's account loads (AUTH-ARCHITECTURE.md, While accounts are loading).
+    // until the owner's account loads, unless the owner is the account derived from the id,
+    // which a sign-in loads first (AUTH-ARCHITECTURE.md, While accounts are loading).
     ['webauthn', credentialIndex.setUser(userId, closed ? [] : m.webAuthnCredentials.map(c => [c.id, enrolledAt(c.createdAt)] as const))],
     // A DID that is not a did:key is bound only with a key /auth/did saw sign this server's
     // nonce, so another account lists it with a key of its own, which never verifies the
@@ -1440,15 +1441,22 @@ async function ensureAccountLoaded(userId: string): Promise<'loaded' | 'absent' 
  * (registering proves nothing about the private key) takes the owner's usernameless sign-ins
  * whenever the owner's account is not loaded. A DID added with a bearer is still bound: only its
  * key's holder can bind a did:key, or a did:web with that key, and a did:web bound with another
- * key never verifies the owner's signature. The cost: new accounts and new credentials wait
- * until every pod has been read.
+ * key never verifies the owner's signature. A passkey is refused at /register-options already,
+ * before the browser creates one that no account would list. The cost: new accounts and new
+ * credentials wait until every pod has been read.
  *
- * This stops new second holders only. A credential two accounts already list (a passkey copy
- * registered before this check, a wallet linked before /wallet/link needed this server's nonce,
- * a write by the other instance while a deploy overlapped the two) is still decided among the
- * loaded holders while loading, as at every startup scan: it signs in to a loaded holder that
- * may not be its owner's, and the wallet 409 (walletAccount) and the did:key choice hold only
- * once every holder is loaded.
+ * This stops new second holders only. A credential two accounts already list was put there
+ * before this check: a passkey copy registered then, a wallet linked before /wallet/link needed
+ * this server's nonce, the account derived from a wallet or did:key that its first sign-in
+ * opened while the account listing it was not loaded (the first-time path waited 50 ms for the
+ * scan and opened it), or a write by the other instance while a deploy overlapped the two.
+ * A passkey, wallet or did:key sign-in loads the account derived from the credential before
+ * choosing another holder (503 while it is unreadable); the rest are decided among the loaded
+ * holders, as at every startup scan. So a passkey copy takes the sign-in of an owner that is
+ * not the account derived from its id, a wallet that would get 409 signs in to its one loaded
+ * holder, and a did:key with no derived holder goes to the lowest loaded id, until every holder
+ * is loaded; and a derived account the first-time path opened beside the owner's keeps the
+ * wallet's or did:key's sign-ins even then, as the derived account is preferred (walletAccount).
  */
 function refuseWhileLoading(res: express.Response, credential: 'passkey' | 'wallet' | 'DID', adding = false): void {
   res.status(503).json({
@@ -2664,14 +2672,21 @@ type WalletAccount = { kind: 'none' } | { kind: 'one'; userId: string } | { kind
  * opens or extends none while some account is not loaded (walletHolder, refuseWhileLoading).
  * A wallet on several accounts therefore comes from a binding made before /wallet/link required
  * this server's nonce (it took any signature the wallet had ever made, so a holder may not be
- * the wallet's own), from a write this server did not see (the other instance, while a deploy
+ * the wallet's own); from a first sign-in made before sign-ins waited for every account, which
+ * opened the derived account while the account listing the wallet was not loaded (the scan
+ * after any restart, or an unreadable pod: the first-time path waited 50 ms for the scan, then
+ * opened it); from a write this server did not see (the other instance, while a deploy
  * overlapped the two, opening an account after this one listed the pods or adding the wallet to
- * an account after this one read it), or from a write to a pod outside this server. In the
- * second case this server can open the derived account itself, at the wallet's first sign-in
- * here, and that account then keeps the wallet's sign-ins. The derived account is the one the
- * wallet's first sign-in opens. With several holders and none of them derived, nothing here says
- * which is the wallet's, so the wallet signs in to none; while one of them is not loaded, the
- * choice is among the others, so such a wallet signs in to its one loaded holder until then.
+ * an account after this one read it), after which this server can open the derived account
+ * itself at the wallet's first sign-in here; or from a write to a pod outside this server. A
+ * derived account opened beside the owner's keeps the wallet's sign-ins even once every holder
+ * is loaded, since it is preferred; it usually holds that wallet and nothing else, so the
+ * wallet cannot be removed from it (its last credential), and signing in to it with the wallet
+ * and deleting it (POST /users/me/delete) hands the wallet to the other holder. The derived
+ * account is the one the wallet's first sign-in opens. With several holders and none of them
+ * derived, nothing here says which is the wallet's, so the wallet signs in to none; while one of
+ * them is not loaded, the choice is among the others, so such a wallet signs in to its one
+ * loaded holder until then.
  */
 function walletAccount(addr: string): WalletAccount {
   const derivedId = deriveUserIdFromWallet(addr);
@@ -3013,7 +3028,6 @@ app.post('/auth/webauthn/register-options', authEnrollLimiter, async (req, res) 
 
   // Mode (B): validate bootstrap invite (do NOT consume yet — consumption
   // happens at /register after the ceremony actually verifies).
-  let bootstrapTargetUserId: string | undefined;
   if (bootstrapUserId || bootstrapInvite) {
     if (!bootstrapUserId || !bootstrapInvite) {
       res.status(400).json({ error: 'bootstrapUserId and bootstrapInvite must both be supplied' });
@@ -3027,6 +3041,20 @@ app.post('/auth/webauthn/register-options', authEnrollLimiter, async (req, res) 
       res.status(409).json({ error: `Bootstrap invite for '${bootstrapUserId}' has already been consumed` });
       return;
     }
+  }
+
+  // While some account is not loaded, /register refuses every passkey (refuseWhileLoading), and
+  // by then the browser has created it: a discoverable passkey on the user's authenticator that
+  // no account lists, offered by the passkey picker from then on, one more with each retry. So
+  // no ceremony starts. Refused after the bearer and invite checks, whose answers do not depend
+  // on loading, and before the seeded account's pod or the signed-in account's passkeys are read.
+  if (!accountIndexState.complete) {
+    refuseWhileLoading(res, 'passkey', true);
+    return;
+  }
+
+  let bootstrapTargetUserId: string | undefined;
+  if (bootstrapUserId) {
     // Additional guard: if the seeded user already has any credential on
     // file, the invite flow is locked out regardless of invite validity.
     const existing = await readAuthMethods(bootstrapUserId, /* allowStale */ true);
@@ -3194,6 +3222,8 @@ app.post('/auth/webauthn/register', authEnrollLimiter, async (req, res) => {
   // attestation proves nothing about the private key), and the owner's usernameless sign-in
   // would then find only the copy. So no passkey is registered, in any mode, until every
   // account is loaded: refused before the bootstrap invite is spent or any pod is written.
+  // /register-options refuses first, so no ceremony starts; this catches a challenge from POST
+  // /challenges, which issues one for a fresh registration without the options.
   if (!accountIndexState.complete) {
     refuseWhileLoading(res, 'passkey', true);
     return;
@@ -3366,8 +3396,12 @@ app.post('/auth/webauthn/authenticate', authEnrollLimiter, async (req, res) => {
     await awaitInitialIndexWithBudget(50);
   }
   // The account a fresh registration of this id opened is derived from it, and may list it
-  // without being loaded (opened on the other instance while a deploy overlapped the two).
-  if (!credentialIndex.has(response.id) && typeof response.id === 'string'
+  // without being loaded (the startup scan has not reached it, its pod is unreadable, or the
+  // other instance opened it while a deploy overlapped the two). It is loaded whenever it is not
+  // a holder already, as for wallets and did:keys: a copy of its key under its id on another
+  // account would otherwise be the only holder tried, and take the owner's sign-in.
+  if (typeof response.id === 'string'
+    && !credentialIndex.candidates(response.id).includes(deriveUserIdFromCredentialId(response.id))
     && await ensureAccountLoaded(deriveUserIdFromCredentialId(response.id)) === 'unreadable') {
     res.status(503).json({ error: 'Could not read this account just now', detail: 'Nothing was changed; try signing in again in a minute.' });
     return;
