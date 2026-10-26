@@ -702,11 +702,27 @@ export async function serveMcpOverHttp(
   return { status: out.status, body: parsed };
 }
 
+/**
+ * The MCP request headers the route hands to the SDK: every `mcp-*` header the client
+ * sent. The SDK cross-checks the standard headers against the body on a 2026-07-28
+ * request — `MCP-Protocol-Version`, `Mcp-Method`, `Mcp-Name`, and `Mcp-Param-*` for a
+ * tool that declares one — and refuses the request (-32020) when one it requires is
+ * absent. This route once forwarded `mcp-method` and `mcp-name` alone, so every modern
+ * client was refused for a header it HAD sent. A prefix, not a list, so a header a later
+ * revision adds reaches the SDK without this route changing. Authorization and the rest
+ * stay here: the bridge gate has already consumed them.
+ */
+function mcpRequestHeaders(incoming: import('node:http').IncomingHttpHeaders): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const [name, value] of Object.entries(incoming)) {
+    if (!name.toLowerCase().startsWith('mcp-') || value === undefined) continue;
+    out[name.toLowerCase()] = Array.isArray(value) ? value.join(', ') : value;
+  }
+  return out;
+}
+
 app.post('/mcp', async (req, res) => {
-  const { status, body } = await serveMcpOverHttp(req.body, {
-    ...(typeof req.headers['mcp-method'] === 'string' ? { 'mcp-method': req.headers['mcp-method'] } : {}),
-    ...(typeof req.headers['mcp-name'] === 'string' ? { 'mcp-name': req.headers['mcp-name'] } : {}),
-  });
+  const { status, body } = await serveMcpOverHttp(req.body, mcpRequestHeaders(req.headers));
   if (body === undefined) { res.status(status).end(); return; }
   res.status(status).json(body);
 });
