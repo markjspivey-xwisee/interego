@@ -58,6 +58,22 @@
   ],
   "@graph": [
     {
+      "comment": "The internal value storage walks every document under /.internal/, including keyless reader counts left in /.internal/locks/ from when LockStorage was pod-backed. Skipping keyless entries keeps them from crashing the hourly expired-entry sweep.",
+      "@type": "Override",
+      "overrideInstance": {
+        "@id": "urn:solid-server:default:KeyValueStorage"
+      },
+      "overrideParameters": {
+        "@type": "KeyedEntriesStorage",
+        "source": {
+          "@type": "MaxKeyLengthStorage",
+          "source": {
+            "@id": "urn:solid-server:default:JsonResourceStorage"
+          }
+        }
+      }
+    },
+    {
       "@type": "Override",
       "overrideInstance": {
         "@id": "urn:solid-server:default:MetadataWriter_Mapped"
@@ -196,7 +212,12 @@
       "pod": "css"
     },
     {
-      "comment": "Shared Redis read-write/resource locker across replicas (ephemeral, atomic).",
+      "comment": [
+        "Shared Redis read-write/resource locker across replicas (ephemeral, atomic).",
+        "expiration 90000 ms, not 6000, for the reason given on the ResourceLocker override in",
+        "pgsl-server.json: css-gate waits up to 90 s for a response head, and an expiry that fires",
+        "first answers 500 while the operation carries on without its lock."
+      ],
       "@id": "urn:solid-server:default:ResourceLocker",
       "@type": "WrappedExpiringReadWriteLocker",
       "locker": {
@@ -204,7 +225,7 @@
         "@type": "RedisLocker",
         "redisClient": "__REDIS_ADDR__"
       },
-      "expiration": 6000
+      "expiration": 90000
     },
     {
       "comment": "Start the RedisLocker (and clear any stale locks) on boot.",

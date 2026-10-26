@@ -36,6 +36,18 @@ test('listPods reads the root container, and a failed listing is an error, not a
   assert.deepEqual(await listPods(reply(200, root), 'http://css/'), ['u-pk-aaa', 'u-eth-bbb']);
   assert.deepEqual(await listPods(reply(200, '<> a <http://www.w3.org/ns/ldp#Container> .'), 'http://css/'), []);
   await assert.rejects(listPods(reply(503), 'http://css/'), PodReadError);
+});
+
+test('listPods reads every child, whatever a name before it holds', async () => {
+  // The live root on 2026-10-23: a file whose name has a '.' sorts between `markj/` and
+  // every account pod, and the listing used to stop at that '.', so no `u-` pod was loaded.
+  const root = `@prefix ldp: <http://www.w3.org/ns/ldp#>.
+<> ldp:contains <agent/>, <markj/>, <provisional-play-admission.json>, <svc-relay-dcr/>, <u-did-6de86e8ba294/>,
+    <u-eth-8f3b8e939600/>, <u-pk-f2a9c751075a/>, <odd;name/>, <u-try-play-b3b2/>.
+<agent/> a ldp:Container.`;
+  assert.deepEqual(await listPods(reply(200, root), 'http://css/'), [
+    'agent', 'markj', 'svc-relay-dcr', 'u-did-6de86e8ba294', 'u-eth-8f3b8e939600', 'u-pk-f2a9c751075a', 'odd;name', 'u-try-play-b3b2',
+  ]);
   await assert.rejects(listPods((async () => { throw new Error('ETIMEDOUT'); }) as FetchLike, 'http://css/'), PodReadError);
 });
 

@@ -14,6 +14,7 @@
 
 import { readFileSync } from 'node:fs';
 import { createVerticalBridge } from '../../_shared/vertical-bridge/index.js';
+import { installProcessSafetyNet } from '../../_shared/vertical-bridge/route-errors.js';
 import { ontologyServingMiddleware } from '../../_shared/ontology-serve/index.js';
 import { acAffordances } from '../affordances.js';
 import {
@@ -97,6 +98,9 @@ const handlers = {
 };
 
 const PORT = parseInt(process.env.PORT ?? '6040', 10);
+// The last resort for a rejection nothing awaits (a call a handler starts and does not
+// wait for): logged, and the bridge keeps serving. See route-errors.ts.
+installProcessSafetyNet((msg) => { process.stderr.write(`[agent-collective-bridge] ${msg}\n`); });
 const app = createVerticalBridge({
   verticalName: 'agent-collective',
   affordances: acAffordances,

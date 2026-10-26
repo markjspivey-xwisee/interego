@@ -13,7 +13,7 @@
  * guarantee, verified separately by the CI integration suite on the real binding.
  */
 
-import type { FdbLike, FdbTxn, Key, KeyValue, Value } from './fdb-like.js';
+import type { FdbLike, FdbTxn, Key, Value } from './fdb-like.js';
 import { sameBytes } from './fdb-like.js';
 
 function toHex(k: Key): string {
@@ -32,6 +32,12 @@ export class MemFdbConflict extends Error {
 export class InMemoryFdb implements FdbLike {
   /** hex(key) -> value. */
   private readonly data = new Map<string, Value>();
+  /** `data`'s keys in sorted order, rebuilt lazily after a commit changes the key set. A range
+   *  read binary-searches it and stops after the rows it needs, so a bounded read costs what it
+   *  returns, not a scan and sort of the whole store; the direct-children skip-scan in store.ts
+   *  issues one such read per child and was quadratic in store size without it. Hex strings
+   *  compare in the same order as the bytes they encode. */
+  private sorted: string[] | null = null;
   /** hex(key) -> monotonically-increasing write version, for conflict detection. */
   private readonly versions = new Map<string, number>();
   private clock = 0;
@@ -47,13 +53,18 @@ export class InMemoryFdb implements FdbLike {
       const writes = new Map<string, Value | null>(); // null = clear
       const readVersions = new Map<string, number>(); // conflict range
 
-      const committedRange = (begin: Key, end: Key): KeyValue[] => {
-        const b = toHex(begin);
-        const e = toHex(end);
-        const out: KeyValue[] = [];
-        for (const [h, v] of this.data) {
-          if (h >= b && h < e) out.push({ key: hexToBytes(h), value: v });
+      /** Committed keys in [b, e), in order, at most `max` of them. */
+      const committedRange = (b: string, e: string, max: number): string[] => {
+        const keys = (this.sorted ??= [...this.data.keys()].sort());
+        let lo = 0;
+        let hi = keys.length;
+        while (lo < hi) {
+          const mid = (lo + hi) >>> 1;
+          if (keys[mid]! < b) lo = mid + 1;
+          else hi = mid;
         }
+        const out: string[] = [];
+        for (let i = lo; i < keys.length && keys[i]! < e && out.length < max; i++) out.push(keys[i]!);
         return out;
       };
 
@@ -93,16 +104,20 @@ export class InMemoryFdb implements FdbLike {
         getRange: async (begin, end, opts) => {
           const b = toHex(begin);
           const e = toHex(end);
+          const lim = opts?.limit;
+          const n = (typeof lim === 'number' && Number.isFinite(lim) && lim > 0) ? Math.floor(lim) : Infinity;
+          // The first n + |writes| committed keys are enough: a pending write can hide at most one
+          // of them, so at least n live committed keys survive, and every later committed key sorts
+          // after all of them.
           const merged = new Map<string, Value | null>();
-          for (const { key, value } of committedRange(begin, end)) merged.set(toHex(key), value);
+          for (const h of committedRange(b, e, n + writes.size)) merged.set(h, this.data.get(h)!);
           for (const [h, v] of writes) if (h >= b && h < e) merged.set(h, v);
-          const rows: KeyValue[] = [];
-          for (const [h, v] of merged) if (v !== null) rows.push({ key: hexToBytes(h), value: v });
-          rows.sort((x, y) => (toHex(x.key) < toHex(y.key) ? -1 : toHex(x.key) > toHex(y.key) ? 1 : 0));
+          const live: string[] = [];
+          for (const [h, v] of merged) if (v !== null) live.push(h);
+          live.sort();
           // Sliced AFTER the sort, so a page is the first N in bytewise key order and the last key
           // returned is a usable cursor. Slicing before would page an arbitrary subset.
-          const lim = opts?.limit;
-          return (typeof lim === 'number' && Number.isFinite(lim) && lim > 0) ? rows.slice(0, Math.floor(lim)) : rows;
+          return live.slice(0, n).map((h) => ({ key: hexToBytes(h), value: merged.get(h)! }));
         },
       };
 
@@ -124,6 +139,7 @@ export class InMemoryFdb implements FdbLike {
 
       const commitVersion = ++this.clock;
       for (const [h, v] of writes) {
+        if ((v === null) === this.data.has(h)) this.sorted = null; // key set changes
         if (v === null) this.data.delete(h);
         else this.data.set(h, v);
         this.versions.set(h, commitVersion);

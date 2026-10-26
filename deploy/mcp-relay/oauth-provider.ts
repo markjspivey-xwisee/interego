@@ -16,6 +16,7 @@
  */
 import type { Response } from 'express';
 import { randomBytes, createHash } from 'node:crypto';
+import { assertLivePlay, type ProvisionalPlay, type VerifiedPlayIdentity } from './provisional-play.js';
 
 // ★ THE AUTHORIZATION-SERVER CONTRACT, OWNED.
 //
@@ -135,6 +136,8 @@ export interface InteregoAuthInfo extends AuthInfo {
      *  reconstructed from `userId` by the relay. */
     podUrl: string;
     identityToken: string;
+    ownerDid?: string;
+    provisionalPlay?: ProvisionalPlay;
     /**
      * RFC 9449 cnf.jkt — JWK SHA-256 thumbprint of the DPoP public key
      * this access token is bound to. Present iff the token was issued
@@ -466,6 +469,8 @@ export class InteregoOAuthProvider implements OAuthServerProvider {
     scope: string[];
     clientId: string;
     expiresAt: number;
+    ownerDid?: string;
+    provisionalPlay?: ProvisionalPlay;
   } | null {
     let info = this.accessTokens.get(token);
     if (!info) {
@@ -485,6 +490,7 @@ export class InteregoOAuthProvider implements OAuthServerProvider {
     }
     const extra = info.extra;
     if (!extra?.userId) return null;
+    if (extra.provisionalPlay && extra.provisionalPlay.expiresAt * 1000 <= Date.now()) return null;
     return {
       valid: true,
       userId: extra.userId,
@@ -494,7 +500,32 @@ export class InteregoOAuthProvider implements OAuthServerProvider {
       scope: info.scopes ?? [],
       clientId: info.clientId,
       expiresAt: info.expiresAt ?? 0,
+      ...(extra.ownerDid ? { ownerDid: extra.ownerDid } : {}),
+      ...(extra.provisionalPlay ? { provisionalPlay: extra.provisionalPlay } : {}),
     };
+  }
+
+  /** Browser key proof was independently checked against identity. This creates the
+   * same durable OAuth access record used by /mcp, with no refresh or broad write scope. */
+  async issueProvisionalAccessToken(identity: VerifiedPlayIdentity): Promise<OAuthTokens> {
+    assertLivePlay(identity.provisionalPlay);
+    if (!this.cfg.persistAccessToken) throw new Error('Durable provisional access storage is required');
+    const now = Math.floor(Date.now() / 1000);
+    const expiresAt = Math.min(now + (this.cfg.tokenTtlSec ?? 3600), identity.expiresAt, identity.provisionalPlay.expiresAt);
+    if (expiresAt <= now) throw new OAuthError(OAuthErrorCode.InvalidGrant, 'Provisional identity expired');
+    const token = randomBytes(32).toString('hex');
+    const boundResource = this.configuredResource;
+    const info: InteregoAuthInfo = { token, clientId: 'interego-play-provisional',
+      scopes: ['mcp:read', 'mcp:play'], expiresAt,
+      ...(boundResource ? { resource: boundResource } : {}),
+      extra: { userId: identity.userId, agentId: identity.agentId, ownerWebId: identity.ownerWebId,
+        ownerDid: identity.ownerDid, podUrl: identity.podUrl, identityToken: identity.identityToken,
+        provisionalPlay: identity.provisionalPlay } };
+    // Await persistence before either the response or process cache grants authority.
+    await this.cfg.persistAccessToken(token, info);
+    this.accessTokens.set(token, info);
+    this.accessTokensBySha.set(InteregoOAuthProvider.sha256Hex(token), info);
+    return { access_token: token, token_type: 'Bearer', expires_in: expiresAt - now, scope: info.scopes.join(' ') };
   }
 
   /** Resolved Client ID Metadata Documents, keyed by client_id URL. */
@@ -1453,6 +1484,10 @@ async function didSubmit() {
       }
     }
     if (!info) throw new OAuthError(OAuthErrorCode.InvalidToken, 'Token not found (may have been issued by a prior relay revision; re-authenticate to obtain a fresh token)');
+    if (info.extra?.provisionalPlay) {
+      try { assertLivePlay(info.extra.provisionalPlay); }
+      catch { throw new OAuthError(OAuthErrorCode.InvalidToken, 'Provisional identity expired'); }
+    }
     if (info.expiresAt && info.expiresAt * 1000 < Date.now()) {
       this.accessTokens.delete(token);
       this.accessTokensBySha.delete(sha);
@@ -1542,3 +1577,4 @@ async function didSubmit() {
     };
   }
 }
+

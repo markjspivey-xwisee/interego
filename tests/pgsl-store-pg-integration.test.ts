@@ -258,6 +258,35 @@ describe.skipIf(!RUN)('pgsl-store: FULL stack over REAL PostgreSQL', () => {
     expect(new TextDecoder().decode(got!.bytes)).toBe(turtle);
   });
 
+  // The direct-children skip-scan leans on bytea ordering and LIMIT; tests/pgsl-store-ldp-listing
+  // holds the in-memory listing to the old full scan, and this holds Postgres to the in-memory one.
+  it('container listing over Postgres matches the in-memory listing, tricky names included', async () => {
+    const pod = `list-${ns}`;
+    const base = 'http://css.internal/';
+    const names = ['a', 'ab', 'a.b', 'a-b', 'a b', '日本', '😀', '', 'z'];
+    const ids: string[] = [base];
+    for (const n of names) {
+      ids.push(`${base}${n}`, `${base}${n}/`);
+      for (let i = 0; i < 12; i++) ids.push(`${base}${n}/x${i}`, `${base}${n}/deep/${i}/y`);
+    }
+    ids.push(`${base}nomarker/only/deep/z`);
+    const mem = openStore(new InMemoryFdb());
+    const pg = openStore(fdb);
+    for (const [i, id] of ids.entries()) {
+      const rec = { topUri: 'urn:x', opaqueUri: 'urn:x', contentType: id.endsWith('/') ? 'internal/container' : 'text/turtle', updatedAt: i, size: i };
+      await mem.cpSet(`ldp ${pod}`, id, rec);
+      await pg.cpSet(`ldp ${pod}`, id, rec);
+    }
+    const memLdp = new LdpStore(mem, new CodecRegistry());
+    const pgLdp = new LdpStore(pg, new CodecRegistry());
+    for (const probe of [base, `${base}a/`, `${base}a`, `${base}nomarker/`, `${base}absent/`, '']) {
+      const want = await memLdp.listChildren(pod, probe);
+      expect(await pgLdp.listChildren(pod, probe), probe).toStrictEqual(want);
+      expect(await pgLdp.hasChildren(pod, probe), probe).toBe(want.length > 0);
+    }
+    expect((await pgLdp.listChildren(pod, base)).length).toBe(2 * names.length + 1);
+  });
+
   // ★ THE ONE PROPERTY NO DOUBLE CAN CHECK. Everything else in this file would pass over
   // InMemoryFdb; these would not, because what is under test is an ISOLATION LEVEL — and
   // InMemoryFdb refuses the second write at either level, so it reports the guard as
@@ -817,5 +846,69 @@ describe.skipIf(!RUN)('pgsl-store: physical write admission over REAL PostgreSQL
       expect(Buffer.from((await ldp.readResource('css', '/many.ttl'))!.bytes)).toEqual(rdf);
     } finally { await fixture.close(); }
   }, 60_000);
+
+  it('takes the mutation lock before flushing queued deletes for an identical CAS, avoiding inversion with a concurrent writer', async () => {
+    const fixture = await pressureFixture('proof_order');
+    const target = Buffer.from('target'), proof = Buffer.from('proof'), original = Buffer.from('original');
+    const gate = `${fixture.table}_gate`;
+    const deleterName = `proof-deleter-${fixture.suffix}`, writerName = `proof-writer-${fixture.suffix}`;
+    let gateHeld = false, deleteAttempts = 0, writeAttempts = 0;
+    let deleting: Promise<boolean> | undefined, writing: Promise<void> | undefined;
+    const unlock = async () => {
+      if (gateHeld) {
+        await fixture.client.query('SELECT pg_advisory_unlock(1346851661, hashtext($1))', [fixture.table]);
+        gateHeld = false;
+      }
+    };
+    const waitForLock = async (applicationName: string): Promise<string | null> => {
+      const deadline = performance.now() + 5000;
+      while (performance.now() < deadline) {
+        const result = await fixture.client.query<{ wait_event_type: string | null; wait_event: string | null }>(
+          'SELECT wait_event_type, wait_event FROM pg_stat_activity WHERE application_name=$1', [applicationName]);
+        const row = result.rows[0];
+        if (row?.wait_event_type === 'Lock') return row.wait_event;
+        await new Promise(resolve => setTimeout(resolve, 25));
+      }
+      throw new Error('expected a PostgreSQL lock wait');
+    };
+    try {
+      await fixture.client.query(`INSERT INTO ${fixture.table}(k,v) VALUES ($1,$2),($3,$4)`, [target, original, proof, original]);
+      await fixture.client.query(`CREATE FUNCTION ${gate}() RETURNS trigger LANGUAGE plpgsql AS $$
+        BEGIN PERFORM pg_advisory_xact_lock(1346851661, hashtext(TG_TABLE_NAME)); RETURN OLD; END; $$`);
+      await fixture.client.query(`CREATE TRIGGER hold_delete BEFORE DELETE ON ${fixture.table}
+        FOR EACH ROW EXECUTE FUNCTION ${gate}()`);
+      await fixture.client.query('SELECT pg_advisory_lock(1346851661, hashtext($1))', [fixture.table]);
+      gateHeld = true;
+      const options = { maxDatabaseBytes: Number.MAX_SAFE_INTEGER, maxTransactionInputBytes: 4096, writeReserveBytes: 8192 };
+      const deleter = await fixture.open(options, deleterName), writer = await fixture.open(options, writerName);
+      deleting = deleter.transact(async tx => {
+        deleteAttempts++;
+        tx.clear(target);
+        return tx.compareAndSet(proof, original, original);
+      });
+      void deleting.catch(() => undefined);
+      expect(await waitForLock(deleterName)).toBe('advisory');
+      writing = writer.transact(async tx => {
+        writeAttempts++;
+        tx.set(target, Buffer.from('replacement'));
+        await tx.get(target);
+      });
+      void writing.catch(() => undefined);
+      // The writer must wait at the shared admission lock, not at the row
+      // locked by DELETE while the deleter later waits for that same admission.
+      expect(await waitForLock(writerName)).toBe('advisory');
+      await unlock();
+      expect(await deleting).toBe(true);
+      await writing;
+      expect(deleteAttempts).toBe(1);
+      expect(writeAttempts).toBe(1);
+      expect((await fixture.value(target))?.toString()).toBe('replacement');
+    } finally {
+      await unlock();
+      await Promise.allSettled([deleting, writing].filter(operation => operation !== undefined));
+      await fixture.client.query(`DROP FUNCTION IF EXISTS ${gate}() CASCADE`);
+      await fixture.close();
+    }
+  }, 20_000);
 
 });

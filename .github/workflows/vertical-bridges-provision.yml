@@ -1,0 +1,34 @@
+name: Provision wrd/pev bridge keys
+# Generates the work-redesign and practice-evidence bridges' signing and record keys inside this
+# runner and writes them straight to Railway (tools/vertical-bridges-provision.mjs). A key that
+# is already set is never overwritten, and no value is printed. Dispatch only, from master.
+on:
+  workflow_dispatch:
+    inputs:
+      apply:
+        description: 'Write the keys (unticked = dry run that lists what it would write)'
+        type: boolean
+        default: false
+permissions:
+  contents: read
+concurrency:
+  group: vertical-bridges-provision
+  cancel-in-progress: false
+jobs:
+  provision:
+    if: github.repository == 'markjspivey-xwisee/interego' && github.ref == 'refs/heads/master'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '20'
+      - name: Verify the provisioning helper
+        run: node --test tests/vertical-bridges-provision.test.mjs
+      - name: Provision the keys (values never printed)
+        env:
+          RAILWAY_PROJECT_TOKEN: ${{ secrets.RAILWAY_PROJECT_TOKEN }}
+          PEV_LLM_API_KEY: ${{ secrets.PEV_LLM_API_KEY }}
+          APPLY: ${{ inputs.apply }}
+        run: node tools/vertical-bridges-provision.mjs

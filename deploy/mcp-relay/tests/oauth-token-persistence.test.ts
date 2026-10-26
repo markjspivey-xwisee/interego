@@ -27,7 +27,7 @@
 
 import { createHash, randomBytes } from 'node:crypto';
 
-import { InteregoOAuthProvider, type ResolvedIdentity } from '../oauth-provider.js';
+import { InteregoOAuthProvider, type InteregoAuthInfo, type ResolvedIdentity } from '../oauth-provider.js';
 import {
   loadAccessTokens,
   loadRefreshTokens,
@@ -291,6 +291,61 @@ async function run() {
        'introspect: expired token pruned from sha map');
   }
 
+  // 6. Provisional browser grants are normal durable OAuth records, with a fixed
+  // guest deadline, no refresh authority, and no broad OAuth write scope.
+  {
+    const pod = makeStubPod();
+    const cfg: OAuthTokenStoreConfig = { podUrl: POD, fetch: pod.fetch, log: () => {} };
+    const deadline = Math.floor(Date.now() / 1000) + 90;
+    const identity = { ...IDENTITY, ownerDid: 'did:web:example.invalid:users:u-test-123',
+      expiresAt: deadline, provisionalPlay: { audience: 'hallowmarch', proofKeyThumbprint: 'a'.repeat(43), expiresAt: deadline } };
+    let release!: () => void, captured = '';
+    const waiting = new Promise<void>(resolve => { release = resolve; });
+    const provider = new InteregoOAuthProvider({ identityUrl: 'https://identity.invalid',
+      resourceIdentifier: 'https://relay.invalid', persistAccessToken: async (token, info) => {
+        captured = token; await waiting; await persistAccessToken(token, info, cfg);
+      } });
+    const issued = provider.issueProvisionalAccessToken(identity);
+    await flush();
+    ok(!!captured, 'provisional issuance reached durable persistence');
+    try { await provider.verifyAccessToken(captured); ok(false, 'unpersisted provisional grant must not verify'); }
+    catch (err) { ok(OAuthError.isInstance(err), 'pending provisional persistence grants no access in process'); }
+    release();
+    const tokens = await issued;
+    ok(!tokens.refresh_token, 'provisional exchange never grants a refresh token');
+    ok(tokens.scope === 'mcp:read mcp:play', 'provisional scope excludes mcp and mcp:write');
+    const live = await provider.verifyAccessToken(tokens.access_token);
+    ok(live.expiresAt === deadline, 'provisional access expiry cannot exceed the native guest deadline');
+    const loaded = await loadAccessTokens(cfg);
+    const restarted = new InteregoOAuthProvider({ identityUrl: 'https://identity.invalid',
+      resourceIdentifier: 'https://relay.invalid', initialAccessTokensBySha: loaded });
+    const restored = await restarted.verifyAccessToken(tokens.access_token) as InteregoAuthInfo;
+    ok(restored.extra?.provisionalPlay?.expiresAt === deadline, 'provisional restriction survives persisted-token restart');
+    ok(restored.extra?.ownerDid === identity.ownerDid, 'provider-verified owner DID survives restart');
+    ok(restored.resource?.href === live.resource?.href, 'relay resource audience survives access-token persistence');
+    ok(restarted.introspectAccessToken(tokens.access_token)?.provisionalPlay?.audience === 'hallowmarch',
+      'gate introspection preserves the provisional marker');
+    const through = await loadAccessTokenByRaw(tokens.access_token, cfg);
+    ok(through?.extra?.provisionalPlay?.expiresAt === deadline, 'single-record read-through preserves provisional deadline');
+
+    let rejectedToken = '';
+    const failing = new InteregoOAuthProvider({ identityUrl: 'https://identity.invalid',
+      persistAccessToken: async token => { rejectedToken = token; throw new Error('persistent storage unavailable'); } });
+    try { await failing.issueProvisionalAccessToken(identity); ok(false, 'failed persistence must reject guest exchange'); }
+    catch { ok(true, 'failed durable persistence rejects guest exchange'); }
+    ok(!failing.introspectAccessToken(rejectedToken), 'failed persistence leaves no guest authority in the OAuth cache');
+    ok(failing['refreshTokens'].size === 0, 'failed provisional issuance creates no refresh-token state');
+
+    const oversizedPod = makeStubPod();
+    const oversizedCfg: OAuthTokenStoreConfig = { podUrl: POD, fetch: oversizedPod.fetch, log: () => {} };
+    try {
+      await persistAccessToken('oversized-guest', { ...restored,
+        extra: { ...restored.extra!, identityToken: 'x'.repeat(20 * 1024) } }, oversizedCfg);
+      ok(false, 'oversized provisional OAuth records must fail before storage');
+    } catch { ok(oversizedPod.files.size === 0, 'provisional OAuth record bytes are bounded before persistence'); }
+  }
+
+
   console.log(`\n${pass} passed, ${fail} failed`);
   if (fail > 0) {
     for (const f of failures) console.log(`  FAIL: ${f}`);
@@ -299,3 +354,4 @@ async function run() {
 }
 
 run().catch((err) => { console.error(err); process.exit(1); });
+

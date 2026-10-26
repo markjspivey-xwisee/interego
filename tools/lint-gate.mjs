@@ -187,7 +187,11 @@ const UNLINTED_FRONTIER = {
   // Derived-resource confidentiality adds a tracked module; the error ceiling stays fixed.
   // The session-delegation repair module and wiring suite bring the committed
   // census to 187. Bank coverage; the existing error pin remains unchanged.
-  deploy: { errors: 356, files: 187 },
+  // Progressive native play adds fourteen tracked deploy modules and regression suites.
+  // Record the committed file census; new lint debt remains forbidden at the same ceiling.
+  // Identity sign-in fixes add six tracked modules and suites (first-sign-in, per-account read
+  // limit, did:web key binding): 213 files. Error ceiling unchanged.
+  deploy: { errors: 356, files: 213 },
   // The bulk of these are `no-console` in vertical bridges and CLI entry points — one config
   // decision, not a thousand defects. See the note above.
   // ★ 320 -> 337, and the ratchet caught it in CI rather than locally, which is the interesting
@@ -266,7 +270,11 @@ const UNLINTED_FRONTIER = {
   //    All seven lint clean.
   // CI measured 808 application source files after the native I2IDL-X modules;
   // the error pin remains unchanged.
-  applications: { errors: 1452, files: 850 },
+  //    850 -> 909 files (2026-10-22), errors not raised: the practice-evidence and work-redesign
+  //    verticals (src, bridge, ui, demo and tests of each) took the root past the slack. All of
+  //    it lints clean (`npx eslint applications/practice-evidence applications/work-redesign`:
+  //    0 problems).
+  applications: { errors: 1452, files: 909 },
   // The controller comparison adds two lint-clean audit modules; the census is 46.
   // Re-pin the file floor to that measured count without raising the error ceiling.
   benchmarks: { errors: 193, files: 46 },
@@ -1044,4 +1052,5 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
   console.log(lintGateReport(result));
   process.exit(result.ok ? 0 : 1);
 }
+
 

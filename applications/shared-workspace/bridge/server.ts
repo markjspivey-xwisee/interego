@@ -33,6 +33,7 @@
  */
 
 import { createVerticalBridge } from '../../_shared/vertical-bridge/index.js';
+import { installProcessSafetyNet } from '../../_shared/vertical-bridge/route-errors.js';
 import { wspAffordances } from '../affordances.js';
 import { openAgentSession, type AgentSession } from '../src/agent-session.js';
 import { respondAsMember } from '../src/respond.js';
@@ -90,6 +91,9 @@ const handlers = {
   },
 };
 
+// The last resort for a rejection nothing awaits (a call a handler starts and does not
+// wait for): logged, and the bridge keeps serving. See route-errors.ts.
+installProcessSafetyNet((msg) => { process.stderr.write(`[shared-workspace-bridge] ${msg}\n`); });
 const app = createVerticalBridge({
   verticalName: 'shared-workspace',
   affordances: wspAffordances,

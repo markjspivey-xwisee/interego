@@ -60,6 +60,7 @@ import {
 import type { Tool } from '@modelcontextprotocol/server';
 import { wantsHmd, sendHmd, renderAffordanceManifestHmd, sendActionResult } from '../hypermedia/index.js';
 import type { GuidedAffordanceEntry } from '../guided-affordance/index.js';
+import { forwardAsyncRouteErrors, routeErrorHandler } from './route-errors.js';
 
 /**
  * ONE JSON-LD projection of an Affordance, shared by the entry point and the
@@ -127,6 +128,23 @@ export interface VerticalBridgeOptions {
 
 export function createVerticalBridge(opts: VerticalBridgeOptions): Express {
   const app = express();
+  const logError = (msg: string): void => { process.stderr.write(`[${opts.verticalName}-bridge] ${msg}\n`); };
+  // Express 5, which every bridge runs, already passes an async handler's rejection to
+  // next(err); this makes that hold on Express 4 as well. See route-errors.ts.
+  forwardAsyncRouteErrors(logError);
+  // The terminal error handler must be the LAST layer, and each vertical adds its own routes
+  // to this app after it is returned, so it is appended when the app starts listening.
+  // Without it a failing request is answered by Express's default: an HTML page carrying the
+  // stack trace, since no bridge image sets NODE_ENV=production.
+  const listen = app.listen.bind(app) as (...args: unknown[]) => ReturnType<Express['listen']>;
+  let terminalInstalled = false;
+  app.listen = ((...args: unknown[]) => {
+    if (!terminalInstalled) {
+      terminalInstalled = true;
+      app.use(routeErrorHandler(logError));
+    }
+    return listen(...args);
+  }) as Express['listen'];
 
   // ★ HSTS FIRST — before express.json() AND before opts.middleware. BOTH orderings are
   // load-bearing, and both were measured rather than reasoned about.

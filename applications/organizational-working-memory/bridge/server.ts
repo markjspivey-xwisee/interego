@@ -25,6 +25,7 @@
  */
 
 import { createVerticalBridge } from '../../_shared/vertical-bridge/index.js';
+import { installProcessSafetyNet } from '../../_shared/vertical-bridge/route-errors.js';
 import { owmAffordances, owmOperatorAffordances } from '../affordances.js';
 import {
   upsertPerson, upsertProject, recordDecision, queueFollowup,
@@ -150,6 +151,9 @@ else if (audience === 'operator') activeAffordances = owmOperatorAffordances;
 else activeAffordances = [...owmAffordances, ...owmOperatorAffordances];
 
 const PORT = parseInt(process.env['PORT'] ?? '6060', 10);
+// The last resort for a rejection nothing awaits (a call a handler starts and does not
+// wait for): logged, and the bridge keeps serving. See route-errors.ts.
+installProcessSafetyNet((msg) => { process.stderr.write(`[organizational-working-memory-bridge] ${msg}\n`); });
 const app = createVerticalBridge({
   verticalName: 'organizational-working-memory',
   affordances: activeAffordances,
