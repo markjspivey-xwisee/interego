@@ -27,7 +27,14 @@ import {
 } from '../packages/pgsl-store/src/index.js';
 import { collectLive, hex, readerFromPg, rebuildTable, RebuildDeferredError, type KvReader } from '../packages/pgsl-store/src/gc.js';
 import { nodeAddrFromUrn } from '../packages/pgsl-store/src/addressing.js';
-import { nodeKey, cpKey } from '../packages/pgsl-store/src/keyspace.js';
+import { nodeKey, cpKey, cpListRange, strinc } from '../packages/pgsl-store/src/keyspace.js';
+import { CHILD_PAGE } from '../packages/pgsl-store/src/store.js';
+import { resourceCollection } from '../packages/pgsl-store/src/resource.js';
+import { encodeJson } from '../packages/pgsl-store/src/node.js';
+import {
+  BASE, POD, type Rec, CountingFdb, GenericOnlyFdb, referenceListing, marker, doc, randomStore, seamStores,
+  expectFirstPerSegmentContract,
+} from './pgsl-store-listing-fixtures.js';
 import type { Engagement } from '@interego/agent-interop';
 
 const RUN = process.env.PGSL_PG_IT === '1';
@@ -857,4 +864,112 @@ describe.skipIf(!RUN)('pgsl-store: physical write admission over REAL PostgreSQL
     }
   }, 20_000);
 
+});
+
+// ★ THE ONE-QUERY LISTING. Over Postgres, `cpListChildren` lists a container with the adapter's
+// `firstPerSegment` (a recursive-CTE loose index scan) instead of one bounded read per child
+// container. These hold it to the generic skip-scan over the SAME table and to the old full-scan
+// reference, on the randomized and page-seam stores tests/pgsl-store-ldp-listing.test.ts uses.
+describe.skipIf(!RUN)('pgsl-store: container listing in one query per page over REAL PostgreSQL', () => {
+  const client = new Client({ host: '127.0.0.1' });
+  const tables: string[] = [];
+  const adapters: FdbLike[] = [];
+  beforeAll(async () => { await client.connect(); });
+  afterAll(async () => {
+    await Promise.all(adapters.map((a) => a.close()));
+    if (tables.length) await client.query(`DROP TABLE IF EXISTS ${tables.join(', ')}`);
+    await client.end();
+  });
+
+  /** A fresh table holding `entries` for POD (and `neighbour` for a second pod), loaded in one statement. */
+  async function table(label: string, entries: Array<[string, Rec]>, neighbour: Array<[string, Rec]> = []): Promise<FdbLike> {
+    const name = `pgsl_list_${label}_${process.pid}_${Date.now()}`;
+    tables.push(name);
+    await client.query(`CREATE TABLE ${name} (k bytea PRIMARY KEY, v bytea NOT NULL)`);
+    const rows = [...entries.map(([id, v]) => [cpKey(resourceCollection(POD), id), v] as const),
+      ...neighbour.map(([id, v]) => [cpKey(resourceCollection(`${POD}2`), id), v] as const)];
+    const byKey = new Map(rows.map(([k, v]) => [Buffer.from(k).toString('hex'), Buffer.from(encodeJson(v))]));
+    await client.query(`INSERT INTO ${name} SELECT * FROM unnest($1::bytea[], $2::bytea[])`,
+      [[...byKey.keys()].map((h) => Buffer.from(h, 'hex')), [...byKey.values()]]);
+    await client.query(`ANALYZE ${name}`);
+    const adapter = await openPgStore({ table: name, ensureSchema: false });
+    adapters.push(adapter);
+    return adapter;
+  }
+  const ldpOver = (fdb: FdbLike) => ({ store: openStore(fdb), ldp: new LdpStore(openStore(fdb), new CodecRegistry()) });
+
+  it('★ randomized stores: the one-query listing equals the generic one and the full-scan reference, probe by probe', async () => {
+    for (const seedNo of [1, 2, 3, 4, 5, 6, 7, 8]) {
+      const { entries, neighbour, probes } = randomStore(seedNo);
+      const pg = new CountingFdb(await table(`r${seedNo}`, entries, neighbour));
+      const fast = ldpOver(pg).ldp;
+      const { store, ldp: generic } = ldpOver(new GenericOnlyFdb(pg));
+      for (const probe of probes) {
+        const want = await referenceListing(store, POD, probe);
+        expect(await generic.listChildren(POD, probe), `seed ${seedNo} ${probe}`).toStrictEqual(want);
+        pg.reset();
+        expect(await fast.listChildren(POD, probe), `seed ${seedNo} ${probe}`).toStrictEqual(want);
+        // A silent fallback to the skip-scan would pass the line above; it must not pass this one.
+        expect([pg.ranges, pg.segments], `seed ${seedNo} ${probe}`).toEqual([0, 1]);
+      }
+    }
+  }, 120_000);
+
+  it(`pages of ${CHILD_PAGE} children join without a gap or a repeat, whatever sits at the seam`, async () => {
+    for (const [i, { name, entries, children }] of seamStores(CHILD_PAGE).entries()) {
+      const pg = new CountingFdb(await table(`s${i}`, entries));
+      const { store, ldp } = ldpOver(pg);
+      const want = await referenceListing(store, POD, BASE);
+      expect(want.length, name).toBe(children);
+      pg.reset();
+      expect(await ldp.listChildren(POD, BASE), name).toStrictEqual(want);
+      expect([pg.ranges, pg.segments], name).toEqual([0, Math.floor(children / CHILD_PAGE) + 1]);
+    }
+  }, 120_000);
+
+  it('honours its bound, pages each group exactly once, and refuses an unbounded call', async () => {
+    const pg = await table('contract', randomStore(9).entries);
+    const { begin, end } = cpListRange(resourceCollection(POD), BASE);
+    await expectFirstPerSegmentContract(pg, Uint8Array.from([...begin, 0]), end, begin.length);
+    for (const opts of [{ limit: 0 }, { limit: Number.NaN }, { limit: 5, separator: 0xff }, { limit: 5, segmentOffset: -1 }]) {
+      await expect(pg.transact((t) => t.firstPerSegment!(begin, end, { segmentOffset: begin.length, separator: 0x2f, ...opts })))
+        .rejects.toThrow(RangeError);
+    }
+  });
+
+  it("sees its own transaction's writes and deletes", async () => {
+    const pg = await table('ryow', [[`${BASE}old/`, marker(1)], [`${BASE}old/x`, doc()], [`${BASE}gone`, doc()]]);
+    const col = resourceCollection(POD);
+    const { begin, end } = cpListRange(col, BASE);
+    const got = await pg.transact(async (t) => {
+      t.set(cpKey(col, `${BASE}new/deep/x`), encodeJson(doc()));
+      t.set(cpKey(col, `${BASE}leaf`), encodeJson(doc(4, 4)));
+      t.clear(cpKey(col, `${BASE}gone`));
+      t.clearRange(cpKey(col, `${BASE}old/`), strinc(cpKey(col, `${BASE}old/`)));
+      return t.firstPerSegment!(Uint8Array.from([...begin, 0]), end, { segmentOffset: begin.length, separator: 0x2f, limit: 10 });
+    });
+    const ids = got.map((r) => new TextDecoder().decode(r.key.subarray(begin.length)));
+    expect(ids).toEqual(['leaf', 'new/deep/x']);
+    // A document's value is returned; a container whose first row is a descendant's is not read.
+    expect(JSON.parse(new TextDecoder().decode(got[0]!.value))).toMatchObject({ size: 4 });
+    expect(got[1]!.value.length).toBe(0);
+  });
+
+  it('★ a 600-pod root is one statement, not one per pod', async () => {
+    const entries: Array<[string, Rec]> = [[BASE, marker(1)]];
+    for (let p = 0; p < 600; p++) {
+      const pod = `${BASE}u-pk-${p.toString(16).padStart(12, '0')}/`;
+      entries.push([pod, marker(p)]);
+      for (let i = 0; i < 30; i++) entries.push([`${pod}${['context-graphs', 'agents', 'lrs'][i % 3]}/r${i}.ttl`, doc(i, i)]);
+    }
+    for (let d = 0; d < 20; d++) entries.push([`${BASE}d${d}.ttl`, doc(d, d)]);
+    const pg = new CountingFdb(await table('root600', entries));
+    const { ldp } = ldpOver(pg);
+    pg.reset();
+    const fast = await ldp.listChildren(POD, BASE);
+    expect([fast.length, pg.ranges, pg.segments, pg.rows]).toEqual([620, 0, 1, 620]);
+    pg.reset();
+    expect(await ldpOver(new GenericOnlyFdb(pg)).ldp.listChildren(POD, BASE)).toStrictEqual(fast);
+    expect(pg.ranges).toBeGreaterThan(600);
+  }, 60_000);
 });
