@@ -165,7 +165,7 @@ const app = createVerticalBridge({ middleware: (a) => { a.get('/x', async (_req,
  for(const eagerForm of [
   `setInterval(autoFetchAdmin, 5 * 60_000, {});`,
   `setTimeout(autoFetchAdmin.bind(null, {}), 1);`,
-  `app.listen(1, warmDirectory);`,
+  `app.listen(1, '127.0.0.1', warmDirectory);`,
   `server.once('listening', warmDirectory);`,
   `setInterval((warmDirectory), 1000);`,
   `setInterval(directoryUsersCache.verifySession, 1000, 'token');`,

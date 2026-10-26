@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-10-26 — Relay and signing page: wallet sign-in signs the address the identity server names
+
+The relay's sign-in page and the shared signing page (`client-sign.html`) now send the wallet's address with their `POST /challenges` request (purpose `siwe`) and sign whatever `address` the reply carries, falling back to the address the wallet gave. A server that returns the EIP-55 checksummed form gets a message wallets read as a sign-in and check against the page's domain; one that does not, as today's, sees the same message as before. On the relay page, a failed challenge request now shows its error instead of going on to sign a message with no nonce in it; the signing page already stopped there.
+
+This ships ahead of the identity change that will require the checksummed address, so that a relay still serving the old page never meets an identity server that refuses what it signs.
+
 ## 2026-10-26 — Identity: the old wallet sign-in route is retired
 
 POST /siwe/verify issued a read-write token without requiring a challenge from this server, so it could not tell a fresh signature from an old one. Nothing in this repository used it; wallet sign-in goes through POST /auth/siwe, which requires a single-use challenge. The old route now answers 410 Gone and issues nothing.
