@@ -333,6 +333,48 @@ export async function openPgStore(opts: PgStoreOptions = {}): Promise<FdbLike> {
                 value: new Uint8Array(row.v),
               }));
             },
+            /**
+             * A loose index scan in ONE statement: each recursive step is one primary-key probe for
+             * the first key past the previous row's group — the next key for a row with no separator,
+             * strinc(group) for a group (the separator becomes separator + 1, which never carries).
+             * The row counter bounds the recursion itself, so `limit` bounds the work and not only
+             * the result, and the outer ORDER BY is over at most `limit` rows. Values are sent only
+             * for rows callers read (see fdb-like.ts); the rest come back empty.
+             */
+            firstPerSegment: async (
+              start: Key, end: Key,
+              opts: { readonly segmentOffset: number; readonly separator: number; readonly limit: number },
+            ): Promise<KeyValue[]> => {
+              const { segmentOffset, separator, limit } = opts;
+              if (!Number.isSafeInteger(limit) || limit < 1) throw new RangeError('pgsl-store: firstPerSegment needs a positive integer limit');
+              if (!Number.isSafeInteger(segmentOffset) || segmentOffset < 0) throw new RangeError('pgsl-store: firstPerSegment needs a nonnegative integer segmentOffset');
+              if (!Number.isInteger(separator) || separator < 0 || separator > 0xfe) throw new RangeError('pgsl-store: firstPerSegment separator must be a byte below 0xff');
+              const capturedStart = Buffer.from(start), capturedEnd = Buffer.from(end);
+              await flush();
+              const r = await client.query<{ k: Buffer; v: Buffer | null }>(
+                `WITH RECURSIVE walk(k, v, n) AS (
+                  (SELECT k, v, 1 FROM ${table} WHERE k >= $1::bytea AND k < $2::bytea ORDER BY k LIMIT 1)
+                  UNION ALL
+                  SELECT nx.k, nx.v, w.n + 1 FROM walk w
+                  CROSS JOIN LATERAL (SELECT position($4::bytea IN substring(w.k FROM $3::int + 1)) AS s) p
+                  CROSS JOIN LATERAL (
+                    SELECT t.k, t.v FROM ${table} t
+                    WHERE t.k >= CASE WHEN p.s = 0 THEN w.k || '\\x00'::bytea
+                                      ELSE substring(w.k FROM 1 FOR $3::int + p.s - 1) || $5::bytea END
+                      AND t.k < $2::bytea
+                    ORDER BY t.k LIMIT 1) nx
+                  WHERE w.n < $6::int
+                )
+                SELECT k, CASE WHEN position($4::bytea IN substring(k FROM $3::int + 1)) IN (0, octet_length(k) - $3::int)
+                               THEN v END AS v
+                FROM walk ORDER BY k`,
+                [capturedStart, capturedEnd, segmentOffset, Buffer.of(separator), Buffer.of(separator + 1), limit],
+              );
+              return r.rows.map(row => ({
+                key: new Uint8Array(row.k),
+                value: row.v === null ? new Uint8Array(0) : new Uint8Array(row.v),
+              }));
+            },
           };
           const result = await fn(txn);
           await flush();

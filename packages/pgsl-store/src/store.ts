@@ -73,6 +73,8 @@ const SLASH = 0x2f;
 // leaves. So no child costs more than CHILD_BATCH_MAX - 1 wasted rows, however deep it is.
 const CHILD_BATCH_FIRST = 8;
 const CHILD_BATCH_MAX = 256;
+/** Children per `firstPerSegment` page, where the backend offers it (exported for the seam tests). */
+export const CHILD_PAGE = 1000;
 function compareKeys(a: Uint8Array, b: Uint8Array): number {
   const n = Math.min(a.length, b.length);
   for (let i = 0; i < n; i++) if (a[i] !== b[i]) return a[i]! - b[i]!;
@@ -463,6 +465,33 @@ export class PgslStore {
     const { begin, end } = cpListRange(collection, idPrefix);
     return this.fdb.transact(async (txn) => {
       const out: Array<CpChild<T>> = [];
+      /** Lists the child a row starts; for a branch, returns strinc(branch prefix), past its subtree. */
+      const classify = (key: Uint8Array, value: Uint8Array): Uint8Array | undefined => {
+        if (key.length === begin.length) return undefined; // the prefix's own entry is not its child
+        // 0x2f never occurs inside a multi-byte UTF-8 sequence, so a byte search is exact.
+        const slash = key.indexOf(SLASH, begin.length);
+        if (slash === -1) {
+          out.push({ id: cpIdFromKey(collection, key), branch: false, value: decodeJson<T>(value) });
+          return undefined;
+        }
+        const branchKey = key.subarray(0, slash + 1);
+        out.push({
+          id: cpIdFromKey(collection, branchKey),
+          branch: true,
+          value: key.length === branchKey.length ? decodeJson<T>(value) : undefined,
+        });
+        return strinc(branchKey);
+      };
+      // A backend that walks its own index returns only each child's first row: one round trip
+      // per CHILD_PAGE children instead of one per child container (see fdb-like.ts).
+      if (txn.firstPerSegment) {
+        let start = keyAfter(begin);
+        for (;;) {
+          const rows = await txn.firstPerSegment(start, end, { segmentOffset: begin.length, separator: SLASH, limit: CHILD_PAGE });
+          for (const { key, value } of rows) start = classify(key, value) ?? keyAfter(key);
+          if (rows.length < CHILD_PAGE) return out;
+        }
+      }
       let cursor: Uint8Array = begin;
       let limit = CHILD_BATCH_FIRST;
       for (;;) {
@@ -470,20 +499,7 @@ export class PgslStore {
         let skipTo: Uint8Array | undefined;
         for (const { key, value } of rows) {
           if (skipTo && compareKeys(key, skipTo) < 0) continue; // inside a branch already listed
-          if (key.length === begin.length) continue; // the prefix's own entry is not its child
-          // 0x2f never occurs inside a multi-byte UTF-8 sequence, so a byte search is exact.
-          const slash = key.indexOf(SLASH, begin.length);
-          if (slash === -1) {
-            out.push({ id: cpIdFromKey(collection, key), branch: false, value: decodeJson<T>(value) });
-            continue;
-          }
-          const branchKey = key.subarray(0, slash + 1);
-          out.push({
-            id: cpIdFromKey(collection, branchKey),
-            branch: true,
-            value: key.length === branchKey.length ? decodeJson<T>(value) : undefined,
-          });
-          skipTo = strinc(branchKey);
+          skipTo = classify(key, value) ?? skipTo;
         }
         if (rows.length < limit) return out;
         const next = keyAfter(rows[rows.length - 1]!.key);
