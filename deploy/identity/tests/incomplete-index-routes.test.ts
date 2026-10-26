@@ -14,8 +14,11 @@
  * opens no account, and no passkey joins one (503 "still loading", nothing written, no
  * bootstrap invite spent), while an account that already lists it still signs in. A passkey
  * registration is refused when it asks for its options, before the browser has created a
- * passkey no account would list. A passkey or did:web sign-in no loaded holder verifies is told
- * to wait rather than refused, and a passkey sign-in waits for the account derived from its id.
+ * passkey no account would list. A did:web is not bound with a bearer either (bound with another
+ * key it takes no sign-in, but keeps its owner from binding it again once the owner removes it).
+ * A passkey or did:web sign-in no loaded holder verifies is told to wait rather than refused, as
+ * is a wallet sign-in for an existing account only, and a passkey sign-in waits for the account
+ * derived from its id.
  *
  * Run:
  *   node --test --import tsx tests/incomplete-index-routes.test.ts
@@ -61,13 +64,18 @@ const owner = {
   copied: softPasskey(),     // someone registers its id with a copy of its public key
   contested: softPasskey(),  // a loaded account lists its id with a key of its own
   didWeb: { did: 'did:web:contested.example', ...ed25519() },  // the same, for a did:web
+  soleWeb: { did: 'did:web:owner.example', ...ed25519() },     // a did:web no loaded account lists
 };
 // A loaded account listing the owner's `contested` id, and its did:web, with keys of its own.
 const contestedOther = { id: 'a-loaded-holder', key: softPasskey(owner.contested.rawId), didWebKey: ed25519() };
 // A loaded account derived from its wallet, whose token adds a device.
 const linked = Wallet.createRandom();
-// An account derived from its wallet that lists it but is not in the listing, so not loaded.
+// Accounts derived from their wallets that list them but are not in the listing, so not loaded:
+// one signed in to by a plain sign-in, one by a sign-in for an existing account only.
 const returning = Wallet.createRandom();
+const returningExisting = Wallet.createRandom();
+// A loaded account derived from its wallet, whose token adds DIDs.
+const adder = Wallet.createRandom();
 // A did:web no loaded account lists.
 const didWeb = { did: 'did:web:loading.example', ...ed25519() };
 // A passkey whose account is the one derived from its id (a fresh registration opened it),
@@ -90,7 +98,8 @@ const pods = new Map<string, Record<string, unknown>>([
   [ownerId, account(ownerId, {
     walletAddresses: [owner.wallet.address.toLowerCase()],
     didKeys: [{ did: owner.didKey.did, publicKeyMultibase: owner.didKey.multibase, keyType: 'Ed25519VerificationKey2020', createdAt: earlier },
-      { did: owner.didWeb.did, publicKeyMultibase: owner.didWeb.multibase, keyType: 'Ed25519VerificationKey2020', createdAt: earlier }],
+      { did: owner.didWeb.did, publicKeyMultibase: owner.didWeb.multibase, keyType: 'Ed25519VerificationKey2020', createdAt: earlier },
+      { did: owner.soleWeb.did, publicKeyMultibase: owner.soleWeb.multibase, keyType: 'Ed25519VerificationKey2020', createdAt: earlier }],
     webAuthnCredentials: [stored(owner.copied, earlier), stored(owner.contested, earlier)],
   })],
   [contestedOther.id, account(contestedOther.id, {
@@ -99,10 +108,12 @@ const pods = new Map<string, Record<string, unknown>>([
   })],
   [walletUser(linked), account(walletUser(linked), { walletAddresses: [linked.address.toLowerCase()] })],
   [walletUser(returning), account(walletUser(returning), { walletAddresses: [returning.address.toLowerCase()] })],
+  [walletUser(returningExisting), account(walletUser(returningExisting), { walletAddresses: [returningExisting.address.toLowerCase()] })],
+  [walletUser(adder), account(walletUser(adder), { walletAddresses: [adder.address.toLowerCase()] })],
   [derivedOwner.userId, account(derivedOwner.userId, { webAuthnCredentials: [stored(derivedOwner, earlier)] })],
   [copyHolder, account(copyHolder, { webAuthnCredentials: [stored(derivedOwner, now)] })],
 ]);
-const listed = new Set([ownerId, contestedOther.id, walletUser(linked), derivedOwner.userId, copyHolder]);
+const listed = new Set([ownerId, contestedOther.id, walletUser(linked), walletUser(adder), derivedOwner.userId, copyHolder]);
 const unreadable = new Set([ownerId, derivedOwner.userId]);
 const writes: string[] = [];
 const reads: string[] = [];
@@ -175,10 +186,10 @@ async function siwe(w: { address: string; signMessage(message: string): Promise<
   return post('/auth/siwe', { message, signature: await w.signMessage(message), nonce, name: 'New', ...extra });
 }
 
-async function didSignIn(k: { did: string; privateKey: crypto.KeyObject }, extra: Record<string, unknown> = {}) {
+async function didSignIn(k: { did: string; privateKey: crypto.KeyObject }, extra: Record<string, unknown> = {}, bearer?: string) {
   const { nonce } = (await post('/challenges', { purpose: 'did-sig' })).json as { nonce: string };
   const signature = crypto.sign(null, Buffer.from(nonce, 'utf8'), k.privateKey).toString('base64url');
-  return post('/auth/did', { did: k.did, nonce, signature, name: 'New', ...extra });
+  return post('/auth/did', { did: k.did, nonce, signature, name: 'New', ...extra }, bearer);
 }
 
 function registerOptions(opts: { bearer?: string; bootstrap?: { userId: string; token: string } } = {}) {
@@ -239,7 +250,7 @@ before(async () => {
   for (;;) {
     if (identity.exitCode !== null) throw new Error(`identity server exited ${identity.exitCode}:\n${output}`);
     try {
-      const loaded = await Promise.all([contestedOther.id, walletUser(linked), copyHolder]
+      const loaded = await Promise.all([contestedOther.id, walletUser(linked), walletUser(adder), copyHolder]
         .map(async id => (await fetch(`${base}/users/${id}/profile`)).status === 200));
       if (loaded.every(Boolean)) break;
     } catch { /* not listening yet */ }
@@ -295,6 +306,33 @@ test('while accounts are loading, a did:web whose loaded holders list other keys
   assert.equal(own.json['userId'], contestedOther.id);
 });
 
+test('while accounts are loading, a did:web only an unloaded account lists is not bound to another account with its bearer', async () => {
+  // Bound with a key of the caller's own, it would not take the owner's sign-ins, but once the
+  // owner removed the DID (to change its key, say) the owner could never bind it again: a DID a
+  // loaded account lists with another key is refused.
+  const signedIn = await siwe(adder);
+  assert.equal(signedIn.status, 200, `${JSON.stringify(signedIn.json)}\n${output}`);
+  assert.equal(signedIn.json['userId'], walletUser(adder));
+  const bearer = String(signedIn.json['token']);
+  const before = snapshot(walletUser(adder));
+  const ownKey = ed25519();
+  const r = await didSignIn({ did: owner.soleWeb.did, privateKey: ownKey.privateKey }, { publicKeyMultibase: ownKey.multibase }, bearer);
+  assertStillLoading(r);
+  assert.match(String(r.json['detail']), /added to no account/);
+  // The cost: a did:web nobody lists waits too.
+  assertStillLoading(await didSignIn(didWeb, { publicKeyMultibase: didWeb.multibase }, bearer));
+  await new Promise(resolve => setTimeout(resolve, 300));   // a deferred write would land by now
+  assert.equal(snapshot(walletUser(adder)), before);
+  assert.equal(writesTo(walletUser(adder)), 0);
+  assert.equal(writesTo(deriveUserIdFromDid(owner.soleWeb.did)), 0);
+  assert.equal(writesTo(deriveUserIdFromDid(didWeb.did)), 0);
+  // A did:key is still added: only its key's holder can bind it.
+  const k = ed25519();
+  const added = await didSignIn({ did: `did:key:${k.multibase}`, privateKey: k.privateKey }, {}, bearer);
+  assert.equal(added.status, 200, `${JSON.stringify(added.json)}\n${output}`);
+  assert.equal(added.json['userId'], walletUser(adder));
+});
+
 /**
  * A spent invite is refused at registration options as consumed (409), before they are refused
  * for loading; an unspent one is told to wait, and reads no pod.
@@ -330,6 +368,19 @@ test('while accounts are loading, an account that already lists its wallet still
   assert.equal(r.status, 200, `${JSON.stringify(r.json)}\n${output}`);
   assert.equal(r.json['userId'], walletUser(returning));
   assert.equal(writesTo(walletUser(returning)), 0);
+});
+
+test('while accounts are loading, a wallet sign-in for an existing account only is told to wait, and still finds its own account', async () => {
+  // The relay's /sign-action page signs in with existingOnly, which was told the wallet was not
+  // registered whenever no loaded account listed it.
+  const r = await siwe(owner.wallet, { existingOnly: true });
+  assertStillLoading(r);
+  assert.equal(writesTo(walletUser(owner.wallet)), 0);
+  assert.equal(pods.has(walletUser(owner.wallet)), false);
+  const found = await siwe(returningExisting, { existingOnly: true });
+  assert.equal(found.status, 200, `${JSON.stringify(found.json)}\n${output}`);
+  assert.equal(found.json['userId'], walletUser(returningExisting));
+  assert.equal(writesTo(walletUser(returningExisting)), 0);
 });
 
 test('while accounts are loading, an unloaded owner\'s passkey id with a copy of its key is not registered, so its sign-in finds no copy', async () => {

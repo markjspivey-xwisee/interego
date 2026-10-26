@@ -27,15 +27,17 @@
  * credential), then by id. What a sign-in does with several wallet holders is the server's
  * choice (walletAccount in server.ts): this module only orders them.
  *
- * The order ranks the accounts the server has loaded, and only those. A copy enrolled while
- * the owner's account was not loaded is the only holder a sign-in finds until that account
- * loads, so the server opens no account and registers no passkey for a credential no loaded
- * account holds while any account is still unloaded (refuseWhileLoading in server.ts). That
- * stops new second holders only. Two kinds remain (AUTH-ARCHITECTURE.md, While accounts are
- * loading). Those that already exist: a passkey copy registered before that check, a wallet
- * linked before /wallet/link needed the server's nonce, and the account derived from a wallet
- * or did:key that its first sign-in opened before that check while the account listing it was
- * not loaded. A passkey, wallet or did:key sign-in loads the account derived from the
+ * The order ranks the accounts the server has loaded, and only those. A copy enrolled while the
+ * owner's account was not loaded is the only holder a sign-in finds until that account loads,
+ * so the server opens no account, and adds no passkey, wallet or DID that is not a did:key to
+ * one, for a credential no loaded account holds while any account is still unloaded
+ * (refuseWhileLoading in server.ts). That stops new second holders only. Two kinds remain
+ * (AUTH-ARCHITECTURE.md, While accounts are loading). Those that already exist: a passkey copy
+ * registered before that check, a did:web another account bound then with a key of its own (it
+ * takes no sign-in, but keeps the owner from binding the DID again once it removes it), a
+ * wallet linked before /wallet/link needed the server's nonce, and the account derived from a
+ * wallet or did:key that its first sign-in opened before that check while the account listing
+ * it was not loaded. A passkey, wallet or did:key sign-in loads the account derived from the
  * credential before it picks another holder, but finds the others without their owner during
  * every startup scan and while the owner's pod is unreadable; and a derived account opened
  * beside the owner's keeps the wallet's or did:key's sign-ins even once both are loaded, since

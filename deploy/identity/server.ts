@@ -1433,23 +1433,27 @@ async function ensureAccountLoaded(userId: string): Promise<'loaded' | 'absent' 
  * The answer for a credential no loaded account holds while some account is not loaded yet
  * (the startup scan is still running, or a pod it listed stays unreadable; the log line
  * identity_account_index_incomplete names it). The account holding the credential may be one
- * of those, so the credential opens no account, a passkey is added to none (nor is a wallet:
- * walletHolder), and a sign-in no loaded account verifies is not told the credential is
- * unknown. Opening one would leave the credential on two accounts: a wallet's first sign-in
- * opens the account derived from it, which then takes the wallet's sign-ins from the account
- * listing it for good; a passkey id registered with a copy of its owner's public key
- * (registering proves nothing about the private key) takes the owner's usernameless sign-ins
- * whenever the owner's account is not loaded. A DID added with a bearer is still bound: only its
- * key's holder can bind a did:key, or a did:web with that key, and a did:web bound with another
- * key never verifies the owner's signature. A passkey is refused at /register-options already,
- * before the browser creates one that no account would list. The cost: new accounts and new
- * credentials wait until every pod has been read.
+ * of those, so the credential opens no account, a passkey or a DID that is not a did:key is
+ * added to none (nor is a wallet: walletHolder), and a sign-in no loaded account verifies,
+ * existingOnly wallet sign-ins included, is not told the credential is unknown. Opening one
+ * would leave the credential on two accounts: a wallet's first sign-in opens the account derived
+ * from it, which then takes the wallet's sign-ins from the account listing it for good; a
+ * passkey id registered with a copy of its owner's public key (registering proves nothing about
+ * the private key) takes the owner's usernameless sign-ins whenever the owner's account is not
+ * loaded; and a did:web bound with another key, though that key never verifies the owner's
+ * signature, keeps the owner from binding the DID again once it removes it (to change its key,
+ * say), since a DID a loaded account lists with another key is refused. A did:key added with a
+ * bearer is still bound: only its key's holder can bind it, so every account listing it is one
+ * that holder chose. A passkey is refused at /register-options already, before the browser
+ * creates one that no account would list. The cost: new accounts and new credentials wait until
+ * every pod has been read.
  *
  * This stops new second holders only. A credential two accounts already list was put there
- * before this check: a passkey copy registered then, a wallet linked before /wallet/link needed
- * this server's nonce, the account derived from a wallet or did:key that its first sign-in
- * opened while the account listing it was not loaded (the first-time path waited 50 ms for the
- * scan and opened it), or a write by the other instance while a deploy overlapped the two.
+ * before this check: a passkey copy registered then, a did:web another account bound with a key
+ * of its own then, a wallet linked before /wallet/link needed this server's nonce, the account
+ * derived from a wallet or did:key that its first sign-in opened while the account listing it
+ * was not loaded (the first-time path waited 50 ms for the scan and opened it), or a write by
+ * the other instance while a deploy overlapped the two.
  * A passkey, wallet or did:key sign-in loads the account derived from the credential before
  * choosing another holder (503 while it is unreadable); the rest are decided among the loaded
  * holders, as at every startup scan. So a passkey copy takes the sign-in of an owner that is
@@ -2834,11 +2838,10 @@ app.post('/auth/siwe', authEnrollLimiter, async (req, res) => {
   }
   let userId: string | undefined = indexed.kind === 'one' ? indexed.userId : undefined;
   let user = userId ? identities.get(userId) : undefined;
-
-  if (!user && req.body?.existingOnly === true) {
-    res.status(401).json({ error: 'This wallet is not registered. Sign in with an existing credential for the requested account.' });
-    return;
-  }
+  // A sign-in to an account that already lists the wallet, and nothing else (the relay's
+  // /sign-action page): it opens no account, adds the wallet to none and claims no invite, but
+  // still finds the account the first-time path below would find.
+  const existingOnly = req.body?.existingOnly === true;
 
   // Authenticated add-wallet: if a valid bearer is presented, bind this
   // newly-signed wallet to the caller's user (not a new one) — but only a
@@ -2847,7 +2850,7 @@ app.post('/auth/siwe', authEnrollLimiter, async (req, res) => {
   // /wallet/link (walletHolder): a holder found on its pod is signed in to,
   // exactly as an indexed one is above, and a wallet whose holder cannot be
   // ruled out is not bound at all.
-  if (!user) {
+  if (!user && !existingOnly) {
     const authHeader = req.headers.authorization;
     if (authHeader?.startsWith('Bearer ')) {
       const tr = await verifyToken(authHeader.slice(7));
@@ -2873,12 +2876,20 @@ app.post('/auth/siwe', authEnrollLimiter, async (req, res) => {
   if (!user) {
     // No account this server has loaded holds the wallet. While some account is not loaded,
     // the wallet's may be one of them, so no account is opened for it (refuseWhileLoading); the
-    // account derived from it can still be signed in to (read below, never created). A
-    // bootstrap claim only opens an account, so it is refused before resolveTargetUserId spends
-    // the invite or anything reads the seeded pod.
+    // account derived from it can still be signed in to (read below, never created). An
+    // existingOnly sign-in opens nothing either, whether accounts are loading or not. A
+    // bootstrap claim only opens an account, so in both cases it is refused before
+    // resolveTargetUserId spends the invite or anything reads the seeded pod.
     const loading = !accountIndexState.complete;
-    if (loading && (bootstrapUserId || bootstrapInvite)) {
-      refuseWhileLoading(res, 'wallet');
+    // No account that lists the wallet was found. While accounts are loading, that is not "not
+    // registered": the wallet's account may be one not loaded yet.
+    const refuseUnknownWallet = (): void => {
+      if (loading) refuseWhileLoading(res, 'wallet');
+      else if (existingOnly) res.status(401).json({ error: 'This wallet is not registered. Sign in with an existing credential for the requested account.' });
+      else res.status(401).json({ error: 'This wallet is not registered. Sign in with an existing credential for this account and add this wallet from there.' });
+    };
+    if ((loading || existingOnly) && (bootstrapUserId || bootstrapInvite)) {
+      refuseUnknownWallet();
       return;
     }
     // Choose the target userId using the same three-mode logic as WebAuthn.
@@ -2920,10 +2931,11 @@ app.post('/auth/siwe', authEnrollLimiter, async (req, res) => {
     // create the account only if it holds no credentials (first-sign-in.ts). This costs the
     // first sign-in a pod read and a synchronous write, which FIX A had deferred; a blind
     // deferred write is what replaced whole accounts with one wallet. While accounts are
-    // loading, only an account that already lists the wallet is signed in to.
+    // loading, and for an existingOnly sign-in, only an account that already lists the wallet
+    // is signed in to.
     const outcome = await claimFirstSignInOnPod(targetUserId, agentId, displayName,
       m => m.walletAddresses.some(a => a.toLowerCase() === recoveredAddress),
-      m => { m.walletAddresses.push(recoveredAddress); }, /* mayCreate */ !loading);
+      m => { m.walletAddresses.push(recoveredAddress); }, /* mayCreate */ !loading && !existingOnly);
     if (outcome.kind === 'unreadable' || outcome.kind === 'unconfirmed') {
       log(`WARN: first-time SIWE sign-in to ${targetUserId} not completed (${outcome.kind}): ${outcome.reason}`);
       // Nothing was written, so a bootstrap invite spent by resolveTargetUserId is still
@@ -2941,8 +2953,7 @@ app.post('/auth/siwe', authEnrollLimiter, async (req, res) => {
       return;
     }
     if (outcome.kind === 'refused') {
-      if (loading) refuseWhileLoading(res, 'wallet');
-      else res.status(401).json({ error: 'This wallet is not registered. Sign in with an existing credential for this account and add this wallet from there.' });
+      refuseUnknownWallet();
       return;
     }
     if (outcome.kind === 'returning') {
@@ -3726,7 +3737,11 @@ app.post('/auth/did', authEnrollLimiter, async (req, res) => {
     // A DID that is not a did:key is bound with a key the caller holds, which need not be the
     // one its owner's account lists: one another account lists stays with that account, and is
     // not bound here too. The index may not have seen the owner's account yet: load the one
-    // derived from the DID.
+    // derived from the DID. Nor is one bound while some account is not loaded, as the owner's
+    // may be one of them (refuseWhileLoading). Bound then, it would not take the owner's
+    // sign-ins (its key never verifies the owner's signature), but once the owner removed the
+    // DID, to change its key say, the owner could never bind it again: a DID a loaded account
+    // lists with another key is refused above.
     if (user && !keyFromDid) {
       const derivedId = deriveUserIdFromDid(did);
       if (derivedId !== user.id && (await ensureAccountLoaded(derivedId)) === 'unreadable') {
@@ -3736,6 +3751,10 @@ app.post('/auth/did', authEnrollLimiter, async (req, res) => {
       const callerId = user.id;
       if (didIndex.candidates(did).some(holder => holder !== callerId)) {
         res.status(409).json({ error: 'This DID is registered to another account. Sign in to that account to manage it.' });
+        return;
+      }
+      if (!accountIndexState.complete) {
+        refuseWhileLoading(res, 'DID', true);
         return;
       }
     }

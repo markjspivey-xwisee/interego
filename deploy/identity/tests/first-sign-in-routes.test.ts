@@ -5,7 +5,8 @@
  * startup is never loaded; one listed account no longer holds the wallet its id was derived
  * from, as after the owner removed it. A sign-in with such a wallet or DID misses the
  * indexes and takes the first-time path, which used to PUT a fresh auth-methods document
- * over whatever the pod held. A bootstrap claim on that path reads the seeded account's pod
+ * over whatever the pod held. A sign-in for an existing account only (existingOnly) takes the
+ * same path and creates nothing. A bootstrap claim on that path reads the seeded account's pod
  * only with its invite: a wrong one used to read the pod it named, and write an empty document
  * there, so `x/../<id>` planted a document in an account not yet opened.
  *
@@ -35,6 +36,9 @@ const wallets = {
   unreadable: Wallet.createRandom(),    // its pod answers 502
   fresh: Wallet.createRandom(),         // no pod
   raced: Wallet.createRandom(),         // no pod when read; another writer creates it before the write
+  // Signed in to for an existing account only (existingOnly, the relay's /sign-action page):
+  existingUnlisted: Wallet.createRandom(),  // its account lists it but was never loaded
+  existingNone: Wallet.createRandom(),      // no pod
 };
 const walletUser = (w: { address: string }) => deriveUserIdFromWallet(w.address.toLowerCase());
 
@@ -109,6 +113,8 @@ const pods = new Map<string, Record<string, unknown>>([
     webAuthnCredentials: [passkey('cred-wallet-owner')] }],
   [walletUser(wallets.unloaded), { userId: walletUser(wallets.unloaded), name: 'Unloaded', didKeys: [],
     walletAddresses: [wallets.unloaded.address.toLowerCase()], webAuthnCredentials: [passkey('cred-unloaded')] }],
+  [walletUser(wallets.existingUnlisted), { userId: walletUser(wallets.existingUnlisted), name: 'Unlisted', didKeys: [],
+    walletAddresses: [wallets.existingUnlisted.address.toLowerCase()], webAuthnCredentials: [] }],
   [didUser(dids.passkeyOnly), { userId: didUser(dids.passkeyOnly), name: 'DID owner', walletAddresses: [], didKeys: [],
     webAuthnCredentials: [passkey('cred-did-owner')] }],
   [didUser(dids.unloaded), { userId: didUser(dids.unloaded), name: 'DID unloaded', walletAddresses: [],
@@ -326,6 +332,37 @@ test('an account another writer creates between the read and the write is not ov
   assert.equal(r.status, 401, JSON.stringify(r.json));
   assert.deepEqual(writesTo(racedUser), []);
   assert.deepEqual(pods.get(racedUser), racedDoc);
+});
+
+test('a wallet sign-in for an existing account only finds an account its pod lists but the index missed, and opens none', async () => {
+  // The relay's /sign-action page signs in this way. It was told the wallet was not registered
+  // whenever the index missed the wallet's account, as it misses one the other instance opened
+  // while a deploy overlapped the two.
+  const userId = walletUser(wallets.existingUnlisted);
+  const found = await siwe(wallets.existingUnlisted, { existingOnly: true });
+  assert.equal(found.status, 200, `${JSON.stringify(found.json)}\n${output}`);
+  assert.equal(found.json['userId'], userId);
+  assert.deepEqual(writesTo(userId), []);
+  // A pod that cannot be read is "try again", not "not registered".
+  const down = await siwe(wallets.unreadable, { existingOnly: true });
+  assert.equal(down.status, 503, JSON.stringify(down.json));
+  assert.equal(down.json['token'], undefined);
+  assert.deepEqual(writesTo(walletUser(wallets.unreadable)), []);
+  // A wallet no account lists opens no account, and a bootstrap claim neither reads the seeded
+  // pod nor spends its invite (the claim below still succeeds).
+  const noneId = walletUser(wallets.existingNone);
+  const none = await siwe(wallets.existingNone, { existingOnly: true });
+  assert.equal(none.status, 401, JSON.stringify(none.json));
+  assert.equal(none.json['error'], 'This wallet is not registered. Sign in with an existing credential for the requested account.');
+  assert.deepEqual(writesTo(noneId), []);
+  assert.equal(pods.has(noneId), false);
+  const seededReads = readsOf(invites.wallet.userId);
+  const claim = await siwe(wallets.existingNone,
+    { existingOnly: true, bootstrapUserId: invites.wallet.userId, bootstrapInvite: invites.wallet.token });
+  assert.equal(claim.status, 401, JSON.stringify(claim.json));
+  assert.equal(claim.json['token'], undefined);
+  assert.equal(readsOf(invites.wallet.userId), seededReads);
+  assert.deepEqual(writesTo(invites.wallet.userId), []);
 });
 
 test('the same for a DID: refused beside a passkey, signed in when listed, 503 when unreadable, created once', async () => {
