@@ -71,6 +71,16 @@ describe('signed xAPI transport boundary', () => {
     expect((await writeSelfXapi(did, [statement()], h.deps)).body).toMatchObject({ok:false,lrsAccepted:true,durable:false});
     expect(h.saved).toHaveLength(0);
   });
+  it('preserves proven LRS acceptance when canonical read-back has a transport failure', async () => {
+    const h = harness();
+    h.deps.request = async method => {
+      if (method === 'POST') return { status: 200, body: [id] };
+      throw new Error('connection lost');
+    };
+    expect(await writeSelfXapi(did, [statement()], h.deps)).toMatchObject({ status: 502,
+      body: { ok: false, lrsAccepted: true, durable: false, statementIds: [id] } });
+    expect(h.saved).toHaveLength(0);
+  });
   it('returns real LRS pagination unchanged and bounds the requested page', async () => {
     const h = harness(); const result = {statements:[h.enriched], more:'/xapi/statements?cursor=next'};
     h.deps.request = async (method, query) => { h.requests.push({method,query:query.toString()}); return {status:200,body:result}; };
