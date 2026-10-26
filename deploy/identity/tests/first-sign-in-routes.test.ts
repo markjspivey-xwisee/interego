@@ -62,11 +62,19 @@ const didWeb = { did: 'did:web:owner.example', owner: ed25519(), other: ed25519(
 const sharedWeb = { did: 'did:web:shared.example', owner: ed25519(), other: ed25519(),
   ownerId: 'u-eth-0000000000d1', otherId: 'u-eth-0000000000d2' };
 // A wallet two accounts list (each binding proved possession): the one derived from it, loaded
-// at startup, and another loaded later.
+// at startup, and another loaded later whose id sorts before it, so only the preference for the
+// derived account picks it.
 const sharedWallet = Wallet.createRandom();
-const sharedWalletOther = 'wallet-second-holder';
-const didWebKey = (did: string, multibase: string) =>
-  ({ did, publicKeyMultibase: multibase, keyType: 'Ed25519VerificationKey2020', createdAt: now });
+const sharedWalletOther = 'a-wallet-second-holder';
+const didWebKey = (did: string, multibase: string, createdAt = now) =>
+  ({ did, publicKeyMultibase: multibase, keyType: 'Ed25519VerificationKey2020', createdAt });
+// The same for a did:key.
+const sharedDidKey = didKey();
+const sharedDidKeyOther = 'a-didkey-second-holder';
+// A did:web its owner bound first, then nine accounts bound with a copy of its public key (a
+// DID document publishes it), each sorting before the owner: more than the cap of holders tried.
+const copiedWeb = { did: 'did:web:copied.example', owner: ed25519(), ownerId: 'zz-web-owner',
+  copies: Array.from({ length: 9 }, (_, i) => `a-web-copy-${i + 1}`) };
 
 // Seeded legacy accounts claimed with a bootstrap invite (mode B).
 const invites = { wallet: { userId: 'seeded-wallet', token: crypto.randomBytes(16).toString('hex') },
@@ -94,9 +102,18 @@ const pods = new Map<string, Record<string, unknown>>([
     walletAddresses: [sharedWallet.address.toLowerCase()], webAuthnCredentials: [] }],
   [sharedWalletOther, { userId: sharedWalletOther, name: 'Wallet other', didKeys: [],
     walletAddresses: [sharedWallet.address.toLowerCase()], webAuthnCredentials: [] }],
+  [didUser(sharedDidKey), { userId: didUser(sharedDidKey), name: 'did:key derived', walletAddresses: [], webAuthnCredentials: [],
+    didKeys: [didWebKey(sharedDidKey.did, sharedDidKey.did.slice('did:key:'.length))] }],
+  [sharedDidKeyOther, { userId: sharedDidKeyOther, name: 'did:key other', walletAddresses: [], webAuthnCredentials: [],
+    didKeys: [didWebKey(sharedDidKey.did, sharedDidKey.did.slice('did:key:'.length), '2024-01-01T00:00:00.000Z')] }],
+  [copiedWeb.ownerId, { userId: copiedWeb.ownerId, name: 'did:web owner', walletAddresses: [], webAuthnCredentials: [],
+    didKeys: [didWebKey(copiedWeb.did, copiedWeb.owner.multibase, '2025-01-01T00:00:00.000Z')] }],
+  ...copiedWeb.copies.map(id => [id, { userId: id, name: 'did:web copy', walletAddresses: [], webAuthnCredentials: [],
+    didKeys: [didWebKey(copiedWeb.did, copiedWeb.owner.multibase)] }] as [string, Record<string, unknown>]),
 ]);
 // Only these are in the root listing, so only these load at startup.
-const listed = new Set([walletUser(wallets.passkeyOnly), didUser(dids.passkeyOnly), sharedWeb.ownerId, walletUser(sharedWallet)]);
+const listed = new Set([walletUser(wallets.passkeyOnly), didUser(dids.passkeyOnly), sharedWeb.ownerId, walletUser(sharedWallet),
+  didUser(sharedDidKey), copiedWeb.ownerId, ...copiedWeb.copies]);
 const unreadable = new Set([walletUser(wallets.unreadable), didUser(dids.unreadable)]);
 // Pods a test makes unreadable for a while (a CSS blip), after startup has loaded the rest.
 const blipping = new Set<string>();
@@ -343,4 +360,19 @@ test('a wallet two accounts list signs in to the one derived from it, whichever 
   assert.equal(legacy.json['userId'], walletUser(sharedWallet));
   assert.deepEqual(writesTo(walletUser(sharedWallet)), []);
   assert.deepEqual(writesTo(sharedWalletOther), []);
+});
+
+test('a did:key two accounts list signs in to the one derived from it, though the other sorts first and enrolled first', async () => {
+  await load(sharedDidKeyOther);
+  const r = await didSignIn(sharedDidKey);
+  assert.equal(r.status, 200, `${JSON.stringify(r.json)}\n${output}`);
+  assert.equal(r.json['userId'], didUser(sharedDidKey));
+  assert.deepEqual(writesTo(sharedDidKeyOther), []);
+});
+
+test('a did:web whose public key later accounts copied still signs in to its owner, past the cap of holders tried', async () => {
+  const r = await didSignIn({ did: copiedWeb.did, privateKey: copiedWeb.owner.privateKey }, { publicKeyMultibase: copiedWeb.owner.multibase });
+  assert.equal(r.status, 200, `${JSON.stringify(r.json)}\n${output}`);
+  assert.equal(r.json['userId'], copiedWeb.ownerId);
+  assert.ok(output.split('\n').some(l => /kind=did holders=10 tried=8$/.test(l.trim())), output);
 });

@@ -11,7 +11,7 @@
 
 import { test } from 'node:test';
 import { strict as assert } from 'node:assert';
-import { AccountIndex } from '../credential-index.js';
+import { AccountIndex, enrolledAt } from '../credential-index.js';
 
 test('indexing a second holder of a key keeps the first', () => {
   const index = new AccountIndex();
@@ -70,4 +70,30 @@ test('setUser reports the holder count of each key it newly shares, and nothing 
   assert.deepEqual(index.setUser('c', ['k1', 'k2']), [3, 2]);
   assert.deepEqual(index.setUser('c', ['k1', 'k2']), []);
   assert.deepEqual(index.setUser('a', ['k1', 'k2']), []);
+});
+
+test('a ranked key lists its earliest-enrolled holder first, ahead of the preferred one; ties go to the preferred', () => {
+  const index = new AccountIndex();
+  // The owner enrolled the passkey id first; a later account (the id's derived one) copied it.
+  index.setUser('u-pk-derived', [['p', 2000]]);
+  index.setUser('zz-owner', [['p', 1000]]);
+  index.setUser('a-later', [['p', 3000]]);
+  assert.deepEqual(index.candidates('p', 'u-pk-derived'), ['zz-owner', 'u-pk-derived', 'a-later']);
+  // Enrolled at the same moment: the derived account first, then by id.
+  index.setUser('zz-owner', [['p', 2000]]);
+  index.setUser('a-later', [['p', 2000]]);
+  assert.deepEqual(index.candidates('p', 'u-pk-derived'), ['u-pk-derived', 'a-later', 'zz-owner']);
+  // Re-indexing with a new enrolment time moves the holder, and reports no new sharing.
+  assert.deepEqual(index.setUser('zz-owner', [['p', 500]]), []);
+  assert.deepEqual(index.candidates('p', 'u-pk-derived'), ['zz-owner', 'u-pk-derived', 'a-later']);
+  // A key listed twice by one account ranks by its earlier enrolment.
+  index.setUser('a-later', [['p', 9000], ['p', 100]]);
+  assert.deepEqual(index.candidates('p'), ['a-later', 'zz-owner', 'u-pk-derived']);
+});
+
+test('enrolledAt ranks a server-set createdAt, and a record without one first', () => {
+  assert.equal(enrolledAt('2025-01-01T00:00:00.000Z'), Date.UTC(2025, 0, 1));
+  assert.equal(enrolledAt(undefined), 0);
+  assert.equal(enrolledAt('not a date'), 0);
+  assert.equal(enrolledAt(12345), 0);
 });

@@ -49,7 +49,7 @@ import { resolveTargetUserId } from './resolve-target-userid.js';
 import { claimFirstSignIn, type FirstSignInOutcome } from './first-sign-in.js';
 import { authenticatePasskey, PasskeyPersistenceError } from './passkey-authentication.js';
 import { listPods, loadAccounts, readPodJson, type AccountLoadReport, type FetchLike } from './account-index.js';
-import { AccountIndex, MAX_HOLDERS } from './credential-index.js';
+import { AccountIndex, MAX_HOLDERS, enrolledAt } from './credential-index.js';
 import { createProvisionalPlayProvider } from './provisional-play-provider.js';
 import { parsePlayClients } from './provisional-play.js';
 import { mountProvisionalPlay } from './provisional-play-routes.js';
@@ -1239,8 +1239,11 @@ function rebuildIndexesForUser(userId: string, m: AuthMethods): void {
   const closed = isTombstone(m) || deletedUserIds.has(userId);
   const shared: Array<[string, number[]]> = [
     ['wallet', walletIndex.setUser(userId, closed ? [] : m.walletAddresses.map(a => a.toLowerCase()))],
-    ['webauthn', credentialIndex.setUser(userId, closed ? [] : m.webAuthnCredentials.map(c => c.id))],
-    ['did', didIndex.setUser(userId, closed ? [] : m.didKeys.map(k => k.did))],
+    // A passkey (registered with 'none' attestation) and a DID that is not a did:key are bound
+    // with a public key the registrant chooses, and a public key can be copied: rank their
+    // holders by when the server enrolled them, so a later copy of the owner's key never wins.
+    ['webauthn', credentialIndex.setUser(userId, closed ? [] : m.webAuthnCredentials.map(c => [c.id, enrolledAt(c.createdAt)] as const))],
+    ['did', didIndex.setUser(userId, closed ? [] : m.didKeys.map(k => k.did.startsWith('did:key:') ? k.did : [k.did, enrolledAt(k.createdAt)] as const))],
   ];
   // Counts only, never an id: for a passkey or a did:web, a second holder is what the attack
   // above leaves behind; for a wallet or did:key it was put there by the key's holder.
@@ -3067,17 +3070,15 @@ app.post('/auth/webauthn/authenticate', authEnrollLimiter, async (req, res) => {
     res.status(404).json({ error: `User for credential not found` });
     return;
   }
-  if (holders.length > MAX_HOLDERS) {
-    log(`WARN identity_credential_multi_holder kind=webauthn holders=${holders.length} refused`);
-    res.status(401).json({ error: 'This passkey cannot be used to sign in here; sign in with another credential for the account' });
-    return;
-  }
+  // Bounded work, never a refusal: refusing a crowded id would let anyone who adds it to enough
+  // accounts lock its owner out. The owner's account enrolled the id first, so it is tried.
+  if (holders.length > MAX_HOLDERS) log(`WARN identity_credential_multi_holder kind=webauthn holders=${holders.length} tried=${MAX_HOLDERS}`);
   // Every account whose record still lists this credential, in the index's stable order (the
-  // account derived from the credential id first). The first whose stored key verifies the
-  // assertion wins, and only its counter is written: authenticatePasskey changes a record only
-  // after it verifies, so a holder whose key does not match is tried at no cost.
+  // earliest-enrolled first). The first whose stored key verifies the assertion wins, and only
+  // its counter is written: authenticatePasskey changes a record only after it verifies, so a
+  // holder whose key does not match is tried at no cost.
   const tries: Array<{ userId: string; methods: AuthMethods; cred: AuthMethods['webAuthnCredentials'][number] }> = [];
-  for (const id of holders) {
+  for (const id of holders.slice(0, MAX_HOLDERS)) {
     const methods = await readAuthMethods(id);
     const cred = methods.webAuthnCredentials.find(c => c.id === response.id);
     if (cred) tries.push({ userId: id, methods, cred });
@@ -3101,7 +3102,8 @@ app.post('/auth/webauthn/authenticate', authEnrollLimiter, async (req, res) => {
         });
       }
     } catch (err) {
-      if (deletedUserIds.has(userId)) {
+      // A holder deleted mid-request that merely failed to verify is no answer: try the next.
+      if (deletedUserIds.has(userId) && (err instanceof PasskeyPersistenceError || err instanceof AccountDeletedError)) {
         // The account was deleted while this sign-in was verified; its counter was not written.
         res.status(409).json({ error: ACCOUNT_DELETED_MESSAGE });
         return;
@@ -3260,18 +3262,16 @@ app.post('/auth/did', authEnrollLimiter, async (req, res) => {
   }
 
   // Returning user via DID index — no user-claim needed. Every account listing this DID is a
-  // candidate, in a stable order (the account derived from the DID first, then by id).
+  // candidate, in a stable order (for a DID that is not a did:key, the earliest-enrolled first;
+  // then the account derived from the DID, then by id), at most MAX_HOLDERS of them.
   const indexLookupStart = timingEnabled() ? startTiming() : 0;
   const derivedDidUserId = deriveUserIdFromDid(did);
-  const didHolders = didIndex.candidates(did, derivedDidUserId).filter(id => identities.get(id)?.type === 'user');
+  const allDidHolders = didIndex.candidates(did, derivedDidUserId).filter(id => identities.get(id)?.type === 'user');
+  if (allDidHolders.length > MAX_HOLDERS) log(`WARN identity_credential_multi_holder kind=did holders=${allDidHolders.length} tried=${MAX_HOLDERS}`);
+  const didHolders = allDidHolders.slice(0, MAX_HOLDERS);
   let userId: string | undefined;
   let user: Identity | undefined;
   if (timingEnabled()) logTiming('did-index-lookup', indexLookupStart, { hit: didHolders.length > 0 });
-  if (didHolders.length > MAX_HOLDERS) {
-    log(`WARN identity_credential_multi_holder kind=did holders=${didHolders.length} refused`);
-    res.status(401).json({ error: DID_KEY_NOT_REGISTERED });
-    return;
-  }
   if (keyFromDid) {
     // A did:key is its own key: every account listing it was bound by that key's holder.
     userId = didHolders[0];

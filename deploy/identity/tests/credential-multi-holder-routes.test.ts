@@ -27,9 +27,13 @@ import { fileURLToPath } from 'node:url';
 import { assertion, attest, softPasskey, type SoftPasskey } from './soft-authenticator.js';
 
 const now = new Date().toISOString();
-const stored = (key: SoftPasskey) => ({ id: key.id, publicKey: key.cose.toString('base64url'), counter: 0, createdAt: now });
+// When the owners enrolled: before anyone could copy their credential ids.
+const earlier = '2025-01-01T00:00:00.000Z';
+const stored = (key: SoftPasskey, createdAt = now) => ({ id: key.id, publicKey: key.cose.toString('base64url'), counter: 0, createdAt });
 const account = (userId: string, ...passkeys: SoftPasskey[]) =>
-  ({ userId, name: userId, walletAddresses: [], didKeys: [], webAuthnCredentials: passkeys.map(stored) });
+  ({ userId, name: userId, walletAddresses: [], didKeys: [], webAuthnCredentials: passkeys.map(k => stored(k)) });
+const enrolled = (userId: string, key: SoftPasskey, createdAt: string) =>
+  ({ ...account(userId), webAuthnCredentials: [stored(key, createdAt)] });
 /** Someone else's passkey with the same credential id. */
 const sameId = (key: SoftPasskey) => softPasskey(key.rawId);
 
@@ -41,10 +45,18 @@ const pair = { victim: softPasskey(), victimId: 'u-eth-00000000000b' };
 const pairAttacker = sameId(pair.victim);
 const flaky = { victim: softPasskey(), victimId: 'u-eth-00000000000c' };
 const flakyAttacker = sameId(flaky.victim);
-const crowded = softPasskey();   // listed by more accounts than the cap
+// A victim's id registered by someone else with a copy of the victim's public key (a public
+// key is not secret), so the victim's own signature verifies on both accounts.
+const copied = { victim: softPasskey(), victimId: 'u-eth-00000000000d' };
+// An owner's id added by someone else to nine accounts of their own, each with its own key.
+const crowded = { owner: softPasskey(), ownerId: 'zz-crowd-owner' };
+const crowd = Array.from({ length: 9 }, (_, i) => ({ id: `crowd-${i + 1}`, key: sameId(crowded.owner) }));
 const eight = softPasskey();     // listed by exactly the cap
-const crowdIds = Array.from({ length: 9 }, (_, i) => `crowd-${i + 1}`);
 const eightIds = Array.from({ length: 8 }, (_, i) => `eight-${8 - i}`);
+// One id on two accounts, each with its own key; the earlier-enrolled one is deleted while the
+// other's sign-in is reading their records.
+const doomed = { key: softPasskey(), id: 'del-x' };
+const survivor = { key: sameId(doomed.key), id: 'del-v' };
 
 const pods = new Map<string, Record<string, unknown>>([
   [race.victimId, account(race.victimId, race.victim)],
@@ -52,14 +64,20 @@ const pods = new Map<string, Record<string, unknown>>([
   [pairAttacker.userId, account(pairAttacker.userId, pairAttacker)],
   [flaky.victimId, account(flaky.victimId, flaky.victim)],
   [flakyAttacker.userId, account(flakyAttacker.userId, flakyAttacker)],
-  ...crowdIds.map(id => [id, account(id, crowded)] as [string, Record<string, unknown>]),
+  [copied.victimId, enrolled(copied.victimId, copied.victim, earlier)],
+  [crowded.ownerId, enrolled(crowded.ownerId, crowded.owner, earlier)],
+  ...crowd.map(({ id, key }) => [id, account(id, key)] as [string, Record<string, unknown>]),
+  [doomed.id, enrolled(doomed.id, doomed.key, '2024-01-01T00:00:00.000Z')],
+  [survivor.id, enrolled(survivor.id, survivor.key, earlier)],
   ...eightIds.map(id => [id, account(id, eight)] as [string, Record<string, unknown>]),
 ]);
 // Only these are in the root listing, so only these load at startup. The others load when a
 // targeted sign-in names them (POST /challenges with a userId).
-const listed = new Set([pair.victimId, flaky.victimId, ...crowdIds, ...eightIds]);
+const listed = new Set([pair.victimId, flaky.victimId, crowded.ownerId, ...crowd.map(c => c.id), ...eightIds, doomed.id, survivor.id]);
 const failingPuts = new Set<string>([flaky.victimId]);
 const writes: string[] = [];
+/** A pod read a test holds until it lets go: `arrived` resolves when the read comes in. */
+let heldRead: { userId: string; arrived: () => void; release: Promise<void> } | undefined;
 
 function servePods(req: http.IncomingMessage, res: http.ServerResponse): void {
   const path = new URL(req.url ?? '/', 'http://pods').pathname;
@@ -69,6 +87,13 @@ function servePods(req: http.IncomingMessage, res: http.ServerResponse): void {
     return;
   }
   const m = /^\/([^/]+)\/auth-methods\.jsonld$/.exec(path);
+  if (m && req.method === 'GET' && heldRead?.userId === m[1]) {
+    const held = heldRead;
+    heldRead = undefined;
+    held.arrived();
+    void held.release.then(() => servePods(req, res));
+    return;
+  }
   if (m && req.method === 'GET') {
     const doc = pods.get(m[1]!);
     if (!doc) { res.writeHead(404).end(); return; }
@@ -223,9 +248,53 @@ test('a counter the verifying account cannot persist is a 503, and no other hold
   await signsInTo(flaky.victim, flaky.victimId);
 });
 
-test('up to the cap, holders are tried in id order; above it the passkey is refused', async () => {
+test('a later copy of the victim\'s public key under the victim\'s id does not take the victim\'s sign-in', async () => {
+  // The derived account is created with the victim's own public key: 'none' attestation proves
+  // nothing about the private key. The victim's signature now verifies on both accounts.
+  const copy = { ...copied.victim };
+  const r = await register(copy);
+  assert.equal(r.status, 200, `${JSON.stringify(r.json)}\n${output}`);
+  assert.equal(r.json['userId'], copied.victim.userId);
+  await challenge(copied.victimId);
+  // The victim's account enrolled the id first, so it is tried first, every time.
+  await signsInTo(copied.victim, copied.victimId);
+  await signsInTo(copied.victim, copied.victimId);
+  assert.equal(writesTo(copied.victim.userId), 1);   // its creation, never a sign-in counter
+});
+
+test('holders of equal standing are tried in id order, up to the cap', async () => {
   await signsInTo(eight, 'eight-1');
-  const r = await signIn(crowded);
-  assert.equal(r.status, 401, JSON.stringify(r.json));
-  assert.equal(r.json['token'], undefined);
+});
+
+test('an id on more accounts than the cap still signs its owner in: the earliest-enrolled are tried', async () => {
+  await signsInTo(crowded.owner, crowded.ownerId);
+  // The owner, then crowd-1..crowd-7, are tried; past the cap, nothing is.
+  await signsInTo(crowd[0]!.key, 'crowd-1');
+  const past = await signIn(crowd[7]!.key);
+  assert.equal(past.status, 401, JSON.stringify(past.json));
+  assert.equal(past.json['token'], undefined);
+  assert.ok(output.split('\n').some(l => /kind=webauthn holders=10 tried=8$/.test(l.trim())), output);
+});
+
+test('a holder deleted while a sign-in reads the records is skipped, not reported as the deleted account', async () => {
+  // A token for the earlier-enrolled holder, so it can be deleted mid-request.
+  const token = await signIn(doomed.key);
+  assert.equal(token.status, 200, JSON.stringify(token.json));
+  assert.equal(token.json['userId'], doomed.id);
+  // Wait out the auth-methods cache, so the sign-in below reads both records from their pods.
+  await new Promise(resolve => setTimeout(resolve, 10_500));
+  let arrived!: () => void;
+  let release!: () => void;
+  const reading = new Promise<void>(resolve => { arrived = resolve; });
+  heldRead = { userId: survivor.id, arrived, release: new Promise<void>(resolve => { release = resolve; }) };
+  const signingIn = signIn(survivor.key);
+  await reading;
+  const del = await fetch(`${base}/users/me/delete`, {
+    method: 'POST', headers: { Authorization: `Bearer ${String(token.json['token'])}`, 'Content-Type': 'application/json' }, body: '{}',
+  });
+  assert.equal(del.status, 200, await del.text());
+  release();
+  const r = await signingIn;
+  assert.equal(r.status, 200, `${JSON.stringify(r.json)}\n${output}`);
+  assert.equal(r.json['userId'], survivor.id);
 });

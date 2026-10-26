@@ -11,37 +11,62 @@
  * chooses, had the same problem.
  *
  * Here a credential maps to every account that lists it. A sign-in tries them in a stable
- * order (the account derived from the credential first, then by id) and the first whose
- * record verifies the proof wins, so another holder can neither take nor block the sign-in.
+ * order and the first whose record verifies the proof wins, so another holder can neither take
+ * nor block the sign-in. The order is earliest-enrolled first where the binding key is the
+ * registrant's choice (a passkey registered with 'none' attestation, a did:web bound with a key
+ * the caller sends): such a key can be copied, since a public key is not secret, so a later
+ * copy of the owner's key must not win, and the owner's account must be among those tried.
+ * Ties, and the credentials bound by proof of possession (wallets, did:key), go to the
+ * preferred account (the one derived from the credential), then by id.
  *
  * Pure: no server state, so it is unit-tested directly (tests/credential-index.test.ts).
  */
 
-/** More holders than this for one credential is refused rather than tried one by one. */
+/** At most this many holders of one credential are tried (and their records read), in order. */
 export const MAX_HOLDERS = 8;
 
+/**
+ * A credential an account holds, optionally with when it was enrolled there (ms since the
+ * epoch, set by the server). A bare key ranks as enrolled at 0.
+ */
+export type IndexEntry = string | readonly [key: string, enrolledAt: number];
+
+/**
+ * The rank of a server-set `createdAt`. A record without one (written before the field
+ * existed) ranks first: every record the server writes now carries one, so a later copy cannot
+ * be made to look older.
+ */
+export function enrolledAt(createdAt: unknown): number {
+  const t = typeof createdAt === 'string' ? Date.parse(createdAt) : NaN;
+  return Number.isFinite(t) ? t : 0;
+}
+
 export class AccountIndex {
-  private readonly byKey = new Map<string, Set<string>>();
+  /** key → (userId → enrolledAt) */
+  private readonly byKey = new Map<string, Map<string, number>>();
   private readonly byUser = new Map<string, Set<string>>();
 
   /**
-   * Make `keys` the credentials `userId` holds, leaving every other holder alone. Returns the
-   * holder count of each key this user did not hold before and now shares with another account
-   * (for the multi-holder warning), so re-indexing an unchanged account reports nothing.
+   * Make `entries` the credentials `userId` holds, leaving every other holder alone. Returns
+   * the holder count of each key this user did not hold before and now shares with another
+   * account (for the multi-holder warning), so re-indexing an unchanged account reports nothing.
    */
-  setUser(userId: string, keys: Iterable<string>): number[] {
-    const next = new Set(keys);
+  setUser(userId: string, entries: Iterable<IndexEntry>): number[] {
+    const next = new Map<string, number>();
+    for (const entry of entries) {
+      const [key, rank] = typeof entry === 'string' ? [entry, 0] : entry;
+      next.set(key, Math.min(rank, next.get(key) ?? Infinity));
+    }
     const previous = this.byUser.get(userId) ?? new Set<string>();
     for (const key of previous) if (!next.has(key)) this.drop(key, userId);
     const shared: number[] = [];
-    for (const key of next) {
-      if (previous.has(key)) continue;
+    for (const [key, rank] of next) {
       let holders = this.byKey.get(key);
-      if (!holders) this.byKey.set(key, holders = new Set());
-      holders.add(userId);
-      if (holders.size > 1) shared.push(holders.size);
+      if (!holders) this.byKey.set(key, holders = new Map());
+      holders.set(userId, rank);
+      if (!previous.has(key) && holders.size > 1) shared.push(holders.size);
     }
-    if (next.size) this.byUser.set(userId, next);
+    if (next.size) this.byUser.set(userId, new Set(next.keys()));
     else this.byUser.delete(userId);
     return shared;
   }
@@ -50,12 +75,13 @@ export class AccountIndex {
     this.setUser(userId, []);
   }
 
-  /** Every account holding `key`: `preferred` first when it is one, then in id order. */
+  /** Every account holding `key`: earliest enrolled first, then `preferred`, then by id. */
   candidates(key: string, preferred?: string): string[] {
-    const holders = [...(this.byKey.get(key) ?? [])].sort();
-    const at = preferred === undefined ? -1 : holders.indexOf(preferred);
-    if (at > 0) holders.unshift(...holders.splice(at, 1));
-    return holders;
+    return [...(this.byKey.get(key) ?? [])]
+      .sort(([a, ra], [b, rb]) => ra - rb
+        || Number(b === preferred) - Number(a === preferred)
+        || (a < b ? -1 : a > b ? 1 : 0))
+      .map(([userId]) => userId);
   }
 
   has(key: string): boolean {
