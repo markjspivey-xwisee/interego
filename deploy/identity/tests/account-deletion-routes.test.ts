@@ -248,7 +248,7 @@ async function register(key: SoftPasskey, extra: Record<string, unknown> = {}) {
 
 async function siwe(w: { address: string; signMessage(message: string): Promise<string> }) {
   const { nonce } = (await post('/challenges', { purpose: 'siwe' })).json as { nonce: string };
-  const message = `example.test wants you to sign in with your Ethereum account:\n${w.address}\n\nSign in.\n\nNonce: ${nonce}`;
+  const message = `${new URL(base).host} wants you to sign in with your Ethereum account:\n${w.address}\n\nSign in.\n\nNonce: ${nonce}`;
   return post('/auth/siwe', { message, signature: await w.signMessage(message), nonce, name: 'Someone' });
 }
 

@@ -2431,12 +2431,102 @@ app.post('/challenges', challengeLimiter, async (req, res) => {
   res.json(resp);
 });
 
+// ── SIWE message rule (shared by /auth/siwe and /wallet/link) ──
+
+/**
+ * The hosts a SIWE message may name on its first line: this server, the relay whose /authorize
+ * page signs users in (RELAY_URL, RELAY_PUBLIC_URL or the relay host derived from BASE_URL), the
+ * WebAuthn ceremony origins (WEBAUTHN_RP_ORIGINS), and any extra front-end listed in
+ * SIWE_DOMAINS (comma-separated hosts). A wallet shows the user this domain line and warns when
+ * it does not match the page asking, so it is what ties a signature to an Interego sign-in.
+ * Without this rule a server nonce relayed into another site's "Sign in with Ethereum" prompt
+ * came back as a signature this server accepted.
+ */
+let siweDomainsMemo: ReadonlySet<string> | null = null;
+function siweDomains(): ReadonlySet<string> {
+  if (siweDomainsMemo) return siweDomainsMemo;
+  const hosts = new Set<string>();
+  const addUrl = (u: string | undefined) => {
+    if (!u || !u.trim()) return;
+    try { hosts.add(new URL(u.trim()).host.toLowerCase()); } catch { /* not a URL: skip */ }
+  };
+  addUrl(BASE_URL);
+  addUrl(RELAY_URL);
+  addUrl(process.env['RELAY_PUBLIC_URL']);
+  addUrl(relayPublicBase());
+  for (const origin of RP_ALLOWLIST.keys()) addUrl(origin);
+  for (const h of (process.env['SIWE_DOMAINS'] ?? '').split(',').map(x => x.trim().toLowerCase()).filter(Boolean)) hosts.add(h);
+  siweDomainsMemo = hosts;
+  return hosts;
+}
+
+const SIWE_DOMAIN_SUFFIX = ' wants you to sign in with your Ethereum account:';
+type SiweMessageCheck =
+  | { ok: true; address: string }
+  | { ok: false; status: 400; body: Record<string, string> };
+
+/**
+ * An ERC-4361 message this server accepts with `nonce`: its first line is
+ * `<host> wants you to sign in with your Ethereum account:` for a host in siweDomains(), its
+ * second line is the signing wallet's address, and it carries the line `Nonce: <nonce>`.
+ * Returns that address, lowercased; the caller still checks the signature recovers to it.
+ */
+function checkSiweMessage(message: string, nonce: string): SiweMessageCheck {
+  const lines = message.split(/\r?\n/);
+  const first = lines[0]?.trim() ?? '';
+  const domain = first.endsWith(SIWE_DOMAIN_SUFFIX) ? first.slice(0, -SIWE_DOMAIN_SUFFIX.length).toLowerCase() : null;
+  if (domain === null || !siweDomains().has(domain)) {
+    return { ok: false, status: 400, body: {
+      error: 'SIWE message is not addressed to this server',
+      detail: 'The first line of the signed message names the site the wallet was signing in to. It must be this Interego deployment.',
+      hint: `Its first line must be "${BASE_URL_HOST}${SIWE_DOMAIN_SUFFIX}" (or name another front-end of this deployment).`,
+    } };
+  }
+  const address = lines[1]?.trim() ?? '';
+  if (!/^0x[0-9a-fA-F]{40}$/.test(address)) {
+    return { ok: false, status: 400, body: {
+      error: 'SIWE message does not name a wallet address on its second line',
+      hint: 'ERC-4361: the line after the domain line is the 0x address of the wallet that signs.',
+    } };
+  }
+  if (!lines.some(l => l.trim() === `Nonce: ${nonce}`)) {
+    return { ok: false, status: 400, body: {
+      error: 'SIWE message does not contain the issued nonce',
+      title: 'Signed message is missing the challenge nonce',
+      detail: 'Replay defense: the signed SIWE statement MUST carry the nonce we issued at /challenges on its own `Nonce:` line.',
+      hint: 'Your wallet client should construct the SIWE message with `Nonce:` set to the value returned by /challenges.',
+    } };
+  }
+  return { ok: true, address: address.toLowerCase() };
+}
+
+/**
+ * Who holds `addr`, as far as this server can tell, before binding it to `forUserId`. The
+ * account the wallet would have opened by itself (u-eth-<addr>) is loaded from its pod in case
+ * the index missed it. 'unknown' means some pod could not be read, so another account may hold
+ * the wallet unseen: the caller must not bind it.
+ */
+async function walletHolder(addr: string, forUserId: string): Promise<{ kind: 'free' } | { kind: 'held'; userId: string } | { kind: 'unknown' }> {
+  const derivedId = deriveUserIdFromWallet(addr);
+  const derived = derivedId === forUserId ? 'absent' : await ensureAccountLoaded(derivedId);
+  const holder = walletIndex.get(addr);
+  if (holder !== undefined && holder !== forUserId) return { kind: 'held', userId: holder };
+  if (derived === 'unreadable' || !accountIndexState.complete) return { kind: 'unknown' };
+  return { kind: 'free' };
+}
+
 // ── SIWE auth (Ethereum wallet) ─────────────────────────────
 
 /**
  * POST /auth/siwe — verify a SIWE message + signature, issue a bearer
  * token scoped to the user whose wallet is either already registered
  * or is being registered now (first-time flow).
+ *
+ * The message must be one checkSiweMessage accepts: addressed to this deployment on its first
+ * line, naming the signing wallet on its second, and carrying the /challenges nonce on its
+ * `Nonce:` line. A wallet already held by an account signs in to that account, bearer or not;
+ * a bearer adds the wallet to its own account only when no account holds it, and only when
+ * every account could be read (otherwise 503).
  *
  * Body: {
  *   message: string,         // SIWE message containing the nonce
@@ -2455,7 +2545,8 @@ app.post('/auth/siwe', authEnrollLimiter, async (req, res) => {
     bootstrapUserId, bootstrapInvite,
     surfaceAgent,
   } = req.body ?? {};
-  if (!message || !signature || !nonce) {
+  if (typeof message !== 'string' || typeof signature !== 'string' || typeof nonce !== 'string'
+    || !message || !signature || !nonce) {
     res.status(400).json({
       error: 'message, signature, and nonce are required',
       title: 'SIWE request is missing required fields',
@@ -2474,13 +2565,11 @@ app.post('/auth/siwe', authEnrollLimiter, async (req, res) => {
     });
     return;
   }
-  if (!String(message).includes(nonce)) {
-    res.status(400).json({
-      error: 'SIWE message does not contain the issued nonce',
-      title: 'Signed message is missing the challenge nonce',
-      detail: 'Replay defense: the signed SIWE statement MUST embed the nonce we issued at /challenges. Without it, an attacker could replay an old signature.',
-      hint: 'Your wallet client should construct the SIWE message with `Nonce:` set to the value returned by /challenges.',
-    });
+  // The nonce alone does not tie the signature to this server: anyone can fetch one from
+  // /challenges and put it in their own site's sign-in prompt. The domain line does.
+  const checked = checkSiweMessage(message, nonce);
+  if (checked.ok === false) {
+    res.status(checked.status).json(checked.body);
     return;
   }
 
@@ -2498,9 +2587,8 @@ app.post('/auth/siwe', authEnrollLimiter, async (req, res) => {
     return;
   }
 
-  const addressMatch = String(message).match(/0x[a-fA-F0-9]{40}/);
-  const claimedAddress = addressMatch?.[0]?.toLowerCase();
-  if (claimedAddress && claimedAddress !== recoveredAddress) {
+  const claimedAddress = checked.address;
+  if (claimedAddress !== recoveredAddress) {
     res.status(401).json({
       error: `Signature mismatch: message claims ${claimedAddress}, recovered ${recoveredAddress}`,
       title: 'Signature belongs to a different wallet than the message claims',
@@ -2523,13 +2611,26 @@ app.post('/auth/siwe', authEnrollLimiter, async (req, res) => {
   }
 
   // Authenticated add-wallet: if a valid bearer is presented, bind this
-  // newly-signed wallet to the caller's user (not a new one).
+  // newly-signed wallet to the caller's user (not a new one) — but only a
+  // wallet no account holds. Not being in the wallet index does not show
+  // that: the holder's pod may not have been read. The same check as
+  // /wallet/link (walletHolder): a holder found on its pod is signed in to,
+  // exactly as an indexed one is above, and a wallet whose holder cannot be
+  // ruled out is not bound at all.
   if (!user) {
     const authHeader = req.headers.authorization;
     if (authHeader?.startsWith('Bearer ')) {
       const tr = await verifyToken(authHeader.slice(7));
       if (tr.valid) {
-        userId = tr.record!.userId;
+        const holder = await walletHolder(recoveredAddress, tr.record!.userId);
+        if (holder.kind === 'unknown') {
+          res.status(503).json({
+            error: 'Could not check this wallet just now',
+            detail: 'Not every account could be read, so this server cannot tell whether another account holds this wallet. Nothing was changed; try again in a minute.',
+          });
+          return;
+        }
+        userId = holder.kind === 'held' ? holder.userId : tr.record!.userId;
         user = identities.get(userId);
       }
     }
@@ -4007,6 +4108,13 @@ app.get('/users', async (req, res) => {
  * the victim's later wallet sign-ins could then resolve to the attacker's account.
  */
 app.post('/wallet/link', authEnrollLimiter, async (req, res) => {
+  const { walletAddress, siweMessage, signature, nonce } = req.body ?? {};
+  // Spend the challenge before any refusal, so a nonce is never good twice. A wallet-link
+  // message names this server and carries a 'siwe' nonce, so if its nonce outlived a refused
+  // request (a stale bearer, say), the same message and signature would still sign the wallet
+  // in at /auth/siwe for anyone who saw them.
+  const challengeOk = typeof nonce === 'string' && nonce !== '' && consumeChallenge(nonce, 'siwe') !== null;
+
   // MUST be authenticated as the target user. Previously any caller could
   // name an arbitrary userId and attach a valid-but-foreign wallet to it,
   // which gave that wallet first-class auth into the victim's account on
@@ -4019,7 +4127,6 @@ app.post('/wallet/link', authEnrollLimiter, async (req, res) => {
   const tr = await verifyToken(authHeader.slice(7));
   if (!tr.valid) { res.status(401).json({ error: `Invalid bearer token: ${tr.reason}` }); return; }
 
-  const { walletAddress, siweMessage, signature, nonce } = req.body ?? {};
   if (typeof walletAddress !== 'string' || typeof siweMessage !== 'string' || typeof signature !== 'string'
     || typeof nonce !== 'string' || !walletAddress || !siweMessage || !signature || !nonce) {
     res.status(400).json({
@@ -4040,8 +4147,7 @@ app.post('/wallet/link', authEnrollLimiter, async (req, res) => {
     return;
   }
 
-  // Spend the challenge before anything else can fail, so a nonce is never good twice.
-  if (!consumeChallenge(nonce, 'siwe')) {
+  if (!challengeOk) {
     res.status(401).json({
       error: 'Invalid or expired challenge',
       detail: 'Challenges are single-use and valid for 5 minutes.',
@@ -4050,16 +4156,12 @@ app.post('/wallet/link', authEnrollLimiter, async (req, res) => {
     return;
   }
   const addr = walletAddress.toLowerCase();
-  const lines = siweMessage.split(/\r?\n/);
-  if (!lines.some(l => l.trim() === `Nonce: ${nonce}`)) {
-    res.status(400).json({ error: 'SIWE message does not contain the issued nonce', hint: 'The signed message must carry a line `Nonce: <nonce>` with the nonce from POST /challenges.' });
+  const checked = checkSiweMessage(siweMessage, nonce);
+  if (checked.ok === false) {
+    res.status(checked.status).json(checked.body);
     return;
   }
-  if (lines[0]?.trim() !== `${BASE_URL_HOST} wants you to sign in with your Ethereum account:`) {
-    res.status(400).json({ error: `SIWE message is not addressed to this server`, hint: `Its first line must be "${BASE_URL_HOST} wants you to sign in with your Ethereum account:".` });
-    return;
-  }
-  if (lines[1]?.trim().toLowerCase() !== addr) {
+  if (checked.address !== addr) {
     res.status(400).json({ error: 'SIWE message does not name walletAddress', hint: 'Its second line must be the wallet address being linked.' });
     return;
   }
@@ -4079,16 +4181,14 @@ app.post('/wallet/link', authEnrollLimiter, async (req, res) => {
 
   // A wallet another account holds stays with it (as passkeys and DIDs do). Every pod must have
   // been read to know that, and the account the wallet would have opened by itself is loaded
-  // from its pod in case the index missed it.
-  const derivedId = deriveUserIdFromWallet(addr);
-  const derived = derivedId === userId ? 'absent' : await ensureAccountLoaded(derivedId);
-  if (derived === 'unreadable' || !accountIndexState.complete) {
-    res.status(503).json({ error: 'Could not check this wallet just now', detail: 'Not every account could be read, so this server cannot tell whether another account holds this wallet. Nothing was changed; try again in a minute.' });
+  // from its pod in case the index missed it (walletHolder).
+  const holder = await walletHolder(addr, userId);
+  if (holder.kind === 'held') {
+    res.status(409).json({ error: 'This wallet is registered to another account. Sign in to that account to manage it.' });
     return;
   }
-  const holder = walletIndex.get(addr);
-  if (holder !== undefined && holder !== userId) {
-    res.status(409).json({ error: 'This wallet is registered to another account. Sign in to that account to manage it.' });
+  if (holder.kind === 'unknown') {
+    res.status(503).json({ error: 'Could not check this wallet just now', detail: 'Not every account could be read, so this server cannot tell whether another account holds this wallet. Nothing was changed; try again in a minute.' });
     return;
   }
 
@@ -4611,7 +4711,7 @@ app.get('/wallet/status/:userId', async (req, res) => {
  * case is LOUD: resolving to our own origin means the derivation failed again, and a
  * warning at least appears in the logs rather than in a user's MCP client.
  */
-function resolveRelayBase(): string {
+function relayPublicBase(): string {
   const explicit = process.env['RELAY_PUBLIC_URL'];
   const derived = (explicit && explicit.trim())
     ? explicit.trim()
@@ -4620,7 +4720,11 @@ function resolveRelayBase(): string {
         .replace(/^(https?:\/\/)identity\./i, '$1relay.')
         // legacy scheme, kept so an older deployment still resolves
         .replace('-identity.', '-relay.');
-  const out = derived.replace(/\/$/, '');
+  return derived.replace(/\/$/, '');
+}
+
+function resolveRelayBase(): string {
+  const out = relayPublicBase();
   if (out === BASE_URL.replace(/\/$/, '')) {
     console.error(
       '[identity] relay base resolved to our OWN origin (%s). The dashboard will hand ' +
@@ -5372,6 +5476,7 @@ app.listen(PORT, () => {
     log(`Introspection: FAIL-CLOSED (no IDENTITY_INTROSPECTION_SECRET, no ALLOW_OPEN_INTROSPECTION) — /tokens/verify returns 401 until one is set.`);
   }
   log(`WebAuthn RP: static id=${RP_ID} origin=${RP_ORIGIN}; per-request allowlist=[${[...RP_ALLOWLIST.keys()].join(', ') || '(none)'}]`);
+  log(`SIWE domains (first line of a wallet sign-in message): [${[...siweDomains()].join(', ')}]; add a front-end with SIWE_DOMAINS`);
   log(`Auth: decentralized — user credentials stored per-pod at <pod>/auth-methods.jsonld`);
   log(`Bootstrap invites: ${BOOTSTRAP_INVITES.size} configured${BOOTSTRAP_INVITES.size > 0 ? ' (' + [...BOOTSTRAP_INVITES.keys()].join(', ') + ')' : ''}`);
   log(`Endpoints:`);

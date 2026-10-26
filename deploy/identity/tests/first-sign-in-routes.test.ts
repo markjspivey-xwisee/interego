@@ -149,7 +149,7 @@ async function post(path: string, body: unknown): Promise<{ status: number; json
 
 async function siwe(w: { address: string; signMessage(message: string): Promise<string> }, extra: Record<string, unknown> = {}) {
   const { nonce } = (await post('/challenges', { purpose: 'siwe' })).json as { nonce: string };
-  const message = `example.test wants you to sign in with your Ethereum account:\n${w.address}\n\nSign in.\n\nNonce: ${nonce}`;
+  const message = `${new URL(base).host} wants you to sign in with your Ethereum account:\n${w.address}\n\nSign in.\n\nNonce: ${nonce}`;
   return post('/auth/siwe', { message, signature: await w.signMessage(message), nonce, name: 'New', ...extra });
 }
 

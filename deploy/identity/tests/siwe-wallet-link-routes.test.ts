@@ -14,11 +14,16 @@
  * POST /challenges (purpose 'siwe'), consumes it, requires the ERC-4361 message to name this
  * server and the wallet and to carry the nonce, and refuses a wallet another account holds.
  *
+ * POST /auth/siwe consumed a server nonce but never read the message's domain line, so a nonce
+ * an attacker fetched from /challenges and put in their own site's sign-in prompt came back as
+ * a sign-in here. Its bearer add-wallet branch bound a wallet missing from the index to the
+ * bearer's account without asking whether an account whose pod was not read holds it.
+ *
  * Run:
  *   node --test --import tsx tests/siwe-wallet-link-routes.test.ts
  */
 
-import { test, before, after } from 'node:test';
+import { test, before, after, beforeEach } from 'node:test';
 import { strict as assert } from 'node:assert';
 import { spawn, type ChildProcess } from 'node:child_process';
 import * as crypto from 'node:crypto';
@@ -39,20 +44,29 @@ const unlisted = Wallet.createRandom();      // its own account, on its pod but 
 const addedElsewhere = Wallet.createRandom(); // added to a passkey account, listed
 const linker = Wallet.createRandom();        // opens an account, then links other wallets to it
 const otherSigner = Wallet.createRandom();   // signs in to a second, unrelated account
+const unlistedForSiwe = Wallet.createRandom(); // like `unlisted`, for the /auth/siwe bearer branch
+const unreadableForLink = Wallet.createRandom(); // its own account's pod answers 500
+const unreadableForSiwe = Wallet.createRandom(); // the same, for the /auth/siwe bearer branch
 const passkeyAccount = 'u-pk-0123456789ab';
+const unreadablePod = 'u-pk-ba9876543210'; // listed, answers 500: the second server's index never completes
 
 // ── Pods ──
 const pods = new Map<string, Record<string, unknown>>([
   [walletUser(victim), { userId: walletUser(victim), name: 'Victim', walletAddresses: [lower(victim)], webAuthnCredentials: [], didKeys: [] }],
   [walletUser(unlisted), { userId: walletUser(unlisted), name: 'Unlisted', walletAddresses: [lower(unlisted)], webAuthnCredentials: [], didKeys: [] }],
+  [walletUser(unlistedForSiwe), { userId: walletUser(unlistedForSiwe), name: 'Unlisted 2', walletAddresses: [lower(unlistedForSiwe)], webAuthnCredentials: [], didKeys: [] }],
   [passkeyAccount, { userId: passkeyAccount, name: 'Passkey', walletAddresses: [lower(addedElsewhere)], didKeys: [],
     webAuthnCredentials: [{ id: 'cred-passkey-account', publicKey: 'AA', counter: 0, createdAt: now }] }],
 ]);
 // Only these are in the root listing, so only these are in the wallet index at startup.
 const listed = new Set([walletUser(victim), passkeyAccount]);
+// The second server's listing adds a pod that cannot be read, so its index stays incomplete.
+const listedIncomplete = new Set([...listed, unreadablePod]);
+// Pods whose auth-methods.jsonld answers 500.
+const failing = new Set([walletUser(unreadableForLink), walletUser(unreadableForSiwe), unreadablePod]);
 const snapshot = (userId: string) => JSON.stringify(pods.get(userId) ?? null);
 
-function servePods(req: http.IncomingMessage, res: http.ServerResponse): void {
+const servePods = (listed: ReadonlySet<string>) => (req: http.IncomingMessage, res: http.ServerResponse): void => {
   const path = new URL(req.url ?? '/', 'http://pods').pathname;
   if (path === '/') {
     res.writeHead(200, { 'Content-Type': 'text/turtle' });
@@ -60,6 +74,7 @@ function servePods(req: http.IncomingMessage, res: http.ServerResponse): void {
     return;
   }
   const m = /^\/([^/]+)\/auth-methods\.jsonld$/.exec(path);
+  if (m && failing.has(m[1]!)) { res.writeHead(500).end(); return; }
   if (m && req.method === 'GET') {
     const doc = pods.get(m[1]!);
     if (!doc) { res.writeHead(404).end(); return; }
@@ -81,7 +96,7 @@ function servePods(req: http.IncomingMessage, res: http.ServerResponse): void {
   }
   if (req.method === 'PUT') { res.writeHead(201).end(); return; }
   res.writeHead(404).end();
-}
+};
 
 async function freePort(): Promise<number> {
   const s = net.createServer();
@@ -95,11 +110,57 @@ let podServer: http.Server;
 let identity: ChildProcess;
 let base = '';
 let host = '';
-let output = '';
+const output = { text: '' };
+// A second server whose account index never completes (one listed pod answers 500).
+let podServer2: http.Server;
+let identity2: ChildProcess;
+let base2 = '';
+const output2 = { text: '' };
+
+/** server.ts as a child process over the pod server on `podPort`, once /health answers. */
+async function startIdentity(podPort: number, sink: { text: string }, ready: (h: { complete: boolean }) => boolean) {
+  const port = await freePort();
+  const url = `http://127.0.0.1:${port}`;
+  const env: NodeJS.ProcessEnv = { ...process.env };
+  for (const k of ['IDENTITY_INTROSPECTION_SECRET', 'TEST_AGENT_PATTERN', 'CSS_PUBLIC_URL', 'BOOTSTRAP_INVITES', 'PROVISIONAL_PLAY_CLIENTS', 'RELAY_PUBLIC_URL', 'SIWE_DOMAINS', 'WEBAUTHN_RP_ORIGINS', 'WEBAUTHN_RP_ORIGIN']) delete env[k];
+  Object.assign(env, {
+    PORT: String(port), BASE_URL: url, CSS_URL: `http://127.0.0.1:${podPort}/`, RELAY_URL: 'http://relay.invalid',
+    TOKEN_SIGNING_KEY: crypto.randomBytes(32).toString('base64'), JANITOR_INTERVAL_MS: '0',
+  });
+  const proc = spawn(process.execPath, ['--import', 'tsx', 'server.ts'], {
+    cwd: fileURLToPath(new URL('..', import.meta.url)), env, stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  proc.stdout!.on('data', d => { sink.text += String(d); });
+  proc.stderr!.on('data', d => { sink.text += String(d); });
+  const deadline = Date.now() + 60_000;
+  for (;;) {
+    if (proc.exitCode !== null) throw new Error(`identity server exited ${proc.exitCode}:\n${sink.text}`);
+    try {
+      const health = await (await fetch(`${url}/health`)).json() as { accountIndex: { complete: boolean } };
+      if (ready(health.accountIndex)) break;
+    } catch { /* not listening yet */ }
+    if (Date.now() > deadline) throw new Error(`identity server did not start:\n${sink.text}`);
+    await new Promise(resolve => setTimeout(resolve, 100));
+  }
+  return { proc, url };
+}
+
+async function listen(handler: http.RequestListener): Promise<{ server: http.Server; port: number }> {
+  const server = http.createServer(handler);
+  await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+  return { server, port: (server.address() as net.AddressInfo).port };
+}
 
 async function post(path: string, body: unknown, headers: Record<string, string> = {}) {
-  const r = await fetch(`${base}${path}`, {
-    method: 'POST', headers: { 'Content-Type': 'application/json', ...headers }, body: JSON.stringify(body),
+  return postTo(base, path, body, headers);
+}
+// Each test arrives from its own address (the server trusts one proxy hop), so the per-IP
+// auth-enroll budget (30 a minute) is not shared across the whole file.
+let clientAddr = 0;
+beforeEach(() => { clientAddr++; });
+async function postTo(server: string, path: string, body: unknown, headers: Record<string, string> = {}) {
+  const r = await fetch(`${server}${path}`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Forwarded-For': `198.51.100.${clientAddr}`, ...headers }, body: JSON.stringify(body),
   });
   const text = await r.text();
   let json: Record<string, unknown> = {};
@@ -107,7 +168,7 @@ async function post(path: string, body: unknown, headers: Record<string, string>
   return { status: r.status, json };
 }
 const bearer = (token: string) => ({ Authorization: `Bearer ${token}` });
-const siweNonce = async () => (await post('/challenges', { purpose: 'siwe' })).json['nonce'] as string;
+const siweNonce = async (server = base) => (await postTo(server, '/challenges', { purpose: 'siwe' })).json['nonce'] as string;
 
 /** An ERC-4361 message by `address` for `domain`, carrying `nonce`. */
 function siweMessage(domain: string, address: string, nonce: string): string {
@@ -118,11 +179,13 @@ function siweMessage(domain: string, address: string, nonce: string): string {
   ].join('\n');
 }
 
-/** Wallet sign-in the supported way: a /challenges nonce, then /auth/siwe. */
-async function signIn(w: Signer) {
-  const nonce = await siweNonce();
-  const message = siweMessage(host, w.address, nonce);
-  return post('/auth/siwe', { message, signature: await w.signMessage(message), nonce, name: 'Someone' });
+/** Wallet sign-in the supported way: a /challenges nonce, then /auth/siwe (with a bearer, add-wallet). */
+async function signIn(w: Signer, opts: { server?: string; token?: string; domain?: string } = {}) {
+  const server = opts.server ?? base;
+  const nonce = await siweNonce(server);
+  const message = siweMessage(opts.domain ?? new URL(server).host, w.address, nonce);
+  return postTo(server, '/auth/siwe', { message, signature: await w.signMessage(message), nonce, name: 'Someone' },
+    opts.token ? bearer(opts.token) : {});
 }
 
 /** POST /wallet/link for `w`, signed by `w`, with a fresh nonce unless one is given. */
@@ -138,35 +201,20 @@ let linkerToken = '';
 let linkerId = '';
 
 before(async () => {
-  podServer = http.createServer(servePods);
-  await new Promise<void>(resolve => podServer.listen(0, '127.0.0.1', resolve));
-  const podPort = (podServer.address() as net.AddressInfo).port;
-  const port = await freePort();
-  base = `http://127.0.0.1:${port}`;
+  const pods1 = await listen(servePods(listed));
+  podServer = pods1.server;
+  const started = await startIdentity(pods1.port, output, h => h.complete);
+  identity = started.proc;
+  base = started.url;
   host = new URL(base).host;
-  const env: NodeJS.ProcessEnv = { ...process.env };
-  for (const k of ['IDENTITY_INTROSPECTION_SECRET', 'TEST_AGENT_PATTERN', 'CSS_PUBLIC_URL', 'BOOTSTRAP_INVITES', 'PROVISIONAL_PLAY_CLIENTS']) delete env[k];
-  Object.assign(env, {
-    PORT: String(port), BASE_URL: base, CSS_URL: `http://127.0.0.1:${podPort}/`, RELAY_URL: 'http://relay.invalid',
-    TOKEN_SIGNING_KEY: crypto.randomBytes(32).toString('base64'), JANITOR_INTERVAL_MS: '0',
-  });
-  identity = spawn(process.execPath, ['--import', 'tsx', 'server.ts'], {
-    cwd: fileURLToPath(new URL('..', import.meta.url)), env, stdio: ['ignore', 'pipe', 'pipe'],
-  });
-  identity.stdout!.on('data', d => { output += String(d); });
-  identity.stderr!.on('data', d => { output += String(d); });
-  const deadline = Date.now() + 60_000;
-  for (;;) {
-    if (identity.exitCode !== null) throw new Error(`identity server exited ${identity.exitCode}:\n${output}`);
-    try {
-      const health = await (await fetch(`${base}/health`)).json() as { accountIndex: { complete: boolean } };
-      if (health.accountIndex.complete) break;
-    } catch { /* not listening yet */ }
-    if (Date.now() > deadline) throw new Error(`identity server did not load its accounts:\n${output}`);
-    await new Promise(resolve => setTimeout(resolve, 100));
-  }
+  const pods2 = await listen(servePods(listedIncomplete));
+  podServer2 = pods2.server;
+  // Its index is incomplete from the start and stays so: no need to wait for the first pass.
+  const started2 = await startIdentity(pods2.port, output2, () => true);
+  identity2 = started2.proc;
+  base2 = started2.url;
   const opened = await signIn(linker);
-  assert.equal(opened.status, 200, `${JSON.stringify(opened.json)}\n${output}`);
+  assert.equal(opened.status, 200, `${JSON.stringify(opened.json)}\n${output.text}`);
   linkerToken = String(opened.json['token']);
   linkerId = String(opened.json['userId']);
   assert.equal(linkerId, walletUser(linker));
@@ -174,7 +222,9 @@ before(async () => {
 
 after(async () => {
   identity?.kill('SIGTERM');
+  identity2?.kill('SIGTERM');
   await new Promise<void>(resolve => podServer?.close(() => resolve()));
+  await new Promise<void>(resolve => podServer2?.close(() => resolve()));
 });
 
 test('a message the victim\'s wallet signed for another site, replayed to /siwe/verify, gets 410 and no token', async () => {
@@ -237,7 +287,7 @@ test('/wallet/link refuses with 409 a wallet another account holds, indexed or o
   for (const [w, holder] of [[victim, walletUser(victim)], [addedElsewhere, passkeyAccount], [unlisted, walletUser(unlisted)]] as const) {
     const before = snapshot(linkerId);
     const r = await link(linkerToken, w);
-    assert.equal(r.status, 409, `${holder}: ${JSON.stringify(r.json)}\n${output}`);
+    assert.equal(r.status, 409, `${holder}: ${JSON.stringify(r.json)}\n${output.text}`);
     assert.match(String(r.json['error']), /registered to another account/);
     assert.equal(snapshot(linkerId), before);
     // The wallet still signs in to the account that holds it.
@@ -250,7 +300,7 @@ test('/wallet/link refuses with 409 a wallet another account holds, indexed or o
 test('a correct link is 200, the wallet then signs in to the linking account, and its nonce is spent', async () => {
   const w = Wallet.createRandom();
   const r = await link(linkerToken, w);
-  assert.equal(r.status, 200, `${JSON.stringify(r.json)}\n${output}`);
+  assert.equal(r.status, 200, `${JSON.stringify(r.json)}\n${output.text}`);
   assert.equal(r.json['linked'], true);
   assert.equal(r.json['userId'], linkerId);
   assert.ok((pods.get(linkerId)!['walletAddresses'] as string[]).includes(lower(w)));
@@ -275,4 +325,105 @@ test('a linked request replayed by another account, with the nonce it carried, l
   assert.equal(replay.status, 401, JSON.stringify(replay.json));
   assert.equal(snapshot(otherId), before);
   assert.equal((await signIn(w)).json['userId'], linkerId);
+});
+
+test('/wallet/link with a message whose second line names another wallet is 400, though the wallet signed it', async () => {
+  const w = Wallet.createRandom();
+  const before = snapshot(linkerId);
+  const nonce = await siweNonce();
+  const siwe = siweMessage(host, Wallet.createRandom().address, nonce);
+  const r = await post('/wallet/link', { walletAddress: w.address, siweMessage: siwe, signature: await w.signMessage(siwe), nonce }, bearer(linkerToken));
+  assert.equal(r.status, 400, JSON.stringify(r.json));
+  assert.match(String(r.json['error']), /does not name walletAddress/);
+  assert.equal(snapshot(linkerId), before);
+});
+
+test('/wallet/link is 503 and links nothing while it cannot tell who holds the wallet', async () => {
+  // The account the wallet would have opened by itself is on a pod that answers 500.
+  const before = snapshot(linkerId);
+  const r = await link(linkerToken, unreadableForLink);
+  assert.equal(r.status, 503, `${JSON.stringify(r.json)}\n${output.text}`);
+  assert.equal(snapshot(linkerId), before);
+  // A server that could not read one of its listed pods: its index is incomplete.
+  const opened = await signIn(Wallet.createRandom(), { server: base2 });
+  assert.equal(opened.status, 200, `${JSON.stringify(opened.json)}\n${output2.text}`);
+  const ownerId = String(opened.json['userId']);
+  const ownerBefore = snapshot(ownerId);
+  const w = Wallet.createRandom();
+  const nonce = await siweNonce(base2);
+  const siwe = siweMessage(new URL(base2).host, w.address, nonce);
+  const r2 = await postTo(base2, '/wallet/link', { walletAddress: w.address, siweMessage: siwe, signature: await w.signMessage(siwe), nonce },
+    bearer(String(opened.json['token'])));
+  assert.equal(r2.status, 503, `${JSON.stringify(r2.json)}\n${output2.text}`);
+  assert.equal(snapshot(ownerId), ownerBefore);
+});
+
+test('a /wallet/link request refused before it is checked (a stale bearer) still spends its nonce', async () => {
+  const w = Wallet.createRandom();
+  const nonce = await siweNonce();
+  const message = siweMessage(host, w.address, nonce);
+  const signature = await w.signMessage(message);
+  const refused = await post('/wallet/link', { walletAddress: w.address, siweMessage: message, signature, nonce }, bearer('not-a-token'));
+  assert.equal(refused.status, 401, JSON.stringify(refused.json));
+  // Whoever saw that request cannot redeem its message and signature as a sign-in.
+  const redeemed = await post('/auth/siwe', { message, signature, nonce });
+  assert.equal(redeemed.status, 401, JSON.stringify(redeemed.json));
+  assert.equal(redeemed.json['token'], undefined);
+  assert.equal(pods.has(walletUser(w)), false);
+});
+
+test('/auth/siwe refuses a message the wallet signed for another site, even with a nonce this server issued', async () => {
+  // evil.example fetched a nonce from /challenges and put it in its own sign-in prompt; the
+  // wallet showed "evil.example wants you to sign in", which matched the page, so it signed.
+  const nonce = await siweNonce();
+  const message = siweMessage('evil.example', victim.address, nonce);
+  const signature = await victim.signMessage(message);
+  const r = await post('/auth/siwe', { message, signature, nonce });
+  assert.equal(r.status, 400, JSON.stringify(r.json));
+  assert.match(String(r.json['error']), /not addressed to this server/);
+  assert.equal(r.json['token'], undefined);
+  // Its nonce was spent: the same request cannot be retried.
+  assert.equal((await post('/auth/siwe', { message, signature, nonce })).status, 401);
+  // This server's host only in the statement is not enough.
+  const nonce2 = await siweNonce();
+  const statementOnly = siweMessage('evil.example', victim.address, nonce2).replace('Link this wallet', `Sign in at ${host}`);
+  const r2 = await post('/auth/siwe', { message: statementOnly, signature: await victim.signMessage(statementOnly), nonce: nonce2 });
+  assert.equal(r2.status, 400, JSON.stringify(r2.json));
+  assert.equal(r2.json['token'], undefined);
+  // The deployment's own front-ends still sign in: this server and its relay (RELAY_URL).
+  const own = await signIn(victim);
+  assert.equal(own.status, 200, JSON.stringify(own.json));
+  assert.equal(own.json['userId'], walletUser(victim));
+  const viaRelay = await signIn(victim, { domain: 'relay.invalid' });
+  assert.equal(viaRelay.status, 200, JSON.stringify(viaRelay.json));
+  assert.equal(viaRelay.json['userId'], walletUser(victim));
+});
+
+test('/auth/siwe with a bearer does not bind a wallet held by an account only on its pod, or one it cannot rule out', async () => {
+  // Held by an account whose pod was not in the listing: the wallet signs in to that account.
+  const before = snapshot(linkerId);
+  const held = await signIn(unlistedForSiwe, { token: linkerToken });
+  assert.equal(held.status, 200, `${JSON.stringify(held.json)}\n${output.text}`);
+  assert.equal(held.json['userId'], walletUser(unlistedForSiwe));
+  assert.equal(snapshot(linkerId), before);
+  assert.equal((await signIn(unlistedForSiwe)).json['userId'], walletUser(unlistedForSiwe));
+  // The account it would have opened by itself cannot be read: nothing is bound, 503.
+  const unreadable = await signIn(unreadableForSiwe, { token: linkerToken });
+  assert.equal(unreadable.status, 503, `${JSON.stringify(unreadable.json)}\n${output.text}`);
+  assert.equal(unreadable.json['token'], undefined);
+  assert.equal(snapshot(linkerId), before);
+  // A server whose index is incomplete binds no new wallet to a bearer's account.
+  const opened = await signIn(Wallet.createRandom(), { server: base2 });
+  assert.equal(opened.status, 200, `${JSON.stringify(opened.json)}\n${output2.text}`);
+  const ownerId = String(opened.json['userId']);
+  const ownerBefore = snapshot(ownerId);
+  const added = await signIn(Wallet.createRandom(), { server: base2, token: String(opened.json['token']) });
+  assert.equal(added.status, 503, `${JSON.stringify(added.json)}\n${output2.text}`);
+  assert.equal(snapshot(ownerId), ownerBefore);
+  // A wallet no account holds is still added to the bearer's account on a complete index.
+  const fresh = Wallet.createRandom();
+  const addFresh = await signIn(fresh, { token: linkerToken });
+  assert.equal(addFresh.status, 200, JSON.stringify(addFresh.json));
+  assert.equal(addFresh.json['userId'], linkerId);
+  assert.equal((await signIn(fresh)).json['userId'], linkerId);
 });
