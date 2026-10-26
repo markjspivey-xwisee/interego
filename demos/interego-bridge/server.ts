@@ -774,7 +774,18 @@ app.use((_req, res, next) => {
   next();
 });
 
-app.use(express.json({ limit: '50mb' }));
+/**
+ * One bound for every read of a request body on this surface: 50 MiB, what `'50mb'` meant
+ * here. @modelcontextprotocol/server 2.3 added its own 4 MiB default on the bodies the SDK
+ * reads itself, so /mcp passes this to the classifier, the modern handler and the legacy
+ * transport as well. Left at the default, a request the parser accepted between 4 MiB and
+ * 50 MiB answered 413. See MAX_MCP_BODY_BYTES in applications/_shared/vertical-bridge.
+ */
+const MAX_MCP_BODY_BYTES = 50 * 1024 * 1024;
+/** The client's framing headers; /mcp re-serializes the parsed body, so none of them holds. */
+const BODY_FRAMING_HEADERS = new Set(['content-length', 'content-encoding', 'transfer-encoding']);
+
+app.use(express.json({ limit: MAX_MCP_BODY_BYTES }));
 
 // Build identity for tools/railway-redeploy.mjs, whose verify poll reads exactly `j.build`.
 // GET /health here used to answer "Cannot GET /health", so no rollout of this service could
@@ -871,6 +882,7 @@ const buildMcpServer = (): McpSdkServer => {
 const mcpModernHandler = createMcpHandler(buildMcpServer, {
   legacy: 'reject',
   responseMode: 'json',
+  maxRequestBodySize: MAX_MCP_BODY_BYTES,
   onerror: () => { /* per-request failures surface in the JSON-RPC response */ },
 });
 
@@ -882,6 +894,7 @@ const serveMcpLegacy = async (request: globalThis.Request): Promise<globalThis.R
     // Honoured by the v2 runtime but absent from the published types: without it the
     // transport SSE-frames every reply and every browser client here calls res.json().
     enableJsonResponse: true,
+    maxRequestBodySize: MAX_MCP_BODY_BYTES,
   } as unknown as ConstructorParameters<typeof WebStandardStreamableHTTPServerTransport>[0]);
   await server.connect(transport);
   return transport.handleRequest(request);
@@ -891,6 +904,7 @@ const handleMcp = async (req: Request, res: Response): Promise<void> => {
   try {
     const headers = new Headers();
     for (const [k, v] of Object.entries(req.headers)) {
+      if (BODY_FRAMING_HEADERS.has(k)) continue;
       if (typeof v === 'string') headers.set(k, v);
       else if (Array.isArray(v)) headers.set(k, v.join(', '));
     }
@@ -903,7 +917,7 @@ const handleMcp = async (req: Request, res: Response): Promise<void> => {
     });
     // isLegacyRequest is the SDK's OWN classifier, so this routing can never disagree
     // with what createMcpHandler would have decided.
-    const out = await isLegacyRequest(request.clone())
+    const out = await isLegacyRequest(request.clone(), undefined, { maxRequestBodySize: MAX_MCP_BODY_BYTES })
       ? await serveMcpLegacy(request)
       : await mcpModernHandler.fetch(request);
     res.status(out.status);

@@ -62,7 +62,7 @@ async function withServer(run: (base: string, directory: string) => Promise<void
 // Wire assertions intentionally inspect the actual protocol response rather than an in-process handler double.
 async function rpc(base: string, method: string, params: Record<string, unknown> = {}, modern = false) {
   const meta = { 'io.modelcontextprotocol/protocolVersion': '2026-07-28', 'io.modelcontextprotocol/clientCapabilities': {} };
-  const response = await fetch(base + '/i2idlx/mcp', { method: 'POST', headers: { 'Content-Type': 'application/json', ...(modern ? { 'Mcp-Method': method } : {}) },
+  const response = await fetch(base + '/i2idlx/mcp', { method: 'POST', headers: { 'Content-Type': 'application/json', ...(modern ? { 'MCP-Protocol-Version': '2026-07-28', 'Mcp-Method': method } : {}) },
     body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params: { ...params, ...(modern ? { _meta: meta } : {}) } }) });
   return { status: response.status, type: response.headers.get('content-type'), body: await response.json() };
 }

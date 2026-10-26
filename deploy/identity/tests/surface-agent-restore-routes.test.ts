@@ -109,6 +109,13 @@ function servePods(req: http.IncomingMessage, res: http.ServerResponse): void {
     res.writeHead(205).end();
     return;
   }
+  // Kept, as a pod keeps it: deleting an account writes its tombstone here.
+  if (m && req.method === 'PUT') {
+    let body = '';
+    req.on('data', d => { body += String(d); });
+    req.on('end', () => { pods.set(m[1]!, JSON.parse(body) as Record<string, unknown>); res.writeHead(201).end(); });
+    return;
+  }
   const a = /^\/([^/]+)\/agents$/.exec(path);
   if (a && req.method === 'GET') {
     registryReads.set(a[1]!, (registryReads.get(a[1]!) ?? 0) + 1);

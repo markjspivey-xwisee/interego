@@ -169,7 +169,7 @@ jobs:
           async function rpc(method, params = {}, modern = false) {
             const response = await fetch(endpoint, {
               method: 'POST', signal: AbortSignal.timeout(30000),
-              headers: { 'Content-Type': 'application/json', ...(modern ? { 'Mcp-Method': method } : {}) },
+              headers: { 'Content-Type': 'application/json', ...(modern ? { 'MCP-Protocol-Version': '2026-07-28', 'Mcp-Method': method } : {}) },
               body: JSON.stringify({ jsonrpc: '2.0', id: ++sequence, method, params: { ...params,
                 ...(modern ? { _meta: { 'io.modelcontextprotocol/protocolVersion': '2026-07-28',
                   'io.modelcontextprotocol/clientCapabilities': {} } } : {}) } }),
