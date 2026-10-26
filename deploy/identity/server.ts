@@ -3914,67 +3914,17 @@ app.get('/.well-known/webfinger', webfingerLimiter, (req, res) => {
 // ── SIWE (Sign-In With Ethereum / ERC-4361) ─────────────────
 
 /**
- * POST /siwe/verify — Verify a SIWE message signature
- * Body: { message, signature }
- * Returns: { valid, walletAddress, userId? }
- *
- * The SIWE message format (ERC-4361):
- *   {domain} wants you to sign in with your Ethereum account:
- *   {address}
- *   {statement}
- *   URI: {uri}
- *   Nonce: {nonce}
- *   Issued At: {issuedAt}
+ * POST /siwe/verify — retired; answers 410 Gone and issues nothing. Wallet sign-in is
+ * POST /auth/siwe, which requires a nonce from POST /challenges (purpose=siwe).
  */
-app.post('/siwe/verify', siweVerifyLimiter, async (req, res) => {
-  const { message, signature } = req.body;
-  if (!message || !signature) {
-    res.status(400).json({ error: 'message and signature are required' });
-    return;
-  }
-
-  // Parse SIWE message to extract wallet address
-  const addressMatch = message.match(/0x[a-fA-F0-9]{40}/);
-  if (!addressMatch) {
-    res.status(400).json({ error: 'No Ethereum address found in SIWE message' });
-    return;
-  }
-  const walletAddress = addressMatch[0].toLowerCase();
-
-  // Verify the signature using ethers.js — real ECDSA recovery
-  try {
-    const { ethers } = await loadEthers();
-    const recovered = ethers.verifyMessage(message, signature);
-    if (recovered.toLowerCase() !== walletAddress) {
-      res.status(401).json({ valid: false, error: `Signature mismatch: expected ${walletAddress}, recovered ${recovered.toLowerCase()}` });
-      return;
-    }
-  } catch (err) {
-    res.status(401).json({ valid: false, error: `Signature verification failed: ${(err as Error).message}` });
-    return;
-  }
-
-  // Look up by pod-resident index (rebuilt from pods on startup + on writes).
-  const userId = walletIndex.get(walletAddress);
-  const user = userId ? identities.get(userId) : undefined;
-
-  if (user) {
-    const token = await issueToken(user.id, `wallet-${walletAddress}`, 'ReadWrite');
-    res.json({
-      valid: true,
-      walletAddress,
-      userId: user.id,
-      token: token.token,
-      expiresAt: token.expiresAt,
-    });
-  } else {
-    res.json({
-      valid: true,
-      walletAddress,
-      userId: null,
-      message: 'Wallet signature valid but no account linked. Use POST /auth/siwe to register.',
-    });
-  }
+app.post('/siwe/verify', siweVerifyLimiter, (_req, res) => {
+  // Retired: it issued a ReadWrite token without a server-issued nonce, so it could not
+  // tell a fresh signature from a replayed one. Nothing in this repository calls it;
+  // POST /auth/siwe is the wallet sign-in and consumes a single-use challenge.
+  res.status(410).json({
+    error: 'POST /siwe/verify is retired',
+    hint: 'Request a nonce from POST /challenges with purpose=siwe, sign a SIWE message that contains it, then POST message, signature and nonce to /auth/siwe.',
+  });
 });
 
 /**
