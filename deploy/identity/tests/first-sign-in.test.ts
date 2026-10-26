@@ -21,6 +21,7 @@ type Methods = {
   webAuthnCredentials: Array<{ id: string }>;
   didKeys: Array<{ did: string }>;
   sessionEpoch?: number;
+  deletedAt?: string;
 };
 
 const ID = 'u-eth-d8da6bf26964';
@@ -199,4 +200,33 @@ test('a credential that may not open an account: refused on an empty pod, still 
   assert.equal((await wallet(listed, { mayCreate: false })).kind, 'returning');
   assert.equal(listed.writes.length, 0);
   assert.equal((await wallet(pod('unreadable'), { mayCreate: false })).kind, 'unreadable');
+});
+
+test('a deleted account\'s tombstone is never re-opened: deleted, nothing built or written', async () => {
+  const closed = (m: Methods) => typeof m.deletedAt === 'string';
+  const p = pod(record({ sessionEpoch: 3, deletedAt: '2026-10-26' }));
+  let built = 0;
+  const outcome = await wallet(p, { closed, build: existing => { built++; return existing ?? record(); } });
+  assert.deepEqual(outcome, { kind: 'deleted' });
+  assert.equal(built, 0);
+  assert.equal(p.writes.length, 0);
+  // Without the predicate the same document reads as an account without credentials.
+  assert.equal((await wallet(pod(record({ deletedAt: '2026-10-26' })))).kind, 'created');
+});
+
+test('a tombstone written between the read and the write is seen on the re-read: deleted', async () => {
+  const p = pod(null);
+  const read = p.read;
+  let reads = 0;
+  const outcome = await wallet(p, {
+    closed: m => typeof m.deletedAt === 'string',
+    read: async () => {
+      const r = await read();
+      if (reads++ === 0) p.doc = record({ sessionEpoch: 1, deletedAt: '2026-10-26' });
+      return r;
+    },
+  });
+  assert.deepEqual(outcome, { kind: 'deleted' });
+  assert.equal(p.writes.length, 0);
+  assert.equal(reads, 2);
 });

@@ -20,6 +20,7 @@
  */
 
 import { gatewayTransport } from '../src/gateway-transport.js';
+import { createDirectoryDemand } from '../src/directory-demand.js';
 import { meshPollingAllowed, pollingMode, pollingInterval } from '../src/on-demand-work.js';
 import { randomUUID, createHash, createHmac, randomBytes } from 'node:crypto';
 import { format } from 'node:util';
@@ -668,11 +669,19 @@ const learningEngineerWebIds = new Set(
     .split(',').map(s => s.trim()).filter(Boolean),
 );
 
-// Sync snapshot of the published-directory users (with wallet_address) used
-// to verify session-token signers on the synchronous express gates
-// (operator-auth + the xapi-admin gate). Refreshed off autoFetchAdmin
-// (itself 60s-cached); empty until first load, then last-good retained.
-let directoryUsersCache: ReadonlyArray<{ user_id: string; web_id: string; wallet_address?: string }> = [];
+// Published directory preparation is lazy: no boot load or background timer.
+const directoryUsersCache = createDirectoryDemand(async (signal) => {
+  const directory = await fetchSection(TENANT_TYPES.TenantDirectory, {
+    ...fetcherConfig(),
+    fetch: (input, init) => globalThis.fetch(input, {
+      ...init, signal: init?.signal ? AbortSignal.any([init.signal, signal]) : signal,
+    }),
+  }) as {
+    users?: ReadonlyArray<{ user_id: string; web_id: string; wallet_address?: string }>;
+  };
+  if (!Array.isArray(directory.users)) throw new Error('tenant directory users unavailable');
+  return directory.users;
+});
 
 // The bridge's own xAPI conformance runner (/compliance/xapi/run) authenticates to its own
 // LRS with a wallet-signed session token. Since round-47 the LRS gate rejects any Bearer
@@ -1254,19 +1263,14 @@ async function autoFetchAdmin(args: Record<string, unknown>): Promise<FoxxiAdmin
     // membership overlay on it authorize (fail-closed even if its encrypted
     // directory is currently stale/undecryptable).
     const forceClosed = samePod(podUrl, tenantPodUrl);
-    return await fetchAdminPayload({ ...fetcherConfig(), podUrl, forceClosed }) as FoxxiAdminPayload;
+    const admin = await fetchAdminPayload({ ...fetcherConfig(), podUrl, forceClosed }) as FoxxiAdminPayload;
+    // Reuse directory data already fetched for this request; foreign tenants never warm this cache.
+    if (forceClosed && Array.isArray(admin.users)) directoryUsersCache.observe(admin.users);
+    return admin;
   } catch (err) {
     bridgeError('[foxxi-bridge] autoFetchAdmin failed:', (err as Error).message);
     return null;
   }
-}
-
-/** Refresh the directory-users cache used by the synchronous session-token gates. */
-async function refreshDirectoryCache(): Promise<void> {
-  try {
-    const a = await autoFetchAdmin({});
-    if (a?.users) directoryUsersCache = a.users as typeof directoryUsersCache;
-  } catch { /* keep last good snapshot */ }
 }
 
 /** Resolve a course_id from args.course_id OR a course_iri (…/courses/<id>#package). */
@@ -5853,8 +5857,7 @@ const instrumentedHandlers = Object.fromEntries(
               // an anonymous caller forge an xAPI statement attributed to any victim.
               // Only a cryptographically-verified token sets the actor; otherwise the
               // call is attributed to 'anonymous' (callerActor's unset-webId path).
-              const addressMap = trustedAddressMap(directoryUsersCache as unknown as Parameters<typeof trustedAddressMap>[0]);
-              const verified = verifySessionToken(bearerToken, addressMap);
+              const verified = await directoryUsersCache.verifySession(bearerToken);
               if (verified.ok) {
                 callerCtx.webId = verified.callerDid;
                 callerCtx.role = learningEngineerWebIds.has(verified.callerDid) ? 'learning-engineer'
@@ -5951,6 +5954,10 @@ const app = createVerticalBridge({
       res.json(metricsJson());
     });
 
+    // Prepare only a requested wallet-authenticated surface's directory, before its
+    // existing gates run. Health, discovery and non-wallet credentials perform no refresh.
+    a.use(directoryUsersCache.middleware);
+
     // Inbound xAPI LRS surface — Foxxi can BE an LRS that external
     // systems (LMSes, mobile apps, simulators, tutoring agents, other
     // LRSes via Statement Forwarding) write to. Each accepted Statement
@@ -5977,7 +5984,7 @@ const app = createVerticalBridge({
       // Append the bridge's own conformance self-test identity (secret-seeded, so only the
       // in-process runner can mint it) so /compliance/xapi/run authenticates on a clean-slate
       // deployment whose live directory doesn't carry the persona.
-      sessionUsers: () => [...directoryUsersCache, conformanceSelfIdentity],
+      sessionUsers: () => [...directoryUsersCache.read(), conformanceSelfIdentity],
       // Verify OAuth client-credentials Bearers by real ES256 signature against the LTI key.
       oauthPublicKey: oauthPublicKeyFrom(process.env.FOXXI_LTI_PRIVATE_KEY_PEM),
       // Per-user self-sovereign forwarding: a statement forwards to the
@@ -6021,11 +6028,7 @@ const app = createVerticalBridge({
     // for a SIGNATURE-VERIFIED admin/learning-engineer; pin everyone else to
     // the default tenant. loadUsers feeds verifySessionToken the published
     // directory's wallet_address map.
-    const operatorAuth = { adminWebId, learningEngineerWebIds, loadUsers: () => directoryUsersCache };
-    // Warm + periodically refresh the directory cache (everything is
-    // initialized here) so the synchronous gates can verify signers.
-    void refreshDirectoryCache();
-    { const t = setInterval(() => void refreshDirectoryCache(), 5 * 60_000); (t as { unref?: () => void }).unref?.(); }
+    const operatorAuth = { adminWebId, learningEngineerWebIds, loadUsers: () => directoryUsersCache.read() };
 
     attachCmi5LmsRoutes(a, {
       selfBaseUrl: process.env.BRIDGE_DEPLOYMENT_URL ?? 'http://localhost:6080',
@@ -6733,7 +6736,7 @@ const app = createVerticalBridge({
       selfBaseUrl: process.env.BRIDGE_DEPLOYMENT_URL ?? 'http://localhost:6080',
       basicAuthPairs: process.env.FOXXI_LRS_BASIC_AUTH_PAIRS ?? '',
       forwardingTargets: process.env.FOXXI_LRS_FORWARDING_TARGETS ?? '',
-      loadUsers: () => directoryUsersCache,
+      loadUsers: () => directoryUsersCache.read(),
     });
 
     // OAuth 2.0 client_credentials token endpoint — for partner-eng SDKs
