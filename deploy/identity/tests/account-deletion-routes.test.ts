@@ -85,6 +85,21 @@ const blipping = new Set<string>();   // GET answers 502
 const failingPuts = new Set<string>(); // PUT answers 500
 const writes: Array<{ userId: string; method: string }> = [];
 
+// One staged race at a time, on one account: the deletion's read of the record is held until a
+// write of the account's old (credentialed) record arrives, and that write is held until the
+// tombstone has landed, so the old record is put after the tombstone unless the server orders
+// them itself. Each hold gives up after a while, so a writer the server serialises behind the
+// deletion is not waited for for ever.
+function deferred() {
+  let resolve!: () => void;
+  const promise = new Promise<void>(r => { resolve = r; });
+  return { promise, resolve };
+}
+const within = (p: Promise<void>, ms: number) => Promise.race([p, new Promise<void>(r => setTimeout(r, ms))]);
+const RACE_HOLD_MS = 1500;
+let race: { userId: string; readHeld: boolean; deletionRead: ReturnType<typeof deferred>;
+  staleWrite: ReturnType<typeof deferred>; tombstone: ReturnType<typeof deferred> } | null = null;
+
 function servePods(req: http.IncomingMessage, res: http.ServerResponse): void {
   const path = new URL(req.url ?? '/', 'http://pods').pathname;
   if (path === '/') {
@@ -97,6 +112,18 @@ function servePods(req: http.IncomingMessage, res: http.ServerResponse): void {
     const userId = m[1]!;
     if (req.method === 'GET') {
       if (blipping.has(userId)) { res.writeHead(502).end(); return; }
+      if (race && race.userId === userId && !race.readHeld) {
+        const held = race;
+        held.readHeld = true;
+        held.deletionRead.resolve();
+        void within(held.staleWrite.promise, RACE_HOLD_MS).then(() => {
+          const doc = pods.get(userId);
+          if (!doc) { res.writeHead(404).end(); return; }
+          res.writeHead(200, { 'Content-Type': 'application/ld+json' });
+          res.end(JSON.stringify(doc));
+        });
+        return;
+      }
       const doc = pods.get(userId);
       if (!doc) { res.writeHead(404).end(); return; }
       res.writeHead(200, { 'Content-Type': 'application/ld+json' });
@@ -106,12 +133,19 @@ function servePods(req: http.IncomingMessage, res: http.ServerResponse): void {
     if (req.method === 'PUT') {
       let body = '';
       req.on('data', d => { body += String(d); });
-      req.on('end', () => {
+      req.on('end', async () => {
         if (failingPuts.has(userId)) { res.writeHead(500).end(); return; }
         if (req.headers['if-none-match'] === '*' && pods.has(userId)) { res.writeHead(412).end(); return; }
+        const doc = JSON.parse(body) as Record<string, unknown>;
+        const held = race && race.userId === userId ? race : null;
+        if (held && doc['deletedAt'] === undefined) {
+          held.staleWrite.resolve();
+          await within(held.tombstone.promise, RACE_HOLD_MS);
+        }
         writes.push({ userId, method: 'PUT' });
-        pods.set(userId, JSON.parse(body) as Record<string, unknown>);
+        pods.set(userId, doc);
         res.writeHead(201).end();
+        if (held && doc['deletedAt'] !== undefined) held.tombstone.resolve();
       });
       return;
     }
@@ -376,4 +410,56 @@ test('after a restart, old tokens stay refused and a deleted bootstrap alias can
   // And the old credentials still cannot open their accounts.
   await assertDeletedRefusal(deletedPasskey.userId, () => register(deletedPasskey));
   assertTombstone(invite.userId, 1);
+});
+
+/** A usernameless passkey sign-in's request body, with a challenge fetched now. */
+async function passkeyAssertion(key: SoftPasskey): Promise<Record<string, unknown>> {
+  const ch = await post('/challenges', { purpose: 'webauthn-authenticate' });
+  assert.equal(ch.status, 200, JSON.stringify(ch.json));
+  const rpId = String(ch.json['rpId'] ?? new URL(base).hostname);
+  const counter = Buffer.alloc(4);
+  counter.writeUInt32BE(1);
+  const authData = Buffer.concat([crypto.createHash('sha256').update(rpId).digest(), Buffer.from([0x05]), counter]);
+  const clientDataJSON = Buffer.from(JSON.stringify({ type: 'webauthn.get', challenge: String(ch.json['nonce']), origin: base, crossOrigin: false }));
+  const signature = crypto.sign('sha256',
+    Buffer.concat([authData, crypto.createHash('sha256').update(clientDataJSON).digest()]), key.privateKey);
+  return { response: { id: key.id, rawId: key.id, type: 'public-key', clientExtensionResults: {},
+    response: { clientDataJSON: clientDataJSON.toString('base64url'), authenticatorData: authData.toString('base64url'),
+      signature: signature.toString('base64url') } } };
+}
+
+test('a passkey sign-in that read the account before its deletion cannot write it back over the tombstone', async () => {
+  clientIp = '198.51.100.8';
+  const key = softPasskey();
+  const { userId } = key;
+  const created = await register(key);
+  assert.equal(created.status, 200, `${JSON.stringify(created.json)}\n${output}`);
+  const token = String(created.json['token']);
+  const signIn = await passkeyAssertion(key);
+
+  // The deletion starts and reads the record; the sign-in then reads the account (still
+  // loaded), verifies its assertion and writes the record back with the advanced counter.
+  race = { userId, readHeld: false, deletionRead: deferred(), staleWrite: deferred(), tombstone: deferred() };
+  const deletion = deleteAccount(token);
+  await within(race.deletionRead.promise, 10_000);
+  assert.ok(race.readHeld, `the deletion never read the record\n${output}`);
+  const signedIn = await post('/auth/webauthn/authenticate', signIn);
+  const deleted = await deletion;
+  race = null;
+
+  assert.equal(deleted.status, 200, `${JSON.stringify(deleted.json)}\n${output}`);
+  assertTombstone(userId, 1);
+  assert.equal(signedIn.status, 409, `${JSON.stringify(signedIn.json)}\n${output}`);
+  assert.match(String(signedIn.json['error']), /account was deleted/);
+  assert.equal(signedIn.json['token'], undefined);
+  await settle();
+  assertTombstone(userId, 1);
+  assert.equal((await me(token)).status, 401);
+
+  // The pod is what a restart loads: the account stays deleted and its token refused.
+  await stopIdentity();
+  await startIdentity();
+  assert.equal((await me(token)).status, 401);
+  await assertDeletedRefusal(userId, () => register(key));
+  assertTombstone(userId, 1);
 });

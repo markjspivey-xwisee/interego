@@ -635,6 +635,17 @@ const identityPodWriteMutexes = new Map<string, Promise<unknown>>();
 // avoiding a refresh fetch racing the in-flight write.
 const identityPendingPodWrites = new Set<string>();
 
+// Accounts deleted in this process. deleteUserCompletely adds the id under the per-user mutex
+// once the pod has the tombstone (or, for a random `u-try-` id other than Play's, as its record
+// goes), and putPodAuthMethods then refuses every write of that id except the tombstone itself. A writer
+// that read the record before the deletion (a passkey sign-in advancing its counter, an
+// enrollment, a deferred write, a sign-out-everywhere) holds a snapshot with the old
+// credentials and epoch; under the same mutex it runs either wholly before the tombstone or
+// after this mark, so it can never put that snapshot back over the tombstone. Process-local,
+// like the mutex: a second replica writing the same pod is not covered (see AUTH-ARCHITECTURE.md).
+// An operator who re-opens an id by removing its tombstone restarts the process to clear this.
+const deletedUserIds = new Set<string>();
+
 async function withIdentityPodMutex<T>(userId: string, fn: () => Promise<T>): Promise<T> {
   const prev = identityPodWriteMutexes.get(userId) ?? Promise.resolve();
   let release!: () => void;
@@ -673,6 +684,8 @@ const bootstrapUserIds = new Set<string>();
  * response path skip the await.
  */
 function inlineApplyAuthMethods(userId: string, methods: AuthMethods): void {
+  // A deleted account's credentials never go back into the sign-in indexes.
+  if (deletedUserIds.has(userId)) return;
   authMethodsCache.set(userId, { value: methods, fetchedAt: Date.now() });
   rebuildIndexesForUser(userId, methods);
 }
@@ -710,6 +723,8 @@ function scheduleDeferredAuthMethodsWrite(
           break;
         } catch (err) {
           lastErr = err as Error;
+          // The account was deleted after this write was scheduled: there is nothing to retry.
+          if (err instanceof AccountDeletedError) break;
           if (attempt < delays.length) {
             await new Promise(r => setTimeout(r, delays[attempt]));
           }
@@ -768,8 +783,11 @@ async function fetchPodAuthMethods(
 // it has one, nothing is written and this throws PodDocumentExistsError.
 class PodDocumentExistsError extends Error {}
 async function putPodAuthMethods(userId: string, methods: AuthMethods, opts: { ifAbsent?: boolean } = {}): Promise<void> {
-  // Every writer builds on the record it read, so a credential added to a tombstone lands here.
-  if (isTombstone(methods) && hasAnyCredential(methods)) throw new AccountDeletedError(`${userId}: ${ACCOUNT_DELETED_MESSAGE}`);
+  // Every writer builds on the record it read, so a credential added to a tombstone lands here,
+  // and a snapshot read before this process deleted the account is refused here (deletedUserIds).
+  if ((isTombstone(methods) && hasAnyCredential(methods)) || (deletedUserIds.has(userId) && !isTombstone(methods))) {
+    throw new AccountDeletedError(`${userId}: ${ACCOUNT_DELETED_MESSAGE}`);
+  }
   const url = podAuthMethodsUrl(userId);
   // Ensure pod container exists first (idempotent).
   try {
@@ -868,14 +886,24 @@ async function commitCredentialEnrollment(
     return;
   }
   const methods = await readAuthMethods(userId);
-  if (isTombstone(methods)) throw new AccountDeletedError(`${userId}: ${ACCOUNT_DELETED_MESSAGE}`);
+  if (isTombstone(methods) || deletedUserIds.has(userId)) throw new AccountDeletedError(`${userId}: ${ACCOUNT_DELETED_MESSAGE}`);
   if (update(methods) === false) return;
   if (synchronous) {
-    await putPodAuthMethods(userId, methods);
+    await persistExistingAuthMethods(userId, methods);
   } else {
     inlineApplyAuthMethods(userId, methods);
     scheduleDeferredAuthMethodsWrite(userId, methods, context);
   }
+}
+
+/**
+ * Write a record an existing account's handler read earlier, under the per-user mutex, so it
+ * never interleaves with deleteUserCompletely: it lands wholly before the tombstone (which is
+ * then written over it) or is refused after it (putPodAuthMethods, deletedUserIds). Every
+ * existing-account write that is not already inside the mutex goes through here.
+ */
+async function persistExistingAuthMethods(userId: string, methods: AuthMethods): Promise<void> {
+  return withIdentityPodMutex(userId, () => putPodAuthMethods(userId, methods));
 }
 
 async function authenticatePlayOwnerPasskey(
@@ -3008,11 +3036,14 @@ app.post('/auth/webauthn/authenticate', authEnrollLimiter, async (req, res) => {
     } else {
       await authenticatePasskey({ credential: cred, response, challenge: expectedChallenge,
         rpId: ch.rpId ?? RP_ID, origin: ch.rpOrigin ?? RP_ORIGIN,
-        persist: () => putPodAuthMethods(userId, methods),
+        persist: () => persistExistingAuthMethods(userId, methods),
       });
     }
   } catch (err) {
-    if (err instanceof PasskeyPersistenceError) {
+    if (deletedUserIds.has(userId)) {
+      // The account was deleted while this sign-in was verified; its counter was not written.
+      res.status(409).json({ error: ACCOUNT_DELETED_MESSAGE });
+    } else if (err instanceof PasskeyPersistenceError) {
       log(`WARN: refused passkey auth — ${(err as Error).message}`);
       res.status(503).json({ error: err.message });
     } else {
@@ -4339,7 +4370,7 @@ app.post('/tokens/me/sign-out-everywhere', tokenLimiter, async (req, res) => {
       const methods = await readAuthMethods(user.id, false);
       previousEpoch = methods.sessionEpoch ?? 0;
       newEpoch = previousEpoch + 1;
-      await putPodAuthMethods(user.id, { ...methods, sessionEpoch: newEpoch });
+      await persistExistingAuthMethods(user.id, { ...methods, sessionEpoch: newEpoch });
     }
   } catch (err) {
     res.status(500).json({ error: `Failed to persist sessionEpoch bump: ${(err as Error).message}` });
@@ -4373,12 +4404,18 @@ app.post('/tokens/me/sign-out-everywhere', tokenLimiter, async (req, res) => {
  */
 async function deleteUserCompletely(userId: string): Promise<{ agents: string[]; tombstoned: boolean; podCleanup: { authMethods: number; agents: number } }> {
   const tombstoned = !userId.startsWith('u-try-');
-  if (tombstoned) {
-    await withIdentityPodMutex(userId, async () => {
+  // Under the per-user mutex (a `u-try-play-` caller already holds it), so no existing-account
+  // writer runs between reading the record and closing it; every one after is refused. A Play
+  // id is not marked: it is derived from a game's proof key and may be provisioned again once
+  // purged, and its writers re-read the record under this mutex rather than keep a snapshot.
+  const close = async () => {
+    if (tombstoned) {
       const current = await fetchPodAuthMethods(userId, { createIfMissing: false });
       await putPodAuthMethods(userId, deletionTombstone(userId, current.sessionEpoch ?? 0));
-    });
-  }
+    }
+    if (!userId.startsWith('u-try-play-')) deletedUserIds.add(userId);
+  };
+  await (userId.startsWith('u-try-play-') ? close() : withIdentityPodMutex(userId, close));
 
   const ownedAgentIds = [...identities.values()]
     .filter(i => i.type === 'agent' && i.owner === userId)
