@@ -313,6 +313,7 @@ PORT=6080 \
 | Var | What it does |
 |---|---|
 | `PORT` | Port the bridge HTTP server binds to. |
+| `FOXXI_SIGNED_XAPI_TIMEOUT_MS` | Optional. Deadline for the signed xAPI adapter's same-process LRS request, including the response body: 120000 ms by default; an integer from 30000 to 180000, and anything else stops the bridge at startup. A POST that times out returns 503 with `lrsAccepted: null`, `retryable: true` and the original statement IDs; it does not cancel or roll back native persistence, so retry with the same IDs and content. The 120-second default is longer than a 90-second gateway or client deadline (such as Hallowmarch's), so a caller with a shorter deadline must keep those IDs and reconcile by statement ID. |
 | `FOXXI_TENANT_POD_URL` | Pod base the bridge reads and writes against. Must end in the tenant slug — the deployed tenant pod is `/foxxi/`. Against a local CSS use `http://localhost:3000/foxxi/`; against the deployed substrate use the **css-gate** URL (`https://gate.interego.xwisee.com/foxxi/`), not the raw CSS URL. |
 | `FOXXI_AUTHORITATIVE_SOURCE` | `did:web:` (or other) identifier the bridge stamps on tenant-authored descriptors so federated readers can resolve attribution. |
 | `FOXXI_AUDIENCE` | Which audience slice the bridge serves (`learner`, `admin`, or `both`). |

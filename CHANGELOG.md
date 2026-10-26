@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-10-26 — Foxxi: signed xAPI uses the caller's own pod and reports an unconfirmed write instead of failing
+
+Signed xAPI reads and writes now honour the owner pod the verified payload names, through the same principal and same-store checks every other self-bound route uses. A wallet's provisioned `u-eth-*` pod is used both for its private LRS lens and for the encrypted lattice copy, instead of the derived `eth-*` pod that is usually not the one that exists. A pod that belongs to someone else, sits on another host or is malformed still falls back to the caller's derived pod. Requests that name no pod keep their old lens. Records already written to the derived lens are not moved or merged. Telemetry routes keep their pod and lens; they share the new loopback deadline (120 s by default, now covering the response body). This fix shipped once from a branch image and was lost when later master deploys replaced that image.
+
+The adapter's same-process LRS request now waits 120 seconds by default instead of 30, and the deadline covers the response body as well as the headers. `FOXXI_SIGNED_XAPI_TIMEOUT_MS` sets it, from 30 to 180 seconds. When the write itself times out or loses its connection, the caller now gets a 503 with `lrsAccepted: null`, `retryable: true` and its original statement IDs, rather than an HTTP 500 with no IDs. The statement may still be committed, so the caller retries with the same IDs and content. A read-back that throws after the LRS accepted the batch now returns the existing 502 receipt with `lrsAccepted: true`.
+
 ## 2026-10-26 — PGSL sweep: private sweep connection failures release both clients
 
 The private sweep worker bounds each PostgreSQL connection attempt to five seconds and closes both clients when either connection fails, including a cleanup rejection from the other client. Failure remains a nonzero exit with sanitized diagnostics before any SQL runs. Injected entry-point fixtures cover both connection failures; the existing real PostgreSQL retention and reclamation cases remain unchanged.

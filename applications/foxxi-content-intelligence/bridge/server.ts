@@ -29,6 +29,7 @@ const bridgeLog = (...values: unknown[]) => { process.stdout.write(format(...val
 const bridgeWarn = (...values: unknown[]) => { process.stderr.write(format(...values) + '\n'); };
 const bridgeError = (...values: unknown[]) => { process.stderr.write(format(...values) + '\n'); };
 import { readSelfXapi, writeSelfXapi } from '../src/self-xapi.js';
+import { configuredSelfXapiTimeout, createSelfXapiRequest } from '../src/self-xapi-request.js';
 import { composeOwnSubjectXapiVerifier } from '../src/own-subject-xapi-auth.js';
 import { OwnSubjectXapiWriteBudget, OwnSubjectXapiRequestBudget } from '../src/own-subject-xapi.js';
 import { createOwnSubjectActivityStore } from '../src/own-subject-activity-store.js';
@@ -5783,6 +5784,7 @@ else if (audience === 'admin') activeAffordances = foxxiAdminAffordances;
 else activeAffordances = [...foxxiAffordances, ...foxxiAdminAffordances];
 
 const PORT = parseInt(process.env.PORT ?? '6080', 10);
+const signedXapiTimeoutMs = configuredSelfXapiTimeout();
 
 // Browser dashboard origin (default Vite dev server). Override with
 // FOXXI_DASHBOARD_ORIGIN for production. Multiple browser surfaces
@@ -9818,7 +9820,12 @@ const signedXapiHandler = (operation: 'read' | 'write' | 'telemetry-ingest' | 't
         ? checkTelemetryRateLimit(bound.callerDid, operation === 'telemetry-ingest' || operation === 'telemetry-otlp' ? 'ingest' : operation === 'telemetry-query' ? 'query' : 'settings')
         : checkAgenticRateLimit(ip);
       if (!rl.ok) { res.setHeader('Retry-After', String(rl.retryAfterSeconds)); res.status(429).json({ error: `rate limit — retry in ${rl.retryAfterSeconds}s` }); return; }
-      const podUrl = resolveSubjectPodUrl(bound.callerDid);
+      // The signed xAPI caller may name its provisioned own pod. Reuse the
+      // existing principal/store fence before selecting either private LRS lens
+      // or native persistence target; a signature alone cannot authorize a pod.
+      const podUrl = operation === 'read' || operation === 'write'
+        ? selfBoundPod(bound.callerDid, typeof bound.payload.subject_pod_url === 'string' ? bound.payload.subject_pod_url : undefined)
+        : resolveSubjectPodUrl(bound.callerDid);
       const label = actorForPod(podUrl, MESH_ACTOR_LABELS);
       const tenant = lensTenantFor(label);
       const captureStore = telemetryCaptureStore(bound.callerDid, podUrl, label);
@@ -9866,16 +9873,7 @@ const signedXapiHandler = (operation: 'read' | 'write' | 'telemetry-ingest' | 't
             if (!statement.stored || !statement.authority) throw new Error('durable record is missing its LRS-assigned envelope');
             await getStatementStore(tenant).put({ id: String(statement.id), statement, stored: String(statement.stored), voided: false });
           },
-          request: async (method, query, body) => {
-            const url = new URL(`http://127.0.0.1:${PORT}/xapi/statements`);
-            url.search = query.toString();
-            const response = await fetch(url, {
-              method, redirect: 'error', signal: AbortSignal.timeout(30_000),
-              headers: { 'Content-Type': 'application/json', 'X-Experience-API-Version': '2.0.0', Authorization: `Basic ${Buffer.from(`${principal}:${secret}`).toString('base64')}` },
-              ...(body === undefined ? {} : { body: JSON.stringify(body) }),
-            });
-            return { status: response.status, body: await response.json() as unknown };
-          },
+          request: createSelfXapiRequest({ port: PORT, principal, secret, timeoutMs: signedXapiTimeoutMs }),
           persist: async (statement) => {
             const result = await composeIntoSharedLattice({
             podUrl, agentDid: bound.callerDid, label: telemetry ? `${label}-llm-telemetry-v1` : label,
