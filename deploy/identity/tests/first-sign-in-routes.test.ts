@@ -13,7 +13,7 @@
  *   node --test --import tsx tests/first-sign-in-routes.test.ts
  */
 
-import { test, before, after } from 'node:test';
+import { test, before, after, beforeEach } from 'node:test';
 import { strict as assert } from 'node:assert';
 import { spawn, type ChildProcess } from 'node:child_process';
 import * as crypto from 'node:crypto';
@@ -74,10 +74,18 @@ const didWebKey = (did: string, multibase: string, createdAt = now) =>
 // The same for a did:key.
 const sharedDidKey = didKey();
 const sharedDidKeyOther = 'a-didkey-second-holder';
-// A did:web its owner bound first, then nine accounts bound with a copy of its public key (a
-// DID document publishes it), each sorting before the owner: more than the cap of holders tried.
-const copiedWeb = { did: 'did:web:copied.example', owner: ed25519(), ownerId: 'zz-web-owner',
-  copies: Array.from({ length: 9 }, (_, i) => `a-web-copy-${i + 1}`) };
+// A wallet and a did:key listed by a loaded account not derived from them and by the account
+// derived from them, which is not loaded: its pod answers 502, or is not in the listing.
+const derivedUnreadable = { wallet: Wallet.createRandom(), walletOther: 'a-wallet-holder-loaded',
+  didKey: didKey(), didKeyOther: 'a-didkey-holder-loaded' };
+const derivedUnlisted = { wallet: Wallet.createRandom(), walletOther: 'a-wallet-holder-listed',
+  didKey: didKey(), didKeyOther: 'a-didkey-holder-listed' };
+// A did:web its owner bound first, then nine more accounts bound it, each sorting before the
+// owner: more than the cap of holders tried. Only a key's holder can bind a did:web with that
+// key (/auth/did checks a signature by it over this server's nonce first), so each of the nine
+// lists a key of its own, which never verifies the owner's signature.
+const crowdedWeb = { did: 'did:web:crowded.example', owner: ed25519(), ownerId: 'zz-web-owner',
+  others: Array.from({ length: 9 }, (_, i) => ({ id: `a-web-other-${i + 1}`, key: ed25519() })) };
 
 // Seeded legacy accounts claimed with a bootstrap invite (mode B).
 const invites = { wallet: { userId: 'seeded-wallet', token: crypto.randomBytes(16).toString('hex') },
@@ -109,17 +117,29 @@ const pods = new Map<string, Record<string, unknown>>([
     didKeys: [didWebKey(sharedDidKey.did, sharedDidKey.did.slice('did:key:'.length))] }],
   [sharedDidKeyOther, { userId: sharedDidKeyOther, name: 'did:key other', walletAddresses: [], webAuthnCredentials: [],
     didKeys: [didWebKey(sharedDidKey.did, sharedDidKey.did.slice('did:key:'.length), '2024-01-01T00:00:00.000Z')] }],
-  [copiedWeb.ownerId, { userId: copiedWeb.ownerId, name: 'did:web owner', walletAddresses: [], webAuthnCredentials: [],
-    didKeys: [didWebKey(copiedWeb.did, copiedWeb.owner.multibase, '2025-01-01T00:00:00.000Z')] }],
-  ...copiedWeb.copies.map(id => [id, { userId: id, name: 'did:web copy', walletAddresses: [], webAuthnCredentials: [],
-    didKeys: [didWebKey(copiedWeb.did, copiedWeb.owner.multibase)] }] as [string, Record<string, unknown>]),
+  [crowdedWeb.ownerId, { userId: crowdedWeb.ownerId, name: 'did:web owner', walletAddresses: [], webAuthnCredentials: [],
+    didKeys: [didWebKey(crowdedWeb.did, crowdedWeb.owner.multibase, '2025-01-01T00:00:00.000Z')] }],
+  ...crowdedWeb.others.map(({ id, key }) => [id, { userId: id, name: 'did:web other', walletAddresses: [], webAuthnCredentials: [],
+    didKeys: [didWebKey(crowdedWeb.did, key.multibase)] }] as [string, Record<string, unknown>]),
+  ...[derivedUnreadable, derivedUnlisted].flatMap(({ wallet, walletOther, didKey: k, didKeyOther }) => [
+    [walletOther, { userId: walletOther, name: 'Wallet holder', didKeys: [], webAuthnCredentials: [],
+      walletAddresses: [wallet.address.toLowerCase()] }],
+    [walletUser(wallet), { userId: walletUser(wallet), name: 'Wallet derived', didKeys: [], webAuthnCredentials: [],
+      walletAddresses: [wallet.address.toLowerCase()] }],
+    [didKeyOther, { userId: didKeyOther, name: 'did:key holder', walletAddresses: [], webAuthnCredentials: [],
+      didKeys: [didWebKey(k.did, k.did.slice('did:key:'.length))] }],
+    [didUser(k), { userId: didUser(k), name: 'did:key derived', walletAddresses: [], webAuthnCredentials: [],
+      didKeys: [didWebKey(k.did, k.did.slice('did:key:'.length))] }],
+  ] as Array<[string, Record<string, unknown>]>),
   ...strandedHolders.map(id => [id, { userId: id, name: 'Wallet holder', didKeys: [], webAuthnCredentials: [],
     walletAddresses: [strandedWallet.address.toLowerCase()] }] as [string, Record<string, unknown>]),
 ]);
 // Only these are in the root listing, so only these load at startup.
 const listed = new Set([walletUser(wallets.passkeyOnly), didUser(dids.passkeyOnly), sharedWeb.ownerId, walletUser(sharedWallet),
-  didUser(sharedDidKey), copiedWeb.ownerId, ...copiedWeb.copies, ...strandedHolders]);
-const unreadable = new Set([walletUser(wallets.unreadable), didUser(dids.unreadable)]);
+  didUser(sharedDidKey), crowdedWeb.ownerId, ...crowdedWeb.others.map(o => o.id), ...strandedHolders,
+  ...[derivedUnreadable, derivedUnlisted].flatMap(d => [d.walletOther, d.didKeyOther])]);
+const unreadable = new Set([walletUser(wallets.unreadable), didUser(dids.unreadable),
+  walletUser(derivedUnreadable.wallet), didUser(derivedUnreadable.didKey)]);
 // Pods a test makes unreadable for a while (a CSS blip), after startup has loaded the rest.
 const blipping = new Set<string>();
 // GET once answers 404, and the document then appears as another writer's.
@@ -180,9 +200,13 @@ let identity: ChildProcess;
 let base = '';
 let output = '';
 
+// Each test arrives from its own address (the server trusts one proxy hop), so the per-IP
+// auth-enroll budget (30 a minute) is not shared across the whole file.
+let clientAddr = 0;
+beforeEach(() => { clientAddr++; });
 async function post(path: string, body: unknown): Promise<{ status: number; json: Record<string, unknown> }> {
   const r = await fetch(`${base}${path}`, {
-    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+    method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Forwarded-For': `198.51.100.${clientAddr}` }, body: JSON.stringify(body),
   });
   return { status: r.status, json: await r.json() as Record<string, unknown> };
 }
@@ -380,11 +404,59 @@ test('a did:key two accounts list signs in to the one derived from it, though th
   assert.deepEqual(writesTo(sharedDidKeyOther), []);
 });
 
-test('a did:web whose public key later accounts copied still signs in to its owner, past the cap of holders tried', async () => {
-  const r = await didSignIn({ did: copiedWeb.did, privateKey: copiedWeb.owner.privateKey }, { publicKeyMultibase: copiedWeb.owner.multibase });
+test('a did:web nine later accounts bound with keys of their own still signs in to its owner, past the cap of holders tried', async () => {
+  const r = await didSignIn({ did: crowdedWeb.did, privateKey: crowdedWeb.owner.privateKey }, { publicKeyMultibase: crowdedWeb.owner.multibase });
   assert.equal(r.status, 200, `${JSON.stringify(r.json)}\n${output}`);
-  assert.equal(r.json['userId'], copiedWeb.ownerId);
+  assert.equal(r.json['userId'], crowdedWeb.ownerId);
   assert.ok(output.split('\n').some(l => /kind=did holders=10 tried=8$/.test(l.trim())), output);
+  // The others neither take nor block it: one tried signs in with its own key, to its own account.
+  const [first] = crowdedWeb.others;
+  const own = await didSignIn({ did: crowdedWeb.did, privateKey: first!.key.privateKey }, { publicKeyMultibase: first!.key.multibase });
+  assert.equal(own.status, 200, `${JSON.stringify(own.json)}\n${output}`);
+  assert.equal(own.json['userId'], first!.id);
+});
+
+test('a wallet a loaded account lists is not signed in there while the account derived from it cannot be read', async () => {
+  // The derived account lists the wallet too, and would take its sign-ins once it loaded.
+  const { wallet, walletOther } = derivedUnreadable;
+  const r = await siwe(wallet);
+  assert.equal(r.status, 503, `${JSON.stringify(r.json)}\n${output}`);
+  assert.equal(r.json['token'], undefined);
+  assert.equal(r.json['userId'], undefined);
+  assert.deepEqual(writesTo(walletOther), []);
+  assert.deepEqual(writesTo(walletUser(wallet)), []);
+});
+
+test('a wallet a loaded account lists signs in to the account derived from it, which lists it but was not loaded', async () => {
+  const { wallet, walletOther } = derivedUnlisted;
+  for (let i = 0; i < 2; i++) {
+    const r = await siwe(wallet);
+    assert.equal(r.status, 200, `${JSON.stringify(r.json)}\n${output}`);
+    assert.equal(r.json['userId'], walletUser(wallet));
+  }
+  assert.deepEqual(writesTo(walletOther), []);
+  assert.deepEqual(writesTo(walletUser(wallet)), []);
+});
+
+test('a did:key a loaded account lists is not signed in there while the account derived from it cannot be read', async () => {
+  const { didKey: k, didKeyOther } = derivedUnreadable;
+  const r = await didSignIn(k);
+  assert.equal(r.status, 503, `${JSON.stringify(r.json)}\n${output}`);
+  assert.equal(r.json['token'], undefined);
+  assert.equal(r.json['userId'], undefined);
+  assert.deepEqual(writesTo(didKeyOther), []);
+  assert.deepEqual(writesTo(didUser(k)), []);
+});
+
+test('a did:key a loaded account lists signs in to the account derived from it, which lists it but was not loaded', async () => {
+  const { didKey: k, didKeyOther } = derivedUnlisted;
+  for (let i = 0; i < 2; i++) {
+    const r = await didSignIn(k);
+    assert.equal(r.status, 200, `${JSON.stringify(r.json)}\n${output}`);
+    assert.equal(r.json['userId'], didUser(k));
+  }
+  assert.deepEqual(writesTo(didKeyOther), []);
+  assert.deepEqual(writesTo(didUser(k)), []);
 });
 
 test('a wallet signature replayed to the retired /siwe/verify gets no token', async () => {

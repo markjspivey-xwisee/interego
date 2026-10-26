@@ -5,11 +5,17 @@
  *
  * Credential ids are not secret (POST /challenges lists an account's ids to anyone who names
  * it) and a software authenticator registers any id with its own key. So while a victim's
- * account is not loaded, anyone can register the victim's id: the account derived from the
+ * account is not loaded, anyone could register the victim's id: the account derived from the
  * id is empty, so a fresh registration creates it. The index used to map the id to whichever
  * account was loaded last, and the other holder's sign-ins then failed, on and off with every
  * load order and refresh. Now every holder is a candidate, and the first whose stored key
  * verifies the assertion wins.
+ *
+ * This server's index is complete, so a registration is refused only for an id a loaded account
+ * holds. The victims here are not in the root listing: they stand for an account this server
+ * never listed (one opened on the other instance while a deploy overlapped the two), which is
+ * what remains of that window. While the index is incomplete nothing is registered at all
+ * (tests/incomplete-index-routes.test.ts).
  *
  * The pure half is tests/credential-index.test.ts.
  *
@@ -29,11 +35,11 @@ import { assertion, attest, softPasskey, type SoftPasskey } from './soft-authent
 const now = new Date().toISOString();
 // When the owners enrolled: before anyone could copy their credential ids.
 const earlier = '2025-01-01T00:00:00.000Z';
-const stored = (key: SoftPasskey, createdAt = now) => ({ id: key.id, publicKey: key.cose.toString('base64url'), counter: 0, createdAt });
+const stored = (key: SoftPasskey, createdAt = now, counter = 0) => ({ id: key.id, publicKey: key.cose.toString('base64url'), counter, createdAt });
 const account = (userId: string, ...passkeys: SoftPasskey[]) =>
   ({ userId, name: userId, walletAddresses: [], didKeys: [], webAuthnCredentials: passkeys.map(k => stored(k)) });
-const enrolled = (userId: string, key: SoftPasskey, createdAt: string) =>
-  ({ ...account(userId), webAuthnCredentials: [stored(key, createdAt)] });
+const enrolled = (userId: string, key: SoftPasskey, createdAt: string, counter = 0) =>
+  ({ ...account(userId), webAuthnCredentials: [stored(key, createdAt, counter)] });
 /** Someone else's passkey with the same credential id. */
 const sameId = (key: SoftPasskey) => softPasskey(key.rawId);
 
@@ -57,6 +63,13 @@ const eightIds = Array.from({ length: 8 }, (_, i) => `eight-${8 - i}`);
 // other's sign-in is reading their records.
 const doomed = { key: softPasskey(), id: 'del-x' };
 const survivor = { key: sameId(doomed.key), id: 'del-v' };
+// One key on two accounts: the earlier holder's stored sign counter is above the counter the
+// assertion carries (a replay, or a cloned authenticator), the later holder's (a copy of the
+// key registered under the same id) is below it.
+const counted = { key: softPasskey(), earliestId: 'cnt-early', laterId: 'cnt-later' };
+// A Play owner's passkey, and a later copy of its key under its id on another account. The Play
+// owner's record is read again from its pod at sign-in.
+const play = { key: softPasskey(), id: 'u-try-play-0000000000aa', copyId: 'zz-play-copy' };
 
 const pods = new Map<string, Record<string, unknown>>([
   [race.victimId, account(race.victimId, race.victim)],
@@ -70,11 +83,18 @@ const pods = new Map<string, Record<string, unknown>>([
   [doomed.id, enrolled(doomed.id, doomed.key, '2024-01-01T00:00:00.000Z')],
   [survivor.id, enrolled(survivor.id, survivor.key, earlier)],
   ...eightIds.map(id => [id, account(id, eight)] as [string, Record<string, unknown>]),
+  [counted.earliestId, enrolled(counted.earliestId, counted.key, earlier, 100)],
+  [counted.laterId, enrolled(counted.laterId, counted.key, now, 0)],
+  [play.id, enrolled(play.id, play.key, earlier)],
+  [play.copyId, enrolled(play.copyId, play.key, now)],
 ]);
 // Only these are in the root listing, so only these load at startup. The others load when a
 // targeted sign-in names them (POST /challenges with a userId).
-const listed = new Set([pair.victimId, flaky.victimId, crowded.ownerId, ...crowd.map(c => c.id), ...eightIds, doomed.id, survivor.id]);
+const listed = new Set([pair.victimId, flaky.victimId, crowded.ownerId, ...crowd.map(c => c.id), ...eightIds, doomed.id, survivor.id,
+  counted.earliestId, counted.laterId, play.id, play.copyId]);
 const failingPuts = new Set<string>([flaky.victimId]);
+// Pods whose auth-methods.jsonld a test makes answer 502 for a while, after startup loaded them.
+const failingGets = new Set<string>();
 const writes: string[] = [];
 /** A pod read a test holds until it lets go: `arrived` resolves when the read comes in. */
 let heldRead: { userId: string; arrived: () => void; release: Promise<void> } | undefined;
@@ -95,6 +115,7 @@ function servePods(req: http.IncomingMessage, res: http.ServerResponse): void {
     return;
   }
   if (m && req.method === 'GET') {
+    if (failingGets.has(m[1]!)) { res.writeHead(502).end(); return; }
     const doc = pods.get(m[1]!);
     if (!doc) { res.writeHead(404).end(); return; }
     res.writeHead(200, { 'Content-Type': 'application/ld+json' });
@@ -154,10 +175,10 @@ async function challenge(userId?: string) {
   assert.equal(ch.status, 200, JSON.stringify(ch.json));
   return ch.json;
 }
-async function signIn(key: SoftPasskey, userId?: string) {
+async function signIn(key: SoftPasskey, userId?: string, counter = ++signCount) {
   const ch = await challenge(userId);
   const rpId = String(ch['rpId'] ?? new URL(base).hostname);
-  return post('/auth/webauthn/authenticate', { response: assertion(key, String(ch['nonce']), base, rpId, ++signCount) });
+  return post('/auth/webauthn/authenticate', { response: assertion(key, String(ch['nonce']), base, rpId, counter) });
 }
 async function signsInTo(key: SoftPasskey, userId: string, scope?: string): Promise<void> {
   const r = await signIn(key, scope);
@@ -202,8 +223,9 @@ after(async () => {
   await new Promise<void>(resolve => podServer?.close(() => resolve()));
 });
 
-test('a victim\'s passkey id registered by someone else while the victim was unloaded: both sign in to their own accounts', async () => {
-  // The race itself is unchanged: the derived account is empty, so the registration creates it.
+test('a victim\'s passkey id registered by someone else while the victim was not in this server\'s listing: both sign in to their own accounts', async () => {
+  // The index is complete and no loaded account holds the id, so the registration creates the
+  // empty derived account.
   const r = await register(raceAttacker);
   assert.equal(r.status, 200, `${JSON.stringify(r.json)}\n${output}`);
   assert.equal(r.json['userId'], raceAttacker.userId);
@@ -256,7 +278,7 @@ test('a later copy of the victim\'s public key under the victim\'s id does not t
   assert.equal(r.status, 200, `${JSON.stringify(r.json)}\n${output}`);
   assert.equal(r.json['userId'], copied.victim.userId);
   await challenge(copied.victimId);
-  // The victim's account enrolled the id first, so it is tried first, every time.
+  // Once loaded, the victim's account, which enrolled the id first, is tried first, every time.
   await signsInTo(copied.victim, copied.victimId);
   await signsInTo(copied.victim, copied.victimId);
   assert.equal(writesTo(copied.victim.userId), 1);   // its creation, never a sign-in counter
@@ -297,4 +319,35 @@ test('a holder deleted while a sign-in reads the records is skipped, not reporte
   const r = await signingIn;
   assert.equal(r.status, 200, `${JSON.stringify(r.json)}\n${output}`);
   assert.equal(r.json['userId'], survivor.id);
+});
+
+test('a holder that refuses an assertion for its sign counter does not hand it to a later holder of the same key', async () => {
+  // The earlier holder refuses counter 50 (its own is 100) before it checks the signature; the
+  // later one, storing the same key with counter 0, would accept it and record 50.
+  const before = { earliest: writesTo(counted.earliestId), later: writesTo(counted.laterId) };
+  const r = await signIn(counted.key, undefined, 50);
+  assert.equal(r.status, 401, `${JSON.stringify(r.json)}\n${output}`);
+  assert.equal(r.json['token'], undefined);
+  assert.equal(writesTo(counted.laterId), before.later);
+  assert.equal(writesTo(counted.earliestId), before.earliest);
+  // Above the earlier holder's counter, the assertion signs in to it.
+  const ok = await signIn(counted.key, undefined, 101);
+  assert.equal(ok.status, 200, `${JSON.stringify(ok.json)}\n${output}`);
+  assert.equal(ok.json['userId'], counted.earliestId);
+  assert.equal(writesTo(counted.laterId), before.later);
+});
+
+test('a Play owner whose pod cannot be read stops the sign-in: no later holder of its key takes it', async () => {
+  failingGets.add(play.id);
+  const before = { owner: writesTo(play.id), copy: writesTo(play.copyId) };
+  const r = await signIn(play.key);
+  assert.equal(r.status, 503, `${JSON.stringify(r.json)}\n${output}`);
+  assert.equal(r.json['token'], undefined);
+  assert.equal(r.json['userId'], undefined);
+  assert.equal(writesTo(play.copyId), before.copy);
+  assert.equal(writesTo(play.id), before.owner);
+  // Readable again, it signs in to the Play owner.
+  failingGets.delete(play.id);
+  await signsInTo(play.key, play.id);
+  assert.equal(writesTo(play.copyId), before.copy);
 });

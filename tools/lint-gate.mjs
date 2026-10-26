@@ -194,7 +194,8 @@ const UNLINTED_FRONTIER = {
   // The strict ERC-4361 reader (identity siwe-message.ts) and its suite, then the multi-holder
   // credential index (module, its suite, a route suite, a shared software authenticator), with
   // the rounds since: 229 files. All lint clean; the error ceiling stays fixed.
-  deploy: { errors: 356, files: 229 },
+  // A route suite for sign-ins while the account index is incomplete: 230.
+  deploy: { errors: 356, files: 230 },
   // The bulk of these are `no-console` in vertical bridges and CLI entry points — one config
   // decision, not a thousand defects. See the note above.
   // ★ 320 -> 337, and the ratchet caught it in CI rather than locally, which is the interesting

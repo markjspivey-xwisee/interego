@@ -4,21 +4,35 @@
  * The indexes this replaces mapped each credential to ONE account, and whichever account was
  * loaded last won. A passkey credential id is not secret (POST /challenges lists an account's
  * ids to anyone who names it), and a software authenticator registers any id with its own
- * key. So while a victim's account was not loaded (after a deploy, a pod unreadable at boot,
- * an account on another replica), anyone could register the victim's id on an account of
- * their own; from then on every load order and every refresh re-pointed the id, and the
- * victim's sign-ins failed on and off for good. A did:web, bound with a key the caller
- * chooses, had the same problem.
+ * key. So while a victim's account was not loaded (after a deploy, a pod unreadable at boot),
+ * anyone could register the victim's id on an account of their own; from then on every load
+ * order and every refresh re-pointed the id, and the victim's sign-ins failed on and off for
+ * good. A did:web that another account bound with a key of its own did the same.
  *
  * Here a credential maps to every account that lists it. A sign-in tries them in a stable
- * order and the first whose record verifies the proof wins, so another holder can neither take
- * nor block the sign-in. The order is earliest-enrolled first where the binding key is the
- * registrant's choice (a passkey registered with 'none' attestation, a did:web bound with a key
- * the caller sends): such a key can be copied, since a public key is not secret, so a later
- * copy of the owner's key must not win, and the owner's account must be among those tried.
+ * order and the first whose record verifies the proof wins, so a holder with a key of its own
+ * can neither take nor block another's sign-in. Passkeys and DIDs that are not did:keys rank
+ * earliest-enrolled first:
+ *   - A passkey is registered with 'none' attestation, so its public key is whatever the
+ *     registrant sends, and a public key is not secret: someone can register a copy of the
+ *     owner's key under the owner's id, and the owner's signature then verifies on both
+ *     accounts. The owner's account enrolled first, so it is tried first.
+ *   - A DID that is not a did:key is bound only with a key that signed the server's nonce, so
+ *     only the key's holder can bind it with that key, and another account lists it with a key
+ *     of its own, which never verifies the owner's signature. Ranking by enrolment keeps the
+ *     owner among the first MAX_HOLDERS tried however many such bindings pile up; accounts
+ *     listing it with the same key were all bound by that key's holder, and are tried in the
+ *     same order every time.
  * Ties, wallets and did:keys go to the preferred account (the one derived from the
  * credential), then by id. What a sign-in does with several wallet holders is the server's
  * choice (walletAccount in server.ts): this module only orders them.
+ *
+ * The order ranks the accounts the server has loaded, and only those. A copy enrolled while
+ * the owner's account was not loaded is the only holder a sign-in finds until that account
+ * loads, so the server opens no account and registers no passkey for a credential no loaded
+ * account holds while any account is still unloaded (refuseWhileLoading in server.ts). What
+ * that leaves is an account the server never listed: one opened on the other instance while a
+ * deploy overlapped the two is loaded only when something names it, until the next restart.
  *
  * Pure: no server state, so it is unit-tested directly (tests/credential-index.test.ts).
  */
