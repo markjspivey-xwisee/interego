@@ -747,6 +747,60 @@ describe.skipIf(!RUN)('pgsl-store: physical write admission over REAL PostgreSQL
     }
   }, 20_000);
 
+
+  it('never acknowledges a swallowed lock-only CAS SQL error after PostgreSQL turns COMMIT into ROLLBACK', async () => {
+    const fixture = await pressureFixture('proof_abort');
+    const proofKey = Buffer.from('proof'), value = Buffer.from('original');
+    const deletedKey = Buffer.from('earlier-delete'), retained = Buffer.from('must survive rollback');
+    const blocker = new Client({ host: '127.0.0.1' });
+    let transaction: Promise<string> | undefined;
+    let caughtCode: string | undefined;
+    try {
+      await fixture.client.query(`INSERT INTO ${fixture.table}(k,v) VALUES ($1,$2),($3,$4)`,
+        [proofKey, value, deletedKey, retained]);
+      await blocker.connect();
+      await blocker.query('BEGIN');
+      await blocker.query(`SELECT 1 FROM ${fixture.table} WHERE k=$1 FOR UPDATE`, [proofKey]);
+      const applicationName = `pgsl-proof-abort-${fixture.suffix}`;
+      const adapter = await fixture.open({ maxDatabaseBytes: 1, writeReserveBytes: 0 }, applicationName);
+      transaction = adapter.transact(async tx => {
+        tx.clear(deletedKey);
+        expect(await tx.get(deletedKey)).toBeUndefined(); // Prove the deletion reached PostgreSQL.
+        try {
+          await tx.compareAndSet(proofKey, value, value);
+        } catch (error) {
+          caughtCode = (error as { code?: string }).code;
+          if (caughtCode !== '57014') throw error;
+        }
+        return 'acknowledged';
+      });
+      void transaction.catch(() => undefined);
+      // Cancel a real blocked proof query, rather than simulating PostgreSQL's abort state.
+      let proofPid: number | undefined;
+      const deadline = performance.now() + 5000;
+      while (performance.now() < deadline) {
+        const activity = await fixture.client.query<{ pid: number }>(
+          "SELECT pid FROM pg_stat_activity WHERE application_name=$1 AND wait_event_type='Lock' AND query LIKE 'SELECT 1 FROM % FOR UPDATE'",
+          [applicationName]);
+        proofPid = activity.rows[0]?.pid;
+        if (proofPid !== undefined) break;
+        await new Promise(resolve => setTimeout(resolve, 25));
+      }
+      expect(proofPid).toBeDefined();
+      expect((await fixture.client.query<{ cancelled: boolean }>(
+        'SELECT pg_cancel_backend($1) AS cancelled', [proofPid])).rows[0]?.cancelled).toBe(true);
+      await expect(transaction).rejects.toThrow('transaction did not commit');
+      expect(caughtCode).toBe('57014');
+      expect(await fixture.value(deletedKey)).toEqual(retained);
+      expect(await fixture.value(proofKey)).toEqual(value);
+    } finally {
+      await blocker.query('ROLLBACK').catch(() => undefined);
+      await blocker.end();
+      await Promise.allSettled(transaction ? [transaction] : []);
+      await fixture.close();
+    }
+  }, 15_000);
+
   it('admits a previously supported large replacement including retired old-value bytes under the bounded default', async () => {
     const fixture = await pressureFixture('large_replace');
     const key = Buffer.from('large');
