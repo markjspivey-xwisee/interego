@@ -69,6 +69,8 @@ const b64 = (u: Uint8Array): string =>
   Buffer.from(u.buffer, u.byteOffset, u.byteLength).toString('base64');
 const unb64 = (s: string): Uint8Array => new Uint8Array(Buffer.from(s, 'base64'));
 const bareCt = (ct: string): string => ct.split(';')[0]!.trim();
+const containerPrefix = (containerPath: string): string =>
+  containerPath === '' || containerPath.endsWith('/') ? containerPath : `${containerPath}/`;
 
 export class LdpStore {
   constructor(
@@ -279,37 +281,19 @@ export class LdpStore {
 
   /** Direct children of a container WITH per-child type/size/date (from the records). */
   async listChildren(pod: string, containerPath: string): Promise<ChildMeta[]> {
-    const prefix =
-      containerPath === '' || containerPath.endsWith('/') ? containerPath : `${containerPath}/`;
-    const entries = await this.store.cpList<ResourceRecord>(this.col(pod), prefix);
-    const direct = new Map<string, ChildMeta>();
-    for (const { id, value } of entries) {
-      if (id === prefix) continue;
-      const rest = id.slice(prefix.length);
-      if (!rest) continue;
-      const slash = rest.indexOf('/');
-      if (slash === -1) {
-        // A direct DOCUMENT child (container markers live at slash-terminated paths).
-        const childPath = prefix + rest;
-        direct.set(childPath, {
-          path: childPath,
-          isContainer: false,
-          contentType: value.contentType,
-          size: value.size ?? 0,
-          updatedAt: value.updatedAt,
-        });
-      } else {
-        // A direct CONTAINER child; capture its marker's updatedAt if this entry IS the marker.
-        const childPath = `${prefix}${rest.slice(0, slash)}/`;
-        const isMarker = rest === `${rest.slice(0, slash)}/`;
-        const prev = direct.get(childPath);
-        direct.set(childPath, {
-          path: childPath,
-          isContainer: true,
-          updatedAt: isMarker ? value.updatedAt : prev?.updatedAt,
-        });
-      }
-    }
-    return [...direct.values()].sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
+    // The store walks only the direct children (it jumps over each child container's subtree),
+    // so a listing costs what the container holds, not what the whole server holds.
+    const children = await this.store.cpListChildren<ResourceRecord>(this.col(pod), containerPrefix(containerPath));
+    return children
+      .map(({ id, branch, value }): ChildMeta => branch
+        // A child container; its updatedAt is its marker's, when the marker exists.
+        ? { path: id, isContainer: true, updatedAt: value?.updatedAt }
+        : { path: id, isContainer: false, contentType: value!.contentType, size: value!.size ?? 0, updatedAt: value!.updatedAt })
+      .sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
+  }
+
+  /** Does the container hold anything at all? One bounded read, for an existence check. */
+  async hasChildren(pod: string, containerPath: string): Promise<boolean> {
+    return this.store.cpHasUnder(this.col(pod), containerPrefix(containerPath));
   }
 }

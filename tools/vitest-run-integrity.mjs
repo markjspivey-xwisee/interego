@@ -279,7 +279,12 @@ const REPO_ROOT = fileURLToPath(new URL('..', import.meta.url));
 // 510 -> 539: measured after the native storage/recovery and own-subject activity
 // rounds. The tree's declared-module floor had exceeded its allowed slack; no
 // test module was removed or excluded to make this check pass.
-export const MIN_TEST_MODULES = 539;
+// 539 -> 567, measured on the tree that tripped the allowance (567 modules, 28 above the floor).
+// The gate named 540, the least it would accept, but that leaves no headroom, which
+// tests/vitest-run-integrity.test.ts refuses. The work-redesign and practice-evidence sign-in
+// round added four modules (the relay-delegated verifier and the web UI sign-in, two per
+// vertical); the rest are the rounds since the last pin. None was removed.
+export const MIN_TEST_MODULES = 567;
 
 /**
  * How far below the real module count MIN_TEST_MODULES may sit before that is itself a

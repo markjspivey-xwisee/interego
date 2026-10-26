@@ -5,7 +5,7 @@
   "scripts": {
     "build": "tsc",
     "start": "node dist/server.js",
-    "test": "node --test --import tsx tests/webfinger.test.ts tests/derive-userid.test.ts tests/resolve-target-userid.test.ts tests/account-index.test.ts"
+    "test": "node --test --import tsx tests/webfinger.test.ts tests/derive-userid.test.ts tests/resolve-target-userid.test.ts tests/account-index.test.ts tests/provisional-play.test.ts tests/provisional-play-cleanup.test.ts tests/provisional-play-provider.test.ts tests/provisional-play-enrollment.test.ts tests/surface-agent-restore.test.ts tests/surface-agent-restore-routes.test.ts tests/first-sign-in.test.ts tests/first-sign-in-routes.test.ts tests/did-key-binding-routes.test.ts tests/passkey-register-routes.test.ts tests/image-copies-every-source.test.ts tests/auth-methods-rate-limit.test.ts tests/route-errors.test.ts"
   },
   "dependencies": {
     "express": "^4.21.0",
@@ -19,3 +19,4 @@
     "typescript": "^5.7.0"
   }
 }
+

@@ -6,7 +6,7 @@
  * ── WHY THIS FILE EXISTS ─────────────────────────────────────────────────────
  *
  * `tools/railway-redeploy.mjs` used to compute `interego-${service}` inline. That holds
- * for seventeen of the twenty services and is wrong for three, so the assumption was
+ * for nineteen of the twenty-two services and is wrong for three, so the assumption was
  * invisible until the day it wasn't — and the day it wasn't, it blocked a legitimate
  * deploy for a naming reason dressed up as a safety one: `css` runs
  * `interego-css-pgsl`, so pinning it was refused even though a sha-tagged image of it
@@ -54,7 +54,7 @@ export const IMAGE_PREFIX = 'ghcr.io/markjspivey-xwisee';
  * them gets a specific refusal instead of "unknown service", which reads like a typo.
  */
 export const SERVICES = {
-  // ★ SEVENTEEN of the twenty rows below have an image that really is `interego-<service>`;
+  // ★ NINETEEN of the twenty-two rows below have an image that really is `interego-<service>`;
   // the three that do not are css (interego-css-pgsl) and postgres/redis (upstream images,
   // repo null). This said "Thirteen" and the table has grown since - the numbers are stated
   // here because the whole point of the file is that the mapping is NOT derivable, and a
@@ -88,6 +88,14 @@ export const SERVICES = {
   // bound to the tree the image was built from. Its /health reports INTEREGO_BUILD_SHA as
   // `build`. Added after the service was created, like agp-bridge above.
   'jev-harness-bridge': { repo: 'interego-jev-harness-bridge', health: '/health' },
+  // work-redesign and practice-evidence. Added after both services were created, like agp-bridge.
+  // Singletons: each keeps its replay ledger, locks and hourly budgets in process, so a second
+  // container would accept an envelope the first already spent. As with css, these settings
+  // only SHRINK the two-container window on a deploy (tests/railway-singleton.test.ts); they do
+  // not close it. What is left is the seconds between the successor going live and the old
+  // container's SIGTERM, during which a replayed envelope could be accepted once more.
+  'wrd-bridge': { repo: 'interego-wrd-bridge', health: '/health', singleton: true, maxOverlapSeconds: 0, drainingMustBeUnset: true },
+  'pev-bridge': { repo: 'interego-pev-bridge', health: '/health', singleton: true, maxOverlapSeconds: 0, drainingMustBeUnset: true },
   bridge: { repo: 'interego-bridge', health: '/health' },
   dashboard: { repo: 'interego-dashboard', health: '/health' },
   'pgsl-browser': { repo: 'interego-pgsl-browser', health: '/health' },

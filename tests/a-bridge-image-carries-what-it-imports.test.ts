@@ -40,6 +40,8 @@ const BRIDGES: readonly { vertical: string; dockerfile: string }[] = [
   { vertical: 'foxxi-content-intelligence', dockerfile: 'deploy/Dockerfile.foxxi-bridge' },
   { vertical: 'agentic-performance-practice', dockerfile: 'deploy/Dockerfile.agp-bridge' },
   { vertical: 'shared-workspace', dockerfile: 'deploy/Dockerfile.wsp-bridge' },
+  { vertical: 'work-redesign', dockerfile: 'deploy/Dockerfile.wrd-bridge' },
+  { vertical: 'practice-evidence', dockerfile: 'deploy/Dockerfile.pev-bridge' },
 ];
 
 /** COPY sources naming repo paths, normalised to directory prefixes. */
