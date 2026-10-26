@@ -1,0 +1,184 @@
+# work-redesign (wrd:) bridge: work decisions with an honest record.
+#
+# Serves /affordances, the named MCP tools, the web UI at /ui and the dereferenceable wrd:
+# ontology at /ns/wrd. Every record it writes is a platform-signed descriptor on the pod named by
+# WRD_DEFAULT_POD_URL (or by the call), so the process itself keeps nothing that matters.
+#
+# Built from Dockerfile.wsp-bridge (one stage; see the note there on why one): every workspace
+# package.json before `npm ci` so that layer caches, then sources, then one `npm run build`.
+# The vertical imports only @interego/core, @interego/solid and applications/_shared, and reads
+# its own ui/*.js and ontology/*.ttl at runtime, so the whole vertical directory is copied.
+ARG NODE_BASE=node:22-slim
+FROM ${NODE_BASE}
+
+ENV ONNXRUNTIME_NODE_INSTALL_CUDA=skip
+
+WORKDIR /app
+
+# Workspace manifests: npm ci needs every declared workspace's package.json before it can resolve
+# the tree. This list mirrors the root package.json `workspaces` field, as
+# Dockerfile.jev-harness-bridge's does. The work-redesign bridge is not a workspace (it declares no
+# dependencies of its own), so it adds no line here and obliges no other image to grow one.
+COPY package.json package-lock.json tsconfig.base.json tsconfig.json ./
+COPY packages/abac/package.json ./packages/abac/
+COPY packages/agent-interop/package.json ./packages/agent-interop/
+COPY packages/compliance/package.json ./packages/compliance/
+COPY packages/connectors/package.json ./packages/connectors/
+COPY packages/constitutional/package.json ./packages/constitutional/
+COPY packages/core/package.json ./packages/core/
+COPY packages/extractors/package.json ./packages/extractors/
+COPY packages/mdvault/package.json ./packages/mdvault/
+COPY packages/ops/package.json ./packages/ops/
+COPY packages/p2p/package.json ./packages/p2p/
+COPY packages/passport/package.json ./packages/passport/
+COPY packages/pgsl/package.json ./packages/pgsl/
+COPY packages/pgsl-store/package.json ./packages/pgsl-store/
+COPY packages/privacy/package.json ./packages/privacy/
+COPY packages/registry/package.json ./packages/registry/
+COPY packages/security-txt/package.json ./packages/security-txt/
+COPY packages/skills/package.json ./packages/skills/
+COPY packages/solid/package.json ./packages/solid/
+COPY packages/transactions/package.json ./packages/transactions/
+COPY packages/workspace-client/package.json ./packages/workspace-client/
+COPY mcp-server/package.json ./mcp-server/
+COPY deploy/mcp-relay/package.json ./deploy/mcp-relay/
+COPY deploy/identity/package.json ./deploy/identity/
+COPY deploy/validator/package.json ./deploy/validator/
+COPY applications/foxxi-content-intelligence/bridge/package.json ./applications/foxxi-content-intelligence/bridge/
+COPY applications/agentic-performance-practice/bridge/package.json ./applications/agentic-performance-practice/bridge/
+COPY applications/learner-performer-companion/bridge/package.json ./applications/learner-performer-companion/bridge/
+COPY applications/agent-collective/bridge/package.json ./applications/agent-collective/bridge/
+COPY applications/agent-development-practice/bridge/package.json ./applications/agent-development-practice/bridge/
+COPY applications/organizational-working-memory/bridge/package.json ./applications/organizational-working-memory/bridge/
+COPY applications/lrs-adapter/bridge/package.json ./applications/lrs-adapter/bridge/
+COPY applications/jev-harness/bridge/package.json ./applications/jev-harness/bridge/
+COPY applications/shared-workspace/desktop/package.json ./applications/shared-workspace/desktop/
+COPY applications/shared-workspace/discord/package.json ./applications/shared-workspace/discord/
+RUN npm ci
+
+# Only what this bridge needs:
+#   packages/                    the @interego/* substrate it imports
+#   docs/ns/pgsl-lexicon.ttl     read by @interego/pgsl at runtime (see Dockerfile.wsp-bridge)
+#   applications/_shared/        vertical-bridge, ontology-serve, judgment-kit
+#   applications/work-redesign/  the vertical, including bridge/ui/ and ontology/
+COPY packages/ ./packages/
+COPY docs/ns/pgsl-lexicon.ttl ./docs/ns/pgsl-lexicon.ttl
+COPY applications/_shared/ ./applications/_shared/
+COPY applications/work-redesign/ ./applications/work-redesign/
+
+# build-ghcr.yml restores the packages' dist/ into the context and passes PREBUILT=1; a local
+# build without them still builds.
+ARG PREBUILT=0
+RUN if [ "$PREBUILT" = "1" ] && [ -f packages/registry/dist/index.js ]; then echo "prebuilt packages present; skipping the build"; else npm run build; fi
+
+RUN mkdir -p node_modules/@interego \
+  && ln -sfn /app/packages/core node_modules/@interego/core \
+  && ln -sfn /app/packages/solid node_modules/@interego/solid \
+  && ln -sfn /app/packages/pgsl node_modules/@interego/pgsl
+
+EXPOSE 6100
+ENV PORT=6100
+ENV NODE_NO_WARNINGS=1
+
+# ★ EVERY INTERFACE, IPv4 AND IPv6. The bridge defaults HOST to 127.0.0.1 because it holds a
+# signing key, and a loopback bind also turns on its DNS-rebinding Host guard. In a container
+# behind Railway's proxy a loopback bind answers nothing and the health check fails. `::` is
+# what the other fleet bridges get by listening with no host, and it is not a loopback name,
+# so the Host guard (a loopback-only defence) stays off here.
+ENV HOST=::
+
+# The public URL, substituted into every affordance's hydra:target and the UI's links. Without it
+# the manifest advertises 127.0.0.1. Set on the service (https://${{RAILWAY_PUBLIC_DOMAIN}}).
+ENV BRIDGE_DEPLOYMENT_URL=
+
+# The operator pod. Not a secret: the gate path this deployment writes under, as Foxxi bakes
+# FOXXI_TENANT_POD_URL.
+ENV WRD_DEFAULT_POD_URL=https://gate.interego.xwisee.com/work-redesign/
+
+# ★ SECRETS AND PER-DEPLOYMENT VALUES: unset here on purpose, because anything baked into an image
+# is published to everyone who can pull it. Set them on the service.
+#   WRD_PLATFORM_KEY                64 hex: the key records are signed with. REQUIRED by this image
+#                                   (WRD_REQUIRE_PLATFORM_KEY=1 below): unset or blank, the bridge
+#                                   exits 1 rather than sign with an EPHEMERAL key, whose records
+#                                   the next restart (every deploy is one) would set aside. Keep it
+#                                   for the life of the pod; to rotate, see the next line
+#   WRD_RECORD_KEY                  64 hex, a different key: the record graphs the bridge writes are
+#                                   sealed to it on the pod, and the entity IRIs it derives are keyed
+#                                   with it (graphs a keyless bridge wrote there before stay
+#                                   plaintext; the read model counts them under plaintext).
+#                                   REQUIRED by this image (WRD_REQUIRE_RECORD_KEY=1 below): unset
+#                                   or blank, the bridge exits 1 rather than write plaintext records
+#                                   that the gate serves to anyone. ★ BACK IT UP before the first
+#                                   write, somewhere other than this service: a lost or changed key
+#                                   leaves every sealed record unreadable (409), with no way back
+#   WRD_POD_WRITE_SECRET            the gate's operator token, sent under the default pod's path only
+#   WRD_ADMIN_ADDRESSES             who may change the role registry: 0x addresses only (a user DID
+#                                   goes in WRD_ADMIN_DIDS); any other value stops the bridge
+#   WRD_ADMIN_DIDS                  people who sign in with their Interego account and are admins
+#                                   too: did:web:<WRD_IDENTITY_HOST>:users:<id>, comma separated.
+#                                   Per deployment, so not baked in; a malformed value stops the bridge
+#   WRD_CHAT_AGENTS_DECIDE          1 → acts that change who may do what (registry, countersign, an
+#                                   outcome, grant, revoke) are taken from chat agents (Claude, ChatGPT) too;
+#                                   unset → only from this bridge's web UI. Any other value stops it
+#   WRD_TRUSTED_PLATFORM_ADDRESSES  earlier platform keys whose records stay trusted. An address that
+#                                   signed records on the pod stays listed for as long as the pod is
+#                                   used: dropping it cuts every line holding a version it signed,
+#                                   and every write to those graphs answers 409. Listing an address
+#                                   after a later key started its own chains (an ephemeral key's,
+#                                   say) forks those graphs (409)
+#   WRD_SERVED_PODS                 pods records are read and written on; unset → the default pod
+#   WRD_PUBLIC_READS                1 → unsigned reads of every record; unset → signed reads only
+ENV WRD_PLATFORM_KEY=
+ENV WRD_RECORD_KEY=
+ENV WRD_POD_WRITE_SECRET=
+ENV WRD_ADMIN_ADDRESSES=
+ENV WRD_TRUSTED_PLATFORM_ADDRESSES=
+ENV WRD_SERVED_PODS=
+ENV WRD_PUBLIC_READS=
+ENV WRD_ADMIN_DIDS=
+ENV WRD_CHAT_AGENTS_DECIDE=
+
+# ★ SIGN IN WITH AN INTEREGO ACCOUNT: RELAY-ATTESTED, NOT USER-HELD. A request the Interego relay
+# signed (act … sign_payload: true from Claude, ChatGPT or the web UI) is taken as the person the
+# signed-in agent belongs to when its signature recovers to one of these relay delegation keys and
+# the agent's DID document on WRD_IDENTITY_HOST names a user as its controller. Whoever holds that
+# relay key, or controls the identity host, can therefore act here as any person; every record made
+# this way says authority relay-delegated. Not secrets, so they are baked in: the live relay's
+# delegation address, the identity host, and the relay the web UI signs in through. Set
+# WRD_TRUSTED_RELAY_ADDRESSES to empty on the service to take no relay-signed request at all; a
+# malformed value of any of the three stops the bridge at startup (exit 1, saying which).
+#
+# ROTATING THE RELAY KEY. WRD_TRUSTED_RELAY_ADDRESSES is the keys NEW requests are taken from;
+# WRD_RETIRED_RELAY_ADDRESSES (empty here) is keys taken from no new request, read only to re-check
+# a countersign one of them signed when that decision's outcome is recorded. When the relay
+# rotates, list the new address beside the old one in WRD_TRUSTED_RELAY_ADDRESSES on the service
+# until the relay signs with the new key, then move the old address to WRD_RETIRED_RELAY_ADDRESSES,
+# and keep it there while any decision countersigned through it may still have its outcome
+# recorded. Dropped from both, those outcomes answer 409. An address in both stops the bridge.
+ENV WRD_TRUSTED_RELAY_ADDRESSES=0x276e11d2229d3a96dc96356c15c03c7f83201ebc
+ENV WRD_RETIRED_RELAY_ADDRESSES=
+ENV WRD_IDENTITY_HOST=identity.interego.xwisee.com
+ENV WRD_RELAY_URL=https://relay.interego.xwisee.com
+
+# ★ NO PLAINTEXT RECORDS FROM THIS IMAGE. With this set the bridge refuses to start (exit 1, and
+# a line saying why) unless WRD_RECORD_KEY holds a valid 64-hex key; a blank key counts as
+# missing. Not a secret, so it is baked in. Unlike the bridge variables above, where an empty value
+# means unset, this one is read as it is: 1 turns the guard on, 0 turns it off, and any other
+# value set on the service, a blank or whitespace one included (an unresolved reference
+# overriding this 1, say), stops the bridge at startup (exit 1, saying why) rather than let it
+# write plaintext records. A local run without it (unset) keeps the plaintext default.
+ENV WRD_REQUIRE_RECORD_KEY=1
+
+# ★ NO EPHEMERAL PLATFORM KEY FROM THIS IMAGE. With this set the bridge refuses to start (exit 1,
+# and a line saying why) unless WRD_PLATFORM_KEY holds a valid 64-hex key; a blank key counts as
+# missing. Read as it is, like WRD_REQUIRE_RECORD_KEY above: 1 turns the guard on, 0 turns it off,
+# and any other value set on the service, a blank or whitespace one included, stops the bridge at
+# startup (exit 1, saying why).
+ENV WRD_REQUIRE_PLATFORM_KEY=1
+
+# The commit this image was built from, surfaced at /health by the shared createVerticalBridge
+# factory so a deploy can be VERIFIED rather than assumed.
+ARG GIT_SHA=unset
+ENV INTEREGO_BUILD_SHA=$GIT_SHA
+
+CMD ["npx", "tsx", "applications/work-redesign/bridge/server.ts"]

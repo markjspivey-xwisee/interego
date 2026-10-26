@@ -31,6 +31,7 @@ COPY deploy/css-gate/package.json /app/package.json
 RUN npm install --omit=dev --no-audit --no-fund
 
 COPY deploy/css-gate/server.mjs /app/server.mjs
+COPY deploy/css-gate/provisional-play.mjs /app/provisional-play.mjs
 
 EXPOSE 8080
 ENV PORT=8080
@@ -58,3 +59,4 @@ ARG GIT_SHA=unset
 ENV INTEREGO_BUILD_SHA=$GIT_SHA
 
 CMD ["node", "/app/server.mjs"]
+

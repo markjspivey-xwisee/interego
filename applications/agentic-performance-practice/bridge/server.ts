@@ -32,6 +32,7 @@
  */
 
 import { createVerticalBridge } from '../../_shared/vertical-bridge/index.js';
+import { installProcessSafetyNet } from '../../_shared/vertical-bridge/route-errors.js';
 import { attachOntologyServing } from '../../_shared/ontology-serve/index.js';
 import { attachGuidanceServing, type GuidedAffordanceEntry } from '../../_shared/guided-affordance/index.js';
 import { agpAffordances } from '../affordances.js';
@@ -76,6 +77,9 @@ const GUIDANCE: GuidedAffordanceEntry[] = [
 
 const PORT = parseInt(process.env.PORT ?? '6030', 10);
 const base = (process.env.BRIDGE_DEPLOYMENT_URL ?? `http://localhost:${PORT}`).replace(/\/$/, '');
+// The last resort for a rejection nothing awaits (a call a handler starts and does not
+// wait for): logged, and the bridge keeps serving. See route-errors.ts.
+installProcessSafetyNet((msg) => { process.stderr.write(`[agentic-performance-practice-bridge] ${msg}\n`); });
 const app = createVerticalBridge({
   verticalName: 'agentic-performance-practice',
   affordances: agpAffordances,

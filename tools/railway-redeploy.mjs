@@ -540,22 +540,30 @@ function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 async function verifyFromLogs(needle) {
   console.log(`\nverifying deployment ${deployId} logs report ${JSON.stringify(needle)}…`);
   const until = Date.now() + 4 * 60_000;
+  let observedBoot = false;
   while (Date.now() < until) {
     const found = await bootLines(needle);
     if (found === null) {
       console.log('  … transient: log query unavailable, retrying');
     } else if (found.length === 1) {
+      observedBoot = true;
       console.log(`  booted — ${JSON.stringify(needle)} appears once in this deployment's logs`);
       // Railway's own opinion, read AFTER the app's: a container that has already died
       // again by now is not a successful rollout however green the deploy looked.
       const st = await gql('query($id:String!){ deployment(id:$id){ status } }', { id: deployId }, { tolerant: true });
-      const now = st?._transient ? '(unreadable)' : st.deployment.status;
-      if (now !== 'SUCCESS') {
-        console.error(`\nIt booted, and the deployment is now ${now}. The container did not stay up.`);
-        process.exit(1);
+      if (st?._transient) {
+        // An unavailable control-plane read says nothing about container health.
+        // Re-enter the same bounded loop so a later restart is still counted.
+        console.log('  … transient: deployment status unavailable, retrying');
+      } else {
+        const now = st.deployment.status;
+        if (now !== 'SUCCESS') {
+          console.error(`\nIt booted, and the deployment is now ${now}. The container did not stay up.`);
+          process.exit(1);
+        }
+        console.log('  deployment still SUCCESS — verified');
+        process.exit(0);
       }
-      console.log('  deployment still SUCCESS — verified');
-      process.exit(0);
     } else if (found.length > 1) {
       console.error(`\n${JSON.stringify(needle)} appears ${found.length} times in ONE deployment's logs.`);
       console.error('The container RESTARTED — it boots, exits, and Railway starts it again.');
@@ -568,9 +576,14 @@ async function verifyFromLogs(needle) {
     }
     await sleep(6000);
   }
-  console.error(`\nDeployment ${deployId} never printed ${JSON.stringify(needle)} within 4 minutes.`);
-  console.error('Railway called the deploy SUCCESS, which for a portless service means only');
-  console.error('that the container started — not that it got through its own boot.');
+  if (observedBoot) {
+    console.error(`\nDeployment ${deployId} booted, but its status could not be verified within 4 minutes.`);
+    console.error('Verification is inconclusive. Inspect this deployment before retrying.');
+  } else {
+    console.error(`\nDeployment ${deployId} never printed ${JSON.stringify(needle)} within 4 minutes.`);
+    console.error('Railway called the deploy SUCCESS, which for a portless service means only');
+    console.error('that the container started — not that it got through its own boot.');
+  }
   printTail(await recentLines());
   process.exit(1);
 }

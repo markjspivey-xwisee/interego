@@ -1,0 +1,23 @@
+name: wrd/pev bridge key provisioning fixture
+on:
+  pull_request:
+    paths:
+      - 'tools/vertical-bridges-provision.mjs'
+      - 'tests/vertical-bridges-provision.test.mjs'
+      - '.github/workflows/vertical-bridges-provision.yml'
+      - '.github/workflows/vertical-bridges-provision-test.yml'
+permissions:
+  contents: read
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  provision-fixture:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '20'
+      - run: node --test tests/vertical-bridges-provision.test.mjs

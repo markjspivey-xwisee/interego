@@ -1,0 +1,28 @@
+name: Railway post-boot status regressions
+on:
+  push:
+    branches: [master]
+    paths:
+      - 'tools/railway-redeploy.mjs'
+      - 'tools/railway-services.mjs'
+      - 'tools/railway-deploy-trigger.mjs'
+      - 'tests/railway-postboot-status.test.mjs'
+      - '.github/workflows/railway-postboot-status.yml'
+  pull_request:
+    paths:
+      - 'tools/railway-redeploy.mjs'
+      - 'tools/railway-services.mjs'
+      - 'tools/railway-deploy-trigger.mjs'
+      - 'tests/railway-postboot-status.test.mjs'
+      - '.github/workflows/railway-postboot-status.yml'
+permissions:
+  contents: read
+jobs:
+  postboot-status:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with: { node-version: '22' }
+      - run: node --test tests/railway-postboot-status.test.mjs

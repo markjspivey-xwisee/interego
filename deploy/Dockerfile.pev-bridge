@@ -1,0 +1,161 @@
+# practice-evidence (pev:) bridge: conversation practice with reviewable evidence.
+#
+# Serves /affordances, the named MCP tools, the web UI at /ui and the dereferenceable pev:
+# ontology at /ns/pev. Scenarios, rubrics, attempts, judgments and reviews are platform-signed
+# descriptors on the pod named by PEV_DEFAULT_POD_URL, so the process itself keeps nothing that
+# matters beyond its hourly budgets.
+#
+# Built from Dockerfile.wsp-bridge (one stage; see the note there on why one): every workspace
+# package.json before `npm ci` so that layer caches, then sources, then one `npm run build`.
+# The vertical imports only @interego/core, @interego/solid and applications/_shared, and reads
+# its own ui/*.js and ontology/*.ttl at runtime, so the whole vertical directory is copied.
+ARG NODE_BASE=node:22-slim
+FROM ${NODE_BASE}
+
+ENV ONNXRUNTIME_NODE_INSTALL_CUDA=skip
+
+WORKDIR /app
+
+# Workspace manifests: npm ci needs every declared workspace's package.json before it can resolve
+# the tree. This list mirrors the root package.json `workspaces` field, as
+# Dockerfile.jev-harness-bridge's does. The practice-evidence bridge is not a workspace (it declares no
+# dependencies of its own), so it adds no line here and obliges no other image to grow one.
+COPY package.json package-lock.json tsconfig.base.json tsconfig.json ./
+COPY packages/abac/package.json ./packages/abac/
+COPY packages/agent-interop/package.json ./packages/agent-interop/
+COPY packages/compliance/package.json ./packages/compliance/
+COPY packages/connectors/package.json ./packages/connectors/
+COPY packages/constitutional/package.json ./packages/constitutional/
+COPY packages/core/package.json ./packages/core/
+COPY packages/extractors/package.json ./packages/extractors/
+COPY packages/mdvault/package.json ./packages/mdvault/
+COPY packages/ops/package.json ./packages/ops/
+COPY packages/p2p/package.json ./packages/p2p/
+COPY packages/passport/package.json ./packages/passport/
+COPY packages/pgsl/package.json ./packages/pgsl/
+COPY packages/pgsl-store/package.json ./packages/pgsl-store/
+COPY packages/privacy/package.json ./packages/privacy/
+COPY packages/registry/package.json ./packages/registry/
+COPY packages/security-txt/package.json ./packages/security-txt/
+COPY packages/skills/package.json ./packages/skills/
+COPY packages/solid/package.json ./packages/solid/
+COPY packages/transactions/package.json ./packages/transactions/
+COPY packages/workspace-client/package.json ./packages/workspace-client/
+COPY mcp-server/package.json ./mcp-server/
+COPY deploy/mcp-relay/package.json ./deploy/mcp-relay/
+COPY deploy/identity/package.json ./deploy/identity/
+COPY deploy/validator/package.json ./deploy/validator/
+COPY applications/foxxi-content-intelligence/bridge/package.json ./applications/foxxi-content-intelligence/bridge/
+COPY applications/agentic-performance-practice/bridge/package.json ./applications/agentic-performance-practice/bridge/
+COPY applications/learner-performer-companion/bridge/package.json ./applications/learner-performer-companion/bridge/
+COPY applications/agent-collective/bridge/package.json ./applications/agent-collective/bridge/
+COPY applications/agent-development-practice/bridge/package.json ./applications/agent-development-practice/bridge/
+COPY applications/organizational-working-memory/bridge/package.json ./applications/organizational-working-memory/bridge/
+COPY applications/lrs-adapter/bridge/package.json ./applications/lrs-adapter/bridge/
+COPY applications/jev-harness/bridge/package.json ./applications/jev-harness/bridge/
+COPY applications/shared-workspace/desktop/package.json ./applications/shared-workspace/desktop/
+COPY applications/shared-workspace/discord/package.json ./applications/shared-workspace/discord/
+RUN npm ci
+
+# Only what this bridge needs:
+#   packages/                    the @interego/* substrate it imports
+#   docs/ns/pgsl-lexicon.ttl     read by @interego/pgsl at runtime (see Dockerfile.wsp-bridge)
+#   applications/_shared/        vertical-bridge, ontology-serve, judgment-kit
+#   applications/practice-evidence/  the vertical, including bridge/ui/ and ontology/
+COPY packages/ ./packages/
+COPY docs/ns/pgsl-lexicon.ttl ./docs/ns/pgsl-lexicon.ttl
+COPY applications/_shared/ ./applications/_shared/
+COPY applications/practice-evidence/ ./applications/practice-evidence/
+
+# build-ghcr.yml restores the packages' dist/ into the context and passes PREBUILT=1; a local
+# build without them still builds.
+ARG PREBUILT=0
+RUN if [ "$PREBUILT" = "1" ] && [ -f packages/registry/dist/index.js ]; then echo "prebuilt packages present; skipping the build"; else npm run build; fi
+
+RUN mkdir -p node_modules/@interego \
+  && ln -sfn /app/packages/core node_modules/@interego/core \
+  && ln -sfn /app/packages/solid node_modules/@interego/solid \
+  && ln -sfn /app/packages/pgsl node_modules/@interego/pgsl
+
+EXPOSE 6110
+ENV PORT=6110
+ENV NODE_NO_WARNINGS=1
+
+# ★ EVERY INTERFACE, IPv4 AND IPv6. The bridge defaults HOST to 127.0.0.1 because it holds a
+# signing key, and a loopback bind also turns on its DNS-rebinding Host guard. In a container
+# behind Railway's proxy a loopback bind answers nothing and the health check fails. `::` is
+# what the other fleet bridges get by listening with no host, and it is not a loopback name,
+# so the Host guard (a loopback-only defence) stays off here.
+ENV HOST=::
+
+# The public URL, substituted into every affordance's hydra:target and the UI's links. Without it
+# the manifest advertises 127.0.0.1. Set on the service (https://${{RAILWAY_PUBLIC_DOMAIN}}).
+ENV BRIDGE_DEPLOYMENT_URL=
+
+# The operator pod. Not a secret: the gate path this deployment writes under, as Foxxi bakes
+# FOXXI_TENANT_POD_URL. PEV_SERVED_PODS defaults to this one pod; never set it to '*' here.
+ENV PEV_DEFAULT_POD_URL=https://gate.interego.xwisee.com/practice-evidence/
+
+# Pilot budgets, "<per signer>,<total>" per hour. The bridge's own defaults (120,2000 and 20,500)
+# are sized for a team; a first deployment spends the operator's model key, so it starts lower.
+ENV PEV_MODEL_CALLS_PER_HOUR=60,300
+ENV PEV_ATTEMPTS_PER_HOUR=5,50
+
+# ★ INTEREGO SIGN-IN (relay-delegated identity), RELAY-ATTESTED, NOT USER-HELD. A person who signs
+# in with their Interego account holds no key: the relay signs each act for the agent of their
+# session, and the identity host says whose agent it is. So whoever holds the relay's delegation
+# key, or controls the identity host, can act as any person on this bridge; records made this way
+# carry authority relay-delegated. Not secrets: the live relay's delegation address (its
+# signing.relayAnchor), the identity host, and the relay a person signs in through. Override
+# PEV_TRUSTED_RELAY_ADDRESSES with an empty value to turn the route off; a malformed value of any of
+# these stops the bridge at start-up. PEV_ADMIN_DIDS (the people, as
+# did:web:identity.interego.xwisee.com:users:<id>, who may change roles and withdraw reviews) is NOT
+# baked in: the operator sets it on the service, like PEV_ADMIN_ADDRESSES. PEV_CHAT_AGENTS_DECIDE=1
+# (left unset: off) would let a chat agent signed in through the relay, not only this bridge's own
+# web UI, take the decisive acts: change roles, ratify a rubric, countersign or override a judgment,
+# withdraw a review, and remove another learner's transcript.
+ENV PEV_TRUSTED_RELAY_ADDRESSES=0x276e11d2229d3a96dc96356c15c03c7f83201ebc
+ENV PEV_IDENTITY_HOST=identity.interego.xwisee.com
+ENV PEV_RELAY_URL=https://relay.interego.xwisee.com
+
+# ★ SECRETS AND PER-DEPLOYMENT VALUES: unset here on purpose, because anything baked into an image
+# is published to everyone who can pull it. Set them on the service.
+#   PEV_PLATFORM_KEY                the key records are signed with; unset → an ephemeral key
+#   PEV_RECORD_KEY                  64 hex (32 bytes): the key every record's graph is encrypted
+#                                   to on the operator pod, and new attempt IRIs are keyed with.
+#                                   The gate serves GET to anyone, so without it every transcript,
+#                                   judgment and reviewer reason is public. BACK IT UP before the
+#                                   first write: if it is lost, every encrypted record is lost with
+#                                   it, and nothing can recover them. Generate it once, e.g.
+#                                   `openssl rand -hex 32`, and never rotate it in place.
+#   PEV_ADMIN_ADDRESSES             who may change roles and withdraw reviews
+#   PEV_ADMIN_DIDS                  the same, for people who sign in with their Interego account:
+#                                   did:web:identity.interego.xwisee.com:users:<id>, comma-separated
+#   PEV_TRUSTED_PLATFORM_ADDRESSES  earlier platform keys whose records stay trusted
+#   PEV_POD_WRITE_SECRET            the operator pod's bearer, sent under that pod's path only
+#   PEV_LLM_API_KEY, PEV_LLM_MODEL  the bridge's own model route; a key without a model is no
+#                                   route, because this bridge never picks a model. Without
+#                                   either, only the packet routes (a client's own model) work.
+# Never set PEV_DEMO_ROLES on a deployment: it holds demo role keys and refuses a non-loopback
+# HOST anyway.
+ENV PEV_PLATFORM_KEY=
+ENV PEV_RECORD_KEY=
+ENV PEV_ADMIN_ADDRESSES=
+ENV PEV_TRUSTED_PLATFORM_ADDRESSES=
+ENV PEV_POD_WRITE_SECRET=
+ENV PEV_LLM_API_KEY=
+ENV PEV_LLM_MODEL=
+
+# ★ NO PLAINTEXT ON A DEPLOYMENT. With this set the bridge refuses to start (exit 1, saying why)
+# while PEV_RECORD_KEY is missing or blank, which is what an unset or unresolved service variable
+# leaves behind, so the service crash-loops visibly instead of writing transcripts in plaintext to
+# a pod anyone can read. Not a secret. Override it with 0 only for a throwaway pod path; any other
+# value stops the bridge too, a blank override (an unresolved reference) included.
+ENV PEV_REQUIRE_RECORD_KEY=1
+
+# The commit this image was built from, surfaced at /health by the shared createVerticalBridge
+# factory so a deploy can be VERIFIED rather than assumed.
+ARG GIT_SHA=unset
+ENV INTEREGO_BUILD_SHA=$GIT_SHA
+
+CMD ["npx", "tsx", "applications/practice-evidence/bridge/server.ts"]

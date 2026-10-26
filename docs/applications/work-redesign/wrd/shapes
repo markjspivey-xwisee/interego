@@ -1,0 +1,165 @@
+@prefix wrd:   <https://markjspivey-xwisee.github.io/interego/applications/work-redesign/wrd#> .
+@prefix wrdsh: <https://markjspivey-xwisee.github.io/interego/applications/work-redesign/wrd/shapes#> .
+@prefix sh:    <http://www.w3.org/ns/shacl#> .
+@prefix dct:   <http://purl.org/dc/terms/> .
+@prefix xsd:   <http://www.w3.org/2001/XMLSchema#> .
+
+# ══════════════════════════════════════════════════════════════════════════
+#  SHACL node shapes for the work-redesign vertical's record graphs.
+#  Authored within the EXECUTABLE subset of the in-process SHACL engine:
+#  sh:targetClass, single-predicate sh:path, sh:minCount/maxCount,
+#  sh:datatype, sh:nodeKind, sh:class, sh:in, sh:pattern, sh:message,
+#  sh:severity. No sh:and/or/not/xone, no sequence paths, no sh:sparql.
+#  Every record shape requires the lossless payload (wrd:payloadJson) and a
+#  status from the kind's own lifecycle. Rules that span records (who may
+#  countersign, what a regime allows) are enforced by the engine in code
+#  over the published policy in wrd.ttl, not here.
+# ══════════════════════════════════════════════════════════════════════════
+
+wrdsh:RoleRegistryShape a sh:NodeShape ; sh:targetClass wrd:RoleRegistry ;
+    sh:property [ sh:path wrd:payloadJson ; sh:minCount 1 ; sh:maxCount 1 ; sh:datatype xsd:string ] ;
+    sh:property [ sh:path wrd:status ; sh:minCount 1 ; sh:maxCount 1 ; sh:in ( "registered" ) ;
+        sh:message "A role registry version has status registered." ] ;
+    sh:property [ sh:path wrd:demoRecord ; sh:maxCount 1 ; sh:datatype xsd:boolean ] ;
+    sh:property [ sh:path wrd:signedBy ; sh:nodeKind sh:IRI ] ;
+    sh:property [ sh:path wrd:member ; sh:nodeKind sh:IRI ] .
+
+wrdsh:WorkflowShape a sh:NodeShape ; sh:targetClass wrd:Workflow ;
+    sh:property [ sh:path wrd:payloadJson ; sh:minCount 1 ; sh:maxCount 1 ; sh:datatype xsd:string ] ;
+    sh:property [ sh:path wrd:status ; sh:minCount 1 ; sh:maxCount 1 ; sh:in ( "captured" ) ;
+        sh:message "A workflow version has status captured." ] ;
+    sh:property [ sh:path wrd:demoRecord ; sh:maxCount 1 ; sh:datatype xsd:boolean ] ;
+    sh:property [ sh:path wrd:signedBy ; sh:nodeKind sh:IRI ] ;
+    sh:property [ sh:path dct:title ; sh:minCount 1 ; sh:maxCount 1 ; sh:datatype xsd:string ] ;
+    sh:property [ sh:path wrd:hasTask ; sh:nodeKind sh:IRI ] ;
+    sh:property [ sh:path wrd:captureMode ; sh:minCount 1 ; sh:maxCount 1 ; sh:in ( "manual" "document" ) ] ;
+    sh:property [ sh:path wrd:documentSha256 ; sh:maxCount 1 ; sh:pattern "^[0-9a-f]{64}$" ] .
+
+wrdsh:TaskShape a sh:NodeShape ; sh:targetClass wrd:Task ;
+    sh:property [ sh:path wrd:payloadJson ; sh:minCount 1 ; sh:maxCount 1 ; sh:datatype xsd:string ] ;
+    sh:property [ sh:path wrd:status ; sh:minCount 1 ; sh:maxCount 1 ; sh:in ( "captured" "ratified" "disputed" "retired" ) ;
+        sh:message "A task version is captured, ratified, disputed or retired." ] ;
+    sh:property [ sh:path wrd:demoRecord ; sh:maxCount 1 ; sh:datatype xsd:boolean ] ;
+    sh:property [ sh:path wrd:signedBy ; sh:nodeKind sh:IRI ] ;
+    sh:property [ sh:path dct:title ; sh:minCount 1 ; sh:maxCount 1 ; sh:datatype xsd:string ] ;
+    sh:property [ sh:path wrd:inWorkflow ; sh:minCount 1 ; sh:maxCount 1 ; sh:nodeKind sh:IRI ] ;
+    sh:property [ sh:path wrd:performer ; sh:minCount 1 ; sh:maxCount 1 ; sh:nodeKind sh:IRI ] ;
+    sh:property [ sh:path wrd:namedParty ; sh:minCount 1 ; sh:maxCount 2 ; sh:nodeKind sh:IRI ;
+        sh:message "A task names one person, one agent, or one of each." ] ;
+    sh:property [ sh:path wrd:taskKind ; sh:minCount 1 ; sh:maxCount 1 ; sh:pattern "^[a-z0-9][a-z0-9-]{1,62}$" ] ;
+    sh:property [ sh:path wrd:currentLevel ; sh:minCount 1 ; sh:maxCount 1 ; sh:nodeKind sh:IRI ] ;
+    sh:property [ sh:path wrd:quoteStatus ; sh:minCount 1 ; sh:maxCount 1 ; sh:in ( "verified" "partly-verified" "unverified" "none" ) ] ;
+    sh:property [ sh:path wrd:externalTaskTerm ; sh:maxCount 1 ; sh:nodeKind sh:IRI ] .
+
+wrdsh:ClassificationShape a sh:NodeShape ; sh:targetClass wrd:Classification ;
+    sh:property [ sh:path wrd:payloadJson ; sh:minCount 1 ; sh:maxCount 1 ; sh:datatype xsd:string ] ;
+    sh:property [ sh:path wrd:status ; sh:minCount 1 ; sh:maxCount 1 ; sh:in ( "classified" "ratified" "disputed" ) ;
+        sh:message "A classification version is classified, ratified or disputed." ] ;
+    sh:property [ sh:path wrd:demoRecord ; sh:maxCount 1 ; sh:datatype xsd:boolean ] ;
+    sh:property [ sh:path wrd:signedBy ; sh:nodeKind sh:IRI ] ;
+    sh:property [ sh:path wrd:classifies ; sh:minCount 1 ; sh:maxCount 1 ; sh:nodeKind sh:IRI ] ;
+    sh:property [ sh:path wrd:regime ; sh:minCount 1 ; sh:maxCount 1 ; sh:nodeKind sh:IRI ;
+        sh:message "A classification places the task in exactly one regime." ] ;
+    sh:property [ sh:path wrd:method ; sh:minCount 1 ; sh:maxCount 1 ; sh:nodeKind sh:IRI ] ;
+    sh:property [ sh:path wrd:regimeSource ; sh:minCount 1 ; sh:maxCount 1 ; sh:nodeKind sh:IRI ] ;
+    sh:property [ sh:path wrd:ruleFired ; sh:minCount 1 ; sh:nodeKind sh:IRI ] ;
+    sh:property [ sh:path wrd:checkability ; sh:maxCount 1 ; sh:in ( "before-effect" "after-effect" "not-checkable" "unknown" ) ] ;
+    sh:property [ sh:path wrd:feedbackLatency ; sh:maxCount 1 ; sh:in ( "minutes" "days" "weeks" "months-or-more" "unknown" ) ] ;
+    sh:property [ sh:path wrd:ontologySha256 ; sh:minCount 1 ; sh:maxCount 1 ; sh:pattern "^[0-9a-f]{64}$" ] .
+
+wrdsh:PlanShape a sh:NodeShape ; sh:targetClass wrd:Plan ;
+    sh:property [ sh:path wrd:payloadJson ; sh:minCount 1 ; sh:maxCount 1 ; sh:datatype xsd:string ] ;
+    sh:property [ sh:path wrd:status ; sh:minCount 1 ; sh:maxCount 1 ; sh:in ( "proposed" ) ;
+        sh:message "A plan has status proposed; a changed plan is proposed again." ] ;
+    sh:property [ sh:path wrd:demoRecord ; sh:maxCount 1 ; sh:datatype xsd:boolean ] ;
+    sh:property [ sh:path wrd:signedBy ; sh:nodeKind sh:IRI ] ;
+    sh:property [ sh:path wrd:forWorkflow ; sh:minCount 1 ; sh:maxCount 1 ; sh:nodeKind sh:IRI ] ;
+    sh:property [ sh:path wrd:changesTask ; sh:minCount 1 ; sh:nodeKind sh:IRI ;
+        sh:message "A plan changes at least one task." ] ;
+    sh:property [ sh:path wrd:planKind ; sh:minCount 1 ; sh:maxCount 1 ; sh:in ( "valued" "probe" ) ] ;
+    sh:property [ sh:path wrd:ontologySha256 ; sh:minCount 1 ; sh:maxCount 1 ; sh:pattern "^[0-9a-f]{64}$" ] .
+
+wrdsh:ValuationShape a sh:NodeShape ; sh:targetClass wrd:Valuation ;
+    sh:property [ sh:path wrd:payloadJson ; sh:minCount 1 ; sh:maxCount 1 ; sh:datatype xsd:string ] ;
+    sh:property [ sh:path wrd:status ; sh:minCount 1 ; sh:maxCount 1 ; sh:in ( "valued" ) ] ;
+    sh:property [ sh:path wrd:demoRecord ; sh:maxCount 1 ; sh:datatype xsd:boolean ] ;
+    sh:property [ sh:path wrd:signedBy ; sh:nodeKind sh:IRI ] ;
+    sh:property [ sh:path wrd:values ; sh:minCount 1 ; sh:maxCount 1 ; sh:nodeKind sh:IRI ] ;
+    sh:property [ sh:path wrd:seed ; sh:minCount 1 ; sh:maxCount 1 ; sh:pattern "^[0-9a-f]{64}$" ] ;
+    sh:property [ sh:path wrd:draws ; sh:minCount 1 ; sh:maxCount 1 ; sh:datatype xsd:integer ] ;
+    sh:property [ sh:path wrd:valuationMethod ; sh:minCount 1 ; sh:maxCount 1 ; sh:nodeKind sh:IRI ] ;
+    sh:property [ sh:path wrd:cashWeeklyDeltaP10 ; sh:minCount 1 ; sh:maxCount 1 ; sh:datatype xsd:double ] ;
+    sh:property [ sh:path wrd:cashWeeklyDeltaP50 ; sh:minCount 1 ; sh:maxCount 1 ; sh:datatype xsd:double ] ;
+    sh:property [ sh:path wrd:cashWeeklyDeltaP90 ; sh:minCount 1 ; sh:maxCount 1 ; sh:datatype xsd:double ] ;
+    sh:property [ sh:path wrd:redeployedWeeklyDeltaP10 ; sh:minCount 1 ; sh:maxCount 1 ; sh:datatype xsd:double ] ;
+    sh:property [ sh:path wrd:redeployedWeeklyDeltaP50 ; sh:minCount 1 ; sh:maxCount 1 ; sh:datatype xsd:double ] ;
+    sh:property [ sh:path wrd:redeployedWeeklyDeltaP90 ; sh:minCount 1 ; sh:maxCount 1 ; sh:datatype xsd:double ] ;
+    sh:property [ sh:path wrd:cashNpvP50 ; sh:minCount 1 ; sh:maxCount 1 ; sh:datatype xsd:double ] ;
+    sh:property [ sh:path wrd:redeployedNpvP50 ; sh:minCount 1 ; sh:maxCount 1 ; sh:datatype xsd:double ] ;
+    sh:property [ sh:path wrd:valuationHash ; sh:minCount 1 ; sh:maxCount 1 ; sh:pattern "^[0-9a-f]{64}$" ] ;
+    sh:property [ sh:path wrd:ontologySha256 ; sh:minCount 1 ; sh:maxCount 1 ; sh:pattern "^[0-9a-f]{64}$" ] .
+
+wrdsh:DecisionShape a sh:NodeShape ; sh:targetClass wrd:Decision ;
+    sh:property [ sh:path wrd:payloadJson ; sh:minCount 1 ; sh:maxCount 1 ; sh:datatype xsd:string ] ;
+    sh:property [ sh:path wrd:status ; sh:minCount 1 ; sh:maxCount 1 ; sh:in ( "submitted" "countersigned" "declined" "measured" ) ;
+        sh:message "A decision version is submitted, countersigned, declined or measured." ] ;
+    sh:property [ sh:path wrd:demoRecord ; sh:maxCount 1 ; sh:datatype xsd:boolean ] ;
+    sh:property [ sh:path wrd:signedBy ; sh:nodeKind sh:IRI ] ;
+    sh:property [ sh:path wrd:decides ; sh:minCount 1 ; sh:maxCount 1 ; sh:nodeKind sh:IRI ] ;
+    sh:property [ sh:path wrd:decisionKind ; sh:minCount 1 ; sh:maxCount 1 ; sh:in ( "valued" "probe" ) ] ;
+    sh:property [ sh:path wrd:boundValuation ; sh:maxCount 1 ; sh:nodeKind sh:IRI ] ;
+    sh:property [ sh:path wrd:valuationHash ; sh:maxCount 1 ; sh:pattern "^[0-9a-f]{64}$" ] ;
+    sh:property [ sh:path wrd:comparisonBasis ; sh:maxCount 1 ; sh:in ( "holdout" "staggered" "before-after" ) ] ;
+    sh:property [ sh:path wrd:prediction ; sh:maxCount 1 ; sh:nodeKind sh:IRI ] ;
+    sh:property [ sh:path wrd:measuredWeeklyDelta ; sh:maxCount 1 ; sh:datatype xsd:double ] ;
+    sh:property [ sh:path wrd:bandVerdict ; sh:maxCount 1 ; sh:in ( "below-band" "in-band" "above-band" "inconclusive" ) ] ;
+    sh:property [ sh:path wrd:disposition ; sh:maxCount 1 ; sh:in ( "kept" "reverted" "stopped-early" ) ] .
+
+wrdsh:PredictionShape a sh:NodeShape ; sh:targetClass wrd:Prediction ;
+    sh:property [ sh:path wrd:predictionStatus ; sh:minCount 1 ; sh:maxCount 1 ; sh:in ( "unmeasured" "measured" "not-to-be-measured" ) ;
+        sh:message "A prediction says whether the world has answered: unmeasured, measured, or not-to-be-measured." ] ;
+    sh:property [ sh:path wrd:outcomeMetric ; sh:minCount 1 ; sh:maxCount 1 ; sh:in ( "weekly-cash-delta" "weekly-delta-if-redeployed" ) ] ;
+    sh:property [ sh:path wrd:predictedP10 ; sh:minCount 1 ; sh:maxCount 1 ; sh:datatype xsd:double ] ;
+    sh:property [ sh:path wrd:predictedP50 ; sh:minCount 1 ; sh:maxCount 1 ; sh:datatype xsd:double ] ;
+    sh:property [ sh:path wrd:predictedP90 ; sh:minCount 1 ; sh:maxCount 1 ; sh:datatype xsd:double ] .
+
+wrdsh:AcknowledgementShape a sh:NodeShape ; sh:targetClass wrd:Acknowledgement ;
+    sh:property [ sh:path wrd:payloadJson ; sh:minCount 1 ; sh:maxCount 1 ; sh:datatype xsd:string ] ;
+    sh:property [ sh:path wrd:status ; sh:minCount 1 ; sh:maxCount 1 ; sh:in ( "acknowledged" "objected" ) ] ;
+    sh:property [ sh:path wrd:demoRecord ; sh:maxCount 1 ; sh:datatype xsd:boolean ] ;
+    sh:property [ sh:path wrd:signedBy ; sh:nodeKind sh:IRI ] ;
+    sh:property [ sh:path wrd:acknowledges ; sh:minCount 1 ; sh:maxCount 1 ; sh:nodeKind sh:IRI ] ;
+    sh:property [ sh:path wrd:forTask ; sh:minCount 1 ; sh:maxCount 1 ; sh:nodeKind sh:IRI ] ;
+    sh:property [ sh:path wrd:assignee ; sh:minCount 1 ; sh:maxCount 1 ; sh:nodeKind sh:IRI ] .
+
+wrdsh:AgentRunShape a sh:NodeShape ; sh:targetClass wrd:AgentRun ;
+    sh:property [ sh:path wrd:payloadJson ; sh:minCount 1 ; sh:maxCount 1 ; sh:datatype xsd:string ] ;
+    sh:property [ sh:path wrd:status ; sh:minCount 1 ; sh:maxCount 1 ; sh:in ( "acted-under-grant" "reviewed" ) ] ;
+    sh:property [ sh:path wrd:demoRecord ; sh:maxCount 1 ; sh:datatype xsd:boolean ] ;
+    sh:property [ sh:path wrd:signedBy ; sh:nodeKind sh:IRI ] ;
+    sh:property [ sh:path wrd:agent ; sh:minCount 1 ; sh:maxCount 1 ; sh:nodeKind sh:IRI ] ;
+    sh:property [ sh:path wrd:task ; sh:minCount 1 ; sh:maxCount 1 ; sh:nodeKind sh:IRI ] ;
+    sh:property [ sh:path wrd:model ; sh:minCount 1 ; sh:maxCount 1 ; sh:datatype xsd:string ] ;
+    sh:property [ sh:path wrd:verdict ; sh:maxCount 1 ; sh:in ( "accepted" "reworked" "critical-failure" ) ] ;
+    sh:property [ sh:path wrd:reviewer ; sh:maxCount 1 ; sh:nodeKind sh:IRI ] .
+
+wrdsh:GrantShape a sh:NodeShape ; sh:targetClass wrd:Grant ;
+    sh:property [ sh:path wrd:payloadJson ; sh:minCount 1 ; sh:maxCount 1 ; sh:datatype xsd:string ] ;
+    sh:property [ sh:path wrd:status ; sh:minCount 1 ; sh:maxCount 1 ; sh:in ( "granted" "revoked" ) ] ;
+    sh:property [ sh:path wrd:demoRecord ; sh:maxCount 1 ; sh:datatype xsd:boolean ] ;
+    sh:property [ sh:path wrd:signedBy ; sh:nodeKind sh:IRI ] ;
+    sh:property [ sh:path wrd:grantee ; sh:minCount 1 ; sh:maxCount 1 ; sh:nodeKind sh:IRI ] ;
+    sh:property [ sh:path wrd:principal ; sh:minCount 1 ; sh:maxCount 1 ; sh:nodeKind sh:IRI ;
+        sh:message "Every grant names the registered person accountable for the agent." ] ;
+    sh:property [ sh:path wrd:model ; sh:minCount 1 ; sh:maxCount 1 ; sh:datatype xsd:string ] ;
+    sh:property [ sh:path wrd:taskKind ; sh:minCount 1 ; sh:maxCount 1 ; sh:pattern "^[a-z0-9][a-z0-9-]{1,62}$" ] ;
+    sh:property [ sh:path wrd:underPolicy ; sh:minCount 1 ; sh:maxCount 1 ; sh:nodeKind sh:IRI ] ;
+    sh:property [ sh:path wrd:ontologySha256 ; sh:minCount 1 ; sh:maxCount 1 ; sh:pattern "^[0-9a-f]{64}$" ] .
+
+wrdsh:HolderCopyShape a sh:NodeShape ; sh:targetClass wrd:HolderCopy ;
+    sh:property [ sh:path wrd:payloadJson ; sh:minCount 1 ; sh:maxCount 1 ; sh:datatype xsd:string ] ;
+    sh:property [ sh:path wrd:status ; sh:minCount 1 ; sh:maxCount 1 ; sh:in ( "copied" "exported" ) ] ;
+    sh:property [ sh:path wrd:demoRecord ; sh:maxCount 1 ; sh:datatype xsd:boolean ] ;
+    sh:property [ sh:path wrd:signedBy ; sh:nodeKind sh:IRI ] ;
+    sh:property [ sh:path wrd:holder ; sh:minCount 1 ; sh:maxCount 1 ; sh:nodeKind sh:IRI ] ;
+    sh:property [ sh:path wrd:copiedRecord ; sh:nodeKind sh:IRI ] .

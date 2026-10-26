@@ -20,6 +20,7 @@ import express, { type Express, type Request, type Response, type NextFunction }
 import { readFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { installProcessSafetyNet } from '../../_shared/vertical-bridge/route-errors.js';
 import { jevHarnessAffordances } from '../affordances.js';
 import { affordancesManifestTurtle } from '../src/affordance-turtle.js';
 import { DEFAULT_NS, controlsFor, type Published } from '../src/descriptor.js';
@@ -228,6 +229,8 @@ export function createApp(opts: AppOptions): { app: Express; harness: Harness } 
 }
 
 export function main(): void {
+  // Here, not at module level: tests import createApp from this module. See route-errors.ts.
+  installProcessSafetyNet((msg) => { process.stderr.write(`[jev-harness] ${msg}\n`); });
   const port = Number(process.env['PORT'] ?? 6090);
   const repoRoot = resolve(process.env['JEV_HARNESS_REPO'] ?? process.cwd());
   const base = (process.env['BRIDGE_DEPLOYMENT_URL'] ?? `http://localhost:${port}`).replace(/\/$/, '');
