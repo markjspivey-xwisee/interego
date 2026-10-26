@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-10-26 — PGSL sweep: private sweep connection failures release both clients
+
+The private sweep worker bounds each PostgreSQL connection attempt to five seconds and closes both clients when either connection fails, including a cleanup rejection from the other client. Failure remains a nonzero exit with sanitized diagnostics before any SQL runs. Injected entry-point fixtures cover both connection failures; the existing real PostgreSQL retention and reclamation cases remain unchanged.
+
 ## 2026-10-26 — CI: the I2IDL-X historical oracle passes again with its original gUFO pin
 
 The pull-request check "Immutable v0.0.86 trace and original staged-write oracle" rebuilds the v0.0.86 workbench from the archived implementation and replays its recorded run. It had failed on every run since the gUFO publisher removed one triple from its file on 2026-10-22. The archive still pins the old file's SHA-256 and refuses the new bytes, and that is correct: master re-pinned only its own manifest. The job now downloads the old bytes from the gUFO repository at the commit before that change and places them in the archive's ignored download cache. The archived code checks a cached file against its pin exactly as it checks a fresh download, so the archive's own pin still decides, and no archived file is changed. The step also refuses to run if the archive pins a different gUFO hash or URL. The new manifest was not copied into the archive, because then the replay would run on a different upper ontology than the one v0.0.86 was built on, inside a checkout the job says is unaltered. Run locally, the complete job passes again: 48 of 48 recorded results, and all four staged writes pass SHACL.
