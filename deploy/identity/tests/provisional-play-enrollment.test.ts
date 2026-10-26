@@ -59,7 +59,7 @@ function fixture() {
   };
   const commit = new Function('enrollProvisionalCredential', 'withIdentityPodMutex', 'fetchPodAuthMethods',
     'hasAnyCredential', 'provisionalPlay', 'putPodAuthMethods', 'readAuthMethods',
-    'inlineApplyAuthMethods', 'scheduleDeferredAuthMethodsWrite',
+    'inlineApplyAuthMethods', 'scheduleDeferredAuthMethodsWrite', 'isTombstone', 'AccountDeletedError', 'ACCOUNT_DELETED_MESSAGE',
     `${productionFunction('commitCredentialEnrollment')}; return commitCredentialEnrollment;`)(
     enrollProvisionalCredential, withIdentityPodMutex, read, hasAnyCredential,
     { open(anchor: string) {
@@ -69,6 +69,7 @@ function fixture() {
     } }, persist, async () => cached,
     (_owner: string, methods: Methods) => { inline++; cached = methods; },
     () => { scheduled++; },
+    (m: Methods & { deletedAt?: string }) => typeof m.deletedAt === 'string', Error, 'account deleted',
   ) as (owner: string, context: string, update: (m: Methods) => boolean | void, synchronous?: boolean) => Promise<void>;
   const authenticate = new Function('withIdentityPodMutex', 'fetchPodAuthMethods', 'authenticatePasskey', 'putPodAuthMethods',
     `${productionFunction('authenticatePlayOwnerPasskey')}; return authenticatePlayOwnerPasskey;`)(
