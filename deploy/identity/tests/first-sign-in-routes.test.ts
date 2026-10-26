@@ -57,6 +57,16 @@ const dids = { passkeyOnly: didKey(), unloaded: didKey(), unreadable: didKey(), 
 const didUser = (k: { did: string }) => deriveUserIdFromDid(k.did);
 // A did:web is checked against the key the caller sends, so its account must list that key.
 const didWeb = { did: 'did:web:owner.example', owner: ed25519(), other: ed25519() };
+// A did:web two accounts list, each with its own key: its owner's (non-derived, loaded at
+// startup) and one bound by someone else (loaded later). Neither is the account derived from it.
+const sharedWeb = { did: 'did:web:shared.example', owner: ed25519(), other: ed25519(),
+  ownerId: 'u-eth-0000000000d1', otherId: 'u-eth-0000000000d2' };
+// A wallet two accounts list (each binding proved possession): the one derived from it, loaded
+// at startup, and another loaded later.
+const sharedWallet = Wallet.createRandom();
+const sharedWalletOther = 'wallet-second-holder';
+const didWebKey = (did: string, multibase: string) =>
+  ({ did, publicKeyMultibase: multibase, keyType: 'Ed25519VerificationKey2020', createdAt: now });
 
 // Seeded legacy accounts claimed with a bootstrap invite (mode B).
 const invites = { wallet: { userId: 'seeded-wallet', token: crypto.randomBytes(16).toString('hex') },
@@ -76,9 +86,17 @@ const pods = new Map<string, Record<string, unknown>>([
     didKeys: [{ did: dids.unloaded.did, publicKeyMultibase: 'z', keyType: 'Ed25519VerificationKey2020', createdAt: now }] }],
   [didUser(didWeb), { userId: didUser(didWeb), name: 'did:web owner', walletAddresses: [], webAuthnCredentials: [],
     didKeys: [{ did: didWeb.did, publicKeyMultibase: didWeb.owner.multibase, keyType: 'Ed25519VerificationKey2020', createdAt: now }] }],
+  [sharedWeb.ownerId, { userId: sharedWeb.ownerId, name: 'did:web owner', walletAddresses: [], webAuthnCredentials: [],
+    didKeys: [didWebKey(sharedWeb.did, sharedWeb.owner.multibase)] }],
+  [sharedWeb.otherId, { userId: sharedWeb.otherId, name: 'did:web other', walletAddresses: [], webAuthnCredentials: [],
+    didKeys: [didWebKey(sharedWeb.did, sharedWeb.other.multibase)] }],
+  [walletUser(sharedWallet), { userId: walletUser(sharedWallet), name: 'Wallet derived', didKeys: [],
+    walletAddresses: [sharedWallet.address.toLowerCase()], webAuthnCredentials: [] }],
+  [sharedWalletOther, { userId: sharedWalletOther, name: 'Wallet other', didKeys: [],
+    walletAddresses: [sharedWallet.address.toLowerCase()], webAuthnCredentials: [] }],
 ]);
 // Only these are in the root listing, so only these load at startup.
-const listed = new Set([walletUser(wallets.passkeyOnly), didUser(dids.passkeyOnly)]);
+const listed = new Set([walletUser(wallets.passkeyOnly), didUser(dids.passkeyOnly), sharedWeb.ownerId, walletUser(sharedWallet)]);
 const unreadable = new Set([walletUser(wallets.unreadable), didUser(dids.unreadable)]);
 // Pods a test makes unreadable for a while (a CSS blip), after startup has loaded the rest.
 const blipping = new Set<string>();
@@ -291,4 +309,38 @@ test('a did:web the index missed signs in only with the key its pod lists for it
   assert.equal(impostor.json['token'], undefined);
   assert.deepEqual(writesTo(userId), []);
   assert.equal((pods.get(userId)!['didKeys'] as Array<{ publicKeyMultibase: string }>)[0]!.publicKeyMultibase, didWeb.owner.multibase);
+});
+
+/** Load an account the startup pass did not (a targeted passkey sign-in names it). */
+async function load(userId: string): Promise<void> {
+  await post('/challenges', { purpose: 'webauthn-authenticate', userId });
+}
+
+test('a did:web two accounts list signs in to the one holding the key that signed, whichever loaded last', async () => {
+  await load(sharedWeb.otherId);
+  for (const [key, userId] of [[sharedWeb.owner, sharedWeb.ownerId], [sharedWeb.other, sharedWeb.otherId], [sharedWeb.owner, sharedWeb.ownerId]] as const) {
+    const r = await didSignIn({ did: sharedWeb.did, privateKey: key.privateKey }, { publicKeyMultibase: key.multibase });
+    assert.equal(r.status, 200, `${JSON.stringify(r.json)}\n${output}`);
+    assert.equal(r.json['userId'], userId);
+  }
+  // A key neither lists is still refused.
+  const stranger = ed25519();
+  const r = await didSignIn({ did: sharedWeb.did, privateKey: stranger.privateKey }, { publicKeyMultibase: stranger.multibase });
+  assert.equal(r.status, 401, JSON.stringify(r.json));
+  assert.deepEqual(writesTo(sharedWeb.ownerId), []);
+  assert.deepEqual(writesTo(sharedWeb.otherId), []);
+});
+
+test('a wallet two accounts list signs in to the one derived from it, whichever loaded last', async () => {
+  await load(sharedWalletOther);
+  const r = await siwe(sharedWallet);
+  assert.equal(r.status, 200, `${JSON.stringify(r.json)}\n${output}`);
+  assert.equal(r.json['userId'], walletUser(sharedWallet));
+  // The legacy verify route picks the same account.
+  const message = `example.test wants you to sign in with your Ethereum account:\n${sharedWallet.address}\n\nSign in.`;
+  const legacy = await post('/siwe/verify', { message, signature: await sharedWallet.signMessage(message) });
+  assert.equal(legacy.status, 200, JSON.stringify(legacy.json));
+  assert.equal(legacy.json['userId'], walletUser(sharedWallet));
+  assert.deepEqual(writesTo(walletUser(sharedWallet)), []);
+  assert.deepEqual(writesTo(sharedWalletOther), []);
 });

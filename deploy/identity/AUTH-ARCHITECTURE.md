@@ -75,11 +75,18 @@ Every `/auth/*` endpoint picks one of three modes based on the request, and **th
 
 ### Canonical identity lookup
 
-- `walletIndex: address → userId` (built from all pods' `walletAddresses[]`)
-- `credentialIndex: credentialId → userId` (built from all pods' `webAuthnCredentials[]`)
-- `didIndex: did → userId` (built from all pods' `didKeys[]`)
+- `walletIndex: address → userIds` (built from all pods' `walletAddresses[]`)
+- `credentialIndex: credentialId → userIds` (built from all pods' `webAuthnCredentials[]`)
+- `didIndex: did → userIds` (built from all pods' `didKeys[]`)
 
 These indexes are rebuilt on container startup from pod scans. The authenticate endpoints *only* consult these indexes — they do not accept a userId claim in the body. If the signed credential material doesn't match an indexed entry, authentication fails.
+
+Each index maps a credential to **every** account that lists it (`credential-index.ts`), never to one. A passkey credential id is not secret (`/challenges` with a `userId` lists that account's ids), and a software authenticator registers any id with its own key, so while a victim's account is not loaded anyone can register the victim's id: the account derived from it is empty, so a fresh registration creates it. With one account per credential, whichever account loaded last owned the id, and the victim's sign-ins then failed on and off with every restart and refresh. Now a sign-in tries the holders in a stable order (the account derived from the credential first, then by id):
+
+- **Passkey:** the challenge is spent first; a challenge scoped to a `userId` tries that account only; then each holder whose record still lists the credential, up to 8 (more is refused with `401`). The first whose stored key verifies the assertion wins and is the only one whose counter is written; a counter that cannot be written is a `503` and nothing else is tried.
+- **DID that is not a `did:key`:** the first holder that lists the DID with the key that signed, then the account derived from the DID. A `did:key`, and a **wallet**, go to the first holder: every account listing one was bound by its key's holder, so this is a deterministic choice for an ambiguity the holder made.
+
+A deleted (tombstoned) account holds nothing in the indexes, so it is never a candidate. When an account newly shares a credential with another, the log says `WARN identity_credential_multi_holder kind=<webauthn|wallet|did> holders=<n>`, a count only; for a passkey or a `did:web` that is what the attack above leaves behind.
 
 A pod that cannot be read is not a pod without credentials (`account-index.ts`). The startup scan retries the listing and every unreadable pod (three more passes, at 2 s, 5 s and 15 s), then retries what is still unreadable once a minute until none is left; each read times out after 30 s. Until the scan is complete, a passkey that matches no loaded account gets `503 Interego is still loading accounts` rather than `401`, so nobody is told to register again. A targeted sign-in (`/challenges` with a `userId`) and a token whose account is not in memory both load that account from its pod on demand: an unreadable pod there is a `503`, never "No passkey found" or "User for token not found". `GET /health` reports `accountIndex: { complete, listed, unreadable, lastPassAt }`, and the log line `identity_account_index_incomplete` says which pods are still unread. Before this, every failed read counted as "no credentials": a restart while CSS was slow left 437 of 445 accounts unknown, which disconnected their connectors and refused their passkeys.
 
@@ -121,7 +128,7 @@ The current code closes this by removing user-supplied userId claims everywhere:
 - `/auth/webauthn/register-options` no longer accepts `userId`. It accepts a display `name` and optional bootstrap/bearer proof. The WebAuthn `userHandle` is a transient `u-pend-<rand>` unless mode (2) or (3) applies.
 - `/auth/webauthn/register` derives the final userId from the credential itself and binds it to a seeded userId *only* if a matching single-use bootstrap invite was already validated at options time. A registration without a bearer or invite may only *create* the derived account: the server reads that pod first and answers `409` if it already holds any credential (credential ids are not secret, and the derived id is 48 bits), `503` if the pod cannot be read, and writes a missing account with `If-None-Match: *`. After a refusal, or a write the pod did not confirm, it loads whatever account the pod holds (no token), so a passkey whose write did land can still sign in.
 - `/auth/siwe` and `/auth/did` follow the same three-mode pattern — userId is derived from address / DID unless a bearer token or bootstrap invite authorises binding to a different user.
-- `/auth/webauthn/authenticate` resolves the user via `credentialIndex[response.id]`, ignoring any body-supplied userId hint.
+- `/auth/webauthn/authenticate` resolves the user via `credentialIndex[response.id]` (the first holder whose key verifies, above), ignoring any body-supplied userId hint.
 - `/register` now returns **410 Gone** — there is no reason to reserve a userId without proving key-ownership.
 - `/wallet/link` now requires `Authorization: Bearer <token>` and binds to the token's user (the previous unauthenticated variant let any caller attach a foreign wallet to any user's account).
 
