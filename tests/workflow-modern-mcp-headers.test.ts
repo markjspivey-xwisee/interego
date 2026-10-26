@@ -10,7 +10,7 @@
  * were updated when the SDK moved; a workflow is not a test, so nothing ran it.
  *
  * The rule is checked per line because that is how every probe here builds its headers:
- * one object literal, the modern pair spread in together.
+ * one object literal (or one curl -H pair), the modern pair set together.
  */
 import { describe, it, expect } from 'vitest';
 import { readdirSync, readFileSync } from 'node:fs';
@@ -18,21 +18,24 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const WORKFLOWS = fileURLToPath(new URL('../.github/workflows/', import.meta.url));
+// Quoted object-literal keys ('Mcp-Method': …) and curl's -H 'Mcp-Method: …' form alike.
+const SETS_METHOD = /Mcp-Method['"]?\s*:/i;
+const SETS_VERSION = /MCP-Protocol-Version['"]?\s*:/i;
 
 describe('workflow MCP probes send the headers a 2026-07-28 request requires', () => {
   const files = readdirSync(WORKFLOWS).filter(f => /\.ya?ml$/.test(f));
 
   it('finds the workflows (a renamed directory must not pass this vacuously)', () => {
     expect(files.length).toBeGreaterThan(0);
-    const probing = files.filter(f => /['"]Mcp-Method['"]\s*:/i.test(readFileSync(join(WORKFLOWS, f), 'utf8')));
-    expect(probing).toContain('i2idlx-v93-release.yml');
+    const probing = files.filter(f => SETS_METHOD.test(readFileSync(join(WORKFLOWS, f), 'utf8')));
+    expect(probing.length).toBeGreaterThan(0);
   });
 
   it('every line that sets Mcp-Method also sets MCP-Protocol-Version', () => {
     const missing: string[] = [];
     for (const f of files) {
       readFileSync(join(WORKFLOWS, f), 'utf8').split('\n').forEach((line, i) => {
-        if (/['"]Mcp-Method['"]\s*:/i.test(line) && !/['"]MCP-Protocol-Version['"]\s*:/i.test(line)) {
+        if (SETS_METHOD.test(line) && !SETS_VERSION.test(line)) {
           missing.push(`${f}:${i + 1}: ${line.trim()}`);
         }
       });
