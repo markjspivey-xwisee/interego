@@ -84,6 +84,10 @@ const pods = new Map<string, Record<string, unknown>>();
 const blipping = new Set<string>();   // GET answers 502
 const failingPuts = new Set<string>(); // PUT answers 500
 const writes: Array<{ userId: string; method: string }> = [];
+const unlisted = new Set<string>(); // left out of the root listing, so a restart does not load it
+// One GET of an account's record, answered with the record as it was when the GET arrived, but
+// only once the test releases it: a read that starts before a deletion and finishes after it.
+let heldGet: { userId: string; received: ReturnType<typeof deferred>; release: ReturnType<typeof deferred> } | null = null;
 
 // One staged race at a time, on one account: the deletion's read of the record is held until a
 // write of the account's old (credentialed) record arrives, and that write is held until the
@@ -104,7 +108,8 @@ function servePods(req: http.IncomingMessage, res: http.ServerResponse): void {
   const path = new URL(req.url ?? '/', 'http://pods').pathname;
   if (path === '/') {
     res.writeHead(200, { 'Content-Type': 'text/turtle' });
-    res.end(`@prefix ldp: <http://www.w3.org/ns/ldp#> .\n<> ldp:contains ${[...pods.keys()].map(p => `<${p}/>`).join(', ') || '<>'} .\n`);
+    const listed = [...pods.keys()].filter(p => !unlisted.has(p));
+    res.end(`@prefix ldp: <http://www.w3.org/ns/ldp#> .\n<> ldp:contains ${listed.map(p => `<${p}/>`).join(', ') || '<>'} .\n`);
     return;
   }
   const m = /^\/([^/]+)\/auth-methods\.jsonld$/.exec(path);
@@ -112,6 +117,18 @@ function servePods(req: http.IncomingMessage, res: http.ServerResponse): void {
     const userId = m[1]!;
     if (req.method === 'GET') {
       if (blipping.has(userId)) { res.writeHead(502).end(); return; }
+      if (heldGet && heldGet.userId === userId) {
+        const held = heldGet;
+        heldGet = null;
+        const snapshot = pods.get(userId);
+        held.received.resolve();
+        void within(held.release.promise, 10_000).then(() => {
+          if (!snapshot) { res.writeHead(404).end(); return; }
+          res.writeHead(200, { 'Content-Type': 'application/ld+json' });
+          res.end(JSON.stringify(snapshot));
+        });
+        return;
+      }
       if (race && race.userId === userId && !race.readHeld) {
         const held = race;
         held.readHeld = true;
@@ -462,4 +479,72 @@ test('a passkey sign-in that read the account before its deletion cannot write i
   assert.equal((await me(token)).status, 401);
   await assertDeletedRefusal(userId, () => register(key));
   assertTombstone(userId, 1);
+});
+
+test('an add-device challenge issued before the deletion cannot bring the account back, even with the pod unreadable', async () => {
+  clientIp = '198.51.100.9';
+  const key = softPasskey();
+  const { userId } = key;
+  const created = await register(key);
+  assert.equal(created.status, 200, `${JSON.stringify(created.json)}\n${output}`);
+  const token = String(created.json['token']);
+  // Someone holding the token asks to add a device, then the owner deletes the account.
+  const options = await post('/auth/webauthn/register-options', { name: 'Someone' }, token);
+  assert.equal(options.status, 200, JSON.stringify(options.json));
+  assert.equal((await deleteAccount(token)).status, 200);
+  assertTombstone(userId, 1);
+
+  // The ceremony completes while the pod cannot be read: refused as deleted, no token, and
+  // nothing put back in memory for the account.
+  blipping.add(userId);
+  try {
+    const rpId = (options.json['rp'] as { id: string }).id;
+    const added = await post('/auth/webauthn/register', { response: attest(softPasskey(), String(options.json['challenge']), base, rpId) });
+    assert.equal(added.status, 409, `${JSON.stringify(added.json)}\n${output}`);
+    assert.match(String(added.json['error']), /account was deleted/);
+    assert.equal(added.json['token'], undefined);
+    // With nothing to read on the pod, the old token is still refused, and the account's
+    // documents do not resolve.
+    assert.equal((await me(token)).status, 401);
+    assert.equal((await call('GET', `/users/${userId}/did.json`)).status, 404);
+    assert.equal((await call('GET', `/users/${userId}/profile`)).status, 404);
+  } finally {
+    blipping.delete(userId);
+  }
+  await settle();
+  assertTombstone(userId, 1);
+  assert.equal((await me(token)).status, 401);
+});
+
+test('a load of the account that read it before the deletion does not put it back in memory', async () => {
+  clientIp = '198.51.100.10';
+  const key = softPasskey();
+  const { userId } = key;
+  const created = await register(key);
+  assert.equal(created.status, 200, `${JSON.stringify(created.json)}\n${output}`);
+  const token = String(created.json['token']);
+  // After a restart that did not list the pod, the account is loaded on demand.
+  unlisted.add(userId);
+  await stopIdentity();
+  await startIdentity();
+
+  // A request with the token starts that load and reads the record; the deletion (which loads
+  // the account for itself) then completes; only then does the first read come back.
+  const release = deferred();
+  heldGet = { userId, received: deferred(), release };
+  const pending = me(token);
+  await within(heldGet.received.promise, 10_000);
+  assert.equal(heldGet, null, `the on-demand load never read the record\n${output}`);
+  const deleted = await deleteAccount(token);
+  assert.equal(deleted.status, 200, `${JSON.stringify(deleted.json)}\n${output}`);
+  assertTombstone(userId, 1);
+  release.resolve();
+
+  const late = await pending;
+  assert.equal(late.status, 401, `${JSON.stringify(late.json)}\n${output}`);
+  assert.equal((await me(token)).status, 401);
+  assert.equal((await call('GET', `/users/${userId}/did.json`)).status, 404);
+  await assertDeletedRefusal(userId, () => register(key));
+  assertTombstone(userId, 1);
+  unlisted.delete(userId);
 });

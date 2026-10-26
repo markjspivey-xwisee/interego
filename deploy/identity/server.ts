@@ -1315,15 +1315,19 @@ async function loadAccountFromPod(userId: string): Promise<boolean> {
       if (provisionalPlay.open(m.provisionalPlayAnchor, true).userId !== userId) return false;
     } catch { return false; }
   }
-  adoptAccount(userId, m);
-  return true;
+  return adoptAccount(userId, m);
 }
 
 // An account read from its pod becomes known: identity shell, auth-methods cache, indexes.
-function adoptAccount(userId: string, m: AuthMethods): void {
+// Returns false, adopting nothing, for a tombstone or an account deleted in this process: a
+// read that started before the deletion's tombstone and finished after it cleared memory
+// holds the old record, and must not put it back (inlineApplyAuthMethods has the same guard).
+function adoptAccount(userId: string, m: AuthMethods): boolean {
+  if (isTombstone(m) || deletedUserIds.has(userId)) return false;
   hydrateFromAuthMethods(m);
   authMethodsCache.set(userId, { value: m, fetchedAt: Date.now() });
   rebuildIndexesForUser(userId, m);
+  return true;
 }
 
 // What the last pass over the pods found, for /health: the accounts loaded, and the pods
@@ -1791,6 +1795,10 @@ async function verifyToken(token: string): Promise<{ valid: boolean; record?: To
     return { valid: false, reason: (parsed as { valid: false; reason: string }).reason };
   }
   const payload = parsed.payload;
+  // An account deleted in this process is refused before anything is read: what memory or a
+  // failed pod read would say about it (a shell re-seeded by a refused sign-in, an empty
+  // record at epoch 0) is not the tombstone's answer.
+  if (deletedUserIds.has(payload.userId)) return { valid: false, reason: 'Account deleted' };
   // An agent id ending in ANOTHER user's canonical id reads as that user's agent
   // (surface-agent-restore.ts). This server never issues one now (POST /register-agent
   // refuses it, and every other issuer names the user's own agents), so such a token was
@@ -2930,11 +2938,20 @@ app.post('/auth/webauthn/register', authEnrollLimiter, async (req, res) => {
     created = true;
   }
 
+  // An add-device challenge issued before the account was deleted is refused here, before any
+  // shell is seeded for it (commitCredentialEnrollment below refuses it too).
+  if (deletedUserIds.has(targetUserId)) {
+    res.status(409).json({ error: ACCOUNT_DELETED_MESSAGE });
+    return;
+  }
+
   // Ensure an Identity shell exists for the target. Seeded users already
   // have one; derived users get created here on first touch.
   let user = identities.get(targetUserId);
+  const seeded: string[] = [];
   if (!user) {
     seedIdentity(targetUserId, 'user', displayName);
+    seeded.push(targetUserId);
     user = identities.get(targetUserId)!;
   }
   // Make sure the user has a default agent to issue tokens for.
@@ -2942,6 +2959,7 @@ app.post('/auth/webauthn/register', authEnrollLimiter, async (req, res) => {
   if (!hasAgent) {
     const def = defaultAgentForRegistration(targetUserId, displayName, surfaceAgent);
     seedIdentity(def.agentId, 'agent', def.label, targetUserId, 'ReadWrite');
+    seeded.push(def.agentId);
     log(`First-time WebAuthn registration: ${targetUserId} defaultAgent=${def.agentId} (surfaceHint=${surfaceAgent ?? 'none'})`);
   }
 
@@ -2957,7 +2975,14 @@ app.post('/auth/webauthn/register', authEnrollLimiter, async (req, res) => {
         methods.webAuthnCredentials.push(record);
       });
     } catch (err) {
+      // Nothing was enrolled, so the shell seeded above for it goes again: left in memory it
+      // would make the account look loaded (its profile and did:web document resolvable).
+      for (const id of seeded) { identities.delete(id); keys.delete(id); }
       log(`WebAuthn credential enrollment not confirmed for ${targetUserId}: ${(err as Error).message}`);
+      if (err instanceof AccountDeletedError) {
+        res.status(409).json({ error: ACCOUNT_DELETED_MESSAGE });
+        return;
+      }
       res.status(503).json({ error: 'Credential enrollment could not be confirmed. No permanent session was issued.' });
       return;
     }
