@@ -63,6 +63,27 @@ import type { GuidedAffordanceEntry } from '../guided-affordance/index.js';
 import { forwardAsyncRouteErrors, routeErrorHandler } from './route-errors.js';
 
 /**
+ * The largest request body this mount accepts, in bytes: 50 MiB, which is what
+ * express.json's `'50mb'` meant here before it was spelled as a number.
+ *
+ * ★ IT IS PASSED TO THE SDK TOO, and that is the point. @modelcontextprotocol/server 2.3
+ * added its own 4 MiB default bound on every body it reads itself (the classifier, the
+ * modern handler, the legacy transport). Left at that default, every /mcp request
+ * between 4 MiB and 50 MiB answered 413 although the body parser in front of it had
+ * accepted it. That range is not hypothetical: foxxi.upload_scorm_package,
+ * foxxi.ingest_content_package and lpc.ingest_training_content take the whole package
+ * inline as `zip_base64`, so a SCORM package over about 3 MB crosses 4 MiB once
+ * encoded. mcp-wire-contract.test.ts posts one over 4 MiB through both eras.
+ */
+const MAX_MCP_BODY_BYTES = 50 * 1024 * 1024;
+
+/**
+ * Request headers that describe the client's bytes rather than the message. /mcp
+ * re-serializes the parsed body, so none of them is true of the Request it hands the SDK.
+ */
+const BODY_FRAMING_HEADERS = new Set(['content-length', 'content-encoding', 'transfer-encoding']);
+
+/**
  * ONE JSON-LD projection of an Affordance, shared by the entry point and the
  * `/affordances` manifest.
  *
@@ -170,7 +191,9 @@ export function createVerticalBridge(opts: VerticalBridgeOptions): Express {
     next();
   });
 
-  app.use(express.json({ limit: '50mb' }));
+  // One bound for every byte count on this mount: the body parser here, and the SDK's own
+  // reads below (see MAX_MCP_BODY_BYTES).
+  app.use(express.json({ limit: MAX_MCP_BODY_BYTES }));
 
   // Build identity, mounted BEFORE opts.middleware so a vertical's own hook cannot end up
   // in front of it. tools/railway-redeploy.mjs polls exactly `j.build` and Railway calls a
@@ -420,6 +443,7 @@ export function createVerticalBridge(opts: VerticalBridgeOptions): Express {
   const modernHandler = createMcpHandler(buildMcpServer, {
     legacy: 'reject',
     responseMode: 'json',
+    maxRequestBodySize: MAX_MCP_BODY_BYTES,
     onerror: () => { /* per-request failures surface in the JSON-RPC response */ },
   });
 
@@ -435,6 +459,7 @@ export function createVerticalBridge(opts: VerticalBridgeOptions): Express {
     const transport = new WebStandardStreamableHTTPServerTransport({
       sessionIdGenerator: undefined,
       enableJsonResponse: true,
+      maxRequestBodySize: MAX_MCP_BODY_BYTES,
     } as unknown as ConstructorParameters<typeof WebStandardStreamableHTTPServerTransport>[0]);
     await server.connect(transport);
     return transport.handleRequest(request);
@@ -444,6 +469,10 @@ export function createVerticalBridge(opts: VerticalBridgeOptions): Express {
     try {
       const headers = new Headers();
       for (const [k, v] of Object.entries(req.headers)) {
+        // The body below is re-serialized from the parsed one, so the client's framing
+        // headers describe bytes this Request does not carry. The SDK refuses on a declared
+        // Content-Length before reading anything, so a stale one would decide the request.
+        if (BODY_FRAMING_HEADERS.has(k)) continue;
         if (typeof v === 'string') headers.set(k, v);
         else if (Array.isArray(v)) headers.set(k, v.join(', '));
       }
@@ -464,7 +493,7 @@ export function createVerticalBridge(opts: VerticalBridgeOptions): Express {
       // never disagree with what createMcpHandler would have decided. A request with no
       // per-request `_meta` envelope claim (which is every 2025-era client, and every
       // bare POST our own clients send) is legacy.
-      const out = await isLegacyRequest(request.clone())
+      const out = await isLegacyRequest(request.clone(), undefined, { maxRequestBodySize: MAX_MCP_BODY_BYTES })
         ? await serveLegacy(request)
         : await modernHandler.fetch(request);
 

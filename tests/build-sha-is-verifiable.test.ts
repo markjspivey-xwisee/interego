@@ -173,7 +173,9 @@ describe('a portless service is verified from its own deployment logs', () => {
     const lock = JSON.parse(read('integrations/pgsl-css-accessor/package-lock.json')) as {
       packages: Record<string, { version?: string }>;
     };
-    expect(lock.packages['node_modules/@solid/community-server']?.version).toBe('7.1.9');
+    // 7.2.0: server.it.ts re-run against it (in-memory and real PostgreSQL) printed the needle
+    // exactly once, and a read succeeded straight after it.
+    expect(lock.packages['node_modules/@solid/community-server']?.version).toBe('7.2.0');
   });
 
   it('the live-boot test asserts the SAME string the deploy tool looks for', () => {

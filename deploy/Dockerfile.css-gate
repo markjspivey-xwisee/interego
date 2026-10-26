@@ -23,12 +23,13 @@ FROM ${NODE_BASE}
 
 WORKDIR /app
 
-# Install runtime deps (undici). Use a clean install with --omit=dev so
-# we do not drag in test tooling. The package-lock is not committed for
-# this micro-service — `npm install` is fine on a leaf with one direct
-# dependency.
-COPY deploy/css-gate/package.json /app/package.json
-RUN npm install --omit=dev --no-audit --no-fund
+# Install runtime deps (undici) from the committed lockfile with `npm ci`, so the
+# image ships the tree that was audited and tested (CI's provisional-play job runs
+# `npm ci --prefix deploy/css-gate`). `npm install` without the lock re-resolved
+# ^7 at every build, so the shipped undici was whatever was newest that day.
+# --omit=dev keeps test tooling out.
+COPY deploy/css-gate/package.json deploy/css-gate/package-lock.json /app/
+RUN npm ci --omit=dev --no-audit --no-fund
 
 COPY deploy/css-gate/server.mjs /app/server.mjs
 COPY deploy/css-gate/provisional-play.mjs /app/provisional-play.mjs

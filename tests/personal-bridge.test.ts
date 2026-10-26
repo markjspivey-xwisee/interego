@@ -184,7 +184,7 @@ describe('personal-bridge — tool surface', () => {
         'io.modelcontextprotocol/protocolVersion': '2026-07-28',
         'io.modelcontextprotocol/clientCapabilities': {},
       } },
-    }, { 'mcp-method': 'server/discover' });
+    }, { 'mcp-protocol-version': '2026-07-28', 'mcp-method': 'server/discover' });
     const result = (body as { result: { supportedVersions: string[] } }).result;
     expect(result.supportedVersions).toContain('2026-07-28');
   });
@@ -359,6 +359,51 @@ describe('personal-bridge — the bridge-level gate', () => {
     // ★ MUST abort. /events never ends; leaving it open makes server.close() in
     // afterAll never fire its callback and hangs the whole run.
     ac.abort();
+  });
+
+  // ★ THROUGH THE ROUTE, not serveMcpOverHttp. The route picks which client headers
+  // reach the SDK, and it once forwarded `mcp-method` and `mcp-name` alone: a modern
+  // client sending MCP-Protocol-Version was refused -32020 for a header it HAD sent,
+  // while the helper-level test above, handed the header directly, stayed green.
+  const MODERN_META = {
+    'io.modelcontextprotocol/protocolVersion': '2026-07-28',
+    'io.modelcontextprotocol/clientCapabilities': {},
+  };
+  const modernPost = (method: string, params: Record<string, unknown>, headers: Record<string, string>) =>
+    fetch(`${base}/mcp`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json', authorization: `Bearer ${BRIDGE_TOKEN}`,
+        'MCP-Protocol-Version': '2026-07-28', 'Mcp-Method': method, ...headers,
+      },
+      body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params: { ...params, _meta: MODERN_META } }),
+    });
+
+  it('serves a 2026-07-28 request through POST /mcp with the headers the client sent', async () => {
+    const discover = await modernPost('server/discover', {}, {});
+    const discovered = await discover.json() as { result?: { supportedVersions: string[] }; error?: unknown };
+    expect(discovered.error).toBeUndefined();
+    expect(discover.status).toBe(200);
+    expect(discovered.result?.supportedVersions).toContain('2026-07-28');
+
+    // tools/call also needs Mcp-Name, mirrored from params.name.
+    const call = await modernPost('tools/call', { name: 'bridge_status', arguments: {} }, { 'Mcp-Name': 'bridge_status' });
+    const called = await call.json() as { result?: { content: { text: string }[] }; error?: unknown };
+    expect(called.error).toBeUndefined();
+    expect(call.status).toBe(200);
+    expect(JSON.parse(called.result!.content[0]!.text)).toMatchObject({ bridgePubkey: client.pubkey });
+  });
+
+  it('still refuses a 2026-07-28 request whose client really omitted MCP-Protocol-Version', async () => {
+    // The other half: the route forwards what was sent and invents nothing, so the SDK's
+    // own check still fires for a client that broke the rule.
+    const r = await fetch(`${base}/mcp`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${BRIDGE_TOKEN}`, 'Mcp-Method': 'server/discover' },
+      body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'server/discover', params: { _meta: MODERN_META } }),
+    });
+    expect(r.status).toBe(400);
+    expect((await r.json() as { error: { code: number } }).error.code).toBe(-32020);
   });
 
   it('GET /health stays open — liveness must not need the token', async () => {

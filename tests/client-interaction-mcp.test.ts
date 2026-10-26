@@ -57,8 +57,11 @@ async function harness(toolName = 'act') {
   });
   app.all('/mcp', mcp.handler);
   const http = await listenLoopback(app);
+  // A 2026-07-28 request (one carrying Mcp-Method) also carries MCP-Protocol-Version, as an SDK
+  // client sends it; @modelcontextprotocol/server refuses one without it (-32020) from 2.3 on.
   const post = (body: unknown, headers: Record<string, string> = {}) => fetch(http.base + '/mcp', { method: 'POST',
-    headers: { 'Content-Type': 'application/json', Accept: 'application/json, text/event-stream', Authorization: 'Bearer alice', ...headers }, body: JSON.stringify(body) });
+    headers: { 'Content-Type': 'application/json', Accept: 'application/json, text/event-stream', Authorization: 'Bearer alice',
+      ...('Mcp-Method' in headers ? { 'MCP-Protocol-Version': '2026-07-28' } : {}), ...headers }, body: JSON.stringify(body) });
   return { ...f, id, pending, post, base: http.base, close: async () => { await mcp.close(); await http.close(); } };
 }
 
