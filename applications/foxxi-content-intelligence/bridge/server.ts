@@ -20,7 +20,7 @@
  */
 
 import { gatewayTransport } from '../src/gateway-transport.js';
-import { createDirectoryDemand } from '../src/directory-demand.js';
+import { createDirectoryDemand, directoryObserverFor } from '../src/directory-demand.js';
 import { meshPollingAllowed, pollingMode, pollingInterval } from '../src/on-demand-work.js';
 import { randomUUID, createHash, createHmac, randomBytes } from 'node:crypto';
 import { format } from 'node:util';
@@ -1263,10 +1263,12 @@ async function autoFetchAdmin(args: Record<string, unknown>): Promise<FoxxiAdmin
     // membership overlay on it authorize (fail-closed even if its encrypted
     // directory is currently stale/undecryptable).
     const forceClosed = samePod(podUrl, tenantPodUrl);
-    const admin = await fetchAdminPayload({ ...fetcherConfig(), podUrl, forceClosed }) as FoxxiAdminPayload;
-    // Reuse directory data already fetched for this request; foreign tenants never warm this cache.
-    if (forceClosed && Array.isArray(admin.users)) directoryUsersCache.observe(admin.users);
-    return admin;
+    // Share a directory this read actually loaded, and only from exactly the configured pod URL:
+    // samePod folds case, so a caller's case variant is closed here but must not write the
+    // shared snapshot, and an unreadable directory keeps the last good copy.
+    const onDirectoryLoaded = directoryObserverFor(podUrl, tenantPodUrl, directoryUsersCache);
+    return await fetchAdminPayload({ ...fetcherConfig(), podUrl, forceClosed,
+      ...(onDirectoryLoaded ? { onDirectoryLoaded } : {}) }) as FoxxiAdminPayload;
   } catch (err) {
     bridgeError('[foxxi-bridge] autoFetchAdmin failed:', (err as Error).message);
     return null;

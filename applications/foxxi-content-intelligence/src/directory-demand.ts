@@ -103,3 +103,20 @@ export function createDirectoryDemand(loadUsers: (signal: AbortSignal) => Promis
   };
   return { read, observe, verifySession, middleware };
 }
+
+/**
+ * The hook a request-time read of `readPodUrl` may pass as `onDirectoryLoaded` to share the
+ * directory it loaded, or undefined when that read must leave the shared snapshot alone.
+ *
+ * The snapshot is process-wide trust: every operator gate reads it. So only a read of exactly the
+ * configured pod URL may write it. A lenient pod comparison (one that folds case or collapses
+ * slashes) is not enough: a caller could name a URL that matches the configured pod under it but
+ * that the pod server resolves to a different path, or to nothing, and replace every operator's
+ * directory with what that path returns.
+ */
+export function directoryObserverFor(readPodUrl: string, configuredPodUrl: string,
+  directory: { observe(users: ReadonlyArray<DirectoryUser>): void }):
+  ((users: ReadonlyArray<DirectoryUser>) => void) | undefined {
+  if (!configuredPodUrl || readPodUrl !== configuredPodUrl) return undefined;
+  return users => directory.observe(users);
+}

@@ -116,6 +116,14 @@ export interface TenantFetchConfig {
    * enrollable tenant. Fail-closed.
    */
   forceClosed?: boolean;
+  /**
+   * Called by `fetchAdminPayload`, when it reads the pod rather than its cache, with the users of
+   * a TenantDirectory section that actually loaded. It is never called with the empty default
+   * composed for a directory that was absent or unreadable (502, timeout, no key): the composed
+   * `users: []` of a closed tenant means "unknown", and a caller that keeps its own copy of the
+   * directory must not take it as "nobody".
+   */
+  onDirectoryLoaded?: (users: ReadonlyArray<{ user_id: string; web_id: string; wallet_address?: string }>) => void;
 }
 
 function resolveAdminKeyPair(config: TenantFetchConfig): EncryptionKeyPair | undefined {
@@ -358,6 +366,9 @@ export async function fetchAdminPayload(config: TenantFetchConfig): Promise<unkn
     // any other failure (encrypted-no-key, fetch error) is treated as present.
     : !isSectionAbsentError(directorySettled.reason);
   const closed = Boolean(config.forceClosed) || directoryPresent;
+  if (directorySettled.status === 'fulfilled' && Array.isArray(dir.users)) {
+    config.onDirectoryLoaded?.(dir.users as Array<{ user_id: string; web_id: string; wallet_address?: string }>);
+  }
   const effectiveUsers = closed ? dirUsers : memUsers;
   // Policies resolve the same way: a CLOSED tenant uses its (encrypted)
   // AssignmentPolicySet; a SELF-SOVEREIGN tenant uses its PUBLIC TenantAssignments
