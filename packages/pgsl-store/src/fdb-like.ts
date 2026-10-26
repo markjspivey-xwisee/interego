@@ -50,6 +50,26 @@ export interface FdbTxn {
    */
   getRange(begin: Key, end: Key, opts?: { readonly limit?: number }): Promise<KeyValue[]>;
   /**
+   * The FIRST row of each separator-delimited group in [start, end), ascending by key. A row's
+   * group is its bytes up to and including the first `separator` at or after byte `segmentOffset`;
+   * a row with no separator there is a group of its own. At most `limit` rows, and `limit` is
+   * required: this is a bounded read like `getRange`, so a backend refuses a missing or
+   * non-positive bound rather than scanning. Like every read, it sees the transaction's own writes.
+   *
+   * ★ OPTIONAL, AND ONLY A SPEED-UP. It returns exactly the rows the direct-children skip-scan in
+   * store.ts does not skip, so a backend that can walk its index server-side (Postgres, in one
+   * recursive statement) lists a container in one round trip instead of one per child container.
+   * Callers fall back to `getRange` when it is absent, and the classification of those rows stays
+   * in store.ts for both paths. A backend MAY return an empty value for a row that is neither a
+   * group of its own nor exactly its group's prefix; callers do not read those values.
+   * `expectFirstPerSegmentContract` (tests/pgsl-store-listing-fixtures.ts) is the contract; the
+   * Postgres integration test holds that adapter to it.
+   */
+  firstPerSegment?(
+    start: Key, end: Key,
+    opts: { readonly segmentOffset: number; readonly separator: number; readonly limit: number },
+  ): Promise<KeyValue[]>;
+  /**
    * Write `value` at `key` ONLY IF the stored value is byte-identical to `expected` —
    * or, when `expected` is null, only if the key is absent. Resolves true if the write
    * will land with this transaction, false if the stored value did not match, in which
