@@ -30,6 +30,20 @@ export function softPasskey(rawId: Buffer = crypto.randomBytes(16)) {
 }
 export type SoftPasskey = ReturnType<typeof softPasskey>;
 
+/**
+ * `key`'s public key in other COSE bytes that decode to the same key: its map entries in
+ * another order, or with a label the verifier ignores. Whoever registers a copy of a key picks
+ * its encoding, and registration stores the map in the order it was sent.
+ */
+export function recoded(key: SoftPasskey, how: 'reordered' | 'extra-label'): Buffer {
+  const jwk = crypto.createPublicKey(key.privateKey).export({ format: 'jwk' });
+  const x = Buffer.from(jwk.x!, 'base64url');
+  const y = Buffer.from(jwk.y!, 'base64url');
+  return cbor(new Map<number, unknown>(how === 'reordered'
+    ? [[3, -7], [1, 2], [-1, 1], [-2, x], [-3, y]]
+    : [[1, 2], [3, -7], [-1, 1], [-2, x], [-3, y], [99, 0]]));
+}
+
 /** The registration response for `key`. */
 export function attest(key: SoftPasskey, challenge: string, origin: string, rpId: string) {
   const len = Buffer.alloc(2);

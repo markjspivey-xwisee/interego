@@ -30,9 +30,14 @@
  * The order ranks the accounts the server has loaded, and only those. A copy enrolled while
  * the owner's account was not loaded is the only holder a sign-in finds until that account
  * loads, so the server opens no account and registers no passkey for a credential no loaded
- * account holds while any account is still unloaded (refuseWhileLoading in server.ts). What
- * that leaves is an account the server never listed: one opened on the other instance while a
- * deploy overlapped the two is loaded only when something names it, until the next restart.
+ * account holds while any account is still unloaded (refuseWhileLoading in server.ts). That
+ * stops new second holders only. Two kinds remain (AUTH-ARCHITECTURE.md, While accounts are
+ * loading): those that already exist (a passkey copy registered before that check, a wallet
+ * linked before /wallet/link needed the server's nonce), which a sign-in finds without their
+ * owner during every startup scan and while the owner's pod is unreadable; and what the other
+ * instance writes while a deploy overlaps the two after this one has read the pods (an account
+ * it opens, a credential it adds to an account this one loaded), unseen here until something
+ * reads that account again or the next restart.
  *
  * Pure: no server state, so it is unit-tested directly (tests/credential-index.test.ts).
  */

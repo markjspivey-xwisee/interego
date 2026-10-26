@@ -12,8 +12,8 @@
  * about the private key), after which the owner's usernameless sign-in found only the copy and
  * signed in to it. Now, until every account is loaded, a credential no loaded account holds
  * opens no account, and no passkey joins one (503 "still loading", nothing written, no
- * bootstrap invite spent), while an account that already lists it still signs in. A passkey
- * sign-in no loaded holder verifies is told to wait rather than refused.
+ * bootstrap invite spent), while an account that already lists it still signs in. A passkey or
+ * did:web sign-in no loaded holder verifies is told to wait rather than refused.
  *
  * Run:
  *   node --test --import tsx tests/incomplete-index-routes.test.ts
@@ -58,9 +58,10 @@ const owner = {
   didKey: (() => { const k = ed25519(); return { did: `did:key:${k.multibase}`, ...k }; })(),
   copied: softPasskey(),     // someone registers its id with a copy of its public key
   contested: softPasskey(),  // a loaded account lists its id with a key of its own
+  didWeb: { did: 'did:web:contested.example', ...ed25519() },  // the same, for a did:web
 };
-// A loaded account listing the owner's `contested` id with its own key.
-const contestedOther = { id: 'a-loaded-holder', key: softPasskey(owner.contested.rawId) };
+// A loaded account listing the owner's `contested` id, and its did:web, with keys of its own.
+const contestedOther = { id: 'a-loaded-holder', key: softPasskey(owner.contested.rawId), didWebKey: ed25519() };
 // A loaded account derived from its wallet, whose token adds a device.
 const linked = Wallet.createRandom();
 // An account derived from its wallet that lists it but is not in the listing, so not loaded.
@@ -81,10 +82,14 @@ const account = (userId: string, fields: Record<string, unknown>) =>
 const pods = new Map<string, Record<string, unknown>>([
   [ownerId, account(ownerId, {
     walletAddresses: [owner.wallet.address.toLowerCase()],
-    didKeys: [{ did: owner.didKey.did, publicKeyMultibase: owner.didKey.multibase, keyType: 'Ed25519VerificationKey2020', createdAt: earlier }],
+    didKeys: [{ did: owner.didKey.did, publicKeyMultibase: owner.didKey.multibase, keyType: 'Ed25519VerificationKey2020', createdAt: earlier },
+      { did: owner.didWeb.did, publicKeyMultibase: owner.didWeb.multibase, keyType: 'Ed25519VerificationKey2020', createdAt: earlier }],
     webAuthnCredentials: [stored(owner.copied, earlier), stored(owner.contested, earlier)],
   })],
-  [contestedOther.id, account(contestedOther.id, { webAuthnCredentials: [stored(contestedOther.key, now)] })],
+  [contestedOther.id, account(contestedOther.id, {
+    webAuthnCredentials: [stored(contestedOther.key, now)],
+    didKeys: [{ did: owner.didWeb.did, publicKeyMultibase: contestedOther.didWebKey.multibase, keyType: 'Ed25519VerificationKey2020', createdAt: now }],
+  })],
   [walletUser(linked), account(walletUser(linked), { walletAddresses: [linked.address.toLowerCase()] })],
   [walletUser(returning), account(walletUser(returning), { walletAddresses: [returning.address.toLowerCase()] })],
 ]);
@@ -262,6 +267,21 @@ test('while accounts are loading, a did:key whose only holder is not loaded open
 test('while accounts are loading, a did:web no loaded account lists is told to wait, not that it is unregistered', async () => {
   assertStillLoading(await didSignIn(didWeb, { publicKeyMultibase: didWeb.multibase }));
   assert.equal(writesTo(deriveUserIdFromDid(didWeb.did)), 0);
+});
+
+test('while accounts are loading, a did:web whose loaded holders list other keys is told to wait, not that it is unregistered', async () => {
+  // A loaded account bound the owner's did:web with a key of its own; the owner's account, which
+  // lists it with the key that signs here, is the unloaded one.
+  const r = await didSignIn(owner.didWeb, { publicKeyMultibase: owner.didWeb.multibase });
+  assertStillLoading(r);
+  assert.equal(writesTo(contestedOther.id), 0);
+  assert.equal(writesTo(deriveUserIdFromDid(owner.didWeb.did)), 0);
+  assert.equal(pods.has(deriveUserIdFromDid(owner.didWeb.did)), false);
+  // The loaded holder still signs in with its own key.
+  const own = await didSignIn({ did: owner.didWeb.did, privateKey: contestedOther.didWebKey.privateKey },
+    { publicKeyMultibase: contestedOther.didWebKey.multibase });
+  assert.equal(own.status, 200, `${JSON.stringify(own.json)}\n${output}`);
+  assert.equal(own.json['userId'], contestedOther.id);
 });
 
 /** A spent invite is refused at registration options as consumed; an unspent one is not. */
