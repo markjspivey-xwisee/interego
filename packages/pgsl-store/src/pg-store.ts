@@ -122,7 +122,7 @@ interface PgClient {
   // affects 1 row or 0, and 0 IS the refusal. Omitting it from this declared slice is how
   // the adapter ended up with only unconditional writes to offer. node-postgres types it
   // nullable (some commands report no count), so a caller must treat null as "not one row".
-  query<R = never>(text: string, values?: readonly unknown[]): Promise<{ rows: R[]; rowCount: number | null }>;
+  query<R = never>(text: string, values?: readonly unknown[]): Promise<{ rows: R[]; rowCount: number | null; command: string }>;
   release(): void;
 }
 
@@ -379,7 +379,10 @@ export async function openPgStore(opts: PgStoreOptions = {}): Promise<FdbLike> {
           const result = await fn(txn);
           await flush();
           if (pressure && positiveOperations > 0) checkPressure(await databaseBytes());
-          await client.query('COMMIT');
+          const committed = await client.query('COMMIT');
+          // A callback can catch a SQL error while PostgreSQL leaves BEGIN aborted.
+          // In that state COMMIT succeeds as a command tagged ROLLBACK, not a commit.
+          if (committed.command !== 'COMMIT') throw new Error('pgsl-store: transaction did not commit');
           return result;
         } catch (err) {
           try { await client.query('ROLLBACK'); } catch { /* ignore */ }

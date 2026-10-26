@@ -1,4 +1,5 @@
-import {readFile} from 'node:fs/promises';
+import {readFile,mkdtemp,writeFile,rm} from 'node:fs/promises';
+import {tmpdir} from 'node:os';
 import {spawnSync} from 'node:child_process';
 import {randomUUID} from 'node:crypto';
 import {setTimeout as delay} from 'node:timers/promises';
@@ -53,6 +54,30 @@ try{
    encoding:'utf8',timeout:10000});
   assert.equal(disabled.status,0);assert.equal(disabled.stderr,'');assert.equal(disabled.stdout.trim(),'Private PGSL sweep is disabled.');
   results.push('self-contained function matches source exactly and default off never opens invalid DB credentials');
+
+  const directory=await mkdtemp(tmpdir()+'/pgsl-sweep-connect-');
+  try{
+   const injected={...modules,'sweep.mjs':modules['sweep.mjs'].replace("from 'pg@8.22.0'","from './fake-pg.mjs'"),'fake-pg.mjs':"let next=0;\nconst record=value=>console.log(JSON.stringify(value));\nexport class Client{\n constructor(options){this.id=++next;record({event:'new',id:this.id,timeout:options.connectionTimeoutMillis});}\n async connect(){record({event:'connect',id:this.id});if(this.id===Number(process.env.PGSL_FIXTURE_CONNECT_FAILURE))throw Error('fixture private connect detail');}\n async end(){record({event:'end',id:this.id});if(this.id===2&&process.env.PGSL_FIXTURE_END_FAILURE==='1')throw Error('fixture private cleanup detail');}\n async query(){record({event:'query',id:this.id});throw Error('fixture must not run SQL');}\n}\n"};
+   await Promise.all(Object.entries(injected).map(([name,source])=>writeFile(directory+'/'+name,source,'utf8')));
+   for(const failedConnect of [1,2])for(const failedCleanup of ['0','1']){
+    const failed=spawnSync(process.execPath,[directory+'/sweep.mjs'],{
+     env:{...process.env,PGSL_SWEEP_ACTION:'install',PGSL_PG_CONNSTR:'postgresql://fixture:fixture@postgres.railway.internal/postgres',
+      PGSL_FIXTURE_CONNECT_FAILURE:String(failedConnect),PGSL_FIXTURE_END_FAILURE:failedCleanup},
+     encoding:'utf8',timeout:10000});
+    assert.equal(failed.status,1,'connection failure must exit unsuccessfully within the fixture deadline');
+    assert.equal(failed.signal,null);assert.equal(failed.error,undefined);
+    assert.equal(failed.stderr,'Private PGSL sweep failed; no database payload or credentials are logged.\n');
+    const events=failed.stdout.trim().split('\n').map(line=>JSON.parse(line));
+    assert.deepEqual(events.filter(e=>e.event==='new'),[{event:'new',id:1,timeout:5000},{event:'new',id:2,timeout:5000}]);
+    assert.deepEqual(events.filter(e=>e.event==='connect').map(e=>e.id),failedConnect===1?[1]:[1,2]);
+    assert.deepEqual(events.filter(e=>e.event==='end').map(e=>e.id).sort(),[1,2],'both clients must close even when connect or the other cleanup fails');
+    assert.equal(events.filter(e=>e.event==='query').length,0,'connection failure must never reach SQL or DELETE');
+    assert.ok(!failed.stdout.includes('private connect detail')&&!failed.stderr.includes('private connect detail'));
+    assert.ok(!failed.stdout.includes('private cleanup detail')&&!failed.stderr.includes('private cleanup detail'));
+   }
+  }finally{await rm(directory,{recursive:true,force:true});}
+  results.push('first and second connection failures close both bounded clients, run no SQL and exit with sanitized diagnostics');
+
  }
  {
   const f=await fresh(),c=f.client;for(let i=1;i<=4;i++)await atom(c,i);
