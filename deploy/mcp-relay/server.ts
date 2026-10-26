@@ -1018,6 +1018,111 @@ function verifySignedRequest(body: unknown): SignedAuthResult {
 // (`normalizeCssUrl` is imported alongside the other local helpers at the
 // top of the file.)
 
+// ── Descriptor body cache (Fix-4 outer) ─────────────────────
+//
+// Only versioned resources in the SDK's context-graphs publication container
+// are eligible. Arbitrary Turtle (agents, profiles, manifests) is mutable, even
+// when returned by get_descriptor. Unknown/custom layouts conservatively miss.
+// Cache plaintext bodies so repeated reads of a published version don't hit CSS.
+// This URL convention is a cache policy, never proof of authorship or integrity.
+// Encrypted envelopes are NEVER cached (the bytes
+// depend on the recipient key thumbprint; cross-recipient leakage
+// would be a security bug).
+//
+// ★ PUBLISHED DESCRIPTORS ARE USUALLY WRITE-ONCE, NOT ALWAYS. A publish with a stable,
+// caller-chosen `descriptor_id` rewrites the SAME `context-graphs/<slug>.ttl` and
+// `<slug>-graph.trig` — a same-graph self-overwrite needs no `if_match` — and nothing used to
+// drop the old body, so `get_descriptor` served the previous bytes for up to the TTL after a
+// successful republish. So every write the relay makes through `solidFetch` is reported to
+// `invalidateDescriptorBody` by `solidFetch` itself (`EgressConfig.onWrite` in egress.ts):
+// publish_context (and `remember` and the kernel extend/promote shims that route through it),
+// the deferred publish, pgsl_ingest, rebuild_manifest and any writer added later all go
+// through that one wrapper, so none of them can forget.
+// A same-id republish now invalidates its cached body.
+//
+// ★ THE CACHE IS DECLARED ABOVE `createEgress(...)` ON PURPOSE. `onWrite` can fire during the
+// module's own top-level awaits, and a `const` Map initialised further down is a temporal-dead-
+// zone ReferenceError for any write that lands first.
+const DESCRIPTOR_BODY_CACHE_TTL_MS = 5 * 60 * 1000;  // 5 minutes
+const DESCRIPTOR_BODY_CACHE_MAX = 2048;
+// ★ `landedUrl` IS CACHED WITH THE BODY, and it is not bookkeeping. The descriptor binding is
+// anchored on where the bytes CAME FROM, not on the URL asked for — the same rule
+// `followAlternateTurtle` learned, for the same two reasons: `normalizeCssUrl` rewrites a
+// legacy CSS host to a DIFFERENT ORIGIN, and redirects move the target. A cache that stored
+// only the body would answer the second read of a URL with no idea where it landed, so the
+// binding would silently weaken to `slug-only` on every cache hit.
+const descriptorBodyCache = new Map<string, { content: string; mediaType: string; encrypted: boolean; landedUrl?: string; expiresAt: number }>();
+/**
+ * Bumped by every relay write into a `context-graphs/` container. A read captures it before it
+ * fetches and may only populate the cache if it is unchanged afterwards: a read that was already
+ * in flight when a republish landed holds the OLD bytes, and storing them after the invalidation
+ * ran would put the stale body straight back for a full TTL. Global rather than per URL — a
+ * colliding read just skips one cache fill, which costs a GET, never freshness.
+ */
+let descriptorBodyWrites = 0;
+function canCacheDescriptorBody(url: string, landedUrl = url): boolean {
+  return [url, landedUrl].every(value => {
+    try {
+      const parsed = new URL(value);
+      return /^https?:$/.test(parsed.protocol) && !parsed.username && !parsed.password
+        && !parsed.search && !parsed.hash && !/%(?:2f|5c|2e)/i.test(value)
+        && /\/context-graphs\/[^/]+(?:\.ttl|-graph\.trig)$/.test(parsed.pathname);
+    } catch { return false; }
+  });
+}
+function cacheDescriptorBody(url: string, value: { content: string; mediaType: string; encrypted: boolean; landedUrl?: string }, writesAtStart: number): void {
+  if (value.encrypted || !canCacheDescriptorBody(url, value.landedUrl)) return;
+  // A write into a publication container landed while this read was in flight: these bytes
+  // may predate it. Serve them to this caller, but do not keep them.
+  if (writesAtStart !== descriptorBodyWrites) return;
+  if (descriptorBodyCache.size >= DESCRIPTOR_BODY_CACHE_MAX) {
+    const oldest = descriptorBodyCache.keys().next().value;
+    if (oldest !== undefined) descriptorBodyCache.delete(oldest);
+  }
+  descriptorBodyCache.set(url, { ...value, expiresAt: Date.now() + DESCRIPTOR_BODY_CACHE_TTL_MS });
+}
+/**
+ * One spelling per stored resource, for comparing a WRITTEN url with a CACHED key or landed URL.
+ * Collapses what the read side lets alias: the legacy public CSS host (`normalizeCssUrl`), the
+ * internal and public spellings of this deployment's store (`STORE_ORIGINS`), host case, and
+ * percent-encoding of ordinary path characters. Query and fragment are dropped because a
+ * cacheable key never has either.
+ */
+function descriptorBodyIdentity(url: string): string | undefined {
+  let parsed: URL;
+  try { parsed = new URL(normalizeCssUrl(url)); } catch { return undefined; }
+  let origin = parsed.origin;
+  if (STORE_ORIGINS.has(origin)) {
+    try { origin = new URL(CSS_URL).origin; } catch { /* keep the parsed origin */ }
+  }
+  let path = parsed.pathname;
+  try { path = decodeURIComponent(path); } catch { /* malformed escape: compare as written */ }
+  return origin + path;
+}
+/**
+ * Drop every cached body a write to `url` could have made stale: the URL itself, any key or
+ * landed URL that is another spelling of it, and its publication sibling — a descriptor and its
+ * graph are written as a pair, and an encrypted republish replaces a plaintext `-graph.trig`
+ * with an envelope at a different name, so writing either half retires the other half's body.
+ */
+function invalidateDescriptorBody(url: string): void {
+  const written = descriptorBodyIdentity(url);
+  if (written === undefined || !written.includes('/context-graphs/')) return;
+  descriptorBodyWrites++;
+  const stale = new Set<string>([written]);
+  const base = /\.ttl$/.test(written) ? written.slice(0, -'.ttl'.length)
+    : /-graph\.(?:trig|envelope\.jose\.json)$/.test(written) ? written.replace(/-graph\.(?:trig|envelope\.jose\.json)$/, '')
+    : undefined;
+  if (base !== undefined) { stale.add(base + '.ttl'); stale.add(base + '-graph.trig'); }
+  for (const [key, entry] of descriptorBodyCache) {
+    const keyId = descriptorBodyIdentity(key);
+    const landedId = entry.landedUrl === undefined ? undefined : descriptorBodyIdentity(entry.landedUrl);
+    if ((keyId !== undefined && stale.has(keyId)) || (landedId !== undefined && stale.has(landedId))) {
+      descriptorBodyCache.delete(key);
+    }
+  }
+}
+
 // ── Outbound HTTP: pools, fetch wrapper, egress choke point ─
 //
 // All of it now lives in `egress.ts`, and the reason is the address screen. Its
@@ -1049,6 +1154,10 @@ const {
   // hatch — it turns a security control off, so it should only ever be set while someone
   // is watching. See `EgressConfig.screenAddresses`.
   screenAddresses: process.env['RELAY_ADDRESS_SCREEN'] !== '0',
+  // Every write the relay makes retires the cached bodies it could have made stale — see the
+  // descriptor body cache above. Hooked here, at the one wrapper every descriptor and graph
+  // write goes through, so a writer cannot opt out by forgetting to call it.
+  onWrite: invalidateDescriptorBody,
 });
 
 // The GLOBAL dispatcher is the UNGUARDED pool, deliberately: the relay's own CSS
@@ -1728,44 +1837,6 @@ async function discoverCached(podUrl: string, filter?: DiscoverFilterLite): Prom
 // one index, no flag, archive segments inside `.well-known/` where the descriptor scan
 // already refuses to look. Do not reintroduce a second write path without first making all
 // thirteen readers agree, and without a recovery path that can undo it.
-
-// ── Descriptor body cache (Fix-4 outer) ─────────────────────
-//
-// Only versioned resources in the SDK's context-graphs publication container
-// are eligible. Arbitrary Turtle (agents, profiles, manifests) is mutable, even
-// when returned by get_descriptor. Unknown/custom layouts conservatively miss.
-// Cache plaintext bodies so repeated reads of a published version don't hit CSS.
-// This URL convention is a cache policy, never proof of authorship or integrity.
-// Encrypted envelopes are NEVER cached (the bytes
-// depend on the recipient key thumbprint; cross-recipient leakage
-// would be a security bug).
-const DESCRIPTOR_BODY_CACHE_TTL_MS = 5 * 60 * 1000;  // 5 minutes
-const DESCRIPTOR_BODY_CACHE_MAX = 2048;
-// ★ `landedUrl` IS CACHED WITH THE BODY, and it is not bookkeeping. The descriptor binding is
-// anchored on where the bytes CAME FROM, not on the URL asked for — the same rule
-// `followAlternateTurtle` learned, for the same two reasons: `normalizeCssUrl` rewrites a
-// legacy CSS host to a DIFFERENT ORIGIN, and redirects move the target. A cache that stored
-// only the body would answer the second read of a URL with no idea where it landed, so the
-// binding would silently weaken to `slug-only` on every cache hit.
-const descriptorBodyCache = new Map<string, { content: string; mediaType: string; encrypted: boolean; landedUrl?: string; expiresAt: number }>();
-function canCacheDescriptorBody(url: string, landedUrl = url): boolean {
-  return [url, landedUrl].every(value => {
-    try {
-      const parsed = new URL(value);
-      return /^https?:$/.test(parsed.protocol) && !parsed.username && !parsed.password
-        && !parsed.search && !parsed.hash && !/%(?:2f|5c|2e)/i.test(value)
-        && /\/context-graphs\/[^/]+(?:\.ttl|-graph\.trig)$/.test(parsed.pathname);
-    } catch { return false; }
-  });
-}
-function cacheDescriptorBody(url: string, value: { content: string; mediaType: string; encrypted: boolean; landedUrl?: string }): void {
-  if (value.encrypted || !canCacheDescriptorBody(url, value.landedUrl)) return;
-  if (descriptorBodyCache.size >= DESCRIPTOR_BODY_CACHE_MAX) {
-    const oldest = descriptorBodyCache.keys().next().value;
-    if (oldest !== undefined) descriptorBodyCache.delete(oldest);
-  }
-  descriptorBodyCache.set(url, { ...value, expiresAt: Date.now() + DESCRIPTOR_BODY_CACHE_TTL_MS });
-}
 
 // Who does the pod that served a descriptor say it belongs to? Read once per pod per TTL and
 // handed to `proofBindsToDescriptorUrl` as the location half of a URN-form binding — a URN
@@ -4690,6 +4761,7 @@ async function handleGetDescriptor(args: ToolArgs, project = true): Promise<stri
     if (cached && cached.expiresAt > Date.now() && !cached.encrypted && canCacheDescriptorBody(url, cached.landedUrl)) {
       return JSON.stringify({ url, encrypted: false, mediaType: cached.mediaType, content: cached.content });
     }
+    const writesAtStart = descriptorBodyWrites;
     let graphLandedUrl: string | undefined;
     const { content, encrypted, mediaType } = await fetchGraphContent(url, {
       fetch: async (target, init) => {
@@ -4711,7 +4783,7 @@ async function handleGetDescriptor(args: ToolArgs, project = true): Promise<stri
       });
     }
     if (!encrypted && content !== null && graphLandedUrl) {
-      cacheDescriptorBody(url, { content, mediaType, encrypted: false, landedUrl: graphLandedUrl });
+      cacheDescriptorBody(url, { content, mediaType, encrypted: false, landedUrl: graphLandedUrl }, writesAtStart);
     }
     return JSON.stringify({ url, encrypted, mediaType, content });
   }
@@ -4733,6 +4805,7 @@ async function handleGetDescriptor(args: ToolArgs, project = true): Promise<stri
     // can only weaken a binding, never strengthen one.
     landedUrl = cached.landedUrl ?? url;
   } else {
+    const writesAtStart = descriptorBodyWrites;
     const { response: resp, landedUrl: landed } = await guardedInvokeFetchLanded(url, {
       method: 'GET',
       headers: { 'Accept': 'text/turtle, text/markdown;q=0.9' },
@@ -4748,7 +4821,7 @@ async function handleGetDescriptor(args: ToolArgs, project = true): Promise<stri
     // Direct HMD resources (courses, catalogues, etc.) are mutable representations,
     // not immutable Turtle descriptors. Do not mislabel or descriptor-cache them.
     if (!/^text\/markdown(?:\s*;|\s*$)/i.test(representationMediaType) && canCacheDescriptorBody(url, landed)) {
-      cacheDescriptorBody(url, { content: turtle, mediaType: representationMediaType, encrypted: false, landedUrl: landed });
+      cacheDescriptorBody(url, { content: turtle, mediaType: representationMediaType, encrypted: false, landedUrl: landed }, writesAtStart);
     }
   }
 
