@@ -16,8 +16,9 @@
  * registrant's choice (a passkey registered with 'none' attestation, a did:web bound with a key
  * the caller sends): such a key can be copied, since a public key is not secret, so a later
  * copy of the owner's key must not win, and the owner's account must be among those tried.
- * Ties, and the credentials bound by proof of possession (wallets, did:key), go to the
- * preferred account (the one derived from the credential), then by id.
+ * Ties, wallets and did:keys go to the preferred account (the one derived from the
+ * credential), then by id. What a sign-in does with several wallet holders is the server's
+ * choice (walletAccount in server.ts): this module only orders them.
  *
  * Pure: no server state, so it is unit-tested directly (tests/credential-index.test.ts).
  */

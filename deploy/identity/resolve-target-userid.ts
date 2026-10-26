@@ -1,6 +1,6 @@
 /**
  * Pure mode-selection helper for the three targeted-userId branches in
- * the SIWE (/auth/siwe/verify) and WebAuthn (/auth/webauthn/register)
+ * the SIWE (/auth/siwe) and WebAuthn (/auth/webauthn/register)
  * handlers:
  *
  *   (A) derive     — no bearer, no bootstrap claim. The targetUserId is

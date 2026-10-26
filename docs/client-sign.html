@@ -333,8 +333,9 @@ async function login(kind){
     result=await api(base+'/auth/webauthn/authenticate',{response:assertionJson(credential)});
   }else{
     if(!window.ethereum)throw Error('Use a browser with your existing wallet extension.');
-    const [address]=await window.ethereum.request({method:'eth_requestAccounts'});
-    const {nonce}=await api(base+'/challenges',{purpose:'siwe'});
+    const [account]=await window.ethereum.request({method:'eth_requestAccounts'});
+    const challenge=await api(base+'/challenges',{purpose:'siwe',address:account});
+    const nonce=challenge.nonce,address=challenge.address || account;
     const message=location.host+' wants you to sign in with your Ethereum account:\n'+address+'\n\nSign in to Interego\n\nURI: '+location.origin+'\nVersion: 1\nChain ID: 1\nNonce: '+nonce+'\nIssued At: '+new Date().toISOString();
     const bytes=Array.from(encoder.encode(message),b=>b.toString(16).padStart(2,'0')).join('');
     const signature=await window.ethereum.request({method:'personal_sign',params:['0x'+bytes,address]});

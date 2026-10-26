@@ -1736,29 +1736,89 @@ async function toolSetupIdentity(args: {
 
 // ── Wallet Tool Implementations ─────────────────────────────
 
+/**
+ * `message` as one shell word that bash (and zsh) turn back into exactly its bytes: ANSI-C
+ * quoting, where `\n` is a newline. A double-quoted "...\n..." stays a backslash and an `n`, so
+ * cast signed a one-line string and the identity server, rebuilding the real message, recovered
+ * a different address.
+ */
+function shellQuoteAnsiC(message: string): string {
+  return "$'" + message.replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/\n/g, '\\n') + "'";
+}
+
+/** Messages step 1 showed, by nonce, so step 2 submits those exact bytes (five-minute life). */
+const shownLinkMessages = new Map<string, { address: string; issuedAt: string; message: string; at: number }>();
+
+/**
+ * The identity server links a wallet only for a signed-in account (Authorization: Bearer) and
+ * only with a single-use nonce from its POST /challenges (purpose 'siwe') signed inside an
+ * ERC-4361 message that names the server's host. The first call fetches that nonce and shows
+ * the message; the second call rebuilds the same message from the nonce and timestamp it was
+ * shown with and submits it. This server holds no identity bearer of its own: it sends the one
+ * in CG_IDENTITY_TOKEN, and without one it says so instead of sending a request that would fail.
+ */
+function linkWalletMessage(address: string, userId: string, nonce: string, issuedAt: string): string {
+  const domain = new URL(IDENTITY_SERVER_URL).host;
+  return [
+    `${domain} wants you to sign in with your Ethereum account:`,
+    address,
+    '',
+    `Link wallet to Interego identity: ${userId}`,
+    '',
+    `URI: ${IDENTITY_SERVER_URL}`,
+    `Version: 1`,
+    `Chain ID: 1`,
+    `Nonce: ${nonce}`,
+    `Issued At: ${issuedAt}`,
+  ].join('\n');
+}
+
 async function toolLinkWallet(args: {
   wallet_address: string;
   signature?: string;
+  nonce?: string;
+  issued_at?: string;
 }): Promise<string> {
   const address = args.wallet_address;
   const userId = POD_NAME;
+  const identityToken = process.env['CG_IDENTITY_TOKEN'] ?? '';
+  if (!identityToken) {
+    return [
+      `Cannot link a wallet from here: no identity-server bearer token is configured.`,
+      ``,
+      `The identity server links a wallet only to a signed-in account, and this server sends`,
+      `the bearer token in the CG_IDENTITY_TOKEN environment variable, which is not set.`,
+      `Nothing was sent.`,
+      ``,
+      `Either set CG_IDENTITY_TOKEN to a bearer token for your account and restart this server,`,
+      `or open ${IDENTITY_SERVER_URL}/connect, sign in, and add the wallet there.`,
+    ].join('\n');
+  }
 
   if (!args.signature) {
-    // Generate SIWE message for the user to sign offline
-    const domain = new URL(IDENTITY_SERVER_URL).host;
-    const nonce = Math.random().toString(36).slice(2, 18);
-    const siweMessage = [
-      `${domain} wants you to sign in with your Ethereum account:`,
-      address,
-      '',
-      `Link wallet to Interego identity: ${userId}`,
-      '',
-      `URI: ${IDENTITY_SERVER_URL}`,
-      `Version: 1`,
-      `Chain ID: 1`,
-      `Nonce: ${nonce}`,
-      `Issued At: ${new Date().toISOString()}`,
-    ].join('\n');
+    // Step 1: a single-use nonce from the identity server, inside the message to sign.
+    let nonce: string;
+    let signingAddress = address;
+    try {
+      const chResp = await fetch(`${IDENTITY_SERVER_URL}/challenges`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        // The server returns the address in EIP-55 form, which ERC-4361 requires on the
+        // address line (a wallet reads a message with a lowercase one as no sign-in at all).
+        body: JSON.stringify({ purpose: 'siwe', address }),
+      });
+      const ch = await chResp.json() as { nonce?: string; address?: string; error?: string };
+      if (!chResp.ok || !ch.nonce) return `Could not get a challenge from the identity server (HTTP ${chResp.status}): ${ch.error ?? 'no nonce returned'}`;
+      nonce = ch.nonce;
+      if (typeof ch.address === 'string' && ch.address.toLowerCase() === address.toLowerCase()) signingAddress = ch.address;
+    } catch (err) {
+      return `Cannot reach identity server: ${(err as Error).message}`;
+    }
+    const issuedAt = new Date().toISOString();
+    const siweMessage = linkWalletMessage(signingAddress, userId, nonce, issuedAt);
+    const now = Date.now();
+    for (const [k, v] of shownLinkMessages) if (now - v.at > 5 * 60 * 1000) shownLinkMessages.delete(k);
+    shownLinkMessages.set(nonce, { address: signingAddress.toLowerCase(), issuedAt, message: siweMessage, at: now });
 
     return [
       `Sign this message with your wallet to link it to your identity.`,
@@ -1769,50 +1829,50 @@ async function toolLinkWallet(args: {
       `─────────────────────────────────────`,
       ``,
       `How to sign:`,
-      `  • cast: cast wallet sign --private-key <key> "${siweMessage.replace(/\n/g, '\\n')}"`,
+      `  • cast: cast wallet sign --private-key <key> ${shellQuoteAnsiC(siweMessage)}`,
       `  • Web: Open ${IDENTITY_SERVER_URL}/connect and use MetaMask`,
       ``,
-      `Then call link_wallet again with your wallet_address and signature.`,
+      `Then, within 5 minutes (the nonce is single-use), call link_wallet again with:`,
+      `  wallet_address: ${signingAddress}`,
+      `  signature: <the signature>`,
+      `  nonce: ${nonce}`,
+      `  issued_at: ${issuedAt}`,
     ].join('\n');
   }
 
-  // Verify and link
-  const domain = new URL(IDENTITY_SERVER_URL).host;
-  const siweMessage = [
-    `${domain} wants you to sign in with your Ethereum account:`,
-    address,
-    '',
-    `Link wallet to Interego identity: ${userId}`,
-    '',
-    `URI: ${IDENTITY_SERVER_URL}`,
-    `Version: 1`,
-    `Chain ID: 1`,
-    `Nonce: manual`,
-    `Issued At: ${new Date().toISOString()}`,
-  ].join('\n');
+  if (!args.nonce || !args.issued_at) {
+    return `Link failed: nonce and issued_at are required with a signature. Call link_wallet with only wallet_address to get a fresh message to sign, then pass back the nonce and issued_at it shows.`;
+  }
+  // Step 2: the exact message that was shown and signed — the one step 1 kept, or, when this
+  // process did not show it (a restart), rebuilt from what step 1 printed.
+  const shown = shownLinkMessages.get(args.nonce);
+  shownLinkMessages.delete(args.nonce);
+  const siweMessage = shown && shown.address === address.toLowerCase() && shown.issuedAt === args.issued_at
+    ? shown.message
+    : linkWalletMessage(address, userId, args.nonce, args.issued_at);
 
   try {
     const resp = await fetch(`${IDENTITY_SERVER_URL}/wallet/link`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${identityToken}` },
       body: JSON.stringify({
-        userId,
         walletAddress: address,
         siweMessage,
         signature: args.signature,
+        nonce: args.nonce,
       }),
     });
-    const result = await resp.json() as any;
+    const result = await resp.json() as { linked?: boolean; userId?: string; error?: string };
 
-    if (result.linked) {
+    if (resp.ok && result.linked) {
       return [
         `Wallet linked successfully!`,
         `  Address: ${address}`,
-        `  User: ${userId}`,
+        `  User: ${result.userId ?? userId}`,
         `  You can now use SIWE to authenticate from any device.`,
       ].join('\n');
     }
-    return `Link failed: ${result.error}`;
+    return `Link failed (HTTP ${resp.status}): ${result.error ?? 'no error message'}`;
   } catch (err) {
     return `Cannot reach identity server: ${(err as Error).message}`;
   }
@@ -2916,12 +2976,14 @@ const handleListTools = async () => ({
     },
     {
       name: 'link_wallet',
-      description: 'Compatibility shim — composes SIWE message-construction + identity-server link-wallet affordance. Links an existing Ethereum wallet to your identity. Generates a SIWE message for you to sign offline (with cast, ethers CLI, or MetaMask). Alternatively, open the web connect page at the identity server to sign in browser.',
+      description: 'Compatibility shim — composes SIWE message-construction + identity-server link-wallet affordance. Links an existing Ethereum wallet to your identity. The first call gets a single-use nonce from the identity server and shows the SIWE message to sign offline (with cast, ethers CLI, or MetaMask); the second call passes back the signature, nonce and issued_at. Needs an identity-server bearer token for your account in CG_IDENTITY_TOKEN. Alternatively, open the web connect page at the identity server to sign in browser.',
       inputSchema: {
         type: 'object' as const,
         properties: {
           wallet_address: { type: 'string', description: 'Your Ethereum wallet address (0x...)' },
-          signature: { type: 'string', description: 'SIWE signature (0x...) — if you already signed offline. Omit to get the message to sign.' },
+          signature: { type: 'string', description: 'SIWE signature (0x...) over the message the first call showed. Omit to get the message to sign.' },
+          nonce: { type: 'string', description: 'The nonce the first call showed (single-use, valid 5 minutes). Required with signature.' },
+          issued_at: { type: 'string', description: 'The Issued At timestamp the first call showed. Required with signature.' },
         },
         required: ['wallet_address'],
       },

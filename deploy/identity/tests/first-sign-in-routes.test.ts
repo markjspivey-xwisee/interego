@@ -61,11 +61,14 @@ const didWeb = { did: 'did:web:owner.example', owner: ed25519(), other: ed25519(
 // startup) and one bound by someone else (loaded later). Neither is the account derived from it.
 const sharedWeb = { did: 'did:web:shared.example', owner: ed25519(), other: ed25519(),
   ownerId: 'u-eth-0000000000d1', otherId: 'u-eth-0000000000d2' };
-// A wallet two accounts list (each binding proved possession): the one derived from it, loaded
-// at startup, and another loaded later whose id sorts before it, so only the preference for the
-// derived account picks it.
+// A wallet two accounts list (bound before adding a wallet needed this server's nonce): the one
+// derived from it, loaded at startup, and another loaded later whose id sorts before it, so only
+// the preference for the derived account picks it.
 const sharedWallet = Wallet.createRandom();
 const sharedWalletOther = 'a-wallet-second-holder';
+// A wallet two accounts list, neither derived from it: nothing says which is the wallet's.
+const strandedWallet = Wallet.createRandom();
+const strandedHolders = ['a-wallet-holder-1', 'b-wallet-holder-2'];
 const didWebKey = (did: string, multibase: string, createdAt = now) =>
   ({ did, publicKeyMultibase: multibase, keyType: 'Ed25519VerificationKey2020', createdAt });
 // The same for a did:key.
@@ -110,10 +113,12 @@ const pods = new Map<string, Record<string, unknown>>([
     didKeys: [didWebKey(copiedWeb.did, copiedWeb.owner.multibase, '2025-01-01T00:00:00.000Z')] }],
   ...copiedWeb.copies.map(id => [id, { userId: id, name: 'did:web copy', walletAddresses: [], webAuthnCredentials: [],
     didKeys: [didWebKey(copiedWeb.did, copiedWeb.owner.multibase)] }] as [string, Record<string, unknown>]),
+  ...strandedHolders.map(id => [id, { userId: id, name: 'Wallet holder', didKeys: [], webAuthnCredentials: [],
+    walletAddresses: [strandedWallet.address.toLowerCase()] }] as [string, Record<string, unknown>]),
 ]);
 // Only these are in the root listing, so only these load at startup.
 const listed = new Set([walletUser(wallets.passkeyOnly), didUser(dids.passkeyOnly), sharedWeb.ownerId, walletUser(sharedWallet),
-  didUser(sharedDidKey), copiedWeb.ownerId, ...copiedWeb.copies]);
+  didUser(sharedDidKey), copiedWeb.ownerId, ...copiedWeb.copies, ...strandedHolders]);
 const unreadable = new Set([walletUser(wallets.unreadable), didUser(dids.unreadable)]);
 // Pods a test makes unreadable for a while (a CSS blip), after startup has loaded the rest.
 const blipping = new Set<string>();
@@ -184,7 +189,8 @@ async function post(path: string, body: unknown): Promise<{ status: number; json
 
 async function siwe(w: { address: string; signMessage(message: string): Promise<string> }, extra: Record<string, unknown> = {}) {
   const { nonce } = (await post('/challenges', { purpose: 'siwe' })).json as { nonce: string };
-  const message = `example.test wants you to sign in with your Ethereum account:\n${w.address}\n\nSign in.\n\nNonce: ${nonce}`;
+  const message = `${new URL(base).host} wants you to sign in with your Ethereum account:\n${w.address}\n\nSign in.\n\n`
+    + `URI: ${base}\nVersion: 1\nChain ID: 1\nNonce: ${nonce}\nIssued At: ${new Date().toISOString()}`;
   return post('/auth/siwe', { message, signature: await w.signMessage(message), nonce, name: 'New', ...extra });
 }
 
@@ -353,13 +359,17 @@ test('a wallet two accounts list signs in to the one derived from it, whichever 
   const r = await siwe(sharedWallet);
   assert.equal(r.status, 200, `${JSON.stringify(r.json)}\n${output}`);
   assert.equal(r.json['userId'], walletUser(sharedWallet));
-  // The legacy verify route picks the same account.
-  const message = `example.test wants you to sign in with your Ethereum account:\n${sharedWallet.address}\n\nSign in.`;
-  const legacy = await post('/siwe/verify', { message, signature: await sharedWallet.signMessage(message) });
-  assert.equal(legacy.status, 200, JSON.stringify(legacy.json));
-  assert.equal(legacy.json['userId'], walletUser(sharedWallet));
   assert.deepEqual(writesTo(walletUser(sharedWallet)), []);
   assert.deepEqual(writesTo(sharedWalletOther), []);
+});
+
+test('a wallet two accounts list, neither derived from it, signs in to neither', async () => {
+  const r = await siwe(strandedWallet);
+  assert.equal(r.status, 409, `${JSON.stringify(r.json)}\n${output}`);
+  assert.equal(r.json['token'], undefined);
+  assert.equal(r.json['userId'], undefined);
+  assert.ok(output.split('\n').some(l => /kind=wallet holders=2 refused=ambiguous$/.test(l.trim())), output);
+  for (const id of [...strandedHolders, walletUser(strandedWallet)]) assert.deepEqual(writesTo(id), []);
 });
 
 test('a did:key two accounts list signs in to the one derived from it, though the other sorts first and enrolled first', async () => {
@@ -375,4 +385,15 @@ test('a did:web whose public key later accounts copied still signs in to its own
   assert.equal(r.status, 200, `${JSON.stringify(r.json)}\n${output}`);
   assert.equal(r.json['userId'], copiedWeb.ownerId);
   assert.ok(output.split('\n').some(l => /kind=did holders=10 tried=8$/.test(l.trim())), output);
+});
+
+test('a wallet signature replayed to the retired /siwe/verify gets no token', async () => {
+  // The account exists: the wallet signed in through /auth/siwe, which consumes a challenge.
+  assert.equal((await siwe(wallets.unloaded)).status, 200);
+  // Any message the wallet ever signed that names its address used to buy a ReadWrite token here.
+  const message = `elsewhere.example wants you to sign in with your Ethereum account:\n${wallets.unloaded.address}\n\nSign in to another site.`;
+  const replay = await post('/siwe/verify', { message, signature: await wallets.unloaded.signMessage(message) });
+  assert.equal(replay.status, 410, JSON.stringify(replay.json));
+  assert.equal(replay.json['token'], undefined);
+  assert.equal(replay.json['userId'], undefined);
 });

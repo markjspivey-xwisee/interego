@@ -155,9 +155,10 @@ test('one user over the limit gets 429 with Retry-After, and only that user', as
 });
 
 test('verified reads leave the address\'s enrollment budget alone', async () => {
-  // POST /siwe/nonce shares the per-IP auth-enroll bucket the read used to count against.
+  // POST /siwe/nonce shares the per-IP auth-enroll bucket the read used to count against. It is
+  // retired (410), but the limiter still runs first, so an exhausted bucket would answer 429.
   const r = await fetch(`${base}/siwe/nonce`, { method: 'POST', headers: { 'X-Forwarded-For': RELAY_IP } });
-  assert.equal(r.status, 200, await r.text());
+  assert.equal(r.status, 410, await r.text());
 });
 
 test('a concurrent burst is counted before verification awaits the pod', async () => {

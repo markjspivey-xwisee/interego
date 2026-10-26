@@ -155,6 +155,8 @@ npx -y @interego/mcp
 | `CG_BASE_URL` | `http://localhost:3456/` | Base URL used to compute the default home pod |
 | `CG_HOME_POD` | `${CG_BASE_URL}${CG_POD_NAME}/` | Default Solid pod for publishing |
 | `CG_KNOWN_PODS` | _(empty)_ | Comma-separated pod URLs to seed the federation |
+| `CG_IDENTITY_URL` | `https://identity.interego.xwisee.com` | Identity server that `setup_identity` and `link_wallet` call |
+| `CG_IDENTITY_TOKEN` | _(empty)_ | Identity-server bearer token for your account. `link_wallet` needs it: the identity server links a wallet only to a signed-in account, with a single-use nonce from its `POST /challenges`. Unset, `link_wallet` says so and sends nothing |
 
 ## Build from source
 
