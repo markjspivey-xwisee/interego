@@ -182,6 +182,32 @@ check('MCP tools/list lists every tool that exists, same as the root document',
   check('...and the modern era serves the SAME tool surface as the legacy one',
     modernList?.result?.tools?.length === mcpTools.length,
     `${modernList?.result?.tools?.length} vs ${mcpTools.length}`);
+
+  // ★ A body over the SDK's 4 MiB default must be SERVED, through both eras.
+  // @modelcontextprotocol/server 2.3 added that default on the bodies it reads itself,
+  // while this surface's parser accepts 50 MiB, so without passing the bound through
+  // every request in between answered 413 behind a parser that had accepted it.
+  const big = 'A'.repeat(5 * 1024 * 1024);
+  const bigCall = (headers, meta) => fetch(`${B}/mcp`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...headers },
+    body: JSON.stringify({ jsonrpc: '2.0', id: 105, method: 'tools/call',
+      params: { name: 'protocol.zk_commit', arguments: { value: big }, ...(meta ? { _meta: meta } : {}) } }),
+  });
+  /** HTTP status plus the tool's own text block, which carries `"ok": true` on success. */
+  const served = async (r) => {
+    const text = await r.text();
+    let inner = '';
+    try { inner = JSON.parse(text)?.result?.content?.[0]?.text ?? ''; } catch { /* left empty */ }
+    return { ok: r.status === 200 && /"ok": true/.test(inner), detail: `HTTP ${r.status} ${text.slice(0, 140)}` };
+  };
+  const bigLegacy = await served(await bigCall({}));
+  check('a tools/call over 4 MiB is served on the legacy era (the SDK default bound is raised)',
+    bigLegacy.ok, bigLegacy.detail);
+  const bigModern = await served(await bigCall(
+    { 'MCP-Protocol-Version': '2026-07-28', 'Mcp-Method': 'tools/call', 'Mcp-Name': 'protocol.zk_commit' },
+    { 'io.modelcontextprotocol/protocolVersion': '2026-07-28', 'io.modelcontextprotocol/clientCapabilities': {} }));
+  check('...and on the 2026-07-28 era', bigModern.ok, bigModern.detail);
 }
 
 const flagged = mcpTools.filter(t => t.annotations?.unavailable);

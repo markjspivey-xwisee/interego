@@ -301,6 +301,27 @@ try {
       && modernList.json?.result?.cacheScope !== undefined,
     JSON.stringify({ resultType: modernList.json?.result?.resultType, cacheScope: modernList.json?.result?.cacheScope }));
 
+  // ── A body over the SDK's own 4 MiB default, through both eras ───────────
+  // @modelcontextprotocol/server 2.3 added a 4 MiB default bound on every body the SDK
+  // reads itself. This mount accepts 50 MiB at its body parser, and foxxi/lpc tools take a
+  // whole SCORM package inline as `zip_base64`, so a request in between must be SERVED,
+  // not answered 413 by the layer behind the parser. 5 MiB of payload clears 4 MiB with
+  // room to spare whatever the envelope adds.
+  const big = 'A'.repeat(5 * 1024 * 1024);
+  const bigLegacy = await rpc('tools/call', { name: 'demo.ping', arguments: { msg: big } });
+  check('a tools/call over 4 MiB is served on the legacy era (the SDK default bound is raised)',
+    bigLegacy.status === 200 && bigLegacy.json?.result?.structuredContent?.pong?.length === big.length,
+    `HTTP ${bigLegacy.status} ${bigLegacy.text.slice(0, 160)}`);
+  const bigModern = await rpc('tools/call', { name: 'demo.ping', arguments: { msg: big }, _meta: ENVELOPE },
+    { ...MODERN, 'Mcp-Method': 'tools/call', 'Mcp-Name': 'demo.ping' });
+  check('…and on the 2026-07-28 era',
+    bigModern.status === 200 && bigModern.json?.result?.structuredContent?.pong?.length === big.length,
+    `HTTP ${bigModern.status} ${bigModern.text.slice(0, 160)}`);
+  // The bound is raised to the mount's own, not removed: over 50 MiB is still refused.
+  const tooBig = await rpc('tools/call', { name: 'demo.ping', arguments: { msg: 'A'.repeat(51 * 1024 * 1024) } });
+  check('…while a body over the mount\'s 50 MiB bound is still refused with 413',
+    tooBig.status === 413, `HTTP ${tooBig.status}`);
+
   // ── MIGRATION DELTA: no input validation exists today ────────────────────
   // demo.ping declares msg as required, and the mount invokes the handler anyway.
   // The SDK validates against the derived schema and refuses. That is strictly
