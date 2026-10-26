@@ -30,14 +30,20 @@ const pod = vi.hoisted(() => ({
   entries: new Map<string, Array<{ descriptorUrl: string; conformsTo: string[] }>>(),
   descriptors: new Map<string, string>(),
   graphs: new Map<string, string>(),
-  /** A descriptor URL whose next fetch waits for this promise. */
+  /** A descriptor or graph URL whose next fetch waits for this promise. */
   stalls: new Map<string, Promise<void>>(),
 }));
 
 vi.mock('@interego/solid', async (original) => ({
   ...(await original<typeof import('@interego/solid')>()),
   discover: async (podUrl: string) => pod.entries.get(podUrl) ?? [],
-  fetchGraphContent: async (url: string) => ({ content: pod.graphs.get(url) ?? null, encrypted: false, mediaType: 'application/trig' }),
+  // A stalled graph read answers late with what the pod held when it was asked.
+  fetchGraphContent: async (url: string) => {
+    const content = pod.graphs.get(url) ?? null;
+    const stall = pod.stalls.get(url);
+    if (stall) { pod.stalls.delete(url); await stall; }
+    return { content, encrypted: false, mediaType: 'application/trig' };
+  },
 }));
 vi.mock('../src/ssrf-guard.js', () => ({
   assertSafeFetchTarget: async () => undefined,
@@ -80,6 +86,7 @@ function publishSection(podUrl: string, type: string, name: string, bundle: unkn
 }
 const publishDirectory = (podUrl: string, users: unknown[], readable = true) =>
   publishSection(podUrl, TENANT_TYPES.TenantDirectory, 'directory', { users, groups: [] }, readable);
+const directoryGraph = (podUrl: string) => `${podUrl}tenant/directory-graph.trig`;
 
 /** Make the next fetch of `descriptorUrl` wait until the returned release is called. */
 function stall(descriptorUrl: string): () => void {
@@ -207,6 +214,54 @@ describe('★ an older read never replaces a newer one, and its age counts from 
     expect(directory.read()).toEqual([]);
     const late = await mintSessionToken({ userId: OPERATOR.user_id, webId: OPERATOR.web_id, seed: SEED });
     expect((await directory.verifySession(late)).ok).toBe(false);
+  });
+});
+
+describe('★ an older read that lands late never displaces a newer one in the 60 s section cache', () => {
+  // Without this, the late read's cache entry (stamped with its older start) is served for 60 s, and
+  // the shared directory rejects every such hit as older than its copy: no refresh reaches the pod,
+  // so a revocation is not seen until the copy goes stale and then every operator is refused.
+  it('a refresh past ttl still reaches the pod and sees a revocation', async () => {
+    publishDirectory(TENANT, [OPERATOR]);
+    const config = { podUrl: TENANT, authoritativeSource: SOURCE };
+    const directory = createDirectoryDemand(signal => loadConfiguredDirectory(config, signal));
+    const release = stall(directoryGraph(TENANT));
+    const first = readAsTheBridge(TENANT, directory); // Read A starts at T0 and stalls.
+    await settle();
+
+    vi.setSystemTime(T0 + 1_000); // An operator's request refreshes from the pod.
+    const token = await mintSessionToken({ userId: OPERATOR.user_id, webId: OPERATOR.web_id, seed: SEED });
+    expect((await directory.verifySession(token)).ok).toBe(true);
+
+    vi.setSystemTime(T0 + 200_000); // The admin revokes the operator.
+    publishDirectory(TENANT, []);
+    vi.setSystemTime(T0 + 250_000); // Read A finally answers with what the pod held at T0.
+    release();
+    await first;
+    expect(directory.read()).toEqual([OPERATOR]); // Older than the held copy: ignored.
+
+    vi.setSystemTime(T0 + 251_000); // Past ttl: this refresh must read the pod, not A's late entry.
+    const later = await mintSessionToken({ userId: OPERATOR.user_id, webId: OPERATOR.web_id, seed: SEED });
+    expect((await directory.verifySession(later)).ok).toBe(false);
+    expect(directory.read()).toEqual([]);
+  });
+
+  it('the composed admin payload is not replaced by a read that started before it', async () => {
+    publishDirectory(TENANT, [INTRUDER]);
+    const directory = quietDirectory();
+    const release = stall(directoryGraph(TENANT));
+    const first = readAsTheBridge(TENANT, directory); // Read A starts at T0 and stalls.
+    await settle();
+
+    vi.setSystemTime(T0 + 1_000); // The intruder is revoked; read B sees it.
+    publishDirectory(TENANT, []);
+    expect((await readAsTheBridge(TENANT, directory)).users).toEqual([]);
+
+    vi.setSystemTime(T0 + 2_000);
+    release();
+    expect((await first).users).toEqual([INTRUDER]); // That request's own payload is its own business.
+    // Every later caller within the payload's 60 s gets B's, not A's.
+    expect((await readAsTheBridge(TENANT, directory)).users).toEqual([]);
   });
 });
 

@@ -77,7 +77,15 @@ function getCached<T>(key: string): T | null {
   return getCachedEntry<T>(key)?.value ?? null;
 }
 
-function setCached<T>(key: string, value: T, fetchedAt = Date.now()): void {
+/**
+ * Cache `value`, read from the pod starting at `fetchedAt`, unless the entry already held came
+ * from a read that started later: reads overlap (a stalled hop can answer minutes late), and a
+ * late-landing older read must not replace a newer one, or every hit until it expires serves data
+ * the pod had already moved past (and a caller ordering copies by `fetchedAt` rejects each hit).
+ */
+function setCached<T>(key: string, value: T, fetchedAt: number): void {
+  const held = cache.get(key);
+  if (held && held.fetchedAt > fetchedAt) return;
   if (cache.size >= CACHE_MAX && !cache.has(key)) {
     const now = Date.now();
     for (const [k, e] of cache) { if (now > e.expiresAt) cache.delete(k); }
@@ -323,6 +331,7 @@ export async function fetchAdminPayload(config: TenantFetchConfig): Promise<unkn
   const key = cacheKey(config.podUrl, config.authoritativeSource, 'AdminPayload');
   const hit = getCached<unknown>(key);
   if (hit !== null) return hit;
+  const startedAt = Date.now();
 
   // Resilient composition: a tenant may have published some sections and
   // not others (e.g. the directory exists but the course catalog was never
@@ -341,19 +350,21 @@ export async function fetchAdminPayload(config: TenantFetchConfig): Promise<unkn
     ['membership', TENANT_TYPES.TenantMembership],
     ['assignments', TENANT_TYPES.TenantAssignments],
   ];
-  const settled = await Promise.allSettled(SECTIONS.map(([, iri]) => iri === TENANT_TYPES.TenantDirectory
-    // Hand a loaded directory over as soon as it settles: a stalled sibling section must not hold
-    // it back until after a newer read has been shared.
-    ? fetchSectionStamped(iri, config).then(({ value, fetchedAt }) => {
-      const users = (value as { users?: unknown } | null)?.users;
+  // The composed payload is as old as the oldest section in it (a section-cache hit included).
+  let oldestRead = startedAt;
+  const settled = await Promise.allSettled(SECTIONS.map(([, iri]) => fetchSectionStamped(iri, config)
+    .then(({ value, fetchedAt }) => {
+      oldestRead = Math.min(oldestRead, fetchedAt);
+      const users = iri === TENANT_TYPES.TenantDirectory ? (value as { users?: unknown } | null)?.users : undefined;
+      // Hand a loaded directory over as soon as it settles: a stalled sibling section must not
+      // hold it back until after a newer read has been shared.
       if (Array.isArray(users)) {
         try {
           config.onDirectoryLoaded?.(users as Array<{ user_id: string; web_id: string; wallet_address?: string }>, fetchedAt);
         } catch { /* the hook is the caller's; it cannot fail this read */ }
       }
       return value;
-    })
-    : fetchSection(iri, config)));
+    })));
   const missing: string[] = [];
   const section = (i: number): unknown => {
     if (settled[i]!.status === 'fulfilled') return (settled[i] as PromiseFulfilledResult<unknown>).value;
@@ -428,7 +439,7 @@ export async function fetchAdminPayload(config: TenantFetchConfig): Promise<unkn
     audit,
     connections,
   };
-  setCached(key, composed);
+  setCached(key, composed, oldestRead);
   return composed;
 }
 
@@ -439,6 +450,7 @@ export async function fetchCoursePackage(
   const key = cacheKey(config.podUrl, config.authoritativeSource, `course:${courseId}`);
   const hit = getCached<unknown>(key);
   if (hit !== null) return hit;
+  const fetchedAt = Date.now();
 
   // For courses we need to discover among multiple CoursePackageBundle
   // entries — pick the one whose graph IRI matches this courseId. The
@@ -457,7 +469,7 @@ export async function fetchCoursePackage(
   const newest = matching[0];
   if (!newest) throw new Error(`No course package with id=${courseId} found in pod ${config.podUrl}`);
   const payload = await fetchBundleJson(newest, config);
-  setCached(key, payload);
+  setCached(key, payload, fetchedAt);
   return payload;
 }
 

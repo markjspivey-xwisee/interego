@@ -187,6 +187,31 @@ describe('directory refresh runs only for an explicit wallet-authenticated consu
     expect(directory.read()).toEqual([]);
   });
 
+  it('a refresh that started after an observed read wins when it lands, though the observation came during it', async () => {
+    let now = 1_000;
+    let finish: ((snapshot: { users: ReadonlyArray<DirectoryUser>; fetchedAt: number }) => void) | undefined;
+    const directory = createDirectoryDemand(() => new Promise(resolve => { finish = resolve; }), 60_000, () => now);
+    const pending = directory.verifySession(await operatorToken()); // The refresh reads the pod from t=1000.
+    await Promise.resolve();
+    expect(finish).toBeTypeOf('function');
+    now = 2_000;
+    directory.observe([OPERATOR], 500); // A request-time read that started at t=500 lands first.
+    expect(directory.read()).toEqual([OPERATOR]);
+    finish!({ users: [], fetchedAt: 1_000 }); // The newer read no longer lists the operator.
+    expect((await pending).ok).toBe(false);
+    expect(directory.read()).toEqual([]);
+  });
+
+  it('a read stamped in the future cannot outlive the staleness bound', () => {
+    let now = 1_000;
+    const directory = createDirectoryDemand(async () => { throw new Error('no reload expected'); }, 60_000, () => now);
+    directory.observe([OPERATOR], now + 600_000); // A clock step between stamping and observing.
+    now = 1_000 + 299_999;
+    expect(directory.read()).toEqual([OPERATOR]);
+    now = 1_000 + 300_000; // Five minutes after it arrived, whatever it claimed.
+    expect(directory.read()).toEqual([]);
+  });
+
   it('bounds a stalled directory request, aborts HTTP, and ignores a late successful result', async () => {
     let finish: ((users: ReadonlyArray<DirectoryUser>) => void) | undefined;
     let signal: AbortSignal | undefined;
