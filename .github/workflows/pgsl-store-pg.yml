@@ -10,6 +10,7 @@ on:
     paths:
       - 'packages/pgsl-store/**'
       - 'tests/pgsl-store-pg-integration.test.ts'
+      - 'tests/pgsl-store-listing-fixtures.ts'
       - '.github/workflows/pgsl-store-pg.yml'
       # The engagement compare-and-swap is pinned in the test above and its SUBJECT lives
       # here. Without this line a change to engagement-store.ts would not run the only job
@@ -20,6 +21,7 @@ on:
     paths:
       - 'packages/pgsl-store/**'
       - 'tests/pgsl-store-pg-integration.test.ts'
+      - 'tests/pgsl-store-listing-fixtures.ts'
       - '.github/workflows/pgsl-store-pg.yml'
       - 'deploy/mcp-relay/engagement-store.ts'
   workflow_dispatch:
