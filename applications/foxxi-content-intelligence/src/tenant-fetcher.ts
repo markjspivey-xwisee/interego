@@ -46,6 +46,8 @@ import { assertSafeFetchTarget, safeFetch, guardedFetchFn } from './ssrf-guard.j
 interface CacheEntry<T> {
   value: T;
   expiresAt: number;
+  /** When the pod read that produced `value` started. A cache hit is only as fresh as this. */
+  fetchedAt: number;
 }
 
 const TTL_MS = 60_000;
@@ -61,17 +63,29 @@ function cacheKey(podUrl: string, authoritativeSource: IRI, kind: string): strin
   return `${podUrl}|${authoritativeSource}|${kind}`;
 }
 
-function getCached<T>(key: string): T | null {
+function getCachedEntry<T>(key: string): CacheEntry<T> | null {
   const e = cache.get(key);
   if (!e) return null;
   if (Date.now() > e.expiresAt) {
     cache.delete(key);
     return null;
   }
-  return e.value as T;
+  return e as CacheEntry<T>;
 }
 
-function setCached<T>(key: string, value: T): void {
+function getCached<T>(key: string): T | null {
+  return getCachedEntry<T>(key)?.value ?? null;
+}
+
+/**
+ * Cache `value`, read from the pod starting at `fetchedAt`, unless the entry already held came
+ * from a read that started later: reads overlap (a stalled hop can answer minutes late), and a
+ * late-landing older read must not replace a newer one, or every hit until it expires serves data
+ * the pod had already moved past (and a caller ordering copies by `fetchedAt` rejects each hit).
+ */
+function setCached<T>(key: string, value: T, fetchedAt: number): void {
+  const held = cache.get(key);
+  if (held && held.fetchedAt > fetchedAt) return;
   if (cache.size >= CACHE_MAX && !cache.has(key)) {
     const now = Date.now();
     for (const [k, e] of cache) { if (now > e.expiresAt) cache.delete(k); }
@@ -80,7 +94,7 @@ function setCached<T>(key: string, value: T): void {
       if (oldest !== undefined) cache.delete(oldest);
     }
   }
-  cache.set(key, { value, expiresAt: Date.now() + TTL_MS });
+  cache.set(key, { value, expiresAt: Date.now() + TTL_MS, fetchedAt });
 }
 
 export function invalidateTenantCache(podUrl?: string): void {
@@ -116,6 +130,18 @@ export interface TenantFetchConfig {
    * enrollable tenant. Fail-closed.
    */
   forceClosed?: boolean;
+  /**
+   * Called by `fetchAdminPayload`, when it composes a payload rather than serving its cache, with
+   * the users of a TenantDirectory section that actually loaded, as soon as that section settles
+   * (not after the slowest sibling section), and with `fetchedAt`: when the pod read that produced
+   * those users started (`Date.now()` clock), which for a section-cache hit is the original read's
+   * start, not the hit's. A caller keeping its own copy must order copies by `fetchedAt` and count
+   * their age from it. It is never called with the empty default composed for a directory that was
+   * absent or unreadable (502, timeout, no key): the composed `users: []` of a closed tenant means
+   * "unknown", and a caller that keeps its own copy of the directory must not take it as "nobody".
+   */
+  onDirectoryLoaded?: (users: ReadonlyArray<{ user_id: string; web_id: string; wallet_address?: string }>,
+    fetchedAt: number) => void;
 }
 
 function resolveAdminKeyPair(config: TenantFetchConfig): EncryptionKeyPair | undefined {
@@ -272,16 +298,29 @@ export async function fetchSection(
   typeIri: IRI,
   config: TenantFetchConfig,
 ): Promise<unknown> {
+  return (await fetchSectionStamped(typeIri, config)).value;
+}
+
+/**
+ * `fetchSection`, plus when the pod read that produced the value started (`Date.now()` clock).
+ * A value served from the 60 s cache carries its original read's start, so a caller that keeps
+ * the value longer than the cache does can bound its age by when the pod last showed it.
+ */
+export async function fetchSectionStamped(
+  typeIri: IRI,
+  config: TenantFetchConfig,
+): Promise<{ value: unknown; fetchedAt: number }> {
   const key = cacheKey(config.podUrl, config.authoritativeSource, typeIri);
-  const hit = getCached<unknown>(key);
-  if (hit !== null) return hit;
+  const hit = getCachedEntry<unknown>(key);
+  if (hit !== null) return { value: hit.value, fetchedAt: hit.fetchedAt };
+  const fetchedAt = Date.now();
   const entry = await findEntry(config, typeIri);
   if (!entry) {
     throw new Error(`${SECTION_ABSENT_PREFIX}${typeIri} found in pod ${config.podUrl}. Tenant publish required first.`);
   }
   const payload = await fetchBundleJson(entry, config);
-  setCached(key, payload);
-  return payload;
+  setCached(key, payload, fetchedAt);
+  return { value: payload, fetchedAt };
 }
 
 /**
@@ -292,6 +331,7 @@ export async function fetchAdminPayload(config: TenantFetchConfig): Promise<unkn
   const key = cacheKey(config.podUrl, config.authoritativeSource, 'AdminPayload');
   const hit = getCached<unknown>(key);
   if (hit !== null) return hit;
+  const startedAt = Date.now();
 
   // Resilient composition: a tenant may have published some sections and
   // not others (e.g. the directory exists but the course catalog was never
@@ -310,7 +350,21 @@ export async function fetchAdminPayload(config: TenantFetchConfig): Promise<unkn
     ['membership', TENANT_TYPES.TenantMembership],
     ['assignments', TENANT_TYPES.TenantAssignments],
   ];
-  const settled = await Promise.allSettled(SECTIONS.map(([, iri]) => fetchSection(iri, config)));
+  // The composed payload is as old as the oldest section in it (a section-cache hit included).
+  let oldestRead = startedAt;
+  const settled = await Promise.allSettled(SECTIONS.map(([, iri]) => fetchSectionStamped(iri, config)
+    .then(({ value, fetchedAt }) => {
+      oldestRead = Math.min(oldestRead, fetchedAt);
+      const users = iri === TENANT_TYPES.TenantDirectory ? (value as { users?: unknown } | null)?.users : undefined;
+      // Hand a loaded directory over as soon as it settles: a stalled sibling section must not
+      // hold it back until after a newer read has been shared.
+      if (Array.isArray(users)) {
+        try {
+          config.onDirectoryLoaded?.(users as Array<{ user_id: string; web_id: string; wallet_address?: string }>, fetchedAt);
+        } catch { /* the hook is the caller's; it cannot fail this read */ }
+      }
+      return value;
+    })));
   const missing: string[] = [];
   const section = (i: number): unknown => {
     if (settled[i]!.status === 'fulfilled') return (settled[i] as PromiseFulfilledResult<unknown>).value;
@@ -385,7 +439,7 @@ export async function fetchAdminPayload(config: TenantFetchConfig): Promise<unkn
     audit,
     connections,
   };
-  setCached(key, composed);
+  setCached(key, composed, oldestRead);
   return composed;
 }
 
@@ -396,6 +450,7 @@ export async function fetchCoursePackage(
   const key = cacheKey(config.podUrl, config.authoritativeSource, `course:${courseId}`);
   const hit = getCached<unknown>(key);
   if (hit !== null) return hit;
+  const fetchedAt = Date.now();
 
   // For courses we need to discover among multiple CoursePackageBundle
   // entries — pick the one whose graph IRI matches this courseId. The
@@ -414,7 +469,7 @@ export async function fetchCoursePackage(
   const newest = matching[0];
   if (!newest) throw new Error(`No course package with id=${courseId} found in pod ${config.podUrl}`);
   const payload = await fetchBundleJson(newest, config);
-  setCached(key, payload);
+  setCached(key, payload, fetchedAt);
   return payload;
 }
 

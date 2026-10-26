@@ -8,6 +8,12 @@ export interface DirectoryUser {
   wallet_address?: string;
 }
 
+/** Directory users together with when the pod read that produced them started (`now` clock). */
+export interface DirectorySnapshot {
+  users: ReadonlyArray<DirectoryUser>;
+  fetchedAt: number;
+}
+
 /** Only REST surfaces whose existing gates consume the published directory. */
 export function directoryConsumerPath(path: string): boolean {
   const normalized = path.toLowerCase(); // Express routes are case-insensitive by default.
@@ -28,16 +34,23 @@ function sessionProof(encoded: string): boolean {
 }
 
 /**
+ * A snapshot's age counts from when the pod read that produced it STARTED, not from when
+ * it arrived here: a loader or `observe` caller that hands over cached or slow data passes
+ * that start time, and a loader that returns bare users is taken to have read at the start
+ * of its refresh. A snapshot older than the one held is ignored, so a slow read can never
+ * put back a user that a newer read had already dropped.
+ *
  * A snapshot is refreshed once it is `ttlMs` old, but gates keep reading it until it
  * is `maxStaleMs` old. A request admitted on a fresh snapshot therefore cannot be
  * refused mid-flight (a slow upload body) just because the refresh age passed, and a
  * failed or timed-out refresh keeps the last good snapshot serving for a bounded time.
  * A revoked user is dropped at the next successful refresh, or at most `maxStaleMs`
- * after the last success while the directory cannot be read. After a failure the next
+ * after the start of the last successful read while the directory cannot be read. After a failure the next
  * attempt waits only `retryMs`, so a brief outage does not lock operators out for a
  * full refresh period.
  */
-export function createDirectoryDemand(loadUsers: (signal: AbortSignal) => Promise<ReadonlyArray<DirectoryUser>>,
+export function createDirectoryDemand(
+  loadUsers: (signal: AbortSignal) => Promise<ReadonlyArray<DirectoryUser> | DirectorySnapshot>,
   ttlMs = 60_000, now: () => number = Date.now, timeoutMs = 10_000,
   retryMs = 5_000, maxStaleMs = 5 * 60_000) {
   const staleLimit = Math.max(maxStaleMs, ttlMs);
@@ -45,13 +58,17 @@ export function createDirectoryDemand(loadUsers: (signal: AbortSignal) => Promis
   let updatedAt = Number.NEGATIVE_INFINITY;
   let retryAt = Number.NEGATIVE_INFINITY;
   let active: Promise<void> | undefined;
-  let runningLoad: Promise<ReadonlyArray<DirectoryUser>> | undefined;
+  let runningLoad: Promise<DirectorySnapshot> | undefined;
   let generation = 0;
-  const observe = (snapshot: ReadonlyArray<DirectoryUser>): void => {
+  /** Hold `snapshot`, read from the pod starting at `fetchedAt`, unless the held one is newer. */
+  const observe = (snapshot: ReadonlyArray<DirectoryUser>, fetchedAt: number = now()): boolean => {
+    const at = Math.min(fetchedAt, now()); // A future stamp cannot extend a snapshot's life.
+    if (!(at >= updatedAt)) return false; // Older than what is held (or NaN): keep the newer copy.
     generation++;
     users = snapshot.map(user => ({ ...user }));
-    updatedAt = now();
+    updatedAt = at;
     retryAt = Number.NEGATIVE_INFINITY;
+    return true;
   };
   const refresh = (): Promise<void> => {
     if (active) return active;
@@ -59,6 +76,7 @@ export function createDirectoryDemand(loadUsers: (signal: AbortSignal) => Promis
     if (runningLoad) return Promise.resolve();
     if (now() - updatedAt < ttlMs || now() < retryAt) return Promise.resolve();
     const startedGeneration = generation;
+    const startedAt = now();
     const controller = new AbortController();
     let timer: ReturnType<typeof setTimeout> | undefined;
     const deadline = new Promise<never>((_resolve, reject) => {
@@ -69,12 +87,15 @@ export function createDirectoryDemand(loadUsers: (signal: AbortSignal) => Promis
     });
     // Race the whole loader, including non-cancellable DNS checks; abort all HTTP hops.
     // Only the winning operation may publish, and an explicit newer snapshot wins.
-    const work = Promise.resolve().then(() => loadUsers(controller.signal));
+    const work = Promise.resolve().then(() => loadUsers(controller.signal))
+      .then((result): DirectorySnapshot => ('fetchedAt' in result ? result : { users: result, fetchedAt: startedAt }));
     runningLoad = work;
     void work.then(() => { runningLoad = undefined; }, () => { runningLoad = undefined; });
     active = Promise.race([work, deadline])
       .then(snapshot => {
-        if (generation === startedGeneration) observe(snapshot);
+        // Ordered by read start; an explicit observation made during this load wins a tie.
+        if (generation !== startedGeneration && snapshot.fetchedAt <= updatedAt) return;
+        observe(snapshot.users, snapshot.fetchedAt);
       }, () => {
         if (generation === startedGeneration) {
           retryAt = now() + retryMs;
@@ -102,4 +123,21 @@ export function createDirectoryDemand(loadUsers: (signal: AbortSignal) => Promis
     void refresh().then(() => next(), next);
   };
   return { read, observe, verifySession, middleware };
+}
+
+/**
+ * The hook a request-time read of `readPodUrl` may pass as `onDirectoryLoaded` to share the
+ * directory it loaded, or undefined when that read must leave the shared snapshot alone.
+ *
+ * The snapshot is process-wide trust: every operator gate reads it. So only a read of exactly the
+ * configured pod URL may write it. A lenient pod comparison (one that folds case or collapses
+ * slashes) is not enough: a caller could name a URL that matches the configured pod under it but
+ * that the pod server resolves to a different path, or to nothing, and replace every operator's
+ * directory with what that path returns.
+ */
+export function directoryObserverFor(readPodUrl: string, configuredPodUrl: string,
+  directory: { observe(users: ReadonlyArray<DirectoryUser>, fetchedAt: number): unknown }):
+  ((users: ReadonlyArray<DirectoryUser>, fetchedAt: number) => void) | undefined {
+  if (!configuredPodUrl || readPodUrl !== configuredPodUrl) return undefined;
+  return (users, fetchedAt) => { directory.observe(users, fetchedAt); };
 }

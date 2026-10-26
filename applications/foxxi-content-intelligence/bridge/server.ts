@@ -21,6 +21,7 @@
 
 import { gatewayTransport } from '../src/gateway-transport.js';
 import { createDirectoryDemand } from '../src/directory-demand.js';
+import { loadConfiguredDirectory, readAdminPayload } from '../src/admin-payload-read.js';
 import { meshPollingAllowed, pollingMode, pollingInterval } from '../src/on-demand-work.js';
 import { randomUUID, createHash, createHmac, randomBytes } from 'node:crypto';
 import { format } from 'node:util';
@@ -174,7 +175,6 @@ import {
   type FoxxiAgenticPayload,
 } from '../src/agentic-rag.js';
 import {
-  fetchAdminPayload,
   fetchCoursePackage,
   fetchSection,
   invalidateTenantCache,
@@ -670,18 +670,7 @@ const learningEngineerWebIds = new Set(
 );
 
 // Published directory preparation is lazy: no boot load or background timer.
-const directoryUsersCache = createDirectoryDemand(async (signal) => {
-  const directory = await fetchSection(TENANT_TYPES.TenantDirectory, {
-    ...fetcherConfig(),
-    fetch: (input, init) => globalThis.fetch(input, {
-      ...init, signal: init?.signal ? AbortSignal.any([init.signal, signal]) : signal,
-    }),
-  }) as {
-    users?: ReadonlyArray<{ user_id: string; web_id: string; wallet_address?: string }>;
-  };
-  if (!Array.isArray(directory.users)) throw new Error('tenant directory users unavailable');
-  return directory.users;
-});
+const directoryUsersCache = createDirectoryDemand(signal => loadConfiguredDirectory(fetcherConfig(), signal));
 
 // The bridge's own xAPI conformance runner (/compliance/xapi/run) authenticates to its own
 // LRS with a wallet-signed session token. Since round-47 the LRS gate rejects any Bearer
@@ -1263,10 +1252,12 @@ async function autoFetchAdmin(args: Record<string, unknown>): Promise<FoxxiAdmin
     // membership overlay on it authorize (fail-closed even if its encrypted
     // directory is currently stale/undecryptable).
     const forceClosed = samePod(podUrl, tenantPodUrl);
-    const admin = await fetchAdminPayload({ ...fetcherConfig(), podUrl, forceClosed }) as FoxxiAdminPayload;
-    // Reuse directory data already fetched for this request; foreign tenants never warm this cache.
-    if (forceClosed && Array.isArray(admin.users)) directoryUsersCache.observe(admin.users);
-    return admin;
+    // Share a directory this read actually loaded, and only from exactly the configured pod URL:
+    // samePod folds case, so a caller's case variant is closed here but must not write the
+    // shared snapshot, and an unreadable directory keeps the last good copy. The rule lives in
+    // readAdminPayload so its tests run this code (tests/a-request-read-keeps-the-shared-directory).
+    return await readAdminPayload({ base: fetcherConfig(), podUrl, configuredPodUrl: tenantPodUrl,
+      forceClosed, directory: directoryUsersCache }) as FoxxiAdminPayload;
   } catch (err) {
     bridgeError('[foxxi-bridge] autoFetchAdmin failed:', (err as Error).message);
     return null;
