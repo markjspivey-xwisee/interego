@@ -292,3 +292,14 @@ test('a did:web the index missed signs in only with the key its pod lists for it
   assert.deepEqual(writesTo(userId), []);
   assert.equal((pods.get(userId)!['didKeys'] as Array<{ publicKeyMultibase: string }>)[0]!.publicKeyMultibase, didWeb.owner.multibase);
 });
+
+test('a wallet signature replayed to the retired /siwe/verify gets no token', async () => {
+  // The account exists: the wallet signed in through /auth/siwe, which consumes a challenge.
+  assert.equal((await siwe(wallets.unloaded)).status, 200);
+  // Any message the wallet ever signed that names its address used to buy a ReadWrite token here.
+  const message = `elsewhere.example wants you to sign in with your Ethereum account:\n${wallets.unloaded.address}\n\nSign in to another site.`;
+  const replay = await post('/siwe/verify', { message, signature: await wallets.unloaded.signMessage(message) });
+  assert.equal(replay.status, 410, JSON.stringify(replay.json));
+  assert.equal(replay.json['token'], undefined);
+  assert.equal(replay.json['userId'], undefined);
+});
