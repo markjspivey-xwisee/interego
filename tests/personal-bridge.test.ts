@@ -184,7 +184,7 @@ describe('personal-bridge — tool surface', () => {
         'io.modelcontextprotocol/protocolVersion': '2026-07-28',
         'io.modelcontextprotocol/clientCapabilities': {},
       } },
-    }, { 'mcp-method': 'server/discover' });
+    }, { 'mcp-protocol-version': '2026-07-28', 'mcp-method': 'server/discover' });
     const result = (body as { result: { supportedVersions: string[] } }).result;
     expect(result.supportedVersions).toContain('2026-07-28');
   });

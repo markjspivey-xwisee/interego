@@ -156,9 +156,11 @@ check('MCP tools/list lists every tool that exists, same as the root document',
   check('initialize NEGOTIATES the revision the client asked for (was hard-coded)',
     init?.result?.protocolVersion === '2024-11-05', String(init?.result?.protocolVersion));
 
+  // A 2026-07-28 request carries MCP-Protocol-Version beside Mcp-Method; the SDK
+  // refuses one without it (-32020) from @modelcontextprotocol/server 2.3 on.
   const discover = await (await fetch(`${B}/mcp`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'Mcp-Method': 'server/discover' },
+    headers: { 'Content-Type': 'application/json', 'MCP-Protocol-Version': '2026-07-28', 'Mcp-Method': 'server/discover' },
     body: JSON.stringify({ jsonrpc: '2.0', id: 103, method: 'server/discover', params: { _meta: {
       'io.modelcontextprotocol/protocolVersion': '2026-07-28',
       'io.modelcontextprotocol/clientCapabilities': {},
@@ -171,7 +173,7 @@ check('MCP tools/list lists every tool that exists, same as the root document',
 
   const modernList = await (await fetch(`${B}/mcp`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'Mcp-Method': 'tools/list' },
+    headers: { 'Content-Type': 'application/json', 'MCP-Protocol-Version': '2026-07-28', 'Mcp-Method': 'tools/list' },
     body: JSON.stringify({ jsonrpc: '2.0', id: 104, method: 'tools/list', params: { _meta: {
       'io.modelcontextprotocol/protocolVersion': '2026-07-28',
       'io.modelcontextprotocol/clientCapabilities': {},

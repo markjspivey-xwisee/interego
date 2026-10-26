@@ -423,7 +423,8 @@ export function healthPathFor(service) {
  * ★ `Listening to server at` — READ OFF THE LIVE LOGS on 2026-08-09, and here is why it
  * means "ready" rather than "started":
  *
- *  · It is the LAST line of the boot. @solid/community-server 7.1.9 composes
+ *  · It is the LAST line of the boot. @solid/community-server 7.1.9 (and 7.2.0, whose init
+ *    config and ServerInitializer are byte-identical) composes
  *    `urn:solid-server:default:Initializer` as LoggerInitializer -> PrimaryInitializer ->
  *    WorkerInitializer, and ServerInitializer — the only thing that logs this string — is
  *    the last handler of the last one (config/app/init/base/init.json). Everything that can

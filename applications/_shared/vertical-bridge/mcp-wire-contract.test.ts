@@ -284,12 +284,15 @@ try {
     'io.modelcontextprotocol/protocolVersion': '2026-07-28',
     'io.modelcontextprotocol/clientCapabilities': {},
   };
-  const discover = await rpc('server/discover', { _meta: ENVELOPE }, { 'Mcp-Method': 'server/discover' });
+  // Every 2026-07-28 request carries MCP-Protocol-Version beside Mcp-Method; the SDK
+  // refuses one without it (-32020) from @modelcontextprotocol/server 2.3 on.
+  const MODERN = { 'MCP-Protocol-Version': '2026-07-28' };
+  const discover = await rpc('server/discover', { _meta: ENVELOPE }, { ...MODERN, 'Mcp-Method': 'server/discover' });
   check('server/discover advertises the 2026-07-28 era',
     Array.isArray(discover.json?.result?.supportedVersions)
       && discover.json.result.supportedVersions.includes('2026-07-28'),
     discover.text.slice(0, 160));
-  const modernList = await rpc('tools/list', { _meta: ENVELOPE }, { 'Mcp-Method': 'tools/list' });
+  const modernList = await rpc('tools/list', { _meta: ENVELOPE }, { ...MODERN, 'Mcp-Method': 'tools/list' });
   check('…and the modern era serves the same tool surface',
     modernList.json?.result?.tools?.length === affordances.length,
     String(modernList.json?.result?.tools?.length));
