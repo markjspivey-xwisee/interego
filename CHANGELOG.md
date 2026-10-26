@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-10-26 — PGSL sweep: private sweep connection failures release both clients
+
+The private sweep worker bounds each PostgreSQL connection attempt to five seconds and closes both clients when either connection fails, including a cleanup rejection from the other client. Failure remains a nonzero exit with sanitized diagnostics before any SQL runs. Injected entry-point fixtures cover both connection failures; the existing real PostgreSQL retention and reclamation cases remain unchanged.
+
 ## 2026-10-24 — Identity: a new passkey can no longer join an existing account
 
 Registering a passkey without signing in first derives the account id from the passkey's credential id. The server checked only that it had not seen that credential id before, then added the passkey to whatever account already lived at the derived id and issued that account's token. Credential ids are not secret, and a passkey made in software can carry any id, so someone could reuse the id of a passkey whose account the server had not loaded yet (accounts load in the background after a restart), re-register a passkey its owner had removed, or pick an id that derives to the same account id as someone else's. Such a registration may now only create an account: the server first reads the account's pod, and refuses with 409 if it holds any credential, with nothing written and no token; if the pod cannot be read the answer is 503 and nothing is changed. A new account is written only if no other request has created it in the meantime. If the pod does not confirm that write, the answer is a 503 saying the passkey may or may not have been saved, not that nothing changed. After that, and after any refusal, the server loads whatever account the pod holds without issuing a token, so a passkey whose write did land can sign in. Adding a passkey from a signed-in account, and claiming a seeded account with an invite, work as before.
@@ -250,10 +254,6 @@ Identical-value conditional writes now prove and lock the matching row without r
 A private PostgreSQL maintenance worker journals mutable roots and retains every current root, all native historical C resources, and one hour of retired mutable roots. Its first hour performs no deletion. Fenced mark-and-sweep deletion and ordinary VACUUM reuse heap and TOAST pages without a second payload table. Queued traffic, incomplete closure, malformed input, insufficient reserve, or a work deadline rolls the deletion transaction back. The Bun Function defaults to off; installation, production measurement and scheduling remain explicit recovery-owner rollout steps. A trusted-master workflow can forward the existing project token only to the named private worker without deployment. The legacy GitHub collector is now manual-only, so it cannot start alongside the private cron.
 
 Real PostgreSQL 16 fixtures cover retained roots, reader races, failure rollback and TOAST-page reuse; they do not establish production mark throughput. This entry documents this maintenance change. The inherited undocumented backlog measured 398 commits in exact-candidate CI, so the visible ceiling becomes 408 with ten commits of headroom; the continuous documented-through marker stays unchanged and no historical backfill is claimed.
-
-## 2026-10-21 — Private sweep connection failures release both clients
-
-The private sweep worker bounds each PostgreSQL connection attempt to five seconds and closes both clients when either connection fails, including a cleanup rejection from the other client. Failure remains a nonzero exit with sanitized diagnostics before any SQL runs. Injected entry-point fixtures cover both connection failures; the existing real PostgreSQL retention and reclamation cases remain unchanged.
 
 ## 2026-10-21 — Retain URL roots and bound shared-store collector reads
 
