@@ -42,15 +42,37 @@ const DOMAIN = /^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?(?::[0-9]{1,5})?$/;
 const ADDRESS = /^0x[0-9a-fA-F]{40}$/;
 // ERC-4361: statement = *( reserved / unreserved / " " ), one line.
 const STATEMENT = /^[A-Za-z0-9\-._~:/?#[\]@!$&'()*+,;= ]+$/;
-// RFC 3986 characters only, with a scheme; '%' only as a percent-escape.
-const URI = /^[A-Za-z][A-Za-z0-9+.-]*:[A-Za-z0-9\-._~:/?#[\]@!$&'()*+,;=%]+$/;
 const NONCE = /^[A-Za-z0-9]{8,}$/;
 const CHAIN_ID = /^[1-9][0-9]*$/;
-const REQUEST_ID = /^[A-Za-z0-9\-._~!$&'()*+,;=:@/?]*$/;
+
+// RFC 3986, as siwe-parser's grammar spells it, narrowed: a host is a DNS-style name or dotted
+// quad (no IP-literal, so '[' and ']' appear nowhere, and no percent-escapes in the host); at
+// most one '?' before at most one '#'; '%' only as a percent-escape. Character classes are by
+// URI part, not one class for the whole string: '[' / ']' are legal only around an IPv6 host and
+// '#' only once, and a URL constructor accepts both anywhere, so a single class let through URIs
+// the wallet's parser refuses (and a wallet shows such a message with no domain check).
+const PCT = '%[0-9A-Fa-f]{2}';
+const PCHAR = `(?:[A-Za-z0-9\\-._~!$&'()*+,;=:@]|${PCT})`;
+const SEGMENT = `${PCHAR}*`;
+const SEGMENT_NZ = `${PCHAR}+`;
+const QUERY_OR_FRAGMENT = `(?:${PCHAR}|[/?])*`;
+const USERINFO = `(?:[A-Za-z0-9\\-._~!$&'()*+,;=:]|${PCT})*`;
+const LABEL = '[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?';
+const AUTHORITY = `(?:${USERINFO}@)?${LABEL}(?:\\.${LABEL})*(?::[0-9]{1,5})?`;
+const SCHEME = '[A-Za-z][A-Za-z0-9+.-]*';
+const TAIL = `(?:\\?${QUERY_OR_FRAGMENT})?(?:#${QUERY_OR_FRAGMENT})?`;
+const PATH_ABEMPTY = `(?:/${SEGMENT})*`;
+// The URI line names the deployment by its host, so it must have one: scheme "://" authority.
+// (A URL constructor reads "https:host" as a host; siwe-parser reads it as a path.)
+const URI_LINE = new RegExp(`^${SCHEME}://${AUTHORITY}${PATH_ABEMPTY}${TAIL}$`);
+// A resource may be any hier-part form (urn:..., did:...).
+const RESOURCE = new RegExp(`^${SCHEME}:(?://${AUTHORITY}${PATH_ABEMPTY}|/(?:${SEGMENT_NZ}(?:/${SEGMENT})*)?|${SEGMENT_NZ}(?:/${SEGMENT})*|)${TAIL}$`);
+// ERC-4361: request-id = *pchar (no '/' or '?').
+const REQUEST_ID = new RegExp(`^${PCHAR}*$`);
 const DATE_TIME = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d+)?(?:Z|[+-](\d{2}):(\d{2}))$/;
 
-function isUri(s: string): boolean {
-  if (!URI.test(s) || /%(?![0-9A-Fa-f]{2})/.test(s)) return false;
+function isUri(s: string, form: RegExp): boolean {
+  if (!form.test(s)) return false;
   try { new URL(s); return true; } catch { return false; }
 }
 
@@ -99,7 +121,7 @@ export function parseSiweMessage(text: string): SiweParse {
   };
 
   const uri = field('URI');
-  if (uri === null || !isUri(uri)) return fail('a "URI: <absolute URI>" line must follow');
+  if (uri === null || !isUri(uri, URI_LINE)) return fail('a "URI: <scheme>://<host>[/path] (RFC 3986)" line must follow');
   if (field('Version') !== '1') return fail('a "Version: 1" line must follow the URI');
   const chainId = field('Chain ID');
   if (chainId === null || !CHAIN_ID.test(chainId)) return fail('a "Chain ID: <number>" line must follow the version');
@@ -129,7 +151,7 @@ export function parseSiweMessage(text: string): SiweParse {
     resources = [];
     while (i < lines.length) {
       const line = lines[i]!;
-      if (!line.startsWith('- ') || !isUri(line.slice(2))) return fail('each resource must be a "- <absolute URI>" line');
+      if (!line.startsWith('- ') || !isUri(line.slice(2), RESOURCE)) return fail('each resource must be a "- <absolute RFC 3986 URI>" line');
       resources.push(line.slice(2));
       i++;
     }

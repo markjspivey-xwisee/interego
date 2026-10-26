@@ -456,6 +456,12 @@ test('/auth/siwe and /wallet/link refuse text a wallet does not read as a sign-i
     'the nonce on another line, another value in the Nonce field': n => siweMessage(host, victim.address, 'otherNonce1234').replace('Link this wallet to my Interego account.', `Nonce: ${n}`),
     'a lowercase address': n => siweMessage(host, lower(victim), n),
     'CRLF line ends': n => siweMessage(host, victim.address, n).replace(/\n/g, '\r\n'),
+    // A URL constructor takes these; siwe-parser does not (RFC 3986 allows '[' ']' only around
+    // an IPv6 host and one '#'; ERC-4361's request-id is *pchar, so no '/' or '?').
+    'brackets in the URI path': n => siweMessage(host, victim.address, n, { uri: `http://${host}/[x]` }),
+    'a second # in the URI fragment': n => siweMessage(host, victim.address, n, { uri: `http://${host}/#a#b` }),
+    'a / in the Request ID': n => `${siweMessage(host, victim.address, n)}\nRequest ID: a/b`,
+    'brackets in a resource': n => `${siweMessage(host, victim.address, n)}\nResources:\n- http://${host}/[y]`,
   };
   for (const [name, build] of Object.entries(forms)) {
     const nonce = await siweNonce();

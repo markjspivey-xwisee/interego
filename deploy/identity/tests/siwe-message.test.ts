@@ -12,8 +12,9 @@
  *
  * Checked against siwe-parser itself (a root dependency, through `siwe`): every message the
  * project's clients build is accepted by both; every form the old reading let through is
- * refused by both; and over a few thousand random edits of valid messages, nothing this reader
- * accepts (with the server's EIP-55 check) is refused by siwe-parser.
+ * refused by both; and over a few thousand random edits of valid messages, and every printable
+ * character in every field and URI part, nothing this reader accepts (with the server's EIP-55
+ * check) is refused by siwe-parser.
  *
  * Run:
  *   node --test --import tsx tests/siwe-message.test.ts
@@ -130,4 +131,59 @@ test('nothing this server accepts is text a wallet would not read as a sign-in (
     }
   }
   assert.ok(accepted > 50, `only ${accepted} edits were accepted: the corpus is not exercising the reader`);
+});
+
+test('nothing this server accepts is text a wallet would not read as a sign-in (every character in every field)', () => {
+  // The random edits above rarely put a given character in a given URI part. This puts every
+  // printable ASCII character (and a few others) at a marked spot in each field, alone and
+  // doubled, over messages with and without a query, fragment, Request ID and Resources. A URL
+  // constructor took '[' / ']' anywhere in a URI and a second '#' in its fragment, and the
+  // Request ID took '/' and '?', all of which siwe-parser refuses: a message the server read
+  // as a sign-in that a wallet showed with no domain check.
+  const M = '\u0000';
+  const H = 'identity.interego.xwisee.com';
+  const slots: Record<string, string> = {
+    domain: message({ domain: `iden${M}tity.interego.xwisee.com` }),
+    domainPort: message({ domain: `${H}:80${M}` }),
+    statement: message({ statement: `Sign ${M}in` }),
+    nonce: message({ nonce: `a3f09c${M}a3f09c` }),
+    uriScheme: message({ uri: `ht${M}tps://${H}/p?q#f` }),
+    uriUserinfo: message({ uri: `https://u${M}@${H}/p` }),
+    uriHost: message({ uri: `https://iden${M}tity.interego.xwisee.com/p` }),
+    uriPort: message({ uri: `https://${H}:84${M}43/p` }),
+    uriAfterHost: message({ uri: `https://${H}${M}` }),
+    uriPath: message({ uri: `https://${H}/p${M}a?q#f` }),
+    uriPathOnly: message({ uri: `https://${H}/p${M}a` }),
+    uriQuery: message({ uri: `https://${H}/p?q${M}b#f` }),
+    uriQueryOnly: message({ uri: `https://${H}/p?q${M}b` }),
+    uriFrag: message({ uri: `https://${H}/p?q#f${M}c` }),
+    uriFragOnly: message({ uri: `https://${H}/#f${M}c` }),
+    reqId: message({ extra: [`Request ID: r${M}1`] }),
+    resScheme: message({ extra: ['Resources:', `- ht${M}tps://x.example/a`] }),
+    resHost: message({ extra: ['Resources:', `- https://x${M}.example/a`] }),
+    resPath: message({ extra: ['Resources:', `- https://x.example/a${M}b?q#f`] }),
+    resQuery: message({ extra: ['Resources:', `- https://x.example/a?q${M}b#f`] }),
+    resFrag: message({ extra: ['Resources:', `- https://x.example/a#f${M}b`] }),
+    resUrn: message({ extra: ['Resources:', `- urn:x${M}y`] }),
+    chainId: message().replace('Chain ID: 1', `Chain ID: 1${M}`),
+    issuedAt: message().replace(ISSUED, ISSUED.replace('.000Z', `.0${M}00Z`)),
+  };
+  const chars = [...Array.from({ length: 0x7f - 0x20 }, (_, k) => String.fromCharCode(0x20 + k)), '\t', '\r', '\n', ' ', '﻿', 'é', '%4', '%41', '%zz'];
+  let accepted = 0;
+  const leaks: string[] = [];
+  for (const [slot, template] of Object.entries(slots)) {
+    for (const c of chars) {
+      for (const ins of [c, c + c]) {
+        const text = template.replace(M, ins);
+        if (!server(text)) continue;
+        accepted++;
+        if (!wallets(text)) { leaks.push(`${slot} ${JSON.stringify(ins)}`); continue; }
+        const p = parseSiweMessage(text);
+        const w = new ParsedMessage(text);
+        assert.ok(p.ok && p.fields.domain === w.domain && p.fields.nonce === w.nonce && p.fields.address === w.address && p.fields.uri === w.uri, `${slot} ${JSON.stringify(ins)}`);
+      }
+    }
+  }
+  assert.deepEqual(leaks, [], 'the server accepted these, and siwe-parser does not');
+  assert.ok(accepted > 500, `only ${accepted} insertions were accepted: the sweep is not exercising the reader`);
 });
