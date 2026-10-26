@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import express from 'express';
 import type { Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
+import { request as httpRequest } from 'node:http';
 import { generateKeyPairSync, sign } from 'node:crypto';
 import { createDirectoryDemand, directoryConsumerPath, type DirectoryUser } from '../src/directory-demand.js';
 import { decodeToken, encodeToken, deriveUserWallet, mintSessionToken } from '../src/auth.js';
@@ -49,7 +50,7 @@ async function fixture(load: (signal: AbortSignal) => Promise<ReadonlyArray<Dire
     const body = await response.text();
     return { status: response.status, body };
   };
-  return { directory, request, jwt };
+  return { directory, request, jwt, base };
 }
 
 describe('directory refresh runs only for an explicit wallet-authenticated consumer', () => {
@@ -112,18 +113,66 @@ describe('directory refresh runs only for an explicit wallet-authenticated consu
     expect(calls).toBe(1);
   });
 
-  it('fails closed on a refresh error and bounds retries while the directory is unavailable', async () => {
+  it('keeps the last good snapshot through a failed refresh, retries soon, and drops it after the staleness bound', async () => {
     let now = 0, calls = 0, fail = false;
-    const { request } = await fixture(async () => { calls++; if (fail) throw new Error('offline'); return [OPERATOR]; }, () => now);
+    const { directory, request } = await fixture(async () => { calls++; if (fail) throw new Error('offline'); return [OPERATOR]; }, () => now);
     const auth = 'Bearer ' + await operatorToken();
     expect((await request('/xapi/admin/config', auth)).status).toBe(200);
     now = 60_000; fail = true;
-    expect((await request('/xapi/admin/config', auth)).status).toBe(401);
-    expect((await request('/xapi/admin/config', auth)).status).toBe(401);
-    expect(calls).toBe(2);
-    now = 120_000; fail = false;
+    // The pod is briefly unreachable: a signed-in operator keeps working on the last good copy.
     expect((await request('/xapi/admin/config', auth)).status).toBe(200);
-    expect(calls).toBe(3);
+    expect(calls).toBe(2);
+    now = 64_999;
+    expect((await request('/xapi/admin/config', auth)).status).toBe(200);
+    expect(calls).toBe(2); // No retry storm: one attempt per retry interval while failing.
+    now = 65_000;
+    expect((await request('/xapi/admin/config', auth)).status).toBe(200);
+    expect(calls).toBe(3); // Retried after the short backoff, not a full refresh period.
+    now = 300_000;
+    // Five minutes after the last successful read the old copy no longer admits anyone.
+    expect((await request('/xapi/admin/config', auth)).status).toBe(401);
+    expect(directory.read()).toEqual([]);
+    expect(calls).toBe(4);
+    now = 305_000; fail = false;
+    expect((await request('/xapi/admin/config', auth)).status).toBe(200);
+    expect(calls).toBe(5);
+  });
+
+  it('a timed-out refresh keeps serving the last good snapshot and aborts the stalled read', async () => {
+    let now = 0, calls = 0, signal: AbortSignal | undefined;
+    const { request } = await fixture(received => {
+      calls++;
+      if (calls === 1) return Promise.resolve([OPERATOR]);
+      signal = received;
+      return new Promise(() => undefined);
+    }, () => now, 20);
+    const auth = 'Bearer ' + await operatorToken();
+    expect((await request('/xapi/admin/config', auth)).status).toBe(200);
+    now = 60_000;
+    expect((await request('/xapi/admin/config', auth)).status).toBe(200);
+    expect(calls).toBe(2);
+    expect(signal?.aborted).toBe(true);
+  });
+
+  it('does not refuse an admitted operator whose upload body outlasts the refresh age', async () => {
+    let now = 0, calls = 0;
+    const { directory, base } = await fixture(async () => { calls++; return [OPERATOR]; }, () => now);
+    await directory.verifySession(await operatorToken());
+    expect(calls).toBe(1);
+    now = 59_000; // Still fresh when the request arrives, so the middleware does not reload.
+    const token = await operatorToken();
+    const reply = new Promise<number>((resolve, reject) => {
+      const req = httpRequest(base + '/cmi5/course', { method: 'POST',
+        headers: { 'Content-Type': 'text/xml', Authorization: 'Bearer ' + token } }, res => {
+        res.resume(); res.on('end', () => resolve(res.statusCode ?? 0));
+      });
+      req.on('error', reject);
+      req.write('<not-a-cmi5');
+      setTimeout(() => { now = 61_000; req.end(' course/>'); }, 100);
+    });
+    // 400 is the route rejecting the XML after admitting the caller; 401 would be a refused operator.
+    expect(await reply).toBe(400);
+    expect(calls).toBe(1);
   });
 
   it('a newer explicitly observed revocation wins over an earlier in-flight refresh', async () => {

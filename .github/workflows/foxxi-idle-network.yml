@@ -26,6 +26,7 @@ on:
       - 'applications/foxxi-content-intelligence/src/on-demand-work.ts'
       - 'applications/foxxi-content-intelligence/src/directory-demand.ts'
       - 'applications/foxxi-content-intelligence/tests/directory-demand.test.ts'
+      - 'applications/foxxi-content-intelligence/bridge/server.ts'
       - 'tests/foxxi-idle-network.test.mjs'
 permissions:
   contents: read
@@ -39,8 +40,9 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22.22.2
-      - run: node --test tests/foxxi-idle-network.test.mjs
       - run: npm ci
+      # After install: the bridge guard parses server.ts with the TypeScript compiler.
+      - run: node --test tests/foxxi-idle-network.test.mjs
       - run: npm run build
       - name: Verify directory demand and existing credential gates
         run: npx vitest run applications/foxxi-content-intelligence/tests/directory-demand.test.ts applications/foxxi-content-intelligence/tests/nrps-consumer-is-operator-only.test.ts applications/foxxi-content-intelligence/tests/cmi5-signed-launch.test.ts applications/foxxi-content-intelligence/tests/a-learner-reads-their-own-profile.test.ts

@@ -27,25 +27,37 @@ function sessionProof(encoded: string): boolean {
   ])).ok;
 }
 
+/**
+ * A snapshot is refreshed once it is `ttlMs` old, but gates keep reading it until it
+ * is `maxStaleMs` old. A request admitted on a fresh snapshot therefore cannot be
+ * refused mid-flight (a slow upload body) just because the refresh age passed, and a
+ * failed or timed-out refresh keeps the last good snapshot serving for a bounded time.
+ * A revoked user is dropped at the next successful refresh, or at most `maxStaleMs`
+ * after the last success while the directory cannot be read. After a failure the next
+ * attempt waits only `retryMs`, so a brief outage does not lock operators out for a
+ * full refresh period.
+ */
 export function createDirectoryDemand(loadUsers: (signal: AbortSignal) => Promise<ReadonlyArray<DirectoryUser>>,
-  ttlMs = 60_000, now: () => number = Date.now, timeoutMs = 10_000) {
+  ttlMs = 60_000, now: () => number = Date.now, timeoutMs = 10_000,
+  retryMs = 5_000, maxStaleMs = 5 * 60_000) {
+  const staleLimit = Math.max(maxStaleMs, ttlMs);
   let users: ReadonlyArray<DirectoryUser> = [];
   let updatedAt = Number.NEGATIVE_INFINITY;
-  let attemptedAt = Number.NEGATIVE_INFINITY;
+  let retryAt = Number.NEGATIVE_INFINITY;
   let active: Promise<void> | undefined;
   let runningLoad: Promise<ReadonlyArray<DirectoryUser>> | undefined;
   let generation = 0;
   const observe = (snapshot: ReadonlyArray<DirectoryUser>): void => {
     generation++;
     users = snapshot.map(user => ({ ...user }));
-    updatedAt = attemptedAt = now();
+    updatedAt = now();
+    retryAt = Number.NEGATIVE_INFINITY;
   };
   const refresh = (): Promise<void> => {
     if (active) return active;
     // A loader still unwinding after abort cannot overlap another refresh.
     if (runningLoad) return Promise.resolve();
-    if (now() - attemptedAt < ttlMs) return Promise.resolve();
-    attemptedAt = now();
+    if (now() - updatedAt < ttlMs || now() < retryAt) return Promise.resolve();
     const startedGeneration = generation;
     const controller = new AbortController();
     let timer: ReturnType<typeof setTimeout> | undefined;
@@ -65,9 +77,9 @@ export function createDirectoryDemand(loadUsers: (signal: AbortSignal) => Promis
         if (generation === startedGeneration) observe(snapshot);
       }, () => {
         if (generation === startedGeneration) {
-          // An unavailable directory must not preserve revoked access indefinitely.
-          users = [];
-          updatedAt = Number.NEGATIVE_INFINITY;
+          retryAt = now() + retryMs;
+          // The last good snapshot keeps serving only within the staleness bound.
+          if (now() - updatedAt >= staleLimit) users = [];
         }
       }).finally(() => {
         if (timer) clearTimeout(timer);
@@ -75,7 +87,7 @@ export function createDirectoryDemand(loadUsers: (signal: AbortSignal) => Promis
       });
     return active;
   };
-  const read = (): ReadonlyArray<DirectoryUser> => now() - updatedAt < ttlMs ? users : [];
+  const read = (): ReadonlyArray<DirectoryUser> => now() - updatedAt < staleLimit ? users : [];
   const verifySession = async (encoded: string) => {
     if (sessionProof(encoded)) await refresh();
     return verifySessionToken(encoded, trustedAddressMap(read()));
