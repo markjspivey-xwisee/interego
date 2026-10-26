@@ -1018,12 +1018,17 @@ async function siweLogin() {
   if (!window.ethereum) { setStatus('siwe-status', 'No wallet detected. Install a wallet extension, or use the DID method.', 'err'); return; }
   try {
     setStatus('siwe-status', 'Requesting wallet connection...', 'info');
-    const [address] = await window.ethereum.request({ method: 'eth_requestAccounts' });
+    const [account] = await window.ethereum.request({ method: 'eth_requestAccounts' });
+    // The identity server returns the address in EIP-55 form: a wallet reads the message as a
+    // sign-in (and checks its domain line) only with a checksummed address.
     const chRes = await fetch(IDENTITY + '/challenges', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ purpose: 'siwe' }),
+      body: JSON.stringify({ purpose: 'siwe', address: account }),
     });
-    const { nonce } = await chRes.json();
+    const ch = await chRes.json();
+    if (!chRes.ok || !ch.nonce) throw new Error(ch.error || ('Could not get a challenge (HTTP ' + chRes.status + ')'));
+    const nonce = ch.nonce;
+    const address = ch.address || account;
     const domain = window.location.host;
     const issuedAt = new Date().toISOString();
     const message =

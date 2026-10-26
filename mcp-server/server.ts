@@ -1737,6 +1737,19 @@ async function toolSetupIdentity(args: {
 // ── Wallet Tool Implementations ─────────────────────────────
 
 /**
+ * `message` as one shell word that bash (and zsh) turn back into exactly its bytes: ANSI-C
+ * quoting, where `\n` is a newline. A double-quoted "...\n..." stays a backslash and an `n`, so
+ * cast signed a one-line string and the identity server, rebuilding the real message, recovered
+ * a different address.
+ */
+function shellQuoteAnsiC(message: string): string {
+  return "$'" + message.replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/\n/g, '\\n') + "'";
+}
+
+/** Messages step 1 showed, by nonce, so step 2 submits those exact bytes (five-minute life). */
+const shownLinkMessages = new Map<string, { address: string; issuedAt: string; message: string; at: number }>();
+
+/**
  * The identity server links a wallet only for a signed-in account (Authorization: Bearer) and
  * only with a single-use nonce from its POST /challenges (purpose 'siwe') signed inside an
  * ERC-4361 message that names the server's host. The first call fetches that nonce and shows
@@ -1785,20 +1798,27 @@ async function toolLinkWallet(args: {
   if (!args.signature) {
     // Step 1: a single-use nonce from the identity server, inside the message to sign.
     let nonce: string;
+    let signingAddress = address;
     try {
       const chResp = await fetch(`${IDENTITY_SERVER_URL}/challenges`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ purpose: 'siwe' }),
+        // The server returns the address in EIP-55 form, which ERC-4361 requires on the
+        // address line (a wallet reads a message with a lowercase one as no sign-in at all).
+        body: JSON.stringify({ purpose: 'siwe', address }),
       });
-      const ch = await chResp.json() as { nonce?: string; error?: string };
+      const ch = await chResp.json() as { nonce?: string; address?: string; error?: string };
       if (!chResp.ok || !ch.nonce) return `Could not get a challenge from the identity server (HTTP ${chResp.status}): ${ch.error ?? 'no nonce returned'}`;
       nonce = ch.nonce;
+      if (typeof ch.address === 'string' && ch.address.toLowerCase() === address.toLowerCase()) signingAddress = ch.address;
     } catch (err) {
       return `Cannot reach identity server: ${(err as Error).message}`;
     }
     const issuedAt = new Date().toISOString();
-    const siweMessage = linkWalletMessage(address, userId, nonce, issuedAt);
+    const siweMessage = linkWalletMessage(signingAddress, userId, nonce, issuedAt);
+    const now = Date.now();
+    for (const [k, v] of shownLinkMessages) if (now - v.at > 5 * 60 * 1000) shownLinkMessages.delete(k);
+    shownLinkMessages.set(nonce, { address: signingAddress.toLowerCase(), issuedAt, message: siweMessage, at: now });
 
     return [
       `Sign this message with your wallet to link it to your identity.`,
@@ -1809,11 +1829,11 @@ async function toolLinkWallet(args: {
       `─────────────────────────────────────`,
       ``,
       `How to sign:`,
-      `  • cast: cast wallet sign --private-key <key> "${siweMessage.replace(/\n/g, '\\n')}"`,
+      `  • cast: cast wallet sign --private-key <key> ${shellQuoteAnsiC(siweMessage)}`,
       `  • Web: Open ${IDENTITY_SERVER_URL}/connect and use MetaMask`,
       ``,
       `Then, within 5 minutes (the nonce is single-use), call link_wallet again with:`,
-      `  wallet_address: ${address}`,
+      `  wallet_address: ${signingAddress}`,
       `  signature: <the signature>`,
       `  nonce: ${nonce}`,
       `  issued_at: ${issuedAt}`,
@@ -1823,8 +1843,13 @@ async function toolLinkWallet(args: {
   if (!args.nonce || !args.issued_at) {
     return `Link failed: nonce and issued_at are required with a signature. Call link_wallet with only wallet_address to get a fresh message to sign, then pass back the nonce and issued_at it shows.`;
   }
-  // Step 2: the exact message that was shown and signed.
-  const siweMessage = linkWalletMessage(address, userId, args.nonce, args.issued_at);
+  // Step 2: the exact message that was shown and signed — the one step 1 kept, or, when this
+  // process did not show it (a restart), rebuilt from what step 1 printed.
+  const shown = shownLinkMessages.get(args.nonce);
+  shownLinkMessages.delete(args.nonce);
+  const siweMessage = shown && shown.address === address.toLowerCase() && shown.issuedAt === args.issued_at
+    ? shown.message
+    : linkWalletMessage(address, userId, args.nonce, args.issued_at);
 
   try {
     const resp = await fetch(`${IDENTITY_SERVER_URL}/wallet/link`, {

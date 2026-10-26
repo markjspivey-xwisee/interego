@@ -118,7 +118,7 @@ let base2 = '';
 const output2 = { text: '' };
 
 /** server.ts as a child process over the pod server on `podPort`, once /health answers. */
-async function startIdentity(podPort: number, sink: { text: string }, ready: (h: { complete: boolean }) => boolean) {
+async function startIdentity(podPort: number, sink: { text: string }, ready: (h: { complete: boolean }) => boolean, extraEnv: (port: number) => Record<string, string> = () => ({})) {
   const port = await freePort();
   const url = `http://127.0.0.1:${port}`;
   const env: NodeJS.ProcessEnv = { ...process.env };
@@ -126,7 +126,7 @@ async function startIdentity(podPort: number, sink: { text: string }, ready: (h:
   Object.assign(env, {
     PORT: String(port), BASE_URL: url, CSS_URL: `http://127.0.0.1:${podPort}/`, RELAY_URL: 'http://relay.invalid',
     TOKEN_SIGNING_KEY: crypto.randomBytes(32).toString('base64'), JANITOR_INTERVAL_MS: '0',
-  });
+  }, extraEnv(port));
   const proc = spawn(process.execPath, ['--import', 'tsx', 'server.ts'], {
     cwd: fileURLToPath(new URL('..', import.meta.url)), env, stdio: ['ignore', 'pipe', 'pipe'],
   });
@@ -171,11 +171,11 @@ const bearer = (token: string) => ({ Authorization: `Bearer ${token}` });
 const siweNonce = async (server = base) => (await postTo(server, '/challenges', { purpose: 'siwe' })).json['nonce'] as string;
 
 /** An ERC-4361 message by `address` for `domain`, carrying `nonce`. */
-function siweMessage(domain: string, address: string, nonce: string): string {
+function siweMessage(domain: string, address: string, nonce: string, o: { uri?: string; issuedAt?: string } = {}): string {
   return [
     `${domain} wants you to sign in with your Ethereum account:`,
     address, '', 'Link this wallet to my Interego account.', '',
-    `URI: http://${domain}`, 'Version: 1', 'Chain ID: 1', `Nonce: ${nonce}`, `Issued At: ${new Date().toISOString()}`,
+    `URI: ${o.uri ?? `http://${domain}`}`, 'Version: 1', 'Chain ID: 1', `Nonce: ${nonce}`, `Issued At: ${o.issuedAt ?? new Date().toISOString()}`,
   ].join('\n');
 }
 
@@ -269,7 +269,7 @@ test('/wallet/link with a nonce this server never issued, or one of another purp
 test('/wallet/link with a message that does not carry the nonce, or names another host, is 400', async () => {
   const w = Wallet.createRandom();
   const before = snapshot(linkerId);
-  const lacksNonce = await link(linkerToken, w, { signedNonce: 'some-other-nonce' });
+  const lacksNonce = await link(linkerToken, w, { signedNonce: 'someOtherNonce1234' });
   assert.equal(lacksNonce.status, 400, JSON.stringify(lacksNonce.json));
   assert.match(String(lacksNonce.json['error']), /nonce/);
   const otherHost = await link(linkerToken, w, { domain: 'other-site.example' });
@@ -426,4 +426,93 @@ test('/auth/siwe with a bearer does not bind a wallet held by an account only on
   assert.equal(addFresh.status, 200, JSON.stringify(addFresh.json));
   assert.equal(addFresh.json['userId'], linkerId);
   assert.equal((await signIn(fresh)).json['userId'], linkerId);
+});
+
+test('/challenges for siwe issues a nonce ERC-4361 allows, and returns a sent address in EIP-55 form', async () => {
+  // base64url's '-' and '_' are not ERC-4361 nonce characters: a wallet read such a message as
+  // no sign-in at all, and skipped its domain check.
+  for (let k = 0; k < 8; k++) assert.match(await siweNonce(), /^[A-Za-z0-9]{8,}$/);
+  const w = Wallet.createRandom();
+  const r = await post('/challenges', { purpose: 'siwe', address: lower(w) });
+  assert.equal(r.status, 200, JSON.stringify(r.json));
+  assert.equal(r.json['address'], w.address);
+  assert.equal((await post('/challenges', { purpose: 'siwe', address: 'not-an-address' })).status, 400);
+  // A browser page's flow: a lowercase account from the wallet, the checksummed form back, a sign-in.
+  const nonce = String(r.json['nonce']);
+  const message = siweMessage(host, String(r.json['address']), nonce);
+  const signedIn = await post('/auth/siwe', { message, signature: await w.signMessage(message), nonce, name: 'Someone' });
+  assert.equal(signedIn.status, 200, JSON.stringify(signedIn.json));
+  assert.equal(signedIn.json['userId'], walletUser(w));
+});
+
+test('/auth/siwe and /wallet/link refuse text a wallet does not read as a sign-in, though it names this server and carries the nonce', async () => {
+  // Each of these passed the old reading (trimmed first line, any `Nonce:` line, no other
+  // field) and none is ERC-4361, so a wallet showed it as a plain signature request with no
+  // domain warning. Signed on an attacker's page, each was a sign-in to the victim's account.
+  const forms: Record<string, (nonce: string) => string> = {
+    'a leading byte-order mark': n => '\uFEFF' + siweMessage(host, victim.address, n),
+    'a leading space': n => ' ' + siweMessage(host, victim.address, n),
+    'no URI, Version, Chain ID or Issued At': n => `${host} wants you to sign in with your Ethereum account:\n${victim.address}\n\nVerify ownership\n\nNonce: ${n}`,
+    'the nonce on another line, another value in the Nonce field': n => siweMessage(host, victim.address, 'otherNonce1234').replace('Link this wallet to my Interego account.', `Nonce: ${n}`),
+    'a lowercase address': n => siweMessage(host, lower(victim), n),
+    'CRLF line ends': n => siweMessage(host, victim.address, n).replace(/\n/g, '\r\n'),
+  };
+  for (const [name, build] of Object.entries(forms)) {
+    const nonce = await siweNonce();
+    const message = build(nonce);
+    const r = await post('/auth/siwe', { message, signature: await victim.signMessage(message), nonce });
+    assert.equal(r.status, 400, `${name}: ${JSON.stringify(r.json)}`);
+    assert.equal(r.json['token'], undefined, name);
+  }
+  // The same through /wallet/link with the attacker's own bearer: nothing is linked.
+  const w = Wallet.createRandom();
+  const before = snapshot(linkerId);
+  for (const [name, build] of Object.entries(forms)) {
+    const nonce = await siweNonce();
+    const siwe = build(nonce).split(victim.address).join(w.address).split(lower(victim)).join(lower(w));
+    const r = await post('/wallet/link', { walletAddress: w.address, siweMessage: siwe, signature: await w.signMessage(siwe), nonce }, bearer(linkerToken));
+    assert.equal(r.status, 400, `${name}: ${JSON.stringify(r.json)}`);
+  }
+  assert.equal(snapshot(linkerId), before);
+});
+
+test('/auth/siwe refuses a message whose URI is another site, or whose Issued At does not fit its challenge', async () => {
+  const otherUri = await siweNonce();
+  const m1 = siweMessage(host, victim.address, otherUri, { uri: 'https://evil.example/login' });
+  const r1 = await post('/auth/siwe', { message: m1, signature: await victim.signMessage(m1), nonce: otherUri });
+  assert.equal(r1.status, 400, JSON.stringify(r1.json));
+  assert.match(String(r1.json['error']), /URI/);
+  const stale = await siweNonce();
+  const m2 = siweMessage(host, victim.address, stale, { issuedAt: new Date(Date.now() - 60 * 60 * 1000).toISOString() });
+  const r2 = await post('/auth/siwe', { message: m2, signature: await victim.signMessage(m2), nonce: stale });
+  assert.equal(r2.status, 400, JSON.stringify(r2.json));
+  assert.match(String(r2.json['error']), /Issued At/);
+});
+
+test('the relay host guessed from BASE_URL is not a sign-in domain; RELAY_URL is, and each domain is logged with its source', async () => {
+  // BASE_URL acme-identity.<suffix> with RELAY_PUBLIC_URL unset: relayPublicBase() guesses
+  // acme-relay.<suffix>, a name that on a shared hosting suffix anyone may register. A page an
+  // attacker serves there passes the wallet's domain check, so it must not pass this server's.
+  const pods3 = await listen(servePods(listed));
+  const sink = { text: '' };
+  let proc: ChildProcess | undefined;
+  let port = 0;
+  try {
+    const started = await startIdentity(pods3.port, sink, h => h.complete,
+      p => ({ BASE_URL: `http://acme-identity.localhost:${p}`, RELAY_URL: 'http://acme-mcp.invalid' }));
+    port = Number(new URL(started.url).port);
+    proc = started.proc;
+    const w = Wallet.createRandom();
+    const guessed = await signIn(w, { server: started.url, domain: `acme-relay.localhost:${port}` });
+    assert.equal(guessed.status, 400, `${JSON.stringify(guessed.json)}\n${sink.text}`);
+    assert.match(String(guessed.json['error']), /not addressed to this server/);
+    const viaRelay = await signIn(w, { server: started.url, domain: 'acme-mcp.invalid' });
+    assert.equal(viaRelay.status, 200, `${JSON.stringify(viaRelay.json)}\n${sink.text}`);
+    assert.match(sink.text, /acme-identity\.localhost:\d+ \(BASE_URL\)/);
+    assert.match(sink.text, /acme-mcp\.invalid \(RELAY_URL\)/);
+    assert.doesNotMatch(sink.text.split('\n').find(l => l.includes('SIWE domains')) ?? '', /acme-relay/);
+  } finally {
+    proc?.kill('SIGTERM');
+    await new Promise<void>(resolve => pods3.server.close(() => resolve()));
+  }
 });

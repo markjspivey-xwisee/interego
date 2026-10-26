@@ -64,6 +64,7 @@ import {
 import { enrollProvisionalCredential } from './provisional-play-enrollment.js';
 import { clientIp, createLimiter, rateLimit, sendRateLimited } from './rate-limit.js';
 import { forwardAsyncRouteErrors, installProcessSafetyNet, routeErrorHandler } from './route-errors.js';
+import { parseSiweMessage, SIWE_DOMAIN_SUFFIX } from './siwe-message.js';
 
 // ── Lazy heavy imports ──────────────────────────────────────
 //
@@ -1580,7 +1581,10 @@ function issueChallenge(purpose?: Challenge['purpose'], userId?: string): Challe
   // Prune expired entries periodically on new issues
   const now = Date.now();
   for (const [k, v] of challenges) if (v.expiresAt < now) challenges.delete(k);
-  const nonce = crypto.randomBytes(32).toString('base64url');
+  // A SIWE nonce is hex: ERC-4361 allows letters and digits only, and a wallet does not read a
+  // message whose nonce has base64url's '-' or '_' as a sign-in (so it would skip its domain
+  // check). The other purposes keep base64url, which WebAuthn decodes as challenge bytes.
+  const nonce = crypto.randomBytes(32).toString(purpose === 'siwe' ? 'hex' : 'base64url');
   const ch: Challenge = { nonce, expiresAt: now + CHALLENGE_TTL_MS };
   if (purpose) ch.purpose = purpose;
   if (userId) ch.userId = userId;
@@ -2366,7 +2370,18 @@ app.post('/register', (_req, res) => {
  * Returns: { nonce, expiresAt, allowCredentials? }
  */
 app.post('/challenges', challengeLimiter, async (req, res) => {
-  const { purpose, userId } = req.body as { purpose?: Challenge['purpose']; userId?: string };
+  const { purpose, userId, address } = req.body as { purpose?: Challenge['purpose']; userId?: string; address?: unknown };
+  // A SIWE message must carry the wallet's address in EIP-55 mixed case, which takes keccak-256
+  // to compute and a browser has no built-in for; eth_requestAccounts hands pages a lowercase
+  // address. A client that sends the address here gets it back in checksum form to sign with.
+  let checksummedAddress: string | undefined;
+  if (purpose === 'siwe' && address !== undefined) {
+    if (typeof address !== 'string' || !/^0x[0-9a-fA-F]{40}$/.test(address)) {
+      res.status(400).json({ error: 'address must be a 0x-prefixed 20-byte hex address' });
+      return;
+    }
+    checksummedAddress = (await loadEthers()).getAddress(address.toLowerCase());
+  }
   // Targeted webauthn-authenticate: when a userId is supplied we MUST
   // resolve it to a real account with at least one registered passkey
   // before minting a challenge. Otherwise the relay UI would build a
@@ -2416,6 +2431,7 @@ app.post('/challenges', challengeLimiter, async (req, res) => {
   }
   const resp: Record<string, unknown> = { nonce: ch.nonce, expiresAt: new Date(ch.expiresAt).toISOString() };
   if (ch.rpId) resp.rpId = ch.rpId;
+  if (checksummedAddress) resp.address = checksummedAddress;
   if (purpose === 'webauthn-authenticate' && userId) {
     // Read credentials from the user's pod (stale-while-revalidate cache).
     // The pre-check above guarantees readAuthMethods has succeeded and at
@@ -2434,70 +2450,116 @@ app.post('/challenges', challengeLimiter, async (req, res) => {
 // ── SIWE message rule (shared by /auth/siwe and /wallet/link) ──
 
 /**
- * The hosts a SIWE message may name on its first line: this server, the relay whose /authorize
- * page signs users in (RELAY_URL, RELAY_PUBLIC_URL or the relay host derived from BASE_URL), the
+ * The hosts a SIWE message may name on its first line (and in its URI): this server
+ * (BASE_URL), the relay whose /authorize page signs users in (RELAY_URL, RELAY_PUBLIC_URL), the
  * WebAuthn ceremony origins (WEBAUTHN_RP_ORIGINS), and any extra front-end listed in
  * SIWE_DOMAINS (comma-separated hosts). A wallet shows the user this domain line and warns when
  * it does not match the page asking, so it is what ties a signature to an Interego sign-in.
  * Without this rule a server nonce relayed into another site's "Sign in with Ethereum" prompt
  * came back as a signature this server accepted.
+ *
+ * Only hosts the operator configured. The relay host that relayPublicBase() derives from
+ * BASE_URL when RELAY_PUBLIC_URL is unset (identity.<zone> -> relay.<zone>,
+ * x-identity.<zone> -> x-relay.<zone>) is a guess: on a shared hosting suffix it can be a name
+ * anyone may register, and a page an attacker serves on an admitted host passes the wallet's
+ * own domain check too. Each host is listed at startup with the setting it came from.
  */
-let siweDomainsMemo: ReadonlySet<string> | null = null;
-function siweDomains(): ReadonlySet<string> {
+let siweDomainsMemo: ReadonlyMap<string, string> | null = null;
+function siweDomainSources(): ReadonlyMap<string, string> {
   if (siweDomainsMemo) return siweDomainsMemo;
-  const hosts = new Set<string>();
-  const addUrl = (u: string | undefined) => {
+  const hosts = new Map<string, string>();
+  const add = (host: string, source: string) => { if (!hosts.has(host)) hosts.set(host, source); };
+  const addUrl = (u: string | undefined, source: string) => {
     if (!u || !u.trim()) return;
-    try { hosts.add(new URL(u.trim()).host.toLowerCase()); } catch { /* not a URL: skip */ }
+    try { add(new URL(u.trim()).host.toLowerCase(), source); } catch { /* not a URL: skip */ }
   };
-  addUrl(BASE_URL);
-  addUrl(RELAY_URL);
-  addUrl(process.env['RELAY_PUBLIC_URL']);
-  addUrl(relayPublicBase());
-  for (const origin of RP_ALLOWLIST.keys()) addUrl(origin);
-  for (const h of (process.env['SIWE_DOMAINS'] ?? '').split(',').map(x => x.trim().toLowerCase()).filter(Boolean)) hosts.add(h);
+  addUrl(BASE_URL, 'BASE_URL');
+  addUrl(RELAY_URL, 'RELAY_URL');
+  addUrl(process.env['RELAY_PUBLIC_URL'], 'RELAY_PUBLIC_URL');
+  for (const origin of RP_ALLOWLIST.keys()) addUrl(origin, 'WEBAUTHN_RP_ORIGINS');
+  for (const h of (process.env['SIWE_DOMAINS'] ?? '').split(',').map(x => x.trim().toLowerCase()).filter(Boolean)) add(h, 'SIWE_DOMAINS');
   siweDomainsMemo = hosts;
   return hosts;
 }
+function siweDomains(): ReadonlySet<string> { return new Set(siweDomainSources().keys()); }
 
-const SIWE_DOMAIN_SUFFIX = ' wants you to sign in with your Ethereum account:';
+/** How far a wallet's clock may differ from this server's when it stamps Issued At. */
+const SIWE_CLOCK_SKEW_MS = 5 * 60 * 1000;
+
 type SiweMessageCheck =
   | { ok: true; address: string }
   | { ok: false; status: 400; body: Record<string, string> };
 
 /**
- * An ERC-4361 message this server accepts with `nonce`: its first line is
- * `<host> wants you to sign in with your Ethereum account:` for a host in siweDomains(), its
- * second line is the signing wallet's address, and it carries the line `Nonce: <nonce>`.
- * Returns that address, lowercased; the caller still checks the signature recovers to it.
+ * An ERC-4361 message this server accepts for challenge `ch`: one parseSiweMessage reads (so a
+ * wallet reads it as a sign-in too and runs its domain check), whose domain and URI host are in
+ * siweDomains(), whose address is in EIP-55 form (a wallet's parser refuses any other), whose
+ * Nonce field is exactly the challenge's nonce, and whose Issued At falls between the
+ * challenge's issue and now (give or take SIWE_CLOCK_SKEW_MS). Expiration Time, if present, must
+ * not have passed, and Not Before must have arrived.
+ * Returns the address, lowercased; the caller still checks the signature recovers to it.
  */
-function checkSiweMessage(message: string, nonce: string): SiweMessageCheck {
-  const lines = message.split(/\r?\n/);
-  const first = lines[0]?.trim() ?? '';
-  const domain = first.endsWith(SIWE_DOMAIN_SUFFIX) ? first.slice(0, -SIWE_DOMAIN_SUFFIX.length).toLowerCase() : null;
-  if (domain === null || !siweDomains().has(domain)) {
-    return { ok: false, status: 400, body: {
+async function checkSiweMessage(message: string, ch: Challenge): Promise<SiweMessageCheck> {
+  const refuse = (body: Record<string, string>): SiweMessageCheck => ({ ok: false, status: 400, body });
+  const parsed = parseSiweMessage(message);
+  if (parsed.ok === false) {
+    return refuse({
+      error: 'Signed message is not an ERC-4361 sign-in message',
+      detail: `${parsed.reason}. A wallet checks the site it is signing in to only on a message it reads as Sign-In with Ethereum, so this server accepts no other.`,
+      hint: `Build the message exactly as ERC-4361 lays it out: "${BASE_URL_HOST}${SIWE_DOMAIN_SUFFIX}", the checksummed address, a blank line, an optional statement and blank line, then URI, Version: 1, Chain ID, Nonce and Issued At, one per line, separated by LF.`,
+    });
+  }
+  const f = parsed.fields;
+  const domains = siweDomains();
+  if (!domains.has(f.domain)) {
+    return refuse({
       error: 'SIWE message is not addressed to this server',
       detail: 'The first line of the signed message names the site the wallet was signing in to. It must be this Interego deployment.',
       hint: `Its first line must be "${BASE_URL_HOST}${SIWE_DOMAIN_SUFFIX}" (or name another front-end of this deployment).`,
-    } };
+    });
   }
-  const address = lines[1]?.trim() ?? '';
-  if (!/^0x[0-9a-fA-F]{40}$/.test(address)) {
-    return { ok: false, status: 400, body: {
-      error: 'SIWE message does not name a wallet address on its second line',
-      hint: 'ERC-4361: the line after the domain line is the 0x address of the wallet that signs.',
-    } };
+  let uriHost = '';
+  try { uriHost = new URL(f.uri).host.toLowerCase(); } catch { /* parseSiweMessage checked it */ }
+  if (!domains.has(uriHost)) {
+    return refuse({
+      error: 'SIWE message URI is not this server',
+      hint: 'The URI field names the resource being signed in to; it must be on the same deployment as the domain line.',
+    });
   }
-  if (!lines.some(l => l.trim() === `Nonce: ${nonce}`)) {
-    return { ok: false, status: 400, body: {
+  const { ethers } = await loadEthers();
+  let checksummed = '';
+  try { checksummed = ethers.getAddress(f.address.toLowerCase()); } catch { /* not an address */ }
+  if (checksummed !== f.address) {
+    return refuse({
+      error: 'SIWE message address is not in EIP-55 checksum form',
+      detail: 'ERC-4361 requires the address line in EIP-55 mixed case; a wallet does not read a message with a lowercase address as a sign-in.',
+      hint: checksummed ? `Write the address as ${checksummed}. POST /challenges with {"purpose":"siwe","address":"0x..."} also returns it in this form.` : 'The second line must be the 0x address of the signing wallet.',
+    });
+  }
+  if (f.nonce !== ch.nonce) {
+    return refuse({
       error: 'SIWE message does not contain the issued nonce',
       title: 'Signed message is missing the challenge nonce',
-      detail: 'Replay defense: the signed SIWE statement MUST carry the nonce we issued at /challenges on its own `Nonce:` line.',
+      detail: 'Replay defense: the signed SIWE message MUST carry the nonce we issued at /challenges in its Nonce field.',
       hint: 'Your wallet client should construct the SIWE message with `Nonce:` set to the value returned by /challenges.',
-    } };
+    });
   }
-  return { ok: true, address: address.toLowerCase() };
+  const now = Date.now();
+  const issuedAt = Date.parse(f.issuedAt);
+  const challengeIssued = ch.expiresAt - CHALLENGE_TTL_MS;
+  if (issuedAt < challengeIssued - SIWE_CLOCK_SKEW_MS || issuedAt > now + SIWE_CLOCK_SKEW_MS) {
+    return refuse({
+      error: 'SIWE message Issued At does not fit its challenge',
+      hint: 'Issued At must be the time the message was built, after the nonce was fetched. Check the signing device\'s clock.',
+    });
+  }
+  if (f.expirationTime !== undefined && Date.parse(f.expirationTime) <= now) {
+    return refuse({ error: 'SIWE message has expired (Expiration Time has passed)' });
+  }
+  if (f.notBefore !== undefined && Date.parse(f.notBefore) > now + SIWE_CLOCK_SKEW_MS) {
+    return refuse({ error: 'SIWE message is not valid yet (Not Before is in the future)' });
+  }
+  return { ok: true, address: f.address.toLowerCase() };
 }
 
 /**
@@ -2567,7 +2629,7 @@ app.post('/auth/siwe', authEnrollLimiter, async (req, res) => {
   }
   // The nonce alone does not tie the signature to this server: anyone can fetch one from
   // /challenges and put it in their own site's sign-in prompt. The domain line does.
-  const checked = checkSiweMessage(message, nonce);
+  const checked = await checkSiweMessage(message, ch);
   if (checked.ok === false) {
     res.status(checked.status).json(checked.body);
     return;
@@ -4113,7 +4175,7 @@ app.post('/wallet/link', authEnrollLimiter, async (req, res) => {
   // message names this server and carries a 'siwe' nonce, so if its nonce outlived a refused
   // request (a stale bearer, say), the same message and signature would still sign the wallet
   // in at /auth/siwe for anyone who saw them.
-  const challengeOk = typeof nonce === 'string' && nonce !== '' && consumeChallenge(nonce, 'siwe') !== null;
+  const challenge = typeof nonce === 'string' && nonce !== '' ? consumeChallenge(nonce, 'siwe') : null;
 
   // MUST be authenticated as the target user. Previously any caller could
   // name an arbitrary userId and attach a valid-but-foreign wallet to it,
@@ -4147,7 +4209,7 @@ app.post('/wallet/link', authEnrollLimiter, async (req, res) => {
     return;
   }
 
-  if (!challengeOk) {
+  if (!challenge) {
     res.status(401).json({
       error: 'Invalid or expired challenge',
       detail: 'Challenges are single-use and valid for 5 minutes.',
@@ -4156,7 +4218,7 @@ app.post('/wallet/link', authEnrollLimiter, async (req, res) => {
     return;
   }
   const addr = walletAddress.toLowerCase();
-  const checked = checkSiweMessage(siweMessage, nonce);
+  const checked = await checkSiweMessage(siweMessage, challenge);
   if (checked.ok === false) {
     res.status(checked.status).json(checked.body);
     return;
@@ -5368,13 +5430,17 @@ async function connectMetaMask() {
   try {
     setStatus('Requesting wallet connection...', 'info');
     const accounts = await window.ethereum.request({ method: 'eth_requestAccounts' });
-    const address = accounts[0];
 
+    // The server returns the address in EIP-55 form: a wallet reads the message as a sign-in
+    // (and checks its domain line) only with a checksummed address.
     const chResp = await fetch(BASE + '/challenges', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ purpose: 'siwe' }),
+      body: JSON.stringify({ purpose: 'siwe', address: accounts[0] }),
     });
-    const { nonce } = await chResp.json();
+    const ch = await chResp.json();
+    if (!chResp.ok || !ch.nonce) throw new Error(ch.error || ('Could not get a challenge (HTTP ' + chResp.status + ')'));
+    const nonce = ch.nonce;
+    const address = ch.address || accounts[0];
 
     const domain = window.location.host;
     const issuedAt = new Date().toISOString();
@@ -5476,7 +5542,7 @@ app.listen(PORT, () => {
     log(`Introspection: FAIL-CLOSED (no IDENTITY_INTROSPECTION_SECRET, no ALLOW_OPEN_INTROSPECTION) — /tokens/verify returns 401 until one is set.`);
   }
   log(`WebAuthn RP: static id=${RP_ID} origin=${RP_ORIGIN}; per-request allowlist=[${[...RP_ALLOWLIST.keys()].join(', ') || '(none)'}]`);
-  log(`SIWE domains (first line of a wallet sign-in message): [${[...siweDomains()].join(', ')}]; add a front-end with SIWE_DOMAINS`);
+  log(`SIWE domains (first line of a wallet sign-in message): [${[...siweDomainSources()].map(([h, src]) => `${h} (${src})`).join(', ')}]; add a front-end with SIWE_DOMAINS`);
   log(`Auth: decentralized — user credentials stored per-pod at <pod>/auth-methods.jsonld`);
   log(`Bootstrap invites: ${BOOTSTRAP_INVITES.size} configured${BOOTSTRAP_INVITES.size > 0 ? ' (' + [...BOOTSTRAP_INVITES.keys()].join(', ') + ')' : ''}`);
   log(`Endpoints:`);

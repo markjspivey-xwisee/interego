@@ -191,7 +191,9 @@ const UNLINTED_FRONTIER = {
   // Record the committed file census; new lint debt remains forbidden at the same ceiling.
   // Identity sign-in fixes add six tracked modules and suites (first-sign-in, per-account read
   // limit, did:web key binding): 213 files. Error ceiling unchanged.
-  deploy: { errors: 356, files: 213 },
+  // The strict ERC-4361 reader (identity siwe-message.ts) and its suite, with the rounds since,
+  // bring the committed census to 225. Both lint clean; the error ceiling stays fixed.
+  deploy: { errors: 356, files: 225 },
   // The bulk of these are `no-console` in vertical bridges and CLI entry points — one config
   // decision, not a thousand defects. See the note above.
   // ★ 320 -> 337, and the ratchet caught it in CI rather than locally, which is the interesting

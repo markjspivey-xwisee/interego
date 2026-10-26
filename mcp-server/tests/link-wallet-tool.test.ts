@@ -20,14 +20,16 @@ import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
 import * as http from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { Wallet, verifyMessage } from 'ethers';
+import { execFileSync } from 'node:child_process';
+import { Wallet, getAddress, verifyMessage } from 'ethers';
+import { ParsedMessage } from '@spruceid/siwe-parser';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const serverPath = resolve(here, '..', 'server.ts');
 const require_ = createRequire(import.meta.url);
 const tsxCli = join(dirname(require_.resolve('tsx/package.json')), 'dist', 'cli.mjs');
 
-const ISSUED_NONCE = 'server-issued-nonce-0123456789abcdef';
+const ISSUED_NONCE = '0123456789abcdef0123456789abcdef'; // hex, as the identity server issues for 'siwe'
 const TOKEN = 'test-identity-bearer';
 const seen: Array<{ path: string; authorization?: string; body: Record<string, unknown> }> = [];
 let stub: http.Server;
@@ -41,7 +43,11 @@ beforeAll(async () => {
       const body = raw ? JSON.parse(raw) as Record<string, unknown> : {};
       seen.push({ path: req.url ?? '', authorization: req.headers.authorization, body });
       res.setHeader('Content-Type', 'application/json');
-      if (req.url === '/challenges') { res.end(JSON.stringify({ nonce: ISSUED_NONCE, expiresAt: new Date(Date.now() + 300_000).toISOString() })); return; }
+      if (req.url === '/challenges') {
+        const address = typeof body['address'] === 'string' ? { address: getAddress(String(body['address']).toLowerCase()) } : {};
+        res.end(JSON.stringify({ nonce: ISSUED_NONCE, expiresAt: new Date(Date.now() + 300_000).toISOString(), ...address }));
+        return;
+      }
       if (req.url === '/wallet/link') { res.end(JSON.stringify({ linked: true, userId: 'u-eth-linked', walletAddress: String(body['walletAddress']).toLowerCase() })); return; }
       res.statusCode = 404; res.end('{}');
     });
@@ -70,26 +76,56 @@ describe('link_wallet', () => {
     const wallet = Wallet.createRandom();
     const client = await connect({ CG_IDENTITY_TOKEN: TOKEN });
     try {
-      const shown = text(await client.callTool({ name: 'link_wallet', arguments: { wallet_address: wallet.address } }));
+      // A lowercase address, as a wallet's eth_requestAccounts hands it out.
+      const shown = text(await client.callTool({ name: 'link_wallet', arguments: { wallet_address: wallet.address.toLowerCase() } }));
       expect(seen.map(s => s.path)).toEqual(['/challenges']);
-      expect(seen[0]!.body).toEqual({ purpose: 'siwe' });
+      expect(seen[0]!.body).toEqual({ purpose: 'siwe', address: wallet.address.toLowerCase() });
       const message = /─+\n([\s\S]*?)\n─+/.exec(shown)?.[1];
       expect(message, shown).toBeTruthy();
       expect(message!.split('\n')[0]).toBe(`${new URL(identityUrl).host} wants you to sign in with your Ethereum account:`);
       expect(message).toContain(`Nonce: ${ISSUED_NONCE}`);
+      // ERC-4361 with the EIP-55 address the server returned: a wallet reads it as a sign-in
+      // (and checks its domain line); with a lowercase address it would not.
+      expect(message!.split('\n')[1]).toBe(wallet.address);
+      expect(new ParsedMessage(message!).nonce).toBe(ISSUED_NONCE);
       const nonce = /nonce: (\S+)/.exec(shown)?.[1];
       const issuedAt = /issued_at: (\S+)/.exec(shown)?.[1];
       expect(nonce).toBe(ISSUED_NONCE);
       expect(issuedAt).toBeTruthy();
 
       const signature = await wallet.signMessage(message!);
-      const done = text(await client.callTool({ name: 'link_wallet', arguments: { wallet_address: wallet.address, signature, nonce, issued_at: issuedAt } }));
+      const done = text(await client.callTool({ name: 'link_wallet', arguments: { wallet_address: wallet.address.toLowerCase(), signature, nonce, issued_at: issuedAt } }));
       expect(done).toMatch(/Wallet linked successfully/);
       const linkReq = seen.find(s => s.path === '/wallet/link');
       expect(linkReq, JSON.stringify(seen)).toBeTruthy();
       expect(linkReq!.authorization).toBe(`Bearer ${TOKEN}`);
       expect(linkReq!.body['nonce']).toBe(ISSUED_NONCE);
       expect(linkReq!.body['siweMessage']).toBe(message);
+      expect(verifyMessage(String(linkReq!.body['siweMessage']), String(linkReq!.body['signature']))).toBe(wallet.address);
+    } finally {
+      await client.close();
+    }
+  }, 120_000);
+
+  it('prints a cast command whose message argument the shell turns into exactly the bytes submitted', async () => {
+    seen.length = 0;
+    const wallet = Wallet.createRandom();
+    const client = await connect({ CG_IDENTITY_TOKEN: TOKEN });
+    try {
+      const shown = text(await client.callTool({ name: 'link_wallet', arguments: { wallet_address: wallet.address } }));
+      const message = /─+\n([\s\S]*?)\n─+/.exec(shown)?.[1];
+      const castLine = shown.split('\n').find(l => l.includes('cast wallet sign'));
+      expect(castLine, shown).toBeTruthy();
+      const arg = castLine!.slice(castLine!.indexOf('<key> ') + '<key> '.length);
+      // What `cast wallet sign --private-key <key> <arg>` receives as its message: bash's word
+      // for <arg>. A double-quoted "...\n..." kept backslash-n, so cast signed one line.
+      const word = execFileSync('bash', ['-c', `printf '%s' ${arg}`], { encoding: 'utf8' });
+      expect(word).toBe(message);
+      const nonce = /nonce: (\S+)/.exec(shown)?.[1];
+      const issuedAt = /issued_at: (\S+)/.exec(shown)?.[1];
+      const signature = await wallet.signMessage(word);
+      await client.callTool({ name: 'link_wallet', arguments: { wallet_address: wallet.address, signature, nonce, issued_at: issuedAt } });
+      const linkReq = seen.find(s => s.path === '/wallet/link');
       expect(verifyMessage(String(linkReq!.body['siweMessage']), String(linkReq!.body['signature']))).toBe(wallet.address);
     } finally {
       await client.close();
