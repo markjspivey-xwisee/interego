@@ -534,6 +534,11 @@ interface AuthMethods {
   /** Provider-signed immutable Play owner anchor; not an enrolled human credential. */
   provisionalPlayAnchor?: string;
   provisionalPlayReceipts?: Array<{ hash: string; expiresAt: number }>;
+  /**
+   * Set (to the day, YYYY-MM-DD) on the tombstone a deleted account leaves at this URL. Its
+   * derived id may never be opened again; see deletionTombstone.
+   */
+  deletedAt?: string;
 }
 
 function emptyAuthMethods(userId: string, name = userId, agentId?: string): AuthMethods {
@@ -630,6 +635,17 @@ const identityPodWriteMutexes = new Map<string, Promise<unknown>>();
 // avoiding a refresh fetch racing the in-flight write.
 const identityPendingPodWrites = new Set<string>();
 
+// Accounts deleted in this process. deleteUserCompletely adds the id under the per-user mutex
+// once the pod has the tombstone (or, for a random `u-try-` id other than Play's, as its record
+// goes), and putPodAuthMethods then refuses every write of that id except the tombstone itself. A writer
+// that read the record before the deletion (a passkey sign-in advancing its counter, an
+// enrollment, a deferred write, a sign-out-everywhere) holds a snapshot with the old
+// credentials and epoch; under the same mutex it runs either wholly before the tombstone or
+// after this mark, so it can never put that snapshot back over the tombstone. Process-local,
+// like the mutex: a second replica writing the same pod is not covered (see AUTH-ARCHITECTURE.md).
+// An operator who re-opens an id by removing its tombstone restarts the process to clear this.
+const deletedUserIds = new Set<string>();
+
 async function withIdentityPodMutex<T>(userId: string, fn: () => Promise<T>): Promise<T> {
   const prev = identityPodWriteMutexes.get(userId) ?? Promise.resolve();
   let release!: () => void;
@@ -668,6 +684,8 @@ const bootstrapUserIds = new Set<string>();
  * response path skip the await.
  */
 function inlineApplyAuthMethods(userId: string, methods: AuthMethods): void {
+  // A deleted account's credentials never go back into the sign-in indexes.
+  if (deletedUserIds.has(userId)) return;
   authMethodsCache.set(userId, { value: methods, fetchedAt: Date.now() });
   rebuildIndexesForUser(userId, methods);
 }
@@ -705,6 +723,8 @@ function scheduleDeferredAuthMethodsWrite(
           break;
         } catch (err) {
           lastErr = err as Error;
+          // The account was deleted after this write was scheduled: there is nothing to retry.
+          if (err instanceof AccountDeletedError) break;
           if (attempt < delays.length) {
             await new Promise(r => setTimeout(r, delays[attempt]));
           }
@@ -763,6 +783,11 @@ async function fetchPodAuthMethods(
 // it has one, nothing is written and this throws PodDocumentExistsError.
 class PodDocumentExistsError extends Error {}
 async function putPodAuthMethods(userId: string, methods: AuthMethods, opts: { ifAbsent?: boolean } = {}): Promise<void> {
+  // Every writer builds on the record it read, so a credential added to a tombstone lands here,
+  // and a snapshot read before this process deleted the account is refused here (deletedUserIds).
+  if ((isTombstone(methods) && hasAnyCredential(methods)) || (deletedUserIds.has(userId) && !isTombstone(methods))) {
+    throw new AccountDeletedError(`${userId}: ${ACCOUNT_DELETED_MESSAGE}`);
+  }
   const url = podAuthMethodsUrl(userId);
   // Ensure pod container exists first (idempotent).
   try {
@@ -808,6 +833,7 @@ async function claimFirstSignInOnPod(
 ): Promise<FirstSignInOutcome<AuthMethods>> {
   const outcome = await withIdentityPodMutex(userId, () => claimFirstSignIn<AuthMethods>({
     mayCreate,
+    closed: isTombstone,
     read: async () => {
       // A deferred write still queued behind this mutex is what the pod is about to hold.
       const pending = identityPendingPodWrites.has(userId) ? authMethodsCache.get(userId) : undefined;
@@ -860,13 +886,24 @@ async function commitCredentialEnrollment(
     return;
   }
   const methods = await readAuthMethods(userId);
+  if (isTombstone(methods) || deletedUserIds.has(userId)) throw new AccountDeletedError(`${userId}: ${ACCOUNT_DELETED_MESSAGE}`);
   if (update(methods) === false) return;
   if (synchronous) {
-    await putPodAuthMethods(userId, methods);
+    await persistExistingAuthMethods(userId, methods);
   } else {
     inlineApplyAuthMethods(userId, methods);
     scheduleDeferredAuthMethodsWrite(userId, methods, context);
   }
+}
+
+/**
+ * Write a record an existing account's handler read earlier, under the per-user mutex, so it
+ * never interleaves with deleteUserCompletely: it lands wholly before the tombstone (which is
+ * then written over it) or is refused after it (putPodAuthMethods, deletedUserIds). Every
+ * existing-account write that is not already inside the mutex goes through here.
+ */
+async function persistExistingAuthMethods(userId: string, methods: AuthMethods): Promise<void> {
+  return withIdentityPodMutex(userId, () => putPodAuthMethods(userId, methods));
 }
 
 async function authenticatePlayOwnerPasskey(
@@ -1125,7 +1162,31 @@ function normaliseAuthMethods(raw: unknown, userId: string): AuthMethods {
     ...(Number.isInteger(src.sessionEpoch) ? { sessionEpoch: src.sessionEpoch } : {}),
     ...(typeof src.provisionalPlayAnchor === 'string' ? { provisionalPlayAnchor: src.provisionalPlayAnchor } : {}),
     ...(Array.isArray(src.provisionalPlayReceipts) ? { provisionalPlayReceipts: src.provisionalPlayReceipts } : {}),
+    ...(typeof src.deletedAt === 'string' ? { deletedAt: src.deletedAt } : {}),
   };
+}
+
+// ── Deletion tombstone ──────────────────────────────────────
+//
+// Deleting an account cannot empty its pod: the container and its other files (descriptors,
+// inbox, profile) stay, and the relay maps a userId straight to that container. A derived id
+// (u-pk-/u-eth-/u-did-) is a function of a credential, and passkey credential ids are not
+// secret, so re-creating the account would hand those files, and the did:web name others
+// hold for it, to whoever presents an old credential, and a fresh document at session epoch
+// 0 would make the deleted account's unexpired tokens verify again. So deletion overwrites
+// auth-methods.jsonld with this tombstone instead of removing it: the URL every first
+// sign-in already reads, in the pod (the identity server keeps nothing). It records the id
+// (already the path), the day, and an epoch above every token issued; no name, agent or
+// credential. It is permanent; an operator re-opens an id by deleting the file by hand.
+const ACCOUNT_DELETED_MESSAGE = 'This account was deleted and cannot be re-opened; register a new credential';
+class AccountDeletedError extends Error {}
+
+function isTombstone(m: AuthMethods): boolean {
+  return typeof m.deletedAt === 'string';
+}
+
+function deletionTombstone(userId: string, sessionEpoch: number): AuthMethods {
+  return { ...emptyAuthMethods(userId), sessionEpoch: sessionEpoch + 1, deletedAt: new Date().toISOString().slice(0, 10) };
 }
 
 async function readAuthMethods(userId: string, allowStale = false): Promise<AuthMethods> {
@@ -1254,15 +1315,19 @@ async function loadAccountFromPod(userId: string): Promise<boolean> {
       if (provisionalPlay.open(m.provisionalPlayAnchor, true).userId !== userId) return false;
     } catch { return false; }
   }
-  adoptAccount(userId, m);
-  return true;
+  return adoptAccount(userId, m);
 }
 
 // An account read from its pod becomes known: identity shell, auth-methods cache, indexes.
-function adoptAccount(userId: string, m: AuthMethods): void {
+// Returns false, adopting nothing, for a tombstone or an account deleted in this process: a
+// read that started before the deletion's tombstone and finished after it cleared memory
+// holds the old record, and must not put it back (inlineApplyAuthMethods has the same guard).
+function adoptAccount(userId: string, m: AuthMethods): boolean {
+  if (isTombstone(m) || deletedUserIds.has(userId)) return false;
   hydrateFromAuthMethods(m);
   authMethodsCache.set(userId, { value: m, fetchedAt: Date.now() });
   rebuildIndexesForUser(userId, m);
+  return true;
 }
 
 // What the last pass over the pods found, for /health: the accounts loaded, and the pods
@@ -1730,6 +1795,10 @@ async function verifyToken(token: string): Promise<{ valid: boolean; record?: To
     return { valid: false, reason: (parsed as { valid: false; reason: string }).reason };
   }
   const payload = parsed.payload;
+  // An account deleted in this process is refused before anything is read: what memory or a
+  // failed pod read would say about it (a shell re-seeded by a refused sign-in, an empty
+  // record at epoch 0) is not the tombstone's answer.
+  if (deletedUserIds.has(payload.userId)) return { valid: false, reason: 'Account deleted' };
   // An agent id ending in ANOTHER user's canonical id reads as that user's agent
   // (surface-agent-restore.ts). This server never issues one now (POST /register-agent
   // refuses it, and every other issuer names the user's own agents), so such a token was
@@ -1763,7 +1832,7 @@ async function verifyToken(token: string): Promise<{ valid: boolean; record?: To
   if (!identities.has(payload.userId)) {
     // The signature is already verified, so only a genuine token gets here: load its account
     // from the pod (unreadable at startup, say) before calling the user missing. A deleted
-    // user's auth-methods are gone from the pod, so this cannot bring one back.
+    // user's pod holds a tombstone without credentials, which does not load.
     const account = await ensureAccountLoaded(payload.userId);
     if (account !== 'loaded') {
       return { valid: false, reason: account === 'unreadable' ? 'Could not read the account for this token; try again' : 'User for token not found' };
@@ -1774,6 +1843,7 @@ async function verifyToken(token: string): Promise<{ valid: boolean; record?: To
   // every prior token verify-fail until the user authenticates again.
   try {
     const methods = await readAuthMethods(payload.userId, /* allowStale */ true);
+    if (isTombstone(methods)) return { valid: false, reason: 'Account deleted' };
     const podEpoch = methods.sessionEpoch ?? 0;
     if (payload.epoch < podEpoch) {
       return { valid: false, reason: 'Token revoked (signed out everywhere)' };
@@ -2513,6 +2583,11 @@ app.post('/auth/siwe', authEnrollLimiter, async (req, res) => {
       });
       return;
     }
+    if (outcome.kind === 'deleted') {
+      if (resolved.mode === 'bootstrap') CONSUMED_INVITES.delete(targetUserId);
+      res.status(409).json({ error: ACCOUNT_DELETED_MESSAGE });
+      return;
+    }
     if (outcome.kind === 'refused') {
       res.status(401).json({ error: 'This wallet is not registered. Sign in with an existing credential for this account and add this wallet from there.' });
       return;
@@ -2618,6 +2693,10 @@ app.post('/auth/webauthn/register-options', authEnrollLimiter, async (req, res) 
     // Additional guard: if the seeded user already has any credential on
     // file, the invite flow is locked out regardless of invite validity.
     const existing = await readAuthMethods(bootstrapUserId, /* allowStale */ true);
+    if (isTombstone(existing)) {
+      res.status(409).json({ error: ACCOUNT_DELETED_MESSAGE });
+      return;
+    }
     if (hasAnyCredential(existing)) {
       res.status(401).json({ error: 'Bootstrap credential invalid or already consumed' });
       return;
@@ -2790,8 +2869,23 @@ app.post('/auth/webauthn/register', authEnrollLimiter, async (req, res) => {
       res.status(409).json({ error: 'Bootstrap invite no longer valid' });
       return;
     }
-    // Re-check: if somebody else bound a credential in the interim, refuse.
-    const existing = await readAuthMethods(ch.bootstrapUserId, /* allowStale */ true);
+    // Re-check: if somebody else bound a credential in the interim, or the account was
+    // deleted, refuse. Read the pod itself: an unreadable one is not an empty account.
+    const bootstrapUserId = ch.bootstrapUserId;
+    let existing: AuthMethods;
+    try {
+      existing = await withIdentityPodMutex(bootstrapUserId, () => fetchPodAuthMethods(bootstrapUserId, { createIfMissing: false }));
+    } catch (err) {
+      log(`WARN: bootstrap passkey registration of ${bootstrapUserId} not completed (unreadable): ${(err as Error).message}`);
+      CONSUMED_INVITES.delete(bootstrapUserId);
+      res.status(503).json({ error: 'Could not read this account just now', detail: 'Nothing was changed; try registering again in a minute.' });
+      return;
+    }
+    if (isTombstone(existing)) {
+      CONSUMED_INVITES.delete(bootstrapUserId);
+      res.status(409).json({ error: ACCOUNT_DELETED_MESSAGE });
+      return;
+    }
     if (hasAnyCredential(existing)) {
       res.status(401).json({ error: 'Bootstrap credential invalid or already consumed' });
       return;
@@ -2822,6 +2916,10 @@ app.post('/auth/webauthn/register', authEnrollLimiter, async (req, res) => {
       });
       return;
     }
+    if (outcome.kind === 'deleted') {
+      res.status(409).json({ error: ACCOUNT_DELETED_MESSAGE });
+      return;
+    }
     if (outcome.kind !== 'created') {
       // Load what the pod holds, with no token: a create the pod applied without confirming
       // it, or an account the indexes missed, can then be signed in to, as both answers say.
@@ -2840,11 +2938,20 @@ app.post('/auth/webauthn/register', authEnrollLimiter, async (req, res) => {
     created = true;
   }
 
+  // An add-device challenge issued before the account was deleted is refused here, before any
+  // shell is seeded for it (commitCredentialEnrollment below refuses it too).
+  if (deletedUserIds.has(targetUserId)) {
+    res.status(409).json({ error: ACCOUNT_DELETED_MESSAGE });
+    return;
+  }
+
   // Ensure an Identity shell exists for the target. Seeded users already
   // have one; derived users get created here on first touch.
   let user = identities.get(targetUserId);
+  const seeded: string[] = [];
   if (!user) {
     seedIdentity(targetUserId, 'user', displayName);
+    seeded.push(targetUserId);
     user = identities.get(targetUserId)!;
   }
   // Make sure the user has a default agent to issue tokens for.
@@ -2852,6 +2959,7 @@ app.post('/auth/webauthn/register', authEnrollLimiter, async (req, res) => {
   if (!hasAgent) {
     const def = defaultAgentForRegistration(targetUserId, displayName, surfaceAgent);
     seedIdentity(def.agentId, 'agent', def.label, targetUserId, 'ReadWrite');
+    seeded.push(def.agentId);
     log(`First-time WebAuthn registration: ${targetUserId} defaultAgent=${def.agentId} (surfaceHint=${surfaceAgent ?? 'none'})`);
   }
 
@@ -2867,7 +2975,14 @@ app.post('/auth/webauthn/register', authEnrollLimiter, async (req, res) => {
         methods.webAuthnCredentials.push(record);
       });
     } catch (err) {
+      // Nothing was enrolled, so the shell seeded above for it goes again: left in memory it
+      // would make the account look loaded (its profile and did:web document resolvable).
+      for (const id of seeded) { identities.delete(id); keys.delete(id); }
       log(`WebAuthn credential enrollment not confirmed for ${targetUserId}: ${(err as Error).message}`);
+      if (err instanceof AccountDeletedError) {
+        res.status(409).json({ error: ACCOUNT_DELETED_MESSAGE });
+        return;
+      }
       res.status(503).json({ error: 'Credential enrollment could not be confirmed. No permanent session was issued.' });
       return;
     }
@@ -2946,11 +3061,14 @@ app.post('/auth/webauthn/authenticate', authEnrollLimiter, async (req, res) => {
     } else {
       await authenticatePasskey({ credential: cred, response, challenge: expectedChallenge,
         rpId: ch.rpId ?? RP_ID, origin: ch.rpOrigin ?? RP_ORIGIN,
-        persist: () => putPodAuthMethods(userId, methods),
+        persist: () => persistExistingAuthMethods(userId, methods),
       });
     }
   } catch (err) {
-    if (err instanceof PasskeyPersistenceError) {
+    if (deletedUserIds.has(userId)) {
+      // The account was deleted while this sign-in was verified; its counter was not written.
+      res.status(409).json({ error: ACCOUNT_DELETED_MESSAGE });
+    } else if (err instanceof PasskeyPersistenceError) {
       log(`WARN: refused passkey auth — ${(err as Error).message}`);
       res.status(503).json({ error: err.message });
     } else {
@@ -3205,6 +3323,11 @@ app.post('/auth/did', authEnrollLimiter, async (req, res) => {
         error: 'Could not read this account just now',
         detail: 'The pod holding this account did not answer. Nothing was changed; try signing in again in a minute.',
       });
+      return;
+    }
+    if (outcome.kind === 'deleted') {
+      if (resolved.mode === 'bootstrap') CONSUMED_INVITES.delete(targetUserId);
+      res.status(409).json({ error: ACCOUNT_DELETED_MESSAGE });
       return;
     }
     if (outcome.kind === 'refused') {
@@ -4272,7 +4395,7 @@ app.post('/tokens/me/sign-out-everywhere', tokenLimiter, async (req, res) => {
       const methods = await readAuthMethods(user.id, false);
       previousEpoch = methods.sessionEpoch ?? 0;
       newEpoch = previousEpoch + 1;
-      await putPodAuthMethods(user.id, { ...methods, sessionEpoch: newEpoch });
+      await persistExistingAuthMethods(user.id, { ...methods, sessionEpoch: newEpoch });
     }
   } catch (err) {
     res.status(500).json({ error: `Failed to persist sessionEpoch bump: ${(err as Error).message}` });
@@ -4296,13 +4419,29 @@ app.post('/tokens/me/sign-out-everywhere', tokenLimiter, async (req, res) => {
  * by the periodic janitor (see `janitor` loop below) for stale test
  * users left behind after a crashed run.
  *
- * Pod *files* are deleted via CSS HTTP DELETE; the empty pod *container*
- * remains (CSS doesn't auto-prune empty containers, and removing them
- * requires storage-account credentials the identity server doesn't carry).
- * That's acceptable — empty containers don't slow the root listing
- * appreciably and the dashboard's discovery cache absorbs the rest.
+ * The pod's other files and its container remain (CSS does not prune containers, and
+ * removing them requires storage-account credentials the identity server doesn't carry). So
+ * for an account whose id can come back (derived from a credential, or a seeded alias),
+ * auth-methods.jsonld is overwritten with a tombstone (deletionTombstone) rather than
+ * removed, and nothing in memory is dropped until the pod has it: a deletion the pod did not
+ * take throws, and the route says so. `u-try-*` ids are random (and `u-try-play-` pods are
+ * purged by their own cleanup), so theirs is still removed.
  */
-async function deleteUserCompletely(userId: string): Promise<{ agents: string[]; podCleanup: { authMethods: number; agents: number } }> {
+async function deleteUserCompletely(userId: string): Promise<{ agents: string[]; tombstoned: boolean; podCleanup: { authMethods: number; agents: number } }> {
+  const tombstoned = !userId.startsWith('u-try-');
+  // Under the per-user mutex (a `u-try-play-` caller already holds it), so no existing-account
+  // writer runs between reading the record and closing it; every one after is refused. A Play
+  // id is not marked: it is derived from a game's proof key and may be provisioned again once
+  // purged, and its writers re-read the record under this mutex rather than keep a snapshot.
+  const close = async () => {
+    if (tombstoned) {
+      const current = await fetchPodAuthMethods(userId, { createIfMissing: false });
+      await putPodAuthMethods(userId, deletionTombstone(userId, current.sessionEpoch ?? 0));
+    }
+    if (!userId.startsWith('u-try-play-')) deletedUserIds.add(userId);
+  };
+  await (userId.startsWith('u-try-play-') ? close() : withIdentityPodMutex(userId, close));
+
   const ownedAgentIds = [...identities.values()]
     .filter(i => i.type === 'agent' && i.owner === userId)
     .map(a => a.id);
@@ -4317,35 +4456,41 @@ async function deleteUserCompletely(userId: string): Promise<{ agents: string[];
   surfaceAgentRestores.forgetUser(userId);
   podRegistryCache.delete(userId);
 
-  // Token revocation: deleting the pod's auth-methods.jsonld (below)
-  // makes `readAuthMethods` fail for this user; verifyToken handles
-  // that as a soft-pass (partition tolerance), but tokens will hit TTL
-  // shortly. Hard revocation isn't necessary for a delete — the user
-  // and their pod are gone.
+  // Token revocation: the tombstone has no credentials, so the account does not load and
+  // verifyToken refuses its tokens; its session epoch is above every token issued, too.
   authMethodsCache.delete(userId);
   for (const [k, v] of walletIndex) if (v === userId) walletIndex.delete(k);
   for (const [k, v] of credentialIndex) if (v === userId) credentialIndex.delete(k);
   for (const [k, v] of didIndex) if (v === userId) didIndex.delete(k);
 
   const podCleanup = { authMethods: 0, agents: 0 };
-  try {
-    const r = await fetch(podAuthMethodsUrl(userId), { method: 'DELETE' });
-    podCleanup.authMethods = r.status;
-  } catch { /* best-effort */ }
+  if (!tombstoned) {
+    try {
+      const r = await fetch(podAuthMethodsUrl(userId), { method: 'DELETE' });
+      podCleanup.authMethods = r.status;
+    } catch { /* best-effort */ }
+  }
   try {
     const r = await fetch(`${CSS_URL}${userId}/agents`, { method: 'DELETE' });
     podCleanup.agents = r.status;
   } catch { /* best-effort */ }
 
-  return { agents: ownedAgentIds, podCleanup };
+  return { agents: ownedAgentIds, tombstoned, podCleanup };
 }
 
 app.post('/users/me/delete', tokenLimiter, async (req, res) => {
   const user = await requireUserFromBearer(req, res);
   if (!user) return;
-  const result = user.id.startsWith('u-try-play-')
-    ? await withIdentityPodMutex(user.id, () => deleteUserCompletely(user.id))
-    : await deleteUserCompletely(user.id);
+  let result: Awaited<ReturnType<typeof deleteUserCompletely>>;
+  try {
+    result = user.id.startsWith('u-try-play-')
+      ? await withIdentityPodMutex(user.id, () => deleteUserCompletely(user.id))
+      : await deleteUserCompletely(user.id);
+  } catch (err) {
+    log(`WARN: deletion of ${user.id} not completed: ${(err as Error).message}`);
+    res.status(503).json({ error: 'Deletion not completed', detail: 'The pod did not take the deletion. Nothing was changed; try again in a minute.' });
+    return;
+  }
   log(`Deleted user ${user.id} (agents removed: ${result.agents.join(', ') || 'none'})`);
   res.json({ deleted: true, userId: user.id, ...result });
 });
