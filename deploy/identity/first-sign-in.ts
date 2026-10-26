@@ -21,7 +21,11 @@
  *     (`If-None-Match: *`); on that failure the pod is read again and the decision taken
  *     again, so a concurrent creator is never overwritten.
  * A document without credentials is kept (its session epoch and name; the caller sets the
- * agent) and the credential is added to it.
+ * agent) and the credential is added to it, unless it is the tombstone a deleted account
+ * leaves (`closed`): then the answer is 'deleted' and nothing is written. Deleting an account
+ * leaves its pod container and files behind, so re-creating its derived id would hand them,
+ * and its did:web name, to whoever presents one of its old credentials. A write that meets
+ * a document under it reads again, so a tombstone written meanwhile is seen.
  *
  * The caller runs this under the per-user pod mutex. No server state and no I/O: the read,
  * the record to write and the write are injected, so it is tested without starting server.ts.
@@ -34,6 +38,7 @@ export type FirstSignInOutcome<M> =
   | { readonly kind: 'created'; readonly methods: M }
   | { readonly kind: 'returning'; readonly methods: M }
   | { readonly kind: 'refused' }
+  | { readonly kind: 'deleted' }
   | { readonly kind: 'unreadable'; readonly reason: string }
   | { readonly kind: 'unconfirmed'; readonly reason: string };
 
@@ -57,6 +62,8 @@ export interface FirstSignInInput<M extends AuthMethodsLike> {
    * and nothing is written. Default true.
    */
   mayCreate?: boolean;
+  /** Whether a record is a deleted account's tombstone, which no sign-in may re-open. */
+  closed?: (methods: M) => boolean;
 }
 
 export async function claimFirstSignIn<M extends AuthMethodsLike>(input: FirstSignInInput<M>): Promise<FirstSignInOutcome<M>> {
@@ -68,6 +75,7 @@ export async function claimFirstSignIn<M extends AuthMethodsLike>(input: FirstSi
     } catch (err) {
       return { kind: 'unreadable', reason: (err as Error).message };
     }
+    if (existing && input.closed?.(existing)) return { kind: 'deleted' };
     if (existing && hasAnyCredentialLike(existing)) {
       return input.holds(existing) ? { kind: 'returning', methods: existing } : { kind: 'refused' };
     }

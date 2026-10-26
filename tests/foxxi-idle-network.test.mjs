@@ -68,3 +68,59 @@ test('foreign and lookalike origins cannot reach private transport',async()=>{
  assert.throws(()=>gatewayTransport(base,{publicPodUrl:'https://gate.example/a/',internalGatewayUrl:'http://user:secret@css-gate.railway.internal:8080/'}));
  assert.equal(gatewayTransport(base,{publicPodUrl:'https://gate.example/a/'}),base);
 });
+
+test('the bridge loads its tenant directory only on demand: no boot load and no timer',async()=>{
+ const { default: ts }=await import('typescript');
+ const path='../applications/foxxi-content-intelligence/bridge/server.ts';
+ const text=await readFile(new URL(path,import.meta.url),'utf8');
+ const file=ts.createSourceFile('server.ts',text,ts.ScriptTarget.Latest,true,ts.ScriptKind.TS);
+ const nodes=[];(function walk(n){nodes.push(n);ts.forEachChild(n,walk);})(file);
+ const isFn=n=>ts.isFunctionDeclaration(n)||ts.isFunctionExpression(n)||ts.isArrowFunction(n)||ts.isMethodDeclaration(n);
+ const enclosingFn=n=>{for(let p=n.parent;p;p=p.parent) if(isFn(p)) return p;};
+ const calleeName=call=>{const e=call.expression;
+  if(ts.isIdentifier(e)) return e.text;
+  if(ts.isPropertyAccessExpression(e)) return (ts.isIdentifier(e.expression)?e.expression.text+'.':'')+e.name.text;};
+ const fnName=f=>{
+  if(f.name&&ts.isIdentifier(f.name)) return f.name.text;
+  if(ts.isVariableDeclaration(f.parent)&&ts.isIdentifier(f.parent.name)) return f.parent.name.text;};
+ // The directory is constructed once, through the demand module, and never reassigned.
+ const demand=nodes.filter(n=>ts.isCallExpression(n)&&calleeName(n)==='createDirectoryDemand');
+ assert.equal(demand.length,1);
+ assert.ok(ts.isVariableDeclaration(demand[0].parent)&&demand[0].parent.name.text==='directoryUsersCache');
+ assert.ok(ts.getCombinedModifierFlags(demand[0].parent)&ts.ModifierFlags.Const||demand[0].parent.parent.flags&ts.NodeFlags.Const);
+ const demandLoader=demand[0].arguments[0];
+ // Every call that reads the directory, directly or through a named helper that does.
+ const loads=new Set(['autoFetchAdmin','fetchAdminPayload','refreshDirectoryCache',
+  'directoryUsersCache.verifySession','directoryUsersCache.observe']);
+ const loadsDirectly=n=>ts.isCallExpression(n)&&(loads.has(calleeName(n))||(calleeName(n)==='fetchSection'
+  &&n.arguments[0]?.getText(file)==='TENANT_TYPES.TenantDirectory'));
+ for(let grew=true;grew;){grew=false;
+  for(const n of nodes) if(loadsDirectly(n)){
+   for(let f=enclosingFn(n);f;f=enclosingFn(f)){
+    if(f===demandLoader) break;
+    const name=fnName(f);
+    if(name&&!loads.has(name)){loads.add(name);grew=true;}
+   }
+  }
+ }
+ // A load is eager if it runs at module evaluation, in the bridge's route-setup callback,
+ // in the listen callback, or on a timer; promise callbacks and IIFEs inherit their context.
+ const callbackOf=f=>ts.isCallExpression(f.parent)&&f.parent.arguments.includes(f)?f.parent:undefined;
+ const eager=[];
+ for(const n of nodes) if(loadsDirectly(n)){
+  let f=enclosingFn(n);
+  for(;f;f=enclosingFn(f)){
+   if(f===demandLoader) break;
+   const call=callbackOf(f);
+   const name=call&&calleeName(call);
+   if(name&&/^(setInterval|setTimeout|setImmediate|queueMicrotask)$|\.listen$/.test(name)){eager.push(n);break;}
+   if(ts.isPropertyAssignment(f.parent)&&f.parent.name.getText(file)==='middleware'){eager.push(n);break;}
+   if(ts.isParenthesizedExpression(f.parent)&&ts.isCallExpression(f.parent.parent)) continue;
+   if(name&&/\.(then|catch|finally)$/.test(name)) continue;
+   break; // Inside a handler or helper: it runs when that is called.
+  }
+  if(!f) eager.push(n);
+ }
+ assert.deepEqual(eager.map(n=>`line ${file.getLineAndCharacterOfPosition(n.getStart(file)).line+1}: ${n.getText(file).slice(0,80)}`),[]);
+ assert.ok(!text.includes('refreshDirectoryCache'));
+});

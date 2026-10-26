@@ -250,7 +250,9 @@ try {
         'io.modelcontextprotocol/clientCapabilities': {},
       },
     },
-  }, { ...ACCEPT_BOTH, 'Mcp-Method': 'server/discover' });
+  // A 2026-07-28 request carries MCP-Protocol-Version as well as Mcp-Method; the SDK
+  // refuses one without it (-32020) from @modelcontextprotocol/server 2.3 on.
+  }, { ...ACCEPT_BOTH, 'MCP-Protocol-Version': '2026-07-28', 'Mcp-Method': 'server/discover' });
   const modernBody = payload(modern);
   ok(Array.isArray(modernBody?.result?.supportedVersions)
     && modernBody.result.supportedVersions.includes('2026-07-28'),
