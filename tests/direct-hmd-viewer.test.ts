@@ -29,7 +29,7 @@ function reader(content = hmd, status = 200) {
   let current = content;
   const requests: unknown[] = [], writes: unknown[] = [];
   const get = handler('handleGetDescriptor', { normalizeCssUrl: (url: string) => url,
-    resourceCompositions: { claims: () => false }, descriptorBodyCache: new Map(),
+    resourceCompositions: { claims: () => false }, descriptorBodyCache: new Map(), descriptorBodyWrites: 0,
     guardedInvokeFetchLanded: async (...args: unknown[]) => {
       requests.push(args);
       return { response: new Response(current, { status, headers: { 'content-type': 'text/markdown; charset=UTF-8; variant=CommonMark' } }), landedUrl: HMD_URL };

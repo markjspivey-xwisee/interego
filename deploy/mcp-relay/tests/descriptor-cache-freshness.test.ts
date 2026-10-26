@@ -9,8 +9,9 @@ import ts from 'typescript';
 
 const source = readFileSync(new URL('../server.ts', import.meta.url), 'utf8');
 const ast = ts.createSourceFile('server.ts', source, ts.ScriptTarget.ES2022, true);
-const names = new Set(['DESCRIPTOR_BODY_CACHE_TTL_MS', 'DESCRIPTOR_BODY_CACHE_MAX', 'descriptorBodyCache']);
-const functions = new Set(['canCacheDescriptorBody', 'cacheDescriptorBody', 'handleGetDescriptor']);
+const names = new Set(['DESCRIPTOR_BODY_CACHE_TTL_MS', 'DESCRIPTOR_BODY_CACHE_MAX', 'descriptorBodyCache', 'descriptorBodyWrites']);
+const functions = new Set(['canCacheDescriptorBody', 'cacheDescriptorBody', 'handleGetDescriptor',
+  'descriptorBodyIdentity', 'invalidateDescriptorBody']);
 const code = ast.statements.filter(node => ts.isFunctionDeclaration(node) ? functions.has(node.name?.text ?? '')
   : ts.isVariableStatement(node) && node.declarationList.declarations.some(d => ts.isIdentifier(d.name) && names.has(d.name.text)))
   .map(node => node.getText(ast)).join('\n');
@@ -45,10 +46,14 @@ function fixture() {
     inlineRenderedForDescriptor: () => undefined,
     asPublicPodUrl: (url: string) => url,
     PUBLIC_BASE_URL: 'https://relay.test', PORT: 3000, isFollowableTarget: () => false,
+    // The store's two spellings, as server.ts declares them: internal (where the relay writes)
+    // and public (what identifiers handed out say).
+    CSS_URL: 'http://css.test/', STORE_ORIGINS: new Set(['http://css.test', 'https://store.test']),
   };
-  const compiled = compileFunction(js + '\nreturn { get: handleGetDescriptor, cache: descriptorBodyCache };', Object.keys(ports));
+  const compiled = compileFunction(js + '\nreturn { get: handleGetDescriptor, cache: descriptorBodyCache, wrote: invalidateDescriptorBody };', Object.keys(ports));
   const api = compiled(...Object.values(ports)) as {
     get(args: Record<string, unknown>, project?: boolean): Promise<string>;
+    wrote(url: string): void;
     cache: Map<string, { content: string; landedUrl?: string; encrypted: boolean; mediaType: string; expiresAt: number }>;
   };
   return { ...api, resources, reads, payloadReads,
@@ -125,6 +130,47 @@ await check('decrypted envelope bytes never enter the shared cache or leak to an
   assert.equal((await f.read(url, { recipient: 'owner' })).content, 'owner-private-plaintext');
   const other = await f.read(url); assert.equal(other.encrypted, true); assert.equal(other.content, undefined);
   assert.equal(f.payloadReads.length, 2); assert.equal(f.cache.size, 0);
+});
+await check('a write retires the cached descriptor and graph bodies under every spelling that aliases them', async () => {
+  const graph = descriptor.replace(/\.ttl$/, '-graph.trig');
+  const writes: Array<[string, string]> = [
+    ['the URL itself', descriptor],
+    ['the public spelling of the store', descriptor.replace('http://css.test/', 'https://store.test/')],
+    ['the legacy host normalizeCssUrl rewrites', descriptor.replace('http://css.test/', 'https://gate.test/')],
+    ['upper-case host', descriptor.replace('css.test', 'CSS.TEST')],
+    ['percent-encoded path characters', descriptor.replace('context-graphs', 'context%2Dgraphs')],
+    ['the graph half of the pair', graph],
+    ['an encrypted republish of the graph half', descriptor.replace(/\.ttl$/, '-graph.envelope.jose.json')],
+  ];
+  for (const [how, written] of writes) {
+    const f = fixture();
+    f.resources.set(descriptor, { content: body('v1') }); f.resources.set(graph, { content: body('g1') });
+    await f.read(descriptor); await f.read(graph); assert.equal(f.cache.size, 2, how);
+    f.resources.set(descriptor, { content: body('v2') }); f.resources.set(graph, { content: body('g2') });
+    f.wrote(written);
+    assert.equal(f.cache.size, 0, how);
+    assert.equal((await f.read(descriptor)).turtle, body('v2'), how);
+    assert.equal((await f.read(graph)).content, body('g2'), how);
+  }
+});
+await check('a key whose bytes LANDED on the written URL is retired too', async () => {
+  const f = fixture(), alias = 'http://css.test/u-pk-owner/context-graphs/alias.ttl';
+  f.resources.set(alias, { content: body('v1'), landedUrl: descriptor }); await f.read(alias);
+  assert.equal(f.cache.size, 1); f.wrote(descriptor); assert.equal(f.cache.size, 0);
+});
+await check('writes outside a publication container leave cached descriptors alone', async () => {
+  const f = fixture(); f.resources.set(descriptor, { content: body('v1') }); await f.read(descriptor);
+  for (const url of [registry, 'http://css.test/u-pk-owner/.well-known/context-graphs', 'not a url']) f.wrote(url);
+  assert.equal(f.cache.size, 1);
+  f.wrote('http://css.test/u-pk-owner/context-graphs/some-other-descriptor.ttl'); assert.equal(f.cache.size, 1);
+});
+await check('a descriptor read in flight across a republish cannot put the old bytes back', async () => {
+  const f = fixture(); f.resources.set(descriptor, { content: body('old') });
+  const gate = f.holdNext(); const oldRead = f.read(descriptor); await gate.started;
+  f.resources.set(descriptor, { content: body('new') }); f.wrote(descriptor); gate.release();
+  assert.equal((await oldRead).turtle, body('old')); assert.equal(f.cache.size, 0);
+  assert.equal((await f.read(descriptor)).turtle, body('new'));
+  assert.equal((await f.read(descriptor)).turtle, body('new')); assert.equal(f.reads.length, 2, 'a read after the write caches again');
 });
 await check('the public get_descriptor input advertises its implemented freshness port', () => {
   const declaration = ast.statements.find(node => ts.isVariableStatement(node) && node.declarationList.declarations.some(d => ts.isIdentifier(d.name) && d.name.text === 'TOOL_SCHEMAS'));

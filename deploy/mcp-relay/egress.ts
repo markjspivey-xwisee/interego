@@ -87,6 +87,19 @@ export interface EgressConfig {
    * gap that leaves is measured and stated at `guardedEgressAgent`.
    */
   screenAddresses: boolean;
+  /**
+   * Called with the (normalised) target of every request `solidFetch` makes whose method can
+   * change the resource — anything but GET / HEAD / OPTIONS — once it settles, whether it
+   * succeeded, failed or threw. A failed or timed-out PUT may still have landed, so "settled"
+   * is the honest trigger for a cache that must not outlive the bytes it holds. Redirected
+   * guarded writes report every hop, because each hop is its own `solidFetch` call.
+   *
+   * The relay hangs its descriptor-body invalidation here so that no writer can skip it: every
+   * descriptor and graph write in server.ts — publish, deferred publish, pgsl_ingest, rebuilds —
+   * goes through this wrapper. (The raw-`fetch` ACL and container writers in pod-writers.ts do
+   * not, and never touch a `context-graphs/` body.) A throwing observer is contained; it can never fail the write it observes.
+   */
+  onWrite?: (url: string) => void;
 }
 
 export interface Egress {
@@ -108,7 +121,13 @@ export interface Egress {
 export const GUARDED_MAX_REDIRECTS = 5;
 
 export function createEgress(config: EgressConfig): Egress {
-  const { cssUrl, publicBaseUrl, screenAddresses } = config;
+  const { cssUrl, publicBaseUrl, screenAddresses, onWrite } = config;
+  const observeWrite = (target: string, init: Parameters<FetchFn>[1]): void => {
+    if (!onWrite) return;
+    const method = String((init as { method?: unknown } | undefined)?.method ?? 'GET').toUpperCase();
+    if (method === 'GET' || method === 'HEAD' || method === 'OPTIONS') return;
+    try { onWrite(target); } catch { /* an observer must never fail the write it observes */ }
+  };
 
   // ── Outbound HTTP keep-alive pool ───────────────────────────
   //
@@ -272,6 +291,7 @@ export function createEgress(config: EgressConfig): Egress {
       throw e;
     } finally {
       clearTimeout(timer);
+      observeWrite(target, init);
     }
   };
 
