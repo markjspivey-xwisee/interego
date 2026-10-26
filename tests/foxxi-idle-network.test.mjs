@@ -69,33 +69,48 @@ test('foreign and lookalike origins cannot reach private transport',async()=>{
  assert.equal(gatewayTransport(base,{publicPodUrl:'https://gate.example/a/'}),base);
 });
 
-test('the bridge loads its tenant directory only on demand: no boot load and no timer',async()=>{
- const { default: ts }=await import('typescript');
- const path='../applications/foxxi-content-intelligence/bridge/server.ts';
- const text=await readFile(new URL(path,import.meta.url),'utf8');
+/**
+ * Every place in `text` (bridge/server.ts, or a fixture) where the tenant directory is loaded
+ * eagerly: at module evaluation, in the route-setup or listen callback, or from a timer. A load is
+ * a call of a loading function (or of its .call/.apply), and also a loading function handed BY
+ * REFERENCE (bare, or through .bind) to a timer or a listen callback, which runs it later with no
+ * request behind it. The demand loader given to createDirectoryDemand is the one sanctioned place.
+ */
+function eagerDirectoryLoads(ts,text){
  const file=ts.createSourceFile('server.ts',text,ts.ScriptTarget.Latest,true,ts.ScriptKind.TS);
  const nodes=[];(function walk(n){nodes.push(n);ts.forEachChild(n,walk);})(file);
  const isFn=n=>ts.isFunctionDeclaration(n)||ts.isFunctionExpression(n)||ts.isArrowFunction(n)||ts.isMethodDeclaration(n);
  const enclosingFn=n=>{for(let p=n.parent;p;p=p.parent) if(isFn(p)) return p;};
- const calleeName=call=>{const e=call.expression;
+ const unwrap=e=>{while(ts.isParenthesizedExpression(e)||ts.isAsExpression(e)||ts.isNonNullExpression(e)) e=e.expression;return e;};
+ const exprName=e=>{e=unwrap(e);
   if(ts.isIdentifier(e)) return e.text;
-  if(ts.isPropertyAccessExpression(e)) return (ts.isIdentifier(e.expression)?e.expression.text+'.':'')+e.name.text;};
+  if(ts.isPropertyAccessExpression(e)) return (ts.isIdentifier(unwrap(e.expression))?unwrap(e.expression).text+'.':'')+e.name.text;};
+ const calleeName=call=>exprName(call.expression);
  const fnName=f=>{
   if(f.name&&ts.isIdentifier(f.name)) return f.name.text;
   if(ts.isVariableDeclaration(f.parent)&&ts.isIdentifier(f.parent.name)) return f.parent.name.text;};
- // The directory is constructed once, through the demand module, and never reassigned.
  const demand=nodes.filter(n=>ts.isCallExpression(n)&&calleeName(n)==='createDirectoryDemand');
- assert.equal(demand.length,1);
- assert.ok(ts.isVariableDeclaration(demand[0].parent)&&demand[0].parent.name.text==='directoryUsersCache');
- assert.ok(ts.getCombinedModifierFlags(demand[0].parent)&ts.ModifierFlags.Const||demand[0].parent.parent.flags&ts.NodeFlags.Const);
- const demandLoader=demand[0].arguments[0];
+ const demandLoader=demand[0]?.arguments[0];
  // Every call that reads the directory, directly or through a named helper that does.
- const loads=new Set(['autoFetchAdmin','fetchAdminPayload','refreshDirectoryCache',
-  'directoryUsersCache.verifySession','directoryUsersCache.observe']);
- const loadsDirectly=n=>ts.isCallExpression(n)&&(loads.has(calleeName(n))||(calleeName(n)==='fetchSection'
-  &&n.arguments[0]?.getText(file)==='TENANT_TYPES.TenantDirectory'));
+ const loads=new Set(['autoFetchAdmin','fetchAdminPayload','readAdminPayload','loadConfiguredDirectory',
+  'refreshDirectoryCache','directoryUsersCache.verifySession','directoryUsersCache.observe']);
+ // `f.call(…)` / `f.apply(…)` invoke f now; `f.bind(…)` only names it.
+ const receiverOf=(call,methods)=>{const e=unwrap(call.expression);
+  return ts.isPropertyAccessExpression(e)&&methods.includes(e.name.text)?e.expression:undefined;};
+ const invokes=n=>{if(!ts.isCallExpression(n)) return false;
+  if(loads.has(calleeName(n))) return true;
+  const recv=receiverOf(n,['call','apply']);
+  if(recv&&loads.has(exprName(recv))) return true;
+  return /^(fetchSection|fetchSectionStamped)$/.test(calleeName(n)??'')&&n.arguments[0]?.getText(file)==='TENANT_TYPES.TenantDirectory';};
+ const scheduler=/^(setInterval|setTimeout|setImmediate|queueMicrotask)$|\.(listen|on|once)$/;
+ // A loading function passed by reference (or bound) to something that will call it later.
+ const references=n=>{if(!ts.isCallExpression(n)||!scheduler.test(calleeName(n)??'')) return [];
+  return n.arguments.filter(a=>{a=unwrap(a);
+   if(loads.has(exprName(a))) return true;
+   if(ts.isCallExpression(a)){const recv=receiverOf(a,['bind']);return Boolean(recv&&loads.has(exprName(recv)));}
+   return false;});};
  for(let grew=true;grew;){grew=false;
-  for(const n of nodes) if(loadsDirectly(n)){
+  for(const n of nodes) if(invokes(n)){
    for(let f=enclosingFn(n);f;f=enclosingFn(f)){
     if(f===demandLoader) break;
     const name=fnName(f);
@@ -107,13 +122,15 @@ test('the bridge loads its tenant directory only on demand: no boot load and no 
  // in the listen callback, or on a timer; promise callbacks and IIFEs inherit their context.
  const callbackOf=f=>ts.isCallExpression(f.parent)&&f.parent.arguments.includes(f)?f.parent:undefined;
  const eager=[];
- for(const n of nodes) if(loadsDirectly(n)){
+ for(const n of nodes){
+  eager.push(...references(n)); // Run later by a timer or listener, whatever encloses it.
+  if(!invokes(n)) continue;
   let f=enclosingFn(n);
   for(;f;f=enclosingFn(f)){
    if(f===demandLoader) break;
    const call=callbackOf(f);
    const name=call&&calleeName(call);
-   if(name&&/^(setInterval|setTimeout|setImmediate|queueMicrotask)$|\.listen$/.test(name)){eager.push(n);break;}
+   if(name&&scheduler.test(name)){eager.push(n);break;}
    if(ts.isPropertyAssignment(f.parent)&&f.parent.name.getText(file)==='middleware'){eager.push(n);break;}
    if(ts.isParenthesizedExpression(f.parent)&&ts.isCallExpression(f.parent.parent)) continue;
    if(name&&/\.(then|catch|finally)$/.test(name)) continue;
@@ -121,6 +138,53 @@ test('the bridge loads its tenant directory only on demand: no boot load and no 
   }
   if(!f) eager.push(n);
  }
- assert.deepEqual(eager.map(n=>`line ${file.getLineAndCharacterOfPosition(n.getStart(file)).line+1}: ${n.getText(file).slice(0,80)}`),[]);
+ return { file, demand, eager: eager.map(n=>`line ${file.getLineAndCharacterOfPosition(n.getStart(file)).line+1}: ${n.getText(file).slice(0,80)}`) };
+}
+
+test('the bridge loads its tenant directory only on demand: no boot load and no timer',async()=>{
+ const { default: ts }=await import('typescript');
+ const path='../applications/foxxi-content-intelligence/bridge/server.ts';
+ const text=await readFile(new URL(path,import.meta.url),'utf8');
+ const { demand, eager }=eagerDirectoryLoads(ts,text);
+ // The directory is constructed once, through the demand module, and never reassigned.
+ assert.equal(demand.length,1);
+ assert.ok(ts.isVariableDeclaration(demand[0].parent)&&demand[0].parent.name.text==='directoryUsersCache');
+ assert.ok(ts.getCombinedModifierFlags(demand[0].parent)&ts.ModifierFlags.Const||demand[0].parent.parent.flags&ts.NodeFlags.Const);
+ assert.deepEqual(eager,[]);
  assert.ok(!text.includes('refreshDirectoryCache'));
+});
+
+test('the on-demand guard sees a load passed by reference, bound, or invoked through call/apply',async()=>{
+ const { default: ts }=await import('typescript');
+ const prelude=`const directoryUsersCache = createDirectoryDemand(async (signal) => fetchSection(TENANT_TYPES.TenantDirectory, {}));
+async function autoFetchAdmin(args) { return fetchAdminPayload(args); }
+async function warmDirectory() { await autoFetchAdmin({}); }
+const app = createVerticalBridge({ middleware: (a) => { a.get('/x', async (_req, res) => { res.json(await autoFetchAdmin({})); }); } });
+`;
+ // Each of these brings back a boot load or a background poll.
+ for(const eagerForm of [
+  `setInterval(autoFetchAdmin, 5 * 60_000, {});`,
+  `setTimeout(autoFetchAdmin.bind(null, {}), 1);`,
+  `app.listen(1, warmDirectory);`,
+  `server.once('listening', warmDirectory);`,
+  `setInterval((warmDirectory), 1000);`,
+  `setInterval(directoryUsersCache.verifySession, 1000, 'token');`,
+  `queueMicrotask(warmDirectory.bind(undefined));`,
+  `void autoFetchAdmin.call(null, {});`,
+  `void warmDirectory.apply(null, []);`,
+  `function boot() { setTimeout(readAdminPayload, 1, {}); }`,
+  `const t = setInterval(loadConfiguredDirectory.bind(null, {}, new AbortController().signal), 1);`,
+ ]){
+  const { eager }=eagerDirectoryLoads(ts,prelude+eagerForm);
+  assert.equal(eager.length,1,`not caught: ${eagerForm} -> ${JSON.stringify(eager)}`);
+ }
+ // A request handler's load, a timer that loads nothing, and naming a load without scheduling it are fine.
+ for(const lazyForm of [
+  `app.get('/y', async () => { await warmDirectory(); });`,
+  `setTimeout(() => console.log('tick'), 1);`,
+  `const handler = autoFetchAdmin.bind(null, {}); app.get('/z', handler);`,
+  `setInterval(unrelatedTask, 1000);`,
+ ]){
+  assert.deepEqual(eagerDirectoryLoads(ts,prelude+lazyForm).eager,[],lazyForm);
+ }
 });

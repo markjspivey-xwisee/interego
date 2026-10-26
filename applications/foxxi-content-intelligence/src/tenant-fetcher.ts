@@ -46,6 +46,8 @@ import { assertSafeFetchTarget, safeFetch, guardedFetchFn } from './ssrf-guard.j
 interface CacheEntry<T> {
   value: T;
   expiresAt: number;
+  /** When the pod read that produced `value` started. A cache hit is only as fresh as this. */
+  fetchedAt: number;
 }
 
 const TTL_MS = 60_000;
@@ -61,17 +63,21 @@ function cacheKey(podUrl: string, authoritativeSource: IRI, kind: string): strin
   return `${podUrl}|${authoritativeSource}|${kind}`;
 }
 
-function getCached<T>(key: string): T | null {
+function getCachedEntry<T>(key: string): CacheEntry<T> | null {
   const e = cache.get(key);
   if (!e) return null;
   if (Date.now() > e.expiresAt) {
     cache.delete(key);
     return null;
   }
-  return e.value as T;
+  return e as CacheEntry<T>;
 }
 
-function setCached<T>(key: string, value: T): void {
+function getCached<T>(key: string): T | null {
+  return getCachedEntry<T>(key)?.value ?? null;
+}
+
+function setCached<T>(key: string, value: T, fetchedAt = Date.now()): void {
   if (cache.size >= CACHE_MAX && !cache.has(key)) {
     const now = Date.now();
     for (const [k, e] of cache) { if (now > e.expiresAt) cache.delete(k); }
@@ -80,7 +86,7 @@ function setCached<T>(key: string, value: T): void {
       if (oldest !== undefined) cache.delete(oldest);
     }
   }
-  cache.set(key, { value, expiresAt: Date.now() + TTL_MS });
+  cache.set(key, { value, expiresAt: Date.now() + TTL_MS, fetchedAt });
 }
 
 export function invalidateTenantCache(podUrl?: string): void {
@@ -117,13 +123,17 @@ export interface TenantFetchConfig {
    */
   forceClosed?: boolean;
   /**
-   * Called by `fetchAdminPayload`, when it reads the pod rather than its cache, with the users of
-   * a TenantDirectory section that actually loaded. It is never called with the empty default
-   * composed for a directory that was absent or unreadable (502, timeout, no key): the composed
-   * `users: []` of a closed tenant means "unknown", and a caller that keeps its own copy of the
-   * directory must not take it as "nobody".
+   * Called by `fetchAdminPayload`, when it composes a payload rather than serving its cache, with
+   * the users of a TenantDirectory section that actually loaded, as soon as that section settles
+   * (not after the slowest sibling section), and with `fetchedAt`: when the pod read that produced
+   * those users started (`Date.now()` clock), which for a section-cache hit is the original read's
+   * start, not the hit's. A caller keeping its own copy must order copies by `fetchedAt` and count
+   * their age from it. It is never called with the empty default composed for a directory that was
+   * absent or unreadable (502, timeout, no key): the composed `users: []` of a closed tenant means
+   * "unknown", and a caller that keeps its own copy of the directory must not take it as "nobody".
    */
-  onDirectoryLoaded?: (users: ReadonlyArray<{ user_id: string; web_id: string; wallet_address?: string }>) => void;
+  onDirectoryLoaded?: (users: ReadonlyArray<{ user_id: string; web_id: string; wallet_address?: string }>,
+    fetchedAt: number) => void;
 }
 
 function resolveAdminKeyPair(config: TenantFetchConfig): EncryptionKeyPair | undefined {
@@ -280,16 +290,29 @@ export async function fetchSection(
   typeIri: IRI,
   config: TenantFetchConfig,
 ): Promise<unknown> {
+  return (await fetchSectionStamped(typeIri, config)).value;
+}
+
+/**
+ * `fetchSection`, plus when the pod read that produced the value started (`Date.now()` clock).
+ * A value served from the 60 s cache carries its original read's start, so a caller that keeps
+ * the value longer than the cache does can bound its age by when the pod last showed it.
+ */
+export async function fetchSectionStamped(
+  typeIri: IRI,
+  config: TenantFetchConfig,
+): Promise<{ value: unknown; fetchedAt: number }> {
   const key = cacheKey(config.podUrl, config.authoritativeSource, typeIri);
-  const hit = getCached<unknown>(key);
-  if (hit !== null) return hit;
+  const hit = getCachedEntry<unknown>(key);
+  if (hit !== null) return { value: hit.value, fetchedAt: hit.fetchedAt };
+  const fetchedAt = Date.now();
   const entry = await findEntry(config, typeIri);
   if (!entry) {
     throw new Error(`${SECTION_ABSENT_PREFIX}${typeIri} found in pod ${config.podUrl}. Tenant publish required first.`);
   }
   const payload = await fetchBundleJson(entry, config);
-  setCached(key, payload);
-  return payload;
+  setCached(key, payload, fetchedAt);
+  return { value: payload, fetchedAt };
 }
 
 /**
@@ -318,7 +341,19 @@ export async function fetchAdminPayload(config: TenantFetchConfig): Promise<unkn
     ['membership', TENANT_TYPES.TenantMembership],
     ['assignments', TENANT_TYPES.TenantAssignments],
   ];
-  const settled = await Promise.allSettled(SECTIONS.map(([, iri]) => fetchSection(iri, config)));
+  const settled = await Promise.allSettled(SECTIONS.map(([, iri]) => iri === TENANT_TYPES.TenantDirectory
+    // Hand a loaded directory over as soon as it settles: a stalled sibling section must not hold
+    // it back until after a newer read has been shared.
+    ? fetchSectionStamped(iri, config).then(({ value, fetchedAt }) => {
+      const users = (value as { users?: unknown } | null)?.users;
+      if (Array.isArray(users)) {
+        try {
+          config.onDirectoryLoaded?.(users as Array<{ user_id: string; web_id: string; wallet_address?: string }>, fetchedAt);
+        } catch { /* the hook is the caller's; it cannot fail this read */ }
+      }
+      return value;
+    })
+    : fetchSection(iri, config)));
   const missing: string[] = [];
   const section = (i: number): unknown => {
     if (settled[i]!.status === 'fulfilled') return (settled[i] as PromiseFulfilledResult<unknown>).value;
@@ -366,9 +401,6 @@ export async function fetchAdminPayload(config: TenantFetchConfig): Promise<unkn
     // any other failure (encrypted-no-key, fetch error) is treated as present.
     : !isSectionAbsentError(directorySettled.reason);
   const closed = Boolean(config.forceClosed) || directoryPresent;
-  if (directorySettled.status === 'fulfilled' && Array.isArray(dir.users)) {
-    config.onDirectoryLoaded?.(dir.users as Array<{ user_id: string; web_id: string; wallet_address?: string }>);
-  }
   const effectiveUsers = closed ? dirUsers : memUsers;
   // Policies resolve the same way: a CLOSED tenant uses its (encrypted)
   // AssignmentPolicySet; a SELF-SOVEREIGN tenant uses its PUBLIC TenantAssignments
