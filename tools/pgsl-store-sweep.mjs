@@ -292,10 +292,10 @@ export async function runPrivateSweep(){
   if(!connectionString)throw Error('PGSL_PG_CONNSTR is required');
   const endpoint=new URL(connectionString);
   if(!endpoint.hostname.endsWith('.railway.internal'))throw Error('private Railway database hostname is required');
-  const client=new Client({connectionString,application_name:'pgsl-private-sweep'});
-  const watchdog=new Client({connectionString,application_name:'pgsl-private-sweep-watchdog',statement_timeout:3000});
-  await client.connect();await watchdog.connect();
+  const client=new Client({connectionString,application_name:'pgsl-private-sweep',connectionTimeoutMillis:5000});
+  const watchdog=new Client({connectionString,application_name:'pgsl-private-sweep-watchdog',connectionTimeoutMillis:5000,statement_timeout:3000});
   try{
+    await client.connect();await watchdog.connect();
     if(action==='install'){await installSweep(client,{table});console.log('Root journal installed; deletion disabled for its first hour.');return;}
     if(!token)throw Error('project-scoped Railway token is required for fresh volume headroom');
     const serviceId=process.env.PGSL_SWEEP_POSTGRES_SERVICE_ID;
@@ -317,7 +317,7 @@ export async function runPrivateSweep(){
       return sample.capacityBytes-sample.usedBytes;
     };
     console.log(JSON.stringify(await sweepStore({client,watchdog,table,measureFreeBytes,dryRun:action==='measure'})));
-  }finally{await watchdog.end();await client.end();}
+  }finally{await Promise.allSettled([watchdog.end(),client.end()]);}
 }
 if(process.argv[1]&&import.meta.url===pathToFileURL(process.argv[1]).href){
   runPrivateSweep().catch(()=>{console.error('Private PGSL sweep failed; no database payload or credentials are logged.');process.exitCode=1;});
