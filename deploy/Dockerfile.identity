@@ -27,6 +27,7 @@ COPY deploy/identity/resolve-target-userid.ts ./
 COPY deploy/identity/passkey-authentication.ts ./
 COPY deploy/identity/account-index.ts ./
 COPY deploy/identity/credential-index.ts ./
+COPY deploy/identity/credential-decisions.ts ./
 COPY deploy/identity/provisional-play.ts ./
 COPY deploy/identity/provisional-play-store.ts ./
 COPY deploy/identity/provisional-play-admission.ts ./

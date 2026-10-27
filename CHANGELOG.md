@@ -1,5 +1,35 @@
 # Changelog
 
+## 2026-10-27 — Identity: a wallet or DID being added, or whose add the pod did not confirm, no longer opens a second account
+
+Three corrections to the entries below. Each was reproduced against the server, running with a stand-in pod.
+
+- **A wallet or DID sign-in made while a bearer adds the same credential now waits for the add.**
+  - What went wrong: adds now answer only once the pod has the write (about 2.5 s on CSS), and the sign-in indexes learn the new credential only then. A plain sign-in with the same wallet or `did:key` in that window found no account holding it. It opened the account derived from the credential, under that account's own lock, and the add then put the credential on the bearer's account as well.
+  - What followed: the credential was on two accounts, and its sign-ins went to the derived account from then on, because that one is preferred. `/wallet/link` had the same window before these changes.
+  - Now `/auth/siwe`, `/auth/did` and `/wallet/link` decide which account holds a wallet or DID, and write it onto one, in that credential's turn (`deploy/identity/credential-decisions.ts`). On one instance, one request per credential runs at a time, each after the write of the one before. A sign-in made during an add waits for it, then signs in to the account the credential went to. An add or link that meets a first sign-in of the same wallet waits too, then finds the wallet held.
+  - This also closes, on one instance, the gap listed further down as "Two accounts can add one wallet at once". Across a deploy's overlap it stays open.
+  - A turn waits at most 30 s for the ones before it, then answers 503 with nothing changed.
+- **A wallet or DID added with a bearer, whose write the pod took without confirming it, now signs in to that account.**
+  - What went wrong: the pod applied the write and then answered 500, or the write timed out, and the read after it failed too. The writer only marked the account's copy stale; its index entries, without the new credential, stayed. A sign-in with the credential reads only the accounts the indexes name, so it never read this one, and it opened the derived account for good.
+  - Now the add reads the account once more before it answers. If the pod lists the credential, the credential is in the index at once and the 503 says to sign in with it. `/wallet/link` answers 200, linked.
+  - If that read fails too, the 503 says the add may or may not have been saved, and the write is recorded. The credential's next sign-in reads that account first: 503 with nothing changed while it cannot, and once it can, the sign-in goes to the account the pod lists the credential on.
+- **A first wallet or DID sign-in that no read could confirm is recorded the same way.**
+  - When its write failed and neither the read after it nor loading the account answered, the 503 already said the write may or may not have been saved, and gave a bootstrap invite back.
+  - A plain sign-in with the credential then opened the derived account beside the seeded account the pod may list it on. It now reads that account first.
+
+`deploy/identity/auth-methods-writer.ts` said this server's copy and indexes never disagree with the pod for longer than a failed re-read. After a failed re-read they disagree until something reads the account, and a sign-in with the new credential was not such a read. The comment, and "A write that fails" in `deploy/identity/AUTH-ARCHITECTURE.md`, now say so. `deploy/Dockerfile.identity` copies the new module.
+
+Tests:
+
+- **`credential-decisions.test.ts`** (new) covers the turns: they run one at a time and in order, other credentials do not wait, a turn gives up at its bound, a decision that throws releases the turn, and a recorded write is read before the next decision.
+- **`live-record-writes-routes.test.ts`** adds three cases:
+  - K1: a plain and an `existingOnly` wallet sign-in, a `did:key` sign-in, and a sign-in with a wallet being linked, each made while its add's write is held; and an add and a link of a wallet whose first sign-in is opening its account.
+  - K2: adds through `/auth/siwe`, `/auth/did` and `/wallet/link` that the pod applied and answered 500, with the read after the write failing, and with the second read failing too.
+  - K3: wallet and DID bootstrap claims that no read could confirm.
+
+  All three fail against the code before this change, and removing each piece of the fix fails its case. B7 changes with them: an `existingOnly` sign-in made while its wallet is being added used to answer 401 at once, and now waits and signs in to that account.
+
 ## 2026-10-27 — Identity: first sign-ins the pod took without confirming them, accounts the indexes list but this server never loaded, and the janitor's lock
 
 Three corrections to the entries below. Each was reproduced against the server, running with a stand-in pod.

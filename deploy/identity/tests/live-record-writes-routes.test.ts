@@ -226,7 +226,9 @@ const invites = { pk: { userId: 'seeded-pk', token: crypto.randomBytes(12).toStr
   landedBlind: { userId: 'seeded-landed-blind', token: crypto.randomBytes(12).toString('hex') },
   landedBlindDid: { userId: 'seeded-landed-blind-did', token: crypto.randomBytes(12).toString('hex') },
   slow: { userId: 'seeded-slow', token: crypto.randomBytes(12).toString('hex') },
-  slowDid: { userId: 'seeded-slow-did', token: crypto.randomBytes(12).toString('hex') } };
+  slowDid: { userId: 'seeded-slow-did', token: crypto.randomBytes(12).toString('hex') },
+  unsure: { userId: 'seeded-unsure', token: crypto.randomBytes(12).toString('hex') },
+  unsureDid: { userId: 'seeded-unsure-did', token: crypto.randomBytes(12).toString('hex') } };
 const bootstrap = (invite: { userId: string; token: string }) => ({ extra: { bootstrapUserId: invite.userId, bootstrapInvite: invite.token } });
 let podServer: http.Server;
 let podPort = 0;
@@ -333,12 +335,20 @@ async function bootstrapPasskey(key: SoftPasskey, invite: { userId: string; toke
   const rpId = (options.json['rp'] as { id: string }).id;
   return post('/auth/webauthn/register', { response: attest(key, String(options.json['challenge']), inst.base, rpId) }, undefined, inst);
 }
-async function siwe(w: AnyWallet, opts: { bearer?: string; existingOnly?: boolean; extra?: Doc } = {}, inst = primary): Promise<Reply> {
+/** A SIWE message for this instance, signed by `w`, carrying a fresh nonce. */
+async function siweProof(w: AnyWallet, inst: Instance) {
   const { nonce } = (await post('/challenges', { purpose: 'siwe' }, undefined, inst)).json as { nonce: string };
   const message = `${new URL(inst.base).host} wants you to sign in with your Ethereum account:\n${w.address}\n\nSign in.\n\n`
     + `URI: ${inst.base}\nVersion: 1\nChain ID: 1\nNonce: ${nonce}\nIssued At: ${new Date().toISOString()}`;
-  return post('/auth/siwe', { message, signature: await w.signMessage(message), nonce, name: 'Wallet',
+  return { message, signature: await w.signMessage(message), nonce };
+}
+async function siwe(w: AnyWallet, opts: { bearer?: string; existingOnly?: boolean; extra?: Doc } = {}, inst = primary): Promise<Reply> {
+  return post('/auth/siwe', { ...(await siweProof(w, inst)), name: 'Wallet',
     ...(opts.existingOnly ? { existingOnly: true } : {}), ...(opts.extra ?? {}) }, opts.bearer, inst);
+}
+async function linkWallet(w: AnyWallet, bearer: string, inst = primary): Promise<Reply> {
+  const { message, signature, nonce } = await siweProof(w, inst);
+  return post('/wallet/link', { walletAddress: w.address, siweMessage: message, signature, nonce }, bearer, inst);
 }
 async function didSignIn(k: DidKey, opts: { bearer?: string; did?: string; extra?: Doc } = {}, inst = primary): Promise<Reply> {
   const { nonce } = (await post('/challenges', { purpose: 'did-sig' }, undefined, inst)).json as { nonce: string };
@@ -397,6 +407,11 @@ const raceOut = account({ keys: [P()] });
 const raceAdd = account({ keys: [P()] });
 const raceSignOut = account({ keys: [P()] });
 const raceRemove = account({ keys: [P()], wallets: [W()] });
+// Accounts a wallet or DID is added to with a bearer while a sign-in with it is made, or whose add
+// the pod takes without confirming it.
+const k1 = { wallet: account({ keys: [P()] }), did: account({ keys: [P()] }), link: account({ keys: [P()] }), other: account({ keys: [P()] }) };
+const k2 = { wallet: account({ keys: [P()] }), did: account({ keys: [P()] }), link: account({ keys: [P()] }),
+  blind: account({ keys: [P()] }), blindDid: account({ keys: [P()] }) };
 const play = { key: P(), id: `u-try-play-${crypto.randomBytes(16).toString('hex')}` };
 // Claimed Play owners (a passkey each) whose writes meet another writer's change.
 const playId = () => `u-try-play-${crypto.randomBytes(16).toString('hex')}`;
@@ -756,11 +771,14 @@ test('B7, C10: credentials added at once both land, and neither is acknowledged 
   assert.ok(await within(held.arrived, 5_000), `no write arrived${out()}`);
   const addD = didSignIn(k, { bearer: token });
   assert.equal(await within(Promise.race([addW, addD]), 500), false, 'acknowledged while its write was held');
-  // Nor does this server act on it before the pod has it.
-  assert.equal((await siwe(w, { existingOnly: true })).status, 401);
+  // Nor does this server act on it before the pod has it: a sign-in with the wallet waits for the
+  // add (K1), and then signs in to the account it was added to.
+  const early = siwe(w, { existingOnly: true });
+  assert.equal(await within(early, 500), false, 'a sign-in with the wallet being added was answered before the add');
   held.release();
   await signsInTo(addW, c1.userId);
   await signsInTo(addD, c1.userId);
+  await signsInTo(early, c1.userId);
   assert.deepEqual(record(c1.userId)!.walletAddresses, [w.address.toLowerCase()]);
   assert.deepEqual(record(c1.userId)!.didKeys.map(x => x.did), [k.did]);
 });
@@ -1175,6 +1193,155 @@ test('C13, J6: one request the pod never answers holds an account\'s lock for no
   await signsInTo(siwe(w), invites.slow.userId);
   await signsInTo(didSignIn(k), invites.slowDid.userId);
   assert.equal(docs.has(deriveUserIdFromWallet(w.address.toLowerCase())), false, 'no account is opened for the wallet');
+  assert.equal(docs.has(deriveUserIdFromDid(k.did)), false, 'no account is opened for the did:key');
+});
+
+// ── K. A wallet or DID being added, or whose add the pod did not confirm ────────────────────
+test('K1: a wallet or did:key sign-in made while a bearer adds that credential waits for the add, and opens no other account', async () => {
+  const derivedOf = (w: AnyWallet) => deriveUserIdFromWallet(w.address.toLowerCase());
+  // A wallet added through /auth/siwe: a plain and an existingOnly sign-in made while its write is
+  // in flight sign in to the account it is added to, once the pod has it.
+  const walletToken = await tokenFor(k1.wallet.keys[0]!, 1, k1.wallet.userId);
+  const w = W();
+  let held = hold('PUT', k1.wallet.userId);
+  const addW = siwe(w, { bearer: walletToken });
+  assert.ok(await within(held.arrived, 5_000), `no write arrived${out()}`);
+  const plainW = siwe(w);
+  const existingW = siwe(w, { existingOnly: true });
+  assert.equal(await within(Promise.race([plainW, existingW]), 500), false, 'a sign-in with the wallet being added was answered before the add');
+  held.release();
+  await signsInTo(addW, k1.wallet.userId);
+  await signsInTo(plainW, k1.wallet.userId);
+  await signsInTo(existingW, k1.wallet.userId);
+  await signsInTo(siwe(w), k1.wallet.userId);
+  assert.equal(docs.has(derivedOf(w)), false, 'no account is opened for the wallet');
+
+  // The same for a did:key added through /auth/did.
+  const didToken = await tokenFor(k1.did.keys[0]!, 1, k1.did.userId);
+  const k = didKey();
+  held = hold('PUT', k1.did.userId);
+  const addD = didSignIn(k, { bearer: didToken });
+  assert.ok(await within(held.arrived, 5_000), `no write arrived${out()}`);
+  const plainD = didSignIn(k);
+  assert.equal(await within(plainD, 500), false, 'a sign-in with the did:key being added was answered before the add');
+  held.release();
+  await signsInTo(addD, k1.did.userId);
+  await signsInTo(plainD, k1.did.userId);
+  await signsInTo(didSignIn(k), k1.did.userId);
+  assert.equal(docs.has(deriveUserIdFromDid(k.did)), false, 'no account is opened for the did:key');
+
+  // And for a wallet linked through /wallet/link.
+  const linkToken = await tokenFor(k1.link.keys[0]!, 1, k1.link.userId);
+  const wl = W();
+  held = hold('PUT', k1.link.userId);
+  const link = linkWallet(wl, linkToken);
+  assert.ok(await within(held.arrived, 5_000), `no write arrived${out()}`);
+  const plainL = siwe(wl);
+  assert.equal(await within(plainL, 500), false, 'a sign-in with the wallet being linked was answered before the link');
+  held.release();
+  const linked = await link;
+  assert.equal(linked.status, 200, JSON.stringify(linked.json));
+  await signsInTo(plainL, k1.link.userId);
+  assert.equal(docs.has(derivedOf(wl)), false, 'no account is opened for the wallet');
+
+  // The other way round: a first sign-in is opening the account derived from a wallet when another
+  // account adds the same wallet with a bearer, or links it. They wait for it, and then find the
+  // wallet held: the add signs in to that account, the link is refused, and neither puts the
+  // wallet on a second account.
+  const otherToken = await tokenFor(k1.other.keys[0]!, 1, k1.other.userId);
+  const wf = W();
+  held = hold('PUT', derivedOf(wf));
+  const first = siwe(wf);
+  assert.ok(await within(held.arrived, 5_000), `no write arrived${out()}`);
+  const addF = siwe(wf, { bearer: otherToken });
+  const linkF = linkWallet(wf, otherToken);
+  assert.equal(await within(Promise.race([addF, linkF]), 500), false, 'an add of the wallet being opened was answered before the first sign-in');
+  held.release();
+  await signsInTo(first, derivedOf(wf));
+  await signsInTo(addF, derivedOf(wf));
+  assert.equal((await linkF).status, 409, JSON.stringify((await linkF).json));
+  assert.deepEqual(record(k1.other.userId)!.walletAddresses, [], 'the wallet is on one account only');
+});
+
+test('K2: a wallet or did:key whose bearer add the pod took without confirming it signs in to that account, and opens no other', async () => {
+  const derivedOf = (w: AnyWallet) => deriveUserIdFromWallet(w.address.toLowerCase());
+  // Tokens first: a passkey sign-in writes its counter.
+  const token = Object.fromEntries(await Promise.all(Object.entries(k2).map(async ([name, a]) => [name, await tokenFor(a.keys[0]!, 1, a.userId)] as const)));
+  // The pod applies the add's write and answers 500, and the next `gets` reads of the account fail.
+  const unconfirmed = (userId: string, gets: number, attempt: () => Promise<Reply>) => {
+    failPuts(userId, 'apply-then-500');
+    const put = hold('PUT', userId, 1, () => { failingGets.set(userId, gets); });
+    void put.arrived.then(() => put.release());
+    return attempt();
+  };
+  // The read right after the write fails: the account is read again before the answer, which says
+  // the pod lists the credential; its next sign-in goes there.
+  const w = W();
+  const addW = await unconfirmed(k2.wallet.userId, 1, () => siwe(w, { bearer: token['wallet'] }));
+  assert.equal(addW.status, 503, JSON.stringify(addW.json));
+  assert.deepEqual(record(k2.wallet.userId)!.walletAddresses, [w.address.toLowerCase()]);
+  await signsInTo(siwe(w), k2.wallet.userId);
+  await signsInTo(siwe(w, { existingOnly: true }), k2.wallet.userId);
+  assert.equal(docs.has(derivedOf(w)), false, 'no account is opened for the wallet');
+  assert.match(String(addW.json['detail']), /lists this wallet/);
+  const k = didKey();
+  const addD = await unconfirmed(k2.did.userId, 1, () => didSignIn(k, { bearer: token['did'] }));
+  assert.equal(addD.status, 503, JSON.stringify(addD.json));
+  await signsInTo(didSignIn(k), k2.did.userId);
+  assert.equal(docs.has(deriveUserIdFromDid(k.did)), false, 'no account is opened for the did:key');
+  assert.match(String(addD.json['detail']), /lists this DID/);
+  // /wallet/link reports such a wallet linked: the pod has it.
+  const wl = W();
+  const link = await unconfirmed(k2.link.userId, 1, () => linkWallet(wl, token['link']!));
+  assert.equal(link.status, 200, JSON.stringify(link.json));
+  await signsInTo(siwe(wl), k2.link.userId);
+  assert.equal(docs.has(derivedOf(wl)), false, 'no account is opened for the wallet');
+
+  // That read fails too: the answer says the add may or may not have been saved, and the next
+  // sign-in with the credential reads the account first. While it cannot, nothing is decided (503,
+  // no account opened); once it can, the sign-in goes to the account the pod lists it on.
+  const wb = W();
+  const blind = await unconfirmed(k2.blind.userId, 2, () => siwe(wb, { bearer: token['blind'] }));
+  assert.equal(blind.status, 503, JSON.stringify(blind.json));
+  failingGets.set(k2.blind.userId, 1);
+  const unread = await siwe(wb);
+  assert.equal(docs.has(derivedOf(wb)), false, 'no account is opened for the wallet while its add is unconfirmed');
+  assert.equal(unread.status, 503, JSON.stringify(unread.json));
+  assert.match(String(blind.json['detail']), /may or may not/);
+  await signsInTo(siwe(wb), k2.blind.userId);
+  await signsInTo(siwe(wb), k2.blind.userId);
+  assert.equal(docs.has(derivedOf(wb)), false, 'no account is opened for the wallet');
+  const kb = didKey();
+  const blindD = await unconfirmed(k2.blindDid.userId, 2, () => didSignIn(kb, { bearer: token['blindDid'] }));
+  assert.equal(blindD.status, 503, JSON.stringify(blindD.json));
+  await signsInTo(didSignIn(kb), k2.blindDid.userId);
+  assert.equal(docs.has(deriveUserIdFromDid(kb.did)), false, 'no account is opened for the did:key');
+  assert.match(String(blindD.json['detail']), /may or may not/);
+});
+
+test('K3: a first wallet or DID sign-in that no read could confirm sends the credential\'s next sign-in to that account, not a new one', async () => {
+  // A bootstrap claim whose write the pod applied and answered 500, with the read after it and the
+  // load of the account failing too: 503 "may or may not", and the invite is given back. The
+  // credential's next sign-in, without the invite, reads the seeded account first and signs in
+  // there; it used to open the account derived from the credential beside it.
+  const blind = (invite: { userId: string }, attempt: () => Promise<Reply>) => {
+    failPuts(invite.userId, 'apply-then-500');
+    const put = hold('PUT', invite.userId, 1, () => { failingGets.set(invite.userId, 2); });
+    void put.arrived.then(() => put.release());
+    return attempt();
+  };
+  const w = W();
+  const claim = await blind(invites.unsure, () => siwe(w, bootstrap(invites.unsure)));
+  assert.equal(claim.status, 503, JSON.stringify(claim.json));
+  assert.match(String(claim.json['detail']), /may or may not/);
+  assert.deepEqual(record(invites.unsure.userId)!.walletAddresses, [w.address.toLowerCase()]);
+  await signsInTo(siwe(w), invites.unsure.userId);
+  assert.equal(docs.has(deriveUserIdFromWallet(w.address.toLowerCase())), false, 'no account is opened for the wallet');
+  const k = didKey();
+  const didClaim = await blind(invites.unsureDid, () => didSignIn(k, bootstrap(invites.unsureDid)));
+  assert.equal(didClaim.status, 503, JSON.stringify(didClaim.json));
+  assert.match(String(didClaim.json['detail']), /may or may not/);
+  await signsInTo(didSignIn(k), invites.unsureDid.userId);
   assert.equal(docs.has(deriveUserIdFromDid(k.did)), false, 'no account is opened for the did:key');
 });
 

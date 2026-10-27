@@ -19,10 +19,15 @@
  *   4. only then put what was written into this server's copy and indexes (`install`).
  * A read that fails writes nothing. A write that fails is followed, still under the lock, by
  * one more read, and what the pod holds then is installed and handed to the caller with the
- * error (`AuthMethodsWriteError.podRecord`: a write the pod applied before failing has landed);
- * if that read fails too the copy is marked stale (`expire`) so the next reader goes to the pod. This server's copy and indexes
- * therefore change only from a record read or written under the lock, and never disagree with
- * the pod for longer than a failed re-read.
+ * error (`AuthMethodsWriteError.podRecord`: a write the pod applied before failing has landed).
+ * This server's copy and indexes therefore change only from a record read or written under the
+ * lock. When that read fails too, the copy is marked stale (`expire`) and kept, with its index
+ * entries: a reader of this account's copy then goes to the pod, but a decision that reads no
+ * account's copy (a sign-in with a wallet or DID no indexed account lists) never would, so until
+ * something reads the account the indexes can miss a credential the pod lists. A caller whose
+ * write may have landed reads the account again itself (server.ts credentialAfterFailedAdd and
+ * claimFirstSignInOnPod), and when it cannot, server.ts has that credential's next sign-in read
+ * the account first (credential-decisions.ts).
  *
  * No server state and no I/O of its own: everything is injected, as in first-sign-in.ts, so
  * the contract is tested without starting server.ts (tests/auth-methods-writer.test.ts).

@@ -198,7 +198,8 @@ const UNLINTED_FRONTIER = {
   // The identity server's one writer of auth-methods.jsonld (auth-methods-writer.ts), its unit
   // suite and a route suite for writes that meet other writers: 233. All lint clean.
   // Play owners' writes go through that writer too, so provisional-play-enrollment.ts is gone: 232.
-  deploy: { errors: 356, files: 232 },
+  // Decisions about one wallet or DID in turn (identity credential-decisions.ts) and its suite: 234.
+  deploy: { errors: 356, files: 234 },
   // The bulk of these are `no-console` in vertical bridges and CLI entry points — one config
   // decision, not a thousand defects. See the note above.
   // ★ 320 -> 337, and the ratchet caught it in CI rather than locally, which is the interesting
