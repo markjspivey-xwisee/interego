@@ -148,7 +148,8 @@ const ALLOW_OPEN_INTROSPECTION = process.env['ALLOW_OPEN_INTROSPECTION'] === '1'
 // DID sign-in transition. A did-sig challenge carries a message naming this server
 // (didSignInMessage), and /auth/did verifies the signature over it. A signature over the bare
 // nonce names no server. While this setting is on, such a signature is still accepted and each
-// one is logged as identity_did_bare_nonce, so the clients still sending one can be found.
+// sign-in made with one is logged as identity_did_bare_nonce, so the clients still sending one
+// can be found.
 // Surrounding whitespace is ignored. Unset, empty or '1': on (the default for now). '0': refused
 // with 401. Any other value stops the server here.
 const DID_ACCEPT_BARE_NONCE = (() => {
@@ -159,8 +160,13 @@ const DID_ACCEPT_BARE_NONCE = (() => {
 })();
 
 // A line break inside a message (a stack trace, or text a caller sent: a display name, a
-// surface hint) continues the entry indented, so nothing a caller sends starts a log line.
-function log(msg: string) { console.log(`[identity] ${msg.replace(/\r\n|\r|\n/g, '\n    ')}`); }
+// surface hint) continues the entry indented, so nothing a caller sends starts a log line. A line
+// break is any character a log reader may end a line at: CRLF, LF, CR, VT, FF, U+001C to U+001E,
+// U+0085, U+2028 and U+2029 (the set Python's str.splitlines uses; JavaScript and Java end lines
+// at some of them). The continuation still carries the caller's text, behind the indent: a line
+// is this server's own only when it starts with "[identity] ".
+const LOG_LINE_BREAK = /\r\n|[\n\r\v\f\x1c-\x1e\x85\u2028\u2029]/g;
+function log(msg: string) { console.log(`[identity] ${msg.replace(LOG_LINE_BREAK, '\n    ')}`); }
 
 /** A request value for one log line: printable ASCII, at most `max` characters, JSON-quoted; '-' when absent. */
 function logValue(value: unknown, max = 120): string {
@@ -476,7 +482,7 @@ function accountHoldsDidKey(m: AuthMethods, did: string, keyFromDid: boolean, pu
 const DID_NOT_REGISTERED = 'This DID is not registered. Sign in with an existing credential for this account and add this DID from there.';
 const DID_KEY_NOT_REGISTERED = 'This DID is not registered with this key, and only a did:key can open an account by itself. Sign in with an existing credential and add this DID from there.';
 const DID_SIGNATURE_FAILED = 'Ed25519 signature verification failed. Sign, with the DID\'s key, the exact UTF-8 bytes of the message that POST /challenges with {"purpose":"did-sig"} returned beside this nonce (LF line breaks, nothing added or removed). The challenge is spent; request a new one.';
-const DID_BARE_NONCE_REFUSED = 'This signature is over the bare nonce, which names no server. POST /challenges with {"purpose":"did-sig"} returns a message beside the nonce: sign its exact UTF-8 bytes and send the signature with that nonce.';
+const DID_BARE_NONCE_REFUSED = 'This signature is over the bare nonce, which names no server. POST /challenges with {"purpose":"did-sig"} returns a message beside a new nonce: sign that message\'s exact UTF-8 bytes and send the signature with its nonce. The challenge is spent; request a new one.';
 // A key of small order (isSmallOrderEd25519Key), from a did:key or publicKeyMultibase: a signature
 // by it can be made without a private key, so it proves nothing.
 const DID_KEY_NOT_USABLE = 'This is not a usable Ed25519 key: it is a point of small order, for which a signature proves nothing. Use a key made by an Ed25519 key generator. The challenge is spent; request a new one.';
@@ -3690,15 +3696,19 @@ app.post('/auth/webauthn/authenticate', authEnrollLimiter, async (req, res) => {
 // ── Generic DID-signature auth (did:key / did:web) ──────────
 
 /**
- * One line per signature over the bare nonce: enough to find the client; never the DID, the
- * nonce, the signature, an invite or a token. Written at the signature check, before the account
- * is resolved, so `accepted` says only that the signature passed under the transition.
+ * One line for a signature over the bare nonce: enough to find the client; never the DID, the
+ * nonce, the signature, an invite or a token. With `signedIn`: a sign-in made with one, written
+ * once the token for that account is issued (`accepted`). A signature refused later on (a key no
+ * account lists for this DID, a pod that cannot be read) signed nobody in and writes no line, as
+ * that refusal does not depend on the setting. Without: the signature, refused at its check
+ * because DID_ACCEPT_BARE_NONCE is 0 (`refused`). No account has been looked up then, so for a
+ * DID that is not a did:key, `derivedUserId` names whatever DID was sent with the caller's key.
  */
-function logBareNonceSignature(req: express.Request, did: string, ch: Challenge, surfaceAgent: unknown): void {
+function logBareNonceSignature(req: express.Request, did: string, ch: Challenge, surfaceAgent: unknown, signedIn?: string): void {
   const method = /^did:([a-z0-9]{1,16}):/.exec(did)?.[1] ?? 'other';
   const surface = surfaceAgent === undefined ? '-'
     : typeof surfaceAgent === 'string' && /^[a-z][a-z0-9-]{0,63}$/.test(surfaceAgent) ? surfaceAgent : 'invalid';
-  log(`WARN identity_did_bare_nonce outcome=${DID_ACCEPT_BARE_NONCE ? 'accepted' : 'refused'} purpose=${ch.purpose === 'did-sig' ? 'did-sig' : 'none'} method=${method} derivedUserId=${deriveUserIdFromDid(did)} surface=${surface} ua=${logValue(req.get('user-agent'))} origin=${logValue(req.get('origin'))}`);
+  log(`WARN identity_did_bare_nonce outcome=${signedIn ? 'accepted' : 'refused'} purpose=${ch.purpose === 'did-sig' ? 'did-sig' : 'none'} method=${method} derivedUserId=${deriveUserIdFromDid(did)} userId=${signedIn ?? '-'} surface=${surface} ua=${logValue(req.get('user-agent'))} origin=${logValue(req.get('origin'))}`);
 }
 
 /**
@@ -3712,8 +3722,9 @@ function logBareNonceSignature(req: express.Request, did: string, ch: Challenge,
  * The signature is checked against the message stored with the challenge,
  * which names this server and carries the nonce. A signature over the bare
  * nonce names no server. It is accepted only while DID_ACCEPT_BARE_NONCE is
- * unset or 1, with Deprecation and Warning headers and an
- * identity_did_bare_nonce log line. With 0 it is refused with 401.
+ * unset or 1, with Deprecation and Warning headers, and a sign-in made with
+ * one logs an identity_did_bare_nonce line naming the account signed in to.
+ * With 0 it is refused with 401, and logged.
  *
  * Body: {
  *   did: string,              // did:key:z... or did:web:...
@@ -3815,7 +3826,8 @@ app.post('/auth/did', authEnrollLimiter, async (req, res) => {
 
   // Verify the Ed25519 signature over the challenge's message, the bytes /challenges handed out.
   // A signature over the bare nonce (all a challenge with no purpose has) names no server: it is
-  // accepted only while DID_ACCEPT_BARE_NONCE allows it, and logged either way.
+  // accepted only while DID_ACCEPT_BARE_NONCE allows it. Refused, it is logged here; accepted, it
+  // is logged once the sign-in is done (logBareNonceSignature).
   //
   // crypto.createPublicKey(...) does ~30ms of native work on the first
   // call in the process (lazy-loads OpenSSL EVP_PKEY + ed25519 curve
@@ -3839,8 +3851,8 @@ app.post('/auth/did', authEnrollLimiter, async (req, res) => {
     return;
   }
   if (proof === 'bare-nonce') {
-    logBareNonceSignature(req, did, ch, surfaceAgent);
     if (!DID_ACCEPT_BARE_NONCE) {
+      logBareNonceSignature(req, did, ch, surfaceAgent);
       res.status(401).json({ error: DID_BARE_NONCE_REFUSED });
       return;
     }
@@ -4080,6 +4092,9 @@ app.post('/auth/did', authEnrollLimiter, async (req, res) => {
   const tokenStart = timingEnabled() ? startTiming() : 0;
   const tokenResponse = await issueTokenResponse(user, surfaceAgent);
   if (timingEnabled()) logTiming('did-issue-token', tokenStart);
+  // Only now: a bare-nonce signature refused on the way here signed nobody in, and the line says
+  // which account this one did.
+  if (proof === 'bare-nonce') logBareNonceSignature(req, did, ch, surfaceAgent, user.id);
   if (timingEnabled()) logTiming('did-total', requestStart);
   res.json(tokenResponse);
 });
@@ -6089,7 +6104,7 @@ app.listen(PORT, () => {
   log(`SIWE domains (first line of a wallet sign-in message): [${[...siweDomainSources()].map(([h, src]) => `${h} (${src})`).join(', ')}]; add a front-end with SIWE_DOMAINS`);
   log(`DID sign-in: did-sig challenges carry a message naming ${BASE_URL_HOST}`);
   if (DID_ACCEPT_BARE_NONCE) {
-    log(`WARN: DID sign-in still accepts a signature over the bare nonce (DID_ACCEPT_BARE_NONCE unset or 1); each is logged as identity_did_bare_nonce. Set DID_ACCEPT_BARE_NONCE=0 to refuse them once no known client is logged.`);
+    log(`WARN: DID sign-in still accepts a signature over the bare nonce (DID_ACCEPT_BARE_NONCE unset or 1); each sign-in made with one is logged as identity_did_bare_nonce. Set DID_ACCEPT_BARE_NONCE=0 to refuse them once no known client is logged.`);
   } else {
     log(`DID sign-in: a signature over the bare nonce is refused (DID_ACCEPT_BARE_NONCE=0)`);
   }

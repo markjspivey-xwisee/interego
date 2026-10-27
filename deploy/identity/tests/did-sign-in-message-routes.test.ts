@@ -8,7 +8,8 @@
  * and carries the nonce, and /auth/did verifies the signature over that text, the bytes stored
  * with the challenge. A signature over the bare nonce is still accepted while
  * DID_ACCEPT_BARE_NONCE is unset or 1, with Deprecation and Warning headers and one
- * `WARN identity_did_bare_nonce` line each, and refused with 401 when it is 0.
+ * `WARN identity_did_bare_nonce` line for each sign-in made with one, naming the account signed
+ * in to, and refused with 401, and logged, when it is 0.
  *
  * Two servers. LENIENT: the setting unset, and a BASE_URL naming a host the tests never connect
  * to, so the host in the message can only have come from configuration. STRICT: the setting 0,
@@ -223,8 +224,11 @@ async function overBareNonce(server: string, key: { did: string; privateKey: cry
 }
 
 const BARE_PREFIX = '[identity] WARN identity_did_bare_nonce ';
-// Split as a log reader may: at CR as well as LF.
-const bareLines = (s: IdentityProcess) => s.sink.text.split(/\r\n|\r|\n/).filter(l => l.startsWith(BARE_PREFIX));
+// Every character a log reader may end a line at (Python's str.splitlines): CRLF, LF, CR, VT, FF,
+// U+001C to U+001E, U+0085, U+2028 and U+2029.
+const READER_BREAKS = ['\r\n', '\n', '\r', '\v', '\f', '\x1c', '\x1d', '\x1e', '\x85', '\u2028', '\u2029'];
+const logLines = (s: IdentityProcess) => s.sink.text.split(/\r\n|[\n\r\v\f\x1c-\x1e\x85\u2028\u2029]/);
+const bareLines = (s: IdentityProcess) => logLines(s).filter(l => l.startsWith(BARE_PREFIX));
 async function waitFor(cond: () => boolean, ms: number, what: string): Promise<void> {
   const deadline = Date.now() + ms;
   while (!cond()) {
@@ -329,7 +333,7 @@ test('a did:web signs in with its publicKeyMultibase by signing the message; ano
   assert.deepEqual(writesTo(webId), []);
 });
 
-test('with the setting on, a signature over the bare nonce still signs in, and each is logged once', async () => {
+test('with the setting on, a signature over the bare nonce still signs in, and each such sign-in is logged once, naming its account', async () => {
   const ua = { 'User-Agent': 'did-sig-probe/1' };
   // A fresh did:key.
   let before = bareLines(lenient).length;
@@ -342,9 +346,9 @@ test('with the setting on, a signature over the bare nonce still signs in, and e
   assert.match(String(r.headers.get('warning')), /bare nonce/);
   let lines = await newBareLines(lenient, before, 1);
   await settle();
-  assert.deepEqual(bareLines(lenient).slice(before), lines, 'one line per signature');
+  assert.deepEqual(bareLines(lenient).slice(before), lines, 'one line per sign-in');
   assert.equal(lines.length, 1);
-  assert.equal(lines[0], `${BARE_PREFIX}outcome=accepted purpose=did-sig method=key derivedUserId=${derived} surface=mcp-client ua="did-sig-probe/1" origin=-`);
+  assert.equal(lines[0], `${BARE_PREFIX}outcome=accepted purpose=did-sig method=key derivedUserId=${derived} userId=${derived} surface=mcp-client ua="did-sig-probe/1" origin=-`);
   // Enough to find the client; never the DID, the nonce, the signature or the token.
   assert.equal(lines[0]!.includes('did:'), false);
   assert.equal(lines[0]!.includes(String(r.json['token'])), false);
@@ -355,8 +359,34 @@ test('with the setting on, a signature over the bare nonce still signs in, and e
   assert.equal(w.status, 200, JSON.stringify(w.json));
   assert.equal(w.json['userId'], webId);
   lines = await newBareLines(lenient, before, 1);
-  assert.equal(lines[0], `${BARE_PREFIX}outcome=accepted purpose=did-sig method=web derivedUserId=${webId} surface=- ua="node" origin=-`);
+  assert.equal(lines[0], `${BARE_PREFIX}outcome=accepted purpose=did-sig method=web derivedUserId=${webId} userId=${webId} surface=- ua="node" origin=-`);
   assert.equal(lines[0]!.includes('owner.example'), false);
+
+  // Another key on that did:web, claiming a known client's surface and user-agent: refused, and
+  // nothing reads as a sign-in, as the line is written only once a token is issued.
+  before = bareLines(lenient).length;
+  const stranger = ed25519();
+  const posed = await overBareNonce(lenient.url, { ...stranger, did: web.did },
+    { publicKeyMultibase: stranger.multibase, surfaceAgent: 'claude-code-vscode' }, { 'User-Agent': 'node' });
+  assert.equal(posed.status, 401, JSON.stringify(posed.json));
+  assert.match(String(posed.json['error']), /not registered with this key/);
+  await settle();
+  assert.deepEqual(bareLines(lenient).slice(before), [], lenient.sink.text);
+
+  // A did:web added with a bearer: the line names the account signed in to, which is not the one
+  // derived from the DID.
+  before = bareLines(lenient).length;
+  const bearerKey = didKey();
+  const bearerAccount = await overMessage(lenient.url, bearerKey);
+  assert.equal(bearerAccount.status, 200, JSON.stringify(bearerAccount.json));
+  const addedKey = ed25519();
+  const addedDid = 'did:web:added-bare.example';
+  const added = await overBareNonce(lenient.url, { ...addedKey, did: addedDid }, { publicKeyMultibase: addedKey.multibase },
+    { Authorization: `Bearer ${String(bearerAccount.json['token'])}` });
+  assert.equal(added.status, 200, JSON.stringify(added.json));
+  assert.equal(added.json['userId'], deriveUserIdFromDid(bearerKey.did));
+  lines = await newBareLines(lenient, before, 1);
+  assert.equal(lines[0], `${BARE_PREFIX}outcome=accepted purpose=did-sig method=web derivedUserId=${deriveUserIdFromDid(addedDid)} userId=${deriveUserIdFromDid(bearerKey.did)} surface=- ua="node" origin=-`);
 
   // A challenge taken with no purpose has no message: the bare nonce is all it can sign.
   before = bareLines(lenient).length;
@@ -383,24 +413,30 @@ test('with the setting on, a signature over the bare nonce still signs in, and e
   assert.match(warning, /bare nonce/);
 });
 
-test('with the setting off, a signature over the bare nonce is refused, and the error says to sign the message', async () => {
+test('with the setting off, a signature over the bare nonce is refused, and the error says to sign a new challenge\'s message', async () => {
   const refusedLines: string[] = [];
   const expectRefused = async (attempt: () => Promise<Reply>) => {
     const before = bareLines(strict).length;
     const r = await attempt();
     assert.equal(r.status, 401, JSON.stringify(r.json));
     assert.match(String(r.json['error']), /bare nonce/);
-    assert.match(String(r.json['error']), /"purpose":"did-sig"/);
+    assert.match(String(r.json['error']), /"purpose":"did-sig"\} returns a message beside a new nonce/);
+    assert.match(String(r.json['error']), / The challenge is spent; request a new one\.$/);
     assert.equal(r.json['token'], undefined);
     const lines = await newBareLines(strict, before, 1);
-    assert.match(lines[0]!, /^\[identity\] WARN identity_did_bare_nonce outcome=refused /);
+    assert.match(lines[0]!, /^\[identity\] WARN identity_did_bare_nonce outcome=refused purpose=\S+ method=\S+ derivedUserId=\S+ userId=- /);
     refusedLines.push(lines[0]!);
   };
   const k = didKey();
   const derived = deriveUserIdFromDid(k.did);
-  await expectRefused(() => overBareNonce(strict.url, k));
+  const spent = await messageChallenge(strict.url);
+  await expectRefused(() => post(strict.url, '/auth/did', { did: k.did, nonce: spent.nonce, signature: sign(spent.nonce, k) }));
   assert.equal(pods.has(derived), false);
   assert.deepEqual(writesTo(derived), []);
+  // As the error says, that challenge is spent: its message, signed now, is too late.
+  const late = await post(strict.url, '/auth/did', { did: k.did, nonce: spent.nonce, signature: sign(spent.message, k) });
+  assert.equal(late.status, 401, JSON.stringify(late.json));
+  assert.equal(late.json['error'], 'Invalid or expired challenge');
 
   // A challenge with no purpose has no message to sign, so it cannot sign in at all.
   const k2 = didKey();
@@ -408,13 +444,19 @@ test('with the setting off, a signature over the bare nonce is refused, and the 
   assert.match(refusedLines[1]!, / purpose=none /);
   assert.deepEqual(writesTo(deriveUserIdFromDid(k2.did)), []);
 
-  // An account that exists.
+  // An account that exists. Refused at the signature check, before any account is looked up, so
+  // another key on the same did:web gets the same line: for a DID that is not a did:key, a refused
+  // line names whatever DID was sent.
   await expectRefused(() => overBareNonce(strict.url, { ...web.owner, did: web.did }, { publicKeyMultibase: web.owner.multibase }));
+  assert.equal(refusedLines[2], `${BARE_PREFIX}outcome=refused purpose=did-sig method=web derivedUserId=${webId} userId=- surface=- ua="node" origin=-`);
+  const other = ed25519();
+  await expectRefused(() => overBareNonce(strict.url, { ...other, did: web.did }, { publicKeyMultibase: other.multibase }));
+  assert.equal(refusedLines[3], refusedLines[2]);
 
   // A surface hint that is not a slug is named as such, and opens nothing.
   const k3 = didKey();
   await expectRefused(() => overBareNonce(strict.url, k3, { surfaceAgent: 'Bad Slug!' }));
-  assert.match(refusedLines[3]!, / surface=invalid /);
+  assert.match(refusedLines[4]!, / surface=invalid /);
   assert.equal(pods.has(deriveUserIdFromDid(k3.did)), false);
   assert.deepEqual(writesTo(deriveUserIdFromDid(k3.did)), []);
 
@@ -546,19 +588,24 @@ test('the startup log names the setting in force, an empty or padded value reads
 
 test('text a caller sends (a DID, a surface hint, a display name) cannot start a line that reads as a bare-nonce signature', async () => {
   const forged = (br: string) => `${br}[identity] WARN identity_did_bare_nonce outcome=accepted`;
-  // Any line that starts as a warning of this server's does.
-  const warnLines = (s: IdentityProcess) => s.sink.text.split(/\r\n|\r|\n/).filter(l => l.startsWith('[identity] WARN')).length;
+  // Any line that starts as a warning of this server's does, split at every break a reader may use.
+  const warnLines = (s: IdentityProcess) => logLines(s).filter(l => l.startsWith('[identity] WARN')).length;
+  // Each request below comes from an address of its own, so the per-IP limits do not run out.
+  let addr = 0;
+  const from = () => ({ 'X-Forwarded-For': `192.0.2.${++addr}` });
   // A DID that is not a did:key, sent with a legacy-form key, is logged before its signature is
   // checked; on STRICT its first 24 characters go into a timing line too, so the break comes
   // straight after the method.
   for (const s of [lenient, strict]) {
     const before = warnLines(s);
-    for (const br of ['\n', '\r', '\r\n']) {
-      const { nonce } = await challenge(s.url);
+    for (const br of READER_BREAKS) {
+      const h = from();
+      const ch = await post(s.url, '/challenges', { purpose: 'did-sig' }, h);
+      assert.equal(ch.status, 200, JSON.stringify(ch.json));
       const r = await post(s.url, '/auth/did', {
-        did: `did:web:${forged(br)}`, nonce, signature: 'AAAA', publicKeyMultibase: ed25519().legacyMultibase,
-      });
-      assert.equal(r.status, 401, JSON.stringify(r.json));
+        did: `did:web:${forged(br)}`, nonce: ch.json['nonce'], signature: 'AAAA', publicKeyMultibase: ed25519().legacyMultibase,
+      }, h);
+      assert.equal(r.status, 401, `${JSON.stringify(br)}: ${JSON.stringify(r.json)}`);
     }
     await settle();
     assert.equal(warnLines(s), before, s.sink.text);
@@ -566,22 +613,25 @@ test('text a caller sends (a DID, a surface hint, a display name) cannot start a
   // Logged when a first sign-in opens an account: the surface hint, the agent id made from it
   // and the display name.
   const before = warnLines(lenient);
-  const opened = await overMessage(lenient.url, didKey(), { surfaceAgent: `x${forged('\n')}`, name: `n${forged('\r')}` });
+  const opened = await overMessage(lenient.url, didKey(), { surfaceAgent: `x${READER_BREAKS.map(forged).join('')}`, name: `n${READER_BREAKS.map(forged).join('')}` }, from());
   assert.equal(opened.status, 200, JSON.stringify(opened.json));
   await settle();
   assert.equal(warnLines(lenient), before, lenient.sink.text);
 
   // A first wallet sign-in logs the surface hint and the agent id made from it as they are, so
-  // there it is log() that writes each line break as an indented continuation.
-  const lines = () => lenient.sink.text.split(/\r\n|\r|\n/);
-  for (const br of ['\n', '\r', '\r\n']) {
+  // there it is log() that writes each line break, of every kind, as an indented continuation.
+  const lines = () => logLines(lenient);
+  for (const br of READER_BREAKS) {
+    const h = from();
     const wallet = Wallet.createRandom();
-    const { nonce } = await challenge(lenient.url, { purpose: 'siwe' });
+    const ch = await post(lenient.url, '/challenges', { purpose: 'siwe' }, h);
+    assert.equal(ch.status, 200, JSON.stringify(ch.json));
+    const nonce = String(ch.json['nonce']);
     const message = [
       `${LENIENT_HOST} wants you to sign in with your Ethereum account:`, wallet.address, '', 'Sign in to Interego.', '',
       `URI: https://${LENIENT_HOST}`, 'Version: 1', 'Chain ID: 1', `Nonce: ${nonce}`, `Issued At: ${new Date().toISOString()}`,
     ].join('\n');
-    const r = await post(lenient.url, '/auth/siwe', { message, signature: await wallet.signMessage(message), nonce, name: 'Wallet', surfaceAgent: `x${forged(br)}` });
+    const r = await post(lenient.url, '/auth/siwe', { message, signature: await wallet.signMessage(message), nonce, name: 'Wallet', surfaceAgent: `x${forged(br)}` }, h);
     assert.equal(r.status, 200, `${JSON.stringify(r.json)}\n${lenient.sink.text}`);
     const userId = String(r.json['userId']);
     const first = `[identity] First-time SIWE registration: ${userId} wallet=${wallet.address.toLowerCase()} defaultAgent=x`;
@@ -593,10 +643,12 @@ test('text a caller sends (a DID, a surface hint, a display name) cannot start a
     ], JSON.stringify(br));
   }
   assert.equal(warnLines(lenient), before, lenient.sink.text);
+  // What reaches stdout is the continuation alone: no character a reader ends a line at but LF.
+  assert.doesNotMatch(lenient.sink.text, /[\r\v\f\x1c-\x1e\x85\u2028\u2029]/);
 });
 
 test('the lines a DID sign-in, a DID added with a bearer and a DID removal write quote what the caller sent', async () => {
-  const lines = () => lenient.sink.text.split(/\r\n|\r|\n/);
+  const lines = () => logLines(lenient);
   const expectLine = async (line: string) => {
     await waitFor(() => lines().includes(line), 2000, `the line ${line}\n${lenient.sink.text}`);
   };
