@@ -173,7 +173,7 @@ describe('★ every other check on the head is the last condition: #707 and #716
   // 2026-10-27: the decision merged both the moment Bridge Typecheck passed, while Mutation Gate
   // and Base without verticals still ran on the same heads. They came back green; a red one would
   // have landed on master with nothing reading it. The words are the ones
-  // tools/wait-for-workflow-run.mjs writes (tests/wait-for-workflow-run.test.ts covers how it
+  // tools/wait-for-workflow-run.mjs writes (wait-for-workflow-run.test.ts beside this file covers how it
   // reaches each one from GitHub's listings).
   it('holds only when every other check concluded success, neutral or skipped, and says what was read', () => {
     const d = autoMergeDecision({ ...all, checks: { result: 'success', gates: true, detail: '14 check run(s) from 8 other workflow run(s) and any other app concluded success, neutral or skipped' } });

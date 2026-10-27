@@ -9,9 +9,9 @@ import { fileURLToPath } from 'node:url';
 import {
   MAX_PAGES, PASSING_CONCLUSIONS, SUITE_WORKFLOW, keepWaiting, listAll, otherChecksState, suiteState, waitForHead,
   type CheckRunLike, type WorkflowRunLike,
-} from '../tools/wait-for-workflow-run.mjs';
-import { retryable } from '../tools/ci-green-for-sha.mjs';
-import { autoMergeDecision } from '../applications/jev-harness/src/auto-merge.js';
+} from '../../../tools/wait-for-workflow-run.mjs';
+import { retryable } from '../../../tools/ci-green-for-sha.mjs';
+import { autoMergeDecision } from '../src/auto-merge.js';
 
 const SELF = 'jev-harness (System One judgments)';
 const self = { name: SELF, status: 'in_progress', conclusion: null };
@@ -54,7 +54,7 @@ describe('when the loop asks again', () => {
 });
 
 describe('the judge workflow runs the wait with the names the tool expects', () => {
-  const read = (rel: string) => readFileSync(fileURLToPath(new URL(`../${rel}`, import.meta.url)), 'utf8');
+  const read = (rel: string) => readFileSync(fileURLToPath(new URL(`../../../${rel}`, import.meta.url)), 'utf8');
   it('names the suite workflow as bridge-typecheck.yml names itself, and its own name as SELF_WORKFLOW', () => {
     const suite = /^name:\s*(.+?)\s*$/m.exec(read('.github/workflows/bridge-typecheck.yml'))?.[1];
     expect(suite).toBe(SUITE_WORKFLOW);
