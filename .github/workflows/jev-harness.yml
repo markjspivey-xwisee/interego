@@ -202,8 +202,9 @@ jobs:
       # ★ And every other check on the head, since 2026-10-27, when #707 and #716 merged with
       # Mutation Gate and Base without verticals still running on them. The same loop lists every
       # workflow run and check run for the head, leaves out this workflow's own by its workflow id
-      # (GITHUB_RUN_ID names the run; a name is not an id), keeps the latest attempt of each, reads
-      # them again on every poll, and writes a second word, `checks` (success, failure, timeout,
+      # (GITHUB_RUN_ID names the run; a name is not an id), reads each run by its own conclusion
+      # (an older run's red answered only by a newer run made after it finished that ran its red
+      # jobs again), reads them again on every poll, and writes a second word, `checks` (success, failure, timeout,
       # untrusted, error, and pending only when advisory), with `checks_detail` naming what failed
       # or was still running. One deadline for both: the fifty minutes below. On 2026-10-26 and
       # 27 Mutation Gate's 63 successful runs (of 66) took 18 to 47 minutes from the push, median

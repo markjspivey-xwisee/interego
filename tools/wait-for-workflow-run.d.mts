@@ -31,6 +31,13 @@ export interface WorkflowRunLike {
   readonly status?: string | null;
   readonly conclusion?: string | null;
   readonly created_at?: string;
+  /** When the run last changed: once it has concluded, when it finished (a re-run moves it on).
+   *  What did not pass is answered only by a run of its group made after this. */
+  readonly updated_at?: string;
+  /** Not read: a run's own conclusion is its latest try's, which is what the wait reads. */
+  readonly run_attempt?: number;
+  /** Not read, for the same reason. */
+  readonly run_started_at?: string;
   readonly html_url?: string;
 }
 
@@ -40,7 +47,11 @@ export interface CheckRunLike {
   readonly name?: string;
   readonly status?: string | null;
   readonly conclusion?: string | null;
+  /** Read only for another app's check: whether a later check run of its name started after a
+   *  red one concluded. An Actions job's run decides for it. */
   readonly started_at?: string | null;
+  /** When it concluded: read for another app's check, and to say when a run finished when its
+   *  listing gives no updated_at. */
   readonly completed_at?: string | null;
   readonly html_url?: string | null;
   readonly details_url?: string | null;

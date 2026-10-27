@@ -62,9 +62,10 @@
  *      back green; a red one would have landed on master with nothing reading it. The same
  *      wait, against the same deadline (no second budget), now also lists every workflow run
  *      and check run GitHub holds for the head, leaves out this workflow's own by its workflow
- *      id (never by name), reads the latest attempt of each check by name (an earlier run's
- *      check of another name still counts, and an earlier run's red waits for a newer run of
- *      its workflow for the same event that has not concluded), reads them again on every poll
+ *      id (never by name), reads each workflow run by its own conclusion (a run that did not
+ *      pass is answered only by a newer run of its workflow for its event, made after it
+ *      finished, that ran its red jobs again; a dispatch only by its own re-run) and another
+ *      app's check run by itself, reads them again on every poll
  *      until the wait returns (only a red check or a refused listing is kept), and hands the
  *      decision a second word: success holds (each concluded success, neutral or skipped);
  *      failure (one concluded failure, cancelled, timed_out, action_required, startup_failure
