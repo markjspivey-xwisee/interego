@@ -49,7 +49,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const ROOT = fileURLToPath(new URL('..', import.meta.url));
+const ROOT = fileURLToPath(new URL('../../..', import.meta.url));
 const read = (path: string): string => readFileSync(join(ROOT, path), 'utf8');
 
 const WORKFLOW = read('.github/workflows/build-ghcr.yml');
