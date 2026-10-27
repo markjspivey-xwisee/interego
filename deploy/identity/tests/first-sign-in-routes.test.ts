@@ -106,26 +106,6 @@ const planted = Wallet.createRandom();
 // wallet only: what a first sign-in opened before sign-ins waited for every account to load,
 // while the passkey account was not loaded. Both are listed.
 const openedBeside = { wallet: Wallet.createRandom(), ownerId: 'u-pk-0000000000a1' };
-// Credentials a record drops without this server seeing it (the other instance removes them
-// while a deploy overlaps the two, or an operator removes them by hand). Every account here is
-// listed and loaded with the credential; a test then takes it off the pod.
-const dropped = {
-  // A wallet one account lists, not the account derived from it.
-  single: { wallet: Wallet.createRandom(), ownerId: 'u-pk-0000000000b1' },
-  // A wallet its owner and the account derived from it list; it goes off the derived one.
-  pair: { wallet: Wallet.createRandom(), ownerId: 'u-pk-0000000000b2' },
-  // A wallet two accounts list, neither derived from it; it goes off one of them.
-  either: { wallet: Wallet.createRandom(), keptId: 'a-dropped-holder-1', droppedId: 'b-dropped-holder-2' },
-  // A did:key its owner and the account derived from it list; it goes off the derived one.
-  didKey: { key: didKey(), ownerId: 'u-pk-0000000000b3' },
-  // A did:web one account lists with its key.
-  didWeb: { did: 'did:web:dropped.example', key: ed25519(), ownerId: 'u-pk-0000000000b4' },
-};
-const holding = (userId: string, credential: { wallet?: string; didKey?: ReturnType<typeof didWebKey> }, passkeyId?: string) => ({
-  userId, name: userId, walletAddresses: credential.wallet ? [credential.wallet] : [],
-  didKeys: credential.didKey ? [credential.didKey] : [], webAuthnCredentials: passkeyId ? [passkey(passkeyId)] : [],
-});
-const droppedDidKey = didWebKey(dropped.didKey.key.did, dropped.didKey.key.did.slice('did:key:'.length));
 
 // ── Pods ──
 const pods = new Map<string, Record<string, unknown>>([
@@ -176,23 +156,12 @@ const pods = new Map<string, Record<string, unknown>>([
     walletAddresses: [openedBeside.wallet.address.toLowerCase()], webAuthnCredentials: [passkey('cred-opened-beside')] }],
   [walletUser(openedBeside.wallet), { userId: walletUser(openedBeside.wallet), name: 'New', didKeys: [], webAuthnCredentials: [],
     walletAddresses: [openedBeside.wallet.address.toLowerCase()] }],
-  [dropped.single.ownerId, holding(dropped.single.ownerId, { wallet: dropped.single.wallet.address.toLowerCase() }, 'cred-dropped-single')],
-  [dropped.pair.ownerId, holding(dropped.pair.ownerId, { wallet: dropped.pair.wallet.address.toLowerCase() }, 'cred-dropped-pair')],
-  [walletUser(dropped.pair.wallet), holding(walletUser(dropped.pair.wallet), { wallet: dropped.pair.wallet.address.toLowerCase() })],
-  [dropped.either.keptId, holding(dropped.either.keptId, { wallet: dropped.either.wallet.address.toLowerCase() })],
-  [dropped.either.droppedId, holding(dropped.either.droppedId, { wallet: dropped.either.wallet.address.toLowerCase() }, 'cred-dropped-either')],
-  [dropped.didKey.ownerId, holding(dropped.didKey.ownerId, { didKey: droppedDidKey }, 'cred-dropped-didkey')],
-  [didUser(dropped.didKey.key), holding(didUser(dropped.didKey.key), { didKey: droppedDidKey })],
-  [dropped.didWeb.ownerId, holding(dropped.didWeb.ownerId, { didKey: didWebKey(dropped.didWeb.did, dropped.didWeb.key.multibase) },
-    'cred-dropped-didweb')],
 ]);
 // Only these are in the root listing, so only these load at startup.
 const listed = new Set([walletUser(wallets.passkeyOnly), didUser(dids.passkeyOnly), sharedWeb.ownerId, walletUser(sharedWallet),
   didUser(sharedDidKey), crowdedWeb.ownerId, ...crowdedWeb.others.map(o => o.id), ...strandedHolders, walletUser(planted),
   ...[derivedUnreadable, derivedUnlisted].flatMap(d => [d.walletOther, d.didKeyOther]),
-  openedBeside.ownerId, walletUser(openedBeside.wallet),
-  dropped.single.ownerId, dropped.pair.ownerId, walletUser(dropped.pair.wallet), dropped.either.keptId, dropped.either.droppedId,
-  dropped.didKey.ownerId, didUser(dropped.didKey.key), dropped.didWeb.ownerId]);
+  openedBeside.ownerId, walletUser(openedBeside.wallet)]);
 const unreadable = new Set([walletUser(wallets.unreadable), didUser(dids.unreadable),
   walletUser(derivedUnreadable.wallet), didUser(derivedUnreadable.didKey)]);
 // Pods a test makes unreadable for a while (a CSS blip), after startup has loaded the rest.
@@ -612,57 +581,4 @@ test('a wallet signature replayed to the retired /siwe/verify gets no token', as
   assert.equal(replay.status, 410, JSON.stringify(replay.json));
   assert.equal(replay.json['token'], undefined);
   assert.equal(replay.json['userId'], undefined);
-});
-
-test('a credential a record dropped unseen here signs in there no more, and no sign-in writes it back', async () => {
-  // This server loaded every account below with the credential, and its index still has it.
-  // A sign-in used to take the index's word for the account, and then "add" the credential to
-  // it, which wrote back what the record had dropped: a wallet removed as compromised was signed
-  // in with and restored by whoever held it, existingOnly included, and a hand removal from a
-  // holder that is not the owner's was undone by the owner's next sign-in.
-  const { single, pair, either, didKey: dk, didWeb: web } = dropped;
-  const drop = (userId: string, field: 'walletAddresses' | 'didKeys') => pods.set(userId, { ...pods.get(userId)!, [field]: [] });
-  drop(single.ownerId, 'walletAddresses');
-  drop(walletUser(pair.wallet), 'walletAddresses');
-  drop(either.droppedId, 'walletAddresses');
-  drop(didUser(dk.key), 'didKeys');
-  drop(web.ownerId, 'didKeys');
-  const untouched = [single.ownerId, walletUser(pair.wallet), either.droppedId, didUser(dk.key), web.ownerId];
-  const before = untouched.map(id => JSON.stringify(pods.get(id)));
-  // Wait out the auth-methods cache: the records are read again from their pods.
-  await new Promise(resolve => setTimeout(resolve, 10_500));
-
-  // The one account that listed the wallet lists it no more: for an existing account only, the
-  // wallet is not registered; otherwise it opens the account derived from it, as a wallet no
-  // account lists does.
-  const existing = await siwe(single.wallet, { existingOnly: true });
-  assert.equal(existing.status, 401, `${JSON.stringify(existing.json)}\n${output}`);
-  assert.equal(existing.json['error'], 'This wallet is not registered. Sign in with an existing credential for the requested account.');
-  const opened = await siwe(single.wallet);
-  assert.equal(opened.status, 200, `${JSON.stringify(opened.json)}\n${output}`);
-  assert.equal(opened.json['userId'], walletUser(single.wallet));
-
-  // The derived account, preferred while it listed the wallet, no longer does: its owner signs in.
-  for (const extra of [{}, { existingOnly: true }]) {
-    const r = await siwe(pair.wallet, extra);
-    assert.equal(r.status, 200, `${JSON.stringify(r.json)}\n${output}`);
-    assert.equal(r.json['userId'], pair.ownerId);
-  }
-  // Two holders were one too many; one of them dropped it, so the other signs in.
-  const kept = await siwe(either.wallet);
-  assert.equal(kept.status, 200, `${JSON.stringify(kept.json)}\n${output}`);
-  assert.equal(kept.json['userId'], either.keptId);
-
-  // The same for DIDs: the did:key goes to its owner, and the did:web signs in nowhere.
-  const owner = await didSignIn(dk.key);
-  assert.equal(owner.status, 200, `${JSON.stringify(owner.json)}\n${output}`);
-  assert.equal(owner.json['userId'], dk.ownerId);
-  const nowhere = await didSignIn({ did: web.did, privateKey: web.key.privateKey }, { publicKeyMultibase: web.key.multibase });
-  assert.equal(nowhere.status, 401, `${JSON.stringify(nowhere.json)}\n${output}`);
-  assert.equal(nowhere.json['token'], undefined);
-
-  // A deferred write lands after its response; give it the time one takes.
-  await new Promise(resolve => setTimeout(resolve, 300));
-  for (const id of [...untouched, pair.ownerId, either.keptId, dk.ownerId]) assert.deepEqual(writesTo(id), [], id);
-  assert.deepEqual(untouched.map(id => JSON.stringify(pods.get(id))), before);
 });

@@ -2700,37 +2700,6 @@ function walletAccount(addr: string): WalletAccount {
   return { kind: 'ambiguous', holders: holders.length };
 }
 
-/**
- * walletAccount's answer as the holders' records have it, for a sign-in. A record can drop the
- * wallet without this server seeing it (the other instance removes it while a deploy overlaps
- * the two, or an operator removes it by hand), so each holder the answer rests on is read again
- * (readAuthMethods: from its pod once this server's copy is 10 s old). One whose record no
- * longer lists the wallet drops out of the index, and the choice is made again: the wallet signs
- * in there no more, and nothing writes it back. The derived account may list the wallet without
- * being loaded, so it is loaded before another answer is acted on; 'unreadable': it could not be.
- */
-async function walletSignInAccount(addr: string): Promise<WalletAccount | 'unreadable'> {
-  const derivedId = deriveUserIdFromWallet(addr);
-  // A pass that does not return dropped a holder from the index (a record and its index entries
-  // are set together), so this ends; the bound only keeps a disagreement between them from
-  // spinning.
-  for (let pass = 0; pass <= MAX_HOLDERS; pass++) {
-    let account = walletAccount(addr);
-    if (account.kind === 'ambiguous' || (account.kind === 'one' && account.userId !== derivedId)) {
-      if (await ensureAccountLoaded(derivedId) === 'unreadable') return 'unreadable';
-      account = walletAccount(addr);
-    }
-    if (account.kind === 'none') return account;
-    const holders = account.kind === 'one' ? [account.userId] : walletIndex.candidates(addr, derivedId).slice(0, MAX_HOLDERS);
-    let dropped = false;
-    for (const id of holders) {
-      if (!(await readAuthMethods(id)).walletAddresses.some(a => a.toLowerCase() === addr)) dropped = true;
-    }
-    if (!dropped) return account;
-  }
-  return 'unreadable';
-}
-
 const WALLET_AMBIGUOUS = {
   error: 'This wallet is listed on more than one account',
   detail: 'More than one account lists it, and this server cannot tell which account is yours. Nothing was changed.',
@@ -2853,12 +2822,15 @@ app.post('/auth/siwe', authEnrollLimiter, async (req, res) => {
   // in to the one derived from it, or to none (walletAccount). The index holds loaded accounts
   // only, and the derived account may list the wallet without being loaded: load it before
   // signing in to another account or refusing several, or the wallet would move to it once it
-  // loads. A holder whose record no longer lists the wallet is not one (walletSignInAccount). A
-  // pod that cannot be read signs nobody in.
-  const indexed = await walletSignInAccount(recoveredAddress);
-  if (indexed === 'unreadable') {
-    res.status(503).json({ error: 'Could not read this account just now', detail: 'Nothing was changed; try signing in again in a minute.' });
-    return;
+  // loads. A pod that cannot be read signs nobody in.
+  const derivedWalletUserId = deriveUserIdFromWallet(recoveredAddress);
+  let indexed = walletAccount(recoveredAddress);
+  if (indexed.kind === 'ambiguous' || (indexed.kind === 'one' && indexed.userId !== derivedWalletUserId)) {
+    if (await ensureAccountLoaded(derivedWalletUserId) === 'unreadable') {
+      res.status(503).json({ error: 'Could not read this account just now', detail: 'Nothing was changed; try signing in again in a minute.' });
+      return;
+    }
+    indexed = walletAccount(recoveredAddress);
   }
   if (indexed.kind === 'ambiguous') {
     refuseAmbiguousWallet(res, indexed);
@@ -2866,9 +2838,6 @@ app.post('/auth/siwe', authEnrollLimiter, async (req, res) => {
   }
   let userId: string | undefined = indexed.kind === 'one' ? indexed.userId : undefined;
   let user = userId ? identities.get(userId) : undefined;
-  // Set only where a bearer adds the wallet to its own account; every other account here lists
-  // it already, and a sign-in writes nothing to it.
-  let adding = false;
   // A sign-in to an account that already lists the wallet, and nothing else (the relay's
   // /sign-action page): it opens no account, adds the wallet to none and claims no invite, but
   // still finds the account the first-time path below would find.
@@ -2898,7 +2867,6 @@ app.post('/auth/siwe', authEnrollLimiter, async (req, res) => {
           refuseAmbiguousWallet(res, holder.account);
           return;
         }
-        adding = holder.kind === 'free';
         userId = holder.kind === 'held' && holder.account.kind === 'one' ? holder.account.userId : tr.record!.userId;
         user = identities.get(userId);
       }
@@ -3006,11 +2974,11 @@ app.post('/auth/siwe', authEnrollLimiter, async (req, res) => {
     // would become negative" on /profile/card) and a ~10s 404 window for
     // any client polling those URLs immediately after auth.
     if (outcome.kind === 'created') log(`First-time SIWE registration: ${targetUserId} wallet=${recoveredAddress} defaultAgent=${agentId} (surfaceHint=${surfaceAgent ?? 'none'})`);
-  } else if (adding) {
+  } else {
     // Add-wallet (authenticated) path — append if not already bound.
     try {
       await commitCredentialEnrollment(user.id, 'siwe-add-wallet', methods => {
-        if (methods.walletAddresses.some(a => a.toLowerCase() === recoveredAddress)) return false;
+        if (methods.walletAddresses.includes(recoveredAddress)) return false;
         methods.walletAddresses.push(recoveredAddress);
       });
     } catch (err) {
@@ -3730,27 +3698,24 @@ app.post('/auth/did', authEnrollLimiter, async (req, res) => {
   const didHolders = allDidHolders.slice(0, MAX_HOLDERS);
   let userId: string | undefined;
   let user: Identity | undefined;
-  // Set only where a bearer adds the DID to its own account; every other account here lists it
-  // already, and a sign-in writes nothing to it.
-  let adding = false;
-  if (didHolders.length) {
-    // Sign in to the first account whose record lists the DID with the key that signed. A did:key
-    // is its own key: every account listing it was bound by that key's holder. For a DID that is
-    // not, the signature proved only that the caller holds the key it sent, so another account
-    // listing the DID with a key of its own choosing can neither take this sign-in nor block it.
-    // Each record is read again (readAuthMethods: from its pod once this server's copy is 10 s
-    // old), as a record can drop the DID unseen here (the other instance removes it while a
-    // deploy overlaps the two, or an operator by hand): such a holder drops out of the index and
-    // is passed over, and nothing writes the DID back. An unreadable pod is judged by the record
-    // read before it; with none, it lists no key, so it refuses rather than trusting the DID.
+  if (keyFromDid) {
+    // A did:key is its own key: every account listing it was bound by that key's holder.
+    userId = didHolders[0];
+    user = userId ? identities.get(userId) : undefined;
+  } else if (didHolders.length) {
+    // The DID string names the account; for a DID that is not its own key, the signature proved
+    // only that the caller holds the key it sent. Sign in to the first account that holds that
+    // key for this DID: another account listing the DID with a key of its own choosing can
+    // neither take this sign-in nor block it. An unreadable pod gives no keys, so it refuses
+    // rather than trusting the DID.
     for (const id of didHolders) {
-      if (accountHoldsDidKey(await readAuthMethods(id), did, keyFromDid, publicKeyRaw)) {
+      if (accountHoldsDidKey(await readAuthMethods(id, /* allowStale */ true), did, keyFromDid, publicKeyRaw)) {
         userId = id;
         user = identities.get(id);
         break;
       }
     }
-    if (!user && !keyFromDid) {
+    if (!user) {
       // None of them; the owner's account may be the one derived from the DID, not loaded yet.
       // A pod that cannot be read signs nobody in.
       const derived = didHolders.includes(derivedDidUserId) ? 'absent' : await ensureAccountLoaded(derivedDidUserId);
@@ -3758,7 +3723,7 @@ app.post('/auth/did', authEnrollLimiter, async (req, res) => {
         res.status(503).json({ error: 'Could not read this account just now', detail: 'Nothing was changed; try signing in again in a minute.' });
         return;
       }
-      if (derived !== 'loaded' || !accountHoldsDidKey(await readAuthMethods(derivedDidUserId), did, keyFromDid, publicKeyRaw)) {
+      if (derived !== 'loaded' || !accountHoldsDidKey(await readAuthMethods(derivedDidUserId, /* allowStale */ true), did, keyFromDid, publicKeyRaw)) {
         // While some account is not loaded, the one listing the DID with this key may be it.
         if (!accountIndexState.complete) refuseWhileLoading(res, 'DID');
         else res.status(401).json({ error: DID_KEY_NOT_REGISTERED });
@@ -3777,7 +3742,6 @@ app.post('/auth/did', authEnrollLimiter, async (req, res) => {
       if (tr.valid) {
         userId = tr.record!.userId;
         user = identities.get(userId);
-        adding = true;
       }
     }
     // A DID that is not a did:key is bound with a key the caller holds, which need not be the
@@ -3907,7 +3871,7 @@ app.post('/auth/did', authEnrollLimiter, async (req, res) => {
     // Single authoritative pod-side writer is the relay's /oauth/verify
     // handler. See SIWE first-touch comment above for background.
     if (outcome.kind === 'created') log(`First-time DID registration: ${targetUserId} did=${did} defaultAgent=${agentId} (surfaceHint=${surfaceAgent ?? 'none'})`);
-  } else if (adding) {
+  } else {
     // Add-did (authenticated) path — append if not already bound.
     try {
       await commitCredentialEnrollment(user.id, 'did-add-did', methods => {
