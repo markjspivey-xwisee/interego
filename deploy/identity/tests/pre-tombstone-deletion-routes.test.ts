@@ -9,7 +9,9 @@
  * sign-in that derived the same id again created the account over it and inherited all of
  * that. A derived id whose pod looks deleted is now refused (409) and given its tombstone; a
  * brand-new account pays one HEAD, a live account is never probed, a seeded id claimed with
- * its invite is not probed, and a pod that cannot be read is 503 with nothing written.
+ * its invite is not probed, and a pod that cannot be read is 503 with nothing written. For a
+ * wallet or did:key pod only the relay's card counts: a manifest or descriptors a bridge
+ * published into the signer's pod, with no account here, do not lock that signer out.
  *
  * Run:
  *   node --test --import tsx tests/pre-tombstone-deletion-routes.test.ts
@@ -254,24 +256,64 @@ test('u-eth: the deleted shape (relay files kept, agents gone, no record) is ref
   const w = Wallet.createRandom();
   const id = walletUser(w);
   deletedBeforeTombstones(id);
+  const since = requests.length;
   const r = await siwe(w);
   assert.equal(r.status, 409, `${JSON.stringify(r.json)}\n${output}`);
   assert.match(String(r.json['error']), DELETED);
   assert.ok(isTombstone(id));
-  assert.match(output, new RegExp(`WARN identity_deleted_before_tombstone userId=${id} evidence=profile/card,\\.well-known/context-graphs,context-graphs/`));
+  assert.match(output, new RegExp(`WARN identity_deleted_before_tombstone userId=${id} evidence=profile/card refused=deleted`));
+  // The pod root, then agents and the card: nothing else in the pod is asked about.
+  assert.deepEqual(probesOf(id, since).sort(), [`/${id}/`, `/${id}/agents`, `/${id}/profile/card`]);
 });
 
-test('u-eth: one of the card, the manifest or the descriptors is enough', async () => {
-  for (const kept of ['profile/card', '.well-known/context-graphs', 'context-graphs/a-descriptor.ttl']) {
+test('u-eth: the relay\'s card alone is enough', async () => {
+  const w = Wallet.createRandom();
+  const id = walletUser(w);
+  containers.add(id);
+  files.add(`/${id}/profile/card`);
+  files.add(`/${id}/inbox/old.jsonld`);
+  const r = await siwe(w);
+  assert.equal(r.status, 409, JSON.stringify(r.json));
+  assert.ok(isTombstone(id));
+});
+
+// What a bridge holding the gate's write secret leaves in a signer's own pod when it publishes
+// there with no identity account involved: publish() writes the manifest and the descriptor
+// files, and nothing writes agents or the card. Foxxi's self-sovereign enrolment does this for
+// the u-eth- spelling of a wallet's pod (foxxi/tenant-membership*); credential issuance and
+// publish_ontology publish under context-graphs/.
+const BRIDGE_PUBLISHED = [
+  ['.well-known/context-graphs', 'foxxi/tenant-membership.ttl', 'foxxi/tenant-membership-graph.trig'],
+  ['.well-known/context-graphs', 'context-graphs/credential.ttl', 'context-graphs/credential-graph.trig'],
+];
+
+test('u-eth: a pod a bridge published into, with no card and no agents, is its wallet\'s: the first sign-in opens the account', async () => {
+  for (const shape of BRIDGE_PUBLISHED) {
     const w = Wallet.createRandom();
     const id = walletUser(w);
     containers.add(id);
-    files.add(`/${id}/${kept}`);
-    files.add(`/${id}/inbox/old.jsonld`);
-    const r = await siwe(w);
-    assert.equal(r.status, 409, `${kept}: ${JSON.stringify(r.json)}`);
-    assert.ok(isTombstone(id), kept);
+    for (const f of shape) files.add(`/${id}/${f}`);
+    const first = await siwe(w);
+    assert.equal(first.status, 200, `${shape.join(' ')}: ${JSON.stringify(first.json)}\n${output}`);
+    assert.equal(first.json['userId'], id);
+    assert.ok(first.json['token']);
+    assert.equal(isTombstone(id), false, JSON.stringify(docs.get(id)));
+    assert.deepEqual(docs.get(id)!['walletAddresses'], [w.address.toLowerCase()]);
+    assert.doesNotMatch(output, new RegExp(`identity_deleted_before_tombstone userId=${id}`));
+    const again = await siwe(w);
+    assert.equal(again.status, 200, JSON.stringify(again.json));
   }
+});
+
+test('did:key: a pod a bridge published into, with no card and no agents, is its key\'s', async () => {
+  const k = didKey();
+  const id = deriveUserIdFromDid(k.did);
+  containers.add(id);
+  for (const f of BRIDGE_PUBLISHED[1]!) files.add(`/${id}/${f}`);
+  const r = await didSignIn(k);
+  assert.equal(r.status, 200, `${JSON.stringify(r.json)}\n${output}`);
+  assert.equal(r.json['userId'], id);
+  assert.equal(isTombstone(id), false);
 });
 
 test('u-eth: a record without credentials over the deleted shape keeps its epoch above the old one', async () => {

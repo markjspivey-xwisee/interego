@@ -846,10 +846,18 @@ async function putPodAuthMethods(userId: string, methods: AuthMethods, opts: { i
 //     id twice (every registration makes a new one), so no owner is turned away, and a
 //     container exists only because an account with this id was written, or attempted, before.
 //   - u-eth- / u-did-: <pod>/agents is gone (only a deletion removes it) while the relay's
-//     first-touch card, the manifest or the descriptors remain. A pod whose agents registry is
-//     still there lost only its sign-in record (a write before 2026-10-24 that never landed);
+//     profile/card remains. The relay writes that card only at its first touch of a pod, after
+//     this server issued a token for that very id (/oauth/verify, or lazy init for the token's
+//     own pod), so the card shows that an account here used the pod. Nothing else in the pod
+//     does: every publish() writes the manifest (.well-known/context-graphs) and context-graphs/,
+//     and a bridge holding the gate's write secret publishes into a signer's own u-eth- pod with
+//     no account here at all (Foxxi self-enrolment, credential issuance, publish_ontology), so
+//     counting them locked such a wallet out at its first sign-in. A pod whose agents registry
+//     is still there lost only its sign-in record (a write before 2026-10-24 that never landed);
 //     its owner, holding the same wallet or key, signs in to it as before. The inbox does not
-//     count: anyone can deliver to a pod, and these ids follow from a public address or key.
+//     count either: anyone can deliver to a pod, and these ids follow from a public address or
+//     key. A pod deleted before the relay wrote cards (2026-06-04), or never connected to it,
+//     shows nothing and opens again, as it did before.
 // Yes: the sign-in is refused as deleted (409) and the tombstone written (identity_deleted_
 // before_tombstone in the log), so the next attempt reads it and asks nothing. A probe that
 // cannot be answered is 'unreadable' (503), never a new account. A brand-new account pays one
@@ -861,21 +869,16 @@ const DERIVED_USER_ID = /^u-(pk|eth|did)-[0-9a-f]{12}$/;
  * it, or null when nothing does. `existing` is the pod's record without credentials, or null
  * when it has none. Throws PodReadError when a probe cannot be answered.
  */
-async function deletedBeforeTombstones(userId: string, existing: AuthMethods | null): Promise<string[] | null> {
+async function deletedBeforeTombstones(userId: string, existing: AuthMethods | null): Promise<string | null> {
   const pod = `${CSS_URL}${userId}/`;
   // A record lies in its container, so only a pod without one is asked whether it exists.
   if (existing === null && !(await podResourceExists(podFetch, pod))) return null;
-  if (userId.startsWith('u-pk-')) return [existing === null ? 'container' : 'auth-methods.jsonld without credentials'];
-  const [agents, card, manifest, descriptors] = await Promise.all([
+  if (userId.startsWith('u-pk-')) return existing === null ? 'container' : 'auth-methods.jsonld without credentials';
+  const [agents, card] = await Promise.all([
     podResourceExists(podFetch, `${pod}agents`),
     podResourceExists(podFetch, `${pod}profile/card`),
-    podResourceExists(podFetch, `${pod}.well-known/context-graphs`),
-    podResourceExists(podFetch, `${pod}context-graphs/`),
   ]);
-  if (agents) return null;
-  const evidence = [card && 'profile/card', manifest && '.well-known/context-graphs', descriptors && 'context-graphs/']
-    .filter((e): e is string => typeof e === 'string');
-  return evidence.length > 0 ? evidence : null;
+  return !agents && card ? 'profile/card' : null;
 }
 
 /**
@@ -897,19 +900,19 @@ async function claimFirstSignInOnPod(
   derived = false,
 ): Promise<FirstSignInOutcome<AuthMethods>> {
   const probe = derived && DERIVED_USER_ID.test(userId);
-  let evidence: string[] = [];
+  let evidence: string | null = null;
   const outcome = await withIdentityPodMutex(userId, () => claimFirstSignIn<AuthMethods>({
     mayCreate,
     closed: isTombstone,
     ...(probe ? {
       vacated: async (existing: AuthMethods | null) => {
-        evidence = (await deletedBeforeTombstones(userId, existing)) ?? [];
-        return evidence.length > 0;
+        evidence = await deletedBeforeTombstones(userId, existing);
+        return evidence !== null;
       },
       // Still under the mutex. A pod that had no record gets the tombstone only if none has
       // appeared since (If-None-Match: *), so a record another writer made is never replaced.
       retire: async (existing: AuthMethods | null) => {
-        log(`WARN identity_deleted_before_tombstone userId=${userId} evidence=${evidence.join(',')} refused=deleted`);
+        log(`WARN identity_deleted_before_tombstone userId=${userId} evidence=${evidence} refused=deleted`);
         try {
           await putPodAuthMethods(userId, deletionTombstone(userId, existing?.sessionEpoch ?? 0), { ifAbsent: existing === null });
         } catch (err) {
