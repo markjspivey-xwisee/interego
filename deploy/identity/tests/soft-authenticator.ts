@@ -6,6 +6,7 @@
 
 import * as crypto from 'node:crypto';
 import { deriveUserIdFromCredentialId } from '../derive-userid.js';
+import { publicJwk } from './public-jwk.js';
 
 // Just enough CBOR for an attestation object and a COSE key: maps, text, bytes, small ints.
 function cbor(v: unknown): Buffer {
@@ -22,7 +23,7 @@ function cbor(v: unknown): Buffer {
 /** A passkey: a credential id (any bytes the authenticator chooses) and its own P-256 key. */
 export function softPasskey(rawId: Buffer = crypto.randomBytes(16)) {
   const { publicKey, privateKey } = crypto.generateKeyPairSync('ec', { namedCurve: 'P-256' });
-  const jwk = publicKey.export({ format: 'jwk' });
+  const jwk = publicJwk(publicKey);
   const cose = cbor(new Map<number, unknown>([[1, 2], [3, -7], [-1, 1],
     [-2, Buffer.from(jwk.x!, 'base64url')], [-3, Buffer.from(jwk.y!, 'base64url')]]));
   const id = rawId.toString('base64url');
@@ -36,7 +37,7 @@ export type SoftPasskey = ReturnType<typeof softPasskey>;
  * its encoding, and registration stores the map in the order it was sent.
  */
 export function recoded(key: SoftPasskey, how: 'reordered' | 'extra-label'): Buffer {
-  const jwk = crypto.createPublicKey(key.privateKey).export({ format: 'jwk' });
+  const jwk = publicJwk(key.privateKey);
   const x = Buffer.from(jwk.x!, 'base64url');
   const y = Buffer.from(jwk.y!, 'base64url');
   return cbor(new Map<number, unknown>(how === 'reordered'

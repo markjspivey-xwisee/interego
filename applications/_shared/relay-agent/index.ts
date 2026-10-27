@@ -15,8 +15,9 @@
  *
  *   1. POST /register (dynamic client registration) -> client_id
  *   2. GET /authorize with PKCE -> a page whose inline script carries PENDING_ID and IDENTITY
- *   3. POST {IDENTITY}/challenges {purpose: "did-sig"} -> nonce
- *   4. sign the UTF-8 nonce with Ed25519, base64url
+ *   3. POST {IDENTITY}/challenges {purpose: "did-sig"} -> nonce, and from a server that names
+ *      itself in the proof, the exact text to sign as `message`
+ *   4. sign that text (the nonce when there is no `message`) as UTF-8 with Ed25519, base64url
  *   5. POST /oauth/verify {pending_id, method: "did", did, nonce, signature, publicKeyMultibase}
  *      -> redirect carrying ?code
  *   6. POST /token (authorization_code + PKCE) -> access_token, expires_in
@@ -81,9 +82,19 @@ export function generateAgentKeyJwk(): JsonWebKey {
   return privateKey.export({ format: 'jwk' }) as JsonWebKey;
 }
 
-/** The identity server verifies crypto.verify(null, utf8(nonce), key, sig): sign exactly that. */
-export function signNonce(key: AgentKey, nonce: string): string {
-  return Buffer.from(edSign(null, Buffer.from(nonce, 'utf8'), key.privateKey)).toString('base64url');
+/** An Ed25519 signature over the UTF-8 bytes of `text`, base64url: what /auth/did verifies. */
+export function signNonce(key: AgentKey, text: string): string {
+  return Buffer.from(edSign(null, Buffer.from(text, 'utf8'), key.privateKey)).toString('base64url');
+}
+
+/**
+ * The text a did-sig challenge asks the key to sign. An identity server that names itself in
+ * the proof returns that text as a string `message` beside the nonce; it is signed exactly as
+ * sent, never rebuilt from its parts. A server that returns no `message` (every server before
+ * that change) verifies the bare nonce, so the nonce is signed.
+ */
+export function didChallengeText(challenge: { readonly nonce: string; readonly message?: unknown }): string {
+  return typeof challenge.message === 'string' ? challenge.message : challenge.nonce;
 }
 
 // ── Token minting: the relay's OAuth 2.1 flow driven by the agent key ─────────────────────
@@ -197,7 +208,8 @@ export class DidTokenMinter implements TokenSource {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         pending_id: pendingId, method: 'did', did: this.cfg.key.did, nonce,
-        signature: signNonce(this.cfg.key, nonce), publicKeyMultibase: this.cfg.key.publicKeyMultibase,
+        signature: signNonce(this.cfg.key, didChallengeText({ nonce, message: challenge['message'] })),
+        publicKeyMultibase: this.cfg.key.publicKeyMultibase,
       }),
     }), 'relay /oauth/verify');
     const redirect = verified['redirect'];

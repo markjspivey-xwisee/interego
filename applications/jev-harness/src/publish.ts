@@ -29,7 +29,8 @@ import type { Published } from './descriptor.js';
 import { modalStatus } from './descriptor.js';
 
 export {
-  DEFAULT_RELAY_URL, DidTokenMinter, RelayClient, agentKeyFromJwk, base58btc, generateAgentKeyJwk, lastJsonRpcMessage, signNonce,
+  DEFAULT_RELAY_URL, DidTokenMinter, RelayClient, agentKeyFromJwk, base58btc, didChallengeText, generateAgentKeyJwk, lastJsonRpcMessage,
+  signNonce,
 } from '../../_shared/relay-agent/index.js';
 export type { AgentKey, MinterConfig, RelayConfig, TokenSource, ToolCallResult } from '../../_shared/relay-agent/index.js';
 
