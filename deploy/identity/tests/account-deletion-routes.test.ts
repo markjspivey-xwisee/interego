@@ -260,7 +260,7 @@ async function didSignIn(k: { did: string; privateKey: crypto.KeyObject }, extra
 }
 
 const writesTo = (userId: string) => writes.filter(w => w.userId === userId).length;
-const settle = () => new Promise(resolve => setTimeout(resolve, 300)); // time for a deferred write to land
+const settle = () => new Promise(resolve => setTimeout(resolve, 300)); // time for a write made after the response to land
 
 /** The tombstone holds the id, the day and an epoch, and nothing that names or signs in anyone. */
 function assertTombstone(userId: string, epoch: number): void {

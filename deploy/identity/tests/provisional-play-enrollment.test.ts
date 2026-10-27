@@ -1,9 +1,16 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { readFileSync } from 'node:fs';
 import * as nodeModule from 'node:module';
 import { enrollProvisionalCredential } from '../provisional-play-enrollment.js';
 import { purgeProvisionalPlayPod } from '../provisional-play-cleanup.js';
+import { PodReadError, readPodJsonWithEtag } from '../account-index.js';
+import {
+  AccountDeletedError, AccountRecordMissingError, AuthMethodsConflictError, AuthMethodsWriteError, NoWrite,
+  PlayOwnerUnavailableError, PodLockReentryError, Write, unknownTopLevelKeys, updateAuthMethods as updateAuthMethodsWith,
+  type WritePrecondition,
+} from '../auth-methods-writer.js';
 
 const server = readFileSync(new URL('../server.ts', import.meta.url), 'utf8');
 const strip = (nodeModule as { stripTypeScriptTypes?: (source: string) => string }).stripTypeScriptTypes;
@@ -11,13 +18,15 @@ const strip = (nodeModule as { stripTypeScriptTypes?: (source: string) => string
 const executable = strip ? strip(server) : (await import('typescript')).default.transpileModule(server, {
   compilerOptions: { target: 9, module: 99 },
 }).outputText;
-function productionFunction(name: string): string {
-  const start = executable.search(new RegExp(`async function ${name}\\s*\\(`));
+function sliceFunction(pattern: RegExp, name: string): string {
+  const start = executable.search(pattern);
   assert.ok(start >= 0, `Production function ${name} exists`);
   const end = executable.indexOf('\n}', start);
   assert.ok(end > start, `Production function ${name} ends at top-level`);
   return executable.slice(start, end + 2);
 }
+const productionFunction = (name: string) => sliceFunction(new RegExp(`async function ${name}\\s*\\(`), name);
+const productionSyncFunction = (name: string) => sliceFunction(new RegExp(`(?<!async )function ${name}\\s*\\(`), name);
 function deferred() {
   let resolve!: () => void;
   const promise = new Promise<void>(done => { resolve = done; });
@@ -26,75 +35,121 @@ function deferred() {
 const userId = `u-try-play-${'1'.repeat(32)}`;
 type Methods = {
   userId: string; provisionalPlayAnchor?: string;
-  webAuthnCredentials: Array<{ id: string; counter?: number }>;
+  webAuthnCredentials: Array<{ id: string; counter?: number; publicKey?: string }>;
   walletAddresses: string[]; didKeys: Array<{ did: string }>;
-  sessionEpoch?: number;
+  sessionEpoch?: number; deletedAt?: string;
 };
 const hasAnyCredential = (m: Methods) => m.webAuthnCredentials.length + m.walletAddresses.length + m.didKeys.length > 0;
-const empty = (): Methods => ({ userId, webAuthnCredentials: [], walletAddresses: [], didKeys: [] });
+const empty = (owner = userId): Methods => ({ userId: owner, webAuthnCredentials: [], walletAddresses: [], didKeys: [] });
+const isTombstone = (m: Methods) => typeof m.deletedAt === 'string';
 
+/** The lock exactly as server.ts builds it: a promise chain per account, and a context naming the locks held. */
+function productionLock() {
+  const podLockContext = new AsyncLocalStorage<ReadonlyMap<string, { held: boolean }>>();
+  const withIdentityPodMutex = new Function('podLockContext', 'PodLockReentryError', `const identityPodWriteMutexes = new Map();
+    ${productionFunction('withIdentityPodMutex')}; return withIdentityPodMutex;`)(podLockContext, PodLockReentryError) as
+    <T>(owner: string, work: () => Promise<T>) => Promise<T>;
+  const assertLockHeld = new Function('podLockContext',
+    `${productionSyncFunction('assertLockHeld')}; return assertLockHeld;`)(podLockContext) as (owner: string) => void;
+  return { podLockContext, withIdentityPodMutex, assertLockHeld };
+}
+
+/**
+ * One account's pod (any id reads and writes the same document) with ETags, and the production
+ * functions that write it, rebuilt from server.ts with stand-ins for everything they reach.
+ */
 function fixture() {
   let document: Methods | null = { ...empty(), provisionalPlayAnchor: 'original-owner-anchor' };
-  let cached = document;
+  let version = 1;
+  let cached: Methods | null = document;
   let now = 0;
   let checkpoint = true;
   let puts = 0;
-  let inline = 0;
-  let scheduled = 0;
+  let installs = 0;
   let openCalls = 0;
   const deletions: string[] = [];
-  const withIdentityPodMutex = new Function(`const identityPodWriteMutexes = new Map();
-    ${productionFunction('withIdentityPodMutex')}; return withIdentityPodMutex;`)() as
-    <T>(owner: string, work: () => Promise<T>) => Promise<T>;
+  const { withIdentityPodMutex, assertLockHeld } = productionLock();
   let beforePersist: () => Promise<void> = async () => {};
   let beforeDelete: () => Promise<void> = async () => {};
   let duringVerification: () => Promise<void> = async () => {};
   let duringAccountDelete: () => Promise<void> = async () => {};
-  const read = async () => document ? structuredClone(document) : empty();
-  const persist = async (_owner: string, candidate: Methods) => {
+  const etag = () => `"${version}-application/ld+json"`;
+  const readLive = async () => document
+    ? { methods: structuredClone(document), raw: structuredClone(document), etag: etag() }
+    : { methods: null, raw: null, etag: null };
+  const writeLive = async (_owner: string, doc: Methods, pre: WritePrecondition) => {
     puts++;
     await beforePersist();
-    document = structuredClone(candidate);
-    cached = document;
+    if (pre.kind === 'absent' ? document !== null : pre.kind === 'match' && pre.etag !== etag()) return 'precondition-failed' as const;
+    document = structuredClone(doc);
+    version++;
+    return 'ok' as const;
   };
-  const persistExistingAuthMethods = new Function('withIdentityPodMutex', 'putPodAuthMethods',
-    `${productionFunction('persistExistingAuthMethods')}; return persistExistingAuthMethods;`)(withIdentityPodMutex, persist);
-  const commit = new Function('enrollProvisionalCredential', 'withIdentityPodMutex', 'fetchPodAuthMethods',
-    'hasAnyCredential', 'provisionalPlay', 'putPodAuthMethods', 'readAuthMethods',
-    'inlineApplyAuthMethods', 'scheduleDeferredAuthMethodsWrite', 'isTombstone', 'AccountDeletedError', 'ACCOUNT_DELETED_MESSAGE',
-    'deletedUserIds', 'persistExistingAuthMethods',
+  const installAuthMethods = (_owner: string, m: Methods) => { installs++; cached = structuredClone(m); return cached; };
+  const reconcileAfterWriteFailure = async (owner: string) => {
+    const live = await readLive();
+    installAuthMethods(owner, live.methods ?? empty(owner));
+  };
+  const provisionalPlay = { open(anchor: string) {
+    openCalls++;
+    if (anchor !== 'original-owner-anchor' || now >= 10) throw new Error('Provisional owner unavailable');
+    return { userId };
+  } };
+  const deletedUserIds = new Set<string>();
+  const authMethodsWriter = {
+    lock: withIdentityPodMutex, assertLockHeld, readLive, writeLive,
+    install: installAuthMethods, expire: () => {}, isDeleted: (owner: string) => deletedUserIds.has(owner), isTombstone,
+    empty: (owner: string) => empty(owner),
+    playGuard: (owner: string, m: Methods) => {
+      if (hasAnyCredential(m)) return true;
+      try { return provisionalPlay.open(m.provisionalPlayAnchor!).userId === owner; } catch { return false; }
+    },
+  };
+  const updateAuthMethods = new Function('updateAuthMethodsWith', 'authMethodsWriter',
+    `${productionFunction('updateAuthMethods')}; return updateAuthMethods;`)(updateAuthMethodsWith, authMethodsWriter);
+  const commit = new Function('enrollProvisionalCredential', 'withIdentityPodMutex', 'readLive', 'installAuthMethods',
+    'emptyAuthMethods', 'AccountRecordMissingError', 'hasAnyCredential', 'provisionalPlay', 'unknownTopLevelKeys', 'writeLive',
+    'AccountDeletedError', 'reconcileAfterWriteFailure', 'AuthMethodsConflictError', 'updateAuthMethods', 'NoWrite', 'Write',
     `${productionFunction('commitCredentialEnrollment')}; return commitCredentialEnrollment;`)(
-    enrollProvisionalCredential, withIdentityPodMutex, read, hasAnyCredential,
-    { open(anchor: string) {
-      openCalls++;
-      if (anchor !== 'original-owner-anchor' || now >= 10) throw new Error('Provisional owner unavailable');
-      return { userId };
-    } }, persist, async () => cached,
-    (_owner: string, methods: Methods) => { inline++; cached = methods; },
-    () => { scheduled++; },
-    (m: Methods & { deletedAt?: string }) => typeof m.deletedAt === 'string', Error, 'account deleted',
-    new Set<string>(), persistExistingAuthMethods,
-  ) as (owner: string, context: string, update: (m: Methods) => boolean | void, synchronous?: boolean) => Promise<void>;
-  const authenticate = new Function('withIdentityPodMutex', 'fetchPodAuthMethods', 'authenticatePasskey', 'putPodAuthMethods',
-    `${productionFunction('authenticatePlayOwnerPasskey')}; return authenticatePlayOwnerPasskey;`)(
-    withIdentityPodMutex, read,
-    async ({ credential, persist }: { credential: { counter?: number }; persist: () => Promise<void> }) => {
+    enrollProvisionalCredential, withIdentityPodMutex, readLive, installAuthMethods,
+    (owner: string) => empty(owner), AccountRecordMissingError, hasAnyCredential, provisionalPlay, unknownTopLevelKeys, writeLive,
+    AccountDeletedError, reconcileAfterWriteFailure, AuthMethodsConflictError, updateAuthMethods, NoWrite, Write,
+  ) as (owner: string, context: string, update: (m: Methods) => boolean | void, opts?: { absent?: 'refuse' | 'create' }) => Promise<unknown>;
+  const authMethodsCache = { get: () => cached ? { value: cached } : undefined };
+  const signIn = new Function('authMethodsCache', 'publicKeyIdentity', 'updateAuthMethods', 'NoWrite', 'Write',
+    'verifyPasskeyAssertion', 'PodReadError', 'AuthMethodsWriteError', 'AuthMethodsConflictError', 'AccountRecordMissingError',
+    'PlayOwnerUnavailableError', 'AccountDeletedError',
+    `${productionFunction('signInWithPasskey')}; return signInWithPasskey;`)(
+    authMethodsCache, async (key: string | undefined) => `key:${key ?? 'stand-in'}`, updateAuthMethods, NoWrite, Write,
+    async ({ credential }: { credential: { counter?: number } }) => {
       await duringVerification();
-      credential.counter = (credential.counter ?? 0) + 1;
-      await persist();
-    }, persist,
-  ) as (owner: string, response: { id: string }, challenge: string, rpId: string, origin: string) => Promise<void>;
+      return { ok: true, newCounter: (credential.counter ?? 0) + 1 };
+    }, PodReadError, AuthMethodsWriteError, AuthMethodsConflictError, AccountRecordMissingError,
+    PlayOwnerUnavailableError, AccountDeletedError,
+  ) as (holders: string[], response: { id: string }, challenge: string, rpId: string, origin: string) => Promise<{ kind: string }>;
+  const authenticate = async (owner: string, response: { id: string }, challenge: string, rpId: string, origin: string) => {
+    const outcome = await signIn([owner], response, challenge, rpId, origin);
+    assert.equal(outcome.kind, 'signed-in', JSON.stringify(outcome));
+  };
+  const log = () => {};
+  const sendAccountWriteRefusal = new Function('PodReadError', 'AccountDeletedError', 'AccountRecordMissingError',
+    'ACCOUNT_DELETED_MESSAGE', 'log', `${productionSyncFunction('sendAccountWriteRefusal')}; return sendAccountWriteRefusal;`)(
+    PodReadError, AccountDeletedError, AccountRecordMissingError, 'account deleted', log);
+  const refuseRemoval = new Function(`${productionSyncFunction('refuseRemoval')}; return refuseRemoval;`)();
+  // The production deletion takes the account's lock itself (deleteUserCompletely).
+  const deleteUserCompletely = (owner: string) => withIdentityPodMutex(owner, async () => {
+    await duringAccountDelete(); document = null; cached = null; return { agents: [] };
+  });
   const control = (method: string, path: string) => {
     const start = executable.indexOf(`app.${method}('${path}',`);
     assert.ok(start >= 0, path);
     const handler = executable.indexOf('async (req, res) => {', start);
     const end = executable.indexOf('\n});', handler);
     const run = new Function('requireUserFromBearer', 'commitCredentialEnrollment', 'withIdentityPodMutex',
-      'deleteUserCompletely', 'log',
+      'deleteUserCompletely', 'log', 'authMethodsCache', 'sendAccountWriteRefusal', 'refuseRemoval',
       `return (${executable.slice(handler, end)}\n});`)(
-      async () => ({ id: userId }), commit, withIdentityPodMutex,
-      async () => { await duringAccountDelete(); document = null; cached = null; return { agents: [] }; },
-      () => {},
+      async () => ({ id: userId }), commit, withIdentityPodMutex, deleteUserCompletely, log,
+      authMethodsCache, sendAccountWriteRefusal, refuseRemoval,
     );
     const response = { statusCode: 200, headersSent: false, body: null as unknown,
       status(code: number) { this.statusCode = code; return this; },
@@ -105,11 +160,17 @@ function fixture() {
   const root = `https://css.test/${userId}/`;
   const cleanup = () => withIdentityPodMutex(userId, () => purgeProvisionalPlayPod({
     userId, cssUrl: 'https://css.test/',
-    stillUnclaimed: async () => now >= 10 && !hasAnyCredential(await read()),
+    stillUnclaimed: async () => {
+      const live = await readLive();
+      return { ok: now >= 10 && !!live.methods && !hasAnyCredential(live.methods), etag: live.etag };
+    },
     fetcher: (async (input: string | URL | Request, init?: RequestInit) => {
       const url = String(input);
       if (init?.method === 'DELETE') {
         await beforeDelete();
+        if (url === root + 'auth-methods.jsonld' && new Headers(init.headers).get('if-match') !== etag()) {
+          return new Response(null, { status: 412 });
+        }
         deletions.push(url);
         if (url === root + 'checkpoint') checkpoint = false;
         if (url === root + 'auth-methods.jsonld') document = null;
@@ -119,15 +180,17 @@ function fixture() {
     }) as typeof fetch,
   }));
   return {
-    commit, authenticate, cleanup, control, deletions,
+    commit, authenticate, signIn, cleanup, control, deletions,
     get document() { return document; }, get cached() { return cached; },
-    get checkpoint() { return checkpoint; }, get puts() { return puts; },
-    get inline() { return inline; }, get scheduled() { return scheduled; }, get openCalls() { return openCalls; },
+    get checkpoint() { return checkpoint; }, get puts() { return puts; }, get installs() { return installs; },
+    get openCalls() { return openCalls; },
     set now(value: number) { now = value; },
     set beforePersist(value: () => Promise<void>) { beforePersist = value; },
     set beforeDelete(value: () => Promise<void>) { beforeDelete = value; },
     set duringVerification(value: () => Promise<void>) { duringVerification = value; },
     set duringAccountDelete(value: () => Promise<void>) { duringAccountDelete = value; },
+    /** An edit by another writer (the other instance, an operator): the ETag moves on. */
+    outOfBand(edit: (m: Methods) => void) { edit(document!); version++; },
   };
 }
 const enroll = (m: Methods) => { m.webAuthnCredentials.push({ id: 'verified-passkey' }); };
@@ -162,7 +225,7 @@ test('cleanup that wins the lock cannot be followed by successful enrollment or 
   const cleanup = f.cleanup();
   await started.promise;
   const enrollment = f.commit(userId, 'webauthn-register', enroll);
-  const rejected = assert.rejects(enrollment, /Provisional owner unavailable/);
+  const rejected = assert.rejects(enrollment, AccountRecordMissingError);
   release.resolve();
   await cleanup;
   await rejected;
@@ -177,8 +240,6 @@ test('a failed durable enrollment never exposes a credential through cache or su
   await assert.rejects(f.commit(userId, 'webauthn-register', enroll), /Pod unavailable/);
   assert.deepEqual(f.cached!.webAuthnCredentials, []);
   assert.deepEqual(f.document!.webAuthnCredentials, []);
-  assert.equal(f.inline, 0);
-  assert.equal(f.scheduled, 0);
 });
 
 test('an expired unclaimed anchor cannot be promoted even before cleanup runs', async () => {
@@ -200,16 +261,40 @@ test('a durable permanent owner in the guest namespace can add a credential afte
   assert.equal(f.checkpoint, true);
 });
 
-test('ordinary canonical enrollment retains deferred writes and explicit wallet linking remains synchronous', async () => {
+test('enrolment is synchronous: a canonical account\'s credential is acknowledged only once the pod has it', async () => {
   const f = fixture();
-  await f.commit('u-pk-canonical', 'webauthn-register', enroll);
-  assert.equal(f.inline, 1);
-  assert.equal(f.scheduled, 1);
-  assert.equal(f.puts, 0);
-  await f.commit('u-pk-canonical', 'wallet-link', m => { m.walletAddresses.push('0xverified'); }, true);
+  const started = deferred(), release = deferred();
+  f.beforePersist = async () => { started.resolve(); await release.promise; };
+  let acknowledged = false;
+  const enrollment = f.commit('u-pk-canonical', 'webauthn-register', enroll).then(() => { acknowledged = true; });
+  await started.promise;
+  await new Promise(resolve => setTimeout(resolve, 20));
+  assert.equal(acknowledged, false);
+  assert.deepEqual(f.cached!.webAuthnCredentials, [], 'nothing is installed before the write lands');
+  release.resolve();
+  await enrollment;
   assert.equal(f.puts, 1);
-  assert.equal(f.inline, 1);
-  assert.equal(f.scheduled, 1);
+  assert.equal(f.document!.webAuthnCredentials[0].id, 'verified-passkey');
+  assert.equal(f.cached!.webAuthnCredentials[0].id, 'verified-passkey');
+  f.beforePersist = async () => {};
+  await f.commit('u-pk-canonical', 'wallet-link', m => { m.walletAddresses.push('0xverified'); });
+  assert.equal(f.puts, 2);
+  assert.deepEqual(f.document!.walletAddresses, ['0xverified']);
+  // A change nothing needs writes nothing.
+  await f.commit('u-pk-canonical', 'wallet-link', m => m.walletAddresses.includes('0xverified') ? false : undefined);
+  assert.equal(f.puts, 2);
+});
+
+test('a canonical write meeting another writer\'s change re-reads and keeps both', async () => {
+  const f = fixture();
+  f.beforePersist = async () => {
+    f.beforePersist = async () => {};
+    f.outOfBand(m => { m.didKeys.push({ did: 'did:key:out-of-band' }); });
+  };
+  await f.commit('u-pk-canonical', 'wallet-link', m => { m.walletAddresses.push('0xverified'); });
+  assert.equal(f.puts, 2);
+  assert.deepEqual(f.document!.walletAddresses, ['0xverified']);
+  assert.deepEqual(f.document!.didKeys, [{ did: 'did:key:out-of-band' }]);
 });
 
 test('passkey authentication cannot overwrite a concurrently acknowledged enrollment', async () => {
@@ -231,9 +316,25 @@ test('passkey authentication cannot overwrite a concurrently acknowledged enroll
   assert.equal(f.document!.webAuthnCredentials[0].counter, 1);
   assert.deepEqual(f.document!.walletAddresses, ['0xverified']);
   // An authentication that starts after enrollment reads its durable addition.
+  f.duringVerification = async () => {};
   await f.authenticate(userId, { id: 'verified-passkey' }, 'next-challenge', 'identity.test', 'https://identity.test');
   assert.equal(f.document!.webAuthnCredentials[0].counter, 2);
   assert.deepEqual(f.document!.walletAddresses, ['0xverified']);
+});
+
+test('a passkey sign-in that meets another writer\'s change re-runs its check and still signs in', async () => {
+  const f = fixture();
+  await f.commit(userId, 'webauthn-register', enroll);
+  let edited = false;
+  f.duringVerification = async () => {
+    if (edited) return;
+    edited = true;
+    f.outOfBand(m => { m.walletAddresses.push('0xother-instance'); });
+  };
+  const outcome = await f.signIn([userId], { id: 'verified-passkey' }, 'challenge', 'identity.test', 'https://identity.test');
+  assert.equal(outcome.kind, 'signed-in', JSON.stringify(outcome));
+  assert.equal(f.document!.webAuthnCredentials[0].counter, 1);
+  assert.deepEqual(f.document!.walletAddresses, ['0xother-instance']);
 });
 
 test('credential removal and session revocation retain concurrent enrollment and passkey counters', async () => {
@@ -257,6 +358,18 @@ test('credential removal and session revocation retain concurrent enrollment and
   assert.equal(f.document!.webAuthnCredentials[0].counter, 1);
   assert.deepEqual(f.document!.walletAddresses, []);
   assert.deepEqual(f.document!.didKeys, [{ did: 'did:key:new' }]);
+});
+
+test('sign-out raises the epoch above both the pod\'s and this server\'s copy\'s', async () => {
+  const f = fixture();
+  await f.commit(userId, 'webauthn-register', enroll);
+  // This server's copy says 4 (it checked tokens against 4); the pod says 2.
+  await f.commit(userId, 'sign-out-everywhere', m => { m.sessionEpoch = 4; });
+  f.outOfBand(m => { m.sessionEpoch = 2; });
+  const signOut = f.control('post', '/tokens/me/sign-out-everywhere');
+  await signOut.run();
+  assert.equal(signOut.response.statusCode, 200, JSON.stringify(signOut.response.body));
+  assert.equal(f.document!.sessionEpoch, 5);
 });
 
 test('concurrent credential removals re-evaluate the last-method guard inside the lock', async () => {
@@ -287,23 +400,32 @@ test('self-deletion waits for an in-flight enrollment and later mutations cannot
   assert.equal(f.document, null);
   const puts = f.puts;
   await assert.rejects(f.commit(userId, 'did-add-did', m => { m.didKeys.push({ did: 'did:key:late' }); }),
-    /Provisional owner unavailable/);
+    AccountRecordMissingError);
+  // Nor does a sign-out, which may create a canonical account's document, create a Play owner's.
+  const signOut = f.control('post', '/tokens/me/sign-out-everywhere');
+  await signOut.run();
+  assert.equal(signOut.response.statusCode, 404, JSON.stringify(signOut.response.body));
   assert.equal(f.document, null);
   assert.equal(f.puts, puts);
 });
 
-test('a passive read cannot recreate a deleted provisional owner', async () => {
-  let puts = 0;
-  const read = new Function('podAuthMethodsUrl', 'readPodJson', 'podFetch', 'emptyAuthMethods',
-    'putPodAuthMethods', 'normaliseAuthMethods',
-    `${productionFunction('fetchPodAuthMethods')}; return fetchPodAuthMethods;`)(
-    (owner: string) => `https://css.test/${owner}/auth-methods.jsonld`, async () => null, () => {},
-    (owner: string) => ({ ...empty(), userId: owner }), async () => { puts++; }, (value: unknown) => value,
-  );
-  await read(userId);
-  assert.equal(puts, 0);
-  await read('u-pk-canonical');
-  assert.equal(puts, 1);
+test('a read never creates a document, for any id', async () => {
+  const requests: Array<{ url: string; method: string }> = [];
+  const podFetch = async (url: string, init?: { method?: string }) => {
+    requests.push({ url, method: init?.method ?? 'GET' });
+    return { ok: false, status: 404, statusText: 'Not Found', text: async () => '', headers: { get: () => null } };
+  };
+  const readLive = new Function('readPodJsonWithEtag', 'podFetch', 'podAuthMethodsUrl', 'normaliseAuthMethods',
+    `${productionFunction('readLive')}; return readLive;`)(
+    readPodJsonWithEtag, podFetch, (owner: string) => `https://css.test/${owner}/auth-methods.jsonld`, (value: unknown) => value,
+  ) as (owner: string) => Promise<{ methods: unknown }>;
+  for (const owner of [userId, 'u-pk-canonical', 'u-eth-000000000000', 'markj']) {
+    assert.equal((await readLive(owner)).methods, null, owner);
+  }
+  assert.deepEqual([...new Set(requests.map(r => r.method))], ['GET']);
+  assert.equal(requests.length, 4);
+  // No route reaches a function that creates a document on a read any more.
+  assert.doesNotMatch(server, /createIfMissing/);
 });
 
 test('all four credential routes await the shared commit before acknowledging enrollment', () => {

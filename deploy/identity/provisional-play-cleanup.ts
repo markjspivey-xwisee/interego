@@ -1,8 +1,15 @@
-/** Bounded, own-pod-only cleanup; physical PGSL history reclamation is separate. */
+/**
+ * Bounded, own-pod-only cleanup; physical PGSL history reclamation is separate.
+ *
+ * `stillUnclaimed` reads the owner's record and says whether it may go, with the ETag it was
+ * read under: the anchor (auth-methods.jsonld) is deleted only if it is still that record
+ * (If-Match), so an enrolment that lands between the read and the delete (the other instance's)
+ * keeps the account. 'kept': nothing more is deleted.
+ */
 export async function purgeProvisionalPlayPod(options: {
   userId: string; cssUrl: string; fetcher?: typeof fetch;
-  stillUnclaimed(): Promise<boolean>;
-}): Promise<void> {
+  stillUnclaimed(): Promise<{ ok: boolean; etag: string | null }>;
+}): Promise<'purged' | 'kept'> {
   if (!/^u-try-play-[a-f0-9]{32}$/.test(options.userId)) throw new Error('Refusing non-Play pod cleanup');
   const root = new URL(`${options.userId}/`, options.cssUrl);
   const fetcher = options.fetcher ?? fetch;
@@ -30,13 +37,17 @@ export async function purgeProvisionalPlayPod(options: {
   };
   // Discover and validate the entire bounded tree before deleting anything.
   await visit(root, 0);
-  if (!await options.stillUnclaimed()) return;
+  const unclaimed = await options.stillUnclaimed();
+  if (!unclaimed.ok) return 'kept';
   const anchor = new URL('auth-methods.jsonld', root).href;
   const targets = ordered.filter(url => url !== root.href && url !== anchor);
   if (ordered.includes(anchor)) targets.push(anchor);
   if (ordered.includes(root.href)) targets.push(root.href);
   for (const url of targets) {
-    const response = await request(url, { method: 'DELETE' });
+    const conditional = url === anchor && unclaimed.etag ? { headers: { 'If-Match': unclaimed.etag } } : {};
+    const response = await request(url, { method: 'DELETE', ...conditional });
+    if (url === anchor && response.status === 412) return 'kept';
     if (!response.ok && response.status !== 404) throw new Error('Provisional cleanup deletion incomplete');
   }
+  return 'purged';
 }

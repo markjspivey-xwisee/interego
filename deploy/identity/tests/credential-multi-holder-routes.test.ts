@@ -409,7 +409,7 @@ test('a passkey id its unlisted derived account holds is not added to another ac
   const r = await register({ ...derivedOwner }, String(signedIn.json['token']));
   assert.equal(r.status, 409, `${JSON.stringify(r.json)}\n${output}`);
   assert.equal(r.json['token'], undefined);
-  await new Promise(resolve => setTimeout(resolve, 300));   // a deferred write would land by now
+  await new Promise(resolve => setTimeout(resolve, 300));   // a write made after the response would land by now
   assert.equal(writesTo(adder.id), before.adder);
   assert.equal(writesTo(derivedOwner.userId), before.owner);
   assert.equal((pods.get(adder.id)!['webAuthnCredentials'] as unknown[]).length, 1);
