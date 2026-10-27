@@ -20,7 +20,9 @@
  * Usage:
  *   RAILWAY_PROJECT_TOKEN=... node tools/railway-set-secret-var.mjs <service> <VAR_NAME> <file> [--apply]
  *
- * Dry run is the default, as with its sibling.
+ * Dry run is the default, as with its sibling. The upsert does not pass `skipDeploys`, whose API
+ * default is false, so an --apply makes Railway redeploy the service with the new value
+ * (https://docs.railway.com/integrations/api/manage-variables).
  */
 
 import { readFileSync, existsSync } from 'node:fs';
@@ -102,4 +104,4 @@ if (now !== value) {
   console.error(`\nVERIFY FAILED — reads back as ${now === undefined ? '(unset)' : `${now.length} chars, sha256:${fp(now)}`}`);
   process.exit(1);
 }
-console.log('\nwritten and verified. The service keeps running the OLD value until it restarts.');
+console.log('\nwritten and verified. This upsert does not pass skipDeploys (API default false), so Railway redeploys the service with it; confirm that deployment in Railway.');

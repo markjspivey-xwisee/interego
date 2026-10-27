@@ -52,6 +52,12 @@
  *                      its outbound /verify-token call; MUST match
  *                      the same env var on the relay. Required when
  *                      RELAY_VERIFY_URL is set.
+ *   IDENTITY_INTROSPECTION_SECRET — bearer the gate presents on its
+ *                      /tokens/verify call to IDENTITY_URL. MUST equal
+ *                      the identity server's and the relay's value.
+ *                      Unset works only while identity runs open
+ *                      (ALLOW_OPEN_INTROSPECTION=1). See
+ *                      deploy/identity/AUTH-ARCHITECTURE.md.
  *   CSS_INTERNAL_URL — upstream CSS.
  *   CSS_HOST_HEADER  — Host header to forward to CSS.
  *   USER_BEARER_CACHE_TTL_MS — verified-token cache TTL (default 60000).
@@ -142,12 +148,21 @@ const RELAY_VERIFY_URL = (process.env.RELAY_VERIFY_URL ?? '').replace(/\/+$/, ''
 // write returns 401 here.
 const RELAY_INTROSPECTION_SECRET = process.env.RELAY_INTROSPECTION_SECRET ?? '';
 // Shared secret the gate carries on its outbound /tokens/verify call
-// to identity-server. Mirrors the relay introspection pattern: when
-// identity-server has IDENTITY_INTROSPECTION_SECRET set, it rejects
-// any /tokens/verify probe that doesn't carry the same bearer. Unset
-// here = legacy unauthenticated probe (still accepted by an
-// identity-server that hasn't enabled the gate yet).
+// to identity-server, as `Authorization: Bearer <value>`. An identity
+// server holding its own copy answers a verify without it (or with
+// another value) with 401. The gate treats that 401 as a transport
+// failure and asks the relay (when RELAY_VERIFY_URL is set), which does
+// not know identity tokens, so every identity-token write and
+// private-document read then gets 401 'token not found or expired'.
+// Unset here is accepted only while identity runs open
+// (ALLOW_OPEN_INTROSPECTION=1 and no secret of its own).
+// See deploy/identity/AUTH-ARCHITECTURE.md.
 const IDENTITY_INTROSPECTION_SECRET = process.env.IDENTITY_INTROSPECTION_SECRET ?? '';
+// How identity has answered the gate's /tokens/verify calls since this process started, for
+// /healthz: `accepted` = identity answered 2xx (whatever it said about the token), `refused` =
+// it answered 401 or 403 (it refused the gate's introspection bearer), `other` = anything else
+// (unreachable, 5xx, another 4xx, a body that is not JSON). Cache hits are not counted.
+const identityVerifyResults = { accepted: 0, refused: 0, other: 0 };
 const USER_BEARER_CACHE_TTL_MS = Number(process.env.USER_BEARER_CACHE_TTL_MS ?? 60_000);
 const UPSTREAM_POOL_CONNECTIONS = Number(process.env.UPSTREAM_POOL_CONNECTIONS ?? 16);
 const UPSTREAM_REQUEST_BUFFER = (process.env.UPSTREAM_REQUEST_BUFFER ?? '').toLowerCase() === 'true'
@@ -383,6 +398,18 @@ function cacheSet(token, value) {
 }
 
 /**
+ * A name for a failed fetch that cannot carry a header value: the error's `cause.code` when it
+ * is a short code (ECONNREFUSED, UND_ERR_CONNECT_TIMEOUT, ...), else the error's own name
+ * (TypeError, TimeoutError). Never the message.
+ */
+function failureLabel(err) {
+  const code = err?.cause?.code;
+  if (typeof code === 'string' && /^[A-Z][A-Z0-9_]{1,40}$/.test(code)) return code;
+  const name = err?.name;
+  return typeof name === 'string' && /^[A-Za-z]{1,40}$/.test(name) ? name : 'Error';
+}
+
+/**
  * Inner helper: probe ONE verification source. Returns:
  *   { kind: 'valid',    userId, agentId?, scope? }
  *   { kind: 'invalid',  reason }    — source authoritatively rejected
@@ -409,6 +436,11 @@ async function probeVerifySource(url, token, opts = {}) {
       method: 'POST',
       headers,
       body: JSON.stringify({ token }),
+      // Neither verifier redirects. Following one would carry the bearer above (on a same-origin
+      // redirect) and the user's token in the body (to any origin, on a 307 or 308) to wherever
+      // the Location points. fetch throws instead, which lands in the catch below as 'transport'.
+      // This covers the relay /verify-token call too.
+      redirect: 'error',
       // ★★ BOUNDED, BECAUSE AN UNBOUNDED ONE PINS A REQUEST HANDLER FOREVER.
       //
       // This awaits the identity server or the relay. Neither is guaranteed to answer: MEASURED,
@@ -423,7 +455,9 @@ async function probeVerifySource(url, token, opts = {}) {
       signal: AbortSignal.timeout(Number(process.env.VERIFY_TIMEOUT_MS ?? 10_000)),
     });
   } catch (err) {
-    return { kind: 'transport', reason: `${url} unreachable: ${err.message}` };
+    // Not err.message: undici's header-validation error quotes the whole Authorization header
+    // (the introspection secret), and this reason is returned in the 401 `detail`.
+    return { kind: 'transport', reason: `${url} unreachable (${failureLabel(err)})` };
   }
   if (resp.status >= 500) {
     return { kind: 'transport', reason: `${url} returned ${resp.status}` };
@@ -432,7 +466,7 @@ async function probeVerifySource(url, token, opts = {}) {
     // The verifier rejected US (the gate), not the token. This is a
     // config error — the secret/headers we sent are wrong. Treat as
     // unknown so the next source still gets to weigh in; don't cache.
-    return { kind: 'transport', reason: `${url} rejected gate auth (${resp.status})` };
+    return { kind: 'transport', refused: true, reason: `${url} rejected gate auth (${resp.status})` };
   }
   if (!resp.ok) {
     // 4xx other than auth: the verifier doesn't recognize this
@@ -508,6 +542,9 @@ async function verifyUserBearer(token) {
       token,
       IDENTITY_INTROSPECTION_SECRET ? { bearer: IDENTITY_INTROSPECTION_SECRET } : {},
     );
+    if (r.kind !== 'transport') identityVerifyResults.accepted++;
+    else if (r.refused) identityVerifyResults.refused++;
+    else identityVerifyResults.other++;
     if (r.kind === 'valid') {
       cacheSet(token, { valid: true, userId: r.userId, agentId: r.agentId, scope: r.scope, ownerDid: r.ownerDid, provisionalPlay: r.provisionalPlay });
       return { ok: true, userId: r.userId, agentId: r.agentId, scope: r.scope, ownerDid: r.ownerDid, provisionalPlay: r.provisionalPlay };
@@ -999,6 +1036,10 @@ const server = createServer(async (req, res) => {
       perUserBearers: Boolean(IDENTITY_URL) || Boolean(RELAY_VERIFY_URL && RELAY_INTROSPECTION_SECRET),
       identityVerify: Boolean(IDENTITY_URL),
       relayIntrospect: Boolean(RELAY_VERIFY_URL && RELAY_INTROSPECTION_SECRET),
+      // Whether the identity call carries a bearer, and how identity has answered it since start.
+      // Never the value or its length.
+      identityVerifyAuth: Boolean(IDENTITY_INTROSPECTION_SECRET),
+      identityVerifyResults: { ...identityVerifyResults },
       provisionalPlay: { ...PROVISIONAL_LIMITS, accounting: 'durable-lifetime-before-write',
         budgetDocument: PROVISIONAL_BUDGET_DOCUMENT, conditionalNativeCommit: true },
       // The git sha baked into the image, and the only field here that can distinguish one
@@ -1338,7 +1379,11 @@ if (process.env.CSS_GATE_AUTOSTART !== '0') server.listen(PORT, () => {
   if (IDENTITY_URL || (RELAY_VERIFY_URL && RELAY_INTROSPECTION_SECRET)) {
     console.log(`[css-gate]   • Bearer <per-user token>          → per-user path, must target /<userId>/...`);
     if (IDENTITY_URL) {
-      console.log(`[css-gate]   identity verify : ${IDENTITY_URL}/tokens/verify  (primary)`);
+      // Says whether a bearer is presented, and warns (value-free) when it cannot be sent in a header.
+      const bearerNote = !IDENTITY_INTROSPECTION_SECRET ? 'no bearer: accepted only while identity runs open'
+        : /^[\x21-\x7e]+$/.test(IDENTITY_INTROSPECTION_SECRET) ? 'with introspection bearer'
+          : 'WARN: IDENTITY_INTROSPECTION_SECRET holds whitespace or a byte a header cannot carry; every identity verify will fail';
+      console.log(`[css-gate]   identity verify : ${IDENTITY_URL}/tokens/verify  (primary, ${bearerNote})`);
     }
     if (RELAY_VERIFY_URL && RELAY_INTROSPECTION_SECRET) {
       console.log(`[css-gate]   relay introspect: ${RELAY_VERIFY_URL}/verify-token  (fallback for OAuth tokens)`);

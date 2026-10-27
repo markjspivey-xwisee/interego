@@ -344,6 +344,12 @@ export INTEREGO_OAUTH_BASE_URL=https://your-relay-host/
 # on disk.
 # export RELAY_OAUTH_STORE_POD=https://your-css-host/svc-relay-dcr/
 
+# Required once your identity server enforces token introspection: the
+# bearer the relay presents on the identity server's POST /tokens/verify.
+# MUST equal the identity server's value (and your css-gate's). See
+# deploy/identity/AUTH-ARCHITECTURE.md, "Token introspection".
+# export IDENTITY_INTROSPECTION_SECRET=<the identity server's value>
+
 npm start
 ```
 
@@ -361,6 +367,7 @@ the hosted reference.
 | "Could not reach relay" on first call | Cold start on Azure Container Apps — the relay scales to zero. | Retry once; subsequent calls warm. |
 | 429 Too Many Requests during enrollment | Per-IP rate limit on `/auth/*` (30 enrollments / min). | Wait one minute; the limit is generous for legitimate use. |
 | Multiple agents appear in `/auth-methods/me` | Each MCP client mints its own surface agent. Expected. | Revoke unused agents via the dashboard if needed. |
+| REST tool calls with an identity token fail 401, detail `Identity server error: 401` | The identity server enforces token introspection and the relay's `IDENTITY_INTROSPECTION_SECRET` is missing or differs from identity's. The relay's `GET /health` reports `identityVerifyAuth`. | Set the same value on the relay as on identity (`deploy/identity/AUTH-ARCHITECTURE.md`, "Token introspection") and redeploy the relay. |
 
 ## See also
 

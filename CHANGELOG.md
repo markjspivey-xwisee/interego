@@ -1,5 +1,38 @@
 # Changelog
 
+## 2026-10-27 — Identity: token introspection can be closed, and a workflow sets its secret on the callers before the server
+
+Production identity answers `POST /tokens/verify` for anyone (`ALLOW_OPEN_INTROSPECTION=1`, no `IDENTITY_INTROSPECTION_SECRET`), so whoever holds a captured token can ask whether it is still live. Both callers, the relay and css-gate, already send `Authorization: Bearer <IDENTITY_INTROSPECTION_SECRET>` when they hold that variable: the relay since `f20b8499`, css-gate since `9ce7812f`. Closing the route therefore takes one value on all three services, set on the callers first. The startup warning named only css-gate. Following it would have refused every relay REST write, `/messages` call and `/client-interactions` request made with an identity token; it now names both callers. Two comments are corrected: one called an unset secret the "legacy open behavior" (introspection has failed closed by default since June), and css-gate's said an unset secret is "still accepted" (only while identity runs open). `deploy/identity/AUTH-ARCHITECTURE.md` documents the two variables, the three modes, the rollout order, rollback, rotation, and the oldest relay and css-gate images that send the header; `deploy/mcp-relay/OAUTH-SETUP.md` and css-gate's header list the variable for their services.
+
+Each service now reports whether it holds the variable, and nothing about its value. Identity's `GET /health` reports `introspection` (`enforced`, `open` or `disabled`) and `allowOpenIntrospection`. In enforced mode its startup log prints `Introspection: ENFORCED`, where before it printed nothing, and warns (without the value) when the value has leading or trailing whitespace or a control character, which no caller could send. The relay's `GET /health` and css-gate's `GET /healthz` report `identityVerifyAuth`. css-gate also reports `identityVerifyResults`: how identity has answered its verify requests since it started, counted as accepted, refused and other.
+
+`.github/workflows/identity-introspection-provision.yml` (dispatch only, from master) runs `tools/identity-introspection-provision.mjs`, one stage per dispatch:
+- `callers` writes one newly generated value (32 random bytes as hex) to the relay and css-gate when neither has the variable. It does nothing when both hold the same value, and refuses otherwise.
+- `identity` copies the callers' value, compared in memory, to identity. It refuses if identity holds a different one.
+- `finalize` removes `ALLOW_OPEN_INTROSPECTION` from identity once identity enforces the callers' value.
+
+Every value is written with `skipDeploys: true`. The tool then deploys each service it changed with `serviceInstanceDeployV2`, which ships the image the service is already pinned to; Railway's variable upsert returns no deployment to wait on. Removing `ALLOW_OPEN_INTROSPECTION` has no such option, so for that step the tool follows the deployment Railway starts or starts one itself. It waits for SUCCESS and for the service's own health field to show the change, because the build sha is the same before and after.
+
+Before writing, the tool refuses when:
+- a service is serving a build other than its pin;
+- a deployment is in flight;
+- a service reports the variable while Railway shows it unset;
+- an `Auto-deploy master` or `Deploy to Railway` run has not finished.
+
+After the identity stage it checks, with a made-up bearer, that identity still accepts the relay and css-gate. A refusal fails the job and names the rollback. A dry run, the default, reports names, set or unset, and `equal: yes/no`. The tool prints no value and writes none to a file or step output. It passes no value to another process and masks every value it handles.
+
+A caller presenting the right bearer no longer uses the per-address `tokens` budget, which is 60 a minute shared with `/tokens`, `/register-agent`, `/tokens/me/sign-out-everywhere`, `/users/me/delete` and `/agents/me`. It has an `introspection` budget of 600 a minute instead. Every other request counts against `tokens` as before. An address that has used its 60 gets 429 even with the right bearer, so someone guessing the secret learns nothing past their 60. The bearer is compared as SHA-256 digests, so the comparison no longer exits early on a length mismatch.
+
+css-gate's verify requests now refuse redirects (`redirect: 'error'`), as the relay's do, so neither the secret nor the user's token can follow one. The relay and css-gate no longer copy the text of a failed identity request into the 401 they return. For a header value that Node refuses, such as one containing a line break, that text quotes the whole `Authorization` header. `tools/railway-set-secret-var.mjs` and `tools/railway-set-var.mjs` said a variable change does not redeploy. Their upserts do not pass `skipDeploys`, whose API default is false, so Railway redeploys the service, and the text now says so.
+
+Tests:
+- `deploy/identity/tests/token-introspection-routes.test.ts` runs the server in each mode and checks `/health` in each:
+  - enforced: 401 `introspection bearer required` without a bearer or with another scheme, 401 `introspection bearer rejected` for a wrong value, 200 with the right one, and both rate-limit budgets;
+  - open: answers without a header;
+  - disabled: 401.
+- `deploy/mcp-relay/tests/identity-introspection-bearer.test.ts` and css-gate's `identity-introspection-bearer.test.mjs` check that each caller sends `Bearer <value>` when the variable is set and no `Authorization` when it is not, that css-gate follows no redirect, and (with `identity-introspection-malformed.test.mjs`) that a malformed value does not appear in a 401. `per-user-bearer-fallback.test.mjs` asserts the unset case.
+- `tests/identity-introspection-provision.test.mjs` drives every stage against a stand-in Railway API and health endpoints. It covers each refusal, no-op and write, the deploy wait, and that no value reaches the output.
+
 ## 2026-10-27 — Foxxi: when signed xAPI ignored the owner pod, and what that left in the derived lens
 
 The Foxxi README now says when the signed xAPI adapter ignored the owner pod a payload named: from about 2026-10-17 17:15Z to 2026-10-26 07:44Z. In that window a direct wallet signer's writes and reads went to its derived `eth-<hex>` lens. The new section is "Signed xAPI records in the derived lens", under Run the bridge locally.

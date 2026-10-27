@@ -1,0 +1,623 @@
+// tools/identity-introspection-provision.mjs against a stand-in Railway API and stand-in
+// health endpoints. Every stage's refusals, no-ops and writes; the deploy it starts and waits
+// for; and that no value reaches anything it prints, returns or throws.
+//
+// The stand-in models what the tool relies on: a variable write changes what Railway STORES; a
+// deployment that reaches SUCCESS makes the service RUN what is stored; health endpoints report
+// what runs; identity accepts a caller only when the caller runs its value (or identity is open).
+// A fake clock drives every wait.
+import assert from 'node:assert/strict';
+import test from 'node:test';
+import { readFileSync } from 'node:fs';
+import { triggerWithRetry } from '../tools/railway-deploy-trigger.mjs';
+import {
+  TARGET, SECRET_VAR, OPEN_VAR, STAGES, CALLERS, ProvisionRefusal, StageFailure,
+  newSecret, usableSecret, cliRefusal, planStage, runStage, describeFailure, railwayGql, httpClient,
+} from '../tools/identity-introspection-provision.mjs';
+
+const SVCS = ['relay', 'css-gate', 'identity'];
+const TAG = { relay: 'a1'.repeat(20), 'css-gate': 'b2'.repeat(20), identity: 'c3'.repeat(20) };
+const image = (svc, tag = TAG[svc]) => `ghcr.io/markjspivey-xwisee/interego-${svc}:${tag}`;
+const V1 = '0123456789abcdef'.repeat(4);
+const V2 = 'fedcba9876543210'.repeat(4);
+const HEALTH = { relay: '/health', 'css-gate': '/healthz', identity: '/health' };
+
+/** The stand-in: Railway's API, the three services' health, the relay and gate, GitHub's runs list. */
+function world(o = {}) {
+  const clock = { t: 1_000_000 };
+  const events = [];
+  const stored = {
+    relay: { ...(o.stored?.relay ?? {}) },
+    'css-gate': { ...(o.stored?.['css-gate'] ?? {}) },
+    identity: { [OPEN_VAR]: '1', ...(o.stored?.identity ?? {}) },
+  };
+  for (const svc of SVCS) for (const [k, v] of Object.entries(stored[svc])) if (v === undefined) delete stored[svc][k];
+  const running = Object.fromEntries(SVCS.map((s) => [s, { ...stored[s], ...(o.running?.[s] ?? {}) }]));
+  for (const svc of SVCS) for (const [k, v] of Object.entries(running[svc])) if (v === undefined) delete running[svc][k];
+  const pins = { relay: image('relay'), 'css-gate': image('css-gate'), identity: image('identity'), ...(o.pins ?? {}) };
+  const serving = { ...TAG, ...(o.serving ?? {}) };
+  const deployments = Object.fromEntries(SVCS.map((s) => [s, [{ id: `dep-${s}-0`, status: o.newestStatus?.[s] ?? 'SUCCESS' }]]));
+  const scripts = {};
+  const successAt = {};
+  const counters = { accepted: 0, refused: 0, other: 0 };
+  const probes = [];
+  let n = 0;
+  const svcOf = (id) => SVCS.find((s) => `id-${s}` === id);
+  const newDeployment = (svc) => {
+    const id = `dep-${svc}-${++n}`;
+    deployments[svc].unshift({ id, status: 'DEPLOYING' });
+    scripts[id] = { svc, statuses: [...(o.statuses?.[svc] ?? ['DEPLOYING', 'SUCCESS'])] };
+    return id;
+  };
+  const modeOf = () => (running.identity[SECRET_VAR] ? 'enforced' : running.identity[OPEN_VAR] === '1' ? 'open' : 'disabled');
+  const accepts = (svc) => {
+    const mode = modeOf();
+    if (mode === 'open') return true;
+    if (mode === 'disabled') return false;
+    return running[svc][SECRET_VAR] === running.identity[SECRET_VAR];
+  };
+
+  const gql = async (query, v = {}) => {
+    events.push({ gql: query, v });
+    if (o.gqlThrows?.(query)) throw new Error(o.gqlThrows(query));
+    if (query.includes('projectToken')) return { projectToken: { projectId: o.project ?? TARGET.projectId, environmentId: o.environment ?? TARGET.environmentId } };
+    if (query.includes('project(id')) {
+      const services = o.services ?? SVCS.map((s) => ({ id: `id-${s}`, name: s }));
+      return { project: { services: { edges: services.map((node) => ({ node })) } } };
+    }
+    const svc = svcOf(v.s ?? v.input?.serviceId ?? scripts[v.id]?.svc);
+    if (query.includes('variables(')) {
+      const copy = { ...stored[svc] };
+      if (o.sealed?.includes(svc)) delete copy[SECRET_VAR];
+      return { variables: copy };
+    }
+    if (query.includes('domains(')) return { domains: { serviceDomains: [{ domain: `${svc}.example.test` }], customDomains: [] } };
+    if (query.includes('serviceInstance(')) {
+      return { serviceInstance: { source: { image: pins[svc] }, numReplicas: o.numReplicas?.[svc] ?? 1,
+        overlapSeconds: o.overlapSeconds ?? null, drainingSeconds: null, latestDeployment: deployments[svc][0] } };
+    }
+    if (query.includes('deployments(')) return { deployments: { edges: [{ node: { ...deployments[svc][0] } }] } };
+    if (query.includes('variableUpsert')) {
+      if (o.upsertResult !== undefined) return { variableUpsert: o.upsertResult };
+      stored[svc][v.input.name] = v.input.value;
+      if (o.upsertAutoDeploys) newDeployment(svc);
+      return { variableUpsert: true };
+    }
+    if (query.includes('variableDelete')) {
+      delete stored[svc][v.input.name];
+      if (o.deleteAutoDeploys) newDeployment(svc);
+      return { variableDelete: true };
+    }
+    if (query.includes('serviceInstanceDeployV2')) return { serviceInstanceDeployV2: newDeployment(svc) };
+    if (query.includes('deployment(id')) {
+      const script = scripts[v.id];
+      const status = script.statuses.length > 1 ? script.statuses.shift() : script.statuses[0];
+      const dep = deployments[script.svc].find((d) => d.id === v.id);
+      if (dep.status !== 'SUCCESS' && status === 'SUCCESS') {
+        if (!o.noCarry?.includes(script.svc)) running[script.svc] = { ...stored[script.svc] };
+        serving[script.svc] = pins[script.svc].split(':').pop();
+        successAt[script.svc] = clock.t;
+        if (o.repointOnSuccess === script.svc) pins[script.svc] = image(script.svc, 'd4'.repeat(20));
+      }
+      dep.status = status;
+      return { deployment: { status } };
+    }
+    throw new Error(`unexpected query ${query}`);
+  };
+
+  const healthOf = (svc) => {
+    if (svc === 'identity') {
+      const body = { status: 'ok', build: serving.identity, introspection: modeOf(), allowOpenIntrospection: running.identity[OPEN_VAR] === '1' };
+      return o.healthOverride?.(svc, body) ?? body;
+    }
+    const body = { status: 'ok', build: serving[svc], identityVerifyAuth: Boolean(running[svc][SECRET_VAR]) };
+    if (svc === 'css-gate') body.identityVerifyResults = { ...counters };
+    return o.healthOverride?.(svc, body) ?? body;
+  };
+  const http = {
+    async getJson(url, opts = {}) {
+      events.push({ http: url });
+      const u = new URL(url);
+      if (u.hostname === 'api.github.com') {
+        const file = /workflows\/([^/]+)\/runs/.exec(u.pathname)[1];
+        if (o.githubStatus) return { status: o.githubStatus, body: {} };
+        return { status: 200, body: { workflow_runs: o.githubRuns?.[file] ?? [{ id: 1, status: 'completed' }] } };
+      }
+      const svc = SVCS.find((s) => u.hostname === `${s}.example.test`);
+      if (u.pathname === HEALTH[svc]) return { status: 200, body: healthOf(svc) };
+      if (svc === 'css-gate' && u.pathname.endsWith('/auth-methods.jsonld')) {
+        probes.push({ side: 'gate', at: clock.t });
+        assert.match(opts.headers.Authorization, /^Bearer introspection-rollout-probe-[0-9a-f]{16}$/);
+        if (!o.gateInconclusive) {
+          if (modeOf() === 'disabled' || !accepts('css-gate')) counters.refused++;
+          else counters.accepted++;
+        }
+        return { status: 401, body: { error: 'invalid bearer' } };
+      }
+      return { status: 404, body: null };
+    },
+    async send(url, { method, headers }) {
+      events.push({ http: url, method });
+      const u = new URL(url);
+      if (u.hostname === 'relay.example.test' && u.pathname === '/tool/publish_context' && method === 'POST') {
+        probes.push({ side: 'relay', at: clock.t });
+        assert.equal(headers.Authorization, 'Bearer introspection-rollout-probe');
+        if (o.relayInconclusive) return { status: 502, body: null };
+        return { status: 401, body: { detail: accepts('relay') ? 'Token not found' : 'Identity server error: 401' } };
+      }
+      return { status: 404, body: null };
+    },
+  };
+  const masks = [];
+  return {
+    clock, events, stored, running, pins, deployments, successAt, probes, masks, counters, gql, http,
+    sleep: async (ms) => { clock.t += ms; },
+    now: () => clock.t,
+    mask: (v) => { masks.push(v); events.push({ mask: true }); },
+  };
+}
+
+const upserts = (w) => w.events.filter((e) => e.gql?.includes('variableUpsert')).map((e) => e.v.input);
+const deletes = (w) => w.events.filter((e) => e.gql?.includes('variableDelete')).map((e) => e.v.input);
+const deploysTriggered = (w) => w.events.filter((e) => e.gql?.includes('serviceInstanceDeployV2')).map((e) => e.v.s.replace(/^id-/, ''));
+const writeCount = (w) => upserts(w).length + deletes(w).length;
+
+/** Run one stage and capture everything it says, returns or throws. */
+async function run(w, stage, { apply = false, rand, github } = {}) {
+  const lines = [];
+  const captured = [];
+  const out = process.stdout.write.bind(process.stdout);
+  const err = process.stderr.write.bind(process.stderr);
+  process.stdout.write = (chunk, ...rest) => { captured.push(String(chunk)); return out(chunk, ...rest); };
+  process.stderr.write = (chunk, ...rest) => { captured.push(String(chunk)); return err(chunk, ...rest); };
+  let summary;
+  let error;
+  try {
+    summary = await runStage({ gql: w.gql, http: w.http, stage, apply, rand, log: (l) => lines.push(l), mask: w.mask, sleep: w.sleep, now: w.now, github });
+  } catch (e) {
+    error = e;
+  } finally {
+    process.stdout.write = out;
+    process.stderr.write = err;
+  }
+  const text = [lines.join('\n'), captured.join(''), JSON.stringify(summary ?? null), error ? `${error.message} ${String(error.cause ?? '')}` : '',
+    error ? describeFailure(error) : ''].join('\n');
+  return { summary, error, lines, text };
+}
+
+function assertNoValue(r, ...values) {
+  for (const v of values) {
+    assert.equal(r.text.includes(v), false, 'a value reached the output');
+    assert.equal(r.text.includes(v.slice(0, 12)), false, 'part of a value reached the output');
+  }
+}
+
+const both = { relay: { [SECRET_VAR]: V1 }, 'css-gate': { [SECRET_VAR]: V1 } };
+
+// ── callers ───────────────────────────────────────────────────────────────────
+
+test('callers, fresh, dry run: nothing written, generated, masked or deployed', async () => {
+  const w = world();
+  let drawn = 0;
+  const r = await run(w, 'callers', { rand: (n) => { drawn++; return Buffer.alloc(n, 1); } });
+  assert.equal(r.error, undefined, r.error?.message);
+  assert.equal(r.summary.applied, false);
+  assert.equal(writeCount(w), 0);
+  assert.deepEqual(deploysTriggered(w), []);
+  assert.equal(drawn, 0);
+  assert.deepEqual(w.masks, []);
+  assert.match(r.text, /relay: IDENTITY_INTROSPECTION_SECRET unset/);
+  assert.match(r.text, /relay and css-gate equal: n\/a/);
+  assert.match(r.text, /plan: write IDENTITY_INTROSPECTION_SECRET on relay \(generated now, never shown\)/);
+  assert.match(r.text, /dry run: nothing written or deployed/);
+});
+
+test('callers, fresh, apply: one generated value on both callers, masked first, both deployed, never shown', async () => {
+  const w = world();
+  const r = await run(w, 'callers', { apply: true });
+  assert.equal(r.error, undefined, r.error && describeFailure(r.error));
+  const u = upserts(w);
+  assert.deepEqual(u.map((x) => x.serviceId), ['id-relay', 'id-css-gate']);
+  assert.ok(u.every((x) => x.name === SECRET_VAR && x.skipDeploys === true));
+  const value = u[0].value;
+  assert.match(value, /^[0-9a-f]{64}$/);
+  assert.equal(u[1].value, value);
+  assert.deepEqual(w.masks, [value]);
+  const maskAt = w.events.findIndex((e) => e.mask);
+  const upsertAt = w.events.findIndex((e) => e.gql?.includes('variableUpsert'));
+  assert.ok(maskAt >= 0 && maskAt < upsertAt, 'masked before the first write');
+  assert.deepEqual(deploysTriggered(w), ['relay', 'css-gate']);
+  assert.equal(w.running.relay[SECRET_VAR], value);
+  assert.equal(w.running['css-gate'][SECRET_VAR], value);
+  assert.deepEqual(r.summary, { stage: 'callers', applied: true, wrote: [`relay:${SECRET_VAR}`, `css-gate:${SECRET_VAR}`], deployed: ['relay', 'css-gate'] });
+  assertNoValue(r, value);
+});
+
+test('callers rerun: both equal and running, nothing written or deployed', async () => {
+  const w = world({ stored: both });
+  const r = await run(w, 'callers', { apply: true });
+  assert.equal(r.error, undefined, r.error?.message);
+  assert.equal(writeCount(w), 0);
+  assert.deepEqual(deploysTriggered(w), []);
+  assert.match(r.text, /relay and css-gate equal: yes/);
+  assert.deepEqual(w.masks, [V1]);
+  assertNoValue(r, V1);
+});
+
+test('callers converge: a caller stored but not running is deployed, not written', async () => {
+  const w = world({ stored: both, running: { 'css-gate': { [SECRET_VAR]: undefined } } });
+  const r = await run(w, 'callers', { apply: true });
+  assert.equal(r.error, undefined, r.error?.message);
+  assert.equal(writeCount(w), 0);
+  assert.deepEqual(deploysTriggered(w), ['css-gate']);
+  assert.deepEqual(r.summary.deployed, ['css-gate']);
+});
+
+test('a deployment Railway starts after the write is followed, not triggered over', async () => {
+  const w = world({ upsertAutoDeploys: true });
+  const r = await run(w, 'callers', { apply: true });
+  assert.equal(r.error, undefined, r.error?.message);
+  assert.deepEqual(deploysTriggered(w), []);
+  assert.match(r.text, /Railway started deployment dep-relay-\d+ after the write; following it/);
+  assert.deepEqual(r.summary.deployed, ['relay', 'css-gate']);
+});
+
+for (const [why, opts, pattern] of [
+  ['only one caller set', { stored: { relay: { [SECRET_VAR]: V1 } } }, /only relay holds .*delete it from relay in Railway, or copy it to the other by hand, then rerun/],
+  ['the callers differ', { stored: { relay: { [SECRET_VAR]: V1 }, 'css-gate': { [SECRET_VAR]: V2 } } }, /different values/],
+  ['both equal but padded', { stored: { relay: { [SECRET_VAR]: ` ${V1}` }, 'css-gate': { [SECRET_VAR]: ` ${V1}` } } }, /not usable/],
+  ['both equal but short', { stored: { relay: { [SECRET_VAR]: 'short' }, 'css-gate': { [SECRET_VAR]: 'short' } } }, /not usable/],
+  ['identity set while the callers are not', { stored: { identity: { [SECRET_VAR]: V1 } } }, /identity holds/],
+  ['a sealed caller (running a value Railway does not show)', { stored: both, sealed: ['css-gate'] }, /css-gate runs with a value Railway does not show/],
+]) {
+  test(`callers refuses, before any write: ${why}`, async () => {
+    const w = world(opts);
+    const r = await run(w, 'callers', { apply: true });
+    assert.ok(r.error instanceof ProvisionRefusal, r.error?.message ?? 'no refusal');
+    assert.match(r.error.message, pattern);
+    assert.equal(writeCount(w), 0);
+    assert.deepEqual(deploysTriggered(w), []);
+    assertNoValue(r, V1, V2);
+  });
+}
+
+// identity running 'enforced' while Railway shows its variable unset: the sealed-or-undeployed
+// guard refuses before the callers rule is reached.
+test('callers refuses when identity runs enforced but Railway shows it unset (sealed)', async () => {
+  const w = world({ stored: { identity: { [SECRET_VAR]: V1 } }, sealed: ['identity'] });
+  const r = await run(w, 'callers', { apply: true });
+  assert.ok(r.error instanceof ProvisionRefusal);
+  assert.match(r.error.message, /identity runs with a value Railway does not show/);
+  assert.equal(writeCount(w), 0);
+});
+
+// ── identity ──────────────────────────────────────────────────────────────────
+
+test('identity refuses while the callers are unset', async () => {
+  const w = world();
+  const r = await run(w, 'identity', { apply: true });
+  assert.ok(r.error instanceof ProvisionRefusal);
+  assert.match(r.error.message, /run stage=callers with apply first/);
+  assert.equal(writeCount(w), 0);
+});
+
+test('identity refuses when a caller does not report presenting the bearer', async () => {
+  const w = world({ stored: both, running: { relay: { [SECRET_VAR]: undefined } } });
+  const r = await run(w, 'identity', { apply: true });
+  assert.ok(r.error instanceof ProvisionRefusal);
+  assert.match(r.error.message, /relay does not report presenting a bearer/);
+  assert.equal(writeCount(w), 0);
+});
+
+test('identity refuses when identity serves an image without the health fields', async () => {
+  const w = world({ stored: both, healthOverride: (svc, body) => (svc === 'identity' ? { status: 'ok', build: body.build } : undefined) });
+  const r = await run(w, 'identity', { apply: true });
+  assert.ok(r.error instanceof ProvisionRefusal);
+  assert.match(r.error.message, /deploy master first/);
+  assert.equal(writeCount(w), 0);
+});
+
+test('identity refuses when the check before the write is not accepted', async () => {
+  const w = world({ stored: both, relayInconclusive: true });
+  const r = await run(w, 'identity', { apply: true });
+  assert.ok(r.error instanceof ProvisionRefusal);
+  assert.match(r.error.message, /does not accept both callers now/);
+  assert.equal(writeCount(w), 0);
+});
+
+test('identity: copies the callers\' value, deploys, waits out the overlap, and checks both callers', async () => {
+  const w = world({ stored: both, overlapSeconds: 30 });
+  const r = await run(w, 'identity', { apply: true });
+  assert.equal(r.error, undefined, r.error && describeFailure(r.error));
+  const u = upserts(w);
+  assert.equal(u.length, 1);
+  assert.equal(u[0].serviceId, 'id-identity');
+  assert.equal(u[0].value, V1);
+  assert.equal(u[0].skipDeploys, true);
+  assert.deepEqual(deploysTriggered(w), ['identity']);
+  assert.equal(w.running.identity[SECRET_VAR], V1);
+  const after = w.probes.filter((p) => p.at > w.successAt.identity);
+  assert.ok(after.some((p) => p.side === 'relay') && after.some((p) => p.side === 'gate'));
+  assert.ok(Math.min(...after.map((p) => p.at)) - w.successAt.identity >= 40_000, 'probed inside the overlap');
+  assert.match(r.text, /check after the deploy: identity accepts relay: accepted; accepts css-gate: accepted/);
+  assertNoValue(r, V1);
+});
+
+test('identity rerun: identity equal and enforcing, nothing written or deployed', async () => {
+  const w = world({ stored: { ...both, identity: { [SECRET_VAR]: V1 } } });
+  const r = await run(w, 'identity', { apply: true });
+  assert.equal(r.error, undefined, r.error?.message);
+  assert.equal(writeCount(w), 0);
+  assert.deepEqual(deploysTriggered(w), []);
+});
+
+test('identity refuses when identity holds a different value', async () => {
+  const w = world({ stored: { ...both, identity: { [SECRET_VAR]: V2 } }, running: { identity: { [SECRET_VAR]: undefined } } });
+  const r = await run(w, 'identity', { apply: true });
+  assert.ok(r.error instanceof ProvisionRefusal);
+  assert.match(r.error.message, /different/);
+  assert.equal(writeCount(w), 0);
+  assertNoValue(r, V1, V2);
+});
+
+test('identity: a caller running a stale value fails the stage and names the rollback', async () => {
+  const w = world({ stored: both, running: { relay: { [SECRET_VAR]: V2 } } });
+  const r = await run(w, 'identity', { apply: true });
+  assert.ok(r.error instanceof StageFailure, r.error?.message);
+  assert.match(r.error.message, /identity refuses the relay/);
+  assert.match(r.error.message, /delete IDENTITY_INTROSPECTION_SECRET from identity \(ALLOW_OPEN_INTROSPECTION is still set\) and redeploy identity/);
+  assertNoValue(r, V1, V2);
+});
+
+test('identity: the gate refused after the deploy fails the stage', async () => {
+  const w = world({ stored: both, running: { 'css-gate': { [SECRET_VAR]: V2 } } });
+  const r = await run(w, 'identity', { apply: true });
+  assert.ok(r.error instanceof StageFailure, r.error?.message);
+  assert.match(r.error.message, /identity refuses css-gate/);
+});
+
+test('identity: an inconclusive check after the deploy fails the stage with the manual checks', async () => {
+  const w = world({ stored: both });
+  let calls = 0;
+  const http = { ...w.http, async send(url, opts) { calls++; return calls === 1 ? w.http.send(url, opts) : { status: 502, body: null }; } };
+  const r = await run({ ...w, http }, 'identity', { apply: true });
+  assert.ok(r.error instanceof StageFailure, r.error?.message);
+  assert.match(r.error.message, /inconclusive for the relay.*Check by hand/);
+});
+
+// ── finalize ──────────────────────────────────────────────────────────────────
+
+const enforcing = { ...both, identity: { [SECRET_VAR]: V1 } };
+
+test('finalize refuses while identity does not enforce', async () => {
+  const w = world({ stored: enforcing, running: { identity: { [SECRET_VAR]: undefined } } });
+  const r = await run(w, 'finalize', { apply: true });
+  assert.ok(r.error instanceof ProvisionRefusal);
+  assert.match(r.error.message, /run stage=identity first/);
+  assert.equal(writeCount(w), 0);
+});
+
+test('finalize with ALLOW_OPEN_INTROSPECTION gone and not running: nothing to do', async () => {
+  const w = world({ stored: { ...enforcing, identity: { [SECRET_VAR]: V1, [OPEN_VAR]: undefined } } });
+  const r = await run(w, 'finalize', { apply: true });
+  assert.equal(r.error, undefined, r.error?.message);
+  assert.equal(writeCount(w), 0);
+  assert.deepEqual(deploysTriggered(w), []);
+});
+
+test('finalize converge: removed but still running with it, so one deploy and no write', async () => {
+  const w = world({ stored: { ...enforcing, identity: { [SECRET_VAR]: V1, [OPEN_VAR]: undefined } }, running: { identity: { [OPEN_VAR]: '1' } } });
+  const r = await run(w, 'finalize', { apply: true });
+  assert.equal(r.error, undefined, r.error?.message);
+  assert.equal(writeCount(w), 0);
+  assert.deepEqual(deploysTriggered(w), ['identity']);
+  assert.equal(w.running.identity[OPEN_VAR], undefined);
+});
+
+test('finalize deletes ALLOW_OPEN_INTROSPECTION and follows the deployment Railway starts', async () => {
+  const w = world({ stored: enforcing, deleteAutoDeploys: true });
+  const r = await run(w, 'finalize', { apply: true });
+  assert.equal(r.error, undefined, r.error?.message);
+  assert.deepEqual(deletes(w).map((d) => [d.serviceId, d.name]), [['id-identity', OPEN_VAR]]);
+  assert.deepEqual(deploysTriggered(w), []);
+  assert.equal(w.running.identity[OPEN_VAR], undefined);
+  assert.equal(w.running.identity[SECRET_VAR], V1);
+});
+
+test('finalize deletes and, when Railway starts nothing within the grace window, deploys once', async () => {
+  const w = world({ stored: enforcing });
+  const r = await run(w, 'finalize', { apply: true });
+  assert.equal(r.error, undefined, r.error?.message);
+  assert.equal(deletes(w).length, 1);
+  assert.deepEqual(deploysTriggered(w), ['identity']);
+  const deleteAt = w.events.findIndex((e) => e.gql?.includes('variableDelete'));
+  const graceChecks = w.events.slice(deleteAt).filter((e) => e.gql?.includes('deployments(')).length;
+  assert.ok(graceChecks >= 10, `the grace window was not waited (${graceChecks} checks)`);
+  assert.match(r.text, /allowOpenIntrospection=false/);
+});
+
+// ── deploy outcomes ───────────────────────────────────────────────────────────
+
+test('a FAILED deployment fails the stage and says what is stored', async () => {
+  const w = world({ stored: both, statuses: { identity: ['DEPLOYING', 'FAILED'] } });
+  const r = await run(w, 'identity', { apply: true });
+  assert.ok(r.error instanceof StageFailure);
+  assert.match(r.error.message, /ended FAILED/);
+  assert.match(r.error.message, /next identity deploy \(an auto-deploy included\) will enforce it/);
+});
+
+test('a deployment that never finishes times out and says not to rerun', async () => {
+  const w = world({ statuses: { relay: ['DEPLOYING'] } });
+  const r = await run(w, 'callers', { apply: true });
+  assert.ok(r.error instanceof StageFailure);
+  assert.match(r.error.message, /do not rerun while it is in flight/);
+  assert.equal(r.text.includes(w.stored.relay[SECRET_VAR]), false);
+});
+
+test('a pin that moves during the run fails the stage', async () => {
+  const w = world({ repointOnSuccess: 'relay' });
+  const r = await run(w, 'callers', { apply: true });
+  assert.ok(r.error instanceof StageFailure);
+  assert.match(r.error.message, /repointed/);
+});
+
+test('SUCCESS without the health field changing fails the stage', async () => {
+  const w = world({ noCarry: ['relay'] });
+  const r = await run(w, 'callers', { apply: true });
+  assert.ok(r.error instanceof StageFailure);
+  assert.match(r.error.message, /staged changes/);
+  assert.equal(r.text.includes(w.stored.relay[SECRET_VAR]), false);
+});
+
+test('a write Railway does not confirm fails the stage', async () => {
+  const w = world({ upsertResult: false });
+  const r = await run(w, 'callers', { apply: true });
+  assert.ok(r.error instanceof StageFailure);
+  assert.match(r.error.message, /did not confirm/);
+});
+
+test('a write that half-lands (relay written, css-gate refused) says how to recover', async () => {
+  let upsertsSeen = 0;
+  const w = world({ gqlThrows: (q) => (q.includes('variableUpsert') && ++upsertsSeen === 2 ? 'GraphQL: Railway refused the request' : null) });
+  const r = await run(w, 'callers', { apply: true });
+  assert.ok(r.error instanceof StageFailure, r.error?.message);
+  assert.match(r.error.message, /Only relay is known to hold IDENTITY_INTROSPECTION_SECRET.*delete it from relay/);
+  assert.deepEqual(deploysTriggered(w), []);
+});
+
+// ── preflight ─────────────────────────────────────────────────────────────────
+
+for (const [why, opts, pattern] of [
+  ['another project', { project: 'not-the-fleet' }, /does not belong/],
+  ['another environment', { environment: 'not-production' }, /does not belong/],
+  ['a missing service', { services: [{ id: 'id-relay', name: 'relay' }, { id: 'id-identity', name: 'identity' }] }, /exactly one service named css-gate/],
+  ['a duplicated service', { services: [...SVCS.map((s) => ({ id: `id-${s}`, name: s })), { id: 'x', name: 'relay' }] }, /exactly one service named relay, found 2/],
+  ['a mutable tag', { pins: { relay: 'ghcr.io/markjspivey-xwisee/interego-relay:latest' } }, /not pinned/],
+  ['a repository the table does not name', { pins: { identity: `ghcr.io/markjspivey-xwisee/interego-relay:${TAG.identity}` } }, /not pinned/],
+  ['a build other than the pin', { serving: { 'css-gate': 'e5'.repeat(20) } }, /pinned to b2b2b2b2 but serving e5e5e5e5/],
+  ['a deployment in flight', { newestStatus: { identity: 'BUILDING' } }, /dep-identity-0 BUILDING/],
+  ['a caller image without the health field', { healthOverride: (svc, body) => (svc === 'relay' ? { status: 'ok', build: body.build } : undefined) }, /deploy master first/],
+]) {
+  test(`preflight refuses: ${why}`, async () => {
+    const w = world({ ...opts, stored: both });
+    const r = await run(w, 'callers', { apply: true });
+    assert.ok(r.error instanceof ProvisionRefusal, r.error?.message ?? 'no refusal');
+    assert.match(r.error.message, pattern);
+    assert.equal(writeCount(w), 0);
+    assert.deepEqual(deploysTriggered(w), []);
+  });
+}
+
+test('preflight refuses while a deploy workflow run has not finished, and skips the check outside Actions', async () => {
+  const github = { repository: 'markjspivey-xwisee/interego', token: 'gh-token', runId: '77' };
+  const busy = world({ githubRuns: { 'auto-deploy.yml': [{ id: 76, status: 'in_progress' }] } });
+  const r = await run(busy, 'callers', { apply: true, github });
+  assert.ok(r.error instanceof ProvisionRefusal);
+  assert.match(r.error.message, /auto-deploy\.yml has a run that has not finished \(76\)/);
+  assert.equal(writeCount(busy), 0);
+  const self = world({ githubRuns: { 'deploy-railway.yml': [{ id: 77, status: 'in_progress' }] } });
+  assert.equal((await run(self, 'callers', { github })).error, undefined, 'its own run does not count');
+  const denied = world({ githubStatus: 403 });
+  assert.match((await run(denied, 'callers', { github })).error.message, /could not list the runs/);
+  const local = world();
+  assert.match((await run(local, 'callers')).text, /not in GitHub Actions/);
+});
+
+test('css-gate with more than one replica is noted', async () => {
+  const w = world({ stored: both, numReplicas: { 'css-gate': 2 } });
+  const r = await run(w, 'callers');
+  assert.match(r.text, /per replica/);
+});
+
+// ── the live wrappers and failure text ───────────────────────────────────────
+
+test('Railway error text never reaches a message; a non-2xx answer is "network:" and is not retried', async () => {
+  const leaky = railwayGql('tok', async () => new Response(JSON.stringify({ errors: [{ message: `bad value ${V1}` }] }), { status: 200 }));
+  const e1 = await leaky('{x}').catch((e) => e);
+  assert.equal(e1.message, 'GraphQL: Railway refused the request');
+  assert.equal(e1.cause, undefined);
+  assert.equal(describeFailure(e1), 'provisioning failed at a Railway or HTTP request; no value or API response is logged.');
+  let calls = 0;
+  const bad = railwayGql('tok', async () => { calls++; return new Response(`upstream said ${V1}`, { status: 502 }); });
+  const e2 = await triggerWithRetry(() => bad('mutation{x}'), { sleep: async () => {} }).catch((e) => e);
+  assert.equal(e2.message, 'network: request failed');
+  assert.equal(calls, 1, 'an ambiguous failure is not retried');
+  const lost = railwayGql('tok', async () => { throw new Error(`socket ${V1}`); });
+  assert.equal((await lost('{x}').catch((e) => e)).message, 'network: request failed');
+  const ok = railwayGql('tok', async (url, init) => {
+    assert.equal(url, 'https://backboard.railway.com/graphql/v2');
+    assert.equal(init.headers['Project-Access-Token'], 'tok');
+    return new Response(JSON.stringify({ data: { y: 1 } }), { status: 200 });
+  });
+  assert.deepEqual(await ok('{y}'), { y: 1 });
+  const http = httpClient(async (url, init) => {
+    assert.equal(init.redirect, 'error');
+    return new Response(url.endsWith('/json') ? '{"a":1}' : 'plain', { status: 201 });
+  });
+  assert.deepEqual(await http.getJson('https://x.test/json'), { status: 201, body: { a: 1 } });
+  assert.deepEqual(await http.send('https://x.test/text', { method: 'POST' }), { status: 201, body: null });
+  assert.equal(describeFailure(new ProvisionRefusal('x')), 'refused: x');
+  assert.equal(describeFailure(new StageFailure('y')), 'failed: y');
+});
+
+// ── unit tables ───────────────────────────────────────────────────────────────
+
+test('planStage, usableSecret, newSecret and cliRefusal', () => {
+  const st = (relay, gate, identity, more = {}) => ({
+    relay: { stored: relay, running: false }, 'css-gate': { stored: gate, running: false },
+    identity: { stored: identity, running: false, openStored: true, openRunning: true, ...more },
+  });
+  assert.deepEqual(planStage('callers', st(undefined, '', undefined), { generate: () => V1 }).writes.map((w) => [w.service, w.value]), [['relay', V1], ['css-gate', V1]]);
+  assert.deepEqual(planStage('callers', st(undefined, undefined, undefined)).writes.map((w) => Object.hasOwn(w, 'value')), [false, false]);
+  assert.deepEqual(planStage('callers', st(V1, V1, V2)).notes.length, 1);
+  assert.equal(planStage('callers', st(V1, V1, V2)).identityEqual, 'no');
+  assert.deepEqual(planStage('identity', st(V1, V1, undefined)).writes, [{ service: 'identity', op: 'upsert', name: SECRET_VAR, value: V1 }]);
+  assert.deepEqual(planStage('identity', st(V1, V1, V1)).writes, []);
+  assert.throws(() => planStage('identity', st(V1, V2, undefined)), /different values/);
+  assert.deepEqual(planStage('finalize', st(V1, V1, V1)).writes, [{ service: 'identity', op: 'delete', name: OPEN_VAR }]);
+  assert.deepEqual(planStage('finalize', st(V1, V1, V1, { openStored: false })).writes, []);
+  assert.throws(() => planStage('finalize', st(V1, V1, undefined)), /run stage=identity first/);
+  assert.throws(() => planStage('finalize', st(V1, V1, V2)), /run stage=identity first/);
+  assert.throws(() => planStage('nonsense', st(V1, V1, V1)), ProvisionRefusal);
+
+  assert.equal(usableSecret(V1), true);
+  assert.equal(usableSecret('x'.repeat(31)), false);
+  assert.equal(usableSecret(`${V1}\n`), false);
+  assert.equal(usableSecret(`${V1.slice(0, 32)} ${V1.slice(32)}`), false);
+  assert.equal(usableSecret(undefined), false);
+
+  assert.equal(newSecret((n) => Buffer.alloc(n, 0xab)), 'ab'.repeat(32));
+  assert.match(newSecret(), /^[0-9a-f]{64}$/);
+  assert.notEqual(newSecret(), newSecret());
+
+  const env = { RAILWAY_PROJECT_TOKEN: 't', STAGE: 'callers' };
+  assert.equal(cliRefusal(env), null);
+  assert.equal(cliRefusal({ ...env, GITHUB_ACTIONS: 'true', GITHUB_REF: 'refs/heads/master' }), null);
+  assert.match(cliRefusal({ ...env, GITHUB_ACTIONS: 'true', GITHUB_REF: 'refs/heads/feature' }), /only from master/);
+  assert.match(cliRefusal({ STAGE: 'callers' }), /RAILWAY_PROJECT_TOKEN/);
+  assert.match(cliRefusal({ ...env, STAGE: 'all' }), /STAGE must be one of/);
+  assert.deepEqual([...STAGES], ['callers', 'identity', 'finalize']);
+  assert.deepEqual([...CALLERS], ['relay', 'css-gate']);
+});
+
+// ── static checks ─────────────────────────────────────────────────────────────
+
+test('the tool cannot write a value anywhere but Railway', () => {
+  const src = readFileSync(new URL('../tools/identity-introspection-provision.mjs', import.meta.url), 'utf8');
+  for (const forbidden of [/child_process/, /writeFile/, /appendFile/, /GITHUB_OUTPUT/, /GITHUB_ENV/, /GITHUB_STEP_SUMMARY/]) {
+    assert.doesNotMatch(src, forbidden);
+  }
+});
+
+test('the workflow is dispatch-only, master-only, and has no output channel', () => {
+  const yml = readFileSync(new URL('../.github/workflows/identity-introspection-provision.yml', import.meta.url), 'utf8');
+  const on = yml.slice(yml.indexOf('\non:'), yml.indexOf('\npermissions:'));
+  assert.match(on, /workflow_dispatch:/);
+  for (const trigger of ['push:', 'pull_request:', 'schedule:', 'workflow_run:', 'workflow_call:']) assert.equal(on.includes(trigger), false, trigger);
+  assert.match(yml, /github\.ref == 'refs\/heads\/master'/);
+  for (const option of STAGES) assert.match(yml, new RegExp(`- ${option}\\b`));
+  assert.match(yml, /secrets\.RAILWAY_PROJECT_TOKEN/);
+  for (const forbidden of ['GITHUB_OUTPUT', 'GITHUB_ENV', 'GITHUB_STEP_SUMMARY', 'set -x', 'upload-artifact']) {
+    assert.equal(yml.includes(forbidden), false, forbidden);
+  }
+});

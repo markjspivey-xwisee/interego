@@ -128,6 +128,48 @@ The identity server mounts RFC 7033 WebFinger at `/.well-known/webfinger` (see `
     - `self` (`application/did+ld+json`) → DID document
 - **Agent JRD shape.** Similar, plus `prov:actedOnBehalfOf` linking to the owner's WebID.
 
+## Token introspection: who may ask whether a token is live
+
+`POST /tokens/verify` takes `{ token }` and answers whether an identity token is live: `{ valid: true, userId, agentId, scope, expiresAt, ownerDid, webId, podUrl }` for one this server signed and that still verifies, otherwise `{ valid: false, reason }`. Forging a token is already prevented by `TOKEN_SIGNING_KEY`; what the route adds for someone holding a captured token is whether it is still live (not expired, revoked or deleted). It has two callers:
+
+- the relay (`deploy/mcp-relay/server.ts`, `verifyBearerToken`), for identity tokens on REST `/tool/<name>`, `/messages`, `/client-interactions`, A2A calls and provisional-play calls;
+- css-gate (`deploy/css-gate/server.mjs`), for writes and for owner reads of each pod's private documents.
+
+Both send `Authorization: Bearer <IDENTITY_INTROSPECTION_SECRET>` whenever their own copy of that variable is non-empty (the relay reads it on every call, css-gate at start). Not to be confused with the relay's own `POST /verify-token` and its `RELAY_INTROSPECTION_SECRET`, which css-gate uses for the relay's OAuth tokens.
+
+The identity server reads two variables at startup and runs in one of three modes:
+
+| Identity env | `GET /health` | `POST /tokens/verify` |
+|---|---|---|
+| `IDENTITY_INTROSPECTION_SECRET` set (`ALLOW_OPEN_INTROSPECTION` ignored) | `introspection: "enforced"`, `allowOpenIntrospection` says whether `ALLOW_OPEN_INTROSPECTION=1` is still set | Answers only `Authorization: Bearer <secret>`. No bearer, or another scheme: 401 `introspection bearer required`. A wrong value: 401 `introspection bearer rejected`. The scheme is case-sensitive (`bearer <secret>` counts as no bearer). |
+| No secret, `ALLOW_OPEN_INTROSPECTION=1` | `introspection: "open"`, `allowOpenIntrospection: true` | Answers anyone; the startup log warns. |
+| Neither | `introspection: "disabled"`, `allowOpenIntrospection: false` | 401 `token introspection is disabled — …` for everyone, which refuses both callers. |
+
+The startup log says which: `Introspection: ENFORCED`, the `OPEN mode` warning, or `Introspection: FAIL-CLOSED`. The relay's `GET /health` and css-gate's `GET /healthz` report `identityVerifyAuth`, whether they present a bearer. css-gate also reports `identityVerifyResults`, how identity has answered its verify requests since the gate started: `accepted` (identity answered 2xx, whatever it said about the token), `refused` (401 or 403: identity refused the gate's bearer), `other`. Nothing reports the value, its length or a hash of it.
+
+**The value.** One value on three services: `relay`, `css-gate` and `identity`. Use 32 random bytes as hex (the rollout workflow generates exactly that). A value with leading or trailing whitespace or a control character cannot be presented in a header, so every caller is refused; identity's startup log and css-gate's warn about it without showing it.
+
+**Rate limits.** A request presenting the right bearer counts against the `introspection` budget, 600 a minute per address. Every other request to this route counts against the shared per-address `tokens` budget, 60 a minute, with `POST /tokens`, `POST /register-agent`, `POST /tokens/me/sign-out-everywhere`, `POST /users/me/delete` and `GET /agents/me`, before it is answered. An address that has used its 60 gets 429 even with the right bearer, so a guess at the secret past the 60th learns nothing.
+
+### Rollout
+
+With `.github/workflows/identity-introspection-provision.yml` (`tools/identity-introspection-provision.mjs`), one stage per dispatch, a dry run first each time (it reports names, set or unset, and `equal: yes/no`):
+
+1. `stage=callers`: generates one value and writes it to the relay and css-gate, then deploys both with the image they already run and waits until each reports `identityVerifyAuth: true`. Identity is still open, so nothing changes for users.
+2. `stage=identity`: checks that identity accepts both callers now, copies their value to identity (keeping `ALLOW_OPEN_INTROSPECTION`, the rollback), deploys identity, waits until it reports `introspection: "enforced"`, waits out the deploy's overlap, and checks again that identity accepts the relay and css-gate. A refusal fails the job and names the rollback.
+3. `stage=finalize`, after an observation window: removes `ALLOW_OPEN_INTROSPECTION` from identity and deploys it, until `allowOpenIntrospection: false`.
+
+Each write passes `skipDeploys: true` and the tool deploys the service itself; it refuses before writing when a service serves a build other than its pin, a deployment is in flight, a service reports the variable while Railway shows it unset, or an `Auto-deploy master` or `Deploy to Railway` run has not finished. Do not dispatch while either is running. Optional checks after stage 2: `GET https://gate.interego.xwisee.com/<your userId>/auth-methods.jsonld` with your own identity token (never pasted anywhere) answers 200; a 401 `token not found or expired` means the gate's value is wrong, and the gate caches that refusal for 60 s. `client-signature-live.yml` drives the relay's `/client-interactions` with an identity token.
+
+### Rollback, floors and rotation
+
+- **Before finalize:** delete `IDENTITY_INTROSPECTION_SECRET` from identity and deploy identity (the dashboard's Deploy, or `deploy-railway.yml` with `service=identity` and its current build sha). With `ALLOW_OPEN_INTROSPECTION=1` still set, identity is open again.
+- **After finalize:** set `ALLOW_OPEN_INTROSPECTION=1` first. Deleting the secret without it leaves introspection disabled, which refuses both callers.
+- **Rollback floors.** Once identity enforces, the relay must run `f20b8499` or later and css-gate `9ce7812f` or later: older images send no header and are refused. That covers `deploy-railway.yml` with an old tag and a Railway rollback to an older deployment of either caller.
+- **Rotation.** Identity accepts one value, so changing it means a brief failure for whichever side runs the old value until all three run the new one. The tool refuses differing values and does not rotate; accepting two values at once would need code.
+- **Sealing.** Seal the variable only after finalize, if at all. Railway does not return a sealed value through the API, so the tool then sees the variable unset while the service reports it, and refuses.
+- **By hand.** `tools/railway-set-secret-var.mjs <service> IDENTITY_INTROSPECTION_SECRET <file> --apply`, in the same order (relay, css-gate, then identity). It reads the value from a file, prints a length and a 12-hex SHA-256 fingerprint and never the value, and each `--apply` makes Railway redeploy that service.
+
 ## Threat model: userId-claim hijack (closed)
 
 A naïve implementation would let a caller type *any* userId on the enrollment page and bind their own credential to it. That pattern let an attacker who learned a display-alias like `markj` attach their passkey to the real user's account, issue bearer tokens for them, and — because the passkey went into the pod's `auth-methods.jsonld` — survive container restarts indistinguishably from legitimate credentials.
