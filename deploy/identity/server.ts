@@ -2639,8 +2639,16 @@ function siweDomainSources(): ReadonlyMap<string, string> {
 }
 function siweDomains(): ReadonlySet<string> { return new Set(siweDomainSources().keys()); }
 
-/** How far a wallet's clock may differ from this server's when it stamps Issued At. */
+/** How far ahead of this server's clock a message's Not Before may be. */
 const SIWE_CLOCK_SKEW_MS = 5 * 60 * 1000;
+/**
+ * How far a message's Issued At may be from its challenge's issue, either way. Issued At is the
+ * signing device's clock, which can be off by hours (a phone with the wrong time zone, a laptop
+ * that never synced); freshness is the single-use nonce's job, which this server issued and
+ * which expires CHALLENGE_TTL_MS after that. A window of minutes refused those devices' sign-ins
+ * and kept nothing out that the nonce does not.
+ */
+const SIWE_ISSUED_AT_WINDOW_MS = 24 * 60 * 60 * 1000;
 
 type SiweMessageCheck =
   | { ok: true; address: string }
@@ -2650,9 +2658,10 @@ type SiweMessageCheck =
  * An ERC-4361 message this server accepts for challenge `ch`: one parseSiweMessage reads (so a
  * wallet reads it as a sign-in too and runs its domain check), whose domain and URI host are in
  * siweDomains(), whose address is in EIP-55 form (a wallet's parser refuses any other), whose
- * Nonce field is exactly the challenge's nonce, and whose Issued At falls between the
- * challenge's issue and now (give or take SIWE_CLOCK_SKEW_MS). Expiration Time, if present, must
- * not have passed, and Not Before must have arrived.
+ * Nonce field is exactly the challenge's nonce, and whose Issued At (an RFC 3339 date-time, as
+ * the parser requires) is within SIWE_ISSUED_AT_WINDOW_MS of the challenge's issue, either way.
+ * Expiration Time, if present, must not have passed, and Not Before must have arrived (give or
+ * take SIWE_CLOCK_SKEW_MS).
  * Returns the address, lowercased; the caller still checks the signature recovers to it.
  */
 async function checkSiweMessage(message: string, ch: Challenge): Promise<SiweMessageCheck> {
@@ -2703,10 +2712,10 @@ async function checkSiweMessage(message: string, ch: Challenge): Promise<SiweMes
   const now = Date.now();
   const issuedAt = Date.parse(f.issuedAt);
   const challengeIssued = ch.expiresAt - CHALLENGE_TTL_MS;
-  if (issuedAt < challengeIssued - SIWE_CLOCK_SKEW_MS || issuedAt > now + SIWE_CLOCK_SKEW_MS) {
+  if (Math.abs(issuedAt - challengeIssued) > SIWE_ISSUED_AT_WINDOW_MS) {
     return refuse({
-      error: 'SIWE message Issued At does not fit its challenge',
-      hint: 'Issued At must be the time the message was built, after the nonce was fetched. Check the signing device\'s clock.',
+      error: 'SIWE message Issued At is more than 24 hours from its challenge',
+      hint: 'Issued At must be the time the message was built, just after the nonce was fetched; it may be up to 24 hours off this server\'s clock either way. Check the signing device\'s date and clock.',
     });
   }
   if (f.expirationTime !== undefined && Date.parse(f.expirationTime) <= now) {
