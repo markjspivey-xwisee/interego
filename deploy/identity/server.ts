@@ -38,6 +38,7 @@ import {
   getCachedParsedDid,
   setCachedParsedDid,
   getOrCreateEd25519VerifyKey,
+  isSmallOrderEd25519Key,
 } from './did-parse.js';
 import { startTiming, logTiming, timingEnabled } from './timing.js';
 import {
@@ -144,7 +145,33 @@ const TOKEN_TTL_SECONDS = 86400; // 24 hours
 const IDENTITY_INTROSPECTION_SECRET = process.env['IDENTITY_INTROSPECTION_SECRET'] ?? '';
 const ALLOW_OPEN_INTROSPECTION = process.env['ALLOW_OPEN_INTROSPECTION'] === '1';
 
-function log(msg: string) { console.log(`[identity] ${msg}`); }
+// DID sign-in transition. A did-sig challenge carries a message naming this server
+// (didSignInMessage), and /auth/did verifies the signature over it. A signature over the bare
+// nonce names no server. While this setting is on, such a signature is still accepted and each
+// sign-in made with one is logged as identity_did_bare_nonce, so the clients still sending one
+// can be found.
+// Surrounding whitespace is ignored. Unset, empty or '1': on (the default for now). '0': refused
+// with 401. Any other value stops the server here.
+const DID_ACCEPT_BARE_NONCE = (() => {
+  const raw = (process.env['DID_ACCEPT_BARE_NONCE'] ?? '').trim();
+  if (raw === '' || raw === '1') return true;
+  if (raw === '0') return false;
+  throw new Error(`DID_ACCEPT_BARE_NONCE must be 1 (accept a DID signature over the bare nonce, logged) or 0 (refuse it); got ${JSON.stringify(raw)}`);
+})();
+
+// A line break inside a message (a stack trace, or text a caller sent: a display name, a
+// surface hint) continues the entry indented, so nothing a caller sends starts a log line. A line
+// break is any character a log reader may end a line at: CRLF, LF, CR, VT, FF, U+001C to U+001E,
+// U+0085, U+2028 and U+2029 (the set Python's str.splitlines uses; JavaScript and Java end lines
+// at some of them). The continuation still carries the caller's text, behind the indent: a line
+// is this server's own only when it starts with "[identity] ".
+const LOG_LINE_BREAK = /\r\n|[\n\r\v\f\x1c-\x1e\x85\u2028\u2029]/g;
+function log(msg: string) { console.log(`[identity] ${msg.replace(LOG_LINE_BREAK, '\n    ')}`); }
+
+/** A request value for one log line: printable ASCII, at most `max` characters, JSON-quoted; '-' when absent. */
+function logValue(value: unknown, max = 120): string {
+  return typeof value === 'string' && value !== '' ? JSON.stringify(value.slice(0, max).replace(/[^\x20-\x7e]/g, '?')) : '-';
+}
 
 // A failure nothing awaited is logged and the server keeps serving; see route-errors.ts.
 installProcessSafetyNet(log);
@@ -379,8 +406,8 @@ function encodeX25519Multibase(rawKey: Buffer): string {
  * tried first. If that fails we fall back to the legacy
  * `'z' + base64url(rawKey)` shape this server originally emitted, so
  * pre-existing clients that registered under the old encoding keep
- * working. The fallback logs a deprecation marker; a future relay
- * version will flip this to a hard 400.
+ * working. /auth/did logs a deprecation marker for the fallback; a
+ * future relay version will flip this to a hard 400.
  *
  * Returns either `{ ok: true, publicKey, format }` or
  * `{ ok: false, error }`.
@@ -406,7 +433,6 @@ function parseEd25519DidKey(did: string): { ok: true; publicKey: Buffer; format:
     const legacy = Buffer.from(encoded, 'base64url');
     if (legacy.length >= 32) {
       const publicKey = legacy.subarray(legacy.length - 32);
-      log(`[did-key-legacy] accepted base64url-encoded did:key for ${did.slice(0, 24)}…; client should migrate to W3C base58btc encoding`);
       return { ok: true, publicKey: Buffer.from(publicKey), format: 'base64url-legacy' };
     }
   } catch { /* fall through */ }
@@ -455,6 +481,11 @@ function accountHoldsDidKey(m: AuthMethods, did: string, keyFromDid: boolean, pu
  */
 const DID_NOT_REGISTERED = 'This DID is not registered. Sign in with an existing credential for this account and add this DID from there.';
 const DID_KEY_NOT_REGISTERED = 'This DID is not registered with this key, and only a did:key can open an account by itself. Sign in with an existing credential and add this DID from there.';
+const DID_SIGNATURE_FAILED = 'Ed25519 signature verification failed. Sign, with the DID\'s key, the exact UTF-8 bytes of the message that POST /challenges with {"purpose":"did-sig"} returned beside this nonce (LF line breaks, nothing added or removed). The challenge is spent; request a new one.';
+const DID_BARE_NONCE_REFUSED = 'This signature is over the bare nonce, which names no server. POST /challenges with {"purpose":"did-sig"} returns a message beside a new nonce: sign that message\'s exact UTF-8 bytes and send the signature with its nonce. The challenge is spent; request a new one.';
+// A key of small order (isSmallOrderEd25519Key), from a did:key or publicKeyMultibase: a signature
+// by it can be made without a private key, so it proves nothing.
+const DID_KEY_NOT_USABLE = 'This is not a usable Ed25519 key: it is a point of small order, for which a signature proves nothing. Use a key made by an Ed25519 key generator. The challenge is spent; request a new one.';
 
 function generateEd25519(): KeyPair {
   // Ed25519 — signing / authentication / assertionMethod.
@@ -1607,7 +1638,8 @@ function seedIdentity(id: string, type: 'user' | 'agent', name: string, owner?: 
   if (scope !== undefined) rec.scope = scope;
   identities.set(id, rec);
   keys.set(id, generateEd25519());
-  log(`Seeded ${type} identity: ${id} (${name})`);
+  // Quoted: a first sign-in names the user and its agent from what the caller sends.
+  log(`Seeded ${type} identity: ${logValue(id, 200)} (${logValue(name, 200)})`);
 }
 
 // The janitor (app.listen below) deletes the OWNER of any agent whose id matches this, once
@@ -1711,11 +1743,13 @@ async function agentIdentity(agentId: string): Promise<Identity | undefined> {
 
 // ── Challenges (nonces for proof-of-possession auth) ────────
 //
-// Every sign-in starts with POST /challenges -> nonce. The client then
-// signs the nonce with their private key (wallet / passkey / DID key)
-// and POSTs it to /verify. The server checks the nonce was issued,
-// hasn't been used, hasn't expired, and that the signature matches the
-// public key already on file (or being registered for first time).
+// Every sign-in starts with POST /challenges -> nonce. A passkey signs
+// the nonce as its WebAuthn challenge bytes; a wallet signs a SIWE
+// message that carries it; a DID key signs the message its did-sig
+// challenge comes with. The client POSTs the proof to /auth/<method>.
+// The server checks the nonce was issued, is unused and has not
+// expired, and, if it was issued with a purpose, that the purpose is
+// this route's (consumeChallenge); then it checks the signature.
 
 interface Challenge {
   nonce: string;
@@ -1724,6 +1758,9 @@ interface Challenge {
   // specific auth method / WebAuthn operation. Prevents cross-use of
   // a WebAuthn-originated challenge against SIWE, etc.
   purpose?: 'siwe' | 'webauthn-register' | 'webauthn-authenticate' | 'did-sig';
+  // did-sig: the text the DID's key signs (didSignInMessage), kept so /auth/did verifies the
+  // bytes it handed out.
+  message?: string;
   // For WebAuthn flows: the transient session-user handle emitted in
   // the registration options (so the `/register` step can match the
   // ceremony back to this challenge). NOT the final userId.
@@ -1750,6 +1787,15 @@ interface Challenge {
 const challenges = new Map<string, Challenge>();
 const CHALLENGE_TTL_MS = 5 * 60 * 1000;
 
+/**
+ * The text a did-sig challenge asks the DID's key to sign: what it is and its format version,
+ * this server's host (from BASE_URL, the `base` /health reports; never a request header), and
+ * the nonce. LF line ends, no trailing newline, ASCII only. Nothing in it comes from the request.
+ */
+function didSignInMessage(nonce: string): string {
+  return `Interego DID sign-in v1\nHost: ${BASE_URL_HOST}\nNonce: ${nonce}`;
+}
+
 function issueChallenge(purpose?: Challenge['purpose'], userId?: string): Challenge {
   // Prune expired entries periodically on new issues
   const now = Date.now();
@@ -1760,6 +1806,7 @@ function issueChallenge(purpose?: Challenge['purpose'], userId?: string): Challe
   const nonce = crypto.randomBytes(32).toString(purpose === 'siwe' ? 'hex' : 'base64url');
   const ch: Challenge = { nonce, expiresAt: now + CHALLENGE_TTL_MS };
   if (purpose) ch.purpose = purpose;
+  if (purpose === 'did-sig') ch.message = didSignInMessage(nonce);
   if (userId) ch.userId = userId;
   challenges.set(nonce, ch);
   return ch;
@@ -1962,7 +2009,7 @@ async function issueToken(userId: string, agentId: string, scope: string, provis
     expiresAt: payload.expiresAt,
     ...(payload.provisionalPlay ? { provisionalPlay: payload.provisionalPlay } : {}),
   };
-  log(`Issued token for ${agentId} (user: ${userId}, scope: ${scope}, epoch: ${epoch}, expires: ${record.expiresAt})`);
+  log(`Issued token for ${logValue(agentId, 200)} (user: ${userId}, scope: ${scope}, epoch: ${epoch}, expires: ${record.expiresAt})`);
   return record;
 }
 
@@ -2525,7 +2572,7 @@ app.post('/register', (_req, res) => {
     use: {
       'brand-new user (passkey)': 'POST /auth/webauthn/register-options then /auth/webauthn/register',
       'brand-new user (wallet)': 'POST /auth/siwe after /challenges with purpose=siwe',
-      'brand-new user (did)': 'POST /auth/did after /challenges with purpose=did-sig',
+      'brand-new user (did)': 'POST /auth/did with a signature over the message /challenges returns for purpose=did-sig',
       'claim legacy seeded userId': 'include { bootstrapUserId, bootstrapInvite } on first-auth call (one-time)',
       'add another device to existing account': 'authenticate first, then repeat any register path with Authorization: Bearer <token>',
     },
@@ -2536,11 +2583,14 @@ app.post('/register', (_req, res) => {
 
 /**
  * POST /challenges — issue a nonce the client signs to prove key control.
- * Body: { purpose?, userId? }
+ * Body: { purpose?, userId?, address? }
  *   purpose:  'siwe' | 'webauthn-register' | 'webauthn-authenticate' | 'did-sig'
  *   userId:   for WebAuthn authenticate, scopes the challenge to a user
  *             (server returns allowed credential IDs the client may use)
- * Returns: { nonce, expiresAt, allowCredentials? }
+ *   address:  siwe only; comes back in EIP-55 form to sign with
+ * Returns: { nonce, expiresAt, message?, rpId?, address?, allowCredentials? }
+ *   message:  did-sig only. The exact text the DID's key signs, byte for byte; a client never
+ *             rebuilds it. It names this server's host (from BASE_URL) and carries the nonce.
  */
 app.post('/challenges', challengeLimiter, async (req, res) => {
   const { purpose, userId, address } = req.body as { purpose?: Challenge['purpose']; userId?: string; address?: unknown };
@@ -2603,6 +2653,7 @@ app.post('/challenges', challengeLimiter, async (req, res) => {
     ch.rpOrigin = rp.origin;
   }
   const resp: Record<string, unknown> = { nonce: ch.nonce, expiresAt: new Date(ch.expiresAt).toISOString() };
+  if (ch.message) resp.message = ch.message;
   if (ch.rpId) resp.rpId = ch.rpId;
   if (checksummedAddress) resp.address = checksummedAddress;
   if (purpose === 'webauthn-authenticate' && userId) {
@@ -3646,6 +3697,22 @@ app.post('/auth/webauthn/authenticate', authEnrollLimiter, async (req, res) => {
 // ── Generic DID-signature auth (did:key / did:web) ──────────
 
 /**
+ * One line for a signature over the bare nonce: enough to find the client; never the DID, the
+ * nonce, the signature, an invite or a token. With `signedIn`: a sign-in made with one, written
+ * once the token for that account is issued (`accepted`). A signature refused later on (a key no
+ * account lists for this DID, a pod that cannot be read) signed nobody in and writes no line, as
+ * that refusal does not depend on the setting. Without: the signature, refused at its check
+ * because DID_ACCEPT_BARE_NONCE is 0 (`refused`). No account has been looked up then, so for a
+ * DID that is not a did:key, `derivedUserId` names whatever DID was sent with the caller's key.
+ */
+function logBareNonceSignature(req: express.Request, did: string, ch: Challenge, surfaceAgent: unknown, signedIn?: string): void {
+  const method = /^did:([a-z0-9]{1,16}):/.exec(did)?.[1] ?? 'other';
+  const surface = surfaceAgent === undefined ? '-'
+    : typeof surfaceAgent === 'string' && /^[a-z][a-z0-9-]{0,63}$/.test(surfaceAgent) ? surfaceAgent : 'invalid';
+  log(`WARN identity_did_bare_nonce outcome=${signedIn ? 'accepted' : 'refused'} purpose=${ch.purpose === 'did-sig' ? 'did-sig' : 'none'} method=${method} derivedUserId=${deriveUserIdFromDid(did)} userId=${signedIn ?? '-'} surface=${surface} ua=${logValue(req.get('user-agent'))} origin=${logValue(req.get('origin'))}`);
+}
+
+/**
  * POST /auth/did — verify an Ed25519 signature against a pre-registered
  * DID key. Supports did:key (self-sovereign, public-key-encoded-as-DID)
  * and other DIDs such as did:web, whose key the caller sends in
@@ -3653,10 +3720,17 @@ app.post('/auth/webauthn/authenticate', authEnrollLimiter, async (req, res) => {
  * only to an account that lists it with that key, and cannot open an
  * account by itself: add it with a bearer token (or bootstrap invite).
  *
+ * The signature is checked against the message stored with the challenge,
+ * which names this server and carries the nonce. A signature over the bare
+ * nonce names no server. It is accepted only while DID_ACCEPT_BARE_NONCE is
+ * unset or 1, with Deprecation and Warning headers, and a sign-in made with
+ * one logs an identity_did_bare_nonce line naming the account signed in to.
+ * With 0 it is refused with 401, and logged.
+ *
  * Body: {
  *   did: string,              // did:key:z... or did:web:...
- *   nonce: string,            // from /challenges
- *   signature: string,        // base64url Ed25519 signature of nonce
+ *   nonce: string,            // from /challenges with purpose 'did-sig'
+ *   signature: string,        // base64url Ed25519 signature over the UTF-8 bytes of that challenge's message
  *   userId?: string,          // first-time: register this DID to this user
  *   name?: string,            // first-time display name
  *   publicKeyMultibase?: string,  // required for a DID that is not a did:key
@@ -3710,6 +3784,14 @@ app.post('/auth/did', authEnrollLimiter, async (req, res) => {
       res.status(400).json({ error: `Could not decode did:key public key: ${parsed.error}` });
       return;
     }
+    // Checked before the key is cached, so a cache hit is a usable key.
+    if (isSmallOrderEd25519Key(parsed.publicKey)) {
+      res.status(400).json({ error: DID_KEY_NOT_USABLE });
+      return;
+    }
+    if (parsed.format === 'base64url-legacy') {
+      log(`[did-key-legacy] accepted base64url-encoded did:key for ${logValue(did, 24)}…; client should migrate to W3C base58btc encoding`);
+    }
     publicKeyRaw = parsed.publicKey;
     didKeyFormat = parsed.format;
     setCachedParsedDid(did, publicKeyRaw, didKeyFormat);
@@ -3723,8 +3805,12 @@ app.post('/auth/did', authEnrollLimiter, async (req, res) => {
       res.status(400).json({ error: 'Could not decode publicKeyMultibase — tried W3C base58btc(0xed 0x01 || key) and legacy base64url(rawKey); neither yielded a 32-byte Ed25519 public key' });
       return;
     }
+    if (isSmallOrderEd25519Key(decoded.publicKey)) {
+      res.status(400).json({ error: DID_KEY_NOT_USABLE });
+      return;
+    }
     if (decoded.format === 'base64url-legacy') {
-      log(`[did-key-legacy] accepted base64url-encoded publicKeyMultibase for ${did}; client should migrate to W3C base58btc encoding`);
+      log(`[did-key-legacy] accepted base64url-encoded publicKeyMultibase for ${logValue(did, 200)}; client should migrate to W3C base58btc encoding`);
     }
     publicKeyRaw = decoded.publicKey;
     if (timingEnabled()) logTiming('did-parse', parseStart, { did: did.slice(0, 24), cache: 'none', format: decoded.format, source: 'multibase' });
@@ -3739,7 +3825,10 @@ app.post('/auth/did', authEnrollLimiter, async (req, res) => {
     res.setHeader('Warning', '299 - "did:key base64url encoding is deprecated; migrate to W3C base58btc multicodec format"');
   }
 
-  // Verify Ed25519 signature over the nonce.
+  // Verify the Ed25519 signature over the challenge's message, the bytes /challenges handed out.
+  // A signature over the bare nonce (all a challenge with no purpose has) names no server: it is
+  // accepted only while DID_ACCEPT_BARE_NONCE allows it. Refused, it is logged here; accepted, it
+  // is logged once the sign-in is done (logBareNonceSignature).
   //
   // crypto.createPublicKey(...) does ~30ms of native work on the first
   // call in the process (lazy-loads OpenSSL EVP_PKEY + ed25519 curve
@@ -3747,18 +3836,30 @@ app.post('/auth/did', authEnrollLimiter, async (req, res) => {
   // cache it keyed on hex(publicKeyRaw) — every subsequent /auth/did
   // for the same DID skips the SPKI assembly + KeyObject build entirely.
   const verifyStart = timingEnabled() ? startTiming() : 0;
+  let proof: 'message' | 'bare-nonce' | null = null;
   try {
     const sig = Buffer.from(signature, 'base64url');
     const verifyKey = getOrCreateEd25519VerifyKey(publicKeyRaw);
-    const ok = crypto.verify(null, Buffer.from(nonce, 'utf8'), verifyKey, sig);
-    if (timingEnabled()) logTiming('did-verify', verifyStart, { ok });
-    if (!ok) {
-      res.status(401).json({ error: 'Ed25519 signature verification failed' });
-      return;
-    }
+    if (ch.message !== undefined && crypto.verify(null, Buffer.from(ch.message, 'utf8'), verifyKey, sig)) proof = 'message';
+    else if (crypto.verify(null, Buffer.from(nonce, 'utf8'), verifyKey, sig)) proof = 'bare-nonce';
+    if (timingEnabled()) logTiming('did-verify', verifyStart, { ok: proof !== null, proof: proof ?? 'none' });
   } catch (err) {
     res.status(401).json({ error: `DID signature verification error: ${(err as Error).message}` });
     return;
+  }
+  if (proof === null) {
+    res.status(401).json({ error: DID_SIGNATURE_FAILED });
+    return;
+  }
+  if (proof === 'bare-nonce') {
+    if (!DID_ACCEPT_BARE_NONCE) {
+      logBareNonceSignature(req, did, ch, surfaceAgent);
+      res.status(401).json({ error: DID_BARE_NONCE_REFUSED });
+      return;
+    }
+    res.setHeader('Deprecation', 'true');
+    // Appended: a legacy-form did:key has set a Warning of its own above.
+    res.append('Warning', '299 - "a DID signature over the bare nonce is deprecated; sign the message POST /challenges returns"');
   }
 
   // If the initial pod-index rebuild hasn't settled yet, give it a small
@@ -3957,7 +4058,7 @@ app.post('/auth/did', authEnrollLimiter, async (req, res) => {
     }
     if (outcome.kind === 'returning') {
       // adoptAccount loaded it; this is a sign-in, and nothing was written.
-      log(`DID ${did} signed in to ${targetUserId}, loaded from its pod (not in the DID index)`);
+      log(`DID ${logValue(did, 200)} signed in to ${targetUserId}, loaded from its pod (not in the DID index)`);
     } else if (!identities.has(targetUserId)) {
       seedIdentity(targetUserId, 'user', displayName);
       seedIdentity(def.agentId, 'agent', def.label, targetUserId, 'ReadWrite');
@@ -3967,7 +4068,7 @@ app.post('/auth/did', authEnrollLimiter, async (req, res) => {
     // FIX A: identity-server no longer mirrors /profile/card or /<id>/agents.
     // Single authoritative pod-side writer is the relay's /oauth/verify
     // handler. See SIWE first-touch comment above for background.
-    if (outcome.kind === 'created') log(`First-time DID registration: ${targetUserId} did=${did} defaultAgent=${agentId} (surfaceHint=${surfaceAgent ?? 'none'})`);
+    if (outcome.kind === 'created') log(`First-time DID registration: ${targetUserId} did=${logValue(did, 200)} defaultAgent=${logValue(agentId, 200)} (surfaceHint=${logValue(surfaceAgent, 200)})`);
   } else {
     // Add-did (authenticated) path — append if not already bound.
     try {
@@ -3986,12 +4087,15 @@ app.post('/auth/did', authEnrollLimiter, async (req, res) => {
       return;
     }
     if (timingEnabled()) logTiming('did-pod-write-scheduled', requestStart, { branch: 'add-did' });
-    log(`DID ${did} linked to existing user ${user.id}`);
+    log(`DID ${logValue(did, 200)} linked to existing user ${user.id}`);
   }
 
   const tokenStart = timingEnabled() ? startTiming() : 0;
   const tokenResponse = await issueTokenResponse(user, surfaceAgent);
   if (timingEnabled()) logTiming('did-issue-token', tokenStart);
+  // Only now: a bare-nonce signature refused on the way here signed nobody in, and the line says
+  // which account this one did.
+  if (proof === 'bare-nonce') logBareNonceSignature(req, did, ch, surfaceAgent, user.id);
   if (timingEnabled()) logTiming('did-total', requestStart);
   res.json(tokenResponse);
 });
@@ -4987,7 +5091,7 @@ app.delete('/auth-methods/me/did', authEnrollLimiter, async (req, res) => {
   }
   catch (err) { res.status(500).json({ error: `Failed to persist: ${(err as Error).message}` }); return; }
   if (res.headersSent) return;
-  log(`Removed DID ${did} for ${user.id}`);
+  log(`Removed DID ${logValue(did, 200)} for ${user.id}`);
   res.json({ removed: true, did, remaining });
 });
 
@@ -5999,11 +6103,17 @@ app.listen(PORT, () => {
   }
   log(`WebAuthn RP: static id=${RP_ID} origin=${RP_ORIGIN}; per-request allowlist=[${[...RP_ALLOWLIST.keys()].join(', ') || '(none)'}]`);
   log(`SIWE domains (first line of a wallet sign-in message): [${[...siweDomainSources()].map(([h, src]) => `${h} (${src})`).join(', ')}]; add a front-end with SIWE_DOMAINS`);
+  log(`DID sign-in: did-sig challenges carry a message naming ${BASE_URL_HOST}`);
+  if (DID_ACCEPT_BARE_NONCE) {
+    log(`WARN: DID sign-in still accepts a signature over the bare nonce (DID_ACCEPT_BARE_NONCE unset or 1); each sign-in made with one is logged as identity_did_bare_nonce. Set DID_ACCEPT_BARE_NONCE=0 to refuse them once no known client is logged.`);
+  } else {
+    log(`DID sign-in: a signature over the bare nonce is refused (DID_ACCEPT_BARE_NONCE=0)`);
+  }
   log(`Auth: decentralized — user credentials stored per-pod at <pod>/auth-methods.jsonld`);
   log(`Bootstrap invites: ${BOOTSTRAP_INVITES.size} configured${BOOTSTRAP_INVITES.size > 0 ? ' (' + [...BOOTSTRAP_INVITES.keys()].join(', ') + ')' : ''}`);
   log(`Endpoints:`);
   log(`  POST /register                        DEPRECATED (410 Gone) — userId is derived, not claimed`);
-  log(`  POST /challenges                      Issue proof-of-possession nonce`);
+  log(`  POST /challenges                      Issue proof-of-possession nonce (did-sig: and the message to sign)`);
   log(`  POST /auth/siwe                       Sign-In With Ethereum (derives u-eth-<…> or binds via Bearer/invite)`);
   log(`  POST /auth/webauthn/register-options  Begin passkey enrollment (Bearer for add-device, invite for seeded)`);
   log(`  POST /auth/webauthn/register          Finish passkey enrollment (userId derived from credential)`);

@@ -555,3 +555,7 @@ test('a load of the account that read it before the deletion does not put it bac
   assertTombstone(userId, 1);
   unlisted.delete(userId);
 });
+
+test('every DID sign-in above signed the challenge\'s message', () => {
+  assert.doesNotMatch(output, /WARN identity_did_bare_nonce /);
+});
