@@ -3,7 +3,8 @@
  * that is safe for one reason this file pins: the deployed config never sends mail.
  *
  * ★ WHY AN OVERRIDE AND NOT AN UPGRADE. npm audit reports nine advisories against nodemailer
- * 9.1.1. The two HIGH ones (quadratic denial of service in addressparser) are fixed in 10.0.6.
+ * 9.1.1. The two HIGH ones (quadratic denial of service in addressparser) are fixed in 10.0.5
+ * and 10.0.6.
  * The seven moderate ones (DKIM header unfolding, malformed envelope recipients, a TLS
  * servername reused across transports, nested recipient arrays, and addressparser releasing
  * comment, group or angle-addr text as a recipient) are fixed between 10.0.2 and 10.1.4, so
