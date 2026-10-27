@@ -2,9 +2,10 @@
  * The upper-ontology seed: what `i2idlx/tools/seed-pinned-upper.mjs --all` may and may not put in
  * the directory build-ghcr.yml hands the Foxxi image build as its `upper-seed` context.
  *
- * The image build fetched all 21 manifest-pinned sources from their publishers on every build, and
- * on 2026-10-27 one of them (data.europa.eu, ESCO) timing out held back every service's deploy. The
- * seed lets the build read verified bytes instead, so it must hold to three things:
+ * The image build fetched all 21 manifest-pinned sources from their publishers whenever its stage
+ * ran, which is every build that changed what the bridge copies, and on 2026-10-27 one of them
+ * (data.europa.eu, ESCO) timing out held back every service's deploy. The seed lets the build read
+ * verified bytes instead, so it must hold to three things:
  *
  *   1. It never writes bytes that are not the pin, and it removes any file that is not.
  *      refresh-upper.ts refuses a cached file that does not match and does NOT fall back to a live
@@ -18,12 +19,12 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
-  MIRRORS, USER_AGENT, readAccepts, readPins, seedAll, seedMirrors, writeVerified, type FetchLike,
+  MIRRORS, USER_AGENT, download, readAccepts, readPins, seedAll, seedMirrors, writeVerified, type FetchLike,
 } from '../i2idlx/tools/seed-pinned-upper.mjs';
 
 const I2IDLX = fileURLToPath(new URL('../i2idlx/', import.meta.url));
@@ -137,6 +138,17 @@ describe('seed-pinned-upper --all: only the pinned bytes, and every key accounte
     expect(buckets.sort()).toEqual(PINS.map(p => p.key).sort());
   });
 
+  it('as the command line calls it, a URL that keeps failing is asked four times: one try, three retries', async () => {
+    // The CHANGELOG states this number, so it is pinned at the default the CLI gets, not at `fast`.
+    const net = fakeNetwork({ ...healthy(), [PINS[0]!.url]: 'network-error' });
+    const report = await seedAll(root, out, { fetchImpl: net.fetchImpl, backoffMs: 0, log });
+    expect(net.calls.filter(c => c.url === PINS[0]!.url)).toHaveLength(4);
+    expect(report.missing).toEqual(['alpha']);
+    const alone = fakeNetwork({});
+    await expect(download(PINS[0]!.url, { fetchImpl: alone.fetchImpl, backoffMs: 0 })).rejects.toThrow('returned HTTP 404');
+    expect(alone.calls).toHaveLength(4);
+  });
+
   it('a failure that clears on a retry still seeds', async () => {
     const net = fakeNetwork({ ...healthy(), [PINS[0]!.url]: n => (n === 1 ? 'network-error' : BYTES.alpha) });
     const report = await seedAll(root, out, { ...fast, fetchImpl: net.fetchImpl });
@@ -207,7 +219,7 @@ describe('writeVerified is the only writer, and it checks the bytes itself', () 
 });
 
 describe('the command line tells the workflow whether to save the cache', () => {
-  const run = (outFile: string): string => execFileSync(process.execPath, [SCRIPT, root, '--all', out], {
+  const run = (outFile: string, script = SCRIPT): string => execFileSync(process.execPath, [script, root, '--all', out], {
     encoding: 'utf8', env: { ...process.env, GITHUB_OUTPUT: outFile },
   });
 
@@ -227,6 +239,23 @@ describe('the command line tells the workflow whether to save the cache', () => 
     const outputs = join(root, 'github-output');
     expect(run(outputs)).toContain('::warning::upper seed: esco: not seeded');
     expect(readFileSync(outputs, 'utf8')).toBe('complete=false\nmissing=esco\n');
+  });
+
+  it('still runs, and still reports, when started through a symlinked path', () => {
+    // Node runs the main module from its real path, and process.argv[1] keeps the path as typed. A
+    // guard that compared the two as URLs was false through any symlink: the script exited 0 having
+    // seeded nothing, warned of nothing and written no complete=, a silent skip of the whole set.
+    mkdirSync(out, { recursive: true });
+    for (const [key, text] of Object.entries(BYTES)) writeFileSync(join(out, key + '.source'), text);
+    const throughDirectory = join(root, 'tools-link');
+    symlinkSync(join(I2IDLX, 'tools'), throughDirectory, 'dir');
+    const throughFile = join(root, 'seed-link.mjs');
+    symlinkSync(SCRIPT, throughFile, 'file');
+    for (const [name, script] of [['directory', join(throughDirectory, 'seed-pinned-upper.mjs')], ['file', throughFile]] as const) {
+      const outputs = join(root, 'github-output-' + name);
+      expect(run(outputs, script), name).toContain('upper seed complete: all 3 pinned sources verified');
+      expect(readFileSync(outputs, 'utf8'), name).toBe('complete=true\nmissing=\n');
+    }
   });
 });
 
@@ -274,7 +303,7 @@ describe('against the real manifest', () => {
   });
 });
 
-describe('default mode, which the Dockerfile and the I2IDL-X workflows run, is unchanged', () => {
+describe('default mode, which the Dockerfile and the I2IDL-X workflows run, fetches and writes what it did before', () => {
   it('seeds the mirrored sources into <root>/.cache/upper and stops on bytes that are not the pin', async () => {
     const good = fakeNetwork(healthy());
     await seedMirrors(root, { fetchImpl: good.fetchImpl, backoffMs: 0, log });
@@ -285,5 +314,15 @@ describe('default mode, which the Dockerfile and the I2IDL-X workflows run, is u
     const bad = fakeNetwork({ [MIRRORS.gufo!.mirror]: 'a different commit\n' });
     await expect(seedMirrors(root, { fetchImpl: bad.fetchImpl, backoffMs: 0, log })).rejects.toThrow(/update the mirror commit with the pin/);
     expect(existsSync(join(root, '.cache', 'upper', 'gufo.source'))).toBe(false);
+  });
+
+  it('runs when started through a symlinked path, as the old top-level script did', () => {
+    mkdirSync(join(root, '.cache', 'upper'), { recursive: true });
+    writeFileSync(join(root, '.cache', 'upper', 'gufo.source'), BYTES.gufo);
+    const link = join(root, 'tools-link');
+    symlinkSync(join(I2IDLX, 'tools'), link, 'dir');
+    // The cached file matches its pin, so nothing is fetched; the line is the proof that it ran.
+    const stdout = execFileSync(process.execPath, [join(link, 'seed-pinned-upper.mjs'), root], { encoding: 'utf8' });
+    expect(stdout).toBe('gufo: cached source already matches the pin\n');
   });
 });

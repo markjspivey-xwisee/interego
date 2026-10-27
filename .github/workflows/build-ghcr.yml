@@ -193,21 +193,23 @@ jobs:
       # ── seed: i2idlx-upper ─────────────────────────────────────────────────────────────────────
       # The Foxxi image's i2idlx-builder stage restores the 21 sources (upper ontologies, Interego
       # namespace files, JSON-LD contexts) that its evidence/upper/manifest.json pins by SHA-256, and
-      # until now it fetched every one from its publisher on every build: purl.obolibrary.org,
-      # ontologydesignpatterns.org, w3.org, dublincore.org, purl.org, data.europa.eu,
-      # purl.imsglobal.org, GitHub Pages and raw.githubusercontent.com. On 2026-10-27 data.europa.eu
-      # timed out on ESCO (four attempts in under a minute), this leg failed, and auto-deploy, which
-      # is all-or-nothing, deployed no service; a re-run of the failed jobs succeeded. On 2026-10-26
-      # gUFO's persistent URL changing its bytes had held back every deploy the same way.
+      # until now it fetched every one from its publisher every time the stage ran, which is every
+      # build that changed what the bridge copies (the registry layer cache serves the others):
+      # purl.obolibrary.org, ontologydesignpatterns.org, w3.org, dublincore.org, purl.org,
+      # data.europa.eu, purl.imsglobal.org, GitHub Pages and raw.githubusercontent.com. On
+      # 2026-10-27 data.europa.eu timed out on ESCO (four attempts in under a minute), this leg
+      # failed, and auto-deploy, which is all-or-nothing, deployed no service; a re-run of the failed
+      # jobs succeeded. On 2026-10-26 gUFO's persistent URL changing its bytes had held back every
+      # deploy the same way.
       #
       # So the leg fetches them here first, verifies each against the manifest, and hands the
       # directory to the Dockerfile as its `upper-seed` stage. MEASURED 2026-10-27, off a runner: all
-      # 21 verified, 6.4 MB, and with them in .cache/upper, prepare-build-inputs.ts ran in a network
-      # namespace with no interfaces (the ROBOT jar it also checks comes earlier, from
-      # prepare-source.ts). The directory lives in the Actions cache, keyed on the pins, the request
-      # data and the script with its mirror table, so a hit fetches nothing. A miss restores the
-      # newest older seed and the script re-checks every file against the current pins, so a re-pin
-      # fetches only what changed.
+      # 21 verified, 6.6 MB (6,632,249 bytes), and with them in .cache/upper, prepare-build-inputs.ts
+      # ran in a network namespace whose only interface is a loopback that is down (unshare -n; the
+      # ROBOT jar it also checks comes earlier, from prepare-source.ts). The directory lives in the
+      # Actions cache, keyed on the pins, the request data and the script with its mirror table, so
+      # a hit fetches nothing. A miss restores the newest older seed and the script re-checks every
+      # file against the current pins, so a re-pin fetches only what changed.
       #
       # The seed never fails the leg: all three steps continue on error. A source the script cannot
       # get, or whose bytes are not the pin, is named in a warning and left out, and the image build

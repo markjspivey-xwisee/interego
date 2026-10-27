@@ -146,14 +146,16 @@ ENV I2IDLX_NOW=2026-10-19T00:51:00+00:00
 RUN npx tsx applications/foxxi-content-intelligence/i2idlx/typescript/prepare-source.ts \
   /app/applications/foxxi-content-intelligence/i2idlx /tmp/i2idlx-canonical-source
 # ★ prepare-build-inputs.ts below restores 21 sources that evidence/upper/manifest.json pins by
-# SHA-256, and it used to fetch every one from its publisher on every build. On 2026-10-27
-# data.europa.eu timed out on ESCO (four attempts in under a minute), this stage failed, and the
-# all-or-nothing auto-deploy held back every service; a re-run of the same jobs succeeded. CI now
-# fetches and verifies them on the runner, keeps them in the Actions cache, and passes them here as
-# the upper-seed stage. Nothing is trusted for having been cached: refresh-upper.ts checks each file
-# against the manifest's SHA-256 exactly as it checks a fresh fetch, and a source the seed does not
-# carry is fetched live as before. .cache never reaches the runtime stage, which copies only
-# site-ts, dist-ts and app/build-ts out of this one.
+# SHA-256, and it used to fetch every one from its publisher every time this stage ran rather than
+# came from the layer cache. On 2026-10-27 data.europa.eu timed out on ESCO (four attempts in under
+# a minute), this stage failed, and the all-or-nothing auto-deploy held back every service; a re-run
+# of the same jobs succeeded. CI now fetches and verifies them on the runner, keeps them in the
+# Actions cache, and passes them here as the upper-seed stage. Nothing is trusted for having been
+# cached: refresh-upper.ts checks each file against the manifest's SHA-256 exactly as it checks a
+# fresh fetch, and a source the seed does not carry is fetched live as before. The COPY sits after
+# prepare-source.ts and before the two steps that read .cache/upper, so a seed that differs from the
+# last build's re-runs those steps and not the clone. .cache never reaches the runtime stage, which
+# copies only site-ts, dist-ts and app/build-ts out of this one.
 COPY --from=upper-seed / /app/applications/foxxi-content-intelligence/i2idlx/.cache/upper/
 # gUFO's persistent URL serves whatever its publisher last committed, and bytes that differ from
 # the manifest's pin are refused, so the pinned bytes come from the publisher's own commit

@@ -26,9 +26,9 @@
 // Usage: node tools/seed-pinned-upper.mjs <i2idlx root>
 //        node tools/seed-pinned-upper.mjs <i2idlx root> --all <dir>
 import { createHash } from 'node:crypto';
-import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
-import { pathToFileURL } from 'node:url';
+import { fileURLToPath } from 'node:url';
 
 export const MIRRORS = {
   gufo: {
@@ -236,6 +236,23 @@ async function main(argv) {
   }
 }
 
-if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.meta.url) {
+/**
+ * Is this file the program node was started with, rather than a module a test imported? Node runs
+ * the main module from its real path, while process.argv[1] is the path as typed, so the two are
+ * compared as real paths. Compared as URLs they differ whenever the typed path goes through a
+ * symlink, and the script then did nothing at all and exited 0: no seed, no warning, no complete=.
+ */
+function startedAsProgram() {
+  if (!process.argv[1]) return false;
+  let typed;
+  try {
+    typed = realpathSync(process.argv[1]);
+  } catch {
+    return false; // not a file (node -e, node -), so not this one
+  }
+  return typed === realpathSync(fileURLToPath(import.meta.url));
+}
+
+if (startedAsProgram()) {
   await main(process.argv.slice(2));
 }

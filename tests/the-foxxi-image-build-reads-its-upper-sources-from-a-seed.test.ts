@@ -4,15 +4,16 @@
  * ── WHY ─────────────────────────────────────────────────────────────────────────────────────
  *
  * deploy/Dockerfile.foxxi-bridge's i2idlx-builder stage restores 21 sources that
- * evidence/upper/manifest.json pins by SHA-256, and it fetched every one from its publisher on every
- * build. On 2026-10-27 data.europa.eu timed out on ESCO, the leg failed, and the all-or-nothing
- * auto-deploy deployed no service; a re-run succeeded. build-ghcr.yml now fetches and verifies them
+ * evidence/upper/manifest.json pins by SHA-256, and it fetched every one from its publisher whenever
+ * the stage ran, which is every build that changed what the bridge copies (otherwise the registry
+ * layer cache serves it). On 2026-10-27 data.europa.eu timed out on ESCO, the leg failed, and the
+ * all-or-nothing auto-deploy deployed no service; a re-run succeeded. build-ghcr.yml now fetches and verifies them
  * on the runner (tools/seed-pinned-upper.mjs --all), keeps them in the Actions cache, and passes the
  * directory as the build context `upper-seed`, which replaces an empty `FROM scratch` stage.
  *
  * What is pinned here is the wiring, because each piece fails quietly on its own:
  *   - a context passed to a leg whose Dockerfile has no such stage is ignored, and one passed to
- *     every leg would put a Foxxi cache step in sixteen builds that do not read it;
+ *     every leg would put a Foxxi cache step in every other leg's build, none of which reads it;
  *   - a seed directory that the main context also carried would enter bridge-base and so the
  *     runtime image;
  *   - a COPY that lands anywhere but `<root>/.cache/upper/<key>.source` is never read, and every
@@ -208,7 +209,7 @@ describe('deploy/Dockerfile.foxxi-bridge', () => {
     expect(index(CONTEXT)).toBeLessThan(index('i2idlx-builder'));
   });
 
-  it('copies the seed into the directory refresh-upper.ts reads, before anything that fetches', () => {
+  it('copies the seed into the directory refresh-upper.ts reads, after prepare-source.ts and before the steps that read .cache/upper', () => {
     const copies = all.flatMap(s => s.body.filter(l => /^COPY\s+--from=upper-seed\s/.test(l)).map(l => [s.name, l]));
     expect(copies).toHaveLength(1);
     expect(copies[0]![0]).toBe('i2idlx-builder');
@@ -223,9 +224,19 @@ describe('deploy/Dockerfile.foxxi-bridge', () => {
     expect(reader).toContain(`const cache = join(root, '.cache', 'upper')`);
     expect(reader).toContain(`join(cache, pin.key + '.source')`);
 
-    const at = (needle: string): number => builder.body.findIndex(l => l.includes(needle));
-    expect(at('COPY --from=upper-seed')).toBeLessThan(at('tools/seed-pinned-upper.mjs'));
-    expect(at('COPY --from=upper-seed')).toBeLessThan(at('prepare-build-inputs.ts'));
+    // Before the two steps that read .cache/upper: the default-mode seed step and
+    // prepare-build-inputs.ts. Not before everything that fetches: apt-get, the workbench's npm ci
+    // and prepare-source.ts (the github.com clone and the ROBOT jar) come first, so a seed that
+    // differs from the last build's re-runs only the steps that read it, not the clone.
+    const at = (needle: string): number => {
+      const i = builder.body.findIndex(l => l.includes(needle));
+      expect(i, `no ${needle} step in i2idlx-builder`).toBeGreaterThan(-1);
+      return i;
+    };
+    const copy = at('COPY --from=upper-seed');
+    expect(copy).toBeLessThan(at('tools/seed-pinned-upper.mjs'));
+    expect(copy).toBeLessThan(at('prepare-build-inputs.ts'));
+    expect(copy).toBeGreaterThan(at('prepare-source.ts'));
   });
 
   it('never lets the cache reach the runtime image', () => {
