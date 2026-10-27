@@ -153,6 +153,9 @@ describe('the workflow that runs the root suite triggers on everything the suite
           const s = m[1] ?? '';
           // Only things shaped like a repo-relative path, and only if one exists.
           if (s.startsWith('/') || s.startsWith('@')) continue;
+          // In a git worktree `.git` is a file pointing at the main repository, so it would pass
+          // the existence check below; it is never a file the suite reads from the checkout.
+          if (s === '.git' || s.startsWith('.git/')) continue;
           if (!s.includes('/') && !/\.[a-z]+$/.test(s)) continue;
           const abs = join(ROOT, s);
           if (!existsSync(abs) || statSync(abs).isDirectory()) continue;
