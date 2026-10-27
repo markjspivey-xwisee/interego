@@ -25,6 +25,8 @@ import * as net from 'node:net';
 import { fileURLToPath } from 'node:url';
 import { Wallet } from 'ethers';
 import { deriveUserIdFromDid, deriveUserIdFromWallet } from '../derive-userid.js';
+import { closeServer, stopChild } from './teardown.js';
+import { publicJwk } from './public-jwk.js';
 
 const now = new Date().toISOString();
 const passkey = (id: string) => ({ id, publicKey: 'AA', counter: 0, createdAt: now });
@@ -52,7 +54,7 @@ function base58(bytes: Uint8Array): string {
 }
 function ed25519() {
   const { publicKey, privateKey } = crypto.generateKeyPairSync('ed25519');
-  const raw = Buffer.from(publicKey.export({ format: 'jwk' }).x!, 'base64url');
+  const raw = Buffer.from(publicJwk(publicKey).x!, 'base64url');
   return { multibase: `z${base58(Buffer.concat([Buffer.from([0xed, 0x01]), raw]))}`, privateKey };
 }
 function didKey() {
@@ -88,7 +90,7 @@ const derivedUnlisted = { wallet: Wallet.createRandom(), walletOther: 'a-wallet-
   didKey: didKey(), didKeyOther: 'a-didkey-holder-listed' };
 // A did:web its owner bound first, then nine more accounts bound it, each sorting before the
 // owner: more than the cap of holders tried. Only a key's holder can bind a did:web with that
-// key (/auth/did checks a signature by it over this server's nonce first), so each of the nine
+// key (/auth/did checks a signature by it over this server's challenge first), so each of the nine
 // lists a key of its own, which never verifies the owner's signature.
 const crowdedWeb = { did: 'did:web:crowded.example', owner: ed25519(), ownerId: 'zz-web-owner',
   others: Array.from({ length: 9 }, (_, i) => ({ id: `a-web-other-${i + 1}`, key: ed25519() })) };
@@ -245,8 +247,10 @@ async function siwe(w: { address: string; signMessage(message: string): Promise<
 }
 
 async function didSignIn(k: { did: string; privateKey: crypto.KeyObject }, extra: Record<string, unknown> = {}) {
-  const { nonce } = (await post('/challenges', { purpose: 'did-sig' })).json as { nonce: string };
-  const signature = crypto.sign(null, Buffer.from(nonce, 'utf8'), k.privateKey).toString('base64url');
+  const { nonce, message } = (await post('/challenges', { purpose: 'did-sig' })).json as { nonce: string; message?: unknown };
+  // As every DID client signs: the challenge's `message` when the server returns one, else the nonce.
+  const signed = typeof message === 'string' ? message : nonce;
+  const signature = crypto.sign(null, Buffer.from(signed, 'utf8'), k.privateKey).toString('base64url');
   return post('/auth/did', { did: k.did, nonce, signature, name: 'New', ...extra });
 }
 
@@ -284,8 +288,8 @@ before(async () => {
 });
 
 after(async () => {
-  identity?.kill('SIGTERM');
-  await new Promise<void>(resolve => podServer?.close(() => resolve()));
+  await stopChild(identity);
+  await closeServer(podServer);
 });
 
 test('a first-time wallet whose account holds a passkey is refused, and the account is left as it was', async () => {
@@ -581,4 +585,8 @@ test('a wallet signature replayed to the retired /siwe/verify gets no token', as
   assert.equal(replay.status, 410, JSON.stringify(replay.json));
   assert.equal(replay.json['token'], undefined);
   assert.equal(replay.json['userId'], undefined);
+});
+
+test('every DID sign-in above signed the challenge\'s message', () => {
+  assert.doesNotMatch(output, /WARN identity_did_bare_nonce /);
 });

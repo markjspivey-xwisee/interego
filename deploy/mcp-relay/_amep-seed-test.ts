@@ -41,6 +41,19 @@ const seed = await buildSeedState(deps);
 // was in the program to say so.
 console.log(`built seed: ${seed.order.length} acts, openHeads=[${seed.openHeads.join(', ')}]`);
 
+// ★ The Assert's semanticCid is a content address: SHA-256 over the RDFC-1.0 canonical N-Quads of
+// the memory's semantic projection. Clients and other relays hold these ids. The validator below
+// recomputes the CID with the same jsonld and rdf-canonize the engine used, so a release of either
+// that moved one byte of the projection would re-address every committed memory and still pass
+// there. This value was computed under jsonld 8.3.3 with rdf-canonize 4.0.1.
+const PINNED_SEMANTIC_CID = 'urn:cid:rdfc-1.0:sha256:455cc39fcf7ca2377cab7fcdc3dbbd4e52d9b34eb948bc63f976089ed97b6661';
+const assertCid = seed.acts[seed.order[1] ?? '']?.memory?.['semanticCid'];
+if (assertCid !== PINNED_SEMANTIC_CID) {
+  process.stdout.write(`  FAILS     semanticCid moved: ${String(assertCid)}, pinned ${PINNED_SEMANTIC_CID}\n`);
+  process.exit(1);
+}
+process.stdout.write(`  PINNED    semanticCid ${assertCid}\n`);
+
 // Validate each act's projection by calling the exchange route for each head.
 let pass = 0, fail = 0;
 for (const actId of seed.order) {

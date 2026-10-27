@@ -97,8 +97,9 @@ describe('★★★ the rule is DATA — the engine reads a graph it does not em
     // rewriting a TRACKED file with its own identical content on every run. It restored a change
     // that no longer happens.
     //
-    // Removing it is right under the current single-fork pool, where it was merely pointless I/O
-    // on a file more than ten other modules read. It matters more if file parallelism is ever
+    // Removing it is right under the pool vitest.config.ts pins, which runs one file at a time
+    // (one fork for the whole run under vitest 3, a fresh one per file since vitest 4), where it
+    // was merely pointless I/O on a file more than ten other modules read. It matters more if file parallelism is ever
     // enabled (measured, and parked on wip/parallel-test-pool): a whole-file write is not atomic,
     // so a concurrent reader could catch the truncated window.
     //

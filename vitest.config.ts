@@ -118,8 +118,9 @@ export default defineConfig({
     // the module graph between files: a source module evaluated while one file's `vi.mock` was
     // in force stays cached, still bound to that mock, for every file after it. Eight collected
     // modules call `vi.mock` or `vi.doMock` (on `ssrf-guard.js`, `@interego/solid`,
-    // `@interego/pgsl`, `electron` and others), so that is not a theoretical leak. One worker with `isolate: true` (vitest 4's default) runs the
-    // files one at a time as before, and gives each its own process: module state is fresh per
+    // `@interego/pgsl`, `electron` and others), so that is not a theoretical leak. One worker
+    // with `isolate: true` (vitest 4's default) runs the files one at a time as before, and
+    // gives each its own process: module state is fresh per
     // file, as it was. Process state now is too. Under vitest 3 a `vi.stubEnv` left unrestored
     // leaked into every later FILE (see the `afterEach` note in shared-live-externals.test.ts,
     // where a leaked SKIP_POD_TESTS would have emptied the five pod suites); now it stops at

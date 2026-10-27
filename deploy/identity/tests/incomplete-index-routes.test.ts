@@ -34,6 +34,8 @@ import { fileURLToPath } from 'node:url';
 import { Wallet } from 'ethers';
 import { deriveUserIdFromDid, deriveUserIdFromWallet } from '../derive-userid.js';
 import { assertion, attest, softPasskey, type SoftPasskey } from './soft-authenticator.js';
+import { closeServer, stopChild } from './teardown.js';
+import { publicJwk } from './public-jwk.js';
 
 const now = new Date().toISOString();
 const earlier = '2025-01-01T00:00:00.000Z';
@@ -50,7 +52,7 @@ function base58(bytes: Uint8Array): string {
 }
 function ed25519() {
   const { publicKey, privateKey } = crypto.generateKeyPairSync('ed25519');
-  const raw = Buffer.from(publicKey.export({ format: 'jwk' }).x!, 'base64url');
+  const raw = Buffer.from(publicJwk(publicKey).x!, 'base64url');
   return { multibase: `z${base58(Buffer.concat([Buffer.from([0xed, 0x01]), raw]))}`, privateKey };
 }
 
@@ -187,8 +189,10 @@ async function siwe(w: { address: string; signMessage(message: string): Promise<
 }
 
 async function didSignIn(k: { did: string; privateKey: crypto.KeyObject }, extra: Record<string, unknown> = {}, bearer?: string) {
-  const { nonce } = (await post('/challenges', { purpose: 'did-sig' })).json as { nonce: string };
-  const signature = crypto.sign(null, Buffer.from(nonce, 'utf8'), k.privateKey).toString('base64url');
+  const { nonce, message } = (await post('/challenges', { purpose: 'did-sig' })).json as { nonce: string; message?: unknown };
+  // As every DID client signs: the challenge's `message` when the server returns one, else the nonce.
+  const signed = typeof message === 'string' ? message : nonce;
+  const signature = crypto.sign(null, Buffer.from(signed, 'utf8'), k.privateKey).toString('base64url');
   return post('/auth/did', { did: k.did, nonce, signature, name: 'New', ...extra }, bearer);
 }
 
@@ -262,8 +266,8 @@ before(async () => {
 });
 
 after(async () => {
-  identity?.kill('SIGTERM');
-  await new Promise<void>(resolve => podServer?.close(() => resolve()));
+  await stopChild(identity);
+  await closeServer(podServer);
 });
 
 test('while accounts are loading, a wallet whose only holder is not loaded opens no account of its own', async () => {
@@ -446,4 +450,8 @@ test('while accounts are loading, a passkey whose derived account is unreadable 
   await new Promise(resolve => setTimeout(resolve, 300));   // a deferred write would land by now
   assert.equal(writesTo(copyHolder), 0);
   assert.equal(writesTo(derivedOwner.userId), 0);
+});
+
+test('every DID sign-in above signed the challenge\'s message', () => {
+  assert.doesNotMatch(output, /WARN identity_did_bare_nonce /);
 });

@@ -38,6 +38,7 @@ import {
   getCachedParsedDid,
   setCachedParsedDid,
   getOrCreateEd25519VerifyKey,
+  isSmallOrderEd25519Key,
 } from './did-parse.js';
 import { startTiming, logTiming, timingEnabled } from './timing.js';
 import {
@@ -48,7 +49,7 @@ import {
 import { resolveTargetUserId } from './resolve-target-userid.js';
 import { claimFirstSignIn, type FirstSignInOutcome } from './first-sign-in.js';
 import { authenticatePasskey, PasskeyPersistenceError, publicKeyIdentity } from './passkey-authentication.js';
-import { PodReadError, listPods, loadAccounts, readPodJson, type AccountLoadReport, type FetchLike } from './account-index.js';
+import { PodReadError, listPods, loadAccounts, podResourceExists, readPodJson, type AccountLoadReport, type FetchLike } from './account-index.js';
 import { AccountIndex, MAX_HOLDERS, enrolledAt } from './credential-index.js';
 import { createProvisionalPlayProvider } from './provisional-play-provider.js';
 import { parsePlayClients } from './provisional-play.js';
@@ -144,7 +145,33 @@ const TOKEN_TTL_SECONDS = 86400; // 24 hours
 const IDENTITY_INTROSPECTION_SECRET = process.env['IDENTITY_INTROSPECTION_SECRET'] ?? '';
 const ALLOW_OPEN_INTROSPECTION = process.env['ALLOW_OPEN_INTROSPECTION'] === '1';
 
-function log(msg: string) { console.log(`[identity] ${msg}`); }
+// DID sign-in transition. A did-sig challenge carries a message naming this server
+// (didSignInMessage), and /auth/did verifies the signature over it. A signature over the bare
+// nonce names no server. While this setting is on, such a signature is still accepted and each
+// sign-in made with one is logged as identity_did_bare_nonce, so the clients still sending one
+// can be found.
+// Surrounding whitespace is ignored. Unset, empty or '1': on (the default for now). '0': refused
+// with 401. Any other value stops the server here.
+const DID_ACCEPT_BARE_NONCE = (() => {
+  const raw = (process.env['DID_ACCEPT_BARE_NONCE'] ?? '').trim();
+  if (raw === '' || raw === '1') return true;
+  if (raw === '0') return false;
+  throw new Error(`DID_ACCEPT_BARE_NONCE must be 1 (accept a DID signature over the bare nonce, logged) or 0 (refuse it); got ${JSON.stringify(raw)}`);
+})();
+
+// A line break inside a message (a stack trace, or text a caller sent: a display name, a
+// surface hint) continues the entry indented, so nothing a caller sends starts a log line. A line
+// break is any character a log reader may end a line at: CRLF, LF, CR, VT, FF, U+001C to U+001E,
+// U+0085, U+2028 and U+2029 (the set Python's str.splitlines uses; JavaScript and Java end lines
+// at some of them). The continuation still carries the caller's text, behind the indent: a line
+// is this server's own only when it starts with "[identity] ".
+const LOG_LINE_BREAK = /\r\n|[\n\r\v\f\x1c-\x1e\x85\u2028\u2029]/g;
+function log(msg: string) { console.log(`[identity] ${msg.replace(LOG_LINE_BREAK, '\n    ')}`); }
+
+/** A request value for one log line: printable ASCII, at most `max` characters, JSON-quoted; '-' when absent. */
+function logValue(value: unknown, max = 120): string {
+  return typeof value === 'string' && value !== '' ? JSON.stringify(value.slice(0, max).replace(/[^\x20-\x7e]/g, '?')) : '-';
+}
 
 // A failure nothing awaited is logged and the server keeps serving; see route-errors.ts.
 installProcessSafetyNet(log);
@@ -379,8 +406,8 @@ function encodeX25519Multibase(rawKey: Buffer): string {
  * tried first. If that fails we fall back to the legacy
  * `'z' + base64url(rawKey)` shape this server originally emitted, so
  * pre-existing clients that registered under the old encoding keep
- * working. The fallback logs a deprecation marker; a future relay
- * version will flip this to a hard 400.
+ * working. /auth/did logs a deprecation marker for the fallback; a
+ * future relay version will flip this to a hard 400.
  *
  * Returns either `{ ok: true, publicKey, format }` or
  * `{ ok: false, error }`.
@@ -406,7 +433,6 @@ function parseEd25519DidKey(did: string): { ok: true; publicKey: Buffer; format:
     const legacy = Buffer.from(encoded, 'base64url');
     if (legacy.length >= 32) {
       const publicKey = legacy.subarray(legacy.length - 32);
-      log(`[did-key-legacy] accepted base64url-encoded did:key for ${did.slice(0, 24)}…; client should migrate to W3C base58btc encoding`);
       return { ok: true, publicKey: Buffer.from(publicKey), format: 'base64url-legacy' };
     }
   } catch { /* fall through */ }
@@ -455,6 +481,11 @@ function accountHoldsDidKey(m: AuthMethods, did: string, keyFromDid: boolean, pu
  */
 const DID_NOT_REGISTERED = 'This DID is not registered. Sign in with an existing credential for this account and add this DID from there.';
 const DID_KEY_NOT_REGISTERED = 'This DID is not registered with this key, and only a did:key can open an account by itself. Sign in with an existing credential and add this DID from there.';
+const DID_SIGNATURE_FAILED = 'Ed25519 signature verification failed. Sign, with the DID\'s key, the exact UTF-8 bytes of the message that POST /challenges with {"purpose":"did-sig"} returned beside this nonce (LF line breaks, nothing added or removed). The challenge is spent; request a new one.';
+const DID_BARE_NONCE_REFUSED = 'This signature is over the bare nonce, which names no server. POST /challenges with {"purpose":"did-sig"} returns a message beside a new nonce: sign that message\'s exact UTF-8 bytes and send the signature with its nonce. The challenge is spent; request a new one.';
+// A key of small order (isSmallOrderEd25519Key), from a did:key or publicKeyMultibase: a signature
+// by it can be made without a private key, so it proves nothing.
+const DID_KEY_NOT_USABLE = 'This is not a usable Ed25519 key: it is a point of small order, for which a signature proves nothing. Use a key made by an Ed25519 key generator. The challenge is spent; request a new one.';
 
 function generateEd25519(): KeyPair {
   // Ed25519 — signing / authentication / assertionMethod.
@@ -465,17 +496,18 @@ function generateEd25519(): KeyPair {
 
   // X25519 — keyAgreement (envelope-recipient key for cross-pod E2EE
   // sharing). Per-identity so each agent has its own encryption key
-  // (FIX 6 with FIX 3). Extract raw 32 bytes via JWK (`x`) — avoids
-  // hand-parsing SPKI DER.
+  // (FIX 6 with FIX 3). The raw 32 bytes are the end of the 44-byte SPKI
+  // DER, as for Ed25519 above. Not via JWK: on Node 20 a JWK export of a
+  // freshly generated key holds the key pair's mutex while it allocates,
+  // a GC there can run the finished keygen job's destructor, which takes
+  // the same mutex, and the thread deadlocks with itself (see
+  // tests/public-jwk.ts). The SPKI export takes no lock.
   const { publicKey: x25519PublicKey, privateKey: x25519PrivateKey } = crypto.generateKeyPairSync('x25519');
-  const xJwk = x25519PublicKey.export({ format: 'jwk' }) as { x?: string };
-  if (typeof xJwk.x !== 'string') {
-    throw new Error('X25519 public key JWK missing `x` field; cannot derive raw key');
+  const xSpki = x25519PublicKey.export({ type: 'spki', format: 'der' });
+  if (xSpki.length !== 44) {
+    throw new Error(`X25519 SPKI must be 44 bytes, got ${xSpki.length}`);
   }
-  const xRaw = Buffer.from(xJwk.x, 'base64url');
-  if (xRaw.length !== 32) {
-    throw new Error(`X25519 raw public key must be 32 bytes, got ${xRaw.length}`);
-  }
+  const xRaw = xSpki.subarray(xSpki.length - 32);
   const x25519PublicKeyMultibase = encodeX25519Multibase(xRaw);
   const x25519PublicKeyBase64 = xRaw.toString('base64');
 
@@ -660,7 +692,8 @@ const identityPendingPodWrites = new Set<string>();
 // credentials and epoch; under the same mutex it runs either wholly before the tombstone or
 // after this mark, so it can never put that snapshot back over the tombstone. Process-local,
 // like the mutex: a second replica writing the same pod is not covered (see AUTH-ARCHITECTURE.md).
-// An operator who re-opens an id by removing its tombstone restarts the process to clear this.
+// An operator re-opens an id by editing its tombstone into a record that lists a credential
+// (see the Deletion tombstone block) and restarts the process to clear this.
 const deletedUserIds = new Set<string>();
 
 async function withIdentityPodMutex<T>(userId: string, fn: () => Promise<T>): Promise<T> {
@@ -834,11 +867,65 @@ async function putPodAuthMethods(userId: string, methods: AuthMethods, opts: { i
   bootstrapUserIds.add(userId);
 }
 
+// ── Accounts deleted before deletions left a tombstone ──────
+//
+// Until 2026-10-26 POST /users/me/delete removed auth-methods.jsonld and <pod>/agents and kept
+// every other file: the container, the relay's profile/card and .acl files, the descriptors
+// and the .well-known/context-graphs manifest, the inbox. Such a pod has no tombstone, so a
+// derived id signing in to it again was created over it and inherited all of that (and its
+// did:web name). Before a derived id is created, its pod is asked whether such an account used
+// it, and only when the pod holds no credentials and the credential may create an account:
+//   - u-pk-: any container at all. An owner's authenticator never presents the same credential
+//     id twice (every registration makes a new one), so no owner is turned away, and a
+//     container exists only because an account with this id was written, or attempted, before.
+//   - u-eth- / u-did-: <pod>/agents is gone (only a deletion removes it) while the relay's
+//     profile/card remains. The relay writes that card only when it creates agents, at its
+//     first touch of a pod after this server issued a token for that very id (/oauth/verify,
+//     or lazy init for the token's own pod), and only since 2026-06-04, so the card shows that
+//     an account here used the pod. Nothing else in the pod does: every publish() writes the
+//     manifest (.well-known/context-graphs) and context-graphs/, and a bridge holding the gate's
+//     write secret publishes into a signer's own u-eth- pod with no account here at all (a
+//     vertical's self-enrolment, credential issuance, ontology publishing), so counting them
+//     locked such a wallet out at its first sign-in. A pod whose agents registry is still there
+//     lost only its sign-in record (a write before 2026-10-24 that never landed); its owner,
+//     holding the same wallet or key, signs in to it as before. The inbox does not count either:
+//     anyone can deliver to a pod, and these ids follow from a public address or key. A pod
+//     without the card shows nothing and opens again, as it did before, and that is more pods
+//     than the deletion date suggests: the relay wrote agents (publish path, /oauth/verify) long
+//     before it wrote cards and never adds a card to a pod that has agents, so a pod whose agents
+//     predates 2026-06-04 has none whenever it was deleted, nor has a pod that never connected to
+//     the relay (AUTH-ARCHITECTURE.md says how an operator finds them).
+// Yes: the sign-in is refused as deleted (409) and the tombstone written (identity_deleted_
+// before_tombstone in the log), so the next attempt reads it and asks nothing. A probe that
+// cannot be answered is 'unreadable' (503), never a new account. A brand-new account pays one
+// HEAD; a live account (a pod listing a credential) is never asked.
+const DERIVED_USER_ID = /^u-(pk|eth|did)-[0-9a-f]{12}$/;
+
+/**
+ * What in `userId`'s pod shows that an account deleted before deletions left a tombstone used
+ * it, or null when nothing does. `existing` is the pod's record without credentials, or null
+ * when it has none. Throws PodReadError when a probe cannot be answered.
+ */
+async function deletedBeforeTombstones(userId: string, existing: AuthMethods | null): Promise<string | null> {
+  const pod = `${CSS_URL}${userId}/`;
+  // A record lies in its container, so only a pod without one is asked whether it exists.
+  if (existing === null && !(await podResourceExists(podFetch, pod))) return null;
+  if (userId.startsWith('u-pk-')) return existing === null ? 'container' : 'auth-methods.jsonld without credentials';
+  const [agents, card] = await Promise.all([
+    podResourceExists(podFetch, `${pod}agents`),
+    podResourceExists(podFetch, `${pod}profile/card`),
+  ]);
+  return !agents && card ? 'profile/card' : null;
+}
+
 /**
  * A first-time wallet or DID sign-in to `userId` (first-sign-in.ts): read the account's pod
  * under its mutex and create the account only if the pod holds no credentials, so a
  * credential the indexes missed never replaces the ones the account already has. A
  * 'returning' account is loaded into the indexes; nothing else is touched unless 'created'.
+ * `derived`: the id was derived from the credential presented (not a bootstrap invite's
+ * seeded id, whose files predate its credentials by design), so before it is created its pod
+ * is asked whether an account deleted before tombstones used it (deletedBeforeTombstones).
  */
 async function claimFirstSignInOnPod(
   userId: string,
@@ -847,10 +934,30 @@ async function claimFirstSignInOnPod(
   holds: (methods: AuthMethods) => boolean,
   add: (methods: AuthMethods) => void,
   mayCreate = true,
+  derived = false,
 ): Promise<FirstSignInOutcome<AuthMethods>> {
+  const probe = derived && DERIVED_USER_ID.test(userId);
+  let evidence: string | null = null;
   const outcome = await withIdentityPodMutex(userId, () => claimFirstSignIn<AuthMethods>({
     mayCreate,
     closed: isTombstone,
+    ...(probe ? {
+      vacated: async (existing: AuthMethods | null) => {
+        evidence = await deletedBeforeTombstones(userId, existing);
+        return evidence !== null;
+      },
+      // Still under the mutex. A pod that had no record gets the tombstone only if none has
+      // appeared since (If-None-Match: *), so a record another writer made is never replaced.
+      retire: async (existing: AuthMethods | null) => {
+        log(`WARN identity_deleted_before_tombstone userId=${userId} evidence=${evidence} refused=deleted`);
+        try {
+          await putPodAuthMethods(userId, deletionTombstone(userId, existing?.sessionEpoch ?? 0), { ifAbsent: existing === null });
+        } catch (err) {
+          log(`WARN: tombstone for ${userId} not written (the next sign-in asks again): ${(err as Error).message}`);
+          throw err;
+        }
+      },
+    } : {}),
     read: async () => {
       // A deferred write still queued behind this mutex is what the pod is about to hold.
       const pending = identityPendingPodWrites.has(userId) ? authMethodsCache.get(userId) : undefined;
@@ -1197,7 +1304,18 @@ function normaliseAuthMethods(raw: unknown, userId: string): AuthMethods {
 // auth-methods.jsonld with this tombstone instead of removing it: the URL every first
 // sign-in already reads, in the pod (the identity server keeps nothing). It records the id
 // (already the path), the day, and an epoch above every token issued; no name, agent or
-// credential. It is permanent; an operator re-opens an id by deleting the file by hand.
+// credential. It is permanent. An operator re-opens an id by editing the file into a record
+// that lists the credential to admit, without deletedAt and with its sessionEpoch kept (so
+// the old tokens stay refused), and restarting the process (deletedUserIds).
+// Deletions before 2026-10-26 left no tombstone: they removed auth-methods.jsonld and
+// <pod>/agents and kept the rest. A derived id whose pod still looks like that is refused at
+// its first sign-in and given its tombstone then (deletedBeforeTombstones). A deletion since
+// leaves the pod looking the same once its tombstone is gone, so for u-pk- (while its
+// container exists) and for u-eth-/u-did- with the relay's card (while agents is gone),
+// deleting the file does not re-open the id: the tombstone comes back at the next try. A
+// u-eth-/u-did- pod without the card (its agents predates 2026-06-04, or it never connected
+// to the relay) shows nothing then: deleting the file and restarting re-opens the id at
+// epoch 0, and the deleted account's unexpired tokens verify again. Editing is the only way.
 const ACCOUNT_DELETED_MESSAGE = 'This account was deleted and cannot be re-opened; register a new credential';
 class AccountDeletedError extends Error {}
 
@@ -1520,7 +1638,8 @@ function seedIdentity(id: string, type: 'user' | 'agent', name: string, owner?: 
   if (scope !== undefined) rec.scope = scope;
   identities.set(id, rec);
   keys.set(id, generateEd25519());
-  log(`Seeded ${type} identity: ${id} (${name})`);
+  // Quoted: a first sign-in names the user and its agent from what the caller sends.
+  log(`Seeded ${type} identity: ${logValue(id, 200)} (${logValue(name, 200)})`);
 }
 
 // The janitor (app.listen below) deletes the OWNER of any agent whose id matches this, once
@@ -1624,11 +1743,13 @@ async function agentIdentity(agentId: string): Promise<Identity | undefined> {
 
 // ── Challenges (nonces for proof-of-possession auth) ────────
 //
-// Every sign-in starts with POST /challenges -> nonce. The client then
-// signs the nonce with their private key (wallet / passkey / DID key)
-// and POSTs it to /verify. The server checks the nonce was issued,
-// hasn't been used, hasn't expired, and that the signature matches the
-// public key already on file (or being registered for first time).
+// Every sign-in starts with POST /challenges -> nonce. A passkey signs
+// the nonce as its WebAuthn challenge bytes; a wallet signs a SIWE
+// message that carries it; a DID key signs the message its did-sig
+// challenge comes with. The client POSTs the proof to /auth/<method>.
+// The server checks the nonce was issued, is unused and has not
+// expired, and, if it was issued with a purpose, that the purpose is
+// this route's (consumeChallenge); then it checks the signature.
 
 interface Challenge {
   nonce: string;
@@ -1637,6 +1758,9 @@ interface Challenge {
   // specific auth method / WebAuthn operation. Prevents cross-use of
   // a WebAuthn-originated challenge against SIWE, etc.
   purpose?: 'siwe' | 'webauthn-register' | 'webauthn-authenticate' | 'did-sig';
+  // did-sig: the text the DID's key signs (didSignInMessage), kept so /auth/did verifies the
+  // bytes it handed out.
+  message?: string;
   // For WebAuthn flows: the transient session-user handle emitted in
   // the registration options (so the `/register` step can match the
   // ceremony back to this challenge). NOT the final userId.
@@ -1663,6 +1787,15 @@ interface Challenge {
 const challenges = new Map<string, Challenge>();
 const CHALLENGE_TTL_MS = 5 * 60 * 1000;
 
+/**
+ * The text a did-sig challenge asks the DID's key to sign: what it is and its format version,
+ * this server's host (from BASE_URL, the `base` /health reports; never a request header), and
+ * the nonce. LF line ends, no trailing newline, ASCII only. Nothing in it comes from the request.
+ */
+function didSignInMessage(nonce: string): string {
+  return `Interego DID sign-in v1\nHost: ${BASE_URL_HOST}\nNonce: ${nonce}`;
+}
+
 function issueChallenge(purpose?: Challenge['purpose'], userId?: string): Challenge {
   // Prune expired entries periodically on new issues
   const now = Date.now();
@@ -1673,6 +1806,7 @@ function issueChallenge(purpose?: Challenge['purpose'], userId?: string): Challe
   const nonce = crypto.randomBytes(32).toString(purpose === 'siwe' ? 'hex' : 'base64url');
   const ch: Challenge = { nonce, expiresAt: now + CHALLENGE_TTL_MS };
   if (purpose) ch.purpose = purpose;
+  if (purpose === 'did-sig') ch.message = didSignInMessage(nonce);
   if (userId) ch.userId = userId;
   challenges.set(nonce, ch);
   return ch;
@@ -1875,7 +2009,7 @@ async function issueToken(userId: string, agentId: string, scope: string, provis
     expiresAt: payload.expiresAt,
     ...(payload.provisionalPlay ? { provisionalPlay: payload.provisionalPlay } : {}),
   };
-  log(`Issued token for ${agentId} (user: ${userId}, scope: ${scope}, epoch: ${epoch}, expires: ${record.expiresAt})`);
+  log(`Issued token for ${logValue(agentId, 200)} (user: ${userId}, scope: ${scope}, epoch: ${epoch}, expires: ${record.expiresAt})`);
   return record;
 }
 
@@ -2438,7 +2572,7 @@ app.post('/register', (_req, res) => {
     use: {
       'brand-new user (passkey)': 'POST /auth/webauthn/register-options then /auth/webauthn/register',
       'brand-new user (wallet)': 'POST /auth/siwe after /challenges with purpose=siwe',
-      'brand-new user (did)': 'POST /auth/did after /challenges with purpose=did-sig',
+      'brand-new user (did)': 'POST /auth/did with a signature over the message /challenges returns for purpose=did-sig',
       'claim legacy seeded userId': 'include { bootstrapUserId, bootstrapInvite } on first-auth call (one-time)',
       'add another device to existing account': 'authenticate first, then repeat any register path with Authorization: Bearer <token>',
     },
@@ -2449,11 +2583,14 @@ app.post('/register', (_req, res) => {
 
 /**
  * POST /challenges — issue a nonce the client signs to prove key control.
- * Body: { purpose?, userId? }
+ * Body: { purpose?, userId?, address? }
  *   purpose:  'siwe' | 'webauthn-register' | 'webauthn-authenticate' | 'did-sig'
  *   userId:   for WebAuthn authenticate, scopes the challenge to a user
  *             (server returns allowed credential IDs the client may use)
- * Returns: { nonce, expiresAt, allowCredentials? }
+ *   address:  siwe only; comes back in EIP-55 form to sign with
+ * Returns: { nonce, expiresAt, message?, rpId?, address?, allowCredentials? }
+ *   message:  did-sig only. The exact text the DID's key signs, byte for byte; a client never
+ *             rebuilds it. It names this server's host (from BASE_URL) and carries the nonce.
  */
 app.post('/challenges', challengeLimiter, async (req, res) => {
   const { purpose, userId, address } = req.body as { purpose?: Challenge['purpose']; userId?: string; address?: unknown };
@@ -2516,6 +2653,7 @@ app.post('/challenges', challengeLimiter, async (req, res) => {
     ch.rpOrigin = rp.origin;
   }
   const resp: Record<string, unknown> = { nonce: ch.nonce, expiresAt: new Date(ch.expiresAt).toISOString() };
+  if (ch.message) resp.message = ch.message;
   if (ch.rpId) resp.rpId = ch.rpId;
   if (checksummedAddress) resp.address = checksummedAddress;
   if (purpose === 'webauthn-authenticate' && userId) {
@@ -2569,8 +2707,16 @@ function siweDomainSources(): ReadonlyMap<string, string> {
 }
 function siweDomains(): ReadonlySet<string> { return new Set(siweDomainSources().keys()); }
 
-/** How far a wallet's clock may differ from this server's when it stamps Issued At. */
+/** How far ahead of this server's clock a message's Not Before may be. */
 const SIWE_CLOCK_SKEW_MS = 5 * 60 * 1000;
+/**
+ * How far a message's Issued At may be from its challenge's issue, either way. Issued At is the
+ * signing device's clock, which can be off by hours (a phone with the wrong time zone, a laptop
+ * that never synced); freshness is the single-use nonce's job, which this server issued and
+ * which expires CHALLENGE_TTL_MS after that. A window of minutes refused those devices' sign-ins
+ * and kept nothing out that the nonce does not.
+ */
+const SIWE_ISSUED_AT_WINDOW_MS = 24 * 60 * 60 * 1000;
 
 type SiweMessageCheck =
   | { ok: true; address: string }
@@ -2580,9 +2726,10 @@ type SiweMessageCheck =
  * An ERC-4361 message this server accepts for challenge `ch`: one parseSiweMessage reads (so a
  * wallet reads it as a sign-in too and runs its domain check), whose domain and URI host are in
  * siweDomains(), whose address is in EIP-55 form (a wallet's parser refuses any other), whose
- * Nonce field is exactly the challenge's nonce, and whose Issued At falls between the
- * challenge's issue and now (give or take SIWE_CLOCK_SKEW_MS). Expiration Time, if present, must
- * not have passed, and Not Before must have arrived.
+ * Nonce field is exactly the challenge's nonce, and whose Issued At (an RFC 3339 date-time, as
+ * the parser requires) is within SIWE_ISSUED_AT_WINDOW_MS of the challenge's issue, either way.
+ * Expiration Time, if present, must not have passed, and Not Before must have arrived (give or
+ * take SIWE_CLOCK_SKEW_MS).
  * Returns the address, lowercased; the caller still checks the signature recovers to it.
  */
 async function checkSiweMessage(message: string, ch: Challenge): Promise<SiweMessageCheck> {
@@ -2633,10 +2780,10 @@ async function checkSiweMessage(message: string, ch: Challenge): Promise<SiweMes
   const now = Date.now();
   const issuedAt = Date.parse(f.issuedAt);
   const challengeIssued = ch.expiresAt - CHALLENGE_TTL_MS;
-  if (issuedAt < challengeIssued - SIWE_CLOCK_SKEW_MS || issuedAt > now + SIWE_CLOCK_SKEW_MS) {
+  if (Math.abs(issuedAt - challengeIssued) > SIWE_ISSUED_AT_WINDOW_MS) {
     return refuse({
-      error: 'SIWE message Issued At does not fit its challenge',
-      hint: 'Issued At must be the time the message was built, after the nonce was fetched. Check the signing device\'s clock.',
+      error: 'SIWE message Issued At is more than 24 hours from its challenge',
+      hint: 'Issued At must be the time the message was built, just after the nonce was fetched; it may be up to 24 hours off this server\'s clock either way. Check the signing device\'s date and clock.',
     });
   }
   if (f.expirationTime !== undefined && Date.parse(f.expirationTime) <= now) {
@@ -2935,7 +3082,8 @@ app.post('/auth/siwe', authEnrollLimiter, async (req, res) => {
     // is signed in to.
     const outcome = await claimFirstSignInOnPod(targetUserId, agentId, displayName,
       m => m.walletAddresses.some(a => a.toLowerCase() === recoveredAddress),
-      m => { m.walletAddresses.push(recoveredAddress); }, /* mayCreate */ !loading && !existingOnly);
+      m => { m.walletAddresses.push(recoveredAddress); }, /* mayCreate */ !loading && !existingOnly,
+      /* derived */ resolved.mode === 'derive');
     if (outcome.kind === 'unreadable' || outcome.kind === 'unconfirmed') {
       log(`WARN: first-time SIWE sign-in to ${targetUserId} not completed (${outcome.kind}): ${outcome.reason}`);
       // Nothing was written, so a bootstrap invite spent by resolveTargetUserId is still
@@ -3313,7 +3461,7 @@ app.post('/auth/webauthn/register', authEnrollLimiter, async (req, res) => {
       m => {
         if (!m.name || m.name === targetUserId) m.name = displayName;
         m.webAuthnCredentials.push(record);
-      });
+      }, /* mayCreate */ true, /* derived */ true);
     if (outcome.kind === 'unreadable') {
       log(`WARN: passkey registration of ${targetUserId} not completed (unreadable): ${outcome.reason}`);
       res.status(503).json({
@@ -3549,6 +3697,22 @@ app.post('/auth/webauthn/authenticate', authEnrollLimiter, async (req, res) => {
 // ── Generic DID-signature auth (did:key / did:web) ──────────
 
 /**
+ * One line for a signature over the bare nonce: enough to find the client; never the DID, the
+ * nonce, the signature, an invite or a token. With `signedIn`: a sign-in made with one, written
+ * once the token for that account is issued (`accepted`). A signature refused later on (a key no
+ * account lists for this DID, a pod that cannot be read) signed nobody in and writes no line, as
+ * that refusal does not depend on the setting. Without: the signature, refused at its check
+ * because DID_ACCEPT_BARE_NONCE is 0 (`refused`). No account has been looked up then, so for a
+ * DID that is not a did:key, `derivedUserId` names whatever DID was sent with the caller's key.
+ */
+function logBareNonceSignature(req: express.Request, did: string, ch: Challenge, surfaceAgent: unknown, signedIn?: string): void {
+  const method = /^did:([a-z0-9]{1,16}):/.exec(did)?.[1] ?? 'other';
+  const surface = surfaceAgent === undefined ? '-'
+    : typeof surfaceAgent === 'string' && /^[a-z][a-z0-9-]{0,63}$/.test(surfaceAgent) ? surfaceAgent : 'invalid';
+  log(`WARN identity_did_bare_nonce outcome=${signedIn ? 'accepted' : 'refused'} purpose=${ch.purpose === 'did-sig' ? 'did-sig' : 'none'} method=${method} derivedUserId=${deriveUserIdFromDid(did)} userId=${signedIn ?? '-'} surface=${surface} ua=${logValue(req.get('user-agent'))} origin=${logValue(req.get('origin'))}`);
+}
+
+/**
  * POST /auth/did — verify an Ed25519 signature against a pre-registered
  * DID key. Supports did:key (self-sovereign, public-key-encoded-as-DID)
  * and other DIDs such as did:web, whose key the caller sends in
@@ -3556,10 +3720,17 @@ app.post('/auth/webauthn/authenticate', authEnrollLimiter, async (req, res) => {
  * only to an account that lists it with that key, and cannot open an
  * account by itself: add it with a bearer token (or bootstrap invite).
  *
+ * The signature is checked against the message stored with the challenge,
+ * which names this server and carries the nonce. A signature over the bare
+ * nonce names no server. It is accepted only while DID_ACCEPT_BARE_NONCE is
+ * unset or 1, with Deprecation and Warning headers, and a sign-in made with
+ * one logs an identity_did_bare_nonce line naming the account signed in to.
+ * With 0 it is refused with 401, and logged.
+ *
  * Body: {
  *   did: string,              // did:key:z... or did:web:...
- *   nonce: string,            // from /challenges
- *   signature: string,        // base64url Ed25519 signature of nonce
+ *   nonce: string,            // from /challenges with purpose 'did-sig'
+ *   signature: string,        // base64url Ed25519 signature over the UTF-8 bytes of that challenge's message
  *   userId?: string,          // first-time: register this DID to this user
  *   name?: string,            // first-time display name
  *   publicKeyMultibase?: string,  // required for a DID that is not a did:key
@@ -3613,6 +3784,14 @@ app.post('/auth/did', authEnrollLimiter, async (req, res) => {
       res.status(400).json({ error: `Could not decode did:key public key: ${parsed.error}` });
       return;
     }
+    // Checked before the key is cached, so a cache hit is a usable key.
+    if (isSmallOrderEd25519Key(parsed.publicKey)) {
+      res.status(400).json({ error: DID_KEY_NOT_USABLE });
+      return;
+    }
+    if (parsed.format === 'base64url-legacy') {
+      log(`[did-key-legacy] accepted base64url-encoded did:key for ${logValue(did, 24)}…; client should migrate to W3C base58btc encoding`);
+    }
     publicKeyRaw = parsed.publicKey;
     didKeyFormat = parsed.format;
     setCachedParsedDid(did, publicKeyRaw, didKeyFormat);
@@ -3626,8 +3805,12 @@ app.post('/auth/did', authEnrollLimiter, async (req, res) => {
       res.status(400).json({ error: 'Could not decode publicKeyMultibase — tried W3C base58btc(0xed 0x01 || key) and legacy base64url(rawKey); neither yielded a 32-byte Ed25519 public key' });
       return;
     }
+    if (isSmallOrderEd25519Key(decoded.publicKey)) {
+      res.status(400).json({ error: DID_KEY_NOT_USABLE });
+      return;
+    }
     if (decoded.format === 'base64url-legacy') {
-      log(`[did-key-legacy] accepted base64url-encoded publicKeyMultibase for ${did}; client should migrate to W3C base58btc encoding`);
+      log(`[did-key-legacy] accepted base64url-encoded publicKeyMultibase for ${logValue(did, 200)}; client should migrate to W3C base58btc encoding`);
     }
     publicKeyRaw = decoded.publicKey;
     if (timingEnabled()) logTiming('did-parse', parseStart, { did: did.slice(0, 24), cache: 'none', format: decoded.format, source: 'multibase' });
@@ -3642,7 +3825,10 @@ app.post('/auth/did', authEnrollLimiter, async (req, res) => {
     res.setHeader('Warning', '299 - "did:key base64url encoding is deprecated; migrate to W3C base58btc multicodec format"');
   }
 
-  // Verify Ed25519 signature over the nonce.
+  // Verify the Ed25519 signature over the challenge's message, the bytes /challenges handed out.
+  // A signature over the bare nonce (all a challenge with no purpose has) names no server: it is
+  // accepted only while DID_ACCEPT_BARE_NONCE allows it. Refused, it is logged here; accepted, it
+  // is logged once the sign-in is done (logBareNonceSignature).
   //
   // crypto.createPublicKey(...) does ~30ms of native work on the first
   // call in the process (lazy-loads OpenSSL EVP_PKEY + ed25519 curve
@@ -3650,18 +3836,30 @@ app.post('/auth/did', authEnrollLimiter, async (req, res) => {
   // cache it keyed on hex(publicKeyRaw) — every subsequent /auth/did
   // for the same DID skips the SPKI assembly + KeyObject build entirely.
   const verifyStart = timingEnabled() ? startTiming() : 0;
+  let proof: 'message' | 'bare-nonce' | null = null;
   try {
     const sig = Buffer.from(signature, 'base64url');
     const verifyKey = getOrCreateEd25519VerifyKey(publicKeyRaw);
-    const ok = crypto.verify(null, Buffer.from(nonce, 'utf8'), verifyKey, sig);
-    if (timingEnabled()) logTiming('did-verify', verifyStart, { ok });
-    if (!ok) {
-      res.status(401).json({ error: 'Ed25519 signature verification failed' });
-      return;
-    }
+    if (ch.message !== undefined && crypto.verify(null, Buffer.from(ch.message, 'utf8'), verifyKey, sig)) proof = 'message';
+    else if (crypto.verify(null, Buffer.from(nonce, 'utf8'), verifyKey, sig)) proof = 'bare-nonce';
+    if (timingEnabled()) logTiming('did-verify', verifyStart, { ok: proof !== null, proof: proof ?? 'none' });
   } catch (err) {
     res.status(401).json({ error: `DID signature verification error: ${(err as Error).message}` });
     return;
+  }
+  if (proof === null) {
+    res.status(401).json({ error: DID_SIGNATURE_FAILED });
+    return;
+  }
+  if (proof === 'bare-nonce') {
+    if (!DID_ACCEPT_BARE_NONCE) {
+      logBareNonceSignature(req, did, ch, surfaceAgent);
+      res.status(401).json({ error: DID_BARE_NONCE_REFUSED });
+      return;
+    }
+    res.setHeader('Deprecation', 'true');
+    // Appended: a legacy-form did:key has set a Warning of its own above.
+    res.append('Warning', '299 - "a DID signature over the bare nonce is deprecated; sign the message POST /challenges returns"');
   }
 
   // If the initial pod-index rebuild hasn't settled yet, give it a small
@@ -3836,7 +4034,7 @@ app.post('/auth/did', authEnrollLimiter, async (req, res) => {
           keyType: 'Ed25519VerificationKey2020',
           createdAt: new Date().toISOString(),
         });
-      }, mayCreate);
+      }, mayCreate, /* derived */ resolved.mode === 'derive');
     if (outcome.kind === 'unreadable' || outcome.kind === 'unconfirmed') {
       log(`WARN: first-time DID sign-in to ${targetUserId} not completed (${outcome.kind}): ${outcome.reason}`);
       // Nothing was written, so a bootstrap invite spent by resolveTargetUserId is still
@@ -3860,7 +4058,7 @@ app.post('/auth/did', authEnrollLimiter, async (req, res) => {
     }
     if (outcome.kind === 'returning') {
       // adoptAccount loaded it; this is a sign-in, and nothing was written.
-      log(`DID ${did} signed in to ${targetUserId}, loaded from its pod (not in the DID index)`);
+      log(`DID ${logValue(did, 200)} signed in to ${targetUserId}, loaded from its pod (not in the DID index)`);
     } else if (!identities.has(targetUserId)) {
       seedIdentity(targetUserId, 'user', displayName);
       seedIdentity(def.agentId, 'agent', def.label, targetUserId, 'ReadWrite');
@@ -3870,7 +4068,7 @@ app.post('/auth/did', authEnrollLimiter, async (req, res) => {
     // FIX A: identity-server no longer mirrors /profile/card or /<id>/agents.
     // Single authoritative pod-side writer is the relay's /oauth/verify
     // handler. See SIWE first-touch comment above for background.
-    if (outcome.kind === 'created') log(`First-time DID registration: ${targetUserId} did=${did} defaultAgent=${agentId} (surfaceHint=${surfaceAgent ?? 'none'})`);
+    if (outcome.kind === 'created') log(`First-time DID registration: ${targetUserId} did=${logValue(did, 200)} defaultAgent=${logValue(agentId, 200)} (surfaceHint=${logValue(surfaceAgent, 200)})`);
   } else {
     // Add-did (authenticated) path — append if not already bound.
     try {
@@ -3889,12 +4087,15 @@ app.post('/auth/did', authEnrollLimiter, async (req, res) => {
       return;
     }
     if (timingEnabled()) logTiming('did-pod-write-scheduled', requestStart, { branch: 'add-did' });
-    log(`DID ${did} linked to existing user ${user.id}`);
+    log(`DID ${logValue(did, 200)} linked to existing user ${user.id}`);
   }
 
   const tokenStart = timingEnabled() ? startTiming() : 0;
   const tokenResponse = await issueTokenResponse(user, surfaceAgent);
   if (timingEnabled()) logTiming('did-issue-token', tokenStart);
+  // Only now: a bare-nonce signature refused on the way here signed nobody in, and the line says
+  // which account this one did.
+  if (proof === 'bare-nonce') logBareNonceSignature(req, did, ch, surfaceAgent, user.id);
   if (timingEnabled()) logTiming('did-total', requestStart);
   res.json(tokenResponse);
 });
@@ -4890,7 +5091,7 @@ app.delete('/auth-methods/me/did', authEnrollLimiter, async (req, res) => {
   }
   catch (err) { res.status(500).json({ error: `Failed to persist: ${(err as Error).message}` }); return; }
   if (res.headersSent) return;
-  log(`Removed DID ${did} for ${user.id}`);
+  log(`Removed DID ${logValue(did, 200)} for ${user.id}`);
   res.json({ removed: true, did, remaining });
 });
 
@@ -5902,11 +6103,17 @@ app.listen(PORT, () => {
   }
   log(`WebAuthn RP: static id=${RP_ID} origin=${RP_ORIGIN}; per-request allowlist=[${[...RP_ALLOWLIST.keys()].join(', ') || '(none)'}]`);
   log(`SIWE domains (first line of a wallet sign-in message): [${[...siweDomainSources()].map(([h, src]) => `${h} (${src})`).join(', ')}]; add a front-end with SIWE_DOMAINS`);
+  log(`DID sign-in: did-sig challenges carry a message naming ${BASE_URL_HOST}`);
+  if (DID_ACCEPT_BARE_NONCE) {
+    log(`WARN: DID sign-in still accepts a signature over the bare nonce (DID_ACCEPT_BARE_NONCE unset or 1); each sign-in made with one is logged as identity_did_bare_nonce. Set DID_ACCEPT_BARE_NONCE=0 to refuse them once no known client is logged.`);
+  } else {
+    log(`DID sign-in: a signature over the bare nonce is refused (DID_ACCEPT_BARE_NONCE=0)`);
+  }
   log(`Auth: decentralized — user credentials stored per-pod at <pod>/auth-methods.jsonld`);
   log(`Bootstrap invites: ${BOOTSTRAP_INVITES.size} configured${BOOTSTRAP_INVITES.size > 0 ? ' (' + [...BOOTSTRAP_INVITES.keys()].join(', ') + ')' : ''}`);
   log(`Endpoints:`);
   log(`  POST /register                        DEPRECATED (410 Gone) — userId is derived, not claimed`);
-  log(`  POST /challenges                      Issue proof-of-possession nonce`);
+  log(`  POST /challenges                      Issue proof-of-possession nonce (did-sig: and the message to sign)`);
   log(`  POST /auth/siwe                       Sign-In With Ethereum (derives u-eth-<…> or binds via Bearer/invite)`);
   log(`  POST /auth/webauthn/register-options  Begin passkey enrollment (Bearer for add-device, invite for seeded)`);
   log(`  POST /auth/webauthn/register          Finish passkey enrollment (userId derived from credential)`);

@@ -195,7 +195,10 @@ const UNLINTED_FRONTIER = {
   // credential index (module, its suite, a route suite, a shared software authenticator), with
   // the rounds since: 229 files. All lint clean; the error ceiling stays fixed.
   // A route suite for sign-ins while the account index is incomplete: 230.
-  deploy: { errors: 356, files: 230 },
+  // A route suite for accounts deleted before tombstones: 231.
+  // The relay page's DID challenge suite and a route suite for the DID sign-in message: 233.
+  // Identity's shared test teardown and SPKI key reader (tests/teardown.ts, tests/public-jwk.ts): 235.
+  deploy: { errors: 356, files: 235 },
   // The bulk of these are `no-console` in vertical bridges and CLI entry points — one config
   // decision, not a thousand defects. See the note above.
   // ★ 320 -> 337, and the ratchet caught it in CI rather than locally, which is the interesting
@@ -687,7 +690,11 @@ const BASELINE = {};
 // base-without-verticals tool and its test (#366) to 633; the gate named 603. The advertised-demos
 // lint and its declarations (#567 follow-up) brought it to 635; the gate named 604.
 // 2026-10-08: private HMD invocation coverage adds one file, so the floor is 605.
-export const MIN_FILES = 647;
+// 2026-10-27: tests/did-sig-live-scripts.test.ts brings the linted scope to 681; the gate named 648.
+// 2026-10-27: the jsonld fromRDF guard (tests/no-code-reads-rdf-back-through-jsonld-fromrdf.test.ts)
+// and the exact-version guard (tests/canonicalizer-versions-are-exact.test.ts) bring it to 683;
+// the gate named 650.
+export const MIN_FILES = 650;
 
 /**
  * How far below the real linted-file count MIN_FILES may sit before that is itself a failure.
