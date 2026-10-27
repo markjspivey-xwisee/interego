@@ -548,3 +548,50 @@ test('text a caller sends (a DID, a surface hint, a display name) cannot start a
   await settle();
   assert.equal(warnLines(lenient), before, lenient.sink.text);
 });
+
+test('the lines a DID sign-in, a DID added with a bearer and a DID removal write quote what the caller sent', async () => {
+  const lines = () => lenient.sink.text.split(/\r\n|\r|\n/);
+  const expectLine = async (line: string) => {
+    await waitFor(() => lines().includes(line), 2000, `the line ${line}\n${lenient.sink.text}`);
+  };
+  const expectLineStarting = async (prefix: string) => {
+    await waitFor(() => lines().some(l => l.startsWith(prefix)), 2000, `a line starting ${prefix}\n${lenient.sink.text}`);
+  };
+  // A first sign-in seeds the user and its agent from the display name and the surface hint.
+  const k = didKey();
+  const derived = deriveUserIdFromDid(k.did);
+  const name = 'Eve" did=did:key:zForged outcome=accepted';
+  const surface = 's" x=y';
+  const agentId = `${surface}-${derived}`;
+  const first = await overMessage(lenient.url, k, { name, surfaceAgent: surface });
+  assert.equal(first.status, 200, `${JSON.stringify(first.json)}\n${lenient.sink.text}`);
+  assert.equal(first.json['agentId'], agentId);
+  await expectLine(`[identity] Seeded user identity: ${JSON.stringify(derived)} (${JSON.stringify(name)})`);
+  await expectLineStarting(`[identity] Seeded agent identity: ${JSON.stringify(agentId)} ("`);
+  await expectLine(`[identity] First-time DID registration: ${derived} did=${JSON.stringify(k.did)} defaultAgent=${JSON.stringify(agentId)} (surfaceHint=${JSON.stringify(surface)})`);
+  await expectLineStarting(`[identity] Issued token for ${JSON.stringify(agentId)} (user: ${derived}, `);
+
+  // A DID that is not a did:key, sent with a legacy-form key and added with that account's bearer.
+  const bearer = { Authorization: `Bearer ${String(first.json['token'])}` };
+  const webKey = ed25519();
+  const webDid = 'did:web:quote.example" x=y';
+  const added = await overMessage(lenient.url, { ...webKey, did: webDid }, { publicKeyMultibase: webKey.legacyMultibase }, bearer);
+  assert.equal(added.status, 200, `${JSON.stringify(added.json)}\n${lenient.sink.text}`);
+  assert.equal(added.json['userId'], derived);
+  await expectLine(`[identity] [did-key-legacy] accepted base64url-encoded publicKeyMultibase for ${JSON.stringify(webDid)}; client should migrate to W3C base58btc encoding`);
+  await expectLine(`[identity] DID ${JSON.stringify(webDid)} linked to existing user ${derived}`);
+
+  // Its removal.
+  const removed = await fetch(`${lenient.url}/auth-methods/me/did`, {
+    method: 'DELETE', headers: { 'Content-Type': 'application/json', 'X-Forwarded-For': `198.51.100.${clientAddr}`, ...bearer }, body: JSON.stringify({ did: webDid }),
+  });
+  assert.equal(removed.status, 200, await removed.text());
+  await expectLine(`[identity] Removed DID ${JSON.stringify(webDid)} for ${derived}`);
+
+  // A did:key in the legacy form, with text a base64url decoder skips before its key.
+  const legacy = ed25519();
+  const legacyDid = `did:key:z" okAA${legacy.legacyMultibase.slice(1)}`;
+  const opened = await overMessage(lenient.url, { ...legacy, did: legacyDid });
+  assert.equal(opened.status, 200, `${JSON.stringify(opened.json)}\n${lenient.sink.text}`);
+  await expectLine(`[identity] [did-key-legacy] accepted base64url-encoded did:key for ${JSON.stringify(legacyDid.slice(0, 24))}…; client should migrate to W3C base58btc encoding`);
+});

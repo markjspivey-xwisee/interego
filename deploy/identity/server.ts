@@ -160,6 +160,11 @@ const DID_ACCEPT_BARE_NONCE = (() => {
 // surface hint) continues the entry indented, so nothing a caller sends starts a log line.
 function log(msg: string) { console.log(`[identity] ${msg.replace(/\r\n|\r|\n/g, '\n    ')}`); }
 
+/** A request value for one log line: printable ASCII, at most `max` characters, JSON-quoted; '-' when absent. */
+function logValue(value: unknown, max = 120): string {
+  return typeof value === 'string' && value !== '' ? JSON.stringify(value.slice(0, max).replace(/[^\x20-\x7e]/g, '?')) : '-';
+}
+
 // A failure nothing awaited is logged and the server keeps serving; see route-errors.ts.
 installProcessSafetyNet(log);
 
@@ -420,7 +425,7 @@ function parseEd25519DidKey(did: string): { ok: true; publicKey: Buffer; format:
     const legacy = Buffer.from(encoded, 'base64url');
     if (legacy.length >= 32) {
       const publicKey = legacy.subarray(legacy.length - 32);
-      log(`[did-key-legacy] accepted base64url-encoded did:key for ${did.slice(0, 24)}…; client should migrate to W3C base58btc encoding`);
+      log(`[did-key-legacy] accepted base64url-encoded did:key for ${logValue(did, 24)}…; client should migrate to W3C base58btc encoding`);
       return { ok: true, publicKey: Buffer.from(publicKey), format: 'base64url-legacy' };
     }
   } catch { /* fall through */ }
@@ -1622,7 +1627,8 @@ function seedIdentity(id: string, type: 'user' | 'agent', name: string, owner?: 
   if (scope !== undefined) rec.scope = scope;
   identities.set(id, rec);
   keys.set(id, generateEd25519());
-  log(`Seeded ${type} identity: ${id} (${name})`);
+  // Quoted: a first sign-in names the user and its agent from what the caller sends.
+  log(`Seeded ${type} identity: ${logValue(id, 200)} (${logValue(name, 200)})`);
 }
 
 // The janitor (app.listen below) deletes the OWNER of any agent whose id matches this, once
@@ -1991,7 +1997,7 @@ async function issueToken(userId: string, agentId: string, scope: string, provis
     expiresAt: payload.expiresAt,
     ...(payload.provisionalPlay ? { provisionalPlay: payload.provisionalPlay } : {}),
   };
-  log(`Issued token for ${agentId} (user: ${userId}, scope: ${scope}, epoch: ${epoch}, expires: ${record.expiresAt})`);
+  log(`Issued token for ${logValue(agentId, 200)} (user: ${userId}, scope: ${scope}, epoch: ${epoch}, expires: ${record.expiresAt})`);
   return record;
 }
 
@@ -3677,11 +3683,6 @@ app.post('/auth/webauthn/authenticate', authEnrollLimiter, async (req, res) => {
 });
 
 // ── Generic DID-signature auth (did:key / did:web) ──────────
-
-/** A request value for one log line: printable ASCII, at most `max` characters, JSON-quoted; '-' when absent. */
-function logValue(value: unknown, max = 120): string {
-  return typeof value === 'string' && value !== '' ? JSON.stringify(value.slice(0, max).replace(/[^\x20-\x7e]/g, '?')) : '-';
-}
 
 /**
  * One line per signature over the bare nonce: enough to find the client; never the DID, the

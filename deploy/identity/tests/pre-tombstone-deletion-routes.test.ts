@@ -138,6 +138,8 @@ let podPort = 0;
 let identity: ChildProcess;
 let base = '';
 let output = '';
+// Everything every server this file started wrote; `output` holds the current one's only.
+let allOutput = '';
 
 async function startIdentity(): Promise<void> {
   const port = await freePort();
@@ -153,8 +155,8 @@ async function startIdentity(): Promise<void> {
   identity = spawn(process.execPath, ['--import', 'tsx', 'server.ts'], {
     cwd: fileURLToPath(new URL('..', import.meta.url)), env, stdio: ['ignore', 'pipe', 'pipe'],
   });
-  identity.stdout!.on('data', d => { output += String(d); });
-  identity.stderr!.on('data', d => { output += String(d); });
+  identity.stdout!.on('data', d => { output += String(d); allOutput += String(d); });
+  identity.stderr!.on('data', d => { output += String(d); allOutput += String(d); });
   const deadline = Date.now() + 60_000;
   for (;;) {
     if (identity.exitCode !== null) throw new Error(`identity server exited ${identity.exitCode}:\n${output}`);
@@ -579,6 +581,6 @@ test('the documented limit: deleting the tombstone of a wallet or did:key accoun
   for (const t of oldTokens) assert.equal((await me(t)).status, 200, 'a token issued before the deletion verifies again');
 });
 
-test('every DID sign-in above signed the challenge\'s message', () => {
-  assert.doesNotMatch(output, /WARN identity_did_bare_nonce /);
+test('every DID sign-in above, on every server started, signed the challenge\'s message', () => {
+  assert.doesNotMatch(allOutput, /WARN identity_did_bare_nonce /);
 });
