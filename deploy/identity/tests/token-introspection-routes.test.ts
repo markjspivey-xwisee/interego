@@ -274,6 +274,7 @@ const VALUE_TABLE: ReadonlyArray<readonly [string, string, 'answered' | 'rejecte
   ['a trailing space', `${HEX} `, 'rejected'],
   ['a trailing tab', `${HEX}\t`, 'rejected'],
   ['a control character', `${HEX.slice(0, 32)}\u0001${HEX.slice(32)}`, 'unsendable'],
+  ['a DEL character', `${HEX.slice(0, 32)}\u007f${HEX.slice(32)}`, 'unsendable'],
   ['a character above U+00FF', `${HEX}\u0100`, 'unsendable'],
 ];
 

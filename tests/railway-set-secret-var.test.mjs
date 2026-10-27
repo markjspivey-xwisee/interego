@@ -5,9 +5,10 @@
 // API, so it cannot reach the network. The stand-in can refuse the variableUpsert the way
 // graphql-js reports an input it cannot coerce (the message quotes the whole input object,
 // value included), fail the request with an error whose message and cause hold the request
-// body, or answer 502 with a body that starts with the value. Each answer has to reach the
-// operator as one fixed line that names the step, and the value must not appear in stdout or
-// stderr, in whole or in part.
+// body, answer 502 with a body that starts with the value, answer 200 with a body that is not
+// JSON, redirect the write to another origin, or raise an error the tool does not expect. Each
+// answer has to reach the operator as one fixed line that names the step, and the value must not
+// appear in stdout or stderr, in whole or in part.
 import assert from 'node:assert/strict';
 import test, { after } from 'node:test';
 import { mkdtempSync, writeFileSync, rmSync, readFileSync } from 'node:fs';
@@ -47,6 +48,16 @@ globalThis.fetch = async (url, init = {}) => {
     if (mode === 'throw') throw new Error('fetch failed: ' + init.body, { cause: new Error(init.body) });
     if (mode === 'bad-gateway') return new Response(input.value + ' was not accepted upstream', { status: 502 });
     if (mode === 'lost') return json({ data: { variableUpsert: true } });
+    // A 307 to another origin, as fetch handles it: with redirect 'error' it throws; otherwise it
+    // re-sends the token and the body there and returns that origin's answer as Railway's.
+    if (mode === 'redirect') {
+      if (init.redirect === 'error') throw new TypeError('fetch failed');
+      stored = input.value;
+      return json({ data: { variableUpsert: true } });
+    }
+    if (mode === 'not-json') return new Response(input.value + ' is not JSON', { status: 200 });
+    // An error this tool does not expect, whose message holds the value.
+    if (mode === 'odd') return { get ok() { throw new Error('odd ' + input.value); } };
     stored = input.value;
     return json({ data: { variableUpsert: true } });
   }
@@ -76,6 +87,9 @@ for (const [mode, message] of [
   ['echo', 'GraphQL: Railway refused the request'],
   ['throw', 'network: the request failed'],
   ['bad-gateway', 'network: Railway answered HTTP 502'],
+  ['redirect', 'network: the request failed'],
+  ['not-json', 'network: the answer was not JSON'],
+  ['odd', 'unexpected Error'],
 ]) {
   test(`a failed write (${mode}) prints one fixed line and no part of the value`, () => {
     const r = run(mode);

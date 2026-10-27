@@ -347,9 +347,36 @@ for (const [why, opts, otherwise] of [
 
 test('a caller lost while identity holds the value but does not run it yet', () => {
   const st = { relay: { stored: undefined, running: false }, 'css-gate': { stored: V1, running: true },
-    identity: { stored: V1, running: false, openStored: true, openRunning: true } };
+    identity: { stored: V1, running: false, openStored: true, openListed: true, openRunning: true } };
   assert.throws(() => planStage('callers', st), /relay does not, so identity refuses it from its next deploy\. .*roll relay back again .*do not delete css-gate's copy/);
 });
+
+// After finalize the docs allow sealing a caller's variable: Railway then shows it unset while the
+// caller runs it, and identity accepts it. A refusal about what another service serves must not
+// turn that into "identity refuses css-gate, roll it back", which would take a working deployment
+// away: the sealed refusal goes first, as it does when nothing else is wrong.
+for (const [why, opts] of [
+  ['a sealed css-gate', { stored: { ...both, identity: { [SECRET_VAR]: V1 } }, sealed: ['css-gate'] }],
+  ['a css-gate variable deleted without a deploy', { stored: { relay: { [SECRET_VAR]: V1 }, identity: { [SECRET_VAR]: V1 } }, running: { 'css-gate': { [SECRET_VAR]: V1 } } }],
+]) {
+  for (const [problem, more] of [
+    ['nothing else wrong', {}],
+    ['the relay pinned to a mutable tag', { pins: { relay: 'ghcr.io/markjspivey-xwisee/interego-relay:latest' } }],
+    ['identity serving a build other than its pin', { serving: { identity: 'e5'.repeat(20) } }],
+  ]) {
+    test(`${why}, with ${problem}: every stage gives the sealed refusal, not Rollback advice`, async () => {
+      for (const stage of STAGES) {
+        const w = world({ ...opts, ...more });
+        const r = await run(w, stage, { apply: true });
+        assert.ok(r.error instanceof ProvisionRefusal, `${stage}: ${r.error?.message ?? 'no refusal'}`);
+        assert.equal(r.error.message, 'css-gate runs with a value Railway does not show (sealed, or changed without a deploy); resolve by hand', stage);
+        assert.equal(writeCount(w), 0);
+        assert.deepEqual(deploysTriggered(w), []);
+        assertNoValue(r, V1);
+      }
+    });
+  }
+}
 
 // identity running 'enforced' while Railway shows its variable unset: the sealed-or-undeployed
 // guard refuses before the callers rule is reached.
@@ -403,12 +430,85 @@ for (const [why, running] of [['runs it', { identity: { [OPEN_VAR]: '1' } }], ['
   });
 }
 
-test('identity refuses when the check before the write is not accepted', async () => {
-  const w = world({ stored: both, relayInconclusive: true });
+// Identity opens only when ALLOW_OPEN_INTROSPECTION is exactly '1' (deploy/identity/server.ts), so
+// a stored '0', '' or 'true' is no rollback, even while identity still runs '1' from an earlier
+// deploy: deleting the secret would then leave it disabled. The stage refuses to write, as it does
+// when the variable is missing.
+for (const other of ['0', '', 'true']) {
+  test(`identity refuses to write while ALLOW_OPEN_INTROSPECTION is stored as ${JSON.stringify(other)} and identity runs '1'`, async () => {
+    for (const apply of [false, true]) {
+      const w = world({ stored: { ...both, identity: { [OPEN_VAR]: other } }, running: { identity: { [OPEN_VAR]: '1' } } });
+      const r = await run(w, 'identity', { apply });
+      assert.ok(r.error instanceof ProvisionRefusal, r.error?.message ?? 'no refusal');
+      assert.match(r.error.message, /^identity does not hold ALLOW_OPEN_INTROSPECTION=1, this stage's rollback: /);
+      assert.equal(writeCount(w), 0);
+      assert.deepEqual(deploysTriggered(w), []);
+    }
+  });
+}
+
+test('the report says whether ALLOW_OPEN_INTROSPECTION is stored as 1, as another value, or not at all', async () => {
+  for (const [open, said] of [['1', /ALLOW_OPEN_INTROSPECTION=1;/], ['0', /ALLOW_OPEN_INTROSPECTION set to a value other than 1;/], [undefined, /ALLOW_OPEN_INTROSPECTION unset;/]]) {
+    const w = world({ stored: { ...both, identity: { [OPEN_VAR]: open } }, running: { identity: { [OPEN_VAR]: '1' } } });
+    const r = await run(w, 'callers');
+    assert.equal(r.error, undefined, r.error?.message);
+    assert.match(r.text, said);
+  }
+});
+
+// The warning beside the identity stage's check: only while the rollback is not stored as 1.
+// Stored but not running yet is fine, because the rollback's own deploy picks it up.
+for (const [why, identity, warns] of [
+  ['not stored', { stored: { [SECRET_VAR]: V1, [OPEN_VAR]: undefined } }, true],
+  ['stored as another value', { stored: { [SECRET_VAR]: V1, [OPEN_VAR]: '0' } }, true],
+  ['stored as 1 but not running yet', { stored: { [SECRET_VAR]: V1 }, running: { [OPEN_VAR]: undefined } }, false],
+]) {
+  test(`identity stage, ALLOW_OPEN_INTROSPECTION ${why}: the rollback warning is ${warns ? '' : 'not '}printed`, async () => {
+    const w = world({ stored: { ...both, identity: identity.stored }, running: { identity: identity.running ?? {} } });
+    const r = await run(w, 'identity');
+    assert.equal(r.error, undefined, r.error?.message);
+    assert[warns ? 'match' : 'doesNotMatch'](r.text, /warning: identity does not hold ALLOW_OPEN_INTROSPECTION=1, so deleting the secret to roll back would leave introspection disabled/);
+  });
+}
+
+// ALLOW_OPEN_INTROSPECTION=1 was stored when the run began, and the deployment no longer runs it
+// (changed in Railway meanwhile): the stage must not call the rollback "still set".
+test('an identity deploy that no longer runs ALLOW_OPEN_INTROSPECTION=1 fails the stage and says to set it first', async () => {
+  const w = world({ stored: both });
+  const gql = async (q, v) => {
+    const answer = await w.gql(q, v);
+    if (q.includes('variableUpsert') && v.input.serviceId === 'id-identity') w.stored.identity[OPEN_VAR] = '0';
+    return answer;
+  };
+  const r = await run({ ...w, gql }, 'identity', { apply: true });
+  assert.ok(r.error instanceof StageFailure, r.error?.message ?? 'no failure');
+  assert.equal(w.running.identity[SECRET_VAR], V1);
+  assert.match(r.error.message, /^identity enforces IDENTITY_INTROSPECTION_SECRET but no longer runs ALLOW_OPEN_INTROSPECTION=1, which it stored when this run began, so the rollback is gone/);
+  assert.match(r.error.message, /To reopen instead, set ALLOW_OPEN_INTROSPECTION=1 on identity, then delete IDENTITY_INTROSPECTION_SECRET from identity, and deploy identity again\.$/);
+  assert.doesNotMatch(r.error.message, /still set/);
+  assertNoValue(r, V1);
+});
+
+for (const [side, opts, said] of [
+  ['the relay', { relayInconclusive: true }, /accepts relay: inconclusive; accepts css-gate: accepted/],
+  ['css-gate', { gateInconclusive: true }, /accepts relay: accepted; accepts css-gate: inconclusive/],
+]) {
+  test(`identity refuses when the check before the write is not accepted for ${side}`, async () => {
+    const w = world({ stored: both, ...opts });
+    const r = await run(w, 'identity', { apply: true });
+    assert.ok(r.error instanceof ProvisionRefusal, r.error?.message ?? 'no refusal');
+    assert.match(r.error.message, /does not accept both callers now/);
+    assert.match(r.text, said);
+    assert.equal(writeCount(w), 0);
+  });
+}
+
+test('an identity write Railway does not confirm says the secret may be stored on identity', async () => {
+  const w = world({ stored: both, upsertResult: false });
   const r = await run(w, 'identity', { apply: true });
-  assert.ok(r.error instanceof ProvisionRefusal);
-  assert.match(r.error.message, /does not accept both callers now/);
-  assert.equal(writeCount(w), 0);
+  assert.ok(r.error instanceof StageFailure, r.error?.message ?? 'no failure');
+  assert.match(r.error.message, /^Railway did not confirm writing IDENTITY_INTROSPECTION_SECRET on identity\. IDENTITY_INTROSPECTION_SECRET may be stored on identity, and the next identity deploy/);
+  assert.deepEqual(deploysTriggered(w), []);
 });
 
 test('identity: copies the callers\' value, deploys, waits out the overlap, and checks both callers', async () => {
@@ -451,7 +551,7 @@ test('identity: a caller running a stale value fails the stage and names the rol
   const r = await run(w, 'identity', { apply: true });
   assert.ok(r.error instanceof StageFailure, r.error?.message);
   assert.match(r.error.message, /identity refuses the relay/);
-  assert.match(r.error.message, /delete IDENTITY_INTROSPECTION_SECRET from identity \(ALLOW_OPEN_INTROSPECTION is still set\) and redeploy identity/);
+  assert.match(r.error.message, /delete IDENTITY_INTROSPECTION_SECRET from identity \(ALLOW_OPEN_INTROSPECTION=1 is still set\) and redeploy identity/);
   assertNoValue(r, V1, V2);
 });
 
@@ -537,14 +637,37 @@ test('finalize deletes and, when Railway starts nothing within the grace window,
   assert.match(r.text, /allowOpenIntrospection=false/);
 });
 
+test('finalize removes ALLOW_OPEN_INTROSPECTION stored as a value other than 1', async () => {
+  const w = world({ stored: { ...enforcing, identity: { [SECRET_VAR]: V1, [OPEN_VAR]: '0' } } });
+  const r = await run(w, 'finalize', { apply: true });
+  assert.equal(r.error, undefined, r.error?.message);
+  assert.deepEqual(deletes(w).map((d) => [d.serviceId, d.name]), [['id-identity', OPEN_VAR]]);
+  assert.equal(Object.hasOwn(w.stored.identity, OPEN_VAR), false);
+  assert.deepEqual(r.summary.deployed, ['identity']);
+});
+
+// Once the variable is gone from Railway, a failed deploy cannot bring it back: the text says it
+// is removed, whether this run deleted it or an earlier one did.
+for (const [why, identity] of [
+  ['after this run deleted it', { stored: { [SECRET_VAR]: V1 } }],
+  ['after an earlier run deleted it', { stored: { [SECRET_VAR]: V1, [OPEN_VAR]: undefined }, running: { [OPEN_VAR]: '1' } }],
+]) {
+  test(`a failed finalize deploy ${why} says ALLOW_OPEN_INTROSPECTION is removed`, async () => {
+    const w = world({ stored: { ...both, identity: identity.stored }, running: { identity: identity.running ?? {} }, statuses: { identity: ['DEPLOYING', 'FAILED'] } });
+    const r = await run(w, 'finalize', { apply: true });
+    assert.ok(r.error instanceof StageFailure, r.error?.message ?? 'no failure');
+    assert.match(r.error.message, /ended FAILED\. ALLOW_OPEN_INTROSPECTION is removed from identity, which keeps enforcing the secret/);
+  });
+}
+
 // ── deploy outcomes ───────────────────────────────────────────────────────────
 
 test('a FAILED deployment fails the stage and says what is stored', async () => {
   const w = world({ stored: both, statuses: { identity: ['DEPLOYING', 'FAILED'] } });
   const r = await run(w, 'identity', { apply: true });
   assert.ok(r.error instanceof StageFailure);
-  assert.match(r.error.message, /ended FAILED/);
-  assert.match(r.error.message, /next identity deploy \(an auto-deploy included\) will enforce it\. Rerun stage=identity, or delete IDENTITY_INTROSPECTION_SECRET from identity \(ALLOW_OPEN_INTROSPECTION is still set\) to stay open\.$/);
+  assert.match(r.error.message, /ended FAILED\. IDENTITY_INTROSPECTION_SECRET is stored on identity, /);
+  assert.match(r.error.message, /next identity deploy \(an auto-deploy included\) will enforce it\. Rerun stage=identity, or delete IDENTITY_INTROSPECTION_SECRET from identity \(ALLOW_OPEN_INTROSPECTION=1 is still set\) to stay open\.$/);
   assert.doesNotMatch(r.error.message, /Deployment dep-identity/);
 });
 
@@ -560,9 +683,45 @@ test('a failed identity deploy without ALLOW_OPEN_INTROSPECTION stored says to s
   assert.ok(r.error instanceof StageFailure, r.error?.message ?? 'no failure');
   assert.equal(writeCount(w), 0);
   assert.deepEqual(deploysTriggered(w), ['identity']);
-  assert.match(r.error.message, /ended FAILED\. .*Rerun stage=identity, or set ALLOW_OPEN_INTROSPECTION=1 on identity, then delete IDENTITY_INTROSPECTION_SECRET from identity to stay open\.$/);
+  assert.match(r.error.message, /ended FAILED\. IDENTITY_INTROSPECTION_SECRET is stored on identity, .*Rerun stage=identity, or set ALLOW_OPEN_INTROSPECTION=1 on identity, then delete IDENTITY_INTROSPECTION_SECRET from identity to stay open\.$/);
   assertNoValue(r, V1);
 });
+
+test('a failed identity deploy with ALLOW_OPEN_INTROSPECTION stored as another value says to set it to 1 first', async () => {
+  const w = world({
+    stored: { ...both, identity: { [SECRET_VAR]: V1, [OPEN_VAR]: '0' } },
+    running: { identity: { [SECRET_VAR]: undefined, [OPEN_VAR]: '1' } },
+    statuses: { identity: ['DEPLOYING', 'FAILED'] },
+  });
+  const r = await run(w, 'identity', { apply: true });
+  assert.ok(r.error instanceof StageFailure, r.error?.message ?? 'no failure');
+  assert.match(r.text, /warning: identity does not hold ALLOW_OPEN_INTROSPECTION=1/);
+  assert.match(r.error.message, /Rerun stage=identity, or set ALLOW_OPEN_INTROSPECTION=1 on identity, then delete IDENTITY_INTROSPECTION_SECRET from identity to stay open\.$/);
+  assert.doesNotMatch(r.error.message, /still set/);
+});
+
+// The deploy request was sent and no deployment id came back: Railway may have created a
+// deployment carrying the secret, which deleting the stored variable would not reach.
+for (const [why, opts, failure] of [
+  ['whose answer is lost', { lose: true }, /^the deploy of identity failed at a Railway or HTTP request \(network\)\. /],
+  ['that returns no deployment id', { deployResult: null }, /^Railway returned no deployment id for identity\. /],
+]) {
+  test(`identity: a deploy request ${why} says a deployment may exist, not "to stay open"`, async () => {
+    const w = world({ stored: both, ...(opts.lose ? {} : opts) });
+    const gql = opts.lose
+      ? async (q, v) => { const answer = await w.gql(q, v); if (q.includes('serviceInstanceDeployV2')) throw new Error('network: request failed'); return answer; }
+      : w.gql;
+    const r = await run({ ...w, gql }, 'identity', { apply: true });
+    assert.ok(r.error instanceof StageFailure, r.error?.message ?? 'no failure');
+    assert.match(r.error.message, failure);
+    assert.match(r.error.message, /A deployment of identity may have been created with IDENTITY_INTROSPECTION_SECRET stored \(this run sent a deploy request and got no deployment id back\)/);
+    assert.match(r.error.message, /Rerun stage=identity once no identity deployment is in flight/);
+    assert.match(r.error.message, /To reopen instead, delete IDENTITY_INTROSPECTION_SECRET from identity \(ALLOW_OPEN_INTROSPECTION=1 is still set\), and deploy identity again\.$/);
+    assert.doesNotMatch(r.error.message, /to stay open|next identity deploy \(an auto-deploy included\)/);
+    if (opts.lose) assert.equal(w.deployments.identity[0].status, 'DEPLOYING', 'the stand-in created the deployment');
+    assertNoValue(r, V1);
+  });
+}
 
 // Once a deployment carrying the secret exists, deleting the stored variable does not change
 // it: the text names the deployment and says how to check and how to reopen.
@@ -576,7 +735,7 @@ for (const [why, opts, pattern] of [
     assert.ok(r.error instanceof StageFailure, r.error?.message ?? 'no failure');
     assert.match(r.error.message, pattern);
     assert.match(r.error.message, /Deployment dep-identity-1 of identity was created with IDENTITY_INTROSPECTION_SECRET stored, so identity enforces it from that deployment if it carries the change, and otherwise from its next deploy\. Rerun stage=identity once no identity deployment is in flight: its check before any write tells whether identity accepts both callers/);
-    assert.match(r.error.message, /To reopen instead, delete IDENTITY_INTROSPECTION_SECRET from identity \(ALLOW_OPEN_INTROSPECTION is still set\), and deploy identity again\.$/);
+    assert.match(r.error.message, /To reopen instead, delete IDENTITY_INTROSPECTION_SECRET from identity \(ALLOW_OPEN_INTROSPECTION=1 is still set\), and deploy identity again\.$/);
     assert.doesNotMatch(r.error.message, /next identity deploy \(an auto-deploy included\)|to stay open/);
     assertNoValue(r, V1);
   });
@@ -654,6 +813,15 @@ test('one health reading with the change, then stale ones, fails the stage', asy
   assert.deepEqual(deploysTriggered(w), ['relay']);
 });
 
+// The field shows the change, but on another build: not the deployment this run made.
+test('health readings with the change from another build fail the stage', async () => {
+  let w;
+  w = world({ healthOverride: (svc, body) => (svc === 'relay' && w?.successAt.relay !== undefined ? { ...body, build: 'e5'.repeat(20) } : undefined) });
+  const r = await run(w, 'callers', { apply: true });
+  assert.ok(r.error instanceof StageFailure, r.error?.message ?? 'no failure');
+  assert.match(r.error.message, /^relay reached SUCCESS but still reports identityVerifyAuth=true on build e5e5e5e5/);
+});
+
 test('a write Railway does not confirm fails the stage', async () => {
   const w = world({ upsertResult: false });
   const r = await run(w, 'callers', { apply: true });
@@ -674,6 +842,7 @@ test('a write that reads back as something else fails the stage before any deplo
 for (const [why, opts, pattern] of [
   ['Railway does not confirm the delete', { deleteResult: false }, /Railway did not confirm deleting ALLOW_OPEN_INTROSPECTION on identity/],
   ['the variable is still listed after the delete', { deleteKeeps: true }, /ALLOW_OPEN_INTROSPECTION is still listed on identity after the delete/],
+  ['a value other than 1 is still listed after the delete', { deleteKeeps: true, stored: { ...enforcing, identity: { [SECRET_VAR]: V1, [OPEN_VAR]: '0' } } }, /ALLOW_OPEN_INTROSPECTION is still listed on identity after the delete/],
 ]) {
   test(`finalize fails, before any deploy, when ${why}`, async () => {
     const w = world({ stored: enforcing, ...opts });
@@ -764,6 +933,8 @@ for (const [why, opts, pattern] of [
   ['a caller image without the health field', { healthOverride: (svc, body) => (svc === 'relay' ? { status: 'ok', build: body.build } : undefined) }, /deploy master first/],
   ['a css-gate image without identityVerifyResults', { healthOverride: (svc, body) => (svc === 'css-gate' ? { ...body, identityVerifyResults: undefined } : undefined) }, /css-gate serves an image without the introspection health fields; deploy master first/],
   ['an identity image without allowOpenIntrospection', { healthOverride: (svc, body) => (svc === 'identity' ? { ...body, allowOpenIntrospection: undefined } : undefined) }, /identity serves an image without the introspection health fields/],
+  ['an identity image without introspection', { healthOverride: (svc, body) => (svc === 'identity' ? { ...body, introspection: undefined } : undefined) }, /identity serves an image without the introspection health fields/],
+  ['an identity image with an unknown introspection mode', { healthOverride: (svc, body) => (svc === 'identity' ? { ...body, introspection: 'unknown' } : undefined) }, /identity serves an image without the introspection health fields/],
   ['a service Railway reports no domain for', { noDomain: ['identity'] }, /identity: no health URL \(Railway reports no domain/],
   ['a health endpoint that does not answer 200', { healthStatus: { 'css-gate': 503 } }, /css-gate: GET https:\/\/css-gate\.example\.test\/healthz did not answer 200 with JSON/],
 ]) {
@@ -845,9 +1016,16 @@ test('Railway error text never reaches a message; a non-2xx answer is "network:"
   assert.equal(calls, 1, 'an ambiguous failure is not retried');
   const lost = railwayGql('tok', async () => { throw new Error(`socket ${V1}`); });
   assert.equal((await lost('{x}').catch((e) => e)).message, 'network: request failed');
+  // A non-2xx answer whose body is JSON with `errors` is still ambiguous: not 'GraphQL:', not retried.
+  let unavailableCalls = 0;
+  const unavailable = railwayGql('tok', async () => { unavailableCalls++; return new Response(JSON.stringify({ errors: [{ message: `busy ${V1}` }] }), { status: 503 }); });
+  const e4 = await triggerWithRetry(() => unavailable('mutation{x}'), { sleep: async () => {} }).catch((e) => e);
+  assert.equal(e4.message, 'network: request failed');
+  assert.equal(unavailableCalls, 1, 'a 503 with a JSON body is not retried');
   const ok = railwayGql('tok', async (url, init) => {
     assert.equal(url, 'https://backboard.railway.com/graphql/v2');
     assert.equal(init.headers['Project-Access-Token'], 'tok');
+    assert.equal(init.redirect, 'error');
     return new Response(JSON.stringify({ data: { y: 1 } }), { status: 200 });
   });
   assert.deepEqual(await ok('{y}'), { y: 1 });
@@ -859,6 +1037,22 @@ test('Railway error text never reaches a message; a non-2xx answer is "network:"
   assert.deepEqual(await http.send('https://x.test/text', { method: 'POST' }), { status: 201, body: null });
   assert.equal(describeFailure(new ProvisionRefusal('x')), 'refused: x');
   assert.equal(describeFailure(new StageFailure('y')), 'failed: y');
+});
+
+// fetch drops only Authorization across origins, so a followed 307 or 308 would carry the
+// Project-Access-Token and the upsert's body, value included, to wherever Location points, and
+// that origin's answer would read as Railway's.
+test('the Railway client follows no redirect', async () => {
+  const followed = [];
+  const redirecting = railwayGql('tok', async (url, init) => {
+    if (init.redirect === 'error') throw new TypeError('fetch failed');
+    followed.push(init.body);
+    return new Response(JSON.stringify({ data: { variableUpsert: true } }), { status: 200 });
+  });
+  const e = await redirecting('mutation{x}', { input: { name: SECRET_VAR, value: V1 } }).catch((x) => x);
+  assert.ok(e instanceof Error, 'the redirect target answered for Railway');
+  assert.equal(e.message, 'network: request failed');
+  assert.deepEqual(followed, []);
 });
 
 test('an unknown stage is refused before any Railway request', async () => {
@@ -896,7 +1090,7 @@ test('the CLI refuses an applied run outside the master workflow before any requ
 test('planStage, usableSecret, newSecret and cliRefusal', () => {
   const st = (relay, gate, identity, more = {}) => ({
     relay: { stored: relay, running: false }, 'css-gate': { stored: gate, running: false },
-    identity: { stored: identity, running: false, openStored: true, openRunning: true, ...more },
+    identity: { stored: identity, running: false, openStored: true, openListed: true, openRunning: true, ...more },
   });
   assert.deepEqual(planStage('callers', st(undefined, '', undefined), { generate: () => V1 }).writes.map((w) => [w.service, w.value]), [['relay', V1], ['css-gate', V1]]);
   assert.deepEqual(planStage('callers', st(undefined, undefined, undefined)).writes.map((w) => Object.hasOwn(w, 'value')), [false, false]);
@@ -906,7 +1100,10 @@ test('planStage, usableSecret, newSecret and cliRefusal', () => {
   assert.deepEqual(planStage('identity', st(V1, V1, V1)).writes, []);
   assert.throws(() => planStage('identity', st(V1, V2, undefined)), /different values/);
   assert.deepEqual(planStage('finalize', st(V1, V1, V1)).writes, [{ service: 'identity', op: 'delete', name: OPEN_VAR }]);
-  assert.deepEqual(planStage('finalize', st(V1, V1, V1, { openStored: false })).writes, []);
+  assert.deepEqual(planStage('finalize', st(V1, V1, V1, { openStored: false, openListed: false })).writes, []);
+  // A value other than '1' does not open identity, but finalize still removes it.
+  assert.deepEqual(planStage('finalize', st(V1, V1, V1, { openStored: false })).writes, [{ service: 'identity', op: 'delete', name: OPEN_VAR }]);
+  assert.throws(() => planStage('identity', st(V1, V1, undefined, { openStored: false })), /does not hold ALLOW_OPEN_INTROSPECTION=1/);
   assert.throws(() => planStage('finalize', st(V1, V1, undefined)), /run stage=identity first/);
   assert.throws(() => planStage('finalize', st(V1, V1, V2)), /run stage=identity first/);
   assert.throws(() => planStage('nonsense', st(V1, V1, V1)), ProvisionRefusal);

@@ -31,6 +31,7 @@ const TABLE = [
   ['a trailing space', `${HEX} `, 'refused'],
   ['a trailing tab', `${HEX}\t`, 'refused'],
   ['a control character', `${HEX.slice(0, 32)}\u0001${HEX.slice(32)}`, 'refused'],
+  ['a DEL character', `${HEX.slice(0, 32)}\u007f${HEX.slice(32)}`, 'refused'],
   ['a character above U+00FF', `${HEX}Ā`, 'refused'],
 ];
 

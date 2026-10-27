@@ -71,7 +71,9 @@ class RequestFailed extends Error {}
 async function gql(query, variables = {}) {
   let r;
   try {
-    r = await fetch(EP, { method: 'POST', headers: H, body: JSON.stringify({ query, variables }) });
+    // No redirect is followed: fetch drops only Authorization across origins, so a followed 307
+    // or 308 would carry the Project-Access-Token and the upsert's body, value included.
+    r = await fetch(EP, { method: 'POST', headers: H, body: JSON.stringify({ query, variables }), redirect: 'error' });
   } catch {
     // Not the error's message or cause: either can hold the request body.
     throw new RequestFailed('network: the request failed');
