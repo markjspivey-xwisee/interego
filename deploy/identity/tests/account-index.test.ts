@@ -10,7 +10,7 @@
 
 import { test } from 'node:test';
 import { strict as assert } from 'node:assert';
-import { listPods, loadAccounts, PodReadError, readPodJson, type FetchLike } from '../account-index.js';
+import { listPods, loadAccounts, podResourceExists, PodReadError, readPodJson, type FetchLike } from '../account-index.js';
 
 const reply = (status: number, body = '', statusText = ''): FetchLike => async () => ({
   ok: status >= 200 && status < 300, status, statusText, text: async () => body,
@@ -26,6 +26,20 @@ test('readPodJson throws PodReadError for every failure that is not a 404', asyn
   for (const f of [reply(500, '', 'Internal Server Error'), reply(502), reply(401), reply(200, '<html>not json</html>'),
     (async () => { throw new Error('ECONNRESET'); }) as FetchLike]) {
     await assert.rejects(readPodJson(f, url), (err: unknown) => err instanceof PodReadError && (err as PodReadError).url === url);
+  }
+});
+
+test('podResourceExists asks with HEAD: true for 2xx, false only for 404 and 410, PodReadError otherwise', async () => {
+  const url = 'http://css/u-eth-0123456789ab/profile/card';
+  const methods: Array<string | undefined> = [];
+  const seen = (status: number): FetchLike => async (_u, init) => { methods.push(init?.method); return (await reply(status)(_u, init)); };
+  assert.equal(await podResourceExists(seen(200), url), true);
+  assert.equal(await podResourceExists(seen(204), url), true);
+  assert.equal(await podResourceExists(seen(404), url), false);
+  assert.equal(await podResourceExists(seen(410), url), false);
+  assert.deepEqual(methods, ['HEAD', 'HEAD', 'HEAD', 'HEAD']);
+  for (const f of [reply(500), reply(502), reply(401), reply(403), (async () => { throw new Error('ECONNRESET'); }) as FetchLike]) {
+    await assert.rejects(podResourceExists(f, url), (err: unknown) => err instanceof PodReadError && (err as PodReadError).url === url);
   }
 });
 
