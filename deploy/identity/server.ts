@@ -47,8 +47,9 @@ import {
 } from './derive-userid.js';
 import { resolveTargetUserId } from './resolve-target-userid.js';
 import { claimFirstSignIn, type FirstSignInOutcome } from './first-sign-in.js';
-import { authenticatePasskey, PasskeyPersistenceError } from './passkey-authentication.js';
-import { listPods, loadAccounts, readPodJson, type AccountLoadReport, type FetchLike } from './account-index.js';
+import { authenticatePasskey, PasskeyPersistenceError, publicKeyIdentity } from './passkey-authentication.js';
+import { PodReadError, listPods, loadAccounts, readPodJson, type AccountLoadReport, type FetchLike } from './account-index.js';
+import { AccountIndex, MAX_HOLDERS, enrolledAt } from './credential-index.js';
 import { createProvisionalPlayProvider } from './provisional-play-provider.js';
 import { parsePlayClients } from './provisional-play.js';
 import { mountProvisionalPlay } from './provisional-play-routes.js';
@@ -189,8 +190,15 @@ function hasAnyCredential(m: AuthMethods): boolean {
     || m.didKeys.length > 0;
 }
 
-function verifyBootstrapInvite(userId: string, token: string | undefined): boolean {
-  if (!token) return false;
+/**
+ * Whether `token` is the invite configured for `userId`, without spending it, and `userId` has
+ * an account id's shape (no slash, no dot-segment). A bootstrap claim reads the seeded account's
+ * pod only after this (readBootstrapTarget), so a wrong invite touches no pod. The read used to
+ * come first, and on a 404 it writes an empty document (fetchPodAuthMethods): any caller could
+ * put a document into the pod of an account not yet opened, `x/../<id>` reaching any account's.
+ */
+function bootstrapInviteMatches(userId: unknown, token: unknown): boolean {
+  if (typeof userId !== 'string' || typeof token !== 'string' || !token || !ACCOUNT_ID_SHAPE.test(userId)) return false;
   const expected = BOOTSTRAP_INVITES.get(userId);
   if (!expected) return false;
   // Constant-time comparison so the response-time signal can't be used to
@@ -198,8 +206,11 @@ function verifyBootstrapInvite(userId: string, token: string | undefined): boole
   // requires equal-length buffers, so a length mismatch is the short-circuit.
   const a = Buffer.from(token);
   const b = Buffer.from(expected);
-  if (a.length !== b.length) return false;
-  if (!crypto.timingSafeEqual(a, b)) return false;
+  return a.length === b.length && crypto.timingSafeEqual(a, b);
+}
+
+function verifyBootstrapInvite(userId: string, token: string | undefined): boolean {
+  if (!bootstrapInviteMatches(userId, token)) return false;
   if (CONSUMED_INVITES.has(userId)) return false;
   CONSUMED_INVITES.add(userId);
   return true;
@@ -580,19 +591,24 @@ interface ProvisionalTokenGrant {
 // In-memory stores. `identities` and `keys` are cheap-to-rebuild bookkeeping
 // (user/agent shells + Ed25519 keys for DID documents). The user-authoritative
 // credential data (wallets, passkeys, DID keys) does NOT live here — it lives
-// in each user's Solid pod as auth-methods.jsonld. `walletIndex` and
-// `credentialIndex` are read-through caches built from pod scans on startup
-// so SIWE/passkey flows can look up "which user owns this wallet/credential?"
-// without scanning every pod on every call.
+// in each user's Solid pod as auth-methods.jsonld. `walletIndex`,
+// `credentialIndex` and `didIndex` are read-through caches built from pod scans on startup
+// so SIWE/passkey/DID flows can look up "which users hold this wallet/credential/DID?"
+// without scanning every pod on every call. Each maps a credential to EVERY account that
+// lists it (credential-index.ts): with one account per credential, whichever loaded last
+// won, so anyone who put a victim's (non-secret) passkey id on an account of their own made
+// the victim's sign-ins fail on and off. A sign-in tries the holders in a stable order, and
+// sees only the accounts loaded so far: while any is not, a credential no loaded account
+// holds opens no account, and a passkey or wallet joins none (refuseWhileLoading).
 const identities: Map<string, Identity> = new Map();
 const keys: Map<string, KeyPair> = new Map();
 
-// lowercased wallet address → userId
-const walletIndex: Map<string, string> = new Map();
-// webauthn credential id → userId
-const credentialIndex: Map<string, string> = new Map();
-// did → userId
-const didIndex: Map<string, string> = new Map();
+// lowercased wallet address → userIds
+const walletIndex = new AccountIndex();
+// webauthn credential id → userIds
+const credentialIndex = new AccountIndex();
+// did → userIds
+const didIndex = new AccountIndex();
 
 // Per-user auth-methods cache with a short TTL. Stale-while-revalidate:
 // a cache miss or expired entry triggers a pod fetch but returns the
@@ -1146,13 +1162,16 @@ async function putPodAgentRegistry(userId: string): Promise<void> {
   }
 }
 
+// `userId` is the pod the document was read from, and that pod's account is the one it
+// describes, whatever its own userId field says. A document planted in another account's pod
+// (a bootstrap pre-read once wrote one for any caller) seeded the identity under its field's
+// id, and after each restart that pod's account could not sign in (its wallet got a 500).
 function normaliseAuthMethods(raw: unknown, userId: string): AuthMethods {
   const base = emptyAuthMethods(userId);
   if (!raw || typeof raw !== 'object') return base;
   const src = raw as Partial<AuthMethods>;
   return {
     ...base,
-    userId: typeof src.userId === 'string' ? src.userId : userId,
     name: typeof src.name === 'string' ? src.name : userId,
     ...(src.agentId ? { agentId: src.agentId } : {}),
     walletAddresses: Array.isArray(src.walletAddresses)
@@ -1230,14 +1249,39 @@ async function readAuthMethods(userId: string, allowStale = false): Promise<Auth
   }
 }
 
+// Replaces this account's entries (a credential it no longer lists drops out) and leaves every
+// other holder alone. A deleted or tombstoned account holds nothing, so it is never a candidate.
 function rebuildIndexesForUser(userId: string, m: AuthMethods): void {
-  // Remove previous entries pointing at this user (e.g. after credential deletion)
-  for (const [k, v] of walletIndex) if (v === userId) walletIndex.delete(k);
-  for (const [k, v] of credentialIndex) if (v === userId) credentialIndex.delete(k);
-  for (const [k, v] of didIndex) if (v === userId) didIndex.delete(k);
-  for (const addr of m.walletAddresses) walletIndex.set(addr.toLowerCase(), userId);
-  for (const c of m.webAuthnCredentials) credentialIndex.set(c.id, userId);
-  for (const k of m.didKeys) didIndex.set(k.did, userId);
+  const closed = isTombstone(m) || deletedUserIds.has(userId);
+  const shared: Array<[string, number[]]> = [
+    ['wallet', walletIndex.setUser(userId, closed ? [] : m.walletAddresses.map(a => a.toLowerCase()))],
+    // A passkey is registered with 'none' attestation, so its public key is whatever the
+    // registrant sends, and a public key is not secret: anyone can register a copy of the
+    // owner's under the owner's id. Rank holders by when the server enrolled them, so among
+    // the accounts loaded the owner's is tried before a later copy. While the owner's account
+    // is not loaded a copy is tried alone, so no copy is enrolled then (refuseWhileLoading);
+    // a copy enrolled before that check, or during a deploy's overlap, is still tried alone
+    // until the owner's account loads, unless the owner is the account derived from the id,
+    // which a sign-in loads first (AUTH-ARCHITECTURE.md, While accounts are loading).
+    ['webauthn', credentialIndex.setUser(userId, closed ? [] : m.webAuthnCredentials.map(c => [c.id, enrolledAt(c.createdAt)] as const))],
+    // A DID that is not a did:key is bound only with a key /auth/did saw sign this server's
+    // nonce, so another account lists it with a key of its own, which never verifies the
+    // owner's signature. Ranking by enrolment keeps the owner among the first MAX_HOLDERS
+    // tried however many such bindings pile up.
+    ['did', didIndex.setUser(userId, closed ? [] : m.didKeys.map(k => k.did.startsWith('did:key:') ? k.did : [k.did, enrolledAt(k.createdAt)] as const))],
+  ];
+  // Counts only, never an id. A second holder of a passkey may hold a copy of its key; of a
+  // did:web, a key of its own; of a did:key, the key's holder bound it; of a wallet, see
+  // walletAccount.
+  for (const [kind, counts] of shared) {
+    for (const holders of counts) log(`WARN identity_credential_multi_holder kind=${kind} holders=${holders}`);
+  }
+}
+
+function removeFromIndexes(userId: string): void {
+  walletIndex.removeUser(userId);
+  credentialIndex.removeUser(userId);
+  didIndex.removeUser(userId);
 }
 
 // The CSS root lists every pod as a direct sub-container, which makes the pod layer —
@@ -1247,10 +1291,10 @@ function rebuildIndexesForUser(userId: string, m: AuthMethods): void {
 // have an in-memory entry yet (common after a container restart). Also
 // creates a default agent if auth-methods references one, so issueTokenResponse
 // has something to issue for. Idempotent — skipped if the user is already in
-// the identities map.
-function hydrateFromAuthMethods(m: AuthMethods): void {
-  if (identities.has(m.userId)) return;
-  seedIdentity(m.userId, 'user', m.name);
+// the identities map. Seeded under `userId`, the pod the record was read from.
+function hydrateFromAuthMethods(userId: string, m: AuthMethods): void {
+  if (identities.has(userId)) return;
+  seedIdentity(userId, 'user', m.name);
   // Hydration runs at boot when the in-memory identities map is empty and
   // we're recovering shells from pods. If the pod's auth-methods.jsonld
   // explicitly names an agent, honour it. Otherwise seed the surface-neutral
@@ -1260,9 +1304,9 @@ function hydrateFromAuthMethods(m: AuthMethods): void {
   // Never default to a Claude-specific slug here: not every user came in via
   // a Claude surface, and a stale `claude-mobile-<userId>` would mis-label
   // descriptors written by the placeholder agent before the surface agent appears.
-  const agentId = m.agentId ?? `mcp-client-${m.userId}`;
+  const agentId = m.agentId ?? `mcp-client-${userId}`;
   if (!identities.has(agentId)) {
-    seedIdentity(agentId, 'agent', `MCP client (${m.name})`, m.userId, 'ReadWrite');
+    seedIdentity(agentId, 'agent', `MCP client (${m.name})`, userId, 'ReadWrite');
   }
 }
 
@@ -1325,7 +1369,7 @@ async function loadAccountFromPod(userId: string): Promise<boolean> {
 // holds the old record, and must not put it back (inlineApplyAuthMethods has the same guard).
 function adoptAccount(userId: string, m: AuthMethods): boolean {
   if (isTombstone(m) || deletedUserIds.has(userId)) return false;
-  hydrateFromAuthMethods(m);
+  hydrateFromAuthMethods(userId, m);
   authMethodsCache.set(userId, { value: m, fetchedAt: Date.now() });
   rebuildIndexesForUser(userId, m);
   return true;
@@ -1383,6 +1427,48 @@ async function ensureAccountLoaded(userId: string): Promise<'loaded' | 'absent' 
     log(`WARN: could not load account ${userId} on demand: ${(err as Error).message}`);
     return 'unreadable';
   }
+}
+
+/**
+ * The answer for a credential no loaded account holds while some account is not loaded yet
+ * (the startup scan is still running, or a pod it listed stays unreadable; the log line
+ * identity_account_index_incomplete names it). The account holding the credential may be one
+ * of those, so the credential opens no account, a passkey or a DID that is not a did:key is
+ * added to none (nor is a wallet: walletHolder), and a sign-in no loaded account verifies,
+ * existingOnly wallet sign-ins included, is not told the credential is unknown. Opening one
+ * would leave the credential on two accounts: a wallet's first sign-in opens the account derived
+ * from it, which then takes the wallet's sign-ins from the account listing it for good; a
+ * passkey id registered with a copy of its owner's public key (registering proves nothing about
+ * the private key) takes the owner's usernameless sign-ins whenever the owner's account is not
+ * loaded; and a did:web bound with another key, though that key never verifies the owner's
+ * signature, keeps the owner from binding the DID again once it removes it (to change its key,
+ * say), since a DID a loaded account lists with another key is refused. A did:key added with a
+ * bearer is still bound: only its key's holder can bind it, so every account listing it is one
+ * that holder chose. A passkey is refused at /register-options already, before the browser
+ * creates one that no account would list. The cost: new accounts and new credentials wait until
+ * every pod has been read.
+ *
+ * This stops new second holders only. A credential two accounts already list was put there
+ * before this check: a passkey copy registered then, a did:web another account bound with a key
+ * of its own then, a wallet linked before /wallet/link needed this server's nonce, the account
+ * derived from a wallet or did:key that its first sign-in opened while the account listing it
+ * was not loaded (the first-time path waited 50 ms for the scan and opened it), or a write by
+ * the other instance while a deploy overlapped the two.
+ * A passkey, wallet or did:key sign-in loads the account derived from the credential before
+ * choosing another holder (503 while it is unreadable); the rest are decided among the loaded
+ * holders, as at every startup scan. So a passkey copy takes the sign-in of an owner that is
+ * not the account derived from its id, a wallet that would get 409 signs in to its one loaded
+ * holder, and a did:key with no derived holder goes to the lowest loaded id, until every holder
+ * is loaded; and a derived account the first-time path opened beside the owner's keeps the
+ * wallet's or did:key's sign-ins even then, as the derived account is preferred (walletAccount).
+ */
+function refuseWhileLoading(res: express.Response, credential: 'passkey' | 'wallet' | 'DID', adding = false): void {
+  res.status(503).json({
+    error: 'Interego is still loading accounts',
+    detail: adding
+      ? `This ${credential} may already be on an account that has not been loaded yet, so it is added to no account until every account is loaded. Nothing was changed; try again in a minute.`
+      : `This ${credential} may belong to an account that has not been loaded yet. Nothing was changed; try signing in again in a minute rather than creating a new account.`,
+  });
 }
 
 /**
@@ -2565,16 +2651,85 @@ async function checkSiweMessage(message: string, ch: Challenge): Promise<SiweMes
 /**
  * Who holds `addr`, as far as this server can tell, before binding it to `forUserId`. The
  * account the wallet would have opened by itself (u-eth-<addr>) is loaded from its pod in case
- * the index missed it. 'unknown' means some pod could not be read, so another account may hold
- * the wallet unseen: the caller must not bind it.
+ * the index missed it, before any holder is named (walletAccount prefers it). 'unknown' means
+ * some pod could not be read, so another account may hold the wallet unseen: the caller must
+ * not bind it.
  */
-async function walletHolder(addr: string, forUserId: string): Promise<{ kind: 'free' } | { kind: 'held'; userId: string } | { kind: 'unknown' }> {
+async function walletHolder(addr: string, forUserId: string): Promise<{ kind: 'free' } | { kind: 'held'; account: WalletAccount } | { kind: 'unknown' }> {
   const derivedId = deriveUserIdFromWallet(addr);
   const derived = derivedId === forUserId ? 'absent' : await ensureAccountLoaded(derivedId);
-  const holder = walletIndex.get(addr);
-  if (holder !== undefined && holder !== forUserId) return { kind: 'held', userId: holder };
-  if (derived === 'unreadable' || !accountIndexState.complete) return { kind: 'unknown' };
+  if (derived === 'unreadable') return { kind: 'unknown' };
+  if (walletIndex.candidates(addr).some(id => id !== forUserId)) return { kind: 'held', account: walletAccount(addr) };
+  if (!accountIndexState.complete) return { kind: 'unknown' };
   return { kind: 'free' };
+}
+
+type WalletAccount = { kind: 'none' } | { kind: 'one'; userId: string } | { kind: 'ambiguous'; holders: number };
+
+/**
+ * The account a wallet signs in to, among the accounts this server has loaded: the one account
+ * listing it or, when several do, the account derived from the wallet if it is one of them. The
+ * derived account may list the wallet without being loaded yet, so a caller loads it before
+ * acting on any other answer.
+ *
+ * This server gives a wallet to an account only when no account it has loaded holds it, and
+ * opens or extends none while some account is not loaded (walletHolder, refuseWhileLoading).
+ * A wallet on several accounts therefore comes from a binding made before /wallet/link required
+ * this server's nonce (it took any signature the wallet had ever made, so a holder may not be
+ * the wallet's own); from a first sign-in made before sign-ins waited for every account, which
+ * opened the derived account while the account listing the wallet was not loaded (the scan
+ * after any restart, or an unreadable pod: the first-time path waited 50 ms for the scan, then
+ * opened it); from a write this server did not see (the other instance, while a deploy
+ * overlapped the two, opening an account after this one listed the pods or adding the wallet to
+ * an account after this one read it), after which this server can open the derived account
+ * itself at the wallet's first sign-in here; or from a write to a pod outside this server. A
+ * derived account opened beside the owner's keeps the wallet's sign-ins even once every holder
+ * is loaded, since it is preferred; it usually holds that wallet and nothing else, so the
+ * wallet cannot be removed from it (its last credential), and signing in to it with the wallet
+ * and deleting it (POST /users/me/delete) hands the wallet to the other holder. The derived
+ * account is the one the wallet's first sign-in opens. With several holders and none of them
+ * derived, nothing here says which is the wallet's, so the wallet signs in to none; while one of
+ * them is not loaded, the choice is among the others, so such a wallet signs in to its one
+ * loaded holder until then.
+ */
+function walletAccount(addr: string): WalletAccount {
+  const derivedId = deriveUserIdFromWallet(addr);
+  const holders = walletIndex.candidates(addr, derivedId);
+  if (holders.length === 0) return { kind: 'none' };
+  if (holders.length === 1 || holders[0] === derivedId) return { kind: 'one', userId: holders[0]! };
+  return { kind: 'ambiguous', holders: holders.length };
+}
+
+const WALLET_AMBIGUOUS = {
+  error: 'This wallet is listed on more than one account',
+  detail: 'More than one account lists it, and this server cannot tell which account is yours. Nothing was changed.',
+  hint: 'Sign in with another credential and remove the wallet from each account that is not yours (DELETE /auth-methods/me/wallet/<address>). An account you cannot sign in to needs the operator.',
+};
+
+function refuseAmbiguousWallet(res: express.Response, account: { holders: number }): void {
+  log(`WARN identity_credential_multi_holder kind=wallet holders=${account.holders} refused=ambiguous`);
+  res.status(409).json(WALLET_AMBIGUOUS);
+}
+
+type BootstrapTarget = Pick<AuthMethods, 'walletAddresses' | 'webAuthnCredentials' | 'didKeys'>;
+
+/**
+ * What resolveTargetUserId checks a bootstrap claim of /auth/siwe or /auth/did against: the
+ * seeded account's record, read only when the claim carries the invite configured for that id
+ * (bootstrapInviteMatches), and never created. Any other claim reads no pod and gets an empty
+ * record, which resolveTargetUserId then refuses on the invite with the same answer as an
+ * account that already has credentials. 'unreadable': the pod did not answer, and the caller
+ * answers 503 before resolveTargetUserId spends the invite.
+ */
+async function readBootstrapTarget(bootstrapUserId: unknown, bootstrapInvite: unknown): Promise<BootstrapTarget | 'unreadable'> {
+  if (!bootstrapInviteMatches(bootstrapUserId, bootstrapInvite)) return { walletAddresses: [], webAuthnCredentials: [], didKeys: [] };
+  const userId = bootstrapUserId as string;
+  try {
+    return await withIdentityPodMutex(userId, () => fetchPodAuthMethods(userId, { createIfMissing: false }));
+  } catch (err) {
+    log(`WARN: bootstrap claim of ${userId} not completed (unreadable): ${(err as Error).message}`);
+    return 'unreadable';
+  }
 }
 
 // ── SIWE auth (Ethereum wallet) ─────────────────────────────
@@ -2663,14 +2818,30 @@ app.post('/auth/siwe', authEnrollLimiter, async (req, res) => {
   if (!walletIndex.has(recoveredAddress)) {
     await awaitInitialIndexWithBudget(50);
   }
-  // Returning user via wallet index — no user-claim needed.
-  let userId = walletIndex.get(recoveredAddress);
-  let user = userId ? identities.get(userId) : undefined;
-
-  if (!user && req.body?.existingOnly === true) {
-    res.status(401).json({ error: 'This wallet is not registered. Sign in with an existing credential for the requested account.' });
+  // Returning user via wallet index — no user-claim needed. A wallet several accounts list signs
+  // in to the one derived from it, or to none (walletAccount). The index holds loaded accounts
+  // only, and the derived account may list the wallet without being loaded: load it before
+  // signing in to another account or refusing several, or the wallet would move to it once it
+  // loads. A pod that cannot be read signs nobody in.
+  const derivedWalletUserId = deriveUserIdFromWallet(recoveredAddress);
+  let indexed = walletAccount(recoveredAddress);
+  if (indexed.kind === 'ambiguous' || (indexed.kind === 'one' && indexed.userId !== derivedWalletUserId)) {
+    if (await ensureAccountLoaded(derivedWalletUserId) === 'unreadable') {
+      res.status(503).json({ error: 'Could not read this account just now', detail: 'Nothing was changed; try signing in again in a minute.' });
+      return;
+    }
+    indexed = walletAccount(recoveredAddress);
+  }
+  if (indexed.kind === 'ambiguous') {
+    refuseAmbiguousWallet(res, indexed);
     return;
   }
+  let userId: string | undefined = indexed.kind === 'one' ? indexed.userId : undefined;
+  let user = userId ? identities.get(userId) : undefined;
+  // A sign-in to an account that already lists the wallet, and nothing else (the relay's
+  // /sign-action page): it opens no account, adds the wallet to none and claims no invite, but
+  // still finds the account the first-time path below would find.
+  const existingOnly = req.body?.existingOnly === true;
 
   // Authenticated add-wallet: if a valid bearer is presented, bind this
   // newly-signed wallet to the caller's user (not a new one) — but only a
@@ -2679,7 +2850,7 @@ app.post('/auth/siwe', authEnrollLimiter, async (req, res) => {
   // /wallet/link (walletHolder): a holder found on its pod is signed in to,
   // exactly as an indexed one is above, and a wallet whose holder cannot be
   // ruled out is not bound at all.
-  if (!user) {
+  if (!user && !existingOnly) {
     const authHeader = req.headers.authorization;
     if (authHeader?.startsWith('Bearer ')) {
       const tr = await verifyToken(authHeader.slice(7));
@@ -2692,22 +2863,50 @@ app.post('/auth/siwe', authEnrollLimiter, async (req, res) => {
           });
           return;
         }
-        userId = holder.kind === 'held' ? holder.userId : tr.record!.userId;
+        if (holder.kind === 'held' && holder.account.kind === 'ambiguous') {
+          refuseAmbiguousWallet(res, holder.account);
+          return;
+        }
+        userId = holder.kind === 'held' && holder.account.kind === 'one' ? holder.account.userId : tr.record!.userId;
         user = identities.get(userId);
       }
     }
   }
 
   if (!user) {
+    // No account this server has loaded holds the wallet. While some account is not loaded,
+    // the wallet's may be one of them, so no account is opened for it (refuseWhileLoading); the
+    // account derived from it can still be signed in to (read below, never created). An
+    // existingOnly sign-in opens nothing either, whether accounts are loading or not. A
+    // bootstrap claim only opens an account, so in both cases it is refused before
+    // resolveTargetUserId spends the invite or anything reads the seeded pod.
+    const loading = !accountIndexState.complete;
+    // No account that lists the wallet was found. While accounts are loading, that is not "not
+    // registered": the wallet's account may be one not loaded yet.
+    const refuseUnknownWallet = (): void => {
+      if (loading) refuseWhileLoading(res, 'wallet');
+      else if (existingOnly) res.status(401).json({ error: 'This wallet is not registered. Sign in with an existing credential for the requested account.' });
+      else res.status(401).json({ error: 'This wallet is not registered. Sign in with an existing credential for this account and add this wallet from there.' });
+    };
+    if ((loading || existingOnly) && (bootstrapUserId || bootstrapInvite)) {
+      refuseUnknownWallet();
+      return;
+    }
     // Choose the target userId using the same three-mode logic as WebAuthn.
     // Mode (C) add-device is handled upstream (bearer token already
     // populated `user`); resolveTargetUserId here covers (A) derive and
     // (B) bootstrap-claim, pinned by tests/resolve-target-userid.test.ts
     // — in particular the enumeration-safe ordering of the existing-
-    // credential guard before the invite check.
-    const existingForBootstrap = (bootstrapUserId && bootstrapInvite)
-      ? await readAuthMethods(bootstrapUserId, /* allowStale */ true)
-      : { walletAddresses: [], webAuthnCredentials: [], didKeys: [] };
+    // credential guard before the invite check. The seeded pod is read
+    // only with its invite, and written by nothing here (readBootstrapTarget).
+    const existingForBootstrap = await readBootstrapTarget(bootstrapUserId, bootstrapInvite);
+    if (existingForBootstrap === 'unreadable') {
+      res.status(503).json({
+        error: 'Could not read this account just now',
+        detail: 'The pod holding this account did not answer. Nothing was changed; try signing in again in a minute.',
+      });
+      return;
+    }
     const resolved = resolveTargetUserId({
       bootstrapUserId,
       bootstrapInvite,
@@ -2731,10 +2930,12 @@ app.post('/auth/siwe', authEnrollLimiter, async (req, res) => {
     // loaded, or this wallet may have been removed from it. Read the pod before writing, and
     // create the account only if it holds no credentials (first-sign-in.ts). This costs the
     // first sign-in a pod read and a synchronous write, which FIX A had deferred; a blind
-    // deferred write is what replaced whole accounts with one wallet.
+    // deferred write is what replaced whole accounts with one wallet. While accounts are
+    // loading, and for an existingOnly sign-in, only an account that already lists the wallet
+    // is signed in to.
     const outcome = await claimFirstSignInOnPod(targetUserId, agentId, displayName,
       m => m.walletAddresses.some(a => a.toLowerCase() === recoveredAddress),
-      m => { m.walletAddresses.push(recoveredAddress); });
+      m => { m.walletAddresses.push(recoveredAddress); }, /* mayCreate */ !loading && !existingOnly);
     if (outcome.kind === 'unreadable' || outcome.kind === 'unconfirmed') {
       log(`WARN: first-time SIWE sign-in to ${targetUserId} not completed (${outcome.kind}): ${outcome.reason}`);
       // Nothing was written, so a bootstrap invite spent by resolveTargetUserId is still
@@ -2752,7 +2953,7 @@ app.post('/auth/siwe', authEnrollLimiter, async (req, res) => {
       return;
     }
     if (outcome.kind === 'refused') {
-      res.status(401).json({ error: 'This wallet is not registered. Sign in with an existing credential for this account and add this wallet from there.' });
+      refuseUnknownWallet();
       return;
     }
     if (outcome.kind === 'returning') {
@@ -2838,14 +3039,12 @@ app.post('/auth/webauthn/register-options', authEnrollLimiter, async (req, res) 
 
   // Mode (B): validate bootstrap invite (do NOT consume yet — consumption
   // happens at /register after the ceremony actually verifies).
-  let bootstrapTargetUserId: string | undefined;
   if (bootstrapUserId || bootstrapInvite) {
     if (!bootstrapUserId || !bootstrapInvite) {
       res.status(400).json({ error: 'bootstrapUserId and bootstrapInvite must both be supplied' });
       return;
     }
-    const expected = BOOTSTRAP_INVITES.get(bootstrapUserId);
-    if (!expected || expected !== bootstrapInvite) {
+    if (!bootstrapInviteMatches(bootstrapUserId, bootstrapInvite)) {
       res.status(401).json({ error: 'Bootstrap credential invalid or already consumed' });
       return;
     }
@@ -2853,9 +3052,33 @@ app.post('/auth/webauthn/register-options', authEnrollLimiter, async (req, res) 
       res.status(409).json({ error: `Bootstrap invite for '${bootstrapUserId}' has already been consumed` });
       return;
     }
+  }
+
+  // While some account is not loaded, /register refuses every passkey (refuseWhileLoading), and
+  // by then the browser has created it: a discoverable passkey on the user's authenticator that
+  // no account lists, offered by the passkey picker from then on, one more with each retry. So
+  // no ceremony starts. Refused after the bearer and invite checks, whose answers do not depend
+  // on loading, and before the seeded account's pod or the signed-in account's passkeys are read.
+  if (!accountIndexState.complete) {
+    refuseWhileLoading(res, 'passkey', true);
+    return;
+  }
+
+  let bootstrapTargetUserId: string | undefined;
+  if (bootstrapUserId) {
     // Additional guard: if the seeded user already has any credential on
     // file, the invite flow is locked out regardless of invite validity.
-    const existing = await readAuthMethods(bootstrapUserId, /* allowStale */ true);
+    // Read from the pod as /register reads it, creating nothing: no ceremony has run yet, and
+    // one abandoned now would leave an empty document behind. An unreadable pod is not an
+    // account without credentials.
+    let existing: AuthMethods;
+    try {
+      existing = await withIdentityPodMutex(bootstrapUserId, () => fetchPodAuthMethods(bootstrapUserId, { createIfMissing: false }));
+    } catch (err) {
+      log(`WARN: bootstrap passkey registration options for ${bootstrapUserId} not issued (unreadable): ${(err as Error).message}`);
+      res.status(503).json({ error: 'Could not read this account just now', detail: 'Nothing was changed; try registering again in a minute.' });
+      return;
+    }
     if (isTombstone(existing)) {
       res.status(409).json({ error: ACCOUNT_DELETED_MESSAGE });
       return;
@@ -3000,10 +3223,30 @@ app.post('/auth/webauthn/register', authEnrollLimiter, async (req, res) => {
   const { credential } = verification.registrationInfo;
   const credentialId = credential.id;
 
+  // The account a fresh registration of this id opened is derived from it, and may list it
+  // without being loaded here (opened on the other instance while a deploy overlapped the two):
+  // load it, so an id it holds is refused below rather than added to another account with a
+  // copy of its key. A fresh registration reads that account's pod below anyway.
+  if ((ch.addDeviceUserId || ch.bootstrapUserId)
+    && await ensureAccountLoaded(deriveUserIdFromCredentialId(credentialId)) === 'unreadable') {
+    res.status(503).json({ error: 'Could not read this account just now', detail: 'Nothing was changed; try registering again in a minute.' });
+    return;
+  }
   // Reject a credential we've seen before — either as a duplicate register
   // attempt, or (extremely unlikely) as a 256-bit collision.
   if (credentialIndex.has(credentialId)) {
     res.status(409).json({ error: 'This credential is already registered' });
+    return;
+  }
+  // Absent from the index says nothing while some account is not loaded: the id may be one an
+  // unloaded account lists, sent here with a copy of that account's public key ('none'
+  // attestation proves nothing about the private key), and the owner's usernameless sign-in
+  // would then find only the copy. So no passkey is registered, in any mode, until every
+  // account is loaded: refused before the bootstrap invite is spent or any pod is written.
+  // /register-options refuses first, so no ceremony starts; this catches a challenge from POST
+  // /challenges, which issues one for a fresh registration without the options.
+  if (!accountIndexState.complete) {
+    refuseWhileLoading(res, 'passkey', true);
     return;
   }
 
@@ -3173,32 +3416,24 @@ app.post('/auth/webauthn/authenticate', authEnrollLimiter, async (req, res) => {
   if (!credentialIndex.has(response.id)) {
     await awaitInitialIndexWithBudget(50);
   }
-  // Canonical lookup: credential id → userId. We never trust a body-supplied
-  // userId claim; the identity is whichever user owns the credential that
-  // successfully signs the ceremony.
-  const userId = credentialIndex.get(response.id);
-  if (!userId) {
-    if (!accountIndexState.complete) {
-      // Some pods have not been read yet, so this passkey may belong to one of them.
-      // Saying "no match" here is what sent people to register a new account.
-      res.status(503).json({
-        error: 'Interego is still loading accounts',
-        detail: 'This passkey may belong to an account that has not been loaded yet. Nothing was changed; try signing in again in a minute rather than creating a new account.',
-      });
-      return;
-    }
-    res.status(401).json({ error: 'No WebAuthn credential matches this response' });
+  // The account a fresh registration of this id opened is derived from it, and may list it
+  // without being loaded (the startup scan has not reached it, its pod is unreadable, or the
+  // other instance opened it while a deploy overlapped the two). It is loaded whenever it is not
+  // a holder already, as for wallets and did:keys: a copy of its key under its id on another
+  // account would otherwise be the only holder tried, and take the owner's sign-in.
+  if (typeof response.id === 'string'
+    && !credentialIndex.candidates(response.id).includes(deriveUserIdFromCredentialId(response.id))
+    && await ensureAccountLoaded(deriveUserIdFromCredentialId(response.id)) === 'unreadable') {
+    res.status(503).json({ error: 'Could not read this account just now', detail: 'Nothing was changed; try signing in again in a minute.' });
     return;
   }
-  const user = identities.get(userId);
-  if (!user || user.type !== 'user') {
-    res.status(404).json({ error: `User for credential not found` });
-    return;
-  }
-  const methods = await readAuthMethods(userId);
-  const cred = methods.webAuthnCredentials.find(c => c.id === response.id);
-  if (!cred) {
-    res.status(401).json({ error: 'Credential indexed but not on file' });
+  // Canonical lookup: credential id → the accounts listing it. We never trust a body-supplied
+  // userId claim; the identity is whichever account's stored key verifies the ceremony.
+  if (!credentialIndex.has(response.id)) {
+    // Some pods have not been read yet, so this passkey may belong to one of them.
+    // Saying "no match" here is what sent people to register a new account.
+    if (!accountIndexState.complete) refuseWhileLoading(res, 'passkey');
+    else res.status(401).json({ error: 'No WebAuthn credential matches this response' });
     return;
   }
 
@@ -3209,34 +3444,103 @@ app.post('/auth/webauthn/authenticate', authEnrollLimiter, async (req, res) => {
     res.status(400).json({ error: 'Could not extract challenge from clientDataJSON' });
     return;
   }
+  // Single-use and independent of the account, so it is spent before any holder is tried.
   const ch = consumeChallenge(expectedChallenge, 'webauthn-authenticate');
-  // If the challenge was scoped to a specific userId at issuance time, it
-  // MUST match the credential's owning userId. No cross-account reuse.
-  if (!ch || (ch.userId && ch.userId !== userId)) {
+  // A challenge scoped to a userId at issuance time tries that account only: no cross-account
+  // reuse.
+  const scoped = ch
+    ? credentialIndex.candidates(response.id, deriveUserIdFromCredentialId(response.id)).filter(id => !ch.userId || id === ch.userId)
+    : [];
+  if (!ch || scoped.length === 0) {
     res.status(401).json({ error: 'Invalid or expired authentication challenge' });
     return;
   }
+  // No holder verified. A usernameless sign-in tries the loaded accounts only, so while some
+  // are not loaded the passkey's own account may be one of them (a loaded holder may list its id
+  // with a key of its own): say so, as for an id no account lists. A challenge scoped to an
+  // account loaded that account.
+  const noHolderVerified = (status: number, error: string): void => {
+    if (!ch.userId && !accountIndexState.complete) refuseWhileLoading(res, 'passkey');
+    else res.status(status).json({ error });
+  };
+  const holders = scoped.filter(id => identities.get(id)?.type === 'user' && !deletedUserIds.has(id));
+  if (holders.length === 0) {
+    noHolderVerified(404, 'User for credential not found');
+    return;
+  }
+  // Bounded work, never a refusal: refusing a crowded id would let anyone who adds it to enough
+  // accounts lock its owner out. Of the loaded accounts, the owner's enrolled the id first, so it
+  // is tried.
+  if (holders.length > MAX_HOLDERS) log(`WARN identity_credential_multi_holder kind=webauthn holders=${holders.length} tried=${MAX_HOLDERS}`);
+  // Every account whose record still lists this credential, in the index's stable order (the
+  // earliest-enrolled first). The first whose stored key verifies the assertion wins, and only
+  // its counter is written: authenticatePasskey changes a record only after it verifies, so a
+  // holder whose key does not match is tried at no cost.
+  const tries: Array<{ userId: string; methods: AuthMethods; cred: AuthMethods['webAuthnCredentials'][number] }> = [];
+  for (const id of holders.slice(0, MAX_HOLDERS)) {
+    const methods = await readAuthMethods(id);
+    const cred = methods.webAuthnCredentials.find(c => c.id === response.id);
+    if (cred) tries.push({ userId: id, methods, cred });
+  }
+  if (tries.length === 0) {
+    noHolderVerified(401, 'Credential indexed but not on file');
+    return;
+  }
 
-  try {
-    if (userId.startsWith('u-try-play-')) {
-      await authenticatePlayOwnerPasskey(userId, response, expectedChallenge,
-        ch.rpId ?? RP_ID, ch.rpOrigin ?? RP_ORIGIN);
-    } else {
-      await authenticatePasskey({ credential: cred, response, challenge: expectedChallenge,
-        rpId: ch.rpId ?? RP_ID, origin: ch.rpOrigin ?? RP_ORIGIN,
-        persist: () => persistExistingAuthMethods(userId, methods),
-      });
+  let user: Identity | undefined;
+  let lastError: unknown;
+  // Each public key is tried once, at its earliest holder. A later holder storing the same key
+  // would give the same answer, except where the answer turned on the earlier holder's record:
+  // a sign counter at or above the assertion's is refused before the signature is checked, and
+  // a later copy of the key with a lower counter would then accept the assertion it refused.
+  // Keys are compared as keys (publicKeyIdentity): a copy's registrant chooses its COSE bytes.
+  const triedKeys = new Set<string>();
+  for (const { userId, methods, cred } of tries) {
+    const key = await publicKeyIdentity(cred.publicKey);
+    if (triedKeys.has(key)) continue;
+    triedKeys.add(key);
+    try {
+      if (userId.startsWith('u-try-play-')) {
+        await authenticatePlayOwnerPasskey(userId, response, expectedChallenge,
+          ch.rpId ?? RP_ID, ch.rpOrigin ?? RP_ORIGIN);
+      } else {
+        await authenticatePasskey({ credential: cred, response, challenge: expectedChallenge,
+          rpId: ch.rpId ?? RP_ID, origin: ch.rpOrigin ?? RP_ORIGIN,
+          persist: () => persistExistingAuthMethods(userId, methods),
+        });
+      }
+    } catch (err) {
+      // A holder deleted mid-request that merely failed to verify is no answer: try the next.
+      if (deletedUserIds.has(userId) && (err instanceof PasskeyPersistenceError || err instanceof AccountDeletedError)) {
+        // The account was deleted while this sign-in was verified; its counter was not written.
+        res.status(409).json({ error: ACCOUNT_DELETED_MESSAGE });
+        return;
+      }
+      if (err instanceof PasskeyPersistenceError) {
+        // It verified, so this was the passkey's account: stop rather than try another.
+        log(`WARN: refused passkey auth — ${(err as Error).message}`);
+        res.status(503).json({ error: err.message });
+        return;
+      }
+      if (err instanceof PodReadError) {
+        // Its record (a Play owner's is read again here) could not be read, so whether it
+        // verifies is unknown: stop rather than let a later holder take the sign-in.
+        log(`WARN: refused passkey auth — ${err.message}`);
+        res.status(503).json({ error: 'Could not read this account just now', detail: 'Nothing was changed; try signing in again in a minute.' });
+        return;
+      }
+      lastError = err;
+      continue;
     }
-  } catch (err) {
-    if (deletedUserIds.has(userId)) {
-      // The account was deleted while this sign-in was verified; its counter was not written.
-      res.status(409).json({ error: ACCOUNT_DELETED_MESSAGE });
-    } else if (err instanceof PasskeyPersistenceError) {
-      log(`WARN: refused passkey auth — ${(err as Error).message}`);
-      res.status(503).json({ error: err.message });
-    } else {
-      res.status(401).json({ error: `WebAuthn verification failed: ${(err as Error).message}` });
+    user = identities.get(userId);
+    if (!user) {
+      res.status(404).json({ error: `User for credential not found` });
+      return;
     }
+    break;
+  }
+  if (!user) {
+    noHolderVerified(401, `WebAuthn verification failed: ${(lastError as Error | undefined)?.message ?? 'no holder verified'}`);
     return;
   }
   res.json(await issueTokenResponse(user, surfaceAgent));
@@ -3372,30 +3676,62 @@ app.post('/auth/did', authEnrollLimiter, async (req, res) => {
     await awaitInitialIndexWithBudget(50);
   }
 
-  // Returning user via DID index — no user-claim needed.
+  // Returning user via DID index — no user-claim needed. Every account listing this DID is a
+  // candidate, in a stable order (for a DID that is not a did:key, the earliest-enrolled first;
+  // then the account derived from the DID, then by id), at most MAX_HOLDERS of them.
   const indexLookupStart = timingEnabled() ? startTiming() : 0;
-  let userId = didIndex.get(did);
-  let user = userId ? identities.get(userId) : undefined;
-  if (timingEnabled()) logTiming('did-index-lookup', indexLookupStart, { hit: !!user });
-  // The DID string names the account; for a DID that is not its own key, the signature proved
-  // only that the caller holds the key it sent. Sign in only if the account holds that key for
-  // this DID. An unreadable pod gives no keys, so it refuses rather than trusting the DID.
-  if (user && !keyFromDid && !accountHoldsDidKey(await readAuthMethods(user.id, /* allowStale */ true), did, keyFromDid, publicKeyRaw)) {
-    // The index names whichever account listing this DID was loaded last, which may not be its
-    // owner's (two accounts list it, or one bound it before keys were checked). Try the account
-    // derived from the DID before refusing; a pod that cannot be read signs nobody in.
-    const derivedId = deriveUserIdFromDid(did);
-    const derived = derivedId === user.id ? 'absent' : await ensureAccountLoaded(derivedId);
-    if (derived === 'unreadable') {
+  const derivedDidUserId = deriveUserIdFromDid(did);
+  const indexedDidHolders = () => didIndex.candidates(did, derivedDidUserId).filter(id => identities.get(id)?.type === 'user');
+  let allDidHolders = indexedDidHolders();
+  if (timingEnabled()) logTiming('did-index-lookup', indexLookupStart, { hit: allDidHolders.length > 0 });
+  // A did:key goes to the account derived from it when that is a holder, and the index holds
+  // loaded accounts only: load the derived account before signing in to another, or the DID
+  // would move to it once it loads. A pod that cannot be read signs nobody in.
+  if (keyFromDid && allDidHolders.length > 0 && allDidHolders[0] !== derivedDidUserId) {
+    if (await ensureAccountLoaded(derivedDidUserId) === 'unreadable') {
       res.status(503).json({ error: 'Could not read this account just now', detail: 'Nothing was changed; try signing in again in a minute.' });
       return;
     }
-    if (derived !== 'loaded' || !accountHoldsDidKey(await readAuthMethods(derivedId, /* allowStale */ true), did, keyFromDid, publicKeyRaw)) {
-      res.status(401).json({ error: DID_KEY_NOT_REGISTERED });
-      return;
+    allDidHolders = indexedDidHolders();
+  }
+  if (allDidHolders.length > MAX_HOLDERS) log(`WARN identity_credential_multi_holder kind=did holders=${allDidHolders.length} tried=${MAX_HOLDERS}`);
+  const didHolders = allDidHolders.slice(0, MAX_HOLDERS);
+  let userId: string | undefined;
+  let user: Identity | undefined;
+  if (keyFromDid) {
+    // A did:key is its own key: every account listing it was bound by that key's holder.
+    userId = didHolders[0];
+    user = userId ? identities.get(userId) : undefined;
+  } else if (didHolders.length) {
+    // The DID string names the account; for a DID that is not its own key, the signature proved
+    // only that the caller holds the key it sent. Sign in to the first account that holds that
+    // key for this DID: another account listing the DID with a key of its own choosing can
+    // neither take this sign-in nor block it. An unreadable pod gives no keys, so it refuses
+    // rather than trusting the DID.
+    for (const id of didHolders) {
+      if (accountHoldsDidKey(await readAuthMethods(id, /* allowStale */ true), did, keyFromDid, publicKeyRaw)) {
+        userId = id;
+        user = identities.get(id);
+        break;
+      }
     }
-    userId = derivedId;
-    user = identities.get(derivedId)!;
+    if (!user) {
+      // None of them; the owner's account may be the one derived from the DID, not loaded yet.
+      // A pod that cannot be read signs nobody in.
+      const derived = didHolders.includes(derivedDidUserId) ? 'absent' : await ensureAccountLoaded(derivedDidUserId);
+      if (derived === 'unreadable') {
+        res.status(503).json({ error: 'Could not read this account just now', detail: 'Nothing was changed; try signing in again in a minute.' });
+        return;
+      }
+      if (derived !== 'loaded' || !accountHoldsDidKey(await readAuthMethods(derivedDidUserId, /* allowStale */ true), did, keyFromDid, publicKeyRaw)) {
+        // While some account is not loaded, the one listing the DID with this key may be it.
+        if (!accountIndexState.complete) refuseWhileLoading(res, 'DID');
+        else res.status(401).json({ error: DID_KEY_NOT_REGISTERED });
+        return;
+      }
+      userId = derivedDidUserId;
+      user = identities.get(derivedDidUserId)!;
+    }
   }
 
   // Authenticated add-did: bearer token binds this DID to the caller.
@@ -3408,18 +3744,27 @@ app.post('/auth/did', authEnrollLimiter, async (req, res) => {
         user = identities.get(userId);
       }
     }
-    // A DID that is not a did:key is bound with a key the caller chose. Binding one another
-    // account lists would point the index at the binder and lock its owner out, so refuse it.
-    // The index may not have seen the owner's account yet: load the one derived from the DID.
+    // A DID that is not a did:key is bound with a key the caller holds, which need not be the
+    // one its owner's account lists: one another account lists stays with that account, and is
+    // not bound here too. The index may not have seen the owner's account yet: load the one
+    // derived from the DID. Nor is one bound while some account is not loaded, as the owner's
+    // may be one of them (refuseWhileLoading). Bound then, it would not take the owner's
+    // sign-ins (its key never verifies the owner's signature), but once the owner removed the
+    // DID, to change its key say, the owner could never bind it again: a DID a loaded account
+    // lists with another key is refused above.
     if (user && !keyFromDid) {
       const derivedId = deriveUserIdFromDid(did);
       if (derivedId !== user.id && (await ensureAccountLoaded(derivedId)) === 'unreadable') {
         res.status(503).json({ error: 'Could not check this DID just now', detail: 'Nothing was changed; try again in a minute.' });
         return;
       }
-      const holder = didIndex.get(did);
-      if (holder !== undefined && holder !== user.id) {
+      const callerId = user.id;
+      if (didIndex.candidates(did).some(holder => holder !== callerId)) {
         res.status(409).json({ error: 'This DID is registered to another account. Sign in to that account to manage it.' });
+        return;
+      }
+      if (!accountIndexState.complete) {
+        refuseWhileLoading(res, 'DID', true);
         return;
       }
     }
@@ -3433,12 +3778,27 @@ app.post('/auth/did', authEnrollLimiter, async (req, res) => {
   const canonicalPublicKeyMultibase = encodeEd25519Multibase(publicKeyRaw);
 
   if (!user) {
+    // As for SIWE: while some account is not loaded, the one holding this DID may be one of
+    // them, so no account is opened for it (refuseWhileLoading); the account derived from it
+    // can still be signed in to. A bootstrap claim is refused before anything spends its invite
+    // or reads the seeded pod.
+    const loading = !accountIndexState.complete;
+    if (loading && (bootstrapUserId || bootstrapInvite)) {
+      refuseWhileLoading(res, 'DID');
+      return;
+    }
     // Mode (C) add-device handled upstream (bearer populated `user`);
     // resolveTargetUserId covers (A) derive and (B) bootstrap-claim with
     // the enumeration-safe ordering pinned by tests/resolve-target-userid.test.ts.
-    const existingForBootstrap = (bootstrapUserId && bootstrapInvite)
-      ? await readAuthMethods(bootstrapUserId, /* allowStale */ true)
-      : { walletAddresses: [], webAuthnCredentials: [], didKeys: [] };
+    // The seeded pod is read only with its invite (readBootstrapTarget).
+    const existingForBootstrap = await readBootstrapTarget(bootstrapUserId, bootstrapInvite);
+    if (existingForBootstrap === 'unreadable') {
+      res.status(503).json({
+        error: 'Could not read this account just now',
+        detail: 'The pod holding this account did not answer. Nothing was changed; try signing in again in a minute.',
+      });
+      return;
+    }
     const resolved = resolveTargetUserId({
       bootstrapUserId,
       bootstrapInvite,
@@ -3466,7 +3826,7 @@ app.post('/auth/did', authEnrollLimiter, async (req, res) => {
     // Only a did:key can open an account by itself: nothing here proves that a key the caller
     // supplied belongs to any other DID (no DID document is fetched), so such a DID signs in
     // to an account whose pod lists it with this key, or is added from a signed-in account.
-    const mayCreate = keyFromDid || resolved.mode !== 'derive';
+    const mayCreate = !loading && (keyFromDid || resolved.mode !== 'derive');
     const outcome = await claimFirstSignInOnPod(targetUserId, agentId, displayName,
       m => accountHoldsDidKey(m, did, keyFromDid, publicKeyRaw),
       m => {
@@ -3494,7 +3854,8 @@ app.post('/auth/did', authEnrollLimiter, async (req, res) => {
       return;
     }
     if (outcome.kind === 'refused') {
-      res.status(401).json({ error: keyFromDid ? DID_NOT_REGISTERED : DID_KEY_NOT_REGISTERED });
+      if (loading) refuseWhileLoading(res, 'DID');
+      else res.status(401).json({ error: keyFromDid ? DID_NOT_REGISTERED : DID_KEY_NOT_REGISTERED });
       return;
     }
     if (outcome.kind === 'returning') {
@@ -3633,7 +3994,7 @@ const provisionalPlay = createProvisionalPlayProvider({
   empty: claims => emptyAuthMethods(claims.userId, 'Play guest', claims.authenticatedAgentId) as unknown as import('./provisional-play-store.js').PlayAnchorDocument,
   committed: document => {
     const methods = normaliseAuthMethods(document, document.userId);
-    hydrateFromAuthMethods(methods);
+    hydrateFromAuthMethods(document.userId, methods);
     inlineApplyAuthMethods(document.userId, methods);
     bootstrapUserIds.add(document.userId);
   },
@@ -4633,9 +4994,7 @@ async function deleteUserCompletely(userId: string): Promise<{ agents: string[];
   // Token revocation: the tombstone has no credentials, so the account does not load and
   // verifyToken refuses its tokens; its session epoch is above every token issued, too.
   authMethodsCache.delete(userId);
-  for (const [k, v] of walletIndex) if (v === userId) walletIndex.delete(k);
-  for (const [k, v] of credentialIndex) if (v === userId) credentialIndex.delete(k);
-  for (const [k, v] of didIndex) if (v === userId) didIndex.delete(k);
+  removeFromIndexes(userId);
 
   const podCleanup = { authMethods: 0, agents: 0 };
   if (!tombstoned) {
@@ -5563,7 +5922,7 @@ app.listen(PORT, () => {
   // before this container restarted are still reachable without re-enrolling.
   // Non-blocking — health checks come up immediately, indexes populate async.
   // The promise is cached at module scope so /auth/did can Promise.race
-  // against a small timeout before its didIndex.get() — see
+  // against a small timeout before its didIndex lookup — see
   // awaitInitialIndexWithBudget().
   startInitialIndexRebuild();
 

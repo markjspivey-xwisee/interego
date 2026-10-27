@@ -5,7 +5,10 @@
  * startup is never loaded; one listed account no longer holds the wallet its id was derived
  * from, as after the owner removed it. A sign-in with such a wallet or DID misses the
  * indexes and takes the first-time path, which used to PUT a fresh auth-methods document
- * over whatever the pod held.
+ * over whatever the pod held. A sign-in for an existing account only (existingOnly) takes the
+ * same path and creates nothing. A bootstrap claim on that path reads the seeded account's pod
+ * only with its invite: a wrong one used to read the pod it named, and write an empty document
+ * there, so `x/../<id>` planted a document in an account not yet opened.
  *
  * The pure half is tests/first-sign-in.test.ts.
  *
@@ -13,7 +16,7 @@
  *   node --test --import tsx tests/first-sign-in-routes.test.ts
  */
 
-import { test, before, after } from 'node:test';
+import { test, before, after, beforeEach } from 'node:test';
 import { strict as assert } from 'node:assert';
 import { spawn, type ChildProcess } from 'node:child_process';
 import * as crypto from 'node:crypto';
@@ -33,6 +36,9 @@ const wallets = {
   unreadable: Wallet.createRandom(),    // its pod answers 502
   fresh: Wallet.createRandom(),         // no pod
   raced: Wallet.createRandom(),         // no pod when read; another writer creates it before the write
+  // Signed in to for an existing account only (existingOnly, the relay's /sign-action page):
+  existingUnlisted: Wallet.createRandom(),  // its account lists it but was never loaded
+  existingNone: Wallet.createRandom(),      // no pod
 };
 const walletUser = (w: { address: string }) => deriveUserIdFromWallet(w.address.toLowerCase());
 
@@ -57,11 +63,49 @@ const dids = { passkeyOnly: didKey(), unloaded: didKey(), unreadable: didKey(), 
 const didUser = (k: { did: string }) => deriveUserIdFromDid(k.did);
 // A did:web is checked against the key the caller sends, so its account must list that key.
 const didWeb = { did: 'did:web:owner.example', owner: ed25519(), other: ed25519() };
+// A did:web two accounts list, each with its own key: its owner's (non-derived, loaded at
+// startup) and one bound by someone else (loaded later). Neither is the account derived from it.
+const sharedWeb = { did: 'did:web:shared.example', owner: ed25519(), other: ed25519(),
+  ownerId: 'u-eth-0000000000d1', otherId: 'u-eth-0000000000d2' };
+// A wallet two accounts list (bound before adding a wallet needed this server's nonce): the one
+// derived from it, loaded at startup, and another loaded later whose id sorts before it, so only
+// the preference for the derived account picks it.
+const sharedWallet = Wallet.createRandom();
+const sharedWalletOther = 'a-wallet-second-holder';
+// A wallet two accounts list, neither derived from it: nothing says which is the wallet's.
+const strandedWallet = Wallet.createRandom();
+const strandedHolders = ['a-wallet-holder-1', 'b-wallet-holder-2'];
+const didWebKey = (did: string, multibase: string, createdAt = now) =>
+  ({ did, publicKeyMultibase: multibase, keyType: 'Ed25519VerificationKey2020', createdAt });
+// The same for a did:key.
+const sharedDidKey = didKey();
+const sharedDidKeyOther = 'a-didkey-second-holder';
+// A wallet and a did:key listed by a loaded account not derived from them and by the account
+// derived from them, which is not loaded: its pod answers 502, or is not in the listing.
+const derivedUnreadable = { wallet: Wallet.createRandom(), walletOther: 'a-wallet-holder-loaded',
+  didKey: didKey(), didKeyOther: 'a-didkey-holder-loaded' };
+const derivedUnlisted = { wallet: Wallet.createRandom(), walletOther: 'a-wallet-holder-listed',
+  didKey: didKey(), didKeyOther: 'a-didkey-holder-listed' };
+// A did:web its owner bound first, then nine more accounts bound it, each sorting before the
+// owner: more than the cap of holders tried. Only a key's holder can bind a did:web with that
+// key (/auth/did checks a signature by it over this server's nonce first), so each of the nine
+// lists a key of its own, which never verifies the owner's signature.
+const crowdedWeb = { did: 'did:web:crowded.example', owner: ed25519(), ownerId: 'zz-web-owner',
+  others: Array.from({ length: 9 }, (_, i) => ({ id: `a-web-other-${i + 1}`, key: ed25519() })) };
 
 // Seeded legacy accounts claimed with a bootstrap invite (mode B).
 const invites = { wallet: { userId: 'seeded-wallet', token: crypto.randomBytes(16).toString('hex') },
   did: { userId: 'seeded-did', token: crypto.randomBytes(16).toString('hex') } };
 const bootstrapWallet = Wallet.createRandom();
+// Accounts not opened yet, whose ids anyone can work out (a wallet address and a did:key are
+// public): a bootstrap claim naming `x/../<id>` once reached their pods.
+const notYetOpened = { wallet: Wallet.createRandom(), didKey: didKey() };
+// A listed account whose pod holds a document naming another id, as such a claim planted.
+const planted = Wallet.createRandom();
+// A wallet a passkey account linked, and the account derived from the wallet, which lists that
+// wallet only: what a first sign-in opened before sign-ins waited for every account to load,
+// while the passkey account was not loaded. Both are listed.
+const openedBeside = { wallet: Wallet.createRandom(), ownerId: 'u-pk-0000000000a1' };
 
 // ── Pods ──
 const pods = new Map<string, Record<string, unknown>>([
@@ -69,6 +113,8 @@ const pods = new Map<string, Record<string, unknown>>([
     webAuthnCredentials: [passkey('cred-wallet-owner')] }],
   [walletUser(wallets.unloaded), { userId: walletUser(wallets.unloaded), name: 'Unloaded', didKeys: [],
     walletAddresses: [wallets.unloaded.address.toLowerCase()], webAuthnCredentials: [passkey('cred-unloaded')] }],
+  [walletUser(wallets.existingUnlisted), { userId: walletUser(wallets.existingUnlisted), name: 'Unlisted', didKeys: [],
+    walletAddresses: [wallets.existingUnlisted.address.toLowerCase()], webAuthnCredentials: [] }],
   [didUser(dids.passkeyOnly), { userId: didUser(dids.passkeyOnly), name: 'DID owner', walletAddresses: [], didKeys: [],
     webAuthnCredentials: [passkey('cred-did-owner')] }],
   [didUser(dids.unloaded), { userId: didUser(dids.unloaded), name: 'DID unloaded', walletAddresses: [],
@@ -76,10 +122,48 @@ const pods = new Map<string, Record<string, unknown>>([
     didKeys: [{ did: dids.unloaded.did, publicKeyMultibase: 'z', keyType: 'Ed25519VerificationKey2020', createdAt: now }] }],
   [didUser(didWeb), { userId: didUser(didWeb), name: 'did:web owner', walletAddresses: [], webAuthnCredentials: [],
     didKeys: [{ did: didWeb.did, publicKeyMultibase: didWeb.owner.multibase, keyType: 'Ed25519VerificationKey2020', createdAt: now }] }],
+  [sharedWeb.ownerId, { userId: sharedWeb.ownerId, name: 'did:web owner', walletAddresses: [], webAuthnCredentials: [],
+    didKeys: [didWebKey(sharedWeb.did, sharedWeb.owner.multibase)] }],
+  [sharedWeb.otherId, { userId: sharedWeb.otherId, name: 'did:web other', walletAddresses: [], webAuthnCredentials: [],
+    didKeys: [didWebKey(sharedWeb.did, sharedWeb.other.multibase)] }],
+  [walletUser(sharedWallet), { userId: walletUser(sharedWallet), name: 'Wallet derived', didKeys: [],
+    walletAddresses: [sharedWallet.address.toLowerCase()], webAuthnCredentials: [] }],
+  [sharedWalletOther, { userId: sharedWalletOther, name: 'Wallet other', didKeys: [],
+    walletAddresses: [sharedWallet.address.toLowerCase()], webAuthnCredentials: [] }],
+  [didUser(sharedDidKey), { userId: didUser(sharedDidKey), name: 'did:key derived', walletAddresses: [], webAuthnCredentials: [],
+    didKeys: [didWebKey(sharedDidKey.did, sharedDidKey.did.slice('did:key:'.length))] }],
+  [sharedDidKeyOther, { userId: sharedDidKeyOther, name: 'did:key other', walletAddresses: [], webAuthnCredentials: [],
+    didKeys: [didWebKey(sharedDidKey.did, sharedDidKey.did.slice('did:key:'.length), '2024-01-01T00:00:00.000Z')] }],
+  [crowdedWeb.ownerId, { userId: crowdedWeb.ownerId, name: 'did:web owner', walletAddresses: [], webAuthnCredentials: [],
+    didKeys: [didWebKey(crowdedWeb.did, crowdedWeb.owner.multibase, '2025-01-01T00:00:00.000Z')] }],
+  ...crowdedWeb.others.map(({ id, key }) => [id, { userId: id, name: 'did:web other', walletAddresses: [], webAuthnCredentials: [],
+    didKeys: [didWebKey(crowdedWeb.did, key.multibase)] }] as [string, Record<string, unknown>]),
+  ...[derivedUnreadable, derivedUnlisted].flatMap(({ wallet, walletOther, didKey: k, didKeyOther }) => [
+    [walletOther, { userId: walletOther, name: 'Wallet holder', didKeys: [], webAuthnCredentials: [],
+      walletAddresses: [wallet.address.toLowerCase()] }],
+    [walletUser(wallet), { userId: walletUser(wallet), name: 'Wallet derived', didKeys: [], webAuthnCredentials: [],
+      walletAddresses: [wallet.address.toLowerCase()] }],
+    [didKeyOther, { userId: didKeyOther, name: 'did:key holder', walletAddresses: [], webAuthnCredentials: [],
+      didKeys: [didWebKey(k.did, k.did.slice('did:key:'.length))] }],
+    [didUser(k), { userId: didUser(k), name: 'did:key derived', walletAddresses: [], webAuthnCredentials: [],
+      didKeys: [didWebKey(k.did, k.did.slice('did:key:'.length))] }],
+  ] as Array<[string, Record<string, unknown>]>),
+  ...strandedHolders.map(id => [id, { userId: id, name: 'Wallet holder', didKeys: [], webAuthnCredentials: [],
+    walletAddresses: [strandedWallet.address.toLowerCase()] }] as [string, Record<string, unknown>]),
+  [walletUser(planted), { userId: `x/../${walletUser(planted)}`, name: `x/../${walletUser(planted)}`, didKeys: [],
+    webAuthnCredentials: [], walletAddresses: [planted.address.toLowerCase()] }],
+  [openedBeside.ownerId, { userId: openedBeside.ownerId, name: 'Owner', didKeys: [],
+    walletAddresses: [openedBeside.wallet.address.toLowerCase()], webAuthnCredentials: [passkey('cred-opened-beside')] }],
+  [walletUser(openedBeside.wallet), { userId: walletUser(openedBeside.wallet), name: 'New', didKeys: [], webAuthnCredentials: [],
+    walletAddresses: [openedBeside.wallet.address.toLowerCase()] }],
 ]);
 // Only these are in the root listing, so only these load at startup.
-const listed = new Set([walletUser(wallets.passkeyOnly), didUser(dids.passkeyOnly)]);
-const unreadable = new Set([walletUser(wallets.unreadable), didUser(dids.unreadable)]);
+const listed = new Set([walletUser(wallets.passkeyOnly), didUser(dids.passkeyOnly), sharedWeb.ownerId, walletUser(sharedWallet),
+  didUser(sharedDidKey), crowdedWeb.ownerId, ...crowdedWeb.others.map(o => o.id), ...strandedHolders, walletUser(planted),
+  ...[derivedUnreadable, derivedUnlisted].flatMap(d => [d.walletOther, d.didKeyOther]),
+  openedBeside.ownerId, walletUser(openedBeside.wallet)]);
+const unreadable = new Set([walletUser(wallets.unreadable), didUser(dids.unreadable),
+  walletUser(derivedUnreadable.wallet), didUser(derivedUnreadable.didKey)]);
 // Pods a test makes unreadable for a while (a CSS blip), after startup has loaded the rest.
 const blipping = new Set<string>();
 // GET once answers 404, and the document then appears as another writer's.
@@ -87,6 +171,7 @@ const racedUser = walletUser(wallets.raced);
 const racedDoc = { userId: racedUser, name: 'Other writer', walletAddresses: [], didKeys: [], webAuthnCredentials: [passkey('cred-other-writer')] };
 let racedReads = 0;
 const writes: Array<{ userId: string; ifNoneMatch: string | undefined }> = [];
+const reads: string[] = [];
 
 function servePods(req: http.IncomingMessage, res: http.ServerResponse): void {
   const path = new URL(req.url ?? '/', 'http://pods').pathname;
@@ -98,6 +183,7 @@ function servePods(req: http.IncomingMessage, res: http.ServerResponse): void {
   const m = /^\/([^/]+)\/auth-methods\.jsonld$/.exec(path);
   if (m && req.method === 'GET') {
     const userId = m[1]!;
+    reads.push(userId);
     if (unreadable.has(userId) || blipping.has(userId)) { res.writeHead(502).end(); return; }
     if (userId === racedUser && racedReads++ === 0) {
       pods.set(racedUser, racedDoc);
@@ -140,9 +226,13 @@ let identity: ChildProcess;
 let base = '';
 let output = '';
 
+// Each test arrives from its own address (the server trusts one proxy hop), so the per-IP
+// auth-enroll budget (30 a minute) is not shared across the whole file.
+let clientAddr = 0;
+beforeEach(() => { clientAddr++; });
 async function post(path: string, body: unknown): Promise<{ status: number; json: Record<string, unknown> }> {
   const r = await fetch(`${base}${path}`, {
-    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+    method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Forwarded-For': `198.51.100.${clientAddr}` }, body: JSON.stringify(body),
   });
   return { status: r.status, json: await r.json() as Record<string, unknown> };
 }
@@ -163,6 +253,7 @@ async function didSignIn(k: { did: string; privateKey: crypto.KeyObject }, extra
 }
 
 const writesTo = (userId: string) => writes.filter(w => w.userId === userId);
+const readsOf = (userId: string) => reads.filter(r => r === userId).length;
 
 before(async () => {
   podServer = http.createServer(servePods);
@@ -245,6 +336,37 @@ test('an account another writer creates between the read and the write is not ov
   assert.deepEqual(pods.get(racedUser), racedDoc);
 });
 
+test('a wallet sign-in for an existing account only finds an account its pod lists but the index missed, and opens none', async () => {
+  // The relay's /sign-action page signs in this way. It was told the wallet was not registered
+  // whenever the index missed the wallet's account, as it misses one the other instance opened
+  // while a deploy overlapped the two.
+  const userId = walletUser(wallets.existingUnlisted);
+  const found = await siwe(wallets.existingUnlisted, { existingOnly: true });
+  assert.equal(found.status, 200, `${JSON.stringify(found.json)}\n${output}`);
+  assert.equal(found.json['userId'], userId);
+  assert.deepEqual(writesTo(userId), []);
+  // A pod that cannot be read is "try again", not "not registered".
+  const down = await siwe(wallets.unreadable, { existingOnly: true });
+  assert.equal(down.status, 503, JSON.stringify(down.json));
+  assert.equal(down.json['token'], undefined);
+  assert.deepEqual(writesTo(walletUser(wallets.unreadable)), []);
+  // A wallet no account lists opens no account, and a bootstrap claim neither reads the seeded
+  // pod nor spends its invite (the claim below still succeeds).
+  const noneId = walletUser(wallets.existingNone);
+  const none = await siwe(wallets.existingNone, { existingOnly: true });
+  assert.equal(none.status, 401, JSON.stringify(none.json));
+  assert.equal(none.json['error'], 'This wallet is not registered. Sign in with an existing credential for the requested account.');
+  assert.deepEqual(writesTo(noneId), []);
+  assert.equal(pods.has(noneId), false);
+  const seededReads = readsOf(invites.wallet.userId);
+  const claim = await siwe(wallets.existingNone,
+    { existingOnly: true, bootstrapUserId: invites.wallet.userId, bootstrapInvite: invites.wallet.token });
+  assert.equal(claim.status, 401, JSON.stringify(claim.json));
+  assert.equal(claim.json['token'], undefined);
+  assert.equal(readsOf(invites.wallet.userId), seededReads);
+  assert.deepEqual(writesTo(invites.wallet.userId), []);
+});
+
 test('the same for a DID: refused beside a passkey, signed in when listed, 503 when unreadable, created once', async () => {
   const refused = await didSignIn(dids.passkeyOnly);
   assert.equal(refused.status, 401, JSON.stringify(refused.json));
@@ -287,6 +409,43 @@ test('a bootstrap claim that meets an unreadable pod keeps its invite, so the re
   }
 });
 
+test('a bootstrap claim with a wrong invite reads and writes no pod, whatever id it names', async () => {
+  const targets = [walletUser(notYetOpened.wallet), didUser(notYetOpened.didKey)];
+  const touched = [...targets, invites.wallet.userId, invites.did.userId];
+  const before = touched.map(id => ({ reads: readsOf(id), writes: writesTo(id).length }));
+  for (const [kind, attempt] of [
+    ['wallet', (bootstrapUserId: string) => siwe(Wallet.createRandom(), { bootstrapUserId, bootstrapInvite: 'not-the-invite' })],
+    ['did', (bootstrapUserId: string) => didSignIn(didKey(), { bootstrapUserId, bootstrapInvite: 'not-the-invite' })],
+  ] as const) {
+    // A dot-segment in the id reached another account's pod; a seeded id is read only with its invite.
+    for (const bootstrapUserId of [...targets.map(id => `x/../${id}`), invites[kind].userId]) {
+      const r = await attempt(bootstrapUserId);
+      assert.equal(r.status, 401, `${kind} ${bootstrapUserId}: ${JSON.stringify(r.json)}\n${output}`);
+      assert.equal(r.json['error'], 'Bootstrap credential invalid or already consumed');
+      assert.equal(r.json['token'], undefined);
+    }
+  }
+  assert.deepEqual(touched.map(id => ({ reads: readsOf(id), writes: writesTo(id).length })), before);
+  assert.equal(pods.has(targets[0]!), false);
+  assert.equal(pods.has(targets[1]!), false);
+  // The accounts open as their own, under their own ids.
+  const wallet = await siwe(notYetOpened.wallet);
+  assert.equal(wallet.status, 200, `${JSON.stringify(wallet.json)}\n${output}`);
+  assert.equal(pods.get(targets[0]!)!['userId'], targets[0]);
+  const did = await didSignIn(notYetOpened.didKey);
+  assert.equal(did.status, 200, `${JSON.stringify(did.json)}\n${output}`);
+  assert.equal(pods.get(targets[1]!)!['userId'], targets[1]);
+});
+
+test('a pod whose document names another id signs in as the account the pod holds', async () => {
+  // The identity was seeded under the document's id, so the pod's own account was never found:
+  // every sign-in failed with 500 after each restart.
+  const r = await siwe(planted);
+  assert.equal(r.status, 200, `${JSON.stringify(r.json)}\n${output}`);
+  assert.equal(r.json['userId'], walletUser(planted));
+  assert.deepEqual(writesTo(walletUser(planted)), []);
+});
+
 test('a did:web the index missed signs in only with the key its pod lists for it', async () => {
   const userId = didUser(didWeb);
   const impostor = await didSignIn({ did: didWeb.did, privateKey: didWeb.other.privateKey }, { publicKeyMultibase: didWeb.other.multibase });
@@ -294,6 +453,125 @@ test('a did:web the index missed signs in only with the key its pod lists for it
   assert.equal(impostor.json['token'], undefined);
   assert.deepEqual(writesTo(userId), []);
   assert.equal((pods.get(userId)!['didKeys'] as Array<{ publicKeyMultibase: string }>)[0]!.publicKeyMultibase, didWeb.owner.multibase);
+});
+
+/** Load an account the startup pass did not (a targeted passkey sign-in names it). */
+async function load(userId: string): Promise<void> {
+  await post('/challenges', { purpose: 'webauthn-authenticate', userId });
+}
+
+test('a did:web two accounts list signs in to the one holding the key that signed, whichever loaded last', async () => {
+  await load(sharedWeb.otherId);
+  for (const [key, userId] of [[sharedWeb.owner, sharedWeb.ownerId], [sharedWeb.other, sharedWeb.otherId], [sharedWeb.owner, sharedWeb.ownerId]] as const) {
+    const r = await didSignIn({ did: sharedWeb.did, privateKey: key.privateKey }, { publicKeyMultibase: key.multibase });
+    assert.equal(r.status, 200, `${JSON.stringify(r.json)}\n${output}`);
+    assert.equal(r.json['userId'], userId);
+  }
+  // A key neither lists is still refused.
+  const stranger = ed25519();
+  const r = await didSignIn({ did: sharedWeb.did, privateKey: stranger.privateKey }, { publicKeyMultibase: stranger.multibase });
+  assert.equal(r.status, 401, JSON.stringify(r.json));
+  assert.deepEqual(writesTo(sharedWeb.ownerId), []);
+  assert.deepEqual(writesTo(sharedWeb.otherId), []);
+});
+
+test('a wallet two accounts list signs in to the one derived from it, whichever loaded last', async () => {
+  await load(sharedWalletOther);
+  const r = await siwe(sharedWallet);
+  assert.equal(r.status, 200, `${JSON.stringify(r.json)}\n${output}`);
+  assert.equal(r.json['userId'], walletUser(sharedWallet));
+  assert.deepEqual(writesTo(walletUser(sharedWallet)), []);
+  assert.deepEqual(writesTo(sharedWalletOther), []);
+});
+
+test('a wallet two accounts list, neither derived from it, signs in to neither', async () => {
+  const r = await siwe(strandedWallet);
+  assert.equal(r.status, 409, `${JSON.stringify(r.json)}\n${output}`);
+  assert.equal(r.json['token'], undefined);
+  assert.equal(r.json['userId'], undefined);
+  assert.ok(output.split('\n').some(l => /kind=wallet holders=2 refused=ambiguous$/.test(l.trim())), output);
+  for (const id of [...strandedHolders, walletUser(strandedWallet)]) assert.deepEqual(writesTo(id), []);
+});
+
+test('a did:key two accounts list signs in to the one derived from it, though the other sorts first and enrolled first', async () => {
+  await load(sharedDidKeyOther);
+  const r = await didSignIn(sharedDidKey);
+  assert.equal(r.status, 200, `${JSON.stringify(r.json)}\n${output}`);
+  assert.equal(r.json['userId'], didUser(sharedDidKey));
+  assert.deepEqual(writesTo(sharedDidKeyOther), []);
+});
+
+test('a did:web nine later accounts bound with keys of their own still signs in to its owner, past the cap of holders tried', async () => {
+  const r = await didSignIn({ did: crowdedWeb.did, privateKey: crowdedWeb.owner.privateKey }, { publicKeyMultibase: crowdedWeb.owner.multibase });
+  assert.equal(r.status, 200, `${JSON.stringify(r.json)}\n${output}`);
+  assert.equal(r.json['userId'], crowdedWeb.ownerId);
+  assert.ok(output.split('\n').some(l => /kind=did holders=10 tried=8$/.test(l.trim())), output);
+  // The others neither take nor block it: one tried signs in with its own key, to its own account.
+  const [first] = crowdedWeb.others;
+  const own = await didSignIn({ did: crowdedWeb.did, privateKey: first!.key.privateKey }, { publicKeyMultibase: first!.key.multibase });
+  assert.equal(own.status, 200, `${JSON.stringify(own.json)}\n${output}`);
+  assert.equal(own.json['userId'], first!.id);
+});
+
+test('a wallet a loaded account lists is not signed in there while the account derived from it cannot be read', async () => {
+  // The derived account lists the wallet too, and would take its sign-ins once it loaded.
+  const { wallet, walletOther } = derivedUnreadable;
+  const r = await siwe(wallet);
+  assert.equal(r.status, 503, `${JSON.stringify(r.json)}\n${output}`);
+  assert.equal(r.json['token'], undefined);
+  assert.equal(r.json['userId'], undefined);
+  assert.deepEqual(writesTo(walletOther), []);
+  assert.deepEqual(writesTo(walletUser(wallet)), []);
+});
+
+test('a wallet a loaded account lists signs in to the account derived from it, which lists it but was not loaded', async () => {
+  const { wallet, walletOther } = derivedUnlisted;
+  for (let i = 0; i < 2; i++) {
+    const r = await siwe(wallet);
+    assert.equal(r.status, 200, `${JSON.stringify(r.json)}\n${output}`);
+    assert.equal(r.json['userId'], walletUser(wallet));
+  }
+  assert.deepEqual(writesTo(walletOther), []);
+  assert.deepEqual(writesTo(walletUser(wallet)), []);
+});
+
+test('a did:key a loaded account lists is not signed in there while the account derived from it cannot be read', async () => {
+  const { didKey: k, didKeyOther } = derivedUnreadable;
+  const r = await didSignIn(k);
+  assert.equal(r.status, 503, `${JSON.stringify(r.json)}\n${output}`);
+  assert.equal(r.json['token'], undefined);
+  assert.equal(r.json['userId'], undefined);
+  assert.deepEqual(writesTo(didKeyOther), []);
+  assert.deepEqual(writesTo(didUser(k)), []);
+});
+
+test('a did:key a loaded account lists signs in to the account derived from it, which lists it but was not loaded', async () => {
+  const { didKey: k, didKeyOther } = derivedUnlisted;
+  for (let i = 0; i < 2; i++) {
+    const r = await didSignIn(k);
+    assert.equal(r.status, 200, `${JSON.stringify(r.json)}\n${output}`);
+    assert.equal(r.json['userId'], didUser(k));
+  }
+  assert.deepEqual(writesTo(didKeyOther), []);
+  assert.deepEqual(writesTo(didUser(k)), []);
+});
+
+test('a derived account a first sign-in opened beside the wallet\'s owner keeps the wallet; deleting it hands the wallet back', async () => {
+  // Every holder is loaded, and the derived account is preferred.
+  const { wallet, ownerId } = openedBeside;
+  const derived = await siwe(wallet);
+  assert.equal(derived.status, 200, `${JSON.stringify(derived.json)}\n${output}`);
+  assert.equal(derived.json['userId'], walletUser(wallet));
+  // The wallet is its only credential, so it cannot be removed from it.
+  const headers = { Authorization: `Bearer ${String(derived.json['token'])}`, 'Content-Type': 'application/json', 'X-Forwarded-For': `198.51.100.${clientAddr}` };
+  const unlink = await fetch(`${base}/auth-methods/me/wallet/${wallet.address.toLowerCase()}`, { method: 'DELETE', headers });
+  assert.equal(unlink.status, 409, await unlink.text());
+  const del = await fetch(`${base}/users/me/delete`, { method: 'POST', headers, body: '{}' });
+  assert.equal(del.status, 200, await del.text());
+  const owner = await siwe(wallet);
+  assert.equal(owner.status, 200, `${JSON.stringify(owner.json)}\n${output}`);
+  assert.equal(owner.json['userId'], ownerId);
+  assert.deepEqual(writesTo(ownerId), []);
 });
 
 test('a wallet signature replayed to the retired /siwe/verify gets no token', async () => {
