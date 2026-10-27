@@ -1,5 +1,41 @@
 # Changelog
 
+## 2026-10-27 — Identity: a did:web's turn follows the request's own checks, and the answers to unsettled writes say what is true
+
+Corrections to the entries below. Each was reproduced against the server, running with a stand-in pod.
+
+- **A `did:web` add could run outside the DID's turn.** `/auth/did` checked the bearer once to decide whether the request takes the DID's turn, and again to decide whether it adds the DID. The two checks could disagree. A token for an account this server has not loaded is checked by reading that account, and a read that failed and then answered made the first check fail and the second pass. The add then ran outside the turn, beside another account's add of the same `did:web`, and both accounts listed it. The bearer is now checked once, and both decisions follow from that answer. A request whose bearer fails the check adds nothing.
+- **Any request naming a bootstrap id took a `did:web`'s turn.** Only the fields' presence counted. A request with someone's `did:web`, a key of its own and any `bootstrapUserId` could hold the owner's requests that take the turn (an add with a bearer, a claim) for up to 30 s, or make them answer 503. Now only a claim whose invite matches its seeded id takes the turn.
+- **A `did:web` whose add or claim nothing could settle was not settled by its next sign-in.** The write was recorded for the credential's next turn, but a plain `did:web` sign-in takes no turn. It decided from indexes that did not list the DID yet, and answered 401 "not registered" while the pod listed it, until something else read the account. Now a recorded write gives the DID's next request the turn, whatever that request is, so it settles the account first, as a wallet's or `did:key`'s does. Other plain `did:web` sign-ins still take no turn.
+- **The 503s for a change nothing could settle no longer send people to `GET /auth-methods/me`.** That route could not tell: while the pod is unreadable it answers this server's copy from before the write, and it is a plain read that a write still pending at the pod can overtake. A removal, a sign-out-everywhere and `/wallet/link` now say that sending the same request again is safe, and what the repeat does.
+- **A passkey sign-in whose counter write nothing could settle now says it may or may not have been saved.** It answered "failed to persist passkey counter and RP binding", which is untrue when the write landed, for example on a pod slow enough to store it after the 15 s timeout. The entry below already said it answered this way.
+- **A busy credential turn is logged.** The 503 "Another request for this wallet/DID is still being answered" logged nothing. It now logs `WARN identity_credential_turn_busy kind=<wallet|did> waitedMs=<n>`, without the credential. A pod request that hangs inside a turn makes every later request for that credential answer this 503, so alert on it.
+- **A missing record's 404 says so.** An add or removal on an account whose `auth-methods.jsonld` was removed outside this server answered "User for token not found", which is also what an unknown token gets. It now says the account's sign-in record is missing from its pod.
+
+Documentation:
+
+- `deploy/identity/AUTH-ARCHITECTURE.md` listed `/try` and the tombstone a first sign-in leaves on a pod deleted before tombstones among the read-modify-writes that retry a 412 and are settled after a failure. Both are single conditional writes, with no retry and no fence. It also said that tombstone goes through the writer's lock-free core. It no longer does.
+- Two lines of the identity entry further down still described the janitor's conditional delete of a Play owner's anchor, which the write-back replaced.
+- The entry directly below said every new or changed case failed against the code before it. J2 and K2 pass there; they were tightened only so that two surviving mutations fail them. Its commit also said that removing each piece of its fix failed a case. No case covered the settles that carry a pending write's condition, the janitor's fence, the 15 s bound on a first sign-in's probes, or the writer's check after its fence: each could be removed with the whole suite still passing. The new cases below cover them.
+
+Tests:
+
+- **`live-record-writes-routes.test.ts`**:
+  - K5: a bearer whose check fails (its account not loaded here, and the read that would load it failing once) adds nothing while another account's add of the same `did:web` is in flight.
+  - R3: two bearer adds of one `did:web`, and a `did:web` bootstrap claim racing a bearer add. The second waits, is refused with 401, and one account lists the DID.
+  - K4 adds a stranger naming a bootstrap id without its invite, while the owner signs in with a bearer.
+  - K2 and K3 add `did:web` cases: after the 503, a plain sign-in signs in to the account the pod lists the DID on.
+  - L2 covers writes the pod never answers and stores only after the answer, whose fence goes unanswered too:
+    - settled by the route: adds through `/auth/siwe`, `/auth/did` and `/wallet/link`, a device, a bootstrap passkey, a first wallet sign-in and a wallet bootstrap claim, and a claimed `u-try-` account's deletion;
+    - with the read after the fence failing as well, so recorded and settled by the credential's next sign-in: an add with a bearer, and wallet and DID bootstrap claims.
+    None of the held writes lands. L2 also has first sign-ins whose probe of the derived id's pod is never answered, which end within the 15 s bound.
+  - C16: the janitor's purge of a Play owner meets an enrolment that lands after its last check. The write-back gets 412, and nothing is deleted.
+  - C14 checks the new wording, and adds a passkey sign-in whose counter write nothing could settle. G2 checks the 404's message.
+- **`auth-methods-writer.test.ts`**: a fence that leaves the record where it was (a refusal the pod answered, or a store whose ETag does not change) settles nothing.
+- **`credential-decisions.test.ts`**: `server.ts`'s answer to a busy turn logs the alert line.
+
+Each case fails with its piece of the fix removed, and the mutations the review named (a settle that drops the pending condition, at each place one is carried; the janitor's document; a probe with the 30 s timeout; the writer's check after the fence) each fail L2, C16 or the writer case.
+
 ## 2026-10-27 — Identity: a write the pod never answered is settled before anything is decided on it
 
 Corrections to the entries below. Each was reproduced against the server, running with a stand-in pod.
@@ -40,7 +76,7 @@ Tests:
 - **`pre-tombstone-deletion-routes.test.ts`** adds a record another writer creates during the probes, which is not replaced.
 - **`provisional-play-cleanup.test.ts`** checks that the fence comes before any deletion and that a 412 on it deletes nothing. `provisional-play-enrollment.test.ts` takes the new route helpers from `server.ts`.
 
-Each new or changed case fails against the code before this change. J2 and K2 also fail with the mutations that used to survive the whole suite.
+Each new case, and C6, C7 and I7 as changed, fails against the code before this change. J2 and K2 do not: they pass there, and were tightened so that the two mutations that used to survive the whole suite now fail them.
 
 ## 2026-10-27 — Identity: a wallet or DID being added, or whose add the pod did not confirm, no longer opens a second account
 
@@ -162,7 +198,7 @@ Other changes:
 - The lock is not re-entrant. Asking for it while holding it is answered with 500 at once, where it would have waited for itself.
 - Deleting an account writes a tombstone whose epoch is above both the pod's epoch and this server's.
 - A `u-try-` account is reaped by the janitor only if, read again under the lock, it still has no credential. A claimed one whose removal fails stays whole, and the deletion answers 503.
-- A Play owner's anchor is purged only if it is still the record the janitor checked (`If-Match`).
+- A Play owner is purged only if its anchor is still the record the janitor checked: the janitor writes the anchor back on that ETag (`If-Match`) before it deletes anything, and a 412 keeps the whole account.
 
 What changes for users and operators:
 
@@ -216,7 +252,7 @@ Tests:
   - one that catches a mutation (a sign-in that writes).
 
   Removing each of the design's guards in turn makes a named case fail.
-- **Existing suites.** `provisional-play-enrollment.test.ts` now rebuilds the new functions. Its read test checks that a read never creates a document for any id, and its canonical enrolment test checks that an add is acknowledged only once the pod has it. `provisional-play-cleanup.test.ts` adds the anchor's conditional delete. The other route suites pass unchanged except for comments.
+- **Existing suites.** `provisional-play-enrollment.test.ts` now rebuilds the new functions. Its read test checks that a read never creates a document for any id, and its canonical enrolment test checks that an add is acknowledged only once the pod has it. `provisional-play-cleanup.test.ts` checks that the anchor is written back on the checked ETag before anything is deleted, and that a 412 on that write deletes nothing. The other route suites pass unchanged except for comments.
 
 ## 2026-10-27 — Foxxi: when signed xAPI ignored the owner pod, and what that left in the derived lens
 

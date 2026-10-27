@@ -60,6 +60,8 @@ function pod(initial: (Record_ & Record<string, unknown>) | null, userId = 'u-pk
   let readFailures = 0;
   let writeFailures = 0;
   let applyThenFail = false;
+  // A store whose ETag does not change on a write (the same for the same content, say).
+  let etagSticks = false;
   let beforeWrite: (() => void) | null = null;
   // Writes the pod never answers ('hang', the client times out), and when each would still be
   // applied: right after the next read is answered, only when the test says (applyLater), never.
@@ -112,7 +114,7 @@ function pod(initial: (Record_ & Record<string, unknown>) | null, userId = 'u-pk
       if (pre.kind === 'absent' && doc) return 'precondition-failed';
       if (pre.kind === 'match' && pre.etag !== `"${version}-application/ld+json"`) return 'precondition-failed';
       doc = structuredClone(written) as typeof doc;
-      version++;
+      if (!etagSticks) version++;
       return 'ok';
     },
     install: (_id, m) => { installed.push(structuredClone(m)); },
@@ -136,6 +138,7 @@ function pod(initial: (Record_ & Record<string, unknown>) | null, userId = 'u-pk
     applyLater() { for (const apply of late.splice(0)) apply(); },
     set beforeWrite(fn: (() => void) | null) { beforeWrite = fn; },
     set anchorOpens(v: boolean) { anchorOpens = v; },
+    set etagSticks(v: boolean) { etagSticks = v; },
   };
 }
 const account = (userId = 'u-pk-000000000001'): Record_ =>
@@ -269,6 +272,29 @@ test('a write the pod never answered whose fence gets no answer either is not se
   const before = answered.log.length;
   await answered.deps.lock(answered.userId, () => settle(answered.deps, answered.userId, undefined, 'answered'));
   assert.deepEqual(answered.log.slice(before), ['GET']);
+});
+
+test('a fence that leaves the record where the write found it settles nothing: the copy expires and the error carries the pending condition', async () => {
+  // The fence is answered with an error the pod did not apply (a 500), so the record has not moved;
+  // and a store whose ETag stays the same takes the fence ('ok') without moving it either. Either
+  // way the held write's condition still holds, and it can still land.
+  const refused = pod(account());
+  refused.hang('later');
+  refused.failWrites(1);
+  const sticky = pod(account());
+  sticky.hang('later');
+  sticky.etagSticks = true;
+  for (const p of [refused, sticky]) {
+    const err = await updateAuthMethods(p.deps, p.userId, 'test', addWallet('0xbbb')).then(() => null, (e: unknown) => e);
+    assert.ok(err instanceof AuthMethodsWriteError, String(err));
+    assert.deepEqual(p.log, ['GET', 'PUT match "1-application/ld+json"', 'GET', 'PUT match "1-application/ld+json"', 'GET']);
+    assert.equal(err.podRecord, undefined, 'not settled');
+    assert.deepEqual(err.pending, { kind: 'match', etag: '"1-application/ld+json"' });
+    assert.equal(p.expired, 1);
+    assert.deepEqual(p.installed, [], 'nothing installed as what the pod holds');
+    p.applyLater();
+    assert.deepEqual(p.doc!.walletAddresses, ['0xaaa', '0xbbb'], 'the held write could still land, which is why it is unsettled');
+  }
 });
 
 test('a precondition failure re-reads and re-runs the delta on the new record, and gives up after three', async () => {

@@ -12,7 +12,9 @@
 
 import { test } from 'node:test';
 import { strict as assert } from 'node:assert';
-import { createCredentialDecisions } from '../credential-decisions.js';
+import { readFileSync } from 'node:fs';
+import * as nodeModule from 'node:module';
+import { createCredentialDecisions, type Turn } from '../credential-decisions.js';
 
 const sleep = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms));
 function deferred() {
@@ -64,6 +66,31 @@ test('a turn that waits longer than its bound decides nothing; the next still wa
   await holder;
   assert.deepEqual(await next, { kind: 'decided', value: true });
   assert.equal(decisions.inFlight(), 0);
+});
+
+test('server.ts answers a turn that decided nothing with 503, and logs a busy one for operators, without the credential', async () => {
+  // refuseCredentialTurn, taken from server.ts as provisional-play-enrollment.test.ts takes its helpers.
+  const server = readFileSync(new URL('../server.ts', import.meta.url), 'utf8');
+  const strip = (nodeModule as { stripTypeScriptTypes?: (source: string) => string }).stripTypeScriptTypes;
+  const executable = strip ? strip(server) : (await import('typescript')).default.transpileModule(server, {
+    compilerOptions: { target: 9, module: 99 },
+  }).outputText;
+  const start = executable.search(/(?<!async )function refuseCredentialTurn\s*\(/);
+  assert.ok(start >= 0, 'refuseCredentialTurn exists in server.ts');
+  const source = executable.slice(start, executable.indexOf('\n}', start) + 2);
+  const lines: string[] = [];
+  const refuse = new Function('log', 'CREDENTIAL_TURN_WAIT_MS', `${source}; return refuseCredentialTurn;`)(
+    (line: string) => { lines.push(line); }, 30_000) as (res: unknown, turn: Exclude<Turn<unknown>, { kind: 'decided' }>, credential: 'wallet' | 'DID') => void;
+  const answered: Array<{ status: number; body: Record<string, string> }> = [];
+  const res = { status(code: number) { return { json(body: Record<string, string>) { answered.push({ status: code, body }); } }; } };
+  refuse(res, { kind: 'busy' }, 'wallet');
+  refuse(res, { kind: 'busy' }, 'DID');
+  assert.deepEqual(answered.map(a => a.status), [503, 503]);
+  assert.match(answered[0]!.body['error']!, /Another request for this wallet/);
+  assert.deepEqual(lines, ['WARN identity_credential_turn_busy kind=wallet waitedMs=30000', 'WARN identity_credential_turn_busy kind=did waitedMs=30000']);
+  refuse(res, { kind: 'unreadable', userId: 'u-pk-000000000001' }, 'DID');
+  assert.equal(answered[2]!.status, 503);
+  assert.match(lines[2]!, /^WARN: DID decision deferred/);
 });
 
 test('a decision that throws gives the turn up, and the error reaches its caller', async () => {

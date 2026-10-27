@@ -68,15 +68,20 @@ const applyAfterRead: Array<{ userId: string; apply: () => void }> = [];
 const lateWrites: Array<{ userId: string; apply: () => void }> = [];
 /** What each held write did when the store got round to it. */
 const heldOutcomes: Array<{ userId: string; applied: boolean }> = [];
-function applyLate(): void { for (const w of lateWrites.splice(0)) w.apply(); }
+/** The store gets round to the held writes of the ids in `ids` (cases running side by side each release their own). */
+function applyLate(ids: readonly string[]): void {
+  for (const w of lateWrites.filter(x => ids.includes(x.userId))) { lateWrites.splice(lateWrites.indexOf(w), 1); w.apply(); }
+}
 const failingDeletes = new Set<string>();
+/** Records whose next DELETE is never answered, and applied (if its If-Match still holds) only at applyLate(). */
+const lateDeletes = new Set<string>();
 const hangingContainers = new Set<string>();
 /** Pods whose container GET lists their auth-methods.jsonld (a Play owner's, which the janitor walks to purge it). */
 const listedContainers = new Set<string>();
 const requests: Logged[] = [];
 /** Requests for the pods' other documents (an account's agent registry, say), and when the client gave up one never answered. */
 const otherRequests: Array<{ method: string; path: string; at: number; abandonedAt?: number }> = [];
-/** `<METHOD> <path>` of other documents' requests that are never answered. */
+/** `<METHOD> <path>` of requests for a pod's container or other documents that are never answered. */
 const hangingOther = new Set<string>();
 let latencyMs = 0;
 type Hold = { arrived: Promise<void>; release: () => void };
@@ -117,6 +122,12 @@ async function servePods(req: http.IncomingMessage, res: http.ServerResponse): P
   let raw = '';
   for await (const chunk of req) raw += String(chunk);
   if (latencyMs) await sleep(latencyMs);
+  if (hangingOther.has(`${req.method} ${path}`)) {
+    const other: (typeof otherRequests)[number] = { method: req.method!, path, at: Date.now() };
+    otherRequests.push(other);
+    res.on('close', () => { other.abandonedAt = Date.now(); });
+    return;
+  }
   if (path === '/') {
     res.writeHead(200, { 'Content-Type': 'text/turtle' });
     const listed = [...docs.keys()].filter(p => !unlisted.has(p));
@@ -137,9 +148,7 @@ async function servePods(req: http.IncomingMessage, res: http.ServerResponse): P
   }
   const m = /^\/([^/]+)\/auth-methods\.jsonld$/.exec(path);
   if (!m) {
-    const other: (typeof otherRequests)[number] = { method: req.method!, path, at: Date.now() };
-    otherRequests.push(other);
-    if (hangingOther.has(`${req.method} ${path}`)) { res.on('close', () => { other.abandonedAt = Date.now(); }); return; }
+    otherRequests.push({ method: req.method!, path, at: Date.now() });
     res.writeHead(req.method === 'GET' ? 404 : 205).end();
     return;
   }
@@ -190,6 +199,14 @@ async function servePods(req: http.IncomingMessage, res: http.ServerResponse): P
   }
   if (req.method === 'DELETE') {
     if (failingDeletes.has(userId)) { answer(500); return; }
+    if (lateDeletes.delete(userId)) {
+      lateWrites.push({ userId, apply: () => {
+        const applied = !(entry.ifMatch && entry.ifMatch !== etagOf(userId));
+        if (applied) docs.delete(userId);
+        heldOutcomes.push({ userId, applied });
+      } });
+      return;
+    }
     if (entry.ifMatch && entry.ifMatch !== etagOf(userId)) { answer(412); return; }
     docs.delete(userId);
     answer(205);
@@ -255,8 +272,21 @@ const invites = { pk: { userId: 'seeded-pk', token: crypto.randomBytes(12).toStr
   unsure: { userId: 'seeded-unsure', token: crypto.randomBytes(12).toString('hex') },
   unsureDid: { userId: 'seeded-unsure-did', token: crypto.randomBytes(12).toString('hex') },
   hangEarly: { userId: 'seeded-hang-early', token: crypto.randomBytes(12).toString('hex') },
-  hangLate: { userId: 'seeded-hang-late', token: crypto.randomBytes(12).toString('hex') } };
+  hangLate: { userId: 'seeded-hang-late', token: crypto.randomBytes(12).toString('hex') },
+  unsureWeb: { userId: 'seeded-unsure-web', token: crypto.randomBytes(12).toString('hex') },
+  raceWeb: { userId: 'seeded-race-web', token: crypto.randomBytes(12).toString('hex') },
+  fenceClaim: { userId: 'seeded-fence-claim', token: crypto.randomBytes(12).toString('hex') },
+  fenceBlind: { userId: 'seeded-fence-blind', token: crypto.randomBytes(12).toString('hex') },
+  fenceBlindDid: { userId: 'seeded-fence-blind-did', token: crypto.randomBytes(12).toString('hex') },
+  fencePk: { userId: 'seeded-fence-pk', token: crypto.randomBytes(12).toString('hex') } };
 const bootstrap = (invite: { userId: string; token: string }) => ({ extra: { bootstrapUserId: invite.userId, bootstrapInvite: invite.token } });
+/** A bearer token for `userId` signed with the shared key, as another instance issues one (in server.ts's cg2_ format). */
+function tokenSignedElsewhere(userId: string): string {
+  const now = Date.now();
+  const b64 = Buffer.from(JSON.stringify({ userId, agentId: `mcp-client-${userId}`, scope: 'ReadWrite',
+    issuedAt: new Date(now).toISOString(), expiresAt: new Date(now + 3_600_000).toISOString(), epoch: 0 })).toString('base64url');
+  return `cg2_${b64}.${crypto.createHmac('sha256', Buffer.from(tokenSigningKey, 'base64')).update(b64).digest('base64url')}`;
+}
 let podServer: http.Server;
 let podPort = 0;
 async function freePort(): Promise<number> {
@@ -433,15 +463,25 @@ const raceRemove = account({ keys: [P()], wallets: [W()] });
 // the pod takes without confirming it.
 const k1 = { wallet: account({ keys: [P()] }), did: account({ keys: [P()] }), link: account({ keys: [P()] }), other: account({ keys: [P()] }) };
 const k2 = { wallet: account({ keys: [P()] }), did: account({ keys: [P()] }), link: account({ keys: [P()] }),
-  blind: account({ keys: [P()] }), blindDid: account({ keys: [P()] }), linkBlind: account({ keys: [P()] }) };
+  blind: account({ keys: [P()] }), blindDid: account({ keys: [P()] }), linkBlind: account({ keys: [P()] }), blindWeb: account({ keys: [P()] }) };
 // The owner of a did:web (listed with its key), for sign-ins with that DID and keys of their own.
 const k4 = { owner: account({ keys: [P()] }), key: didKey(), did: 'did:web:owner-turn.example' };
+// An account adding a did:web, and one the other instance opened after this one listed the pods (so
+// not loaded here), whose token that instance signed with the shared key.
+const k5 = { holder: account({ keys: [P()] }), unloaded: account({ keys: [P()] }) };
+unlisted.add(k5.unloaded.userId);
+// Two accounts adding one did:web at once (and a bootstrap claim of another).
+const r3 = { a: account({ keys: [P()] }), b: account({ keys: [P()] }) };
 // Accounts whose write the pod never answers and stores later: right after the read the writer
 // makes once its write timed out ('early'), or only after the route has answered ('late').
 const l1 = {
   early: { wallet: account({ keys: [P()] }), did: account({ keys: [P()] }), link: account({ keys: [P()] }), device: account({ keys: [P()] }) },
   late: { wallet: account({ keys: [P()] }), did: account({ keys: [P()] }), link: account({ keys: [P()] }), del: account({ keys: [P()] }) },
 };
+// Accounts whose write the pod never answers and stores only after the route has answered, while
+// the write-back that would settle it (the fence) gets no answer either.
+const l2 = { add: account({ keys: [P()] }), link: account({ keys: [P()] }), did: account({ keys: [P()] }),
+  blind: account({ keys: [P()] }), device: account({ keys: [P()] }) };
 // Removals the pod takes without confirming them; a scan overlapped by a write nothing could settle.
 const c14 = account({ keys: [P(), P()], wallets: [W(), W()], dids: [didKey()] });
 const b12 = account({ keys: [P()] });
@@ -468,17 +508,19 @@ const sameId = (k: SoftPasskey) => softPasskey(k.rawId);
 // derived from a wallet it no longer lists and holding one credential of another kind.
 const unloaded = (from: AnyWallet) => deriveUserIdFromWallet(from.address.toLowerCase());
 const j5 = { wallet: { from: W(), holds: W() }, did: { from: W(), holds: didKey() }, passkey: { from: W(), holds: P() } };
-// An unclaimed Play owner whose anchor has expired, for the janitor to purge.
-const playKey = (() => {
+// Unclaimed Play owners whose anchor has expired, for the janitor to purge.
+function playOwner() {
   const jwk = publicJwk(crypto.generateKeyPairSync('ec', { namedCurve: 'P-256' }).publicKey) as { x: string; y: string };
-  return { crv: 'P-256', kty: 'EC', x: jwk.x, y: jwk.y } as const;
-})();
-const playThumb = playKeyThumbprint(playKey as Parameters<typeof playKeyThumbprint>[0]);
-const expiredPlay = { id: provisionalUserId('game.example', playThumb), invite: crypto.randomBytes(12).toString('hex') };
-/** The anchor an identity server at `issuer` sealed for expiredPlay an hour ago, as provisional-play.ts seals one. */
-function expiredAnchor(issuer: string): string {
+  const key = { crv: 'P-256', kty: 'EC', x: jwk.x, y: jwk.y } as const;
+  const thumb = playKeyThumbprint(key as Parameters<typeof playKeyThumbprint>[0]);
+  return { key, thumb, id: provisionalUserId('game.example', thumb), invite: crypto.randomBytes(12).toString('hex') };
+}
+const expiredPlay = playOwner();
+const fencedPlay = playOwner();
+/** The anchor an identity server at `issuer` sealed for `owner` an hour ago, as provisional-play.ts seals one. */
+function expiredAnchor(issuer: string, owner = expiredPlay): string {
   const now = Math.floor(Date.now() / 1000);
-  const id = expiredPlay.id;
+  const { id, key: playKey, thumb: playThumb } = owner;
   const claims = { version: 1, issuer, audience: 'game.example', userId: id, ownerDid: `did:web:x:users:${id}`, webId: `${issuer}/users/${id}/profile#me`,
     podUrl: `http://127.0.0.1:${podPort}/${id}/`, authenticatedAgentId: `play-${id}`, authenticatedAgentDid: `did:web:x:agents:play-${id}`,
     publicKeyJwk: playKey, proofKeyThumbprint: playThumb, issuedAt: now - 7200, expiresAt: now - 3600,
@@ -1028,7 +1070,25 @@ test('C14: a removal the pod took without confirming it is answered as done; one
   const unsure = await del(`/auth-methods/me/wallet/${w2!.address.toLowerCase()}`, token);
   assert.equal(unsure.status, 503, JSON.stringify(unsure.json));
   assert.match(String(unsure.json['detail']), /may or may not/);
+  // It says the removal is safe to send again (it is), not to check GET /auth-methods/me, a plain
+  // read that answers this server's copy from before the write while the pod cannot be read.
+  assert.match(String(unsure.json['detail']), /Sending the same removal again is safe/);
+  assert.doesNotMatch(JSON.stringify(unsure.json), /auth-methods\/me/);
   assert.deepEqual(record(c14.userId)!.walletAddresses, []);
+  assert.equal((await del(`/auth-methods/me/wallet/${w2!.address.toLowerCase()}`, token)).status, 404, 'the repeat finds it removed');
+  // A passkey sign-in whose counter write the pod applied and answered 500, with the read after it
+  // failing: it may or may not have been saved, and is answered so (not "failed to persist"); the
+  // next sign-in works.
+  const [p1] = c14.keys;
+  failPuts(c14.userId, 'apply-then-500');
+  const counterPut = hold('PUT', c14.userId, 1, () => { failingGets.set(c14.userId, 1); });
+  void counterPut.arrived.then(() => counterPut.release());
+  const counted = await signIn(p1!, 5);
+  assert.equal(counted.status, 503, JSON.stringify(counted.json));
+  assert.match(String(counted.json['detail']), /may or may not have been saved/);
+  assert.doesNotMatch(String(counted.json['error']), /failed to persist/);
+  assert.equal(credentialOf(c14.userId, p1!)!.counter, 5, 'the pod holds the counter');
+  await signsInTo(signIn(p1!, 6), c14.userId);
 });
 
 test('C15: a first sign-in that meets another writer\'s change at all three attempts logs identity_authmethods_write_conflict', async () => {
@@ -1189,7 +1249,7 @@ describe('writes the pod never answers', { concurrency: true }, () => {
     assert.equal(lX.status, 503, JSON.stringify(lX.json));
     assert.equal(lX.json['error'], 'Deletion not completed');
     const lateIds = [...Object.values(l1.late).map(a => a.userId), invites.hangLate.userId, derivedOf(l.first)];
-    applyLate();
+    applyLate(lateIds);
     assert.deepEqual(heldOutcomes.filter(o => lateIds.includes(o.userId)).map(o => o.applied), lateIds.map(() => false),
       'no write held past its answer lands');
     assert.deepEqual(record(l1.late.wallet.userId)!.walletAddresses, []);
@@ -1204,6 +1264,98 @@ describe('writes the pod never answers', { concurrency: true }, () => {
     await signsInTo(siwe(l.wallet), l1.late.wallet.userId);
     await signsInTo(siwe(l.claim, bootstrap(invites.hangLate)), invites.hangLate.userId);
     await signsInTo(siwe(l.first), derivedOf(l.first));
+  });
+
+  test('L2: a write whose fence goes unanswered too is settled again with the condition it was sent on (by the route, or by the credential\'s next turn), so it cannot land after the answer; a hung probe ends a first sign-in at 15 s', { timeout: 90_000 }, async () => {
+    const derivedOf = (w: AnyWallet) => deriveUserIdFromWallet(w.address.toLowerCase());
+    const token = Object.fromEntries(await Promise.all(Object.entries(l2).map(async ([n, a]) => [n, await tokenFor(a.keys[0]!, 1, a.userId)] as const)));
+    // A claimed u-try- account (a passkey added with its /try token), for its deletion.
+    const tried = await post('/try', {});
+    assert.equal(tried.status, 200, JSON.stringify(tried.json));
+    const tryId = String(tried.json['userId']);
+    const tryKey = P();
+    assert.equal((await addDevice(tryKey, String(tried.json['token']))).status, 200, out());
+    // The write is never answered and is stored only at applyLate(); the fence the writer sends after
+    // it gets no answer either. With `readFails`, the read the route then makes fails as well, so the
+    // write is recorded, with its condition, for the credential's next turn.
+    const unanswered = (userId: string, readFails = false) => {
+      failPuts(userId, 'hang-then-apply-late', 'hang');
+      if (!readFails) return;
+      const fence = hold('PUT', userId, 2, () => { failingGets.set(userId, 1); });
+      void fence.arrived.then(() => fence.release());
+    };
+    const w = { add: W(), link: W(), blind: W(), first: W(), claim: W(), blindClaim: W(), probeRoot: W(), probeAgents: W() };
+    const k = { did: didKey(), blindClaim: didKey() };
+    for (const a of [l2.add, l2.link, l2.did, l2.device]) unanswered(a.userId);
+    unanswered(l2.blind.userId, true);
+    unanswered(derivedOf(w.first));
+    unanswered(invites.fenceClaim.userId);
+    unanswered(invites.fenceBlind.userId, true);
+    unanswered(invites.fenceBlindDid.userId, true);
+    unanswered(invites.fencePk.userId);
+    lateDeletes.add(tryId);
+    // First sign-ins whose probe of the derived id's pod (deleted before tombstones?) is never
+    // answered: the pod's root, where there is no record; its agent registry, where one without
+    // credentials is.
+    seed(derivedOf(w.probeAgents), {});
+    const hungProbes = [`HEAD /${derivedOf(w.probeRoot)}/`, `HEAD /${derivedOf(w.probeAgents)}/agents`];
+    for (const h of hungProbes) hangingOther.add(h);
+    const timed = async (reply: Promise<Reply>, from = Date.now()) => ({ ...(await reply), took: Date.now() - from });
+    let replies: Array<Reply & { took: number }>;
+    try {
+      replies = await Promise.all([
+        siwe(w.add, { bearer: token['add'] }), linkWallet(w.link, token['link']!), didSignIn(k.did, { bearer: token['did'] }),
+        siwe(w.blind, { bearer: token['blind'] }), siwe(w.first), siwe(w.claim, bootstrap(invites.fenceClaim)),
+        siwe(w.blindClaim, bootstrap(invites.fenceBlind)), didSignIn(k.blindClaim, bootstrap(invites.fenceBlindDid)),
+        addDevice(P(), token['device']!), bootstrapPasskey(P(), invites.fencePk), post('/users/me/delete', {}, String(tried.json['token'])),
+        siwe(w.probeRoot), siwe(w.probeAgents),
+      ].map(r => timed(r)));
+    } finally {
+      for (const h of hungProbes) hangingOther.delete(h);
+    }
+    const [add, link, did, blind, first, claim, blindClaim, blindClaimDid, device, pk, deletion, probeRoot, probeAgents] = replies;
+    // Settled by the route: the read after the fence found the record as it was, and said so.
+    for (const r of [add!, did!, device!, pk!]) {
+      assert.equal(r.status, 503, JSON.stringify(r.json));
+      assert.match(String(r.json['error']), /could not be confirmed/);
+      assert.doesNotMatch(JSON.stringify(r.json), /may or may not|lists this/);
+    }
+    assert.equal(link!.status, 500, JSON.stringify(link!.json));
+    for (const r of [first!, claim!]) {
+      assert.equal(r.status, 503, JSON.stringify(r.json));
+      assert.match(String(r.json['detail']), /Nothing was changed/);
+    }
+    assert.equal(deletion!.status, 503, JSON.stringify(deletion!.json));
+    assert.equal(deletion!.json['error'], 'Deletion not completed');
+    // Not settled by the route: recorded, and settled by the credential's next turn, which then decides.
+    for (const r of [blind!, blindClaim!, blindClaimDid!]) {
+      assert.equal(r.status, 503, JSON.stringify(r.json));
+      assert.match(String(r.json['detail']), /may or may not/);
+    }
+    await signsInTo(siwe(w.blind), derivedOf(w.blind));
+    await signsInTo(siwe(w.blindClaim), derivedOf(w.blindClaim));
+    await signsInTo(didSignIn(k.blindClaim), deriveUserIdFromDid(k.blindClaim.did));
+    // The hung probes ended their claims at the 15 s bound, and nothing was left holding the lock.
+    for (const r of [probeRoot!, probeAgents!]) {
+      assert.equal(r.status, 503, JSON.stringify(r.json));
+      assert.ok(r.took < 20_000, `a first sign-in whose probe was never answered took ${r.took} ms`);
+    }
+    await signsInTo(siwe(w.probeRoot), derivedOf(w.probeRoot));
+
+    // The pod gets round to each held write only now, after every answer and every decision above.
+    // Each was fenced first, so none lands.
+    const ids = [l2.add.userId, l2.link.userId, l2.did.userId, l2.device.userId, l2.blind.userId, derivedOf(w.first),
+      invites.fenceClaim.userId, invites.fenceBlind.userId, invites.fenceBlindDid.userId, invites.fencePk.userId, tryId];
+    applyLate(ids);
+    assert.deepEqual(ids.map(id => heldOutcomes.filter(o => o.userId === id).map(o => o.applied)), ids.map(() => [false]),
+      'no write held past its answer lands');
+    for (const id of [l2.add.userId, l2.link.userId, l2.blind.userId, invites.fenceClaim.userId, invites.fenceBlind.userId, derivedOf(w.first)]) {
+      assert.deepEqual(record(id)!.walletAddresses, [], `${id} lists no wallet`);
+    }
+    for (const id of [l2.did.userId, invites.fenceBlindDid.userId]) assert.deepEqual(record(id)!.didKeys, [], `${id} lists no DID`);
+    assert.equal(record(l2.device.userId)!.webAuthnCredentials.length, 1);
+    assert.deepEqual(record(invites.fencePk.userId)!.webAuthnCredentials, []);
+    await signsInTo(signIn(tryKey, 1), tryId);
   });
 });
 
@@ -1394,6 +1546,38 @@ test('C13, J6: one request the pod never answers holds an account\'s lock for no
   assert.equal(docs.has(deriveUserIdFromDid(k.did)), false, 'no account is opened for the did:key');
 });
 
+test('C16: the janitor writes a Play owner\'s anchor back on the ETag it checked before it deletes anything: an enrolment landing in between keeps the whole account', async () => {
+  const port = await freePort();
+  docs.set(fencedPlay.id, { modified: clock = Math.max(clock + 1, Date.now()), doc: { userId: fencedPlay.id, name: 'Play guest',
+    walletAddresses: [], webAuthnCredentials: [], didKeys: [], provisionalPlayAnchor: expiredAnchor(`http://127.0.0.1:${port}`, fencedPlay) } });
+  listedContainers.add(fencedPlay.id);
+  // Once the purge has listed the pod, its next read of the anchor is the janitor's last check
+  // (stillUnclaimed). An enrolment lands right after that read is answered (the other instance's,
+  // during a deploy's overlap): the record the check approved is no longer the pod's.
+  const key = P();
+  const listed = (id: string) => id === fencedPlay.id && requests.some(r => r.userId === id && r.target === 'container' && r.method === 'GET');
+  const check = hold('GET', listed, 1, id => outOfBand(id, d => { (d['webAuthnCredentials'] as unknown[]).push(stored(key)); }));
+  void check.arrived.then(() => check.release());
+  const since = mark();
+  const otherSince = otherRequests.length;
+  const janitor = await startIdentity(port, { JANITOR_INTERVAL_MS: '1000' });
+  try {
+    const fence = await waitFor(() => docPuts(fencedPlay.id, since).find(r => r.status !== undefined), 15_000);
+    assert.ok(fence, `the janitor never wrote the anchor back${out(janitor)}`);
+    assert.ok(fence.ifMatch, 'the write-back is conditional on the ETag checked');
+    assert.equal(fence.status, 412);
+    await sleep(1_500);
+    assert.equal(requests.slice(since).some(r => r.userId === fencedPlay.id && r.method === 'DELETE'), false, `the anchor or the pod was deleted${out(janitor)}`);
+    assert.equal(otherRequests.slice(otherSince).some(r => r.method === 'DELETE' && r.path.startsWith(`/${fencedPlay.id}/`)), false,
+      'a resource of the pod was deleted');
+    assert.deepEqual(record(fencedPlay.id)!.webAuthnCredentials.map(c => c.id), [key.id]);
+  } finally {
+    check.release();
+    await janitor.stop();
+    listedContainers.delete(fencedPlay.id);
+  }
+});
+
 // ── K. A wallet or DID being added, or whose add the pod did not confirm ────────────────────
 test('K1: a wallet or did:key sign-in made while a bearer adds that credential waits for the add, and opens no other account', async () => {
   const derivedOf = (w: AnyWallet) => deriveUserIdFromWallet(w.address.toLowerCase());
@@ -1521,8 +1705,20 @@ test('K2: a wallet or did:key whose bearer add the pod took without confirming i
   const linkBlind = await unconfirmed(k2.linkBlind.userId, 2, () => linkWallet(wlb, token['linkBlind']!));
   assert.equal(linkBlind.status, 503, JSON.stringify(linkBlind.json));
   assert.match(String(linkBlind.json['detail']), /may or may not/);
+  assert.match(String(linkBlind.json['detail']), /Linking it again is safe/);
   await signsInTo(siwe(wlb), k2.linkBlind.userId);
   assert.equal(docs.has(derivedOf(wlb)), false, 'no account is opened for the wallet');
+  // A did:web the same way. Its plain sign-in takes no turn of its own (it cannot open an account),
+  // but one whose add is recorded as unconfirmed does: it settles the account first, and signs in
+  // there. It used to answer 401 "not registered" while the pod listed the DID.
+  const kw = didKey();
+  const web = 'did:web:unconfirmed-add.example';
+  const blindW = await unconfirmed(k2.blindWeb.userId, 2, () => didSignIn(kw, { did: web, bearer: token['blindWeb'] }));
+  assert.equal(blindW.status, 503, JSON.stringify(blindW.json));
+  assert.match(String(blindW.json['detail']), /may or may not/);
+  assert.deepEqual(record(k2.blindWeb.userId)!.didKeys.map(d => d.did), [web]);
+  await signsInTo(didSignIn(kw, { did: web }), k2.blindWeb.userId);
+  await signsInTo(didSignIn(kw, { did: web }), k2.blindWeb.userId);
 });
 
 test('K3: a first wallet or DID sign-in that no read could confirm sends the credential\'s next sign-in to that account, not a new one', async () => {
@@ -1549,6 +1745,15 @@ test('K3: a first wallet or DID sign-in that no read could confirm sends the cre
   assert.match(String(didClaim.json['detail']), /may or may not/);
   await signsInTo(didSignIn(k), invites.unsureDid.userId);
   assert.equal(docs.has(deriveUserIdFromDid(k.did)), false, 'no account is opened for the did:key');
+  // A did:web bootstrap claim: its plain sign-in after the 503 settles the seeded account first
+  // (the recorded write gives it the DID's turn), and signs in there.
+  const kw = didKey();
+  const web = 'did:web:unconfirmed-claim.example';
+  const webClaim = await blind(invites.unsureWeb, () => didSignIn(kw, { did: web, ...bootstrap(invites.unsureWeb) }));
+  assert.equal(webClaim.status, 503, JSON.stringify(webClaim.json));
+  assert.match(String(webClaim.json['detail']), /may or may not/);
+  assert.deepEqual(record(invites.unsureWeb.userId)!.didKeys.map(d => d.did), [web]);
+  await signsInTo(didSignIn(kw, { did: web }), invites.unsureWeb.userId);
 });
 
 test('K4: a sign-in with someone else\'s did:web and a key of its own does not hold up the owner\'s sign-in', async () => {
@@ -1566,6 +1771,67 @@ test('K4: a sign-in with someone else\'s did:web and a key of its own does not h
   assert.equal(owner.json['userId'], k4.owner.userId);
   assert.ok(took < 3_000, `the owner's sign-in waited ${took} ms behind a request that could not change who holds the DID`);
   assert.equal((await stranger).status, 401);
+  // A stranger's request that names a bootstrap id, with an invite that is not that id's, cannot
+  // write either, and takes no turn: the owner's request with a bearer (which does take the turn)
+  // is not held behind it. Only the fields being there used to count.
+  const ownerToken = await tokenFor(k4.owner.keys[0]!, 1, k4.owner.userId);
+  const heldAgain = hold('GET', derived);
+  const claimant = didSignIn(didKey(), { did: k4.did, extra: { bootstrapUserId: invites.never.userId, bootstrapInvite: 'not-its-invite' } });
+  assert.ok(await within(heldAgain.arrived, 5_000), `the stranger's request never read the derived account${out()}`);
+  const startedAgain = Date.now();
+  const withBearer = await didSignIn(k4.key, { did: k4.did, bearer: ownerToken });
+  const tookAgain = Date.now() - startedAgain;
+  heldAgain.release();
+  assert.equal(withBearer.status, 200, `${JSON.stringify(withBearer.json)}${out()}`);
+  assert.equal(withBearer.json['userId'], k4.owner.userId);
+  assert.ok(tookAgain < 3_000, `the owner's request with a bearer waited ${tookAgain} ms behind a bootstrap field without its invite`);
+  assert.equal((await claimant).status, 401);
+});
+
+test('K5: a bearer whose check fails adds nothing, so a did:web another account is adding stays on that account alone', async () => {
+  // The bearer of an account this server has not loaded is checked by loading it, and that read
+  // fails once. The request is then a plain sign-in, decided outside the DID's turn, and adds
+  // nothing; it used to check the bearer again inside, pass, and add the DID outside the turn,
+  // beside the add in flight.
+  const did = 'did:web:first-check.example';
+  const holderToken = await tokenFor(k5.holder.keys[0]!, 1, k5.holder.userId);
+  const held = hold('PUT', k5.holder.userId);
+  const first = didSignIn(didKey(), { did, bearer: holderToken });
+  assert.ok(await within(held.arrived, 5_000), `no write arrived${out()}`);
+  failingGets.set(k5.unloaded.userId, 1);
+  const second = await didSignIn(didKey(), { did, bearer: tokenSignedElsewhere(k5.unloaded.userId) });
+  held.release();
+  await signsInTo(first, k5.holder.userId);
+  assert.equal(second.status, 401, `${JSON.stringify(second.json)}${out()}`);
+  assert.deepEqual(record(k5.unloaded.userId)!.didKeys, [], 'the DID is on one account only');
+  assert.deepEqual(record(k5.holder.userId)!.didKeys.map(d => d.did), [did]);
+});
+
+test('R3: two adds of one did:web, by bearers or a bootstrap claim, take its turn one after the other: the second is refused, and one account lists it', async () => {
+  const tokenA = await tokenFor(r3.a.keys[0]!, 1, r3.a.userId);
+  const tokenB = await tokenFor(r3.b.keys[0]!, 1, r3.b.userId);
+  // Two bearers, each with a key of its own.
+  const did = 'did:web:race-adds.example';
+  let held = hold('PUT', r3.a.userId);
+  const addA = didSignIn(didKey(), { did, bearer: tokenA });
+  assert.ok(await within(held.arrived, 5_000), `no write arrived${out()}`);
+  const addB = didSignIn(didKey(), { did, bearer: tokenB });
+  assert.equal(await within(addB, 500), false, 'the second add was answered while the first was being written');
+  held.release();
+  await signsInTo(addA, r3.a.userId);
+  assert.equal((await addB).status, 401, JSON.stringify((await addB).json));
+  assert.deepEqual(record(r3.b.userId)!.didKeys, [], 'the DID is on one account only');
+  // A bootstrap claim of a did:web, and a bearer's add of the same DID.
+  const claimed = 'did:web:race-claim.example';
+  held = hold('PUT', invites.raceWeb.userId);
+  const claim = didSignIn(didKey(), { did: claimed, ...bootstrap(invites.raceWeb) });
+  assert.ok(await within(held.arrived, 5_000), `no write arrived${out()}`);
+  const addC = didSignIn(didKey(), { did: claimed, bearer: tokenB });
+  assert.equal(await within(addC, 500), false, 'the add was answered while the claim was being written');
+  held.release();
+  await signsInTo(claim, invites.raceWeb.userId);
+  assert.equal((await addC).status, 401, JSON.stringify((await addC).json));
+  assert.deepEqual(record(r3.b.userId)!.didKeys, [], 'the DID is on one account only');
 });
 
 // ── D, E. Counters and epochs ───────────────────────────────────────────────────────────────
@@ -1700,8 +1966,11 @@ test('A7, A8, B6, B9, G1, G2, H3, I2, J3: once the copy is 10 s old, every decis
   await me(tokenG);
   await post('/auth/webauthn/register-options', { name: 'x' }, tokenG);
   assert.equal(docPuts(g.userId, since).length + containerPuts(g.userId, since).length, 0);
-  // G2: nor do writes: an add or a removal needs the document.
-  assert.equal((await siwe(W(), { bearer: tokenG })).status, 404);
+  // G2: nor do writes: an add or a removal needs the document, and the 404 says it is missing (not
+  // "User for token not found", which is an unknown token's answer).
+  const missing = await siwe(W(), { bearer: tokenG });
+  assert.equal(missing.status, 404, JSON.stringify(missing.json));
+  assert.match(String(missing.json['error']), /sign-in record is missing from its pod/);
   assert.equal((await addDevice(P(), tokenG)).status, 404);
   assert.equal((await del(`/auth-methods/me/webauthn/${encodeURIComponent(g.keys[0]!.id)}`, tokenG)).status, 404);
   assert.equal(docPuts(g.userId, since).length + containerPuts(g.userId, since).length, 0);

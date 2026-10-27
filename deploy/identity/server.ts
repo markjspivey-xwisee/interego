@@ -901,8 +901,9 @@ async function readAccountNow(userId: string, pending?: WritePrecondition): Prom
 // beside it (which would keep the credential's sign-ins for good, being preferred). A write whose
 // outcome nothing could settle (auth-methods-writer.ts settle) is recorded with the condition it
 // was sent on, and the credential's next turn settles that account before deciding (503 while it
-// cannot). A turn waits at most 30 s for the ones before it. A DID that is not a did:key takes
-// its turn only for a request that can write it (see /auth/did).
+// cannot). A turn waits at most 30 s for the ones before it (then 503, logged as
+// identity_credential_turn_busy). A DID that is not a did:key takes its turn only for a request
+// that can write it, or once a write of it is recorded as unconfirmed (see /auth/did).
 const CREDENTIAL_TURN_WAIT_MS = 30_000;
 const credentialDecisions = createCredentialDecisions({
   readAccount: (userId, pending) => readAccountNow(userId, pending as WritePrecondition | undefined),
@@ -911,9 +912,15 @@ const credentialDecisions = createCredentialDecisions({
 const walletCredential = (address: string) => `wallet:${address.toLowerCase()}`;
 const didCredential = (did: string) => `did:${did}`;
 
-/** The answer when a credential's turn decided nothing: another request held it too long, or an unconfirmed write's account is unreadable. */
+/**
+ * The answer when a credential's turn decided nothing: another request held it too long, or an
+ * unconfirmed write's account is unreadable. Both are logged: a turn held that long is a pod read
+ * or write that hangs inside it, and every later request for the credential gets this 503 until
+ * it ends (`identity_credential_turn_busy`, with no credential value, is the line to alert on).
+ */
 function refuseCredentialTurn(res: express.Response, turn: Exclude<Turn<unknown>, { kind: 'decided' }>, credential: 'wallet' | 'DID'): void {
   if (turn.kind === 'busy') {
+    log(`WARN identity_credential_turn_busy kind=${credential === 'wallet' ? 'wallet' : 'did'} waitedMs=${CREDENTIAL_TURN_WAIT_MS}`);
     res.status(503).json({
       error: `Another request for this ${credential} is still being answered`,
       detail: `A sign-in or add of this ${credential} made before this one has not finished. Nothing was changed; try again in a minute.`,
@@ -981,13 +988,21 @@ function changeOnPod(err: unknown, shows: (m: AuthMethods) => boolean): 'landed'
   return onPod && !isTombstone(onPod) && shows(onPod) ? 'landed' : 'not-landed';
 }
 
-/** The answer to a removal or sign-out whose write the pod did not confirm, and that nothing could settle. */
-function refuseUndeterminedChange(res: express.Response, what: string): void {
+/**
+ * The answer to a change whose write the pod did not confirm, and that nothing could settle: a
+ * removal, a sign-out-everywhere, a passkey sign-in's counter. `again` says what sending the same
+ * request again does, which is safe whether or not the write was saved. The answer used to point
+ * at GET /auth-methods/me, which could not tell: while the pod is unreadable it answers this
+ * server's copy from before the write, and it is a plain read that a write still pending at the
+ * pod can overtake.
+ */
+function refuseUndeterminedChange(res: express.Response, error: string, again: string): void {
   res.status(503).json({
-    error: `${what} not confirmed`,
-    detail: 'The pod did not confirm the write, and could not be read after it, so it may or may not have been saved. Check GET /auth-methods/me in a minute, and try again if it was not.',
+    error,
+    detail: `The pod did not confirm the write, and could not be read after it, so it may or may not have been saved. ${again}`,
   });
 }
+const REMOVE_AGAIN = 'Sending the same removal again is safe: it removes the credential if it is still there, and answers 404 if it is not.';
 
 /** An unclaimed Play owner may change only while its anchor opens to its id; a claimed one always. */
 function playOwnerWritable(userId: string, m: AuthMethods): boolean {
@@ -1279,7 +1294,12 @@ function sendAccountWriteRefusal(res: express.Response, err: unknown): boolean {
     return true;
   }
   if (err instanceof AccountRecordMissingError) {
-    res.status(404).json({ error: 'User for token not found' });
+    // Not "User for token not found" (an unknown token): the token's account is known here, and
+    // its record was removed from its pod by something other than this server.
+    res.status(404).json({
+      error: "This account's sign-in record is missing from its pod",
+      detail: 'Nothing was written: this server does not re-create a record removed outside it.',
+    });
     return true;
   }
   return false;
@@ -3955,6 +3975,8 @@ type PasskeySignIn =
   | { kind: 'deleted' }
   | { kind: 'unreadable'; reason: string }
   | { kind: 'unpersisted'; reason: string }
+  /** The counter write failed and nothing could settle it: it may or may not have been saved. */
+  | { kind: 'undetermined'; reason: string }
   | { kind: 'not-on-file' }
   | { kind: 'not-verified'; lastError: unknown };
 
@@ -4022,10 +4044,15 @@ async function signInWithPasskey(
       if (err instanceof PodReadError) return { kind: 'unreadable', reason: err.message };
       // A write the pod took without confirming it (a 5xx after applying it, a timeout) is a
       // sign-in: the record the writer settled under the lock holds exactly this counter and pin.
-      if (err instanceof AuthMethodsWriteError && writing && changeOnPod(err, m =>
-        m.webAuthnCredentials.some(c => c.id === response.id && c.counter === writing!.counter && c.rpId === writing!.rpId)) === 'landed') {
-        log(`WARN: passkey sign-in to ${userId}: the pod took the counter write without confirming it (${err.message})`);
-        return { kind: 'signed-in', userId };
+      // One that nothing could settle may or may not have been saved, and is answered so.
+      if (err instanceof AuthMethodsWriteError && writing) {
+        const onPod = changeOnPod(err, m =>
+          m.webAuthnCredentials.some(c => c.id === response.id && c.counter === writing!.counter && c.rpId === writing!.rpId));
+        if (onPod === 'landed') {
+          log(`WARN: passkey sign-in to ${userId}: the pod took the counter write without confirming it (${err.message})`);
+          return { kind: 'signed-in', userId };
+        }
+        if (onPod === 'undetermined') return { kind: 'undetermined', reason: err.message };
       }
       if (err instanceof AuthMethodsWriteError || err instanceof AuthMethodsConflictError) return { kind: 'unpersisted', reason: err.message };
       if (err instanceof AccountRecordMissingError || err instanceof PlayOwnerUnavailableError) continue;
@@ -4147,6 +4174,12 @@ app.post('/auth/webauthn/authenticate', authEnrollLimiter, async (req, res) => {
       // It verified, so this was the passkey's account: stop rather than try another.
       log(`WARN: refused passkey auth — ${outcome.reason}`);
       res.status(503).json({ error: 'transient: failed to persist passkey counter and RP binding; retry' });
+      return;
+    case 'undetermined':
+      // It verified, and its counter write may have landed: "failed to persist" would be untrue.
+      log(`WARN: refused passkey auth — ${outcome.reason}`);
+      refuseUndeterminedChange(res, 'transient: passkey sign-in not confirmed',
+        'Signing in again with this passkey is safe.');
       return;
     case 'not-on-file':
       noHolderVerified(401, 'Credential indexed but not on file');
@@ -4291,14 +4324,25 @@ app.post('/auth/did', authEnrollLimiter, async (req, res) => {
   // DID's turn (credentialDecisions). Only a request that can change who holds it takes the turn.
   // A did:key's signature proves its key, so every such request is its holder's. A DID that is
   // not a did:key proves only the key the caller sent, so anyone can present the owner's did:web
-  // with a key of their own; such a request takes the turn only when it can write (a bearer that
-  // verifies, adding it; a bootstrap claim). A plain sign-in with it writes nothing and opens no
-  // account (it signs in only where a record lists the DID with this key), so it is decided
-  // outside the turn: requests with keys of their own cannot queue ahead of the owner's sign-in.
+  // with a key of their own; such a request takes the turn only when it can write: with a bearer
+  // that verifies (adding it), or with a bootstrap claim whose invite matches its seeded id (the
+  // fields' mere presence used to count, so any request could take the turn). A plain sign-in
+  // with it writes nothing and opens no account (it signs in only where a record lists the DID
+  // with this key), so it is decided outside the turn: requests with keys of their own cannot
+  // queue ahead of the owner's sign-in. The exception is a DID with a write recorded as
+  // unconfirmed (credentialDecisions.unconfirmed): its next request of any kind takes the turn,
+  // which settles the account that write was for before anything is decided, as for a did:key.
+  //
+  // The bearer is verified once, here, and decideDid adds the DID on this same answer, so whether
+  // the request takes the turn and whether it adds the DID cannot disagree. A second check inside
+  // decideDid could pass where this one failed (an account read that failed, then answered), and
+  // the add then ran outside the turn, beside another bearer's add of the same DID.
   const didKey = didCredential(did);
   const bearerHeader = req.headers.authorization;
-  const mayChangeHolder = keyFromDid || !!bootstrapUserId || !!bootstrapInvite
-    || (bearerHeader?.startsWith('Bearer ') === true && (await verifyToken(bearerHeader.slice(7))).valid);
+  const bearer = bearerHeader?.startsWith('Bearer ') ? await verifyToken(bearerHeader.slice(7)) : undefined;
+  const bearerUserId = bearer?.valid ? bearer.record!.userId : undefined;
+  const takesTurn = keyFromDid || bearerUserId !== undefined || bootstrapInviteMatches(bootstrapUserId, bootstrapInvite)
+    || credentialDecisions.unconfirmedFor(didKey) !== undefined;
   const decideDid = async (): Promise<Identity | undefined> => {
     // Returning user via DID index — no user-claim needed. Every account listing this DID is a
     // candidate, in a stable order (for a DID that is not a did:key, the earliest-enrolled first;
@@ -4376,16 +4420,12 @@ app.post('/auth/did', authEnrollLimiter, async (req, res) => {
       }
     }
 
-    // Authenticated add-did: bearer token binds this DID to the caller.
+    // Authenticated add-did: bearer token binds this DID to the caller (verified once, above).
     if (!user) {
-      const authHeader = req.headers.authorization;
-      if (authHeader?.startsWith('Bearer ')) {
-        const tr = await verifyToken(authHeader.slice(7));
-        if (tr.valid) {
-          userId = tr.record!.userId;
-          user = identities.get(userId);
-          adding = true;
-        }
+      if (bearerUserId !== undefined) {
+        userId = bearerUserId;
+        user = identities.get(userId);
+        adding = true;
       }
       // A DID that is not a did:key is bound with a key the caller holds, which need not be the
       // one its owner's account lists: one another account lists stays with that account, and is
@@ -4539,7 +4579,7 @@ app.post('/auth/did', authEnrollLimiter, async (req, res) => {
     }
     return user;
   };
-  const turn: Turn<Identity | undefined> = mayChangeHolder
+  const turn: Turn<Identity | undefined> = takesTurn
     ? await credentialDecisions.decide(didKey, decideDid)
     : { kind: 'decided', value: await decideDid() };
   if (turn.kind !== 'decided') {
@@ -5304,7 +5344,7 @@ app.post('/wallet/link', authEnrollLimiter, async (req, res) => {
       if (onPod === 'undetermined') {
         res.status(503).json({
           error: 'The wallet could not be confirmed as linked',
-          detail: 'The pod did not confirm the write, and could not be read after it, so it may or may not have been saved. Check GET /auth-methods/me in a minute, or link it again.',
+          detail: 'The pod did not confirm the write, and could not be read after it, so it may or may not have been saved. Linking it again is safe: if this write was saved, the repeat answers linked and writes nothing.',
         });
         return;
       }
@@ -5561,7 +5601,7 @@ app.delete('/auth-methods/me/webauthn/:credentialId', authEnrollLimiter, async (
       res.json({ removed: true, credentialId, remaining: ((err as AuthMethodsWriteError).podRecord as AuthMethods).webAuthnCredentials.length });
       return;
     }
-    if (onPod === 'undetermined') { refuseUndeterminedChange(res, 'Removal'); return; }
+    if (onPod === 'undetermined') { refuseUndeterminedChange(res, 'Removal not confirmed', REMOVE_AGAIN); return; }
     if (sendAccountWriteRefusal(res, err)) return;
     res.status(500).json({ error: `Failed to persist: ${(err as Error).message}` });
     return;
@@ -5601,7 +5641,7 @@ app.delete('/auth-methods/me/wallet/:address', authEnrollLimiter, async (req, re
       res.json({ removed: true, walletAddress: address, remaining: ((err as AuthMethodsWriteError).podRecord as AuthMethods).walletAddresses.length });
       return;
     }
-    if (onPod === 'undetermined') { refuseUndeterminedChange(res, 'Removal'); return; }
+    if (onPod === 'undetermined') { refuseUndeterminedChange(res, 'Removal not confirmed', REMOVE_AGAIN); return; }
     if (sendAccountWriteRefusal(res, err)) return;
     res.status(500).json({ error: `Failed to persist: ${(err as Error).message}` });
     return;
@@ -5642,7 +5682,7 @@ app.delete('/auth-methods/me/did', authEnrollLimiter, async (req, res) => {
       res.json({ removed: true, did, remaining: ((err as AuthMethodsWriteError).podRecord as AuthMethods).didKeys.length });
       return;
     }
-    if (onPod === 'undetermined') { refuseUndeterminedChange(res, 'Removal'); return; }
+    if (onPod === 'undetermined') { refuseUndeterminedChange(res, 'Removal not confirmed', REMOVE_AGAIN); return; }
     if (sendAccountWriteRefusal(res, err)) return;
     res.status(500).json({ error: `Failed to persist: ${(err as Error).message}` });
     return;
@@ -5699,7 +5739,11 @@ app.post('/tokens/me/sign-out-everywhere', tokenLimiter, async (req, res) => {
       res.json({ revoked: true, userId: user.id, sessionEpoch: epoch });
       return;
     }
-    if (onPod === 'undetermined') { refuseUndeterminedChange(res, 'Sign-out'); return; }
+    if (onPod === 'undetermined') {
+      refuseUndeterminedChange(res, 'Sign-out not confirmed', 'Signing out everywhere again is safe: a repeat ends every session '
+        + 'issued before it, or is refused (401) because this token was among those the first one ended.');
+      return;
+    }
     if (sendAccountWriteRefusal(res, err)) return;
     res.status(500).json({ error: `Failed to persist sessionEpoch bump: ${(err as Error).message}` });
     return;
