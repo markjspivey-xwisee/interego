@@ -20,6 +20,7 @@ import * as crypto from 'node:crypto';
 import * as http from 'node:http';
 import * as net from 'node:net';
 import { fileURLToPath } from 'node:url';
+import { closeServer, stopChild } from './teardown.js';
 
 const ALICE = 'u-pk-aaaaaaaaaaaa';
 const BOB = 'u-pk-bbbbbbbbbbbb';
@@ -211,8 +212,8 @@ before(async () => {
 });
 
 after(async () => {
-  identity?.kill('SIGTERM');
-  await new Promise<void>(resolve => podServer?.close(() => resolve()));
+  await stopChild(identity);
+  await closeServer(podServer);
 });
 
 test('after a restart the map holds the users and one placeholder agent each', async () => {

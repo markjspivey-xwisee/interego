@@ -3,6 +3,7 @@ import * as assert from 'node:assert/strict';
 import * as crypto from 'node:crypto';
 import { createProvisionalPlayProvider } from '../provisional-play-provider.js';
 import { publicPlayKey, playKeyThumbprint, bootstrapProofPayload, PlayError, type PlayClaims } from '../provisional-play.js';
+import { publicJwk } from './public-jwk.js';
 
 function adapterFixture(overrides: { verified?: boolean; subject?: string; canSign?: boolean; recover?: string;
   missingEtag?: boolean; maxPods?: number; ledgerReadStatus?: number; ledgerWriteStatus?: number } = {}) {
@@ -61,7 +62,7 @@ function adapterFixture(overrides: { verified?: boolean; subject?: string; canSi
   };
   const play = createProvisionalPlayProvider(options);
   const key = crypto.generateKeyPairSync('ec', { namedCurve: 'prime256v1' });
-  const publicKeyJwk = publicPlayKey(key.publicKey.export({ format: 'jwk' }));
+  const publicKeyJwk = publicPlayKey(publicJwk(key.publicKey));
   const now = Math.floor(Date.now() / 1000);
   const grant = { _signed_payload: JSON.stringify({ purpose: 'interego-play-provisional-v1', audience,
     publicKeyThumbprint: playKeyThumbprint(publicKeyJwk), challenge: 'a'.repeat(32), expiresAt: now + 60,
@@ -72,7 +73,7 @@ function adapterFixture(overrides: { verified?: boolean; subject?: string; canSi
   }).toString('base64url') };
   const freshBody = (differentKey = false) => {
     const pair = differentKey ? crypto.generateKeyPairSync('ec', { namedCurve: 'prime256v1' }) : key;
-    const jwk = publicPlayKey(pair.publicKey.export({ format: 'jwk' }));
+    const jwk = publicPlayKey(publicJwk(pair.publicKey));
     const next = { ...grant, _signed_payload: JSON.stringify({ ...JSON.parse(grant._signed_payload),
       publicKeyThumbprint: playKeyThumbprint(jwk), challenge: crypto.randomBytes(24).toString('base64url') }) };
     return { playGrant: next, publicKeyJwk: jwk, proof: crypto.sign('sha256', Buffer.from(bootstrapProofPayload(next)), {

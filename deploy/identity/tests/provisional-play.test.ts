@@ -5,6 +5,7 @@ import { ProvisionalPlay, PlayError, publicPlayKey, playKeyThumbprint, bootstrap
   parsePlayClients, type PlayClaims, type PlayGrant } from '../provisional-play.js';
 import { provisionPlayAnchor, type PlayAnchorDocument } from '../provisional-play-store.js';
 import { reservePlayAdmission, type PlayAdmissionLedger } from '../provisional-play-admission.js';
+import { publicJwk } from './public-jwk.js';
 
 const audience = 'https://play.example';
 const issuer = 'https://identity.example';
@@ -53,7 +54,7 @@ function fixture(options: { max?: number; ttl?: number } = {}) {
   });
   play = make();
   const pair = keyPair();
-  const jwk = publicPlayKey(pair.publicKey.export({ format: 'jwk' }));
+  const jwk = publicPlayKey(publicJwk(pair.publicKey));
   const grant = (overrides: Record<string, unknown> = {}): PlayGrant => ({ _signature: `0x${'12'.repeat(65)}`,
     _signed_payload: JSON.stringify({ purpose: 'interego-play-provisional-v1', audience,
       publicKeyThumbprint: playKeyThumbprint(jwk), challenge: Buffer.from(`challenge-${++sequence}-${now}`).toString('base64url'),
@@ -74,7 +75,11 @@ function fixture(options: { max?: number; ttl?: number } = {}) {
 test('WebCrypto nonextractable P-256 private key proves browser possession', async () => {
   const pair = await crypto.webcrypto.subtle.generateKey({ name: 'ECDSA', namedCurve: 'P-256' }, false, ['sign', 'verify']);
   await assert.rejects(crypto.webcrypto.subtle.exportKey('jwk', pair.privateKey));
-  const publicKeyJwk = await crypto.webcrypto.subtle.exportKey('jwk', pair.publicKey);
+  // The JWK comes from a re-import of the SPKI, never from the generated key itself (see public-jwk.ts):
+  // on Node 20 that export could deadlock this process, and once did, in CI.
+  const spki = await crypto.webcrypto.subtle.exportKey('spki', pair.publicKey);
+  const publicKeyJwk = await crypto.webcrypto.subtle.exportKey('jwk',
+    await crypto.webcrypto.subtle.importKey('spki', spki, { name: 'ECDSA', namedCurve: 'P-256' }, true, ['verify']));
   const f = fixture();
   const g = f.grant({ publicKeyThumbprint: playKeyThumbprint(publicPlayKey(publicKeyJwk)) });
   const proof = Buffer.from(await crypto.webcrypto.subtle.sign({ name: 'ECDSA', hash: 'SHA-256' }, pair.privateKey,
@@ -150,7 +155,7 @@ test('expired owner cannot refresh, even after pod deletion or provider restart'
 });
 test('lifetime cap survives expired/deleted pods and is not reset by a fresh browser key', async () => {
   const f = fixture({ max: 1 }); const result = await f.bootstrap(); f.docs.clear(); f.restart();
-  const pair = keyPair(); const key = publicPlayKey(pair.publicKey.export({ format: 'jwk' }));
+  const pair = keyPair(); const key = publicPlayKey(publicJwk(pair.publicKey));
   const g = f.grant({ publicKeyThumbprint: playKeyThumbprint(key) });
   await assert.rejects(f.play.bootstrap({ playGrant: g, publicKeyJwk: key, proof: sign(pair.privateKey, bootstrapProofPayload(g)) }),
     errorCode('provisional_play_lifetime_capacity'));
