@@ -171,11 +171,42 @@ test('recorded writes are settled without a request for the credential, and drop
 
 test('at most maxRecorded writes are recorded: a new one past that is refused, one recorded already is updated', async () => {
   const decisions = createCredentialDecisions({ readAccount: async () => { throw new Error('502'); }, waitMs: 5_000, maxRecorded: 2 });
-  assert.equal(decisions.unconfirmed('wallet:0x1', 'u-1'), true);
-  assert.equal(decisions.unconfirmed('wallet:0x2', 'u-2'), true);
-  assert.equal(decisions.unconfirmed('wallet:0x3', 'u-3'), false, 'full: nothing recorded');
+  assert.equal(decisions.unconfirmed('wallet:0x1', 'u-1'), 'recorded');
+  assert.equal(decisions.unconfirmed('wallet:0x2', 'u-2'), 'recorded');
+  assert.equal(decisions.unconfirmed('wallet:0x3', 'u-3'), 'full', 'full: nothing recorded');
   assert.equal(decisions.unconfirmedFor('wallet:0x3'), undefined);
-  assert.equal(decisions.unconfirmed('wallet:0x2', 'u-2b'), true, 'a credential recorded already keeps its place');
+  assert.equal(decisions.unconfirmed('wallet:0x2', 'u-2b'), 'recorded', 'a credential recorded already keeps its place');
   assert.equal(decisions.unconfirmedFor('wallet:0x2'), 'u-2b');
   assert.equal(decisions.recorded(), 2);
+});
+
+test('first sign-ins (no bearer, no invite) take at most half of the records, so a flood of them leaves the rest for adds with a bearer or an invite', async () => {
+  const reads: string[] = [];
+  let readable = false;
+  const decisions = createCredentialDecisions({
+    readAccount: async userId => { reads.push(userId); if (!readable) throw new Error('502'); },
+    waitMs: 5_000, maxRecorded: 4,
+  });
+  const firstSignIn = { firstSignIn: true };
+  assert.equal(decisions.unconfirmed('wallet:0x1', 'u-eth-1', undefined, firstSignIn), 'recorded');
+  assert.equal(decisions.unconfirmed('wallet:0x2', 'u-eth-2', undefined, firstSignIn), 'recorded');
+  assert.equal(decisions.unconfirmed('wallet:0x3', 'u-eth-3', undefined, firstSignIn), 'first-sign-ins-full');
+  assert.equal(decisions.unconfirmedFor('wallet:0x3'), undefined);
+  // The other half is for writes made with a bearer or an invite.
+  assert.equal(decisions.unconfirmed('wallet:0xb1', 'u-pk-1'), 'recorded');
+  assert.equal(decisions.unconfirmed('wallet:0xb2', 'u-pk-2'), 'recorded');
+  assert.equal(decisions.unconfirmed('wallet:0xb3', 'u-pk-3'), 'full');
+  assert.equal(decisions.recorded(), 4);
+  // A first sign-in's record that is settled frees its place for another first sign-in.
+  readable = true;
+  assert.equal((await decisions.decide('wallet:0x1', async () => 'decided')).kind, 'decided');
+  assert.deepEqual(reads.slice(-1), ['u-eth-1']);
+  assert.equal(decisions.unconfirmed('wallet:0x3', 'u-eth-3', undefined, firstSignIn), 'recorded');
+  assert.equal(decisions.unconfirmed('wallet:0x4', 'u-eth-4', undefined, firstSignIn), 'full');
+  // A credential recorded already keeps its place, as whichever kind it is recorded again.
+  assert.equal(decisions.unconfirmed('wallet:0x2', 'u-eth-2', undefined, firstSignIn), 'recorded');
+  assert.equal(await decisions.settleRecorded(), 0);
+  assert.equal(decisions.unconfirmed('wallet:0x5', 'u-eth-5', undefined, firstSignIn), 'recorded');
+  assert.equal(decisions.unconfirmed('wallet:0x6', 'u-eth-6', undefined, firstSignIn), 'recorded');
+  assert.equal(decisions.unconfirmed('wallet:0x7', 'u-eth-7', undefined, firstSignIn), 'first-sign-ins-full', 'the count follows the records settled');
 });

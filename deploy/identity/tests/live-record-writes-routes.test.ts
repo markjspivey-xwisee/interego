@@ -490,9 +490,14 @@ unlisted.add(k5.unloaded.userId);
 const r3 = { a: account({ keys: [P()] }), b: account({ keys: [P()] }) };
 // Bearers that do not verify, with a wallet or did:key no account holds: accounts the other instance
 // opened after this one listed the pods (so not loaded here), and one signed out everywhere.
-const k6 = { wallet: account({ keys: [P()] }), did: account({ keys: [P()] }), revoked: account({ keys: [P()] }) };
+const k6 = { wallet: account({ keys: [P()] }), did: account({ keys: [P()] }), revoked: account({ keys: [P()] }), link: account({ keys: [P()] }) };
 unlisted.add(k6.wallet.userId);
 unlisted.add(k6.did.userId);
+unlisted.add(k6.link.userId);
+// Bearer adds whose account is deleted while the request waits: for the DID's turn (held by an
+// account removing that did:key), or for the read of the wallet's derived account.
+const k8key = didKey();
+const k8 = { y: account({ keys: [P()], dids: [k8key] }), didX: account({ keys: [P()] }), walletX: account({ keys: [P()] }) };
 // Adds that wait (for a credential's turn, or between a passkey's options and its registration)
 // while their account signs out everywhere.
 const s9 = { y: account({ keys: [P()] }), x: account({ keys: [P()] }), linkY: account({ keys: [P()] }), linkX: account({ keys: [P()] }),
@@ -511,7 +516,9 @@ const a12 = { siwe: account({ keys: [P()] }), did: account({ keys: [P()] }), lin
 const c21 = account({ keys: [P()] });
 const j7 = account({ keys: [P()] });
 const p7 = { wallet: account({ keys: [P()] }), did: account({ keys: [P()] }) };
-const p8 = account({ keys: [P()] });
+const p8 = { wallet: account({ keys: [P()] }), did: account({ keys: [P()] }), stranger: account({ keys: [P()] }) };
+// Owners whose bearer adds nothing could settle, while first sign-ins fill their share of the records (S10).
+const s10 = [account({ keys: [P()] }), account({ keys: [P()] }), account({ keys: [P()] })];
 // A claimed u-try- account for L2's deletion, made in before() so that no other /try runs beside the
 // /try cases of the concurrent block below (they find their own id by its shape).
 let l2Try: Reply;
@@ -579,9 +586,10 @@ const PLAY_CLIENTS = JSON.stringify({ [PLAY_AUDIENCE]: { agentDid: 'did:web:game
 /**
  * A Play owner whose anchor an identity server at `issuer` sealed a minute ago (valid for an hour,
  * for the audience PLAY_CLIENTS allows), seeded on its pod, and a guest token for it as that server
- * issues one.
+ * issues one. The anchor is sealed with `sealKey`: by default the key the servers share; any other
+ * makes an anchor that does not open to the owner (the token itself is still a good one).
  */
-function livePlayGuest(issuer: string): { id: string; token: string } {
+function livePlayGuest(issuer: string, sealKey = Buffer.from(tokenSigningKey, 'base64')): { id: string; token: string } {
   const jwk = publicJwk(crypto.generateKeyPairSync('ec', { namedCurve: 'P-256' }).publicKey) as { x: string; y: string };
   const key = { crv: 'P-256', kty: 'EC', x: jwk.x, y: jwk.y } as const;
   const thumb = playKeyThumbprint(key as Parameters<typeof playKeyThumbprint>[0]);
@@ -593,7 +601,7 @@ function livePlayGuest(issuer: string): { id: string; token: string } {
     publicKeyJwk: key, proofKeyThumbprint: thumb, issuedAt: now - 60, expiresAt: now + 3600,
     capabilities: ['human-play', 'own-pod-checkpoint'], provisional: true };
   const encoded = Buffer.from(JSON.stringify(claims)).toString('base64url');
-  const seal = crypto.createHmac('sha256', Buffer.from(tokenSigningKey, 'base64')).update(`interego-play-attestation-v1\0${encoded}`).digest('base64url');
+  const seal = crypto.createHmac('sha256', sealKey).update(`interego-play-attestation-v1\0${encoded}`).digest('base64url');
   docs.set(id, { modified: clock = Math.max(clock + 1, Date.now()), doc: { userId: id, name: 'Play guest',
     walletAddresses: [], webAuthnCredentials: [], didKeys: [], provisionalPlayAnchor: `ipa1_${encoded}.${seal}` } });
   const b64 = Buffer.from(JSON.stringify({ userId: id, agentId, scope: 'ReadWrite', issuedAt: new Date().toISOString(),
@@ -1348,9 +1356,13 @@ describe('writes the pod never answers', { concurrency: true }, () => {
     assert.equal(lW.status, 503, JSON.stringify(lW.json));
     assert.equal(lD.status, 503, JSON.stringify(lD.json));
     assert.equal(lL.status, 500, JSON.stringify(lL.json));
+    // The fence wrote the seeded record back, and created an empty one for the derived id where there
+    // was none: not "Nothing was changed", nor "Could not read this account", which they used to say.
     for (const r of [lC, lF]) {
       assert.equal(r.status, 503, JSON.stringify(r.json));
-      assert.match(String(r.json['detail']), /Nothing was changed/);
+      assert.equal(r.json['error'], 'Your sign-in was not saved');
+      assert.match(String(r.json['detail']), /did not take the write, so the credential was not added/);
+      assert.doesNotMatch(String(r.json['detail']), /Nothing was changed/);
     }
     assert.equal(lX.status, 503, JSON.stringify(lX.json));
     assert.equal(lX.json['error'], 'Deletion not completed');
@@ -1370,6 +1382,9 @@ describe('writes the pod never answers', { concurrency: true }, () => {
     await signsInTo(siwe(l.wallet), l1.late.wallet.userId);
     await signsInTo(siwe(l.claim, bootstrap(invites.hangLate)), invites.hangLate.userId);
     await signsInTo(siwe(l.first), derivedOf(l.first));
+    // Built on the empty record the fence left, the account takes the name it was asked for: it used
+    // to keep the id as its name.
+    assert.equal(record(derivedOf(l.first))!.name, 'Wallet');
   });
 
   test('L2: a write whose fence goes unanswered too is settled again with the condition it was sent on (by the route, or by the credential\'s next turn), so it cannot land after the answer; a hung probe ends a first sign-in at 15 s', { timeout: 90_000 }, async () => {
@@ -1427,9 +1442,12 @@ describe('writes the pod never answers', { concurrency: true }, () => {
       assert.doesNotMatch(JSON.stringify(r.json), /may or may not|lists this/);
     }
     assert.equal(link!.status, 500, JSON.stringify(link!.json));
+    // The fence that settled each wrote the record back (or an empty one): not saved, which is true,
+    // rather than "Nothing was changed".
     for (const r of [first!, claim!]) {
       assert.equal(r.status, 503, JSON.stringify(r.json));
-      assert.match(String(r.json['detail']), /Nothing was changed/);
+      assert.equal(r.json['error'], 'Your sign-in was not saved');
+      assert.match(String(r.json['detail']), /did not take the write, so the credential was not added/);
     }
     assert.equal(deletion!.status, 503, JSON.stringify(deletion!.json));
     assert.equal(deletion!.json['error'], 'Deletion not completed');
@@ -1599,39 +1617,65 @@ describe('writes the pod never answers', { concurrency: true }, () => {
     }
   });
 
-  test('U1: a wallet write recorded against a u-try- account that is then deleted here is settled at the wallet\'s next request, which signs in', { timeout: 60_000 }, async () => {
+  test('U1: a u-try- account whose record the pod refuses to remove stays whole (503), so an add recorded against it lands on a live account; once it is removed, nothing pending lands, and the wallet signs in on its own', { timeout: 60_000 }, async () => {
     const derivedOf = (w: AnyWallet) => deriveUserIdFromWallet(w.address.toLowerCase());
     assert.equal(u1Try.status, 200, JSON.stringify(u1Try.json));
     const tryId = String(u1Try.json['userId']);
     const tryToken = String(u1Try.json['token']);
     const w = W();
+    const v = W();
     try {
-      // A bearer add of the wallet that the pod never answers, and the two reads after it fail:
-      // nothing settles it, so it is recorded for the wallet's next turn. Until the account is
-      // deleted, every fence is answered 500 (not applied), so no sweep can settle it before then.
-      failPuts(tryId, 'hang', ...Array.from({ length: 100 }, () => '500' as const));
-      const put = hold('PUT', tryId, 1, () => { failingGets.set(tryId, 2); });
-      void put.arrived.then(() => put.release());
+      // A bearer add of the wallet that the pod never answers, and stores (if its If-Match still
+      // holds) only at applyLate(); every fence after it is answered 500 and not applied, so nothing
+      // settles it, and it is recorded for the wallet's next turn.
+      failPuts(tryId, 'hang-then-apply-late', ...Array.from({ length: 100 }, () => '500' as const));
       const add = await siwe(w, { bearer: tryToken });
       assert.equal(add.status, 503, `${JSON.stringify(add.json)}${out()}`);
       assert.match(String(add.json['detail']), /may or may not/);
-      // The u-try- account is deleted. Its record lists no credential (the add never landed), so a
-      // DELETE the pod refuses still deletes it here; the pod keeps the record.
+      // The account is deleted, and the pod refuses the DELETE of its record (which lists no
+      // credential: the add has not landed). The account stays, here and on the pod: 503, and its
+      // token still works. It used to be deleted here all the same (200), its record left on the pod
+      // in the state the held add was conditional on, so the add landed afterwards, and a restart
+      // loaded the deleted account with the wallet, its /try token verifying again.
       failingDeletes.add(tryId);
+      const refused = await post('/users/me/delete', {}, tryToken);
+      assert.equal(refused.status, 503, `${JSON.stringify(refused.json)}${out()}`);
+      assert.equal(refused.json['error'], 'Deletion not completed');
+      assert.ok(docs.has(tryId), 'the pod still holds the record');
+      assert.equal((await verify(tryToken)).json['valid'], true, 'the account was kept');
+      failingDeletes.delete(tryId);
+      // The pod stores the held add now: on an account that is still open, which is what the 503
+      // said. The wallet's next request settles the recorded write first, and signs in there.
+      applyLate([tryId]);
+      assert.deepEqual(heldOutcomes.filter(o => o.userId === tryId).map(o => o.applied), [true]);
+      putFaults.delete(tryId);
+      await signsInTo(siwe(w), tryId);
+      assert.equal(docs.has(derivedOf(w)), false, 'no account is opened for the wallet');
+      // A second add the same way, recorded against the account; then the deletion goes through. The
+      // record's DELETE was conditional on the state the held add was too, so that add can no longer
+      // land: nothing is left on the pod for a restart to load.
+      failPuts(tryId, 'hang-then-apply-late', ...Array.from({ length: 100 }, () => '500' as const));
+      const again = await siwe(v, { bearer: tryToken });
+      assert.equal(again.status, 503, `${JSON.stringify(again.json)}${out()}`);
+      putFaults.delete(tryId);
       const deleted = await post('/users/me/delete', {}, tryToken);
       assert.equal(deleted.status, 200, `${JSON.stringify(deleted.json)}${out()}`);
-      assert.ok(docs.has(tryId), 'the pod still holds the record');
-      putFaults.delete(tryId);
-      // The wallet's next request settles the record first: nothing a deleted id holds reaches the
-      // indexes here, so there is nothing to fence. It used to try to fence it, which writes of a
-      // deleted id are refused, so every request with the wallet (and every sweep) left the record,
-      // and the wallet answered 503 until the process restarted.
-      await signsInTo(siwe(w), derivedOf(w));
-      assert.deepEqual(record(derivedOf(w))!.walletAddresses, [w.address.toLowerCase()]);
+      assert.equal(docs.has(tryId), false, 'the record is gone');
+      applyLate([tryId]);
+      assert.deepEqual(heldOutcomes.filter(o => o.userId === tryId).map(o => o.applied), [true, false], 'the held add does not land');
+      assert.equal(docs.has(tryId), false);
+      assert.equal((await verify(tryToken)).json['valid'], false);
+      // The second wallet's next request settles its record without a request to the deleted
+      // account's pod (its deletion left nothing a pending write could land on), and the wallet
+      // opens its own account.
+      const since = mark();
+      await signsInTo(siwe(v), derivedOf(v));
+      assert.equal(docGets(tryId, since).length, 0, 'the deleted account\'s pod is not read');
+      assert.deepEqual(record(derivedOf(v))!.walletAddresses, [v.address.toLowerCase()]);
     } finally {
       failingDeletes.delete(tryId);
-      failingGets.delete(tryId);
       putFaults.delete(tryId);
+      applyLate([tryId]);
     }
   });
 
@@ -1783,6 +1827,29 @@ test('J7: a deletion whose record cannot be read says so, not that the pod refus
   assert.equal(done.status, 200, `${JSON.stringify(done.json)}${out()}`);
   assert.equal(docPuts(j7.userId, since).length, 0);
   assert.equal((await verify(token)).json['valid'], false);
+});
+
+test('U3: a u-try- account whose record another writer changes under every attempt of its deletion stays whole (503)', async () => {
+  const tried = await post('/try', {});
+  assert.equal(tried.status, 200, JSON.stringify(tried.json));
+  const id = String(tried.json['userId']);
+  const token = String(tried.json['token']);
+  // Each conditional DELETE meets a change made just before it (the other instance, say): 412, three
+  // times. The record still lists no credential, and it used to be closed here all the same (200),
+  // left on the pod as the last writer made it.
+  for (let i = 0; i < 3; i++) {
+    const h = hold('DELETE', id, 1, x => outOfBand(x, d => { d['name'] = `renamed-${i}`; }));
+    void h.arrived.then(() => h.release());
+  }
+  const r = await post('/users/me/delete', {}, token);
+  assert.equal(r.status, 503, `${JSON.stringify(r.json)}${out()}`);
+  assert.equal(r.json['error'], 'Deletion not completed');
+  assert.ok(docs.has(id), 'the record is still on the pod');
+  assert.equal((await verify(token)).json['valid'], true, 'the account was kept');
+  assert.match(primary.output(), new RegExp(`identity_authmethods_write_conflict userId=${id} context=delete-account attempts=3`));
+  const done = await post('/users/me/delete', {}, token);
+  assert.equal(done.status, 200, JSON.stringify(done.json));
+  assert.equal(docs.has(id), false);
 });
 
 test('J2: a bootstrap passkey the pod took without confirming it signs in to the seeded account, and spends the invite', async () => {
@@ -2002,28 +2069,51 @@ test('C21: a sign-out-everywhere the pod took, but that nothing could read after
   assert.equal((await me(token)).status, 401);
 });
 
-test('P8: a removal of a wallet this server\'s copy did not list yet, but the pod does, waits for the wallet\'s turn before it writes', async () => {
-  const token = await tokenFor(p8.keys[0]!, 1, p8.userId);
+test('P8: a removal of a wallet or DID this server\'s copy did not list yet, but the pod does, waits for the credential\'s turn before it writes; another account\'s removal of it does not wait', async () => {
+  const token = await tokenFor(p8.wallet.keys[0]!, 1, p8.wallet.userId);
+  const tokenD = await tokenFor(p8.did.keys[0]!, 1, p8.did.userId);
+  const stranger = await tokenFor(p8.stranger.keys[0]!, 1, p8.stranger.userId);
   const w = W();
-  // Added by the other instance after this server read the account: its copy does not list it.
-  outOfBand(p8.userId, d => { (d['walletAddresses'] as string[]).push(w.address.toLowerCase()); });
-  // A plain sign-in with the wallet holds its turn: the indexes list it nowhere, so it opens the
-  // account derived from it, and that write is held.
+  const k = didKey();
+  // Added by the other instance after this server read the accounts: its copies list neither.
+  outOfBand(p8.wallet.userId, d => { (d['walletAddresses'] as string[]).push(w.address.toLowerCase()); });
+  outOfBand(p8.did.userId, d => { (d['didKeys'] as unknown[]).push(didEntry(k)); });
+  // A plain sign-in with each holds its turn: the indexes list it nowhere, so it opens the account
+  // derived from it, and that write is held.
   const derived = deriveUserIdFromWallet(w.address.toLowerCase());
+  const derivedD = deriveUserIdFromDid(k.did);
   const held = hold('PUT', derived);
+  const heldD = hold('PUT', derivedD);
   const first = siwe(w);
+  const firstD = didSignIn(k);
   assert.ok(await within(held.arrived, 5_000), `no write arrived${out()}`);
-  // The removal finds the wallet on the record as the pod holds it, writes nothing there, and runs
-  // again in the turn, behind the sign-in. It used to remove it there and then, outside the turn.
-  const since = mark();
+  assert.ok(await within(heldD.arrived, 5_000), `no write arrived${out()}`);
+  // Another account, whose record lists neither, removes each from itself: 404 at once, and nothing
+  // is written. Any account can ask that, so it is not queued in the credential's turn, where it
+  // could hold up the owner's sign-ins.
+  let since = mark();
+  const strangerW = del(`/auth-methods/me/wallet/${w.address.toLowerCase()}`, stranger);
+  const strangerD = del('/auth-methods/me/did', stranger, { did: k.did });
+  assert.deepEqual(await Promise.all([within(strangerW, 2_000), within(strangerD, 2_000)]), [true, true],
+    'a stranger\'s removal waited for the credential\'s turn');
+  for (const r of [await strangerW, await strangerD]) assert.equal(r.status, 404, JSON.stringify(r.json));
+  assert.equal(docPuts(p8.stranger.userId, since).length, 0);
+  // The owners' removals find each on the record as the pod holds it, write nothing there, and run
+  // again in the turn, behind the sign-in. They used to remove it there and then, outside the turn.
+  since = mark();
   const removal = del(`/auth-methods/me/wallet/${w.address.toLowerCase()}`, token);
+  const removalD = del('/auth-methods/me/did', tokenD, { did: k.did });
   assert.equal(await within(removal, 1_000), false, 'the removal was answered while the wallet\'s turn was held');
-  assert.equal(docPuts(p8.userId, since).length, 0, 'nothing was written outside the turn');
+  assert.equal(await within(removalD, 1_000), false, 'the removal was answered while the DID\'s turn was held');
+  assert.equal(docPuts(p8.wallet.userId, since).length, 0, 'nothing was written outside the turn');
+  assert.equal(docPuts(p8.did.userId, since).length, 0, 'nothing was written outside the turn');
   held.release();
+  heldD.release();
   await signsInTo(first, derived);
-  const r = await removal;
-  assert.equal(r.status, 200, `${JSON.stringify(r.json)}${out()}`);
-  assert.deepEqual(record(p8.userId)!.walletAddresses, []);
+  await signsInTo(firstD, derivedD);
+  for (const r of [await removal, await removalD]) assert.equal(r.status, 200, `${JSON.stringify(r.json)}${out()}`);
+  assert.deepEqual(record(p8.wallet.userId)!.walletAddresses, []);
+  assert.deepEqual(record(p8.did.userId)!.didKeys, []);
 });
 
 test('C18: an id deleted here whose record was put back without its tombstone is refused at its next first sign-in, and nothing is written', async () => {
@@ -2390,15 +2480,52 @@ test('K6: a wallet or did:key sent with a bearer that does not verify is refused
   for (const id of [invites.bearerClaim.userId, invites.bearerClaimWeb.userId]) assert.equal(docs.has(id), false, `${id}: nothing written`);
   await signsInTo(siwe(wc, bootstrap(invites.bearerClaim)), invites.bearerClaim.userId);
   await signsInTo(didSignIn(kw, { did: web, ...bootstrap(invites.bearerClaimWeb) }), invites.bearerClaimWeb.userId);
+  // The /connect page sends the add-device token with every request while its field is filled, so
+  // a stale one there makes a sign-in or an invite claim 401: the page says to clear it.
+  const page = await (await fetch(`${primary.base}/connect`)).text();
+  const script = page.slice(page.indexOf('<script>') + '<script>'.length, page.lastIndexOf('</script>'));
+  assert.doesNotThrow(() => new Function(script), 'the page\'s script parses');
+  const from = script.indexOf('function staleTokenHint(');
+  assert.ok(from >= 0, 'the /connect page explains a stale add-device token');
+  const hint = new Function(`${script.slice(from, script.indexOf('\n}', from) + 2)}; return staleTokenHint;`)() as
+    (status: number, error: unknown, adv: { addDeviceToken: string; bootstrapUserId: string }) => string;
+  assert.match(hint(401, claimW.json['error'], { addDeviceToken: 'not-a-token', bootstrapUserId: invites.bearerClaim.userId }), /clear it to claim the invite/);
+  assert.match(hint(401, 'Invalid bearer token: Token expired', { addDeviceToken: 'x', bootstrapUserId: '' }), /clear it to sign in/);
+  assert.equal(hint(401, 'This wallet is not registered.', { addDeviceToken: 'x', bootstrapUserId: '' }), '');
+  assert.equal(hint(401, 'Invalid bearer token: Token expired', { addDeviceToken: '', bootstrapUserId: '' }), '');
+  // A bearer whose account could not be read is a 503 on the other routes that act on the bearer's
+  // own account too: a link, a device's registration options, a removal. They answered 401, which
+  // tells a client its token is no good.
+  const tokenL = tokenSignedElsewhere(k6.link.userId);
+  const wl = W();
+  const unreadable = [
+    () => linkWallet(wl, tokenL),
+    () => post('/auth/webauthn/register-options', { name: 'Device' }, tokenL),
+    () => del(`/auth-methods/me/wallet/${wl.address.toLowerCase()}`, tokenL),
+  ];
+  for (const send of unreadable) {
+    failingGets.set(k6.link.userId, 1);
+    const r = await send();
+    assert.equal(r.status, 503, `${JSON.stringify(r.json)}${out()}`);
+    assert.equal(r.json['error'], 'Could not read the account for this token just now');
+  }
+  assert.deepEqual(record(k6.link.userId)!.walletAddresses, []);
+  const linked = await linkWallet(wl, tokenL);
+  assert.equal(linked.status, 200, JSON.stringify(linked.json));
+  assert.deepEqual(record(k6.link.userId)!.walletAddresses, [wl.address.toLowerCase()]);
 });
 
-test('K7: a Play guest\'s bearer whose owner\'s record cannot be read for a moment is answered 503 (try again), not 401', async () => {
+test('K7: a Play guest\'s bearer whose owner\'s record cannot be read for a moment is answered 503 (try again) wherever it adds to or acts on the account; one whose anchor does not open to the owner is 401; and a deletion the pod refuses keeps the account', async () => {
   // A guest claims its Play owner by adding a wallet or DID with its bearer. Its check reads the
   // owner's anchor from the pod; a read that failed was answered 401 "Provisional owner unavailable"
-  // and told to sign in again, where every other unreadable bearer account is a 503.
+  // and told to sign in again. /auth/siwe and /auth/did answer 503 for it; so do /wallet/link, a
+  // device's registration options and every route that acts on the bearer's own account.
   const derivedOf = (w: AnyWallet) => deriveUserIdFromWallet(w.address.toLowerCase());
   const port = await freePort();
-  const owner = livePlayGuest(`http://127.0.0.1:${port}`);
+  const issuer = `http://127.0.0.1:${port}`;
+  const owner = livePlayGuest(issuer);
+  const sealedElsewhere = livePlayGuest(issuer, crypto.randomBytes(32));
+  const leaving = livePlayGuest(issuer);
   const play = await startIdentity(port, { CSS_PUBLIC_URL: 'https://pods.example/', PROVISIONAL_PLAY_CLIENTS: PLAY_CLIENTS });
   try {
     const w = W();
@@ -2410,16 +2537,96 @@ test('K7: a Play guest\'s bearer whose owner\'s record cannot be read for a mome
     failingGets.set(owner.id, 1);
     const addD = await didSignIn(k, { bearer: owner.token }, play);
     assert.equal(addD.status, 503, `${JSON.stringify(addD.json)}${out(play)}`);
+    const others = [
+      () => linkWallet(W(), owner.token, play),
+      () => post('/auth/webauthn/register-options', { name: 'Device' }, owner.token, play),
+      () => call(play, 'GET', '/agents/me', undefined, owner.token),
+      () => del(`/auth-methods/me/wallet/${w.address.toLowerCase()}`, owner.token, undefined, play),
+    ];
+    for (const send of others) {
+      failingGets.set(owner.id, 1);
+      const r = await send();
+      assert.equal(r.status, 503, `${JSON.stringify(r.json)}${out(play)}`);
+      assert.equal(r.json['error'], 'Could not read the account for this token just now');
+    }
     assert.deepEqual(record(owner.id)!.walletAddresses, []);
     assert.equal(docs.has(derivedOf(w)), false, 'no account is opened for the wallet');
     assert.equal(docs.has(deriveUserIdFromDid(k.did)), false, 'no account is opened for the did:key');
     // Readable again: the same request adds the wallet to the owner.
     await signsInTo(siwe(w, { bearer: owner.token }, play), owner.id, play);
     assert.deepEqual(record(owner.id)!.walletAddresses, [w.address.toLowerCase()]);
+    // An owner whose anchor does not open to it (sealed with another key): 401, as before, with
+    // nothing added and no account opened. A read that fails is a 503; this is a refusal.
+    const w2 = W();
+    const k2 = didKey();
+    const w3 = W();
+    for (const r of [await siwe(w2, { bearer: sealedElsewhere.token }, play), await didSignIn(k2, { bearer: sealedElsewhere.token }, play),
+      await linkWallet(w3, sealedElsewhere.token, play)]) {
+      assert.equal(r.status, 401, `${JSON.stringify(r.json)}${out(play)}`);
+      assert.match(String(r.json['error']), /Provisional owner unavailable/);
+    }
+    assert.deepEqual(record(sealedElsewhere.id)!.walletAddresses, []);
+    assert.deepEqual(record(sealedElsewhere.id)!.didKeys, []);
+    for (const id of [derivedOf(w2), deriveUserIdFromDid(k2.did), derivedOf(w3)]) assert.equal(docs.has(id), false, `${id}: no account is opened`);
+    // A guest's deletion whose DELETE the pod refuses: 503, and the owner stays, its token working.
+    // It answered 200 deleted, while the anchor stayed on the pod, so the guest token verified again
+    // at once.
+    failingDeletes.add(leaving.id);
+    const refused = await post('/users/me/delete', {}, leaving.token, play);
+    assert.equal(refused.status, 503, `${JSON.stringify(refused.json)}${out(play)}`);
+    assert.equal(refused.json['error'], 'Deletion not completed');
+    assert.ok(docs.has(leaving.id));
+    assert.equal((await verify(leaving.token, play)).json['valid'], true);
+    failingDeletes.delete(leaving.id);
+    const deleted = await post('/users/me/delete', {}, leaving.token, play);
+    assert.equal(deleted.status, 200, `${JSON.stringify(deleted.json)}${out(play)}`);
+    assert.equal(docs.has(leaving.id), false);
+    assert.equal((await verify(leaving.token, play)).json['valid'], false);
   } finally {
     failingGets.delete(owner.id);
+    failingDeletes.delete(leaving.id);
     await play.stop();
   }
+});
+
+test('K8: a bearer add whose account is deleted while the request waits, for the DID\'s turn or for the read of the wallet\'s derived account, is refused, and opens no account', async () => {
+  const derivedOf = (w: AnyWallet) => deriveUserIdFromWallet(w.address.toLowerCase());
+  const tokenY = await tokenFor(k8.y.keys[0]!, 1, k8.y.userId);
+  const tokenDidX = await tokenFor(k8.didX.keys[0]!, 1, k8.didX.userId);
+  const tokenWalletX = await tokenFor(k8.walletX.keys[0]!, 1, k8.walletX.userId);
+  // /auth/did: account Y removes the did:key, in its turn, and that write is held. X's add of the
+  // same did:key verifies its bearer on arrival and waits for the turn, while X is deleted.
+  const held = hold('PUT', k8.y.userId);
+  const removal = del('/auth-methods/me/did', tokenY, { did: k8key.did });
+  assert.ok(await within(held.arrived, 5_000), `no write arrived${out()}`);
+  const addD = didSignIn(k8key, { bearer: tokenDidX });
+  assert.equal(await within(addD, 500), false, 'the add waits for the DID\'s turn');
+  const gone = await post('/users/me/delete', {}, tokenDidX);
+  assert.equal(gone.status, 200, JSON.stringify(gone.json));
+  held.release();
+  assert.equal((await removal).status, 200);
+  // No account holds the did:key now, and the bearer's account is gone: refused, as a bearer deleted
+  // before the request is. It used to go on as a first sign-in and open the account derived from it.
+  const d = await addD;
+  assert.equal(d.status, 401, `${JSON.stringify(d.json)}${out()}`);
+  assert.match(String(d.json['error']), /Account deleted/);
+  assert.equal(docs.has(deriveUserIdFromDid(k8key.did)), false, 'no account is opened for the did:key');
+  // /auth/siwe checks the bearer in the wallet's turn, then reads the account derived from the wallet
+  // (walletHolder); X is deleted while that read is held.
+  const w = W();
+  const read = hold('GET', derivedOf(w));
+  const addW = siwe(w, { bearer: tokenWalletX });
+  assert.ok(await within(read.arrived, 5_000), `no read arrived${out()}`);
+  const goneW = await post('/users/me/delete', {}, tokenWalletX);
+  assert.equal(goneW.status, 200, JSON.stringify(goneW.json));
+  read.release();
+  const r = await addW;
+  assert.equal(r.status, 401, `${JSON.stringify(r.json)}${out()}`);
+  assert.match(String(r.json['error']), /Account deleted/);
+  assert.equal(docs.has(derivedOf(w)), false, 'no account is opened for the wallet');
+  // Without a bearer, each opens its own account, as any first sign-in does.
+  await signsInTo(didSignIn(k8key), deriveUserIdFromDid(k8key.did));
+  await signsInTo(siwe(w), derivedOf(w));
 });
 
 test('S9: an add that waits while its account signs out everywhere adds nothing: a DID or wallet waiting for its turn, a device between its options and its registration', async () => {
@@ -2483,38 +2690,64 @@ test('S9: an add that waits while its account signs out everywhere adds nothing:
   assert.equal((await signIn(key, 1)).status, 401);
 });
 
-test('S10: unconfirmed writes are settled in the background when their credential never comes back, and at most UNCONFIRMED_WRITES_MAX are held', async () => {
+test('S10: unconfirmed writes are settled in the background when their credential never comes back; at most UNCONFIRMED_WRITES_MAX are held, at most half of them for first sign-ins, and a bearer\'s add that finds them full is told to add it again', async () => {
   const derivedOf = (w: AnyWallet) => deriveUserIdFromWallet(w.address.toLowerCase());
-  const bg = await startIdentity(await freePort(), { UNCONFIRMED_SETTLE_MS: '300', UNCONFIRMED_WRITES_MAX: '2' });
+  const bg = await startIdentity(await freePort(), { UNCONFIRMED_SETTLE_MS: '300', UNCONFIRMED_WRITES_MAX: '4' });
   const unconfirmedWrites = async () => ((await (await fetch(`${bg.base}/health`)).json()) as { unconfirmedWrites: number }).unconfirmedWrites;
   const ws = [W(), W(), W()];
+  const adds = s10.map(() => W());
+  const ids = [...ws.map(derivedOf), ...s10.map(a => a.userId)];
+  /** The pod applies the next write of `id`, answers 500, and then cannot be read: nothing settles it. */
+  const unsettled = (id: string) => {
+    failPuts(id, 'apply-then-500');
+    const put = hold('PUT', id, 1, () => { failingGets.set(id, 1_000); });
+    void put.arrived.then(() => put.release());
+  };
   try {
-    // First sign-ins of throwaway wallets: the pod applies each write, answers 500, and then cannot
-    // be read, so nothing settles it and each is recorded (the third finds the records full).
+    const tokens = await Promise.all(s10.map(a => tokenFor(a.keys[0]!, 1, a.userId, bg)));
+    // First sign-ins of throwaway wallets, which any request can make: each is recorded until they
+    // hold half of the records (two of four), and the third finds that half full.
     for (const w of ws) {
-      const id = derivedOf(w);
-      failPuts(id, 'apply-then-500');
-      const put = hold('PUT', id, 1, () => { failingGets.set(id, 1_000); });
-      void put.arrived.then(() => put.release());
+      unsettled(derivedOf(w));
       const r = await siwe(w, {}, bg);
       assert.equal(r.status, 503, `${JSON.stringify(r.json)}${out(bg)}`);
       assert.match(String(r.json['detail']), /may or may not/);
     }
     assert.equal(await unconfirmedWrites(), 2, 'the third was not recorded');
-    assert.match(bg.output(), new RegExp(`identity_unconfirmed_writes_full max=2 userId=${derivedOf(ws[2]!)}`));
-    // While the pods cannot be read, the sweep keeps both, and says so.
+    assert.match(bg.output(), new RegExp(`identity_unconfirmed_writes_full max=2 scope=first-sign-ins userId=${derivedOf(ws[2]!)}`));
+    // Bearer adds that nothing could settle still have the other half: two are recorded, and the
+    // third finds the records full. Its 503 says to add it again with the same bearer, not to sign in
+    // with the wallet: such a sign-in reads none of the accounts the indexes do not name for it.
+    const answers = [];
+    for (const [i, a] of s10.entries()) {
+      unsettled(a.userId);
+      answers.push(await siwe(adds[i]!, { bearer: tokens[i] }, bg));
+    }
+    for (const r of answers) assert.equal(r.status, 503, `${JSON.stringify(r.json)}${out(bg)}`);
+    for (const r of answers.slice(0, 2)) assert.match(String(r.json['detail']), /Try signing in with this wallet/);
+    assert.match(String(answers[2]!.json['detail']), /Add it again with the same bearer token/);
+    assert.doesNotMatch(String(answers[2]!.json['detail']), /Try signing in/);
+    assert.equal(await unconfirmedWrites(), 4);
+    assert.match(bg.output(), new RegExp(`identity_unconfirmed_writes_full max=4 scope=all userId=${s10[2]!.userId}`));
+    // While the pods cannot be read, the sweep keeps all four, and says so.
     await sleep(800);
-    assert.equal(await unconfirmedWrites(), 2);
-    assert.match(bg.output(), /WARN identity_unconfirmed_writes_unsettled left=2/);
-    // Readable again, and nobody signs in with these wallets: the sweep settles both anyway. They used
-    // to stay recorded for the life of the process.
-    for (const w of ws) failingGets.delete(derivedOf(w));
+    assert.equal(await unconfirmedWrites(), 4);
+    assert.match(bg.output(), /WARN identity_unconfirmed_writes_unsettled left=4/);
+    // Readable again. The third owner does as its 503 said: the same add, with the same bearer, finds
+    // the wallet on its record (the pod took the first one) and signs in there, opening nothing else.
+    for (const id of ids) failingGets.delete(id);
+    await signsInTo(siwe(adds[2]!, { bearer: tokens[2] }, bg), s10[2]!.userId, bg);
+    assert.deepEqual(record(s10[2]!.userId)!.walletAddresses, [adds[2]!.address.toLowerCase()]);
+    // Nobody signs in with the other wallets: the sweep settles their records anyway. They used to
+    // stay recorded for the life of the process.
     const deadline = Date.now() + 5_000;
     while (await unconfirmedWrites() > 0 && Date.now() < deadline) await sleep(100);
     assert.equal(await unconfirmedWrites(), 0, `the records were never settled${out(bg)}`);
     for (const w of ws) await signsInTo(siwe(w, {}, bg), derivedOf(w), bg);
+    for (const [i, w] of adds.entries()) await signsInTo(siwe(w, {}, bg), s10[i]!.userId, bg);
+    for (const w of adds) assert.equal(docs.has(derivedOf(w)), false, 'no account is opened for the wallet');
   } finally {
-    for (const w of ws) failingGets.delete(derivedOf(w));
+    for (const id of ids) failingGets.delete(id);
     await bg.stop();
   }
 });

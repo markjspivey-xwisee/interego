@@ -5,7 +5,8 @@
  * credential, and when none does its first-time path opens the account derived from it (under
  * that account's own lock). A request that puts the credential on an account (a bearer adding it
  * through /auth/siwe or /auth/did, /wallet/link, a first sign-in) changes those indexes only once
- * the pod has the write (auth-methods-writer.ts), about 2.5 s on CSS. Two things followed:
+ * the pod has the write (auth-methods-writer.ts): a read and a write, over a second on CSS. Two
+ * things followed:
  *   - a sign-in decided while such a write was in flight found no holder, and opened the derived
  *     account beside the account the credential was being added to. The derived account is
  *     preferred where several hold a wallet or a did:key, so it kept the credential's sign-ins
@@ -33,9 +34,13 @@
  *     is running, so on pods that do not answer a pass takes about one read timeout per record,
  *     and a record is visited once per pass rather than once a minute. A credential that never
  *     comes back (a throwaway wallet whose first sign-in met a failing pod) is dropped that way.
- *     At most `maxRecorded` are held at once: past that, `unconfirmed` records nothing and says
- *     so (false), and the caller's answer is the same 503 without the guarantee for that
- *     credential.
+ *     At most `maxRecorded` are held at once, and at most `maxFirstSignIns` of them (half, by
+ *     default) for first sign-ins that opened the account derived from the credential: those are
+ *     the ones a request with no bearer and no invite can make, so a flood of them during an
+ *     outage leaves the rest for writes made with a bearer or an invite. Past either bound,
+ *     `unconfirmed` records nothing and says which bound it met, and the caller answers without
+ *     the guarantee for that credential (server.ts tells a bearer's add to add it again with the
+ *     same bearer, which reads the account under its lock, rather than to sign in with it).
  * A turn waits at most `waitMs` for the turns before it ('busy'), then decides nothing; the
  * turns after it still wait for the one that holds the turn. A turn is not re-entrant: a request
  * takes one credential's turn once. Process-local, as the account lock is: another instance
@@ -57,7 +62,15 @@ export interface CredentialDecisionDeps {
   waitMs: number;
   /** At most this many unconfirmed writes are recorded at once (default 10,000). */
   maxRecorded?: number;
+  /**
+   * At most this many of them for first sign-ins of the account derived from the credential
+   * (`unconfirmed(..., { firstSignIn: true })`). Default: half of maxRecorded, rounded down.
+   */
+  maxFirstSignIns?: number;
 }
+
+/** What `unconfirmed` did: recorded the write, or met one of its bounds and recorded nothing. */
+export type Recording = 'recorded' | 'full' | 'first-sign-ins-full';
 
 export type Turn<T> =
   | { readonly kind: 'decided'; readonly value: T }
@@ -75,10 +88,13 @@ export interface CredentialDecisions {
   /**
    * A write of `credential` on `userId` (putting it there, or removing it) failed, and whether the
    * pod took it is not known: the credential's next turn reads `userId` first (passing `pending`
-   * to readAccount). Called inside the credential's turn. False when `maxRecorded` writes are
-   * recorded already: nothing is recorded then.
+   * to readAccount). Called inside the credential's turn. `firstSignIn`: the write was a first
+   * sign-in opening the account derived from the credential (no bearer, no invite). Nothing is
+   * recorded when `maxRecorded` writes are recorded already ('full'), or when this one is a first
+   * sign-in and `maxFirstSignIns` of those are ('first-sign-ins-full'); a credential recorded
+   * already keeps its place either way.
    */
-  unconfirmed(credential: string, userId: string, pending?: unknown): boolean;
+  unconfirmed(credential: string, userId: string, pending?: unknown, opts?: { firstSignIn?: boolean }): Recording;
   /** The account an unconfirmed write of the credential was for, if one is recorded. */
   unconfirmedFor(credential: string): string | undefined;
   /**
@@ -96,8 +112,15 @@ export interface CredentialDecisions {
 
 export function createCredentialDecisions(deps: CredentialDecisionDeps): CredentialDecisions {
   const turns = new Map<string, Promise<void>>();
-  const unconfirmed = new Map<string, { userId: string; pending: unknown }>();
+  const unconfirmed = new Map<string, { userId: string; pending: unknown; firstSignIn: boolean }>();
   const maxRecorded = deps.maxRecorded ?? 10_000;
+  const maxFirstSignIns = deps.maxFirstSignIns ?? Math.floor(maxRecorded / 2);
+  // How many of the records are first sign-ins'.
+  let firstSignIns = 0;
+  const drop = (credential: string) => {
+    if (unconfirmed.get(credential)?.firstSignIn) firstSignIns--;
+    unconfirmed.delete(credential);
+  };
   const decisions: CredentialDecisions = {
     async decide<T>(credential: string, decide: () => Promise<T>): Promise<Turn<T>> {
       const before = turns.get(credential) ?? Promise.resolve();
@@ -128,7 +151,7 @@ export function createCredentialDecisions(deps: CredentialDecisionDeps): Credent
           } catch (err) {
             return { kind: 'unreadable', userId: recorded.userId, reason: (err as Error).message };
           }
-          unconfirmed.delete(credential);
+          drop(credential);
         }
         return { kind: 'decided', value: await decide() };
       } finally {
@@ -137,11 +160,17 @@ export function createCredentialDecisions(deps: CredentialDecisionDeps): Credent
         if (started) forget();
       }
     },
-    unconfirmed(credential, userId, pending) {
+    unconfirmed(credential, userId, pending, opts = {}) {
+      const firstSignIn = opts.firstSignIn === true;
       // A credential recorded already keeps its place; only a new one can be refused.
-      if (!unconfirmed.has(credential) && unconfirmed.size >= maxRecorded) return false;
-      unconfirmed.set(credential, { userId, pending });
-      return true;
+      if (!unconfirmed.has(credential)) {
+        if (unconfirmed.size >= maxRecorded) return 'full';
+        if (firstSignIn && firstSignIns >= maxFirstSignIns) return 'first-sign-ins-full';
+      }
+      if (unconfirmed.get(credential)?.firstSignIn) firstSignIns--;
+      if (firstSignIn) firstSignIns++;
+      unconfirmed.set(credential, { userId, pending, firstSignIn });
+      return 'recorded';
     },
     unconfirmedFor: credential => unconfirmed.get(credential)?.userId,
     async settleRecorded() {
