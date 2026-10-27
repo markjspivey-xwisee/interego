@@ -23,6 +23,8 @@ import * as http from 'node:http';
 import * as net from 'node:net';
 import { fileURLToPath } from 'node:url';
 import { deriveUserIdFromDid } from '../derive-userid.js';
+import { closeServer, stopChild } from './teardown.js';
+import { publicJwk } from './public-jwk.js';
 
 const now = new Date().toISOString();
 
@@ -36,7 +38,7 @@ function base58(bytes: Uint8Array): string {
 }
 function ed25519() {
   const { publicKey, privateKey } = crypto.generateKeyPairSync('ed25519');
-  const raw = Buffer.from(publicKey.export({ format: 'jwk' }).x!, 'base64url');
+  const raw = Buffer.from(publicJwk(publicKey).x!, 'base64url');
   return {
     multibase: `z${base58(Buffer.concat([Buffer.from([0xed, 0x01]), raw]))}`,
     // The server's original encoding, still accepted (and still on pods).
@@ -180,8 +182,8 @@ before(async () => {
 });
 
 after(async () => {
-  identity?.kill('SIGTERM');
-  await new Promise<void>(resolve => podServer?.close(() => resolve()));
+  await stopChild(identity);
+  await closeServer(podServer);
 });
 
 test('a registered did:web refuses a key its account does not list, issues nothing and writes nothing', async () => {

@@ -32,6 +32,7 @@ import * as net from 'node:net';
 import { fileURLToPath } from 'node:url';
 import { Wallet } from 'ethers';
 import { deriveUserIdFromWallet } from '../derive-userid.js';
+import { closeServer, stopChild } from './teardown.js';
 
 const now = new Date().toISOString();
 type Signer = { address: string; signMessage(message: string): Promise<string> };
@@ -133,14 +134,21 @@ async function startIdentity(podPort: number, sink: { text: string }, ready: (h:
   proc.stdout!.on('data', d => { sink.text += String(d); });
   proc.stderr!.on('data', d => { sink.text += String(d); });
   const deadline = Date.now() + 60_000;
-  for (;;) {
-    if (proc.exitCode !== null) throw new Error(`identity server exited ${proc.exitCode}:\n${sink.text}`);
-    try {
-      const health = await (await fetch(`${url}/health`)).json() as { accountIndex: { complete: boolean } };
-      if (ready(health.accountIndex)) break;
-    } catch { /* not listening yet */ }
-    if (Date.now() > deadline) throw new Error(`identity server did not start:\n${sink.text}`);
-    await new Promise(resolve => setTimeout(resolve, 100));
+  try {
+    for (;;) {
+      if (proc.exitCode !== null) throw new Error(`identity server exited ${proc.exitCode}:\n${sink.text}`);
+      try {
+        const health = await (await fetch(`${url}/health`)).json() as { accountIndex: { complete: boolean } };
+        if (ready(health.accountIndex)) break;
+      } catch { /* not listening yet */ }
+      if (Date.now() > deadline) throw new Error(`identity server did not start:\n${sink.text}`);
+      await new Promise(resolve => setTimeout(resolve, 100));
+    }
+  } catch (err) {
+    // No caller holds `proc` yet, so no after() hook could stop it: a live child would keep
+    // this file's process (and the whole run) waiting for ever.
+    await stopChild(proc);
+    throw err;
   }
   return { proc, url };
 }
@@ -221,10 +229,8 @@ before(async () => {
 });
 
 after(async () => {
-  identity?.kill('SIGTERM');
-  identity2?.kill('SIGTERM');
-  await new Promise<void>(resolve => podServer?.close(() => resolve()));
-  await new Promise<void>(resolve => podServer2?.close(() => resolve()));
+  await Promise.all([stopChild(identity), stopChild(identity2)]);
+  await Promise.all([closeServer(podServer), closeServer(podServer2)]);
 });
 
 test('a message the victim\'s wallet signed for another site, replayed to /siwe/verify, gets 410 and no token', async () => {
@@ -520,7 +526,7 @@ test('the relay host guessed from BASE_URL is not a sign-in domain; RELAY_URL is
     assert.match(sink.text, /acme-mcp\.invalid \(RELAY_URL\)/);
     assert.doesNotMatch(sink.text.split('\n').find(l => l.includes('SIWE domains')) ?? '', /acme-relay/);
   } finally {
-    proc?.kill('SIGTERM');
-    await new Promise<void>(resolve => pods3.server.close(() => resolve()));
+    await stopChild(proc);
+    await closeServer(pods3.server);
   }
 });

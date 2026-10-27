@@ -25,6 +25,8 @@ import * as net from 'node:net';
 import { fileURLToPath } from 'node:url';
 import { Wallet } from 'ethers';
 import { deriveUserIdFromDid, deriveUserIdFromWallet } from '../derive-userid.js';
+import { closeServer, stopChild } from './teardown.js';
+import { publicJwk } from './public-jwk.js';
 
 const now = new Date().toISOString();
 const passkey = (id: string) => ({ id, publicKey: 'AA', counter: 0, createdAt: now });
@@ -52,7 +54,7 @@ function base58(bytes: Uint8Array): string {
 }
 function ed25519() {
   const { publicKey, privateKey } = crypto.generateKeyPairSync('ed25519');
-  const raw = Buffer.from(publicKey.export({ format: 'jwk' }).x!, 'base64url');
+  const raw = Buffer.from(publicJwk(publicKey).x!, 'base64url');
   return { multibase: `z${base58(Buffer.concat([Buffer.from([0xed, 0x01]), raw]))}`, privateKey };
 }
 function didKey() {
@@ -284,8 +286,8 @@ before(async () => {
 });
 
 after(async () => {
-  identity?.kill('SIGTERM');
-  await new Promise<void>(resolve => podServer?.close(() => resolve()));
+  await stopChild(identity);
+  await closeServer(podServer);
 });
 
 test('a first-time wallet whose account holds a passkey is refused, and the account is left as it was', async () => {

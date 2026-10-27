@@ -22,6 +22,7 @@ import * as net from 'node:net';
 import { fileURLToPath } from 'node:url';
 import express from 'express';
 import { forwardAsyncRouteErrors, routeErrorHandler } from '../route-errors.js';
+import { closeServer, stopChild } from './teardown.js';
 
 async function listen(app: express.Express): Promise<{ base: string; close: () => Promise<void> }> {
   const server = http.createServer(app);
@@ -244,8 +245,8 @@ before(async () => {
 });
 
 after(async () => {
-  identity?.kill('SIGTERM');
-  await new Promise<void>(resolve => podServer?.close(() => resolve()));
+  await stopChild(identity);
+  await closeServer(podServer);
 });
 
 test('POST /auth/did with an array `did` answers JSON and the server answers /health afterwards', async () => {

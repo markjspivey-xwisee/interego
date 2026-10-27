@@ -24,6 +24,8 @@ import * as net from 'node:net';
 import { fileURLToPath } from 'node:url';
 import { Wallet } from 'ethers';
 import { deriveUserIdFromCredentialId, deriveUserIdFromDid, deriveUserIdFromWallet } from '../derive-userid.js';
+import { closeServer, stopChild } from './teardown.js';
+import { publicJwk } from './public-jwk.js';
 
 // ── A software authenticator ('none' attestation; see passkey-register-routes.test.ts) ──
 function cbor(v: unknown): Buffer {
@@ -39,7 +41,7 @@ function cbor(v: unknown): Buffer {
 
 function softPasskey(rawId: Buffer = crypto.randomBytes(16)) {
   const { publicKey, privateKey } = crypto.generateKeyPairSync('ec', { namedCurve: 'P-256' });
-  const jwk = publicKey.export({ format: 'jwk' });
+  const jwk = publicJwk(publicKey);
   const cose = cbor(new Map<number, unknown>([[1, 2], [3, -7], [-1, 1],
     [-2, Buffer.from(jwk.x!, 'base64url')], [-3, Buffer.from(jwk.y!, 'base64url')]]));
   const id = rawId.toString('base64url');
@@ -69,7 +71,7 @@ function attest(key: SoftPasskey, challenge: string, origin: string, rpId: strin
 function didKey() {
   const B58 = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
   const { publicKey, privateKey } = crypto.generateKeyPairSync('ed25519');
-  const bytes = Buffer.concat([Buffer.from([0xed, 0x01]), Buffer.from(publicKey.export({ format: 'jwk' }).x!, 'base64url')]);
+  const bytes = Buffer.concat([Buffer.from([0xed, 0x01]), Buffer.from(publicJwk(publicKey).x!, 'base64url')]);
   let n = BigInt(`0x${bytes.toString('hex')}`);
   let out = '';
   while (n > 0n) { out = B58[Number(n % 58n)] + out; n /= 58n; }
@@ -99,7 +101,12 @@ function deferred() {
   const promise = new Promise<void>(r => { resolve = r; });
   return { promise, resolve };
 }
-const within = (p: Promise<void>, ms: number) => Promise.race([p, new Promise<void>(r => setTimeout(r, ms))]);
+// The give-up timer is cleared once `p` settles: left pending, a 10s hold kept this file's
+// process alive for 10s after its last test, as every CI run of the suite showed.
+async function within(p: Promise<void>, ms: number): Promise<void> {
+  let timer: NodeJS.Timeout | undefined;
+  try { await Promise.race([p, new Promise<void>(r => { timer = setTimeout(r, ms); })]); } finally { clearTimeout(timer); }
+}
 const RACE_HOLD_MS = 1500;
 let race: { userId: string; readHeld: boolean; deletionRead: ReturnType<typeof deferred>;
   staleWrite: ReturnType<typeof deferred>; tombstone: ReturnType<typeof deferred> } | null = null;
@@ -221,10 +228,7 @@ async function startIdentity(): Promise<void> {
 }
 
 async function stopIdentity(): Promise<void> {
-  if (!identity || identity.exitCode !== null) return;
-  const exited = new Promise(resolve => identity.once('exit', resolve));
-  identity.kill('SIGTERM');
-  await exited;
+  await stopChild(identity);
 }
 
 async function call(method: string, path: string, body?: unknown, bearer?: string): Promise<{ status: number; json: Record<string, unknown> }> {
@@ -297,7 +301,7 @@ before(async () => {
 
 after(async () => {
   await stopIdentity();
-  await new Promise<void>(resolve => podServer?.close(() => resolve()));
+  await closeServer(podServer);
 });
 
 const deletedPasskey = softPasskey();
