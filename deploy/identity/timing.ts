@@ -45,11 +45,13 @@ export function logTiming(
   const parts: string[] = [`step=${label}`, `ms=${dur}`];
   for (const [k, v] of Object.entries(extras)) {
     if (v === undefined) continue;
+    // Printable ASCII only, so a value a caller sent (a DID, say) cannot break the line.
+    const value = typeof v === 'string' ? v.replace(/[^\x20-\x7e]/g, '?') : v;
     // Quote string values that contain spaces; leave numbers/bools bare.
-    if (typeof v === 'string' && /\s/.test(v)) {
-      parts.push(`${k}="${v.replace(/"/g, '\\"')}"`);
+    if (typeof value === 'string' && /\s/.test(value)) {
+      parts.push(`${k}="${value.replace(/"/g, '\\"')}"`);
     } else {
-      parts.push(`${k}=${v}`);
+      parts.push(`${k}=${value}`);
     }
   }
   // Stable prefix so log aggregators can split timings from regular logs.

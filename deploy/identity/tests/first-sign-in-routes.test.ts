@@ -90,7 +90,7 @@ const derivedUnlisted = { wallet: Wallet.createRandom(), walletOther: 'a-wallet-
   didKey: didKey(), didKeyOther: 'a-didkey-holder-listed' };
 // A did:web its owner bound first, then nine more accounts bound it, each sorting before the
 // owner: more than the cap of holders tried. Only a key's holder can bind a did:web with that
-// key (/auth/did checks a signature by it over this server's nonce first), so each of the nine
+// key (/auth/did checks a signature by it over this server's challenge first), so each of the nine
 // lists a key of its own, which never verifies the owner's signature.
 const crowdedWeb = { did: 'did:web:crowded.example', owner: ed25519(), ownerId: 'zz-web-owner',
   others: Array.from({ length: 9 }, (_, i) => ({ id: `a-web-other-${i + 1}`, key: ed25519() })) };
@@ -585,4 +585,8 @@ test('a wallet signature replayed to the retired /siwe/verify gets no token', as
   assert.equal(replay.status, 410, JSON.stringify(replay.json));
   assert.equal(replay.json['token'], undefined);
   assert.equal(replay.json['userId'], undefined);
+});
+
+test('every DID sign-in above signed the challenge\'s message', () => {
+  assert.doesNotMatch(output, /WARN identity_did_bare_nonce /);
 });

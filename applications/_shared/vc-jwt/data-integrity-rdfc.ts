@@ -174,7 +174,7 @@ export async function verifyDataIntegrityRdfcProof(signed: VerifiableCredentialR
   const sig = base58Decode(proof.proofValue.slice(1));
 
   // Recover public key from did:key in verificationMethod
-  const did = proof.verificationMethod.split('#')[0];
+  const did = proof.verificationMethod.split('#')[0] ?? '';
   if (!did.startsWith('did:key:')) {
     return { verified: false, reason: 'verifier only supports did:key issuers' };
   }

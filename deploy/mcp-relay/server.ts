@@ -851,6 +851,11 @@ interface AuthResult {
   podUrl?: string;
 }
 
+// Asks identity's POST /tokens/verify about an identity token. Carries
+// IDENTITY_INTROSPECTION_SECRET as `Authorization: Bearer <value>` when it is set (read on every
+// call). An identity server enforcing a different value answers 401, which comes back here as
+// error 'Identity server error: 401' and is the 401 `detail` of the REST route that asked. See
+// deploy/identity/AUTH-ARCHITECTURE.md for the rollout order and the three identity modes.
 async function verifyBearerToken(authHeader: string | undefined): Promise<AuthResult> {
   if (!authHeader?.startsWith('Bearer ')) {
     return { authenticated: false, error: 'Bearer token required' };
@@ -876,7 +881,14 @@ async function verifyBearerToken(authHeader: string | undefined): Promise<AuthRe
     }
     return { authenticated: false, error: data.reason ?? 'Invalid token' };
   } catch (err) {
-    return { authenticated: false, error: `Cannot reach identity server: ${(err as Error).message}` };
+    // Not the error's message: undici's header-validation error quotes the whole Authorization
+    // header (the introspection secret), and this error is returned in the 401 `detail`. Only
+    // the error's name, or a short `cause.code` (ECONNREFUSED, UND_ERR_*), is kept.
+    const e = err as { name?: unknown; cause?: { code?: unknown } };
+    const code = e?.cause?.code;
+    const label = typeof code === 'string' && /^[A-Z][A-Z0-9_]{1,40}$/.test(code) ? code
+      : typeof e?.name === 'string' && /^[A-Za-z]{1,40}$/.test(e.name) ? e.name : 'Error';
+    return { authenticated: false, error: `Cannot reach identity server (${label})` };
   }
 }
 
@@ -14849,6 +14861,8 @@ app.get('/health', (_req, res) => {
     tools: TOOL_SURFACE.tools.length,
     auth: 'bearer-token',
     x402: true,
+    // Whether verifyBearerToken presents a bearer to identity's /tokens/verify; never the value.
+    identityVerifyAuth: Boolean(process.env['IDENTITY_INTROSPECTION_SECRET']),
     build: process.env['INTEREGO_BUILD_SHA'] ?? 'unset',
     mcpServerVersion: MCP_SERVER_VERSION,
     toolSurfaceDigest: TOOL_SURFACE_DIGEST,

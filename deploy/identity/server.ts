@@ -39,6 +39,7 @@ import {
   getCachedParsedDid,
   setCachedParsedDid,
   getOrCreateEd25519VerifyKey,
+  isSmallOrderEd25519Key,
 } from './did-parse.js';
 import { startTiming, logTiming, timingEnabled } from './timing.js';
 import {
@@ -85,7 +86,7 @@ import {
   surfaceAgentLabel,
   type DelegationScope,
 } from './surface-agent-restore.js';
-import { clientIp, createLimiter, rateLimit, sendRateLimited } from './rate-limit.js';
+import { clientIp, createLimiter, limitByIp, rateLimit, sendRateLimited } from './rate-limit.js';
 import { forwardAsyncRouteErrors, installProcessSafetyNet, routeErrorHandler } from './route-errors.js';
 import { parseSiweMessage, SIWE_DOMAIN_SUFFIX } from './siwe-message.js';
 
@@ -147,26 +148,58 @@ const REPO_URL = process.env['REPO_URL'] ?? 'https://github.com/markjspivey-xwis
 const ONTOLOGY_URL = 'https://markjspivey-xwisee.github.io/interego/ns/iep#';
 const TOKEN_TTL_SECONDS = 86400; // 24 hours
 
-// Shared secret guarding POST /tokens/verify. Mirrors the relay's
-// /verify-token introspection-secret pattern: any legitimate caller
-// (the css-gate today) carries `Authorization: Bearer <secret>`. Without
-// this gate the endpoint is an open oracle that lets an attacker
-// confirm a captured bearer is a live identity token AND harvest its
-// bound userId / agentId / scope for downstream targeting. Token-forging
-// is already prevented by TOKEN_SIGNING_KEY; this is info-disclosure
-// tightening on the verification surface.
+// Shared secret guarding POST /tokens/verify. Mirrors the relay's /verify-token
+// introspection-secret pattern. Without it the endpoint is an open oracle: anyone holding a
+// captured bearer can confirm it is a live identity token and read its bound userId / agentId /
+// scope for downstream targeting. Token-forging is already prevented by TOKEN_SIGNING_KEY; this
+// is information-disclosure tightening on the verification surface.
 //
-// Rollout: introspection now FAILS CLOSED by default. Operators choose one of:
-//   - set IDENTITY_INTROSPECTION_SECRET (and have callers present it) → enforced, OR
-//   - set ALLOW_OPEN_INTROSPECTION=1 → explicit, warned opt-in to the legacy open
-//     oracle for the migration window only.
-// With neither set, /tokens/verify returns 401 (instead of silently being an open
-// oracle that a forgotten env var leaves exposed). Symmetric with how the relay's
-// /verify-token fails closed and how TOKEN_SIGNING_KEY warns loudly when unset.
+// Two callers send `Authorization: Bearer <IDENTITY_INTROSPECTION_SECRET>` whenever their own
+// copy of the variable is non-empty: the relay (deploy/mcp-relay/server.ts verifyBearerToken,
+// which reads it on every call) and css-gate (deploy/css-gate/server.mjs, which reads it at
+// start). All three services must hold the same value.
+//
+// The mode is fixed at startup:
+//   - IDENTITY_INTROSPECTION_SECRET set → enforced. ALLOW_OPEN_INTROSPECTION is then ignored,
+//     and kept only as the rollback (delete the secret and redeploy → open again).
+//   - secret empty and ALLOW_OPEN_INTROSPECTION=1 → open, with a startup warning.
+//   - neither → disabled: /tokens/verify answers 401 to everyone, instead of silently being an
+//     open oracle that a forgotten env var leaves exposed. Symmetric with how the relay's
+//     /verify-token fails closed and how TOKEN_SIGNING_KEY warns loudly when unset.
+// The rollout order, the rollback, and the oldest relay and css-gate images that send the
+// header are in deploy/identity/AUTH-ARCHITECTURE.md.
 const IDENTITY_INTROSPECTION_SECRET = process.env['IDENTITY_INTROSPECTION_SECRET'] ?? '';
 const ALLOW_OPEN_INTROSPECTION = process.env['ALLOW_OPEN_INTROSPECTION'] === '1';
+type IntrospectionMode = 'enforced' | 'open' | 'disabled';
+const INTROSPECTION_MODE: IntrospectionMode = IDENTITY_INTROSPECTION_SECRET ? 'enforced' : ALLOW_OPEN_INTROSPECTION ? 'open' : 'disabled';
 
-function log(msg: string) { console.log(`[identity] ${msg}`); }
+// DID sign-in transition. A did-sig challenge carries a message naming this server
+// (didSignInMessage), and /auth/did verifies the signature over it. A signature over the bare
+// nonce names no server. While this setting is on, such a signature is still accepted and each
+// sign-in made with one is logged as identity_did_bare_nonce, so the clients still sending one
+// can be found.
+// Surrounding whitespace is ignored. Unset, empty or '1': on (the default for now). '0': refused
+// with 401. Any other value stops the server here.
+const DID_ACCEPT_BARE_NONCE = (() => {
+  const raw = (process.env['DID_ACCEPT_BARE_NONCE'] ?? '').trim();
+  if (raw === '' || raw === '1') return true;
+  if (raw === '0') return false;
+  throw new Error(`DID_ACCEPT_BARE_NONCE must be 1 (accept a DID signature over the bare nonce, logged) or 0 (refuse it); got ${JSON.stringify(raw)}`);
+})();
+
+// A line break inside a message (a stack trace, or text a caller sent: a display name, a
+// surface hint) continues the entry indented, so nothing a caller sends starts a log line. A line
+// break is any character a log reader may end a line at: CRLF, LF, CR, VT, FF, U+001C to U+001E,
+// U+0085, U+2028 and U+2029 (the set Python's str.splitlines uses; JavaScript and Java end lines
+// at some of them). The continuation still carries the caller's text, behind the indent: a line
+// is this server's own only when it starts with "[identity] ".
+const LOG_LINE_BREAK = /\r\n|[\n\r\v\f\x1c-\x1e\x85\u2028\u2029]/g;
+function log(msg: string) { console.log(`[identity] ${msg.replace(LOG_LINE_BREAK, '\n    ')}`); }
+
+/** A request value for one log line: printable ASCII, at most `max` characters, JSON-quoted; '-' when absent. */
+function logValue(value: unknown, max = 120): string {
+  return typeof value === 'string' && value !== '' ? JSON.stringify(value.slice(0, max).replace(/[^\x20-\x7e]/g, '?')) : '-';
+}
 
 // A failure nothing awaited is logged and the server keeps serving; see route-errors.ts.
 installProcessSafetyNet(log);
@@ -401,8 +434,8 @@ function encodeX25519Multibase(rawKey: Buffer): string {
  * tried first. If that fails we fall back to the legacy
  * `'z' + base64url(rawKey)` shape this server originally emitted, so
  * pre-existing clients that registered under the old encoding keep
- * working. The fallback logs a deprecation marker; a future relay
- * version will flip this to a hard 400.
+ * working. /auth/did logs a deprecation marker for the fallback; a
+ * future relay version will flip this to a hard 400.
  *
  * Returns either `{ ok: true, publicKey, format }` or
  * `{ ok: false, error }`.
@@ -428,7 +461,6 @@ function parseEd25519DidKey(did: string): { ok: true; publicKey: Buffer; format:
     const legacy = Buffer.from(encoded, 'base64url');
     if (legacy.length >= 32) {
       const publicKey = legacy.subarray(legacy.length - 32);
-      log(`[did-key-legacy] accepted base64url-encoded did:key for ${did.slice(0, 24)}…; client should migrate to W3C base58btc encoding`);
       return { ok: true, publicKey: Buffer.from(publicKey), format: 'base64url-legacy' };
     }
   } catch { /* fall through */ }
@@ -477,6 +509,11 @@ function accountHoldsDidKey(m: AuthMethods, did: string, keyFromDid: boolean, pu
  */
 const DID_NOT_REGISTERED = 'This DID is not registered. Sign in with an existing credential for this account and add this DID from there.';
 const DID_KEY_NOT_REGISTERED = 'This DID is not registered with this key, and only a did:key can open an account by itself. Sign in with an existing credential and add this DID from there.';
+const DID_SIGNATURE_FAILED = 'Ed25519 signature verification failed. Sign, with the DID\'s key, the exact UTF-8 bytes of the message that POST /challenges with {"purpose":"did-sig"} returned beside this nonce (LF line breaks, nothing added or removed). The challenge is spent; request a new one.';
+const DID_BARE_NONCE_REFUSED = 'This signature is over the bare nonce, which names no server. POST /challenges with {"purpose":"did-sig"} returns a message beside a new nonce: sign that message\'s exact UTF-8 bytes and send the signature with its nonce. The challenge is spent; request a new one.';
+// A key of small order (isSmallOrderEd25519Key), from a did:key or publicKeyMultibase: a signature
+// by it can be made without a private key, so it proves nothing.
+const DID_KEY_NOT_USABLE = 'This is not a usable Ed25519 key: it is a point of small order, for which a signature proves nothing. Use a key made by an Ed25519 key generator. The challenge is spent; request a new one.';
 
 function generateEd25519(): KeyPair {
   // Ed25519 — signing / authentication / assertionMethod.
@@ -1990,7 +2027,8 @@ function seedIdentity(id: string, type: 'user' | 'agent', name: string, owner?: 
   if (scope !== undefined) rec.scope = scope;
   identities.set(id, rec);
   keys.set(id, generateEd25519());
-  log(`Seeded ${type} identity: ${id} (${name})`);
+  // Quoted: a first sign-in names the user and its agent from what the caller sends.
+  log(`Seeded ${type} identity: ${logValue(id, 200)} (${logValue(name, 200)})`);
 }
 
 // The janitor (app.listen below) deletes the OWNER of any agent whose id matches this, once
@@ -2094,11 +2132,13 @@ async function agentIdentity(agentId: string): Promise<Identity | undefined> {
 
 // ── Challenges (nonces for proof-of-possession auth) ────────
 //
-// Every sign-in starts with POST /challenges -> nonce. The client then
-// signs the nonce with their private key (wallet / passkey / DID key)
-// and POSTs it to /verify. The server checks the nonce was issued,
-// hasn't been used, hasn't expired, and that the signature matches the
-// public key already on file (or being registered for first time).
+// Every sign-in starts with POST /challenges -> nonce. A passkey signs
+// the nonce as its WebAuthn challenge bytes; a wallet signs a SIWE
+// message that carries it; a DID key signs the message its did-sig
+// challenge comes with. The client POSTs the proof to /auth/<method>.
+// The server checks the nonce was issued, is unused and has not
+// expired, and, if it was issued with a purpose, that the purpose is
+// this route's (consumeChallenge); then it checks the signature.
 
 interface Challenge {
   nonce: string;
@@ -2107,6 +2147,9 @@ interface Challenge {
   // specific auth method / WebAuthn operation. Prevents cross-use of
   // a WebAuthn-originated challenge against SIWE, etc.
   purpose?: 'siwe' | 'webauthn-register' | 'webauthn-authenticate' | 'did-sig';
+  // did-sig: the text the DID's key signs (didSignInMessage), kept so /auth/did verifies the
+  // bytes it handed out.
+  message?: string;
   // For WebAuthn flows: the transient session-user handle emitted in
   // the registration options (so the `/register` step can match the
   // ceremony back to this challenge). NOT the final userId.
@@ -2133,6 +2176,15 @@ interface Challenge {
 const challenges = new Map<string, Challenge>();
 const CHALLENGE_TTL_MS = 5 * 60 * 1000;
 
+/**
+ * The text a did-sig challenge asks the DID's key to sign: what it is and its format version,
+ * this server's host (from BASE_URL, the `base` /health reports; never a request header), and
+ * the nonce. LF line ends, no trailing newline, ASCII only. Nothing in it comes from the request.
+ */
+function didSignInMessage(nonce: string): string {
+  return `Interego DID sign-in v1\nHost: ${BASE_URL_HOST}\nNonce: ${nonce}`;
+}
+
 function issueChallenge(purpose?: Challenge['purpose'], userId?: string): Challenge {
   // Prune expired entries periodically on new issues
   const now = Date.now();
@@ -2143,6 +2195,7 @@ function issueChallenge(purpose?: Challenge['purpose'], userId?: string): Challe
   const nonce = crypto.randomBytes(32).toString(purpose === 'siwe' ? 'hex' : 'base64url');
   const ch: Challenge = { nonce, expiresAt: now + CHALLENGE_TTL_MS };
   if (purpose) ch.purpose = purpose;
+  if (purpose === 'did-sig') ch.message = didSignInMessage(nonce);
   if (userId) ch.userId = userId;
   challenges.set(nonce, ch);
   return ch;
@@ -2345,7 +2398,7 @@ async function issueToken(userId: string, agentId: string, scope: string, provis
     expiresAt: payload.expiresAt,
     ...(payload.provisionalPlay ? { provisionalPlay: payload.provisionalPlay } : {}),
   };
-  log(`Issued token for ${agentId} (user: ${userId}, scope: ${scope}, epoch: ${epoch}, expires: ${record.expiresAt})`);
+  log(`Issued token for ${logValue(agentId, 200)} (user: ${userId}, scope: ${scope}, epoch: ${epoch}, expires: ${record.expiresAt})`);
   return record;
 }
 
@@ -2652,7 +2705,9 @@ app.use(corsMiddleware({
 //     (human-driven, not bot-driven). 30/min is generous.
 //   - Challenge nonces: minted as part of every auth ceremony. 60/min
 //     accommodates retries + multiple methods.
-//   - Token issue / verify: per-session, low volume.
+//   - Token issue: per-session, low volume. POST /tokens/verify from a caller presenting the
+//     introspection bearer has its own per-address budget (see the route); every other verify
+//     counts against 'tokens' with the routes below.
 //   - GET /auth-methods/me: per verified account, not per IP (see the
 //     route). The relay reads it with each user's bearer from its one
 //     address, so a per-IP cap there is one budget for every relay user.
@@ -2661,7 +2716,9 @@ app.use(corsMiddleware({
 
 const authEnrollLimiter = rateLimit('auth-enroll', { windowMs: 60_000, max: 30 });
 const challengeLimiter = rateLimit('challenges', { windowMs: 60_000, max: 60 });
-const tokenLimiter = rateLimit('tokens', { windowMs: 60_000, max: 60 });
+const tokenBucket = createLimiter('tokens', { windowMs: 60_000, max: 60 });
+const tokenLimiter = limitByIp(tokenBucket);
+const introspectionBucket = createLimiter('introspection', { windowMs: 60_000, max: 600 });
 // /siwe/verify runs ECDSA recovery on every call — tighter cap than the
 // general auth-enroll limiter to keep unauthenticated CPU exhaustion off
 // the table.
@@ -2857,6 +2914,10 @@ app.get('/health', (_req, res) => {
     // Tokens are stateless (HMAC-signed) — there's no server-side count
     // to report. Caller can still trust signature + expiry + sessionEpoch.
     tokenSigningKeyOrigin: process.env['TOKEN_SIGNING_KEY'] ? 'env' : 'ephemeral',
+    // Which mode POST /tokens/verify runs in, and whether ALLOW_OPEN_INTROSPECTION=1 is set (while
+    // enforced it is only the rollback). Neither says anything about the secret's value.
+    introspection: INTROSPECTION_MODE,
+    allowOpenIntrospection: ALLOW_OPEN_INTROSPECTION,
     base: BASE_URL,
     // ★ The field is named `build` and nothing more descriptive because
     // tools/railway-redeploy.mjs reads exactly `j.build` from --verify-url, and that poll
@@ -2908,7 +2969,7 @@ app.post('/register', (_req, res) => {
     use: {
       'brand-new user (passkey)': 'POST /auth/webauthn/register-options then /auth/webauthn/register',
       'brand-new user (wallet)': 'POST /auth/siwe after /challenges with purpose=siwe',
-      'brand-new user (did)': 'POST /auth/did after /challenges with purpose=did-sig',
+      'brand-new user (did)': 'POST /auth/did with a signature over the message /challenges returns for purpose=did-sig',
       'claim legacy seeded userId': 'include { bootstrapUserId, bootstrapInvite } on first-auth call (one-time)',
       'add another device to existing account': 'authenticate first, then repeat any register path with Authorization: Bearer <token>',
     },
@@ -2919,11 +2980,14 @@ app.post('/register', (_req, res) => {
 
 /**
  * POST /challenges — issue a nonce the client signs to prove key control.
- * Body: { purpose?, userId? }
+ * Body: { purpose?, userId?, address? }
  *   purpose:  'siwe' | 'webauthn-register' | 'webauthn-authenticate' | 'did-sig'
  *   userId:   for WebAuthn authenticate, scopes the challenge to a user
  *             (server returns allowed credential IDs the client may use)
- * Returns: { nonce, expiresAt, allowCredentials? }
+ *   address:  siwe only; comes back in EIP-55 form to sign with
+ * Returns: { nonce, expiresAt, message?, rpId?, address?, allowCredentials? }
+ *   message:  did-sig only. The exact text the DID's key signs, byte for byte; a client never
+ *             rebuilds it. It names this server's host (from BASE_URL) and carries the nonce.
  */
 app.post('/challenges', challengeLimiter, async (req, res) => {
   const { purpose, userId, address } = req.body as { purpose?: Challenge['purpose']; userId?: string; address?: unknown };
@@ -2986,6 +3050,7 @@ app.post('/challenges', challengeLimiter, async (req, res) => {
     ch.rpOrigin = rp.origin;
   }
   const resp: Record<string, unknown> = { nonce: ch.nonce, expiresAt: new Date(ch.expiresAt).toISOString() };
+  if (ch.message) resp.message = ch.message;
   if (ch.rpId) resp.rpId = ch.rpId;
   if (checksummedAddress) resp.address = checksummedAddress;
   if (purpose === 'webauthn-authenticate' && userId) {
@@ -4193,6 +4258,22 @@ app.post('/auth/webauthn/authenticate', authEnrollLimiter, async (req, res) => {
 // ── Generic DID-signature auth (did:key / did:web) ──────────
 
 /**
+ * One line for a signature over the bare nonce: enough to find the client; never the DID, the
+ * nonce, the signature, an invite or a token. With `signedIn`: a sign-in made with one, written
+ * once the token for that account is issued (`accepted`). A signature refused later on (a key no
+ * account lists for this DID, a pod that cannot be read) signed nobody in and writes no line, as
+ * that refusal does not depend on the setting. Without: the signature, refused at its check
+ * because DID_ACCEPT_BARE_NONCE is 0 (`refused`). No account has been looked up then, so for a
+ * DID that is not a did:key, `derivedUserId` names whatever DID was sent with the caller's key.
+ */
+function logBareNonceSignature(req: express.Request, did: string, ch: Challenge, surfaceAgent: unknown, signedIn?: string): void {
+  const method = /^did:([a-z0-9]{1,16}):/.exec(did)?.[1] ?? 'other';
+  const surface = surfaceAgent === undefined ? '-'
+    : typeof surfaceAgent === 'string' && /^[a-z][a-z0-9-]{0,63}$/.test(surfaceAgent) ? surfaceAgent : 'invalid';
+  log(`WARN identity_did_bare_nonce outcome=${signedIn ? 'accepted' : 'refused'} purpose=${ch.purpose === 'did-sig' ? 'did-sig' : 'none'} method=${method} derivedUserId=${deriveUserIdFromDid(did)} userId=${signedIn ?? '-'} surface=${surface} ua=${logValue(req.get('user-agent'))} origin=${logValue(req.get('origin'))}`);
+}
+
+/**
  * POST /auth/did — verify an Ed25519 signature against a pre-registered
  * DID key. Supports did:key (self-sovereign, public-key-encoded-as-DID)
  * and other DIDs such as did:web, whose key the caller sends in
@@ -4200,10 +4281,17 @@ app.post('/auth/webauthn/authenticate', authEnrollLimiter, async (req, res) => {
  * only to an account that lists it with that key, and cannot open an
  * account by itself: add it with a bearer token (or bootstrap invite).
  *
+ * The signature is checked against the message stored with the challenge,
+ * which names this server and carries the nonce. A signature over the bare
+ * nonce names no server. It is accepted only while DID_ACCEPT_BARE_NONCE is
+ * unset or 1, with Deprecation and Warning headers, and a sign-in made with
+ * one logs an identity_did_bare_nonce line naming the account signed in to.
+ * With 0 it is refused with 401, and logged.
+ *
  * Body: {
  *   did: string,              // did:key:z... or did:web:...
- *   nonce: string,            // from /challenges
- *   signature: string,        // base64url Ed25519 signature of nonce
+ *   nonce: string,            // from /challenges with purpose 'did-sig'
+ *   signature: string,        // base64url Ed25519 signature over the UTF-8 bytes of that challenge's message
  *   userId?: string,          // first-time: register this DID to this user
  *   name?: string,            // first-time display name
  *   publicKeyMultibase?: string,  // required for a DID that is not a did:key
@@ -4257,6 +4345,14 @@ app.post('/auth/did', authEnrollLimiter, async (req, res) => {
       res.status(400).json({ error: `Could not decode did:key public key: ${parsed.error}` });
       return;
     }
+    // Checked before the key is cached, so a cache hit is a usable key.
+    if (isSmallOrderEd25519Key(parsed.publicKey)) {
+      res.status(400).json({ error: DID_KEY_NOT_USABLE });
+      return;
+    }
+    if (parsed.format === 'base64url-legacy') {
+      log(`[did-key-legacy] accepted base64url-encoded did:key for ${logValue(did, 24)}…; client should migrate to W3C base58btc encoding`);
+    }
     publicKeyRaw = parsed.publicKey;
     didKeyFormat = parsed.format;
     setCachedParsedDid(did, publicKeyRaw, didKeyFormat);
@@ -4270,8 +4366,12 @@ app.post('/auth/did', authEnrollLimiter, async (req, res) => {
       res.status(400).json({ error: 'Could not decode publicKeyMultibase — tried W3C base58btc(0xed 0x01 || key) and legacy base64url(rawKey); neither yielded a 32-byte Ed25519 public key' });
       return;
     }
+    if (isSmallOrderEd25519Key(decoded.publicKey)) {
+      res.status(400).json({ error: DID_KEY_NOT_USABLE });
+      return;
+    }
     if (decoded.format === 'base64url-legacy') {
-      log(`[did-key-legacy] accepted base64url-encoded publicKeyMultibase for ${did}; client should migrate to W3C base58btc encoding`);
+      log(`[did-key-legacy] accepted base64url-encoded publicKeyMultibase for ${logValue(did, 200)}; client should migrate to W3C base58btc encoding`);
     }
     publicKeyRaw = decoded.publicKey;
     if (timingEnabled()) logTiming('did-parse', parseStart, { did: did.slice(0, 24), cache: 'none', format: decoded.format, source: 'multibase' });
@@ -4286,7 +4386,10 @@ app.post('/auth/did', authEnrollLimiter, async (req, res) => {
     res.setHeader('Warning', '299 - "did:key base64url encoding is deprecated; migrate to W3C base58btc multicodec format"');
   }
 
-  // Verify Ed25519 signature over the nonce.
+  // Verify the Ed25519 signature over the challenge's message, the bytes /challenges handed out.
+  // A signature over the bare nonce (all a challenge with no purpose has) names no server: it is
+  // accepted only while DID_ACCEPT_BARE_NONCE allows it. Refused, it is logged here; accepted, it
+  // is logged once the sign-in is done (logBareNonceSignature).
   //
   // crypto.createPublicKey(...) does ~30ms of native work on the first
   // call in the process (lazy-loads OpenSSL EVP_PKEY + ed25519 curve
@@ -4294,18 +4397,30 @@ app.post('/auth/did', authEnrollLimiter, async (req, res) => {
   // cache it keyed on hex(publicKeyRaw) — every subsequent /auth/did
   // for the same DID skips the SPKI assembly + KeyObject build entirely.
   const verifyStart = timingEnabled() ? startTiming() : 0;
+  let proof: 'message' | 'bare-nonce' | null = null;
   try {
     const sig = Buffer.from(signature, 'base64url');
     const verifyKey = getOrCreateEd25519VerifyKey(publicKeyRaw);
-    const ok = crypto.verify(null, Buffer.from(nonce, 'utf8'), verifyKey, sig);
-    if (timingEnabled()) logTiming('did-verify', verifyStart, { ok });
-    if (!ok) {
-      res.status(401).json({ error: 'Ed25519 signature verification failed' });
-      return;
-    }
+    if (ch.message !== undefined && crypto.verify(null, Buffer.from(ch.message, 'utf8'), verifyKey, sig)) proof = 'message';
+    else if (crypto.verify(null, Buffer.from(nonce, 'utf8'), verifyKey, sig)) proof = 'bare-nonce';
+    if (timingEnabled()) logTiming('did-verify', verifyStart, { ok: proof !== null, proof: proof ?? 'none' });
   } catch (err) {
     res.status(401).json({ error: `DID signature verification error: ${(err as Error).message}` });
     return;
+  }
+  if (proof === null) {
+    res.status(401).json({ error: DID_SIGNATURE_FAILED });
+    return;
+  }
+  if (proof === 'bare-nonce') {
+    if (!DID_ACCEPT_BARE_NONCE) {
+      logBareNonceSignature(req, did, ch, surfaceAgent);
+      res.status(401).json({ error: DID_BARE_NONCE_REFUSED });
+      return;
+    }
+    res.setHeader('Deprecation', 'true');
+    // Appended: a legacy-form did:key has set a Warning of its own above.
+    res.append('Warning', '299 - "a DID signature over the bare nonce is deprecated; sign the message POST /challenges returns"');
   }
 
   // If the initial pod-index rebuild hasn't settled yet, give it a small
@@ -4539,7 +4654,7 @@ app.post('/auth/did', authEnrollLimiter, async (req, res) => {
       if (outcome.kind === 'returning') {
         // claimFirstSignInOnPod loaded it: a sign-in to an account that lists the credential (one
         // whose write this request made unconfirmed, found when the account was loaded, included).
-        log(`DID ${did} signed in to ${targetUserId}, loaded from its pod (not in the DID index)`);
+        log(`DID ${logValue(did, 200)} signed in to ${targetUserId}, loaded from its pod (not in the DID index)`);
       } else if (!identities.has(targetUserId)) {
         seedIdentity(targetUserId, 'user', displayName);
         seedIdentity(def.agentId, 'agent', def.label, targetUserId, 'ReadWrite');
@@ -4549,7 +4664,7 @@ app.post('/auth/did', authEnrollLimiter, async (req, res) => {
       // FIX A: identity-server no longer mirrors /profile/card or /<id>/agents.
       // Single authoritative pod-side writer is the relay's /oauth/verify
       // handler. See SIWE first-touch comment above for background.
-      if (outcome.kind === 'created') log(`First-time DID registration: ${targetUserId} did=${did} defaultAgent=${agentId} (surfaceHint=${surfaceAgent ?? 'none'})`);
+      if (outcome.kind === 'created') log(`First-time DID registration: ${targetUserId} did=${logValue(did, 200)} defaultAgent=${logValue(agentId, 200)} (surfaceHint=${logValue(surfaceAgent, 200)})`);
     } else if (adding) {
       // Add-did (authenticated) path: added to the record as the pod holds it, and answered only
       // once the pod has it.
@@ -4575,7 +4690,7 @@ app.post('/auth/did', authEnrollLimiter, async (req, res) => {
         return;
       }
       if (timingEnabled()) logTiming('did-pod-write-completed', requestStart, { branch: 'add-did' });
-      log(`DID ${did} linked to existing user ${user.id}`);
+      log(`DID ${logValue(did, 200)} linked to existing user ${user.id}`);
     }
     return user;
   };
@@ -4592,6 +4707,9 @@ app.post('/auth/did', authEnrollLimiter, async (req, res) => {
   const tokenStart = timingEnabled() ? startTiming() : 0;
   const tokenResponse = await issueTokenResponse(user, surfaceAgent);
   if (timingEnabled()) logTiming('did-issue-token', tokenStart);
+  // Only now: a bare-nonce signature refused on the way here signed nobody in, and the line says
+  // which account this one did.
+  if (proof === 'bare-nonce') logBareNonceSignature(req, did, ch, surfaceAgent, user.id);
   if (timingEnabled()) logTiming('did-total', requestStart);
   res.json(tokenResponse);
 });
@@ -4925,28 +5043,44 @@ app.post('/tokens', tokenLimiter, async (req, res) => {
  * Body: { token }
  * Returns: { valid, userId?, agentId?, scope?, reason? }
  */
-app.post('/tokens/verify', tokenLimiter, async (req, res) => {
-  // Introspection-secret gate. Mirrors the relay's /verify-token: when
-  // IDENTITY_INTROSPECTION_SECRET is set we require the caller to carry
-  // the same shared secret in `Authorization: Bearer <secret>`, compared
-  // timing-safe. Unset = legacy open behavior so the rollout doesn't
-  // break existing css-gate deployments before they're rewired.
-  if (IDENTITY_INTROSPECTION_SECRET) {
+app.post('/tokens/verify', async (req, res) => {
+  // Introspection-secret gate (the modes are described where IDENTITY_INTROSPECTION_SECRET is
+  // read). Which budget a request counts against:
+  //   - enforced, with the right bearer (`Authorization: Bearer <secret>`, compared as SHA-256
+  //     digests with timingSafeEqual, so the comparison has no early exit on a length mismatch):
+  //     the 'introspection' bucket, 600 a minute per address. The shared 'tokens' bucket is only
+  //     PEEKED, and refuses at `count >= max`, i.e. when one more counted request would be over:
+  //     an address that has used its 60 gets the same 429 whatever bearer it sends, so a guess
+  //     at the secret past the 60th learns nothing, exactly as when every request was counted.
+  //     (With `>`, an address at exactly 60 would get one answer that tells the right value
+  //     from a wrong one.)
+  //   - enforced without it (no bearer, another scheme, a wrong value), open, and disabled: the
+  //     'tokens' bucket, counted before any answer, as before.
+  // Every count is synchronous, before anything here awaits, as in GET /auth-methods/me, so a
+  // concurrent burst cannot slip past it.
+  const ip = clientIp(req);
+  if (INTROSPECTION_MODE === 'enforced') {
     const auth = req.headers.authorization ?? '';
-    if (!auth.startsWith('Bearer ')) {
-      res.status(401).json({ error: 'introspection bearer required' });
+    const presented = auth.startsWith('Bearer ') ? auth.slice(7) : undefined;
+    const digest = (v: string): Buffer => crypto.createHash('sha256').update(v, 'utf8').digest();
+    const authorized = presented !== undefined && crypto.timingSafeEqual(digest(presented), digest(IDENTITY_INTROSPECTION_SECRET));
+    if (!authorized) {
+      const wait = tokenBucket.hit(ip);
+      if (wait !== null) { sendRateLimited(res, tokenBucket, wait); return; }
+      res.status(401).json({ error: presented === undefined ? 'introspection bearer required' : 'introspection bearer rejected' });
       return;
     }
-    const presented = Buffer.from(auth.slice(7), 'utf8');
-    const expected = Buffer.from(IDENTITY_INTROSPECTION_SECRET, 'utf8');
-    if (presented.length !== expected.length || !crypto.timingSafeEqual(presented, expected)) {
-      res.status(401).json({ error: 'introspection bearer rejected' });
+    const sharedWait = tokenBucket.blocked(ip);
+    if (sharedWait !== null) { sendRateLimited(res, tokenBucket, sharedWait); return; }
+    const wait = introspectionBucket.hit(ip);
+    if (wait !== null) { sendRateLimited(res, introspectionBucket, wait); return; }
+  } else {
+    const wait = tokenBucket.hit(ip);
+    if (wait !== null) { sendRateLimited(res, tokenBucket, wait); return; }
+    if (INTROSPECTION_MODE === 'disabled') {
+      res.status(401).json({ error: 'token introspection is disabled — set IDENTITY_INTROSPECTION_SECRET (and have callers present it), or set ALLOW_OPEN_INTROSPECTION=1 for the legacy open oracle during migration' });
       return;
     }
-  } else if (!ALLOW_OPEN_INTROSPECTION) {
-    // Fail closed: neither a secret nor an explicit open-mode opt-in is set.
-    res.status(401).json({ error: 'token introspection is disabled — set IDENTITY_INTROSPECTION_SECRET (and have callers present it), or set ALLOW_OPEN_INTROSPECTION=1 for the legacy open oracle during migration' });
-    return;
   }
 
   const { token } = req.body;
@@ -5678,7 +5812,7 @@ app.delete('/auth-methods/me/did', authEnrollLimiter, async (req, res) => {
   } catch (err) {
     const onPod = changeOnPod(err, m => !m.didKeys.some(k => k.did === did));
     if (onPod === 'landed') {
-      log(`Removed DID ${did} for ${user.id} (the pod took the write without confirming it)`);
+      log(`Removed DID ${logValue(did, 200)} for ${user.id} (the pod took the write without confirming it)`);
       res.json({ removed: true, did, remaining: ((err as AuthMethodsWriteError).podRecord as AuthMethods).didKeys.length });
       return;
     }
@@ -5688,7 +5822,7 @@ app.delete('/auth-methods/me/did', authEnrollLimiter, async (req, res) => {
     return;
   }
   if (refusal) { refuseRemoval(res, refusal, 'DID not found'); return; }
-  log(`Removed DID ${did} for ${user.id}`);
+  log(`Removed DID ${logValue(did, 200)} for ${user.id}`);
   res.json({ removed: true, did, remaining });
 });
 
@@ -6790,18 +6924,36 @@ app.listen(PORT, () => {
   log(`Interego Identity Server v2 started on port ${PORT}`);
   log(`Base URL: ${BASE_URL}`);
   log(`CSS URL: ${CSS_URL}`);
-  if (!IDENTITY_INTROSPECTION_SECRET && ALLOW_OPEN_INTROSPECTION) {
-    log(`WARN: token introspection is running in OPEN mode (ALLOW_OPEN_INTROSPECTION=1) — /tokens/verify is an unauthenticated oracle. Set IDENTITY_INTROSPECTION_SECRET (and have css-gate present it) to fail closed, then remove ALLOW_OPEN_INTROSPECTION.`);
-  } else if (!IDENTITY_INTROSPECTION_SECRET) {
+  if (INTROSPECTION_MODE === 'enforced') {
+    log(`Introspection: ENFORCED — /tokens/verify answers only a caller presenting IDENTITY_INTROSPECTION_SECRET as a bearer; relay and css-gate must hold the same value${ALLOW_OPEN_INTROSPECTION ? '. ALLOW_OPEN_INTROSPECTION=1 is ignored while the secret is set; remove it once both callers are confirmed' : ''}.`);
+    // The values no caller can present intact in `Authorization: Bearer <value>`, as measured on
+    // Node 20 and 22: a trailing space or tab is dropped (by fetch, and by Node's parser here), an
+    // ASCII control character other than TAB (U+0000-U+001F or U+007F) makes fetch throw and this
+    // server answer 400, and a character above U+00FF makes fetch throw and can never arrive (a
+    // header reads as Latin-1). Leading or interior spaces and tabs, and other Latin-1 characters
+    // (the C1 controls U+0080-U+009F among them), arrive intact.
+    // css-gate's startup line uses the same rule and wording.
+    if (/[\t ]$|[\x00-\x08\x0a-\x1f\x7f]|[^\x00-\xff]/.test(IDENTITY_INTROSPECTION_SECRET)) {
+      log('WARN: IDENTITY_INTROSPECTION_SECRET ends in a space or tab, or holds an ASCII control character other than TAB (U+0000-U+001F or U+007F) or a character above U+00FF; such a value cannot be sent intact in a header, so no caller can present it and /tokens/verify refuses every caller. Use 32 random bytes as hex.');
+    }
+  } else if (INTROSPECTION_MODE === 'open') {
+    log('WARN: token introspection is running in OPEN mode (ALLOW_OPEN_INTROSPECTION=1) — /tokens/verify is an unauthenticated oracle. Set IDENTITY_INTROSPECTION_SECRET on relay and css-gate first, then the same value here, then remove ALLOW_OPEN_INTROSPECTION (deploy/identity/AUTH-ARCHITECTURE.md).');
+  } else {
     log(`Introspection: FAIL-CLOSED (no IDENTITY_INTROSPECTION_SECRET, no ALLOW_OPEN_INTROSPECTION) — /tokens/verify returns 401 until one is set.`);
   }
   log(`WebAuthn RP: static id=${RP_ID} origin=${RP_ORIGIN}; per-request allowlist=[${[...RP_ALLOWLIST.keys()].join(', ') || '(none)'}]`);
   log(`SIWE domains (first line of a wallet sign-in message): [${[...siweDomainSources()].map(([h, src]) => `${h} (${src})`).join(', ')}]; add a front-end with SIWE_DOMAINS`);
+  log(`DID sign-in: did-sig challenges carry a message naming ${BASE_URL_HOST}`);
+  if (DID_ACCEPT_BARE_NONCE) {
+    log(`WARN: DID sign-in still accepts a signature over the bare nonce (DID_ACCEPT_BARE_NONCE unset or 1); each sign-in made with one is logged as identity_did_bare_nonce. Set DID_ACCEPT_BARE_NONCE=0 to refuse them once no known client is logged.`);
+  } else {
+    log(`DID sign-in: a signature over the bare nonce is refused (DID_ACCEPT_BARE_NONCE=0)`);
+  }
   log(`Auth: decentralized — user credentials stored per-pod at <pod>/auth-methods.jsonld`);
   log(`Bootstrap invites: ${BOOTSTRAP_INVITES.size} configured${BOOTSTRAP_INVITES.size > 0 ? ' (' + [...BOOTSTRAP_INVITES.keys()].join(', ') + ')' : ''}`);
   log(`Endpoints:`);
   log(`  POST /register                        DEPRECATED (410 Gone) — userId is derived, not claimed`);
-  log(`  POST /challenges                      Issue proof-of-possession nonce`);
+  log(`  POST /challenges                      Issue proof-of-possession nonce (did-sig: and the message to sign)`);
   log(`  POST /auth/siwe                       Sign-In With Ethereum (derives u-eth-<…> or binds via Bearer/invite)`);
   log(`  POST /auth/webauthn/register-options  Begin passkey enrollment (Bearer for add-device, invite for seeded)`);
   log(`  POST /auth/webauthn/register          Finish passkey enrollment (userId derived from credential)`);

@@ -200,7 +200,10 @@ const UNLINTED_FRONTIER = {
   // suite and a route suite for writes that meet other writers: 234. All lint clean.
   // Play owners' writes go through that writer too, so provisional-play-enrollment.ts is gone: 233.
   // Decisions about one wallet or DID in turn (identity credential-decisions.ts) and its suite: 235.
-  deploy: { errors: 356, files: 235 },
+  // From master beside those (231 -> 235 there): the relay page's DID challenge suite, a route
+  // suite for the DID sign-in message, identity's shared test teardown and SPKI key reader
+  // (tests/teardown.ts, tests/public-jwk.ts): 239.
+  deploy: { errors: 356, files: 239 },
   // The bulk of these are `no-console` in vertical bridges and CLI entry points — one config
   // decision, not a thousand defects. See the note above.
   // ★ 320 -> 337, and the ratchet caught it in CI rather than locally, which is the interesting
@@ -693,7 +696,13 @@ const BASELINE = {};
 // lint and its declarations (#567 follow-up) brought it to 635; the gate named 604.
 // 2026-10-08: private HMD invocation coverage adds one file, so the floor is 605.
 // 2026-10-27: tests/did-sig-live-scripts.test.ts brings the linted scope to 681; the gate named 648.
-export const MIN_FILES = 648;
+// 2026-10-27: the introspection provisioning tool and its test bring the linted scope to 683; the gate named 650.
+// 2026-10-27: tests/railway-set-secret-var.test.mjs brings the linted scope to 684; the gate named 651.
+// 2026-10-27: the jsonld fromRDF guard (tests/no-code-reads-rdf-back-through-jsonld-fromrdf.test.ts)
+// and the exact-version guard (tests/canonicalizer-versions-are-exact.test.ts) bring it to 683;
+// the gate named 650.
+// 2026-10-27: both, merged, bring the linted scope to 686; the gate named 653.
+export const MIN_FILES = 653;
 
 /**
  * How far below the real linted-file count MIN_FILES may sit before that is itself a failure.

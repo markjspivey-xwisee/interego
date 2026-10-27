@@ -5,6 +5,9 @@
  * counter underneath it, for a route that can only name its key after it has looked at the
  * request: GET /auth-methods/me counts a signed token against the account it names, because
  * every read the relay makes on its users' behalf arrives from the relay's one address.
+ * A route that counts some of its requests itself holds the Limiter and passes it to
+ * `limitByIp()` for its other routes, so both share one bucket (POST /tokens/verify and the
+ * 'tokens' routes).
  *
  * In-memory, so the counts are per process. For a multi-instance deployment, replace with a
  * shared (Redis-backed) counter so limits hold across replicas.
@@ -21,6 +24,8 @@ export interface Limiter {
   readonly opts: RateLimitOptions;
   /** Count one request against `key`: the seconds to wait when that is over the cap, else null. */
   hit(key: string): number | null;
+  /** Seconds to wait when one more request counted against `key` now would be over the cap; else null. Counts nothing. */
+  blocked(key: string): number | null;
 }
 
 const buckets = new Map<string, Map<string, RateLimitEntry>>();
@@ -46,6 +51,11 @@ export function createLimiter(bucketName: string, opts: RateLimitOptions): Limit
       entry.count++;
       return entry.count > opts.max ? wait(entry, now) : null;
     },
+    blocked(key) {
+      const now = Date.now();
+      const entry = current(key, now);
+      return entry && entry.count >= opts.max ? wait(entry, now) : null;
+    },
   };
 }
 
@@ -65,14 +75,18 @@ export function sendRateLimited(res: express.Response, limiter: Limiter, retryAf
   });
 }
 
-/** Middleware: every request counts against the caller's IP. */
-export function rateLimit(bucketName: string, opts: RateLimitOptions) {
-  const limiter = createLimiter(bucketName, opts);
+/** Middleware over an existing Limiter: every request counts against the caller's IP. */
+export function limitByIp(limiter: Limiter) {
   return (req: express.Request, res: express.Response, next: express.NextFunction): void => {
     const retryAfterSec = limiter.hit(clientIp(req));
     if (retryAfterSec !== null) { sendRateLimited(res, limiter, retryAfterSec); return; }
     next();
   };
+}
+
+/** Middleware: every request counts against the caller's IP. */
+export function rateLimit(bucketName: string, opts: RateLimitOptions) {
+  return limitByIp(createLimiter(bucketName, opts));
 }
 
 // Periodic cleanup of expired entries so a long-lived process doesn't
