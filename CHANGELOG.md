@@ -8,6 +8,21 @@ Those records are not moved. Nothing in a stored record says which pod the reque
 
 This corrects the 2026-10-26 entry further down, which says the fix "was lost when later master deploys replaced that image". A branch image replaced it first, and master deploys kept it out from then on.
 
+## 2026-10-27 — Dependencies: @anthropic-ai/sdk 0.91 and esbuild 0.28, in place of Dependabot's #721
+
+This lands Dependabot's security group (#721) with the one file its checks needed changed. It closes two of the items the entry below left open.
+
+- **Root:** `@anthropic-ai/sdk` goes from 0.80.0 to 0.91.1, a dev dependency that only `benchmarks/` imports, and esbuild from 0.28.0 to 0.28.2 (dev). `applications/shared-workspace/desktop` asks for esbuild `^0.28.2`.
+- **Examples:** in `examples/pgsl-browser`, esbuild goes from 0.25.12 to 0.28.2. In it and in `examples/dashboard` and `examples/multi-agent`, tsx goes from 4.21.0 to 4.23.15, which brings esbuild 0.28.2 in place of 0.27.4. The pgsl-browser image installs from that `package.json` without the lockfile and transpiles `server.ts` with the esbuild it gets. The transpiled file is byte-identical under 0.25.12 and 0.28.2.
+- **The Foxxi workbench:** `applications/foxxi-content-intelligence/i2idlx/app`, which the foxxi-bridge image builds, goes from esbuild 0.23.1 to 0.28.1. The I2IDL-X TypeScript parity and complete golden parity checks pass on #721's head.
+
+The changed file is `deploy/mcp-relay/client-encryption-bundle.ts`. esbuild generates it (`tools/build-client-encryption.mjs`), and `tests/client-key-vault.test.ts` fails if it differs from a fresh build, which it did on #721. Rebuilt with 0.28.2, the bundle changes in one place, esbuild's CommonJS wrapper. Before, a module that threw while it loaded stayed cached half-built. Now the wrapper forgets it (`throw mod = 0, e`), so the next `require` runs it again.
+
+Still open:
+
+- **Root lockfile, dev-only:** `@zed-industries/claude-code-acp` 0.16.2 pins `@modelcontextprotocol/sdk` 1.26.0 and minimatch 10.2.1 exactly. npm now marks it deprecated, renamed `@agentclientprotocol/claude-agent-acp`, whose current release, 0.97.0, uses the ACP SDK 2.0. Only the reject-always-probe adapter (`applications/agent-development-practice/adapters/reject-always-probe`) runs it, against a live agent, so moving to the new package waits for a change that can run that probe.
+- **uuid 11.1.1, through `@comunica/query-sparql` 5.2.3:** a production dependency. Comunica's `UUID()` and `STRUUID()` functions require `^11.0.0`, and Dependabot names 14.0.0 as the fix for GHSA-w5hq-g745-h8pq. That advisory is about `v3`, `v5` and `v6` writing into a buffer the caller passes. Comunica calls only `uuid.v4()`, with no arguments.
+
 ## 2026-10-27 — Dependencies: vitest 4, Electron 44 and electron-builder 26, in place of Dependabot's #701
 
 Dependabot's #701 bumped fourteen packages across eleven directories and failed 26 checks. Nearly all of them failed at `npm ci`: the root lockfile resolved Electron 42.11.16 while the desktop's `package.json` asked for `^45.0.0`. It also moved vitest to 5 and jsonld to 9. This change replaces it. jsonld 9 and rdf-canonize 5 came on their own, at exact versions (the entries below), and stay at 9.0.0 and 5.0.0 here. Against master with those in, the root lockfile's advisories go from 32 (3 critical, 24 high) to 5 (none critical, 3 high), and its production advisories stay at none.
