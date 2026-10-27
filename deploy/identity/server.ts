@@ -38,6 +38,7 @@ import {
   getCachedParsedDid,
   setCachedParsedDid,
   getOrCreateEd25519VerifyKey,
+  isSmallOrderEd25519Key,
 } from './did-parse.js';
 import { startTiming, logTiming, timingEnabled } from './timing.js';
 import {
@@ -398,8 +399,8 @@ function encodeX25519Multibase(rawKey: Buffer): string {
  * tried first. If that fails we fall back to the legacy
  * `'z' + base64url(rawKey)` shape this server originally emitted, so
  * pre-existing clients that registered under the old encoding keep
- * working. The fallback logs a deprecation marker; a future relay
- * version will flip this to a hard 400.
+ * working. /auth/did logs a deprecation marker for the fallback; a
+ * future relay version will flip this to a hard 400.
  *
  * Returns either `{ ok: true, publicKey, format }` or
  * `{ ok: false, error }`.
@@ -425,7 +426,6 @@ function parseEd25519DidKey(did: string): { ok: true; publicKey: Buffer; format:
     const legacy = Buffer.from(encoded, 'base64url');
     if (legacy.length >= 32) {
       const publicKey = legacy.subarray(legacy.length - 32);
-      log(`[did-key-legacy] accepted base64url-encoded did:key for ${logValue(did, 24)}…; client should migrate to W3C base58btc encoding`);
       return { ok: true, publicKey: Buffer.from(publicKey), format: 'base64url-legacy' };
     }
   } catch { /* fall through */ }
@@ -476,6 +476,9 @@ const DID_NOT_REGISTERED = 'This DID is not registered. Sign in with an existing
 const DID_KEY_NOT_REGISTERED = 'This DID is not registered with this key, and only a did:key can open an account by itself. Sign in with an existing credential and add this DID from there.';
 const DID_SIGNATURE_FAILED = 'Ed25519 signature verification failed. Sign, with the DID\'s key, the exact UTF-8 bytes of the message that POST /challenges with {"purpose":"did-sig"} returned beside this nonce (LF line breaks, nothing added or removed). The challenge is spent; request a new one.';
 const DID_BARE_NONCE_REFUSED = 'This signature is over the bare nonce, which names no server. POST /challenges with {"purpose":"did-sig"} returns a message beside the nonce: sign its exact UTF-8 bytes and send the signature with that nonce.';
+// A key of small order (isSmallOrderEd25519Key), from a did:key or publicKeyMultibase: a signature
+// by it can be made without a private key, so it proves nothing.
+const DID_KEY_NOT_USABLE = 'This is not a usable Ed25519 key: it is a point of small order, for which a signature proves nothing. Use a key made by an Ed25519 key generator. The challenge is spent; request a new one.';
 
 function generateEd25519(): KeyPair {
   // Ed25519 — signing / authentication / assertionMethod.
@@ -3767,6 +3770,14 @@ app.post('/auth/did', authEnrollLimiter, async (req, res) => {
       res.status(400).json({ error: `Could not decode did:key public key: ${parsed.error}` });
       return;
     }
+    // Checked before the key is cached, so a cache hit is a usable key.
+    if (isSmallOrderEd25519Key(parsed.publicKey)) {
+      res.status(400).json({ error: DID_KEY_NOT_USABLE });
+      return;
+    }
+    if (parsed.format === 'base64url-legacy') {
+      log(`[did-key-legacy] accepted base64url-encoded did:key for ${logValue(did, 24)}…; client should migrate to W3C base58btc encoding`);
+    }
     publicKeyRaw = parsed.publicKey;
     didKeyFormat = parsed.format;
     setCachedParsedDid(did, publicKeyRaw, didKeyFormat);
@@ -3778,6 +3789,10 @@ app.post('/auth/did', authEnrollLimiter, async (req, res) => {
     const decoded = decodeEd25519PublicKeyMultibase(publicKeyMultibase);
     if (!decoded) {
       res.status(400).json({ error: 'Could not decode publicKeyMultibase — tried W3C base58btc(0xed 0x01 || key) and legacy base64url(rawKey); neither yielded a 32-byte Ed25519 public key' });
+      return;
+    }
+    if (isSmallOrderEd25519Key(decoded.publicKey)) {
+      res.status(400).json({ error: DID_KEY_NOT_USABLE });
       return;
     }
     if (decoded.format === 'base64url-legacy') {

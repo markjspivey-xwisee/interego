@@ -15,6 +15,9 @@
  * BASE_URL its own address, a bootstrap invite configured and timing lines on. A third start
  * with an unknown value must stop before it listens.
  *
+ * A key of small order, for which a signature can be made without a private key, is refused with
+ * 400 before any signature is checked, on either server.
+ *
  * Run:
  *   node --test --import tsx tests/did-sign-in-message-routes.test.ts
  */
@@ -27,6 +30,7 @@ import * as http from 'node:http';
 import * as net from 'node:net';
 import { fileURLToPath } from 'node:url';
 import { deriveUserIdFromDid } from '../derive-userid.js';
+import { isSmallOrderEd25519Key } from '../did-parse.js';
 
 const now = new Date().toISOString();
 const LENIENT_HOST = 'identity.example.test';
@@ -594,4 +598,74 @@ test('the lines a DID sign-in, a DID added with a bearer and a DID removal write
   const opened = await overMessage(lenient.url, { ...legacy, did: legacyDid });
   assert.equal(opened.status, 200, `${JSON.stringify(opened.json)}\n${lenient.sink.text}`);
   await expectLine(`[identity] [did-key-legacy] accepted base64url-encoded did:key for ${JSON.stringify(legacyDid.slice(0, 24))}…; client should migrate to W3C base58btc encoding`);
+});
+
+// The Ed25519 public keys libsodium refuses as small-order points (crypto_sign_ed25519's
+// blocklist): y of 0, 1, the two of order 8 and p-1, then p and p+1 (0 and 1 again, not reduced).
+// Each is compared with its sign bit cleared, so each stands for two encodings.
+const SMALL_ORDER_ENCODINGS = [
+  '0000000000000000000000000000000000000000000000000000000000000000',
+  '0100000000000000000000000000000000000000000000000000000000000000',
+  '26e8958fc2b227b045c3f489f2ef98f0d5dfac05d3c63339b13802886d53fc05',
+  'c7176a703d4dd84fba3c0b760d10670f2a2053fa2c39ccc64ec7fd7792ac037a',
+  'ecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f',
+  'edffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f',
+  'eeffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f',
+].flatMap(h => { const raw = Buffer.from(h, 'hex'); const signed = Buffer.from(raw); signed[31] |= 0x80; return [raw, signed]; });
+
+test('a key of small order is refused before any signature is checked, whatever the setting', async () => {
+  for (const raw of SMALL_ORDER_ENCODINGS) assert.equal(isSmallOrderEd25519Key(raw), true, raw.toString('hex'));
+  for (let i = 0; i < 64; i++) {
+    const { publicKey } = crypto.generateKeyPairSync('ed25519');
+    const raw = publicKey.export({ format: 'der', type: 'spki' }).subarray(-32);
+    assert.equal(isSmallOrderEd25519Key(raw), false, raw.toString('hex'));
+  }
+
+  // Each request below comes from an address of its own, so the per-IP limits do not run out.
+  let addr = 0;
+  const from = () => ({ 'X-Forwarded-For': `203.0.113.${++addr}` });
+  const attempt = async (server: string, body: Record<string, unknown>, headers: Record<string, string> = {}) => {
+    const h = { ...from(), ...headers };
+    const ch = await post(server, '/challenges', { purpose: 'did-sig' }, h);
+    assert.equal(ch.status, 200, JSON.stringify(ch.json));
+    return post(server, '/auth/did', { nonce: ch.json['nonce'], ...body }, h);
+  };
+  const expectUnusable = (r: Reply, label: string) => {
+    assert.equal(r.status, 400, `${label}: ${JSON.stringify(r.json)}`);
+    assert.match(String(r.json['error']), /^This is not a usable Ed25519 key: it is a point of small order/, label);
+    assert.equal(r.json['token'], undefined, label);
+  };
+
+  // The identity point as a did:key, with one fixed signature for every challenge.
+  const identityKey = SMALL_ORDER_ENCODINGS[2]!;
+  const identityDid = `did:key:z${base58(Buffer.concat([Buffer.from([0xed, 0x01]), identityKey]))}`;
+  assert.equal(identityDid, 'did:key:z6MkeXATEjyXENzBXBxgC5EHk2JE5aqd7qMGGtDpLUH1e2Sj');
+  const fixed = Buffer.concat([identityKey, Buffer.alloc(32)]).toString('base64url');
+  for (const s of [lenient, strict]) {
+    const before = bareLines(s).length;
+    for (let i = 0; i < 2; i++) expectUnusable(await attempt(s.url, { did: identityDid, signature: fixed }), `identity did:key, try ${i + 1}`);
+    await settle();
+    assert.equal(bareLines(s).length, before, s.sink.text);
+  }
+  assert.deepEqual(writesTo(deriveUserIdFromDid(identityDid)), []);
+
+  // Every such encoding: as a did:key in either form, and as the key of a DID added with a bearer.
+  const owner = didKey();
+  const signedIn = await overMessage(lenient.url, owner);
+  assert.equal(signedIn.status, 200, JSON.stringify(signedIn.json));
+  const bearer = { Authorization: `Bearer ${String(signedIn.json['token'])}` };
+  const ownerWrites = writesTo(signedIn.json['userId'] as string).length;
+  for (const [i, raw] of SMALL_ORDER_ENCODINGS.entries()) {
+    const label = raw.toString('hex');
+    const keyDid = `did:key:z${base58(Buffer.concat([Buffer.from([0xed, 0x01]), raw]))}`;
+    const legacyDid = `did:key:z${raw.toString('base64url')}`;
+    expectUnusable(await attempt(lenient.url, { did: keyDid, signature: fixed }), `${label} as a did:key`);
+    expectUnusable(await attempt(lenient.url, { did: legacyDid, signature: fixed }), `${label} as a legacy did:key`);
+    const multibase = i % 2 === 0 ? `z${base58(Buffer.concat([Buffer.from([0xed, 0x01]), raw]))}` : `z${raw.toString('base64url')}`;
+    expectUnusable(await attempt(lenient.url, { did: `did:web:small-order-${i}.example`, signature: fixed, publicKeyMultibase: multibase }, bearer), `${label} as a publicKeyMultibase`);
+    for (const did of [keyDid, legacyDid]) assert.deepEqual(writesTo(deriveUserIdFromDid(did)), [], label);
+    // A legacy-form did:key is logged as accepted only once its key is usable.
+    assert.equal(lenient.sink.text.includes(`did:key for ${JSON.stringify(legacyDid.slice(0, 24))}`), false, label);
+  }
+  assert.equal(writesTo(signedIn.json['userId'] as string).length, ownerWrites, 'no DID was added to the bearer\'s account');
 });
