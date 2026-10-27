@@ -1,5 +1,67 @@
 # Changelog
 
+## 2026-10-27 — Identity: wallet and DID removals take the credential's turn, a bearer that does not verify opens no account, and unconfirmed writes are settled in the background
+
+Corrections to the entries below, after merging master into this branch. Each was reproduced against the server, running with a stand-in pod.
+
+- **A wallet or DID removal could answer the opposite of what the pod went on to hold.** Removals were decided outside the credential's turn, and a removal that nothing could settle was not recorded. Two cases:
+  - an add of a wallet or DID that nothing could settle is recorded for the credential's next turn. A removal of the same credential then read the account's record without it and answered 404 "not found", and the add landed afterwards, so the account listed it;
+  - a removal that nothing could settle, followed by the owner adding the credential back. The add decided on a plain read, which said it was still there, and the removal landed afterwards. The credential's next sign-in then opened an account of its own.
+
+  `DELETE /auth-methods/me/wallet/:address` and `DELETE /auth-methods/me/did` now run in the credential's turn whenever this server's copy of the account lists the credential, or a write of it to that account is recorded. The turn settles a recorded write before the removal reads. A removal that nothing could settle is recorded the same way an add is, so the credential's next request (a sign-in, an add, a link) settles that account first. Any account can ask to remove any wallet or DID from itself, so a removal of a credential its copy does not list, with nothing recorded, does not queue in the turn, where it could hold up the owner's sign-ins.
+- **A bearer that did not verify was treated as no bearer.** `/auth/siwe` and `/auth/did`, with a wallet or `did:key` that no account holds and a bearer whose check failed, went on as a first sign-in and opened the account derived from the credential. A check fails when the bearer's account cannot be read for a moment (the other instance opened it during a deploy's overlap), and when the token was signed out, expired or deleted. The derived account is preferred, so the owner's retry with the same bearer signed in there, and the credential never reached the owner's account. Such a request is now refused with nothing changed: 503 when the bearer's account could not be read, 401 otherwise. Master's routes have the same fall-through; this branch changes them.
+- **An add could complete after its account signed out everywhere.** A request waits for a credential's turn for up to 30 s, and a device is registered up to 5 minutes after its options. The bearer was checked only when the request arrived, so a token signed out meanwhile still added the credential and got a working session back. Every add with a bearer (`/auth/siwe`, `/auth/did`, `/wallet/link`, and an added device) now checks the record it writes, under the lock, and adds nothing (401) when that record's session epoch is above the one the token was issued at. This check only refuses. A4 changes with it: a device added with a token that the other instance had signed out was added before, and is refused now.
+- **Unconfirmed-write records were kept for the life of the process.** A record was dropped only by a later request with the same credential, and a throwaway wallet whose first sign-in met a failing pod never comes back. Each record is now settled in the background once a minute (`UNCONFIRMED_SETTLE_MS`), in its credential's turn as its next request would, and dropped once settled. At most 10,000 are held (`UNCONFIRMED_WRITES_MAX`). Past that a write nothing could settle still answers 503 "may or may not have been saved" but is not recorded, and `WARN identity_unconfirmed_writes_full max=<n> userId=<id>` is logged. `GET /health` reports the count as `unconfirmedWrites`. The per-account generation counters also grew with every id ever installed or expired. They are replaced by watches that last only as long as the read they serve (`deploy/identity/record-watch.ts`), so nothing is kept for an account nobody is reading.
+- **A first sign-in whose write the pod refused (a 4xx) said it may or may not have been saved,** and recorded the write for the credential's next sign-in, whenever the read after the refusal failed. A refused write did not land. The answer is now that nothing was changed ("was not saved", for a passkey registration), and nothing is recorded.
+- **Creates failed on a pod taking more than about 7.5 s per PUT.** A create's container PUT and document PUT shared one 15 s timeout, where an update failed only past 15 s. Each now has its own 15 s. A create whose container PUT gets no answer still sends no document, so the bound for a pod that never answers is unchanged. `/try` now keeps the record it wrote when the read after a failed write finds it there (a pod that stored it without answering). It used to answer 503 and abandon the id.
+- **A first sign-in to an id deleted here, whose record was put back without its tombstone,** answered 503 "Nothing was changed; try again". It now answers 409, as for the tombstone. Nothing is written either way.
+- The DID values the branch logs go through master's `logValue`, as master's own DID log lines do.
+- `DELETE /auth-methods/me/did` with a `did` that is not a string answers 400. It answered 404 after reading the account.
+
+Documentation (`deploy/identity/AUTH-ARCHITECTURE.md`, and the entries below where they were wrong):
+
+- Removals in the turn, the refusals above, the sweep and its limit, the 4xx answer, the container PUT's timeout (and the per-PUT threshold it removes), and what `/try` does after a failed write.
+- Repeating a request after "may or may not have been saved": a removal and a sign-out can be sent again as they are. A link and a passkey sign-in are repeated with a new nonce or challenge, because the first request spent its own. The same `/wallet/link` request sent again is refused (401), and its 503 now says to sign a new message.
+- The ways settling fails include a fence after which the record has not moved.
+- A recorded write is a wallet's or DID's only. A passkey add and a deletion are not recorded.
+- The extra pod read also comes with two requests that succeed: an already-linked `/wallet/link`, and the deletion of a `u-try-` account.
+- C14 covers a wallet removal that nothing could settle, not removals in general.
+- A bullet that quoted an entry below as it read before that entry was rewritten now states the facts instead. The entry directly below no longer quotes text that was since rewritten.
+- A paragraph on accounts deleted before tombstones named a vertical; it now describes the case without the name.
+
+Tests:
+
+- **`live-record-writes-routes.test.ts`**:
+  - P1: an add of a wallet and of a `did:key` that nothing could settle, then a removal of each. The removals answer 404, and the adds, released afterwards, do not land.
+  - P6: a wallet removal and a DID removal that nothing could settle, then the owner adds each back with a bearer. The removals, released afterwards, do not land, and each credential still signs in to its account.
+  - K6: a wallet and a `did:key` sent with a bearer whose account cannot be read for a moment (503, and the retry adds the credential), or with a signed-out bearer (401). No account is opened for either. K5's `did:web` request now gets 503 too.
+  - S9: a `did:web` add, a `/wallet/link` and an `/auth/siwe` add that wait for the turn while their account signs out everywhere, and a device registered after its account signed out. None adds anything.
+  - S10: a second instance with a 300 ms sweep and a limit of 2. Three throwaway wallets' first sign-ins go unsettled. Two are recorded and the third logs the limit; once the pod is readable, the sweep settles both without any request.
+  - C17: a passkey removal, a DID removal and a sign-out-everywhere that nothing could settle. Each says so and says that repeating it is safe, without pointing at `GET /auth-methods/me`.
+  - C18: a deleted id whose record is put back without the tombstone: 409, and nothing is written.
+  - C19: a first wallet sign-in and a first passkey registration the pod refused with 403, with the next two reads failing.
+  - T1: `/try` with a record already there (`If-None-Match: *`, 412, nothing overwritten), with a write the pod never answers (one read after it and nothing written back), and with one the pod stores without answering (provisioned).
+  - T2: a first passkey registration on a pod taking 9 s per PUT succeeds.
+  - L2's claimed `u-try-` account is made in `before()`, so that T1 can find its own ids. DID sign-ins sign the challenge's message.
+- **`credential-decisions.test.ts`**: the sweep (it keeps a record while the account cannot be read or the turn is busy) and the limit.
+- **`record-watch.test.ts`** (new): a read sees a change made while it is in flight, and nothing is kept once every read is done. `auth-methods-writer.test.ts` hands the production refresh and load functions the watches.
+- **`provisional-play-enrollment.test.ts`** hands the wallet removal route, which it takes from `server.ts`, the production `inRemovalTurn` and the helpers it now calls.
+
+Each new case was run with its fix reverted, one at a time, and fails then:
+- removals outside the turn, and an unrecorded removal;
+- the fall-through in each of `/auth/siwe` and `/auth/did`;
+- the sweep, and the limit;
+- the 4xx branch;
+- the shared timeout, and `/try` keeping its record;
+- the epoch check;
+- the three answers C17 covers;
+- `writeLive`'s refusal of a deleted id's write;
+- `/try` writing unconditionally, and `/try` fencing.
+
+B10 and B12 fail when a load ignores its watch.
+
+Still open: turns and records are process-local, so two instances during a deploy's overlap are not covered. A passkey registration nothing could settle is not recorded.
+
 ## 2026-10-27 — Identity: a did:web's turn follows the request's own checks, and the answers to unsettled writes say what is true
 
 Corrections to the entries below. Each was reproduced against the server, running with a stand-in pod.
@@ -7,7 +69,7 @@ Corrections to the entries below. Each was reproduced against the server, runnin
 - **A `did:web` add could run outside the DID's turn.** `/auth/did` checked the bearer once to decide whether the request takes the DID's turn, and again to decide whether it adds the DID. The two checks could disagree. A token for an account this server has not loaded is checked by reading that account, and a read that failed and then answered made the first check fail and the second pass. The add then ran outside the turn, beside another account's add of the same `did:web`, and both accounts listed it. The bearer is now checked once, and both decisions follow from that answer. A request whose bearer fails the check adds nothing.
 - **Any request naming a bootstrap id took a `did:web`'s turn.** Only the fields' presence counted. A request with someone's `did:web`, a key of its own and any `bootstrapUserId` could hold the owner's requests that take the turn (an add with a bearer, a claim) for up to 30 s, or make them answer 503. Now only a claim whose invite matches its seeded id takes the turn.
 - **A `did:web` whose add or claim nothing could settle was not settled by its next sign-in.** The write was recorded for the credential's next turn, but a plain `did:web` sign-in takes no turn. It decided from indexes that did not list the DID yet, and answered 401 "not registered" while the pod listed it, until something else read the account. Now a recorded write gives the DID's next request the turn, whatever that request is, so it settles the account first, as a wallet's or `did:key`'s does. Other plain `did:web` sign-ins still take no turn.
-- **The 503s for a change nothing could settle no longer send people to `GET /auth-methods/me`.** That route could not tell: while the pod is unreadable it answers this server's copy from before the write, and it is a plain read that a write still pending at the pod can overtake. A removal, a sign-out-everywhere and `/wallet/link` now say that sending the same request again is safe, and what the repeat does.
+- **The 503s for a change nothing could settle no longer send people to `GET /auth-methods/me`.** That route could not tell: while the pod is unreadable it answers this server's copy from before the write, and it is a plain read that a write still pending at the pod can overtake. A removal and a sign-out-everywhere now say that sending the same request again is safe, `/wallet/link` that linking again (with a new nonce) is safe, and each says what the repeat does.
 - **A passkey sign-in whose counter write nothing could settle now says it may or may not have been saved.** It answered "failed to persist passkey counter and RP binding", which is untrue when the write landed, for example on a pod slow enough to store it after the 15 s timeout. The entry below already said it answered this way.
 - **A busy credential turn is logged.** The 503 "Another request for this wallet/DID is still being answered" logged nothing. It now logs `WARN identity_credential_turn_busy kind=<wallet|did> waitedMs=<n>`, without the credential. A pod request that hangs inside a turn makes every later request for that credential answer this 503, so alert on it.
 - **A missing record's 404 says so.** An add or removal on an account whose `auth-methods.jsonld` was removed outside this server answered "User for token not found", which is also what an unknown token gets. It now says the account's sign-in record is missing from its pod.
@@ -15,8 +77,7 @@ Corrections to the entries below. Each was reproduced against the server, runnin
 Documentation:
 
 - `deploy/identity/AUTH-ARCHITECTURE.md` listed `/try` and the tombstone a first sign-in leaves on a pod deleted before tombstones among the read-modify-writes that retry a 412 and are settled after a failure. Both are single conditional writes, with no retry and no fence. It also said that tombstone goes through the writer's lock-free core. It no longer does.
-- Two lines of the identity entry further down still described the janitor's conditional delete of a Play owner's anchor, which the write-back replaced.
-- The entry directly below said every new or changed case failed against the code before it. J2 and K2 pass there; they were tightened only so that two surviving mutations fail them. Its commit also said that removing each piece of its fix failed a case. No case covered the settles that carry a pending write's condition, the janitor's fence, the 15 s bound on a first sign-in's probes, or the writer's check after its fence: each could be removed with the whole suite still passing. The new cases below cover them.
+- The commit of the entry directly below said that removing each piece of its fix failed a case. No case covered the settles that carry a pending write's condition, the janitor's fence, the 15 s bound on a first sign-in's probes, or the writer's check after its fence: each could be removed with the whole suite still passing. The new cases below cover them.
 
 Tests:
 
@@ -34,7 +95,7 @@ Tests:
 - **`auth-methods-writer.test.ts`**: a fence that leaves the record where it was (a refusal the pod answered, or a store whose ETag does not change) settles nothing.
 - **`credential-decisions.test.ts`**: `server.ts`'s answer to a busy turn logs the alert line.
 
-Each case fails with its piece of the fix removed, and the mutations the review named (a settle that drops the pending condition, at each place one is carried; the janitor's document; a probe with the 30 s timeout; the writer's check after the fence) each fail L2, C16 or the writer case.
+Each case fails with its piece of the fix removed, but not every piece had a case: the sign-out-everywhere wording and the answer of a passkey or DID removal that nothing could settle had none until C17 (the entry above). The mutations the review named (a settle that drops the pending condition, at each place one is carried; the janitor's document; a probe with the 30 s timeout; the writer's check after the fence) each fail L2, C16 or the writer case.
 
 ## 2026-10-27 — Identity: a write the pod never answered is settled before anything is decided on it
 
@@ -44,7 +105,7 @@ Corrections to the entries below. Each was reproduced against the server, runnin
   - What went wrong: a write that timed out (15 s) or lost its connection was followed by one read, and that read was taken as what the pod holds. A store keeps working on a request its client gave up on, and a read can get ahead of a queued write. When the read came first, the write was treated as not landed, and the pod applied it afterwards.
   - What followed: a wallet or `did:key` added with a bearer, linked, or claimed with a bootstrap invite was on the pod but not in the sign-in indexes. Its next plain sign-in opened the account derived from it beside the account the pod listed it on, and kept going there for good, because the derived account is preferred. A passkey added that way answered 401 until a restart. A first sign-in and a deletion answered "Nothing was changed", and the pod then applied them.
   - Now such a write is settled under the account's lock (`settle` in `deploy/identity/auth-methods-writer.ts`). While the record is still in the state the write was conditional on (the same ETag, or no document for a create), it is written back as read on that same condition, so the pending write's condition can never hold again, and then read again. That read is final, and every answer is decided on it: a credential there is in the indexes at once, and "Nothing was changed" is true when it is said.
-  - If settling fails (a read fails, or the write-back gets no answer either), the write is recorded with its condition, and the credential's next sign-in settles the account before anything is decided. A store that sends no ETag cannot be fenced this way; the read after such a write is taken as final, as before.
+  - If settling fails (a read fails, the write-back gets no answer either, or the record has not moved after it), a wallet's or DID's write is recorded with its condition, and the credential's next sign-in settles the account before anything is decided. A passkey added that way is not recorded (a passkey sign-in reads only the accounts the index names), and neither is a deletion (sending it again with the same token finishes it). A store that sends no ETag cannot be fenced this way; the read after such a write is taken as final, as before.
 - **A removal, a sign-out-everywhere and a passkey sign-in's counter that the pod took without confirming them are answered as done.** They answered 500 or 503 although the settled record showed the change: a retried removal then got 404, and a sign-out reported as failed had ended every session. Now a removal or sign-out answers 200 and a passkey sign-in signs in. When nothing could settle the write, the answer is 503 saying it may or may not have been saved.
 - **A plain sign-in with someone else's `did:web` no longer holds up the owner's.** A DID that is not a `did:key` is verified against the key the caller sends, so anyone could present the owner's DID with a key of their own, take the DID's turn, and keep the owner's sign-in waiting behind it (503 after 30 s). Only a request that can change who holds such a DID (a bearer that verifies, a bootstrap claim) takes the turn now. A plain sign-in writes nothing and opens no account, so it is decided outside the turn. Wallets and `did:key`s are unchanged: their signature proves the credential.
 - **The tombstone a first sign-in leaves on a pod deleted before tombstones is conditional on the claim's own read again.** The merge with master sent it through the writer, which read the record again and wrote over a record another writer had created or changed in the meantime, as long as it listed no credential. It is now written with `If-None-Match: *` where the claim's read found no record, and `If-Match` on that read's ETag where it found one. A 412 writes nothing, installs what the pod holds, and the next sign-in asks again. The documentation and the entries below already said so.
@@ -54,7 +115,7 @@ Corrections to the entries below. Each was reproduced against the server, runnin
 
 This branch's first commit now carries its own CHANGELOG entry (the entry used to arrive one commit later), so every commit on the branch touches this file and the undocumented backlog is back to 407. The entries below, `deploy/identity/AUTH-ARCHITECTURE.md` and the comments in `deploy/identity/server.ts` are corrected to match: the list of what puts a record into the indexes without loading its account, the lock's bound, the tombstone's condition and the janitor's order.
 
-Unchanged on purpose: an add with a bearer still answers only after one read and one write of the record (about 2.5 s on CSS), and a few refusals read the pod more often than before. Both follow from deciding on the record the pod holds.
+Unchanged on purpose: an add with a bearer still answers only after one read and one write of the record (about 2.5 s on CSS), and a few requests read the record once more than before: refusals such as a removal of a credential the account does not list (404), and two that succeed, a `/wallet/link` of a wallet the account already lists (200) and the deletion of a `u-try-` account (200, which reads the ETag its conditional delete is sent on). Both follow from deciding on the record the pod holds.
 
 Tests:
 
@@ -68,7 +129,7 @@ Tests:
 - **`live-record-writes-routes.test.ts`** adds five cases:
   - L1: adds through `/auth/siwe`, `/auth/did` and `/wallet/link`, an added device, a bootstrap claim, a first wallet sign-in and a deletion, each with a write the pod never answers and stores either right after the read that follows or only after the route has answered.
   - K4: a stranger's `did:web` request held on a pod read while the owner signs in.
-  - C14: removals the pod applied and answered 500, and one that nothing could settle.
+  - C14: removals the pod applied and answered 500, and a wallet removal that nothing could settle.
   - C15: a first sign-in whose three writes each meet a change.
   - B12: a scan read overlapped by a sign-out that nothing could settle.
 
@@ -146,7 +207,7 @@ Five corrections to the change below, each found by running the server against a
 - **A deletion the pod took without confirming it is finished.** When the pod stored the tombstone and then answered 500 (or the write timed out), the deletion answered 503 "Nothing was changed; try again". The account's tokens were refused from then on, so the retry got 401, and the account's agent registry and DID documents were never removed. Now the record read after a failed write decides: a tombstone there completes the deletion (200). If that read fails too, the 503 says the deletion may have taken, and a retry with the same token finishes it. That token is refused everywhere else.
 - **A bootstrap passkey the pod took without confirming it signs in.** The route rolled back the seeded account's shell and gave the invite back, while the passkey was on the pod and in the index. A usernameless sign-in then got 404 until a restart, and a new claim was refused as already spent. Now, when the pod lists the passkey, the shell and the spent invite stay, and the 503 says to sign in with it. When the read after the write failed too, the account is loaded from its pod before the answer. A device added with a bearer is handled the same way.
 - **Wallet and DID sign-ins never decide on a copy older than 10 s.** When the pod could not be read, they used this server's copy whatever its age, so a wallet or DID removed elsewhere kept signing in for as long as the pod stayed unreadable. That is now a 503.
-- **The lock's real bound, and a shorter one.** The entry below said a pod that never answers holds an account's lock for at most 15 s. It was 30 s for a hung first read, 45 s for a hung write (the write, then a 30 s read after it) and 60 s for a create (its container PUT had a timeout of its own). Every read and write of the record made under the lock now times out after 15 s, and a create's container PUT shares the write's 15 s. The bound is now 15 s when the read hangs and 30 s when the write does.
+- **The lock's real bound, and a shorter one.** A pod that never answers held an account's lock for 30 s for a hung first read, 45 s for a hung write (the write, then a 30 s read after it) and 60 s for a create (its container PUT had a timeout of its own). Every read and write of the record made under the lock now times out after 15 s, and a create's container PUT shares the write's 15 s. The bound is now 15 s when the read hangs and 30 s when the write does.
 - **A Play owner's write re-reads on 412.** Adding, removing and signing out for a `u-try-play-` owner made one attempt and failed at the first 412 (503 or 500). Every other account re-read and retried. Play owners now go through the same writer, which still checks an unclaimed owner's anchor under the lock. `deploy/identity/provisional-play-enrollment.ts` is removed, with its line in `deploy/Dockerfile.identity`.
 
 A write that meets another writer's change at all three attempts now logs `WARN identity_authmethods_write_conflict userId=<id> context=<what> attempts=<n>`. It logged nothing before. Alert on it as on `identity_authmethods_write_failed`.

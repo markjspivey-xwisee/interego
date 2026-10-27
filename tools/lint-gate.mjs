@@ -202,8 +202,11 @@ const UNLINTED_FRONTIER = {
   // Decisions about one wallet or DID in turn (identity credential-decisions.ts) and its suite: 235.
   // From master beside those (231 -> 235 there): the relay page's DID challenge suite, a route
   // suite for the DID sign-in message, identity's shared test teardown and SPKI key reader
-  // (tests/teardown.ts, tests/public-jwk.ts): 239.
-  deploy: { errors: 356, files: 239 },
+  // (tests/teardown.ts, tests/public-jwk.ts). With identity's record-watch.ts and its suite, the
+  // gate measured 246 files on the merged tree (each side had counted inside its slack), and 373
+  // errors, inside the slack; the files that change adds or edits carry no new error, so the error
+  // pin stays.
+  deploy: { errors: 356, files: 246 },
   // The bulk of these are `no-console` in vertical bridges and CLI entry points — one config
   // decision, not a thousand defects. See the note above.
   // ★ 320 -> 337, and the ratchet caught it in CI rather than locally, which is the interesting

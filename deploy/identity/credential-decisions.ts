@@ -20,12 +20,19 @@
  *     in that credential's turn (`decide`), and holds the turn until its write has been
  *     installed or has failed. Decisions about one credential run one at a time, each after the
  *     writes of the ones before it; other credentials do not wait;
- *   - a write whose outcome stayed unknown is recorded against the account it was for
- *     (`unconfirmed`, called inside the turn, with the condition a write the pod never answered
- *     was sent on), and the credential's next turn reads that account from its pod (`readAccount`,
- *     which settles such a write first, so that it can no longer land after the read, and makes
- *     what it read this server's copy and indexes) before anything is decided. While the account
- *     cannot be read or settled, the turn decides nothing ('unreadable') and the record stays.
+ *   - a write of the credential whose outcome stayed unknown (an add, a link, a claim, a first
+ *     sign-in or a removal) is recorded against the account it was for (`unconfirmed`, called
+ *     inside the turn, with the condition a write the pod never answered was sent on), and the
+ *     credential's next turn reads that account from its pod (`readAccount`, which settles such a
+ *     write first, so that it can no longer land after the read, and makes what it read this
+ *     server's copy and indexes) before anything is decided. While the account cannot be read or
+ *     settled, the turn decides nothing ('unreadable') and the record stays.
+ *   - a record is not kept for good: `settleRecorded` (server.ts runs it once a minute) gives each
+ *     recorded credential an empty turn, which settles its account as its next request would and
+ *     drops the record once that worked. A credential that never comes back (a throwaway wallet
+ *     whose first sign-in met a failing pod) is dropped that way. At most `maxRecorded` are held
+ *     at once: past that, `unconfirmed` records nothing and says so (false), and the caller's
+ *     answer is the same 503 without the guarantee for that credential.
  * A turn waits at most `waitMs` for the turns before it ('busy'), then decides nothing; the
  * turns after it still wait for the one that holds the turn. A turn is not re-entrant: a request
  * takes one credential's turn once. Process-local, as the account lock is: another instance
@@ -45,6 +52,8 @@ export interface CredentialDecisionDeps {
   readAccount(userId: string, pending: unknown): Promise<unknown>;
   /** How long a turn waits for the turns before it. */
   waitMs: number;
+  /** At most this many unconfirmed writes are recorded at once (default 10,000). */
+  maxRecorded?: number;
 }
 
 export type Turn<T> =
@@ -58,13 +67,22 @@ export interface CredentialDecisions {
   /** Run `decide` in the credential's turn, once any unconfirmed write of it has been read. */
   decide<T>(credential: string, decide: () => Promise<T>): Promise<Turn<T>>;
   /**
-   * A write that would put `credential` on `userId` failed, and whether the pod took it is not
-   * known: the credential's next turn reads `userId` first (passing `pending` to readAccount).
-   * Called inside the credential's turn.
+   * A write of `credential` on `userId` (putting it there, or removing it) failed, and whether the
+   * pod took it is not known: the credential's next turn reads `userId` first (passing `pending`
+   * to readAccount). Called inside the credential's turn. False when `maxRecorded` writes are
+   * recorded already: nothing is recorded then.
    */
-  unconfirmed(credential: string, userId: string, pending?: unknown): void;
+  unconfirmed(credential: string, userId: string, pending?: unknown): boolean;
   /** The account an unconfirmed write of the credential was for, if one is recorded. */
   unconfirmedFor(credential: string): string | undefined;
+  /**
+   * Settle every recorded write now, one credential at a time, each in its own turn (as its next
+   * request would): a record whose account was read is dropped; one whose account still cannot
+   * be read, or whose turn is busy, stays. Returns how many are left.
+   */
+  settleRecorded(): Promise<number>;
+  /** How many unconfirmed writes are recorded. */
+  recorded(): number;
   /** Credentials whose turn is held or waited for (none once every turn has finished). */
   inFlight(): number;
 }
@@ -72,7 +90,8 @@ export interface CredentialDecisions {
 export function createCredentialDecisions(deps: CredentialDecisionDeps): CredentialDecisions {
   const turns = new Map<string, Promise<void>>();
   const unconfirmed = new Map<string, { userId: string; pending: unknown }>();
-  return {
+  const maxRecorded = deps.maxRecorded ?? 10_000;
+  const decisions: CredentialDecisions = {
     async decide<T>(credential: string, decide: () => Promise<T>): Promise<Turn<T>> {
       const before = turns.get(credential) ?? Promise.resolve();
       let release!: () => void;
@@ -111,8 +130,19 @@ export function createCredentialDecisions(deps: CredentialDecisionDeps): Credent
         if (started) forget();
       }
     },
-    unconfirmed(credential, userId, pending) { unconfirmed.set(credential, { userId, pending }); },
+    unconfirmed(credential, userId, pending) {
+      // A credential recorded already keeps its place; only a new one can be refused.
+      if (!unconfirmed.has(credential) && unconfirmed.size >= maxRecorded) return false;
+      unconfirmed.set(credential, { userId, pending });
+      return true;
+    },
     unconfirmedFor: credential => unconfirmed.get(credential)?.userId,
+    async settleRecorded() {
+      for (const credential of [...unconfirmed.keys()]) await decisions.decide(credential, async () => undefined);
+      return unconfirmed.size;
+    },
+    recorded: () => unconfirmed.size,
     inFlight: () => turns.size,
   };
+  return decisions;
 }

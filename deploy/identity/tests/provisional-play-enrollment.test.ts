@@ -10,6 +10,7 @@ import {
   PlayOwnerUnavailableError, PodLockReentryError, Write, updateAuthMethods as updateAuthMethodsWith,
   type WritePrecondition,
 } from '../auth-methods-writer.js';
+import { createCredentialDecisions } from '../credential-decisions.js';
 
 const server = readFileSync(new URL('../server.ts', import.meta.url), 'utf8');
 const strip = (nodeModule as { stripTypeScriptTypes?: (source: string) => string }).stripTypeScriptTypes;
@@ -139,6 +140,12 @@ function fixture() {
   const deleteUserCompletely = (owner: string) => withIdentityPodMutex(owner, async () => {
     await duringAccountDelete(); document = null; cached = null; return { agents: [] };
   });
+  // A wallet or DID removal runs in the credential's turn (inRemovalTurn, as server.ts has it, over
+  // a decisions instance of its own); the owner's copy lists every credential here.
+  const credentialDecisions = createCredentialDecisions({ readAccount: async () => undefined, waitMs: 5_000 });
+  const inRemovalTurn = new Function('credentialDecisions', `${productionFunction('inRemovalTurn')}; return inRemovalTurn;`)(credentialDecisions);
+  const listsOwner = { candidates: () => [userId] };
+  const unexpected = (what: string) => () => { throw new Error(`${what} was not expected here`); };
   const control = (method: string, path: string) => {
     const start = executable.indexOf(`app.${method}('${path}',`);
     assert.ok(start >= 0, path);
@@ -146,10 +153,13 @@ function fixture() {
     const end = executable.indexOf('\n});', handler);
     const run = new Function('requireUserFromBearer', 'commitCredentialEnrollment', 'withIdentityPodMutex',
       'deleteUserCompletely', 'log', 'authMethodsCache', 'sendAccountWriteRefusal', 'refuseRemoval', 'AuthMethodsWriteError',
-      'changeOnPod', 'refuseUndeterminedChange',
+      'changeOnPod', 'refuseUndeterminedChange', 'inRemovalTurn', 'walletCredential', 'didCredential', 'walletIndex', 'didIndex',
+      'recordUnconfirmed', 'refuseCredentialTurn', 'logValue', 'REMOVE_AGAIN',
       `return (${executable.slice(handler, end)}\n});`)(
       async () => ({ id: userId }), commit, withIdentityPodMutex, deleteUserCompletely, log,
       authMethodsCache, sendAccountWriteRefusal, refuseRemoval, AuthMethodsWriteError, changeOnPod, refuseUndeterminedChange,
+      inRemovalTurn, (a: string) => `wallet:${a.toLowerCase()}`, (d: string) => `did:${d}`, listsOwner, listsOwner,
+      unexpected('recordUnconfirmed'), unexpected('refuseCredentialTurn'), (v: unknown) => JSON.stringify(v), 'Send it again.',
     );
     const response = { statusCode: 200, headersSent: false, body: null as unknown,
       status(code: number) { this.statusCode = code; return this; },

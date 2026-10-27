@@ -33,9 +33,10 @@
  * but a decision that reads no account's copy (a sign-in with a wallet or DID no indexed
  * account lists) never would, so until something reads the account the indexes can miss a
  * credential the pod lists. For a wallet or DID, the caller settles the account again itself
- * (server.ts credentialAfterFailedAdd and claimFirstSignInOnPod), and when it cannot, the
- * credential's next sign-in settles it first (credential-decisions.ts). A passkey whose write
- * stayed unsettled is not recorded that way: its sign-in reads the accounts the index names.
+ * (server.ts credentialAfterFailedAdd and claimFirstSignInOnPod), and when it cannot, the write
+ * (an add or a removal) is recorded and the credential's next request, or a background sweep,
+ * settles it first (credential-decisions.ts). A passkey whose write stayed unsettled is not
+ * recorded that way: its sign-in reads the accounts the index names.
  *
  * No server state and no I/O of its own: everything is injected, as in first-sign-in.ts, so
  * the contract is tested without starting server.ts (tests/auth-methods-writer.test.ts).

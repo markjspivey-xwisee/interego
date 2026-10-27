@@ -19,6 +19,7 @@ import {
   PlayOwnerUnavailableError, PodLockReentryError, Write, applyUpdate, settle, unknownTopLevelKeys, updateAuthMethods,
   type LiveRecord, type WritePrecondition, type WriterDeps,
 } from '../auth-methods-writer.js';
+import { createRecordWatchers } from '../record-watch.js';
 
 type Record_ = {
   userId: string; name?: string; walletAddresses: string[]; webAuthnCredentials: Array<{ id: string; counter: number }>;
@@ -455,15 +456,14 @@ function serverReads(read: () => Promise<LiveRecord<Record_>>) {
   let lockTurns = 0;
   const lock = <T>(id: string, fn: () => Promise<T>) => { lockTurns++; return serverLockFn(id, fn); };
   const authMethodsCache = new Map<string, { value: Record_; fetchedAt: number }>();
-  const recordGeneration = new Map<string, number>();
-  const generationOf = (id: string) => recordGeneration.get(id) ?? 0;
+  const recordWatchers = createRecordWatchers();
   const installAuthMethods = (id: string, m: Record_) => {
     authMethodsCache.set(id, { value: m, fetchedAt: Date.now() });
-    recordGeneration.set(id, generationOf(id) + 1);
+    recordWatchers.changed(id);
     return m;
   };
   const refreshing = new Map();
-  const deps = { podLockContext, PodLockReentryError, refreshing, generationOf, recordGeneration, withIdentityPodMutex: lock,
+  const deps = { podLockContext, PodLockReentryError, refreshing, recordWatchers, withIdentityPodMutex: lock,
     authMethodsCache, readLive: read, installAuthMethods, emptyAuthMethods: empty, AUTH_METHODS_TTL_MS: 10_000, log: () => {} };
   const names = Object.keys(deps);
   const build = new Function(...names, `${productionFunction('refreshAuthMethods', false)}
@@ -475,7 +475,7 @@ function serverReads(read: () => Promise<LiveRecord<Record_>>) {
     readAuthMethods(id: string, allowStale?: boolean): Promise<Record_>;
     expireAuthMethods(id: string): void;
   };
-  return { ...fns, lock, authMethodsCache, installAuthMethods, get lockTurns() { return lockTurns; } };
+  return { ...fns, lock, authMethodsCache, installAuthMethods, recordWatchers, get lockTurns() { return lockTurns; } };
 }
 
 test('readers that find an account\'s copy stale share one pod read', async () => {
@@ -545,15 +545,14 @@ test('a read of this server\'s copy inside the account\'s own lock is a bug, ref
 });
 
 test('an unlocked load whose read an install overlapped reports the installed record and installs nothing', async () => {
-  const recordGeneration = new Map<string, number>([['u-pk-000000000001', 1]]);
-  const generationOf = (id: string) => recordGeneration.get(id) ?? 0;
+  const recordWatchers = createRecordWatchers();
   const authMethodsCache = new Map<string, { value: Record_; fetchedAt: number }>();
   const adopted: Record_[] = [];
   const hydrated: Record_[] = [];
   let releaseRead!: () => void;
   const reading = new Promise<void>(resolve => { releaseRead = resolve; });
   const deps = {
-    generationOf, readPodJson: async () => { await reading; return account(); }, podFetch: null,
+    recordWatchers, readPodJson: async () => { await reading; return account(); }, podFetch: null,
     podAuthMethodsUrl: (id: string) => id, deletedUserIds: new Set<string>(), authMethodsCache,
     isTombstone: (m: Record_) => typeof m.deletedAt === 'string', holdsAnAccount: (_id: string, m: Record_) => hasAnyCredential(m),
     hydrateFromAuthMethods: (_id: string, m: Record_) => { hydrated.push(m); },
@@ -566,7 +565,7 @@ test('an unlocked load whose read an install overlapped reports the installed re
   const load = loadAccountFromPod('u-pk-000000000001');
   const removed = { ...account(), walletAddresses: [] };
   authMethodsCache.set('u-pk-000000000001', { value: removed, fetchedAt: Date.now() });
-  recordGeneration.set('u-pk-000000000001', 2);
+  recordWatchers.changed('u-pk-000000000001');
   releaseRead();
   assert.equal(await load, true);
   assert.deepEqual(adopted, []);
@@ -576,8 +575,8 @@ test('an unlocked load whose read an install overlapped reports the installed re
   assert.equal(adopted.length, 1);
   // A write that failed and could not be settled overlaps the read: it may have landed, and the
   // copy is only marked stale (server.ts expireAuthMethods), so the read is not adopted either.
-  const expireAuthMethods = new Function('authMethodsCache', 'recordGeneration', 'generationOf',
-    `${productionFunction('expireAuthMethods', false)}; return expireAuthMethods;`)(authMethodsCache, recordGeneration, generationOf) as (id: string) => void;
+  const expireAuthMethods = new Function('authMethodsCache', 'recordWatchers',
+    `${productionFunction('expireAuthMethods', false)}; return expireAuthMethods;`)(authMethodsCache, recordWatchers) as (id: string) => void;
   let releaseAgain!: () => void;
   const again = new Promise<void>(resolve => { releaseAgain = resolve; });
   deps.readPodJson = async () => { await again; return account(); };
@@ -588,4 +587,8 @@ test('an unlocked load whose read an install overlapped reports the installed re
   releaseAgain();
   await loading;
   assert.equal(adopted.length, 1, 'the overlapped read is not installed');
+  // Every read is over, and nothing is kept for the account (the per-account counter this
+  // replaced kept an entry for every id ever installed or expired).
+  expireAuthMethods('u-eth-000000000009');
+  assert.equal(recordWatchers.watched(), 0);
 });

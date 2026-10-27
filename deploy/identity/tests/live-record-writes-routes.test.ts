@@ -60,7 +60,8 @@ const nonJson = new Set<string>();
 // the old record, as a store that lets reads ahead of a queued write answers it. 'hang-then-apply-
 // late': never answered, and stored (if its precondition holds) only when the test calls
 // applyLate(), after the route has answered. A store keeps working on a request its client gave up on.
-type PutFault = '500' | 'apply-then-500' | 'hang' | 'apply-then-hang' | 'hang-then-apply' | 'hang-then-apply-late';
+// '403': refused and not stored, as a pod refuses a write it will not take.
+type PutFault = '500' | '403' | 'apply-then-500' | 'hang' | 'apply-then-hang' | 'hang-then-apply' | 'hang-then-apply-late';
 const putFaults = new Map<string, PutFault[]>();
 /** Held writes waiting for the next answered read of their record ('hang-then-apply'). */
 const applyAfterRead: Array<{ userId: string; apply: () => void }> = [];
@@ -84,6 +85,9 @@ const otherRequests: Array<{ method: string; path: string; at: number; abandoned
 /** `<METHOD> <path>` of requests for a pod's container or other documents that are never answered. */
 const hangingOther = new Set<string>();
 let latencyMs = 0;
+/** A pod slow but still answering: each PUT (container or document) of an id this matches takes `ms`, and is then handled as usual. */
+const slowPuts: Array<{ matches: (userId: string) => boolean; ms: number }> = [];
+const slowPutFor = (userId: string) => slowPuts.find(x => x.matches(userId))?.ms ?? 0;
 type Hold = { arrived: Promise<void>; release: () => void };
 type HoldEntry = { method: string; matches: (userId: string) => boolean; arrive: (userId: string) => void; released: Promise<void>; skip: number };
 const holds: HoldEntry[] = [];
@@ -137,6 +141,7 @@ async function servePods(req: http.IncomingMessage, res: http.ServerResponse): P
   const container = /^\/([^/]+)\/$/.exec(path);
   if (container) {
     requests.push({ method: req.method!, userId: container[1]!, target: 'container', at: Date.now() });
+    if (req.method === 'PUT' && slowPutFor(container[1]!)) await sleep(slowPutFor(container[1]!));
     if (req.method === 'PUT' && hangingContainers.has(container[1]!)) return;   // never answered
     if (req.method === 'GET' && listedContainers.has(container[1]!)) {
       res.writeHead(200, { 'Content-Type': 'text/turtle' })
@@ -177,6 +182,7 @@ async function servePods(req: http.IncomingMessage, res: http.ServerResponse): P
   }
   if (req.method === 'PUT') {
     entry.body = JSON.parse(raw) as Doc;
+    if (slowPutFor(userId)) await sleep(slowPutFor(userId));
     const fault = putFaults.get(userId)?.shift();
     if (fault === 'hang') return;   // never answered: the writer's own timeout must end it
     if (fault === 'hang-then-apply' || fault === 'hang-then-apply-late') {
@@ -190,6 +196,7 @@ async function servePods(req: http.IncomingMessage, res: http.ServerResponse): P
       return;
     }
     if (fault === '500') { answer(500); return; }
+    if (fault === '403') { answer(403); return; }
     if (entry.ifNoneMatch === '*' && docs.has(userId)) { answer(412); return; }
     if (entry.ifMatch && entry.ifMatch !== etagOf(userId)) { answer(412); return; }
     docs.set(userId, { doc: entry.body, modified: clock = Math.max(clock + 1, Date.now()) });
@@ -381,6 +388,13 @@ async function addDevice(key: SoftPasskey, bearer: string, inst = primary): Prom
   const rpId = (options.json['rp'] as { id: string }).id;
   return post('/auth/webauthn/register', { response: attest(key, String(options.json['challenge']), inst.base, rpId) }, undefined, inst);
 }
+/** A passkey registered with no bearer and no invite: it opens the account derived from it. */
+async function freshPasskey(key: SoftPasskey, inst = primary): Promise<Reply> {
+  const options = await post('/auth/webauthn/register-options', { name: 'Fresh' }, undefined, inst);
+  if (options.status !== 200) return options;
+  const rpId = (options.json['rp'] as { id: string }).id;
+  return post('/auth/webauthn/register', { response: attest(key, String(options.json['challenge']), inst.base, rpId) }, undefined, inst);
+}
 async function bootstrapPasskey(key: SoftPasskey, invite: { userId: string; token: string }, inst = primary): Promise<Reply> {
   const options = await post('/auth/webauthn/register-options', { name: 'Seeded', bootstrapUserId: invite.userId, bootstrapInvite: invite.token }, undefined, inst);
   if (options.status !== 200) return options;
@@ -403,8 +417,8 @@ async function linkWallet(w: AnyWallet, bearer: string, inst = primary): Promise
   return post('/wallet/link', { walletAddress: w.address, siweMessage: message, signature, nonce }, bearer, inst);
 }
 async function didSignIn(k: DidKey, opts: { bearer?: string; did?: string; extra?: Doc } = {}, inst = primary): Promise<Reply> {
-  const { nonce } = (await post('/challenges', { purpose: 'did-sig' }, undefined, inst)).json as { nonce: string };
-  const signature = crypto.sign(null, Buffer.from(nonce, 'utf8'), k.privateKey).toString('base64url');
+  const { nonce, message } = (await post('/challenges', { purpose: 'did-sig' }, undefined, inst)).json as { nonce: string; message?: string };
+  const signature = crypto.sign(null, Buffer.from(message ?? nonce, 'utf8'), k.privateKey).toString('base64url');
   return post('/auth/did', { did: opts.did ?? k.did, nonce, signature, name: 'DID',
     ...(opts.did ? { publicKeyMultibase: k.multibase } : {}), ...(opts.extra ?? {}) }, opts.bearer, inst);
 }
@@ -472,6 +486,24 @@ const k5 = { holder: account({ keys: [P()] }), unloaded: account({ keys: [P()] }
 unlisted.add(k5.unloaded.userId);
 // Two accounts adding one did:web at once (and a bootstrap claim of another).
 const r3 = { a: account({ keys: [P()] }), b: account({ keys: [P()] }) };
+// Bearers that do not verify, with a wallet or did:key no account holds: accounts the other instance
+// opened after this one listed the pods (so not loaded here), and one signed out everywhere.
+const k6 = { wallet: account({ keys: [P()] }), did: account({ keys: [P()] }), revoked: account({ keys: [P()] }) };
+unlisted.add(k6.wallet.userId);
+unlisted.add(k6.did.userId);
+// Adds that wait (for a credential's turn, or between a passkey's options and its registration)
+// while their account signs out everywhere.
+const s9 = { y: account({ keys: [P()] }), x: account({ keys: [P()] }), linkY: account({ keys: [P()] }), linkX: account({ keys: [P()] }),
+  siweY: account({ keys: [P()] }), siweX: account({ keys: [P()] }), device: account({ keys: [P()] }) };
+// An add the pod never answers whose account then removes the credential; a removal the pod never
+// answers whose credential is then added back.
+const p1 = { wallet: account({ keys: [P()] }), did: account({ keys: [P()] }) };
+const p6 = { wallet: account({ keys: [P()], wallets: [W()] }), did: account({ keys: [P()], dids: [didKey()] }) };
+// Removals and a sign-out nothing could settle.
+const c17 = account({ keys: [P(), P()], wallets: [W()], dids: [didKey(), didKey()] });
+// A claimed u-try- account for L2's deletion, made in before() so that no other /try runs beside the
+// /try cases of the concurrent block below (they find their own id by its shape).
+let l2Try: Reply;
 // Accounts whose write the pod never answers and stores later: right after the read the writer
 // makes once its write timed out ('early'), or only after the route has answered ('late').
 const l1 = {
@@ -564,6 +596,7 @@ before(async () => {
   seed(unloaded(j5.passkey.from), { keys: [j5.passkey.holds] });
   for (const x of Object.values(j5)) unlisted.add(unloaded(x.from));
   primary = await startIdentity(port);
+  l2Try = await post('/try', {});
 });
 
 after(async () => {
@@ -620,11 +653,20 @@ test('A3: a wallet added with a bearer is added to the record as the pod holds i
   assert.equal((await signIn(p2!, 1)).status, 401);
 });
 
-test('A4: a device added with a bearer keeps a session epoch raised out of band', async () => {
+test('A4: a device added with a bearer keeps a session epoch raised out of band; a bearer that epoch ended adds nothing', async () => {
   const token = await tokenFor(a4.keys[0]!, 1, a4.userId);
+  // The other instance signs out everywhere: this server's copy still says epoch 0, so the old
+  // token passes the options' check, but the registration's write sees the record's epoch and adds
+  // nothing (it used to add the device to the signed-out account).
   outOfBand(a4.userId, d => { d['sessionEpoch'] = 2; });
+  const ended = await addDevice(P(), token);
+  assert.equal(ended.status, 401, `${JSON.stringify(ended.json)}${out()}`);
+  assert.match(String(ended.json['error']), /signed out everywhere/);
+  assert.deepEqual(record(a4.userId)!.webAuthnCredentials.map(c => c.id), [a4.keys[0]!.id]);
+  // A token issued at that epoch adds the device, and the epoch stays as the pod has it.
+  const current = await tokenFor(a4.keys[0]!, 2, a4.userId);
   const k2 = P();
-  const added = await addDevice(k2, token);
+  const added = await addDevice(k2, current);
   assert.equal(added.status, 200, `${JSON.stringify(added.json)}${out()}`);
   assert.equal(record(a4.userId)!.sessionEpoch, 2);
   assert.deepEqual(record(a4.userId)!.webAuthnCredentials.map(c => c.id), [a4.keys[0]!.id, k2.id]);
@@ -1270,7 +1312,7 @@ describe('writes the pod never answers', { concurrency: true }, () => {
     const derivedOf = (w: AnyWallet) => deriveUserIdFromWallet(w.address.toLowerCase());
     const token = Object.fromEntries(await Promise.all(Object.entries(l2).map(async ([n, a]) => [n, await tokenFor(a.keys[0]!, 1, a.userId)] as const)));
     // A claimed u-try- account (a passkey added with its /try token), for its deletion.
-    const tried = await post('/try', {});
+    const tried = l2Try;
     assert.equal(tried.status, 200, JSON.stringify(tried.json));
     const tryId = String(tried.json['userId']);
     const tryKey = P();
@@ -1356,6 +1398,129 @@ describe('writes the pod never answers', { concurrency: true }, () => {
     assert.equal(record(l2.device.userId)!.webAuthnCredentials.length, 1);
     assert.deepEqual(record(invites.fencePk.userId)!.webAuthnCredentials, []);
     await signsInTo(signIn(tryKey, 1), tryId);
+  });
+
+  test('P1: a removal first settles an add of the same wallet or DID that nothing could settle, so the add cannot land after the removal\'s 404', { timeout: 60_000 }, async () => {
+    const tokenW = await tokenFor(p1.wallet.keys[0]!, 1, p1.wallet.userId);
+    const tokenD = await tokenFor(p1.did.keys[0]!, 1, p1.did.userId);
+    // The add is never answered and is stored (if its condition still holds) only at applyLate();
+    // the fence after it gets no answer, and the read the route then makes fails: the add is
+    // recorded as unconfirmed, for the credential's next turn.
+    for (const id of [p1.wallet.userId, p1.did.userId]) {
+      failPuts(id, 'hang-then-apply-late', 'hang');
+      const fence = hold('PUT', id, 2, () => { failingGets.set(id, 1); });
+      void fence.arrived.then(() => fence.release());
+    }
+    const w = W();
+    const k = didKey();
+    const [addW, addD] = await Promise.all([siwe(w, { bearer: tokenW }), didSignIn(k, { bearer: tokenD })]);
+    for (const r of [addW, addD]) {
+      assert.equal(r.status, 503, JSON.stringify(r.json));
+      assert.match(String(r.json['detail']), /may or may not/);
+    }
+    // The owner removes the credential. The removal takes its turn, which settles the account first
+    // (the fence lands where the record has not moved), so the 404 is what the pod will go on holding.
+    const [removeW, removeD] = await Promise.all([
+      del(`/auth-methods/me/wallet/${w.address.toLowerCase()}`, tokenW),
+      del('/auth-methods/me/did', tokenD, { did: k.did }),
+    ]);
+    assert.equal(removeW.status, 404, `${JSON.stringify(removeW.json)}${out()}`);
+    assert.equal(removeD.status, 404, JSON.stringify(removeD.json));
+    // The pod gets round to the adds only now. They used to land, so the account listed the wallet
+    // or DID it had just been told was not there.
+    const ids = [p1.wallet.userId, p1.did.userId];
+    applyLate(ids);
+    assert.deepEqual(ids.map(id => heldOutcomes.filter(o => o.userId === id).map(o => o.applied)), [[false], [false]]);
+    assert.deepEqual(record(p1.wallet.userId)!.walletAddresses, []);
+    assert.deepEqual(record(p1.did.userId)!.didKeys, []);
+  });
+
+  test('P6: a removal nothing could settle is recorded, and settled by the credential\'s next request, so it cannot land after a re-add decided on the record', { timeout: 60_000 }, async () => {
+    const tokenW = await tokenFor(p6.wallet.keys[0]!, 1, p6.wallet.userId);
+    const tokenD = await tokenFor(p6.did.keys[0]!, 1, p6.did.userId);
+    const w = p6.wallet.wallets![0]!;
+    const k = p6.did.dids![0]!;
+    // The removal is never answered and is stored (if its condition still holds) only at applyLate();
+    // the fence after it gets no answer either.
+    for (const a of [p6.wallet, p6.did]) failPuts(a.userId, 'hang-then-apply-late', 'hang');
+    const [removeW, removeD] = await Promise.all([
+      del(`/auth-methods/me/wallet/${w.address.toLowerCase()}`, tokenW),
+      del('/auth-methods/me/did', tokenD, { did: k.did }),
+    ]);
+    for (const r of [removeW, removeD]) {
+      assert.equal(r.status, 503, JSON.stringify(r.json));
+      assert.match(String(r.json['detail']), /may or may not/);
+    }
+    // The owner adds each back with a bearer. Its turn settles the account first (the fence lands),
+    // so the record it decides on is final: it lists the credential, and the answer is a sign-in there.
+    await signsInTo(siwe(w, { bearer: tokenW }), p6.wallet.userId);
+    await signsInTo(didSignIn(k, { bearer: tokenD }), p6.did.userId);
+    // The pod gets round to the removals only now. They used to land, so the credential the owner
+    // had just added back was gone, and its next sign-in opened an account of its own.
+    const ids = [p6.wallet.userId, p6.did.userId];
+    applyLate(ids);
+    assert.deepEqual(ids.map(id => heldOutcomes.filter(o => o.userId === id).map(o => o.applied)), [[false], [false]]);
+    assert.deepEqual(record(p6.wallet.userId)!.walletAddresses, [w.address.toLowerCase()]);
+    assert.deepEqual(record(p6.did.userId)!.didKeys.map(d => d.did), [k.did]);
+    await signsInTo(siwe(w), p6.wallet.userId);
+    await signsInTo(didSignIn(k), p6.did.userId);
+    assert.equal(docs.has(deriveUserIdFromWallet(w.address.toLowerCase())), false, 'no account is opened for the wallet');
+    assert.equal(docs.has(deriveUserIdFromDid(k.did)), false, 'no account is opened for the did:key');
+  });
+
+  test('T1: /try creates only where there is no record (If-None-Match: *), reads once after a write that failed and writes nothing back, and keeps a record the pod stored without answering', { timeout: 40_000 }, async () => {
+    // L2's claimed u-try- account (made in before()) writes too while this runs: not one of these.
+    const isTry = (id: string) => id.startsWith('u-try-') && id !== String(l2Try.json['userId']);
+    const trySince = mark();
+    // A record is already there for the random id (412): 503, and it is not overwritten.
+    const taken = hold('PUT', isTry, 1, id => seed(id, { extra: { note: 'someone else' } }));
+    void taken.arrived.then(() => taken.release());
+    const collision = await post('/try', {});
+    assert.equal(collision.status, 503, JSON.stringify(collision.json));
+    const [put] = requests.slice(trySince).filter(r => isTry(r.userId) && r.target === 'doc' && r.method === 'PUT');
+    assert.ok(put, 'a write was sent');
+    assert.equal(put.ifNoneMatch, '*');
+    assert.equal(put.status, 412);
+    assert.equal((docs.get(put.userId)!.doc as { note?: string }).note, 'someone else', 'the record there is kept');
+    // Two more: the pod never answers the first write, and stores the second without answering it.
+    const since = mark();
+    const unanswered = hold('PUT', isTry, 1, id => failPuts(id, 'hang'));
+    const stored = hold('PUT', isTry, 1, id => failPuts(id, 'apply-then-hang'));
+    for (const h of [unanswered, stored]) void h.arrived.then(() => h.release());
+    const [a, b] = await Promise.all([post('/try', {}), post('/try', {})]);
+    const ok = [a, b].find(r => r.status === 200);
+    const failed = [a, b].find(r => r.status !== 200);
+    assert.ok(ok && failed, `one stored and one never written: ${JSON.stringify([a.json, b.json])}`);
+    // The one the pod stored without answering is provisioned: its record is there, with its agent.
+    const keptId = String(ok.json['userId']);
+    assert.equal(record(keptId)!.name, 'Try Interego (anonymous)');
+    assert.equal((await me(String(ok.json['token']))).status, 200);
+    // The one never written: 503, one read after the write, and no write back (a fence would leave
+    // an empty record behind for an id nobody uses).
+    assert.equal(failed.status, 503, JSON.stringify(failed.json));
+    const lostId = requests.slice(since).find(r => isTry(r.userId) && r.target === 'doc' && r.method === 'PUT' && r.userId !== keptId)!.userId;
+    assert.equal(docPuts(lostId, since).length, 1, 'one write, and nothing written back');
+    assert.ok(docGets(lostId, since).length >= 1, 'read after the write');
+    assert.equal(docs.has(lostId), false);
+  });
+
+  test('T2: a create on a pod that takes 9 s per PUT succeeds: the container PUT has its own timeout before the document\'s', { timeout: 40_000 }, async () => {
+    // A first passkey registration writes the account's container and then its record. The two used
+    // to share one 15 s timeout, so a create failed on a pod this slow, where an update did not.
+    const key = P();
+    const slow = { matches: (id: string) => id === key.userId, ms: 9_000 };
+    slowPuts.push(slow);
+    try {
+      const started = Date.now();
+      const reg = await freshPasskey(key);
+      assert.equal(reg.status, 200, `${JSON.stringify(reg.json)}${out()}`);
+      assert.equal(reg.json['userId'], key.userId);
+      assert.ok(Date.now() - started < 25_000, `took ${Date.now() - started} ms`);
+    } finally {
+      slowPuts.splice(slowPuts.indexOf(slow), 1);
+    }
+    assert.equal(record(key.userId)!.webAuthnCredentials.length, 1);
+    await signsInTo(signIn(key, 1), key.userId);
   });
 });
 
@@ -1578,6 +1743,92 @@ test('C16: the janitor writes a Play owner\'s anchor back on the ETag it checked
   }
 });
 
+test('C17: a passkey or DID removal, and a sign-out-everywhere, that nothing could settle each say so, and that sending the same request again is safe', async () => {
+  const token = await tokenFor(c17.keys[0]!, 1, c17.userId);
+  // The pod applies the write and answers 500, and the read after it fails.
+  const unsettled = () => {
+    failPuts(c17.userId, 'apply-then-500');
+    const put = hold('PUT', c17.userId, 1, () => { failingGets.set(c17.userId, 1); });
+    void put.arrived.then(() => put.release());
+  };
+  const p2 = c17.keys[1]!;
+  const d1 = c17.dids![0]!;
+  unsettled();
+  const passkey = await del(`/auth-methods/me/webauthn/${encodeURIComponent(p2.id)}`, token);
+  unsettled();
+  const did = await del('/auth-methods/me/did', token, { did: d1.did });
+  for (const r of [passkey, did]) {
+    assert.equal(r.status, 503, JSON.stringify(r.json));
+    assert.equal(r.json['error'], 'Removal not confirmed');
+    assert.match(String(r.json['detail']), /may or may not have been saved/);
+    assert.match(String(r.json['detail']), /Sending the same removal again is safe/);
+    assert.doesNotMatch(JSON.stringify(r.json), /auth-methods\/me/);
+  }
+  // Both landed (the pod applied them): sent again, each finds nothing to remove.
+  assert.equal((await del(`/auth-methods/me/webauthn/${encodeURIComponent(p2.id)}`, token)).status, 404);
+  assert.equal((await del('/auth-methods/me/did', token, { did: d1.did })).status, 404);
+  assert.equal((await signIn(p2, 1)).status, 401);
+  unsettled();
+  const signedOut = await signOut(token);
+  assert.equal(signedOut.status, 503, JSON.stringify(signedOut.json));
+  assert.equal(signedOut.json['error'], 'Sign-out not confirmed');
+  assert.match(String(signedOut.json['detail']), /may or may not have been saved/);
+  assert.match(String(signedOut.json['detail']), /Signing out everywhere again is safe/);
+  assert.doesNotMatch(JSON.stringify(signedOut.json), /auth-methods\/me/);
+  assert.equal(record(c17.userId)!.sessionEpoch, 1, 'the pod took it');
+});
+
+test('C18: an id deleted here whose record was put back without its tombstone is refused at its next first sign-in, and nothing is written', async () => {
+  const w = W();
+  const id = deriveUserIdFromWallet(w.address.toLowerCase());
+  const token = String((await signsInTo(siwe(w), id)).json['token']);
+  assert.equal((await post('/users/me/delete', {}, token)).status, 200);
+  assert.ok(record(id)!.deletedAt, 'the tombstone is on the pod');
+  // An operator puts a record without credentials back over the tombstone, by hand, and does not
+  // restart the process (AUTH-ARCHITECTURE.md says to restart it).
+  outOfBand(id, d => { delete d['deletedAt']; d['walletAddresses'] = []; });
+  const since = mark();
+  const again = await siwe(w);
+  assert.equal(again.status, 409, `${JSON.stringify(again.json)}${out()}`);
+  assert.equal(docPuts(id, since).length, 0, 'nothing is written over it: only the tombstone may be');
+  assert.deepEqual(record(id)!.walletAddresses, []);
+  assert.equal(docs.has(id), true);
+});
+
+test('C19: a first sign-in or passkey registration the pod refused (403) says nothing was changed, and records nothing', async () => {
+  // The pod refuses the write, and the next two reads fail (the one that settles the write, and the
+  // one a first sign-in made once more after the lock, which no longer follows a refusal).
+  const refused = (userId: string) => {
+    failPuts(userId, '403');
+    const put = hold('PUT', userId, 1, () => { failingGets.set(userId, 2); });
+    void put.arrived.then(() => put.release());
+  };
+  // The write did not land, so the answer is that nothing was changed. It used to say "may or may
+  // not have been saved", and record the write for the wallet's next sign-in.
+  const w = W();
+  const id = deriveUserIdFromWallet(w.address.toLowerCase());
+  refused(id);
+  const r = await siwe(w);
+  assert.equal(r.status, 503, JSON.stringify(r.json));
+  assert.match(String(r.json['detail']), /did not take the write\. Nothing was changed/);
+  assert.doesNotMatch(JSON.stringify(r.json), /may or may not/);
+  assert.equal(docs.has(id), false);
+  // Nothing was recorded: the wallet's next sign-in, while the pod cannot be read, gets the plain
+  // answer for an unreadable pod, not "an earlier write of this wallet ... was not confirmed".
+  failingGets.set(id, 1);
+  const unread = await siwe(w);
+  assert.equal(unread.status, 503, JSON.stringify(unread.json));
+  assert.doesNotMatch(JSON.stringify(unread.json), /earlier write/);
+  await signsInTo(siwe(w), id);
+  // A first passkey registration the same way.
+  const key = P();
+  refused(key.userId);
+  const reg = await freshPasskey(key);
+  assert.equal(reg.status, 503, JSON.stringify(reg.json));
+  assert.match(String(reg.json['detail']), /did not take the write, so this passkey was not saved/);
+  assert.equal(docs.has(key.userId), false);
+});
+
 // ── K. A wallet or DID being added, or whose add the pod did not confirm ────────────────────
 test('K1: a wallet or did:key sign-in made while a bearer adds that credential waits for the add, and opens no other account', async () => {
   const derivedOf = (w: AnyWallet) => deriveUserIdFromWallet(w.address.toLowerCase());
@@ -1790,8 +2041,8 @@ test('K4: a sign-in with someone else\'s did:web and a key of its own does not h
 
 test('K5: a bearer whose check fails adds nothing, so a did:web another account is adding stays on that account alone', async () => {
   // The bearer of an account this server has not loaded is checked by loading it, and that read
-  // fails once. The request is then a plain sign-in, decided outside the DID's turn, and adds
-  // nothing; it used to check the bearer again inside, pass, and add the DID outside the turn,
+  // fails once. The request is decided outside the DID's turn, adds nothing and is refused (503,
+  // try again); it used to check the bearer again inside, pass, and add the DID outside the turn,
   // beside the add in flight.
   const did = 'did:web:first-check.example';
   const holderToken = await tokenFor(k5.holder.keys[0]!, 1, k5.holder.userId);
@@ -1802,7 +2053,8 @@ test('K5: a bearer whose check fails adds nothing, so a did:web another account 
   const second = await didSignIn(didKey(), { did, bearer: tokenSignedElsewhere(k5.unloaded.userId) });
   held.release();
   await signsInTo(first, k5.holder.userId);
-  assert.equal(second.status, 401, `${JSON.stringify(second.json)}${out()}`);
+  assert.equal(second.status, 503, `${JSON.stringify(second.json)}${out()}`);
+  assert.match(String(second.json['error']), /Could not read the account for this token/);
   assert.deepEqual(record(k5.unloaded.userId)!.didKeys, [], 'the DID is on one account only');
   assert.deepEqual(record(k5.holder.userId)!.didKeys.map(d => d.did), [did]);
 });
@@ -1832,6 +2084,145 @@ test('R3: two adds of one did:web, by bearers or a bootstrap claim, take its tur
   await signsInTo(claim, invites.raceWeb.userId);
   assert.equal((await addC).status, 401, JSON.stringify((await addC).json));
   assert.deepEqual(record(r3.b.userId)!.didKeys, [], 'the DID is on one account only');
+});
+
+test('K6: a wallet or did:key sent with a bearer that does not verify is refused, and opens no account of its own', async () => {
+  const derivedOf = (w: AnyWallet) => deriveUserIdFromWallet(w.address.toLowerCase());
+  // The bearer's account was opened by the other instance after this one listed the pods (so it is
+  // not loaded here), and the read that would load it fails once: 503, nothing added and no account
+  // opened. The request used to go on as a plain first sign-in and open the account derived from
+  // the credential, which is then preferred: the owner's retry with the same bearer signed in there
+  // and never added the credential to the owner's account.
+  const w = W();
+  failingGets.set(k6.wallet.userId, 1);
+  const addW = await siwe(w, { bearer: tokenSignedElsewhere(k6.wallet.userId) });
+  assert.equal(addW.status, 503, `${JSON.stringify(addW.json)}${out()}`);
+  assert.match(String(addW.json['error']), /Could not read the account for this token/);
+  assert.equal(docs.has(derivedOf(w)), false, 'no account is opened for the wallet');
+  assert.deepEqual(record(k6.wallet.userId)!.walletAddresses, []);
+  // Once the account reads, the retry adds the wallet to it, and the wallet signs in there.
+  await signsInTo(siwe(w, { bearer: tokenSignedElsewhere(k6.wallet.userId) }), k6.wallet.userId);
+  assert.deepEqual(record(k6.wallet.userId)!.walletAddresses, [w.address.toLowerCase()]);
+  await signsInTo(siwe(w), k6.wallet.userId);
+  assert.equal(docs.has(derivedOf(w)), false, 'no account is opened for the wallet');
+  const k = didKey();
+  failingGets.set(k6.did.userId, 1);
+  const addD = await didSignIn(k, { bearer: tokenSignedElsewhere(k6.did.userId) });
+  assert.equal(addD.status, 503, `${JSON.stringify(addD.json)}${out()}`);
+  assert.equal(docs.has(deriveUserIdFromDid(k.did)), false, 'no account is opened for the did:key');
+  await signsInTo(didSignIn(k, { bearer: tokenSignedElsewhere(k6.did.userId) }), k6.did.userId);
+  await signsInTo(didSignIn(k), k6.did.userId);
+  assert.equal(docs.has(deriveUserIdFromDid(k.did)), false, 'no account is opened for the did:key');
+  // A bearer signed out everywhere: 401, and no account is opened for the wallet or the did:key.
+  const token = await tokenFor(k6.revoked.keys[0]!, 1, k6.revoked.userId);
+  assert.equal((await signOut(token)).status, 200);
+  const w2 = W();
+  const k2 = didKey();
+  for (const r of [await siwe(w2, { bearer: token }), await didSignIn(k2, { bearer: token })]) {
+    assert.equal(r.status, 401, JSON.stringify(r.json));
+    assert.match(String(r.json['error']), /signed out everywhere/);
+  }
+  assert.equal(docs.has(derivedOf(w2)), false, 'no account is opened for the wallet');
+  assert.equal(docs.has(deriveUserIdFromDid(k2.did)), false, 'no account is opened for the did:key');
+  assert.deepEqual(record(k6.revoked.userId)!.walletAddresses, []);
+  // Without a bearer, the same credentials open accounts of their own, as any first sign-in does.
+  await signsInTo(siwe(w2), derivedOf(w2));
+});
+
+test('S9: an add that waits while its account signs out everywhere adds nothing: a DID or wallet waiting for its turn, a device between its options and its registration', async () => {
+  const token = Object.fromEntries(await Promise.all(Object.entries(s9).map(async ([n, a]) => [n, await tokenFor(a.keys[0]!, 1, a.userId)] as const)));
+  /** Another account's add of the same credential holds the turn until `release`; the pod answers it 500. */
+  const holdTurn = (userId: string) => { failPuts(userId, '500'); return hold('PUT', userId); };
+  // A did:web through /auth/did. The bearer was checked when the request arrived; the add checks the
+  // record it writes, and finds the account signed out since that token was issued.
+  const did = 'did:web:signed-out-add.example';
+  let held = holdTurn(s9.y.userId);
+  const addY = didSignIn(didKey(), { did, bearer: token['y'] });
+  assert.ok(await within(held.arrived, 5_000), `no write arrived${out()}`);
+  const addX = didSignIn(didKey(), { did, bearer: token['x'] });
+  assert.equal(await within(addX, 500), false, 'the add waits for the DID\'s turn');
+  assert.equal((await signOut(token['x']!)).status, 200);
+  assert.equal((await me(token['x']!)).status, 401);
+  held.release();
+  assert.equal((await addY).status, 503);
+  const x = await addX;
+  assert.equal(x.status, 401, `${JSON.stringify(x.json)}${out()}`);
+  assert.match(String(x.json['error']), /signed out everywhere/);
+  assert.deepEqual(record(s9.x.userId)!.didKeys, [], 'nothing is added to the signed-out account');
+  // A wallet through /wallet/link, the same way.
+  const w = W();
+  held = holdTurn(s9.linkY.userId);
+  const addLY = siwe(w, { bearer: token['linkY'] });
+  assert.ok(await within(held.arrived, 5_000), `no write arrived${out()}`);
+  const linkX = linkWallet(w, token['linkX']!);
+  assert.equal(await within(linkX, 500), false, 'the link waits for the wallet\'s turn');
+  assert.equal((await signOut(token['linkX']!)).status, 200);
+  held.release();
+  assert.equal((await addLY).status, 503);
+  const l = await linkX;
+  assert.equal(l.status, 401, JSON.stringify(l.json));
+  assert.match(String(l.json['error']), /signed out everywhere/);
+  assert.deepEqual(record(s9.linkX.userId)!.walletAddresses, []);
+  // /auth/siwe checks its bearer inside the wallet's turn, so a signed-out one is refused there.
+  const w2 = W();
+  held = holdTurn(s9.siweY.userId);
+  const addSY = siwe(w2, { bearer: token['siweY'] });
+  assert.ok(await within(held.arrived, 5_000), `no write arrived${out()}`);
+  const addSX = siwe(w2, { bearer: token['siweX'] });
+  assert.equal(await within(addSX, 500), false);
+  assert.equal((await signOut(token['siweX']!)).status, 200);
+  held.release();
+  assert.equal((await addSY).status, 503);
+  const sx = await addSX;
+  assert.equal(sx.status, 401, JSON.stringify(sx.json));
+  assert.deepEqual(record(s9.siweX.userId)!.walletAddresses, []);
+  assert.equal(docs.has(deriveUserIdFromWallet(w2.address.toLowerCase())), false, 'no account is opened for the wallet');
+  // A device: the options were issued to the bearer, which then signs out everywhere; the
+  // registration adds nothing (it used to, and its session was issued at the new epoch).
+  const key = P();
+  const options = await post('/auth/webauthn/register-options', { name: 'Device' }, token['device']);
+  assert.equal(options.status, 200, JSON.stringify(options.json));
+  assert.equal((await signOut(token['device']!)).status, 200);
+  const reg = await post('/auth/webauthn/register', { response: attest(key, String(options.json['challenge']), primary.base, (options.json['rp'] as { id: string }).id) });
+  assert.equal(reg.status, 401, JSON.stringify(reg.json));
+  assert.match(String(reg.json['error']), /signed out everywhere/);
+  assert.deepEqual(record(s9.device.userId)!.webAuthnCredentials.map(c => c.id), [s9.device.keys[0]!.id]);
+  assert.equal((await signIn(key, 1)).status, 401);
+});
+
+test('S10: unconfirmed writes are settled in the background when their credential never comes back, and at most UNCONFIRMED_WRITES_MAX are held', async () => {
+  const derivedOf = (w: AnyWallet) => deriveUserIdFromWallet(w.address.toLowerCase());
+  const bg = await startIdentity(await freePort(), { UNCONFIRMED_SETTLE_MS: '300', UNCONFIRMED_WRITES_MAX: '2' });
+  const unconfirmedWrites = async () => ((await (await fetch(`${bg.base}/health`)).json()) as { unconfirmedWrites: number }).unconfirmedWrites;
+  const ws = [W(), W(), W()];
+  try {
+    // First sign-ins of throwaway wallets: the pod applies each write, answers 500, and then cannot
+    // be read, so nothing settles it and each is recorded (the third finds the records full).
+    for (const w of ws) {
+      const id = derivedOf(w);
+      failPuts(id, 'apply-then-500');
+      const put = hold('PUT', id, 1, () => { failingGets.set(id, 1_000); });
+      void put.arrived.then(() => put.release());
+      const r = await siwe(w, {}, bg);
+      assert.equal(r.status, 503, `${JSON.stringify(r.json)}${out(bg)}`);
+      assert.match(String(r.json['detail']), /may or may not/);
+    }
+    assert.equal(await unconfirmedWrites(), 2, 'the third was not recorded');
+    assert.match(bg.output(), new RegExp(`identity_unconfirmed_writes_full max=2 userId=${derivedOf(ws[2]!)}`));
+    // While the pods cannot be read, the sweep keeps both.
+    await sleep(800);
+    assert.equal(await unconfirmedWrites(), 2);
+    // Readable again, and nobody signs in with these wallets: the sweep settles both anyway. They used
+    // to stay recorded for the life of the process.
+    for (const w of ws) failingGets.delete(derivedOf(w));
+    const deadline = Date.now() + 5_000;
+    while (await unconfirmedWrites() > 0 && Date.now() < deadline) await sleep(100);
+    assert.equal(await unconfirmedWrites(), 0, `the records were never settled${out(bg)}`);
+    for (const w of ws) await signsInTo(siwe(w, {}, bg), derivedOf(w), bg);
+  } finally {
+    for (const w of ws) failingGets.delete(derivedOf(w));
+    await bg.stop();
+  }
 });
 
 // ── D, E. Counters and epochs ───────────────────────────────────────────────────────────────

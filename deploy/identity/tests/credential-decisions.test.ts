@@ -128,3 +128,50 @@ test('an unconfirmed write is read before the credential\'s next decision, and d
   assert.deepEqual(pendings, [pending, pending], 'each read was given the pending write to settle');
   assert.equal(ran, 2);
 });
+
+test('recorded writes are settled without a request for the credential, and dropped once their account was read', async () => {
+  let readable = false;
+  const reads: string[] = [];
+  const decisions = createCredentialDecisions({
+    readAccount: async userId => { reads.push(userId); if (!readable) throw new Error('502'); },
+    waitMs: 5_000,
+  });
+  // Two throwaway credentials whose first writes nothing could settle, and which never come back.
+  await decisions.decide('wallet:0xa', async () => { decisions.unconfirmed('wallet:0xa', 'u-eth-a', { kind: 'absent' }); });
+  await decisions.decide('did:did:key:zB', async () => { decisions.unconfirmed('did:did:key:zB', 'u-did-b'); });
+  assert.equal(decisions.recorded(), 2);
+  // While the pod cannot be read, each stays recorded.
+  assert.equal(await decisions.settleRecorded(), 2);
+  assert.deepEqual(reads, ['u-eth-a', 'u-did-b']);
+  // A sweep does not take a turn that is held: it waits its bound like any turn, and keeps the record.
+  readable = true;
+  const held = deferred();
+  const holder = decisions.decide('wallet:0xa', () => held.promise);
+  const quick = createCredentialDecisions({ readAccount: async () => undefined, waitMs: 50 });
+  const quickHeld = deferred();
+  // Recorded by a turn that is still held when the sweep comes.
+  const quickHolder = quick.decide('wallet:0xq', async () => { quick.unconfirmed('wallet:0xq', 'u-eth-q'); await quickHeld.promise; });
+  await sleep(5);
+  assert.equal(await quick.settleRecorded(), 1, 'a busy turn leaves its record for the next sweep');
+  quickHeld.resolve();
+  await quickHolder;
+  assert.equal(await quick.settleRecorded(), 0);
+  held.resolve();
+  await holder;
+  // Once readable, a sweep settles each and drops it, as each credential's next turn would have.
+  assert.equal(decisions.recorded(), 1, 'the holder\'s own turn settled wallet:0xa first');
+  assert.equal(await decisions.settleRecorded(), 0);
+  assert.equal(decisions.unconfirmedFor('did:did:key:zB'), undefined);
+  assert.equal(decisions.inFlight(), 0);
+});
+
+test('at most maxRecorded writes are recorded: a new one past that is refused, one recorded already is updated', async () => {
+  const decisions = createCredentialDecisions({ readAccount: async () => { throw new Error('502'); }, waitMs: 5_000, maxRecorded: 2 });
+  assert.equal(decisions.unconfirmed('wallet:0x1', 'u-1'), true);
+  assert.equal(decisions.unconfirmed('wallet:0x2', 'u-2'), true);
+  assert.equal(decisions.unconfirmed('wallet:0x3', 'u-3'), false, 'full: nothing recorded');
+  assert.equal(decisions.unconfirmedFor('wallet:0x3'), undefined);
+  assert.equal(decisions.unconfirmed('wallet:0x2', 'u-2b'), true, 'a credential recorded already keeps its place');
+  assert.equal(decisions.unconfirmedFor('wallet:0x2'), 'u-2b');
+  assert.equal(decisions.recorded(), 2);
+});
