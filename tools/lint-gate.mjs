@@ -697,7 +697,9 @@ const BASELINE = {};
 // and the exact-version guard (tests/canonicalizer-versions-are-exact.test.ts) bring it to 683;
 // the gate named 650.
 // 2026-10-27: both, merged, bring the linted scope to 686; the gate named 653.
-export const MIN_FILES = 653;
+// 2026-10-27: tests/the-foxxi-image-build-reads-its-upper-sources-from-a-seed.test.ts brings the
+// linted scope to 687; the gate named 654.
+export const MIN_FILES = 654;
 
 /**
  * How far below the real linted-file count MIN_FILES may sit before that is itself a failure.
