@@ -1,5 +1,20 @@
 # Changelog
 
+## 2026-10-27 — Relay sign-in page and DID clients: ready for a DID sign-in proof that names this server
+
+The DID sign-in proof will name this server. That takes two changes, clients first, as the wallet change did. This is the first. In the second, the identity server's `POST /challenges` with purpose `did-sig` returns a `message` beside the nonce, a versioned text that names the server and carries the nonce, and `POST /auth/did` verifies the signature over that text. Today's identity server returns no `message`, so every client below still signs the bare nonce, exactly as before.
+
+Every client in this repository that signs a `did-sig` challenge now signs the reply's `message` when it is a string, byte for byte and never rebuilt from its parts. Otherwise it signs the nonce. The clients are:
+
+- The relay's `/authorize` page. Its DID method shows the text to sign in a read-only field, with the same bytes as base64url beside it for tools that sign a file, and it sends the nonce back with the signature as before. The page used to show the nonce in its status line, which collapses line breaks. A failed challenge request now shows its error; before, the page offered `undefined` to sign.
+- The relay-agent token minter (`applications/_shared/relay-agent`, through a new `didChallengeText`). The jev-harness bridge and the jev-harness workflow mint their relay tokens with it, and `tools/fleet-event.ts` uses it in the deploy, fleet-audit and pod-store collector workflows.
+- The ten scripts under `scripts/` that sign in with a fresh did:key: `test-publish-deref-roundtrip.mjs`, which runs nightly against the live relay, and nine that are run by hand.
+- The DID sign-in helpers in the identity server's own route tests (`first-sign-in-routes`, `account-deletion-routes`, `did-key-binding-routes`), so those tests will exercise the new proof once the server returns it.
+
+The identity change has to wait until the relay and the jev-harness bridge are deployed with this one, because the relay serves the page and the bridge mints tokens with the key it holds. The workflows and the scripts run from the checkout, so they pick this up when it merges. Nothing else in the repository signs a `did-sig` challenge: the identity server's `/connect` page, `client-sign.html`, the stdio MCP server, the shared-workspace apps and the demos sign in with passkeys or wallets, or send people to the relay's page.
+
+`deploy/mcp-relay/tests/authorize-page-did-challenge.test.ts` runs the page's own script against stand-ins for the DOM, `/challenges` and `/oauth/verify`. It signs what the page shows, as a person would, and checks the signature and nonce that reach `/oauth/verify`. It covers a v1 message, a message with CRLF, non-ASCII text and edge whitespace, no message, a `message` that is not a string, and a failed challenge request. `applications/jev-harness/tests/publish.test.ts` gives its stand-in identity server a `message` and checks the minter's signature against it. `tests/did-sig-live-scripts.test.ts` runs each of the ten scripts in a child process whose `fetch` can reach only a stand-in, and the root suite's workflow now also runs when a file under `scripts/` changes. Every case with a message fails on the previous code; the cases without one pass on both.
+
 ## 2026-10-26 — Identity: a wallet signature must carry this server's nonce and name this server to sign in or link a wallet
 
 Wallet sign-in and wallet linking now take only a signature over this server's nonce, in a message that names this server. `POST /siwe/verify`, which took any message the wallet had signed, was retired earlier today (the entry below). Its companion `POST /siwe/nonce`, which handed out random bytes that nothing ever checked, now answers 410 Gone too and is still rate-limited.

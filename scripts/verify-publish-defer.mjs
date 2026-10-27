@@ -113,7 +113,9 @@ async function oauthBootstrap() {
     body: JSON.stringify({ purpose: 'did-sig' }),
   }).then(r => r.json());
   const nonce = ch.nonce;
-  const signature = b64url(nodeSign(null, Buffer.from(nonce, 'utf8'), privateKey));
+  // The identity server's `message`, when it returns one, is the exact text to sign; else the nonce.
+  const signed = typeof ch.message === 'string' ? ch.message : nonce;
+  const signature = b64url(nodeSign(null, Buffer.from(signed, 'utf8'), privateKey));
   const verify = await fetch(`${RELAY}/oauth/verify`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ pending_id: pendingId, method: 'did', did, nonce, signature, publicKeyMultibase }),
