@@ -693,7 +693,11 @@ const BASELINE = {};
 // 2026-10-27: tests/did-sig-live-scripts.test.ts brings the linted scope to 681; the gate named 648.
 // 2026-10-27: the introspection provisioning tool and its test bring the linted scope to 683; the gate named 650.
 // 2026-10-27: tests/railway-set-secret-var.test.mjs brings the linted scope to 684; the gate named 651.
-export const MIN_FILES = 651;
+// 2026-10-27: the jsonld fromRDF guard (tests/no-code-reads-rdf-back-through-jsonld-fromrdf.test.ts)
+// and the exact-version guard (tests/canonicalizer-versions-are-exact.test.ts) bring it to 683;
+// the gate named 650.
+// 2026-10-27: both, merged, bring the linted scope to 686; the gate named 653.
+export const MIN_FILES = 653;
 
 /**
  * How far below the real linted-file count MIN_FILES may sit before that is itself a failure.
