@@ -11,10 +11,15 @@
  * brand-new account pays one HEAD, a live account is never probed, a seeded id claimed with
  * its invite is not probed, and a pod that cannot be read is 503 with nothing written. For a
  * wallet or did:key pod only the relay's card counts: a manifest or descriptors a bridge
- * published into the signer's pod, with no account here, do not lock that signer out. Since
- * every deletion leaves its pod looking the same, deleting a tombstone by hand re-opens no
- * derived id; an operator re-opens one by editing the tombstone into a record that lists a
- * credential (AUTH-ARCHITECTURE.md, Re-opening a deleted id by hand).
+ * published into the signer's pod, with no account here, do not lock that signer out. So a
+ * wallet or did:key pod without the card (the relay wrote its agents before it wrote cards,
+ * on 2026-06-04, and never adds one later; or it never connected to the relay) opens again
+ * once deleted, and the last two tests pin that documented limit. Deleting a tombstone by
+ * hand re-opens no passkey id and no wallet or did:key id whose pod has the card, since a
+ * deletion leaves those pods looking the same, but it does re-open one without the card, and
+ * the deleted account's tokens verify again; an operator re-opens an id only by editing the
+ * tombstone into a record that lists a credential (AUTH-ARCHITECTURE.md, Re-opening a
+ * deleted id by hand).
  *
  * Run:
  *   node --test --import tsx tests/pre-tombstone-deletion-routes.test.ts
@@ -509,4 +514,65 @@ test('an operator re-opens a deleted account by editing its tombstone; deleting 
   assert.deepEqual([...probesOf(k.userId, since), ...probesOf(wid, since)], []);
   for (const t of oldTokens) assert.equal((await me(t)).status, 401, 'a token issued before the deletion');
   for (const r of [passkeyBack, walletBack]) assert.equal((await me(String(r.json['token']))).status, 200);
+});
+
+// What the relay left in a wallet or did:key pod it first served before 2026-06-04: agents and
+// the delegation credential its publish path wrote with it, descriptors and their manifest, an
+// inbox, and never a card (the relay writes the card only when it creates agents). A deletion
+// then removed agents and the record. Nothing left shows an account here used the pod.
+const RELAY_BEFORE_CARDS = ['credentials/urn%3Aagent%3Aold.jsonld', '.well-known/context-graphs',
+  'context-graphs/note.ttl', 'context-graphs/note-graph.trig', 'inbox/old.jsonld', '.acl'];
+
+test('the documented limit: a wallet or did:key pod the relay served before it wrote cards, deleted before tombstones, opens again', async () => {
+  const w = Wallet.createRandom();
+  const k = didKey();
+  for (const [id, signIn] of [[walletUser(w), () => siwe(w)], [deriveUserIdFromDid(k.did), () => didSignIn(k)]] as const) {
+    containers.add(id);
+    for (const f of RELAY_BEFORE_CARDS) files.add(`/${id}/${f}`);
+    const since = requests.length;
+    const r = await signIn();
+    assert.equal(r.status, 200, `${id}: ${JSON.stringify(r.json)}\n${output}`);
+    assert.equal(r.json['userId'], id);
+    assert.equal(isTombstone(id), false, JSON.stringify(docs.get(id)));
+    assert.doesNotMatch(output, new RegExp(`identity_deleted_before_tombstone userId=${id}`));
+    // Asked about only the pod root, agents and the card; credentials/ is not evidence.
+    assert.deepEqual(probesOf(id, since).sort(), [`/${id}/`, `/${id}/agents`, `/${id}/profile/card`]);
+  }
+});
+
+test('the documented limit: deleting the tombstone of a wallet or did:key account without the card re-opens it, and its tokens verify again', async () => {
+  // A wallet account whose agents the relay wrote before it wrote cards, and a did:key account
+  // that never connected to the relay: neither pod has the card.
+  const w = Wallet.createRandom();
+  const wid = walletUser(w);
+  const s = await siwe(w);
+  assert.equal(s.status, 200, `${JSON.stringify(s.json)}\n${output}`);
+  files.add(`/${wid}/agents`);
+  for (const f of RELAY_BEFORE_CARDS) files.add(`/${wid}/${f}`);
+  const k = didKey();
+  const kid = deriveUserIdFromDid(k.did);
+  const d = await didSignIn(k);
+  assert.equal(d.status, 200, `${JSON.stringify(d.json)}\n${output}`);
+  const oldTokens = [String(s.json['token']), String(d.json['token'])];
+  for (const t of oldTokens) assert.equal((await post('/users/me/delete', {}, t)).status, 200);
+  assert.ok(isTombstone(wid) && isTombstone(kid));
+  assert.equal(files.has(`/${wid}/agents`), false);
+  for (const t of oldTokens) assert.equal((await me(t)).status, 401, 'refused while the tombstone is there');
+
+  docs.delete(wid);
+  docs.delete(kid);
+  await stopIdentity();
+  await startIdentity();
+  const walletAgain = await siwe(w);
+  assert.equal(walletAgain.status, 200, `${JSON.stringify(walletAgain.json)}\n${output}`);
+  assert.equal(walletAgain.json['userId'], wid);
+  const keyAgain = await didSignIn(k);
+  assert.equal(keyAgain.status, 200, `${JSON.stringify(keyAgain.json)}\n${output}`);
+  assert.equal(keyAgain.json['userId'], kid);
+  for (const id of [wid, kid]) {
+    assert.equal(isTombstone(id), false, JSON.stringify(docs.get(id)));
+    assert.equal(docs.get(id)!['sessionEpoch'] ?? 0, 0, 'a new record, at session epoch 0');
+  }
+  assert.doesNotMatch(output, new RegExp(`identity_deleted_before_tombstone userId=(${wid}|${kid})`));
+  for (const t of oldTokens) assert.equal((await me(t)).status, 200, 'a token issued before the deletion verifies again');
 });

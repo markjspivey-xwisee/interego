@@ -847,18 +847,22 @@ async function putPodAuthMethods(userId: string, methods: AuthMethods, opts: { i
 //     id twice (every registration makes a new one), so no owner is turned away, and a
 //     container exists only because an account with this id was written, or attempted, before.
 //   - u-eth- / u-did-: <pod>/agents is gone (only a deletion removes it) while the relay's
-//     profile/card remains. The relay writes that card only at its first touch of a pod, after
-//     this server issued a token for that very id (/oauth/verify, or lazy init for the token's
-//     own pod), so the card shows that an account here used the pod. Nothing else in the pod
-//     does: every publish() writes the manifest (.well-known/context-graphs) and context-graphs/,
-//     and a bridge holding the gate's write secret publishes into a signer's own u-eth- pod with
-//     no account here at all (Foxxi self-enrolment, credential issuance, publish_ontology), so
-//     counting them locked such a wallet out at its first sign-in. A pod whose agents registry
-//     is still there lost only its sign-in record (a write before 2026-10-24 that never landed);
-//     its owner, holding the same wallet or key, signs in to it as before. The inbox does not
-//     count either: anyone can deliver to a pod, and these ids follow from a public address or
-//     key. A pod deleted before the relay wrote cards (2026-06-04), or never connected to it,
-//     shows nothing and opens again, as it did before.
+//     profile/card remains. The relay writes that card only when it creates agents, at its
+//     first touch of a pod after this server issued a token for that very id (/oauth/verify,
+//     or lazy init for the token's own pod), and only since 2026-06-04, so the card shows that
+//     an account here used the pod. Nothing else in the pod does: every publish() writes the
+//     manifest (.well-known/context-graphs) and context-graphs/, and a bridge holding the gate's
+//     write secret publishes into a signer's own u-eth- pod with no account here at all (a
+//     vertical's self-enrolment, credential issuance, ontology publishing), so counting them
+//     locked such a wallet out at its first sign-in. A pod whose agents registry is still there
+//     lost only its sign-in record (a write before 2026-10-24 that never landed); its owner,
+//     holding the same wallet or key, signs in to it as before. The inbox does not count either:
+//     anyone can deliver to a pod, and these ids follow from a public address or key. A pod
+//     without the card shows nothing and opens again, as it did before, and that is more pods
+//     than the deletion date suggests: the relay wrote agents (publish path, /oauth/verify) long
+//     before it wrote cards and never adds a card to a pod that has agents, so a pod whose agents
+//     predates 2026-06-04 has none whenever it was deleted, nor has a pod that never connected to
+//     the relay (AUTH-ARCHITECTURE.md says how an operator finds them).
 // Yes: the sign-in is refused as deleted (409) and the tombstone written (identity_deleted_
 // before_tombstone in the log), so the next attempt reads it and asks nothing. A probe that
 // cannot be answered is 'unreadable' (503), never a new account. A brand-new account pays one
@@ -1273,10 +1277,13 @@ function normaliseAuthMethods(raw: unknown, userId: string): AuthMethods {
 // the old tokens stay refused), and restarting the process (deletedUserIds).
 // Deletions before 2026-10-26 left no tombstone: they removed auth-methods.jsonld and
 // <pod>/agents and kept the rest. A derived id whose pod still looks like that is refused at
-// its first sign-in and given its tombstone then (deletedBeforeTombstones). Every deletion
-// since leaves a pod looking the same once its tombstone is gone, so deleting the file does
-// not re-open a derived id: u-pk- stays refused while its container exists, u-eth-/u-did-
-// while agents is gone and the card is there, and the tombstone comes back at the next try.
+// its first sign-in and given its tombstone then (deletedBeforeTombstones). A deletion since
+// leaves the pod looking the same once its tombstone is gone, so for u-pk- (while its
+// container exists) and for u-eth-/u-did- with the relay's card (while agents is gone),
+// deleting the file does not re-open the id: the tombstone comes back at the next try. A
+// u-eth-/u-did- pod without the card (its agents predates 2026-06-04, or it never connected
+// to the relay) shows nothing then: deleting the file and restarting re-opens the id at
+// epoch 0, and the deleted account's unexpired tokens verify again. Editing is the only way.
 const ACCOUNT_DELETED_MESSAGE = 'This account was deleted and cannot be re-opened; register a new credential';
 class AccountDeletedError extends Error {}
 
