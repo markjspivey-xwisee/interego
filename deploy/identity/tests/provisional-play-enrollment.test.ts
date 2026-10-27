@@ -57,12 +57,14 @@ function fixture() {
     document = structuredClone(candidate);
     cached = document;
   };
-  const persistExistingAuthMethods = new Function('withIdentityPodMutex', 'putPodAuthMethods',
-    `${productionFunction('persistExistingAuthMethods')}; return persistExistingAuthMethods;`)(withIdentityPodMutex, persist);
+  // The record a writer under the lock builds on: a Play owner has no deferred writes, so the pod's.
+  const recordUnderMutex = new Function('identityPendingPodWrites', 'authMethodsCache', 'fetchPodAuthMethods', 'deletedUserIds',
+    'rebuildIndexesForUser', `${productionFunction('recordUnderMutex')}; return recordUnderMutex;`)(
+    new Map(), new Map(), read, new Set<string>(), () => {});
   const commit = new Function('enrollProvisionalCredential', 'withIdentityPodMutex', 'fetchPodAuthMethods',
     'hasAnyCredential', 'provisionalPlay', 'putPodAuthMethods', 'readAuthMethods',
     'inlineApplyAuthMethods', 'scheduleDeferredAuthMethodsWrite', 'isTombstone', 'AccountDeletedError', 'ACCOUNT_DELETED_MESSAGE',
-    'deletedUserIds', 'persistExistingAuthMethods',
+    'deletedUserIds', 'recordUnderMutex', 'identityPendingPodWrites', 'authMethodsCache',
     `${productionFunction('commitCredentialEnrollment')}; return commitCredentialEnrollment;`)(
     enrollProvisionalCredential, withIdentityPodMutex, read, hasAnyCredential,
     { open(anchor: string) {
@@ -73,17 +75,17 @@ function fixture() {
     (_owner: string, methods: Methods) => { inline++; cached = methods; },
     () => { scheduled++; },
     (m: Methods & { deletedAt?: string }) => typeof m.deletedAt === 'string', Error, 'account deleted',
-    new Set<string>(), persistExistingAuthMethods,
+    new Set<string>(), recordUnderMutex, new Map(), new Map(),
   ) as (owner: string, context: string, update: (m: Methods) => boolean | void, synchronous?: boolean) => Promise<void>;
-  const authenticateHolder = new Function('withIdentityPodMutex', 'fetchPodAuthMethods', 'authenticatePasskey', 'putPodAuthMethods',
-    'identityPendingPodWrites', 'authMethodsCache', 'deletedUserIds', 'rebuildIndexesForUser', 'publicKeyIdentity',
+  const authenticateHolder = new Function('withIdentityPodMutex', 'recordUnderMutex', 'authenticatePasskey', 'putPodAuthMethods',
+    'deletedUserIds', 'publicKeyIdentity',
     `${productionFunction('authenticateHolderPasskey')}; return authenticateHolderPasskey;`)(
-    withIdentityPodMutex, read,
+    withIdentityPodMutex, recordUnderMutex,
     async ({ credential, persist }: { credential: { counter?: number }; persist: () => Promise<void> }) => {
       await duringVerification();
       credential.counter = (credential.counter ?? 0) + 1;
       await persist();
-    }, persist, new Set<string>(), new Map(), new Set<string>(), () => {}, async (key: unknown) => String(key),
+    }, persist, new Set<string>(), async (key: unknown) => String(key),
   ) as (owner: string, read: Methods, response: { id: string }, challenge: string, rpId: string, origin: string,
     triedKeys: Set<string>) => Promise<string>;
   // A Play owner's passkey sign-in, as the route runs it: the record is read under the lock.

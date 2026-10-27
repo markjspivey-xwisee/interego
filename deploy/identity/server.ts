@@ -646,11 +646,14 @@ const AUTH_METHODS_TTL_MS = 10 * 1000;
 // concurrent reader's createIfMissing refresh.
 const identityPodWriteMutexes = new Map<string, Promise<unknown>>();
 
-// Tracks userIds whose deferred pod write is still in flight. The
-// readAuthMethods cache-eviction path checks this set and treats the
+// Counts, per userId, the deferred pod writes still in flight (has() is true while any is). The
+// readAuthMethods cache-eviction path checks it and treats the
 // in-memory cache value as authoritative while a write is pending,
 // avoiding a refresh fetch racing the in-flight write.
-const identityPendingPodWrites = new Set<string>();
+// A count, not a flag: a credential added while an earlier add's write is in flight queues a
+// second write, and the first one finishing does not make the pod the record, as it may not hold
+// the second credential yet.
+const identityPendingPodWrites = new Map<string, number>();
 
 // Accounts deleted in this process. deleteUserCompletely adds the id under the per-user mutex
 // once the pod has the tombstone (or, for a random `u-try-` id other than Play's, as its record
@@ -722,7 +725,7 @@ function scheduleDeferredAuthMethodsWrite(
   methods: AuthMethods,
   context: string,
 ): void {
-  identityPendingPodWrites.add(userId);
+  identityPendingPodWrites.set(userId, (identityPendingPodWrites.get(userId) ?? 0) + 1);
   // setImmediate (not setTimeout) so the background task runs on the
   // next event-loop tick AFTER res.json's socket flush — minimises the
   // window where a process restart loses the in-flight write.
@@ -754,7 +757,9 @@ function scheduleDeferredAuthMethodsWrite(
         log(`ERROR: identity_deferred_authmethods_failed userId=${userId} context=${context} err=${lastErr.message}`);
       }
     }).finally(() => {
-      identityPendingPodWrites.delete(userId);
+      const left = (identityPendingPodWrites.get(userId) ?? 1) - 1;
+      if (left > 0) identityPendingPodWrites.set(userId, left);
+      else identityPendingPodWrites.delete(userId);
     });
   });
 }
@@ -902,34 +907,70 @@ async function commitCredentialEnrollment(
     });
     return;
   }
+  if (synchronous) {
+    // Read under the mutex, so the change is built on what the writers before it wrote (a passkey
+    // sign-in's counter and RP binding above all), and lands wholly before deleteUserCompletely's
+    // tombstone or is refused after it (putPodAuthMethods, deletedUserIds).
+    await withIdentityPodMutex(userId, async () => {
+      if (deletedUserIds.has(userId)) throw new AccountDeletedError(`${userId}: ${ACCOUNT_DELETED_MESSAGE}`);
+      const methods = await recordUnderMutex(userId);
+      if (isTombstone(methods)) throw new AccountDeletedError(`${userId}: ${ACCOUNT_DELETED_MESSAGE}`);
+      const read = structuredClone(methods);
+      if (update(methods) === false) return;
+      try {
+        await putPodAuthMethods(userId, methods);
+      } catch (err) {
+        // The pod did not take the change, so this server holds the record as read again, which
+        // its index entries still describe: a sign-in takes the record's word over the index
+        // (walletSignInAccount, /auth/did). Unless a credential added with a bearer queued a
+        // write of this record meanwhile: that write puts the change along with the credential.
+        if (!identityPendingPodWrites.has(userId) && authMethodsCache.get(userId)?.value === methods) {
+          authMethodsCache.set(userId, { value: read, fetchedAt: Date.now() });
+        }
+        throw err;
+      }
+    });
+    return;
+  }
   const methods = await readAuthMethods(userId);
   if (isTombstone(methods) || deletedUserIds.has(userId)) throw new AccountDeletedError(`${userId}: ${ACCOUNT_DELETED_MESSAGE}`);
   if (update(methods) === false) return;
-  if (synchronous) {
-    await persistExistingAuthMethods(userId, methods);
-  } else {
-    inlineApplyAuthMethods(userId, methods);
-    scheduleDeferredAuthMethodsWrite(userId, methods, context);
-  }
+  inlineApplyAuthMethods(userId, methods);
+  scheduleDeferredAuthMethodsWrite(userId, methods, context);
 }
 
 /**
- * Write a record an existing account's handler read earlier, under the per-user mutex, so it
- * never interleaves with deleteUserCompletely: it lands wholly before the tombstone (which is
- * then written over it) or is refused after it (putPodAuthMethods, deletedUserIds). Every
- * existing-account write that is not already inside the mutex goes through here.
+ * The record a writer holding the account's mutex builds on, made the one this server holds
+ * (cache and indexes). A deferred write still queued behind the mutex is what the pod is about
+ * to hold, so it is that write's record. Otherwise it is read from the pod: this server's copy
+ * can be 10 s old, and a record can drop a credential or raise its session epoch without this
+ * server seeing it (the other instance during a deploy's overlap, an operator by hand); written
+ * back, that copy would undo the change for good. A credential added with a bearer while that
+ * read is in flight is applied to this server's copy, whose write then queues behind the mutex,
+ * so the read predates it and that copy is used instead: cached and indexed, the read would
+ * drop the credential from the index, and the queued write would then put back what the caller
+ * wrote. The record returned is the one this server holds, so a credential added while the
+ * caller writes it lands in it, and the add's own write carries the caller's change.
  */
-async function persistExistingAuthMethods(userId: string, methods: AuthMethods): Promise<void> {
-  return withIdentityPodMutex(userId, () => putPodAuthMethods(userId, methods));
+async function recordUnderMutex(userId: string): Promise<AuthMethods> {
+  const queued = () => identityPendingPodWrites.has(userId) ? authMethodsCache.get(userId)?.value : undefined;
+  const pending = queued();
+  if (pending) return pending;
+  const fetched = await fetchPodAuthMethods(userId, { createIfMissing: false });
+  const added = queued();
+  if (added) return added;
+  if (!deletedUserIds.has(userId)) {
+    authMethodsCache.set(userId, { value: fetched, fetchedAt: Date.now() });
+    rebuildIndexesForUser(userId, fetched);
+  }
+  return fetched;
 }
 
 /**
  * A passkey sign-in to one holder. It writes the whole record to advance the sign counter, so
- * under the account's mutex it reads the record from the pod, checks the assertion against the
- * credential there, and writes that record back with only the credential's counter and RP
- * binding changed. The copy this server keeps can be 10 s old, and a record can drop a
- * credential or bump its session epoch without this server seeing it (the other instance during
- * a deploy's overlap, an operator by hand); written back, that copy would undo the change for good.
+ * under the account's mutex it reads the record (recordUnderMutex: from the pod, or the record a
+ * deferred write queued behind the mutex will put), checks the assertion against the credential
+ * there, and writes that record back with only the credential's counter and RP binding changed.
  * 'not-on-file': the record no longer lists the credential, so the account is no holder and
  * leaves the index. 'same-key': an earlier holder was tried with this public key (see the route).
  * `read` is the record the route read before it took the mutex. An account deleted in this
@@ -947,15 +988,7 @@ async function authenticateHolderPasskey(
   triedKeys: Set<string>,
 ): Promise<'verified' | 'not-on-file' | 'same-key'> {
   return withIdentityPodMutex(userId, async () => {
-    // A deferred write still queued behind this mutex is what the pod is about to hold.
-    const pending = identityPendingPodWrites.has(userId) ? authMethodsCache.get(userId) : undefined;
-    let methods = read;
-    if (pending) methods = pending.value;
-    else if (!deletedUserIds.has(userId)) {
-      methods = await fetchPodAuthMethods(userId, { createIfMissing: false });
-      authMethodsCache.set(userId, { value: methods, fetchedAt: Date.now() });
-      rebuildIndexesForUser(userId, methods);
-    }
+    const methods = deletedUserIds.has(userId) ? read : await recordUnderMutex(userId);
     const credential = methods.webAuthnCredentials.find(c => c.id === response.id);
     if (!credential) return 'not-on-file';
     const key = await publicKeyIdentity(credential.publicKey);
@@ -4974,18 +5007,13 @@ app.post('/tokens/me/sign-out-everywhere', tokenLimiter, async (req, res) => {
   let previousEpoch = 0;
   let newEpoch = 0;
   try {
-    if (user.id.startsWith('u-try-play-')) {
-      await commitCredentialEnrollment(user.id, 'sign-out-everywhere', methods => {
-        previousEpoch = methods.sessionEpoch ?? 0;
-        newEpoch = previousEpoch + 1;
-        methods.sessionEpoch = newEpoch;
-      }, true);
-    } else {
-      const methods = await readAuthMethods(user.id, false);
+    // Built on the record read under the account's mutex (commitCredentialEnrollment), so it
+    // keeps what a passkey sign-in just wrote there (its counter and RP binding).
+    await commitCredentialEnrollment(user.id, 'sign-out-everywhere', methods => {
       previousEpoch = methods.sessionEpoch ?? 0;
       newEpoch = previousEpoch + 1;
-      await persistExistingAuthMethods(user.id, { ...methods, sessionEpoch: newEpoch });
-    }
+      methods.sessionEpoch = newEpoch;
+    }, true);
   } catch (err) {
     res.status(500).json({ error: `Failed to persist sessionEpoch bump: ${(err as Error).message}` });
     return;
