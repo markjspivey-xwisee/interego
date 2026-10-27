@@ -337,5 +337,5 @@ function main() {
 
 // Direct invocation only. Importing this module for `changelogFailures` must not run the gate
 // or call process.exit — see tools/derivation-lint.mjs for what that costs inside a vitest
-// worker under this repo's pinned singleFork pool.
+// worker.
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) main();

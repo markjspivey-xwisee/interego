@@ -19,8 +19,9 @@
  * `mintBearer` doing the real four-round-trip SIWE exchange with a real `ethers` signature over
  * the real message body, the real `RelayMcpTransport` speaking real JSON-RPC, and the real
  * `WorkspaceClient.connect()` probing the real tool list. The only substitution is the HTTP
- * itself, which is INJECTED rather than monkey-patched onto `globalThis` — one vitest realm is
- * shared by every file in the run and a global `fetch` patch is a defect in somebody else's test.
+ * itself, which is INJECTED rather than monkey-patched onto `globalThis` — a global `fetch` patch
+ * reaches every later test in the same process (every later file, under vitest 3), so it is a
+ * defect in somebody else's test.
  */
 
 import { describe, expect, it } from 'vitest';

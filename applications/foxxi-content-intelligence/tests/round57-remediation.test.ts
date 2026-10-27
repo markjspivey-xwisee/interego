@@ -33,8 +33,8 @@ import { gateWriteFetch } from '../src/gate-write-fetch.js';
 
 const POD = 'https://pod.example/foxxi/';
 
-/** An in-memory LDP pod. No globals are touched — vitest runs every file in ONE
- *  globalThis here, and a stubbed global fetch would leak into unrelated files. */
+/** An in-memory LDP pod. No globals are touched — a stubbed global fetch would leak into
+ *  every later test in this process (since vitest 4, this file; under vitest 3, the run). */
 function inMemoryPod() {
   const store = new Map<string, string>();
   const fetchFn = (async (input: unknown, init?: { method?: string; body?: unknown }) => {

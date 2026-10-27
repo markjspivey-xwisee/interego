@@ -90,8 +90,8 @@ export class BotSession {
   /**
    * The HTTP the SIWE ceremony runs over. Defaults to the global one, so the program is
    * unchanged; it is a parameter so a test can observe WHICH OAuth client name this session
-   * registers under without patching `globalThis.fetch`, which in a shared vitest realm leaks
-   * into every other file in the run.
+   * registers under without patching `globalThis.fetch`, which leaks into every later test in
+   * the same process (since vitest 4, the rest of that file; under vitest 3, every later file).
    */
   private readonly fetchImpl: typeof fetch;
 

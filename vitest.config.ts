@@ -1,4 +1,12 @@
+import { fileURLToPath } from 'node:url';
 import { defineConfig } from 'vitest/config';
+
+// ★ THE TWO tools/ MODULES BELOW ARE RESOLVED AGAINST THIS FILE, NOT AGAINST `--root`.
+// `.github/workflows/bridge-typecheck.yml` runs `npx vitest run --root mcp-server …`, which still
+// loads this config. Vitest 4 resolves a relative `globalSetup` path against the root, so the
+// bare `'./tools/…'` it had under vitest 3 became `mcp-server/tools/…`, which does not exist, and
+// that CI step failed before running a test. Measured with vitest 4.1.12 on this tree.
+const besideThisFile = (path: string): string => fileURLToPath(new URL(path, import.meta.url));
 
 export default defineConfig({
   test: {
@@ -39,7 +47,7 @@ export default defineConfig({
     // `npm run build --workspace <pkg>` before believing the suite. The gate below reads
     // source directly and still catches TYPE errors, which is precisely why a green
     // typecheck beside a green suite is not evidence the suite ran your change.
-    globalSetup: ['./tools/vitest-typecheck-setup.mjs'],
+    globalSetup: [besideThisFile('./tools/vitest-typecheck-setup.mjs')],
     // ★ THE CHECK THAT THE SUITE RAN AT ALL, and it is here rather than in a workflow for the
     // same reason globalSetup is: the command people type is `npx vitest run tests/`, which
     // reads this file and nothing else. `'default'` is listed explicitly because naming any
@@ -74,14 +82,15 @@ export default defineConfig({
      * is the whole cost, and it buys not training people to re-run instead of read.
      */
     testTimeout: 20_000,
-    reporters: ['default', './tools/vitest-run-integrity.mjs'],
-    // ★ THE REASON THESE ARE PINNED IS NOT IN THIS FILE, AND IT USED TO BE UNFINDABLE.
+    reporters: ['default', besideThisFile('./tools/vitest-run-integrity.mjs')],
+    // ★ THE REASON THE POOL IS PINNED IS NOT IN THIS FILE, AND IT USED TO BE UNFINDABLE.
     // This comment said "the same shared Azure CSS pod" for months after Azure was
     // deliberately destroyed, so it read as a description of something gone — while the
     // hazard had simply MIGRATED to Railway with the rest of the stack, keeping its shape:
-    // one container, five suites. Anyone re-asking "can we drop singleFork?" reads
-    // `poolOptions` and nothing else, and the answer lives in a helper two directories away
-    // that no grep over `*.test.ts` reaches. So the answer is written down, in one place:
+    // one container, five suites. Anyone re-asking "can the files run in parallel?" reads
+    // the pool settings below and nothing else, and the answer lives in a helper two
+    // directories away that no grep over `*.test.ts` reaches. So the answer is written down,
+    // in one place:
     //
     //     applications/_shared/tests/shared-live-externals.ts
     //
@@ -91,28 +100,36 @@ export default defineConfig({
     // it true and derives the completeness of the set from a rule rather than from memory —
     // the first version of that registry said "three" and omitted the only one CI arms.
     // (It also asserts this pointer still exists, so deleting these lines is red.)
-    poolOptions: {
-      threads: {
-        // Single-threaded pool: no cross-file parallelism, within-file parallelism untouched.
-        singleThread: true,
-      },
-      forks: {
-        // ★★ PARALLELISM WAS TRIED AND REJECTED, on evidence, and this is not a placeholder
-        // for someone to flip. The round that tried it reported two findings and both cut
-        // against it: CI runners are 2-core, so a local multi-fork profile does not transfer
-        // to the machine that actually gates, and it made WALL-CLOCK assertions flake — a test
-        // asserting three polls inside a 40 ms window failed under fork contention and passed
-        // alone. Making every timing assertion in this repo deterministic is a much larger
-        // programme than a local saving justifies. Those two numbers are that round's, not
-        // re-driven here; what IS re-driven here is everything below about the pod.
-        //
-        // While this stays true, every module in a run shares one process, which is why
-        // `vi.stubEnv` without a restore leaks across FILES — see the `afterEach` note in
-        // shared-live-externals.test.ts, where a leaked SKIP_POD_TESTS would silently empty
-        // the five pod suites.
-        singleFork: true,
-      },
-    },
+    //
+    // ★★ PARALLELISM WAS TRIED AND REJECTED, on evidence, and this is not a placeholder
+    // for someone to flip. The round that tried it reported two findings and both cut
+    // against it: CI runners are 2-core, so a local multi-fork profile does not transfer
+    // to the machine that actually gates, and it made WALL-CLOCK assertions flake — a test
+    // asserting three polls inside a 40 ms window failed under fork contention and passed
+    // alone. Making every timing assertion in this repo deterministic is a much larger
+    // programme than a local saving justifies. Those two numbers are that round's, not
+    // re-driven here; what IS re-driven here is everything below about the pod.
+    //
+    // ★ VITEST 4 REMOVED `poolOptions`, AND NO SETTING KEPT ITS OLD MEANING. This was
+    // `poolOptions.forks.singleFork` (beside a `threads.singleThread` that did nothing, the
+    // pool being `forks`). Under vitest 3 that ran every file in ONE child process and
+    // invalidated the evaluated module graph before each file. Vitest 4's migration guide maps
+    // it to one worker with `isolate: false`, which keeps the one process but no longer resets
+    // the module graph between files: a source module evaluated while one file's `vi.mock` was
+    // in force stays cached, still bound to that mock, for every file after it. Seven collected
+    // modules call `vi.mock` or `vi.doMock` (on `ssrf-guard.js`, `@interego/solid`,
+    // `@interego/pgsl`, `electron` and others), so that is not a theoretical leak. One worker
+    // with `isolate: true` (vitest 4's default) runs the files one at a time as before, and
+    // gives each its own process: module state is fresh per
+    // file, as it was. Process state now is too. Under vitest 3 a `vi.stubEnv` left unrestored
+    // leaked into every later FILE (see the `afterEach` note in shared-live-externals.test.ts,
+    // where a leaked SKIP_POD_TESTS would have emptied the five pod suites); now it stops at
+    // the end of its own file. Measured on this tree when the upgrade landed: the same 577
+    // modules and 9,362 tests, every module with the same pass, fail and skip counts as vitest
+    // 3 on the same tree.
+    pool: 'forks',
+    maxWorkers: 1,
+    isolate: true,
     coverage: {
       // V8-native; no Babel transform, lower memory than istanbul.
       provider: 'v8',

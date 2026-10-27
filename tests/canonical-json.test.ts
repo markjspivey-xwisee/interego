@@ -161,8 +161,8 @@ describe('no call site re-derives the broken idiom', () => {
     // and reads every `.ts`/`.mts`/`.mjs`/`.js` file outside the pruned directories — 950
     // files, 16.0 MB, one pass (the walk is not repeated per assertion; there is one
     // assertion). It is therefore filesystem-bound, and filesystem is the resource the other
-    // 186 modules of a whole-suite run are contending for at the same time on a
-    // single-threaded pool.
+    // 186 modules of a whole-suite run are contending for at the same time on the
+    // single-process pool vitest ran here before vitest 4, where these numbers were measured.
     //
     // Measured on this tree, a whole-suite run over all 187 modules versus this file alone:
     //
@@ -186,7 +186,7 @@ describe('no call site re-derives the broken idiom', () => {
     //
     // That attribution is by elimination rather than by isolating the two, and the mechanism
     // is not proven here: the likely one is that a dynamic import resolves through vite's
-    // module runner, which is contended by the other 186 modules on the single-threaded pool
+    // module runner, which is contended by the other 186 modules on that single-process pool
     // in a way that a plain `readFileSync` is not. What IS established is the shape — the
     // load-sensitive part of this test was never the tree walk. Static imports are also what
     // `tests/test-files-are-runnable.test.ts`, the other tree-walking guard here, already did.

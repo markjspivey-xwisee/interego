@@ -35,8 +35,9 @@ function runGate(): { status: number; out: string } {
 /**
  * ★ IMPORTED, NOT RE-IMPLEMENTED — and importable only because the gate's body now sits
  * behind a direct-invocation guard. Before that, importing this module ran the whole gate
- * inside the vitest worker and could `process.exit(1)` from within a test, which under this
- * repo's pinned singleFork pool takes every unreached test with it.
+ * inside the vitest worker and could `process.exit(1)` from within a test, which kills the
+ * worker and every unreached test in it (under vitest 3's singleFork pool, every unreached test
+ * in the run).
  */
 const loadGate = async (): Promise<{
   blindSpotFailure: (file: string, ttl: string, parsed: number) => string | null;

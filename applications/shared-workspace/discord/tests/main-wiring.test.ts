@@ -20,7 +20,7 @@
  * ★ AND THE ENTRY POINT IS THE THING THAT MADE THIS POSSIBLE. `main` used to be module-private
  * and self-invoking, so importing this file WAS launching the bot — a live Discord login, a
  * SIWE mint, a write to `~/.interego/`, a real gateway socket and two `process.exit` signal
- * handlers, inside a shared single-threaded vitest worker. `main(boot)` and the
+ * handlers, inside the vitest worker that imported it. `main(boot)` and the
  * `invokedAsProgram()` guard are what let a test reach the wiring at all; every `boot` field
  * defaults to what ran before, so the program is unchanged.
  */
@@ -227,7 +227,7 @@ beforeEach(() => {
 
 afterEach(() => {
   // ★ THE WATCHER IS STOPPED, NOT JUST THE GATEWAY. It owns a sweep interval and a timer per
-  // thread; left running they keep a single-threaded vitest worker alive after the assertions have
+  // thread; left running they keep the vitest worker alive after the assertions have
   // finished and go on calling spies the next test is about to assert on.
   for (const s of started.splice(0)) { s.watcher.stop(); s.gateway.stop(); }
   for (const d of dirs.splice(0)) { try { rmSync(d, { recursive: true, force: true }); } catch { /* tmpdir */ } }

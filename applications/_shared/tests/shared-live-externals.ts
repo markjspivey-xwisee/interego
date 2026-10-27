@@ -25,7 +25,8 @@
  * So the property "these tests share one live resource" was true, load-bearing, and not
  * discoverable from any file a reader of the pool config would open. This module is the one
  * place that states it, `shared-live-externals.test.ts` is what keeps every field below true,
- * and the `poolOptions` comment in `vitest.config.ts` points here.
+ * and the pool comment in `vitest.config.ts` (on `maxWorkers`, since vitest 4 removed
+ * `poolOptions`) points here.
  *
  * ★★ AND THE FIRST VERSION OF THIS FILE SAID "THE THREE LIVE THINGS" WHILE MISSING THE ONLY
  * ONE CI ACTUALLY ARMS. `RUN_PUBLIC_RELAY` — a third-party Nostr relay — is read by two

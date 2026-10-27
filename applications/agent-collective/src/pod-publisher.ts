@@ -284,7 +284,8 @@ async function discoverPromotionConstraints(
   // environment - and this function ignored it and used the ambient one, so on a gated pod the
   // constraint discovery silently returned [] and every governance rule was skipped while
   // `enforceConstitutionalConstraints: true` reported that they had been enforced. It also made
-  // the path untestable without patching globalThis.fetch, which pollutes a shared vitest realm.
+  // the path untestable without patching globalThis.fetch, which leaks into every later test
+  // in the same process (since vitest 4, the rest of that test file; under vitest 3, the run).
   const doFetch = fetchFn ?? globalThis.fetch;
   let entries;
   try {

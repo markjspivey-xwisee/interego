@@ -137,9 +137,11 @@ jobs:
   # slowest together, and everything else in two `--shard`s — with the typechecks and the guards
   # beside them. Two parts of two-then-four: measured 5:05 for the four slowest on one runner
   # against 3:50 for the rest, so the wall was the slow part; cut this way the wall is the
-  # adversarial module plus a runner's fixed minute. Each part is still one single-fork vitest
-  # process, so nothing vitest.config.ts pins (and says why) changes: no two modules share a
-  # process, and the live pod suites are permanent CI skips wherever a shard puts them.
+  # adversarial module plus a runner's fixed minute. Each part is still one `vitest run` under the
+  # pool vitest.config.ts pins (and says why): `pool: 'forks'`, `maxWorkers: 1`, `isolate: true`,
+  # so its modules run one at a time, each in a child process of its own. Splitting the suite
+  # changes none of that: no two modules run at once or share a process, and the live pod suites
+  # are permanent CI skips wherever a shard puts them.
   #
   # ★ THE PARTITION IS A LIST, AND A LIST FAILS SILENTLY, so tests/suite-partition.test.ts reads
   # this file and refuses a `files:` line whose named modules and the complement parts' `--exclude`

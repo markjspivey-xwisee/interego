@@ -199,8 +199,9 @@ function isGrounded(body, otherGroundedClasses, prefix) {
 // Everything below used to execute at module scope, including `process.exit(1)`. Importing
 // this file to reach `blindSpotFailure` / `l1Prefixes` from a test therefore RAN the whole
 // gate inside the vitest worker and, on any real failure, killed the process from inside a
-// test — and `vitest.config.ts` pins singleFork, so that takes every test not yet reached
-// with it and reports the death against whichever file ran last. That is the exact shape
+// test — and under vitest 3 `vitest.config.ts` pinned singleFork, so that took every test not
+// yet reached with it and reported the death against whichever file ran last (since vitest 4
+// it takes the rest of that file's worker). That is the exact shape
 // `tools/vitest-run-integrity.mjs` exists to refuse, so this file must not be able to cause
 // it. Same guard, and for the same reason, as `tools/lint-gate.mjs`.
 //
