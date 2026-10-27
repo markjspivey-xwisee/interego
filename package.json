@@ -92,7 +92,7 @@
     "node": ">=20.0.0"
   },
   "devDependencies": {
-    "@anthropic-ai/claude-code": "^2.1.81",
+    "@anthropic-ai/claude-code": "^2.1.179",
     "@anthropic-ai/sdk": "^0.80.0",
     "@eslint/js": "^9.39.5",
     "@types/express": "^5.0.6",
@@ -111,7 +111,7 @@
     "tsx": "^4.22.4",
     "typescript": "^5.7.0",
     "typescript-eslint": "^8.65.0",
-    "vitest": "^3.0.0"
+    "vitest": "^5.0.5"
   },
   "dependencies": {
     "@comunica/query-sparql": "^5.1.3",
