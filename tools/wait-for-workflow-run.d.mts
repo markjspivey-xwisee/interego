@@ -48,11 +48,14 @@ export interface CheckRunLike {
   readonly app?: { readonly id?: number | string; readonly slug?: string } | null;
 }
 
-/** What the two listings say about every check on the head but this workflow's own. */
+/**
+ * What the two listings say about every check on the head but this workflow's own (and the
+ * suite's, when `suiteGates` is false: its word is then advisory, and counted here it would gate).
+ */
 export declare function otherChecksState(
   runs: readonly WorkflowRunLike[],
   checkRuns: readonly CheckRunLike[],
-  opts: { selfRunId: string | number | undefined },
+  opts: { selfRunId: string | number | undefined; suite?: string; suiteGates?: boolean },
 ): { state: 'success' | 'failure' | 'pending' | 'untrusted'; failed: string[]; pending: string[]; passed: number; left: number; detail: string };
 
 /** Every item of a paginated GitHub listing; throws with `status` on a refused answer. */
@@ -74,6 +77,7 @@ export declare function waitForHead(opts: {
   suite?: string;
   selfRunId?: string | number;
   checksGate?: boolean;
+  suiteGate?: boolean;
   timeoutMs: number;
   pollMs: number;
   fetchFn?: typeof fetch;

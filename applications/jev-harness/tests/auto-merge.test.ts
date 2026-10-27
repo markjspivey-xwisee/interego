@@ -206,6 +206,19 @@ describe('★ every other check on the head is the last condition: #707 and #716
     expect(d.merge).toBe(true);
     expect(d.reasons[7]).toBe('holds: the other checks on this head are advisory (JEV_MERGE_WAITS_FOR_CHECKS is false): pending (still running: Mutation Gate / Every refusal gate fails on its own defect)');
   });
+  it('★ an advisory suite merges red when the checks gate: the wait leaves the suite out of their word (SUITE_GATE=false)', () => {
+    // JEV_MERGE_WAITS_FOR_SUITE=false with JEV_MERGE_WAITS_FOR_CHECKS unset. Had the checks word
+    // counted Bridge Typecheck, the second reason would refuse what the first lets through.
+    const d = autoMergeDecision({
+      ...all, suite: { result: 'failure', gates: false },
+      checks: { result: 'success', gates: true, detail: '12 check run(s) from 7 other workflow run(s) and any other app concluded success, neutral or skipped; 3 run(s) and job(s) of this workflow left out; Bridge Typecheck left out (9 run(s) and job(s)), as its word is advisory' },
+    });
+    expect(d.merge).toBe(true);
+    expect(d.reasons[6]).toBe('holds: the whole suite on this head is advisory (JEV_MERGE_WAITS_FOR_SUITE is false): failure');
+    expect(d.reasons[7]).toContain('Bridge Typecheck left out (9 run(s) and job(s)), as its word is advisory');
+    const counted = autoMergeDecision({ ...all, suite: { result: 'failure', gates: false }, checks: { result: 'failure', gates: true, detail: 'did not pass: Bridge Typecheck / The whole root test suite: failure' } });
+    expect(counted.merge).toBe(false);
+  });
   it('a red check alone fails the merge, beside a green suite', () => {
     const d = autoMergeDecision({ ...all, checks: { result: 'failure', gates: true, detail: 'did not pass: Base without verticals / Emergence with the verticals; the base without them: failure' } });
     expect(d.reasons.filter((r) => r.startsWith('fails:'))).toEqual(['fails: a check on this head did not pass (did not pass: Base without verticals / Emergence with the verticals; the base without them: failure); nothing merges over a red check']);

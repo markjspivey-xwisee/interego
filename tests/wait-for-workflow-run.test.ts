@@ -72,11 +72,24 @@ describe('the judge workflow runs the wait with the names the tool expects', () 
     expect(judge).toContain('--checks-result "$CHECKS_RESULT" --checks-gates "$CHECKS_GATES" --checks-detail "$CHECKS_DETAIL"');
     expect(judge, 'the switch gates unless it is exactly false, in both places').toContain("CHECKS_GATE: ${{ env.JEV_MERGE_WAITS_FOR_CHECKS != 'false' }}");
     expect(judge).toContain("CHECKS_GATES: ${{ env.JEV_MERGE_WAITS_FOR_CHECKS != 'false' }}");
+    expect(judge, 'an advisory suite is left out of the checks word, or it gates there after all').toContain("SUITE_GATE: ${{ env.JEV_MERGE_WAITS_FOR_SUITE != 'false' }}");
     // GITHUB_RUN_ID is the runner's own default variable; setting it in env: would be a second, wrong id.
     expect(judge).not.toMatch(/^\s+GITHUB_RUN_ID:/m);
-    const permissions = /^permissions:\n((?:\s+.+\n)+)/m.exec(judge)?.[1] ?? '';
-    expect(permissions).toMatch(/^\s+actions: read\b/m);
-    expect(permissions).toMatch(/^\s+checks: read\b/m);
+  });
+  it('★ grants the two reads to the judge job alone: the close-time job lists neither runs nor check runs', () => {
+    const judge = read('.github/workflows/jev-harness.yml');
+    const block = (text: string, indent: string) => new RegExp(`^${indent}permissions:\\n((?:${indent}  .+\\n)+)`, 'm').exec(text)?.[1] ?? '';
+    const workflow = block(judge, '');
+    expect(workflow).toMatch(/^ {2}contents: read\b/m);
+    expect(workflow).toMatch(/^ {2}pull-requests: write\b/m);
+    expect(workflow).not.toMatch(/actions:|checks:/);
+    const judgeJob = /^ {2}judge:\n([\s\S]*?)^ {2}outcomes-on-close:/m.exec(judge)?.[1] ?? '';
+    const own = block(judgeJob, '    ');
+    // A job's block replaces the workflow's, so the two the judge still needs are restated beside the reads.
+    for (const scope of ['contents: read', 'pull-requests: write', 'actions: read', 'checks: read']) expect(own, scope).toMatch(new RegExp(`^ {6}${scope}\\b`, 'm'));
+    const close = judge.slice(judge.search(/^ {2}outcomes-on-close:/m));
+    expect(close).toContain('bin/outcomes-on-close.ts');
+    expect(close).not.toMatch(/^\s+permissions:/m);
   });
 });
 
@@ -186,6 +199,16 @@ describe('★ every other check on the head: what the two listings say', () => {
     expect(state(runs, [...checkRuns, { ...job(selfRun, 'select tests → run → gate → decide', { conclusion: 'failure' }), check_suite: null }]).state).toBe('success');
   });
 
+  it('★ ... and by its check suite alone: a job of this run whose listing names no run page is left out, and trusts the listing on its own', () => {
+    const { runs, checkRuns } = green();
+    const noPage = (over: Partial<CheckRunLike>) => ({ ...job(selfRun, 'select tests → run → gate → decide', over), html_url: null, details_url: null });
+    const others = checkRuns.filter((c) => !ownJobs.includes(c));
+    const s = state(runs, [...others, noPage({ status: 'in_progress', conclusion: null })]);
+    expect(s.state).toBe('success');
+    expect(s.left).toBe(2); // the run and that one job
+    expect(state(runs, [...others, noPage({ status: 'in_progress', conclusion: null }), noPage({ conclusion: 'failure' })])).toMatchObject({ state: 'success', left: 3 });
+  });
+
   it('★ counts another workflow that merely carries this workflow\'s name', () => {
     const { runs, checkRuns } = green();
     const impostor = wfRun(40509213200, 'jev-harness (System One judgments)', 999, { conclusion: 'failure' });
@@ -206,10 +229,71 @@ describe('★ every other check on the head: what the two listings say', () => {
   it('★ reads the newest run of a workflow for an event, and leaves the superseded one out with its jobs', () => {
     const { runs, checkRuns } = green();
     const old = wfRun(40509000000, 'Mutation Gate', 348733029, { conclusion: 'cancelled', created_at: '2026-10-27T12:50:00Z' });
-    expect(state([...runs, old], [...checkRuns, job(old, MUTANT, { conclusion: 'cancelled' })]).state).toBe('success');
+    expect(state([...runs, old], [...checkRuns, job(old, MUTANT, { conclusion: 'cancelled', started_at: '2026-10-27T12:50:30Z' })]).state).toBe('success');
     // A run for another event is not superseded by this one: both checked the head.
     const push = wfRun(40509000001, 'Mutation Gate', 348733029, { event: 'push', conclusion: 'failure', created_at: '2026-10-27T12:50:00Z' });
-    expect(state([...runs, push], [...checkRuns, job(push, MUTANT, { conclusion: 'failure' })])).toMatchObject({ state: 'failure', failed: [`Mutation Gate / ${MUTANT}: failure`] });
+    expect(state([...runs, push], [...checkRuns, job(push, MUTANT, { conclusion: 'failure', started_at: '2026-10-27T12:50:30Z' })])).toMatchObject({ state: 'failure', failed: [`Mutation Gate / ${MUTANT}: failure`] });
+  });
+
+  // build-ghcr.yml has no concurrency group and names each leg `${{ matrix.image }}`, and #673,
+  // #675 and #676 each had a dispatch of it on their heads: two dispatches for two images are
+  // two runs of one workflow for one event, with jobs of different names.
+  const GHCR = 330000001;
+  const relayRun = (over: Partial<WorkflowRunLike> = {}) => wfRun(40509300000, 'Build & push to GHCR', GHCR, { event: 'workflow_dispatch', created_at: '2026-10-27T13:01:00Z', ...over });
+  const identityRun = wfRun(40509300100, 'Build & push to GHCR', GHCR, { event: 'workflow_dispatch', created_at: '2026-10-27T13:03:00Z' });
+  const identityJob = () => job(identityRun, 'identity', { started_at: '2026-10-27T13:03:30Z' });
+
+  it('★ a newer run of a workflow does not hide an older run\'s check of another name: two GHCR dispatches, relay still running', () => {
+    const { runs, checkRuns } = green();
+    const relay = relayRun({ status: 'in_progress', conclusion: null });
+    const s = state([...runs, relay, identityRun], [...checkRuns, job(relay, 'relay', { status: 'in_progress', conclusion: null, started_at: '2026-10-27T13:01:30Z' }), identityJob()]);
+    expect(s).toMatchObject({ state: 'pending', pending: ['Build & push to GHCR / relay'] });
+    // Queued, before its job exists: the run's own status says it.
+    const queued = relayRun({ status: 'queued', conclusion: null });
+    expect(state([...runs, queued, identityRun], [...checkRuns, identityJob()])).toMatchObject({ state: 'pending', pending: ['Build & push to GHCR (queued)'] });
+  });
+
+  it('★ ... and relay red, beside a green identity run', () => {
+    const { runs, checkRuns } = green();
+    const relay = relayRun({ conclusion: 'failure' });
+    expect(state([...runs, relay, identityRun], [...checkRuns, job(relay, 'relay', { conclusion: 'failure', started_at: '2026-10-27T13:01:30Z' }), identityJob()]))
+      .toMatchObject({ state: 'failure', failed: ['Build & push to GHCR / relay: failure'] });
+  });
+
+  it('★ an earlier run is superseded only when it has concluded and every check it lists was re-run under the same name', () => {
+    const { runs, checkRuns } = green();
+    const early = (over: Partial<WorkflowRunLike>) => wfRun(40509000002, 'Mutation Gate', 348733029, { created_at: '2026-10-27T12:50:00Z', ...over });
+    const earlyJob = (r: WorkflowRunLike, name: string, over: Partial<CheckRunLike>) => job(r, name, { started_at: '2026-10-27T12:50:30Z', ...over });
+    // Cancelled, and its one job re-ran by name in the newer run: superseded.
+    const cancelled = early({ conclusion: 'cancelled' });
+    expect(state([...runs, cancelled], [...checkRuns, earlyJob(cancelled, MUTANT, { conclusion: 'cancelled' })]).state).toBe('success');
+    // A job of its own that no newer run made still counts, so the run's own conclusion is read too.
+    const partly = early({ conclusion: 'cancelled' });
+    expect(state([...runs, partly], [...checkRuns, earlyJob(partly, MUTANT, { conclusion: 'cancelled' }), earlyJob(partly, 'A leg only this run made', {})]))
+      .toMatchObject({ state: 'failure', failed: ['Mutation Gate: cancelled'] });
+    // Still running: a job not created yet is not re-run by anything.
+    const running = early({ status: 'in_progress', conclusion: null });
+    expect(state([...runs, running], [...checkRuns, earlyJob(running, MUTANT, {})])).toMatchObject({ state: 'pending', pending: ['Mutation Gate (in_progress)'] });
+    // It lists no check run at all: nothing shows that a newer run re-ran what it would have run.
+    const empty = early({ conclusion: 'startup_failure' });
+    expect(state([...runs, empty], checkRuns)).toMatchObject({ state: 'failure', failed: ['Mutation Gate: startup_failure'] });
+  });
+
+  it('★ leaves an advisory suite out (JEV_MERGE_WAITS_FOR_SUITE=false), and says so; a gating suite counts', () => {
+    const { runs, checkRuns } = green();
+    const red = runs.map((r) => (r === suite ? { ...r, conclusion: 'failure' } : r));
+    const redJobs = checkRuns.map((c) => (c.name === 'MCP surface typecheck' ? { ...c, conclusion: 'failure' } : c));
+    expect(state(red, redJobs)).toMatchObject({ state: 'failure', failed: ['Bridge Typecheck / MCP surface typecheck: failure'] });
+    const advisory = otherChecksState(red, redJobs, { selfRunId: String(SELF_RUN), suiteGates: false });
+    expect(advisory.state).toBe('success');
+    expect(advisory.passed).toBe(2);
+    expect(advisory.detail).toBe('2 check run(s) from 2 other workflow run(s) and any other app concluded success, neutral or skipped; 3 run(s) and job(s) of this workflow left out; Bridge Typecheck left out (3 run(s) and job(s)), as its word is advisory');
+    // Still running is left out the same way: a slow advisory suite is no timeout here.
+    const slow = runs.map((r) => (r === suite ? { ...r, status: 'in_progress', conclusion: null } : r));
+    expect(otherChecksState(slow, checkRuns, { selfRunId: String(SELF_RUN), suiteGates: false }).state).toBe('success');
+    // Only the suite: another red check still refuses.
+    expect(otherChecksState(red, [...redJobs, job(base, 'Base on Node 22', { conclusion: 'failure' })], { selfRunId: String(SELF_RUN), suiteGates: false }))
+      .toMatchObject({ state: 'failure', failed: ['Base without verticals / Base on Node 22: failure'] });
   });
 
   it('counts a check run from another app, which has no workflow run, and names the app', () => {
@@ -281,7 +365,7 @@ const SHA = 'c91c2e71ffbbfa7f30b8197057020d68ca0af687';
 const POLL = 30_000;
 const DEADLINE = 20 * 60_000;
 /** A clock that moves only when the wait sleeps, and GitHub answering by poll number. */
-function harness(answer: (poll: number, url: string) => Answer, over: { checksGate?: boolean; selfRunId?: string } = {}) {
+function harness(answer: (poll: number, url: string) => Answer, over: { checksGate?: boolean; suiteGate?: boolean; selfRunId?: string } = {}) {
   let t = 0;
   let poll = 0;
   const f = fakeFetch((url) => answer(poll, url));
@@ -349,6 +433,84 @@ describe('★ the wait: one deadline for the suite and the checks', () => {
     expect(done.checks.result).toBe('pending');
     expect(h.polls()).toBe(0);
     expect(autoMergeDecision({ ...decisionInputs, checks: { ...done.checks, gates: false } }).merge).toBe(true);
+  });
+
+  it('★ advisory: the word printed is the one read on the poll the suite concluded on, not the first poll\'s', async () => {
+    // The suite runs for three polls while Mutation Gate runs; on the third both conclude, the gate red.
+    const running = mutationRunning();
+    const { runs, checkRuns } = green();
+    const suitePending = running.runs.map((r) => (r.id === suite.id ? { ...r, status: 'in_progress', conclusion: null } : r));
+    const red = [...checkRuns.filter((c) => c.name !== MUTANT), job(mutation, MUTANT, { conclusion: 'failure' })];
+    const redRuns = runs.map((r) => (r === mutation ? { ...r, conclusion: 'failure' } : r));
+    const h = harness((poll, url) => listings(poll < 3 ? suitePending : redRuns, poll < 3 ? running.checkRuns : red)(poll, url), { checksGate: false });
+    const done = await h.done;
+    expect(h.polls()).toBe(3);
+    expect(done.suite?.result).toBe('success');
+    expect(done.checks).toEqual({ result: 'failure', detail: `did not pass: Mutation Gate / ${MUTANT}: failure` });
+    const d = autoMergeDecision({ ...decisionInputs, checks: { ...done.checks, gates: false } });
+    expect(d.merge).toBe(true);
+    expect(d.reasons.at(-1)).toContain(`advisory (JEV_MERGE_WAITS_FOR_CHECKS is false): failure (did not pass: Mutation Gate / ${MUTANT}: failure)`);
+  });
+
+  it('★ advisory: an outage once the suite is in ends the wait there, with the word error, not at the deadline', async () => {
+    const { runs } = green();
+    const checksDown = harness((_p, url) => (url.includes('/check-runs') ? { status: 502 } : { body: { workflow_runs: runs } }), { checksGate: false });
+    const r = await checksDown.done;
+    expect(r.suite?.result).toBe('success');
+    expect(r.checks).toMatchObject({ result: 'error', detail: expect.stringContaining('GitHub answered 502') });
+    expect(checksDown.polls()).toBe(0);
+    // The runs listing failing after the first poll changes nothing: the wait already ended on it.
+    const bothDown = harness((poll, url) => (url.includes('/check-runs') || poll > 0 ? { status: 502 } : { body: { workflow_runs: runs } }), { checksGate: false });
+    expect((await bothDown.done).checks.result).toBe('error');
+    expect(bothDown.polls()).toBe(0);
+    // Before the suite is in, an outage is still asked again: the suite is what the wait is for.
+    const suitePending = runs.map((r) => (r === suite ? { ...r, status: 'in_progress', conclusion: null } : r));
+    const early = harness((poll, url) => (url.includes('/check-runs') ? { status: 502 } : { body: { workflow_runs: poll < 2 ? suitePending : runs } }), { checksGate: false });
+    expect((await early.done).checks.result).toBe('error');
+    expect(early.polls()).toBe(2);
+    expect(autoMergeDecision({ ...decisionInputs, checks: { ...r.checks, gates: false } }).merge).toBe(true);
+  });
+
+  it('★ two GHCR dispatches: an older relay run still running times out, and red refuses, whatever the newer identity run says', async () => {
+    const { runs, checkRuns } = green();
+    const GHCR = 330000001;
+    const relay = wfRun(40509300000, 'Build & push to GHCR', GHCR, { event: 'workflow_dispatch', created_at: '2026-10-27T13:01:00Z', status: 'in_progress', conclusion: null });
+    const identity = wfRun(40509300100, 'Build & push to GHCR', GHCR, { event: 'workflow_dispatch', created_at: '2026-10-27T13:03:00Z' });
+    const identityJob = job(identity, 'identity', { started_at: '2026-10-27T13:03:30Z' });
+    const relayJob = (over: Partial<CheckRunLike>) => job(relay, 'relay', { started_at: '2026-10-27T13:01:30Z', ...over });
+    const running = harness(listings([...runs, relay, identity], [...checkRuns, relayJob({ status: 'in_progress', conclusion: null }), identityJob]));
+    expect((await running.done).checks).toEqual({ result: 'timeout', detail: 'still running: Build & push to GHCR / relay' });
+    expect(running.polls()).toBe(DEADLINE / POLL + 1);
+    const red = harness(listings([...runs, { ...relay, status: 'completed', conclusion: 'failure' }, identity], [...checkRuns, relayJob({ conclusion: 'failure' }), identityJob]));
+    const done = await red.done;
+    expect(done.checks).toEqual({ result: 'failure', detail: 'did not pass: Build & push to GHCR / relay: failure' });
+    expect(red.polls()).toBe(0);
+    expect(autoMergeDecision({ ...decisionInputs, checks: { ...done.checks, gates: true } }).merge).toBe(false);
+  });
+
+  it('★ JEV_MERGE_WAITS_FOR_SUITE=false with the checks gating: a red or slow suite merges, as that switch says, and another red check does not', async () => {
+    const { runs, checkRuns } = green();
+    const redRuns = runs.map((r) => (r === suite ? { ...r, conclusion: 'failure' } : r));
+    const redJobs = checkRuns.map((c) => (c.name === 'MCP surface typecheck' ? { ...c, conclusion: 'failure' } : c));
+    const advisorySuite = { ...decisionInputs, suite: { result: 'failure', gates: false } };
+    const red = await harness(listings(redRuns, redJobs), { suiteGate: false }).done;
+    expect(red.suite?.result).toBe('failure');
+    expect(red.checks.result).toBe('success');
+    expect(red.checks.detail).toContain('Bridge Typecheck left out (3 run(s) and job(s)), as its word is advisory');
+    const d = autoMergeDecision({ ...advisorySuite, checks: { ...red.checks, gates: true } });
+    expect(d.merge).toBe(true);
+    expect(d.reasons.filter((r) => r.startsWith('fails:'))).toEqual([]);
+    // The suite still running at the deadline: the suite's word is timeout, the checks' is not.
+    const slowRuns = runs.map((r) => (r === suite ? { ...r, status: 'in_progress', conclusion: null } : r));
+    const slowJobs = checkRuns.map((c) => (c.name === 'MCP surface typecheck' ? { ...c, status: 'in_progress', conclusion: null } : c));
+    const slow = await harness(listings(slowRuns, slowJobs), { suiteGate: false }).done;
+    expect(slow).toMatchObject({ suite: { result: 'timeout' }, checks: { result: 'success' } });
+    expect(autoMergeDecision({ ...decisionInputs, suite: { result: 'timeout', gates: false }, checks: { ...slow.checks, gates: true } }).merge).toBe(true);
+    // Gating, the same red suite is refused twice over; and advisory, another red check still refuses.
+    expect((await harness(listings(redRuns, redJobs)).done).checks.result).toBe('failure');
+    const other = await harness(listings(redRuns, [...redJobs, job(base, 'Base on Node 22', { conclusion: 'failure' })]), { suiteGate: false }).done;
+    expect(other.checks.result).toBe('failure');
+    expect(autoMergeDecision({ ...advisorySuite, checks: { ...other.checks, gates: true } }).merge).toBe(false);
   });
 
   it('★ fails closed when GitHub refuses the check runs: error at once on a 4xx, at the deadline on a 5xx; the suite is still read', async () => {

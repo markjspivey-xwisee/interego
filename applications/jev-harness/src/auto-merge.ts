@@ -53,7 +53,8 @@
  *      decision one word: success holds, absent (no run listed, in a listing that holds the
  *      judge's own run) holds, anything else fails. JEV_MERGE_WAITS_FOR_SUITE=false makes the
  *      word advisory — printed, not gating — for an operator who would rather have the two
- *      minutes back than the ten.
+ *      minutes back than the ten; the wait then leaves the suite out of condition 11's word
+ *      too, which would otherwise refuse over the same red suite.
  *  11. Every other check on this head concluded, and none of them red. Condition 10 read one
  *      workflow and nothing else: on 2026-10-27 the decision merged #707 and #716 the moment
  *      the suite passed, with Mutation Gate and Base without verticals still running on the
@@ -61,15 +62,16 @@
  *      back green; a red one would have landed on master with nothing reading it. The same
  *      wait, against the same deadline (no second budget), now also lists every workflow run
  *      and check run GitHub holds for the head, leaves out this workflow's own by its workflow
- *      id (never by name), keeps the latest attempt of each, and hands the decision a second
- *      word: success holds (each concluded success, neutral or skipped); failure (one concluded
- *      failure, cancelled, timed_out, action_required, startup_failure or anything else),
- *      timeout (one still running at the deadline), untrusted (the listings never held this
- *      run's own job) and error (GitHub could not be asked) fail, and the next push decides
- *      again. Mutation Gate took 19 to 33 minutes from the push on 2026-10-26/27, so a pull
- *      request whose Mutation Gate outlasts the wait is not merged by that run.
- *      JEV_MERGE_WAITS_FOR_CHECKS=false makes the word advisory, and gives the checks no wait
- *      of their own beyond the suite's.
+ *      id (never by name), reads the latest attempt of each check by name (an earlier run's
+ *      check of another name still counts), and hands the decision a second word: success
+ *      holds (each concluded success, neutral or skipped); failure (one concluded failure,
+ *      cancelled, timed_out, action_required, startup_failure or anything else), timeout (one
+ *      still running at the deadline), untrusted (the listings never held this run's own job)
+ *      and error (GitHub could not be asked) fail, and the next push decides again. On
+ *      2026-10-26 and 27 Mutation Gate's 63 successful runs (of 66) took 18 to 47 minutes from
+ *      the push, median 29, so a pull request whose Mutation Gate outlasts the wait is not
+ *      merged by that run. JEV_MERGE_WAITS_FOR_CHECKS=false makes the word advisory, and gives
+ *      the checks no wait of their own beyond the suite's, an outage included.
  *
  * The operator turned the person off on 2026-09-21 ("i dont need human review"), so by default
  * needs-human-review is advisory: the gate still judges every diff and records its verdict,

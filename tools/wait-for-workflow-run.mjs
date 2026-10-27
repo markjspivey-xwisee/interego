@@ -55,10 +55,21 @@
  *     workflow on the head (this one, one a reopen left, the close-time one) and every check
  *     run whose check suite or run page is one of theirs. A name is a string any workflow can
  *     carry. Counted, this job would wait for itself until the deadline.
- *   - THE LATEST ATTEMPT of each. A rerun keeps its run id and check suite and lists its newest
- *     attempt (asked with filter=latest, and the newest per suite and name is kept besides); of
- *     two runs of one workflow for one event on the head, the older is superseded and left out
- *     with its check runs.
+ *   - THE LATEST ATTEMPT of each check, by name. A rerun keeps its run id and check suite and
+ *     lists its newest attempt (asked with filter=latest), and of the check runs one workflow
+ *     made for one event on the head, only the newest of each name is read: a rerun job's
+ *     earlier attempt, or the same job in an earlier run that a reopen re-ran, is not the
+ *     result. A check of ANOTHER name is another check, whichever run carries it, so an
+ *     earlier run is never dropped whole because a newer run of its workflow exists: two
+ *     dispatches of "Build & push to GHCR" for different images make jobs `relay` and
+ *     `identity`, and reading the newer alone would let a relay build still running, or red,
+ *     through. An earlier run is left out only when it has concluded and every check run it
+ *     lists lost to a newer one of the same name; one still running, one that lists no check
+ *     run, and one with a check of its own still counted are read by their own status too.
+ *   - THE SUITE TOO, unless its word is advisory. With SUITE_GATE=false (the repository
+ *     variable JEV_MERGE_WAITS_FOR_SUITE=false) the runs named SUITE_WORKFLOW and their check
+ *     runs are left out of this word as well, and the detail says so: counted here, a red or
+ *     slow suite would refuse the merge that switch lets through.
  *   - BOTH LISTINGS, because neither is enough alone. A workflow run that is queued, or whose
  *     next job has not been created, has no check run to read yet, and one that failed to start
  *     (startup_failure) or waits for approval (action_required) never gets one; a check run
@@ -69,16 +80,17 @@
  *     read in part.
  *
  * The deadline is the suite's (SUITE_WAIT_MS from the start of this step), not a second one:
- * the checks get no time the suite does not. Mutation Gate runs on every pull request and took
- * 19 to 33 minutes from the push on 2026-10-26/27 (median 29), while this step starts about
- * two minutes after it; a pull request whose Mutation Gate is still running at the deadline
- * is not merged by this run, and the next push decides again. CHECKS_GATE=false (the
- * repository variable JEV_MERGE_WAITS_FOR_CHECKS=false) gives the checks no wait of their own:
- * what they say once the suite's word is in is printed, not gated on.
+ * the checks get no time the suite does not. Mutation Gate runs on every pull request; on
+ * 2026-10-26 and 27 its 63 successful runs (of 66) took 18 to 47 minutes from the push,
+ * median 29, while this step starts about two minutes after it. A pull request whose Mutation
+ * Gate is still running at the deadline is not merged by this run, and the next push decides
+ * again. CHECKS_GATE=false (the repository variable JEV_MERGE_WAITS_FOR_CHECKS=false) gives the
+ * checks no wait of their own: what they say once the suite's word is in, or that GitHub could
+ * not list them then, is printed, not gated on.
  *
  *   GITHUB_TOKEN=... GITHUB_REPOSITORY=owner/repo GITHUB_RUN_ID=<this run> \
  *     SELF_WORKFLOW="jev-harness (System One judgments)" SUITE_WORKFLOW="Bridge Typecheck" \
- *     node tools/wait-for-workflow-run.mjs <40-hex-sha>
+ *     [CHECKS_GATE=false] [SUITE_GATE=false] node tools/wait-for-workflow-run.mjs <40-hex-sha>
  *
  * Writes `result=<word>`, `url=<run page>`, `checks=<word>` and `checks_detail=<line>` to
  * $GITHUB_OUTPUT (and prints them). Exits 0 in every case where the suite's word is known: the
@@ -157,11 +169,13 @@ function names(list, max = 8) {
  * as GitHub returns them (id, name, status, conclusion; a run's workflow_id, event,
  * check_suite_id, created_at; a check run's check_suite.id, app, started_at, html_url).
  * `selfRunId` is this run's id (GITHUB_RUN_ID): its workflow id is what is left out, and its
- * presence in both listings is what makes them trusted.
+ * presence in both listings is what makes them trusted. `suiteGates: false` (the suite's word
+ * is advisory) leaves the runs named `suite` and their check runs out as well, so that the
+ * checks word does not gate on the suite after all.
  *
  * Returns { state: success | failure | pending | untrusted, failed, pending, passed, left, detail }.
  */
-export function otherChecksState(runs, checkRuns, { selfRunId }) {
+export function otherChecksState(runs, checkRuns, { selfRunId, suite = SUITE_WORKFLOW, suiteGates = true }) {
   const selfId = String(selfRunId ?? '');
   const self = selfId ? runs.find((r) => String(r?.id) === selfId) : undefined;
   if (!self) {
@@ -171,37 +185,59 @@ export function otherChecksState(runs, checkRuns, { selfRunId }) {
   const ownSuites = new Set(own.map((r) => String(r.check_suite_id)));
   const ownRuns = new Set(own.map((r) => String(r.id)));
   const ofRuns = (c, suites, ids) => {
-    const suite = suiteIdOf(c);
+    const suiteId = suiteIdOf(c);
     const run = runIdOf(c);
-    return (suite !== undefined && suites.has(suite)) || (run !== undefined && ids.has(run));
+    return (suiteId !== undefined && suites.has(suiteId)) || (run !== undefined && ids.has(run));
   };
   if (!checkRuns.some((c) => suiteIdOf(c) === String(self.check_suite_id) || runIdOf(c) === selfId)) {
     return { state: 'untrusted', failed: [], pending: [], passed: 0, left: 0, detail: 'the check runs listed for this head do not hold this run\'s own job, so they are not a listing to decide on' };
   }
 
-  // The newest run of each other workflow for each event; an older one on the same head is superseded.
-  const latest = new Map();
-  const superseded = [];
-  for (const r of runs.filter((x) => x?.workflow_id !== self.workflow_id).sort(newestFirst((x) => x?.created_at))) {
-    const key = `${r.workflow_id}|${r.event}`;
-    if (latest.has(key)) superseded.push(r);
-    else latest.set(key, r);
-  }
-  const goneSuites = new Set(superseded.map((r) => String(r.check_suite_id)));
-  const goneRuns = new Set(superseded.map((r) => String(r.id)));
-  const bySuite = new Map([...latest.values()].map((r) => [String(r.check_suite_id), r]));
-  const byId = new Map([...latest.values()].map((r) => [String(r.id), r]));
+  // An advisory suite is condition 10's to print. Counted here, its red would refuse the merge anyway.
+  const advisory = suiteGates ? [] : runs.filter((r) => r?.workflow_id !== self.workflow_id && r?.name === suite);
+  const advisorySuites = new Set(advisory.map((r) => String(r.check_suite_id)));
+  const advisoryRuns = new Set(advisory.map((r) => String(r.id)));
+  const others = runs.filter((r) => r?.workflow_id !== self.workflow_id && !advisory.includes(r));
+  const bySuite = new Map(others.map((r) => [String(r.check_suite_id), r]));
+  const byId = new Map(others.map((r) => [String(r.id), r]));
   const runOf = (c) => bySuite.get(suiteIdOf(c) ?? '') ?? byId.get(runIdOf(c) ?? '');
 
-  // The newest check run of each name in each check suite: a rerun job's earlier attempt is not its result.
+  // The newest check run of each NAME, per workflow and event: a rerun job's earlier attempt, or
+  // the same job in an earlier run of the same workflow for the same event (a reopen), is not
+  // its result. A check of another name is another check, whichever run carries it: two runs
+  // dispatched with different inputs are two checks, not one superseding the other. A check run
+  // whose workflow run is not listed is keyed by its check suite (or its app) instead.
+  const keyOf = (c) => {
+    const r = runOf(c);
+    if (r) return `wf:${r.workflow_id}|${r.event}|${c?.name}`;
+    const suiteId = suiteIdOf(c);
+    return `${suiteId !== undefined ? `suite:${suiteId}` : `app:${c?.app?.id ?? c?.app?.slug ?? '?'}`}|${c?.name}`;
+  };
   const newest = new Map();
+  const listed = new Map();
   let left = own.length;
+  let suiteLeft = advisory.length;
   for (const c of [...checkRuns].sort(newestFirst((x) => x?.started_at ?? x?.completed_at))) {
     if (ofRuns(c, ownSuites, ownRuns)) { left++; continue; }
-    if (ofRuns(c, goneSuites, goneRuns)) continue;
-    const key = `${suiteIdOf(c) ?? `app:${c?.app?.id ?? c?.app?.slug ?? '?'}`}|${c?.name}`;
+    if (ofRuns(c, advisorySuites, advisoryRuns)) { suiteLeft++; continue; }
+    const key = keyOf(c);
     if (!newest.has(key)) newest.set(key, c);
+    const r = runOf(c);
+    if (r) {
+      if (!listed.has(String(r.id))) listed.set(String(r.id), []);
+      listed.get(String(r.id)).push(c);
+    }
   }
+  // A run is superseded only when it has concluded and every check run it lists lost to a newer
+  // one of the same name: then its own conclusion says nothing those do not. One still running,
+  // one with a check run of its own still counted, and one that lists no check run at all (it
+  // never started a job, or its jobs are not listed yet) all count by their own status as well.
+  const isSuperseded = (r) => {
+    const mine = listed.get(String(r.id)) ?? [];
+    return r.status === 'completed' && mine.length > 0 && mine.every((c) => newest.get(keyOf(c)) !== c);
+  };
+  const superseded = new Set(others.filter(isSuperseded).map((r) => String(r.id)));
+  const counted = others.filter((r) => !superseded.has(String(r.id)));
 
   const label = (c) => {
     const r = runOf(c);
@@ -228,7 +264,7 @@ export function otherChecksState(runs, checkRuns, { selfRunId }) {
   }
   // What a workflow run says that its check runs cannot (yet): queued with no job created, a job
   // not created behind another, or a run that never started one. Named once, not beside its job.
-  for (const r of latest.values()) {
+  for (const r of counted) {
     if (r.status !== 'completed') {
       if (!runsPending.has(String(r.id))) pending.push(`${r.name} (${r.status ?? 'not concluded'})`);
     } else if (!passes(r.conclusion) && !runsFailing.has(String(r.id))) {
@@ -236,13 +272,14 @@ export function otherChecksState(runs, checkRuns, { selfRunId }) {
     }
   }
 
+  const aside = suiteLeft > 0 ? `; ${suite} left out (${suiteLeft} run(s) and job(s)), as its word is advisory` : '';
   if (failed.length > 0) {
-    return { state: 'failure', failed, pending, passed, left, detail: `did not pass: ${names(failed)}${pending.length ? `; still running: ${names(pending)}` : ''}` };
+    return { state: 'failure', failed, pending, passed, left, detail: `did not pass: ${names(failed)}${pending.length ? `; still running: ${names(pending)}` : ''}${aside}` };
   }
   if (pending.length > 0) {
-    return { state: 'pending', failed, pending, passed, left, detail: `still running: ${names(pending)}` };
+    return { state: 'pending', failed, pending, passed, left, detail: `still running: ${names(pending)}${aside}` };
   }
-  return { state: 'success', failed, pending, passed, left, detail: `${passed} check run(s) from ${latest.size} other workflow run(s) and any other app concluded success, neutral or skipped; ${left} run(s) and job(s) of this workflow left out` };
+  return { state: 'success', failed, pending, passed, left, detail: `${passed} check run(s) from ${counted.length} other workflow run(s) and any other app concluded success, neutral or skipped; ${left} run(s) and job(s) of this workflow left out${aside}` };
 }
 
 /**
@@ -292,7 +329,7 @@ const named = (r) => ({ name: r?.name ?? '(unnamed)', status: r?.status, conclus
  * `fatal`, and no `suite`, when the runs could not be listed at all.
  */
 export async function waitForHead({
-  sha, repo, token, self, suite = SUITE_WORKFLOW, selfRunId, checksGate = true,
+  sha, repo, token, self, suite = SUITE_WORKFLOW, selfRunId, checksGate = true, suiteGate = true,
   timeoutMs, pollMs, fetchFn = fetch, now = Date.now, sleep = (ms) => new Promise((r) => setTimeout(r, ms)), log = console.log,
 }) {
   const opts = { repo, token, fetchFn };
@@ -333,11 +370,13 @@ export async function waitForHead({
         try {
           checkRuns = await listCheckRuns(sha, opts);
         } catch (err) {
-          if (retryable(err) && !expired) log(`GitHub is not answering for the check runs (${err.message}); asking again`);
+          // Advisory checks get no time of their own here either: once the suite's word is in, an
+          // outage is what they say, not a reason to keep the decision waiting to the deadline.
+          if (retryable(err) && !expired && (checksGate || !suiteDone)) log(`GitHub is not answering for the check runs (${err.message}); asking again`);
           else checksDone = { result: 'error', detail: `the check runs for this head could not be listed: ${err.message}` };
         }
         if (checkRuns) {
-          const c = otherChecksState(runs, checkRuns, { selfRunId });
+          const c = otherChecksState(runs, checkRuns, { selfRunId, suite, suiteGates: suiteGate });
           // Advisory checks get no time of their own: what they say once the suite's word is in is what is printed.
           if (keepWaiting(c.state, expired) && (checksGate || !suiteDone)) {
             log(`other checks: ${c.detail}; asking again in ${Math.round(pollMs / 1000)} s`);
@@ -379,6 +418,7 @@ async function main() {
     suite: process.env['SUITE_WORKFLOW'] ?? SUITE_WORKFLOW,
     selfRunId: process.env['GITHUB_RUN_ID'],
     checksGate: process.env['CHECKS_GATE'] !== 'false',
+    suiteGate: process.env['SUITE_GATE'] !== 'false',
     timeoutMs: Number(process.env['SUITE_WAIT_MS'] ?? 20 * 60 * 1000),
     pollMs: Number(process.env['SUITE_POLL_MS'] ?? 30_000),
   });
