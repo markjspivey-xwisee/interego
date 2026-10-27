@@ -100,9 +100,10 @@ jobs:
       contents: read
       packages: write
     env:
-      # Where a `seed: i2idlx-upper` leg keeps the verified sources it passes as the `upper-seed`
-      # build context (see "seed: i2idlx-upper" below). It is inside the i2idlx .cache, which
-      # /.dockerignore excludes, so the main context never carries it into bridge-base.
+      # Where a `seed: i2idlx-upper` leg fills the verified sources that it pushes as the seed image,
+      # or passes as the `upper-seed` build context when it cannot (see "seed: i2idlx-upper" below).
+      # It is inside the i2idlx .cache, which /.dockerignore excludes, so the main context never
+      # carries it into bridge-base.
       UPPER_SEED_DIR: applications/foxxi-content-intelligence/i2idlx/.cache/upper-seed
     strategy:
       fail-fast: false
@@ -190,61 +191,6 @@ jobs:
           # ignore file changes the context of all fourteen images, and that is not
           # a thing to do on a hunch about a pattern-matcher.
 
-      # ── seed: i2idlx-upper ─────────────────────────────────────────────────────────────────────
-      # The Foxxi image's i2idlx-builder stage restores the 21 sources (upper ontologies, Interego
-      # namespace files, JSON-LD contexts) that its evidence/upper/manifest.json pins by SHA-256, and
-      # until now it fetched every one from its publisher every time the stage ran, which is every
-      # build that changed what the bridge copies (the registry layer cache serves the others):
-      # purl.obolibrary.org, ontologydesignpatterns.org, w3.org, dublincore.org, purl.org,
-      # data.europa.eu, purl.imsglobal.org, GitHub Pages and raw.githubusercontent.com. On
-      # 2026-10-27 data.europa.eu timed out on ESCO (four attempts in under a minute), this leg
-      # failed, and auto-deploy, which is all-or-nothing, deployed no service; a re-run of the failed
-      # jobs succeeded. On 2026-10-26 gUFO's persistent URL changing its bytes had held back every
-      # deploy the same way.
-      #
-      # So the leg fetches them here first, verifies each against the manifest, and hands the
-      # directory to the Dockerfile as its `upper-seed` stage. MEASURED 2026-10-27, off a runner: all
-      # 21 verified, 6.6 MB (6,632,249 bytes), and with them in .cache/upper, prepare-build-inputs.ts
-      # ran in a network namespace whose only interface is a loopback that is down (unshare -n; the
-      # ROBOT jar it also checks comes earlier, from prepare-source.ts). The directory lives in the
-      # Actions cache, keyed on the pins, the request data and the script with its mirror table, so
-      # a hit fetches nothing. A miss restores the newest older seed and the script re-checks every
-      # file against the current pins, so a re-pin fetches only what changed.
-      #
-      # The seed never fails the leg: all three steps continue on error. A source the script cannot
-      # get, or whose bytes are not the pin, is named in a warning and left out, and the image build
-      # fetches it live as it always did. The cache is saved only when every pin verified, so a
-      # partial set is never what a later build starts from. And nothing is trusted for having been
-      # cached: refresh-upper.ts checks each file against the manifest's SHA-256 inside the build,
-      # as it checks a fresh fetch.
-      - name: Restore the verified upper-ontology sources the Foxxi build reads
-        if: steps.gate.outputs.skip != 'true' && matrix.seed == 'i2idlx-upper'
-        id: upper-seed
-        continue-on-error: true
-        uses: actions/cache/restore@v5
-        with:
-          path: ${{ env.UPPER_SEED_DIR }}
-          key: i2idlx-upper-seed-${{ hashFiles('applications/foxxi-content-intelligence/i2idlx/evidence/upper/manifest.json', 'applications/foxxi-content-intelligence/i2idlx/typescript/refresh-upper-data.json', 'applications/foxxi-content-intelligence/i2idlx/tools/seed-pinned-upper.mjs') }}
-          restore-keys: i2idlx-upper-seed-
-      # mkdir first: buildx refuses a named context that does not exist, so the directory must be
-      # there even if the script never runs.
-      - name: Fetch and verify every pinned source the cache does not hold
-        if: steps.gate.outputs.skip != 'true' && matrix.seed == 'i2idlx-upper'
-        id: upper-seed-fill
-        continue-on-error: true
-        timeout-minutes: 5
-        run: |
-          mkdir -p "$UPPER_SEED_DIR"
-          node applications/foxxi-content-intelligence/i2idlx/tools/seed-pinned-upper.mjs \
-            applications/foxxi-content-intelligence/i2idlx --all "$UPPER_SEED_DIR"
-      - name: Save the seed, only when every pinned source verified
-        if: steps.gate.outputs.skip != 'true' && matrix.seed == 'i2idlx-upper' && steps.upper-seed.outputs.cache-hit != 'true' && steps.upper-seed-fill.outputs.complete == 'true'
-        continue-on-error: true
-        uses: actions/cache/save@v5
-        with:
-          path: ${{ env.UPPER_SEED_DIR }}
-          key: ${{ steps.upper-seed.outputs.cache-primary-key }}
-
       - uses: docker/setup-buildx-action@v3
         if: steps.gate.outputs.skip != 'true'
 
@@ -290,6 +236,140 @@ jobs:
           username: ${{ github.repository_owner }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      # ── seed: i2idlx-upper ─────────────────────────────────────────────────────────────────────
+      # The Foxxi image's i2idlx-builder stage restores the 21 sources (upper ontologies, Interego
+      # namespace files, JSON-LD contexts) that its evidence/upper/manifest.json pins by SHA-256, and
+      # until now it fetched every one from its publisher every time the stage ran, which is every
+      # build that changed what the bridge copies (the registry layer cache serves the others):
+      # purl.obolibrary.org, ontologydesignpatterns.org, w3.org, dublincore.org, purl.org,
+      # data.europa.eu, purl.imsglobal.org, GitHub Pages and raw.githubusercontent.com. On
+      # 2026-10-27 data.europa.eu timed out on ESCO (four attempts in under a minute), this leg
+      # failed, and auto-deploy, which is all-or-nothing, deployed no service; a re-run of the failed
+      # jobs succeeded. On 2026-10-26 gUFO's persistent URL changing its bytes had held back every
+      # deploy the same way.
+      #
+      # So the leg hands the Dockerfile the verified sources as its `upper-seed` stage. MEASURED
+      # 2026-10-27, off a runner: all 21 verified, 6.6 MB (6,632,249 bytes), and with them in
+      # .cache/upper, prepare-build-inputs.ts ran in a network namespace whose only interface is a
+      # loopback that is down (unshare -n; the ROBOT jar it also checks comes earlier, from
+      # prepare-source.ts).
+      #
+      # ★ THE SEED'S DURABLE COPY IS AN IMAGE IN THIS LEG'S OWN PACKAGE, BESIDE :buildcache. The
+      # Dockerfile's COPY of the seed makes its bytes part of the layer-cache key of every step
+      # after it in i2idlx-builder: the seed step, prepare-build-inputs.ts, build.ts (which reads
+      # gate.interego.xwisee.com) and the output check. Before the seed, a build whose bridge-base
+      # had not changed (a change to this file beyond its comments rebuilds every leg, and so does a
+      # dispatch of every image) took that whole stage from the layer cache and fetched nothing.
+      # Kept only in the Actions cache, the seed would make that build worse than no seed: after an
+      # eviction (seven days unused) or a cache-service outage it is filled from the publishers
+      # again, and with one of them down it differs from the cached build's, so the steps after the
+      # COPY run again, fetch that source live from the host that has just failed, and fail the leg
+      # where the layer cache used to pass it (measured below). The registry is as durable as the
+      # layer cache the seed has to agree with, and a build cannot push or read its layer cache
+      # without the registry anyway.
+      #
+      # So a complete seed is pushed once as a FROM scratch image of just those files, tagged
+      # upper-seed-<hashFiles of the manifest>, since the manifest's keys and pins alone decide its
+      # bytes. A build that finds the tag passes it as docker-image://, the same bytes for those pins
+      # every time, and fetches nothing from a publisher. A build that does not find it (the first
+      # build of new pins, whose bridge-base changes anyway because the manifest is in it) fills the
+      # directory, starting from the newest seed in the Actions cache so that a re-pin fetches only
+      # what changed, pushes the image when every pin verified, and passes the image, or the
+      # directory when the set is incomplete. The Actions cache is restored on every build, image
+      # or not, only so that its entry is not evicted between re-pins.
+      #
+      # MEASURED 2026-10-27 with docker buildx 0.38 against a local registry (docker-container
+      # driver, registry cache at mode=max, the builder pruned before every build so that only the
+      # registry cache carried over, and these steps' own run blocks taken from this file). With the
+      # image as the context, a second build reported every step of the stage CACHED, including when
+      # the directory beside it held 20 of the 21 files. With that directory as the context and no
+      # image, the COPY and every step after it ran again, and the prepare-build-inputs.ts stand-in,
+      # under --network=none, stopped at "would fetch esco live". A directory and an image with the
+      # same bytes are not the same cache key: switching from one to the other re-ran the COPY and
+      # the steps after it, though not the clone. That is why a build that has just pushed the image
+      # passes the image and not the directory it pushed from. The pushed image was one OCI manifest
+      # with one layer holding exactly the 21 files, each 0644 and root-owned.
+      #
+      # The seed never fails the leg: every step continues on error. A source the script cannot
+      # get, or whose bytes are not the pin, is named in a warning and left out, and the image build
+      # fetches it live as it always did. Neither the image nor the Actions cache is written from a
+      # partial set. And nothing is trusted for having been kept: refresh-upper.ts checks each file
+      # against the manifest's SHA-256 inside the build, as it checks a fresh fetch.
+      - name: Look for the seed image of these pins
+        if: steps.gate.outputs.skip != 'true' && matrix.seed == 'i2idlx-upper'
+        id: upper-seed-image
+        continue-on-error: true
+        timeout-minutes: 2
+        env:
+          REF: ghcr.io/${{ github.repository_owner }}/${{ matrix.image }}:upper-seed-${{ hashFiles('applications/foxxi-content-intelligence/i2idlx/evidence/upper/manifest.json') }}
+        run: |
+          echo "ref=$REF" >> "$GITHUB_OUTPUT"
+          if docker buildx imagetools inspect "$REF" > /dev/null 2>&1; then
+            echo "found=true" >> "$GITHUB_OUTPUT"
+            echo "$REF is in the registry; the build reads the seed from it"
+          else
+            echo "found=false" >> "$GITHUB_OUTPUT"
+            echo "$REF is not in the registry, or could not be read; the seed is filled on this runner"
+          fi
+      - name: Restore the verified upper-ontology sources the Foxxi build reads
+        if: steps.gate.outputs.skip != 'true' && matrix.seed == 'i2idlx-upper'
+        id: upper-seed
+        continue-on-error: true
+        timeout-minutes: 2
+        uses: actions/cache/restore@v5
+        with:
+          path: ${{ env.UPPER_SEED_DIR }}
+          key: i2idlx-upper-seed-${{ hashFiles('applications/foxxi-content-intelligence/i2idlx/evidence/upper/manifest.json', 'applications/foxxi-content-intelligence/i2idlx/typescript/refresh-upper-data.json', 'applications/foxxi-content-intelligence/i2idlx/tools/seed-pinned-upper.mjs') }}
+          restore-keys: i2idlx-upper-seed-
+      - name: Fetch and verify every pinned source the cache does not hold
+        if: steps.gate.outputs.skip != 'true' && matrix.seed == 'i2idlx-upper' && steps.upper-seed-image.outputs.found != 'true'
+        id: upper-seed-fill
+        continue-on-error: true
+        timeout-minutes: 5
+        run: |
+          mkdir -p "$UPPER_SEED_DIR"
+          node applications/foxxi-content-intelligence/i2idlx/tools/seed-pinned-upper.mjs \
+            applications/foxxi-content-intelligence/i2idlx --all "$UPPER_SEED_DIR"
+      # FROM scratch with the directory as its one layer: the image holds the seed's files and
+      # nothing else, which is what replaces the Dockerfile's empty upper-seed stage. No provenance
+      # attestation, so the tag is one image manifest and not an index.
+      - name: Push the seed as an image, only when every pinned source verified
+        if: steps.gate.outputs.skip != 'true' && matrix.seed == 'i2idlx-upper' && steps.upper-seed-image.outputs.found != 'true' && steps.upper-seed-fill.outputs.complete == 'true'
+        id: upper-seed-push
+        continue-on-error: true
+        timeout-minutes: 5
+        env:
+          REF: ${{ steps.upper-seed-image.outputs.ref }}
+        run: |
+          printf 'FROM scratch\nCOPY . /\n' | docker buildx build --provenance=false --push -t "$REF" -f - "$UPPER_SEED_DIR"
+          echo "pushed=true" >> "$GITHUB_OUTPUT"
+      - name: Save the seed, only when every pinned source verified
+        if: steps.gate.outputs.skip != 'true' && matrix.seed == 'i2idlx-upper' && steps.upper-seed-image.outputs.found != 'true' && steps.upper-seed.outputs.cache-hit != 'true' && steps.upper-seed-fill.outputs.complete == 'true'
+        continue-on-error: true
+        uses: actions/cache/save@v5
+        with:
+          path: ${{ env.UPPER_SEED_DIR }}
+          key: ${{ steps.upper-seed.outputs.cache-primary-key }}
+      # The image whenever the registry has it, the directory only when it does not. mkdir: buildx
+      # refuses a named context that does not exist, so the directory must be there even when the
+      # fill never ran.
+      - name: Choose what the build reads as its upper-seed stage
+        if: steps.gate.outputs.skip != 'true' && matrix.seed == 'i2idlx-upper'
+        id: upper-seed-context
+        continue-on-error: true
+        env:
+          REF: ${{ steps.upper-seed-image.outputs.ref }}
+          IN_REGISTRY: ${{ steps.upper-seed-image.outputs.found == 'true' || steps.upper-seed-push.outputs.pushed == 'true' }}
+        run: |
+          if [ "$IN_REGISTRY" = true ] && [ -n "$REF" ]; then
+            echo "context=upper-seed=docker-image://$REF" >> "$GITHUB_OUTPUT"
+            echo "the build reads the seed from $REF"
+          else
+            mkdir -p "$UPPER_SEED_DIR"
+            echo "context=upper-seed=$UPPER_SEED_DIR" >> "$GITHUB_OUTPUT"
+            echo "the build reads the seed from $UPPER_SEED_DIR: $(find "$UPPER_SEED_DIR" -name '*.source' | wc -l) files"
+          fi
+
       - name: Build & push
         if: steps.gate.outputs.skip != 'true'
         uses: docker/build-push-action@v6
@@ -305,10 +385,11 @@ jobs:
           context: .
           file: ${{ matrix.dockerfile }}
           target: ${{ matrix.target }}
-          # A named context only for a `seed: i2idlx-upper` leg: the directory filled above, which
-          # replaces the Foxxi Dockerfile's empty `upper-seed` stage. Every other leg gets an empty
-          # value, which build-push-action treats as none, so its build is unchanged.
-          build-contexts: ${{ matrix.seed == 'i2idlx-upper' && format('upper-seed={0}', env.UPPER_SEED_DIR) || '' }}
+          # A named context only for a `seed: i2idlx-upper` leg: `upper-seed=` the seed image or
+          # the directory, as the step that chooses it says, which replaces the Foxxi Dockerfile's
+          # empty `upper-seed` stage. That step runs on no other leg, so every other leg gets an
+          # empty value, which build-push-action treats as none, and its build is unchanged.
+          build-contexts: ${{ steps.upper-seed-context.outputs.context }}
           push: true
           # Empty for images without a build_args field; docker/build-push-action
           # treats an empty build-args as none.

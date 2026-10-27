@@ -14,14 +14,16 @@
 // --all <dir>: every source the manifest pins, through its mirror where it has one, into <dir>, best
 // effort. On 2026-10-27 the image build died fetching https://data.europa.eu/esco/model
 // (ConnectTimeoutError, four attempts in under a minute) and held back every service's deploy; a
-// re-run of the same jobs succeeded. build-ghcr.yml runs this mode on the runner, keeps <dir> in the
-// Actions cache and hands it to the Dockerfile as the `upper-seed` build context, so a source that
-// verified once is not fetched from its publisher by every build. A source that cannot be fetched, or
-// whose bytes are not the pin, is reported and left out, and the image build fetches it live as it
-// always has. A file already in <dir> is kept only if it matches its pin; a .source file that does
-// not, or that no pin names, and an interrupted .download are removed. The last line says whether the
-// set is complete, and so does `complete=` in $GITHUB_OUTPUT when that is set: the workflow saves the
-// cache only when it is.
+// re-run of the same jobs succeeded. build-ghcr.yml runs this mode on the runner when its registry
+// has no seed image for the current pins, pushes <dir> as that image when the set is complete (and
+// keeps it in the Actions cache), and hands the image, or <dir> when it is not, to the Dockerfile as
+// the `upper-seed` build context, so a source that verified once is not fetched from its publisher
+// by every build. A source that cannot be fetched, or whose bytes are not the pin, is reported and
+// left out, and the image build fetches it live as it always has. A file already in <dir> is kept
+// only if it matches its pin; a .source file that does not, or that no pin names, and an
+// interrupted .download are removed. The last line says whether the set is complete, and so does
+// `complete=` in $GITHUB_OUTPUT when that is set: the workflow pushes the image and saves the cache
+// only when it is.
 //
 // Usage: node tools/seed-pinned-upper.mjs <i2idlx root>
 //        node tools/seed-pinned-upper.mjs <i2idlx root> --all <dir>

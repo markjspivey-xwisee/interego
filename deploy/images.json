@@ -23,8 +23,9 @@
     "matrix cannot disagree. Same file, same list, no sed parsing of YAML.",
     "",
     "`prebuild` and `seed` name recipes in build-ghcr.yml, the steps gated on `matrix.prebuild` or",
-    "`matrix.seed`. `seed: i2idlx-upper` fetches and verifies the Foxxi build's pinned upper-ontology",
-    "sources on the runner and passes them to that leg alone as the `upper-seed` build context."
+    "`matrix.seed`. `seed: i2idlx-upper` passes the Foxxi build's pinned upper-ontology sources to that",
+    "leg alone as the `upper-seed` build context: an image of them that the leg pushes once per set",
+    "of pins, after fetching and verifying them on the runner."
   ],
   "images": [
     { "image": "interego-relay", "dockerfile": "deploy/Dockerfile.relay", "target": "reference" },
