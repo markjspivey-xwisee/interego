@@ -31,9 +31,9 @@
     "express": "^4.21.0",
     "express-rate-limit": "^7.4.0",
     "js-yaml": "^4.1.0",
-    "jsonld": "^9.0.0",
+    "jsonld": "9.0.0",
     "pg": "^8.13.0",
-    "rdf-canonize": "^5.0.0",
+    "rdf-canonize": "5.0.0",
     "ws": "^8.19.0"
   },
   "devDependencies": {

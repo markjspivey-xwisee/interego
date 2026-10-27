@@ -687,7 +687,9 @@ const BASELINE = {};
 // 2026-10-08: private HMD invocation coverage adds one file, so the floor is 605.
 // 2026-10-27: the jsonld fromRDF guard (tests/no-code-reads-rdf-back-through-jsonld-fromrdf.test.ts)
 // brings the tracked scope to 681; the gate named 648.
-export const MIN_FILES = 648;
+// 2026-10-27: the exact-version guard (tests/canonicalizer-versions-are-exact.test.ts) brings it
+// to 682; the gate named 649.
+export const MIN_FILES = 649;
 
 /**
  * How far below the real linted-file count MIN_FILES may sit before that is itself a failure.
