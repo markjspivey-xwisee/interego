@@ -48,7 +48,7 @@ import {
 import { resolveTargetUserId } from './resolve-target-userid.js';
 import { claimFirstSignIn, type FirstSignInOutcome } from './first-sign-in.js';
 import { authenticatePasskey, PasskeyPersistenceError, publicKeyIdentity } from './passkey-authentication.js';
-import { PodReadError, listPods, loadAccounts, readPodJson, type AccountLoadReport, type FetchLike } from './account-index.js';
+import { PodReadError, listPods, loadAccounts, podResourceExists, readPodJson, type AccountLoadReport, type FetchLike } from './account-index.js';
 import { AccountIndex, MAX_HOLDERS, enrolledAt } from './credential-index.js';
 import { createProvisionalPlayProvider } from './provisional-play-provider.js';
 import { parsePlayClients } from './provisional-play.js';
@@ -834,11 +834,58 @@ async function putPodAuthMethods(userId: string, methods: AuthMethods, opts: { i
   bootstrapUserIds.add(userId);
 }
 
+// ── Accounts deleted before deletions left a tombstone ──────
+//
+// Until 2026-10-26 POST /users/me/delete removed auth-methods.jsonld and <pod>/agents and kept
+// every other file: the container, the relay's profile/card and .acl files, the descriptors
+// and the .well-known/context-graphs manifest, the inbox. Such a pod has no tombstone, so a
+// derived id signing in to it again was created over it and inherited all of that (and its
+// did:web name). Before a derived id is created, its pod is asked whether such an account used
+// it, and only when the pod holds no credentials and the credential may create an account:
+//   - u-pk-: any container at all. An owner's authenticator never presents the same credential
+//     id twice (every registration makes a new one), so no owner is turned away, and a
+//     container exists only because an account with this id was written, or attempted, before.
+//   - u-eth- / u-did-: <pod>/agents is gone (only a deletion removes it) while the relay's
+//     first-touch card, the manifest or the descriptors remain. A pod whose agents registry is
+//     still there lost only its sign-in record (a write before 2026-10-24 that never landed);
+//     its owner, holding the same wallet or key, signs in to it as before. The inbox does not
+//     count: anyone can deliver to a pod, and these ids follow from a public address or key.
+// Yes: the sign-in is refused as deleted (409) and the tombstone written (identity_deleted_
+// before_tombstone in the log), so the next attempt reads it and asks nothing. A probe that
+// cannot be answered is 'unreadable' (503), never a new account. A brand-new account pays one
+// HEAD; a live account (a pod listing a credential) is never asked.
+const DERIVED_USER_ID = /^u-(pk|eth|did)-[0-9a-f]{12}$/;
+
+/**
+ * What in `userId`'s pod shows that an account deleted before deletions left a tombstone used
+ * it, or null when nothing does. `existing` is the pod's record without credentials, or null
+ * when it has none. Throws PodReadError when a probe cannot be answered.
+ */
+async function deletedBeforeTombstones(userId: string, existing: AuthMethods | null): Promise<string[] | null> {
+  const pod = `${CSS_URL}${userId}/`;
+  // A record lies in its container, so only a pod without one is asked whether it exists.
+  if (existing === null && !(await podResourceExists(podFetch, pod))) return null;
+  if (userId.startsWith('u-pk-')) return [existing === null ? 'container' : 'auth-methods.jsonld without credentials'];
+  const [agents, card, manifest, descriptors] = await Promise.all([
+    podResourceExists(podFetch, `${pod}agents`),
+    podResourceExists(podFetch, `${pod}profile/card`),
+    podResourceExists(podFetch, `${pod}.well-known/context-graphs`),
+    podResourceExists(podFetch, `${pod}context-graphs/`),
+  ]);
+  if (agents) return null;
+  const evidence = [card && 'profile/card', manifest && '.well-known/context-graphs', descriptors && 'context-graphs/']
+    .filter((e): e is string => typeof e === 'string');
+  return evidence.length > 0 ? evidence : null;
+}
+
 /**
  * A first-time wallet or DID sign-in to `userId` (first-sign-in.ts): read the account's pod
  * under its mutex and create the account only if the pod holds no credentials, so a
  * credential the indexes missed never replaces the ones the account already has. A
  * 'returning' account is loaded into the indexes; nothing else is touched unless 'created'.
+ * `derived`: the id was derived from the credential presented (not a bootstrap invite's
+ * seeded id, whose files predate its credentials by design), so before it is created its pod
+ * is asked whether an account deleted before tombstones used it (deletedBeforeTombstones).
  */
 async function claimFirstSignInOnPod(
   userId: string,
@@ -847,10 +894,30 @@ async function claimFirstSignInOnPod(
   holds: (methods: AuthMethods) => boolean,
   add: (methods: AuthMethods) => void,
   mayCreate = true,
+  derived = false,
 ): Promise<FirstSignInOutcome<AuthMethods>> {
+  const probe = derived && DERIVED_USER_ID.test(userId);
+  let evidence: string[] = [];
   const outcome = await withIdentityPodMutex(userId, () => claimFirstSignIn<AuthMethods>({
     mayCreate,
     closed: isTombstone,
+    ...(probe ? {
+      vacated: async (existing: AuthMethods | null) => {
+        evidence = (await deletedBeforeTombstones(userId, existing)) ?? [];
+        return evidence.length > 0;
+      },
+      // Still under the mutex. A pod that had no record gets the tombstone only if none has
+      // appeared since (If-None-Match: *), so a record another writer made is never replaced.
+      retire: async (existing: AuthMethods | null) => {
+        log(`WARN identity_deleted_before_tombstone userId=${userId} evidence=${evidence.join(',')} refused=deleted`);
+        try {
+          await putPodAuthMethods(userId, deletionTombstone(userId, existing?.sessionEpoch ?? 0), { ifAbsent: existing === null });
+        } catch (err) {
+          log(`WARN: tombstone for ${userId} not written (the next sign-in asks again): ${(err as Error).message}`);
+          throw err;
+        }
+      },
+    } : {}),
     read: async () => {
       // A deferred write still queued behind this mutex is what the pod is about to hold.
       const pending = identityPendingPodWrites.has(userId) ? authMethodsCache.get(userId) : undefined;
@@ -1198,6 +1265,9 @@ function normaliseAuthMethods(raw: unknown, userId: string): AuthMethods {
 // sign-in already reads, in the pod (the identity server keeps nothing). It records the id
 // (already the path), the day, and an epoch above every token issued; no name, agent or
 // credential. It is permanent; an operator re-opens an id by deleting the file by hand.
+// Deletions before 2026-10-26 left no tombstone: they removed auth-methods.jsonld and
+// <pod>/agents and kept the rest. A derived id whose pod still looks like that is refused at
+// its first sign-in and given its tombstone then (deletedBeforeTombstones).
 const ACCOUNT_DELETED_MESSAGE = 'This account was deleted and cannot be re-opened; register a new credential';
 class AccountDeletedError extends Error {}
 
@@ -2935,7 +3005,8 @@ app.post('/auth/siwe', authEnrollLimiter, async (req, res) => {
     // is signed in to.
     const outcome = await claimFirstSignInOnPod(targetUserId, agentId, displayName,
       m => m.walletAddresses.some(a => a.toLowerCase() === recoveredAddress),
-      m => { m.walletAddresses.push(recoveredAddress); }, /* mayCreate */ !loading && !existingOnly);
+      m => { m.walletAddresses.push(recoveredAddress); }, /* mayCreate */ !loading && !existingOnly,
+      /* derived */ resolved.mode === 'derive');
     if (outcome.kind === 'unreadable' || outcome.kind === 'unconfirmed') {
       log(`WARN: first-time SIWE sign-in to ${targetUserId} not completed (${outcome.kind}): ${outcome.reason}`);
       // Nothing was written, so a bootstrap invite spent by resolveTargetUserId is still
@@ -3313,7 +3384,7 @@ app.post('/auth/webauthn/register', authEnrollLimiter, async (req, res) => {
       m => {
         if (!m.name || m.name === targetUserId) m.name = displayName;
         m.webAuthnCredentials.push(record);
-      });
+      }, /* mayCreate */ true, /* derived */ true);
     if (outcome.kind === 'unreadable') {
       log(`WARN: passkey registration of ${targetUserId} not completed (unreadable): ${outcome.reason}`);
       res.status(503).json({
@@ -3836,7 +3907,7 @@ app.post('/auth/did', authEnrollLimiter, async (req, res) => {
           keyType: 'Ed25519VerificationKey2020',
           createdAt: new Date().toISOString(),
         });
-      }, mayCreate);
+      }, mayCreate, /* derived */ resolved.mode === 'derive');
     if (outcome.kind === 'unreadable' || outcome.kind === 'unconfirmed') {
       log(`WARN: first-time DID sign-in to ${targetUserId} not completed (${outcome.kind}): ${outcome.reason}`);
       // Nothing was written, so a bootstrap invite spent by resolveTargetUserId is still
