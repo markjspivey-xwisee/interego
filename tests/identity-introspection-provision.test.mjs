@@ -78,7 +78,7 @@ function world(o = {}) {
       return { domains: { serviceDomains: o.noDomain?.includes(svc) ? [] : [{ domain: `${svc}.example.test` }], customDomains: [] } };
     }
     if (query.includes('serviceInstance(')) {
-      return { serviceInstance: { source: { image: pins[svc] }, numReplicas: o.numReplicas?.[svc] ?? 1,
+      return { serviceInstance: { source: { image: pins[svc] }, numReplicas: Object.hasOwn(o.numReplicas ?? {}, svc) ? o.numReplicas[svc] : 1,
         overlapSeconds: o.overlapSeconds ?? null, drainingSeconds: null, latestDeployment: deployments[svc][0] } };
     }
     if (query.includes('deployments(')) return { deployments: { edges: [{ node: { ...deployments[svc][0] } }] } };
@@ -319,8 +319,9 @@ for (const stage of STAGES) {
 // would send the operator to deploy-railway.yml, which keeps the restored (unset) variable, so
 // the roll-back-again advice goes first. Without identity holding the value they still apply.
 // A caller whose health does not answer, or does not report identityVerifyAuth, may as well be
-// sealed and working: the text names both cases and states neither (tested further down).
-const UNREAD_CSS_GATE = /^identity holds IDENTITY_INTROSPECTION_SECRET and Railway shows it unset on css-gate, whose health does not say whether it presents it \(no answer, or no identityVerifyAuth field\)\. If css-gate runs a sealed value or one changed without a deploy, nothing is wrong: rerun when its health answers\. If a Railway Rollback took css-gate past the deployment stage=callers made, identity refuses it: in Railway, roll css-gate back again to the deployment that was active before that rollback, and do not delete relay's copy\./;
+// sealed and working, or deleted without a deploy: the text names each case and states none (tested
+// further down).
+const UNREAD_CSS_GATE = /^identity holds IDENTITY_INTROSPECTION_SECRET and Railway shows it unset on css-gate, whose health does not say whether it presents it \(no answer, or no identityVerifyAuth field\)\. If css-gate runs a sealed value, nothing is wrong: rerun when its health answers\. If css-gate's variable was deleted without a deploy, its next deploy \(an auto-deploy included\) ships it unset and identity refuses it: restore the variable in Railway before anything deploys css-gate\. If a Railway Rollback took css-gate past the deployment stage=callers made, identity refuses it: in Railway, roll css-gate back again to the deployment that was active before that rollback, and do not delete relay's copy\./;
 for (const [why, opts, otherwise, said] of [
   ['is pinned to a mutable tag', { pins: { 'css-gate': 'ghcr.io/markjspivey-xwisee/interego-css-gate:latest' } }, /css-gate is not pinned to ghcr\.io\/markjspivey-xwisee\/interego-css-gate:<40-hex sha>/],
   ['serves a build other than its pin', { serving: { 'css-gate': 'e5'.repeat(20) } }, /css-gate is pinned to b2b2b2b2 but serving e5e5e5e5; a redeploy would change running code/],
@@ -354,6 +355,10 @@ test('a caller lost while identity holds the value but does not run it yet', () 
   assert.throws(() => planStage('callers', st), /relay does not, so identity refuses it from its next deploy\. .*roll relay back again .*do not delete css-gate's copy/);
 });
 
+// Railway shows the variable unset, so a change without a deploy can only have been a deletion,
+// whose next deploy (an auto-deploy included) ships it unset: the text must not call that harmless.
+const SEALED_CSS_GATE = "css-gate runs with a value Railway does not show (sealed, or deleted without a deploy); resolve by hand. If it was deleted, css-gate's next deploy (an auto-deploy included) ships it unset, and identity refuses a caller without it whenever it enforces: restore the variable in Railway before anything deploys css-gate";
+
 // After finalize the docs allow sealing a caller's variable: Railway then shows it unset while the
 // caller runs it, and identity accepts it. A refusal about what another service serves must not
 // turn that into "identity refuses css-gate, roll it back", which would take a working deployment
@@ -372,7 +377,7 @@ for (const [why, opts] of [
         const w = world({ ...opts, ...more });
         const r = await run(w, stage, { apply: true });
         assert.ok(r.error instanceof ProvisionRefusal, `${stage}: ${r.error?.message ?? 'no refusal'}`);
-        assert.equal(r.error.message, 'css-gate runs with a value Railway does not show (sealed, or changed without a deploy); resolve by hand', stage);
+        assert.equal(r.error.message, SEALED_CSS_GATE, stage);
         assert.equal(writeCount(w), 0);
         assert.deepEqual(deploysTriggered(w), []);
         assertNoValue(r, V1);
@@ -388,20 +393,21 @@ test('callers refuses when identity runs enforced but Railway shows it unset (se
   const r = await run(w, 'callers', { apply: true });
   assert.ok(r.error instanceof ProvisionRefusal);
   assert.match(r.error.message, /^identity holds IDENTITY_INTROSPECTION_SECRET and relay and css-gate do not, so identity refuses them now\. /);
-  assert.match(r.error.message, /\(identity also runs with a value Railway does not show: sealed, or changed without a deploy\.\) Otherwise resolve by hand; a new value would not match identity's$/);
+  assert.match(r.error.message, /\(identity also runs with a value Railway does not show: sealed, or deleted without a deploy\.\) Otherwise resolve by hand; a new value would not match identity's$/);
   assert.equal(writeCount(w), 0);
 });
 
 // After finalize, with css-gate's variable sealed (Railway shows it unset, css-gate runs it and
 // identity accepts it), css-gate's own health failing to answer, or answering without
 // identityVerifyAuth, must not turn into "identity refuses it now, roll it back": the tool cannot
-// tell a sealed css-gate from a rolled-back one, so it names both and states neither.
+// tell a sealed css-gate from a rolled-back one, or one deleted without a deploy, so it names each
+// and states none.
 const finalized = { relay: { [SECRET_VAR]: V1 }, 'css-gate': { [SECRET_VAR]: V1 }, identity: { [SECRET_VAR]: V1, [OPEN_VAR]: undefined } };
 for (const [why, opts] of [
   ['does not answer', { healthStatus: { 'css-gate': 503 } }],
   ['answers without identityVerifyAuth', { healthOverride: (svc, body) => (svc === 'css-gate' ? { ...body, identityVerifyAuth: undefined } : undefined) }],
 ]) {
-  test(`a sealed css-gate whose health ${why}: every stage names both cases and states neither`, async () => {
+  test(`a sealed css-gate whose health ${why}: every stage names each case and states none`, async () => {
     for (const stage of STAGES) {
       for (const apply of [false, true]) {
         const w = world({ stored: finalized, sealed: ['css-gate'], ...opts });
@@ -419,10 +425,63 @@ for (const [why, opts] of [
   });
 }
 
+// With Railway showing the variable unset, a value "changed without a deploy" can only have been
+// deleted, and the service's next deploy (an auto-deploy from a master push included) ships it
+// unset. Only a sealed value is harmless, so no refusal may call the deleted case harmless:
+// css-gate deleted without a deploy while identity enforces, with its health not answering (the
+// text names the three cases) or answering (the sealed refusal), and identity deleted without a
+// deploy, whose next deploy runs without the secret.
+for (const [why, healthOpts, said] of [
+  ['does not answer', { healthStatus: { 'css-gate': 503 } }, UNREAD_CSS_GATE],
+  ['answers', {}, SEALED_CSS_GATE],
+]) {
+  test(`a css-gate variable deleted without a deploy, health that ${why}: every stage says its next deploy is refused`, async () => {
+    for (const stage of STAGES) {
+      for (const apply of [false, true]) {
+        const w = world({ stored: { relay: { [SECRET_VAR]: V1 }, identity: { [SECRET_VAR]: V1, [OPEN_VAR]: undefined } }, running: { 'css-gate': { [SECRET_VAR]: V1 } }, ...healthOpts });
+        const r = await run(w, stage, { apply });
+        assert.ok(r.error instanceof ProvisionRefusal, `${stage}: ${r.error?.message ?? 'no refusal'}`);
+        if (typeof said === 'string') assert.equal(r.error.message, said, stage);
+        else assert.match(r.error.message, said, stage);
+        assert.match(r.error.message, /next deploy \(an auto-deploy included\) ships it unset,? and identity refuses/, stage);
+        assert.match(r.error.message, /restore the variable in Railway before anything deploys css-gate/, stage);
+        assert.doesNotMatch(r.error.message, /changed without a deploy/, stage);
+        assert.equal(writeCount(w), 0);
+        assert.deepEqual(deploysTriggered(w), []);
+        assertNoValue(r, V1);
+      }
+    }
+    // What the text warns about: css-gate's next deploy runs what Railway stores, and identity,
+    // which enforces V1, then refuses it.
+    const w = world({ stored: { relay: { [SECRET_VAR]: V1 }, identity: { [SECRET_VAR]: V1, [OPEN_VAR]: undefined } }, running: { 'css-gate': { [SECRET_VAR]: V1 } } });
+    w.running['css-gate'] = { ...w.stored['css-gate'] };
+    await w.http.getJson('https://css-gate.example.test/x/auth-methods.jsonld', { headers: { Authorization: 'Bearer introspection-rollout-probe-0123456789abcdef' } });
+    assert.deepEqual(w.counters, { accepted: 0, refused: 1, other: 0 });
+  });
+}
+
+for (const [why, identityStored, next] of [
+  ['finalized', { [OPEN_VAR]: undefined }, /If it was deleted, identity's next deploy \(an auto-deploy included\) runs without it and leaves introspection disabled, which refuses both callers: restore the variable, or set ALLOW_OPEN_INTROSPECTION=1, in Railway before anything deploys identity$/],
+  ['with ALLOW_OPEN_INTROSPECTION=1 stored', {}, /If it was deleted, identity's next deploy \(an auto-deploy included\) runs without it and opens introspection again \(ALLOW_OPEN_INTROSPECTION=1 is stored\)$/],
+]) {
+  test(`identity's variable deleted without a deploy, ${why}: every stage says what its next deploy does`, async () => {
+    for (const stage of STAGES) {
+      const w = world({ stored: { ...both, identity: identityStored }, running: { identity: { [SECRET_VAR]: V1 } } });
+      const r = await run(w, stage, { apply: true });
+      assert.ok(r.error instanceof ProvisionRefusal, `${stage}: ${r.error?.message ?? 'no refusal'}`);
+      assert.match(r.error.message, /^identity runs with a value Railway does not show \(sealed, or deleted without a deploy\); resolve by hand\. /, stage);
+      assert.match(r.error.message, next, stage);
+      assert.equal(writeCount(w), 0);
+      assert.deepEqual(deploysTriggered(w), []);
+      assertNoValue(r, V1);
+    }
+  });
+}
+
 test('the text for a caller whose health says nothing follows how many there are and whether one is sealed', () => {
   const st = { relay: { stored: undefined, running: null }, 'css-gate': { stored: undefined, running: null },
     identity: { stored: undefined, running: true, openStored: false, openListed: false, openRunning: false } };
-  const bothUnread = /: identity holds IDENTITY_INTROSPECTION_SECRET and Railway shows it unset on relay and css-gate, whose health does not say whether they present it .* If relay and css-gate run a sealed value .* rerun when their health answers\. If a Railway Rollback took relay and css-gate past the deployment stage=callers made, identity refuses them: in Railway, roll relay and css-gate back again to the deployment that was active before that rollback\. \(identity also runs with a value Railway does not show: sealed, or changed without a deploy\.\) Otherwise resolve by hand$/;
+  const bothUnread = /: identity holds IDENTITY_INTROSPECTION_SECRET and Railway shows it unset on relay and css-gate, whose health does not say whether they present it .* If relay and css-gate run a sealed value, nothing is wrong: rerun when their health answers\. If the variable was deleted from either without a deploy, that caller's next deploy \(an auto-deploy included\) ships it unset and identity refuses it: restore the variable in Railway before anything deploys it\. If a Railway Rollback took relay and css-gate past the deployment stage=callers made, identity refuses them: in Railway, roll relay and css-gate back again to the deployment that was active before that rollback\. \(identity also runs with a value Railway does not show: sealed, or deleted without a deploy\.\) Otherwise resolve by hand$/;
   for (const stage of ['identity', 'finalize']) assert.throws(() => planStage(stage, st), bothUnread);
   // One caller lost by its health, the other unread: the lost one is named as refused, and the
   // unread one is not called refused.
@@ -441,7 +500,7 @@ for (const sealedSvc of ['relay', 'identity']) {
         const r = await run(w, stage, { apply });
         assert.ok(r.error instanceof ProvisionRefusal, `${stage}: ${r.error?.message ?? 'no refusal'}`);
         assert.match(r.error.message, /^identity holds IDENTITY_INTROSPECTION_SECRET and css-gate does not, so identity refuses it now\. A Railway Rollback past the deployment stage=callers made unsets the variable: in Railway, roll css-gate back again to the deployment that was active before that rollback, and do not delete relay's copy\./, stage);
-        assert.match(r.error.message, new RegExp(`\\(${sealedSvc} also runs with a value Railway does not show: sealed, or changed without a deploy\\.\\)`), stage);
+        assert.match(r.error.message, new RegExp(`\\(${sealedSvc} also runs with a value Railway does not show: sealed, or deleted without a deploy\\.\\)`), stage);
         assert.equal(writeCount(w), 0);
         assert.deepEqual(deploysTriggered(w), []);
         assertNoValue(r, V1);
@@ -1133,8 +1192,62 @@ test('an applied run outside GitHub Actions is refused before any variable is re
 test('css-gate with more than one replica is noted', async () => {
   const w = world({ stored: both, numReplicas: { 'css-gate': 2 } });
   const r = await run(w, 'callers');
-  assert.match(r.text, /per replica/);
+  assert.match(r.text, /note: css-gate is set to 2 replicas \(numReplicas\), and its identityVerifyResults counters are per replica, .* can be wrong either way; stages identity and finalize refuse until css-gate runs one replica/);
+  // Unset is Railway's default of one replica: no note.
+  const unset = await run(world({ stored: both, numReplicas: { 'css-gate': null } }), 'callers');
+  assert.doesNotMatch(unset.text, /replicas/);
 });
+
+// css-gate's identityVerifyResults counters are per replica, and the two /healthz readings around a
+// probe can come from different replicas. Here replica 0 has accepted 100 and replica 1 300, the
+// readings alternate, and real traffic, refused while identity refuses the gate, lands 2:1. The
+// comparison then reads 'accepted' while identity refuses css-gate: the identity stage wrote and
+// deployed, and finalize removed the rollback, each ending in "done" with identity refusing
+// css-gate. With css-gate on more than one replica both stages refuse before any probe or write.
+for (const [stage, base] of [
+  // css-gate stores V1 and runs V2 (changed without a deploy); identity is open, so it accepts css-gate until it enforces V1.
+  ['identity', { stored: both, running: { 'css-gate': { [SECRET_VAR]: V2 } } }],
+  // identity enforces V1 and already refuses css-gate, which runs V2.
+  ['finalize', { stored: { ...both, identity: { [SECRET_VAR]: V1 } }, running: { 'css-gate': { [SECRET_VAR]: V2 } } }],
+]) {
+  test(`${stage}: css-gate on two replicas is refused before any probe or write`, async () => {
+    const w = world({ ...base, numReplicas: { 'css-gate': 2 } });
+    const replicas = [{ accepted: 100, refused: 0, other: 0 }, { accepted: 300, refused: 0, other: 0 }];
+    let reading = 1;
+    let hit = 0;
+    const refusesGate = () => Boolean(w.running.identity[SECRET_VAR]) && w.running['css-gate'][SECRET_VAR] !== w.running.identity[SECRET_VAR];
+    const http = {
+      ...w.http,
+      async getJson(url, opts = {}) {
+        const u = new URL(url);
+        if (u.hostname === 'css-gate.example.test' && u.pathname === '/healthz') {
+          const r = await w.http.getJson(url, opts);
+          r.body.identityVerifyResults = { ...replicas[reading++ % 2] };
+          return r;
+        }
+        if (u.hostname === 'css-gate.example.test' && u.pathname.endsWith('/auth-methods.jsonld')) {
+          replicas[hit++ % 2][refusesGate() ? 'refused' : 'accepted']++;
+          return { status: 401, body: { error: 'invalid bearer' } };
+        }
+        return w.http.getJson(url, opts);
+      },
+    };
+    const sleep = async (ms) => {
+      await w.sleep(ms);
+      const k = refusesGate() ? 'refused' : 'accepted';
+      replicas[0][k] += 2;
+      replicas[1][k] += 1;
+    };
+    const r = await run({ ...w, http, sleep }, stage, { apply: true });
+    assert.ok(r.error instanceof ProvisionRefusal, r.error?.message ?? `no refusal: ${r.lines.join(' | ')}`);
+    assert.match(r.error.message, /^css-gate is set to 2 replicas \(numReplicas\), and its identityVerifyResults counters are per replica, so the check that identity accepts css-gate compares readings that can come from different replicas and can be wrong either way\. Run css-gate on one replica for this stage, or make this stage's checks by hand/);
+    assert.equal(hit, 0, 'no probe reached css-gate');
+    assert.equal(writeCount(w), 0);
+    assert.deepEqual(deploysTriggered(w), []);
+    assert.equal(w.stored.identity[OPEN_VAR], '1', 'the rollback is still stored');
+    assertNoValue(r, V1, V2);
+  });
+}
 
 // ── the live wrappers and failure text ───────────────────────────────────────
 
@@ -1260,6 +1373,36 @@ test('the docs call the apply guard an accident guard and say what the add-mask 
   const src = readFileSync(new URL('../tools/identity-introspection-provision.mjs', import.meta.url), 'utf8');
   assert.match(src, /It is not an access boundary:\n \* RAILWAY_PROJECT_TOKEN is a repository secret/);
   assert.match(src, /The one line that carries a value is the runner's\n \* add-mask command/);
+});
+
+// The tool masks the value it generates, and a stored value only when it could be the secret
+// (usableSecret): masking a short string such as `1` would hide every occurrence of it in the log.
+// The docs said it masks every value it reads.
+test('the docs say which values are masked, and the tool masks exactly those', async () => {
+  const doc = readFileSync(new URL('../deploy/identity/AUTH-ARCHITECTURE.md', import.meta.url), 'utf8');
+  assert.doesNotMatch(doc, /registers each value it reads with the runner's/);
+  assert.match(doc, /registers the value it generates, and each stored value it reads that could be the secret \(32 or more printable ASCII characters without spaces\), with the runner's `::add-mask::` command/);
+  const short = world({ stored: { relay: { [SECRET_VAR]: 'short value' }, 'css-gate': { [SECRET_VAR]: 'short value' } } });
+  const r = await run(short, 'callers', { apply: true });
+  assert.ok(r.error instanceof ProvisionRefusal);
+  assert.match(r.error.message, /not usable/);
+  assert.deepEqual(short.masks, []);
+  const usable = world({ stored: both });
+  await run(usable, 'callers');
+  assert.deepEqual(usable.masks, [V1]);
+});
+
+// The checks see whether identity accepts a caller, not which value it runs, and identity is open
+// before stage=identity's write: a caller whose variable was changed without a deploy is found only
+// by the check after the deploy (tested above as 'a caller running a stale value'). The docs say
+// so, and how to rule it out; and that css-gate on more than one replica is refused.
+test('the docs say what the checks cannot see', () => {
+  const doc = readFileSync(new URL('../deploy/identity/AUTH-ARCHITECTURE.md', import.meta.url), 'utf8');
+  assert.match(doc, /The check before the write cannot tell which value a caller runs, because an open identity accepts any: a caller whose variable was changed in Railway without a deploy runs a value other than the one this stage copies, identity refuses it once the deploy enforces, and only the check after the deploy finds that\. To rule it out beforehand, deploy any caller whose variable may have changed since its last deploy/);
+  assert.match(doc, /Stages `identity` and `finalize` also refuse while css-gate is set to anything other than one replica: .* can make that check wrong either way, including reporting a refused gate as accepted\./);
+  const src = readFileSync(new URL('../tools/identity-introspection-provision.mjs', import.meta.url), 'utf8');
+  assert.match(src, /That check, and the one before each write, sees only whether identity accepts a caller, not\n \* which value the caller runs/);
+  assert.match(src, /so stages\n \* identity and finalize refuse unless css-gate is set to one replica\./);
 });
 
 // ── unit tables ───────────────────────────────────────────────────────────────
