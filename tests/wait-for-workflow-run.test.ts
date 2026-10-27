@@ -124,6 +124,14 @@ const green = () => ({
   checkRuns: [...ownJobs, job(suite, 'The whole root test suite: everything else, first half'), job(suite, 'MCP surface typecheck'), job(mutation, MUTANT), job(base, 'Emergence with the verticals; the base without them')],
 });
 const state = (runs: readonly WorkflowRunLike[], checkRuns: readonly CheckRunLike[]) => otherChecksState(runs, checkRuns, { selfRunId: String(SELF_RUN) });
+// A reopen: jev-harness runs on `reopened`, and so does every pull_request workflow with the
+// default activity types, so the head gets a second run of each for the same event. The ESLint
+// run from `opened` concluded red (the usual reason to close and reopen).
+const ESLINT = 311111111;
+const lintOld = wfRun(40509000100, 'ESLint', ESLINT, { conclusion: 'failure', created_at: '2026-10-27T12:40:00Z' });
+const lintOldJob = () => job(lintOld, 'lint', { conclusion: 'failure', started_at: '2026-10-27T12:40:30Z' });
+const lintNew = (over: Partial<WorkflowRunLike> = {}) => wfRun(40509213300, 'ESLint', ESLINT, { status: 'queued', conclusion: null, ...over });
+const DEFERRED = 'ESLint / lint (failure in an earlier run; the newer run decides)';
 
 describe('★ every other check on the head: what the two listings say', () => {
   it('success when every other check concluded, with this workflow\'s own jobs (one still running) left out', () => {
@@ -277,6 +285,38 @@ describe('★ every other check on the head: what the two listings say', () => {
     // It lists no check run at all: nothing shows that a newer run re-ran what it would have run.
     const empty = early({ conclusion: 'startup_failure' });
     expect(state([...runs, empty], checkRuns)).toMatchObject({ state: 'failure', failed: ['Mutation Gate: startup_failure'] });
+  });
+
+  it('★ an earlier run\'s red waits while a newer run of its workflow for the same event has not concluded (a reopen): pending, and the newer run decides', () => {
+    const { runs, checkRuns } = green();
+    // The newer run is queued and has no check run yet.
+    const queued = lintNew();
+    expect(state([...runs, lintOld, queued], [...checkRuns, lintOldJob()])).toMatchObject({ state: 'pending', failed: [], pending: [DEFERRED, 'ESLint (queued)'] });
+    // Its `lint` is queued with no started_at, so it sorts behind the older red one: still the newer run's to decide.
+    const running = lintNew({ status: 'in_progress' });
+    const queuedLint = job(running, 'lint', { status: 'queued', conclusion: null, started_at: null });
+    expect(state([...runs, lintOld, running], [...checkRuns, lintOldJob(), queuedLint])).toMatchObject({ state: 'pending', failed: [], pending: [DEFERRED, 'ESLint (in_progress)'] });
+    // The older run's own red, with no check run of its own listed, waits the same way.
+    expect(state([...runs, lintOld, queued], checkRuns)).toMatchObject({ state: 'pending', pending: ['ESLint (failure in an earlier run; the newer run decides)', 'ESLint (queued)'] });
+    // The newer run concluded green: the older one is superseded, and it holds.
+    const passed = lintNew({ status: 'completed', conclusion: 'success' });
+    expect(state([...runs, lintOld, passed], [...checkRuns, lintOldJob(), job(passed, 'lint', { started_at: '2026-10-27T13:07:30Z' })]).state).toBe('success');
+    // ... or red too: refused, named once.
+    const red = lintNew({ status: 'completed', conclusion: 'failure' });
+    expect(state([...runs, lintOld, red], [...checkRuns, lintOldJob(), job(red, 'lint', { conclusion: 'failure', started_at: '2026-10-27T13:07:30Z' })]))
+      .toMatchObject({ state: 'failure', failed: ['ESLint / lint: failure'], pending: [] });
+    // A newer run for ANOTHER event checks something else: the older red refuses at once.
+    expect(state([...runs, lintOld, lintNew({ event: 'push' })], [...checkRuns, lintOldJob()])).toMatchObject({ state: 'failure', failed: ['ESLint / lint: failure'] });
+  });
+
+  it('★ an earlier run cancelled before it made any job is replaced by a newer run of its workflow for the same event (a concurrency group); without one it still refuses', () => {
+    const { runs, checkRuns } = green();
+    const cancelled = wfRun(40509000003, 'Mutation Gate', 348733029, { conclusion: 'cancelled', created_at: '2026-10-27T12:50:00Z' });
+    expect(state([...runs, cancelled], checkRuns)).toMatchObject({ state: 'success', failed: [] });
+    // No newer run of the workflow for that event: nothing replaced it.
+    expect(state([...runs, { ...cancelled, event: 'push' }], checkRuns)).toMatchObject({ state: 'failure', failed: ['Mutation Gate: cancelled'] });
+    // Newer than every run of its workflow: nothing replaced it either.
+    expect(state([...runs, { ...cancelled, created_at: '2026-10-27T13:30:00Z' }], checkRuns)).toMatchObject({ state: 'failure', failed: ['Mutation Gate: cancelled'] });
   });
 
   it('★ leaves an advisory suite out (JEV_MERGE_WAITS_FOR_SUITE=false), and says so; a gating suite counts', () => {
@@ -511,6 +551,66 @@ describe('★ the wait: one deadline for the suite and the checks', () => {
     const other = await harness(listings(redRuns, [...redJobs, job(base, 'Base on Node 22', { conclusion: 'failure' })]), { suiteGate: false }).done;
     expect(other.checks.result).toBe('failure');
     expect(autoMergeDecision({ ...advisorySuite, checks: { ...other.checks, gates: true } }).merge).toBe(false);
+  });
+
+  describe('★ JEV_MERGE_WAITS_FOR_SUITE=false: the checks are read again on every poll while the advisory suite runs', () => {
+    // The suite is left out of the checks, so its running does not keep their word open: a green
+    // word read on the first poll must not be the one returned once the suite concludes.
+    const BASE_JOB = 'Emergence with the verticals; the base without them';
+    const suiteRunning = (rs: readonly WorkflowRunLike[]) => rs.map((r) => (r.id === suite.id ? { ...r, status: 'in_progress', conclusion: null } : r));
+    const suiteJobsRunning = (cs: readonly CheckRunLike[]) => cs.map((c) => (c.name === 'MCP surface typecheck' ? { ...c, status: 'in_progress', conclusion: null } : c));
+
+    it('a check re-run red after a green first poll refuses, though the suite concludes green after it', async () => {
+      const { runs, checkRuns } = green();
+      const baseRed = (rs: readonly WorkflowRunLike[]) => rs.map((r) => (r.id === base.id ? { ...r, conclusion: 'failure' } : r));
+      const rerunRed = (cs: readonly CheckRunLike[]) => [...cs.filter((c) => c.name !== BASE_JOB), job(base, BASE_JOB, { conclusion: 'failure', started_at: '2026-10-27T13:20:00Z' })];
+      // Poll 0: the suite runs, everything else green. Poll 1: Base's job re-ran and failed. Poll 2: the suite concludes; Base is still red.
+      const h = harness((poll, url) => {
+        if (poll === 0) return listings(suiteRunning(runs), suiteJobsRunning(checkRuns))(poll, url);
+        if (poll === 1) return listings(baseRed(suiteRunning(runs)), rerunRed(suiteJobsRunning(checkRuns)))(poll, url);
+        return listings(baseRed(runs), rerunRed(checkRuns))(poll, url);
+      }, { suiteGate: false });
+      const done = await h.done;
+      expect(h.polls()).toBe(2);
+      expect(done.suite?.result).toBe('success');
+      expect(done.checks.result).toBe('failure');
+      expect(done.checks.detail).toContain(`did not pass: Base without verticals / ${BASE_JOB}: failure`);
+      expect(autoMergeDecision({ ...decisionInputs, suite: { result: 'success', gates: false }, checks: { ...done.checks, gates: true } }).merge).toBe(false);
+    });
+
+    it('a run that starts on the head after a green first poll is waited for: it decides when it concludes, and times out when it does not', async () => {
+      const { runs, checkRuns } = green();
+      const ghcr = wfRun(40509300200, 'Build & push to GHCR', 330000001, { event: 'workflow_dispatch', status: 'queued', conclusion: null, created_at: '2026-10-27T13:10:00Z' });
+      const ghcrDone = { ...ghcr, status: 'completed', conclusion: 'success' };
+      // Poll 0: the suite runs, everything else green. Polls 1-3: a GHCR dispatch is queued, and the
+      // suite concludes on poll 2. Poll 4 (when it concludes at all): the dispatch passed.
+      const answer = (concludes: boolean) => (poll: number, url: string) => {
+        if (poll === 0) return listings(suiteRunning(runs), suiteJobsRunning(checkRuns))(poll, url);
+        if (poll < 2) return listings([...suiteRunning(runs), ghcr], suiteJobsRunning(checkRuns))(poll, url);
+        if (poll < 4 || !concludes) return listings([...runs, ghcr], checkRuns)(poll, url);
+        return listings([...runs, ghcrDone], [...checkRuns, job(ghcrDone, 'interego-relay', { started_at: '2026-10-27T13:11:00Z' })])(poll, url);
+      };
+      const concluded = harness(answer(true), { suiteGate: false });
+      expect((await concluded.done).checks.result).toBe('success');
+      expect(concluded.polls()).toBe(4);
+      const stuck = harness(answer(false), { suiteGate: false });
+      expect((await stuck.done).checks).toMatchObject({ result: 'timeout', detail: expect.stringContaining('still running: Build & push to GHCR (queued)') });
+      expect(stuck.polls()).toBe(DEADLINE / POLL + 1);
+    });
+  });
+
+  it('★ a reopen: an older run\'s red waits for the newer run of its workflow, and the newer run decides', async () => {
+    const { runs, checkRuns } = green();
+    const passed = lintNew({ status: 'completed', conclusion: 'success' });
+    // Poll 0: the reopen's ESLint run is queued beside the red one from `opened`. Poll 1: it passed.
+    const h = harness((poll, url) => (poll === 0
+      ? listings([...runs, lintOld, lintNew()], [...checkRuns, lintOldJob()])
+      : listings([...runs, lintOld, passed], [...checkRuns, lintOldJob(), job(passed, 'lint', { started_at: '2026-10-27T13:07:30Z' })]))(poll, url));
+    expect((await h.done).checks.result).toBe('success');
+    expect(h.polls()).toBe(1);
+    // Still queued at the deadline: a timeout that names both, not a pass.
+    const stuck = harness(listings([...runs, lintOld, lintNew()], [...checkRuns, lintOldJob()]));
+    expect((await stuck.done).checks).toEqual({ result: 'timeout', detail: `still running: ${DEFERRED}, ESLint (queued)` });
   });
 
   it('★ fails closed when GitHub refuses the check runs: error at once on a 4xx, at the deadline on a 5xx; the suite is still read', async () => {

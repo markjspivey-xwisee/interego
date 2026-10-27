@@ -28,7 +28,7 @@
  */
 
 import { execFileSync } from 'node:child_process';
-import { AUTO_MERGED_LABEL, autoMergeDecision, type AutoMergeInputs } from '../src/auto-merge.js';
+import { AUTO_MERGED_LABEL, autoMergeDecision, waitWordsFromArgv, type AutoMergeInputs } from '../src/auto-merge.js';
 import { loadSavedResults } from '../src/pr-comment.js';
 
 function flag(name: string): string | undefined {
@@ -104,8 +104,9 @@ async function main(): Promise<void> {
     ...(!snapshot ? { reputationError: reputation.error ?? 'the bridge holds no reputation snapshot yet' } : {}),
     ...(mergeable ? { mergeable } : {}),
     ...(base ? { base } : {}),
-    ...(flag('--suite-result') ? { suite: { result: flag('--suite-result') as string, gates: flag('--suite-gates') !== 'false', ...(flag('--suite-url') ? { url: flag('--suite-url') as string } : {}) } } : {}),
-    ...(flag('--checks-result') ? { checks: { result: flag('--checks-result') as string, gates: flag('--checks-gates') !== 'false', ...(flag('--checks-detail') ? { detail: flag('--checks-detail') as string } : {}) } } : {}),
+    // The suite's and the checks' words and switches: parsed by the policy module, where the
+    // defaults (a switch gates unless it is exactly false) are tested.
+    ...waitWordsFromArgv(process.argv),
   });
   // When the one failing condition is that master moved, update the branch before reporting: the
   // push starts the run that decides again, and the report says so in the same breath.

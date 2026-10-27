@@ -63,15 +63,19 @@
  *      wait, against the same deadline (no second budget), now also lists every workflow run
  *      and check run GitHub holds for the head, leaves out this workflow's own by its workflow
  *      id (never by name), reads the latest attempt of each check by name (an earlier run's
- *      check of another name still counts), and hands the decision a second word: success
- *      holds (each concluded success, neutral or skipped); failure (one concluded failure,
- *      cancelled, timed_out, action_required, startup_failure or anything else), timeout (one
- *      still running at the deadline), untrusted (the listings never held this run's own job)
- *      and error (GitHub could not be asked) fail, and the next push decides again. On
- *      2026-10-26 and 27 Mutation Gate's 63 successful runs (of 66) took 18 to 47 minutes from
- *      the push, median 29, so a pull request whose Mutation Gate outlasts the wait is not
- *      merged by that run. JEV_MERGE_WAITS_FOR_CHECKS=false makes the word advisory, and gives
- *      the checks no wait of their own beyond the suite's, an outage included.
+ *      check of another name still counts, and an earlier run's red waits for a newer run of
+ *      its workflow for the same event that has not concluded), reads them again on every poll
+ *      until the wait returns (only a red check or a refused listing is kept), and hands the
+ *      decision a second word: success holds (each concluded success, neutral or skipped);
+ *      failure (one concluded failure, cancelled, timed_out, action_required, startup_failure
+ *      or anything else), timeout (one still running at the deadline), untrusted (the listings
+ *      never held this run's own job) and error (GitHub could not be asked) fail, and the next
+ *      push decides again. On 2026-10-26 and 27 Mutation Gate's 63 successful runs (of 66) took
+ *      18 to 47 minutes from the push, median 29, and only 11 concluded within 22 minutes of
+ *      the push, which is about when this wait ends, so most pull requests are not merged by
+ *      their run until the wait (SUITE_WAIT_MS, and the job's timeout-minutes) is raised.
+ *      JEV_MERGE_WAITS_FOR_CHECKS=false makes the word advisory, and gives the checks no wait
+ *      of their own beyond the suite's, an outage included.
  *
  * The operator turned the person off on 2026-09-21 ("i dont need human review"), so by default
  * needs-human-review is advisory: the gate still judges every diff and records its verdict,
@@ -79,8 +83,9 @@
  * AUTO_MERGED_LABEL so the close-time job never scores it as a person's approval.
  *
  * Unarmed, the CI job prints the decision it would have taken and exits green. This module is
- * the pure decision; bin/auto-merge.ts reads the inputs and, when the decision is merge, runs
- * the merge.
+ * the pure decision, and how the two words of conditions 10 and 11 are read from the driver's
+ * arguments (waitWordsFromArgv); bin/auto-merge.ts reads the other inputs and, when the
+ * decision is merge, runs the merge.
  */
 
 export const AUTO_MERGE_POLICY = {
@@ -137,6 +142,28 @@ export interface AutoMergeInputs {
    * operator made it advisory (JEV_MERGE_WAITS_FOR_CHECKS=false).
    */
   readonly checks?: { readonly result: string; readonly gates: boolean; readonly detail?: string };
+}
+
+/**
+ * The two words the wait wrote, as bin/auto-merge.ts reads them from its arguments. Pure, so the
+ * defaults are tested rather than trusted: a word gates unless its switch is exactly `false` (the
+ * workflow passes `true` or `false`, and an absent switch gates); an absent or empty word is left
+ * out, so its condition fails as unknown; the suite's url and the checks' detail pass through when
+ * given and are left out when empty.
+ */
+export function waitWordsFromArgv(argv: readonly string[]): Pick<AutoMergeInputs, 'suite' | 'checks'> {
+  const flag = (name: string): string | undefined => {
+    const i = argv.indexOf(name);
+    return i >= 0 ? argv[i + 1] : undefined;
+  };
+  const suiteResult = flag('--suite-result');
+  const suiteUrl = flag('--suite-url');
+  const checksResult = flag('--checks-result');
+  const checksDetail = flag('--checks-detail');
+  return {
+    ...(suiteResult ? { suite: { result: suiteResult, gates: flag('--suite-gates') !== 'false', ...(suiteUrl ? { url: suiteUrl } : {}) } } : {}),
+    ...(checksResult ? { checks: { result: checksResult, gates: flag('--checks-gates') !== 'false', ...(checksDetail ? { detail: checksDetail } : {}) } } : {}),
+  };
 }
 
 export interface AutoMergeEvidence {

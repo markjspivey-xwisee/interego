@@ -3,7 +3,9 @@
  * two modes — a person required, or not.
  */
 import { describe, expect, it } from 'vitest';
-import { AUTO_MERGE_POLICY, AUTO_MERGED_LABEL, autoMergeDecision, reviewVerdictEvidence } from '../src/auto-merge.js';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { AUTO_MERGE_POLICY, AUTO_MERGED_LABEL, autoMergeDecision, reviewVerdictEvidence, waitWordsFromArgv } from '../src/auto-merge.js';
 
 const earned = { cells: [{ kind: 'navigation', liveSamples: 3 }, { kind: 'review-verdict', liveSamples: 25, liveAgreement: { agree: 23, conservative: 1, disagree: 1 } }] };
 const all = { verdict: 'auto-ok', selectionResult: 'success', armed: true, tokenPresent: true, calibration: earned, mergeable: 'MERGEABLE', base: { tested: 'aaaaaaaa1', current: 'aaaaaaaa1' }, suite: { result: 'success', gates: true }, checks: { result: 'success', gates: true } };
@@ -227,5 +229,77 @@ describe('★ every other check on the head is the last condition: #707 and #716
     const d = autoMergeDecision({ ...withPerson, checks: { result: 'failure', gates: true } });
     expect(d.reasons).toHaveLength(10);
     expect(d.reasons[9]).toBe('fails: a check on this head did not pass; nothing merges over a red check');
+  });
+});
+
+describe('★ the driver\'s arguments become the two words: a switch gates unless it is exactly false', () => {
+  // bin/auto-merge.ts hands process.argv to waitWordsFromArgv; this is the one place the
+  // workflow's SUITE_GATES / CHECKS_GATES strings become `gates`. Turned around, the default
+  // (switch unset, so the workflow passes `true`) would merge over a red or running check.
+  const node = ['node', 'bin/auto-merge.ts', '--pr', '1', '--repo', 'o/r'];
+  const argv = (over: Record<string, string | undefined>) => {
+    const words: Record<string, string | undefined> = {
+      '--suite-result': 'success', '--suite-gates': 'true', '--suite-url': 'https://github.com/o/r/actions/runs/1',
+      '--checks-result': 'success', '--checks-gates': 'true', '--checks-detail': 'every check concluded',
+      ...over,
+    };
+    // As the workflow's run line passes them: each flag with its value, an unset variable as "".
+    return [...node, ...Object.entries(words).flatMap(([k, v]) => (v === undefined ? [] : [k, v]))];
+  };
+
+  it('gates when the switch is true or absent; only exactly false makes a word advisory', () => {
+    expect(waitWordsFromArgv(argv({}))).toEqual({
+      suite: { result: 'success', gates: true, url: 'https://github.com/o/r/actions/runs/1' },
+      checks: { result: 'success', gates: true, detail: 'every check concluded' },
+    });
+    const absent = waitWordsFromArgv(argv({ '--suite-gates': undefined, '--checks-gates': undefined }));
+    expect(absent.suite?.gates).toBe(true);
+    expect(absent.checks?.gates).toBe(true);
+    const off = waitWordsFromArgv(argv({ '--suite-gates': 'false', '--checks-gates': 'false' }));
+    expect(off.suite?.gates).toBe(false);
+    expect(off.checks?.gates).toBe(false);
+    // Each switch is its own: the checks advisory leaves the suite gating, and the other way round.
+    expect(waitWordsFromArgv(argv({ '--checks-gates': 'false' }))).toMatchObject({ suite: { gates: true }, checks: { gates: false } });
+    expect(waitWordsFromArgv(argv({ '--suite-gates': 'false' }))).toMatchObject({ suite: { gates: false }, checks: { gates: true } });
+    // Anything but exactly false gates: an empty or mistyped switch is not an operator's choice.
+    for (const v of ['', 'TRUE', 'no', '0']) expect(waitWordsFromArgv(argv({ '--checks-gates': v })).checks?.gates, v).toBe(true);
+  });
+
+  it('a red or running check refuses through the parsed default, and only an explicit false lets it through', () => {
+    const decide = (over: Record<string, string | undefined>) => autoMergeDecision({ ...all, ...waitWordsFromArgv(argv(over)) });
+    expect(decide({ '--checks-result': 'failure', '--checks-gates': undefined }).merge).toBe(false);
+    expect(decide({ '--checks-result': 'timeout' }).merge).toBe(false);
+    expect(decide({ '--checks-result': 'failure', '--checks-gates': 'false' }).merge).toBe(true);
+    expect(decide({ '--suite-result': 'failure', '--suite-gates': undefined }).merge).toBe(false);
+    expect(decide({ '--suite-result': 'failure', '--suite-gates': 'false' }).merge).toBe(true);
+  });
+
+  it('an empty or absent word is left out, so its condition fails as unknown; an empty url or detail is left out too', () => {
+    // The wait failed before writing (exit 2): its outputs are empty strings in the run line.
+    const empty = waitWordsFromArgv(argv({ '--suite-result': '', '--suite-url': '', '--checks-result': '', '--checks-detail': '' }));
+    expect(empty).toEqual({});
+    const { suite: _s, checks: _c, ...rest } = all;
+    const d = autoMergeDecision({ ...rest, ...empty });
+    expect(d.merge).toBe(false);
+    expect(d.reasons[6]).toContain('was not given (--suite-result)');
+    expect(d.reasons[7]).toContain('were not given (--checks-result)');
+    expect(waitWordsFromArgv(node)).toEqual({});
+    // A word with no url or detail keeps the word and drops only the empty field.
+    expect(waitWordsFromArgv(argv({ '--suite-url': '', '--checks-detail': '' }))).toEqual({ suite: { result: 'success', gates: true }, checks: { result: 'success', gates: true } });
+  });
+
+  it('passes the detail and the url through as given, check names and all', () => {
+    const detail = 'did not pass: Base without verticals / Emergence with the verticals; the base without them: failure; still running: ESLint (queued)';
+    const words = waitWordsFromArgv(argv({ '--checks-result': 'failure', '--checks-detail': detail }));
+    expect(words.checks).toEqual({ result: 'failure', gates: true, detail });
+    expect(autoMergeDecision({ ...all, ...words }).reasons[7]).toBe(`fails: a check on this head did not pass (${detail}); nothing merges over a red check`);
+  });
+
+  it('the driver reads both words through it, and parses neither itself', () => {
+    const bin = readFileSync(fileURLToPath(new URL('../bin/auto-merge.ts', import.meta.url)), 'utf8');
+    expect(bin).toContain('...waitWordsFromArgv(process.argv),');
+    for (const name of ['--suite-result', '--suite-gates', '--suite-url', '--checks-result', '--checks-gates', '--checks-detail']) {
+      expect(bin, name).not.toContain(`flag('${name}')`);
+    }
   });
 });

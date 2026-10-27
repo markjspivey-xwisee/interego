@@ -42,6 +42,9 @@
  *   success    every other check concluded success, neutral or skipped     → holds
  *   failure    one concluded anything else (failure, cancelled, timed_out, action_required,
  *              startup_failure, stale, none)    → fails, and the wait for checks stops there
+ *              (the one word kept from poll to poll, with error: any other is read again on
+ *              every poll until the wait returns, so a green read while an advisory suite
+ *              still runs is not what is returned once a check has gone red or a run started)
  *   timeout    the deadline passed with a check still running              → fails
  *   untrusted  the listings never held this run and its own job            → fails at the deadline
  *   error      GitHub could not be asked (a 4xx at once, a 5xx at the deadline, a listing
@@ -61,11 +64,17 @@
  *     earlier attempt, or the same job in an earlier run that a reopen re-ran, is not the
  *     result. A check of ANOTHER name is another check, whichever run carries it, so an
  *     earlier run is never dropped whole because a newer run of its workflow exists: two
- *     dispatches of "Build & push to GHCR" for different images make jobs `relay` and
- *     `identity`, and reading the newer alone would let a relay build still running, or red,
- *     through. An earlier run is left out only when it has concluded and every check run it
- *     lists lost to a newer one of the same name; one still running, one that lists no check
- *     run, and one with a check of its own still counted are read by their own status too.
+ *     dispatches of "Build & push to GHCR" for different images make jobs named after their
+ *     images (`interego-relay`, `interego-identity`), and reading the newer alone would let a
+ *     relay build still running, or red, through. An earlier run is left out only when it has
+ *     concluded and every check run it lists lost to a newer one of the same name, or when it
+ *     was cancelled before it made any job and a newer run of its workflow for the same event
+ *     counts (a concurrency group's cancel); one still running, one that made no job for any
+ *     other reason, and one with a check of its own still counted are read by their own status
+ *     too. And while a newer run of the same workflow for the same event has not concluded, an
+ *     earlier run's red (a check run, or the run's own conclusion) reads as pending, not
+ *     failure: the newer run may be re-running that job and decides, and until it does the
+ *     wait goes on (a reopen gives every pull_request workflow a second run on the head).
  *   - THE SUITE TOO, unless its word is advisory. With SUITE_GATE=false (the repository
  *     variable JEV_MERGE_WAITS_FOR_SUITE=false) the runs named SUITE_WORKFLOW and their check
  *     runs are left out of this word as well, and the detail says so: counted here, a red or
@@ -82,11 +91,12 @@
  * The deadline is the suite's (SUITE_WAIT_MS from the start of this step), not a second one:
  * the checks get no time the suite does not. Mutation Gate runs on every pull request; on
  * 2026-10-26 and 27 its 63 successful runs (of 66) took 18 to 47 minutes from the push,
- * median 29, while this step starts about two minutes after it. A pull request whose Mutation
- * Gate is still running at the deadline is not merged by this run, and the next push decides
- * again. CHECKS_GATE=false (the repository variable JEV_MERGE_WAITS_FOR_CHECKS=false) gives the
- * checks no wait of their own: what they say once the suite's word is in, or that GitHub could
- * not list them then, is printed, not gated on.
+ * median 29, and only 11 of them concluded within 22 minutes of the push, which is where this
+ * wait ends (it starts about two minutes in). So most pull requests are not merged by their
+ * run until SUITE_WAIT_MS (and the job's timeout-minutes) is raised; the next push decides
+ * again, and Mutation Gate starts over with it. CHECKS_GATE=false (the repository variable
+ * JEV_MERGE_WAITS_FOR_CHECKS=false) gives the checks no wait of their own: what they say once
+ * the suite's word is in, or that GitHub could not list them then, is printed, not gated on.
  *
  *   GITHUB_TOKEN=... GITHUB_REPOSITORY=owner/repo GITHUB_RUN_ID=<this run> \
  *     SELF_WORKFLOW="jev-harness (System One judgments)" SUITE_WORKFLOW="Bridge Typecheck" \
@@ -237,7 +247,21 @@ export function otherChecksState(runs, checkRuns, { selfRunId, suite = SUITE_WOR
     return r.status === 'completed' && mine.length > 0 && mine.every((c) => newest.get(keyOf(c)) !== c);
   };
   const superseded = new Set(others.filter(isSuperseded).map((r) => String(r.id)));
-  const counted = others.filter((r) => !superseded.has(String(r.id)));
+  // Two runs of one workflow for one event on one head (a reopen starts every pull_request
+  // workflow again). While the newer one has not concluded, what the older one says red is not
+  // the result: the newer run may be re-running that very job, and its check run may not exist
+  // yet (queued) or may not have started (no started_at, so it sorts behind the older one). Such
+  // a red reads as pending, so the wait goes on and the newer run decides; still not a pass.
+  const sameWorkflow = (a, b) => String(a?.workflow_id) === String(b?.workflow_id) && a?.event === b?.event;
+  const newer = (a, b) => newestFirst((x) => x?.created_at)(a, b) < 0;
+  const newerOpen = (r) => others.find((o) => o !== r && sameWorkflow(o, r) && o.status !== 'completed' && newer(o, r));
+  // An older run cancelled before it made any job (a concurrency group cancels the earlier run
+  // the moment a newer one starts) lists no check run, so nothing above can show it re-run. A
+  // newer counted run of the same workflow for the same event is what replaced it. Any other
+  // conclusion without a job (startup_failure, action_required) is still read by its own status.
+  const replaced = new Set(others.filter((r) => r.status === 'completed' && r.conclusion === 'cancelled' && !(listed.get(String(r.id))?.length)
+    && others.some((o) => o !== r && sameWorkflow(o, r) && newer(o, r) && !superseded.has(String(o.id)))).map((r) => String(r.id)));
+  const counted = others.filter((r) => !superseded.has(String(r.id)) && !replaced.has(String(r.id)));
 
   const label = (c) => {
     const r = runOf(c);
@@ -250,14 +274,21 @@ export function otherChecksState(runs, checkRuns, { selfRunId, suite = SUITE_WOR
   let passed = 0;
   const runsFailing = new Set();
   const runsPending = new Set();
+  const runsDeferred = new Set();
+  const deferred = (what, conclusion) => `${what} (${conclusion ?? 'no conclusion'} in an earlier run; the newer run decides)`;
   for (const c of newest.values()) {
     const r = runOf(c);
     if (c?.status !== 'completed') {
       pending.push(label(c));
       if (r) runsPending.add(String(r.id));
     } else if (!passes(c.conclusion)) {
-      failed.push(`${label(c)}: ${c.conclusion ?? 'no conclusion'}`);
-      if (r) runsFailing.add(String(r.id));
+      if (r && newerOpen(r)) {
+        pending.push(deferred(label(c), c.conclusion));
+        runsDeferred.add(String(r.id));
+      } else {
+        failed.push(`${label(c)}: ${c.conclusion ?? 'no conclusion'}`);
+        if (r) runsFailing.add(String(r.id));
+      }
     } else {
       passed++;
     }
@@ -265,10 +296,15 @@ export function otherChecksState(runs, checkRuns, { selfRunId, suite = SUITE_WOR
   // What a workflow run says that its check runs cannot (yet): queued with no job created, a job
   // not created behind another, or a run that never started one. Named once, not beside its job.
   for (const r of counted) {
+    const id = String(r.id);
     if (r.status !== 'completed') {
-      if (!runsPending.has(String(r.id))) pending.push(`${r.name} (${r.status ?? 'not concluded'})`);
-    } else if (!passes(r.conclusion) && !runsFailing.has(String(r.id))) {
-      failed.push(`${r.name}: ${r.conclusion ?? 'no conclusion'}`);
+      if (!runsPending.has(id)) pending.push(`${r.name} (${r.status ?? 'not concluded'})`);
+    } else if (!passes(r.conclusion) && !runsFailing.has(id)) {
+      if (newerOpen(r)) {
+        if (!runsDeferred.has(id)) pending.push(deferred(r.name, r.conclusion));
+      } else {
+        failed.push(`${r.name}: ${r.conclusion ?? 'no conclusion'}`);
+      }
     }
   }
 
@@ -324,7 +360,8 @@ const named = (r) => ({ name: r?.name ?? '(unnamed)', status: r?.status, conclus
 
 /**
  * The wait itself, with its clock, its sleep and GitHub injected so the deadline is testable.
- * Polls until the suite's word and the checks' word are both final, or the deadline passes.
+ * Polls until the suite's word is final and the checks' word read on that same poll is too (a
+ * red check, or a refused listing, is kept from the poll it was read on), or the deadline passes.
  * Returns { suite?: { result, url, detail }, checks: { result, detail }, fatal?: string }:
  * `fatal`, and no `suite`, when the runs could not be listed at all.
  */
@@ -335,7 +372,12 @@ export async function waitForHead({
   const opts = { repo, token, fetchFn };
   const deadline = now() + timeoutMs;
   let suiteDone;
-  let checksDone;
+  // Only a red check or a listing GitHub refused is kept from one poll to the next: nothing a
+  // later poll reads can make either a merge. Any other word is this poll's alone, and the checks
+  // are read again on every poll until the wait returns. While an advisory suite (left out of the
+  // checks) still runs, a green word read early would otherwise be returned at the end over a check
+  // that went red, or a run that started, in between.
+  let checksFinal;
   for (;;) {
     const expired = now() > deadline;
     let runs;
@@ -347,7 +389,7 @@ export async function waitForHead({
         await sleep(pollMs);
         continue;
       }
-      const checks = checksDone ?? { result: 'error', detail: `the workflow runs for this head could not be listed: ${err.message}` };
+      const checks = checksFinal ?? { result: 'error', detail: `the workflow runs for this head could not be listed: ${err.message}` };
       if (suiteDone) return { suite: suiteDone, checks };
       return { checks, fatal: `could not list the runs for ${sha.slice(0, 12)}: ${err.message}` };
     }
@@ -362,9 +404,10 @@ export async function waitForHead({
       }
     }
 
-    if (!checksDone) {
+    let checksNow = checksFinal;
+    if (!checksNow) {
       if (!selfRunId) {
-        checksDone = { result: 'error', detail: 'GITHUB_RUN_ID is not set, so this run cannot tell its own jobs from the checks it waits for' };
+        checksNow = checksFinal = { result: 'error', detail: 'GITHUB_RUN_ID is not set, so this run cannot tell its own jobs from the checks it waits for' };
       } else {
         let checkRuns;
         try {
@@ -373,7 +416,7 @@ export async function waitForHead({
           // Advisory checks get no time of their own here either: once the suite's word is in, an
           // outage is what they say, not a reason to keep the decision waiting to the deadline.
           if (retryable(err) && !expired && (checksGate || !suiteDone)) log(`GitHub is not answering for the check runs (${err.message}); asking again`);
-          else checksDone = { result: 'error', detail: `the check runs for this head could not be listed: ${err.message}` };
+          else checksNow = checksFinal = { result: 'error', detail: `the check runs for this head could not be listed: ${err.message}` };
         }
         if (checkRuns) {
           const c = otherChecksState(runs, checkRuns, { selfRunId, suite, suiteGates: suiteGate });
@@ -381,14 +424,15 @@ export async function waitForHead({
           if (keepWaiting(c.state, expired) && (checksGate || !suiteDone)) {
             log(`other checks: ${c.detail}; asking again in ${Math.round(pollMs / 1000)} s`);
           } else {
-            checksDone = { result: c.state === 'pending' ? (expired ? 'timeout' : 'pending') : c.state, detail: c.detail };
-            log(`other checks on ${sha.slice(0, 12)}: ${checksDone.result} — ${c.detail}`);
+            checksNow = { result: c.state === 'pending' ? (expired ? 'timeout' : 'pending') : c.state, detail: c.detail };
+            if (c.state === 'failure') checksFinal = checksNow;
+            log(`other checks on ${sha.slice(0, 12)}: ${checksNow.result} — ${c.detail}${suiteDone || checksFinal ? '' : '; read again until the suite\'s word is in'}`);
           }
         }
       }
     }
 
-    if (suiteDone && checksDone) return { suite: suiteDone, checks: checksDone };
+    if (suiteDone && checksNow) return { suite: suiteDone, checks: checksNow };
     await sleep(pollMs);
   }
 }
