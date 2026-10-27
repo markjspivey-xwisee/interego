@@ -208,8 +208,10 @@ async function siwe(w: { address: string; signMessage(message: string): Promise<
   return post('/auth/siwe', { message, signature: await w.signMessage(message), nonce, name: 'Someone', ...extra });
 }
 async function didSignIn(k: { did: string; privateKey: crypto.KeyObject }, extra: Record<string, unknown> = {}) {
-  const { nonce } = (await post('/challenges', { purpose: 'did-sig' })).json as { nonce: string };
-  const signature = crypto.sign(null, Buffer.from(nonce, 'utf8'), k.privateKey).toString('base64url');
+  const { nonce, message } = (await post('/challenges', { purpose: 'did-sig' })).json as { nonce: string; message?: unknown };
+  // As every DID client signs: the challenge's `message` when the server returns one, else the nonce.
+  const signed = typeof message === 'string' ? message : nonce;
+  const signature = crypto.sign(null, Buffer.from(signed, 'utf8'), k.privateKey).toString('base64url');
   return post('/auth/did', { did: k.did, nonce, signature, name: 'Someone', ...extra });
 }
 /** HEAD requests on `pod`'s resources since request number `since`. */
@@ -575,4 +577,8 @@ test('the documented limit: deleting the tombstone of a wallet or did:key accoun
   }
   assert.doesNotMatch(output, new RegExp(`identity_deleted_before_tombstone userId=(${wid}|${kid})`));
   for (const t of oldTokens) assert.equal((await me(t)).status, 200, 'a token issued before the deletion verifies again');
+});
+
+test('every DID sign-in above signed the challenge\'s message', () => {
+  assert.doesNotMatch(output, /WARN identity_did_bare_nonce /);
 });
