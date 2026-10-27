@@ -752,7 +752,8 @@ const podFetch: FetchLike = (url, init) => fetch(url, { ...init, signal: AbortSi
 // fails ends it), so a pod that never answers holds an account's lock for at most 15 s when the
 // read hangs and 30 s when the write does. A 412 makes the writer read and write again, which
 // takes longer only while the pod keeps answering; a Play owner's provisioning and the janitor's
-// purge of one make requests of their own under the lock (provisional-play-*.ts, 15 s each).
+// purge of one make requests of their own under the lock, 15 s each (provisional-play-*.ts, and
+// deleteUserCompletely's delete of the owner's agent registry).
 const POD_RECORD_TIMEOUT_MS = 15_000;
 const recordFetch: FetchLike = (url, init) => fetch(url, { ...init, signal: AbortSignal.timeout(POD_RECORD_TIMEOUT_MS) });
 
@@ -896,12 +897,31 @@ async function applyUpdate(userId: string, context: string, delta: Delta<AuthMet
 }
 
 /**
+ * claimFirstSignIn's answer. `undetermined`, on 'unconfirmed': the write failed and nothing could
+ * tell whether the pod took it (the read after it failed, and so did loading the account); when
+ * false, the pod was read after the failure and does not hold the credential.
+ */
+type FirstSignInOnPod =
+  | Exclude<FirstSignInOutcome<AuthMethods>, { kind: 'unconfirmed' }>
+  | { readonly kind: 'unconfirmed'; readonly reason: string; readonly undetermined: boolean };
+
+/**
  * A first-time wallet or DID sign-in to `userId` (first-sign-in.ts): read the account's pod
  * under its lock and create the account only if the pod holds no credentials, so a credential
  * the indexes missed never replaces the ones the account already has. The create keeps what
  * the document holds besides (its session epoch, and keys this server does not read), and is
  * conditional on what was read. A 'returning' account is loaded (identity shell, copy and
  * indexes) inside the lock; a 'refused' or 'deleted' one has its record installed as read.
+ *
+ * A write that fails may have landed all the same (a 5xx after the store applied it, a
+ * timeout), so what the pod holds then decides, never the failed request. Read again under the
+ * lock, a record that `holds` the credential is 'created': whoever wrote it, the account lists
+ * the credential that signed, so this is a sign-in to it. When that read fails too, the account
+ * is loaded from its pod once the lock is released, with the shell a load seeds (a seeded
+ * account has none before), and a record there that holds the credential is 'returning'. Only
+ * when neither read answers is the outcome 'unconfirmed' with `undetermined` set. A passkey
+ * registration's `holds` is never true (a passkey is never signed in to by registering it), so
+ * its route decides on the account it loads itself.
  */
 async function claimFirstSignInOnPod(
   userId: string,
@@ -910,8 +930,10 @@ async function claimFirstSignInOnPod(
   holds: (methods: AuthMethods) => boolean,
   add: (methods: AuthMethods) => void,
   mayCreate = true,
-): Promise<FirstSignInOutcome<AuthMethods>> {
-  return withIdentityPodMutex(userId, async () => {
+): Promise<FirstSignInOnPod> {
+  // Set when a write failed and the read after it failed too.
+  let unread = false;
+  const outcome = await withIdentityPodMutex(userId, async () => {
     let live: LiveRecord<AuthMethods> = { methods: null, raw: null, etag: null };
     const outcome = await claimFirstSignIn<AuthMethods>({
       mayCreate,
@@ -934,7 +956,13 @@ async function claimFirstSignInOnPod(
         try {
           result = await writeLive(userId, doc, pre, 'first-sign-in');
         } catch (err) {
-          if (!(err instanceof AccountDeletedError)) await reconcileAfterWriteFailure(userId);
+          if (err instanceof AccountDeletedError) throw err;
+          const now = await reconcileAfterWriteFailure(userId);
+          unread = now === undefined;
+          if (now && !isTombstone(now) && holds(now)) {
+            log(`WARN: first sign-in to ${userId}: the pod took the write without confirming it (${(err as Error).message})`);
+            return true;
+          }
           throw err;
         }
         if (result === 'precondition-failed') return false;
@@ -949,6 +977,44 @@ async function claimFirstSignInOnPod(
       installAuthMethods(userId, live.methods);
     }
     return outcome;
+  });
+  if (outcome.kind !== 'unconfirmed') return outcome;
+  if (!unread) return { ...outcome, undetermined: false };
+  const loaded = await ensureAccountLoaded(userId);
+  const current = loaded === 'loaded' ? await readForDecision(userId) : loaded === 'absent' ? null : 'unreadable';
+  if (current === 'unreadable') return { ...outcome, undetermined: true };
+  if (current && !isTombstone(current) && holds(current)) {
+    log(`WARN: first sign-in to ${userId}: the pod took the write without confirming it, found on loading the account`);
+    return { kind: 'returning', methods: current };
+  }
+  return { ...outcome, undetermined: false };
+}
+
+/**
+ * The answer to a first-time wallet or DID sign-in that read nothing, or whose write the pod did
+ * not take as far as it can tell (claimFirstSignInOnPod). A bootstrap invite spent on it
+ * (`bootstrapUserId`) is given back, or every retry is refused as "already consumed": nothing is
+ * on the seeded account, or the pod could not say, and a credential that did land unseen refuses
+ * any other claim of the account anyway.
+ */
+function refuseUnfinishedFirstSignIn(
+  res: express.Response,
+  outcome: { kind: 'unreadable' } | { kind: 'unconfirmed'; undetermined: boolean },
+  bootstrapUserId: string | undefined,
+): void {
+  if (bootstrapUserId) CONSUMED_INVITES.delete(bootstrapUserId);
+  if (outcome.kind === 'unconfirmed' && outcome.undetermined) {
+    res.status(503).json({
+      error: 'Your sign-in could not be confirmed as saved',
+      detail: 'The pod did not confirm the write, and could not be read after it, so it may or may not have been saved. Try signing in again in a minute.',
+    });
+    return;
+  }
+  res.status(503).json({
+    error: 'Could not read this account just now',
+    detail: outcome.kind === 'unreadable'
+      ? 'The pod holding this account did not answer. Nothing was changed; try signing in again in a minute.'
+      : 'The pod did not take the write. Nothing was changed; try signing in again in a minute.',
   });
 }
 
@@ -1531,6 +1597,23 @@ async function ensureAccountLoaded(userId: string): Promise<'loaded' | 'absent' 
     log(`WARN: could not load account ${userId} on demand: ${(err as Error).message}`);
     return 'unreadable';
   }
+}
+
+/**
+ * Load each of `holders` (accounts a sign-in index lists for a credential) that this server holds
+ * no identity shell for. The indexes can list an account that was never loaded here: the read
+ * after a failed write, a refused first sign-in or a refused bootstrap passkey installs the
+ * record as the pod holds it, without the shell a load seeds. A sign-in tries only accounts with
+ * a shell, so it passed such a holder over: a passkey got 404, and a wallet or a did:key opened
+ * the account derived from it beside the one listing it, leaving it on two accounts. False: one
+ * could not be read (the caller answers 503).
+ */
+async function loadIndexedHolders(holders: readonly string[]): Promise<boolean> {
+  for (const id of holders.slice(0, MAX_HOLDERS)) {
+    if (identities.has(id) || deletedUserIds.has(id)) continue;
+    if (await ensureAccountLoaded(id) === 'unreadable') return false;
+  }
+  return true;
 }
 
 /**
@@ -2826,6 +2909,7 @@ async function walletSignInAccount(addr: string): Promise<WalletAccount | 'unrea
     }
     if (account.kind === 'none') return account;
     const holders = account.kind === 'one' ? [account.userId] : walletIndex.candidates(addr, derivedId).slice(0, MAX_HOLDERS);
+    if (!(await loadIndexedHolders(holders))) return 'unreadable';
     let dropped = false;
     for (const id of holders) {
       const m = await readForDecision(id);
@@ -3076,13 +3160,7 @@ app.post('/auth/siwe', authEnrollLimiter, async (req, res) => {
       m => { m.walletAddresses.push(recoveredAddress); }, /* mayCreate */ !loading && !existingOnly);
     if (outcome.kind === 'unreadable' || outcome.kind === 'unconfirmed') {
       log(`WARN: first-time SIWE sign-in to ${targetUserId} not completed (${outcome.kind}): ${outcome.reason}`);
-      // Nothing was written, so a bootstrap invite spent by resolveTargetUserId is still
-      // unused: give it back, or every retry is refused as "already consumed".
-      if (resolved.mode === 'bootstrap') CONSUMED_INVITES.delete(targetUserId);
-      res.status(503).json({
-        error: 'Could not read this account just now',
-        detail: 'The pod holding this account did not answer. Nothing was changed; try signing in again in a minute.',
-      });
+      refuseUnfinishedFirstSignIn(res, outcome, resolved.mode === 'bootstrap' ? targetUserId : undefined);
       return;
     }
     if (outcome.kind === 'deleted') {
@@ -3095,7 +3173,8 @@ app.post('/auth/siwe', authEnrollLimiter, async (req, res) => {
       return;
     }
     if (outcome.kind === 'returning') {
-      // claimFirstSignInOnPod loaded it; this is a sign-in, and nothing was written.
+      // claimFirstSignInOnPod loaded it: a sign-in to an account that lists the credential (one
+      // whose write this request made unconfirmed, found when the account was loaded, included).
       log(`Wallet ${recoveredAddress} signed in to ${targetUserId}, loaded from its pod (not in the wallet index)`);
     } else if (!identities.has(targetUserId)) {
       seedIdentity(targetUserId, 'user', displayName);
@@ -3720,6 +3799,10 @@ app.post('/auth/webauthn/authenticate', authEnrollLimiter, async (req, res) => {
     if (!ch.userId && !accountIndexState.complete) refuseWhileLoading(res, 'passkey');
     else res.status(status).json({ error });
   };
+  if (!(await loadIndexedHolders(scoped))) {
+    res.status(503).json({ error: 'Could not read this account just now', detail: 'Nothing was changed; try signing in again in a minute.' });
+    return;
+  }
   const holders = scoped.filter(id => identities.get(id)?.type === 'user' && !deletedUserIds.has(id));
   if (holders.length === 0) {
     noHolderVerified(404, 'User for credential not found');
@@ -3901,6 +3984,10 @@ app.post('/auth/did', authEnrollLimiter, async (req, res) => {
   const indexLookupStart = timingEnabled() ? startTiming() : 0;
   const derivedDidUserId = deriveUserIdFromDid(did);
   const indexedDidHolders = () => didIndex.candidates(did, derivedDidUserId).filter(id => identities.get(id)?.type === 'user');
+  if (!(await loadIndexedHolders(didIndex.candidates(did, derivedDidUserId)))) {
+    res.status(503).json({ error: 'Could not read this account just now', detail: 'Nothing was changed; try signing in again in a minute.' });
+    return;
+  }
   let allDidHolders = indexedDidHolders();
   if (timingEnabled()) logTiming('did-index-lookup', indexLookupStart, { hit: allDidHolders.length > 0 });
   // A did:key goes to the account derived from it when that is a holder, and the index holds
@@ -4073,13 +4160,7 @@ app.post('/auth/did', authEnrollLimiter, async (req, res) => {
       }, mayCreate);
     if (outcome.kind === 'unreadable' || outcome.kind === 'unconfirmed') {
       log(`WARN: first-time DID sign-in to ${targetUserId} not completed (${outcome.kind}): ${outcome.reason}`);
-      // Nothing was written, so a bootstrap invite spent by resolveTargetUserId is still
-      // unused: give it back, or every retry is refused as "already consumed".
-      if (resolved.mode === 'bootstrap') CONSUMED_INVITES.delete(targetUserId);
-      res.status(503).json({
-        error: 'Could not read this account just now',
-        detail: 'The pod holding this account did not answer. Nothing was changed; try signing in again in a minute.',
-      });
+      refuseUnfinishedFirstSignIn(res, outcome, resolved.mode === 'bootstrap' ? targetUserId : undefined);
       return;
     }
     if (outcome.kind === 'deleted') {
@@ -4093,7 +4174,8 @@ app.post('/auth/did', authEnrollLimiter, async (req, res) => {
       return;
     }
     if (outcome.kind === 'returning') {
-      // claimFirstSignInOnPod loaded it; this is a sign-in, and nothing was written.
+      // claimFirstSignInOnPod loaded it: a sign-in to an account that lists the credential (one
+      // whose write this request made unconfirmed, found when the account was loaded, included).
       log(`DID ${did} signed in to ${targetUserId}, loaded from its pod (not in the DID index)`);
     } else if (!identities.has(targetUserId)) {
       seedIdentity(targetUserId, 'user', displayName);
@@ -5365,8 +5447,10 @@ async function deleteUserCompletely(
   surfaceAgentRestores.forgetUser(userId);
   podRegistryCache.delete(userId);
 
+  // Bounded like every request of this function: the janitor's purge of a Play owner makes it
+  // holding the owner's lock (lockHeld), and the route's answer waits for it.
   try {
-    const r = await fetch(`${CSS_URL}${userId}/agents`, { method: 'DELETE' });
+    const r = await fetch(`${CSS_URL}${userId}/agents`, { method: 'DELETE', signal: AbortSignal.timeout(POD_RECORD_TIMEOUT_MS) });
     podCleanup.agents = r.status;
   } catch { /* best-effort */ }
 

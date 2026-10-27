@@ -1,5 +1,36 @@
 # Changelog
 
+## 2026-10-27 — Identity: first sign-ins the pod took without confirming them, accounts the indexes list but this server never loaded, and the janitor's lock
+
+Three corrections to the entries below. Each was reproduced against the server, running with a stand-in pod.
+
+- **A first wallet or DID sign-in the pod took without confirming it now signs in.**
+  - What went wrong: the store applied the write and then answered 500, or the write timed out. `/auth/siwe` and `/auth/did` still answered 503 "Nothing was changed" and gave a bootstrap invite back, although the pod now listed the credential.
+  - What followed: a retry with the invite was refused. A plain sign-in opened a new account derived from the credential, so the wallet or `did:key` was on two accounts, and the new account kept its sign-ins for good.
+  - The 15 s write timeout in the entry below made a slow write that lands fail this way, where it used to succeed.
+  - Now the record read after a failed write decides. If it lists the credential, the sign-in completes (200) and the invite stays spent. If that read fails too, the account is loaded from its pod once the lock is released, and the sign-in is decided on that.
+  - Only when both reads fail is the answer 503, and it says the write may or may not have been saved. "Nothing was changed" is now said only when the pod showed that nothing was.
+- **An account the sign-in indexes list is now loaded before a sign-in passes it over.**
+  - Three things put an account's record into the indexes without loading the account: the read after a failed write, a refused first sign-in, and a refused bootstrap passkey.
+  - Wallet, DID and passkey sign-ins tried only loaded accounts, so they passed such an account over. A passkey got 404. A wallet or `did:key` opened the account derived from it, beside the account that listed it.
+  - They now load that account first. If its pod cannot be read, the answer is 503.
+- **The janitor's purge of a Play owner now holds the owner's lock for at most 15 s per request.**
+  - The purge deletes the owner's agent registry while holding the owner's lock, and that request had no timeout. A pod that never answered it held the lock for up to 300 s, the default time Node's fetch waits for a response's headers.
+  - Every Play provisioning in the deployment waited too: a provisioning of that same owner waits for the owner's lock while holding the one admission queue.
+  - The request now times out after 15 s, as the entry below says every request under the lock does. `POST /users/me/delete` makes the same request after releasing the lock, and its answer is now bounded the same way.
+
+Tests:
+
+- **`live-record-writes-routes.test.ts`** adds three cases:
+  - J4: wallet and DID bootstrap claims whose write the pod refused (503, invite given back); applied and answered 500; and applied and answered 500 with the read after it failing too.
+  - J5: a wallet, a `did:key` and a passkey that the indexes list for an account this server never loaded.
+  - C13, J6: the janitor's purge with the registry delete never answered, while wallet and DID bootstrap claims whose write the pod stored and never answered time out. One 15 s wait covers both.
+
+  All three fail against the code before this change.
+- **`provisional-play-enrollment.test.ts`** built its own copy of the Play guard. So the guard in `server.ts` had no test: `playOwnerWritable`, and the writer's `playGuard` that calls it. Replacing either with `return true` left every identity test passing. The fixture now takes both from `server.ts`, and each replacement fails three cases, among them "an expired unclaimed anchor cannot be promoted even before cleanup runs".
+
+`deploy/identity/AUTH-ARCHITECTURE.md` matches.
+
 ## 2026-10-27 — Identity: writes the pod applied without confirming them, and the limits the entry below promised
 
 Five corrections to the change below, each found by running the server against a stand-in pod.

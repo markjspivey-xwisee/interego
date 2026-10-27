@@ -26,6 +26,8 @@ function sliceFunction(pattern: RegExp, name: string): string {
 }
 const productionFunction = (name: string) => sliceFunction(new RegExp(`async function ${name}\\s*\\(`), name);
 const productionSyncFunction = (name: string) => sliceFunction(new RegExp(`(?<!async )function ${name}\\s*\\(`), name);
+/** A top-level `const <name> = { ... };` object literal (its closing brace at column 0). */
+const productionObject = (name: string) => sliceFunction(new RegExp(`const ${name}\\s*=\\s*\\{`), name);
 function deferred() {
   let resolve!: () => void;
   const promise = new Promise<void>(done => { resolve = done; });
@@ -91,15 +93,16 @@ function fixture() {
     return { userId };
   } };
   const deletedUserIds = new Set<string>();
-  const authMethodsWriter = {
-    lock: withIdentityPodMutex, assertLockHeld, readLive, writeLive,
-    install: installAuthMethods, expire: () => {}, isDeleted: (owner: string) => deletedUserIds.has(owner), isTombstone,
-    empty: (owner: string) => empty(owner),
-    playGuard: (owner: string, m: Methods) => {
-      if (hasAnyCredential(m)) return true;
-      try { return provisionalPlay.open(m.provisionalPlayAnchor!).userId === owner; } catch { return false; }
-    },
-  };
+  // The guard on an unclaimed Play owner, and the writer's wiring, exactly as server.ts has them:
+  // a guard written here instead would pass whatever server.ts checks (or stops checking).
+  const playOwnerWritable = new Function('hasAnyCredential', 'provisionalPlay',
+    `${productionSyncFunction('playOwnerWritable')}; return playOwnerWritable;`)(hasAnyCredential, provisionalPlay);
+  const authMethodsWriter = new Function('withIdentityPodMutex', 'assertLockHeld', 'readLive', 'writeLive', 'installAuthMethods',
+    'expireAuthMethods', 'deletedUserIds', 'isTombstone', 'emptyAuthMethods', 'playOwnerWritable', 'logWriteConflict',
+    `${productionObject('authMethodsWriter')}; return authMethodsWriter;`)(
+    withIdentityPodMutex, assertLockHeld, readLive, writeLive, installAuthMethods,
+    () => {}, deletedUserIds, isTombstone, (owner: string) => empty(owner), playOwnerWritable, () => {},
+  );
   const updateAuthMethods = new Function('updateAuthMethodsWith', 'authMethodsWriter',
     `${productionFunction('updateAuthMethods')}; return updateAuthMethods;`)(updateAuthMethodsWith, authMethodsWriter);
   // Every account, a Play owner's included, goes through the one writer.
