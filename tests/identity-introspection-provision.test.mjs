@@ -275,12 +275,16 @@ test('a deployment Railway starts after the write is followed, not triggered ove
   assert.deepEqual(r.summary.deployed, ['relay', 'css-gate']);
 });
 
+const UNUSABLE = /the callers' IDENTITY_INTROSPECTION_SECRET is not usable \(it must be at least 32 printable ASCII characters with no spaces\)/;
 for (const [why, opts, pattern] of [
   ['only one caller set', { stored: { relay: { [SECRET_VAR]: V1 } } }, /only relay holds .*delete it from relay in Railway, then rerun$/],
   ['the callers differ', { stored: { relay: { [SECRET_VAR]: V1 }, 'css-gate': { [SECRET_VAR]: V2 } } }, /different values/],
-  ['both equal but padded', { stored: { relay: { [SECRET_VAR]: ` ${V1}` }, 'css-gate': { [SECRET_VAR]: ` ${V1}` } } }, /not usable/],
-  ['both equal but short', { stored: { relay: { [SECRET_VAR]: 'short' }, 'css-gate': { [SECRET_VAR]: 'short' } } }, /not usable/],
-  ['identity set while the callers are not', { stored: { identity: { [SECRET_VAR]: V1 } } }, /identity holds/],
+  ['both equal but padded', { stored: { relay: { [SECRET_VAR]: ` ${V1}` }, 'css-gate': { [SECRET_VAR]: ` ${V1}` } } }, UNUSABLE],
+  ['both equal but short', { stored: { relay: { [SECRET_VAR]: 'short' }, 'css-gate': { [SECRET_VAR]: 'short' } } }, UNUSABLE],
+  // Long enough, no whitespace and no control character: refused for the non-ASCII character,
+  // which the message has to name.
+  ['both equal but not ASCII', { stored: { relay: { [SECRET_VAR]: `${V1}\u00e9` }, 'css-gate': { [SECRET_VAR]: `${V1}\u00e9` } } }, UNUSABLE],
+  ['identity set while the callers are not', { stored: { identity: { [SECRET_VAR]: V1 } } }, /^identity holds .* relay and css-gate do not, so identity refuses them now\. .*a new value would not match identity's$/],
   ['a sealed caller (running a value Railway does not show)', { stored: both, sealed: ['css-gate'] }, /css-gate runs with a value Railway does not show/],
 ]) {
   test(`callers refuses, before any write: ${why}`, async () => {
@@ -293,6 +297,29 @@ for (const [why, opts, pattern] of [
     assertNoValue(r, V1, V2);
   });
 }
+
+// A Railway Rollback restores a deployment's variables with its image, so rolling css-gate back
+// past the deployment stage=callers made leaves only the relay holding the value while identity
+// enforces it. Before identity holds the value, the way out is to delete the relay's copy; here
+// that would get the relay refused too, so every stage refuses and says to undo the rollback.
+for (const stage of STAGES) {
+  test(`${stage} refuses, before any write, when identity holds the value and a caller lost it`, async () => {
+    const w = world({ stored: { relay: { [SECRET_VAR]: V1 }, identity: { [SECRET_VAR]: V1 } } });
+    const r = await run(w, stage, { apply: true });
+    assert.ok(r.error instanceof ProvisionRefusal, r.error?.message ?? 'no refusal');
+    assert.match(r.error.message, /^identity holds IDENTITY_INTROSPECTION_SECRET and css-gate does not, so identity refuses it now\. A Railway Rollback past the deployment stage=callers made unsets the variable: in Railway, roll css-gate back again to the deployment that was active before that rollback, and do not delete relay's copy\./);
+    assert.doesNotMatch(r.error.message, /delete it from relay/);
+    assert.equal(writeCount(w), 0);
+    assert.deepEqual(deploysTriggered(w), []);
+    assertNoValue(r, V1);
+  });
+}
+
+test('a caller lost while identity holds the value but does not run it yet', () => {
+  const st = { relay: { stored: undefined, running: false }, 'css-gate': { stored: V1, running: true },
+    identity: { stored: V1, running: false, openStored: true, openRunning: true } };
+  assert.throws(() => planStage('callers', st), /relay does not, so identity refuses it from its next deploy\. .*roll relay back again .*do not delete css-gate's copy/);
+});
 
 // identity running 'enforced' while Railway shows its variable unset: the sealed-or-undeployed
 // guard refuses before the callers rule is reached.

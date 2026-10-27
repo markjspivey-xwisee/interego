@@ -15,12 +15,16 @@
  * first; while identity is open (ALLOW_OPEN_INTROSPECTION=1, no secret) the header is ignored.
  * One stage per run, in this order:
  *   callers   generates 32 random bytes as hex and writes them to relay and css-gate when
- *             neither holds the variable; does nothing when both hold the same value; refuses
- *             otherwise.
+ *             neither holds the variable; writes nothing when both hold the same value;
+ *             refuses otherwise.
  *   identity  copies the callers' value (compared in memory) to identity; refuses if identity
  *             holds a different one. Keeps ALLOW_OPEN_INTROSPECTION, which is the rollback.
  *   finalize  removes ALLOW_OPEN_INTROSPECTION from identity once identity enforces the
  *             callers' value.
+ * An applied run of any stage also deploys a service that already holds the stage's change but
+ * does not report it yet (callers: identityVerifyAuth not true; identity: introspection not
+ * 'enforced'; finalize: allowOpenIntrospection not false), so a rerun finishes a run that
+ * stopped between its write and its deploy, even when it writes nothing.
  * A dry run (the default) reports names, set or unset, and `equal: yes/no`, and writes nothing.
  *
  * ★ WRITES PASS skipDeploys: true, AND THE TOOL DEPLOYS ITSELF. Railway's variableUpsert
@@ -123,22 +127,38 @@ export function planStage(stage, state, { generate = () => null } = {}) {
   const callersEqual = callersSet === 2 ? (relay === gate ? 'yes' : 'no') : 'n/a';
   const identityEqual = set(identity) && callersEqual === 'yes' ? (identity === relay ? 'yes' : 'no') : 'n/a';
   const result = (writes, notes = []) => ({ writes, callersEqual, identityEqual, notes });
+  // Identity holds the value while a caller does not: that caller is refused now (or from
+  // identity's next deploy). A Railway Rollback restores a deployment's variables along with its
+  // image, so rolling a caller back past the deployment stage=callers made unsets the variable on
+  // it. Deleting the other caller's copy, the way out before identity holds the value, would get
+  // that caller refused too, so this says to undo the rollback instead.
+  const identityHolds = set(identity) || state.identity.running;
+  const callersLost = () => {
+    const lost = CALLERS.filter((c) => !set(state[c].stored));
+    const kept = CALLERS.filter((c) => set(state[c].stored));
+    const them = lost.length > 1 ? 'them' : 'it';
+    return `identity holds ${SECRET_VAR} and ${lost.join(' and ')} ${lost.length > 1 ? 'do' : 'does'} not, so identity refuses ${them} ${state.identity.running ? 'now' : 'from its next deploy'}. `
+      + `A Railway Rollback past the deployment stage=callers made unsets the variable: in Railway, roll ${lost.join(' and ')} back again to the deployment that was active before that rollback`
+      + `${kept.length ? `, and do not delete ${kept[0]}'s copy` : ''}. Otherwise resolve by hand`;
+  };
   const callersReady = () => {
+    if (callersSet < 2 && identityHolds) throw new ProvisionRefusal(callersLost());
     if (callersSet < 2) throw new ProvisionRefusal(`relay and css-gate must both hold ${SECRET_VAR}; run stage=callers with apply first`);
     if (callersEqual !== 'yes') throw new ProvisionRefusal(`relay and css-gate hold different values of ${SECRET_VAR}; resolve by hand`);
-    if (!usableSecret(relay)) throw new ProvisionRefusal(`the callers' ${SECRET_VAR} is not usable (whitespace, a control character, or fewer than 32 characters); resolve by hand`);
+    if (!usableSecret(relay)) throw new ProvisionRefusal(`the callers' ${SECRET_VAR} is not usable (it must be at least 32 printable ASCII characters with no spaces); resolve by hand`);
   };
 
   if (stage === 'callers') {
     if (callersSet === 0) {
-      if (set(identity) || state.identity.running) {
-        throw new ProvisionRefusal(`identity holds ${SECRET_VAR} while neither caller does; a new value would not match it. Resolve by hand`);
+      if (identityHolds) {
+        throw new ProvisionRefusal(`${callersLost()}; a new value would not match identity's`);
       }
       const value = generate();
       const write = (service) => ({ service, op: 'upsert', name: SECRET_VAR, generated: true, ...(value === null ? {} : { value }) });
       return result([write('relay'), write('css-gate')]);
     }
     if (callersSet === 1) {
+      if (identityHolds) throw new ProvisionRefusal(callersLost());
       const holder = set(relay) ? 'relay' : 'css-gate';
       throw new ProvisionRefusal(`only ${holder} holds ${SECRET_VAR}; nothing enforces yet: delete it from ${holder} in Railway, then rerun`);
     }

@@ -8,6 +8,8 @@ on:
       - 'tests/identity-introspection-provision.test.mjs'
       - 'tools/railway-set-secret-var.mjs'
       - 'tests/railway-set-secret-var.test.mjs'
+      # Read by tests/railway-set-secret-var.test.mjs (its by-hand commands).
+      - 'deploy/identity/AUTH-ARCHITECTURE.md'
       - '.github/workflows/identity-introspection-provision.yml'
       - '.github/workflows/identity-introspection-provision-test.yml'
 permissions:

@@ -10,7 +10,7 @@
 // stderr, in whole or in part.
 import assert from 'node:assert/strict';
 import test, { after } from 'node:test';
-import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, rmSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -127,4 +127,17 @@ test('a dry run writes nothing, and a stored value equal to the file needs no wr
   assert.equal(same.status, 0, same.out);
   assert.match(same.stdout, /no change needed/);
   assertNoValue(same.out, 'already stored');
+});
+
+// The file is not executable (mode 100644), so the step has to run it with node, as the tool's
+// own usage line does, and the tool's default is a dry run, which the step shows first.
+test('the by-hand step in AUTH-ARCHITECTURE.md runs the tool with node, a dry run before --apply', () => {
+  const doc = readFileSync(new URL('../deploy/identity/AUTH-ARCHITECTURE.md', import.meta.url), 'utf8');
+  const step = doc.split('\n').find((l) => l.startsWith('- **By hand,**'));
+  assert.ok(step, 'the "By hand" bullet');
+  const commands = [...step.matchAll(/`([^`]*railway-set-secret-var\.mjs[^`]*)`/g)].map((m) => m[1]);
+  assert.ok(commands.length > 0, 'the bullet shows a command');
+  for (const c of commands) assert.match(c, /^RAILWAY_PROJECT_TOKEN=\S+ node tools\/railway-set-secret-var\.mjs \S/, c);
+  assert.doesNotMatch(commands[0], /--apply/, 'the first command shown is the dry run');
+  assert.match(step.slice(step.indexOf(commands[0]) + commands[0].length), /the same command with `--apply`/);
 });

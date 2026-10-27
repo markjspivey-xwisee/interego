@@ -4,10 +4,11 @@ name: Identity introspection secret rollout
 #   callers  - one new value, generated in this runner, on relay and css-gate
 #   identity - the same value on identity (ALLOW_OPEN_INTROSPECTION is kept as the rollback)
 #   finalize - removes ALLOW_OPEN_INTROSPECTION from identity
-# Each applied stage deploys the services it changed with the image they already run, and waits
-# for SUCCESS and for the service's own health field to show the change. Unticked `apply` is a
-# dry run. No value is printed. Do not dispatch while Auto-deploy master or Deploy to Railway is
-# running (the tool refuses). Dispatch only, from master. See deploy/identity/AUTH-ARCHITECTURE.md.
+# Each applied stage deploys the services it changed, or that hold the change but do not run it
+# yet, with the image they already run, and waits for SUCCESS and for the service's own health
+# field to show the change. Unticked `apply` is a dry run. No value is printed. Do not dispatch
+# while Auto-deploy master or Deploy to Railway is running (the tool refuses). Dispatch only, from
+# master. See deploy/identity/AUTH-ARCHITECTURE.md.
 on:
   workflow_dispatch:
     inputs:
