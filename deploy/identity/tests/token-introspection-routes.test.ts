@@ -164,7 +164,7 @@ test('enforced: the startup log says so, and never prints the secret', () => {
   assert.match(out, /Introspection: ENFORCED/);
   assert.match(out, /ignored while the secret is set/);
   assert.doesNotMatch(out, /OPEN mode/);
-  assert.doesNotMatch(out, /leading or trailing whitespace/);
+  assert.doesNotMatch(out, /cannot be sent intact/);
   assert.equal(out.includes(SECRET), false);
   assert.equal(out.includes(SECRET.slice(0, 12)), false);
 });
@@ -254,6 +254,44 @@ test('enforced: authorized introspection has a budget of its own, 600 a minute',
   assert.equal(over.status, 429, over.text);
   assert.ok(Number(over.retryAfter) > 0);
   assert.match(String(over.body['detail']), /600 requests in a 60s window for introspection/);
+});
+
+// The startup warning about a value no caller can present: it fires exactly for the values a
+// caller building `Authorization: Bearer ${value}` with fetch (as the relay and css-gate do)
+// cannot get answered, and for no value that works. A trailing space or tab is dropped on the
+// way; a control character other than TAB, or a character above U+00FF, makes fetch throw.
+// Leading and interior whitespace and other Latin-1 characters arrive intact. css-gate's
+// identity-introspection-value-warning.test.mjs runs the same table against the gate.
+const HEX = SECRET;
+const VALUE_TABLE: ReadonlyArray<readonly [string, string, 'answered' | 'rejected' | 'unsendable']> = [
+  ['a leading space', ` ${HEX}`, 'answered'],
+  ['an interior space', `${HEX.slice(0, 32)} ${HEX.slice(32)}`, 'answered'],
+  ['an interior tab', `${HEX.slice(0, 32)}\t${HEX.slice(32)}`, 'answered'],
+  ['a Latin-1 character', `${HEX}\u00e9`, 'answered'],
+  ['a trailing space', `${HEX} `, 'rejected'],
+  ['a trailing tab', `${HEX}\t`, 'rejected'],
+  ['a control character', `${HEX.slice(0, 32)}\u0001${HEX.slice(32)}`, 'unsendable'],
+  ['a character above U+00FF', `${HEX}\u0100`, 'unsendable'],
+];
+
+test('enforced: the header-value warning fires exactly for the values no caller can present', async () => {
+  const started = await Promise.all(VALUE_TABLE.map(([, value]) => startIdentity({ IDENTITY_INTROSPECTION_SECRET: value })));
+  for (const [i, [why, value, expected]] of VALUE_TABLE.entries()) {
+    const server = started[i]!;
+    const out = server.output();
+    assert.match(out, /Introspection: ENFORCED/, why);
+    const warned = /cannot be sent intact in a header, so no caller can present it/.test(out);
+    let outcome: string;
+    try {
+      const r = await verify(server, `192.0.2.${10 + i}`, { token: 'probe' }, `Bearer ${value}`);
+      outcome = r.status === 200 ? 'answered' : r.body['error'] === 'introspection bearer rejected' ? 'rejected' : `status ${r.status}`;
+    } catch {
+      outcome = 'unsendable';
+    }
+    assert.equal(outcome, expected, why);
+    assert.equal(warned, expected !== 'answered', `${why}: warned=${warned}, outcome=${outcome}`);
+    assert.equal(out.includes(HEX.slice(0, 12)), false, `${why}: the log shows part of the value`);
+  }
 });
 
 // ── open ──────────────────────────────────────────────────────────────────────

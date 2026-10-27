@@ -6128,9 +6128,14 @@ app.listen(PORT, () => {
   log(`CSS URL: ${CSS_URL}`);
   if (INTROSPECTION_MODE === 'enforced') {
     log(`Introspection: ENFORCED — /tokens/verify answers only a caller presenting IDENTITY_INTROSPECTION_SECRET as a bearer; relay and css-gate must hold the same value${ALLOW_OPEN_INTROSPECTION ? '. ALLOW_OPEN_INTROSPECTION=1 is ignored while the secret is set; remove it once both callers are confirmed' : ''}.`);
-    const controlCharacter = [...IDENTITY_INTROSPECTION_SECRET].some(c => c.charCodeAt(0) < 0x20 || c.charCodeAt(0) === 0x7f);
-    if (IDENTITY_INTROSPECTION_SECRET !== IDENTITY_INTROSPECTION_SECRET.trim() || controlCharacter) {
-      log('WARN: IDENTITY_INTROSPECTION_SECRET has leading or trailing whitespace or a control character; a caller cannot present it in a header, so /tokens/verify will refuse every caller.');
+    // The values no caller can present intact in `Authorization: Bearer <value>`, as measured on
+    // Node 20 and 22: a trailing space or tab is dropped (by fetch, and by Node's parser here), a
+    // control character other than TAB makes fetch throw and this server answer 400, and a
+    // character above U+00FF makes fetch throw and can never arrive (a header reads as Latin-1).
+    // Leading or interior spaces and tabs, and other Latin-1 characters, arrive intact.
+    // css-gate's startup line uses the same rule and wording.
+    if (/[\t ]$|[\x00-\x08\x0a-\x1f\x7f]|[^\x00-\xff]/.test(IDENTITY_INTROSPECTION_SECRET)) {
+      log('WARN: IDENTITY_INTROSPECTION_SECRET ends in a space or tab, or holds a control character other than TAB or a character above U+00FF; such a value cannot be sent intact in a header, so no caller can present it and /tokens/verify refuses every caller. Use 32 random bytes as hex.');
     }
   } else if (INTROSPECTION_MODE === 'open') {
     log('WARN: token introspection is running in OPEN mode (ALLOW_OPEN_INTROSPECTION=1) — /tokens/verify is an unauthenticated oracle. Set IDENTITY_INTROSPECTION_SECRET on relay and css-gate first, then the same value here, then remove ALLOW_OPEN_INTROSPECTION (deploy/identity/AUTH-ARCHITECTURE.md).');

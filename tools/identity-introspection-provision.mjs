@@ -4,6 +4,12 @@
  * remove ALLOW_OPEN_INTROSPECTION from identity, without any value reaching a log, a file, a
  * step output or a person.
  *
+ * A write (APPLY=true) runs only inside GitHub Actions on master, where the workflow's
+ * concurrency group keeps two runs from interleaving and the preflight can see the deploy
+ * workflows' runs. Two overlapping runs could each pass their read-backs and leave relay and
+ * css-gate with different values. A dry run works anywhere. The check reads GITHUB_ACTIONS and
+ * GITHUB_REF, so it stops an accidental local apply, not someone who sets them by hand.
+ *
  * Identity's POST /tokens/verify answers only a caller presenting that value as a bearer once
  * identity holds it. The relay and css-gate present it whenever they hold it, so they get it
  * first; while identity is open (ALLOW_OPEN_INTROSPECTION=1, no secret) the header is ignored.
@@ -86,6 +92,9 @@ export function usableSecret(v) {
 /** Why the CLI must not run with this environment, or null. */
 export function cliRefusal(env) {
   if (env.GITHUB_ACTIONS === 'true' && env.GITHUB_REF !== 'refs/heads/master') return 'this runs only from master';
+  if (env.APPLY === 'true' && env.GITHUB_ACTIONS !== 'true') {
+    return 'apply runs only from the master workflow (identity-introspection-provision.yml); a dry run works locally';
+  }
   if (!env.RAILWAY_PROJECT_TOKEN) return 'RAILWAY_PROJECT_TOKEN is not set';
   if (!STAGES.includes(env.STAGE)) return `STAGE must be one of ${STAGES.join(', ')}`;
   return null;
@@ -130,7 +139,7 @@ export function planStage(stage, state, { generate = () => null } = {}) {
     }
     if (callersSet === 1) {
       const holder = set(relay) ? 'relay' : 'css-gate';
-      throw new ProvisionRefusal(`only ${holder} holds ${SECRET_VAR}; nothing enforces yet: delete it from ${holder} in Railway, or copy it to the other by hand, then rerun`);
+      throw new ProvisionRefusal(`only ${holder} holds ${SECRET_VAR}; nothing enforces yet: delete it from ${holder} in Railway, then rerun`);
     }
     callersReady();
     return result([], identityEqual === 'no' ? [`identity holds a different ${SECRET_VAR}; stage=identity will refuse until that is resolved`] : []);
@@ -221,7 +230,7 @@ export async function runStage({
     if (found.length !== 1) throw new ProvisionRefusal(`expected exactly one service named ${svc}, found ${found.length}`);
     ids[svc] = found[0].id;
   }
-  await checkNoDeployRunning({ http, github, log });
+  await checkNoDeployRunning({ http, github, log, apply });
 
   const readVars = async (svc) => {
     const d = await gql(Q.variables, { p: TARGET.projectId, e: TARGET.environmentId, s: ids[svc] });
@@ -325,12 +334,19 @@ export async function runStage({
 
   // ── Writes, each read back before any deploy. ──────────────────────────────────────────────
   // What is stored after this run's writes so far, and the way on, for StageFailure messages.
+  // `pending` is the write whose request has been sent and not yet confirmed and read back. Its
+  // outcome is unknown: Railway may have applied it and the answer been lost, or applied it and
+  // the read-back failed. So it never decides which copy to delete; a rerun reads what is stored.
+  let pending = null;
   const has = (svc, name) => summary.wrote.includes(`${svc}:${name}`);
   const whatIsStored = () => {
     if (stage === 'callers') {
       const holders = CALLERS.filter((c) => has(c, SECRET_VAR) || state[c].stored);
+      if (pending) {
+        return `Whether ${SECRET_VAR} landed on ${pending.service} is unknown${holders.length ? ` (${holders.join(' and ')} holds it)` : ''}. Identity is still open, so nothing enforces yet. Rerun stage=callers before changing anything in Railway: it writes a new value when neither caller holds one, finishes when both hold the same value, and otherwise refuses and names the copy to delete.`;
+      }
       if (holders.length === 1) {
-        return `Only ${holders[0]} is known to hold ${SECRET_VAR}. Identity is still open, so nothing enforces yet: delete it from ${holders[0]} in Railway (or copy it to the other by hand), then rerun stage=callers.`;
+        return `Only ${holders[0]} holds ${SECRET_VAR}. Identity is still open, so nothing enforces yet: delete it from ${holders[0]} in Railway, then rerun stage=callers.`;
       }
       return holders.length === 2
         ? `${SECRET_VAR} is stored on relay and css-gate; identity is still open, so nothing enforces yet. Rerun stage=callers to finish the deploys.`
@@ -342,6 +358,7 @@ export async function runStage({
     return `${OPEN_VAR} ${has('identity', OPEN_VAR) || !state.identity.openStored ? 'is' : 'may be'} removed from identity, which keeps enforcing the secret. Rerun stage=finalize to finish, and set ${OPEN_VAR}=1 again before any rollback.`;
   };
   for (const w of plan.writes) {
+    pending = w;
     try {
       if (w.op === 'upsert') {
         const r = await gql(Q.upsert, { input: { projectId: TARGET.projectId, environmentId: TARGET.environmentId, serviceId: ids[w.service], name: w.name, value: w.value, skipDeploys: true } });
@@ -359,6 +376,7 @@ export async function runStage({
       throw new StageFailure(`${w.op === 'delete' ? 'deleting' : 'writing'} ${w.name} on ${w.service} failed at a Railway request (${kindOf(e)}). ${whatIsStored()}`);
     }
     summary.wrote.push(`${w.service}:${w.name}`);
+    pending = null;
     log(`${w.op === 'delete' ? 'deleted' : 'wrote and read back'} ${w.name} on ${w.service}`);
   }
 
@@ -515,11 +533,16 @@ async function gateProbe(http, healthUrl, origin) {
 }
 
 /**
- * R3: refuse while a deploy workflow is running. Reusable-workflow legs run inside the auto-deploy
- * run, so these two files cover every deploy path. Skipped outside GitHub Actions.
+ * Refuse while a deploy workflow is running. Reusable-workflow legs run inside the auto-deploy
+ * run, so these two files cover every deploy path. Outside GitHub Actions a dry run skips the
+ * check and an applied run is refused.
  */
-async function checkNoDeployRunning({ http, github, log }) {
-  if (!github) { log('note: not in GitHub Actions; not checking for a running deploy workflow'); return; }
+async function checkNoDeployRunning({ http, github, log, apply }) {
+  if (!github) {
+    if (apply) throw new ProvisionRefusal('apply runs only inside GitHub Actions, where the deploy workflows can be checked');
+    log('note: not in GitHub Actions; not checking for a running deploy workflow');
+    return;
+  }
   if (!github.token || !github.repository) throw new ProvisionRefusal('GITHUB_TOKEN or GITHUB_REPOSITORY is not set; cannot check for a running deploy');
   for (const file of ['auto-deploy.yml', 'deploy-railway.yml']) {
     let r;
