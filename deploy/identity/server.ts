@@ -660,7 +660,8 @@ const identityPendingPodWrites = new Set<string>();
 // credentials and epoch; under the same mutex it runs either wholly before the tombstone or
 // after this mark, so it can never put that snapshot back over the tombstone. Process-local,
 // like the mutex: a second replica writing the same pod is not covered (see AUTH-ARCHITECTURE.md).
-// An operator who re-opens an id by removing its tombstone restarts the process to clear this.
+// An operator re-opens an id by editing its tombstone into a record that lists a credential
+// (see the Deletion tombstone block) and restarts the process to clear this.
 const deletedUserIds = new Set<string>();
 
 async function withIdentityPodMutex<T>(userId: string, fn: () => Promise<T>): Promise<T> {
@@ -1267,10 +1268,15 @@ function normaliseAuthMethods(raw: unknown, userId: string): AuthMethods {
 // auth-methods.jsonld with this tombstone instead of removing it: the URL every first
 // sign-in already reads, in the pod (the identity server keeps nothing). It records the id
 // (already the path), the day, and an epoch above every token issued; no name, agent or
-// credential. It is permanent; an operator re-opens an id by deleting the file by hand.
+// credential. It is permanent. An operator re-opens an id by editing the file into a record
+// that lists the credential to admit, without deletedAt and with its sessionEpoch kept (so
+// the old tokens stay refused), and restarting the process (deletedUserIds).
 // Deletions before 2026-10-26 left no tombstone: they removed auth-methods.jsonld and
 // <pod>/agents and kept the rest. A derived id whose pod still looks like that is refused at
-// its first sign-in and given its tombstone then (deletedBeforeTombstones).
+// its first sign-in and given its tombstone then (deletedBeforeTombstones). Every deletion
+// since leaves a pod looking the same once its tombstone is gone, so deleting the file does
+// not re-open a derived id: u-pk- stays refused while its container exists, u-eth-/u-did-
+// while agents is gone and the card is there, and the tombstone comes back at the next try.
 const ACCOUNT_DELETED_MESSAGE = 'This account was deleted and cannot be re-opened; register a new credential';
 class AccountDeletedError extends Error {}
 

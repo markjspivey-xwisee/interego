@@ -11,7 +11,10 @@
  * brand-new account pays one HEAD, a live account is never probed, a seeded id claimed with
  * its invite is not probed, and a pod that cannot be read is 503 with nothing written. For a
  * wallet or did:key pod only the relay's card counts: a manifest or descriptors a bridge
- * published into the signer's pod, with no account here, do not lock that signer out.
+ * published into the signer's pod, with no account here, do not lock that signer out. Since
+ * every deletion leaves its pod looking the same, deleting a tombstone by hand re-opens no
+ * derived id; an operator re-opens one by editing the tombstone into a record that lists a
+ * credential (AUTH-ARCHITECTURE.md, Re-opening a deleted id by hand).
  *
  * Run:
  *   node --test --import tsx tests/pre-tombstone-deletion-routes.test.ts
@@ -26,7 +29,7 @@ import * as net from 'node:net';
 import { fileURLToPath } from 'node:url';
 import { Wallet } from 'ethers';
 import { deriveUserIdFromDid, deriveUserIdFromWallet } from '../derive-userid.js';
-import { attest, softPasskey, type SoftPasskey } from './soft-authenticator.js';
+import { assertion, attest, softPasskey, type SoftPasskey } from './soft-authenticator.js';
 
 const B58 = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
 function ed25519() {
@@ -169,17 +172,29 @@ async function stopIdentity(): Promise<void> {
 // auth-enroll budget (30 a minute) is not shared across the whole file.
 let clientAddr = 0;
 beforeEach(() => { clientAddr++; });
-async function post(path: string, body: unknown): Promise<{ status: number; json: Record<string, unknown> }> {
+async function call(method: string, path: string, body?: unknown, bearer?: string): Promise<{ status: number; json: Record<string, unknown> }> {
   const r = await fetch(`${base}${path}`, {
-    method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Forwarded-For': `198.51.100.${clientAddr}` }, body: JSON.stringify(body),
+    method,
+    headers: { 'Content-Type': 'application/json', 'X-Forwarded-For': `198.51.100.${clientAddr}`, ...(bearer ? { Authorization: `Bearer ${bearer}` } : {}) },
+    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
   });
   return { status: r.status, json: await r.json() as Record<string, unknown> };
 }
+const post = (path: string, body: unknown, bearer?: string) => call('POST', path, body, bearer);
+const me = (bearer: string) => call('GET', '/auth-methods/me', undefined, bearer);
 async function register(key: SoftPasskey) {
   const options = await post('/auth/webauthn/register-options', { name: 'Someone' });
   assert.equal(options.status, 200, JSON.stringify(options.json));
   const rpId = (options.json['rp'] as { id: string }).id;
   return post('/auth/webauthn/register', { response: attest(key, String(options.json['challenge']), base, rpId) });
+}
+/** A usernameless passkey sign-in: the server finds the account from the credential id. */
+let signCount = 0;
+async function passkeySignIn(key: SoftPasskey) {
+  const ch = await post('/challenges', { purpose: 'webauthn-authenticate' });
+  assert.equal(ch.status, 200, JSON.stringify(ch.json));
+  const rpId = String(ch.json['rpId'] ?? new URL(base).hostname);
+  return post('/auth/webauthn/authenticate', { response: assertion(key, String(ch.json['nonce']), base, rpId, ++signCount) });
 }
 async function siwe(w: { address: string; signMessage(message: string): Promise<string> }, extra: Record<string, unknown> = {}) {
   const { nonce } = (await post('/challenges', { purpose: 'siwe' })).json as { nonce: string };
@@ -440,4 +455,58 @@ test('after a restart the tombstones written here still refuse, and count as pod
   assert.match(String(r.json['error']), DELETED);
   assert.deepEqual(probesOf(oldPasskey.userId, since), []);
   assert.match(output, /Account index: \d+ loaded, \d+ without credentials/);
+});
+
+test('an operator re-opens a deleted account by editing its tombstone; deleting it is refused again', async () => {
+  // A passkey account, and a wallet account the relay connected (its card and agents), both
+  // deleted: the deletion writes the tombstone, removes agents and keeps the card.
+  const k = softPasskey();
+  const reg = await register(k);
+  assert.equal(reg.status, 200, `${JSON.stringify(reg.json)}\n${output}`);
+  const w = Wallet.createRandom();
+  const wid = walletUser(w);
+  const s = await siwe(w);
+  assert.equal(s.status, 200, `${JSON.stringify(s.json)}\n${output}`);
+  files.add(`/${wid}/profile/card`);
+  files.add(`/${wid}/agents`);
+  const passkeyRecord = structuredClone(docs.get(k.userId)!);
+  const oldTokens = [String(reg.json['token']), String(s.json['token'])];
+  for (const t of oldTokens) assert.equal((await post('/users/me/delete', {}, t)).status, 200);
+  assert.ok(isTombstone(k.userId) && isTombstone(wid));
+  assert.equal(files.has(`/${wid}/agents`), false);
+  const epoch = { [k.userId]: Number(docs.get(k.userId)!['sessionEpoch']), [wid]: Number(docs.get(wid)!['sessionEpoch']) };
+
+  // Deleting the tombstones and restarting does not re-open either id: each pod still looks as
+  // a deletion leaves it, so the next first sign-in is refused, tombstoned again and logged.
+  docs.delete(k.userId);
+  docs.delete(wid);
+  await stopIdentity();
+  await startIdentity();
+  const passkeyAgain = await register(softPasskey(k.rawId));
+  assert.equal(passkeyAgain.status, 409, JSON.stringify(passkeyAgain.json));
+  const walletAgain = await siwe(w);
+  assert.equal(walletAgain.status, 409, JSON.stringify(walletAgain.json));
+  assert.ok(isTombstone(k.userId) && isTombstone(wid));
+  assert.match(output, new RegExp(`WARN identity_deleted_before_tombstone userId=${k.userId} evidence=container`));
+  assert.match(output, new RegExp(`WARN identity_deleted_before_tombstone userId=${wid} evidence=profile/card`));
+
+  // Editing each tombstone into a record that lists the credential to admit, without deletedAt
+  // and with the deletion's session epoch, then restarting, re-opens both; nothing is probed,
+  // and the deleted accounts' tokens stay refused.
+  docs.set(k.userId, { ...passkeyRecord, sessionEpoch: epoch[k.userId] });
+  const walletOpen: Record<string, unknown> = { ...docs.get(wid)!, walletAddresses: [w.address.toLowerCase()], sessionEpoch: epoch[wid] };
+  delete walletOpen['deletedAt'];
+  docs.set(wid, walletOpen);
+  await stopIdentity();
+  await startIdentity();
+  const since = requests.length;
+  const passkeyBack = await passkeySignIn(k);
+  assert.equal(passkeyBack.status, 200, `${JSON.stringify(passkeyBack.json)}\n${output}`);
+  assert.equal(passkeyBack.json['userId'], k.userId);
+  const walletBack = await siwe(w);
+  assert.equal(walletBack.status, 200, `${JSON.stringify(walletBack.json)}\n${output}`);
+  assert.equal(walletBack.json['userId'], wid);
+  assert.deepEqual([...probesOf(k.userId, since), ...probesOf(wid, since)], []);
+  for (const t of oldTokens) assert.equal((await me(t)).status, 401, 'a token issued before the deletion');
+  for (const r of [passkeyBack, walletBack]) assert.equal((await me(String(r.json['token']))).status, 200);
 });
