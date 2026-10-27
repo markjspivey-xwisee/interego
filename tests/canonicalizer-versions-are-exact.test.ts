@@ -7,10 +7,12 @@
  * memory (deploy/mcp-relay/_amep-seed-test.ts) and an I2IDL-X fingerprint. They run against the
  * root lockfile. The relay, dashboard and PGSL browser images do not install from it. Their app
  * stage (deploy/Dockerfile.relay, .dashboard, .pgsl-browser) rewrites a package.json and runs
- * `npm install` with no lockfile over packed `@interego/*` tarballs, so each image gets what the
- * relay's and core's manifests declare. Under `^9.0.0` and `^5.0.0` that is the newest 9.x and 5.x
- * on the day of the build. A release that moved one canonical byte would re-address every new
- * memory in the next relay image while CI, on the lockfile's copy, stayed green.
+ * `npm install` with no lockfile over packed `@interego/*` tarballs. The relay image gets what the
+ * relay's and core's manifests declare; the dashboard and PGSL browser manifests name neither
+ * library, so those images get what core's declares. Under `^9.0.0` and `^5.0.0` that would be the
+ * newest 9.x and 5.x on the day of the build. A release that moved one canonical byte would
+ * re-address every new memory in the next relay image while CI, on the lockfile's copy, stayed
+ * green.
  *
  * An exact version settles it. npm puts the pinned copy at the top of the tree, and jsonld's own
  * `rdf-canonize: ^5.0.0` edge resolves to that copy rather than to a newer release. `npm install
