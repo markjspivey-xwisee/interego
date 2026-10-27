@@ -27,7 +27,13 @@ Measured on the same tree before and after: 577 test modules and 9,362 tests, an
 
 **The Electron pin is now checked.** `electron-builder.yml` pins `electronVersion` because the workspace hoists Electron, and its comment said `npm run package` "fails loudly" if the pin and the installed version diverge. electron-builder never compares them: given a pin, it packages that runtime. #701 would have shipped Electron 33 from a lockfile that said 42. Each `package*` script now runs `tools/electron-pin.mjs` first, which stops the build unless the pin equals the installed version. The pin itself moves to 44.9.3.
 
-The root lockfile was installed, in dry-run mode, the way each of the eleven Dockerfiles that use it installs it. Every install succeeds, and each image installs 81 fewer packages, or 239 fewer for the three that copy the desktop manifest.
+**Sub-project lockfiles**, each updated with `npm update --package-lock-only` inside its own directory and no `package.json` change:
+
+- The Foxxi vertical: the dev-only agent-SDK chain (@modelcontextprotocol/sdk 1.32.2, hono 4.13.14, @hono/node-server 2.1.5, body-parser 2.4.0, fast-uri, ip-address, proxy-addr, qs) and zod 4.6.7.
+- Its dashboard and microsite apps, `demos/interego-microsite` and `interego-main/microsite`: vite 6.4.5 with source-map-js, postcss, nanoid, browserslist and @babel/core. `demos/interego-microsite` and `interego-main/microsite` now audit clean.
+- `demos/interego-bridge` and `examples/personal-bridge`: express 4.22.3, body-parser 1.20.9, proxy-addr 2.0.8 (a critical), qs and tsx. Both now audit clean.
+
+The Foxxi lockfiles keep their ethers, ws and react-router advisories, and `deploy/validator`, `examples/pgsl-browser` and `examples/dashboard` are not touched: the CSS-server dependency change covers those. All four vite apps were built the way their Dockerfiles build them, before and after, and every built `dist/` is byte-identical. The root lockfile was also installed, in dry-run mode, the way each of the eleven Dockerfiles that use it installs it. Every install succeeds, and each image installs 81 fewer packages, or 239 fewer for the three that copy the desktop manifest.
 
 Still open in the root lockfile, all dev-only: `@zed-industries/claude-code-acp` 0.16.2, the newest release, pins `@modelcontextprotocol/sdk` 1.26.0 and minimatch 10.2.1 exactly; `@anthropic-ai/sdk` 0.80 (moderate, used by `benchmarks/` only), whose fix is outside its `^0.80.0` range; and esbuild 0.28.0 (low), for the reason above.
 
