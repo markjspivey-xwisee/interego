@@ -48,7 +48,7 @@ import {
 import { resolveTargetUserId } from './resolve-target-userid.js';
 import { claimFirstSignIn, type FirstSignInOutcome } from './first-sign-in.js';
 import { authenticatePasskey, PasskeyPersistenceError, publicKeyIdentity } from './passkey-authentication.js';
-import { PodReadError, listPods, loadAccounts, readPodJson, type AccountLoadReport, type FetchLike } from './account-index.js';
+import { PodReadError, listPods, loadAccounts, podResourceExists, readPodJson, type AccountLoadReport, type FetchLike } from './account-index.js';
 import { AccountIndex, MAX_HOLDERS, enrolledAt } from './credential-index.js';
 import { createProvisionalPlayProvider } from './provisional-play-provider.js';
 import { parsePlayClients } from './provisional-play.js';
@@ -660,7 +660,8 @@ const identityPendingPodWrites = new Set<string>();
 // credentials and epoch; under the same mutex it runs either wholly before the tombstone or
 // after this mark, so it can never put that snapshot back over the tombstone. Process-local,
 // like the mutex: a second replica writing the same pod is not covered (see AUTH-ARCHITECTURE.md).
-// An operator who re-opens an id by removing its tombstone restarts the process to clear this.
+// An operator re-opens an id by editing its tombstone into a record that lists a credential
+// (see the Deletion tombstone block) and restarts the process to clear this.
 const deletedUserIds = new Set<string>();
 
 async function withIdentityPodMutex<T>(userId: string, fn: () => Promise<T>): Promise<T> {
@@ -834,11 +835,65 @@ async function putPodAuthMethods(userId: string, methods: AuthMethods, opts: { i
   bootstrapUserIds.add(userId);
 }
 
+// ── Accounts deleted before deletions left a tombstone ──────
+//
+// Until 2026-10-26 POST /users/me/delete removed auth-methods.jsonld and <pod>/agents and kept
+// every other file: the container, the relay's profile/card and .acl files, the descriptors
+// and the .well-known/context-graphs manifest, the inbox. Such a pod has no tombstone, so a
+// derived id signing in to it again was created over it and inherited all of that (and its
+// did:web name). Before a derived id is created, its pod is asked whether such an account used
+// it, and only when the pod holds no credentials and the credential may create an account:
+//   - u-pk-: any container at all. An owner's authenticator never presents the same credential
+//     id twice (every registration makes a new one), so no owner is turned away, and a
+//     container exists only because an account with this id was written, or attempted, before.
+//   - u-eth- / u-did-: <pod>/agents is gone (only a deletion removes it) while the relay's
+//     profile/card remains. The relay writes that card only when it creates agents, at its
+//     first touch of a pod after this server issued a token for that very id (/oauth/verify,
+//     or lazy init for the token's own pod), and only since 2026-06-04, so the card shows that
+//     an account here used the pod. Nothing else in the pod does: every publish() writes the
+//     manifest (.well-known/context-graphs) and context-graphs/, and a bridge holding the gate's
+//     write secret publishes into a signer's own u-eth- pod with no account here at all (a
+//     vertical's self-enrolment, credential issuance, ontology publishing), so counting them
+//     locked such a wallet out at its first sign-in. A pod whose agents registry is still there
+//     lost only its sign-in record (a write before 2026-10-24 that never landed); its owner,
+//     holding the same wallet or key, signs in to it as before. The inbox does not count either:
+//     anyone can deliver to a pod, and these ids follow from a public address or key. A pod
+//     without the card shows nothing and opens again, as it did before, and that is more pods
+//     than the deletion date suggests: the relay wrote agents (publish path, /oauth/verify) long
+//     before it wrote cards and never adds a card to a pod that has agents, so a pod whose agents
+//     predates 2026-06-04 has none whenever it was deleted, nor has a pod that never connected to
+//     the relay (AUTH-ARCHITECTURE.md says how an operator finds them).
+// Yes: the sign-in is refused as deleted (409) and the tombstone written (identity_deleted_
+// before_tombstone in the log), so the next attempt reads it and asks nothing. A probe that
+// cannot be answered is 'unreadable' (503), never a new account. A brand-new account pays one
+// HEAD; a live account (a pod listing a credential) is never asked.
+const DERIVED_USER_ID = /^u-(pk|eth|did)-[0-9a-f]{12}$/;
+
+/**
+ * What in `userId`'s pod shows that an account deleted before deletions left a tombstone used
+ * it, or null when nothing does. `existing` is the pod's record without credentials, or null
+ * when it has none. Throws PodReadError when a probe cannot be answered.
+ */
+async function deletedBeforeTombstones(userId: string, existing: AuthMethods | null): Promise<string | null> {
+  const pod = `${CSS_URL}${userId}/`;
+  // A record lies in its container, so only a pod without one is asked whether it exists.
+  if (existing === null && !(await podResourceExists(podFetch, pod))) return null;
+  if (userId.startsWith('u-pk-')) return existing === null ? 'container' : 'auth-methods.jsonld without credentials';
+  const [agents, card] = await Promise.all([
+    podResourceExists(podFetch, `${pod}agents`),
+    podResourceExists(podFetch, `${pod}profile/card`),
+  ]);
+  return !agents && card ? 'profile/card' : null;
+}
+
 /**
  * A first-time wallet or DID sign-in to `userId` (first-sign-in.ts): read the account's pod
  * under its mutex and create the account only if the pod holds no credentials, so a
  * credential the indexes missed never replaces the ones the account already has. A
  * 'returning' account is loaded into the indexes; nothing else is touched unless 'created'.
+ * `derived`: the id was derived from the credential presented (not a bootstrap invite's
+ * seeded id, whose files predate its credentials by design), so before it is created its pod
+ * is asked whether an account deleted before tombstones used it (deletedBeforeTombstones).
  */
 async function claimFirstSignInOnPod(
   userId: string,
@@ -847,10 +902,30 @@ async function claimFirstSignInOnPod(
   holds: (methods: AuthMethods) => boolean,
   add: (methods: AuthMethods) => void,
   mayCreate = true,
+  derived = false,
 ): Promise<FirstSignInOutcome<AuthMethods>> {
+  const probe = derived && DERIVED_USER_ID.test(userId);
+  let evidence: string | null = null;
   const outcome = await withIdentityPodMutex(userId, () => claimFirstSignIn<AuthMethods>({
     mayCreate,
     closed: isTombstone,
+    ...(probe ? {
+      vacated: async (existing: AuthMethods | null) => {
+        evidence = await deletedBeforeTombstones(userId, existing);
+        return evidence !== null;
+      },
+      // Still under the mutex. A pod that had no record gets the tombstone only if none has
+      // appeared since (If-None-Match: *), so a record another writer made is never replaced.
+      retire: async (existing: AuthMethods | null) => {
+        log(`WARN identity_deleted_before_tombstone userId=${userId} evidence=${evidence} refused=deleted`);
+        try {
+          await putPodAuthMethods(userId, deletionTombstone(userId, existing?.sessionEpoch ?? 0), { ifAbsent: existing === null });
+        } catch (err) {
+          log(`WARN: tombstone for ${userId} not written (the next sign-in asks again): ${(err as Error).message}`);
+          throw err;
+        }
+      },
+    } : {}),
     read: async () => {
       // A deferred write still queued behind this mutex is what the pod is about to hold.
       const pending = identityPendingPodWrites.has(userId) ? authMethodsCache.get(userId) : undefined;
@@ -1197,7 +1272,18 @@ function normaliseAuthMethods(raw: unknown, userId: string): AuthMethods {
 // auth-methods.jsonld with this tombstone instead of removing it: the URL every first
 // sign-in already reads, in the pod (the identity server keeps nothing). It records the id
 // (already the path), the day, and an epoch above every token issued; no name, agent or
-// credential. It is permanent; an operator re-opens an id by deleting the file by hand.
+// credential. It is permanent. An operator re-opens an id by editing the file into a record
+// that lists the credential to admit, without deletedAt and with its sessionEpoch kept (so
+// the old tokens stay refused), and restarting the process (deletedUserIds).
+// Deletions before 2026-10-26 left no tombstone: they removed auth-methods.jsonld and
+// <pod>/agents and kept the rest. A derived id whose pod still looks like that is refused at
+// its first sign-in and given its tombstone then (deletedBeforeTombstones). A deletion since
+// leaves the pod looking the same once its tombstone is gone, so for u-pk- (while its
+// container exists) and for u-eth-/u-did- with the relay's card (while agents is gone),
+// deleting the file does not re-open the id: the tombstone comes back at the next try. A
+// u-eth-/u-did- pod without the card (its agents predates 2026-06-04, or it never connected
+// to the relay) shows nothing then: deleting the file and restarting re-opens the id at
+// epoch 0, and the deleted account's unexpired tokens verify again. Editing is the only way.
 const ACCOUNT_DELETED_MESSAGE = 'This account was deleted and cannot be re-opened; register a new credential';
 class AccountDeletedError extends Error {}
 
@@ -2569,8 +2655,16 @@ function siweDomainSources(): ReadonlyMap<string, string> {
 }
 function siweDomains(): ReadonlySet<string> { return new Set(siweDomainSources().keys()); }
 
-/** How far a wallet's clock may differ from this server's when it stamps Issued At. */
+/** How far ahead of this server's clock a message's Not Before may be. */
 const SIWE_CLOCK_SKEW_MS = 5 * 60 * 1000;
+/**
+ * How far a message's Issued At may be from its challenge's issue, either way. Issued At is the
+ * signing device's clock, which can be off by hours (a phone with the wrong time zone, a laptop
+ * that never synced); freshness is the single-use nonce's job, which this server issued and
+ * which expires CHALLENGE_TTL_MS after that. A window of minutes refused those devices' sign-ins
+ * and kept nothing out that the nonce does not.
+ */
+const SIWE_ISSUED_AT_WINDOW_MS = 24 * 60 * 60 * 1000;
 
 type SiweMessageCheck =
   | { ok: true; address: string }
@@ -2580,9 +2674,10 @@ type SiweMessageCheck =
  * An ERC-4361 message this server accepts for challenge `ch`: one parseSiweMessage reads (so a
  * wallet reads it as a sign-in too and runs its domain check), whose domain and URI host are in
  * siweDomains(), whose address is in EIP-55 form (a wallet's parser refuses any other), whose
- * Nonce field is exactly the challenge's nonce, and whose Issued At falls between the
- * challenge's issue and now (give or take SIWE_CLOCK_SKEW_MS). Expiration Time, if present, must
- * not have passed, and Not Before must have arrived.
+ * Nonce field is exactly the challenge's nonce, and whose Issued At (an RFC 3339 date-time, as
+ * the parser requires) is within SIWE_ISSUED_AT_WINDOW_MS of the challenge's issue, either way.
+ * Expiration Time, if present, must not have passed, and Not Before must have arrived (give or
+ * take SIWE_CLOCK_SKEW_MS).
  * Returns the address, lowercased; the caller still checks the signature recovers to it.
  */
 async function checkSiweMessage(message: string, ch: Challenge): Promise<SiweMessageCheck> {
@@ -2633,10 +2728,10 @@ async function checkSiweMessage(message: string, ch: Challenge): Promise<SiweMes
   const now = Date.now();
   const issuedAt = Date.parse(f.issuedAt);
   const challengeIssued = ch.expiresAt - CHALLENGE_TTL_MS;
-  if (issuedAt < challengeIssued - SIWE_CLOCK_SKEW_MS || issuedAt > now + SIWE_CLOCK_SKEW_MS) {
+  if (Math.abs(issuedAt - challengeIssued) > SIWE_ISSUED_AT_WINDOW_MS) {
     return refuse({
-      error: 'SIWE message Issued At does not fit its challenge',
-      hint: 'Issued At must be the time the message was built, after the nonce was fetched. Check the signing device\'s clock.',
+      error: 'SIWE message Issued At is more than 24 hours from its challenge',
+      hint: 'Issued At must be the time the message was built, just after the nonce was fetched; it may be up to 24 hours off this server\'s clock either way. Check the signing device\'s date and clock.',
     });
   }
   if (f.expirationTime !== undefined && Date.parse(f.expirationTime) <= now) {
@@ -2935,7 +3030,8 @@ app.post('/auth/siwe', authEnrollLimiter, async (req, res) => {
     // is signed in to.
     const outcome = await claimFirstSignInOnPod(targetUserId, agentId, displayName,
       m => m.walletAddresses.some(a => a.toLowerCase() === recoveredAddress),
-      m => { m.walletAddresses.push(recoveredAddress); }, /* mayCreate */ !loading && !existingOnly);
+      m => { m.walletAddresses.push(recoveredAddress); }, /* mayCreate */ !loading && !existingOnly,
+      /* derived */ resolved.mode === 'derive');
     if (outcome.kind === 'unreadable' || outcome.kind === 'unconfirmed') {
       log(`WARN: first-time SIWE sign-in to ${targetUserId} not completed (${outcome.kind}): ${outcome.reason}`);
       // Nothing was written, so a bootstrap invite spent by resolveTargetUserId is still
@@ -3313,7 +3409,7 @@ app.post('/auth/webauthn/register', authEnrollLimiter, async (req, res) => {
       m => {
         if (!m.name || m.name === targetUserId) m.name = displayName;
         m.webAuthnCredentials.push(record);
-      });
+      }, /* mayCreate */ true, /* derived */ true);
     if (outcome.kind === 'unreadable') {
       log(`WARN: passkey registration of ${targetUserId} not completed (unreadable): ${outcome.reason}`);
       res.status(503).json({
@@ -3836,7 +3932,7 @@ app.post('/auth/did', authEnrollLimiter, async (req, res) => {
           keyType: 'Ed25519VerificationKey2020',
           createdAt: new Date().toISOString(),
         });
-      }, mayCreate);
+      }, mayCreate, /* derived */ resolved.mode === 'derive');
     if (outcome.kind === 'unreadable' || outcome.kind === 'unconfirmed') {
       log(`WARN: first-time DID sign-in to ${targetUserId} not completed (${outcome.kind}): ${outcome.reason}`);
       // Nothing was written, so a bootstrap invite spent by resolveTargetUserId is still
