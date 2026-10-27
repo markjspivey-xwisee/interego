@@ -10,8 +10,9 @@ import {
 /**
  * ★ LEAVE THE SHARED REALM AS WE FOUND IT — this file polluted it, and another file died.
  *
- * vitest runs this repo single-threaded (`poolOptions.threads.singleThread` /
- * `forks.singleFork`, see vitest.config.ts), so all 187 test files share ONE globalThis.
+ * vitest ran this repo in one fork (`poolOptions.forks.singleFork` under vitest 3), so all
+ * 187 test files shared ONE globalThis. Since vitest 4 each file has its own process (see
+ * vitest.config.ts), so what follows now matters within this file rather than across files.
  * The PDF cases below deliberately run the real pdfjs pipeline, and `pdf-parse` loads
  * `pdfjs-dist/legacy` — the build that carries bundled core-js polyfills. On Node 20 (what
  * CI runs, and what our Dockerfiles ship) there is no native `Iterator`, so core-js DEFINES

@@ -404,7 +404,13 @@ the shell says so on screen in the transport's own words rather than claiming "l
 
 ## Build and run on Windows
 
-Prerequisites: Node 20+ and npm. Nothing else — no Rust, no C++ toolchain, no Python.
+Prerequisites: Node 22.12+ and npm. Nothing else — no Rust, no C++ toolchain, no Python.
+
+Node 22.12 is Electron's floor, not this app's: from Electron 40 the `electron` npm package (and
+from electron-builder 26 its `@electron/rebuild`) declares `node >=22.12.0`, and on Node 20 the
+binary download below failed outright when measured. From Electron 42 nothing downloads at
+`npm install` time. The binary is fetched the first time `npx electron` runs, or ahead of time
+with `npx install-electron --no` from this directory.
 
 ```sh
 # from the repo root
@@ -439,6 +445,7 @@ replaces is the human pressing buttons.
 
 ```sh
 cd applications/shared-workspace/desktop
+npx install-electron --no   # once (Electron 42+): fetches the binary into the root node_modules/electron/dist
 
 # wallet path: sign in, read a workspace, and append a real, public entry
 env -u ELECTRON_RUN_AS_NODE \
@@ -644,6 +651,18 @@ npm run package:mac   --workspace @interego/workspace-desktop   # macOS:   zip +
 never run is worse than one marked untested.** Everything below was measured on the maintainer's
 machine — Windows 10 x64, electron-builder 25.1.8, Electron 33.4.11 — re-measured 2026-08-11.
 
+★ **Since then the shell moved to Electron 44.9.3 and electron-builder 26.18.0 (2026-10-27), and
+only the Linux targets were rebuilt for that.** On a Linux x64 machine `npm run package:linux`
+produced the AppImage (151 MB) and the deb (112 MB), and the AppImage passed
+`tools/ci-launch-smoke.ts` under `xvfb-run`: `SMOKE OK: window reached did-finish-load and closed
+cleanly`. That machine ran as root, which Electron's sandbox refuses, so the launch passed
+`--no-sandbox`; CI's runner is not root and launches with the sandbox on. electron-builder 26
+refused the Linux executable's default name (`@interegoworkspace-desktop`, from the npm package
+name), so `linux.executableName` now names it `interego-workspace`, which is also the deb's
+package name. The Windows and macOS rows below are still the Electron 33 measurements;
+`desktop-package.yml` builds and launches those targets on each pull request that touches this
+directory.
+
 **The published build is `desktop-0.2.1`.** That sentence is here, at the top of this section and
 not only inside a table cell, because the table said `0.1.0` for three hours after `0.2.0` shipped
 (#313) — a version number is the one fact a reader takes on trust, so it gets its own line and is
@@ -690,8 +709,12 @@ recognises. Signing and notarisation are out of scope here, and neither is faked
 
 `electronVersion` is pinned in `electron-builder.yml` because this is an npm **workspace**:
 electron-builder looks for `electron` in the package's own `node_modules`, npm hoists it to the
-repo root, and the range `^33.0.0` is not something it will guess from. If the two diverge the
-package step fails loudly rather than packaging against a runtime nobody tested.
+repo root, and the range `^44.9.3` is not something it will guess from. electron-builder never
+compares the pin with what is installed, so this README used to claim a check that did not
+exist: a lockfile moved to a patched Electron with the pin left behind would have packaged the
+old runtime from a green job. `tools/electron-pin.mjs` is that check now. Every `package*`
+script runs it before electron-builder, and it stops the build unless the pin equals the
+installed version.
 
 ---
 

@@ -29,9 +29,9 @@ const REPO = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const RUNNER = join(REPO, 'spec', 'conformance', 'runner.mjs');
 const BUILTIN = join(REPO, 'spec', 'conformance', 'fixtures');
 
-// Only ever under os.tmpdir(): vitest runs every file in ONE process here
-// (singleThread/singleFork), and a test that wrote inside spec/conformance/fixtures/ would
-// become a polluter that breaks an unrelated file in a full run.
+// Only ever under os.tmpdir(): every file in a run reads the same working tree (and, under
+// vitest 3's singleFork, the same process), and a test that wrote inside
+// spec/conformance/fixtures/ would become a polluter that breaks an unrelated file in a full run.
 const temps: string[] = [];
 afterAll(() => {
   for (const dir of temps) rmSync(dir, { recursive: true, force: true });
@@ -60,7 +60,7 @@ function treeWithRevocation(): string {
  * `vitest.config.ts` sets no `testTimeout`, so every `it` here ran on the 5,000 ms
  * default while synchronously spawning a whole Node process. MEASURED on one box:
  * `node spec/conformance/runner.mjs` costs 1.3-2.0 s idle and 5.4-6.3 s under load, and
- * inside the full suite — which pins `singleThread`/`singleFork`, so all 215 files share
+ * inside the full suite — which pinned `singleThread`/`singleFork` then, so all 215 files shared
  * one contended worker — two of these cases timed out at 7,576 ms and 7,367 ms while
  * passing in isolation. That is a gate whose verdict is decided by machine load, in the
  * one CI job that runs `npx vitest run`; it is the same shape as the AXIS A incident

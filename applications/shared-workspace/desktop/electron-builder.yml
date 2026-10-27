@@ -42,10 +42,16 @@ copyright: MIT
 # ★ PINNED BECAUSE THIS IS AN npm WORKSPACE. electron-builder derives the runtime version by
 # looking for `electron` in the package's OWN node_modules; in a workspace it is hoisted to the
 # repo root, so it finds nothing and refuses with "Cannot compute electron version from
-# installed node modules" — the devDependency range `^33.0.0` is not a version it will guess
-# from. This is the version actually installed at the root; `npm run package` fails loudly if
-# they diverge rather than packaging against a runtime nobody tested.
-electronVersion: 33.4.11
+# installed node modules" — the devDependency range `^44.9.3` is not a version it will guess
+# from. This is the version actually installed at the root.
+#
+# ★ AND electron-builder DOES NOT COMPARE THE TWO. Given `electronVersion` it packages that
+# runtime without looking at what is installed, so a lockfile moved to a patched Electron with
+# this line left behind ships the old, vulnerable runtime and every packaging job stays green.
+# This comment said a divergence "fails loudly", and nothing made it so. `tools/electron-pin.mjs`
+# now does: each `package*` script runs it before electron-builder, and it exits non-zero unless
+# this line equals the version installed at the root.
+electronVersion: 44.9.3
 
 directories:
   output: release
@@ -126,6 +132,12 @@ linux:
     - target: deb
       arch: [x64]
   category: Office
+  # ★ NAMED, BECAUSE electron-builder 26 REFUSES THE DEFAULT. The Linux executable is named after
+  # the npm package unless this says otherwise, and `@interego/workspace-desktop` sanitises to
+  # `@interegoworkspace-desktop`. electron-builder 25 shipped that name; 26.18 stops the AppImage
+  # build with "executableName contains characters that cannot be safely used in file paths".
+  # Windows and macOS name the executable after `productName` and are unaffected.
+  executableName: interego-workspace
   # Named so the two Linux artifacts do not collide in `release/` with each other or with the
   # Windows ZIP, which shares the ${productName}-${version} stem.
   artifactName: ${productName}-${version}-${arch}.${ext}

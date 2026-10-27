@@ -13,10 +13,12 @@ afterEach(() => {
    * this file stubs the GLOBAL fetch twice (below) with a double that throws
    * `new Error('network down')`.
    *
-   * vitest.config.ts pins `singleFork: true` and says why it matters: "every module in a run
+   * Under vitest 3 vitest.config.ts pinned `singleFork: true`, so "every module in a run
    * shares one process, which is why `vi.stubEnv` without a restore leaks across FILES". A
-   * global fetch left installed here is installed for every test file that runs after this
-   * one, and it fails them with a message that reads like a real outage.
+   * global fetch left installed here was installed for every test file that ran after this
+   * one, and it failed them with a message that reads like a real outage. Since vitest 4 each
+   * file gets its own process, so the leak stops at the end of this file; it still reaches
+   * every later test IN it, which is why the restore stays.
    *
    * That string turned up in `tests/railway-running-build.test.ts`, twice, in full-suite runs
    * only — that file binds a REAL localhost server on an ephemeral port and fetches it, so

@@ -17,14 +17,14 @@
     "clean": "rm -rf dist/ release/",
     "selftest": "npm run build && electron dist/selftest.js",
     "drive:account": "npm run build && esbuild tools/drive-account-import-live.ts --bundle --format=cjs --platform=node --target=es2020 --external:electron --outfile=dist/drive-account-import-live.js && electron dist/drive-account-import-live.js",
-    "package": "npm run build && electron-builder --win --publish never --config electron-builder.yml",
-    "package:linux": "npm run build && electron-builder --linux --publish never --config electron-builder.yml",
-    "package:mac": "npm run build && electron-builder --mac --publish never --config electron-builder.yml",
+    "package": "npm run build && node tools/electron-pin.mjs && electron-builder --win --publish never --config electron-builder.yml",
+    "package:linux": "npm run build && node tools/electron-pin.mjs && electron-builder --linux --publish never --config electron-builder.yml",
+    "package:mac": "npm run build && node tools/electron-pin.mjs && electron-builder --mac --publish never --config electron-builder.yml",
     "drive:delegates": "npm run build && esbuild tools/drive-delegate-list-live.ts --bundle --format=cjs --platform=node --target=es2020 --external:electron --outfile=dist/drive-delegate-list-live.js && electron dist/drive-delegate-list-live.js",
     "drive:agent-tools": "npm run build && esbuild tools/drive-agent-tools-live.ts --bundle --format=cjs --platform=node --target=es2020 --external:electron --outfile=dist/drive-agent-tools-live.js && electron dist/drive-agent-tools-live.js"
   },
   "engines": {
-    "node": ">=20.0.0"
+    "node": ">=22.12.0"
   },
   "dependencies": {
     "@interego/workspace-client": "*",
@@ -33,8 +33,8 @@
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
-    "electron": "^33.0.0",
-    "electron-builder": "^25.1.8",
+    "electron": "^44.9.3",
+    "electron-builder": "^26.18.0",
     "typescript": "^5.7.0",
     "esbuild": "^0.28.0"
   }

@@ -109,11 +109,13 @@
  * a credential is present was changed — only the set of VALUES that count as a declaration was
  * widened, and widening it can only turn a run that would have dialled into a skip.
  *
- * ★ `vi.stubEnv` MUTATES THE ONE REAL `process.env`, and `vitest.config.ts` pins
- * `poolOptions.forks.singleFork`, so every module in a run shares this process. The `afterEach`
- * restore below is therefore load-bearing twice over: within this file, where each case stubs
- * all seven names and an unrestored stub would decide the next case's outcome, and across
- * files, where a leaked `SKIP_POD_TESTS` would silently disarm the five pod suites.
+ * ★ `vi.stubEnv` MUTATES THE ONE REAL `process.env` of the worker. Under vitest 3
+ * `vitest.config.ts` pinned `poolOptions.forks.singleFork`, so every module in a run shared this
+ * process, and the `afterEach` restore below was load-bearing twice over: within this file,
+ * where each case stubs all seven names and an unrestored stub would decide the next case's
+ * outcome, and across files, where a leaked `SKIP_POD_TESTS` would silently disarm the five pod
+ * suites. Since vitest 4 each file has its own process, so the second hazard is gone; the first
+ * is not, and the restore stays.
  */
 import { describe, it, expect, afterEach, vi } from 'vitest';
 import { spawnSync } from 'node:child_process';
@@ -1540,13 +1542,17 @@ describe('the pod gate, composed with the real pod-target', () => {
 
 describe('the pool config points at the registry', () => {
   it('names shared-live-externals.ts inside vitest.config.ts', () => {
-    // ★ WHERE THE NEXT READER IS STANDING. The question "can we drop singleFork?" is asked
-    // while looking at `poolOptions` and nowhere else, and the answer turns entirely on a
-    // helper two directories away that no grep over `*.test.ts` reaches. This keeps the
+    // ★ WHERE THE NEXT READER IS STANDING. The question "can the files run in parallel?" is
+    // asked while looking at the pool setting and nowhere else, and the answer turns entirely on
+    // a helper two directories away that no grep over `*.test.ts` reaches. This keeps the
     // pointer alive: delete it and the reason for the pool setting becomes invisible again.
     //
     // The previous version of this comment said vitest.config.ts "points here from inside the
     // poolOptions block" while no such pointer existed anywhere in the file. It does now.
+    //
+    // The setting itself moved with vitest 4, which removed `poolOptions`: what was
+    // `poolOptions.forks.singleFork` is now the top-level `maxWorkers: 1`, so that is the
+    // declaration the pointer has to sit on.
     const cfg = read('vitest.config.ts');
     // ★ THE POSITION IS THE POINT, so it is checked as a position and not as presence. The
     // first version of this asserted `indexOf(path) > indexOf('poolOptions')`, which passed —
@@ -1554,12 +1560,12 @@ describe('the pool config points at the registry', () => {
     // `poolOptions` too. A check with two possible reasons is evidence for neither. What has to
     // be true is that the pointer sits in the comment ATTACHED to the declaration, which is the
     // only text a reader of the pool setting has in front of them.
-    const decl = cfg.indexOf('poolOptions: {');
+    const decl = cfg.indexOf('maxWorkers: 1,');
     const attachedComment = cfg.slice(cfg.indexOf('reporters:'), decl);
     expect(decl).toBeGreaterThan(0);
     expect(
       attachedComment,
-      'vitest.config.ts must name the registry in the comment attached to `poolOptions`, not '
+      'vitest.config.ts must name the registry in the comment attached to `maxWorkers`, not '
       + 'merely somewhere in the file — the question this answers is asked while looking at '
       + 'that declaration.',
     ).toContain('applications/_shared/tests/shared-live-externals.ts');

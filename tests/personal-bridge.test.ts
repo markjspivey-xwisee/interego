@@ -293,8 +293,8 @@ describe('personal-bridge — the bridge-level gate', () => {
     base = `http://127.0.0.1:${addr.port}`;
   });
   afterAll(async () => {
-    // ★ MUST close. vitest runs every file in ONE process here (singleFork); a
-    // leaked listener keeps that process alive after the suite reports.
+    // ★ MUST close. A leaked listener keeps the worker process alive after its tests report
+    // (under vitest 3's singleFork that process was the whole run's).
     await new Promise<void>((resolve) => { server.close(() => resolve()); });
   });
 

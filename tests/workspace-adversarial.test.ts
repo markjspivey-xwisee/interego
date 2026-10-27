@@ -653,8 +653,8 @@ describe('★★ MONOTONICITY: no configuration grants more than a weaker one', 
    *     at Object.onTimeoutError node_modules/vitest/dist/chunks/rpc.-pEldfrD.js:53:10
    *     at Timeout._onTimeout node_modules/vitest/dist/chunks/index.B521nVV-.js:59:62
    *
-   * `vitest.config.ts` pins `singleThread`/`singleFork`, so all 185 files share that one
-   * worker. Killing it mid-run produced the worst signal this repo has a name for:
+   * `vitest.config.ts` pinned `singleThread`/`singleFork` (vitest 3), so all 185 files shared
+   * that one worker. Killing it mid-run produced the worst signal this repo has a name for:
    *
    *   Test Files  2 passed (185)
    *   Tests       169 passed (169)

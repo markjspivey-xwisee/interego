@@ -5,10 +5,10 @@
  * ── WHAT HAPPENED ────────────────────────────────────────────────────────────
  *
  * `tests/workspace-adversarial.test.ts`'s AXIS A enumerates 76,800 configurations and used to
- * do it in one uninterrupted synchronous turn — 66,847 ms measured. `vitest.config.ts` pins
- * `singleThread`/`singleFork`, so every file shares that worker, and vitest's birpc request
- * deadline is 60 s. The main process's reply to `onTaskUpdate` sat unread in the blocked
- * worker's queue until the deadline expired, the worker was torn down, and `npx vitest run
+ * do it in one uninterrupted synchronous turn — 66,847 ms measured. `vitest.config.ts` pinned
+ * `singleThread`/`singleFork` then (vitest 3), so every file shared that worker, and vitest's
+ * birpc request deadline is 60 s. The main process's reply to `onTaskUpdate` sat unread in the
+ * blocked worker's queue until the deadline expired, the worker was torn down, and `npx vitest run
  * tests/` printed:
  *
  *   Test Files  2 passed (185)
@@ -442,16 +442,22 @@ export function readmeSuiteFailures(readmeText, measured, suiteExists) {
  * filters and runs only this shard's slice of them. bridge-typecheck.yml's "everything else,
  * second half" (2026-09-23) planned 420, ran 210, and this gate called the other 210 "never
  * finished" — the worst kind of red, one whose obvious fix is to weaken the unfinished check.
- * The slice is vitest's own: ceil(total / n) per shard, the last one shorter. Planning that
- * slice keeps the check meaning what it says inside the shard: a shard whose worker dies still
- * reports fewer modules than its slice, and still fails here.
+ * The slice is vitest's own. Planning that slice keeps the check meaning what it says inside the
+ * shard: a shard whose worker dies still reports fewer modules than its slice, and still fails
+ * here.
+ *
+ * ★ AND THE SLICE IS VITEST 4's, WHICH IS NOT VITEST 3's. Vitest 3 cut ceil(total / n) per shard
+ * and left the last one short (10 files in 4 shards: 3, 3, 3, 1). Vitest 4's
+ * `BaseSequencer.calculateShardRange` gives every shard floor(total / n) and the first
+ * total % n shards one more (3, 3, 2, 2). The two agree for every total at n = 2, which is all
+ * bridge-typecheck.yml uses, so nothing in CI moved; at n = 4 the old formula would plan 3 for a
+ * shard that runs 2 and call a healthy shard short.
  */
 export function shardPlan(total, shard) {
   const count = Number(shard?.count);
   const index = Number(shard?.index);
   if (!(count > 1) || !(index >= 1) || index > count) return total;
-  const size = Math.ceil(total / count);
-  return Math.max(0, Math.min(size, total - size * (index - 1)));
+  return Math.floor(total / count) + (index <= total % count ? 1 : 0);
 }
 export default class RunIntegrityReporter {
   onInit(vitest) {
