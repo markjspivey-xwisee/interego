@@ -75,20 +75,15 @@ function fixture() {
     (m: Methods & { deletedAt?: string }) => typeof m.deletedAt === 'string', Error, 'account deleted',
     new Set<string>(), persistExistingAuthMethods,
   ) as (owner: string, context: string, update: (m: Methods) => boolean | void, synchronous?: boolean) => Promise<void>;
-  const authenticateHolder = new Function('withIdentityPodMutex', 'fetchPodAuthMethods', 'authenticatePasskey', 'putPodAuthMethods',
-    'identityPendingPodWrites', 'authMethodsCache', 'deletedUserIds', 'rebuildIndexesForUser', 'publicKeyIdentity',
-    `${productionFunction('authenticateHolderPasskey')}; return authenticateHolderPasskey;`)(
+  const authenticate = new Function('withIdentityPodMutex', 'fetchPodAuthMethods', 'authenticatePasskey', 'putPodAuthMethods',
+    `${productionFunction('authenticatePlayOwnerPasskey')}; return authenticatePlayOwnerPasskey;`)(
     withIdentityPodMutex, read,
     async ({ credential, persist }: { credential: { counter?: number }; persist: () => Promise<void> }) => {
       await duringVerification();
       credential.counter = (credential.counter ?? 0) + 1;
       await persist();
-    }, persist, new Set<string>(), new Map(), new Set<string>(), () => {}, async (key: unknown) => String(key),
-  ) as (owner: string, read: Methods, response: { id: string }, challenge: string, rpId: string, origin: string,
-    triedKeys: Set<string>) => Promise<string>;
-  // A Play owner's passkey sign-in, as the route runs it: the record is read under the lock.
-  const authenticate = (owner: string, response: { id: string }, challenge: string, rpId: string, origin: string) =>
-    authenticateHolder(owner, empty(), response, challenge, rpId, origin, new Set<string>());
+    }, persist,
+  ) as (owner: string, response: { id: string }, challenge: string, rpId: string, origin: string) => Promise<void>;
   const control = (method: string, path: string) => {
     const start = executable.indexOf(`app.${method}('${path}',`);
     assert.ok(start >= 0, path);

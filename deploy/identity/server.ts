@@ -923,48 +923,22 @@ async function persistExistingAuthMethods(userId: string, methods: AuthMethods):
   return withIdentityPodMutex(userId, () => putPodAuthMethods(userId, methods));
 }
 
-/**
- * A passkey sign-in to one holder. It writes the whole record to advance the sign counter, so
- * under the account's mutex it reads the record from the pod, checks the assertion against the
- * credential there, and writes that record back with only the credential's counter and RP
- * binding changed. The copy this server keeps can be 10 s old, and a record can drop a
- * credential or bump its session epoch without this server seeing it (the other instance during
- * a deploy's overlap, an operator by hand); written back, that copy would undo the change for good.
- * 'not-on-file': the record no longer lists the credential, so the account is no holder and
- * leaves the index. 'same-key': an earlier holder was tried with this public key (see the route).
- * `read` is the record the route read before it took the mutex. An account deleted in this
- * process since then holds the tombstone, so the assertion is checked against `read`: the
- * passkey's own account is refused as deleted (putPodAuthMethods writes nothing), any other is
- * passed over.
- */
-async function authenticateHolderPasskey(
+async function authenticatePlayOwnerPasskey(
   userId: string,
-  read: AuthMethods,
   response: import('@simplewebauthn/server').AuthenticationResponseJSON,
   challenge: string,
   rpId: string,
   origin: string,
-  triedKeys: Set<string>,
-): Promise<'verified' | 'not-on-file' | 'same-key'> {
-  return withIdentityPodMutex(userId, async () => {
-    // A deferred write still queued behind this mutex is what the pod is about to hold.
-    const pending = identityPendingPodWrites.has(userId) ? authMethodsCache.get(userId) : undefined;
-    let methods = read;
-    if (pending) methods = pending.value;
-    else if (!deletedUserIds.has(userId)) {
-      methods = await fetchPodAuthMethods(userId, { createIfMissing: false });
-      authMethodsCache.set(userId, { value: methods, fetchedAt: Date.now() });
-      rebuildIndexesForUser(userId, methods);
-    }
+): Promise<void> {
+  await withIdentityPodMutex(userId, async () => {
+    // Authentication writes the whole document to advance the counter. Its
+    // verification must therefore use the same locked snapshot as enrollment.
+    const methods = await fetchPodAuthMethods(userId, { createIfMissing: false });
     const credential = methods.webAuthnCredentials.find(c => c.id === response.id);
-    if (!credential) return 'not-on-file';
-    const key = await publicKeyIdentity(credential.publicKey);
-    if (triedKeys.has(key)) return 'same-key';
-    triedKeys.add(key);
+    if (!credential) throw new Error('Credential indexed but not on file');
     await authenticatePasskey({ credential, response, challenge, rpId, origin,
       persist: () => putPodAuthMethods(userId, methods),
     });
-    return 'verified';
   });
 }
 
@@ -3533,12 +3507,12 @@ app.post('/auth/webauthn/authenticate', authEnrollLimiter, async (req, res) => {
   // Every account whose record still lists this credential, in the index's stable order (the
   // earliest-enrolled first). The first whose stored key verifies the assertion wins, and only
   // its counter is written: authenticatePasskey changes a record only after it verifies, so a
-  // holder whose key does not match is tried at no cost. Each is read from its pod again when
-  // it is tried (authenticateHolderPasskey).
-  const tries: Array<{ userId: string; methods: AuthMethods }> = [];
+  // holder whose key does not match is tried at no cost.
+  const tries: Array<{ userId: string; methods: AuthMethods; cred: AuthMethods['webAuthnCredentials'][number] }> = [];
   for (const id of holders.slice(0, MAX_HOLDERS)) {
     const methods = await readAuthMethods(id);
-    if (methods.webAuthnCredentials.some(c => c.id === response.id)) tries.push({ userId: id, methods });
+    const cred = methods.webAuthnCredentials.find(c => c.id === response.id);
+    if (cred) tries.push({ userId: id, methods, cred });
   }
   if (tries.length === 0) {
     noHolderVerified(401, 'Credential indexed but not on file');
@@ -3552,13 +3526,21 @@ app.post('/auth/webauthn/authenticate', authEnrollLimiter, async (req, res) => {
   // a sign counter at or above the assertion's is refused before the signature is checked, and
   // a later copy of the key with a lower counter would then accept the assertion it refused.
   // Keys are compared as keys (publicKeyIdentity): a copy's registrant chooses its COSE bytes.
-  // A holder whose record no longer lists the credential tries no key.
   const triedKeys = new Set<string>();
-  for (const { userId, methods } of tries) {
+  for (const { userId, methods, cred } of tries) {
+    const key = await publicKeyIdentity(cred.publicKey);
+    if (triedKeys.has(key)) continue;
+    triedKeys.add(key);
     try {
-      const outcome = await authenticateHolderPasskey(userId, methods, response, expectedChallenge,
-        ch.rpId ?? RP_ID, ch.rpOrigin ?? RP_ORIGIN, triedKeys);
-      if (outcome !== 'verified') continue;
+      if (userId.startsWith('u-try-play-')) {
+        await authenticatePlayOwnerPasskey(userId, response, expectedChallenge,
+          ch.rpId ?? RP_ID, ch.rpOrigin ?? RP_ORIGIN);
+      } else {
+        await authenticatePasskey({ credential: cred, response, challenge: expectedChallenge,
+          rpId: ch.rpId ?? RP_ID, origin: ch.rpOrigin ?? RP_ORIGIN,
+          persist: () => persistExistingAuthMethods(userId, methods),
+        });
+      }
     } catch (err) {
       // A holder deleted mid-request that merely failed to verify is no answer: try the next.
       if (deletedUserIds.has(userId) && (err instanceof PasskeyPersistenceError || err instanceof AccountDeletedError)) {
@@ -3573,8 +3555,8 @@ app.post('/auth/webauthn/authenticate', authEnrollLimiter, async (req, res) => {
         return;
       }
       if (err instanceof PodReadError) {
-        // Its record (read again from its pod here) could not be read, so whether it verifies
-        // is unknown: stop rather than let a later holder take the sign-in.
+        // Its record (a Play owner's is read again here) could not be read, so whether it
+        // verifies is unknown: stop rather than let a later holder take the sign-in.
         log(`WARN: refused passkey auth — ${err.message}`);
         res.status(503).json({ error: 'Could not read this account just now', detail: 'Nothing was changed; try signing in again in a minute.' });
         return;
