@@ -83,7 +83,7 @@ jobs:
     name: "select tests → run → gate → decide"
     if: ${{ github.event_name != 'pull_request' || github.event.action != 'closed' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 40
+    timeout-minutes: 70
     # The workflow's two, restated (a job's block replaces the workflow's), and the two reads only
     # this job's wait makes; the close-time job lists neither runs nor check runs.
     permissions:
@@ -205,12 +205,11 @@ jobs:
       # (GITHUB_RUN_ID names the run; a name is not an id), keeps the latest attempt of each, reads
       # them again on every poll, and writes a second word, `checks` (success, failure, timeout,
       # untrusted, error, and pending only when advisory), with `checks_detail` naming what failed
-      # or was still running. One deadline for both: the twenty minutes below. On 2026-10-26 and
+      # or was still running. One deadline for both: the fifty minutes below. On 2026-10-26 and
       # 27 Mutation Gate's 63 successful runs (of 66) took 18 to 47 minutes from the push, median
-      # 29, and only 11 concluded within 22 minutes of the push (this step starts about two
-      # minutes in), so most pull requests are not merged by their run until SUITE_WAIT_MS (and
-      # this job's timeout-minutes) is raised; the next push decides again. SUITE_GATE leaves an
-      # advisory suite out of `checks`.
+      # 29, so the wait is fifty minutes, and this job's timeout-minutes is 70 to hold it with the
+      # selection and the gate before it. A check still running at the deadline means no merge,
+      # and the next push decides again. SUITE_GATE leaves an advisory suite out of `checks`.
       - name: Wait for the whole suite and every other check on this head
         id: suite
         if: ${{ always() && github.event_name == 'pull_request' }}
@@ -219,7 +218,7 @@ jobs:
           GITHUB_REPOSITORY: ${{ github.repository }}
           SELF_WORKFLOW: jev-harness (System One judgments)
           SUITE_WORKFLOW: Bridge Typecheck
-          SUITE_WAIT_MS: '1200000'
+          SUITE_WAIT_MS: '3000000'
           CHECKS_GATE: ${{ env.JEV_MERGE_WAITS_FOR_CHECKS != 'false' }}
           SUITE_GATE: ${{ env.JEV_MERGE_WAITS_FOR_SUITE != 'false' }}
         run: node tools/wait-for-workflow-run.mjs "${{ github.event.pull_request.head.sha }}"

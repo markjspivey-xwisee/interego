@@ -91,10 +91,9 @@
  * The deadline is the suite's (SUITE_WAIT_MS from the start of this step), not a second one:
  * the checks get no time the suite does not. Mutation Gate runs on every pull request; on
  * 2026-10-26 and 27 its 63 successful runs (of 66) took 18 to 47 minutes from the push,
- * median 29, and only 11 of them concluded within 22 minutes of the push, which is where this
- * wait ends (it starts about two minutes in). So most pull requests are not merged by their
- * run until SUITE_WAIT_MS (and the job's timeout-minutes) is raised; the next push decides
- * again, and Mutation Gate starts over with it. CHECKS_GATE=false (the repository variable
+ * median 29, so jev-harness.yml sets SUITE_WAIT_MS to fifty minutes (and the job's
+ * timeout-minutes to 70). A check still running at the deadline means no merge; the next push
+ * decides again, and Mutation Gate starts over with it. CHECKS_GATE=false (the repository variable
  * JEV_MERGE_WAITS_FOR_CHECKS=false) gives the checks no wait of their own: what they say once
  * the suite's word is in, or that GitHub could not list them then, is printed, not gated on.
  *

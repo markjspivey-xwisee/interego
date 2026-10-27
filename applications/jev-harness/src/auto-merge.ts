@@ -71,9 +71,8 @@
  *      or anything else), timeout (one still running at the deadline), untrusted (the listings
  *      never held this run's own job) and error (GitHub could not be asked) fail, and the next
  *      push decides again. On 2026-10-26 and 27 Mutation Gate's 63 successful runs (of 66) took
- *      18 to 47 minutes from the push, median 29, and only 11 concluded within 22 minutes of
- *      the push, which is about when this wait ends, so most pull requests are not merged by
- *      their run until the wait (SUITE_WAIT_MS, and the job's timeout-minutes) is raised.
+ *      18 to 47 minutes from the push, median 29, so the wait (SUITE_WAIT_MS in
+ *      jev-harness.yml) is fifty minutes and the job's timeout-minutes 70.
  *      JEV_MERGE_WAITS_FOR_CHECKS=false makes the word advisory, and gives the checks no wait
  *      of their own beyond the suite's, an outage included.
  *
