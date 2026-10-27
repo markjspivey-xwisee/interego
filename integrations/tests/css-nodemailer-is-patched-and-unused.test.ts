@@ -2,9 +2,12 @@
  * The css image runs nodemailer 10 under a Community Solid Server whose own range is ^9, and
  * that is safe for one reason this file pins: the deployed config never sends mail.
  *
- * ★ WHY AN OVERRIDE AND NOT AN UPGRADE. Every nodemailer before 10.1.4 carries at least one
- * HIGH advisory (addressparser and DKIM denial of service, malformed envelope recipients,
- * a TLS servername reused across transports). @solid/community-server 7.2.0, the newest
+ * ★ WHY AN OVERRIDE AND NOT AN UPGRADE. npm audit reports nine advisories against nodemailer
+ * 9.1.1. The two HIGH ones (quadratic denial of service in addressparser) are fixed in 10.0.6.
+ * The seven moderate ones (DKIM header unfolding, malformed envelope recipients, a TLS
+ * servername reused across transports, nested recipient arrays, and addressparser releasing
+ * comment, group or angle-addr text as a recipient) are fixed between 10.0.2 and 10.1.4, so
+ * 10.1.4 is the first release that clears all nine. @solid/community-server 7.2.0, the newest
  * stable release, asks for ^9.0.1, which tops out at 9.1.1; the 8.0.0 alphas ask for even
  * older majors, move to Components.js 6 (the accessor builds against 5) and, from alpha.1,
  * need Node 22 (the image runs 20). No CSS release admits a fixed nodemailer, so
