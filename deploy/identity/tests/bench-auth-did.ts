@@ -4,10 +4,14 @@
  *
  * Hits the cache-backed parse + verify-key helpers directly (no HTTP
  * round-trip needed — the cache code path is the thing we want to
- * measure) and emits two timings:
+ * measure) and emits three timings:
  *
- *   cold: first call for a brand-new did:key   — pays parse + KeyObject
- *   warm: second call for the SAME did:key     — both cached
+ *   cold: first call for a brand-new did:key   — pays parse, the small-order
+ *                                                check and KeyObject
+ *   warm: later calls for the SAME did:key     — both cached; one verify,
+ *                                                over the challenge's message
+ *   warm, bare nonce: the same with a signature over the bare nonce, which
+ *                     the handler verifies only after the message fails
  *
  * Run:
  *   cd deploy/identity && npx tsx tests/bench-auth-did.ts
@@ -22,6 +26,7 @@ import {
   getCachedParsedDid,
   setCachedParsedDid,
   getOrCreateEd25519VerifyKey,
+  isSmallOrderEd25519Key,
   _clearCaches,
 } from '../did-parse.js';
 
@@ -88,7 +93,10 @@ function parseDidKey(did: string): { publicKey: Buffer; format: 'base58btc' | 'b
   throw new Error('not a base58btc did:key');
 }
 
-function mintFreshDidKey(): { did: string; publicKeyRaw: Buffer; nonce: string; signature: Buffer; privateKey: crypto.KeyObject } {
+/** The text a did-sig challenge carries (didSignInMessage in server.ts), for some host. */
+const signInMessage = (nonce: string) => `Interego DID sign-in v1\nHost: identity.example\nNonce: ${nonce}`;
+
+function mintFreshDidKey(): { did: string; nonce: string; message: string; signature: Buffer; bareNonceSignature: Buffer } {
   const { publicKey, privateKey } = crypto.generateKeyPairSync('ed25519');
   const spki = publicKey.export({ type: 'spki', format: 'der' });
   const raw = Buffer.from(spki.subarray(spki.length - 32));
@@ -96,29 +104,35 @@ function mintFreshDidKey(): { did: string; publicKeyRaw: Buffer; nonce: string; 
   mc.set(ED25519_MULTICODEC, 0);
   mc.set(raw, 2);
   const did = 'did:key:z' + base58btcEncode(mc);
-  const nonce = crypto.randomBytes(16).toString('hex');
-  const signature = crypto.sign(null, Buffer.from(nonce, 'utf8'), privateKey);
-  return { did, publicKeyRaw: raw, nonce, signature, privateKey };
+  const nonce = crypto.randomBytes(32).toString('base64url');
+  const message = signInMessage(nonce);
+  const signature = crypto.sign(null, Buffer.from(message, 'utf8'), privateKey);
+  const bareNonceSignature = crypto.sign(null, Buffer.from(nonce, 'utf8'), privateKey);
+  return { did, nonce, message, signature, bareNonceSignature };
 }
 
-// What the /auth/did handler actually does in its parse + verify-key
-// + verify path. We measure the same sequence the handler runs so
-// the numbers reflect the production hot path, not a synthetic.
-function authDidCriticalPath(did: string, publicKeyRawFromDid: Buffer, nonce: string, signature: Buffer): boolean {
+// The steps the /auth/did handler takes from a did:key to a verified signature: the parse
+// cache; on a miss, the parse, the small-order check and caching; the verify-key cache; then a
+// verify over the challenge's message and, only when that fails, one over the bare nonce. The
+// pod read, the account lookup and the token are left out.
+function authDidCriticalPath(did: string, message: string, nonce: string, signature: Buffer): 'message' | 'bare-nonce' | null {
   // 1. Parse cache lookup.
   let publicKeyRaw: Buffer;
   const cached = getCachedParsedDid(did);
   if (cached) {
     publicKeyRaw = cached.publicKeyRaw;
   } else {
-    // First call — parse + cache.
+    // First call — parse, refuse a key of small order, cache.
     const parsed = parseDidKey(did);
+    if (isSmallOrderEd25519Key(parsed.publicKey)) throw new Error('a key of small order');
     publicKeyRaw = parsed.publicKey;
     setCachedParsedDid(did, publicKeyRaw, parsed.format);
   }
   // 2. KeyObject cache lookup + verify.
   const verifyKey = getOrCreateEd25519VerifyKey(publicKeyRaw);
-  return crypto.verify(null, Buffer.from(nonce, 'utf8'), verifyKey, signature);
+  if (crypto.verify(null, Buffer.from(message, 'utf8'), verifyKey, signature)) return 'message';
+  if (crypto.verify(null, Buffer.from(nonce, 'utf8'), verifyKey, signature)) return 'bare-nonce';
+  return null;
 }
 
 function bench(label: string, fn: () => void, iterations: number): { totalMs: number; perCallMs: number } {
@@ -134,26 +148,25 @@ async function main(): Promise<void> {
   // Cold first-call timing — fresh DID, empty caches.
   _clearCaches();
   const fresh = mintFreshDidKey();
-  // Use publicKeyRawFromDid only as a sanity wrapper — the real path
-  // re-derives it from the DID string itself, which is exactly what
-  // we want to measure.
   const coldT0 = performance.now();
-  const coldOk = authDidCriticalPath(fresh.did, fresh.publicKeyRaw, fresh.nonce, fresh.signature);
+  const coldProof = authDidCriticalPath(fresh.did, fresh.message, fresh.nonce, fresh.signature);
   const coldMs = performance.now() - coldT0;
-  if (!coldOk) throw new Error('cold-path signature verify returned false (should not happen on a freshly-minted keypair)');
+  if (coldProof !== 'message') throw new Error(`cold-path verify gave ${String(coldProof)} (should not happen on a freshly-minted keypair)`);
 
   // Warm same-DID timing — same DID, caches hot. Repeat 1000 times
   // so we can average out noise; the per-call number is what matters.
   const ITER = 1000;
-  // Pre-warm an extra signature so we're measuring verify, not signing.
   const warm = bench('warm', () => {
-    const ok = authDidCriticalPath(fresh.did, fresh.publicKeyRaw, fresh.nonce, fresh.signature);
-    if (!ok) throw new Error('warm verify failed');
+    if (authDidCriticalPath(fresh.did, fresh.message, fresh.nonce, fresh.signature) !== 'message') throw new Error('warm verify failed');
+  }, ITER);
+  const warmBare = bench('warm, bare nonce', () => {
+    if (authDidCriticalPath(fresh.did, fresh.message, fresh.nonce, fresh.bareNonceSignature) !== 'bare-nonce') throw new Error('warm bare-nonce verify failed');
   }, ITER);
 
   console.log('— /auth/did cache benchmark —');
   console.log(`Cold (first call, fresh DID):  ${coldMs.toFixed(3)} ms`);
   console.log(`Warm (same DID, x${ITER} avg):    ${warm.perCallMs.toFixed(4)} ms/call (total ${warm.totalMs.toFixed(1)} ms)`);
+  console.log(`Warm, bare nonce (x${ITER} avg):  ${warmBare.perCallMs.toFixed(4)} ms/call (total ${warmBare.totalMs.toFixed(1)} ms)`);
   const speedup = coldMs / warm.perCallMs;
   console.log(`Speedup:                       ${speedup.toFixed(1)}x`);
   if (warm.perCallMs > coldMs) {

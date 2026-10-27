@@ -328,3 +328,7 @@ test('a body whose did, nonce or signature is not a string is refused and the se
   assert.equal((await fetch(`${base}/health`)).status, 200);
   assert.equal(identity.exitCode, null);
 });
+
+test('every DID sign-in above signed the challenge\'s message', () => {
+  assert.doesNotMatch(output, /WARN identity_did_bare_nonce /);
+});

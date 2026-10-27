@@ -196,7 +196,9 @@ const UNLINTED_FRONTIER = {
   // the rounds since: 229 files. All lint clean; the error ceiling stays fixed.
   // A route suite for sign-ins while the account index is incomplete: 230.
   // A route suite for accounts deleted before tombstones: 231.
-  deploy: { errors: 356, files: 231 },
+  // The relay page's DID challenge suite and a route suite for the DID sign-in message: 233.
+  // Identity's shared test teardown and SPKI key reader (tests/teardown.ts, tests/public-jwk.ts): 235.
+  deploy: { errors: 356, files: 235 },
   // The bulk of these are `no-console` in vertical bridges and CLI entry points — one config
   // decision, not a thousand defects. See the note above.
   // ★ 320 -> 337, and the ratchet caught it in CI rather than locally, which is the interesting
