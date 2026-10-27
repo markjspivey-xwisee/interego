@@ -1,5 +1,21 @@
 # Changelog
 
+## 2026-10-27 — Identity: a test pins the X25519 keys the server publishes, and no other generated key is JWK-exported under deploy/ or packages/
+
+The "Node 20 crypto deadlock" entry further down changed how `generateEd25519` in `deploy/identity/server.ts` reads the raw X25519 public key. It had read the `x` of a JWK export, and now reads the last 32 bytes of the SPKI DER. That entry checked on 20,000 keys that both give the same bytes, but no test checked it. The derivation is now `x25519PublicKeyEncodings` in `deploy/identity/key-encoding.ts`. The base58btc codec and the Ed25519 and X25519 multibase encoders it uses moved there from `server.ts` unchanged. `server.ts` imports them, and `deploy/Dockerfile.identity` copies the new file.
+
+`tests/key-encoding.test.ts` checks three things:
+
+- The fixed X25519 key from RFC 7748 §6.1 gets the base64 and multibase that its JWK `x` gives. Both values are also frozen in the test; the multibase (`z6LSkdrX…`) was computed separately with the multiformats library.
+- 200 generated keys get the encodings of their JWK `x`. The test reads that JWK from a copy parsed out of DER (`tests/public-jwk.ts`).
+- A P-256 key is refused, because its SPKI is 91 bytes.
+
+Reading the raw key one byte off fails the first two. The identity suite passes on Node 20.20 and 22.22 (333/333). On Node 20.20 with frequent garbage collection (`--max-semi-space-size=1`), the server's key generation ran 200,000 times through the new function in each of 3 runs. The same loop with the old JWK export hung before 5,000 in every run.
+
+No other code under `deploy/` or `packages/` JWK-exports a key that `generateKeyPairSync` made. `deploy/mcp-relay/client-authorization.ts` exports the JWKs of keys it parsed from a JWK, and no generator job shares a lock with those. `deploy/mcp-relay/tests/dpop.test.ts` exports the JWK of a key from WebCrypto's `generateKey`, and is unchanged. WebCrypto generates keys in an asynchronous job, and Node frees that job as soon as it has handed over the key, so no garbage collection can free it later, in the middle of an export. On Node 20.20 with frequent garbage collection, a loop of `generateKey` and then `exportKey('jwk')` ran 60,000 times in each of 3 runs. So the WebCrypto test that the earlier entry changed in `provisional-play.test.ts` was not at risk either. That change does no harm and stays.
+
+The earlier entry names EC and OKP keys. RSA keys hang the same way on Node 20.20, and so does the JWK of a public key that `createPublicKey` derives from a generated private key: both loops hung, at 0% CPU, before 1,000 iterations. Outside `deploy/` and `packages/`, these JWK exports of generated keys remain, and this change does not touch them. `tests/client-authorization.test.ts` exports P-256, P-384, P-521 and RSA keys, and `tests/browser-signing-handoff.test.ts` exports a P-256 key. CI runs both in the whole root suite on Node 20 (`bridge-typecheck.yml`). `tests/browser-signing-handoff.chromium.test.ts` makes the same P-256 export but runs only on Node 22, in `identity-tests.yml`. `es256Keys` in `applications/foxxi-content-intelligence/src/lti13.ts` derives one when no PEM is configured, but the Foxxi bridge image runs Node 22.
+
 ## 2026-10-27 — Foxxi: when signed xAPI ignored the owner pod, and what that left in the derived lens
 
 The Foxxi README now says when the signed xAPI adapter ignored the owner pod a payload named: from about 2026-10-17 17:15Z to 2026-10-26 07:44Z. In that window a direct wallet signer's writes and reads went to its derived `eth-<hex>` lens. The new section is "Signed xAPI records in the derived lens", under Run the bridge locally.
