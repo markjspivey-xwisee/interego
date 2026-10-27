@@ -27,6 +27,7 @@ import { test, before, after, beforeEach } from 'node:test';
 import { strict as assert } from 'node:assert';
 import { spawn, type ChildProcess } from 'node:child_process';
 import * as crypto from 'node:crypto';
+import { readFileSync } from 'node:fs';
 import * as http from 'node:http';
 import * as net from 'node:net';
 import { fileURLToPath } from 'node:url';
@@ -414,6 +415,19 @@ test('with the setting on, a signature over the bare nonce still signs in, and e
   lines = await newBareLines(lenient, before, 1);
   assert.match(lines[0]!, /^\[identity\] WARN identity_did_bare_nonce outcome=accepted /);
   assert.equal(lines[0]!.endsWith(' ua="probe\\" outcome=refused" origin=-'), true, lines[0]);
+
+  // A user-agent can name any account inside its quotes. The pattern AUTH-ARCHITECTURE.md gives
+  // for reading the account signed in to finds the server's field, never the caller's text.
+  const docPattern = /`(\^\\\[identity\\\] WARN identity_did_bare_nonce outcome=accepted [^`]*)`/
+    .exec(readFileSync(new URL('../AUTH-ARCHITECTURE.md', import.meta.url), 'utf8'))?.[1];
+  assert.ok(docPattern, 'AUTH-ARCHITECTURE.md gives a pattern for the account signed in to');
+  before = bareLines(lenient).length;
+  const posing = didKey();
+  const posed2 = await overBareNonce(lenient.url, posing, {}, { 'User-Agent': 'x userId=u-pk-0123456789ab' });
+  assert.equal(posed2.status, 200, JSON.stringify(posed2.json));
+  lines = await newBareLines(lenient, before, 1);
+  assert.equal(lines[0]!.includes('userId=u-pk-0123456789ab'), true, lines[0]);
+  assert.equal(new RegExp(docPattern).exec(lines[0]!)?.[1], deriveUserIdFromDid(posing.did), lines[0]);
 
   // A legacy-form did:key keeps its own deprecation warning beside this one.
   const legacy = await overBareNonce(lenient.url, legacyDidKey());
