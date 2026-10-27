@@ -20,7 +20,12 @@ export async function canonicalRdf(content: string, format: 'turtle' | 'jsonld' 
     writer.addQuads(new Store(parsed).getQuads(null, null, null, null));
     quads = await new Promise<string>((resolve, reject) => writer.end((error, result) => error ? reject(error) : resolve(result)));
   }
-  return jsonld.canonize(quads, { algorithm: 'URDNA2015', inputFormat: 'application/n-quads', format: 'application/n-quads' });
+  // jsonld 9 hands rdf-canonize only what is under `canonizeOptions`: a top-level `algorithm` is
+  // ignored, and the default work factor of 1 refuses graphs whose blank nodes only their
+  // neighbours tell apart (docs/ns/iep-shapes.ttl, the Foxxi xAPI shapes). jsonld 8 bounded nothing
+  // and fingerprinted them. 2 is the bound tests/support/ns-graph.ts and tools/release-ns.ts use for
+  // the same documents. RDFC-1.0 is URDNA2015 under its W3C name, so the output is unchanged.
+  return jsonld.canonize(quads, { inputFormat: 'application/n-quads', canonizeOptions: { algorithm: 'RDFC-1.0', maxWorkFactor: 2 } });
 }
 
 export async function rdfFingerprint(content: string, format: 'turtle' | 'jsonld' = 'turtle', base?: string): Promise<string> {

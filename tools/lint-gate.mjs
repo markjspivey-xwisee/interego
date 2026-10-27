@@ -691,7 +691,10 @@ const BASELINE = {};
 // lint and its declarations (#567 follow-up) brought it to 635; the gate named 604.
 // 2026-10-08: private HMD invocation coverage adds one file, so the floor is 605.
 // 2026-10-27: tests/did-sig-live-scripts.test.ts brings the linted scope to 681; the gate named 648.
-export const MIN_FILES = 648;
+// 2026-10-27: the jsonld fromRDF guard (tests/no-code-reads-rdf-back-through-jsonld-fromrdf.test.ts)
+// and the exact-version guard (tests/canonicalizer-versions-are-exact.test.ts) bring it to 683;
+// the gate named 650.
+export const MIN_FILES = 650;
 
 /**
  * How far below the real linted-file count MIN_FILES may sit before that is itself a failure.
