@@ -6,8 +6,10 @@
  * REPLACES a service's whole environment — and a caller that means "change this one value" and
  * reaches for the collection mutation silently deletes every variable it did not restate. This
  * tool only ever calls `variableUpsert`, so the blast radius is the named variable and nothing
- * else. It does not redeploy: a variable change and the restart that picks it up are separate
- * decisions, and the restart is the one with the outage risk.
+ * else. It does not pass `skipDeploys`, whose API default is false, so an --apply makes Railway
+ * redeploy the service with the new value (https://docs.railway.com/integrations/api/manage-variables);
+ * a change that must wait for a chosen moment needs `skipDeploys: true` and a deploy by hand, which
+ * this tool does not do.
  *
  * Dry run is the default; `--apply` performs the write. The old and new values are printed so the
  * change is visible before and after — do not use this for secrets, which must never be echoed
@@ -92,4 +94,4 @@ if (now !== value) {
   console.error(`\nVERIFY FAILED — variable reads back as: ${now}`);
   process.exit(1);
 }
-console.log('\nwritten and verified. The service keeps running the OLD value until it restarts.');
+console.log('\nwritten and verified. This upsert does not pass skipDeploys (API default false), so Railway redeploys the service with it; confirm that deployment in Railway.');

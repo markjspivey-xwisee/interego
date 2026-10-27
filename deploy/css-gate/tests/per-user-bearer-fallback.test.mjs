@@ -27,6 +27,9 @@
 //   6. The relay /verify-token request carries the shared bearer
 //      secret (gate↔relay introspection auth) — wrong secret = no
 //      relay accept (we verify by inspecting the captured headers).
+//   7. With IDENTITY_INTROSPECTION_SECRET unset, the identity call carries
+//      no Authorization at all, and /healthz says so (identityVerifyAuth:
+//      false). The set case is identity-introspection-bearer.test.mjs.
 
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
@@ -44,6 +47,9 @@ process.env.CSS_GATE_AUTOSTART = '0';
 // (well, we test the warm case here; the expiry case isn't worth the
 // time-travel ceremony).
 process.env.USER_BEARER_CACHE_TTL_MS = '60000';
+// Unset here, whatever the shell running the suite holds: test 1 asserts the identity call
+// then carries no Authorization header.
+delete process.env.IDENTITY_INTROSPECTION_SECRET;
 
 // Loopback identity + relay verifiers. We point the gate at these
 // via env vars BEFORE importing server.mjs.
@@ -178,6 +184,8 @@ test('identity-valid bearer passes; relay is not called', async () => {
   assert.equal(r.status, 201);
   assert.equal(identity.received.length, 1, 'identity must be called as the primary verifier');
   assert.equal(relay.received.length, 0, 'relay must NOT be called when identity validates');
+  assert.equal(identity.received[0].headers.authorization, undefined,
+    'without IDENTITY_INTROSPECTION_SECRET the identity call carries no Authorization');
   assert.equal(upstream.received[0].headers.authorization, undefined,
     'bearer must be stripped before forwarding to CSS');
 });
@@ -288,4 +296,12 @@ test('relay-valid bearer cache warm: second hit does NOT re-call relay', async (
   assert.equal(r2.status, 201);
   assert.equal(relay.received.length, callsAfterFirst,
     'second cached-warm call must not produce another relay /verify-token roundtrip');
+});
+
+test('/healthz: no introspection bearer, and identity\'s answers are counted', async () => {
+  const r = await fetch(`${gateBase}/healthz`);
+  assert.equal(r.status, 200);
+  const h = await r.json();
+  assert.equal(h.identityVerifyAuth, false);
+  assert.ok(h.identityVerifyResults.accepted >= 1, JSON.stringify(h.identityVerifyResults));
 });

@@ -1,0 +1,31 @@
+name: Identity introspection provisioning fixture
+on:
+  pull_request:
+    paths:
+      - 'tools/identity-introspection-provision.mjs'
+      - 'tools/railway-services.mjs'
+      - 'tools/railway-deploy-trigger.mjs'
+      - 'tests/identity-introspection-provision.test.mjs'
+      - 'tools/railway-set-secret-var.mjs'
+      - 'tests/railway-set-secret-var.test.mjs'
+      # Read by both tests: the by-hand commands, and the apply guard's and add-mask line's wording.
+      - 'deploy/identity/AUTH-ARCHITECTURE.md'
+      - '.github/workflows/identity-introspection-provision.yml'
+      - '.github/workflows/identity-introspection-provision-test.yml'
+permissions:
+  contents: read
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  provision-fixture:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '20'
+      # The second file is the by-hand path deploy/identity/AUTH-ARCHITECTURE.md gives for the
+      # same rollout: tools/railway-set-secret-var.mjs must not print the value either.
+      - run: node --test tests/identity-introspection-provision.test.mjs tests/railway-set-secret-var.test.mjs
