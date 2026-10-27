@@ -17,17 +17,25 @@
  *      pod had no document. A precondition failure means someone wrote in between, so the read
  *      and the delta run again (at most `attempts` times);
  *   4. only then put what was written into this server's copy and indexes (`install`).
- * A read that fails writes nothing. A write that fails is followed, still under the lock, by
- * one more read, and what the pod holds then is installed and handed to the caller with the
- * error (`AuthMethodsWriteError.podRecord`: a write the pod applied before failing has landed).
+ * A read that fails writes nothing. A write that fails is settled, still under the lock
+ * (`settle`), and what the pod holds then is installed and handed to the caller with the error
+ * (`AuthMethodsWriteError.podRecord`: a write the pod applied before failing has landed). A
+ * write the pod answered (a 5xx, a 4xx) is over, so one read settles it. A write the pod never
+ * answered (a timeout, a dropped connection) may still be applied after that read: a store keeps
+ * working on a request its client gave up on, and a read can overtake a queued write. So while
+ * the record is still in the state the write was conditional on, settle writes it back as read
+ * on the same condition (a fence: the pending write's condition can then never hold) and reads
+ * again; the record it returns is final.
  * This server's copy and indexes therefore change only from a record read or written under the
- * lock. When that read fails too, the copy is marked stale (`expire`) and kept, with its index
- * entries: a reader of this account's copy then goes to the pod, but a decision that reads no
- * account's copy (a sign-in with a wallet or DID no indexed account lists) never would, so until
- * something reads the account the indexes can miss a credential the pod lists. A caller whose
- * write may have landed reads the account again itself (server.ts credentialAfterFailedAdd and
- * claimFirstSignInOnPod), and when it cannot, server.ts has that credential's next sign-in read
- * the account first (credential-decisions.ts).
+ * lock. When settling fails (a request of it fails), the copy is marked stale (`expire`) and
+ * kept, with its index entries, and the error carries the condition the pending write was sent
+ * with (`AuthMethodsWriteError.pending`): a reader of this account's copy then goes to the pod,
+ * but a decision that reads no account's copy (a sign-in with a wallet or DID no indexed
+ * account lists) never would, so until something reads the account the indexes can miss a
+ * credential the pod lists. For a wallet or DID, the caller settles the account again itself
+ * (server.ts credentialAfterFailedAdd and claimFirstSignInOnPod), and when it cannot, the
+ * credential's next sign-in settles it first (credential-decisions.ts). A passkey whose write
+ * stayed unsettled is not recorded that way: its sign-in reads the accounts the index names.
  *
  * No server state and no I/O of its own: everything is injected, as in first-sign-in.ts, so
  * the contract is tested without starting server.ts (tests/auth-methods-writer.test.ts).
@@ -71,17 +79,28 @@ export class AuthMethodsConflictError extends Error { override name = 'AuthMetho
 /**
  * The pod refused a write, or did not answer it. `unknownOutcome`: it may have applied it all
  * the same (a 5xx, a timeout, a dropped connection), which is why the record is read again.
+ * `unanswered`: the pod sent no answer at all (a timeout, a dropped connection), so it may still
+ * apply the write later, and a read made after it is final only once settled (`settle`).
  */
 export class AuthMethodsWriteError extends Error {
   override name = 'AuthMethodsWriteError';
   /**
-   * What the pod held when applyUpdate read it again after the failure, still under the lock:
-   * its record, or null when it had no document. Undefined when that read failed too (or was
-   * not made). A caller whose write may have landed decides on this, not on its own request.
+   * What the pod holds once the failed write can no longer apply, settled by applyUpdate still
+   * under the lock: its record, or null when it has no document. Undefined when it could not be
+   * settled (a request of it failed). A caller whose write may have landed decides on this, not
+   * on its own request.
    */
   podRecord?: unknown;
-  constructor(message: string, readonly unknownOutcome: boolean) { super(message); }
+  /**
+   * Set when podRecord is undefined and the pod never answered the write: the condition it was
+   * sent with, which a later `settle` of the account needs (the write may still apply until the
+   * record moves off that state).
+   */
+  pending?: WritePrecondition;
+  constructor(message: string, readonly unknownOutcome: boolean, readonly unanswered = false) { super(message); }
 }
+/** A write the pod never answered may still apply, and nothing could stop it (see settle). */
+export class UnsettledWriteError extends Error { override name = 'UnsettledWriteError'; }
 /** An unclaimed Play owner whose anchor no longer opens to its id: no credential may be added. */
 export class PlayOwnerUnavailableError extends Error { override name = 'PlayOwnerUnavailableError'; }
 /** A caller asked for an account's lock while already holding it. A bug, never a user error. */
@@ -203,15 +222,18 @@ export async function applyUpdate<M>(
       result = await deps.writeLive(userId, doc, pre, context);
     } catch (err) {
       if (err instanceof AccountDeletedError) throw err;
-      const failure = err instanceof AuthMethodsWriteError ? err : new AuthMethodsWriteError((err as Error).message, true);
-      // The pod may hold the new record or the old one. Still under the lock, ask it, and tell
-      // the caller: a write the pod applied before answering 500 (or timing out) has landed.
+      const failure = err instanceof AuthMethodsWriteError ? err : new AuthMethodsWriteError((err as Error).message, true, true);
+      // The pod may hold the new record or the old one, and one it never answered may still
+      // apply. Still under the lock, settle it, and tell the caller what the pod holds then: a
+      // write the pod applied before answering 500 (or timing out) has landed.
+      const pending = failure.unanswered ? pre : undefined;
       try {
-        const now = await deps.readLive(userId);
+        const now = await settle(deps, userId, pending, context);
         deps.install(userId, now.methods ?? deps.empty(userId));
         failure.podRecord = now.methods;
       } catch {
         deps.expire(userId);
+        if (pending) failure.pending = pending;
       }
       throw failure;
     }
@@ -221,6 +243,45 @@ export async function applyUpdate<M>(
   }
   deps.conflicted?.(userId, context, attempts);
   throw new AuthMethodsConflictError(`${userId}: auth-methods document changed under ${attempts} write(s)`);
+}
+
+/** Whether `now` is off the state a write sent on `pending` was conditional on, so that write can no longer apply. */
+function movedOff<M>(now: LiveRecord<M>, pending: WritePrecondition): boolean {
+  if (pending.kind === 'absent') return now.methods !== null;
+  if (pending.kind === 'match') return now.etag !== pending.etag;
+  // Sent unconditionally (the pod sends no ETag): nothing can fence it, and a read is all there is.
+  return true;
+}
+
+/**
+ * The record as the pod holds it once a failed write can no longer change it, for a caller that
+ * holds the account's lock. `pending`: the condition of a write the pod never answered (undefined
+ * when it answered, or when there is none): such a write may still be applied after any read, so
+ * long as the record is in the state it was conditional on (the ETag it was sent with; no
+ * document, for If-None-Match: *). Then the record is written back as read, on that same
+ * condition (an empty record where there is no document), so that the pending write's condition
+ * can never hold again, and read once more. Any write since (the pending one, the fence, another
+ * writer's) moves the record off that state, and the read that finds it moved is final.
+ *
+ * Throws (UnsettledWriteError, or the read's error) when it cannot get there: a read fails, the
+ * fence gets no answer (it may still apply too), or the record has not moved after the fence (a
+ * store whose ETag does not change on every write). Requests stop at the first that fails, so a
+ * pod that never answers holds the lock here for one more timeout at most.
+ */
+export async function settle<M>(deps: WriterDeps<M>, userId: string, pending: WritePrecondition | undefined, context: string): Promise<LiveRecord<M>> {
+  deps.assertLockHeld(userId);
+  const now = await deps.readLive(userId);
+  if (!pending || movedOff(now, pending)) return now;
+  const fence = (pending.kind === 'absent' ? deps.empty(userId) : { ...unknownTopLevelKeys(now.raw), ...now.methods }) as M;
+  try {
+    await deps.writeLive(userId, fence, pending, `${context}-settle`);
+  } catch (err) {
+    // A fence the pod did not answer may apply later, as may the write: neither is over.
+    if (!(err instanceof AuthMethodsWriteError) || err.unanswered) throw new UnsettledWriteError(`${userId}: a write the pod did not answer could not be fenced`);
+  }
+  const after = await deps.readLive(userId);
+  if (movedOff(after, pending)) return after;
+  throw new UnsettledWriteError(`${userId}: the record did not move off the state a write the pod did not answer was conditional on`);
 }
 
 /** applyUpdate under the account's lock. */

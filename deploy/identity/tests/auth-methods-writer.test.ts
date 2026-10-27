@@ -16,7 +16,7 @@ import { readFileSync } from 'node:fs';
 import * as nodeModule from 'node:module';
 import {
   AccountDeletedError, AccountRecordMissingError, AuthMethodsConflictError, AuthMethodsWriteError, NoWrite,
-  PlayOwnerUnavailableError, PodLockReentryError, Write, applyUpdate, unknownTopLevelKeys, updateAuthMethods,
+  PlayOwnerUnavailableError, PodLockReentryError, Write, applyUpdate, settle, unknownTopLevelKeys, updateAuthMethods,
   type LiveRecord, type WritePrecondition, type WriterDeps,
 } from '../auth-methods-writer.js';
 
@@ -61,6 +61,11 @@ function pod(initial: (Record_ & Record<string, unknown>) | null, userId = 'u-pk
   let writeFailures = 0;
   let applyThenFail = false;
   let beforeWrite: (() => void) | null = null;
+  // Writes the pod never answers ('hang', the client times out), and when each would still be
+  // applied: right after the next read is answered, only when the test says (applyLater), never.
+  const hangs: Array<'after-next-read' | 'later' | 'never'> = [];
+  const late: Array<() => void> = [];
+  let afterNextRead: (() => void) | null = null;
   const deleted = new Set<string>();
   let anchorOpens = true;
   const { lock, assertLockHeld } = serverLock();
@@ -69,17 +74,36 @@ function pod(initial: (Record_ & Record<string, unknown>) | null, userId = 'u-pk
     readLive: async (): Promise<LiveRecord<Record_>> => {
       log.push('GET');
       if (readFailures > 0) { readFailures--; throw new Error('pod unreadable'); }
-      if (!doc) return { methods: null, raw: null, etag: null };
-      // What server.ts's normaliseAuthMethods keeps: the keys it reads, never the others.
-      const { userId: id, walletAddresses, webAuthnCredentials, didKeys, sessionEpoch, deletedAt, provisionalPlayAnchor } = structuredClone(doc);
-      const methods: Record_ = { userId: id, walletAddresses, webAuthnCredentials, didKeys,
-        ...(sessionEpoch !== undefined ? { sessionEpoch } : {}), ...(deletedAt ? { deletedAt } : {}),
-        ...(provisionalPlayAnchor ? { provisionalPlayAnchor } : {}) };
-      return { methods, raw: structuredClone(doc), etag: `"${version}-application/ld+json"` };
+      const answered = ((): LiveRecord<Record_> => {
+        if (!doc) return { methods: null, raw: null, etag: null };
+        // What server.ts's normaliseAuthMethods keeps: the keys it reads, never the others.
+        const { userId: id, walletAddresses, webAuthnCredentials, didKeys, sessionEpoch, deletedAt, provisionalPlayAnchor } = structuredClone(doc);
+        const methods: Record_ = { userId: id, walletAddresses, webAuthnCredentials, didKeys,
+          ...(sessionEpoch !== undefined ? { sessionEpoch } : {}), ...(deletedAt ? { deletedAt } : {}),
+          ...(provisionalPlayAnchor ? { provisionalPlayAnchor } : {}) };
+        return { methods, raw: structuredClone(doc), etag: `"${version}-application/ld+json"` };
+      })();
+      const apply = afterNextRead;
+      afterNextRead = null;
+      apply?.();
+      return answered;
     },
     writeLive: async (_id, written: Record_, pre: WritePrecondition) => {
       log.push(`PUT ${pre.kind}${pre.kind === 'match' ? ` ${pre.etag}` : ''}`);
       beforeWrite?.();
+      const hang = hangs.shift();
+      if (hang) {
+        // Its precondition is checked when the pod gets round to it, as a store does.
+        const apply = () => {
+          if (pre.kind === 'absent' ? doc !== null : pre.kind === 'match' && pre.etag !== `"${version}-application/ld+json"`) { log.push('late PUT 412'); return; }
+          doc = structuredClone(written) as typeof doc;
+          version++;
+          log.push('late PUT applied');
+        };
+        if (hang === 'after-next-read') afterNextRead = apply;
+        else if (hang === 'later') late.push(apply);
+        throw new AuthMethodsWriteError('PUT timed out', true, true);
+      }
       if (writeFailures > 0) {
         writeFailures--;
         if (applyThenFail) { doc = structuredClone(written) as typeof doc; version++; }
@@ -106,6 +130,10 @@ function pod(initial: (Record_ & Record<string, unknown>) | null, userId = 'u-pk
     outOfBand(edit: (m: Record_) => void) { edit(doc!); version++; },
     failReads(n: number) { readFailures = n; },
     failWrites(n: number, applied = false) { writeFailures = n; applyThenFail = applied; },
+    /** The next writes are never answered; each is applied (if its condition still holds) when `when` says. */
+    hang(...when: Array<'after-next-read' | 'later' | 'never'>) { hangs.push(...when); },
+    /** The pod gets round to the writes it held for later. */
+    applyLater() { for (const apply of late.splice(0)) apply(); },
     set beforeWrite(fn: (() => void) | null) { beforeWrite = fn; },
     set anchorOpens(v: boolean) { anchorOpens = v; },
   };
@@ -184,6 +212,63 @@ test('a write that fails is followed by a read, and what the pod holds then is i
   assert.deepEqual(blind.installed, []);
   assert.equal(blind.expired, 1);
   assert.equal(unknown.podRecord, undefined);
+});
+
+test('a write the pod never answered and applied after the read that follows is settled: the record read last lists it', async () => {
+  const p = pod(account());
+  p.hang('after-next-read');
+  const err = await updateAuthMethods(p.deps, p.userId, 'test', addWallet('0xbbb')).then(() => null, (e: unknown) => e);
+  assert.ok(err instanceof AuthMethodsWriteError && err.unanswered, String(err));
+  // The read after the timeout found the old record, so it was written back on the same ETag (the
+  // fence); the held write had landed by then, so the fence met it (412), and the next read is final.
+  assert.deepEqual(p.log, ['GET', 'PUT match "1-application/ld+json"', 'GET', 'late PUT applied',
+    'PUT match "1-application/ld+json"', 'GET']);
+  assert.deepEqual(p.doc!.walletAddresses, ['0xaaa', '0xbbb']);
+  assert.deepEqual(err.podRecord, p.doc);
+  assert.deepEqual(p.installed.at(-1)!.walletAddresses, ['0xaaa', '0xbbb']);
+  assert.equal(err.pending, undefined);
+});
+
+test('a write the pod never answered and would apply later is fenced: once settled, it can no longer land', async () => {
+  const p = pod(account());
+  p.hang('later');
+  const err = await updateAuthMethods(p.deps, p.userId, 'test', addWallet('0xbbb')).then(() => null, (e: unknown) => e);
+  assert.ok(err instanceof AuthMethodsWriteError, String(err));
+  assert.deepEqual(p.log, ['GET', 'PUT match "1-application/ld+json"', 'GET', 'PUT match "1-application/ld+json"', 'GET']);
+  assert.deepEqual(err.podRecord, account(), 'what the pod holds, final');
+  assert.deepEqual(p.installed.at(-1), account());
+  p.applyLater();
+  assert.deepEqual(p.log.at(-1), 'late PUT 412');
+  assert.deepEqual(p.doc!.walletAddresses, ['0xaaa'], 'the held write can no longer land');
+  // A create the pod never answered is fenced with an empty record (If-None-Match: *, as the create was).
+  const c = pod(null);
+  c.hang('later');
+  const created = await updateAuthMethods(c.deps, c.userId, 'test', addWallet('0xbbb'), { absent: 'create' }).then(() => null, (e: unknown) => e);
+  assert.ok(created instanceof AuthMethodsWriteError, String(created));
+  assert.deepEqual(c.log, ['GET', 'PUT absent', 'GET', 'PUT absent', 'GET']);
+  assert.deepEqual(created.podRecord, empty(c.userId));
+  c.applyLater();
+  assert.deepEqual(c.doc!.walletAddresses, [], 'the held create can no longer land');
+});
+
+test('a write the pod never answered whose fence gets no answer either is not settled: the copy expires and the error carries the pending condition', async () => {
+  const p = pod(account());
+  p.hang('later', 'never');
+  const err = await updateAuthMethods(p.deps, p.userId, 'test', addWallet('0xbbb')).then(() => null, (e: unknown) => e);
+  assert.ok(err instanceof AuthMethodsWriteError, String(err));
+  assert.deepEqual(p.log, ['GET', 'PUT match "1-application/ld+json"', 'GET', 'PUT match "1-application/ld+json"']);
+  assert.equal(err.podRecord, undefined);
+  assert.deepEqual(err.pending, { kind: 'match', etag: '"1-application/ld+json"' });
+  assert.equal(p.expired, 1);
+  // A later settle with that condition finishes it: the held write lands first here, and the read finds it.
+  p.applyLater();
+  const now = await p.deps.lock(p.userId, () => settle(p.deps, p.userId, err.pending, 'later'));
+  assert.deepEqual(now.methods!.walletAddresses, ['0xaaa', '0xbbb']);
+  // A write the pod answered (500) is over: settling it is one read, with no fence.
+  const answered = pod(account());
+  const before = answered.log.length;
+  await answered.deps.lock(answered.userId, () => settle(answered.deps, answered.userId, undefined, 'answered'));
+  assert.deepEqual(answered.log.slice(before), ['GET']);
 });
 
 test('a precondition failure re-reads and re-runs the delta on the new record, and gives up after three', async () => {
@@ -352,15 +437,17 @@ function serverReads(read: () => Promise<LiveRecord<Record_>>) {
     return m;
   };
   const refreshing = new Map();
-  const deps = { podLockContext, PodLockReentryError, refreshing, generationOf, withIdentityPodMutex: lock,
+  const deps = { podLockContext, PodLockReentryError, refreshing, generationOf, recordGeneration, withIdentityPodMutex: lock,
     authMethodsCache, readLive: read, installAuthMethods, emptyAuthMethods: empty, AUTH_METHODS_TTL_MS: 10_000, log: () => {} };
   const names = Object.keys(deps);
   const build = new Function(...names, `${productionFunction('refreshAuthMethods', false)}
     ${productionFunction('readAuthMethods')}
-    return { refreshAuthMethods, readAuthMethods };`);
+    ${productionFunction('expireAuthMethods', false)}
+    return { refreshAuthMethods, readAuthMethods, expireAuthMethods };`);
   const fns = build(...names.map(n => (deps as Record<string, unknown>)[n])) as {
     refreshAuthMethods(id: string): Promise<Record_>;
     readAuthMethods(id: string, allowStale?: boolean): Promise<Record_>;
+    expireAuthMethods(id: string): void;
   };
   return { ...fns, lock, authMethodsCache, installAuthMethods, get lockTurns() { return lockTurns; } };
 }
@@ -404,6 +491,28 @@ test('a refresh queued behind a writer reuses what the writer installed instead 
   assert.equal(gets, 0);
 });
 
+test('a refresh queued behind a writer that could only mark the copy stale reads the pod', async () => {
+  let gets = 0;
+  const r = serverReads(async () => { gets++; return { methods: account(), raw: null, etag: null }; });
+  r.authMethodsCache.set('u-pk-000000000001', { value: empty('u-pk-000000000001'), fetchedAt: 0 });
+  let holding!: () => void;
+  let finish!: () => void;
+  const held = new Promise<void>(resolve => { holding = resolve; });
+  const finished = new Promise<void>(resolve => { finish = resolve; });
+  const writer = r.lock('u-pk-000000000001', async () => {
+    holding();
+    await finished;
+    // Its write failed and could not be settled.
+    r.expireAuthMethods('u-pk-000000000001');
+  });
+  await held;
+  const refresh = r.readAuthMethods('u-pk-000000000001');
+  finish();
+  await writer;
+  assert.deepEqual((await refresh).walletAddresses, ['0xaaa'], 'what the pod holds, not the stale copy');
+  assert.equal(gets, 1);
+});
+
 test('a read of this server\'s copy inside the account\'s own lock is a bug, refused at once', async () => {
   const r = serverReads(async () => ({ methods: account(), raw: null, etag: null }));
   await assert.rejects(r.lock('u-pk-000000000001', () => r.refreshAuthMethods('u-pk-000000000001')), PodLockReentryError);
@@ -439,4 +548,18 @@ test('an unlocked load whose read an install overlapped reports the installed re
   // With nothing overlapping, the read is adopted.
   assert.equal(await loadAccountFromPod('u-pk-000000000001'), true);
   assert.equal(adopted.length, 1);
+  // A write that failed and could not be settled overlaps the read: it may have landed, and the
+  // copy is only marked stale (server.ts expireAuthMethods), so the read is not adopted either.
+  const expireAuthMethods = new Function('authMethodsCache', 'recordGeneration', 'generationOf',
+    `${productionFunction('expireAuthMethods', false)}; return expireAuthMethods;`)(authMethodsCache, recordGeneration, generationOf) as (id: string) => void;
+  let releaseAgain!: () => void;
+  const again = new Promise<void>(resolve => { releaseAgain = resolve; });
+  deps.readPodJson = async () => { await again; return account(); };
+  const overlapped = new Function(...names, `${productionFunction('loadAccountFromPod')}; return loadAccountFromPod;`)(
+    ...names.map(n => (deps as Record<string, unknown>)[n])) as (id: string) => Promise<boolean>;
+  const loading = overlapped('u-pk-000000000001');
+  expireAuthMethods('u-pk-000000000001');
+  releaseAgain();
+  await loading;
+  assert.equal(adopted.length, 1, 'the overlapped read is not installed');
 });

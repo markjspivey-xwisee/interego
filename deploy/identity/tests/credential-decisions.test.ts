@@ -76,12 +76,15 @@ test('a decision that throws gives the turn up, and the error reaches its caller
 test('an unconfirmed write is read before the credential\'s next decision, and decides nothing while it cannot be', async () => {
   let readable = false;
   const reads: string[] = [];
+  const pendings: unknown[] = [];
   const decisions = createCredentialDecisions({
-    readAccount: async userId => { reads.push(userId); if (!readable) throw new Error('502'); },
+    readAccount: async (userId, pending) => { reads.push(userId); pendings.push(pending); if (!readable) throw new Error('502'); },
     waitMs: 5_000,
   });
-  // Recorded inside a turn, as the route does after a write whose outcome stayed unknown.
-  await decisions.decide('wallet:0xa', async () => { decisions.unconfirmed('wallet:0xa', 'u-pk-x'); });
+  // Recorded inside a turn, as the route does after a write whose outcome stayed unknown, with the
+  // condition a write the pod never answered was sent on: the read must settle that write first.
+  const pending = { kind: 'match', etag: '"7-application/ld+json"' };
+  await decisions.decide('wallet:0xa', async () => { decisions.unconfirmed('wallet:0xa', 'u-pk-x', pending); });
   assert.equal(decisions.unconfirmedFor('wallet:0xa'), 'u-pk-x');
   let ran = 0;
   assert.deepEqual(await decisions.decide('wallet:0xa', async () => { ran++; }), { kind: 'unreadable', userId: 'u-pk-x' });
@@ -95,5 +98,6 @@ test('an unconfirmed write is read before the credential\'s next decision, and d
   assert.equal(decisions.unconfirmedFor('wallet:0xa'), undefined, 'once read, it is settled');
   await decisions.decide('wallet:0xa', async () => { ran++; });
   assert.deepEqual(reads, ['u-pk-x', 'u-pk-x'], 'and not read again');
+  assert.deepEqual(pendings, [pending, pending], 'each read was given the pending write to settle');
   assert.equal(ran, 2);
 });

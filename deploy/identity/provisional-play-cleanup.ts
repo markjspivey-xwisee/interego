@@ -2,13 +2,17 @@
  * Bounded, own-pod-only cleanup; physical PGSL history reclamation is separate.
  *
  * `stillUnclaimed` reads the owner's record and says whether it may go, with the ETag it was
- * read under: the anchor (auth-methods.jsonld) is deleted only if it is still that record
- * (If-Match), so an enrolment that lands between the read and the delete (the other instance's)
- * keeps the account. 'kept': nothing more is deleted.
+ * read under and the document read. Before anything is deleted, that document is written back
+ * unchanged on that ETag (If-Match), a fence: an enrolment that read the anchor before it (the
+ * other instance's, during a deploy's overlap) then fails its own If-Match, and one that reads
+ * it after finds the anchor expired, which no writer accepts (server.ts playOwnerWritable). A
+ * 412 on the fence means such an enrolment landed first: 'kept', and nothing is deleted. Only
+ * then are the pod's resources deleted, the anchor last but the root. A pod that sends no ETag
+ * gets no fence.
  */
 export async function purgeProvisionalPlayPod(options: {
   userId: string; cssUrl: string; fetcher?: typeof fetch;
-  stillUnclaimed(): Promise<{ ok: boolean; etag: string | null }>;
+  stillUnclaimed(): Promise<{ ok: boolean; etag: string | null; document?: unknown }>;
 }): Promise<'purged' | 'kept'> {
   if (!/^u-try-play-[a-f0-9]{32}$/.test(options.userId)) throw new Error('Refusing non-Play pod cleanup');
   const root = new URL(`${options.userId}/`, options.cssUrl);
@@ -40,13 +44,20 @@ export async function purgeProvisionalPlayPod(options: {
   const unclaimed = await options.stillUnclaimed();
   if (!unclaimed.ok) return 'kept';
   const anchor = new URL('auth-methods.jsonld', root).href;
+  if (unclaimed.etag && unclaimed.document !== undefined) {
+    const fence = await request(anchor, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/ld+json', 'If-Match': unclaimed.etag },
+      body: JSON.stringify(unclaimed.document, null, 2),
+    });
+    if (fence.status === 412) return 'kept';
+    if (!fence.ok && fence.status !== 205) throw new Error('Provisional cleanup fence failed');
+  }
   const targets = ordered.filter(url => url !== root.href && url !== anchor);
   if (ordered.includes(anchor)) targets.push(anchor);
   if (ordered.includes(root.href)) targets.push(root.href);
   for (const url of targets) {
-    const conditional = url === anchor && unclaimed.etag ? { headers: { 'If-Match': unclaimed.etag } } : {};
-    const response = await request(url, { method: 'DELETE', ...conditional });
-    if (url === anchor && response.status === 412) return 'kept';
+    const response = await request(url, { method: 'DELETE' });
     if (!response.ok && response.status !== 404) throw new Error('Provisional cleanup deletion incomplete');
   }
   return 'purged';

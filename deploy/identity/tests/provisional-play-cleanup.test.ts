@@ -44,34 +44,61 @@ test('fresh credential enrollment exempts the pod even after traversal', async (
     }) as typeof fetch });
   assert.equal(deletions, 0);
 });
-test('the anchor is deleted only if it is still the record read: an enrolment since keeps the account', async () => {
-  const deleted: string[] = [];
-  const conditions: Array<string | null> = [];
-  let enrolledSinceRead = false;
-  const result = await purgeProvisionalPlayPod({ userId, cssUrl,
-    stillUnclaimed: async () => ({ ok: true, etag: '"1700000000000-application/ld+json"' }),
-    fetcher: (async (input, init) => {
-      const url = String(input);
-      if (init?.method === 'DELETE') {
-        const ifMatch = new Headers(init.headers).get('if-match');
-        conditions.push(ifMatch);
-        // Another instance enrolled a credential after the read: the anchor's ETag moved on.
-        if (url === `${root}auth-methods.jsonld`) {
-          enrolledSinceRead = true;
-          if (ifMatch !== '"1700000000001-application/ld+json"') return new Response(null, { status: 412 });
-        }
-        deleted.push(url);
-        return new Response(null, { status: 204 });
-      }
-      return new Response(url === root ? 'ldp:contains <auth-methods.jsonld>, <checkpoint> .' : '', { status: 200 });
-    }) as typeof fetch });
+/**
+ * A pod with an anchor (ETag versioned) and one other resource. `enrolAfterRead` (the other
+ * instance's enrolment, during a deploy's overlap) changes the anchor after stillUnclaimed read it,
+ * as the first request after that read arrives.
+ */
+function anchoredPod(enrolAfterRead: boolean) {
+  let version = 1;
+  const etag = () => `"${version}-application/ld+json"`;
+  const anchorUrl = `${root}auth-methods.jsonld`;
+  const requests: Array<{ method: string; url: string; ifMatch: string | null; status: number }> = [];
+  const present = new Set([root, anchorUrl, `${root}checkpoint`]);
+  let read = false;
+  let enrolled = false;
+  const fetcher = (async (input: string | URL | Request, init?: RequestInit) => {
+    const url = String(input);
+    const method = init?.method ?? 'GET';
+    const ifMatch = new Headers(init?.headers).get('if-match');
+    if (method !== 'GET' && read && enrolAfterRead && !enrolled) { enrolled = true; version++; }
+    const answer = (status: number, body?: string) => { requests.push({ method, url, ifMatch, status }); return new Response(body ?? null, { status }); };
+    if (method === 'GET') return answer(200, url === root ? 'ldp:contains <auth-methods.jsonld>, <checkpoint> .' : '');
+    if (method === 'PUT') {
+      if (ifMatch !== etag()) return answer(412);
+      version++;
+      return answer(205);
+    }
+    if (method === 'DELETE') { present.delete(url); return answer(205); }
+    return answer(405);
+  }) as typeof fetch;
+  const stillUnclaimed = async () => { read = true; return { ok: true, etag: etag(), document: { userId, provisionalPlayAnchor: 'ipa1_x' } }; };
+  return { fetcher, stillUnclaimed, requests, present, anchorUrl };
+}
+
+test('an enrolment that lands after the decision keeps the whole account: the fence comes before any deletion', async () => {
+  const pod = anchoredPod(true);
+  const result = await purgeProvisionalPlayPod({ userId, cssUrl, stillUnclaimed: pod.stillUnclaimed, fetcher: pod.fetcher });
   assert.equal(result, 'kept');
-  assert.ok(enrolledSinceRead);
-  assert.ok(!deleted.includes(`${root}auth-methods.jsonld`));
-  assert.ok(!deleted.includes(root), 'the container stays');
-  // Only the anchor's DELETE is conditional, on the ETag the decision was read under.
-  assert.deepEqual(conditions, [null, '"1700000000000-application/ld+json"']);
+  // The anchor was written back on the ETag read, refused (412), and nothing was deleted.
+  assert.deepEqual(pod.requests.filter(r => r.method !== 'GET').map(r => [r.method, r.url, r.status]),
+    [['PUT', pod.anchorUrl, 412]]);
+  assert.ok(pod.present.has(`${root}checkpoint`), 'the guest\'s files stay');
+  assert.ok(pod.present.has(pod.anchorUrl) && pod.present.has(root));
 });
+
+test('without an enrolment, the fence lands first and then everything goes, the anchor last but the root', async () => {
+  const pod = anchoredPod(false);
+  const result = await purgeProvisionalPlayPod({ userId, cssUrl, stillUnclaimed: pod.stillUnclaimed, fetcher: pod.fetcher });
+  assert.equal(result, 'purged');
+  assert.deepEqual(pod.requests.filter(r => r.method !== 'GET').map(r => [r.method, r.url, r.ifMatch, r.status]), [
+    ['PUT', pod.anchorUrl, '"1-application/ld+json"', 205],
+    ['DELETE', `${root}checkpoint`, null, 205],
+    ['DELETE', pod.anchorUrl, null, 205],
+    ['DELETE', root, null, 205],
+  ]);
+});
+
 test('cleanup never accepts non-Play owner identifiers', async () => {
   await assert.rejects(purgeProvisionalPlayPod({ userId: 'canonical-owner', cssUrl, stillUnclaimed: async () => ({ ok: true, etag: null }) }), /non-Play/);
 });

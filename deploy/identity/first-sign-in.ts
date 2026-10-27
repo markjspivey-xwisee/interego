@@ -82,6 +82,8 @@ export interface FirstSignInInput<M extends AuthMethodsLike> {
   vacated?: (existing: M | null) => Promise<boolean>;
   /** Called once when `vacated` said true, to leave the tombstone; a failure still refuses. */
   retire?: (existing: M | null) => Promise<void>;
+  /** Every attempt's write met a document written under it (the outcome is then 'unconfirmed'). */
+  conflicted?: (attempts: number) => void;
 }
 
 export async function claimFirstSignIn<M extends AuthMethodsLike>(input: FirstSignInInput<M>): Promise<FirstSignInOutcome<M>> {
@@ -121,5 +123,6 @@ export async function claimFirstSignIn<M extends AuthMethodsLike>(input: FirstSi
     }
     if (written) return { kind: 'created', methods };
   }
+  input.conflicted?.(attempts);
   return { kind: 'unconfirmed', reason: `auth-methods document changed under ${attempts} write(s)` };
 }

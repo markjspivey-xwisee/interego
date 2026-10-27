@@ -21,10 +21,11 @@
  *     installed or has failed. Decisions about one credential run one at a time, each after the
  *     writes of the ones before it; other credentials do not wait;
  *   - a write whose outcome stayed unknown is recorded against the account it was for
- *     (`unconfirmed`, called inside the turn), and the credential's next turn reads that account
- *     from its pod (`readAccount`, which makes what it read this server's copy and indexes)
- *     before anything is decided. While the account cannot be read, the turn decides nothing
- *     ('unreadable') and the record stays.
+ *     (`unconfirmed`, called inside the turn, with the condition a write the pod never answered
+ *     was sent on), and the credential's next turn reads that account from its pod (`readAccount`,
+ *     which settles such a write first, so that it can no longer land after the read, and makes
+ *     what it read this server's copy and indexes) before anything is decided. While the account
+ *     cannot be read or settled, the turn decides nothing ('unreadable') and the record stays.
  * A turn waits at most `waitMs` for the turns before it ('busy'), then decides nothing; the
  * turns after it still wait for the one that holds the turn. A turn is not re-entrant: a request
  * takes one credential's turn once. Process-local, as the account lock is: another instance
@@ -37,9 +38,11 @@
 export interface CredentialDecisionDeps {
   /**
    * Read the account's record from its pod now, and make it this server's copy and indexes.
-   * Throws when the pod cannot be read.
+   * `pending`: what `unconfirmed` was given with the account (the condition of a write the pod
+   * never answered, which the read must settle first). Throws when the pod cannot be read, or
+   * that write cannot be settled.
    */
-  readAccount(userId: string): Promise<unknown>;
+  readAccount(userId: string, pending: unknown): Promise<unknown>;
   /** How long a turn waits for the turns before it. */
   waitMs: number;
 }
@@ -56,9 +59,10 @@ export interface CredentialDecisions {
   decide<T>(credential: string, decide: () => Promise<T>): Promise<Turn<T>>;
   /**
    * A write that would put `credential` on `userId` failed, and whether the pod took it is not
-   * known: the credential's next turn reads `userId` first. Called inside the credential's turn.
+   * known: the credential's next turn reads `userId` first (passing `pending` to readAccount).
+   * Called inside the credential's turn.
    */
-  unconfirmed(credential: string, userId: string): void;
+  unconfirmed(credential: string, userId: string, pending?: unknown): void;
   /** The account an unconfirmed write of the credential was for, if one is recorded. */
   unconfirmedFor(credential: string): string | undefined;
   /** Credentials whose turn is held or waited for (none once every turn has finished). */
@@ -67,7 +71,7 @@ export interface CredentialDecisions {
 
 export function createCredentialDecisions(deps: CredentialDecisionDeps): CredentialDecisions {
   const turns = new Map<string, Promise<void>>();
-  const unconfirmed = new Map<string, string>();
+  const unconfirmed = new Map<string, { userId: string; pending: unknown }>();
   return {
     async decide<T>(credential: string, decide: () => Promise<T>): Promise<Turn<T>> {
       const before = turns.get(credential) ?? Promise.resolve();
@@ -91,12 +95,12 @@ export function createCredentialDecisions(deps: CredentialDecisionDeps): Credent
           void tail.then(forget);
           return { kind: 'busy' };
         }
-        const userId = unconfirmed.get(credential);
-        if (userId !== undefined) {
+        const recorded = unconfirmed.get(credential);
+        if (recorded !== undefined) {
           try {
-            await deps.readAccount(userId);
+            await deps.readAccount(recorded.userId, recorded.pending);
           } catch {
-            return { kind: 'unreadable', userId };
+            return { kind: 'unreadable', userId: recorded.userId };
           }
           unconfirmed.delete(credential);
         }
@@ -107,8 +111,8 @@ export function createCredentialDecisions(deps: CredentialDecisionDeps): Credent
         if (started) forget();
       }
     },
-    unconfirmed(credential, userId) { unconfirmed.set(credential, userId); },
-    unconfirmedFor: credential => unconfirmed.get(credential),
+    unconfirmed(credential, userId, pending) { unconfirmed.set(credential, { userId, pending }); },
+    unconfirmedFor: credential => unconfirmed.get(credential)?.userId,
     inFlight: () => turns.size,
   };
 }

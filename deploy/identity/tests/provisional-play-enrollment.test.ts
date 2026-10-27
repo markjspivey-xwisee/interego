@@ -111,22 +111,26 @@ function fixture() {
     updateAuthMethods, NoWrite, Write,
   ) as (owner: string, context: string, update: (m: Methods) => boolean | void, opts?: { absent?: 'refuse' | 'create' }) => Promise<unknown>;
   const authMethodsCache = { get: () => cached ? { value: cached } : undefined };
+  const log = () => {};
+  // How a route reads a failed write's settled record, exactly as server.ts has it.
+  const changeOnPod = new Function('AuthMethodsWriteError', 'isTombstone',
+    `${productionSyncFunction('changeOnPod')}; return changeOnPod;`)(AuthMethodsWriteError, isTombstone);
+  const refuseUndeterminedChange = new Function(`${productionSyncFunction('refuseUndeterminedChange')}; return refuseUndeterminedChange;`)();
   const signIn = new Function('authMethodsCache', 'publicKeyIdentity', 'updateAuthMethods', 'NoWrite', 'Write',
     'verifyPasskeyAssertion', 'PodReadError', 'AuthMethodsWriteError', 'AuthMethodsConflictError', 'AccountRecordMissingError',
-    'PlayOwnerUnavailableError', 'AccountDeletedError',
+    'PlayOwnerUnavailableError', 'AccountDeletedError', 'changeOnPod', 'log',
     `${productionFunction('signInWithPasskey')}; return signInWithPasskey;`)(
     authMethodsCache, async (key: string | undefined) => `key:${key ?? 'stand-in'}`, updateAuthMethods, NoWrite, Write,
     async ({ credential }: { credential: { counter?: number } }) => {
       await duringVerification();
       return { ok: true, newCounter: (credential.counter ?? 0) + 1 };
     }, PodReadError, AuthMethodsWriteError, AuthMethodsConflictError, AccountRecordMissingError,
-    PlayOwnerUnavailableError, AccountDeletedError,
+    PlayOwnerUnavailableError, AccountDeletedError, changeOnPod, log,
   ) as (holders: string[], response: { id: string }, challenge: string, rpId: string, origin: string) => Promise<{ kind: string }>;
   const authenticate = async (owner: string, response: { id: string }, challenge: string, rpId: string, origin: string) => {
     const outcome = await signIn([owner], response, challenge, rpId, origin);
     assert.equal(outcome.kind, 'signed-in', JSON.stringify(outcome));
   };
-  const log = () => {};
   const sendAccountWriteRefusal = new Function('PodReadError', 'AccountDeletedError', 'AccountRecordMissingError',
     'ACCOUNT_DELETED_MESSAGE', 'log', `${productionSyncFunction('sendAccountWriteRefusal')}; return sendAccountWriteRefusal;`)(
     PodReadError, AccountDeletedError, AccountRecordMissingError, 'account deleted', log);
@@ -142,9 +146,10 @@ function fixture() {
     const end = executable.indexOf('\n});', handler);
     const run = new Function('requireUserFromBearer', 'commitCredentialEnrollment', 'withIdentityPodMutex',
       'deleteUserCompletely', 'log', 'authMethodsCache', 'sendAccountWriteRefusal', 'refuseRemoval', 'AuthMethodsWriteError',
+      'changeOnPod', 'refuseUndeterminedChange',
       `return (${executable.slice(handler, end)}\n});`)(
       async () => ({ id: userId }), commit, withIdentityPodMutex, deleteUserCompletely, log,
-      authMethodsCache, sendAccountWriteRefusal, refuseRemoval, AuthMethodsWriteError,
+      authMethodsCache, sendAccountWriteRefusal, refuseRemoval, AuthMethodsWriteError, changeOnPod, refuseUndeterminedChange,
     );
     const response = { statusCode: 200, headersSent: false, body: null as unknown,
       status(code: number) { this.statusCode = code; return this; },
@@ -157,15 +162,19 @@ function fixture() {
     userId, cssUrl: 'https://css.test/',
     stillUnclaimed: async () => {
       const live = await readLive();
-      return { ok: now >= 10 && !!live.methods && !hasAnyCredential(live.methods), etag: live.etag };
+      return { ok: now >= 10 && !!live.methods && !hasAnyCredential(live.methods), etag: live.etag, document: live.raw };
     },
     fetcher: (async (input: string | URL | Request, init?: RequestInit) => {
       const url = String(input);
+      if (init?.method === 'PUT' && url === root + 'auth-methods.jsonld') {
+        // The fence: the anchor written back as read, on the ETag read.
+        if (new Headers(init.headers).get('if-match') !== etag()) return new Response(null, { status: 412 });
+        document = JSON.parse(String(init.body)) as Methods;
+        version++;
+        return new Response(null, { status: 205 });
+      }
       if (init?.method === 'DELETE') {
         await beforeDelete();
-        if (url === root + 'auth-methods.jsonld' && new Headers(init.headers).get('if-match') !== etag()) {
-          return new Response(null, { status: 412 });
-        }
         deletions.push(url);
         if (url === root + 'checkpoint') checkpoint = false;
         if (url === root + 'auth-methods.jsonld') document = null;

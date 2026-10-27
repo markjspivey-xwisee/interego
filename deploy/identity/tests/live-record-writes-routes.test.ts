@@ -20,7 +20,7 @@
  *   node --test --import tsx tests/live-record-writes-routes.test.ts
  */
 
-import { test, before, after } from 'node:test';
+import { test, describe, before, after } from 'node:test';
 import { strict as assert } from 'node:assert';
 import { spawn, type ChildProcess } from 'node:child_process';
 import * as crypto from 'node:crypto';
@@ -55,8 +55,20 @@ const etagOf = (userId: string) => { const d = docs.get(userId); return d ? `"${
 const unlisted = new Set<string>();
 const failingGets = new Map<string, number>();
 const nonJson = new Set<string>();
-type PutFault = '500' | 'apply-then-500' | 'hang' | 'apply-then-hang';
+// 'hang-then-apply': never answered, and stored (if its precondition still holds then) right after
+// the next read of that record is answered: the read a writer makes once its write timed out sees
+// the old record, as a store that lets reads ahead of a queued write answers it. 'hang-then-apply-
+// late': never answered, and stored (if its precondition holds) only when the test calls
+// applyLate(), after the route has answered. A store keeps working on a request its client gave up on.
+type PutFault = '500' | 'apply-then-500' | 'hang' | 'apply-then-hang' | 'hang-then-apply' | 'hang-then-apply-late';
 const putFaults = new Map<string, PutFault[]>();
+/** Held writes waiting for the next answered read of their record ('hang-then-apply'). */
+const applyAfterRead: Array<{ userId: string; apply: () => void }> = [];
+/** Held writes waiting for applyLate() ('hang-then-apply-late'). */
+const lateWrites: Array<{ userId: string; apply: () => void }> = [];
+/** What each held write did when the store got round to it. */
+const heldOutcomes: Array<{ userId: string; applied: boolean }> = [];
+function applyLate(): void { for (const w of lateWrites.splice(0)) w.apply(); }
 const failingDeletes = new Set<string>();
 const hangingContainers = new Set<string>();
 /** Pods whose container GET lists their auth-methods.jsonld (a Play owner's, which the janitor walks to purge it). */
@@ -149,14 +161,25 @@ async function servePods(req: http.IncomingMessage, res: http.ServerResponse): P
     if (left > 0) { failingGets.set(userId, left - 1); answer(502); return; }
     if (nonJson.has(userId)) { answer(200, { 'Content-Type': 'application/ld+json' }, '{ "userId": "not json'); return; }
     const at = held ? snapshot : docs.get(userId);
-    if (!at) { answer(404); return; }
-    answer(200, { 'Content-Type': 'application/ld+json', ETag: `"${at.modified}-application/ld+json"` }, JSON.stringify(at.doc));
+    if (!at) answer(404);
+    else answer(200, { 'Content-Type': 'application/ld+json', ETag: `"${at.modified}-application/ld+json"` }, JSON.stringify(at.doc));
+    for (const w of applyAfterRead.filter(x => x.userId === userId)) { applyAfterRead.splice(applyAfterRead.indexOf(w), 1); w.apply(); }
     return;
   }
   if (req.method === 'PUT') {
     entry.body = JSON.parse(raw) as Doc;
     const fault = putFaults.get(userId)?.shift();
     if (fault === 'hang') return;   // never answered: the writer's own timeout must end it
+    if (fault === 'hang-then-apply' || fault === 'hang-then-apply-late') {
+      const body = entry.body;
+      const apply = () => {
+        const applied = !(entry.ifNoneMatch === '*' && docs.has(userId)) && !(entry.ifMatch && entry.ifMatch !== etagOf(userId));
+        if (applied) docs.set(userId, { doc: body, modified: clock = Math.max(clock + 1, Date.now()) });
+        heldOutcomes.push({ userId, applied });
+      };
+      (fault === 'hang-then-apply' ? applyAfterRead : lateWrites).push({ userId, apply });
+      return;
+    }
     if (fault === '500') { answer(500); return; }
     if (entry.ifNoneMatch === '*' && docs.has(userId)) { answer(412); return; }
     if (entry.ifMatch && entry.ifMatch !== etagOf(userId)) { answer(412); return; }
@@ -230,7 +253,9 @@ const invites = { pk: { userId: 'seeded-pk', token: crypto.randomBytes(12).toStr
   slow: { userId: 'seeded-slow', token: crypto.randomBytes(12).toString('hex') },
   slowDid: { userId: 'seeded-slow-did', token: crypto.randomBytes(12).toString('hex') },
   unsure: { userId: 'seeded-unsure', token: crypto.randomBytes(12).toString('hex') },
-  unsureDid: { userId: 'seeded-unsure-did', token: crypto.randomBytes(12).toString('hex') } };
+  unsureDid: { userId: 'seeded-unsure-did', token: crypto.randomBytes(12).toString('hex') },
+  hangEarly: { userId: 'seeded-hang-early', token: crypto.randomBytes(12).toString('hex') },
+  hangLate: { userId: 'seeded-hang-late', token: crypto.randomBytes(12).toString('hex') } };
 const bootstrap = (invite: { userId: string; token: string }) => ({ extra: { bootstrapUserId: invite.userId, bootstrapInvite: invite.token } });
 let podServer: http.Server;
 let podPort = 0;
@@ -408,7 +433,18 @@ const raceRemove = account({ keys: [P()], wallets: [W()] });
 // the pod takes without confirming it.
 const k1 = { wallet: account({ keys: [P()] }), did: account({ keys: [P()] }), link: account({ keys: [P()] }), other: account({ keys: [P()] }) };
 const k2 = { wallet: account({ keys: [P()] }), did: account({ keys: [P()] }), link: account({ keys: [P()] }),
-  blind: account({ keys: [P()] }), blindDid: account({ keys: [P()] }) };
+  blind: account({ keys: [P()] }), blindDid: account({ keys: [P()] }), linkBlind: account({ keys: [P()] }) };
+// The owner of a did:web (listed with its key), for sign-ins with that DID and keys of their own.
+const k4 = { owner: account({ keys: [P()] }), key: didKey(), did: 'did:web:owner-turn.example' };
+// Accounts whose write the pod never answers and stores later: right after the read the writer
+// makes once its write timed out ('early'), or only after the route has answered ('late').
+const l1 = {
+  early: { wallet: account({ keys: [P()] }), did: account({ keys: [P()] }), link: account({ keys: [P()] }), device: account({ keys: [P()] }) },
+  late: { wallet: account({ keys: [P()] }), did: account({ keys: [P()] }), link: account({ keys: [P()] }), del: account({ keys: [P()] }) },
+};
+// Removals the pod takes without confirming them; a scan overlapped by a write nothing could settle.
+const c14 = account({ keys: [P(), P()], wallets: [W(), W()], dids: [didKey()] });
+const b12 = account({ keys: [P()] });
 const play = { key: P(), id: `u-try-play-${crypto.randomBytes(16).toString('hex')}` };
 // Claimed Play owners (a passkey each) whose writes meet another writer's change.
 const playId = () => `u-try-play-${crypto.randomBytes(16).toString('hex')}`;
@@ -468,6 +504,8 @@ before(async () => {
     seed(t.y.userId, { keys: t.y.keys, dids: [] });
     docs.get(t.y.userId)!.doc['didKeys'] = [didEntry(t.key, t.did)];
   }
+  seed(k4.owner.userId, { keys: k4.owner.keys });
+  docs.get(k4.owner.userId)!.doc['didKeys'] = [didEntry(k4.key, k4.did)];
   seed(play.id, { keys: [play.key] });
   seed(playCas.add.id, { keys: [playCas.add.key] });
   seed(playCas.remove.id, { keys: [playCas.remove.key], wallets: [playCas.remove.wallet] });
@@ -811,6 +849,36 @@ test('B11: an on-demand load that a sign-in\'s load overtook still finds the acc
   assert.equal(r.status, 200, `${JSON.stringify(r.json)}${out()}`);
 });
 
+test('B12: a startup scan whose read a failed write overlapped installs nothing, even when nothing could settle that write', async () => {
+  const token = await tokenFor(b12.keys[0]!, 1, b12.userId);
+  // A third instance's first pass cannot read the account, so its scan reads it again 2 s later.
+  failingGets.set(b12.userId, 1);
+  const since = mark();
+  const third = await startIdentity(await freePort(), {}, false);
+  assert.ok(await waitFor(() => docGets(b12.userId, since).find(g => g.status === 502), 20_000), `the scan never read the account${out(third)}`);
+  // Meanwhile the account is loaded there on demand, and the scan's second read of it is held.
+  const ch = await post('/challenges', { purpose: 'webauthn-authenticate', userId: b12.userId }, undefined, third);
+  assert.equal(ch.status, 200, JSON.stringify(ch.json));
+  const scan = hold('GET', b12.userId);
+  assert.ok(await within(scan.arrived, 10_000), `the scan never read the account again${out(third)}`);
+  // A sign-out the pod applies and answers 500, and the read after it fails too: nothing settles it.
+  failPuts(b12.userId, 'apply-then-500');
+  const put = hold('PUT', b12.userId, 1, () => { failingGets.set(b12.userId, 1); });
+  void put.arrived.then(() => put.release());
+  const r = await signOut(token, third);
+  assert.equal(r.status, 503, `${JSON.stringify(r.json)}${out(third)}`);
+  assert.equal(record(b12.userId)!.sessionEpoch, 1);
+  scan.release();
+  await third.ready;
+  // The copy was marked stale, not replaced by the scan's older read: a token check answers from it
+  // once (stale-while-revalidate) and its refresh reads the pod, so the token is refused within a
+  // moment. Installed as fresh, the older read would have kept the token working for 10 s.
+  let status = 0;
+  for (let i = 0; i < 30 && (status = (await me(token, third)).status) !== 401; i++) await sleep(100);
+  assert.equal(status, 401, 'the token signed out is refused');
+  await third.stop();
+});
+
 // ── C. Writes the pod refuses, or never answers ─────────────────────────────────────────────
 test('C1: a wallet the pod refused to add is not acknowledged, and does not sign in', async () => {
   const token = await tokenFor(f1.keys[0]!, 1, f1.userId);
@@ -885,15 +953,19 @@ test('C5: a removal the pod refused changes nothing here either', async () => {
   await signsInTo(didSignIn(f5.dids![0]!), f5.userId);
 });
 
-test('C6: a sign-out the pod refused leaves the session working; one it applied anyway ends it here too', async () => {
+test('C6: a sign-out the pod refused leaves the session working; one it applied anyway is done, and answered so', async () => {
   const token = await tokenFor(f6.keys[0]!, 1, f6.userId);
   failPuts(f6.userId, '500');
   assert.equal((await signOut(token)).status, 500);
   assert.equal(record(f6.userId)!.sessionEpoch, undefined);
   assert.equal((await me(token)).status, 200);
-  // The store applied it and answered 500: the pod's epoch is the one this server checks.
+  // The store applied it and answered 500: the pod's epoch is the one this server checks, and the
+  // answer says the sign-out is done (it used to say it failed).
   failPuts(f6.userId, 'apply-then-500');
-  assert.equal((await signOut(token)).status, 500);
+  const done = await signOut(token);
+  assert.equal(done.status, 200, JSON.stringify(done.json));
+  assert.equal(done.json['revoked'], true);
+  assert.equal(done.json['sessionEpoch'], 1);
   assert.equal(record(f6.userId)!.sessionEpoch, 1);
   assert.equal((await me(token)).status, 401);
 });
@@ -907,9 +979,10 @@ test('C7: a sign counter the pod refused is not advanced here; one it applied an
   assert.equal(credentialOf(f7.userId, key)!.counter, 1);
   await signsInTo(signIn(key, 2), f7.userId);
   assert.equal(credentialOf(f7.userId, key)!.counter, 2);
-  // Applied, then 500: a replay of that counter is refused, as the pod's counter says.
+  // Applied, then 500: the pod holds the counter, so this is a sign-in (it used to answer 503), and
+  // a replay of that counter is refused, as the pod's counter says.
   failPuts(f7.userId, 'apply-then-500');
-  assert.equal((await signIn(key, 6)).status, 503);
+  await signsInTo(signIn(key, 6), f7.userId);
   assert.equal(credentialOf(f7.userId, key)!.counter, 6);
   const replay = await signIn(key, 6);
   assert.equal(replay.status, 401, JSON.stringify(replay.json));
@@ -927,6 +1000,49 @@ test('C8: a write the pod applied but answered 500 leaves this server holding wh
   const since = mark();
   await signsInTo(siwe(w, { bearer: token }), f8.userId);
   assert.equal(docPuts(f8.userId, since).length, 0);
+});
+
+test('C14: a removal the pod took without confirming it is answered as done; one nothing could settle says it may or may not have been saved', async () => {
+  const token = await tokenFor(c14.keys[0]!, 1, c14.userId);
+  const [, p2] = c14.keys;
+  const [w1, w2] = c14.wallets!;
+  // Applied, then 500: the record the writer settled no longer lists it, so the answer is 200.
+  failPuts(c14.userId, 'apply-then-500');
+  const wallet = await del(`/auth-methods/me/wallet/${w1!.address.toLowerCase()}`, token);
+  assert.equal(wallet.status, 200, `${JSON.stringify(wallet.json)}${out()}`);
+  assert.equal(wallet.json['remaining'], 1);
+  assert.equal((await del(`/auth-methods/me/wallet/${w1!.address.toLowerCase()}`, token)).status, 404);
+  failPuts(c14.userId, 'apply-then-500');
+  const did = await del('/auth-methods/me/did', token, { did: c14.dids![0]!.did });
+  assert.equal(did.status, 200, JSON.stringify(did.json));
+  assert.equal(did.json['remaining'], 0);
+  failPuts(c14.userId, 'apply-then-500');
+  const passkey = await del(`/auth-methods/me/webauthn/${encodeURIComponent(p2!.id)}`, token);
+  assert.equal(passkey.status, 200, JSON.stringify(passkey.json));
+  assert.equal(passkey.json['remaining'], 1);
+  assert.equal((await signIn(p2!, 1)).status, 401);
+  // Applied, then 500, and the read after it failed too: nothing settled it, and the answer says so.
+  failPuts(c14.userId, 'apply-then-500');
+  const put = hold('PUT', c14.userId, 1, () => { failingGets.set(c14.userId, 1); });
+  void put.arrived.then(() => put.release());
+  const unsure = await del(`/auth-methods/me/wallet/${w2!.address.toLowerCase()}`, token);
+  assert.equal(unsure.status, 503, JSON.stringify(unsure.json));
+  assert.match(String(unsure.json['detail']), /may or may not/);
+  assert.deepEqual(record(c14.userId)!.walletAddresses, []);
+});
+
+test('C15: a first sign-in that meets another writer\'s change at all three attempts logs identity_authmethods_write_conflict', async () => {
+  const w = W();
+  const id = deriveUserIdFromWallet(w.address.toLowerCase());
+  // Each of its three writes meets a document written (then changed) under it.
+  for (let i = 0; i < 3; i++) {
+    const h = hold('PUT', id, 1, uid => { if (docs.has(uid)) outOfBand(uid, d => { d['name'] = `edit ${i}`; }); else seed(uid, {}); });
+    void h.arrived.then(() => h.release());
+  }
+  const r = await siwe(w);
+  assert.equal(r.status, 503, JSON.stringify(r.json));
+  assert.deepEqual(docPuts(id).map(p => p.status), [412, 412, 412]);
+  assert.match(primary.output(), new RegExp(`identity_authmethods_write_conflict userId=${id} context=first-sign-in attempts=3`));
 });
 
 test('C9: every writer whose read of the pod fails answers 503 and writes nothing', async () => {
@@ -957,59 +1073,138 @@ test('C9: every writer whose read of the pod fails answers 503 and writes nothin
   assert.equal(record(f9.userId)!.deletedAt, undefined);
 });
 
-test('C11: a pod that never answers holds an account\'s lock for at most 15 s for a read, and 30 s for a write and the read after it', { timeout: 50_000 }, async () => {
-  const timed = async (reply: Promise<Reply>, from = Date.now()) => ({ ...(await reply), took: Date.now() - from });
-  const tokenAnswered = await tokenFor(f11.keys[0]!, 1, f11.userId);
-  const tokenWrite = await tokenFor(hung.write.keys[0]!, 1, hung.write.userId);
-  const tokenRead = await tokenFor(hung.read.keys[0]!, 1, hung.read.userId);
-  const tokenCreate = await tokenFor(hung.create.keys[0]!, 1, hung.create.userId);
-  const since = mark();
-  /** A GET of `userId`'s record that arrives once a PUT of `target` was sent: the read after a failed write. */
-  const afterPut = (userId: string, target: 'doc' | 'container') => (id: string) => id === userId
-    && requests.slice(since).some(r => r.userId === userId && r.target === target && r.method === 'PUT');
-  // A write the pod never answers; the read after it is answered.
-  failPuts(f11.userId, 'hang');
-  // A write the pod never answers, and the read after it neither.
-  failPuts(hung.write.userId, 'hang');
-  const rereadWrite = hold('GET', afterPut(hung.write.userId, 'doc'));
-  // A first read the pod never answers.
-  const firstRead = hold('GET', hung.read.userId);
-  // A create (sign-out of an account whose document is gone): the container's PUT is never
-  // answered, and the read after it neither. The document's PUT shares the write's timeout.
-  docs.delete(hung.create.userId);
-  hangingContainers.add(hung.create.userId);
-  const rereadCreate = hold('GET', afterPut(hung.create.userId, 'container'));
-  try {
-    const started = Date.now();
-    const answered = timed(siwe(W(), { bearer: tokenAnswered }));
-    const write = timed(siwe(W(), { bearer: tokenWrite }));
-    const read = timed(signOut(tokenRead));
-    const create = timed(signOut(tokenCreate));
-    // Passkey sign-ins of the same accounts, a second later, wait for the lock.
-    await sleep(1_000);
-    const behindWrite = timed(signIn(hung.write.keys[0]!, 2), started);
-    const behindRead = timed(signIn(hung.read.keys[0]!, 2), started);
-    const [a, w, r, c, bw, br] = await Promise.all([answered, write, read, create, behindWrite, behindRead]);
-    assert.equal(a.status, 503, JSON.stringify(a.json));
-    assert.ok(a.took < 17_000, `a write and an answered read took ${a.took} ms`);
-    assert.equal(w.status, 503, JSON.stringify(w.json));
-    assert.ok(w.took < 32_000, `a write and a read, neither answered, took ${w.took} ms`);
-    assert.equal(r.status, 503, JSON.stringify(r.json));
-    assert.ok(r.took < 17_000, `a read never answered took ${r.took} ms`);
-    assert.equal(c.status, 500, JSON.stringify(c.json));
-    assert.ok(c.took < 32_000, `a create and a read, neither answered, took ${c.took} ms`);
-    assert.equal(docPuts(hung.create.userId, since).length, 0, 'no document is sent once the container used up the timeout');
-    // Each writer read the record first, and read it again after its write failed.
-    for (const id of [hung.write.userId, hung.create.userId]) assert.ok(docGets(id, since).length >= 2, `${id}: ${docGets(id, since).length} read(s)`);
-    assert.equal(bw.status, 200, JSON.stringify(bw.json));
-    assert.ok(bw.took < 32_000, `a sign-in behind the write was answered after ${bw.took} ms`);
-    assert.equal(br.status, 200, JSON.stringify(br.json));
-    assert.ok(br.took < 17_000, `a sign-in behind the read was answered after ${br.took} ms`);
-  } finally {
-    for (const h of [rereadWrite, firstRead, rereadCreate]) h.release();
-    hangingContainers.delete(hung.create.userId);
-  }
-  await signsInTo(signIn(f11.keys[0]!, 2), f11.userId);
+// ── C11 and L1 side by side: both wait out the writer's 15 s timeout, so they share it (the
+// file stays well inside the suite's 2-minute bound). They touch different accounts. L: writes the
+// pod never answers, and stores later. ─────────────────────────────────────────────────────────
+describe('writes the pod never answers', { concurrency: true }, () => {
+  test('C11: a pod that never answers holds an account\'s lock for at most 15 s for a read, and 30 s for a write and the read after it', { timeout: 50_000 }, async () => {
+    const timed = async (reply: Promise<Reply>, from = Date.now()) => ({ ...(await reply), took: Date.now() - from });
+    const tokenAnswered = await tokenFor(f11.keys[0]!, 1, f11.userId);
+    const tokenWrite = await tokenFor(hung.write.keys[0]!, 1, hung.write.userId);
+    const tokenRead = await tokenFor(hung.read.keys[0]!, 1, hung.read.userId);
+    const tokenCreate = await tokenFor(hung.create.keys[0]!, 1, hung.create.userId);
+    const since = mark();
+    /** A GET of `userId`'s record that arrives once a PUT of `target` was sent: the read after a failed write. */
+    const afterPut = (userId: string, target: 'doc' | 'container') => (id: string) => id === userId
+      && requests.slice(since).some(r => r.userId === userId && r.target === target && r.method === 'PUT');
+    // A write the pod never answers; the read after it is answered.
+    failPuts(f11.userId, 'hang');
+    // A write the pod never answers, and the read after it neither.
+    failPuts(hung.write.userId, 'hang');
+    const rereadWrite = hold('GET', afterPut(hung.write.userId, 'doc'));
+    // A first read the pod never answers.
+    const firstRead = hold('GET', hung.read.userId);
+    // A create (sign-out of an account whose document is gone): the container's PUT is never
+    // answered, and the read after it neither. The document's PUT shares the write's timeout.
+    docs.delete(hung.create.userId);
+    hangingContainers.add(hung.create.userId);
+    const rereadCreate = hold('GET', afterPut(hung.create.userId, 'container'));
+    try {
+      const started = Date.now();
+      const answered = timed(siwe(W(), { bearer: tokenAnswered }));
+      const write = timed(siwe(W(), { bearer: tokenWrite }));
+      const read = timed(signOut(tokenRead));
+      const create = timed(signOut(tokenCreate));
+      // Passkey sign-ins of the same accounts, a second later, wait for the lock.
+      await sleep(1_000);
+      const behindWrite = timed(signIn(hung.write.keys[0]!, 2), started);
+      const behindRead = timed(signIn(hung.read.keys[0]!, 2), started);
+      const [a, w, r, c, bw, br] = await Promise.all([answered, write, read, create, behindWrite, behindRead]);
+      assert.equal(a.status, 503, JSON.stringify(a.json));
+      assert.ok(a.took < 17_000, `a write and an answered read took ${a.took} ms`);
+      assert.equal(w.status, 503, JSON.stringify(w.json));
+      assert.ok(w.took < 32_000, `a write and a read, neither answered, took ${w.took} ms`);
+      assert.equal(r.status, 503, JSON.stringify(r.json));
+      assert.ok(r.took < 17_000, `a read never answered took ${r.took} ms`);
+      assert.equal(c.status, 500, JSON.stringify(c.json));
+      assert.ok(c.took < 32_000, `a create and a read, neither answered, took ${c.took} ms`);
+      assert.equal(docPuts(hung.create.userId, since).length, 0, 'no document is sent once the container used up the timeout');
+      // Each writer read the record first, and read it again after its write failed.
+      for (const id of [hung.write.userId, hung.create.userId]) assert.ok(docGets(id, since).length >= 2, `${id}: ${docGets(id, since).length} read(s)`);
+      assert.equal(bw.status, 200, JSON.stringify(bw.json));
+      assert.ok(bw.took < 32_000, `a sign-in behind the write was answered after ${bw.took} ms`);
+      assert.equal(br.status, 200, JSON.stringify(br.json));
+      assert.ok(br.took < 17_000, `a sign-in behind the read was answered after ${br.took} ms`);
+    } finally {
+      for (const h of [rereadWrite, firstRead, rereadCreate]) h.release();
+      hangingContainers.delete(hung.create.userId);
+    }
+    await signsInTo(signIn(f11.keys[0]!, 2), f11.userId);
+  });
+
+  test('L1: a write the pod never answered and stores later is settled before anything is decided: what was added, linked, claimed or deleted ends where the pod says', { timeout: 60_000 }, async () => {
+    const derivedOf = (w: AnyWallet) => deriveUserIdFromWallet(w.address.toLowerCase());
+    const token = {
+      early: Object.fromEntries(await Promise.all(Object.entries(l1.early).map(async ([n, a]) => [n, await tokenFor(a.keys[0]!, 1, a.userId)] as const))),
+      late: Object.fromEntries(await Promise.all(Object.entries(l1.late).map(async ([n, a]) => [n, await tokenFor(a.keys[0]!, 1, a.userId)] as const))),
+    };
+    const e = { wallet: W(), did: didKey(), link: W(), device: P(), claim: W(), first: W() };
+    const l = { wallet: W(), did: didKey(), link: W(), claim: W(), first: W() };
+    for (const a of Object.values(l1.early)) failPuts(a.userId, 'hang-then-apply');
+    failPuts(invites.hangEarly.userId, 'hang-then-apply');
+    failPuts(derivedOf(e.first), 'hang-then-apply');
+    for (const a of Object.values(l1.late)) failPuts(a.userId, 'hang-then-apply-late');
+    failPuts(invites.hangLate.userId, 'hang-then-apply-late');
+    failPuts(derivedOf(l.first), 'hang-then-apply-late');
+    const [eW, eD, eL, eV, eC, eF, lW, lD, lL, lC, lF, lX] = await Promise.all([
+      siwe(e.wallet, { bearer: token.early['wallet'] }), didSignIn(e.did, { bearer: token.early['did'] }),
+      linkWallet(e.link, token.early['link']!), addDevice(e.device, token.early['device']!),
+      siwe(e.claim, bootstrap(invites.hangEarly)), siwe(e.first),
+      siwe(l.wallet, { bearer: token.late['wallet'] }), didSignIn(l.did, { bearer: token.late['did'] }),
+      linkWallet(l.link, token.late['link']!), siwe(l.claim, bootstrap(invites.hangLate)), siwe(l.first),
+      post('/users/me/delete', {}, token.late['del']),
+    ]);
+
+    // Early: the pod stored each write right after the read that followed its timeout. That read saw
+    // the old record; the record was written back on its ETag (the fence), which met the stored write,
+    // and the read after it is what each answer is decided on.
+    assert.equal(eW.status, 503, JSON.stringify(eW.json));
+    assert.match(String(eW.json['detail']), /lists this wallet/);
+    assert.equal(eD.status, 503, JSON.stringify(eD.json));
+    assert.match(String(eD.json['detail']), /lists this DID/);
+    assert.equal(eL.status, 200, JSON.stringify(eL.json));
+    assert.equal(eV.status, 503, JSON.stringify(eV.json));
+    assert.match(String(eV.json['detail']), /lists this passkey/);
+    assert.equal(eC.status, 200, `${JSON.stringify(eC.json)}${out()}`);
+    assert.equal(eC.json['userId'], invites.hangEarly.userId);
+    assert.equal(eF.status, 200, JSON.stringify(eF.json));
+    assert.equal(eF.json['userId'], derivedOf(e.first));
+    await signsInTo(siwe(e.wallet), l1.early.wallet.userId);
+    await signsInTo(didSignIn(e.did), l1.early.did.userId);
+    await signsInTo(siwe(e.link), l1.early.link.userId);
+    await signsInTo(signIn(e.device, 1), l1.early.device.userId);
+    await signsInTo(siwe(e.claim), invites.hangEarly.userId);
+    for (const w of [e.wallet, e.link, e.claim]) assert.equal(docs.has(derivedOf(w)), false, 'no account is opened for the wallet');
+    assert.equal(docs.has(deriveUserIdFromDid(e.did.did)), false, 'no account is opened for the did:key');
+
+    // Late: the pod gets round to each write only after the route answered. The fence made each one's
+    // condition fail first, so none lands, and every answer was what the pod now holds.
+    assert.equal(lW.status, 503, JSON.stringify(lW.json));
+    assert.equal(lD.status, 503, JSON.stringify(lD.json));
+    assert.equal(lL.status, 500, JSON.stringify(lL.json));
+    for (const r of [lC, lF]) {
+      assert.equal(r.status, 503, JSON.stringify(r.json));
+      assert.match(String(r.json['detail']), /Nothing was changed/);
+    }
+    assert.equal(lX.status, 503, JSON.stringify(lX.json));
+    assert.equal(lX.json['error'], 'Deletion not completed');
+    const lateIds = [...Object.values(l1.late).map(a => a.userId), invites.hangLate.userId, derivedOf(l.first)];
+    applyLate();
+    assert.deepEqual(heldOutcomes.filter(o => lateIds.includes(o.userId)).map(o => o.applied), lateIds.map(() => false),
+      'no write held past its answer lands');
+    assert.deepEqual(record(l1.late.wallet.userId)!.walletAddresses, []);
+    assert.deepEqual(record(l1.late.did.userId)!.didKeys, []);
+    assert.deepEqual(record(l1.late.link.userId)!.walletAddresses, []);
+    assert.deepEqual(record(invites.hangLate.userId)!.walletAddresses, [], 'the claim did not land');
+    assert.deepEqual(record(derivedOf(l.first))!.walletAddresses, [], 'the first sign-in did not land');
+    assert.equal(record(l1.late.del.userId)!.deletedAt, undefined, 'the deletion did not land');
+    assert.equal((await me(token.late['del']!)).status, 200);
+    // And each retry does what was asked, on one account.
+    await signsInTo(siwe(l.wallet, { bearer: token.late['wallet'] }), l1.late.wallet.userId);
+    await signsInTo(siwe(l.wallet), l1.late.wallet.userId);
+    await signsInTo(siwe(l.claim, bootstrap(invites.hangLate)), invites.hangLate.userId);
+    await signsInTo(siwe(l.first), derivedOf(l.first));
+  });
 });
 
 test('C12: a record that is not JSON stops a passkey sign-in, and is never overwritten', async () => {
@@ -1074,8 +1269,15 @@ test('J2: a bootstrap passkey the pod took without confirming it signs in to the
   failPuts(invites.unconfirmed.userId, 'apply-then-500');
   const r = await bootstrapPasskey(key, invites.unconfirmed);
   assert.equal(r.status, 503, JSON.stringify(r.json));
+  assert.match(String(r.json['detail']), /lists this passkey now/);
   assert.equal(r.json['token'], undefined);
   assert.deepEqual(record(invites.unconfirmed.userId)!.webAuthnCredentials.map(c => c.id), [key.id]);
+  // The seeded account's shell stays (its DID document resolves before any sign-in loads it), and
+  // the invite stays spent: a second claim is refused as consumed, before any ceremony.
+  assert.equal((await call(primary, 'GET', `/users/${invites.unconfirmed.userId}/did.json`)).status, 200);
+  const again = await post('/auth/webauthn/register-options', { name: 'Seeded', bootstrapUserId: invites.unconfirmed.userId, bootstrapInvite: invites.unconfirmed.token });
+  assert.equal(again.status, 409, JSON.stringify(again.json));
+  assert.match(String(again.json['error']), /already been consumed/);
   await signsInTo(signIn(key, 1), invites.unconfirmed.userId);
   assert.notEqual((await bootstrapPasskey(P(), invites.unconfirmed)).status, 200);
   assert.deepEqual(record(invites.unconfirmed.userId)!.webAuthnCredentials.map(c => c.id), [key.id]);
@@ -1313,6 +1515,14 @@ test('K2: a wallet or did:key whose bearer add the pod took without confirming i
   await signsInTo(didSignIn(kb), k2.blindDid.userId);
   assert.equal(docs.has(deriveUserIdFromDid(kb.did)), false, 'no account is opened for the did:key');
   assert.match(String(blindD.json['detail']), /may or may not/);
+  // /wallet/link the same way: neither 200 (nobody confirmed it) nor "failed" (it may have landed),
+  // and the wallet's next sign-in reads the account first and signs in there.
+  const wlb = W();
+  const linkBlind = await unconfirmed(k2.linkBlind.userId, 2, () => linkWallet(wlb, token['linkBlind']!));
+  assert.equal(linkBlind.status, 503, JSON.stringify(linkBlind.json));
+  assert.match(String(linkBlind.json['detail']), /may or may not/);
+  await signsInTo(siwe(wlb), k2.linkBlind.userId);
+  assert.equal(docs.has(derivedOf(wlb)), false, 'no account is opened for the wallet');
 });
 
 test('K3: a first wallet or DID sign-in that no read could confirm sends the credential\'s next sign-in to that account, not a new one', async () => {
@@ -1339,6 +1549,23 @@ test('K3: a first wallet or DID sign-in that no read could confirm sends the cre
   assert.match(String(didClaim.json['detail']), /may or may not/);
   await signsInTo(didSignIn(k), invites.unsureDid.userId);
   assert.equal(docs.has(deriveUserIdFromDid(k.did)), false, 'no account is opened for the did:key');
+});
+
+test('K4: a sign-in with someone else\'s did:web and a key of its own does not hold up the owner\'s sign-in', async () => {
+  // The stranger's signature verifies against the key it sent, and then the DID's holders are
+  // checked: none lists that key, so the account derived from the DID is read (held here).
+  const derived = deriveUserIdFromDid(k4.did);
+  const held = hold('GET', derived);
+  const stranger = didSignIn(didKey(), { did: k4.did });
+  assert.ok(await within(held.arrived, 5_000), `the stranger's request never read the derived account${out()}`);
+  const started = Date.now();
+  const owner = await didSignIn(k4.key, { did: k4.did });
+  const took = Date.now() - started;
+  held.release();
+  assert.equal(owner.status, 200, `${JSON.stringify(owner.json)}${out()}`);
+  assert.equal(owner.json['userId'], k4.owner.userId);
+  assert.ok(took < 3_000, `the owner's sign-in waited ${took} ms behind a request that could not change who holds the DID`);
+  assert.equal((await stranger).status, 401);
 });
 
 // ── D, E. Counters and epochs ───────────────────────────────────────────────────────────────
@@ -1593,12 +1820,13 @@ test('I7: the tombstone a first sign-in leaves on a pod deleted before tombstone
   assert.match(primary.output(), new RegExp(`identity_deleted_before_tombstone userId=${k.userId} evidence=auth-methods.jsonld without credentials`));
 
   // Another writer (the other instance) puts a wallet on such a record while the tombstone is on
-  // its way: the tombstone's If-Match fails, the record is read again, and nothing is written over
-  // the wallet. The sign-in is still refused, and this server holds the record as the pod does,
+  // its way: the tombstone's If-Match (on the claim's own read) fails, the record is read again and
+  // installed, and nothing is written over the wallet. The sign-in is still refused, and this server holds the record as the pod does,
   // so the wallet signs in to that account rather than opening the one derived from it.
   const k2 = P();
   const w = W();
   seed(k2.userId, { epoch: 2 });
+  const read = etagOf(k2.userId);
   const put = hold('PUT', k2.userId, 1, id => outOfBand(id, d => { d['walletAddresses'] = [w.address.toLowerCase()]; }));
   since = mark();
   const pending = (async () => {
@@ -1612,7 +1840,8 @@ test('I7: the tombstone a first sign-in leaves on a pod deleted before tombstone
   assert.equal(record(k2.userId)!.deletedAt, undefined, JSON.stringify(record(k2.userId)));
   assert.deepEqual(record(k2.userId)!.walletAddresses, [w.address.toLowerCase()]);
   assert.deepEqual(docPuts(k2.userId, since).map(p => p.status), [412], 'one tombstone write, refused; none after the re-read');
-  assert.equal(docGets(k2.userId, since).length, 3, 'the claim\'s read, the tombstone\'s, and the re-read after the 412');
+  assert.deepEqual(docPuts(k2.userId, since).map(p => p.ifMatch), [read], 'conditional on the claim\'s own read');
+  assert.equal(docGets(k2.userId, since).length, 2, 'the claim\'s read (the tombstone is conditional on it), and the re-read after the 412');
   const signedIn = await siwe(w);
   assert.equal(signedIn.status, 200, `${JSON.stringify(signedIn.json)}${out()}`);
   assert.equal(signedIn.json['userId'], k2.userId);

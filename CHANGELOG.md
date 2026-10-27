@@ -1,5 +1,47 @@
 # Changelog
 
+## 2026-10-27 — Identity: a write the pod never answered is settled before anything is decided on it
+
+Corrections to the entries below. Each was reproduced against the server, running with a stand-in pod.
+
+- **A write the pod never answered could land after the read that followed it.**
+  - What went wrong: a write that timed out (15 s) or lost its connection was followed by one read, and that read was taken as what the pod holds. A store keeps working on a request its client gave up on, and a read can get ahead of a queued write. When the read came first, the write was treated as not landed, and the pod applied it afterwards.
+  - What followed: a wallet or `did:key` added with a bearer, linked, or claimed with a bootstrap invite was on the pod but not in the sign-in indexes. Its next plain sign-in opened the account derived from it beside the account the pod listed it on, and kept going there for good, because the derived account is preferred. A passkey added that way answered 401 until a restart. A first sign-in and a deletion answered "Nothing was changed", and the pod then applied them.
+  - Now such a write is settled under the account's lock (`settle` in `deploy/identity/auth-methods-writer.ts`). While the record is still in the state the write was conditional on (the same ETag, or no document for a create), it is written back as read on that same condition, so the pending write's condition can never hold again, and then read again. That read is final, and every answer is decided on it: a credential there is in the indexes at once, and "Nothing was changed" is true when it is said.
+  - If settling fails (a read fails, or the write-back gets no answer either), the write is recorded with its condition, and the credential's next sign-in settles the account before anything is decided. A store that sends no ETag cannot be fenced this way; the read after such a write is taken as final, as before.
+- **A removal, a sign-out-everywhere and a passkey sign-in's counter that the pod took without confirming them are answered as done.** They answered 500 or 503 although the settled record showed the change: a retried removal then got 404, and a sign-out reported as failed had ended every session. Now a removal or sign-out answers 200 and a passkey sign-in signs in. When nothing could settle the write, the answer is 503 saying it may or may not have been saved.
+- **A plain sign-in with someone else's `did:web` no longer holds up the owner's.** A DID that is not a `did:key` is verified against the key the caller sends, so anyone could present the owner's DID with a key of their own, take the DID's turn, and keep the owner's sign-in waiting behind it (503 after 30 s). Only a request that can change who holds such a DID (a bearer that verifies, a bootstrap claim) takes the turn now. A plain sign-in writes nothing and opens no account, so it is decided outside the turn. Wallets and `did:key`s are unchanged: their signature proves the credential.
+- **The tombstone a first sign-in leaves on a pod deleted before tombstones is conditional on the claim's own read again.** The merge with master sent it through the writer, which read the record again and wrote over a record another writer had created or changed in the meantime, as long as it listed no credential. It is now written with `If-None-Match: *` where the claim's read found no record, and `If-Match` on that read's ETag where it found one. A 412 writes nothing, installs what the pod holds, and the next sign-in asks again. The documentation and the entries below already said so.
+- **The janitor fences a Play owner before it deletes anything.** It deleted the pod's resources first and the anchor last, on the ETag it had checked, so an enrolment the other instance landed in between kept the account with its files gone. It now writes the anchor back on that ETag first. A 412 keeps the whole account, and an enrolment that reads the anchor after the write-back finds it expired.
+- **A write that failed and could not be settled moves the record's generation on, as an install does.** A startup or on-demand load whose read began before such a write installed the older record as fresh. A sign-out-everywhere the pod applied (answering 500, with the read after it failing) then left the signed-out token working for 10 s. Such a load now installs nothing, and a refresh queued behind such a writer reads the pod instead of reusing the stale copy.
+- **A first sign-in that meets another writer's change at all three attempts logs `identity_authmethods_write_conflict`**, as `deploy/identity/AUTH-ARCHITECTURE.md` says every such write does. It logged only its own warning.
+
+This branch's first commit now carries its own CHANGELOG entry (the entry used to arrive one commit later), so every commit on the branch touches this file and the undocumented backlog is back to 407. The entries below, `deploy/identity/AUTH-ARCHITECTURE.md` and the comments in `deploy/identity/server.ts` are corrected to match: the list of what puts a record into the indexes without loading its account, the lock's bound, the tombstone's condition and the janitor's order.
+
+Unchanged on purpose: an add with a bearer still answers only after one read and one write of the record (about 2.5 s on CSS), and a few refusals read the pod more often than before. Both follow from deciding on the record the pod holds.
+
+Tests:
+
+- **`auth-methods-writer.test.ts`** covers settling:
+  - a write the pod never answered and applied right after the read that follows: the write-back meets it, and the last read lists it;
+  - one it would apply later: the write-back makes its condition fail;
+  - a create: fenced with an empty record;
+  - a write-back that gets no answer either: nothing is settled, the condition is carried, and a later settle finishes it.
+  It also checks that a refresh queued behind a writer that could only mark the copy stale reads the pod, and that a load an expiry overlapped installs nothing.
+- **`credential-decisions.test.ts`** checks that the recorded condition reaches the next turn's read.
+- **`live-record-writes-routes.test.ts`** adds five cases:
+  - L1: adds through `/auth/siwe`, `/auth/did` and `/wallet/link`, an added device, a bootstrap claim, a first wallet sign-in and a deletion, each with a write the pod never answers and stores either right after the read that follows or only after the route has answered.
+  - K4: a stranger's `did:web` request held on a pod read while the owner signs in.
+  - C14: removals the pod applied and answered 500, and one that nothing could settle.
+  - C15: a first sign-in whose three writes each meet a change.
+  - B12: a scan read overlapped by a sign-out that nothing could settle.
+
+  C6 and C7 now expect the change the pod took to be answered as done. J2 now checks what it used to leave open: the 503's detail, the seeded account's shell and the spent invite. K2 adds `/wallet/link` with both reads failing, and I7 expects the tombstone to be conditional on the claim's read.
+- **`pre-tombstone-deletion-routes.test.ts`** adds a record another writer creates during the probes, which is not replaced.
+- **`provisional-play-cleanup.test.ts`** checks that the fence comes before any deletion and that a 412 on it deletes nothing. `provisional-play-enrollment.test.ts` takes the new route helpers from `server.ts`.
+
+Each new or changed case fails against the code before this change. J2 and K2 also fail with the mutations that used to survive the whole suite.
+
 ## 2026-10-27 — Identity: a wallet or DID being added, or whose add the pod did not confirm, no longer opens a second account
 
 Three corrections to the entries below. Each was reproduced against the server, running with a stand-in pod.
@@ -41,7 +83,7 @@ Three corrections to the entries below. Each was reproduced against the server, 
   - Now the record read after a failed write decides. If it lists the credential, the sign-in completes (200) and the invite stays spent. If that read fails too, the account is loaded from its pod once the lock is released, and the sign-in is decided on that.
   - Only when both reads fail is the answer 503, and it says the write may or may not have been saved. "Nothing was changed" is now said only when the pod showed that nothing was.
 - **An account the sign-in indexes list is now loaded before a sign-in passes it over.**
-  - Three things put an account's record into the indexes without loading the account: the read after a failed write, a refused first sign-in, and a refused bootstrap passkey.
+  - A record installed without loading its account puts it into the indexes without the account: the read after a failed write, a refused first sign-in and a refused bootstrap passkey did, and so do the reads the entry above adds (of an account whose add was unconfirmed) and a tombstone write that found the record changed.
   - Wallet, DID and passkey sign-ins tried only loaded accounts, so they passed such an account over. A passkey got 404. A wallet or `did:key` opened the account derived from it, beside the account that listed it.
   - They now load that account first. If its pod cannot be read, the answer is 503.
 - **The janitor's purge of a Play owner now holds the owner's lock for at most 15 s per request.**
@@ -103,7 +145,7 @@ Now every write of that file, everywhere in the server, is one read-modify-write
 
 Deferred writes are gone, so a 200 means the pod has the change.
 
-That covers the tombstone a first sign-in now leaves on a pod deleted before tombstones (the entry on such accounts, further down). It is written in the same way: read again under the lock, written with `If-None-Match: *` where the pod has no record (`If-Match` where it has one), never over a record that lists a credential by then, and installed only once the pod has it. The `HEAD` requests that decide it run under the same lock and time out after 15 s, like the record's own reads. `deploy/identity/tests/live-record-writes-routes.test.ts` (I7) checks that the tombstone is sent with `If-Match` on the record read, and that a wallet another writer adds meanwhile stays on the record and in this server's copy, so that wallet then signs in to the account rather than opening a new one.
+That covers the tombstone a first sign-in now leaves on a pod deleted before tombstones (the entry on such accounts, further down). It is written under the same lock, conditionally on the claim's own read (the state the probes judged): `If-None-Match: *` where that read found no record, `If-Match` on its ETag where it found one. So a record another writer made or changed since is never replaced: the write is refused, the record the pod holds is installed, and the next sign-in asks again. What is written is installed only once the pod has it. The `HEAD` requests that decide it run under the same lock and time out after 15 s, like the record's own reads. `deploy/identity/tests/live-record-writes-routes.test.ts` (I7) checks that the tombstone is sent with `If-Match` on the claim's read, and that a wallet another writer adds meanwhile stays on the record and in this server's copy, so that wallet then signs in to the account rather than opening a new one.
 
 When a write fails, the record is read once more, still under the lock, and this server takes what the pod holds. A store that applied the write and then answered 500 therefore leaves the two agreeing. No read creates a document any more.
 
