@@ -6,7 +6,7 @@ import { describe, expect, it } from 'vitest';
 import { AUTO_MERGE_POLICY, AUTO_MERGED_LABEL, autoMergeDecision, reviewVerdictEvidence } from '../src/auto-merge.js';
 
 const earned = { cells: [{ kind: 'navigation', liveSamples: 3 }, { kind: 'review-verdict', liveSamples: 25, liveAgreement: { agree: 23, conservative: 1, disagree: 1 } }] };
-const all = { verdict: 'auto-ok', selectionResult: 'success', armed: true, tokenPresent: true, calibration: earned, mergeable: 'MERGEABLE', base: { tested: 'aaaaaaaa1', current: 'aaaaaaaa1' }, suite: { result: 'success', gates: true } };
+const all = { verdict: 'auto-ok', selectionResult: 'success', armed: true, tokenPresent: true, calibration: earned, mergeable: 'MERGEABLE', base: { tested: 'aaaaaaaa1', current: 'aaaaaaaa1' }, suite: { result: 'success', gates: true }, checks: { result: 'success', gates: true } };
 const withPerson = { ...all, requireHumanReview: true, reputation: { axes: { accuracy: 0.92, competence: 0.7 }, contributing: 1 } };
 
 describe('the evidence', () => {
@@ -18,10 +18,10 @@ describe('the evidence', () => {
 });
 
 describe('without a person required (the default)', () => {
-  it('merges on armed, token, green tests, any verdict but block, a mergeable branch, a fresh base and a green suite — seven conditions, no calibration bar', () => {
+  it('merges on armed, token, green tests, any verdict but block, a mergeable branch, a fresh base, a green suite and every other check green — eight conditions, no calibration bar', () => {
     const d = autoMergeDecision(all);
     expect(d.merge).toBe(true);
-    expect(d.reasons).toHaveLength(7);
+    expect(d.reasons).toHaveLength(8);
     expect(d.reasons[3]).toContain('needs-human-review is advisory');
     const advisory = autoMergeDecision({ ...all, verdict: 'needs-human-review', calibration: undefined });
     expect(advisory.merge).toBe(true);
@@ -45,14 +45,16 @@ describe('without a person required (the default)', () => {
       ...all, armed: false, selectionResult: 'failure', verdict: 'block',
       base: { tested: 'aaaaaaaa1', current: 'bbbbbbbb2' },
       suite: { result: 'failure', gates: true },
+      checks: { result: 'timeout', gates: true, detail: 'still running: Mutation Gate / Every refusal gate fails on its own defect' },
     });
     expect(d.merge).toBe(false);
-    expect(d.reasons).toHaveLength(7);
+    expect(d.reasons).toHaveLength(8);
     expect(d.reasons[0]).toContain('not armed');
     expect(d.reasons[2]).toContain('did not pass');
     expect(d.reasons[3]).toContain('found a secret');
     expect(d.reasons[5]).toContain('master moved');
     expect(d.reasons[6]).toContain('the whole suite on this head did not pass');
+    expect(d.reasons[7]).toContain('was still running when the wait ran out');
   });
   it('names the label an automatic merge carries', () => {
     expect(AUTO_MERGED_LABEL).toBe('jev-harness:auto-merged');
@@ -60,10 +62,10 @@ describe('without a person required (the default)', () => {
 });
 
 describe('with a person required', () => {
-  it('merges only when every condition holds, and says so nine times', () => {
+  it('merges only when every condition holds, and says so ten times', () => {
     const d = autoMergeDecision(withPerson);
     expect(d.merge).toBe(true);
-    expect(d.reasons).toHaveLength(9);
+    expect(d.reasons).toHaveLength(10);
     expect(d.reasons.every((r) => r.startsWith('holds: '))).toBe(true);
     expect(d.reasons[4]).toContain('25 live review-verdict outcome(s): agreement 0.92 (floor 0.9), disagreement 0.04 (ceiling 0.05)');
     expect(d.reasons[5]).toContain('the reputation from 1 attestation(s) rates accuracy 0.92 (floor 0.9)');
@@ -138,7 +140,7 @@ describe('★ a branch master moved under is not what was tested', () => {
   });
 });
 
-describe('★ the whole suite on the head is the last condition: a red suite merged seven times before anything waited for it', () => {
+describe('★ the whole suite on the head: a red suite merged seven times before anything waited for it', () => {
   // 2026-09-22, 02:24Z to 16:31Z: bridge-typecheck.yml was red on every pull request and the
   // decision, taken on the selected tests alone, merged #446 to #452 over it.
   it('refuses a red, cancelled or timed-out suite, naming the run', () => {
@@ -160,7 +162,57 @@ describe('★ the whole suite on the head is the last condition: a red suite mer
     expect(advisory.merge).toBe(true);
     expect(advisory.reasons[6]).toContain('advisory (JEV_MERGE_WAITS_FOR_SUITE is false): failure');
   });
-  it('is the last condition in the person-required mode too', () => {
+  it('comes ninth in the person-required mode', () => {
     expect(autoMergeDecision({ ...withPerson, suite: { result: 'failure', gates: true } }).reasons[8]).toContain('nothing merges over a red suite');
+  });
+});
+
+describe('★ every other check on the head is the last condition: #707 and #716 merged with Mutation Gate still running', () => {
+  // 2026-10-27: the decision merged both the moment Bridge Typecheck passed, while Mutation Gate
+  // and Base without verticals still ran on the same heads. They came back green; a red one would
+  // have landed on master with nothing reading it. The words are the ones
+  // tools/wait-for-workflow-run.mjs writes (tests/wait-for-workflow-run.test.ts covers how it
+  // reaches each one from GitHub's listings).
+  it('holds only when every other check concluded success, neutral or skipped, and says what was read', () => {
+    const d = autoMergeDecision({ ...all, checks: { result: 'success', gates: true, detail: '14 check run(s) from 8 other workflow run(s) and any other app concluded success, neutral or skipped' } });
+    expect(d.merge).toBe(true);
+    expect(d.reasons[7]).toBe('holds: every other check on this head concluded success, neutral or skipped (14 check run(s) from 8 other workflow run(s) and any other app concluded success, neutral or skipped)');
+  });
+  it('refuses a red check, whatever its conclusion, naming each one', () => {
+    for (const conclusion of ['failure', 'cancelled', 'timed_out', 'action_required', 'startup_failure', 'stale']) {
+      const d = autoMergeDecision({ ...all, checks: { result: 'failure', gates: true, detail: `did not pass: Mutation Gate / Every refusal gate fails on its own defect: ${conclusion}` } });
+      expect(d.merge, conclusion).toBe(false);
+      expect(d.reasons[7]).toBe(`fails: a check on this head did not pass (did not pass: Mutation Gate / Every refusal gate fails on its own defect: ${conclusion}); nothing merges over a red check`);
+    }
+  });
+  it('refuses a check still running when the wait ran out: no merge, and the next push decides again', () => {
+    const d = autoMergeDecision({ ...all, checks: { result: 'timeout', gates: true, detail: 'still running: Mutation Gate / Every refusal gate fails on its own defect' } });
+    expect(d.merge).toBe(false);
+    expect(d.reasons[7]).toContain('fails: a check on this head was still running when the wait ran out (still running: Mutation Gate');
+    expect(d.reasons[7]).toContain('the next push decides again');
+  });
+  it('fails closed: a listing without this run\'s own job, GitHub unreadable, a word it does not know, or no word at all', () => {
+    expect(autoMergeDecision({ ...all, checks: { result: 'untrusted', gates: true } }).reasons[7]).toContain('fails: GitHub\'s listing for this head never held this run\'s own job');
+    const error = autoMergeDecision({ ...all, checks: { result: 'error', gates: true, detail: 'the check runs for this head could not be listed: GitHub answered 403' } });
+    expect(error.merge).toBe(false);
+    expect(error.reasons[7]).toBe('fails: the checks on this head could not be read (the check runs for this head could not be listed: GitHub answered 403); what cannot be read is not merged over');
+    expect(autoMergeDecision({ ...all, checks: { result: 'pending', gates: true } }).reasons[7]).toBe('fails: the other checks on this head have not all concluded (pending)');
+    const { checks: _c, ...none } = all;
+    expect(autoMergeDecision(none).merge).toBe(false);
+    expect(autoMergeDecision(none).reasons[7]).toContain('were not given (--checks-result)');
+  });
+  it('only prints the word when the operator made the checks advisory (JEV_MERGE_WAITS_FOR_CHECKS=false)', () => {
+    const d = autoMergeDecision({ ...all, checks: { result: 'pending', gates: false, detail: 'still running: Mutation Gate / Every refusal gate fails on its own defect' } });
+    expect(d.merge).toBe(true);
+    expect(d.reasons[7]).toBe('holds: the other checks on this head are advisory (JEV_MERGE_WAITS_FOR_CHECKS is false): pending (still running: Mutation Gate / Every refusal gate fails on its own defect)');
+  });
+  it('a red check alone fails the merge, beside a green suite', () => {
+    const d = autoMergeDecision({ ...all, checks: { result: 'failure', gates: true, detail: 'did not pass: Base without verticals / Emergence with the verticals; the base without them: failure' } });
+    expect(d.reasons.filter((r) => r.startsWith('fails:'))).toEqual(['fails: a check on this head did not pass (did not pass: Base without verticals / Emergence with the verticals; the base without them: failure); nothing merges over a red check']);
+  });
+  it('is the last condition in the person-required mode too', () => {
+    const d = autoMergeDecision({ ...withPerson, checks: { result: 'failure', gates: true } });
+    expect(d.reasons).toHaveLength(10);
+    expect(d.reasons[9]).toBe('fails: a check on this head did not pass; nothing merges over a red check');
   });
 });

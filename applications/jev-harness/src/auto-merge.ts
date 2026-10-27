@@ -54,6 +54,22 @@
  *      judge's own run) holds, anything else fails. JEV_MERGE_WAITS_FOR_SUITE=false makes the
  *      word advisory — printed, not gating — for an operator who would rather have the two
  *      minutes back than the ten.
+ *  11. Every other check on this head concluded, and none of them red. Condition 10 read one
+ *      workflow and nothing else: on 2026-10-27 the decision merged #707 and #716 the moment
+ *      the suite passed, with Mutation Gate and Base without verticals still running on the
+ *      same heads (Mutation Gate concluded 24 and 18 minutes after those merges). They came
+ *      back green; a red one would have landed on master with nothing reading it. The same
+ *      wait, against the same deadline (no second budget), now also lists every workflow run
+ *      and check run GitHub holds for the head, leaves out this workflow's own by its workflow
+ *      id (never by name), keeps the latest attempt of each, and hands the decision a second
+ *      word: success holds (each concluded success, neutral or skipped); failure (one concluded
+ *      failure, cancelled, timed_out, action_required, startup_failure or anything else),
+ *      timeout (one still running at the deadline), untrusted (the listings never held this
+ *      run's own job) and error (GitHub could not be asked) fail, and the next push decides
+ *      again. Mutation Gate took 19 to 33 minutes from the push on 2026-10-26/27, so a pull
+ *      request whose Mutation Gate outlasts the wait is not merged by that run.
+ *      JEV_MERGE_WAITS_FOR_CHECKS=false makes the word advisory, and gives the checks no wait
+ *      of their own beyond the suite's.
  *
  * The operator turned the person off on 2026-09-21 ("i dont need human review"), so by default
  * needs-human-review is advisory: the gate still judges every diff and records its verdict,
@@ -111,6 +127,14 @@ export interface AutoMergeInputs {
    * the operator made it advisory (JEV_MERGE_WAITS_FOR_SUITE=false).
    */
   readonly suite?: { readonly result: string; readonly gates: boolean; readonly url?: string };
+  /**
+   * Every other check on the pull request's head (each workflow run and check run GitHub lists
+   * for it, this workflow's own left out by workflow id), as tools/wait-for-workflow-run.mjs left
+   * it when its wait ended: success, failure, timeout, untrusted, error, or pending (only when
+   * advisory). `detail` names what failed or what was still running. `gates` is false when the
+   * operator made it advisory (JEV_MERGE_WAITS_FOR_CHECKS=false).
+   */
+  readonly checks?: { readonly result: string; readonly gates: boolean; readonly detail?: string };
 }
 
 export interface AutoMergeEvidence {
@@ -202,6 +226,26 @@ export function autoMergeDecision(input: AutoMergeInputs, policy: AutoMergePolic
     check(true, 'no whole-suite run was started for this head (its paths did not match), in a listing that holds this run');
   } else {
     check(false, `the whole suite on this head did not pass (${input.suite.result}${input.suite.url ? `, ${input.suite.url}` : ''}); nothing merges over a red suite`);
+  }
+
+  const checks = input.checks;
+  const said = checks?.detail ? ` (${checks.detail})` : '';
+  if (!checks) {
+    check(false, 'the other checks on this head were not given (--checks-result), so whether one is red or still running is unknown');
+  } else if (!checks.gates) {
+    check(true, `the other checks on this head are advisory (JEV_MERGE_WAITS_FOR_CHECKS is false): ${checks.result}${said}`);
+  } else if (checks.result === 'success') {
+    check(true, `every other check on this head concluded success, neutral or skipped${said}`);
+  } else if (checks.result === 'failure') {
+    check(false, `a check on this head did not pass${said}; nothing merges over a red check`);
+  } else if (checks.result === 'timeout') {
+    check(false, `a check on this head was still running when the wait ran out${said}; the next push decides again`);
+  } else if (checks.result === 'untrusted') {
+    check(false, `GitHub's listing for this head never held this run's own job, so it is not one to merge on${said}; the next push decides again`);
+  } else if (checks.result === 'error') {
+    check(false, `the checks on this head could not be read${said}; what cannot be read is not merged over`);
+  } else {
+    check(false, `the other checks on this head have not all concluded (${checks.result})${said}`);
   }
 
   return { merge: holds.every(Boolean), reasons, evidence };

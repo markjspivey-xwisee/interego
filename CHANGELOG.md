@@ -1,5 +1,32 @@
 # Changelog
 
+## 2026-10-27 — jev-harness: the gated auto-merge waits for every check on the head, not only the suite
+
+The gated auto-merge merged #707 and #716 the moment Bridge Typecheck passed on their heads, while Mutation Gate and Base without verticals were still running on the same heads. Mutation Gate concluded 24 and 18 minutes after those merges. Both came back green, but a red one would have landed on master, and nothing would have read it. Bridge Typecheck was the only other workflow the decision waited for.
+
+The decision in `applications/jev-harness/src/auto-merge.ts` now has an eleventh condition, the last in both modes: every other check on the pull request's head has concluded, and none is red. `tools/wait-for-workflow-run.mjs` already polled the head's workflow runs for the suite. The same loop, against the same deadline (`SUITE_WAIT_MS`, twenty minutes from the start of the step), now also lists every workflow run and every check run GitHub holds for the head, and writes a second word, `checks`, with a one-line `checks_detail`:
+
+- **success** holds. Every other check concluded `success`, `neutral` or `skipped`.
+- **failure** fails as soon as one check concludes anything else: `failure`, `cancelled`, `timed_out`, `action_required`, `startup_failure`, `stale` or no conclusion. The detail names the workflow, the job and the conclusion.
+- **timeout** fails. A check was still running at the deadline.
+- **untrusted** fails. At the deadline, the listings still did not hold this run and its own job, so they are not listings to merge on. This is the same rule the suite wait follows for GitHub's eventually consistent answers.
+- **error** fails. GitHub refused the listing (a 4xx at once, a 5xx if it lasts to the deadline), the listing ran past ten pages of 100, or `GITHUB_RUN_ID` was missing.
+
+In every refusal no merge happens, and the next push decides again.
+
+What counts as another check, and which attempt counts:
+
+- **The harness's own runs and jobs are left out by workflow id, never by name.** The wait finds this run by `GITHUB_RUN_ID`, then leaves out every run of the same workflow on the head (this one, an earlier one a reopen left, the close-time one) and every check run whose check suite or run page belongs to one of them. A different workflow that only shares the harness's name still counts.
+- **The latest attempt of each check counts.** A rerun job keeps its check suite, and only its newest check run of that name is read. An older run of the same workflow for the same event on the head is superseded, and its check runs are left out with it.
+- **Both listings are read.** A queued workflow run has no check run yet, a job behind another is not created until its turn, and a run that fails to start (`startup_failure`) or waits for approval (`action_required`) never gets one. A check run from another app has no workflow run. Check suites are not read: GitHub creates one for every installed app on every push, and four on this repository (claude, railway-app, cloudflare-workers-and-pages, fly-io) stay queued with no check run.
+- **Every page is read**, 100 at a time.
+
+The workflow passes the run's own id (GitHub sets `GITHUB_RUN_ID`), hands `checks` and `checks_detail` to `bin/auto-merge.ts` through the environment, and grants the token `actions: read` and `checks: read` for the two listings. The repository variable `JEV_MERGE_WAITS_FOR_CHECKS=false` makes the word advisory, like `JEV_MERGE_WAITS_FOR_SUITE`: the decision prints it but does not gate on it. In that mode the checks also get no wait of their own, so the decision prints what they say once the suite's word is in. Unset, the condition gates.
+
+The budget is the suite's, not a second one, so this can hold merges back. Mutation Gate runs on every pull request, with no path filter. On 2026-10-26 and 27 its runs took 19 to 33 minutes from the push (median 29, 40 runs). The wait starts about two minutes after the push and ends twenty minutes later. A pull request whose Mutation Gate outlasts that is not merged by its run. Raising `SUITE_WAIT_MS` (and the job's 40-minute `timeout-minutes` with it) would trade time for automatic merges; this change does not.
+
+Tests: `applications/jev-harness/tests/auto-merge.test.ts` covers the decision for every word, each red conclusion, the advisory switch and a missing word. `tests/wait-for-workflow-run.test.ts` covers how the wait reaches each word from listings shaped on #716's head. That includes each conclusion, exclusion by workflow id (renamed, an earlier run, a run matched by its page alone, and another workflow that only shares the name), reruns both ways, superseded runs, other apps, untrusted listings, pagination and its page limit, a deadline that ends a pending check, a 4xx and a 5xx, and the workflow passing both words.
+
 ## 2026-10-27 — Foxxi: when signed xAPI ignored the owner pod, and what that left in the derived lens
 
 The Foxxi README now says when the signed xAPI adapter ignored the owner pod a payload named: from about 2026-10-17 17:15Z to 2026-10-26 07:44Z. In that window a direct wallet signer's writes and reads went to its derived `eth-<hex>` lens. The new section is "Signed xAPI records in the derived lens", under Run the bridge locally.
