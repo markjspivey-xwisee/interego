@@ -26,6 +26,7 @@ import * as http from 'node:http';
 import * as net from 'node:net';
 import { fileURLToPath } from 'node:url';
 import { assertion, attest, softPasskey, type SoftPasskey } from './soft-authenticator.js';
+import { closeServer, stopChild } from './teardown.js';
 
 const now = new Date().toISOString();
 const passkey = (id: string) => ({ id, publicKey: 'AA', counter: 0, createdAt: now });
@@ -188,8 +189,8 @@ before(async () => {
 });
 
 after(async () => {
-  identity?.kill('SIGTERM');
-  await new Promise<void>(resolve => podServer?.close(() => resolve()));
+  await stopChild(identity);
+  await closeServer(podServer);
 });
 
 /** A fresh registration that must be refused: 409, no token, and the account left as it was. */

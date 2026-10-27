@@ -260,7 +260,7 @@ async function main() {
   }
 
   // challenge → sign → /oauth/verify
-  let nonce;
+  let nonce, signedText;
   {
     const resp = await fetch(`${identityOrigin}/challenges`, {
       method: 'POST',
@@ -271,16 +271,19 @@ async function main() {
       record('4. POST /challenges', 'fail', `HTTP ${resp.status}`);
       return summarize('step 4');
     }
-    nonce = (await resp.json()).nonce;
-    record('4. POST /challenges', 'pass', `nonce=${nonce.slice(0, 16)}...`);
+    const challenge = await resp.json();
+    nonce = challenge.nonce;
+    // The identity server's `message`, when it returns one, is the exact text to sign; else the nonce.
+    signedText = typeof challenge.message === 'string' ? challenge.message : nonce;
+    record('4. POST /challenges', 'pass', `nonce=${nonce.slice(0, 16)}...${signedText === nonce ? '' : ' (with message)'}`);
   }
   let signature;
   try {
-    const sigBytes = nodeSign(null, Buffer.from(nonce, 'utf8'), id.privateKey);
+    const sigBytes = nodeSign(null, Buffer.from(signedText, 'utf8'), id.privateKey);
     signature = b64url(sigBytes);
-    record('5. Ed25519 sign(nonce)', 'pass');
+    record('5. Ed25519 sign(challenge text)', 'pass');
   } catch (err) {
-    record('5. Ed25519 sign(nonce)', 'fail', err.message);
+    record('5. Ed25519 sign(challenge text)', 'fail', err.message);
     return summarize('step 5');
   }
 

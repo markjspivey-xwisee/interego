@@ -32,8 +32,10 @@ import * as net from 'node:net';
 import { fileURLToPath } from 'node:url';
 import { Wallet } from 'ethers';
 import { deriveUserIdFromWallet } from '../derive-userid.js';
+import { closeServer, stopChild } from './teardown.js';
 
 const now = new Date().toISOString();
+const HOUR = 60 * 60 * 1000;
 type Signer = { address: string; signMessage(message: string): Promise<string> };
 const walletUser = (w: { address: string }) => deriveUserIdFromWallet(w.address.toLowerCase());
 const lower = (w: { address: string }) => w.address.toLowerCase();
@@ -133,14 +135,21 @@ async function startIdentity(podPort: number, sink: { text: string }, ready: (h:
   proc.stdout!.on('data', d => { sink.text += String(d); });
   proc.stderr!.on('data', d => { sink.text += String(d); });
   const deadline = Date.now() + 60_000;
-  for (;;) {
-    if (proc.exitCode !== null) throw new Error(`identity server exited ${proc.exitCode}:\n${sink.text}`);
-    try {
-      const health = await (await fetch(`${url}/health`)).json() as { accountIndex: { complete: boolean } };
-      if (ready(health.accountIndex)) break;
-    } catch { /* not listening yet */ }
-    if (Date.now() > deadline) throw new Error(`identity server did not start:\n${sink.text}`);
-    await new Promise(resolve => setTimeout(resolve, 100));
+  try {
+    for (;;) {
+      if (proc.exitCode !== null) throw new Error(`identity server exited ${proc.exitCode}:\n${sink.text}`);
+      try {
+        const health = await (await fetch(`${url}/health`)).json() as { accountIndex: { complete: boolean } };
+        if (ready(health.accountIndex)) break;
+      } catch { /* not listening yet */ }
+      if (Date.now() > deadline) throw new Error(`identity server did not start:\n${sink.text}`);
+      await new Promise(resolve => setTimeout(resolve, 100));
+    }
+  } catch (err) {
+    // No caller holds `proc` yet, so no after() hook could stop it: a live child would keep
+    // this file's process (and the whole run) waiting for ever.
+    await stopChild(proc);
+    throw err;
   }
   return { proc, url };
 }
@@ -221,10 +230,8 @@ before(async () => {
 });
 
 after(async () => {
-  identity?.kill('SIGTERM');
-  identity2?.kill('SIGTERM');
-  await new Promise<void>(resolve => podServer?.close(() => resolve()));
-  await new Promise<void>(resolve => podServer2?.close(() => resolve()));
+  await Promise.all([stopChild(identity), stopChild(identity2)]);
+  await Promise.all([closeServer(podServer), closeServer(podServer2)]);
 });
 
 test('a message the victim\'s wallet signed for another site, replayed to /siwe/verify, gets 410 and no token', async () => {
@@ -484,17 +491,56 @@ test('/auth/siwe and /wallet/link refuse text a wallet does not read as a sign-i
   assert.equal(snapshot(linkerId), before);
 });
 
-test('/auth/siwe refuses a message whose URI is another site, or whose Issued At does not fit its challenge', async () => {
+test('/auth/siwe refuses a message whose URI is another site, or whose Issued At is more than a day from its challenge', async () => {
   const otherUri = await siweNonce();
   const m1 = siweMessage(host, victim.address, otherUri, { uri: 'https://evil.example/login' });
   const r1 = await post('/auth/siwe', { message: m1, signature: await victim.signMessage(m1), nonce: otherUri });
   assert.equal(r1.status, 400, JSON.stringify(r1.json));
   assert.match(String(r1.json['error']), /URI/);
   const stale = await siweNonce();
-  const m2 = siweMessage(host, victim.address, stale, { issuedAt: new Date(Date.now() - 60 * 60 * 1000).toISOString() });
+  const m2 = siweMessage(host, victim.address, stale, { issuedAt: new Date(Date.now() - 25 * HOUR).toISOString() });
   const r2 = await post('/auth/siwe', { message: m2, signature: await victim.signMessage(m2), nonce: stale });
   assert.equal(r2.status, 400, JSON.stringify(r2.json));
   assert.match(String(r2.json['error']), /Issued At/);
+});
+
+test('a signing device whose clock is hours off still signs in and links a wallet; more than 24 hours off is refused', async () => {
+  // Issued At is the device's clock. Freshness is the nonce's job (single use, five minutes), so
+  // a device two hours behind or ahead of this server is a sign-in, not a replay.
+  for (const offset of [-2 * HOUR, 2 * HOUR]) {
+    const w = Wallet.createRandom();
+    const nonce = await siweNonce();
+    const message = siweMessage(host, w.address, nonce, { issuedAt: new Date(Date.now() + offset).toISOString() });
+    const r = await post('/auth/siwe', { message, signature: await w.signMessage(message), nonce, name: 'Someone' });
+    assert.equal(r.status, 200, `${offset / HOUR}h: ${JSON.stringify(r.json)}`);
+    assert.equal(r.json['userId'], walletUser(w));
+    const added = Wallet.createRandom();
+    const linkNonce = await siweNonce();
+    const siwe = siweMessage(host, added.address, linkNonce, { issuedAt: new Date(Date.now() + offset).toISOString() });
+    const linked = await post('/wallet/link', { walletAddress: added.address, siweMessage: siwe, signature: await added.signMessage(siwe), nonce: linkNonce },
+      bearer(String(r.json['token'])));
+    assert.equal(linked.status, 200, `${offset / HOUR}h link: ${JSON.stringify(linked.json)}`);
+    assert.equal(linked.json['linked'], true);
+  }
+  for (const offset of [-25 * HOUR, 25 * HOUR]) {
+    const w = Wallet.createRandom();
+    const nonce = await siweNonce();
+    const message = siweMessage(host, w.address, nonce, { issuedAt: new Date(Date.now() + offset).toISOString() });
+    const r = await post('/auth/siwe', { message, signature: await w.signMessage(message), nonce, name: 'Someone' });
+    assert.equal(r.status, 400, `${offset / HOUR}h: ${JSON.stringify(r.json)}`);
+    assert.match(String(r.json['error']), /Issued At is more than 24 hours from its challenge/);
+    assert.equal(r.json['token'], undefined);
+    assert.equal(snapshot(walletUser(w)), 'null', 'no account is opened');
+    const added = Wallet.createRandom();
+    const before = snapshot(linkerId);
+    const linkNonce = await siweNonce();
+    const siwe = siweMessage(host, added.address, linkNonce, { issuedAt: new Date(Date.now() + offset).toISOString() });
+    const linked = await post('/wallet/link', { walletAddress: added.address, siweMessage: siwe, signature: await added.signMessage(siwe), nonce: linkNonce },
+      bearer(linkerToken));
+    assert.equal(linked.status, 400, `${offset / HOUR}h link: ${JSON.stringify(linked.json)}`);
+    assert.match(String(linked.json['error']), /Issued At/);
+    assert.equal(snapshot(linkerId), before);
+  }
 });
 
 test('the relay host guessed from BASE_URL is not a sign-in domain; RELAY_URL is, and each domain is logged with its source', async () => {
@@ -520,7 +566,7 @@ test('the relay host guessed from BASE_URL is not a sign-in domain; RELAY_URL is
     assert.match(sink.text, /acme-mcp\.invalid \(RELAY_URL\)/);
     assert.doesNotMatch(sink.text.split('\n').find(l => l.includes('SIWE domains')) ?? '', /acme-relay/);
   } finally {
-    proc?.kill('SIGTERM');
-    await new Promise<void>(resolve => pods3.server.close(() => resolve()));
+    await stopChild(proc);
+    await closeServer(pods3.server);
   }
 });

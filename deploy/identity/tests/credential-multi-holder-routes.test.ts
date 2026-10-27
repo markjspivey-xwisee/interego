@@ -33,6 +33,7 @@ import * as http from 'node:http';
 import * as net from 'node:net';
 import { fileURLToPath } from 'node:url';
 import { assertion, attest, recoded, softPasskey, type SoftPasskey } from './soft-authenticator.js';
+import { closeServer, stopChild } from './teardown.js';
 
 const now = new Date().toISOString();
 // When the owners enrolled: before anyone could copy their credential ids.
@@ -252,8 +253,8 @@ before(async () => {
 });
 
 after(async () => {
-  identity?.kill('SIGTERM');
-  await new Promise<void>(resolve => podServer?.close(() => resolve()));
+  await stopChild(identity);
+  await closeServer(podServer);
 });
 
 test('a victim\'s passkey id registered by someone else while the victim was not in this server\'s listing: both sign in to their own accounts', async () => {
@@ -343,7 +344,11 @@ test('a holder deleted while a sign-in reads the records is skipped, not reporte
   const reading = new Promise<void>(resolve => { arrived = resolve; });
   heldRead = { userId: survivor.id, arrived, release: new Promise<void>(resolve => { release = resolve; }) };
   const signingIn = signIn(survivor.key);
-  await reading;
+  // Bounded: a sign-in that never reads the record fails here, rather than waiting for ever.
+  let timer: NodeJS.Timeout | undefined;
+  const read = await Promise.race([reading.then(() => true), new Promise<boolean>(r => { timer = setTimeout(() => r(false), 10_000); })]);
+  clearTimeout(timer);
+  assert.ok(read, `the sign-in never read ${survivor.id}'s record\n${output}`);
   const del = await fetch(`${base}/users/me/delete`, {
     method: 'POST', headers: { Authorization: `Bearer ${String(token.json['token'])}`, 'Content-Type': 'application/json' }, body: '{}',
   });

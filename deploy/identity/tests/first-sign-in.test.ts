@@ -230,3 +230,76 @@ test('a tombstone written between the read and the write is seen on the re-read:
   assert.equal(p.writes.length, 0);
   assert.equal(reads, 2);
 });
+
+// ── Accounts deleted before deletions left a tombstone (`vacated`, `retire`) ──
+// Their pods hold no document, or one without credentials, and keep the rest of their files.
+
+test('vacated: a pod without credentials it marks is refused as deleted, nothing created, retired once', async () => {
+  for (const initial of [null, record({ sessionEpoch: 4 })]) {
+    const p = pod(initial);
+    const asked: Array<Methods | null> = [];
+    const retired: Array<Methods | null> = [];
+    const out = await wallet(p, {
+      vacated: async existing => { asked.push(existing); return true; },
+      retire: async existing => { retired.push(existing); },
+    });
+    assert.deepEqual(out, { kind: 'deleted' });
+    assert.equal(p.writes.length, 0);
+    assert.deepEqual(asked, [initial]);
+    assert.deepEqual(retired, [initial]);
+  }
+});
+
+test('vacated: never asked of a pod that lists credentials, a tombstone, or a credential that may not create', async () => {
+  let asked = 0;
+  const vacated = async () => { asked++; return true; };
+  assert.equal((await wallet(pod(record({ walletAddresses: [WALLET] })), { vacated })).kind, 'returning');
+  assert.equal((await wallet(pod(record({ walletAddresses: ['0x01'] })), { vacated })).kind, 'refused');
+  assert.equal((await wallet(pod(record({ webAuthnCredentials: [{ id: 'cred-x' }] })), { vacated })).kind, 'refused');
+  assert.equal((await wallet(pod(record({ deletedAt: '2026-10-26' })), { vacated, closed: m => typeof m.deletedAt === 'string' })).kind, 'deleted');
+  for (const doc of [null, record()]) assert.equal((await wallet(pod(doc), { vacated, mayCreate: false })).kind, 'refused');
+  assert.equal((await wallet(pod('unreadable'), { vacated })).kind, 'unreadable');
+  assert.equal(asked, 0);
+});
+
+test('vacated: a probe that cannot be answered is unreadable and writes nothing; false creates as before', async () => {
+  const p = pod(null);
+  let retired = 0;
+  const out = await wallet(p, { vacated: async () => { throw new Error('HEAD profile/card: 502'); }, retire: async () => { retired++; } });
+  assert.equal(out.kind, 'unreadable');
+  assert.match(out.kind === 'unreadable' ? out.reason : '', /502/);
+  assert.equal(p.writes.length, 0);
+  assert.equal(retired, 0);
+  const q = pod(null);
+  assert.equal((await wallet(q, { vacated: async () => false, retire: async () => { retired++; } })).kind, 'created');
+  assert.equal(q.writes.length, 1);
+  assert.equal(retired, 0);
+});
+
+test('vacated: asked once per claim, so a document a concurrent creator left under the write is not taken for a deleted account', async () => {
+  // First read: no document, and the pod is brand-new. Between that read and the write another
+  // writer leaves a document without credentials; the re-read must not ask again.
+  const p = pod(null);
+  const read = p.read;
+  let reads = 0;
+  let asked = 0;
+  const out = await wallet(p, {
+    read: async () => {
+      const r = await read();
+      if (reads++ === 0) p.doc = record();
+      return r;
+    },
+    vacated: async () => asked++ > 0,
+  });
+  assert.equal(out.kind, 'created');
+  assert.equal(asked, 1);
+  assert.equal(reads, 2);
+  assert.equal(p.writes.length, 1);
+});
+
+test('retire: a tombstone write that fails still refuses', async () => {
+  const p = pod(null);
+  const out = await wallet(p, { vacated: async () => true, retire: async () => { throw new Error('PUT 500'); } });
+  assert.deepEqual(out, { kind: 'deleted' });
+  assert.equal(p.writes.length, 0);
+});

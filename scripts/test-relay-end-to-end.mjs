@@ -17,8 +17,10 @@
  *      pre-FIX-3 registrations.
  *   2. POST /register (DCR) -> client_id.
  *   3. GET /authorize, scrape PENDING_ID + IDENTITY from inline JS.
- *   4. POST {IDENTITY}/challenges {purpose:"did-sig"} -> nonce.
- *   5. Sign nonce bytes with Ed25519 -> base64url signature.
+ *   4. POST {IDENTITY}/challenges {purpose:"did-sig"} -> nonce (and, from a server that
+ *      names itself in the proof, the exact text to sign as `message`).
+ *   5. Sign that text's UTF-8 bytes (the nonce when there is no message) with Ed25519
+ *      -> base64url signature.
  *   6. POST {RELAY}/oauth/verify {pending_id, method:"did", did, nonce,
  *      signature} -> redirect URL containing ?code=... .
  *   7. POST {RELAY}/token with grant_type=authorization_code + PKCE
@@ -222,7 +224,7 @@ async function main() {
   }
 
   // Step 4: get challenge from identity
-  let nonce;
+  let nonce, signedText;
   {
     const url = `${identityOrigin}/challenges`;
     const body = { purpose: 'did-sig' };
@@ -243,19 +245,23 @@ async function main() {
       record('4. POST {identity}/challenges (did-sig)', 'fail', 'no nonce in response');
       return summarize('step 4 (challenges)');
     }
-    record('4. POST {identity}/challenges (did-sig)', 'pass', `nonce=${nonce.slice(0, 16)}...`);
+    // A server that names itself in the proof returns the exact text to sign as `message`;
+    // it is signed as sent. Without one, the bare nonce is the text.
+    signedText = typeof data.message === 'string' ? data.message : nonce;
+    record('4. POST {identity}/challenges (did-sig)', 'pass', `nonce=${nonce.slice(0, 16)}...${signedText === nonce ? '' : ' (with message)'}`);
   }
 
-  // Step 5: sign nonce with Ed25519
+  // Step 5: sign the challenge text with Ed25519
   let signature;
   try {
-    // Identity verifies with: crypto.verify(null, Buffer.from(nonce,'utf8'), key, sig)
-    // So we sign the raw UTF-8 bytes of the nonce string with Ed25519 (algorithm = null/EdDSA).
-    const sigBytes = nodeSign(null, Buffer.from(nonce, 'utf8'), id.privateKey);
+    // Identity verifies crypto.verify(null, Buffer.from(text,'utf8'), key, sig), where text is
+    // the message it returned or, from a server that returns none, the nonce. Sign those raw
+    // UTF-8 bytes with Ed25519 (algorithm = null/EdDSA).
+    const sigBytes = nodeSign(null, Buffer.from(signedText, 'utf8'), id.privateKey);
     signature = b64url(sigBytes);
-    record('5. Ed25519 sign(nonce)', 'pass', `sig=${signature.slice(0, 24)}...`);
+    record('5. Ed25519 sign(challenge text)', 'pass', `sig=${signature.slice(0, 24)}...`);
   } catch (err) {
-    record('5. Ed25519 sign(nonce)', 'fail', err.message);
+    record('5. Ed25519 sign(challenge text)', 'fail', err.message);
     return summarize('step 5 (sign)');
   }
 

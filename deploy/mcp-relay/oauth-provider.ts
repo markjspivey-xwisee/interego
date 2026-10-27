@@ -757,6 +757,7 @@ export class InteregoOAuthProvider implements OAuthServerProvider {
   .method p { margin: 0 0 .6em; color: #666; font-size: .85em; }
   label { display: block; margin: .6em 0 .2em; font-size: .85em; color: #333; }
   input[type=text] { width: 100%; padding: .55em; font-size: .95em; border: 1px solid #bbb; border-radius: 6px; }
+  textarea { display: block; width: 100%; padding: .55em; font: .85em/1.35 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; border: 1px solid #bbb; border-radius: 6px; resize: vertical; white-space: pre; overflow-x: auto; }
   button { width: 100%; padding: .7em; font-size: .95em; background: #111; color: #fff; border: 0; border-radius: 6px; cursor: pointer; margin-top: .6em; }
   button:hover:not(:disabled) { background: #333; }
   button:disabled { opacity: .5; cursor: not-allowed; }
@@ -773,7 +774,7 @@ export class InteregoOAuthProvider implements OAuthServerProvider {
     .client, .method { border-color: #333; background: #181818; }
     .client .meta, .method p { color: #aaa; }
     label { color: #ddd; }
-    input[type=text] { background: #1a1a1a; color: #fff; border-color: #444; }
+    input[type=text], textarea { background: #1a1a1a; color: #fff; border-color: #444; }
     button { background: #fff; color: #111; }
     button.secondary { background: #1a1a1a; color: #fff; border-color: #444; }
     button.secondary:hover { background: #262626; }
@@ -835,7 +836,11 @@ export class InteregoOAuthProvider implements OAuthServerProvider {
     <input id="did-did" type="text" placeholder="did:key:z..." autocomplete="off">
     <button onclick="didChallenge()" class="secondary">Request challenge</button>
     <div id="did-nonce-wrap" style="display:none;margin-top:.6em">
-      <label for="did-sig">Signature (base64url, Ed25519 over nonce)</label>
+      <label for="did-text">Text to sign</label>
+      <textarea id="did-text" rows="3" readonly spellcheck="false"></textarea>
+      <label for="did-text-b64">The same bytes (UTF-8), base64url</label>
+      <input id="did-text-b64" type="text" readonly spellcheck="false">
+      <label for="did-sig">Signature (base64url, Ed25519 over the text above)</label>
       <input id="did-sig" type="text" autocomplete="off">
       <button onclick="didSubmit()">Submit signature</button>
     </div>
@@ -1047,6 +1052,10 @@ async function siweLogin() {
 }
 
 // ── DID key signing ────────────────────────────────────────
+// An identity server that names itself in the proof returns the exact text to sign as
+// \`message\` beside the nonce. It is shown and encoded exactly as received, never rebuilt
+// from its parts. A server that returns no message verifies the bare nonce, so the nonce is
+// the text. The nonce goes back with the signature either way.
 let didNonceCache = '';
 async function didChallenge() {
   const did = document.getElementById('did-did').value.trim();
@@ -1056,10 +1065,14 @@ async function didChallenge() {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ purpose: 'did-sig' }),
     });
-    const { nonce } = await chRes.json();
-    didNonceCache = nonce;
+    const ch = await chRes.json();
+    if (!chRes.ok || typeof ch.nonce !== 'string') throw new Error(ch.error || ('Could not get a challenge (HTTP ' + chRes.status + ')'));
+    const text = typeof ch.message === 'string' ? ch.message : ch.nonce;
+    didNonceCache = ch.nonce;
+    document.getElementById('did-text').value = text;
+    document.getElementById('did-text-b64').value = bytesToB64url(new TextEncoder().encode(text));
     document.getElementById('did-nonce-wrap').style.display = 'block';
-    setStatus('did-status', 'Nonce: ' + nonce + '\\n\\nSign this (raw UTF-8 bytes) with your Ed25519 key, then paste the base64url signature above.', 'info');
+    setStatus('did-status', 'Sign exactly the UTF-8 bytes of the text above with your Ed25519 key, then paste the base64url signature above. Copied text can pick up CRLF line breaks or a trailing newline; the base64url field holds the exact bytes, so decoding it gives a file to sign.', 'info');
   } catch (e) { setStatus('did-status', e.message, 'err'); }
 }
 async function didSubmit() {

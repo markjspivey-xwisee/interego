@@ -31,6 +31,8 @@ import { Wallet } from 'ethers';
 import { assertion, attest, softPasskey, type SoftPasskey } from './soft-authenticator.js';
 import { deriveUserIdFromDid, deriveUserIdFromWallet } from '../derive-userid.js';
 import { playKeyThumbprint, provisionalUserId } from '../provisional-play.js';
+import { closeServer, stopChild } from './teardown.js';
+import { publicJwk } from './public-jwk.js';
 
 const sleep = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms));
 const within = <T>(p: Promise<T>, ms: number) => Promise.race([p.then(() => true), sleep(ms).then(() => false)]);
@@ -185,7 +187,7 @@ function base58(bytes: Uint8Array): string {
 }
 function didKey() {
   const { publicKey, privateKey } = crypto.generateKeyPairSync('ed25519');
-  const raw = Buffer.from(publicKey.export({ format: 'jwk' }).x!, 'base64url');
+  const raw = Buffer.from(publicJwk(publicKey).x!, 'base64url');
   const multibase = `z${base58(Buffer.concat([Buffer.from([0xed, 0x01]), raw]))}`;
   return { did: `did:key:${multibase}`, multibase, privateKey };
 }
@@ -271,12 +273,7 @@ async function startIdentity(port: number, env: Record<string, string> = {}, wai
   })();
   const inst: Instance = {
     base, port, ready, output: () => output,
-    stop: async () => {
-      if (proc.exitCode !== null || proc.signalCode !== null) return;
-      const exited = new Promise(resolve => proc.once('exit', resolve));
-      proc.kill('SIGTERM');
-      await exited;
-    },
+    stop: () => stopChild(proc),
   };
   instances.push(inst);
   if (waitComplete) await ready;
@@ -437,7 +434,7 @@ const unloaded = (from: AnyWallet) => deriveUserIdFromWallet(from.address.toLowe
 const j5 = { wallet: { from: W(), holds: W() }, did: { from: W(), holds: didKey() }, passkey: { from: W(), holds: P() } };
 // An unclaimed Play owner whose anchor has expired, for the janitor to purge.
 const playKey = (() => {
-  const jwk = crypto.generateKeyPairSync('ec', { namedCurve: 'P-256' }).publicKey.export({ format: 'jwk' }) as { x: string; y: string };
+  const jwk = publicJwk(crypto.generateKeyPairSync('ec', { namedCurve: 'P-256' }).publicKey) as { x: string; y: string };
   return { crv: 'P-256', kty: 'EC', x: jwk.x, y: jwk.y } as const;
 })();
 const playThumb = playKeyThumbprint(playKey as Parameters<typeof playKeyThumbprint>[0]);
@@ -491,8 +488,7 @@ before(async () => {
 
 after(async () => {
   for (const inst of instances) await inst.stop();
-  podServer?.closeAllConnections();
-  await new Promise<void>(resolve => podServer?.close(() => resolve()));
+  await closeServer(podServer);
 });
 
 // ── A. Edits made by another instance or an operator, within this server's 10 s ─────────────
@@ -1576,4 +1572,49 @@ test('I6: a bootstrap passkey for a seeded account claimed meanwhile is refused,
   assert.equal(r.status, 401, JSON.stringify(r.json));
   assert.equal((await call(primary, 'GET', `/users/${invites.claimed.userId}/did.json`)).status, 404);
   assert.equal(record(invites.claimed.userId)!.webAuthnCredentials.length, 0);
+});
+
+test('I7: the tombstone a first sign-in leaves on a pod deleted before tombstones is a conditional write, never over a credential written meanwhile', async () => {
+  // A passkey id whose pod holds a record without credentials: what a deletion before tombstones
+  // left (pre-tombstone-deletion-routes.test.ts covers the other shapes). Registering it again is
+  // refused as deleted, and the tombstone is written on the record as the pod holds it, If-Match.
+  const k = P();
+  seed(k.userId, { epoch: 4 });
+  const etag = etagOf(k.userId);
+  let since = mark();
+  const r = await post('/auth/webauthn/register', await (async () => {
+    const options = await post('/auth/webauthn/register-options', { name: 'Again' });
+    return { response: attest(k, String(options.json['challenge']), primary.base, (options.json['rp'] as { id: string }).id) };
+  })());
+  assert.equal(r.status, 409, `${JSON.stringify(r.json)}${out()}`);
+  assert.ok(record(k.userId)!.deletedAt, 'tombstone');
+  assert.equal(record(k.userId)!.sessionEpoch, 5);
+  assert.deepEqual(docPuts(k.userId, since).map(p => [p.ifMatch, p.status]), [[etag, 201]]);
+  assert.match(primary.output(), new RegExp(`identity_deleted_before_tombstone userId=${k.userId} evidence=auth-methods.jsonld without credentials`));
+
+  // Another writer (the other instance) puts a wallet on such a record while the tombstone is on
+  // its way: the tombstone's If-Match fails, the record is read again, and nothing is written over
+  // the wallet. The sign-in is still refused, and this server holds the record as the pod does,
+  // so the wallet signs in to that account rather than opening the one derived from it.
+  const k2 = P();
+  const w = W();
+  seed(k2.userId, { epoch: 2 });
+  const put = hold('PUT', k2.userId, 1, id => outOfBand(id, d => { d['walletAddresses'] = [w.address.toLowerCase()]; }));
+  since = mark();
+  const pending = (async () => {
+    const options = await post('/auth/webauthn/register-options', { name: 'Again' });
+    return post('/auth/webauthn/register', { response: attest(k2, String(options.json['challenge']), primary.base, (options.json['rp'] as { id: string }).id) });
+  })();
+  await put.arrived;
+  put.release();
+  const refused = await pending;
+  assert.equal(refused.status, 409, `${JSON.stringify(refused.json)}${out()}`);
+  assert.equal(record(k2.userId)!.deletedAt, undefined, JSON.stringify(record(k2.userId)));
+  assert.deepEqual(record(k2.userId)!.walletAddresses, [w.address.toLowerCase()]);
+  assert.deepEqual(docPuts(k2.userId, since).map(p => p.status), [412], 'one tombstone write, refused; none after the re-read');
+  assert.equal(docGets(k2.userId, since).length, 3, 'the claim\'s read, the tombstone\'s, and the re-read after the 412');
+  const signedIn = await siwe(w);
+  assert.equal(signedIn.status, 200, `${JSON.stringify(signedIn.json)}${out()}`);
+  assert.equal(signedIn.json['userId'], k2.userId);
+  assert.equal(docs.has(deriveUserIdFromWallet(w.address.toLowerCase())), false);
 });

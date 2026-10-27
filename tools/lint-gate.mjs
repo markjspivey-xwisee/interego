@@ -195,11 +195,12 @@ const UNLINTED_FRONTIER = {
   // credential index (module, its suite, a route suite, a shared software authenticator), with
   // the rounds since: 229 files. All lint clean; the error ceiling stays fixed.
   // A route suite for sign-ins while the account index is incomplete: 230.
+  // A route suite for accounts deleted before tombstones: 231.
   // The identity server's one writer of auth-methods.jsonld (auth-methods-writer.ts), its unit
-  // suite and a route suite for writes that meet other writers: 233. All lint clean.
-  // Play owners' writes go through that writer too, so provisional-play-enrollment.ts is gone: 232.
-  // Decisions about one wallet or DID in turn (identity credential-decisions.ts) and its suite: 234.
-  deploy: { errors: 356, files: 234 },
+  // suite and a route suite for writes that meet other writers: 234. All lint clean.
+  // Play owners' writes go through that writer too, so provisional-play-enrollment.ts is gone: 233.
+  // Decisions about one wallet or DID in turn (identity credential-decisions.ts) and its suite: 235.
+  deploy: { errors: 356, files: 235 },
   // The bulk of these are `no-console` in vertical bridges and CLI entry points — one config
   // decision, not a thousand defects. See the note above.
   // ★ 320 -> 337, and the ratchet caught it in CI rather than locally, which is the interesting
@@ -691,7 +692,8 @@ const BASELINE = {};
 // base-without-verticals tool and its test (#366) to 633; the gate named 603. The advertised-demos
 // lint and its declarations (#567 follow-up) brought it to 635; the gate named 604.
 // 2026-10-08: private HMD invocation coverage adds one file, so the floor is 605.
-export const MIN_FILES = 647;
+// 2026-10-27: tests/did-sig-live-scripts.test.ts brings the linted scope to 681; the gate named 648.
+export const MIN_FILES = 648;
 
 /**
  * How far below the real linted-file count MIN_FILES may sit before that is itself a failure.

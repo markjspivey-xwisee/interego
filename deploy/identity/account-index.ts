@@ -35,7 +35,7 @@ export interface FetchResponseLike {
   text(): Promise<string>;
   headers?: { get(name: string): string | null };
 }
-export type FetchLike = (url: string, init?: { headers?: Record<string, string>; signal?: AbortSignal }) => Promise<FetchResponseLike>;
+export type FetchLike = (url: string, init?: { method?: string; headers?: Record<string, string>; signal?: AbortSignal }) => Promise<FetchResponseLike>;
 
 /**
  * One pod document as JSON: its body, or null when the pod has no such document (404).
@@ -73,6 +73,23 @@ export async function readPodJsonWithEtag(fetchFn: FetchLike, url: string): Prom
     throw new PodReadError(url, 'body is not JSON');
   }
   return { body, etag: r.headers?.get('etag') ?? null };
+}
+
+/**
+ * Whether a pod resource exists, asked with HEAD: true for a 2xx answer, false for 404 or 410
+ * (the only answers that mean "nothing here"). Anything else throws PodReadError, so a caller
+ * never takes an outage for an absent resource.
+ */
+export async function podResourceExists(fetchFn: FetchLike, url: string): Promise<boolean> {
+  let r: FetchResponseLike;
+  try {
+    r = await fetchFn(url, { method: 'HEAD' });
+  } catch (err) {
+    throw new PodReadError(url, (err as Error).message);
+  }
+  if (r.status === 404 || r.status === 410) return false;
+  if (r.ok) return true;
+  throw new PodReadError(url, `${r.status} ${r.statusText}`.trim());
 }
 
 /**
