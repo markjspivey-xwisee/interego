@@ -84,6 +84,9 @@ jobs:
             applications/foxxi-content-intelligence/i2idlx/.cache/upper
             applications/foxxi-content-intelligence/i2idlx/.cache/robot-1.9.11.jar
           key: i2idlx-golden-pins-${{ hashFiles('applications/foxxi-content-intelligence/i2idlx/evidence/upper/manifest.json', 'applications/foxxi-content-intelligence/i2idlx/typescript/refresh-upper-data.json', 'applications/foxxi-content-intelligence/i2idlx/typescript/semantic-data.json', 'applications/foxxi-content-intelligence/i2idlx/config.json') }}
+      - name: Seed the pinned gUFO bytes from the publisher's own commit
+        timeout-minutes: 2
+        run: node "$I2IDLX_ROOT/tools/seed-pinned-upper.mjs" "$I2IDLX_ROOT"
       - name: Recompute both complete builds and require exact parity
         run: npx tsx "$I2IDLX_ROOT/typescript/check-parity.ts" "$I2IDLX_ROOT" --prepare-inputs
       - name: Retain parity evidence and both generated outputs
