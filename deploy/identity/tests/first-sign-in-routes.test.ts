@@ -245,8 +245,10 @@ async function siwe(w: { address: string; signMessage(message: string): Promise<
 }
 
 async function didSignIn(k: { did: string; privateKey: crypto.KeyObject }, extra: Record<string, unknown> = {}) {
-  const { nonce } = (await post('/challenges', { purpose: 'did-sig' })).json as { nonce: string };
-  const signature = crypto.sign(null, Buffer.from(nonce, 'utf8'), k.privateKey).toString('base64url');
+  const { nonce, message } = (await post('/challenges', { purpose: 'did-sig' })).json as { nonce: string; message?: unknown };
+  // As every DID client signs: the challenge's `message` when the server returns one, else the nonce.
+  const signed = typeof message === 'string' ? message : nonce;
+  const signature = crypto.sign(null, Buffer.from(signed, 'utf8'), k.privateKey).toString('base64url');
   return post('/auth/did', { did: k.did, nonce, signature, name: 'New', ...extra });
 }
 

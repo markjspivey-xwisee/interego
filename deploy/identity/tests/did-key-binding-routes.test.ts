@@ -145,8 +145,10 @@ async function post(path: string, body: unknown, headers: Record<string, string>
 
 /** Sign a fresh challenge with `signer` and present it for `did`, sending `publicKeyMultibase` when given. */
 async function signIn(did: string, signer: Pick<Key, 'privateKey'>, publicKeyMultibase?: string, headers: Record<string, string> = {}) {
-  const { nonce } = (await post('/challenges', { purpose: 'did-sig' })).json as { nonce: string };
-  const signature = crypto.sign(null, Buffer.from(nonce, 'utf8'), signer.privateKey).toString('base64url');
+  const { nonce, message } = (await post('/challenges', { purpose: 'did-sig' })).json as { nonce: string; message?: unknown };
+  // As every DID client signs: the challenge's `message` when the server returns one, else the nonce.
+  const signed = typeof message === 'string' ? message : nonce;
+  const signature = crypto.sign(null, Buffer.from(signed, 'utf8'), signer.privateKey).toString('base64url');
   return post('/auth/did', { did, nonce, signature, name: 'New', ...(publicKeyMultibase ? { publicKeyMultibase } : {}) }, headers);
 }
 

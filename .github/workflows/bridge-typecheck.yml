@@ -116,6 +116,10 @@ on:
       # build at all, and commit 857c536 touched only it. Without this entry a commit editing
       # only .dockerignore would merge with the assertion about it never executed.
       - '.dockerignore'
+      # ★ ADDED BY tests/workflow-trigger-covers-the-suite.test.ts. tests/did-sig-live-scripts.test.ts
+      # runs the live scripts under scripts/ that sign in with a did:key and checks what they sign.
+      # Without this entry a commit touching only one of them would merge with that check never run.
+      - 'scripts/**'
 
 permissions:
   contents: read
