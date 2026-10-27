@@ -360,18 +360,31 @@ test('the on-demand guard sees a timer under any receiver or name, from timers/p
   `const sleep = promisify(setTimeout); async function poll() { for (;;) { await sleep(60_000); await autoFetchAdmin({}); } }`,
   `async function poll() { do { await new Promise(r => setTimeout(r, 60_000)); await warmDirectory(); } while (true); }`,
   `const wait = (ms) => new Promise(r => setTimeout(r, ms)); async function poll() { while (true) { await wait(60_000); await warmDirectory(); } }`,
+  // A sleep inside Promise.race or Promise.all, or behind a local function that awaits one.
+  `async function poll() { while (true) { await Promise.race([stopRequested, new Promise(r => setTimeout(r, 60_000))]); await warmDirectory(); } }`,
+  `async function poll() { for (;;) await Promise.all([warmDirectory(), new Promise(r => setTimeout(r, 60_000))]); }`,
+  `async function nap(ms) { await new Promise(r => setTimeout(r, ms)); } async function poll() { while (true) { await nap(60_000); await warmDirectory(); } }`,
   // Nothing in these leaves the loop: the throw is caught inside it, the breaks stop an inner loop and a switch.
   `async function poll() { for (;;) { try { if (!(await warmDirectory())) throw Error('empty'); } catch {} await new Promise(resolve => { setTimeout(resolve, 60_000).unref(); }); } }`,
   `const wait = (ms) => new Promise(r => setTimeout(r, ms)); async function poll() { while (true) { for (const t of ['acme']) { if (!t) break; await autoFetchAdmin({ t }); } switch (0) { default: break; } await wait(60_000); } }`,
   `import { setTimeout as sleep } from 'node:timers/promises'; const nap = () => sleep(60_000).then(() => {}); async function poll() { while (true) { await nap(); await warmDirectory(); } }`,
+  // Nor do these: a continue to the loop's own label starts its next pass, and a break or continue
+  // to a label declared inside the body lands inside it.
+  `async function poll() { tick: while (true) { await new Promise(r => setTimeout(r, 60_000)); for (const t of ['acme']) { if (!(await autoFetchAdmin({ t }))) continue tick; } } }`,
+  `async function poll() { while (true) { await new Promise(r => setTimeout(r, 60_000)); tenants: for (const t of ['acme']) { for (const s of ['users']) { if (!s) continue tenants; if (!t) break tenants; await autoFetchAdmin({ t, s }); } } } }`,
   // A loop that can stop is judged by where it runs, and this one starts at module evaluation.
   `async function poll() { while (true) { await new Promise(r => setTimeout(r, 60_000)); await warmDirectory(); if (stopped) break; } } void poll();`,
   // A listener on any receiver.
   `createServer(app).listen(1, '127.0.0.1', warmDirectory);`,
   `app.server.on('listening', () => warmDirectory());`,
   `server.addListener('listening', warmDirectory);`,
+  `bus.prependListener('ready', warmDirectory);`,
+  `bus.prependOnceListener('ready', () => autoFetchAdmin({}));`,
+  `controller.signal.addEventListener('abort', () => warmDirectory());`,
   // A promise reaction, array callback or promise executor runs at module evaluation here.
   `void Promise.resolve().then(warmDirectory);`,
+  `void Promise.reject(Error('cold')).catch(warmDirectory);`,
+  `void Promise.resolve().finally(warmDirectory);`,
   `void fetch('https://gate.example/').then(() => autoFetchAdmin({}));`,
   `['acme'].forEach(t => void autoFetchAdmin({ t }));`,
   `void new Promise(resolve => resolve(warmDirectory()));`,
@@ -395,12 +408,21 @@ test('the on-demand guard sees a timer under any receiver or name, from timers/p
   // A loop with no condition that returns, throws or breaks out of itself, inside a request.
   `app.get('/y', async () => { for (let n = 0; ; n++) { try { return await autoFetchAdmin({}); } catch (e) { if (n >= 3) throw e; await new Promise(r => setTimeout(r, 100 * 2 ** n)); } } });`,
   `app.get('/y', async () => { let n = 0; while (true) { try { return await autoFetchAdmin({}); } catch (e) { if (++n > 3) throw e; await new Promise(r => setTimeout(r, 100 * 2 ** n)); } } });`,
+  // Each of these leaves its loop one way only: by a return, then by a throw that no catch stops
+  // (a try with only a finally does not catch it).
+  `app.get('/y', async () => { while (true) { const users = await autoFetchAdmin({}); if (users.length) return users; await new Promise(r => setTimeout(r, 100)); } });`,
+  `app.get('/y', async (req) => { for (;;) { try { if (req.signal.aborted) throw req.signal.reason; await warmDirectory(); } finally { release(); } await new Promise(r => setTimeout(r, 1000)); } });`,
+  // A paginated read that breaks out, and a continue and a break from an inner loop to an outer one's label.
   `async function fetchPage(c) { const ac = new AbortController(); const t = setTimeout(() => ac.abort(), 5000); try { return await autoFetchAdmin({ cursor: c, signal: ac.signal }); } finally { clearTimeout(t); } }
 app.get('/users', async () => { let cursor; while (true) { const p = await fetchPage(cursor); if (!p.next) break; cursor = p.next; } });`,
   `app.get('/y', async () => { outer: for (const t of ['acme']) { while (true) { await new Promise(r => setTimeout(r, 10)); if (await autoFetchAdmin({ t })) continue outer; } } });`,
+  `app.get('/y', async () => { scan: for (const t of ['acme']) { while (true) { await new Promise(r => setTimeout(r, 10)); if (await autoFetchAdmin({ t })) break scan; } } });`,
   // A helper that only arms a deadline does not sleep, so this loop waits on the queue, not a timer.
   `async function fetchPage(c) { const ac = new AbortController(); const t = setTimeout(() => ac.abort(), 5000); try { return await autoFetchAdmin({ cursor: c, signal: ac.signal }); } finally { clearTimeout(t); } }
 async function drain() { while (true) { await fetchPage(await queue.wait()); } } app.get('/y', () => drain());`,
+  // Nor is a promise whose executor arms a timer that never resolves it: this one only rejects on a deadline.
+  `async function drain() { while (true) { const job = await new Promise((resolve, reject) => { const t = setTimeout(() => reject(Error('queue timeout')), 5000); queue.once('job', (j) => { clearTimeout(t); resolve(j); }); }); await autoFetchAdmin(job); } } app.get('/y', () => drain());`,
+  // A loop over a request body, a loop that waits on a queue, and a listener that loads nothing.
   `app.get('/y', async (req) => { for await (const chunk of req) await directoryUsersCache.observe(chunk); });`,
   `async function drain() { while (true) { await queue.wait(); await warmDirectory(); } } app.get('/y', () => drain());`,
   `server.on('error', e => console.error(e));`,
