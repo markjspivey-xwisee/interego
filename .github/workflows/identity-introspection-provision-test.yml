@@ -8,7 +8,7 @@ on:
       - 'tests/identity-introspection-provision.test.mjs'
       - 'tools/railway-set-secret-var.mjs'
       - 'tests/railway-set-secret-var.test.mjs'
-      # Read by tests/railway-set-secret-var.test.mjs (its by-hand commands).
+      # Read by both tests: the by-hand commands, and the apply guard's and add-mask line's wording.
       - 'deploy/identity/AUTH-ARCHITECTURE.md'
       - '.github/workflows/identity-introspection-provision.yml'
       - '.github/workflows/identity-introspection-provision-test.yml'

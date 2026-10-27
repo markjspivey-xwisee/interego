@@ -10,7 +10,8 @@
  * has not finished. Two overlapping runs could each pass their read-backs and leave relay and
  * css-gate with different values. A dry run works anywhere. The check reads GITHUB_ACTIONS,
  * GITHUB_REF and GITHUB_WORKFLOW_REF, so it stops an accidental local apply, or another
- * workflow running this tool, not someone who sets them by hand.
+ * workflow running this tool, not someone who sets them by hand. It is not an access boundary:
+ * RAILWAY_PROJECT_TOKEN is a repository secret, which a workflow pushed to any branch can read.
  *
  * Identity's POST /tokens/verify answers only a caller presenting that value as a bearer once
  * identity holds it. The relay and css-gate present it whenever they hold it, so they get it
@@ -51,12 +52,15 @@
  * overlapSeconds (20 s when unset) after SUCCESS. Only the field each stage changes tells the
  * containers apart: relay and css-gate `identityVerifyAuth`, identity `introspection` and
  * `allowOpenIntrospection`. The tool waits for that field, read twice in a row, and fails if it
- * never changes. After the identity stage it checks, with a made-up bearer, that identity still
- * accepts the relay and css-gate.
+ * never changes. After every identity deploy (stages identity and finalize) it waits out the
+ * overlap and checks, with a made-up bearer, that identity still accepts the relay and css-gate.
  *
  * ★ NO VALUE IS PRINTED, written to a file, put in a step output or the environment, or passed
- * in argv; this tool starts no child process. Railway's `variables` query returns every
- * variable of a service; only IDENTITY_INTROSPECTION_SECRET's value (and, for identity,
+ * in argv; this tool starts no child process. The one line that carries a value is the runner's
+ * add-mask command (maskCommand), written to stdout when GITHUB_ACTIONS is 'true': the runner
+ * reads it and hides the value from the log. Anywhere else (GITHUB_ACTIONS=true set by hand, or
+ * this tool's stdout piped to a file) that line shows the value. Railway's `variables` query
+ * returns every variable of a service; only IDENTITY_INTROSPECTION_SECRET's value (and, for identity,
  * whether ALLOW_OPEN_INTROSPECTION is present, and whether it is '1') is kept, and the rest is
  * dropped at once.
  * Railway error text is never logged, because it can echo inputs. Messages are built from
@@ -114,50 +118,85 @@ export function cliRefusal(env) {
 }
 
 const set = (v) => typeof v === 'string' && v !== '';
+/** Railway shows the variable on this service, or the service reports running it. */
+const holds = (s) => set(s.stored) || s.running === true;
+const and = (names) => names.join(' and ');
+
+/** Services that report running the variable while Railway shows it unset: sealed, or changed without a deploy. */
+const sealedServices = (state) => SERVICES.filter((s) => state[s].running === true && !set(state[s].stored));
 
 /**
- * A service that reports running the variable while Railway shows it unset: sealed, or changed
- * without a deploy. The refusal text, or null. It goes before lostCallers and every refusal
+ * A sealed service (see sealedServices), as a refusal, or null. It goes before every refusal
  * about what a service serves, because a sealed caller that runs the value is not lost, and
- * telling the operator to roll it back would take its working deployment away.
+ * telling the operator to roll it back would take its working deployment away. It goes after
+ * callerRefusal, which never names a caller that runs the value.
  */
 function sealedRefusal(state) {
-  const svc = SERVICES.find((s) => state[s].running && !set(state[s].stored));
+  const [svc] = sealedServices(state);
   return svc ? `${svc} runs with a value Railway does not show (sealed, or changed without a deploy); resolve by hand` : null;
 }
 
 /**
- * Identity stores the value while a caller does not: that caller is refused now (or from
- * identity's next deploy). Called only after sealedRefusal, so a caller that does not store the
- * value does not run it either, and identity does not run a value it does not store. A Railway
- * Rollback restores a deployment's variables along with its image, so rolling a caller back past
- * the deployment stage=callers made unsets the variable on it. Deleting the other caller's copy,
- * the way out before identity holds the value, would get that caller refused too, so this says
- * to undo the rollback instead. Deploying master would not help: deploy-railway.yml keeps the
- * service's current variables. The refusal text, or null. `state` is planStage's.
+ * Identity holds the value (stores it, or runs it sealed) while Railway shows a caller without
+ * it, and that caller does not report running it: the caller is refused now (or from identity's
+ * next deploy). A Railway Rollback restores a deployment's variables along with its image, so
+ * rolling a caller back past the deployment stage=callers made unsets the variable on it.
+ * Deleting the other caller's copy, the way out before identity holds the value, would get that
+ * caller refused too, so this says to undo the rollback instead. Deploying master would not help:
+ * deploy-railway.yml keeps the service's current variables. The refusal text, or null.
+ *
+ * `running` is true, false, or null when the health could not be read or lacks the field. A
+ * caller whose health says false is lost, and this goes before sealedRefusal, so a sealed relay or
+ * identity does not hide it (a note names the sealed service). A caller whose health says nothing
+ * may be sealed and working, or rolled back and refused, so the text names both and states
+ * neither: telling a working caller to roll back could take its deployment away, and the
+ * deployment before the one stage=callers made would then be refused.
  */
-function lostCallers(state) {
-  const lost = CALLERS.filter((c) => !set(state[c].stored));
-  if (!lost.length || !set(state.identity.stored)) return null;
-  const kept = CALLERS.filter((c) => set(state[c].stored));
-  const them = lost.length > 1 ? 'them' : 'it';
-  return `identity holds ${SECRET_VAR} and ${lost.join(' and ')} ${lost.length > 1 ? 'do' : 'does'} not, so identity refuses ${them} ${state.identity.running ? 'now' : 'from its next deploy'}. `
-    + `A Railway Rollback past the deployment stage=callers made unsets the variable: in Railway, roll ${lost.join(' and ')} back again to the deployment that was active before that rollback`
-    + `${kept.length ? `, and do not delete ${kept[0]}'s copy` : ''}. Otherwise resolve by hand`;
+function callerRefusal(state) {
+  if (!holds(state.identity)) return null;
+  const without = CALLERS.filter((c) => !holds(state[c]));
+  if (!without.length) return null;
+  const lost = without.filter((c) => state[c].running === false);
+  const unread = without.filter((c) => state[c].running !== false);
+  const kept = CALLERS.filter((c) => holds(state[c]));
+  const keep = kept.length ? `, and do not delete ${kept[0]}'s copy` : '';
+  const sealed = sealedServices(state);
+  const also = sealed.length ? ` (${and(sealed)} also ${sealed.length > 1 ? 'run' : 'runs'} with a value Railway does not show: sealed, or changed without a deploy.)` : '';
+  if (lost.length) {
+    const when = state.identity.running === true ? 'now' : state.identity.running === false ? 'from its next deploy' : 'now or from its next deploy';
+    const unknown = unread.length ? ` ${and(unread)}'s health does not say whether it presents the value; check it once it does.` : '';
+    return `identity holds ${SECRET_VAR} and ${and(lost)} ${lost.length > 1 ? 'do' : 'does'} not, so identity refuses ${lost.length > 1 ? 'them' : 'it'} ${when}. `
+      + `A Railway Rollback past the deployment stage=callers made unsets the variable: in Railway, roll ${and(lost)} back again to the deployment that was active before that rollback${keep}.${unknown}${also} Otherwise resolve by hand`;
+  }
+  const many = unread.length > 1;
+  return `identity holds ${SECRET_VAR} and Railway shows it unset on ${and(unread)}, whose health does not say whether ${many ? 'they present' : 'it presents'} it (no answer, or no identityVerifyAuth field). `
+    + `If ${and(unread)} ${many ? 'run' : 'runs'} a sealed value or one changed without a deploy, nothing is wrong: rerun when ${many ? 'their' : 'its'} health answers. `
+    + `If a Railway Rollback took ${and(unread)} past the deployment stage=callers made, identity refuses ${many ? 'them' : 'it'}: in Railway, roll ${and(unread)} back again to the deployment that was active before that rollback${keep}.${also} Otherwise resolve by hand`;
+}
+
+/**
+ * The refusal that the services' variables and health call for before anything else, or null:
+ * callerRefusal, then sealedRefusal. planStage and the preflight both put it first.
+ */
+function stateRefusal(stage, state) {
+  const caller = callerRefusal(state);
+  if (caller) return stage === 'callers' && ![state.relay.stored, state['css-gate'].stored].some(set) ? `${caller}; a new value would not match identity's` : caller;
+  return sealedRefusal(state);
 }
 
 /**
  * What a stage writes, given what Railway stores and what each service reports running. Pure.
  *
  * `state[svc]` is `{ stored, running }`: the stored value (undefined or '' = unset) and whether
- * the service's health shows the variable. identity also carries `openStored`
+ * the service's health shows the variable (true or false; null when the health could not be read
+ * or does not carry the field). identity also carries `openStored`
  * (ALLOW_OPEN_INTROSPECTION stored as exactly '1', the only value that opens identity),
  * `openListed` (stored with any value, which finalize removes) and `openRunning` (reported by
  * /health).
  */
 export function planStage(stage, state, { generate = () => null } = {}) {
-  const sealed = sealedRefusal(state);
-  if (sealed) throw new ProvisionRefusal(sealed);
+  const refused = stateRefusal(stage, state);
+  if (refused) throw new ProvisionRefusal(refused);
   const relay = state.relay.stored;
   const gate = state['css-gate'].stored;
   const identity = state.identity.stored;
@@ -165,8 +204,6 @@ export function planStage(stage, state, { generate = () => null } = {}) {
   const callersEqual = callersSet === 2 ? (relay === gate ? 'yes' : 'no') : 'n/a';
   const identityEqual = set(identity) && callersEqual === 'yes' ? (identity === relay ? 'yes' : 'no') : 'n/a';
   const result = (writes, notes = []) => ({ writes, callersEqual, identityEqual, notes });
-  const lost = lostCallers(state);
-  if (lost) throw new ProvisionRefusal(stage === 'callers' && callersSet === 0 ? `${lost}; a new value would not match identity's` : lost);
   const callersReady = () => {
     if (callersSet < 2) throw new ProvisionRefusal(`relay and css-gate must both hold ${SECRET_VAR}; run stage=callers with apply first`);
     if (callersEqual !== 'yes') throw new ProvisionRefusal(`relay and css-gate hold different values of ${SECRET_VAR}; resolve by hand`);
@@ -206,6 +243,16 @@ export function planStage(stage, state, { generate = () => null } = {}) {
     return result(state.identity.openListed ? [{ service: 'identity', op: 'delete', name: OPEN_VAR }] : []);
   }
   throw new ProvisionRefusal(`unknown stage ${stage}`);
+}
+
+/**
+ * The runner's add-mask command for `v`. The runner percent-decodes a command's data (%25, %0D,
+ * %0A), so the value is escaped as @actions/core's escapeData does; unescaped, a value holding
+ * `%25` would register a mask for another string and leave itself unmasked. The line carries the
+ * value to stdout: it hides anything only when an Actions runner reads that stdout.
+ */
+export function maskCommand(v) {
+  return `::add-mask::${String(v).replace(/%/g, '%25').replace(/\r/g, '%0D').replace(/\n/g, '%0A')}\n`;
 }
 
 /** The one line the CLI prints for a failure. Only this tool's own messages are repeated. */
@@ -300,8 +347,8 @@ export async function runStage({
   const info = {};
   // Refusals about what a service runs (its pin, its health) wait until all three are read. After
   // a Railway Rollback of a caller to an older image, they would say to deploy master or reconcile
-  // the pin, which keeps the restored variables, so lostCallers' advice goes first when it applies,
-  // and sealedRefusal's before both, as in planStage.
+  // the pin, which keeps the restored variables, so stateRefusal's advice goes first when it
+  // applies, as in planStage.
   const servingRefusals = [];
   for (const svc of SERVICES) {
     const vars = await readVars(svc);
@@ -333,16 +380,19 @@ export async function runStage({
     };
   }
 
+  // Health that did not answer, or lacks the field, says neither true nor false: null.
+  const presents = (h) => (typeof h.identityVerifyAuth === 'boolean' ? h.identityVerifyAuth : null);
+  const ih = info.identity.health;
   const state = {
-    relay: { stored: info.relay.stored, running: info.relay.health.identityVerifyAuth === true },
-    'css-gate': { stored: info['css-gate'].stored, running: info['css-gate'].health.identityVerifyAuth === true },
+    relay: { stored: info.relay.stored, running: presents(info.relay.health) },
+    'css-gate': { stored: info['css-gate'].stored, running: presents(info['css-gate'].health) },
     identity: {
-      stored: info.identity.stored, running: info.identity.health.introspection === 'enforced',
+      stored: info.identity.stored, running: ['enforced', 'open', 'disabled'].includes(ih.introspection) ? ih.introspection === 'enforced' : null,
       openStored: info.identity.openStored, openListed: info.identity.openListed,
-      openRunning: info.identity.health.allowOpenIntrospection === true,
+      openRunning: ih.allowOpenIntrospection === true,
     },
   };
-  if (servingRefusals.length) throw new ProvisionRefusal(sealedRefusal(state) ?? lostCallers(state) ?? servingRefusals[0]);
+  if (servingRefusals.length) throw new ProvisionRefusal(stateRefusal(stage, state) ?? servingRefusals[0]);
   const generate = apply ? () => { const v = newSecret(rand); maskOnce(v); return v; } : () => null;
   const plan = planStage(stage, state, { generate });
 
@@ -526,16 +576,28 @@ export async function runStage({
     const deadline = now() + t.healthDeadlineMs;
     let streak = 0;
     let last;
+    // Before this deploy identity did not enforce (the stage deploys it only when it does not, or
+    // after writing a secret it did not store, and a sealed identity is refused), so a reading on
+    // the tag that enforces without ALLOW_OPEN_INTROSPECTION=1 is the new container, and shows the
+    // rollback gone. Any such reading counts, not only the last: a failed reading after it does
+    // not bring the rollback back.
+    let rollbackGone = false;
     while (now() < deadline) {
       last = await readHealth(http, info[svc].url);
+      if (stage === 'identity' && info.identity.openStored && last?.build === info[svc].tag
+        && last.introspection === 'enforced' && last.allowOpenIntrospection === false) rollbackGone = true;
       streak = last && last.build === info[svc].tag && expect(last) ? streak + 1 : 0;
       if (streak >= 2) return;
       await sleep(t.healthPollMs);
     }
-    if (stage === 'identity' && info.identity.openStored && last?.build === info[svc].tag
-      && last.introspection === 'enforced' && last.allowOpenIntrospection === false) {
+    if (rollbackGone) {
       openKept = false;
       throw new StageFailure(`identity enforces ${SECRET_VAR} but no longer runs ${OPEN_VAR}=1, which it stored when this run began, so the rollback is gone: deleting the secret now would leave introspection disabled. ${whatIsStored()}`);
+    }
+    // No reading showed it either way, so the text says ALLOW_OPEN_INTROSPECTION=1 is still set only
+    // if Railway still stores it now.
+    if (stage === 'identity' && openKept) {
+      try { openKept = (await readVars('identity')).openStored; } catch { openKept = false; }
     }
     throw new StageFailure(`${svc} reached SUCCESS but still reports ${last ? `${fieldText(svc, last)} on build ${short(last.build)}` : 'no health'}; the deployment does not carry the change; check Railway's staged changes for ${svc}. ${whatIsStored()}`);
   };
@@ -549,23 +611,33 @@ export async function runStage({
       // When the preflight saw the rollback stored, the new container must still run it, so the
       // rollback text below is true when it says ALLOW_OPEN_INTROSPECTION=1 is still set.
       await deployCurrentImage('identity', (h) => h.introspection === 'enforced' && (!info.identity.openStored || h.allowOpenIntrospection === true));
-      // The old, open identity container may still answer for overlapSeconds after SUCCESS, and
-      // it accepts any caller, so the check waits it out.
-      await sleep(((info.identity.overlapSeconds ?? 20) * 1000) + t.overlapExtraMs);
-      const [r, g] = [await decisive(() => relayProbe(http, info.relay.origin)), await decisive(() => gateProbe(http, info['css-gate'].url, info['css-gate'].origin))];
-      log(`check after the deploy: identity accepts relay: ${r}; accepts css-gate: ${g}`);
-      const rollback = `Roll back: ${reopen()} and redeploy identity`;
-      if (r === 'rejected' || g === 'rejected') {
-        throw new StageFailure(`identity refuses ${[r === 'rejected' ? 'the relay' : '', g === 'rejected' ? 'css-gate' : ''].filter(Boolean).join(' and ')}: the ${SECRET_VAR} that caller runs with is not identity's. ${rollback}.`);
-      }
-      if (r !== 'accepted' || g !== 'accepted') {
-        throw new StageFailure(`identity enforces, but the check is inconclusive for ${[r !== 'accepted' ? 'the relay' : '', g !== 'accepted' ? 'css-gate' : ''].filter(Boolean).join(' and ')}. Check by hand: POST ${info.relay.origin}/tool/publish_context with 'Authorization: Bearer probe' and body {} must answer 401 with detail 'Token not found'; GET ${info['css-gate'].origin}/<your userId>/auth-methods.jsonld with your own identity token must answer 200. If either fails: ${rollback}.`);
-      }
+      await checkCallersAfterDeploy(`Roll back: ${reopen()} and redeploy identity`);
     }
   } else if (wrote('identity') || info.identity.health.allowOpenIntrospection !== false) {
     await deployCurrentImage('identity', (h) => h.introspection === 'enforced' && h.allowOpenIntrospection === false, { followRailway: wrote('identity') });
+    // The check before the delete compared what the callers and the old container run; the new
+    // container runs what Railway stores, which may differ (a value changed without a deploy).
+    await checkCallersAfterDeploy(`Roll back: set ${OPEN_VAR}=1 on identity, then delete ${SECRET_VAR} from identity and deploy identity, and check that identity's GET /health reports introspection: "open" on two readings in a row`);
   }
   log(summary.deployed.length ? `done: deployed ${summary.deployed.join(', ')}` : 'done: nothing needed deploying');
+
+  /**
+   * After an identity deploy: does identity accept both callers? The old container may still
+   * answer for overlapSeconds after SUCCESS (open, or enforcing what it ran before) and accept
+   * them, so the check waits it out. Fails the stage, naming `rollback`, unless both are accepted.
+   */
+  async function checkCallersAfterDeploy(rollback) {
+    await sleep(((info.identity.overlapSeconds ?? 20) * 1000) + t.overlapExtraMs);
+    const [r, g] = [await decisive(() => relayProbe(http, info.relay.origin)), await decisive(() => gateProbe(http, info['css-gate'].url, info['css-gate'].origin))];
+    log(`check after the deploy: identity accepts relay: ${r}; accepts css-gate: ${g}`);
+    if (r === 'rejected' || g === 'rejected') {
+      const both = r === 'rejected' && g === 'rejected';
+      throw new StageFailure(`identity refuses ${[r === 'rejected' ? 'the relay' : '', g === 'rejected' ? 'css-gate' : ''].filter(Boolean).join(' and ')}: the ${SECRET_VAR} ${both ? 'those callers run' : 'that caller runs'} with is not identity's. ${rollback}.`);
+    }
+    if (r !== 'accepted' || g !== 'accepted') {
+      throw new StageFailure(`identity enforces, but the check is inconclusive for ${[r !== 'accepted' ? 'the relay' : '', g !== 'accepted' ? 'css-gate' : ''].filter(Boolean).join(' and ')}. Check by hand: POST ${info.relay.origin}/tool/publish_context with 'Authorization: Bearer probe' and body {} must answer 401 with detail 'Token not found'; GET ${info['css-gate'].origin}/<your userId>/auth-methods.jsonld with your own identity token must answer 200. If either fails: ${rollback}.`);
+    }
+  }
 
   async function decisive(probe) {
     let r = 'inconclusive';
@@ -715,7 +787,7 @@ async function main() {
     apply: process.env.APPLY === 'true',
     log: (line) => console.log(line),
     // A runner command: GitHub hides the value from every later line of this job's log.
-    mask: inActions ? (v) => process.stdout.write(`::add-mask::${v}\n`) : () => {},
+    mask: inActions ? (v) => process.stdout.write(maskCommand(v)) : () => {},
     github: inActions
       ? { repository: process.env.GITHUB_REPOSITORY, token: process.env.GITHUB_TOKEN, runId: process.env.GITHUB_RUN_ID }
       : undefined,
