@@ -1,5 +1,13 @@
 # Changelog
 
+## 2026-10-27 — Foxxi: when signed xAPI ignored the owner pod, and what that left in the derived lens
+
+The Foxxi README now says when the signed xAPI adapter ignored the owner pod a payload named: from about 2026-10-17 17:15Z to 2026-10-26 07:44Z. In that window a direct wallet signer's writes and reads went to its derived `eth-<hex>` lens. The new section is "Signed xAPI records in the derived lens", under Run the bridge locally.
+
+Those records are not moved. Nothing in a stored record says which pod the request named, so the misplaced ones cannot be told from records the derived lens holds by design. A move by the bridge would also put records into a person's lens without their signature. The section says how a wallet holder can copy their own records with the existing signed routes.
+
+This corrects the 2026-10-26 entry further down, which says the fix "was lost when later master deploys replaced that image". A branch image replaced it first, and master deploys kept it out from then on.
+
 ## 2026-10-27 — Identity: a Node 20 crypto deadlock no longer hangs the server or its tests, and a hung test file fails in two minutes
 
 On master, the "Emergence with the verticals; the base without them" job (run 40440495350) stopped printing after the last test of `provisional-play-provider.test.ts`. It sat there until the job's 45-minute timeout cancelled it. Under `node --test`, each file runs in its own process, and output is printed one file at a time in file order. So the file holding it up was either that one or the next, `provisional-play.test.ts`. The process ids of what was left running (one test process and its esbuild) match where `provisional-play.test.ts` starts in a traced run of the suite. That file, run on its own in a loop with an empty tsx cache on Node 20, hung the same way twice in 4,244 runs. Both times it hung in its first test and printed nothing. A debugger showed the main thread waiting for a lock it already held.

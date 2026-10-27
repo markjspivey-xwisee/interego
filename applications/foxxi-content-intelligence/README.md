@@ -330,6 +330,28 @@ PORT=6080 \
 
 Storage stays zero-trust: anyone can read pod contents and the local CSS still accepts anonymous writes. On the deployed substrate, the css-gate fronts CSS — `GET`/`HEAD`/`OPTIONS` pass through anonymously, mutating verbs require the bearer. Trust lives at the verifier and reader layer: the bridge verifies wallet signatures on every `/performance/outcome` and `/agent/teach` write, and the reader-side federated-outcome loader silently drops any peer descriptor whose `foxxi:agentSignature` does not recover to its `prov:wasGeneratedBy` DID.
 
+### Signed xAPI records in the derived lens
+
+From about 2026-10-17 17:15Z to 2026-10-26 07:44Z the deployed bridge ignored the owner pod a signed xAPI payload named. A branch image without the owner-pod fix replaced the hotfix image, and every later deploy lacked the fix until #697. In that window, a direct wallet signer (an `agent_id` that is its own `did:ethr`) that named its provisioned `u-eth-<hex>` pod in `subject_pod_url` had its statements stored in the LRS tenant `lens:eth-<hex>` and mirrored under `<gate>/eth-<hex>/foxxi-lattice/`. Its signed reads read that same lens. Before 2026-10-16 there was no owner-pod option, so every signed write went there. Delegated callers, requests that name no pod, and telemetry were not affected.
+
+Those records stay where they are, for three reasons:
+
+- Neither the statement nor the stored record keeps the request's `subject_pod_url`. So a record misplaced in the window cannot be told from one the derived lens holds by design: signed writes from before the owner-pod option, writes that name no pod, and telemetry.
+- A move by the bridge would put records into a person's lens without that person's signature, and would re-stamp `stored`.
+- A move would break readers of the derived lens.
+
+A read through the owner pod does not see the derived lens; `tests/signed-xapi-owner-pod.test.ts` pins this.
+
+A wallet holder who wants those records in their own lens can copy them with the existing routes:
+
+1. Sign a read that names no pod, and follow the result's `more` link page by page.
+2. Drop `stored` and `authority` from each statement. The adapter refuses statements that carry them.
+3. Post the same statement IDs and content, 1 to 20 per batch, with `subject_pod_url` set to the `u-eth-<hex>` pod.
+
+Each copy gets a new `stored` and the holder's fresh signature. A replay of the same ID and content keeps the first copy, so a copy that stops part-way can be run again.
+
+The one caller known to have named its pod in the window is the operator's own Hallowmarch service monitor.
+
 ### Demo invocations
 
 ```bash
