@@ -114,7 +114,9 @@ async function main() {
     body: JSON.stringify({ purpose: 'did-sig' }),
   }).then(r => r.json());
   const nonce = ch.nonce;
-  const signature = b64url(nodeSign(null, Buffer.from(nonce, 'utf8'), privateKey));
+  // The identity server's `message`, when it returns one, is the exact text to sign; else the nonce.
+  const signed = typeof ch.message === 'string' ? ch.message : nonce;
+  const signature = b64url(nodeSign(null, Buffer.from(signed, 'utf8'), privateKey));
 
   // /oauth/verify
   const verify = await fetch(`${RELAY}/oauth/verify`, {

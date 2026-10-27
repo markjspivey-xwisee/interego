@@ -2,7 +2,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { createHash, createPublicKey, randomBytes, verify as edVerify } from 'node:crypto';
-import { DidTokenMinter, RelayClient, agentKeyFromJwk, base58btc, generateAgentKeyJwk, lastJsonRpcMessage, publishJudgment, recordTrajectoryStep, signNonce } from '../src/publish.js';
+import { DidTokenMinter, RelayClient, agentKeyFromJwk, base58btc, didChallengeText, generateAgentKeyJwk, lastJsonRpcMessage, publishJudgment, recordTrajectoryStep, signNonce } from '../src/publish.js';
 import type { NavigationJudgment } from '../src/judgments/navigate.js';
 
 let server: Server;
@@ -14,7 +14,13 @@ const seen: Array<{ path: string; headers: Record<string, string | string[] | un
 const relayState = {
   clients: new Set<string>(),
   pending: new Map<string, { clientId: string; challenge: string }>(),
-  nonces: new Set<string>(),
+  /** Each issued nonce and the text the fake verifies the signature over for it. */
+  nonces: new Map<string, string>(),
+  /**
+   * Set to make /challenges return a `message` beside the nonce, as an identity server that names
+   * itself in the proof does; the fake then verifies over that message when it is a string.
+   */
+  challengeMessage: undefined as ((nonce: string) => unknown) | undefined,
   codes: new Map<string, { verifier: string; did: string }>(),
   tokens: new Set<string>(['test-token']),
   revoked: new Set<string>(),
@@ -40,13 +46,13 @@ function base58decode(s: string): Uint8Array {
   return Uint8Array.from([...new Array<number>(zeros).fill(0), ...bytes.reverse()]);
 }
 
-/** The identity server's check, reproduced: Ed25519 over the UTF-8 nonce, key from the multibase. */
-function didSignatureValid(did: string, publicKeyMultibase: string, nonce: string, signature: string): boolean {
+/** The identity server's check, reproduced: Ed25519 over the UTF-8 text, key from the multibase. */
+function didSignatureValid(did: string, publicKeyMultibase: string, text: string, signature: string): boolean {
   if (did !== `did:key:${publicKeyMultibase}` || !publicKeyMultibase.startsWith('z')) return false;
   const decoded = base58decode(publicKeyMultibase.slice(1));
   if (decoded.length !== 34 || decoded[0] !== 0xed || decoded[1] !== 0x01) return false;
   const key = createPublicKey({ key: { kty: 'OKP', crv: 'Ed25519', x: Buffer.from(decoded.subarray(2)).toString('base64url') }, format: 'jwk' });
-  return edVerify(null, Buffer.from(nonce, 'utf8'), key, Buffer.from(signature, 'base64url'));
+  return edVerify(null, Buffer.from(text, 'utf8'), key, Buffer.from(signature, 'base64url'));
 }
 
 beforeAll(async () => {
@@ -83,15 +89,23 @@ beforeAll(async () => {
       if (path === '/challenges') {
         if (body['purpose'] !== 'did-sig') { reply(400, { error: 'purpose' }); return; }
         const nonce = `nonce-${randomBytes(8).toString('hex')}`;
-        relayState.nonces.add(nonce);
+        if (relayState.challengeMessage) {
+          const message = relayState.challengeMessage(nonce);
+          relayState.nonces.set(nonce, typeof message === 'string' ? message : nonce);
+          reply(200, { nonce, message });
+          return;
+        }
+        relayState.nonces.set(nonce, nonce);
         reply(200, { nonce });
         return;
       }
       if (path === '/oauth/verify') {
         const pending = relayState.pending.get(body['pending_id'] as string);
         const nonce = body['nonce'] as string;
-        if (!pending || body['method'] !== 'did' || !relayState.nonces.delete(nonce)) { reply(401, { error: 'invalid pending or nonce' }); return; }
-        if (!didSignatureValid(body['did'] as string, body['publicKeyMultibase'] as string, nonce, body['signature'] as string)) { reply(401, { error: 'bad signature' }); return; }
+        const signed = relayState.nonces.get(nonce);
+        if (!pending || body['method'] !== 'did' || signed === undefined) { reply(401, { error: 'invalid pending or nonce' }); return; }
+        relayState.nonces.delete(nonce);
+        if (!didSignatureValid(body['did'] as string, body['publicKeyMultibase'] as string, signed, body['signature'] as string)) { reply(401, { error: 'bad signature' }); return; }
         const code = `code-${randomBytes(6).toString('hex')}`;
         relayState.codes.set(code, { verifier: pending.challenge, did: body['did'] as string });
         reply(200, { redirect: `http://localhost:9999/cb?code=${code}&state=s` });
@@ -283,5 +297,60 @@ describe('minting relay tokens from the agent key', () => {
     const key = agentKeyFromJwk(generateAgentKeyJwk());
     const minter = new DidTokenMinter({ relayOrigin: `${origin}/nowhere`, key });
     await expect(minter.token()).rejects.toThrow(/relay \/register responded 4\d\d/);
+  });
+});
+
+describe('the text a did-sig challenge is signed over', () => {
+  /** Mint once with /challenges answering `message(nonce)`; return what /oauth/verify received. */
+  async function mintWith(message: ((nonce: string) => unknown) | undefined) {
+    const key = agentKeyFromJwk(generateAgentKeyJwk());
+    relayState.challengeMessage = message;
+    try {
+      const before = seen.length;
+      await new DidTokenMinter({ relayOrigin: origin, key }).token();
+      const proof = seen.slice(before).find((s) => s.path === '/oauth/verify')!.body;
+      const nonce = proof['nonce'] as string;
+      const valid = (text: string) => didSignatureValid(key.did, key.publicKeyMultibase, text, proof['signature'] as string);
+      return { nonce, valid };
+    } finally {
+      relayState.challengeMessage = undefined;
+    }
+  }
+
+  it('signs the message the identity server returns, byte for byte, and not the bare nonce', async () => {
+    const v1 = (nonce: string) => `Interego DID sign-in v1\nHost: identity.interego.xwisee.com\nNonce: ${nonce}`;
+    const { nonce, valid } = await mintWith(v1);
+    expect(valid(v1(nonce))).toBe(true);
+    expect(valid(nonce)).toBe(false);
+  });
+
+  it('signs a message it could not have rebuilt exactly as sent: no trimming, no line-end or Unicode rewriting', async () => {
+    // Leading space, CRLF, a precomposed and a combining accent, a trailing newline: a client
+    // that reassembled the text from its fields, trimmed it or normalized it signs other bytes.
+    const odd = (nonce: string) => ` Interego DID sign-in v9\r\nHost: id\u00e9ntity.example\nNote: e\u0301\nNonce: ${nonce}\n`;
+    const { nonce, valid } = await mintWith(odd);
+    expect(valid(odd(nonce))).toBe(true);
+    expect(valid(odd(nonce).trim())).toBe(false);
+    expect(valid(odd(nonce).normalize('NFC'))).toBe(false);
+    expect(valid(nonce)).toBe(false);
+  });
+
+  it('signs the bare nonce when the identity server returns no message, as every server before this change', async () => {
+    const { nonce, valid } = await mintWith(undefined);
+    expect(valid(nonce)).toBe(true);
+  });
+
+  it('signs the bare nonce when `message` is not a string', async () => {
+    for (const notText of [null, 42, { text: 'x' }, ['x']]) {
+      const { nonce, valid } = await mintWith(() => notText);
+      expect(valid(nonce)).toBe(true);
+    }
+  });
+
+  it('didChallengeText picks the string message, else the nonce', () => {
+    expect(didChallengeText({ nonce: 'n', message: 'Interego DID sign-in v1\nHost: h\nNonce: n' })).toBe('Interego DID sign-in v1\nHost: h\nNonce: n');
+    expect(didChallengeText({ nonce: 'n' })).toBe('n');
+    expect(didChallengeText({ nonce: 'n', message: undefined })).toBe('n');
+    expect(didChallengeText({ nonce: 'n', message: 7 })).toBe('n');
   });
 });
