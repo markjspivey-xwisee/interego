@@ -53,8 +53,8 @@ function makeFetch(
 }
 
 function makeWithPodMutex(): LazyPodInitDeps['withPodMutex'] {
-  // Tests don't need real serialisation — single-threaded vitest gives
-  // us ordering for free, and we only need the mutex hook to verify
+  // Tests don't need real serialisation — each test awaits its calls one
+  // at a time, so ordering comes for free, and we only need the mutex hook to verify
   // the helper actually goes through it on the bootstrap path.
   return async <T>(_podUrl: string, fn: () => Promise<T>): Promise<T> => fn();
 }

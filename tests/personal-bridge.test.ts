@@ -72,16 +72,17 @@
  * needs the stronger hook and that file does not.
  *
  * `??=` rather than `=` so a deliberate `BRIDGE_PERSIST=1` from the command line still
- * wins, and because `process.env` is shared by every module in vitest's single worker
- * — this file must not be the reason some other file sees a value it did not set.
+ * wins. Under vitest 3 it was also because `process.env` was shared by every file in the
+ * run, and this file must not be the reason another sees a value it did not set; since
+ * vitest 4 each file has a process of its own.
  * Only `examples/personal-bridge/server.ts` reads it, and only this file imports that.
  */
 import { describe, it, expect, vi, beforeAll, afterAll } from 'vitest';
 // `BRIDGE_TOKEN` joins `BRIDGE_PERSIST` here for the same reason and with the same
 // `??=`: server.ts reads it WHILE BEING IMPORTED, so a bare assignment above the
 // import lands after the value has already been captured (see the ★★ note above).
-// `??=` because process.env is shared by every file in vitest's single worker —
-// this file must not be the reason another one sees a value it did not set.
+// `??=` so a value from the command line still wins (and, under vitest 3, because
+// process.env was shared by every file in the run).
 // Repo-wide grep at the time of writing: nothing else reads BRIDGE_TOKEN.
 vi.hoisted(() => {
   process.env['BRIDGE_PERSIST'] ??= '0';

@@ -12,9 +12,9 @@
  * ever surfaced as an unrelated-looking boot failure.
  *
  * These tests pin a SMALL budget rather than allocating a real heap's worth, and every
- * one restores the budget and clears the registry afterwards: vitest runs every file in
- * ONE globalThis here, so a leaked registration would make an unrelated file's evictions
- * depend on run order.
+ * one restores the budget and clears the registry afterwards: a leaked registration would
+ * make the evictions of every later test in this process (since vitest 4, the rest of this
+ * file) depend on run order.
  */
 import { describe, it, expect, afterEach } from 'vitest';
 import { mkdtempSync, rmSync } from 'node:fs';

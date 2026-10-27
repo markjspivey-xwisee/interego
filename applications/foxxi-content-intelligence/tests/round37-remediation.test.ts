@@ -21,8 +21,8 @@ describe('round-37 — unbounded shared-state stores are capped', () => {
   it('InMemoryStatementStore evicts oldest past the PROCESS-WIDE budget', async () => {
     // The bound is no longer a per-store constant: a per-store constant multiplied by
     // TenantPartition's own cap allowed 262x the heap. Pin a small budget, isolate the
-    // registry, and restore both — vitest runs every file in one realm, so a leaked budget
-    // or a leaked registration silently changes another file's evictions.
+    // registry, and restore both — a leaked budget or a leaked registration silently changes
+    // the evictions of every later test in this process (since vitest 4, this file's).
     resetResidentBudgetRegistryForTest();
     const previous = residentStatementBudget();
     setResidentStatementBudget(50_000);

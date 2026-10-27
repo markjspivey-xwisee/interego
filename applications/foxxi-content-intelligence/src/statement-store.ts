@@ -265,7 +265,7 @@ function statementBodyEqual(a: Record<string, unknown>, b: Record<string, unknow
 // rather than from a quiet tenant's records.
 //
 // Registry entries are WeakRefs: a store dropped without dispose() — or held only by a
-// finished test, since vitest runs every file in ONE realm here — must not be pinned alive
+// finished test, whose process may go on to run other tests — must not be pinned alive
 // by the budget that is supposed to be protecting memory.
 const liveMemoryStores = new Set<WeakRef<InMemoryStatementStore>>();
 let residentStatements = 0;
@@ -288,9 +288,9 @@ export function residentStatementCount(): number { return residentStatements; }
 export function setResidentStatementBudget(n?: number): void {
   residentBudget = n === undefined ? defaultResidentBudget() : n;
 }
-/** Test seam: forget every registered store. vitest runs all files in one realm, so a store
- *  left registered by an earlier file is otherwise a candidate victim for a later file's
- *  eviction, and that file's assertions would depend on run order. Fix the polluter. */
+/** Test seam: forget every registered store. A store left registered by an earlier test is
+ *  otherwise a candidate victim for a later test's eviction in the same process (since
+ *  vitest 4, the same file), and its assertions would depend on run order. Fix the polluter. */
 export function resetResidentBudgetRegistryForTest(): void {
   liveMemoryStores.clear();
   residentStatements = 0;

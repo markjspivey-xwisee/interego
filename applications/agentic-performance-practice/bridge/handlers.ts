@@ -77,8 +77,8 @@ const strList = (v: unknown): string[] => (Array.isArray(v) ? v.map(String).filt
 
 export function createAgpHandlers(deps: { fetchFn?: typeof fetch } = {}): Record<string, (a: Record<string, unknown>) => Promise<unknown>> {
   // The double is passed as an ARGUMENT, never assigned to globalThis.fetch:
-  // vitest shares one globalThis here, and a global fetch patch in this file
-  // would break unrelated pod-touching suites in a full run only.
+  // a global fetch patch reaches every later test in the same process (since
+  // vitest 4, the rest of that test file; under vitest 3, every later file).
   const pub = (a: Parameters<typeof publishAgpArtifact>[0]): Promise<string | null> =>
     publishAgpArtifact(deps.fetchFn ? { ...a, fetchFn: deps.fetchFn } : a);
   const readJson = (iri: string, podUrl?: string): Promise<unknown | null> =>

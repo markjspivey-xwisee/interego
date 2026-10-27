@@ -116,7 +116,7 @@ export default defineConfig({
     // invalidated the evaluated module graph before each file. Vitest 4's migration guide maps
     // it to one worker with `isolate: false`, which keeps the one process but no longer resets
     // the module graph between files: a source module evaluated while one file's `vi.mock` was
-    // in force stays cached, still bound to that mock, for every file after it. Eight collected
+    // in force stays cached, still bound to that mock, for every file after it. Seven collected
     // modules call `vi.mock` or `vi.doMock` (on `ssrf-guard.js`, `@interego/solid`,
     // `@interego/pgsl`, `electron` and others), so that is not a theoretical leak. One worker
     // with `isolate: true` (vitest 4's default) runs the files one at a time as before, and
