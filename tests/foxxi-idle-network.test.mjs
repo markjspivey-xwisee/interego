@@ -76,8 +76,8 @@ test('foreign and lookalike origins cannot reach private transport',async()=>{
  * REFERENCE (bare, or through .bind) to a timer or a listen callback, which runs it later with no
  * request behind it. A timer is named under any receiver or local name (globalThis.setInterval,
  * process.nextTick, a renamed import from node:timers/promises). A promise chained on a timer is a
- * timer too, and so is a loop that sleeps on one and that nothing in its body leaves; a loop that
- * can end is judged by where it runs. The demand loader given to createDirectoryDemand is the one sanctioned place.
+ * timer too, and so is a loop that sleeps on one and that nothing in its body leaves; any other loop
+ * is judged by where it runs. The demand loader given to createDirectoryDemand is the one sanctioned place.
  */
 function eagerDirectoryLoads(ts,text){
  const file=ts.createSourceFile('server.ts',text,ts.ScriptTarget.Latest,true,ts.ScriptKind.TS);
@@ -105,11 +105,12 @@ function eagerDirectoryLoads(ts,text){
  const receiverOf=(call,methods)=>{const e=unwrap(call.expression);
   return ts.isPropertyAccessExpression(e)&&methods.includes(e.name.text)?e.expression:undefined;};
  // A timer function: a timer global read off any receiver (globalThis.setInterval, process.nextTick,
- // timers.setTimeout), timers/promises' scheduler.wait, or a local bound to one by a renamed import
- // or destructuring, an alias, a .bind or a promisify. promiseTimers and promiseModules hold the
- // ones whose call returns a promise for the timer firing: timers/promises and a promisify.
+ // timers.setTimeout), the wait or yield of node:timers/promises' scheduler (taken from that module
+ // under any name, or read off it in the call), or a local bound to one by a renamed import or
+ // destructuring, an alias, a .bind or a promisify. promiseTimers and promiseModules hold the ones whose call returns
+ // a promise for the timer firing: timers/promises and a promisify.
  const timerNames=new Set(['setInterval','setTimeout','setImmediate','queueMicrotask','nextTick']);
- const timerAliases=new Set(),waitObjects=new Set(['scheduler']),tickers=new Set();
+ const timerAliases=new Set(),waitObjects=new Set(),tickers=new Set();
  const promiseTimers=new Set(),promiseModules=new Set();
  // The module a binding comes from: `import … from 'm'`, `require('m')`, `await import('m')`.
  const moduleOf=e=>{e=e&&unwrap(e);if(e&&ts.isAwaitExpression(e)) e=unwrap(e.expression);
@@ -122,7 +123,8 @@ function eagerDirectoryLoads(ts,text){
   if(ts.isIdentifier(e)) return timerNames.has(e.text)||timerAliases.has(e.text);
   const name=propName(e);
   if(name){const recv=unwrap(e.expression);
-   return timerNames.has(name)||/^(wait|yield)$/.test(name)&&(ts.isIdentifier(recv)?waitObjects.has(recv.text):propName(recv)==='scheduler');}
+   return timerNames.has(name)||/^(wait|yield)$/.test(name)&&(ts.isIdentifier(recv)?waitObjects.has(recv.text)
+    :propName(recv)==='scheduler'&&promisesModule(recv.expression));}
   if(!ts.isCallExpression(e)) return false;
   if(method(e)==='bind') return timerFn(unwrap(e.expression).expression);
   return promisified(e);};
@@ -138,7 +140,7 @@ function eagerDirectoryLoads(ts,text){
   if(timerFn(c)) return true;
   if(listeners&&/^(listen|on|once|addListener|prependListener|prependOnceListener|addEventListener)$/.test(name)) return true;
   if(name==='call'||name==='apply') return timerFn(c.expression);
-  if(/^(then|catch|finally)$/.test(name)){const r=unwrap(c.expression);return ts.isCallExpression(r)&&schedules(r,listeners);}
+  if(/^(then|catch|finally)$/.test(name)){const r=unwrap(c.expression);return ts.isCallExpression(r)&&schedules(r,false);}
   return false;};
  for(let grew=true;grew;){grew=false;
   const bind=(set,id)=>{if(id&&ts.isIdentifier(id)&&!set.has(id.text)){set.add(id.text);grew=true;}};
@@ -148,7 +150,7 @@ function eagerDirectoryLoads(ts,text){
     const key=n.propertyName??n.name,named=ts.isIdentifier(key)||ts.isStringLiteralLike(key)?key.text:'';
     const source=ts.isImportSpecifier(n)?n.parent.parent.parent:ts.isVariableDeclaration(n.parent.parent)?n.parent.parent.initializer:undefined;
     if(timerNames.has(named)){bind(timerAliases,n.name);if(promisesModule(source)) bind(promiseTimers,n.name);}
-    else if(named==='scheduler') bind(waitObjects,n.name);
+    else if(named==='scheduler'&&promisesModule(source)) bind(waitObjects,n.name);
     else if(named==='promises'&&moduleOf(source)==='timers') bind(promiseModules,n.name);
    }
    // import * as timers from 'node:timers/promises'; import timers from 'node:timers/promises';
@@ -166,15 +168,22 @@ function eagerDirectoryLoads(ts,text){
  // What a call hands its callee: its arguments, or for `t.apply(this, [cb, ms])` what the array holds.
  const handed=call=>{const list=call.arguments[1]&&unwrap(call.arguments[1]);
   return method(call)==='apply'&&list&&ts.isArrayLiteralExpression(list)?[call.arguments[0],...list.elements]:call.arguments;};
- // A sleep is a promise that settles when a timer fires: a `new Promise` whose executor hands a timer
- // its resolver, bare or in a callback (`new Promise(r => setTimeout(r, ms))`), a timers/promises call
- // (`sleep(ms)`, `scheduler.wait(ms)`), a call of a function that returns or awaits a sleep (a local
- // `wait(ms)`, an IIFE, or either through .call/.apply), or a .then/.catch/.finally or a
- // Promise.race/all/any/allSettled over one. A timer that only arms a deadline
- // (`setTimeout(() => ac.abort(), ms)`) is not a sleep, and a function holding one is not a pacer.
+ // A sleep is one of the forms sleeps() reads, and nothing else:
+ // - a `new Promise` whose executor, an arrow or a `function`, hands a timer its first parameter (the
+ //   resolver), bare or inside a callback: `new Promise(r => setTimeout(r, ms))`;
+ // - a call of a timers/promises timer (promiseTimer): one taken from that module (or from
+ //   node:timers' promises export) under any name, one read off it (`tp.setTimeout(ms)`), its
+ //   scheduler's wait or yield, a promisify of a timer (`promisify(setTimeout)`, `util.promisify`),
+ //   or a .bind of any of these (`sleep.bind(null, ms)`); called directly or through .call/.apply;
+ // - a call of a named local function (a pacer) or an IIFE that returns or awaits a sleep in its own
+ //   body, the named one also through .call/.apply;
+ // - a .then/.catch/.finally on a sleep, or Promise.race/all/any/allSettled over a list holding one;
+ // - an `await` of any of these.
+ // So an executor that hands a timer only its reject is not a sleep, nor is a callback timer that
+ // only arms a deadline (`setTimeout(() => ac.abort(), ms)`), and a function holding one is not a pacer.
  const pacers=new Set();
  const mentions=(x,name)=>ts.isIdentifier(x)?x.text===name:Boolean(ts.forEachChild(x,c=>mentions(c,name)||undefined));
- const findOwn=(body,test)=>{let found=false;(function walk(x){if(found||isFn(x)) return; // not in nested functions
+ const findOwn=(body,test)=>{let found=false;(function walk(x){if(found||ts.isFunctionLike(x)) return; // not in nested functions, accessors included
   if(test(x)) found=true;else ts.forEachChild(x,walk);})(body);return found;};
  const resolvesOnTimer=exec=>{exec=exec&&unwrap(exec);
   const r=exec&&(ts.isArrowFunction(exec)||ts.isFunctionExpression(exec))?exec.parameters[0]?.name:undefined;
@@ -200,9 +209,10 @@ function eagerDirectoryLoads(ts,text){
   for(const f of nodes){const name=isFn(f)&&fnName(f);if(name&&!pacers.has(name)&&paces(f)){pacers.add(name);grew=true;}}
  }
  // A loop a timer paces is a poll: `for await (… of setInterval(ms))` from timers/promises, or a
- // `while (true)`, `do … while (true)` or `for (…; ; …)` that awaits a sleep and that nothing in its
- // body leaves. A loop that can end (a condition, a return or throw, a break or labelled continue that
- // lands outside it) is judged by where it runs, like other code: a retry with backoff, a paged read.
+ // `while (true)`, `do … while (true)` or `for (…; ; …)` whose body awaits a sleep and that nothing in
+ // its body leaves. Any other loop (a condition other than `true`, or a return, throw, break or
+ // labelled continue that lands outside it) is judged by where it runs, like other code: a retry with
+ // backoff, a paged read.
  const endless=p=>{
   if(!((ts.isWhileStatement(p)||ts.isDoStatement(p))&&unwrap(p.expression).kind===ts.SyntaxKind.TrueKeyword||ts.isForStatement(p)&&!p.condition)) return false;
   const own=new Set();for(let l=p.parent;ts.isLabeledStatement(l);l=l.parent) own.add(l.label.text);
@@ -210,7 +220,7 @@ function eagerDirectoryLoads(ts,text){
   // nested: in a loop or switch inside the body (an unlabelled break stops there); labels: declared
   // inside the body; caught: in the try block of a try that catches, so a throw stays in the loop.
   (function walk(x,nested,labels,caught){
-   if(exits||isFn(x)||ts.isClassLike(x)) return;
+   if(exits||ts.isFunctionLike(x)||ts.isClassLike(x)) return;
    if(ts.isReturnStatement(x)||ts.isThrowStatement(x)&&!caught){exits=true;return;}
    if(ts.isBreakStatement(x)||ts.isContinueStatement(x)){
     exits=x.label?!labels.has(x.label.text)&&!(ts.isContinueStatement(x)&&own.has(x.label.text)):ts.isBreakStatement(x)&&!nested;
@@ -475,11 +485,12 @@ test('the on-demand guard: further naming, sleep, loop and callback forms',async
   `async function poll() { for (;;) await Promise.allSettled([warmDirectory(), new Promise(r => setTimeout(r, 60_000))]); }`,
   `async function nap(ms) { await new Promise(r => setTimeout(r, ms)); } async function poll() { while (true) { await nap.call(null, 60_000); await warmDirectory(); } }`,
   `import { setTimeout as sleep } from 'node:timers/promises'; async function poll() { while (true) { await sleep.apply(null, [60_000]); await warmDirectory(); } }`,
-  // Loops nothing leaves: an unlabelled continue starts the next pass, and a return in a callback
-  // or in a class's getter leaves that function, not the loop.
+  // Loops nothing leaves: an unlabelled continue starts the next pass, and a return in a callback,
+  // in a class's getter or in an object literal's getter leaves that function, not the loop.
   `async function poll() { while (true) { await new Promise(r => setTimeout(r, 60_000)); if (paused) continue; await warmDirectory(); } }`,
   `async function poll() { while (true) { await new Promise(r => setTimeout(r, 60_000)); const tenants = ['acme'].filter((t) => { return t !== 'test'; }); await autoFetchAdmin({ tenants }); } }`,
   `async function poll() { while (true) { await new Promise(r => setTimeout(r, 60_000)); const job = new (class { get t() { return 'acme'; } })(); await autoFetchAdmin({ t: job.t }); } }`,
+  `async function poll() { while (true) { await new Promise(r => setTimeout(r, 60_000)); const job = { get t() { return 'acme'; } }; await autoFetchAdmin({ t: job.t }); } }`,
   // The other array methods the check treats as running their callback in place (forEach is in the
   // test above), and rules the check had before: a load in the route-setup callback, in an IIFE, in
   // a helper that calls a loader declared after it, and a direct read of the directory section.
@@ -497,10 +508,19 @@ test('the on-demand guard: further naming, sleep, loop and callback forms',async
   // A promisify of something other than a timer, and a callback timer's handle, are not sleeps.
   `const readFileAsync = promisify(readFile); async function drain() { while (true) { const job = await queue.wait(); await autoFetchAdmin(JSON.parse(await readFileAsync(job.path, 'utf8'))); } } app.get('/y', () => drain());`,
   `async function arm(job) { return globalThis.setTimeout(() => job.cancel(), 5000); } async function drain() { while (true) { const job = await queue.wait(); const t = await arm(job); await autoFetchAdmin(job); clearTimeout(t); } } app.get('/y', () => drain());`,
-  // A helper is a pacer only if it sleeps itself, not if a function inside it does; and a loop
-  // counts only a sleep it awaits.
+  // A helper is a pacer only if it sleeps itself, not if a function or getter inside it does; and a
+  // loop counts only a sleep it awaits itself, not one awaited inside a function it creates.
   `async function nextJob() { const job = await queue.wait(); job.backoff = async () => { await new Promise(r => setTimeout(r, 1000)); }; return job; } async function drain() { while (true) { await autoFetchAdmin(await nextJob()); } } app.get('/y', () => drain());`,
+  `function withBackoff(job) { return { ...job, get backoff() { return new Promise(r => setTimeout(r, 1000)); } }; } async function drain() { while (true) { const job = await withBackoff(await queue.wait()); await autoFetchAdmin(job); } } app.get('/y', () => drain());`,
   `import { setTimeout as sleep } from 'node:timers/promises'; async function drain() { while (true) { const job = await queue.wait(); void sleep(30_000).then(() => metrics.flush()); await autoFetchAdmin(job); } } app.get('/y', () => drain());`,
+  `async function drain() { while (true) { const job = await queue.wait(); job.retry = async () => { await new Promise(r => setTimeout(r, 1000)); }; await autoFetchAdmin(job); } } app.get('/y', () => drain());`,
+  // timers/promises' scheduler counts only when it comes from that module: not a local named
+  // scheduler, one imported from another module, or one read off another object; nor does a
+  // `promises` export of a module other than node:timers.
+  `const scheduler = makeJobScheduler(); app.get('/y', async () => { while (true) { await scheduler.wait(); await warmDirectory(); } });`,
+  `import { scheduler } from './jobs.js'; app.get('/y', async () => { while (true) { await scheduler.wait(); await warmDirectory(); } });`,
+  `app.get('/y', async () => { while (true) { await jobs.scheduler.wait(); await warmDirectory(); } });`,
+  `import { promises as clock } from './virtual-clock.js'; app.get('/y', async () => { while (true) { await clock.setTimeout(10); await warmDirectory(); } });`,
   // Inside a request: a while and a do-while with a real condition, a break to the loop's own
   // label, and a throw from a catch or a finally all end the loop.
   `app.get('/y', async () => { let users = []; while (!users.length) { await new Promise(r => setTimeout(r, 100)); users = await autoFetchAdmin({}); } return users; });`,
@@ -508,9 +528,10 @@ test('the on-demand guard: further naming, sleep, loop and callback forms',async
   `app.get('/y', async () => { scan: while (true) { await new Promise(r => setTimeout(r, 100)); for (const t of ['acme']) { if (await autoFetchAdmin({ t })) break scan; } } });`,
   `app.get('/y', async (req) => { for (;;) { try { await warmDirectory(); } catch (e) { if (req.signal.aborted) throw e; } await new Promise(r => setTimeout(r, 1000)); } });`,
   `app.get('/y', async (req) => { for (;;) { try { await warmDirectory(); } catch {} finally { if (req.signal.aborted) throw req.signal.reason; } await new Promise(r => setTimeout(r, 1000)); } });`,
-  // An event iterator is not a timer, and a callback handed to a constructor other than Promise
-  // runs when that object calls it.
+  // An event iterator is not a timer, nor is a .then chained on a listener call, and a callback
+  // handed to a constructor other than Promise runs when that object calls it.
   `import events from 'node:events'; app.get('/y', async (req) => { for await (const [chunk] of events.on(req, 'data')) await directoryUsersCache.observe(chunk); });`,
+  `import events from 'node:events'; app.get('/y', async (req) => { await events.once(req, 'end').then(() => autoFetchAdmin({})); });`,
   `const refresh = new Command(() => autoFetchAdmin({})); app.post('/refresh', () => refresh.run());`,
  ]){
   assert.deepEqual(eagerDirectoryLoads(ts,prelude+lazyForm).eager,[],lazyForm);
