@@ -11,7 +11,11 @@
 // gate refuses the redirect and treats the verify as failed.
 //
 // /healthz reports whether the gate presents a bearer (`identityVerifyAuth`) and how identity
-// has answered since start (`identityVerifyResults`), and never the value.
+// has answered since start (`identityVerifyResults`), and never the value. The rollout tool
+// (tools/identity-introspection-provision.mjs) reads a rise in `accepted` as identity accepting
+// the gate, so every answer that is not a 2xx JSON verify result has to land in `refused` (401,
+// 403) or `other` (5xx, 429 and other 4xx, a redirect, a body that is not JSON), never in
+// `accepted`.
 //
 // This file runs in its own process under `node --test`, so the env set here is its own.
 
@@ -43,7 +47,7 @@ async function recording(handler) {
       received.push({ method: req.method, url: req.url, headers: { ...req.headers }, body });
       const reply = handler(req, body);
       res.writeHead(reply.status, { 'content-type': 'application/json', ...(reply.headers ?? {}) });
-      res.end(JSON.stringify(reply.body ?? {}));
+      res.end(reply.raw ?? JSON.stringify(reply.body ?? {}));
     });
   });
   return { ...(await listenLoopback(srv)), received };
@@ -64,6 +68,10 @@ const identity = await recording((req, body) => {
   if (token === 'good') return VALID_ALICE;
   if (token === 'redirect-away') return { status: 307, headers: { location: `${trap.base}/tokens/verify` } };
   if (token === 'redirect-same') return { status: 307, headers: { location: '/elsewhere' } };
+  if (token === 'answer-500') return { status: 500, body: { error: 'internal' } };
+  if (token === 'answer-429') return { status: 429, body: { error: 'Too many requests' } };
+  if (token === 'answer-400') return { status: 400, body: { error: 'token required' } };
+  if (token === 'not-json') return { status: 200, raw: 'ok' };
   return { status: 200, body: { valid: false, reason: 'Token not found' } };
 });
 
@@ -155,3 +163,20 @@ test('identity refusing the gate\'s bearer is counted as refused', async () => {
   assert.equal(after.refused, before.refused + 1);
   assert.equal(after.accepted, before.accepted);
 });
+
+for (const [token, what] of [
+  ['answer-500', 'a 500'],
+  ['answer-429', 'a 429'],
+  ['answer-400', 'another 4xx'],
+  ['redirect-away', 'a redirect'],
+  ['not-json', 'a 2xx body that is not JSON'],
+]) {
+  test(`${what} from identity is counted as other, not as accepted or refused`, async () => {
+    const before = (await healthz()).body.identityVerifyResults;
+    const r = await put(token);
+    assert.equal(r.status, 401, r.text);
+    assert.equal(r.text.includes(SECRET), false);
+    const after = (await healthz()).body.identityVerifyResults;
+    assert.deepEqual(after, { accepted: before.accepted, refused: before.refused, other: before.other + 1 });
+  });
+}

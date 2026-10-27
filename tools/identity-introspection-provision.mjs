@@ -34,8 +34,9 @@
  * change), and the deployment id it returns is polled to SUCCESS. Not serviceInstanceRedeploy,
  * which re-ships the previous deployment (tools/railway-redeploy.mjs, "REDEPLOY ≠ DEPLOY").
  * variableDelete documents no skipDeploys, so after the delete the tool follows a deployment
- * Railway starts within a grace window, and triggers one itself otherwise. If Railway starts a
- * deployment after an upsert anyway, the tool follows it rather than triggering over it.
+ * Railway starts within a grace window, and triggers one itself otherwise. After an upsert there
+ * is no grace window: the tool reads the deployment list once, follows a new deployment if one
+ * is already listed (Railway ignoring skipDeploys), and otherwise triggers its own.
  *
  * ★ THE HEALTH FIELD, NOT `build`, PROVES THE NEW CONTAINER. A deploy of the same image reports
  * the same build before and after, and Railway keeps the old container serving for
@@ -533,9 +534,12 @@ async function gateProbe(http, healthUrl, origin) {
 }
 
 /**
- * Refuse while a deploy workflow is running. Reusable-workflow legs run inside the auto-deploy
- * run, so these two files cover every deploy path. Outside GitHub Actions a dry run skips the
- * check and an applied run is refused.
+ * Refuse while a deploy workflow is running. A reusable-workflow leg is listed under its
+ * caller's run, not under deploy-railway.yml, and auto-deploy.yml is the only caller whose leg
+ * deploys relay, css-gate or identity (i2idlx-v93-release.yml's leg deploys only foxxi-bridge),
+ * so these two files cover every workflow that deploys the three services. A deployment started
+ * in Railway itself is caught by the preflight's in-flight check instead. Outside GitHub
+ * Actions a dry run skips the check and an applied run is refused.
  */
 async function checkNoDeployRunning({ http, github, log, apply }) {
   if (!github) {

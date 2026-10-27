@@ -17,7 +17,8 @@
  * Every other request still counts against 'tokens' before it is answered, and an address that
  * has used its 60 gets 429 even with the right bearer, so a guess past the 60th learns nothing.
  *
- * Three servers run as child processes over one stand-in pod server, as in
+ * Three servers (one per mode), plus one per row of VALUE_TABLE for the header-value warning
+ * test, run as child processes over one stand-in pod server, as in
  * auth-methods-rate-limit.test.ts. Callers are told apart by X-Forwarded-For (trust proxy 1).
  *
  * Run:

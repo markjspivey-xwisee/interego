@@ -161,7 +161,9 @@ const IDENTITY_INTROSPECTION_SECRET = process.env.IDENTITY_INTROSPECTION_SECRET 
 // How identity has answered the gate's /tokens/verify calls since this process started, for
 // /healthz: `accepted` = identity answered 2xx (whatever it said about the token), `refused` =
 // it answered 401 or 403 (it refused the gate's introspection bearer), `other` = anything else
-// (unreachable, 5xx, another 4xx, a body that is not JSON). Cache hits are not counted.
+// (unreachable, a redirect, 5xx, another 4xx, a body that is not JSON). Cache hits are not
+// counted. tools/identity-introspection-provision.mjs reads a rise in `accepted` as identity
+// accepting the gate, so nothing else may land there.
 const identityVerifyResults = { accepted: 0, refused: 0, other: 0 };
 const USER_BEARER_CACHE_TTL_MS = Number(process.env.USER_BEARER_CACHE_TTL_MS ?? 60_000);
 const UPSTREAM_POOL_CONNECTIONS = Number(process.env.UPSTREAM_POOL_CONNECTIONS ?? 16);

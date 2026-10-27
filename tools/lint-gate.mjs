@@ -692,7 +692,8 @@ const BASELINE = {};
 // 2026-10-08: private HMD invocation coverage adds one file, so the floor is 605.
 // 2026-10-27: tests/did-sig-live-scripts.test.ts brings the linted scope to 681; the gate named 648.
 // 2026-10-27: the introspection provisioning tool and its test bring the linted scope to 683; the gate named 650.
-export const MIN_FILES = 650;
+// 2026-10-27: tests/railway-set-secret-var.test.mjs brings the linted scope to 684; the gate named 651.
+export const MIN_FILES = 651;
 
 /**
  * How far below the real linted-file count MIN_FILES may sit before that is itself a failure.

@@ -6,6 +6,8 @@ on:
       - 'tools/railway-services.mjs'
       - 'tools/railway-deploy-trigger.mjs'
       - 'tests/identity-introspection-provision.test.mjs'
+      - 'tools/railway-set-secret-var.mjs'
+      - 'tests/railway-set-secret-var.test.mjs'
       - '.github/workflows/identity-introspection-provision.yml'
       - '.github/workflows/identity-introspection-provision-test.yml'
 permissions:
@@ -22,4 +24,6 @@ jobs:
       - uses: actions/setup-node@v6
         with:
           node-version: '20'
-      - run: node --test tests/identity-introspection-provision.test.mjs
+      # The second file is the by-hand path deploy/identity/AUTH-ARCHITECTURE.md gives for the
+      # same rollout: tools/railway-set-secret-var.mjs must not print the value either.
+      - run: node --test tests/identity-introspection-provision.test.mjs tests/railway-set-secret-var.test.mjs
