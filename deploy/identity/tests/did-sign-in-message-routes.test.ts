@@ -231,6 +231,19 @@ async function overBareNonce(server: string, key: { did: string; privateKey: cry
   const { nonce } = await challenge(server, challengeBody);
   return post(server, '/auth/did', { did: key.did, nonce, signature: sign(nonce, key), name: 'New', ...extra }, headers);
 }
+/** A first sign-in by a new wallet, with `surfaceAgent` as its surface hint. */
+async function walletFirstSignIn(server: string, host: string, surfaceAgent: string, headers: Record<string, string> = {}) {
+  const wallet = Wallet.createRandom();
+  const ch = await post(server, '/challenges', { purpose: 'siwe' }, headers);
+  assert.equal(ch.status, 200, JSON.stringify(ch.json));
+  const nonce = String(ch.json['nonce']);
+  const message = [
+    `${host} wants you to sign in with your Ethereum account:`, wallet.address, '', 'Sign in to Interego.', '',
+    `URI: https://${host}`, 'Version: 1', 'Chain ID: 1', `Nonce: ${nonce}`, `Issued At: ${new Date().toISOString()}`,
+  ].join('\n');
+  const reply = await post(server, '/auth/siwe', { message, signature: await wallet.signMessage(message), nonce, name: 'Wallet', surfaceAgent }, headers);
+  return { wallet, reply };
+}
 
 const BARE_PREFIX = '[identity] WARN identity_did_bare_nonce ';
 // Every character a log reader may end a line at (Python's str.splitlines): CRLF, LF, CR, VT, FF,
@@ -436,6 +449,55 @@ test('with the setting on, a signature over the bare nonce still signs in, and e
   const warning = String(legacy.headers.get('warning'));
   assert.match(warning, /did:key base64url encoding is deprecated/);
   assert.match(warning, /bare nonce/);
+});
+
+test('read from the repository\'s log reader, the documented patterns count a bare-nonce sign-in once and no line a caller wrote', async () => {
+  const doc = readFileSync(new URL('../AUTH-ARCHITECTURE.md', import.meta.url), 'utf8');
+  const asWritten = /`(\^\\\[identity\\\] WARN identity_did_bare_nonce outcome=accepted [^`]*)`/.exec(doc)?.[1];
+  const asPrinted = /`(\^\\S\+  \\\[identity\\\] WARN identity_did_bare_nonce outcome=accepted [^`]*)`/.exec(doc)?.[1];
+  const column = /`sed -E 's\/(\^[^/`]+)\/\/'`/.exec(doc)?.[1];
+  assert.ok(asWritten, 'AUTH-ARCHITECTURE.md gives a pattern for the lines as the server writes them');
+  assert.ok(asPrinted, 'AUTH-ARCHITECTURE.md gives a pattern for the lines as tools/railway-logs.ts prints them');
+  assert.ok(column, 'AUTH-ARCHITECTURE.md gives a sed command that strips the column tools/railway-logs.ts prints');
+  // The reader prints each log line after its timestamp and two spaces.
+  const reader = readFileSync(new URL('../../../tools/railway-logs.ts', import.meta.url), 'utf8');
+  assert.equal(reader.includes(`process.stdout.write(l.timestamp + '  ' + l.message + '\\n')`), true,
+    'tools/railway-logs.ts prints <timestamp>, two spaces, the line');
+  const accounts = (pattern: string, lines: string[]) => lines.flatMap(l => {
+    const m = new RegExp(pattern).exec(l);
+    return m ? [m[1]!] : [];
+  });
+
+  const from = lenient.sink.text.length;
+  // One sign-in over the bare nonce.
+  const before = bareLines(lenient).length;
+  const key = didKey();
+  const real = await overBareNonce(lenient.url, key, { surfaceAgent: 'mcp-client' });
+  assert.equal(real.status, 200, JSON.stringify(real.json));
+  await newBareLines(lenient, before, 1);
+  // A first wallet sign-in whose surface hint carries a whole bare-nonce line naming another
+  // account: logged as continuations of the line that opens the account, and quoted in the lines
+  // that seed its agent and issue its token.
+  const forged = '[identity] WARN identity_did_bare_nonce outcome=accepted purpose=did-sig method=key derivedUserId=u-did-000000000000 userId=victim-account surface=-';
+  const { reply } = await walletFirstSignIn(lenient.url, LENIENT_HOST, `x\n${forged}`);
+  assert.equal(reply.status, 200, JSON.stringify(reply.json));
+  const issued = `[identity] Issued token for `;
+  const walletUser = String(reply.json['userId']);
+  await waitFor(() => logLines(lenient).some(l => l.startsWith(issued) && l.includes(`(user: ${walletUser},`)), 2000,
+    `the token line for ${walletUser}\n${lenient.sink.text}`);
+  const written = lenient.sink.text.slice(from).split('\n').filter(l => l !== '');
+  assert.equal(written.filter(l => l.includes('userId=victim-account')).length >= 3, true, written.join('\n'));
+  const stamp = new Date().toISOString();
+  const printed = written.map(l => `${stamp}  ${l}`);
+
+  const signedIn = [deriveUserIdFromDid(key.did)];
+  assert.deepEqual(accounts(asWritten, written), signedIn, written.join('\n'));
+  assert.deepEqual(accounts(asPrinted, printed), signedIn, printed.join('\n'));
+  assert.deepEqual(accounts(asWritten, printed.map(l => l.replace(new RegExp(column), ''))), signedIn, printed.join('\n'));
+  // What the doc warns against: the pattern for the lines as written reads none of the reader's
+  // output, and with its anchor dropped it counts the caller's text as well.
+  assert.deepEqual(accounts(asWritten, printed), []);
+  assert.equal(accounts(asWritten.slice(1), printed).includes('victim-account'), true, printed.join('\n'));
 });
 
 test('with the setting off, a signature over the bare nonce is refused, and the error says to sign a new challenge\'s message', async () => {
@@ -647,16 +709,7 @@ test('text a caller sends (a DID, a surface hint, a display name) cannot start a
   // there it is log() that writes each line break, of every kind, as an indented continuation.
   const lines = () => logLines(lenient);
   for (const br of READER_BREAKS) {
-    const h = from();
-    const wallet = Wallet.createRandom();
-    const ch = await post(lenient.url, '/challenges', { purpose: 'siwe' }, h);
-    assert.equal(ch.status, 200, JSON.stringify(ch.json));
-    const nonce = String(ch.json['nonce']);
-    const message = [
-      `${LENIENT_HOST} wants you to sign in with your Ethereum account:`, wallet.address, '', 'Sign in to Interego.', '',
-      `URI: https://${LENIENT_HOST}`, 'Version: 1', 'Chain ID: 1', `Nonce: ${nonce}`, `Issued At: ${new Date().toISOString()}`,
-    ].join('\n');
-    const r = await post(lenient.url, '/auth/siwe', { message, signature: await wallet.signMessage(message), nonce, name: 'Wallet', surfaceAgent: `x${forged(br)}` }, h);
+    const { wallet, reply: r } = await walletFirstSignIn(lenient.url, LENIENT_HOST, `x${forged(br)}`, from());
     assert.equal(r.status, 200, `${JSON.stringify(r.json)}\n${lenient.sink.text}`);
     const userId = String(r.json['userId']);
     const first = `[identity] First-time SIWE registration: ${userId} wallet=${wallet.address.toLowerCase()} defaultAgent=x`;
