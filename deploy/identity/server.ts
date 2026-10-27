@@ -149,7 +149,8 @@ const ALLOW_OPEN_INTROSPECTION = process.env['ALLOW_OPEN_INTROSPECTION'] === '1'
 // (didSignInMessage), and /auth/did verifies the signature over it. A signature over the bare
 // nonce names no server. While this setting is on, such a signature is still accepted and each
 // one is logged as identity_did_bare_nonce, so the clients still sending one can be found.
-// Unset or '1': on (the default for now). '0': refused with 401. Any other value stops the server here.
+// Surrounding whitespace is ignored. Unset, empty or '1': on (the default for now). '0': refused
+// with 401. Any other value stops the server here.
 const DID_ACCEPT_BARE_NONCE = (() => {
   const raw = (process.env['DID_ACCEPT_BARE_NONCE'] ?? '').trim();
   if (raw === '' || raw === '1') return true;
@@ -1739,8 +1740,9 @@ async function agentIdentity(agentId: string): Promise<Identity | undefined> {
 // the nonce as its WebAuthn challenge bytes; a wallet signs a SIWE
 // message that carries it; a DID key signs the message its did-sig
 // challenge comes with. The client POSTs the proof to /auth/<method>.
-// The server checks the nonce was issued, is unused, has not expired
-// and has the right purpose, then checks the signature.
+// The server checks the nonce was issued, is unused and has not
+// expired, and, if it was issued with a purpose, that the purpose is
+// this route's (consumeChallenge); then it checks the signature.
 
 interface Challenge {
   nonce: string;

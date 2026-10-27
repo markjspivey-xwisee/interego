@@ -12,8 +12,8 @@
  *
  * Two servers. LENIENT: the setting unset, and a BASE_URL naming a host the tests never connect
  * to, so the host in the message can only have come from configuration. STRICT: the setting 0,
- * BASE_URL its own address, a bootstrap invite configured and timing lines on. A third start
- * with an unknown value must stop before it listens.
+ * BASE_URL its own address, a bootstrap invite configured and timing lines on. A start with an
+ * unknown value must stop before it listens; starts with an empty value and a padded '0' must not.
  *
  * A key of small order, for which a signature can be made without a private key, is refused with
  * 400 before any signature is checked, on either server.
@@ -29,6 +29,7 @@ import * as crypto from 'node:crypto';
 import * as http from 'node:http';
 import * as net from 'node:net';
 import { fileURLToPath } from 'node:url';
+import { Wallet } from 'ethers';
 import { deriveUserIdFromDid } from '../derive-userid.js';
 import { isSmallOrderEd25519Key } from '../did-parse.js';
 
@@ -498,7 +499,7 @@ test('a proof is good once, and a nonce of another purpose is refused as before'
   }
 });
 
-test('the startup log names the setting in force, and an unknown value stops the server', async () => {
+test('the startup log names the setting in force, an empty or padded value reads as documented, and an unknown value stops the server', async () => {
   assert.match(lenientStartup, /WARN: DID sign-in still accepts a signature over the bare nonce/);
   assert.match(lenientStartup, /did-sig challenges carry a message naming identity\.example\.test/);
   assert.match(strictStartup, /bare nonce is refused \(DID_ACCEPT_BARE_NONCE=0\)/);
@@ -522,6 +523,24 @@ test('the startup log names the setting in force, and an unknown value stops the
     clearInterval(poll);
     clearTimeout(limit);
     bad.proc.kill('SIGTERM');
+  }
+
+  // Whitespace around the value is ignored, and an empty value is read as unset.
+  const started = await Promise.allSettled([
+    startIdentity(podPort, () => ({ DID_ACCEPT_BARE_NONCE: '' })),
+    startIdentity(podPort, () => ({ DID_ACCEPT_BARE_NONCE: ' 0\t' })),
+  ]);
+  try {
+    const [empty, padded] = started.map(r => { if (r.status === 'rejected') throw r.reason; return r.value; }) as [IdentityProcess, IdentityProcess];
+    await waitFor(() => /WARN: DID sign-in still accepts a signature over the bare nonce/.test(empty.sink.text), 2000, `the setting on\n${empty.sink.text}`);
+    await waitFor(() => /bare nonce is refused \(DID_ACCEPT_BARE_NONCE=0\)/.test(padded.sink.text), 2000, `the setting off\n${padded.sink.text}`);
+    const accepted = await overBareNonce(empty.url, didKey());
+    assert.equal(accepted.status, 200, JSON.stringify(accepted.json));
+    const refused = await overBareNonce(padded.url, didKey());
+    assert.equal(refused.status, 401, JSON.stringify(refused.json));
+    assert.match(String(refused.json['error']), /bare nonce/);
+  } finally {
+    for (const r of started) if (r.status === 'fulfilled') r.value.proc.kill('SIGTERM');
   }
 });
 
@@ -551,6 +570,29 @@ test('text a caller sends (a DID, a surface hint, a display name) cannot start a
   assert.equal(opened.status, 200, JSON.stringify(opened.json));
   await settle();
   assert.equal(warnLines(lenient), before, lenient.sink.text);
+
+  // A first wallet sign-in logs the surface hint and the agent id made from it as they are, so
+  // there it is log() that writes each line break as an indented continuation.
+  const lines = () => lenient.sink.text.split(/\r\n|\r|\n/);
+  for (const br of ['\n', '\r', '\r\n']) {
+    const wallet = Wallet.createRandom();
+    const { nonce } = await challenge(lenient.url, { purpose: 'siwe' });
+    const message = [
+      `${LENIENT_HOST} wants you to sign in with your Ethereum account:`, wallet.address, '', 'Sign in to Interego.', '',
+      `URI: https://${LENIENT_HOST}`, 'Version: 1', 'Chain ID: 1', `Nonce: ${nonce}`, `Issued At: ${new Date().toISOString()}`,
+    ].join('\n');
+    const r = await post(lenient.url, '/auth/siwe', { message, signature: await wallet.signMessage(message), nonce, name: 'Wallet', surfaceAgent: `x${forged(br)}` });
+    assert.equal(r.status, 200, `${JSON.stringify(r.json)}\n${lenient.sink.text}`);
+    const userId = String(r.json['userId']);
+    const first = `[identity] First-time SIWE registration: ${userId} wallet=${wallet.address.toLowerCase()} defaultAgent=x`;
+    await waitFor(() => lines().includes(first), 2000, `the line ${first}\n${lenient.sink.text}`);
+    const at = lines().indexOf(first);
+    assert.deepEqual(lines().slice(at + 1, at + 3), [
+      `    [identity] WARN identity_did_bare_nonce outcome=accepted-${userId} (surfaceHint=x`,
+      '    [identity] WARN identity_did_bare_nonce outcome=accepted)',
+    ], JSON.stringify(br));
+  }
+  assert.equal(warnLines(lenient), before, lenient.sink.text);
 });
 
 test('the lines a DID sign-in, a DID added with a bearer and a DID removal write quote what the caller sent', async () => {
@@ -564,13 +606,15 @@ test('the lines a DID sign-in, a DID added with a bearer and a DID removal write
   // A first sign-in seeds the user and its agent from the display name and the surface hint.
   const k = didKey();
   const derived = deriveUserIdFromDid(k.did);
-  const name = 'Eve" did=did:key:zForged outcome=accepted';
+  // U+2028 and U+0085 end a line for some log readers. JSON quoting leaves them, and é, as they
+  // are; the line shows '?' for each.
+  const name = 'Eve" did=did:key:zForged\u2028outcome=accepted\u0085\u00e9';
   const surface = 's" x=y';
   const agentId = `${surface}-${derived}`;
   const first = await overMessage(lenient.url, k, { name, surfaceAgent: surface });
   assert.equal(first.status, 200, `${JSON.stringify(first.json)}\n${lenient.sink.text}`);
   assert.equal(first.json['agentId'], agentId);
-  await expectLine(`[identity] Seeded user identity: ${JSON.stringify(derived)} (${JSON.stringify(name)})`);
+  await expectLine(`[identity] Seeded user identity: ${JSON.stringify(derived)} ("Eve\\" did=did:key:zForged?outcome=accepted??")`);
   await expectLineStarting(`[identity] Seeded agent identity: ${JSON.stringify(agentId)} ("`);
   await expectLine(`[identity] First-time DID registration: ${derived} did=${JSON.stringify(k.did)} defaultAgent=${JSON.stringify(agentId)} (surfaceHint=${JSON.stringify(surface)})`);
   await expectLineStarting(`[identity] Issued token for ${JSON.stringify(agentId)} (user: ${derived}, `);
@@ -598,6 +642,18 @@ test('the lines a DID sign-in, a DID added with a bearer and a DID removal write
   const opened = await overMessage(lenient.url, { ...legacy, did: legacyDid });
   assert.equal(opened.status, 200, `${JSON.stringify(opened.json)}\n${lenient.sink.text}`);
   await expectLine(`[identity] [did-key-legacy] accepted base64url-encoded did:key for ${JSON.stringify(legacyDid.slice(0, 24))}…; client should migrate to W3C base58btc encoding`);
+
+  // A did:key its account's pod lists, where that account was not loaded at startup: the sign-in
+  // loads it from the pod.
+  const unloaded = ed25519();
+  const unloadedDid = `did:key:z" okAA${unloaded.legacyMultibase.slice(1)}`;
+  const unloadedId = deriveUserIdFromDid(unloadedDid);
+  pods.set(unloadedId, { userId: unloadedId, name: 'Not loaded', walletAddresses: [], webAuthnCredentials: [],
+    didKeys: [{ did: unloadedDid, publicKeyMultibase: unloaded.multibase, keyType: 'Ed25519VerificationKey2020', createdAt: now }] });
+  const returning = await overMessage(lenient.url, { ...unloaded, did: unloadedDid });
+  assert.equal(returning.status, 200, `${JSON.stringify(returning.json)}\n${lenient.sink.text}`);
+  assert.equal(returning.json['userId'], unloadedId);
+  await expectLine(`[identity] DID ${JSON.stringify(unloadedDid)} signed in to ${unloadedId}, loaded from its pod (not in the DID index)`);
 });
 
 // The Ed25519 public keys libsodium refuses as small-order points (crypto_sign_ed25519's
