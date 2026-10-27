@@ -1,5 +1,34 @@
 # Changelog
 
+## 2026-10-27 — Identity: writes the pod applied without confirming them, and the limits the entry below promised
+
+Five corrections to the change below, each found by running the server against a stand-in pod.
+
+- **A deletion the pod took without confirming it is finished.** When the pod stored the tombstone and then answered 500 (or the write timed out), the deletion answered 503 "Nothing was changed; try again". The account's tokens were refused from then on, so the retry got 401, and the account's agent registry and DID documents were never removed. Now the record read after a failed write decides: a tombstone there completes the deletion (200). If that read fails too, the 503 says the deletion may have taken, and a retry with the same token finishes it. That token is refused everywhere else.
+- **A bootstrap passkey the pod took without confirming it signs in.** The route rolled back the seeded account's shell and gave the invite back, while the passkey was on the pod and in the index. A usernameless sign-in then got 404 until a restart, and a new claim was refused as already spent. Now, when the pod lists the passkey, the shell and the spent invite stay, and the 503 says to sign in with it. When the read after the write failed too, the account is loaded from its pod before the answer. A device added with a bearer is handled the same way.
+- **Wallet and DID sign-ins never decide on a copy older than 10 s.** When the pod could not be read, they used this server's copy whatever its age, so a wallet or DID removed elsewhere kept signing in for as long as the pod stayed unreadable. That is now a 503.
+- **The lock's real bound, and a shorter one.** The entry below said a pod that never answers holds an account's lock for at most 15 s. It was 30 s for a hung first read, 45 s for a hung write (the write, then a 30 s read after it) and 60 s for a create (its container PUT had a timeout of its own). Every read and write of the record made under the lock now times out after 15 s, and a create's container PUT shares the write's 15 s. The bound is now 15 s when the read hangs and 30 s when the write does.
+- **A Play owner's write re-reads on 412.** Adding, removing and signing out for a `u-try-play-` owner made one attempt and failed at the first 412 (503 or 500). Every other account re-read and retried. Play owners now go through the same writer, which still checks an unclaimed owner's anchor under the lock. `deploy/identity/provisional-play-enrollment.ts` is removed, with its line in `deploy/Dockerfile.identity`.
+
+A write that meets another writer's change at all three attempts now logs `WARN identity_authmethods_write_conflict userId=<id> context=<what> attempts=<n>`. It logged nothing before. Alert on it as on `identity_authmethods_write_failed`.
+
+`deploy/identity/AUTH-ARCHITECTURE.md` and the entry below are corrected to match.
+
+Tests:
+
+- **`live-record-writes-routes.test.ts`** adds four cases and extends one:
+  - J1: a deletion the pod applied and then answered 500, with and without the read after it.
+  - J2: the same for a bootstrap passkey.
+  - J3: wallet and DID sign-ins on an unreadable pod once the copy has aged.
+  - A9: the 412 cases for a claimed Play owner.
+  - C11: now runs a hung first read, a hung write with a hung read after it, and a hung create at once, with passkey sign-ins waiting behind them.
+
+  All five fail against the code before this change.
+- **`provisional-play-enrollment.test.ts`** adds a Play owner's 412, and an anchor that expires between the two attempts.
+- **`auth-methods-writer.test.ts`** checks the record a failed write hands to its caller, and the conflict report.
+
+Removing each new guard in turn makes its case fail.
+
 ## 2026-10-27 — Identity: every write of a sign-in record starts from the record as the pod holds it
 
 The identity server keeps a copy of each account's `auth-methods.jsonld` for 10 s, and its writers saved a record built from that copy: a passkey sign-in bumping its counter, a credential added or removed with a bearer, sign-out-everywhere. A change that reached the pod by another route within those 10 s was overwritten. That route could be the other instance during the 30 s deploy overlap, an operator's edit, or another request this server was still answering. A removed passkey or wallet came back, a raised session epoch dropped (old tokens verified again), and a sign counter went backwards. Adding a wallet, a DID or a device was also acknowledged before the pod had it. When that write later failed, this server had answered 200 for a credential the pod never held, and at its next sign-in a wallet or did:key could open a new account of its own. Reading a record could also write one: a read that found no document created an empty one, for any caller.
@@ -8,7 +37,7 @@ Now every write of that file, everywhere in the server, is one read-modify-write
 
 1. Read the record from the pod, never this server's copy.
 2. Apply only the request's change: one credential added or removed, one passkey's counter and relying-party pin, the session epoch.
-3. Write it with `If-Match` on the ETag read, or `If-None-Match: *` when there was no document. A `412` means someone wrote in between, so the record is read and the change applied again, up to three times.
+3. Write it with `If-Match` on the ETag read, or `If-None-Match: *` when there was no document. A `412` means someone wrote in between, so the record is read and the change applied again, up to three times, for every account (a Play owner's too).
 4. Only then update this server's copy and the sign-in indexes, and answer.
 
 Deferred writes are gone, so a 200 means the pod has the change.
@@ -24,7 +53,7 @@ Other changes:
 
 - Readers of a stale copy share one read.
 - A startup or on-demand load whose read a write overtook installs nothing.
-- Writes time out after 15 s, so a pod that never answers holds an account's lock for at most that long.
+- Reads and writes of the record under the lock time out after 15 s, so a pod that never answers holds an account's lock for at most 15 s for a read and 30 s for a write and the read after it.
 - The lock is not re-entrant. Asking for it while holding it is answered with 500 at once, where it would have waited for itself.
 - Deleting an account writes a tombstone whose epoch is above both the pod's epoch and this server's.
 - A `u-try-` account is reaped by the janitor only if, read again under the lock, it still has no credential. A claimed one whose removal fails stays whole, and the deletion answers 503.
@@ -42,7 +71,7 @@ What changes for users and operators:
 
 What is left as it was:
 
-- **Wallet and DID sign-ins still decide on the copy.** A wallet or DID removed by the other instance or by hand still signs in on this instance for up to 10 s after its last read of the account. Passkeys are always checked against the pod.
+- **Wallet and DID sign-ins still decide on the copy.** A wallet or DID removed by the other instance or by hand still signs in on this instance for up to 10 s after its last read of the account. After that the sign-in reads the pod, and is a 503 while the pod cannot be read. Passkeys are always checked against the pod.
 - **Two accounts can add one wallet at once.** Two different accounts adding the same wallet with bearers at the same moment are not serialised against each other.
 - **This change's own deploy is not covered.** During its overlap the old instance runs the old code, and its deferred writes and creating reads can still overwrite this one's writes. The conditional write only stops this code from overwriting theirs.
 

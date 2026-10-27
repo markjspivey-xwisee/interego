@@ -197,7 +197,8 @@ const UNLINTED_FRONTIER = {
   // A route suite for sign-ins while the account index is incomplete: 230.
   // The identity server's one writer of auth-methods.jsonld (auth-methods-writer.ts), its unit
   // suite and a route suite for writes that meet other writers: 233. All lint clean.
-  deploy: { errors: 356, files: 233 },
+  // Play owners' writes go through that writer too, so provisional-play-enrollment.ts is gone: 232.
+  deploy: { errors: 356, files: 232 },
   // The bulk of these are `no-console` in vertical bridges and CLI entry points — one config
   // decision, not a thousand defects. See the note above.
   // ★ 320 -> 337, and the ratchet caught it in CI rather than locally, which is the interesting

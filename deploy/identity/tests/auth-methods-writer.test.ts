@@ -154,26 +154,36 @@ test('a write is conditional on the ETag read, and installs exactly what was wri
   assert.throws(() => { (live!.walletAddresses as string[]).push('0xccc'); }, TypeError);
 });
 
-test('a write that fails is followed by a read, and what the pod holds then is installed', async () => {
-  // The store applied the write and answered 500: this server's copy must be the new record.
+test('a write that fails is followed by a read, and what the pod holds then is installed and handed to the caller', async () => {
+  const failure = async (p: ReturnType<typeof pod>): Promise<AuthMethodsWriteError> => {
+    const err = await updateAuthMethods(p.deps, p.userId, 'test', addWallet('0xbbb')).then(() => null, (e: unknown) => e);
+    assert.ok(err instanceof AuthMethodsWriteError, String(err));
+    return err;
+  };
+  // The store applied the write and answered 500: this server's copy must be the new record, and
+  // the caller is told the write landed (a deletion then goes on, a route keeps what it seeded).
   const applied = pod(account());
   applied.failWrites(1, true);
-  await assert.rejects(updateAuthMethods(applied.deps, applied.userId, 'test', addWallet('0xbbb')), AuthMethodsWriteError);
+  const landed = await failure(applied);
   assert.deepEqual(applied.log, ['GET', 'PUT match "1-application/ld+json"', 'GET']);
   assert.deepEqual(applied.installed, [applied.doc]);
   assert.deepEqual(applied.installed[0]!.walletAddresses, ['0xaaa', '0xbbb']);
-  // It did not apply it: the copy is the old record.
+  assert.deepEqual(landed.podRecord, applied.doc);
+  // It did not apply it: the copy is the old record, and so is what the caller is told.
   const refused = pod(account());
   refused.failWrites(1);
-  await assert.rejects(updateAuthMethods(refused.deps, refused.userId, 'test', addWallet('0xbbb')), AuthMethodsWriteError);
+  const kept = await failure(refused);
   assert.deepEqual(refused.installed, [account()]);
-  // And when that read fails too, the copy is marked stale rather than trusted.
+  assert.deepEqual(kept.podRecord, account());
+  // And when that read fails too, the copy is marked stale rather than trusted, and the caller
+  // is told nothing about the pod.
   const blind = pod(account());
   blind.failWrites(1);
   blind.beforeWrite = () => { blind.failReads(1); };
-  await assert.rejects(updateAuthMethods(blind.deps, blind.userId, 'test', addWallet('0xbbb')), AuthMethodsWriteError);
+  const unknown = await failure(blind);
   assert.deepEqual(blind.installed, []);
   assert.equal(blind.expired, 1);
+  assert.equal(unknown.podRecord, undefined);
 });
 
 test('a precondition failure re-reads and re-runs the delta on the new record, and gives up after three', async () => {
@@ -188,11 +198,15 @@ test('a precondition failure re-reads and re-runs the delta on the new record, a
   assert.deepEqual(p.installed, [p.doc]);
 
   const busy = pod(account());
+  const conflicts: string[] = [];
+  busy.deps.conflicted = (id, context, attempts) => { conflicts.push(`${id} ${context} ${attempts}`); };
   busy.beforeWrite = () => { busy.outOfBand(m => { m.sessionEpoch = (m.sessionEpoch ?? 0) + 1; }); };
   await assert.rejects(updateAuthMethods(busy.deps, busy.userId, 'test', addWallet('0xbbb')), AuthMethodsConflictError);
   assert.equal(busy.log.filter(l => l === 'GET').length, 3);
   assert.deepEqual(busy.installed, []);
   assert.deepEqual(busy.doc!.walletAddresses, ['0xaaa']);
+  // Reported once, for the operator's alert (identity_authmethods_write_conflict).
+  assert.deepEqual(conflicts, [`${busy.userId} test 3`]);
 });
 
 test('a delta that runs again after a precondition failure resets what it recorded and answers the same', async () => {

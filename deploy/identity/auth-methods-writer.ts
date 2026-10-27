@@ -18,8 +18,9 @@
  *      and the delta run again (at most `attempts` times);
  *   4. only then put what was written into this server's copy and indexes (`install`).
  * A read that fails writes nothing. A write that fails is followed, still under the lock, by
- * one more read, and what the pod holds then is installed; if that read fails too the copy is
- * marked stale (`expire`) so the next reader goes to the pod. This server's copy and indexes
+ * one more read, and what the pod holds then is installed and handed to the caller with the
+ * error (`AuthMethodsWriteError.podRecord`: a write the pod applied before failing has landed);
+ * if that read fails too the copy is marked stale (`expire`) so the next reader goes to the pod. This server's copy and indexes
  * therefore change only from a record read or written under the lock, and never disagree with
  * the pod for longer than a failed re-read.
  *
@@ -68,6 +69,12 @@ export class AuthMethodsConflictError extends Error { override name = 'AuthMetho
  */
 export class AuthMethodsWriteError extends Error {
   override name = 'AuthMethodsWriteError';
+  /**
+   * What the pod held when applyUpdate read it again after the failure, still under the lock:
+   * its record, or null when it had no document. Undefined when that read failed too (or was
+   * not made). A caller whose write may have landed decides on this, not on its own request.
+   */
+  podRecord?: unknown;
   constructor(message: string, readonly unknownOutcome: boolean) { super(message); }
 }
 /** An unclaimed Play owner whose anchor no longer opens to its id: no credential may be added. */
@@ -127,6 +134,8 @@ export interface WriterDeps<M> {
    * with a credential) always may; an unclaimed one only while its anchor opens to its id.
    */
   playGuard(userId: string, live: M): boolean;
+  /** Every attempt met another writer's change: called once, before AuthMethodsConflictError. */
+  conflicted?(userId: string, context: string, attempts: number): void;
 }
 
 function deepFreeze<T>(value: T): T {
@@ -189,19 +198,23 @@ export async function applyUpdate<M>(
       result = await deps.writeLive(userId, doc, pre, context);
     } catch (err) {
       if (err instanceof AccountDeletedError) throw err;
-      // The pod may hold the new record or the old one. Still under the lock, ask it.
+      const failure = err instanceof AuthMethodsWriteError ? err : new AuthMethodsWriteError((err as Error).message, true);
+      // The pod may hold the new record or the old one. Still under the lock, ask it, and tell
+      // the caller: a write the pod applied before answering 500 (or timing out) has landed.
       try {
         const now = await deps.readLive(userId);
         deps.install(userId, now.methods ?? deps.empty(userId));
+        failure.podRecord = now.methods;
       } catch {
         deps.expire(userId);
       }
-      throw err instanceof AuthMethodsWriteError ? err : new AuthMethodsWriteError((err as Error).message, true);
+      throw failure;
     }
     if (result === 'precondition-failed') continue;
     deps.install(userId, doc);
     return { written: true, record: doc };
   }
+  deps.conflicted?.(userId, context, attempts);
   throw new AuthMethodsConflictError(`${userId}: auth-methods document changed under ${attempts} write(s)`);
 }
 

@@ -3,12 +3,11 @@ import assert from 'node:assert/strict';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { readFileSync } from 'node:fs';
 import * as nodeModule from 'node:module';
-import { enrollProvisionalCredential } from '../provisional-play-enrollment.js';
 import { purgeProvisionalPlayPod } from '../provisional-play-cleanup.js';
 import { PodReadError, readPodJsonWithEtag } from '../account-index.js';
 import {
   AccountDeletedError, AccountRecordMissingError, AuthMethodsConflictError, AuthMethodsWriteError, NoWrite,
-  PlayOwnerUnavailableError, PodLockReentryError, Write, unknownTopLevelKeys, updateAuthMethods as updateAuthMethodsWith,
+  PlayOwnerUnavailableError, PodLockReentryError, Write, updateAuthMethods as updateAuthMethodsWith,
   type WritePrecondition,
 } from '../auth-methods-writer.js';
 
@@ -86,10 +85,6 @@ function fixture() {
     return 'ok' as const;
   };
   const installAuthMethods = (_owner: string, m: Methods) => { installs++; cached = structuredClone(m); return cached; };
-  const reconcileAfterWriteFailure = async (owner: string) => {
-    const live = await readLive();
-    installAuthMethods(owner, live.methods ?? empty(owner));
-  };
   const provisionalPlay = { open(anchor: string) {
     openCalls++;
     if (anchor !== 'original-owner-anchor' || now >= 10) throw new Error('Provisional owner unavailable');
@@ -107,13 +102,10 @@ function fixture() {
   };
   const updateAuthMethods = new Function('updateAuthMethodsWith', 'authMethodsWriter',
     `${productionFunction('updateAuthMethods')}; return updateAuthMethods;`)(updateAuthMethodsWith, authMethodsWriter);
-  const commit = new Function('enrollProvisionalCredential', 'withIdentityPodMutex', 'readLive', 'installAuthMethods',
-    'emptyAuthMethods', 'AccountRecordMissingError', 'hasAnyCredential', 'provisionalPlay', 'unknownTopLevelKeys', 'writeLive',
-    'AccountDeletedError', 'reconcileAfterWriteFailure', 'AuthMethodsConflictError', 'updateAuthMethods', 'NoWrite', 'Write',
+  // Every account, a Play owner's included, goes through the one writer.
+  const commit = new Function('updateAuthMethods', 'NoWrite', 'Write',
     `${productionFunction('commitCredentialEnrollment')}; return commitCredentialEnrollment;`)(
-    enrollProvisionalCredential, withIdentityPodMutex, readLive, installAuthMethods,
-    (owner: string) => empty(owner), AccountRecordMissingError, hasAnyCredential, provisionalPlay, unknownTopLevelKeys, writeLive,
-    AccountDeletedError, reconcileAfterWriteFailure, AuthMethodsConflictError, updateAuthMethods, NoWrite, Write,
+    updateAuthMethods, NoWrite, Write,
   ) as (owner: string, context: string, update: (m: Methods) => boolean | void, opts?: { absent?: 'refuse' | 'create' }) => Promise<unknown>;
   const authMethodsCache = { get: () => cached ? { value: cached } : undefined };
   const signIn = new Function('authMethodsCache', 'publicKeyIdentity', 'updateAuthMethods', 'NoWrite', 'Write',
@@ -146,10 +138,10 @@ function fixture() {
     const handler = executable.indexOf('async (req, res) => {', start);
     const end = executable.indexOf('\n});', handler);
     const run = new Function('requireUserFromBearer', 'commitCredentialEnrollment', 'withIdentityPodMutex',
-      'deleteUserCompletely', 'log', 'authMethodsCache', 'sendAccountWriteRefusal', 'refuseRemoval',
+      'deleteUserCompletely', 'log', 'authMethodsCache', 'sendAccountWriteRefusal', 'refuseRemoval', 'AuthMethodsWriteError',
       `return (${executable.slice(handler, end)}\n});`)(
       async () => ({ id: userId }), commit, withIdentityPodMutex, deleteUserCompletely, log,
-      authMethodsCache, sendAccountWriteRefusal, refuseRemoval,
+      authMethodsCache, sendAccountWriteRefusal, refuseRemoval, AuthMethodsWriteError,
     );
     const response = { statusCode: 200, headersSent: false, body: null as unknown,
       status(code: number) { this.statusCode = code; return this; },
@@ -297,6 +289,33 @@ test('a canonical write meeting another writer\'s change re-reads and keeps both
   assert.deepEqual(f.document!.didKeys, [{ did: 'did:key:out-of-band' }]);
 });
 
+test('a Play owner\'s write meeting another writer\'s change re-reads and keeps both, as a canonical account\'s does', async () => {
+  const f = fixture();
+  await f.commit(userId, 'webauthn-register', enroll);
+  const puts = f.puts;
+  f.beforePersist = async () => {
+    f.beforePersist = async () => {};
+    f.outOfBand(m => { m.didKeys.push({ did: 'did:key:out-of-band' }); });
+  };
+  await f.commit(userId, 'siwe-add-wallet', m => { m.walletAddresses.push('0xverified'); });
+  assert.equal(f.puts - puts, 2, 'a stale write refused, then one built on the new record');
+  assert.deepEqual(f.document!.walletAddresses, ['0xverified']);
+  assert.deepEqual(f.document!.didKeys, [{ did: 'did:key:out-of-band' }]);
+  assert.deepEqual(f.cached!.walletAddresses, ['0xverified']);
+  // The guard is checked again on the record read after the 412: an unclaimed owner whose anchor
+  // expired meanwhile is refused at the second attempt, and nothing is written.
+  const g = fixture();
+  g.beforePersist = async () => {
+    g.beforePersist = async () => {};
+    g.now = 20;
+    g.outOfBand(m => { m.sessionEpoch = 9; });
+  };
+  const before = g.puts;
+  await assert.rejects(g.commit(userId, 'webauthn-register', enroll), /Provisional owner unavailable/);
+  assert.equal(g.puts - before, 1);
+  assert.deepEqual(g.document!.webAuthnCredentials, []);
+});
+
 test('passkey authentication cannot overwrite a concurrently acknowledged enrollment', async () => {
   const f = fixture();
   await f.commit(userId, 'webauthn-register', enroll);
@@ -415,7 +434,7 @@ test('a read never creates a document, for any id', async () => {
     requests.push({ url, method: init?.method ?? 'GET' });
     return { ok: false, status: 404, statusText: 'Not Found', text: async () => '', headers: { get: () => null } };
   };
-  const readLive = new Function('readPodJsonWithEtag', 'podFetch', 'podAuthMethodsUrl', 'normaliseAuthMethods',
+  const readLive = new Function('readPodJsonWithEtag', 'recordFetch', 'podAuthMethodsUrl', 'normaliseAuthMethods',
     `${productionFunction('readLive')}; return readLive;`)(
     readPodJsonWithEtag, podFetch, (owner: string) => `https://css.test/${owner}/auth-methods.jsonld`, (value: unknown) => value,
   ) as (owner: string) => Promise<{ methods: unknown }>;

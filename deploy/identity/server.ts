@@ -83,7 +83,6 @@ import {
   surfaceAgentLabel,
   type DelegationScope,
 } from './surface-agent-restore.js';
-import { enrollProvisionalCredential } from './provisional-play-enrollment.js';
 import { clientIp, createLimiter, rateLimit, sendRateLimited } from './rate-limit.js';
 import { forwardAsyncRouteErrors, installProcessSafetyNet, routeErrorHandler } from './route-errors.js';
 import { parseSiweMessage, SIWE_DOMAIN_SUFFIX } from './siwe-message.js';
@@ -746,9 +745,16 @@ function podAuthMethodsUrl(userId: string): string {
 // account index incomplete for good).
 const POD_READ_TIMEOUT_MS = 30_000;
 const podFetch: FetchLike = (url, init) => fetch(url, { ...init, signal: AbortSignal.timeout(POD_READ_TIMEOUT_MS) });
-// Writes give up sooner: one runs under the account's lock, so a write that never answered
-// would hold every sign-in, enrolment and sign-out of that account behind it.
-const POD_WRITE_TIMEOUT_MS = 15_000;
+// Reads and writes of an account's auth-methods.jsonld made under its lock (readLive, writeLive,
+// deleteLive) give up sooner: one that never answered would hold every sign-in, enrolment and
+// sign-out of that account behind it. A writer makes at most two such requests in a row that a
+// pod can leave unanswered (its write, then the read that follows a failed write: a read that
+// fails ends it), so a pod that never answers holds an account's lock for at most 15 s when the
+// read hangs and 30 s when the write does. A 412 makes the writer read and write again, which
+// takes longer only while the pod keeps answering; a Play owner's provisioning and the janitor's
+// purge of one make requests of their own under the lock (provisional-play-*.ts, 15 s each).
+const POD_RECORD_TIMEOUT_MS = 15_000;
+const recordFetch: FetchLike = (url, init) => fetch(url, { ...init, signal: AbortSignal.timeout(POD_RECORD_TIMEOUT_MS) });
 
 /**
  * The account's record as the pod holds it now, with the document as parsed (for the keys
@@ -760,7 +766,7 @@ const POD_WRITE_TIMEOUT_MS = 15_000;
  * when there was none, for any caller, and a write built on it could re-create an account.
  */
 async function readLive(userId: string): Promise<LiveRecord<AuthMethods>> {
-  const { body, etag } = await readPodJsonWithEtag(podFetch, podAuthMethodsUrl(userId));
+  const { body, etag } = await readPodJsonWithEtag(recordFetch, podAuthMethodsUrl(userId));
   if (body === null) return { methods: null, raw: null, etag: null };
   return { methods: normaliseAuthMethods(body, userId), raw: body, etag };
 }
@@ -782,6 +788,8 @@ async function writeLive(userId: string, doc: AuthMethods, pre: WritePreconditio
     log(`WARN identity_authmethods_write_failed userId=${userId} context=${context} status=${status}`);
     return new AuthMethodsWriteError(`PUT ${url} failed: ${detail}`, unknownOutcome);
   };
+  // One timeout for the write, the container's PUT before a create included.
+  const signal = AbortSignal.timeout(POD_RECORD_TIMEOUT_MS);
   if (pre.kind === 'absent') {
     // The account's container first (idempotent; best-effort, as the document PUT says whether it worked).
     try {
@@ -789,9 +797,11 @@ async function writeLive(userId: string, doc: AuthMethods, pre: WritePreconditio
         method: 'PUT',
         headers: { 'Content-Type': 'text/turtle', 'Link': '<http://www.w3.org/ns/ldp#BasicContainer>; rel="type"' },
         body: '',
-        signal: AbortSignal.timeout(POD_WRITE_TIMEOUT_MS),
+        signal,
       });
     } catch { /* best-effort */ }
+    // Spent on the container: the document was never sent, so the pod does not have it.
+    if (signal.aborted) throw failed('timeout', 'the container PUT used up the write timeout', false);
   }
   let r: Response;
   try {
@@ -802,7 +812,7 @@ async function writeLive(userId: string, doc: AuthMethods, pre: WritePreconditio
         ...(pre.kind === 'absent' ? { 'If-None-Match': '*' } : pre.kind === 'match' ? { 'If-Match': pre.etag } : {}),
       },
       body: JSON.stringify(doc, null, 2),
-      signal: AbortSignal.timeout(POD_WRITE_TIMEOUT_MS),
+      signal,
     });
   } catch (err) {
     const timedOut = (err as Error).name === 'TimeoutError';
@@ -818,7 +828,7 @@ async function deleteLive(userId: string, etag: string | null): Promise<{ result
   const url = podAuthMethodsUrl(userId);
   let r: Response;
   try {
-    r = await fetch(url, { method: 'DELETE', headers: etag ? { 'If-Match': etag } : {}, signal: AbortSignal.timeout(POD_WRITE_TIMEOUT_MS) });
+    r = await fetch(url, { method: 'DELETE', headers: etag ? { 'If-Match': etag } : {}, signal: AbortSignal.timeout(POD_RECORD_TIMEOUT_MS) });
   } catch (err) {
     log(`WARN identity_authmethods_write_failed userId=${userId} context=delete status=${(err as Error).name === 'TimeoutError' ? 'timeout' : 'network'}`);
     throw new AuthMethodsWriteError(`DELETE ${url} failed: ${(err as Error).message}`, true);
@@ -833,14 +843,17 @@ async function deleteLive(userId: string, etag: string | null): Promise<{ result
  * After a write that failed: the pod may hold the new record (a timeout, or a store that
  * applied it and then answered 500) or the old one. Still under the lock, read it and install
  * what it holds, so this server's copy agrees with the pod whatever happened; if that read
- * fails too, mark the copy stale.
+ * fails too, mark the copy stale. Returns what the pod holds (null: no document), or undefined
+ * when that read failed.
  */
-async function reconcileAfterWriteFailure(userId: string): Promise<void> {
+async function reconcileAfterWriteFailure(userId: string): Promise<AuthMethods | null | undefined> {
   try {
     const now = await readLive(userId);
     installAuthMethods(userId, now.methods ?? emptyAuthMethods(userId));
+    return now.methods;
   } catch {
     expireAuthMethods(userId);
+    return undefined;
   }
 }
 
@@ -861,7 +874,13 @@ const authMethodsWriter: WriterDeps<AuthMethods> = {
   isTombstone: m => isTombstone(m),
   empty: userId => emptyAuthMethods(userId),
   playGuard: (userId, m) => playOwnerWritable(userId, m),
+  conflicted: (userId, context, attempts) => logWriteConflict(userId, context, attempts),
 };
+
+/** A write that met another writer's change at every attempt: the request fails (503 or 500). */
+function logWriteConflict(userId: string, context: string, attempts: number): void {
+  log(`WARN identity_authmethods_write_conflict userId=${userId} context=${context} attempts=${attempts}`);
+}
 
 /**
  * Change an account's record as the pod holds it (auth-methods-writer.ts): under the account's
@@ -955,10 +974,12 @@ function sendAccountWriteRefusal(res: express.Response, err: unknown): boolean {
  * The one way a route changes an account's credentials or session epoch. `update` edits a copy
  * of the record as the pod holds it (it may run more than once, so it resets anything it
  * records elsewhere at its start), and returns false to write nothing. Resolves once the pod
- * has the change; throws (and the route says so) when it does not. A Play owner's record goes
- * through enrollProvisionalCredential, which also checks, under the lock, that an unclaimed
- * owner's anchor still opens to its id. `absent`: what to do when the pod has no document
- * ('refuse' by default: AccountRecordMissingError).
+ * has the change; throws (and the route says so) when it does not. Every account, a Play
+ * owner's included, goes through the one writer (updateAuthMethods): a 412 re-reads and applies
+ * the change again; a Play owner's record is never created, and an unclaimed owner is changed
+ * only while its anchor still opens to its id (playOwnerWritable, checked under the lock on the
+ * record read). `absent`: what to do when the pod has no document ('refuse' by default:
+ * AccountRecordMissingError).
  */
 async function commitCredentialEnrollment(
   userId: string,
@@ -966,45 +987,6 @@ async function commitCredentialEnrollment(
   update: (methods: AuthMethods) => boolean | void,
   opts: { absent?: 'refuse' | 'create' } = {},
 ): Promise<UpdateResult<AuthMethods>> {
-  if (userId.startsWith('u-try-play-')) {
-    let read: LiveRecord<AuthMethods> = { methods: null, raw: null, etag: null };
-    let written: AuthMethods | null = null;
-    await enrollProvisionalCredential({
-      userId,
-      withOwnerLock: work => withIdentityPodMutex(userId, work),
-      read: async () => {
-        // A reaped or unreadable owner fails here, without creating an empty pod.
-        read = await readLive(userId);
-        if (!read.methods) {
-          installAuthMethods(userId, emptyAuthMethods(userId));
-          throw new AccountRecordMissingError(`${userId}: no auth-methods document`);
-        }
-        return installAuthMethods(userId, read.methods);
-      },
-      validate: methods => {
-        // A permanently claimed owner keeps this namespace. Its durable
-        // credential, rather than an expired guest anchor, is authoritative.
-        if (hasAnyCredential(methods)) return;
-        const owner = provisionalPlay.open(methods.provisionalPlayAnchor);
-        if (owner.userId !== userId) throw new Error('Provisional owner binding mismatch');
-      },
-      update,
-      persist: async methods => {
-        const doc = { ...unknownTopLevelKeys(read.raw), ...methods } as AuthMethods;
-        let result: WriteResult;
-        try {
-          result = await writeLive(userId, doc, read.etag ? { kind: 'match', etag: read.etag } : { kind: 'none' }, context);
-        } catch (err) {
-          if (!(err instanceof AccountDeletedError)) await reconcileAfterWriteFailure(userId);
-          throw err;
-        }
-        if (result === 'precondition-failed') throw new AuthMethodsConflictError(`${userId}: auth-methods document changed under the write`);
-        written = installAuthMethods(userId, doc);
-      },
-    });
-    const record = written as AuthMethods | null;
-    return record ? { written: true, record } : { written: false, reason: 'unchanged' };
-  }
   return updateAuthMethods(userId, context, draft => update(draft) === false ? NoWrite('unchanged') : Write,
     { absent: opts.absent ?? 'refuse' });
 }
@@ -1329,18 +1311,27 @@ async function readAuthMethods(userId: string, allowStale = false): Promise<Auth
 }
 
 /**
- * readAuthMethods for a sign-in that decides on what a record lists: 'unreadable' instead of an
- * empty record when the pod cannot be read and nothing is cached, so that an account this
- * server cannot see is answered with "try again" (503), never read as one without credentials.
+ * The account's record for a sign-in that decides on what it lists (which account a wallet or
+ * DID signs in to): this server's copy while it is under 10 s old, otherwise the record read
+ * from the pod now. 'unreadable' when the copy is older and the pod cannot be read: a sign-in
+ * is never decided on a copy older than 10 s, so a credential removed by the other instance or
+ * by hand signs in here for at most 10 s after this server last read the account, whether or
+ * not the pod answers now, and an account this server cannot see is answered with "try again"
+ * (503), never read as one without credentials.
  */
 async function readForDecision(userId: string): Promise<AuthMethods | 'unreadable'> {
-  const cached = authMethodsCache.get(userId);
-  if (cached && Date.now() - cached.fetchedAt < AUTH_METHODS_TTL_MS) return cached.value;
+  const fresh = (): AuthMethods | undefined => {
+    const cached = authMethodsCache.get(userId);
+    return cached && Date.now() - cached.fetchedAt < AUTH_METHODS_TTL_MS ? cached.value : undefined;
+  };
+  const copy = fresh();
+  if (copy) return copy;
   try {
     return await refreshAuthMethods(userId);
   } catch (err) {
     log(`WARN: could not read auth-methods for ${userId}: ${(err as Error).message}`);
-    return cached ? cached.value : 'unreadable';
+    // A record a writer installed meanwhile, under the lock, is as good as a read.
+    return fresh() ?? 'unreadable';
   }
 }
 
@@ -2821,7 +2812,7 @@ function walletAccount(addr: string): WalletAccount {
  * longer lists the wallet drops out of the index, and the choice is made again: the wallet signs
  * in there no more, and nothing writes it back. The derived account may list the wallet without
  * being loaded, so it is loaded before another answer is acted on. 'unreadable': it, or a holder
- * this server has no copy of, could not be read.
+ * whose copy here is 10 s old or more (or missing), could not be read.
  */
 async function walletSignInAccount(addr: string): Promise<WalletAccount | 'unreadable'> {
   const derivedId = deriveUserIdFromWallet(addr);
@@ -3507,7 +3498,8 @@ app.post('/auth/webauthn/register', authEnrollLimiter, async (req, res) => {
     let refusal: 'claimed' | undefined;
     // Nothing was enrolled, so the shell seeded above for it goes again: left in memory it
     // would make the account look loaded (its profile and did:web document resolvable).
-    const rollBack = () => { for (const id of seeded) { identities.delete(id); keys.delete(id); } };
+    const rollBack = () => { for (const id of seeded.splice(0)) { identities.delete(id); keys.delete(id); } };
+    const listsPasskey = (m: AuthMethods | null | undefined) => !!m?.webAuthnCredentials.some(c => c.id === record.id);
     try {
       await commitCredentialEnrollment(targetUserId, bootstrap ? 'webauthn-bootstrap' : 'webauthn-register', methods => {
         refusal = undefined;
@@ -3521,11 +3513,46 @@ app.post('/auth/webauthn/register', authEnrollLimiter, async (req, res) => {
         methods.webAuthnCredentials.push(record);
       }, bootstrap ? { absent: 'create' } : {});
     } catch (err) {
-      rollBack();
-      // Nothing was written, so a bootstrap invite spent above is still unused: give it back,
-      // or every retry is refused as "already consumed".
-      if (bootstrap) CONSUMED_INVITES.delete(targetUserId);
       log(`WebAuthn credential enrollment not confirmed for ${targetUserId}: ${(err as Error).message}`);
+      // A write whose outcome is unknown (a 5xx, a timeout) may have landed. The writer read the
+      // pod again under the lock and this server now holds what it read (the passkey indexed to
+      // this account when it is there), so the shell seeded above stays with it, and so does a
+      // spent invite: the pod lists a credential, which refuses any other claim anyway.
+      const unknownOutcome = err instanceof AuthMethodsWriteError && err.unknownOutcome;
+      const after = unknownOutcome ? (err as AuthMethodsWriteError).podRecord as AuthMethods | null | undefined : null;
+      let saved = listsPasskey(after);
+      let undetermined = unknownOutcome && after === undefined;
+      if (!saved) {
+        rollBack();
+        // Not written, so a bootstrap invite spent above is still unused: give it back, or every
+        // retry is refused as "already consumed".
+        if (bootstrap) CONSUMED_INVITES.delete(targetUserId);
+        if (undetermined) {
+          // The read after the write failed too: load the account from its pod (a seeded one
+          // with its shell, as at startup) and read its record, so a passkey the pod took signs in.
+          const loaded = await ensureAccountLoaded(targetUserId);
+          const current = loaded === 'loaded' ? await readForDecision(targetUserId) : loaded === 'absent' ? null : 'unreadable';
+          if (current !== 'unreadable') {
+            undetermined = false;
+            saved = listsPasskey(current);
+            if (saved && bootstrap) CONSUMED_INVITES.add(targetUserId);
+          }
+        }
+      }
+      if (saved) {
+        res.status(503).json({
+          error: 'Your passkey could not be confirmed as saved',
+          detail: 'The pod did not confirm the write, but it lists this passkey now: sign in with it. No session was issued here.',
+        });
+        return;
+      }
+      if (undetermined) {
+        res.status(503).json({
+          error: 'Your passkey could not be confirmed as saved',
+          detail: 'The pod did not confirm the write, so it may or may not have been saved. Try signing in with this passkey in a minute; if that does not work, register it again.',
+        });
+        return;
+      }
       if (sendAccountWriteRefusal(res, err)) return;
       res.status(503).json({ error: 'Credential enrollment could not be confirmed. No permanent session was issued.' });
       return;
@@ -5002,20 +5029,47 @@ app.get('/me', authEnrollLimiter, async (req, res) => {
 });
 
 // Shared helper: resolve bearer token to the user, refuse if invalid.
-async function requireUserFromBearer(req: express.Request, res: express.Response): Promise<Identity | null> {
+async function requireUserFromBearer(
+  req: express.Request,
+  res: express.Response,
+  opts: { closedOnPod?: 'accept' } = {},
+): Promise<Identity | null> {
   const authHeader = req.headers.authorization;
   if (!authHeader?.startsWith('Bearer ')) {
     res.status(401).json({ error: 'Bearer token required' });
     return null;
   }
   const tr = await verifyToken(authHeader.slice(7));
-  if (!tr.valid) { res.status(401).json({ error: `Invalid bearer token: ${tr.reason}` }); return null; }
+  if (!tr.valid) {
+    const closing = opts.closedOnPod === 'accept' && tr.reason === 'Account deleted' ? unfinishedDeletion(authHeader.slice(7)) : null;
+    if (closing) return closing;
+    res.status(401).json({ error: `Invalid bearer token: ${tr.reason}` });
+    return null;
+  }
   const user = identities.get(tr.record!.userId);
   if (!user || user.type !== 'user') {
     res.status(404).json({ error: `User for token not found` });
     return null;
   }
   return user;
+}
+
+/**
+ * The account a genuine, unexpired token names when this server's copy of its record is a
+ * tombstone the process has not acted on: the identity shell is still here and the id is not in
+ * deletedUserIds. That is a deletion the pod took without confirming it (a 5xx after applying
+ * the tombstone, a timeout) whose read afterwards failed too, so the route answered 503; or a
+ * deletion by the other instance or an operator. Only POST /users/me/delete accepts it, to
+ * finish the deletion (memory and the agent registry); it writes nothing over the tombstone.
+ */
+function unfinishedDeletion(token: string): Identity | null {
+  const parsed = parseAndVerifySignature(token);
+  if (parsed.valid !== true) return null;
+  const { userId, expiresAt } = parsed.payload;
+  if (new Date(expiresAt) < new Date() || deletedUserIds.has(userId)) return null;
+  const user = identities.get(userId);
+  const copy = authMethodsCache.get(userId)?.value;
+  return user?.type === 'user' && copy !== undefined && isTombstone(copy) ? user : null;
 }
 
 // Why a removal changed nothing: the record (as the pod holds it) does not list the credential,
@@ -5195,9 +5249,14 @@ app.post('/tokens/me/sign-out-everywhere', tokenLimiter, async (req, res) => {
  * for an account whose id can come back (derived from a credential, or a seeded alias),
  * auth-methods.jsonld is overwritten with a tombstone (deletionTombstone) rather than
  * removed, and nothing in memory is dropped until the pod has it: a deletion the pod did not
- * take throws, and the route says so. `u-try-*` ids are random (and `u-try-play-` pods are
- * purged by their own cleanup), so theirs is removed, conditionally on the record read; one
- * that holds a credential (a claimed account) stays whole when its removal fails.
+ * take throws, and the route says so. A write that failed but may have landed (a 5xx, a
+ * timeout) is decided on the record the writer read after it: a tombstone there closes the
+ * account here too. When that read failed as well, the route's 503 says the deletion may have
+ * taken, and the retry finishes it (unfinishedDeletion; a tombstone already there is not
+ * written again). `u-try-*` ids are random (and `u-try-play-` pods are purged by their own
+ * cleanup), so theirs is removed, conditionally on the record read; one that holds a
+ * credential (a claimed account) stays whole when its removal fails, unless the pod no longer
+ * has it when read again.
  *
  * Under the account's lock, which it takes unless the caller holds it already (`lockHeld`: the
  * janitor's Play purge), so no writer runs between reading the record and closing it, and every
@@ -5219,12 +5278,24 @@ async function deleteUserCompletely(
     if (tombstoned) {
       // Above every epoch a token was issued or checked under: the pod's and this server's copy's.
       const cachedEpoch = authMethodsCache.get(userId)?.value.sessionEpoch ?? 0;
-      await applyUpdate(userId, 'delete-account', (draft, live) => {
-        const tombstone = deletionTombstone(userId, Math.max(live?.sessionEpoch ?? 0, cachedEpoch));
-        for (const k of Object.keys(draft)) delete (draft as unknown as Record<string, unknown>)[k];
-        Object.assign(draft, tombstone);
-        return Write;
-      }, { tombstone: 'replace', absent: 'create' });
+      try {
+        await applyUpdate(userId, 'delete-account', (draft, live) => {
+          // Closed already (a deletion the pod took without confirming it, retried; or the
+          // other instance's): nothing to write, and what follows clears this server's memory.
+          if (live && isTombstone(live)) return NoWrite('closed');
+          const tombstone = deletionTombstone(userId, Math.max(live?.sessionEpoch ?? 0, cachedEpoch));
+          for (const k of Object.keys(draft)) delete (draft as unknown as Record<string, unknown>)[k];
+          Object.assign(draft, tombstone);
+          return Write;
+        }, { tombstone: 'replace', absent: 'create' });
+      } catch (err) {
+        // A write whose outcome is unknown (a 5xx, a timeout) may have landed: the writer read
+        // the pod again under this lock. A tombstone there is a closed account, so the deletion
+        // goes on to clear memory and the agent registry; anything else is answered 503.
+        const after = err instanceof AuthMethodsWriteError ? err.podRecord as AuthMethods | null | undefined : undefined;
+        if (!after || !isTombstone(after)) throw err;
+        log(`WARN: deletion of ${userId}: the pod took the tombstone without confirming it (${(err as Error).message})`);
+      }
     } else {
       for (let attempt = 1; ; attempt++) {
         const live = await readLive(userId);
@@ -5239,14 +5310,24 @@ async function deleteUserCompletely(
         try {
           removed = await deleteLive(userId, live.etag);
         } catch (err) {
-          // A claimed account stays as it is, in memory too: the route answers 503.
-          if (claimed) { await reconcileAfterWriteFailure(userId); throw err; }
-          log(`WARN: could not remove the record of ${userId}: ${(err as Error).message}`);
+          if (!claimed) {
+            log(`WARN: could not remove the record of ${userId}: ${(err as Error).message}`);
+            break;
+          }
+          // A claimed account stays as it is, in memory too: the route answers 503. Unless the
+          // pod applied the removal all the same (a 5xx after it, a timeout): then it is gone.
+          const after = await reconcileAfterWriteFailure(userId);
+          if (after !== null) {
+            if (err instanceof AuthMethodsWriteError) err.podRecord = after;
+            throw err;
+          }
+          log(`WARN: removal of the record of ${userId} not confirmed, but the pod no longer has it`);
           break;
         }
         if (removed.result === 'ok') { podCleanup.authMethods = removed.status; break; }
         // Written since the read: read it again, and check again.
         if (attempt >= 3) {
+          logWriteConflict(userId, 'delete-account', attempt);
           if (claimed) throw new AuthMethodsConflictError(`${userId}: auth-methods document changed under ${attempt} deletion(s)`);
           log(`WARN: could not remove the record of ${userId}: it changed under ${attempt} deletion(s)`);
           break;
@@ -5293,7 +5374,10 @@ async function deleteUserCompletely(
 }
 
 app.post('/users/me/delete', tokenLimiter, async (req, res) => {
-  const user = await requireUserFromBearer(req, res);
+  // A token refused only because the pod holds this account's tombstone, while this process
+  // still holds the account, finishes the deletion (unfinishedDeletion): the retry a 503 below
+  // asks for, of a deletion the pod took without confirming it.
+  const user = await requireUserFromBearer(req, res, { closedOnPod: 'accept' });
   if (!user) return;
   let result: DeletionResult;
   try {
@@ -5301,6 +5385,11 @@ app.post('/users/me/delete', tokenLimiter, async (req, res) => {
     result = await deleteUserCompletely(user.id);
   } catch (err) {
     log(`WARN: deletion of ${user.id} not completed: ${(err as Error).message}`);
+    if (err instanceof AuthMethodsWriteError && err.unknownOutcome && err.podRecord === undefined) {
+      // Neither the write nor the read after it was answered: the pod may hold the tombstone.
+      res.status(503).json({ error: 'Deletion not confirmed', detail: 'The pod did not confirm the deletion, so it may or may not have taken it. Try again in a minute with the same token: the retry finishes it either way.' });
+      return;
+    }
     res.status(503).json({ error: 'Deletion not completed', detail: 'The pod did not take the deletion. Nothing was changed; try again in a minute.' });
     return;
   }
@@ -6291,7 +6380,7 @@ app.listen(PORT, () => {
             });
             if (purge === 'kept') return;
             // A concurrent canonical enrollment wins: keep that account.
-            const remaining = await readPodJson(podFetch, podAuthMethodsUrl(uid));
+            const remaining = await readPodJson(recordFetch, podAuthMethodsUrl(uid));
             if (remaining !== null) return;
             await deleteUserCompletely(uid, { lockHeld: true });
           }).catch(err => log(`Janitor: provisional cleanup kept ${uid}: ${(err as Error).message}`));
