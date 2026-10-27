@@ -27,12 +27,15 @@
  *     write first, so that it can no longer land after the read, and makes what it read this
  *     server's copy and indexes) before anything is decided. While the account cannot be read or
  *     settled, the turn decides nothing ('unreadable') and the record stays.
- *   - a record is not kept for good: `settleRecorded` (server.ts runs it once a minute) gives each
- *     recorded credential an empty turn, which settles its account as its next request would and
- *     drops the record once that worked. A credential that never comes back (a throwaway wallet
- *     whose first sign-in met a failing pod) is dropped that way. At most `maxRecorded` are held
- *     at once: past that, `unconfirmed` records nothing and says so (false), and the caller's
- *     answer is the same 503 without the guarantee for that credential.
+ *   - a record is not kept for good: `settleRecorded` gives each recorded credential an empty
+ *     turn, one after another, which settles its account as its next request would and drops the
+ *     record once that worked. server.ts starts a pass at most once a minute, and not while one
+ *     is running, so on pods that do not answer a pass takes about one read timeout per record,
+ *     and a record is visited once per pass rather than once a minute. A credential that never
+ *     comes back (a throwaway wallet whose first sign-in met a failing pod) is dropped that way.
+ *     At most `maxRecorded` are held at once: past that, `unconfirmed` records nothing and says
+ *     so (false), and the caller's answer is the same 503 without the guarantee for that
+ *     credential.
  * A turn waits at most `waitMs` for the turns before it ('busy'), then decides nothing; the
  * turns after it still wait for the one that holds the turn. A turn is not re-entrant: a request
  * takes one credential's turn once. Process-local, as the account lock is: another instance
@@ -60,8 +63,11 @@ export type Turn<T> =
   | { readonly kind: 'decided'; readonly value: T }
   /** The turns before it did not finish within waitMs. */
   | { readonly kind: 'busy' }
-  /** An earlier write of the credential to `userId` is unconfirmed, and that account could not be read. */
-  | { readonly kind: 'unreadable'; readonly userId: string };
+  /**
+   * An earlier write of the credential to `userId` is unconfirmed, and that account could not be
+   * read, or the write not settled (`reason`: the error readAccount threw).
+   */
+  | { readonly kind: 'unreadable'; readonly userId: string; readonly reason: string };
 
 export interface CredentialDecisions {
   /** Run `decide` in the credential's turn, once any unconfirmed write of it has been read. */
@@ -78,7 +84,8 @@ export interface CredentialDecisions {
   /**
    * Settle every recorded write now, one credential at a time, each in its own turn (as its next
    * request would): a record whose account was read is dropped; one whose account still cannot
-   * be read, or whose turn is busy, stays. Returns how many are left.
+   * be read, or whose turn is busy, stays. Returns how many are left. One at a time, so a pass
+   * over records whose pods do not answer takes one read timeout (or a settlement's few) each.
    */
   settleRecorded(): Promise<number>;
   /** How many unconfirmed writes are recorded. */
@@ -118,8 +125,8 @@ export function createCredentialDecisions(deps: CredentialDecisionDeps): Credent
         if (recorded !== undefined) {
           try {
             await deps.readAccount(recorded.userId, recorded.pending);
-          } catch {
-            return { kind: 'unreadable', userId: recorded.userId };
+          } catch (err) {
+            return { kind: 'unreadable', userId: recorded.userId, reason: (err as Error).message };
           }
           unconfirmed.delete(credential);
         }

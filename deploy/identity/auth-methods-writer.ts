@@ -15,7 +15,7 @@
  *   2. apply only the change the caller means (a delta over a copy of what was read);
  *   3. write it back conditionally: If-Match on the ETag read, or If-None-Match: * when the
  *      pod had no document. A precondition failure means someone wrote in between, so the read
- *      and the delta run again (at most `attempts` times);
+ *      and the delta run again (`attempts` reads in all, 3 by default: two more after a 412);
  *   4. only then put what was written into this server's copy and indexes (`install`).
  * A read that fails writes nothing. A write that fails is settled, still under the lock
  * (`settle`), and what the pod holds then is installed and handed to the caller with the error
@@ -98,6 +98,12 @@ export class AuthMethodsWriteError extends Error {
    * record moves off that state).
    */
   pending?: WritePrecondition;
+  /**
+   * The pod did not answer a request the write sends before its document (a create's container
+   * PUT), so the document was never sent: nothing of this write is pending, but the pod is not
+   * answering, and a settlement whose fence meets this stops there (`settle`).
+   */
+  stalled?: true;
   constructor(message: string, readonly unknownOutcome: boolean, readonly unanswered = false) { super(message); }
 }
 /** A write the pod never answered may still apply, and nothing could stop it (see settle). */
@@ -265,9 +271,10 @@ function movedOff<M>(now: LiveRecord<M>, pending: WritePrecondition): boolean {
  * writer's) moves the record off that state, and the read that finds it moved is final.
  *
  * Throws (UnsettledWriteError, or the read's error) when it cannot get there: a read fails, the
- * fence gets no answer (it may still apply too), or the record has not moved after the fence (a
- * store whose ETag does not change on every write). Requests stop at the first that fails, so a
- * pod that never answers holds the lock here for one more timeout at most.
+ * fence gets no answer (it may still apply too; for a create, its container PUT got none), or the
+ * record has not moved after the fence (a store whose ETag does not change on every write).
+ * Requests stop at the first that fails, so a pod that never answers holds the lock here for one
+ * more timeout at most.
  */
 export async function settle<M>(deps: WriterDeps<M>, userId: string, pending: WritePrecondition | undefined, context: string): Promise<LiveRecord<M>> {
   deps.assertLockHeld(userId);
@@ -277,8 +284,12 @@ export async function settle<M>(deps: WriterDeps<M>, userId: string, pending: Wr
   try {
     await deps.writeLive(userId, fence, pending, `${context}-settle`);
   } catch (err) {
-    // A fence the pod did not answer may apply later, as may the write: neither is over.
-    if (!(err instanceof AuthMethodsWriteError) || err.unanswered) throw new UnsettledWriteError(`${userId}: a write the pod did not answer could not be fenced`);
+    // A fence the pod did not answer may apply later, as may the write: neither is over. A fence
+    // whose container PUT got no answer was never sent, and the pod is not answering: stop here
+    // too rather than read again (that read would add one more timeout to the bound).
+    if (!(err instanceof AuthMethodsWriteError) || err.unanswered || err.stalled) {
+      throw new UnsettledWriteError(`${userId}: a write the pod did not answer could not be fenced`);
+    }
   }
   const after = await deps.readLive(userId);
   if (movedOff(after, pending)) return after;

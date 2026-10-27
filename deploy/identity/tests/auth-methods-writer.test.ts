@@ -66,7 +66,8 @@ function pod(initial: (Record_ & Record<string, unknown>) | null, userId = 'u-pk
   let beforeWrite: (() => void) | null = null;
   // Writes the pod never answers ('hang', the client times out), and when each would still be
   // applied: right after the next read is answered, only when the test says (applyLater), never.
-  const hangs: Array<'after-next-read' | 'later' | 'never'> = [];
+  // 'stalled': a create whose container PUT the pod never answers, so its document is never sent.
+  const hangs: Array<'after-next-read' | 'later' | 'never' | 'stalled'> = [];
   const late: Array<() => void> = [];
   let afterNextRead: (() => void) | null = null;
   const deleted = new Set<string>();
@@ -95,6 +96,11 @@ function pod(initial: (Record_ & Record<string, unknown>) | null, userId = 'u-pk
       log.push(`PUT ${pre.kind}${pre.kind === 'match' ? ` ${pre.etag}` : ''}`);
       beforeWrite?.();
       const hang = hangs.shift();
+      if (hang === 'stalled') {
+        const err = new AuthMethodsWriteError('PUT failed: the container PUT got no answer within the write timeout', false);
+        err.stalled = true;
+        throw err;
+      }
       if (hang) {
         // Its precondition is checked when the pod gets round to it, as a store does.
         const apply = () => {
@@ -134,7 +140,7 @@ function pod(initial: (Record_ & Record<string, unknown>) | null, userId = 'u-pk
     failReads(n: number) { readFailures = n; },
     failWrites(n: number, applied = false) { writeFailures = n; applyThenFail = applied; },
     /** The next writes are never answered; each is applied (if its condition still holds) when `when` says. */
-    hang(...when: Array<'after-next-read' | 'later' | 'never'>) { hangs.push(...when); },
+    hang(...when: Array<'after-next-read' | 'later' | 'never' | 'stalled'>) { hangs.push(...when); },
     /** The pod gets round to the writes it held for later. */
     applyLater() { for (const apply of late.splice(0)) apply(); },
     set beforeWrite(fn: (() => void) | null) { beforeWrite = fn; },
@@ -273,6 +279,25 @@ test('a write the pod never answered whose fence gets no answer either is not se
   const before = answered.log.length;
   await answered.deps.lock(answered.userId, () => settle(answered.deps, answered.userId, undefined, 'answered'));
   assert.deepEqual(answered.log.slice(before), ['GET']);
+});
+
+test('a create whose fence\'s container PUT gets no answer stops settling there, without reading again', async () => {
+  // The create is never answered; the fence (a create too: no document yet) sends its container PUT
+  // first, and the pod does not answer that either, so no fence document is sent. The settlement used
+  // to read once more after it, one more timeout on a pod that is not answering.
+  const c = pod(null);
+  c.hang('later', 'stalled');
+  const err = await updateAuthMethods(c.deps, c.userId, 'test', addWallet('0xbbb'), { absent: 'create' }).then(() => null, (e: unknown) => e);
+  assert.ok(err instanceof AuthMethodsWriteError, String(err));
+  assert.deepEqual(c.log, ['GET', 'PUT absent', 'GET', 'PUT absent']);
+  assert.equal(err.podRecord, undefined, 'not settled');
+  assert.deepEqual(err.pending, { kind: 'absent' });
+  assert.equal(c.expired, 1);
+  // settle on its own says the same, from the same requests.
+  c.hang('stalled');
+  const before = c.log.length;
+  await assert.rejects(c.deps.lock(c.userId, () => settle(c.deps, c.userId, { kind: 'absent' }, 'again')), { name: 'UnsettledWriteError' });
+  assert.deepEqual(c.log.slice(before), ['GET', 'PUT absent']);
 });
 
 test('a fence that leaves the record where the write found it settles nothing: the copy expires and the error carries the pending condition', async () => {
@@ -537,6 +562,29 @@ test('a refresh queued behind a writer that could only mark the copy stale reads
   await writer;
   assert.deepEqual((await refresh).walletAddresses, ['0xaaa'], 'what the pod holds, not the stale copy');
   assert.equal(gets, 1);
+});
+
+test('a copy a failed write marked stale is not answered to a reader that accepts a stale copy until the pod was read; a stale copy that is only old still is', async () => {
+  let gets = 0;
+  let readable = true;
+  const r = serverReads(async () => { gets++; if (!readable) throw new Error('502'); return { methods: account(), raw: null, etag: null }; });
+  // Marked stale by expireAuthMethods (a write that failed and could not be settled, so may have
+  // landed): a token check (allowStale) waits for the pod's record. It used to get the copy at once.
+  r.authMethodsCache.set('u-pk-000000000001', { value: empty('u-pk-000000000001'), fetchedAt: Date.now() });
+  r.expireAuthMethods('u-pk-000000000001');
+  assert.deepEqual((await r.readAuthMethods('u-pk-000000000001', true)).walletAddresses, ['0xaaa']);
+  assert.equal(gets, 1);
+  // When that read fails, the copy is what there is.
+  r.expireAuthMethods('u-pk-000000000001');
+  readable = false;
+  assert.deepEqual((await r.readAuthMethods('u-pk-000000000001', true)).walletAddresses, ['0xaaa']);
+  assert.equal(gets, 2);
+  // A copy that is only older than 10 s is answered at once, and refreshed in the background.
+  readable = true;
+  r.authMethodsCache.set('u-pk-000000000001', { value: empty('u-pk-000000000001'), fetchedAt: Date.now() - 60_000 });
+  assert.deepEqual((await r.readAuthMethods('u-pk-000000000001', true)).walletAddresses, []);
+  for (let i = 0; i < 50 && gets < 3; i++) await new Promise(resolve => setTimeout(resolve, 10));
+  assert.equal(gets, 3);
 });
 
 test('a read of this server\'s copy inside the account\'s own lock is a bug, refused at once', async () => {

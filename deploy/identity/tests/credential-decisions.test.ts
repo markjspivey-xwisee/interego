@@ -88,9 +88,13 @@ test('server.ts answers a turn that decided nothing with 503, and logs a busy on
   assert.deepEqual(answered.map(a => a.status), [503, 503]);
   assert.match(answered[0]!.body['error']!, /Another request for this wallet/);
   assert.deepEqual(lines, ['WARN identity_credential_turn_busy kind=wallet waitedMs=30000', 'WARN identity_credential_turn_busy kind=did waitedMs=30000']);
-  refuse(res, { kind: 'unreadable', userId: 'u-pk-000000000001' }, 'DID');
+  refuse(res, { kind: 'unreadable', userId: 'u-pk-000000000001', reason: 'a write the pod did not answer could not be fenced' }, 'DID');
   assert.equal(answered[2]!.status, 503);
-  assert.match(lines[2]!, /^WARN: DID decision deferred/);
+  // The log says why the settlement failed: it used to say the account "cannot be read yet" whatever
+  // the reason (an account deleted here, whose fence is refused, was readable).
+  assert.equal(lines[2]!, 'WARN: DID decision deferred: an unconfirmed write to u-pk-000000000001 could not be settled: '
+    + 'a write the pod did not answer could not be fenced');
+  assert.doesNotMatch(JSON.stringify(answered[2]!.body), /cannot be read yet/);
 });
 
 test('a decision that throws gives the turn up, and the error reaches its caller', async () => {
@@ -114,7 +118,7 @@ test('an unconfirmed write is read before the credential\'s next decision, and d
   await decisions.decide('wallet:0xa', async () => { decisions.unconfirmed('wallet:0xa', 'u-pk-x', pending); });
   assert.equal(decisions.unconfirmedFor('wallet:0xa'), 'u-pk-x');
   let ran = 0;
-  assert.deepEqual(await decisions.decide('wallet:0xa', async () => { ran++; }), { kind: 'unreadable', userId: 'u-pk-x' });
+  assert.deepEqual(await decisions.decide('wallet:0xa', async () => { ran++; }), { kind: 'unreadable', userId: 'u-pk-x', reason: '502' });
   assert.equal(ran, 0, 'nothing is decided while the account cannot be read');
   assert.equal(decisions.unconfirmedFor('wallet:0xa'), 'u-pk-x', 'and the record stays');
   // Another credential is not held up by it.
