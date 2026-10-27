@@ -19,6 +19,10 @@
  * waited for every account to load. While the index is incomplete nothing is registered at all
  * (tests/incomplete-index-routes.test.ts).
  *
+ * A passkey sign-in reads each holder's record from its pod when it tries it, and writes only
+ * the sign counter into that record: the last tests take credentials off a loaded account's pod
+ * while this server's copy of it is under 10 s old.
+ *
  * The pure half is tests/credential-index.test.ts.
  *
  * Run:
@@ -32,6 +36,7 @@ import * as crypto from 'node:crypto';
 import * as http from 'node:http';
 import * as net from 'node:net';
 import { fileURLToPath } from 'node:url';
+import { Wallet } from 'ethers';
 import { assertion, attest, recoded, softPasskey, type SoftPasskey } from './soft-authenticator.js';
 
 const now = new Date().toISOString();
@@ -85,8 +90,15 @@ const derivedOnly = softPasskey();
 // waited for every account): until the owner's account loads, the copy is the only holder.
 const derivedCopied = { owner: softPasskey(), copyId: 'u-eth-00000000000f' };
 // A Play owner's passkey, and a later copy of its key under its id on another account. The Play
-// owner's record is read again from its pod at sign-in.
+// owner's record is read again from its pod at sign-in, as every holder's is.
 const play = { key: softPasskey(), id: 'u-try-play-0000000000aa', copyId: 'zz-play-copy' };
+// Accounts whose records drop credentials without this server seeing it (the other instance
+// removes them while a deploy overlaps the two, or an operator by hand), while this server's
+// copy of the record is under 10 s old. Each is the account derived from its first passkey.
+// One drops its wallet and its second passkey and is signed out everywhere; the other drops the
+// passkey that then signs in.
+const handEdited = { key: softPasskey(), other: softPasskey(), wallet: Wallet.createRandom() };
+const droppedKey = { key: softPasskey(), kept: softPasskey() };
 
 const pods = new Map<string, Record<string, unknown>>([
   [race.victimId, account(race.victimId, race.victim)],
@@ -113,12 +125,15 @@ const pods = new Map<string, Record<string, unknown>>([
   [derivedOnly.userId, enrolled(derivedOnly.userId, derivedOnly, earlier)],
   [derivedCopied.owner.userId, enrolled(derivedCopied.owner.userId, derivedCopied.owner, earlier)],
   [derivedCopied.copyId, enrolled(derivedCopied.copyId, derivedCopied.owner, now)],
+  [handEdited.key.userId, { ...account(handEdited.key.userId, handEdited.key, handEdited.other),
+    walletAddresses: [handEdited.wallet.address.toLowerCase()] }],
+  [droppedKey.key.userId, account(droppedKey.key.userId, droppedKey.key, droppedKey.kept)],
 ]);
 // Only these are in the root listing, so only these load at startup. The others load when a
 // targeted sign-in names them (POST /challenges with a userId).
 const listed = new Set([pair.victimId, flaky.victimId, crowded.ownerId, ...crowd.map(c => c.id), ...eightIds, doomed.id, survivor.id,
   counted.earliestId, counted.laterId, play.id, play.copyId, ...recodedCopies.flatMap(c => [c.earliestId, c.laterId]), adder.id,
-  derivedCopied.copyId]);
+  derivedCopied.copyId, handEdited.key.userId, droppedKey.key.userId]);
 const failingPuts = new Set<string>([flaky.victimId]);
 // Pods whose auth-methods.jsonld a test makes answer 502 for a while, after startup loaded them.
 const failingGets = new Set<string>();
@@ -220,6 +235,20 @@ async function signsInTo(key: SoftPasskey, userId: string, scope?: string): Prom
   assert.ok(r.json['token']);
 }
 const writesTo = (userId: string) => writes.filter(w => w === userId).length;
+async function siwe(w: { address: string; signMessage(message: string): Promise<string> }, extra: Record<string, unknown> = {}) {
+  const { nonce } = (await post('/challenges', { purpose: 'siwe' })).json as { nonce: string };
+  const message = `${new URL(base).host} wants you to sign in with your Ethereum account:\n${w.address}\n\nSign in.\n\n`
+    + `URI: ${base}\nVersion: 1\nChain ID: 1\nNonce: ${nonce}\nIssued At: ${new Date().toISOString()}`;
+  return post('/auth/siwe', { message, signature: await w.signMessage(message), nonce, name: 'New', ...extra });
+}
+type PodRecord = { walletAddresses: string[]; webAuthnCredentials: Array<{ id: string; counter: number }>; sessionEpoch?: number };
+/** The pod's record of `userId`, as another writer changes it without this server seeing it. */
+function editPod(userId: string, edit: (doc: PodRecord) => void): PodRecord {
+  const doc = structuredClone(pods.get(userId)!) as unknown as PodRecord;
+  edit(doc);
+  pods.set(userId, doc as unknown as Record<string, unknown>);
+  return structuredClone(doc);
+}
 
 before(async () => {
   podServer = http.createServer(servePods);
@@ -430,4 +459,63 @@ test('a passkey whose unlisted derived account holds it signs in there, not to a
   await signsInTo(derivedCopied.owner, derivedCopied.owner.userId);
   assert.equal(writesTo(derivedCopied.copyId), before.copy);
   assert.equal(writesTo(derivedCopied.owner.userId), before.owner + 2);
+});
+
+test('a passkey sign-in writes its counter into the record as the pod holds it, and puts back nothing the record dropped', async () => {
+  const { key, other, wallet } = handEdited;
+  // This server writes the record (the counter), so its copy is fresh for the next 10 s.
+  await signsInTo(key, key.userId);
+  // Another writer takes the wallet and the second passkey off as compromised, and signs the
+  // account out everywhere.
+  const edited = editPod(key.userId, doc => {
+    doc.walletAddresses = [];
+    doc.webAuthnCredentials = doc.webAuthnCredentials.filter(c => c.id === key.id);
+    doc.sessionEpoch = 3;
+  });
+  const before = writesTo(key.userId);
+  const counter = ++signCount;
+  const r = await signIn(key, undefined, counter);
+  assert.equal(r.status, 200, `${JSON.stringify(r.json)}\n${output}`);
+  assert.equal(r.json['userId'], key.userId);
+  assert.equal(writesTo(key.userId), before + 1);
+  // The record as the other writer left it, with only the passkey's counter advanced.
+  const expected = structuredClone(edited);
+  expected.webAuthnCredentials[0]!.counter = counter;
+  assert.deepEqual(pods.get(key.userId), expected);
+  // Its token carries the epoch the record now holds, so it is not refused as signed out.
+  const me = await fetch(`${base}/auth-methods/me`, { headers: { Authorization: `Bearer ${String(r.json['token'])}` } });
+  assert.equal(me.status, 200, await me.text());
+  // Neither credential taken off reaches the account any more.
+  const removedPasskey = await signIn(other);
+  assert.equal(removedPasskey.status, 401, `${JSON.stringify(removedPasskey.json)}\n${output}`);
+  assert.equal(removedPasskey.json['token'], undefined);
+  const removedWallet = await siwe(wallet, { existingOnly: true });
+  assert.equal(removedWallet.status, 401, `${JSON.stringify(removedWallet.json)}\n${output}`);
+  assert.equal(removedWallet.json['token'], undefined);
+  assert.equal(writesTo(key.userId), before + 1);
+  assert.deepEqual((pods.get(key.userId) as unknown as PodRecord).walletAddresses, []);
+});
+
+test('a passkey its record dropped since this server read it signs in to nothing, and is not written back', async () => {
+  const { key, kept } = droppedKey;
+  await signsInTo(key, key.userId);
+  const edited = editPod(key.userId, doc => { doc.webAuthnCredentials = doc.webAuthnCredentials.filter(c => c.id === kept.id); });
+  const before = writesTo(key.userId);
+  for (let i = 0; i < 2; i++) {
+    const r = await signIn(key);
+    assert.equal(r.status, 401, `${JSON.stringify(r.json)}\n${output}`);
+    assert.equal(r.json['token'], undefined);
+  }
+  assert.equal(writesTo(key.userId), before);
+  assert.deepEqual(pods.get(key.userId), edited);
+  // The passkey the record kept still signs in to it.
+  await signsInTo(kept, key.userId);
+  // While the pod cannot be read, nothing says what the record holds now: no copy is written.
+  failingGets.add(key.userId);
+  const blocked = await signIn(kept);
+  failingGets.delete(key.userId);
+  assert.equal(blocked.status, 503, `${JSON.stringify(blocked.json)}\n${output}`);
+  assert.equal(blocked.json['token'], undefined);
+  assert.equal(writesTo(key.userId), before + 1);
+  await signsInTo(kept, key.userId);
 });
