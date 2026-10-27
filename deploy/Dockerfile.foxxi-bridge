@@ -139,6 +139,11 @@ ENV I2IDLX_MODIFIED=2026-10-19
 ENV I2IDLX_NOW=2026-10-19T00:51:00+00:00
 RUN npx tsx applications/foxxi-content-intelligence/i2idlx/typescript/prepare-source.ts \
   /app/applications/foxxi-content-intelligence/i2idlx /tmp/i2idlx-canonical-source
+# gUFO's persistent URL serves whatever its publisher last committed, and bytes that differ from
+# the manifest's pin are refused, so the pinned bytes come from the publisher's own commit
+# (tools/seed-pinned-upper.mjs); refresh-upper.ts still checks them against the pin.
+RUN node applications/foxxi-content-intelligence/i2idlx/tools/seed-pinned-upper.mjs \
+  /app/applications/foxxi-content-intelligence/i2idlx
 # Use exactly the golden gate's retained snapshots. Only missing xAPI TTLs and
 # byte-pinned upper/ROBOT inputs may be restored; no live --all evidence refresh.
 RUN npx tsx applications/foxxi-content-intelligence/i2idlx/typescript/prepare-build-inputs.ts \

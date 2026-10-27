@@ -191,9 +191,12 @@ const UNLINTED_FRONTIER = {
   // Record the committed file census; new lint debt remains forbidden at the same ceiling.
   // Identity sign-in fixes add six tracked modules and suites (first-sign-in, per-account read
   // limit, did:web key binding): 213 files. Error ceiling unchanged.
-  // The strict ERC-4361 reader (identity siwe-message.ts) and its suite, with the rounds since,
-  // bring the committed census to 225. Both lint clean; the error ceiling stays fixed.
-  deploy: { errors: 356, files: 225 },
+  // The strict ERC-4361 reader (identity siwe-message.ts) and its suite, then the multi-holder
+  // credential index (module, its suite, a route suite, a shared software authenticator), with
+  // the rounds since: 229 files. All lint clean; the error ceiling stays fixed.
+  // A route suite for sign-ins while the account index is incomplete: 230.
+  // A route suite for accounts deleted before tombstones: 231.
+  deploy: { errors: 356, files: 231 },
   // The bulk of these are `no-console` in vertical bridges and CLI entry points — one config
   // decision, not a thousand defects. See the note above.
   // ★ 320 -> 337, and the ratchet caught it in CI rather than locally, which is the interesting
@@ -685,11 +688,11 @@ const BASELINE = {};
 // base-without-verticals tool and its test (#366) to 633; the gate named 603. The advertised-demos
 // lint and its declarations (#567 follow-up) brought it to 635; the gate named 604.
 // 2026-10-08: private HMD invocation coverage adds one file, so the floor is 605.
+// 2026-10-27: tests/did-sig-live-scripts.test.ts brings the linted scope to 681; the gate named 648.
 // 2026-10-27: the jsonld fromRDF guard (tests/no-code-reads-rdf-back-through-jsonld-fromrdf.test.ts)
-// brings the tracked scope to 681; the gate named 648.
-// 2026-10-27: the exact-version guard (tests/canonicalizer-versions-are-exact.test.ts) brings it
-// to 682; the gate named 649.
-export const MIN_FILES = 649;
+// and the exact-version guard (tests/canonicalizer-versions-are-exact.test.ts) bring it to 683;
+// the gate named 650.
+export const MIN_FILES = 650;
 
 /**
  * How far below the real linted-file count MIN_FILES may sit before that is itself a failure.

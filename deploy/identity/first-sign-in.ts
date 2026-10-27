@@ -27,6 +27,14 @@
  * and its did:web name, to whoever presents one of its old credentials. A write that meets
  * a document under it reads again, so a tombstone written meanwhile is seen.
  *
+ * Accounts deleted before deletions left a tombstone have none: their pod has no document, or
+ * one without credentials, and still holds the rest. So before creating, the caller may ask
+ * `vacated` whether the pod is such an account's: true answers 'deleted' and creates nothing
+ * (`retire` is then called once to leave the tombstone, so the next attempt reads it); a pod
+ * the question could not be answered for is 'unreadable'. It is asked at most once per claim,
+ * and never about a pod that lists credentials, a tombstone, or a credential that may not
+ * create, so a live account is never asked and never written by it.
+ *
  * The caller runs this under the per-user pod mutex. No server state and no I/O: the read,
  * the record to write and the write are injected, so it is tested without starting server.ts.
  */
@@ -64,10 +72,23 @@ export interface FirstSignInInput<M extends AuthMethodsLike> {
   mayCreate?: boolean;
   /** Whether a record is a deleted account's tombstone, which no sign-in may re-open. */
   closed?: (methods: M) => boolean;
+  /**
+   * Asked only when the pod holds no credentials (no document, or one without credentials
+   * that is not a tombstone) and the account could otherwise be created, at most once per
+   * claim: whether the pod belonged to an account deleted before deletions left a tombstone.
+   * True answers 'deleted' and nothing is created; a throw (the pod could not be read)
+   * answers 'unreadable'.
+   */
+  vacated?: (existing: M | null) => Promise<boolean>;
+  /** Called once when `vacated` said true, to leave the tombstone; a failure still refuses. */
+  retire?: (existing: M | null) => Promise<void>;
 }
 
 export async function claimFirstSignIn<M extends AuthMethodsLike>(input: FirstSignInInput<M>): Promise<FirstSignInOutcome<M>> {
   const attempts = Math.max(1, input.attempts ?? 3);
+  // What `vacated` said, asked once per claim: what a concurrent creator wrote after the first
+  // read is not a deleted account's leftovers.
+  let vacated: boolean | undefined;
   for (let attempt = 0; attempt < attempts; attempt++) {
     let existing: M | null;
     try {
@@ -80,6 +101,17 @@ export async function claimFirstSignIn<M extends AuthMethodsLike>(input: FirstSi
       return input.holds(existing) ? { kind: 'returning', methods: existing } : { kind: 'refused' };
     }
     if (input.mayCreate === false) return { kind: 'refused' };
+    if (input.vacated && vacated === undefined) {
+      try {
+        vacated = await input.vacated(existing);
+      } catch (err) {
+        return { kind: 'unreadable', reason: (err as Error).message };
+      }
+      if (vacated) {
+        try { await input.retire?.(existing); } catch { /* still refused; the next attempt asks again */ }
+        return { kind: 'deleted' };
+      }
+    }
     const methods = input.build(existing);
     let written: boolean;
     try {
