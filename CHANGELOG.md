@@ -1,5 +1,13 @@
 # Changelog
 
+## 2026-10-27 — Foxxi: when signed xAPI ignored the owner pod, and what that left in the derived lens
+
+The Foxxi README now says when the signed xAPI adapter ignored the owner pod a payload named: from about 2026-10-17 17:15Z to 2026-10-26 07:44Z. In that window a direct wallet signer's writes and reads went to its derived `eth-<hex>` lens. The new section is "Signed xAPI records in the derived lens", under Run the bridge locally.
+
+Those records are not moved. Nothing in a stored record says which pod the request named, so the misplaced ones cannot be told from records the derived lens holds by design. A move by the bridge would also put records into a person's lens without their signature. The section says how a wallet holder can copy their own records with the existing signed routes.
+
+This corrects the 2026-10-26 entry further down, which says the fix "was lost when later master deploys replaced that image". A branch image replaced it first, and master deploys kept it out from then on.
+
 ## 2026-10-27 — Identity: a wallet sign-in from a device whose clock is off no longer fails
 
 A wallet sign-in (`POST /auth/siwe`) or wallet link (`POST /wallet/link`) was refused with "SIWE message Issued At does not fit its challenge" when the signing device's clock was more than five minutes off this server's: `Issued At` is the time the device's clock gave when it built the message, and it had to fall between the challenge's issue and now, give or take five minutes. A phone set to the wrong time zone, or a laptop that has not synced its clock, could not sign in at all. The window added nothing to freshness, which the nonce already enforces: it is issued by this server, single-use, and expires five minutes after it was issued. `Issued At` is now accepted when it is within 24 hours of the challenge's issue, either way, and must still be a valid RFC 3339 date-time; outside that the error says "SIWE message Issued At is more than 24 hours from its challenge" and asks to check the device's date and clock. `Expiration Time` and `Not Before` are checked as before, against this server's clock, so a message that sets them from a clock that is hours off can still be refused.
