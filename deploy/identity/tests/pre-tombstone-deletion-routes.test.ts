@@ -35,11 +35,13 @@ import { fileURLToPath } from 'node:url';
 import { Wallet } from 'ethers';
 import { deriveUserIdFromDid, deriveUserIdFromWallet } from '../derive-userid.js';
 import { assertion, attest, softPasskey, type SoftPasskey } from './soft-authenticator.js';
+import { closeServer, stopChild } from './teardown.js';
+import { publicJwk } from './public-jwk.js';
 
 const B58 = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
 function ed25519() {
   const { publicKey, privateKey } = crypto.generateKeyPairSync('ed25519');
-  const bytes = Buffer.concat([Buffer.from([0xed, 0x01]), Buffer.from(publicKey.export({ format: 'jwk' }).x!, 'base64url')]);
+  const bytes = Buffer.concat([Buffer.from([0xed, 0x01]), Buffer.from(publicJwk(publicKey).x!, 'base64url')]);
   let n = BigInt(`0x${bytes.toString('hex')}`);
   let out = '';
   while (n > 0n) { out = B58[Number(n % 58n)] + out; n /= 58n; }
@@ -169,10 +171,7 @@ async function startIdentity(): Promise<void> {
   }
 }
 async function stopIdentity(): Promise<void> {
-  if (!identity || identity.exitCode !== null) return;
-  const exited = new Promise(resolve => identity.once('exit', resolve));
-  identity.kill('SIGTERM');
-  await exited;
+  await stopChild(identity);
 }
 
 // Each test arrives from its own address (the server trusts one proxy hop), so the per-IP
@@ -236,7 +235,7 @@ before(async () => {
 });
 after(async () => {
   await stopIdentity();
-  await new Promise<void>(resolve => podServer?.close(() => resolve()));
+  await closeServer(podServer);
 });
 
 const oldPasskey = softPasskey();

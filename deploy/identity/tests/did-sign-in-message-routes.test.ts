@@ -33,6 +33,7 @@ import { fileURLToPath } from 'node:url';
 import { Wallet } from 'ethers';
 import { deriveUserIdFromDid } from '../derive-userid.js';
 import { isSmallOrderEd25519Key } from '../did-parse.js';
+import { closeServer, stopChild } from './teardown.js';
 
 const now = new Date().toISOString();
 const LENIENT_HOST = 'identity.example.test';
@@ -50,7 +51,7 @@ type Key = { privateKey: crypto.KeyObject; multibase: string; legacyMultibase: s
 type DidKey = Key & { did: string };
 /**
  * A fresh Ed25519 key. The raw public key is the last 32 bytes of its SPKI DER export: a JWK
- * export of a freshly generated key can deadlock on Node 20.
+ * export of a freshly generated key can deadlock on Node 20 (tests/public-jwk.ts).
  */
 function ed25519(): Key {
   const { publicKey, privateKey } = crypto.generateKeyPairSync('ed25519');
@@ -151,18 +152,25 @@ async function spawnIdentity(podPort: number, extraEnv: (port: number) => Record
   return { proc, url, port, sink, closed };
 }
 
-/** spawnIdentity, once /health says every account is loaded. */
+/** spawnIdentity, once /health says every account is loaded; a server that never gets there is stopped. */
 async function startIdentity(podPort: number, extraEnv: (port: number) => Record<string, string>): Promise<IdentityProcess> {
   const s = await spawnIdentity(podPort, extraEnv);
   const deadline = Date.now() + 60_000;
-  for (;;) {
-    if (s.proc.exitCode !== null) throw new Error(`identity server exited ${s.proc.exitCode}:\n${s.sink.text}`);
-    try {
-      const health = await (await fetch(`${s.url}/health`)).json() as { accountIndex: { complete: boolean } };
-      if (health.accountIndex.complete) break;
-    } catch { /* not listening yet */ }
-    if (Date.now() > deadline) throw new Error(`identity server did not load its accounts:\n${s.sink.text}`);
-    await sleep(100);
+  try {
+    for (;;) {
+      if (s.proc.exitCode !== null) throw new Error(`identity server exited ${s.proc.exitCode}:\n${s.sink.text}`);
+      try {
+        const health = await (await fetch(`${s.url}/health`)).json() as { accountIndex: { complete: boolean } };
+        if (health.accountIndex.complete) break;
+      } catch { /* not listening yet */ }
+      if (Date.now() > deadline) throw new Error(`identity server did not load its accounts:\n${s.sink.text}`);
+      await sleep(100);
+    }
+  } catch (err) {
+    // No caller holds this child yet, so no hook could stop it, and a live child keeps the
+    // file's process from ever exiting.
+    await stopChild(s.proc);
+    throw err;
   }
   return s;
 }
@@ -255,18 +263,21 @@ before(async () => {
   podServer = http.createServer(servePods);
   await new Promise<void>(resolve => podServer.listen(0, '127.0.0.1', resolve));
   podPort = (podServer.address() as net.AddressInfo).port;
-  [lenient, strict] = await Promise.all([
+  // allSettled, so a server that started is held (and stopped by after()) when the other did not.
+  const [l, s] = await Promise.allSettled([
     startIdentity(podPort, () => ({ BASE_URL: `https://${LENIENT_HOST}` })),
     startIdentity(podPort, () => ({ DID_ACCEPT_BARE_NONCE: '0', BOOTSTRAP_INVITES: `${seeded.userId}:${seeded.token}`, IDENTITY_TIMING: '1' })),
   ]);
+  if (l.status === 'fulfilled') lenient = l.value;
+  if (s.status === 'fulfilled') strict = s.value;
+  for (const r of [l, s]) if (r.status === 'rejected') throw r.reason;
   lenientStartup = lenient.sink.text;
   strictStartup = strict.sink.text;
 });
 
 after(async () => {
-  lenient?.proc.kill('SIGTERM');
-  strict?.proc.kill('SIGTERM');
-  await new Promise<void>(resolve => podServer?.close(() => resolve()));
+  await Promise.all([stopChild(lenient?.proc), stopChild(strict?.proc)]);
+  await closeServer(podServer);
 });
 
 test('a did-sig challenge carries a message naming this server, and no other challenge carries one', async () => {
@@ -564,7 +575,7 @@ test('the startup log names the setting in force, an empty or padded value reads
   } finally {
     clearInterval(poll);
     clearTimeout(limit);
-    bad.proc.kill('SIGTERM');
+    await stopChild(bad.proc);
   }
 
   // Whitespace around the value is ignored, and an empty value is read as unset.
@@ -582,7 +593,7 @@ test('the startup log names the setting in force, an empty or padded value reads
     assert.equal(refused.status, 401, JSON.stringify(refused.json));
     assert.match(String(refused.json['error']), /bare nonce/);
   } finally {
-    for (const r of started) if (r.status === 'fulfilled') r.value.proc.kill('SIGTERM');
+    await Promise.all(started.map(r => (r.status === 'fulfilled' ? stopChild(r.value.proc) : undefined)));
   }
 });
 

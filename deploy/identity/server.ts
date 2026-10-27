@@ -496,17 +496,18 @@ function generateEd25519(): KeyPair {
 
   // X25519 — keyAgreement (envelope-recipient key for cross-pod E2EE
   // sharing). Per-identity so each agent has its own encryption key
-  // (FIX 6 with FIX 3). Extract raw 32 bytes via JWK (`x`) — avoids
-  // hand-parsing SPKI DER.
+  // (FIX 6 with FIX 3). The raw 32 bytes are the end of the 44-byte SPKI
+  // DER, as for Ed25519 above. Not via JWK: on Node 20 a JWK export of a
+  // freshly generated key holds the key pair's mutex while it allocates,
+  // a GC there can run the finished keygen job's destructor, which takes
+  // the same mutex, and the thread deadlocks with itself (see
+  // tests/public-jwk.ts). The SPKI export takes no lock.
   const { publicKey: x25519PublicKey, privateKey: x25519PrivateKey } = crypto.generateKeyPairSync('x25519');
-  const xJwk = x25519PublicKey.export({ format: 'jwk' }) as { x?: string };
-  if (typeof xJwk.x !== 'string') {
-    throw new Error('X25519 public key JWK missing `x` field; cannot derive raw key');
+  const xSpki = x25519PublicKey.export({ type: 'spki', format: 'der' });
+  if (xSpki.length !== 44) {
+    throw new Error(`X25519 SPKI must be 44 bytes, got ${xSpki.length}`);
   }
-  const xRaw = Buffer.from(xJwk.x, 'base64url');
-  if (xRaw.length !== 32) {
-    throw new Error(`X25519 raw public key must be 32 bytes, got ${xRaw.length}`);
-  }
+  const xRaw = xSpki.subarray(xSpki.length - 32);
   const x25519PublicKeyMultibase = encodeX25519Multibase(xRaw);
   const x25519PublicKeyBase64 = xRaw.toString('base64');
 
