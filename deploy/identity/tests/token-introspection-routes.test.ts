@@ -260,8 +260,9 @@ test('enforced: authorized introspection has a budget of its own, 600 a minute',
 // The startup warning about a value no caller can present: it fires exactly for the values a
 // caller building `Authorization: Bearer ${value}` with fetch (as the relay and css-gate do)
 // cannot get answered, and for no value that works. A trailing space or tab is dropped on the
-// way; a control character other than TAB, or a character above U+00FF, makes fetch throw.
-// Leading and interior whitespace and other Latin-1 characters arrive intact. css-gate's
+// way; an ASCII control character other than TAB (U+0000-U+001F or U+007F), or a character
+// above U+00FF, makes fetch throw. Leading and interior whitespace and other Latin-1 characters,
+// the C1 controls U+0080-U+009F among them, arrive intact. css-gate's
 // identity-introspection-value-warning.test.mjs runs the same table against the gate.
 const HEX = SECRET;
 const VALUE_TABLE: ReadonlyArray<readonly [string, string, 'answered' | 'rejected' | 'unsendable']> = [
@@ -269,6 +270,7 @@ const VALUE_TABLE: ReadonlyArray<readonly [string, string, 'answered' | 'rejecte
   ['an interior space', `${HEX.slice(0, 32)} ${HEX.slice(32)}`, 'answered'],
   ['an interior tab', `${HEX.slice(0, 32)}\t${HEX.slice(32)}`, 'answered'],
   ['a Latin-1 character', `${HEX}\u00e9`, 'answered'],
+  ['a C1 control character', `${HEX.slice(0, 32)}\u0085${HEX.slice(32)}`, 'answered'],
   ['a trailing space', `${HEX} `, 'rejected'],
   ['a trailing tab', `${HEX}\t`, 'rejected'],
   ['a control character', `${HEX.slice(0, 32)}\u0001${HEX.slice(32)}`, 'unsendable'],

@@ -7,8 +7,9 @@ name: Identity introspection secret rollout
 # Each applied stage deploys the services it changed, or that hold the change but do not run it
 # yet, with the image they already run, and waits for SUCCESS and for the service's own health
 # field to show the change. Unticked `apply` is a dry run. No value is printed. Do not dispatch
-# while Auto-deploy master or Deploy to Railway is running (the tool refuses). Dispatch only, from
-# master. See deploy/identity/AUTH-ARCHITECTURE.md.
+# while Auto-deploy master or Deploy to Railway is running, and dispatch one run at a time (the
+# tool refuses while any of them, or another run of this workflow, has not finished). Dispatch
+# only, from master. See deploy/identity/AUTH-ARCHITECTURE.md.
 on:
   workflow_dispatch:
     inputs:
@@ -26,7 +27,7 @@ on:
         default: false
 permissions:
   contents: read
-  # Read-only, to refuse while an auto-deploy or Deploy to Railway run is in progress.
+  # Read-only, to refuse while an auto-deploy, Deploy to Railway or other run of this workflow is in progress.
   actions: read
 # Its own group, deliberately not railway-deploy-<service>: a newer pending run in a concurrency
 # group cancels the older pending one, so joining that group could cancel a queued deploy leg.

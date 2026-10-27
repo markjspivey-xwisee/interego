@@ -2,10 +2,11 @@
 // exactly for those values, and never shows the value.
 //
 // The gate presents the value as `Authorization: Bearer <value>` through fetch. A trailing space
-// or tab is dropped on the way; a control character other than TAB, or a character above
-// U+00FF, makes fetch throw. Leading and interior whitespace and other Latin-1 characters arrive
-// intact. So the warning must fire for the first group and for nothing that works: a false
-// "every identity verify fails" can send an operator to rotate a working value. Identity's
+// or tab is dropped on the way; an ASCII control character other than TAB (U+0000-U+001F or
+// U+007F), or a character above U+00FF, makes fetch throw. Leading and interior whitespace and
+// other Latin-1 characters, the C1 controls U+0080-U+009F among them, arrive intact. So the
+// warning must fire for the first group and for nothing that works: a false "every identity
+// verify fails" can send an operator to rotate a working value. Identity's
 // token-introspection-routes.test.ts runs the same table against identity's own warning.
 //
 // The startup line is printed only when the gate listens, so each value runs a gate as a child
@@ -26,6 +27,7 @@ const TABLE = [
   ['an interior space', `${HEX.slice(0, 32)} ${HEX.slice(32)}`, 'accepted'],
   ['an interior tab', `${HEX.slice(0, 32)}\t${HEX.slice(32)}`, 'accepted'],
   ['a Latin-1 character', `${HEX}é`, 'accepted'],
+  ['a C1 control character', `${HEX.slice(0, 32)}\u0085${HEX.slice(32)}`, 'accepted'],
   ['a trailing space', `${HEX} `, 'refused'],
   ['a trailing tab', `${HEX}\t`, 'refused'],
   ['a control character', `${HEX.slice(0, 32)}\u0001${HEX.slice(32)}`, 'refused'],

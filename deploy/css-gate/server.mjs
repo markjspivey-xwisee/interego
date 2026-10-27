@@ -1382,12 +1382,13 @@ if (process.env.CSS_GATE_AUTOSTART !== '0') server.listen(PORT, () => {
     console.log(`[css-gate]   • Bearer <per-user token>          → per-user path, must target /<userId>/...`);
     if (IDENTITY_URL) {
       // Says whether a bearer is presented, and warns (value-free) when it cannot be sent intact:
-      // fetch drops a trailing space or tab, and throws on a control character other than TAB or
-      // a character above U+00FF. Leading or interior spaces and tabs, and other Latin-1
-      // characters, arrive intact. Identity's startup log uses the same rule and wording.
+      // fetch drops a trailing space or tab, and throws on an ASCII control character other than
+      // TAB (U+0000-U+001F or U+007F) or a character above U+00FF. Leading or interior spaces and
+      // tabs, and other Latin-1 characters (the C1 controls U+0080-U+009F among them), arrive
+      // intact. Identity's startup log uses the same rule and wording.
       const bearerNote = !IDENTITY_INTROSPECTION_SECRET ? 'no bearer: accepted only while identity runs open'
         : !/[\t ]$|[\x00-\x08\x0a-\x1f\x7f]|[^\x00-\xff]/.test(IDENTITY_INTROSPECTION_SECRET) ? 'with introspection bearer'
-          : 'WARN: IDENTITY_INTROSPECTION_SECRET ends in a space or tab, or holds a control character other than TAB or a character above U+00FF; such a value cannot be sent intact in a header, so every identity verify fails while identity holds the same value. Use 32 random bytes as hex';
+          : 'WARN: IDENTITY_INTROSPECTION_SECRET ends in a space or tab, or holds an ASCII control character other than TAB (U+0000-U+001F or U+007F) or a character above U+00FF; such a value cannot be sent intact in a header, so every identity verify fails while identity holds the same value. Use 32 random bytes as hex';
       console.log(`[css-gate]   identity verify : ${IDENTITY_URL}/tokens/verify  (primary, ${bearerNote})`);
     }
     if (RELAY_VERIFY_URL && RELAY_INTROSPECTION_SECRET) {

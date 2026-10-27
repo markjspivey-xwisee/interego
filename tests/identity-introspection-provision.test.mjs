@@ -315,6 +315,36 @@ for (const stage of STAGES) {
   });
 }
 
+// The same Rollback, to a deployment that ran an older image: the pin and health-field refusals
+// would send the operator to deploy-railway.yml, which keeps the restored (unset) variable, so
+// the roll-back-again advice goes first. Without identity holding the value they still apply.
+for (const [why, opts, otherwise] of [
+  ['is pinned to a mutable tag', { pins: { 'css-gate': 'ghcr.io/markjspivey-xwisee/interego-css-gate:latest' } }, /css-gate is not pinned to ghcr\.io\/markjspivey-xwisee\/interego-css-gate:<40-hex sha>/],
+  ['serves a build other than its pin', { serving: { 'css-gate': 'e5'.repeat(20) } }, /css-gate is pinned to b2b2b2b2 but serving e5e5e5e5; a redeploy would change running code/],
+  ['serves an image without the health fields', { healthOverride: (svc, body) => (svc === 'css-gate' ? { status: 'ok', build: body.build } : undefined) }, /css-gate serves an image without the introspection health fields; deploy master first/],
+  ['does not answer its health check', { healthStatus: { 'css-gate': 503 } }, /css-gate: GET https:\/\/css-gate\.example\.test\/healthz did not answer 200 with JSON/],
+]) {
+  for (const stage of STAGES) {
+    test(`${stage}: a caller rolled back to an older image that ${why} is told to roll back again`, async () => {
+      const w = world({ ...opts, stored: { relay: { [SECRET_VAR]: V1 }, identity: { [SECRET_VAR]: V1 } } });
+      const r = await run(w, stage, { apply: true });
+      assert.ok(r.error instanceof ProvisionRefusal, r.error?.message ?? 'no refusal');
+      assert.match(r.error.message, /^identity holds IDENTITY_INTROSPECTION_SECRET and css-gate does not, so identity refuses it now\. .*roll css-gate back again to the deployment that was active before that rollback, and do not delete relay's copy\./);
+      assert.doesNotMatch(r.error.message, /deploy master first|reconcile with deploy-railway/);
+      assert.equal(writeCount(w), 0);
+      assert.deepEqual(deploysTriggered(w), []);
+      assertNoValue(r, V1);
+    });
+  }
+  test(`a caller that ${why} while identity holds nothing is refused for that`, async () => {
+    const w = world({ ...opts, stored: { relay: { [SECRET_VAR]: V1 } } });
+    const r = await run(w, 'callers', { apply: true });
+    assert.ok(r.error instanceof ProvisionRefusal, r.error?.message ?? 'no refusal');
+    assert.match(r.error.message, otherwise);
+    assert.equal(writeCount(w), 0);
+  });
+}
+
 test('a caller lost while identity holds the value but does not run it yet', () => {
   const st = { relay: { stored: undefined, running: false }, 'css-gate': { stored: V1, running: true },
     identity: { stored: V1, running: false, openStored: true, openRunning: true } };
@@ -356,6 +386,22 @@ test('identity refuses when identity serves an image without the health fields',
   assert.match(r.error.message, /deploy master first/);
   assert.equal(writeCount(w), 0);
 });
+
+// ALLOW_OPEN_INTROSPECTION=1 is the identity stage's rollback: deleting the secret again leaves
+// identity open only while it is stored. Running it is not enough (removed without a deploy).
+for (const [why, running] of [['runs it', { identity: { [OPEN_VAR]: '1' } }], ['does not run it either', {}]]) {
+  test(`identity refuses to write when ALLOW_OPEN_INTROSPECTION is not stored and identity ${why}`, async () => {
+    for (const apply of [false, true]) {
+      const w = world({ stored: { ...both, identity: { [OPEN_VAR]: undefined } }, running });
+      const r = await run(w, 'identity', { apply });
+      assert.ok(r.error instanceof ProvisionRefusal, r.error?.message ?? 'no refusal');
+      assert.match(r.error.message, /^identity does not hold ALLOW_OPEN_INTROSPECTION=1, this stage's rollback: .*Set ALLOW_OPEN_INTROSPECTION=1 on identity and deploy identity, then rerun$/);
+      assert.equal(writeCount(w), 0);
+      assert.deepEqual(deploysTriggered(w), []);
+      assertNoValue(r, V1);
+    }
+  });
+}
 
 test('identity refuses when the check before the write is not accepted', async () => {
   const w = world({ stored: both, relayInconclusive: true });
@@ -498,8 +544,72 @@ test('a FAILED deployment fails the stage and says what is stored', async () => 
   const r = await run(w, 'identity', { apply: true });
   assert.ok(r.error instanceof StageFailure);
   assert.match(r.error.message, /ended FAILED/);
-  assert.match(r.error.message, /next identity deploy \(an auto-deploy included\) will enforce it/);
+  assert.match(r.error.message, /next identity deploy \(an auto-deploy included\) will enforce it\. Rerun stage=identity, or delete IDENTITY_INTROSPECTION_SECRET from identity \(ALLOW_OPEN_INTROSPECTION is still set\) to stay open\.$/);
+  assert.doesNotMatch(r.error.message, /Deployment dep-identity/);
 });
+
+// Identity already holds the secret but runs open, and ALLOW_OPEN_INTROSPECTION is no longer
+// stored: the stage only deploys. Deleting the secret alone would then leave identity disabled.
+test('a failed identity deploy without ALLOW_OPEN_INTROSPECTION stored says to set it before deleting the secret', async () => {
+  const w = world({
+    stored: { ...both, identity: { [SECRET_VAR]: V1, [OPEN_VAR]: undefined } },
+    running: { identity: { [SECRET_VAR]: undefined, [OPEN_VAR]: '1' } },
+    statuses: { identity: ['DEPLOYING', 'FAILED'] },
+  });
+  const r = await run(w, 'identity', { apply: true });
+  assert.ok(r.error instanceof StageFailure, r.error?.message ?? 'no failure');
+  assert.equal(writeCount(w), 0);
+  assert.deepEqual(deploysTriggered(w), ['identity']);
+  assert.match(r.error.message, /ended FAILED\. .*Rerun stage=identity, or set ALLOW_OPEN_INTROSPECTION=1 on identity, then delete IDENTITY_INTROSPECTION_SECRET from identity to stay open\.$/);
+  assertNoValue(r, V1);
+});
+
+// Once a deployment carrying the secret exists, deleting the stored variable does not change
+// it: the text names the deployment and says how to check and how to reopen.
+for (const [why, opts, pattern] of [
+  ['is still in flight at the deadline', { statuses: { identity: ['DEPLOYING'] } }, /^deployment dep-identity-1 of identity is still DEPLOYING; do not rerun while it is in flight/],
+  ['succeeds, and the service is repointed', { repointOnSuccess: 'identity' }, /^identity was repointed during this run/],
+]) {
+  test(`an identity deployment that ${why} is named, with how to check and reopen`, async () => {
+    const w = world({ stored: both, ...opts });
+    const r = await run(w, 'identity', { apply: true });
+    assert.ok(r.error instanceof StageFailure, r.error?.message ?? 'no failure');
+    assert.match(r.error.message, pattern);
+    assert.match(r.error.message, /Deployment dep-identity-1 of identity was created with IDENTITY_INTROSPECTION_SECRET stored, so identity enforces it from that deployment if it carries the change, and otherwise from its next deploy\. Rerun stage=identity once no identity deployment is in flight: its check before any write tells whether identity accepts both callers/);
+    assert.match(r.error.message, /To reopen instead, delete IDENTITY_INTROSPECTION_SECRET from identity \(ALLOW_OPEN_INTROSPECTION is still set\), and deploy identity again\.$/);
+    assert.doesNotMatch(r.error.message, /next identity deploy \(an auto-deploy included\)|to stay open/);
+    assertNoValue(r, V1);
+  });
+}
+
+// stage=callers also deploys a caller that holds the value and does not run it, whatever
+// identity does, so its failure text reads identity's mode rather than assuming it is open.
+for (const [why, identity, pattern] of [
+  ['enforces the value', { stored: { [SECRET_VAR]: V1 } }, /IDENTITY_INTROSPECTION_SECRET is stored on relay and css-gate; identity enforces IDENTITY_INTROSPECTION_SECRET, so a caller that does not run it yet is refused until a deployment of it succeeds\. Rerun stage=callers/],
+  ['holds the value without running it', { stored: { [SECRET_VAR]: V1 }, running: { [SECRET_VAR]: undefined } }, /identity holds IDENTITY_INTROSPECTION_SECRET and enforces it from its next deploy \(an auto-deploy included\), refusing a caller that does not run it by then\. Rerun stage=callers/],
+  ['runs disabled', { stored: { [OPEN_VAR]: undefined } }, /identity does not hold IDENTITY_INTROSPECTION_SECRET, so nothing enforces it yet\. Rerun stage=callers/],
+]) {
+  for (const [how, more, failure] of [
+    ['its deployment fails', { statuses: { 'css-gate': ['DEPLOYING', 'FAILED'] } }, /^deployment dep-css-gate-1 of css-gate ended FAILED\. /],
+    ['its deployment does not carry the change', { noCarry: ['css-gate'] }, /^css-gate reached SUCCESS but still reports identityVerifyAuth=false/],
+  ]) {
+    test(`callers: a caller deploy while identity ${why}, and ${how}, says what identity does`, async () => {
+      const w = world({
+        stored: { ...both, identity: identity.stored },
+        running: { 'css-gate': { [SECRET_VAR]: undefined }, identity: identity.running ?? {} },
+        ...more,
+      });
+      const r = await run(w, 'callers', { apply: true });
+      assert.ok(r.error instanceof StageFailure, r.error?.message ?? 'no failure');
+      assert.equal(writeCount(w), 0);
+      assert.deepEqual(deploysTriggered(w), ['css-gate']);
+      assert.match(r.error.message, failure);
+      assert.match(r.error.message, pattern);
+      assert.doesNotMatch(r.error.message, /still open/);
+      assertNoValue(r, V1);
+    });
+  }
+}
 
 test('a deployment that never finishes times out and says not to rerun', async () => {
   const w = world({ statuses: { relay: ['DEPLOYING'] } });
@@ -579,7 +689,7 @@ test('a deploy request that fails, or that returns no deployment id, fails the s
   const lost = world({ gqlThrows: (q) => (q.includes('serviceInstanceDeployV2') ? 'network: request failed' : null) });
   const r1 = await run(lost, 'callers', { apply: true });
   assert.ok(r1.error instanceof StageFailure, r1.error?.message ?? 'no failure');
-  assert.match(r1.error.message, /the deploy of relay failed at a Railway or HTTP request \(network\)\. IDENTITY_INTROSPECTION_SECRET is stored on relay and css-gate/);
+  assert.match(r1.error.message, /the deploy of relay failed at a Railway or HTTP request \(network\)\. IDENTITY_INTROSPECTION_SECRET is stored on relay and css-gate; identity is still open, so nothing enforces yet\./);
   assertNoValue(r1, lost.stored.relay[SECRET_VAR]);
   const empty = world({ deployResult: null });
   const r2 = await run(empty, 'callers', { apply: true });
@@ -674,8 +784,18 @@ test('preflight refuses while a deploy workflow run has not finished, and skips 
   assert.ok(r.error instanceof ProvisionRefusal);
   assert.match(r.error.message, /auto-deploy\.yml has a run that has not finished \(76\)/);
   assert.equal(writeCount(busy), 0);
-  const self = world({ githubRuns: { 'deploy-railway.yml': [{ id: 77, status: 'in_progress' }] } });
-  assert.equal((await run(self, 'callers', { github })).error, undefined, 'its own run does not count');
+  const self = world({ githubRuns: { 'identity-introspection-provision.yml': [{ id: 77, status: 'in_progress' }, { id: 70, status: 'completed' }] } });
+  assert.equal((await run(self, 'callers', { apply: true, github })).error, undefined, 'its own run does not count');
+  // Another run of this workflow: the concurrency group keeps it apart today, and this keeps
+  // that true if the group changes. A queued run counts too.
+  for (const other of [{ id: 78, status: 'in_progress' }, { id: 79, status: 'queued' }]) {
+    const twice = world({ githubRuns: { 'identity-introspection-provision.yml': [{ id: 77, status: 'in_progress' }, other] } });
+    const r3 = await run(twice, 'callers', { apply: true, github });
+    assert.ok(r3.error instanceof ProvisionRefusal, r3.error?.message ?? 'no refusal');
+    assert.equal(r3.error.message, `identity-introspection-provision.yml has a run that has not finished (${other.id}); rerun when it has`);
+    assert.equal(writeCount(twice), 0);
+    assert.equal(twice.events.some((e) => e.gql?.includes('variables(')), false, 'no variable was read');
+  }
   const denied = world({ githubStatus: 403 });
   assert.match((await run(denied, 'callers', { github })).error.message, /could not list the runs of auto-deploy\.yml \(HTTP 403\)/);
   const unreachable = world({ githubThrows: true });
@@ -685,11 +805,11 @@ test('preflight refuses while a deploy workflow run has not finished, and skips 
   assert.equal(writeCount(unreachable), 0);
   const local = world();
   assert.match((await run(local, 'callers')).text, /not in GitHub Actions/);
-  for (const partial of [{ repository: GH.repository, runId: '77' }, { token: GH.token, runId: '77' }]) {
+  for (const partial of [{ repository: GH.repository, runId: '77' }, { token: GH.token, runId: '77' }, { repository: GH.repository, token: GH.token }]) {
     const w = world();
     const r = await run(w, 'callers', { apply: true, github: partial });
     assert.ok(r.error instanceof ProvisionRefusal, r.error?.message ?? 'no refusal');
-    assert.match(r.error.message, /GITHUB_TOKEN or GITHUB_REPOSITORY is not set/);
+    assert.match(r.error.message, /GITHUB_TOKEN, GITHUB_REPOSITORY or GITHUB_RUN_ID is not set/);
     assert.equal(writeCount(w), 0);
   }
 });
@@ -761,6 +881,8 @@ test('the CLI refuses an applied run outside the master workflow before any requ
     [{ APPLY: 'true' }, 'refused: apply runs only from the master workflow (identity-introspection-provision.yml); a dry run works locally'],
     [{ APPLY: 'true', GITHUB_REF: 'refs/heads/master' }, 'refused: apply runs only from the master workflow (identity-introspection-provision.yml); a dry run works locally'],
     [{ APPLY: 'true', GITHUB_ACTIONS: 'true', GITHUB_REF: 'refs/heads/feature' }, 'refused: this runs only from master'],
+    [{ APPLY: 'true', GITHUB_ACTIONS: 'true', GITHUB_REF: 'refs/heads/master', GITHUB_WORKFLOW_REF: 'markjspivey-xwisee/interego/.github/workflows/other.yml@refs/heads/master' },
+      'refused: apply runs only from the master workflow (identity-introspection-provision.yml); a dry run works locally'],
   ]) {
     const r = cli(env);
     assert.equal(r.status, 1, JSON.stringify(env));
@@ -800,11 +922,18 @@ test('planStage, usableSecret, newSecret and cliRefusal', () => {
   assert.notEqual(newSecret(), newSecret());
 
   const env = { RAILWAY_PROJECT_TOKEN: 't', STAGE: 'callers' };
-  const master = { GITHUB_ACTIONS: 'true', GITHUB_REF: 'refs/heads/master' };
+  const WORKFLOW = 'markjspivey-xwisee/interego/.github/workflows/identity-introspection-provision.yml';
+  const master = { GITHUB_ACTIONS: 'true', GITHUB_REF: 'refs/heads/master', GITHUB_WORKFLOW_REF: `${WORKFLOW}@refs/heads/master` };
   assert.equal(cliRefusal(env), null, 'a local dry run');
   assert.equal(cliRefusal({ ...env, APPLY: 'false' }), null, 'a local dry run, said explicitly');
   assert.equal(cliRefusal({ ...env, ...master }), null);
   assert.equal(cliRefusal({ ...env, ...master, APPLY: 'true' }), null, 'an applied run from the master workflow');
+  // Only this workflow, whose concurrency group keeps two runs apart, may apply.
+  for (const ref of [undefined, '', 'markjspivey-xwisee/interego/.github/workflows/deploy-railway.yml@refs/heads/master',
+    `${WORKFLOW}@refs/heads/feature`, `${WORKFLOW}@refs/tags/v1`, `x/${WORKFLOW}@refs/heads/master`]) {
+    assert.match(cliRefusal({ ...env, ...master, APPLY: 'true', GITHUB_WORKFLOW_REF: ref }), /apply runs only from the master workflow \(identity-introspection-provision\.yml\)/, `GITHUB_WORKFLOW_REF=${ref}`);
+    assert.equal(cliRefusal({ ...env, ...master, GITHUB_WORKFLOW_REF: ref }), null, `a dry run, GITHUB_WORKFLOW_REF=${ref}`);
+  }
   assert.match(cliRefusal({ ...env, GITHUB_ACTIONS: 'true', GITHUB_REF: 'refs/heads/feature' }), /only from master/);
   assert.match(cliRefusal({ ...env, GITHUB_ACTIONS: 'true', GITHUB_REF: 'refs/heads/feature', APPLY: 'true' }), /only from master/);
   for (const ref of ['refs/heads/master', 'refs/heads/feature', undefined]) {

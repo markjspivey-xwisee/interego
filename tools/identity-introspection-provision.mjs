@@ -4,11 +4,13 @@
  * remove ALLOW_OPEN_INTROSPECTION from identity, without any value reaching a log, a file, a
  * step output or a person.
  *
- * A write (APPLY=true) runs only inside GitHub Actions on master, where the workflow's
- * concurrency group keeps two runs from interleaving and the preflight can see the deploy
- * workflows' runs. Two overlapping runs could each pass their read-backs and leave relay and
- * css-gate with different values. A dry run works anywhere. The check reads GITHUB_ACTIONS and
- * GITHUB_REF, so it stops an accidental local apply, not someone who sets them by hand.
+ * A write (APPLY=true) runs only inside GitHub Actions on master, from this tool's own workflow
+ * (GITHUB_WORKFLOW_REF), whose concurrency group keeps two runs from interleaving, and where the
+ * preflight can see the deploy workflows' runs and refuses while another run of this workflow
+ * has not finished. Two overlapping runs could each pass their read-backs and leave relay and
+ * css-gate with different values. A dry run works anywhere. The check reads GITHUB_ACTIONS,
+ * GITHUB_REF and GITHUB_WORKFLOW_REF, so it stops an accidental local apply, or another
+ * workflow running this tool, not someone who sets them by hand.
  *
  * Identity's POST /tokens/verify answers only a caller presenting that value as a bearer once
  * identity holds it. The relay and css-gate present it whenever they hold it, so they get it
@@ -18,7 +20,8 @@
  *             neither holds the variable; writes nothing when both hold the same value;
  *             refuses otherwise.
  *   identity  copies the callers' value (compared in memory) to identity; refuses if identity
- *             holds a different one. Keeps ALLOW_OPEN_INTROSPECTION, which is the rollback.
+ *             holds a different one. Keeps ALLOW_OPEN_INTROSPECTION, which is the rollback, and
+ *             refuses to write while identity does not store it.
  *   finalize  removes ALLOW_OPEN_INTROSPECTION from identity once identity enforces the
  *             callers' value.
  * An applied run of any stage also deploys a service that already holds the stage's change but
@@ -94,10 +97,13 @@ export function usableSecret(v) {
   return typeof v === 'string' && v.length >= 32 && /^[\x21-\x7e]+$/.test(v);
 }
 
+/** GITHUB_WORKFLOW_REF of a run of this tool's workflow on master: `<owner>/<repo>/<path>@<ref>`. */
+const WORKFLOW_REF = /^[^/]+\/[^/]+\/\.github\/workflows\/identity-introspection-provision\.yml@refs\/heads\/master$/;
+
 /** Why the CLI must not run with this environment, or null. */
 export function cliRefusal(env) {
   if (env.GITHUB_ACTIONS === 'true' && env.GITHUB_REF !== 'refs/heads/master') return 'this runs only from master';
-  if (env.APPLY === 'true' && env.GITHUB_ACTIONS !== 'true') {
+  if (env.APPLY === 'true' && (env.GITHUB_ACTIONS !== 'true' || !WORKFLOW_REF.test(env.GITHUB_WORKFLOW_REF ?? ''))) {
     return 'apply runs only from the master workflow (identity-introspection-provision.yml); a dry run works locally';
   }
   if (!env.RAILWAY_PROJECT_TOKEN) return 'RAILWAY_PROJECT_TOKEN is not set';
@@ -106,6 +112,25 @@ export function cliRefusal(env) {
 }
 
 const set = (v) => typeof v === 'string' && v !== '';
+
+/**
+ * Identity holds the value (stored, or running enforced) while a caller does not: that caller is
+ * refused now (or from identity's next deploy). A Railway Rollback restores a deployment's
+ * variables along with its image, so rolling a caller back past the deployment stage=callers
+ * made unsets the variable on it. Deleting the other caller's copy, the way out before identity
+ * holds the value, would get that caller refused too, so this says to undo the rollback instead.
+ * Deploying master would not help: deploy-railway.yml keeps the service's current variables. The
+ * refusal text, or null. `state` is planStage's.
+ */
+function lostCallers(state) {
+  const lost = CALLERS.filter((c) => !set(state[c].stored));
+  if (!lost.length || !(set(state.identity.stored) || state.identity.running)) return null;
+  const kept = CALLERS.filter((c) => set(state[c].stored));
+  const them = lost.length > 1 ? 'them' : 'it';
+  return `identity holds ${SECRET_VAR} and ${lost.join(' and ')} ${lost.length > 1 ? 'do' : 'does'} not, so identity refuses ${them} ${state.identity.running ? 'now' : 'from its next deploy'}. `
+    + `A Railway Rollback past the deployment stage=callers made unsets the variable: in Railway, roll ${lost.join(' and ')} back again to the deployment that was active before that rollback`
+    + `${kept.length ? `, and do not delete ${kept[0]}'s copy` : ''}. Otherwise resolve by hand`;
+}
 
 /**
  * What a stage writes, given what Railway stores and what each service reports running. Pure.
@@ -127,38 +152,22 @@ export function planStage(stage, state, { generate = () => null } = {}) {
   const callersEqual = callersSet === 2 ? (relay === gate ? 'yes' : 'no') : 'n/a';
   const identityEqual = set(identity) && callersEqual === 'yes' ? (identity === relay ? 'yes' : 'no') : 'n/a';
   const result = (writes, notes = []) => ({ writes, callersEqual, identityEqual, notes });
-  // Identity holds the value while a caller does not: that caller is refused now (or from
-  // identity's next deploy). A Railway Rollback restores a deployment's variables along with its
-  // image, so rolling a caller back past the deployment stage=callers made unsets the variable on
-  // it. Deleting the other caller's copy, the way out before identity holds the value, would get
-  // that caller refused too, so this says to undo the rollback instead.
-  const identityHolds = set(identity) || state.identity.running;
-  const callersLost = () => {
-    const lost = CALLERS.filter((c) => !set(state[c].stored));
-    const kept = CALLERS.filter((c) => set(state[c].stored));
-    const them = lost.length > 1 ? 'them' : 'it';
-    return `identity holds ${SECRET_VAR} and ${lost.join(' and ')} ${lost.length > 1 ? 'do' : 'does'} not, so identity refuses ${them} ${state.identity.running ? 'now' : 'from its next deploy'}. `
-      + `A Railway Rollback past the deployment stage=callers made unsets the variable: in Railway, roll ${lost.join(' and ')} back again to the deployment that was active before that rollback`
-      + `${kept.length ? `, and do not delete ${kept[0]}'s copy` : ''}. Otherwise resolve by hand`;
-  };
+  const lost = lostCallers(state);
+  if (lost) throw new ProvisionRefusal(stage === 'callers' && callersSet === 0 ? `${lost}; a new value would not match identity's` : lost);
   const callersReady = () => {
-    if (callersSet < 2 && identityHolds) throw new ProvisionRefusal(callersLost());
     if (callersSet < 2) throw new ProvisionRefusal(`relay and css-gate must both hold ${SECRET_VAR}; run stage=callers with apply first`);
     if (callersEqual !== 'yes') throw new ProvisionRefusal(`relay and css-gate hold different values of ${SECRET_VAR}; resolve by hand`);
     if (!usableSecret(relay)) throw new ProvisionRefusal(`the callers' ${SECRET_VAR} is not usable (it must be at least 32 printable ASCII characters with no spaces); resolve by hand`);
   };
 
+  // From here on, identity holds nothing whenever a caller is unset.
   if (stage === 'callers') {
     if (callersSet === 0) {
-      if (identityHolds) {
-        throw new ProvisionRefusal(`${callersLost()}; a new value would not match identity's`);
-      }
       const value = generate();
       const write = (service) => ({ service, op: 'upsert', name: SECRET_VAR, generated: true, ...(value === null ? {} : { value }) });
       return result([write('relay'), write('css-gate')]);
     }
     if (callersSet === 1) {
-      if (identityHolds) throw new ProvisionRefusal(callersLost());
       const holder = set(relay) ? 'relay' : 'css-gate';
       throw new ProvisionRefusal(`only ${holder} holds ${SECRET_VAR}; nothing enforces yet: delete it from ${holder} in Railway, then rerun`);
     }
@@ -167,7 +176,14 @@ export function planStage(stage, state, { generate = () => null } = {}) {
   }
   if (stage === 'identity') {
     callersReady();
-    if (!set(identity)) return result([{ service: 'identity', op: 'upsert', name: SECRET_VAR, value: relay }]);
+    if (!set(identity)) {
+      // ALLOW_OPEN_INTROSPECTION=1 is what keeps identity open once the secret is deleted again,
+      // so without it this write would have no one-step rollback.
+      if (!state.identity.openStored) {
+        throw new ProvisionRefusal(`identity does not hold ${OPEN_VAR}=1, this stage's rollback: without it, deleting ${SECRET_VAR} from identity again would leave introspection disabled, which refuses both callers. Set ${OPEN_VAR}=1 on identity and deploy identity, then rerun`);
+      }
+      return result([{ service: 'identity', op: 'upsert', name: SECRET_VAR, value: relay }]);
+    }
     if (identity === relay) return result([]);
     throw new ProvisionRefusal(`identity holds a different ${SECRET_VAR} from the callers; resolve by hand`);
   }
@@ -266,6 +282,10 @@ export async function runStage({
   const newestOf = async (svc) => (await gql(Q.newest, { s: ids[svc], e: TARGET.environmentId }))?.deployments?.edges?.[0]?.node;
 
   const info = {};
+  // Refusals about what a service runs (its pin, its health) wait until all three are read. After
+  // a Railway Rollback of a caller to an older image, they would say to deploy master or reconcile
+  // the pin, which keeps the restored variables, so lostCallers' advice goes first when it applies.
+  const servingRefusals = [];
   for (const svc of SERVICES) {
     const vars = await readVars(svc);
     const dom = await gql(Q.domains, { p: TARGET.projectId, s: ids[svc], e: TARGET.environmentId });
@@ -276,25 +296,22 @@ export async function runStage({
     const image = String(inst?.source?.image ?? '');
     const repo = resolveImageRepo(svc);
     const m = /^(.*):([0-9a-f]{40})$/.exec(image);
-    if (!repo.ok || !m || m[1] !== repo.repo) {
-      throw new ProvisionRefusal(`${svc} is not pinned to ${repo.ok ? repo.repo : 'its image'}:<40-hex sha> (a mutable tag, or a repository that disagrees with tools/railway-services.mjs); a redeploy would not ship a known build`);
-    }
+    const pinned = repo.ok && m && m[1] === repo.repo;
     const newest = await newestOf(svc);
     if (newest && IN_FLIGHT.has(newest.status)) throw new ProvisionRefusal(`${svc} has deployment ${newest.id} ${newest.status}; rerun when it has finished`);
     const h = await readHealth(http, verify.url);
-    if (!h) throw new ProvisionRefusal(`${svc}: GET ${verify.url} did not answer 200 with JSON`);
-    if (h.build !== m[2]) {
-      throw new ProvisionRefusal(`${svc} is pinned to ${short(m[2])} but serving ${short(h.build)}; a redeploy would change running code; reconcile with deploy-railway.yml first`);
-    }
-    const missing = svc === 'identity'
+    const missing = h && (svc === 'identity'
       ? !['enforced', 'open', 'disabled'].includes(h.introspection) || typeof h.allowOpenIntrospection !== 'boolean'
-      : typeof h.identityVerifyAuth !== 'boolean' || (svc === 'css-gate' && (typeof h.identityVerifyResults !== 'object' || h.identityVerifyResults === null));
-    if (missing) throw new ProvisionRefusal(`${svc} serves an image without the introspection health fields; deploy master first`);
-    if (svc === 'css-gate' && Number(inst?.numReplicas ?? 1) > 1) {
+      : typeof h.identityVerifyAuth !== 'boolean' || (svc === 'css-gate' && (typeof h.identityVerifyResults !== 'object' || h.identityVerifyResults === null)));
+    if (!pinned) servingRefusals.push(`${svc} is not pinned to ${repo.ok ? repo.repo : 'its image'}:<40-hex sha> (a mutable tag, or a repository that disagrees with tools/railway-services.mjs); a redeploy would not ship a known build`);
+    else if (!h) servingRefusals.push(`${svc}: GET ${verify.url} did not answer 200 with JSON`);
+    else if (h.build !== m[2]) servingRefusals.push(`${svc} is pinned to ${short(m[2])} but serving ${short(h.build)}; a redeploy would change running code; reconcile with deploy-railway.yml first`);
+    else if (missing) servingRefusals.push(`${svc} serves an image without the introspection health fields; deploy master first`);
+    else if (svc === 'css-gate' && Number(inst?.numReplicas ?? 1) > 1) {
       log('note: css-gate runs more than one replica; its identityVerifyResults counters are per replica, so the gate check can be inconclusive');
     }
     info[svc] = {
-      ...vars, url: verify.url, origin: new URL(verify.url).origin, tag: m[2], health: h,
+      ...vars, url: verify.url, origin: new URL(verify.url).origin, tag: pinned ? m[2] : undefined, health: h ?? {},
       snapshot: newest?.id, overlapSeconds: inst?.overlapSeconds ?? null,
     };
   }
@@ -307,6 +324,7 @@ export async function runStage({
       openStored: info.identity.openStored, openRunning: info.identity.health.allowOpenIntrospection === true,
     },
   };
+  if (servingRefusals.length) throw new ProvisionRefusal(lostCallers(state) ?? servingRefusals[0]);
   const generate = apply ? () => { const v = newSecret(rand); maskOnce(v); return v; } : () => null;
   const plan = planStage(stage, state, { generate });
 
@@ -358,23 +376,41 @@ export async function runStage({
   // `pending` is the write whose request has been sent and not yet confirmed and read back. Its
   // outcome is unknown: Railway may have applied it and the answer been lost, or applied it and
   // the read-back failed. So it never decides which copy to delete; a rerun reads what is stored.
+  // `started` is the identity deployment this run created or followed, until it ends in a failed
+  // status: it was created with the secret stored, so a deletion now would not reach it.
   let pending = null;
+  let started = null;
   const has = (svc, name) => summary.wrote.includes(`${svc}:${name}`);
+  // How to reopen identity, from what the preflight read; the identity stage never changes it.
+  const reopen = info.identity.openStored
+    ? `delete ${SECRET_VAR} from identity (${OPEN_VAR} is still set)`
+    : `set ${OPEN_VAR}=1 on identity, then delete ${SECRET_VAR} from identity`;
   const whatIsStored = () => {
     if (stage === 'callers') {
+      // The stage writes only while identity holds nothing, but it deploys a caller that holds
+      // the value and does not run it whatever identity does, so identity's mode is read here.
+      const identityNow = state.identity.running
+        ? `identity enforces ${SECRET_VAR}, so a caller that does not run it yet is refused until a deployment of it succeeds`
+        : set(state.identity.stored)
+          ? `identity holds ${SECRET_VAR} and enforces it from its next deploy (an auto-deploy included), refusing a caller that does not run it by then`
+          : state.identity.openRunning ? 'identity is still open, so nothing enforces yet' : `identity does not hold ${SECRET_VAR}, so nothing enforces it yet`;
+      const IdentityNow = identityNow[0].toUpperCase() + identityNow.slice(1);
       const holders = CALLERS.filter((c) => has(c, SECRET_VAR) || state[c].stored);
       if (pending) {
-        return `Whether ${SECRET_VAR} landed on ${pending.service} is unknown${holders.length ? ` (${holders.join(' and ')} holds it)` : ''}. Identity is still open, so nothing enforces yet. Rerun stage=callers before changing anything in Railway: it writes a new value when neither caller holds one, finishes when both hold the same value, and otherwise refuses and names the copy to delete.`;
+        return `Whether ${SECRET_VAR} landed on ${pending.service} is unknown${holders.length ? ` (${holders.join(' and ')} holds it)` : ''}. ${IdentityNow}. Rerun stage=callers before changing anything in Railway: it writes a new value when neither caller holds one, finishes when both hold the same value, and otherwise refuses and names the copy to delete.`;
       }
       if (holders.length === 1) {
-        return `Only ${holders[0]} holds ${SECRET_VAR}. Identity is still open, so nothing enforces yet: delete it from ${holders[0]} in Railway, then rerun stage=callers.`;
+        return `Only ${holders[0]} holds ${SECRET_VAR}. ${IdentityNow}: delete it from ${holders[0]} in Railway, then rerun stage=callers.`;
       }
       return holders.length === 2
-        ? `${SECRET_VAR} is stored on relay and css-gate; identity is still open, so nothing enforces yet. Rerun stage=callers to finish the deploys.`
-        : `No caller write is confirmed; identity is still open, so nothing enforces yet. Rerun stage=callers (if one caller now holds the variable it refuses and says how to recover).`;
+        ? `${SECRET_VAR} is stored on relay and css-gate; ${identityNow}. Rerun stage=callers to finish the deploys.`
+        : `No caller write is confirmed; ${identityNow}. Rerun stage=callers (if one caller now holds the variable it refuses and says how to recover).`;
     }
     if (stage === 'identity') {
-      return `${SECRET_VAR} ${has('identity', SECRET_VAR) || state.identity.stored ? 'is' : 'may be'} stored on identity, and the next identity deploy (an auto-deploy included) will enforce it. Rerun stage=identity, or delete ${SECRET_VAR} from identity to stay open.`;
+      if (started) {
+        return `Deployment ${started} of identity was created with ${SECRET_VAR} stored, so identity enforces it from that deployment if it carries the change, and otherwise from its next deploy. Rerun stage=identity once no identity deployment is in flight: its check before any write tells whether identity accepts both callers, and it deploys identity again if identity does not enforce yet. To reopen instead, ${reopen}, and deploy identity again.`;
+      }
+      return `${SECRET_VAR} ${has('identity', SECRET_VAR) || state.identity.stored ? 'is' : 'may be'} stored on identity, and the next identity deploy (an auto-deploy included) will enforce it. Rerun stage=identity, or ${reopen} to stay open.`;
     }
     return `${OPEN_VAR} ${has('identity', OPEN_VAR) || !state.identity.openStored ? 'is' : 'may be'} removed from identity, which keeps enforcing the secret. Rerun stage=finalize to finish, and set ${OPEN_VAR}=1 again before any rollback.`;
   };
@@ -406,6 +442,7 @@ export async function runStage({
   const deployCurrentImage = async (svc, expect, { followRailway = false } = {}) => {
     try {
       const id = await startDeployment(svc, followRailway);
+      if (svc === 'identity') started = id;
       log(`${svc}: deployment ${id}`);
       await waitForSuccess(svc, id);
       const inst = await instanceOf(svc);
@@ -451,7 +488,10 @@ export async function runStage({
       try { d = await gql(Q.status, { id }); } catch { continue; } // transient until the deadline
       status = String(d?.deployment?.status ?? '(unknown)');
       if (GOOD.has(status)) return;
-      if (BAD.has(status)) throw new StageFailure(`deployment ${id} of ${svc} ended ${status}. ${whatIsStored()}`);
+      if (BAD.has(status)) {
+        started = null; // it will not serve, so the next deploy is the one that enforces
+        throw new StageFailure(`deployment ${id} of ${svc} ended ${status}. ${whatIsStored()}`);
+      }
     }
     throw new StageFailure(`deployment ${id} of ${svc} is still ${status}; do not rerun while it is in flight; inspect deployment ${id}. ${whatIsStored()}`);
   };
@@ -480,9 +520,7 @@ export async function runStage({
       await sleep(((info.identity.overlapSeconds ?? 20) * 1000) + t.overlapExtraMs);
       const [r, g] = [await decisive(() => relayProbe(http, info.relay.origin)), await decisive(() => gateProbe(http, info['css-gate'].url, info['css-gate'].origin))];
       log(`check after the deploy: identity accepts relay: ${r}; accepts css-gate: ${g}`);
-      const rollback = info.identity.openStored
-        ? `Roll back: delete ${SECRET_VAR} from identity (${OPEN_VAR} is still set) and redeploy identity`
-        : `Roll back: set ${OPEN_VAR}=1 on identity, then delete ${SECRET_VAR} from identity and redeploy identity`;
+      const rollback = `Roll back: ${reopen} and redeploy identity`;
       if (r === 'rejected' || g === 'rejected') {
         throw new StageFailure(`identity refuses ${[r === 'rejected' ? 'the relay' : '', g === 'rejected' ? 'css-gate' : ''].filter(Boolean).join(' and ')}: the ${SECRET_VAR} that caller runs with is not identity's. ${rollback}.`);
       }
@@ -554,12 +592,15 @@ async function gateProbe(http, healthUrl, origin) {
 }
 
 /**
- * Refuse while a deploy workflow is running. A reusable-workflow leg is listed under its
- * caller's run, not under deploy-railway.yml, and auto-deploy.yml is the only caller whose leg
- * deploys relay, css-gate or identity (i2idlx-v93-release.yml's leg deploys only foxxi-bridge),
- * so these two files cover every workflow that deploys the three services. A deployment started
- * in Railway itself is caught by the preflight's in-flight check instead. Outside GitHub
- * Actions a dry run skips the check and an applied run is refused.
+ * Refuse while a deploy workflow, or another run of this tool's own workflow, is running. A
+ * reusable-workflow leg is listed under its caller's run, not under deploy-railway.yml, and
+ * auto-deploy.yml is the only caller whose leg deploys relay, css-gate or identity
+ * (i2idlx-v93-release.yml's leg deploys only foxxi-bridge), so these two files cover every
+ * workflow that deploys the three services. The workflow's concurrency group already keeps two
+ * provisioning runs apart; listing them here keeps that true if the group changes, and this run
+ * (GITHUB_RUN_ID) is the one run of that list that does not count. A deployment started in
+ * Railway itself is caught by the preflight's in-flight check instead. Outside GitHub Actions a
+ * dry run skips the check and an applied run is refused.
  */
 async function checkNoDeployRunning({ http, github, log, apply }) {
   if (!github) {
@@ -567,8 +608,10 @@ async function checkNoDeployRunning({ http, github, log, apply }) {
     log('note: not in GitHub Actions; not checking for a running deploy workflow');
     return;
   }
-  if (!github.token || !github.repository) throw new ProvisionRefusal('GITHUB_TOKEN or GITHUB_REPOSITORY is not set; cannot check for a running deploy');
-  for (const file of ['auto-deploy.yml', 'deploy-railway.yml']) {
+  if (!github.token || !github.repository || !github.runId) {
+    throw new ProvisionRefusal('GITHUB_TOKEN, GITHUB_REPOSITORY or GITHUB_RUN_ID is not set; cannot check for a running deploy or provisioning run');
+  }
+  for (const file of ['auto-deploy.yml', 'deploy-railway.yml', 'identity-introspection-provision.yml']) {
     let r;
     try {
       r = await http.getJson(`https://api.github.com/repos/${github.repository}/actions/workflows/${file}/runs?per_page=20`, {
