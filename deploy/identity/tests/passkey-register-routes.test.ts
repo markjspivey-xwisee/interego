@@ -1,8 +1,8 @@
 /**
  * Passkey registration (POST /auth/webauthn/register), through the routes: server.ts is
  * started as a child process against a stand-in pod server (no live pod), and the passkeys
- * come from a software authenticator built here ('none' attestation), so the server's own
- * WebAuthn verification runs unchanged.
+ * come from a software authenticator (tests/soft-authenticator.ts, 'none' attestation), so
+ * the server's own WebAuthn verification runs unchanged.
  *
  * A fresh registration (no bearer, no bootstrap invite) derives its account id from the
  * credential id, `u-pk-<48 bits of its sha256>`. Credential ids are not secret, and an
@@ -25,56 +25,10 @@ import * as crypto from 'node:crypto';
 import * as http from 'node:http';
 import * as net from 'node:net';
 import { fileURLToPath } from 'node:url';
-import { deriveUserIdFromCredentialId } from '../derive-userid.js';
+import { assertion, attest, softPasskey, type SoftPasskey } from './soft-authenticator.js';
 
 const now = new Date().toISOString();
 const passkey = (id: string) => ({ id, publicKey: 'AA', counter: 0, createdAt: now });
-
-// ── A software authenticator ──
-// Just enough CBOR for an attestation object and a COSE key: maps, text, bytes, small ints.
-function cbor(v: unknown): Buffer {
-  const head = (major: number, n: number) => n < 24 ? Buffer.from([(major << 5) | n])
-    : n < 256 ? Buffer.from([(major << 5) | 24, n])
-      : Buffer.from([(major << 5) | 25, n >> 8, n & 0xff]);
-  if (typeof v === 'number') return v >= 0 ? head(0, v) : head(1, -1 - v);
-  if (typeof v === 'string') return Buffer.concat([head(3, Buffer.byteLength(v)), Buffer.from(v)]);
-  if (Buffer.isBuffer(v)) return Buffer.concat([head(2, v.length), v]);
-  if (v instanceof Map) return Buffer.concat([head(5, v.size), ...[...v].flatMap(([k, x]) => [cbor(k), cbor(x)])]);
-  throw new Error(`cbor: unsupported ${typeof v}`);
-}
-
-/** A passkey: a credential id (any bytes the authenticator chooses) and its own P-256 key. */
-function softPasskey(rawId: Buffer = crypto.randomBytes(16)) {
-  const { publicKey, privateKey } = crypto.generateKeyPairSync('ec', { namedCurve: 'P-256' });
-  const jwk = publicKey.export({ format: 'jwk' });
-  const cose = cbor(new Map<number, unknown>([[1, 2], [3, -7], [-1, 1],
-    [-2, Buffer.from(jwk.x!, 'base64url')], [-3, Buffer.from(jwk.y!, 'base64url')]]));
-  const id = rawId.toString('base64url');
-  return { id, rawId, cose, privateKey, userId: deriveUserIdFromCredentialId(id) };
-}
-type SoftPasskey = ReturnType<typeof softPasskey>;
-
-function attest(key: SoftPasskey, challenge: string, origin: string, rpId: string) {
-  const len = Buffer.alloc(2);
-  len.writeUInt16BE(key.rawId.length);
-  const authData = Buffer.concat([
-    crypto.createHash('sha256').update(rpId).digest(),
-    Buffer.from([0x45]),          // user present, user verified, attested credential data
-    Buffer.alloc(4),              // sign counter
-    Buffer.alloc(16),             // AAGUID
-    len, key.rawId, key.cose,
-  ]);
-  const clientDataJSON = Buffer.from(JSON.stringify({ type: 'webauthn.create', challenge, origin, crossOrigin: false }));
-  const attestationObject = cbor(new Map<string, unknown>([['fmt', 'none'], ['attStmt', new Map()], ['authData', authData]]));
-  return {
-    id: key.id, rawId: key.id, type: 'public-key', clientExtensionResults: {},
-    response: {
-      clientDataJSON: clientDataJSON.toString('base64url'),
-      attestationObject: attestationObject.toString('base64url'),
-      transports: ['internal'],
-    },
-  };
-}
 
 // ── Passkeys and the accounts their ids derive to ──
 const keys = {
@@ -187,15 +141,7 @@ async function signIn(key: SoftPasskey) {
   const ch = await post('/challenges', { purpose: 'webauthn-authenticate' });
   assert.equal(ch.status, 200, JSON.stringify(ch.json));
   const rpId = String(ch.json['rpId'] ?? new URL(base).hostname);
-  const counter = Buffer.alloc(4);
-  counter.writeUInt32BE(++signCount);
-  const authData = Buffer.concat([crypto.createHash('sha256').update(rpId).digest(), Buffer.from([0x05]), counter]);
-  const clientDataJSON = Buffer.from(JSON.stringify({ type: 'webauthn.get', challenge: String(ch.json['nonce']), origin: base, crossOrigin: false }));
-  const signature = crypto.sign('sha256',
-    Buffer.concat([authData, crypto.createHash('sha256').update(clientDataJSON).digest()]), key.privateKey);
-  return post('/auth/webauthn/authenticate', { response: { id: key.id, rawId: key.id, type: 'public-key', clientExtensionResults: {},
-    response: { clientDataJSON: clientDataJSON.toString('base64url'), authenticatorData: authData.toString('base64url'),
-      signature: signature.toString('base64url') } } });
+  return post('/auth/webauthn/authenticate', { response: assertion(key, String(ch.json['nonce']), base, rpId, ++signCount) });
 }
 
 const writesTo = (userId: string) => writes.filter(w => w.userId === userId);
@@ -344,6 +290,24 @@ test('adding a device with the account\'s bearer still appends the passkey to it
   await eventually(() => credentialIds(userId).length === 2, 'the added passkey to be written');
   assert.deepEqual(credentialIds(userId), [keys.fresh.id, keys.added.id]);
   assert.equal(pods.get(keys.added.userId), undefined);
+});
+
+test('registration options for a bootstrap invite write nothing to the seeded pod, and an unreadable one starts no ceremony', async () => {
+  // The options read the seeded pod to check it holds no credential. That read used to write an
+  // empty document when the pod had none, before any credential was verified, and left it there
+  // when the ceremony was abandoned; a pod that could not be read was taken as an empty account.
+  const body = { name: 'New', bootstrapUserId: invite.userId, bootstrapInvite: invite.token };
+  blipping.add(invite.userId);
+  const down = await post('/auth/webauthn/register-options', body);
+  blipping.delete(invite.userId);
+  assert.equal(down.status, 503, `${JSON.stringify(down.json)}\n${output}`);
+  assert.equal(down.json['challenge'], undefined);
+  const abandoned = await post('/auth/webauthn/register-options', body);
+  assert.equal(abandoned.status, 200, `${JSON.stringify(abandoned.json)}\n${output}`);
+  // A deferred write would land after the response; give it the time one takes.
+  await new Promise(resolve => setTimeout(resolve, 300));
+  assert.deepEqual(writesTo(invite.userId), []);
+  assert.equal(pods.has(invite.userId), false);
 });
 
 test('a bootstrap invite still claims its seeded account with a passkey', async () => {

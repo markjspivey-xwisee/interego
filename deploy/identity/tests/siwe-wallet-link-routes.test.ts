@@ -344,8 +344,9 @@ test('/wallet/link is 503 and links nothing while it cannot tell who holds the w
   const r = await link(linkerToken, unreadableForLink);
   assert.equal(r.status, 503, `${JSON.stringify(r.json)}\n${output.text}`);
   assert.equal(snapshot(linkerId), before);
-  // A server that could not read one of its listed pods: its index is incomplete.
-  const opened = await signIn(Wallet.createRandom(), { server: base2 });
+  // A server that could not read one of its listed pods: its index is incomplete, so it opens
+  // no new account, and the bearer is an existing account's.
+  const opened = await signIn(victim, { server: base2 });
   assert.equal(opened.status, 200, `${JSON.stringify(opened.json)}\n${output2.text}`);
   const ownerId = String(opened.json['userId']);
   const ownerBefore = snapshot(ownerId);
@@ -412,8 +413,9 @@ test('/auth/siwe with a bearer does not bind a wallet held by an account only on
   assert.equal(unreadable.status, 503, `${JSON.stringify(unreadable.json)}\n${output.text}`);
   assert.equal(unreadable.json['token'], undefined);
   assert.equal(snapshot(linkerId), before);
-  // A server whose index is incomplete binds no new wallet to a bearer's account.
-  const opened = await signIn(Wallet.createRandom(), { server: base2 });
+  // A server whose index is incomplete binds no new wallet to a bearer's account (and opens no
+  // new account, so the bearer is an existing account's).
+  const opened = await signIn(victim, { server: base2 });
   assert.equal(opened.status, 200, `${JSON.stringify(opened.json)}\n${output2.text}`);
   const ownerId = String(opened.json['userId']);
   const ownerBefore = snapshot(ownerId);
