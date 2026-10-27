@@ -64,7 +64,7 @@ import {
   type DelegationScope,
 } from './surface-agent-restore.js';
 import { enrollProvisionalCredential } from './provisional-play-enrollment.js';
-import { clientIp, createLimiter, rateLimit, sendRateLimited } from './rate-limit.js';
+import { clientIp, createLimiter, limitByIp, rateLimit, sendRateLimited } from './rate-limit.js';
 import { forwardAsyncRouteErrors, installProcessSafetyNet, routeErrorHandler } from './route-errors.js';
 import { parseSiweMessage, SIWE_DOMAIN_SUFFIX } from './siwe-message.js';
 
@@ -126,24 +126,30 @@ const REPO_URL = process.env['REPO_URL'] ?? 'https://github.com/markjspivey-xwis
 const ONTOLOGY_URL = 'https://markjspivey-xwisee.github.io/interego/ns/iep#';
 const TOKEN_TTL_SECONDS = 86400; // 24 hours
 
-// Shared secret guarding POST /tokens/verify. Mirrors the relay's
-// /verify-token introspection-secret pattern: any legitimate caller
-// (the css-gate today) carries `Authorization: Bearer <secret>`. Without
-// this gate the endpoint is an open oracle that lets an attacker
-// confirm a captured bearer is a live identity token AND harvest its
-// bound userId / agentId / scope for downstream targeting. Token-forging
-// is already prevented by TOKEN_SIGNING_KEY; this is info-disclosure
-// tightening on the verification surface.
+// Shared secret guarding POST /tokens/verify. Mirrors the relay's /verify-token
+// introspection-secret pattern. Without it the endpoint is an open oracle: anyone holding a
+// captured bearer can confirm it is a live identity token and read its bound userId / agentId /
+// scope for downstream targeting. Token-forging is already prevented by TOKEN_SIGNING_KEY; this
+// is information-disclosure tightening on the verification surface.
 //
-// Rollout: introspection now FAILS CLOSED by default. Operators choose one of:
-//   - set IDENTITY_INTROSPECTION_SECRET (and have callers present it) → enforced, OR
-//   - set ALLOW_OPEN_INTROSPECTION=1 → explicit, warned opt-in to the legacy open
-//     oracle for the migration window only.
-// With neither set, /tokens/verify returns 401 (instead of silently being an open
-// oracle that a forgotten env var leaves exposed). Symmetric with how the relay's
-// /verify-token fails closed and how TOKEN_SIGNING_KEY warns loudly when unset.
+// Two callers send `Authorization: Bearer <IDENTITY_INTROSPECTION_SECRET>` whenever their own
+// copy of the variable is non-empty: the relay (deploy/mcp-relay/server.ts verifyBearerToken,
+// which reads it on every call) and css-gate (deploy/css-gate/server.mjs, which reads it at
+// start). All three services must hold the same value.
+//
+// The mode is fixed at startup:
+//   - IDENTITY_INTROSPECTION_SECRET set → enforced. ALLOW_OPEN_INTROSPECTION is then ignored,
+//     and kept only as the rollback (delete the secret and redeploy → open again).
+//   - secret empty and ALLOW_OPEN_INTROSPECTION=1 → open, with a startup warning.
+//   - neither → disabled: /tokens/verify answers 401 to everyone, instead of silently being an
+//     open oracle that a forgotten env var leaves exposed. Symmetric with how the relay's
+//     /verify-token fails closed and how TOKEN_SIGNING_KEY warns loudly when unset.
+// The rollout order, the rollback, and the oldest relay and css-gate images that send the
+// header are in deploy/identity/AUTH-ARCHITECTURE.md.
 const IDENTITY_INTROSPECTION_SECRET = process.env['IDENTITY_INTROSPECTION_SECRET'] ?? '';
 const ALLOW_OPEN_INTROSPECTION = process.env['ALLOW_OPEN_INTROSPECTION'] === '1';
+type IntrospectionMode = 'enforced' | 'open' | 'disabled';
+const INTROSPECTION_MODE: IntrospectionMode = IDENTITY_INTROSPECTION_SECRET ? 'enforced' : ALLOW_OPEN_INTROSPECTION ? 'open' : 'disabled';
 
 // DID sign-in transition. A did-sig challenge carries a message naming this server
 // (didSignInMessage), and /auth/did verifies the signature over it. A signature over the bare
@@ -2316,7 +2322,9 @@ app.use(corsMiddleware({
 //     (human-driven, not bot-driven). 30/min is generous.
 //   - Challenge nonces: minted as part of every auth ceremony. 60/min
 //     accommodates retries + multiple methods.
-//   - Token issue / verify: per-session, low volume.
+//   - Token issue: per-session, low volume. POST /tokens/verify from a caller presenting the
+//     introspection bearer has its own per-address budget (see the route); every other verify
+//     counts against 'tokens' with the routes below.
 //   - GET /auth-methods/me: per verified account, not per IP (see the
 //     route). The relay reads it with each user's bearer from its one
 //     address, so a per-IP cap there is one budget for every relay user.
@@ -2325,7 +2333,9 @@ app.use(corsMiddleware({
 
 const authEnrollLimiter = rateLimit('auth-enroll', { windowMs: 60_000, max: 30 });
 const challengeLimiter = rateLimit('challenges', { windowMs: 60_000, max: 60 });
-const tokenLimiter = rateLimit('tokens', { windowMs: 60_000, max: 60 });
+const tokenBucket = createLimiter('tokens', { windowMs: 60_000, max: 60 });
+const tokenLimiter = limitByIp(tokenBucket);
+const introspectionBucket = createLimiter('introspection', { windowMs: 60_000, max: 600 });
 // /siwe/verify runs ECDSA recovery on every call — tighter cap than the
 // general auth-enroll limiter to keep unauthenticated CPU exhaustion off
 // the table.
@@ -2521,6 +2531,10 @@ app.get('/health', (_req, res) => {
     // Tokens are stateless (HMAC-signed) — there's no server-side count
     // to report. Caller can still trust signature + expiry + sessionEpoch.
     tokenSigningKeyOrigin: process.env['TOKEN_SIGNING_KEY'] ? 'env' : 'ephemeral',
+    // Which mode POST /tokens/verify runs in, and whether ALLOW_OPEN_INTROSPECTION=1 is set (while
+    // enforced it is only the rollback). Neither says anything about the secret's value.
+    introspection: INTROSPECTION_MODE,
+    allowOpenIntrospection: ALLOW_OPEN_INTROSPECTION,
     base: BASE_URL,
     // ★ The field is named `build` and nothing more descriptive because
     // tools/railway-redeploy.mjs reads exactly `j.build` from --verify-url, and that poll
@@ -4415,28 +4429,44 @@ app.post('/tokens', tokenLimiter, async (req, res) => {
  * Body: { token }
  * Returns: { valid, userId?, agentId?, scope?, reason? }
  */
-app.post('/tokens/verify', tokenLimiter, async (req, res) => {
-  // Introspection-secret gate. Mirrors the relay's /verify-token: when
-  // IDENTITY_INTROSPECTION_SECRET is set we require the caller to carry
-  // the same shared secret in `Authorization: Bearer <secret>`, compared
-  // timing-safe. Unset = legacy open behavior so the rollout doesn't
-  // break existing css-gate deployments before they're rewired.
-  if (IDENTITY_INTROSPECTION_SECRET) {
+app.post('/tokens/verify', async (req, res) => {
+  // Introspection-secret gate (the modes are described where IDENTITY_INTROSPECTION_SECRET is
+  // read). Which budget a request counts against:
+  //   - enforced, with the right bearer (`Authorization: Bearer <secret>`, compared as SHA-256
+  //     digests with timingSafeEqual, so the comparison has no early exit on a length mismatch):
+  //     the 'introspection' bucket, 600 a minute per address. The shared 'tokens' bucket is only
+  //     PEEKED, and refuses at `count >= max`, i.e. when one more counted request would be over:
+  //     an address that has used its 60 gets the same 429 whatever bearer it sends, so a guess
+  //     at the secret past the 60th learns nothing, exactly as when every request was counted.
+  //     (With `>`, an address at exactly 60 would get one answer that tells the right value
+  //     from a wrong one.)
+  //   - enforced without it (no bearer, another scheme, a wrong value), open, and disabled: the
+  //     'tokens' bucket, counted before any answer, as before.
+  // Every count is synchronous, before anything here awaits, as in GET /auth-methods/me, so a
+  // concurrent burst cannot slip past it.
+  const ip = clientIp(req);
+  if (INTROSPECTION_MODE === 'enforced') {
     const auth = req.headers.authorization ?? '';
-    if (!auth.startsWith('Bearer ')) {
-      res.status(401).json({ error: 'introspection bearer required' });
+    const presented = auth.startsWith('Bearer ') ? auth.slice(7) : undefined;
+    const digest = (v: string): Buffer => crypto.createHash('sha256').update(v, 'utf8').digest();
+    const authorized = presented !== undefined && crypto.timingSafeEqual(digest(presented), digest(IDENTITY_INTROSPECTION_SECRET));
+    if (!authorized) {
+      const wait = tokenBucket.hit(ip);
+      if (wait !== null) { sendRateLimited(res, tokenBucket, wait); return; }
+      res.status(401).json({ error: presented === undefined ? 'introspection bearer required' : 'introspection bearer rejected' });
       return;
     }
-    const presented = Buffer.from(auth.slice(7), 'utf8');
-    const expected = Buffer.from(IDENTITY_INTROSPECTION_SECRET, 'utf8');
-    if (presented.length !== expected.length || !crypto.timingSafeEqual(presented, expected)) {
-      res.status(401).json({ error: 'introspection bearer rejected' });
+    const sharedWait = tokenBucket.blocked(ip);
+    if (sharedWait !== null) { sendRateLimited(res, tokenBucket, sharedWait); return; }
+    const wait = introspectionBucket.hit(ip);
+    if (wait !== null) { sendRateLimited(res, introspectionBucket, wait); return; }
+  } else {
+    const wait = tokenBucket.hit(ip);
+    if (wait !== null) { sendRateLimited(res, tokenBucket, wait); return; }
+    if (INTROSPECTION_MODE === 'disabled') {
+      res.status(401).json({ error: 'token introspection is disabled — set IDENTITY_INTROSPECTION_SECRET (and have callers present it), or set ALLOW_OPEN_INTROSPECTION=1 for the legacy open oracle during migration' });
       return;
     }
-  } else if (!ALLOW_OPEN_INTROSPECTION) {
-    // Fail closed: neither a secret nor an explicit open-mode opt-in is set.
-    res.status(401).json({ error: 'token introspection is disabled — set IDENTITY_INTROSPECTION_SECRET (and have callers present it), or set ALLOW_OPEN_INTROSPECTION=1 for the legacy open oracle during migration' });
-    return;
   }
 
   const { token } = req.body;
@@ -6096,9 +6126,21 @@ app.listen(PORT, () => {
   log(`Interego Identity Server v2 started on port ${PORT}`);
   log(`Base URL: ${BASE_URL}`);
   log(`CSS URL: ${CSS_URL}`);
-  if (!IDENTITY_INTROSPECTION_SECRET && ALLOW_OPEN_INTROSPECTION) {
-    log(`WARN: token introspection is running in OPEN mode (ALLOW_OPEN_INTROSPECTION=1) — /tokens/verify is an unauthenticated oracle. Set IDENTITY_INTROSPECTION_SECRET (and have css-gate present it) to fail closed, then remove ALLOW_OPEN_INTROSPECTION.`);
-  } else if (!IDENTITY_INTROSPECTION_SECRET) {
+  if (INTROSPECTION_MODE === 'enforced') {
+    log(`Introspection: ENFORCED — /tokens/verify answers only a caller presenting IDENTITY_INTROSPECTION_SECRET as a bearer; relay and css-gate must hold the same value${ALLOW_OPEN_INTROSPECTION ? '. ALLOW_OPEN_INTROSPECTION=1 is ignored while the secret is set; remove it once both callers are confirmed' : ''}.`);
+    // The values no caller can present intact in `Authorization: Bearer <value>`, as measured on
+    // Node 20 and 22: a trailing space or tab is dropped (by fetch, and by Node's parser here), an
+    // ASCII control character other than TAB (U+0000-U+001F or U+007F) makes fetch throw and this
+    // server answer 400, and a character above U+00FF makes fetch throw and can never arrive (a
+    // header reads as Latin-1). Leading or interior spaces and tabs, and other Latin-1 characters
+    // (the C1 controls U+0080-U+009F among them), arrive intact.
+    // css-gate's startup line uses the same rule and wording.
+    if (/[\t ]$|[\x00-\x08\x0a-\x1f\x7f]|[^\x00-\xff]/.test(IDENTITY_INTROSPECTION_SECRET)) {
+      log('WARN: IDENTITY_INTROSPECTION_SECRET ends in a space or tab, or holds an ASCII control character other than TAB (U+0000-U+001F or U+007F) or a character above U+00FF; such a value cannot be sent intact in a header, so no caller can present it and /tokens/verify refuses every caller. Use 32 random bytes as hex.');
+    }
+  } else if (INTROSPECTION_MODE === 'open') {
+    log('WARN: token introspection is running in OPEN mode (ALLOW_OPEN_INTROSPECTION=1) — /tokens/verify is an unauthenticated oracle. Set IDENTITY_INTROSPECTION_SECRET on relay and css-gate first, then the same value here, then remove ALLOW_OPEN_INTROSPECTION (deploy/identity/AUTH-ARCHITECTURE.md).');
+  } else {
     log(`Introspection: FAIL-CLOSED (no IDENTITY_INTROSPECTION_SECRET, no ALLOW_OPEN_INTROSPECTION) — /tokens/verify returns 401 until one is set.`);
   }
   log(`WebAuthn RP: static id=${RP_ID} origin=${RP_ORIGIN}; per-request allowlist=[${[...RP_ALLOWLIST.keys()].join(', ') || '(none)'}]`);
