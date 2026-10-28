@@ -1,16 +1,22 @@
 /**
  * Every write of an account's auth-methods.jsonld starts from the record as the pod holds it,
  * through the routes: server.ts is started as a child process (twice, where two instances share
- * the pods as during a deploy's overlap) against a stand-in pod server that answers like
- * Community Solid Server 7.2, stock or with the PGSL accessor production runs (an ETag of
- * `"<modified ms>-application/ld+json"`; its conditions are CSS's BasicConditions.matchesMetadata:
- * If-None-Match: * fails with 412 where there is a document, If-Match fails where there is a
+ * the pods as during a deploy's overlap) against a stand-in pod server (servePods) that answers as
+ * Community Solid Server 7.2 with the PGSL accessor production runs answered the same requests when
+ * probed (S0 checks it against those answers): a document's ETag is the accessor's
+ * `"sha256:<revision>-<16 hex>"`, new at every write, identical bytes included; a PUT that creates is
+ * a 201 and one that replaces a 205; its conditions are CSS's BasicConditions.matchesMetadata
+ * (If-None-Match: * fails with 412 where there is a document, If-Match fails where there is a
  * document with another ETag, and on a missing document only If-Match: * fails: a PUT sent with
- * If-Match on an ETag creates it, and a DELETE of it is a 404 whatever its condition) and lets a
- * test hold, fail or delay its requests and edit a record out of band (the other instance, an
- * operator). It used to refuse If-Match on a missing document, which CSS does not, and so passed a
- * deletion that removed a record while a write conditional on its ETag was still pending. Passkeys come from the software authenticator in
- * tests/soft-authenticator.ts.
+ * If-Match on an ETag creates it, and a DELETE of it is a 404 whatever its condition); a pod's
+ * container is created with its first document (or its own PUT, a 409 once it exists) and stays
+ * when its documents are deleted. It lets a test hold, fail or delay its requests and edit a record
+ * out of band (the other instance, an operator). It used to refuse If-Match on a missing document,
+ * which CSS does not, and so passed a deletion that removed a record while a write conditional on
+ * its ETag was still pending; and its header said it answered like CSS with the accessor while it
+ * gave stock CSS's ETag (`"<modified ms>-application/ld+json"`), answered 201 to every PUT it
+ * applied, had no containers, and answered 205 to anything but a GET of a pod's other documents.
+ * Passkeys come from the software authenticator in tests/soft-authenticator.ts.
  *
  * The identity server keeps a 10 s copy of each account's record. Its writers used to save a
  * record built from that copy, and some were acknowledged before the pod had them; a change that
@@ -56,16 +62,32 @@ type Doc = Record<string, unknown>;
 type Logged = { method: string; userId: string; target: 'doc' | 'container'; ifMatch?: string; ifNoneMatch?: string; body?: Doc; status?: number; at: number };
 const docs = new Map<string, { doc: Doc; modified: number }>();
 let clock = Date.now();
-const etagOf = (userId: string) => { const d = docs.get(userId); return d ? `"${d.modified}-application/ld+json"` : null; };
 /**
- * Whether CSS 7.2 refuses (412) a write of `userId`'s record sent with these conditions, now
- * (BasicConditions.matchesMetadata): with no document, only If-Match: * fails.
+ * The ETag the PGSL accessor gives a document (integrations/pgsl-css-accessor NativeETagHandler):
+ * its committed revision, new at every write (identical bytes included), and the first 16 hex of
+ * the SHA-256 of its content type. `modified` stands for the revision here (each write takes a new one).
  */
-function preconditionFails(entry: { ifMatch?: string; ifNoneMatch?: string }, userId: string): boolean {
-  if (!docs.has(userId)) return entry.ifMatch === '*';
+const nativeEtag = (path: string, modified: number, contentType = 'application/ld+json') =>
+  `"sha256:${crypto.createHash('sha256').update(`${path}\0${modified}`).digest('hex')}-${crypto.createHash('sha256').update(contentType).digest('hex').slice(0, 16)}"`;
+const etagOf = (userId: string) => { const d = docs.get(userId); return d ? nativeEtag(`/${userId}/auth-methods.jsonld`, d.modified) : null; };
+/**
+ * Whether CSS 7.2 refuses (412) a write or a DELETE of a document whose ETag is `etag` (null: no
+ * document) sent with these conditions (BasicConditions.matchesMetadata): with no document, only
+ * If-Match: * fails.
+ */
+function conditionFails(entry: { ifMatch?: string; ifNoneMatch?: string }, etag: string | null): boolean {
+  if (etag === null) return entry.ifMatch === '*';
   if (entry.ifNoneMatch === '*') return true;
-  return entry.ifMatch !== undefined && entry.ifMatch !== '*' && entry.ifMatch !== etagOf(userId);
+  return entry.ifMatch !== undefined && entry.ifMatch !== '*' && entry.ifMatch !== etag;
 }
+const preconditionFails = (entry: { ifMatch?: string; ifNoneMatch?: string }, userId: string) => conditionFails(entry, etagOf(userId));
+/** The pods' other documents (an agent registry, a game's checkpoint, the root's admission ledger), by path. */
+const others = new Map<string, { body: string; contentType: string; modified: number }>();
+/** Pods whose container was created and stays: CSS keeps a container once its documents are deleted. */
+const containers = new Set<string>();
+const othersIn = (userId: string) => [...others.keys()].filter(p => p.startsWith(`/${userId}/`));
+/** A pod's container exists once it was PUT, or once a document was written in it (CSS creates it then). */
+const containerExists = (userId: string) => containers.has(userId) || docs.has(userId) || othersIn(userId).length > 0;
 const unlisted = new Set<string>();
 const failingGets = new Map<string, number>();
 const nonJson = new Set<string>();
@@ -88,13 +110,13 @@ function applyLate(ids: readonly string[]): void {
   for (const w of lateWrites.filter(x => ids.includes(x.userId))) { lateWrites.splice(lateWrites.indexOf(w), 1); w.apply(); }
 }
 const hangingContainers = new Set<string>();
-/** Pods whose container GET lists their auth-methods.jsonld (a Play owner's, which the janitor walks to purge it). */
-const listedContainers = new Set<string>();
 const requests: Logged[] = [];
 /** Requests for the pods' other documents (an account's agent registry, say), and when the client gave up one never answered. */
-const otherRequests: Array<{ method: string; path: string; at: number; abandonedAt?: number }> = [];
+const otherRequests: Array<{ method: string; path: string; at: number; status?: number; abandonedAt?: number }> = [];
 /** `<METHOD> <path>` of requests for a pod's container or other documents that are never answered. */
 const hangingOther = new Set<string>();
+/** Paths of other documents whose next N DELETEs answer 500 (and delete nothing). */
+const failingOtherDeletes = new Map<string, number>();
 let latencyMs = 0;
 /** A pod slow but still answering: each PUT (container or document) of an id this matches takes `ms`, and is then handled as usual. */
 const slowPuts: Array<{ matches: (userId: string) => boolean; ms: number }> = [];
@@ -124,19 +146,41 @@ function outOfBand(userId: string, edit: (doc: Doc) => void): void {
   edit(d.doc);
   d.modified = clock = Math.max(clock + 1, Date.now());
 }
+/** Another document of a pod, put there as the relay or a game would. */
+function putOther(path: string, body = '', contentType = 'text/turtle'): void {
+  others.set(path, { body, contentType, modified: clock = Math.max(clock + 1, Date.now()) });
+}
 const record = (userId: string) => docs.get(userId)?.doc as unknown as PodRecord | undefined;
 type PodRecord = { walletAddresses: string[]; didKeys: Array<{ did: string }>; sessionEpoch?: number; deletedAt?: string; name?: string;
+  provisionalPlayAnchor?: string; provisionalPlayPurgePending?: true;
   webAuthnCredentials: Array<{ id: string; counter: number; rpId?: string; rpOrigin?: string }> };
 const docPuts = (userId: string, since = 0) => requests.slice(since).filter(r => r.userId === userId && r.target === 'doc' && r.method === 'PUT');
 const docGets = (userId: string, since = 0) => requests.slice(since).filter(r => r.userId === userId && r.target === 'doc' && r.method === 'GET');
 const containerPuts = (userId: string, since = 0) => requests.slice(since).filter(r => r.userId === userId && r.target === 'container');
 const mark = () => requests.length;
 
+/** A container's listing as CSS writes it: `ldp:contains` with its children's relative IRIs (containers end in '/'). */
+function listing(children: readonly string[]): string {
+  return `@prefix ldp: <http://www.w3.org/ns/ldp#> .\n<> a ldp:BasicContainer${children.length ? ` ; ldp:contains ${children.map(c => `<${c}>`).join(', ')}` : ''} .\n`;
+}
+
+/**
+ * Answers as Community Solid Server 7.2 with the PGSL accessor (the production stack) answered the
+ * same requests when probed: a document's ETag is the accessor's ("sha256:<revision>-<16 hex>"), new
+ * at every write; a PUT that creates is answered 201 and one that replaces 205; conditions as
+ * conditionFails; a DELETE of a missing document is a 404 before any condition is checked; a PUT
+ * of a container that exists is a 409 (the container is left as it is), and a container is created
+ * by a PUT of a document in it and stays once its documents are deleted. Containers are the pods'
+ * own (one level); their listings and HEADs answer as CSS's do.
+ */
 async function servePods(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
   const path = new URL(req.url ?? '/', 'http://pods').pathname;
   let raw = '';
   for await (const chunk of req) raw += String(chunk);
   if (latencyMs) await sleep(latencyMs);
+  const conditions = {
+    ...(req.headers['if-match'] ? { ifMatch: String(req.headers['if-match']) } : {}),
+    ...(req.headers['if-none-match'] ? { ifNoneMatch: String(req.headers['if-none-match']) } : {}) };
   if (hangingOther.has(`${req.method} ${path}`)) {
     const other: (typeof otherRequests)[number] = { method: req.method!, path, at: Date.now() };
     otherRequests.push(other);
@@ -144,34 +188,74 @@ async function servePods(req: http.IncomingMessage, res: http.ServerResponse): P
     return;
   }
   if (path === '/') {
-    res.writeHead(200, { 'Content-Type': 'text/turtle' });
-    const listed = [...docs.keys()].filter(p => !unlisted.has(p));
-    res.end(`@prefix ldp: <http://www.w3.org/ns/ldp#> .\n<> ldp:contains ${listed.map(p => `<${p}/>`).join(', ') || '<>'} .\n`);
+    if (req.method !== 'GET' && req.method !== 'HEAD') { res.writeHead(req.method === 'PUT' ? 409 : 405).end(); return; }
+    const pods = new Set([...docs.keys(), ...containers, ...[...others.keys()].filter(p => /^\/[^/]+\//.test(p)).map(p => p.split('/')[1]!)]);
+    const children = [...[...pods].filter(p => !unlisted.has(p)).map(p => `${p}/`), ...[...others.keys()].filter(p => /^\/[^/]+$/.test(p)).map(p => p.slice(1))];
+    res.writeHead(200, { 'Content-Type': 'text/turtle' }).end(req.method === 'GET' ? listing(children) : undefined);
     return;
   }
   const container = /^\/([^/]+)\/$/.exec(path);
   if (container) {
-    requests.push({ method: req.method!, userId: container[1]!, target: 'container', at: Date.now() });
-    if (req.method === 'PUT' && slowPutFor(container[1]!)) await sleep(slowPutFor(container[1]!));
-    if (req.method === 'PUT' && hangingContainers.has(container[1]!)) return;   // never answered
-    if (req.method === 'GET' && listedContainers.has(container[1]!)) {
-      res.writeHead(200, { 'Content-Type': 'text/turtle' })
-        .end(`@prefix ldp: <http://www.w3.org/ns/ldp#> .\n<> a ldp:BasicContainer${docs.has(container[1]!) ? ' ; ldp:contains <auth-methods.jsonld>' : ''} .\n`);
+    const id = container[1]!;
+    requests.push({ method: req.method!, userId: id, target: 'container', at: Date.now() });
+    if (req.method === 'PUT' && slowPutFor(id)) await sleep(slowPutFor(id));
+    if (req.method === 'PUT' && hangingContainers.has(id)) return;   // never answered
+    if (req.method === 'PUT') {
+      if (containerExists(id)) { res.writeHead(409).end(); return; }
+      containers.add(id);
+      res.writeHead(201).end();
       return;
     }
-    res.writeHead(req.method === 'PUT' ? 201 : 404).end();
+    if (req.method === 'GET' || req.method === 'HEAD') {
+      if (!containerExists(id)) { res.writeHead(404).end(); return; }
+      const children = [...(docs.has(id) ? ['auth-methods.jsonld'] : []), ...othersIn(id).map(p => p.slice(id.length + 2))];
+      res.writeHead(200, { 'Content-Type': 'text/turtle', ETag: `"${clock}-text/turtle"` }).end(req.method === 'GET' ? listing(children) : undefined);
+      return;
+    }
+    if (req.method === 'DELETE') {
+      if (!containerExists(id)) { res.writeHead(404).end(); return; }
+      if (docs.has(id) || othersIn(id).length > 0) { res.writeHead(409).end(); return; }
+      containers.delete(id);
+      res.writeHead(205).end();
+      return;
+    }
+    res.writeHead(405).end();
     return;
   }
   const m = /^\/([^/]+)\/auth-methods\.jsonld$/.exec(path);
   if (!m) {
-    otherRequests.push({ method: req.method!, path, at: Date.now() });
-    res.writeHead(req.method === 'GET' ? 404 : 205).end();
+    const other: (typeof otherRequests)[number] = { method: req.method!, path, at: Date.now() };
+    otherRequests.push(other);
+    const answerOther = (status: number, headers: Record<string, string> = {}, body?: string) => { other.status = status; res.writeHead(status, headers).end(body); };
+    const stored = others.get(path);
+    const etag = stored ? nativeEtag(path, stored.modified, stored.contentType) : null;
+    if (req.method === 'GET' || req.method === 'HEAD') {
+      if (!stored) answerOther(404);
+      else answerOther(200, { 'Content-Type': stored.contentType, ETag: etag! }, req.method === 'GET' ? stored.body : undefined);
+      return;
+    }
+    if (req.method === 'PUT') {
+      if (conditionFails(conditions, etag)) { answerOther(412); return; }
+      others.set(path, { body: raw, contentType: String(req.headers['content-type'] ?? 'application/octet-stream').split(';')[0]!, modified: clock = Math.max(clock + 1, Date.now()) });
+      answerOther(stored ? 205 : 201);
+      return;
+    }
+    if (req.method === 'DELETE') {
+      const failing = failingOtherDeletes.get(path) ?? 0;
+      if (failing > 0) { failingOtherDeletes.set(path, failing - 1); answerOther(500); return; }
+      if (!stored) { answerOther(404); return; }
+      if (conditionFails(conditions, etag)) { answerOther(412); return; }
+      const owner = /^\/([^/]+)\//.exec(path)?.[1];
+      if (owner) containers.add(owner);   // the container stays
+      others.delete(path);
+      answerOther(205);
+      return;
+    }
+    answerOther(405);
     return;
   }
   const userId = m[1]!;
-  const entry: Logged = { method: req.method!, userId, target: 'doc', at: Date.now(),
-    ...(req.headers['if-match'] ? { ifMatch: String(req.headers['if-match']) } : {}),
-    ...(req.headers['if-none-match'] ? { ifNoneMatch: String(req.headers['if-none-match']) } : {}) };
+  const entry: Logged = { method: req.method!, userId, target: 'doc', at: Date.now(), ...conditions };
   requests.push(entry);
   const answer = (status: number, headers: Record<string, string> = {}, body = '') => { entry.status = status; res.writeHead(status, headers).end(body); };
   const snapshot = docs.get(userId) ? structuredClone(docs.get(userId)!) : undefined;
@@ -181,13 +265,18 @@ async function servePods(req: http.IncomingMessage, res: http.ServerResponse): P
     held.arrive(userId);
     await held.released;
   }
+  if (req.method === 'HEAD') {
+    const at = docs.get(userId);
+    answer(at ? 200 : 404, at ? { 'Content-Type': 'application/ld+json', ETag: nativeEtag(`/${userId}/auth-methods.jsonld`, at.modified) } : {});
+    return;
+  }
   if (req.method === 'GET') {
     const left = failingGets.get(userId) ?? 0;
     if (left > 0) { failingGets.set(userId, left - 1); answer(502); return; }
     if (nonJson.has(userId)) { answer(200, { 'Content-Type': 'application/ld+json' }, '{ "userId": "not json'); return; }
     const at = held ? snapshot : docs.get(userId);
     if (!at) answer(404);
-    else answer(200, { 'Content-Type': 'application/ld+json', ETag: `"${at.modified}-application/ld+json"` }, JSON.stringify(at.doc));
+    else answer(200, { 'Content-Type': 'application/ld+json', ETag: nativeEtag(`/${userId}/auth-methods.jsonld`, at.modified) }, JSON.stringify(at.doc));
     for (const w of applyAfterRead.filter(x => x.userId === userId)) { applyAfterRead.splice(applyAfterRead.indexOf(w), 1); w.apply(); }
     return;
   }
@@ -209,9 +298,10 @@ async function servePods(req: http.IncomingMessage, res: http.ServerResponse): P
     if (fault === '500') { answer(500); return; }
     if (fault === '403') { answer(403); return; }
     if (preconditionFails(entry, userId)) { answer(412); return; }
+    const created = !docs.has(userId);
     docs.set(userId, { doc: entry.body, modified: clock = Math.max(clock + 1, Date.now()) });
     if (fault === 'apply-then-hang') return;   // stored, and never answered: the write times out
-    answer(fault === 'apply-then-500' ? 500 : 201);
+    answer(fault === 'apply-then-500' ? 500 : created ? 201 : 205);
     return;
   }
   if (req.method === 'DELETE') {
@@ -219,6 +309,7 @@ async function servePods(req: http.IncomingMessage, res: http.ServerResponse): P
     // A missing document is a 404 before any condition is checked (DataAccessorBasedStore.deleteResource).
     if (!docs.has(userId)) { answer(404); return; }
     if (preconditionFails(entry, userId)) { answer(412); return; }
+    containers.add(userId);   // the container stays
     docs.delete(userId);
     answer(205);
     return;
@@ -659,6 +750,76 @@ after(async () => {
   await closeServer(podServer);
 });
 
+// ── S0. The stand-in itself ─────────────────────────────────────────────────────────────────
+test('S0: the stand-in pod answers as CSS 7.2 with the PGSL accessor answered the same requests when probed', async () => {
+  // Measured against the production stack (CSS 7.2.0 and integrations/pgsl-css-accessor on
+  // postgres:16). The stand-in used to give stock CSS's ETag ("<ms>-application/ld+json"), answer
+  // 201 to a PUT that replaced a document, have no containers (a container PUT was always a 201,
+  // its GET a 404) and answer 205 to anything but a GET of a pod's other documents.
+  const pods = `http://127.0.0.1:${podPort}`;
+  const send = (method: string, path: string, headers: Record<string, string> = {}, body?: string) =>
+    fetch(`${pods}${path}`, { method, headers, ...(body === undefined ? {} : { body }) });
+  const containerPut = (path: string) => send('PUT', path, { 'Content-Type': 'text/turtle', Link: '<http://www.w3.org/ns/ldp#BasicContainer>; rel="type"' }, '');
+  const json = { 'Content-Type': 'application/ld+json' };
+  const etagOfGet = async (path: string) => (await send('GET', path)).headers.get('etag');
+  const a = `zz-s0-${crypto.randomBytes(4).toString('hex')}`;
+  const b = `${a}-b`;
+  const doc = (id: string) => `/${id}/auth-methods.jsonld`;
+  const body = JSON.stringify({ userId: a, walletAddresses: [], webAuthnCredentials: [], didKeys: [] });
+  // A container: created once (201); a PUT of it again is a 409 and leaves it as it is.
+  assert.equal((await containerPut(`/${a}/`)).status, 201);
+  assert.equal((await containerPut(`/${a}/`)).status, 409);
+  assert.equal((await send('GET', `/${a}/`)).status, 200);
+  // A document: created with If-None-Match: * (201), which then fails (412).
+  assert.equal((await send('PUT', doc(a), { ...json, 'If-None-Match': '*' }, body)).status, 201);
+  assert.equal((await send('PUT', doc(a), { ...json, 'If-None-Match': '*' }, body)).status, 412);
+  const e1 = await etagOfGet(doc(a));
+  assert.match(String(e1), /^"sha256:[0-9a-f]{64}-ce807c5b456dd448"$/, 'the accessor\'s ETag: the revision, and the content type\'s digest');
+  // Replaced on its ETag (205), with a new ETag even for identical bytes; the old one is then stale.
+  assert.equal((await send('PUT', doc(a), { ...json, 'If-Match': e1! }, body)).status, 205);
+  const e2 = await etagOfGet(doc(a));
+  assert.notEqual(e2, e1);
+  assert.equal((await send('PUT', doc(a), { ...json, 'If-Match': e1! }, body)).status, 412);
+  // A missing document: If-Match: * fails, If-Match on an ETag creates it (with its container).
+  assert.equal((await send('PUT', doc(b), { ...json, 'If-Match': '*' }, body)).status, 412);
+  assert.equal((await send('GET', doc(b))).status, 404);
+  assert.equal((await send('PUT', doc(b), { ...json, 'If-Match': e2! }, body)).status, 201);
+  assert.equal((await send('PUT', doc(b), { ...json, 'If-Match': e2! }, body)).status, 412);
+  const listedB = await send('GET', `/${b}/`);
+  assert.equal(listedB.status, 200);
+  assert.match(await listedB.text(), /ldp:contains <auth-methods\.jsonld>/);
+  // A DELETE of a missing document is a 404 whatever its condition; of one, it checks it first.
+  const eb = await etagOfGet(doc(b));
+  assert.equal((await send('DELETE', doc(b), { 'If-Match': e2! })).status, 412);
+  assert.equal((await send('DELETE', doc(b), { 'If-None-Match': '*' })).status, 412);
+  assert.equal((await send('DELETE', doc(b), { 'If-Match': eb! })).status, 205);
+  assert.equal((await send('GET', doc(b))).status, 404);
+  assert.equal((await send('DELETE', doc(b), { 'If-Match': eb! })).status, 404);
+  assert.equal((await send('DELETE', doc(b), { 'If-Match': '*' })).status, 404);
+  // Its container stays, listing nothing.
+  const after = await send('GET', `/${b}/`);
+  assert.equal(after.status, 200);
+  assert.doesNotMatch(await after.text(), /auth-methods/);
+  assert.equal((await containerPut(`/${b}/`)).status, 409);
+  // A pod's other document: 404 until written (201), then replaced (205), deleted (205), 404 again.
+  assert.equal((await send('DELETE', `/${a}/agents`)).status, 404);
+  assert.equal((await send('HEAD', `/${a}/agents`)).status, 404);
+  assert.equal((await send('PUT', `/${a}/agents`, { 'Content-Type': 'text/turtle' }, '')).status, 201);
+  assert.match(String(await etagOfGet(`/${a}/agents`)), /^"sha256:[0-9a-f]{64}-d295df4e11ae61a5"$/);
+  assert.equal((await send('PUT', `/${a}/agents`, { 'Content-Type': 'text/turtle' }, '')).status, 205);
+  assert.match(await (await send('GET', `/${a}/`)).text(), /ldp:contains <auth-methods\.jsonld>, <agents>/);
+  assert.equal((await send('DELETE', `/${a}/agents`)).status, 205);
+  assert.equal((await send('DELETE', `/${a}/agents`)).status, 404);
+  // The root lists both pods, as containers.
+  const root = await (await send('GET', '/')).text();
+  assert.ok(root.includes(`<${a}/>`) && root.includes(`<${b}/>`), root);
+  // Out of the way of every test after this one, its requests included (I4 checks that no record
+  // was ever removed).
+  for (const id of [a, b]) { docs.delete(id); containers.delete(id); unlisted.add(id); }
+  for (let i = requests.length - 1; i >= 0; i--) if (requests[i]!.userId.startsWith(a)) requests.splice(i, 1);
+  for (let i = otherRequests.length - 1; i >= 0; i--) if (otherRequests[i]!.path.startsWith(`/${a}`)) otherRequests.splice(i, 1);
+});
+
 // ── A. Edits made by another instance or an operator, within this server's 10 s ─────────────
 test('A1: a passkey sign-in writes only its counter into the record as the pod holds it', async () => {
   const [p1, p2] = a1.keys;
@@ -802,7 +963,7 @@ test('A9: a write that meets another writer\'s change between its read and its w
     assert.equal(r.status, 200, `${userId}: ${JSON.stringify(r.json)}${out()}`);
     assert.deepEqual(record(userId)!.didKeys.map(x => x.did), [k.did], userId);
     const puts = docPuts(userId, since);
-    assert.deepEqual(puts.map(p => p.status), [412, 201], `${userId}: a stale write refused, then one built on the new record`);
+    assert.deepEqual(puts.map(p => p.status), [412, 205], `${userId}: a stale write refused, then one built on the new record`);
     return r;
   };
   // A passkey sign-in still signs in, its check run again on the new record.
@@ -1600,6 +1761,10 @@ describe('writes the pod never answers', { concurrency: true }, () => {
     // has sent one, so that fence gets no answer and its document is never sent.
     const w = W();
     const id = deriveUserIdFromWallet(w.address.toLowerCase());
+    // Its container exists once the create's container PUT is answered, so the pod lists it: kept
+    // out of the startup scan of an instance another case starts meanwhile, whose read of the record
+    // would show up among the requests counted here.
+    unlisted.add(id);
     failPuts(id, 'hang');
     const put = hold('PUT', id, 1, () => { hangingContainers.add(id); });
     void put.arrived.then(() => put.release());
@@ -2002,7 +2167,6 @@ test('C13, J6: one request the pod never answers holds an account\'s lock for no
   const port = await freePort();
   docs.set(expiredPlay.id, { modified: clock = Math.max(clock + 1, Date.now()), doc: { userId: expiredPlay.id, name: 'Play guest',
     walletAddresses: [], webAuthnCredentials: [], didKeys: [], provisionalPlayAnchor: expiredAnchor(`http://127.0.0.1:${port}`) } });
-  listedContainers.add(expiredPlay.id);
   const registry = `/${expiredPlay.id}/agents`;
   hangingOther.add(`DELETE ${registry}`);
   const janitor = await startIdentity(port, { JANITOR_INTERVAL_MS: '1000',
@@ -2037,10 +2201,10 @@ test('C16: the janitor writes a Play owner\'s tombstone on the ETag it checked b
   const port = await freePort();
   docs.set(fencedPlay.id, { modified: clock = Math.max(clock + 1, Date.now()), doc: { userId: fencedPlay.id, name: 'Play guest',
     walletAddresses: [], webAuthnCredentials: [], didKeys: [], provisionalPlayAnchor: expiredAnchor(`http://127.0.0.1:${port}`, fencedPlay) } });
-  listedContainers.add(fencedPlay.id);
-  // Once the purge has listed the pod, its next read of the anchor is the janitor's last check
-  // (stillUnclaimed). An enrolment lands right after that read is answered (the other instance's,
-  // during a deploy's overlap): the record the check approved is no longer the pod's.
+  // Once the purge has listed the pod, its next read of the record is the deletion's own read under
+  // the lock (deleteUserCompletely, checked by stillDeletable). An enrolment lands right after that
+  // read is answered (the other instance's, during a deploy's overlap): the record the check
+  // approved is no longer the pod's.
   const key = P();
   const listed = (id: string) => id === fencedPlay.id && requests.some(r => r.userId === id && r.target === 'container' && r.method === 'GET');
   const check = hold('GET', listed, 1, id => outOfBand(id, d => { (d['webAuthnCredentials'] as unknown[]).push(stored(key)); }));
@@ -2061,7 +2225,93 @@ test('C16: the janitor writes a Play owner\'s tombstone on the ETag it checked b
   } finally {
     check.release();
     await janitor.stop();
-    listedContainers.delete(fencedPlay.id);
+  }
+});
+
+test('P9: a Play purge that fails part-way is finished, at the janitor\'s next pass and after a restart: the account it closed is not forgotten with its pod half purged', { timeout: 90_000 }, async () => {
+  // The janitor closes an expired unclaimed owner (its tombstone, marked as a purge not yet
+  // finished) and then deletes the pod's other resources. One DELETE fails once (`once`), and one
+  // fails until the instance restarts (`stuck`). It used to forget the owner as soon as it was
+  // closed: its sweep walks only the accounts it holds and a tombstone loads none, so the resource
+  // a failed DELETE left stayed for good, through every later pass and every restart.
+  const port = await freePort();
+  const issuer = `http://127.0.0.1:${port}`;
+  const once = playOwner();
+  const stuck = playOwner();
+  const checkpointOf = (o: { id: string }) => `/${o.id}/checkpoint.json`;
+  for (const o of [once, stuck]) {
+    docs.set(o.id, { modified: clock = Math.max(clock + 1, Date.now()), doc: { userId: o.id, name: 'Play guest',
+      walletAddresses: [], webAuthnCredentials: [], didKeys: [], provisionalPlayAnchor: expiredAnchor(issuer, o) } });
+    putOther(checkpointOf(o), '{}', 'application/json');
+  }
+  failingOtherDeletes.set(checkpointOf(once), 1);
+  failingOtherDeletes.set(checkpointOf(stuck), 1_000);
+  const deletesOf = (o: { id: string }) => otherRequests.filter(r => r.method === 'DELETE' && r.path === checkpointOf(o));
+  const gone = (path: string) => (others.has(path) ? undefined : true);
+  let janitor = await startIdentity(port, { JANITOR_INTERVAL_MS: '1000' });
+  try {
+    assert.ok(await waitFor(() => gone(checkpointOf(once)), 20_000),
+      `the checkpoint a failed DELETE left was never deleted (${deletesOf(once).length} DELETE(s))${out(janitor)}`);
+    assert.deepEqual(deletesOf(once).map(r => r.status), [500, 205], 'refused once, then sent again at the next pass');
+    assert.ok(await waitFor(() => (record(once.id)?.provisionalPlayPurgePending ? undefined : true), 5_000), 'the mark is cleared once the purge is done');
+    assert.ok(record(once.id)!.deletedAt, 'the record stays, as the tombstone');
+    assert.ok(await waitFor(() => deletesOf(stuck).length >= 2 || undefined, 10_000), `a purge whose DELETE failed was not tried again${out(janitor)}`);
+    assert.ok(record(stuck.id)!.deletedAt, 'the account is closed');
+    assert.equal(record(stuck.id)!.provisionalPlayPurgePending, true, 'and its tombstone says its purge is unfinished');
+    assert.match(janitor.output(), new RegExp(`purge of ${stuck.id} unfinished`));
+    assert.doesNotMatch(janitor.output(), new RegExp(`kept ${stuck.id}`), 'an owner whose account is closed is not logged as kept');
+  } finally {
+    await janitor.stop();
+  }
+  // Nothing loads a closed account at the restart, but the startup scan finds the mark.
+  failingOtherDeletes.delete(checkpointOf(stuck));
+  const before = deletesOf(stuck).length;
+  janitor = await startIdentity(port, { JANITOR_INTERVAL_MS: '1000' });
+  try {
+    assert.ok(await waitFor(() => gone(checkpointOf(stuck)), 15_000), `the restarted janitor never finished the purge${out(janitor)}`);
+    assert.equal(deletesOf(stuck).length, before + 1);
+    assert.ok(await waitFor(() => (record(stuck.id)?.provisionalPlayPurgePending ? undefined : true), 5_000));
+    assert.ok(record(stuck.id)!.deletedAt);
+  } finally {
+    await janitor.stop();
+  }
+});
+
+test('P10: a Play owner its guest deleted through the other instance is only forgotten by this instance\'s janitor, never purged: that owner may be provisioned again over its tombstone, and its pod stays whole', { timeout: 60_000 }, async () => {
+  // The other instance's provisioning replaces a deletion's tombstone on its ETag, with the owner's
+  // original anchor, until its guest deadline, and does not wait for this server's lock. The janitor
+  // here used to purge any tombstone it found (writing nothing first), so a guest who bootstrapped
+  // again meanwhile lost its checkpoint and its agent registry.
+  const port = await freePort();
+  const guest = livePlayGuest(`http://127.0.0.1:${port}`);   // its anchor has an hour left
+  const anchor = record(guest.id)!.provisionalPlayAnchor;
+  putOther(`/${guest.id}/checkpoint.json`, '{}', 'application/json');
+  putOther(`/${guest.id}/agents`);
+  const janitor = await startIdentity(port, { JANITOR_INTERVAL_MS: '1000', CSS_PUBLIC_URL: 'https://pods.example/', PROVISIONAL_PLAY_CLIENTS: PLAY_CLIENTS });
+  const since = mark();
+  const otherSince = otherRequests.length;
+  try {
+    // The guest deletes the owner through the other instance: a deletion's tombstone (deletionTombstone).
+    outOfBand(guest.id, d => {
+      for (const k of Object.keys(d)) delete d[k];
+      Object.assign(d, { userId: guest.id, name: guest.id, walletAddresses: [], webAuthnCredentials: [], didKeys: [], sessionEpoch: 1, deletedAt: '2026-10-28' });
+    });
+    const tombstoned = mark();
+    // Its sweep reads the tombstone, and so does the purge's close under the owner's lock.
+    assert.ok(await waitFor(() => docGets(guest.id, tombstoned).length >= 2 || undefined, 10_000), `the janitor never read the tombstone${out(janitor)}`);
+    await sleep(1_200);
+    const deleted = () => otherRequests.slice(otherSince).filter(r => r.method === 'DELETE' && r.path.startsWith(`/${guest.id}/`)).map(r => r.path);
+    assert.deepEqual(deleted(), [], 'nothing of the pod is deleted, its agent registry included');
+    assert.match(janitor.output(), new RegExp(`forgot ${guest.id}`));
+    // The guest bootstraps again through the other instance: its provisioning puts the original anchor back.
+    outOfBand(guest.id, d => { delete d['deletedAt']; Object.assign(d, { name: 'Play guest', provisionalPlayAnchor: anchor, provisionalPlayReceipts: [] }); });
+    await sleep(1_200);
+    assert.deepEqual(deleted(), [], 'nor after it is provisioned again');
+    assert.ok(others.has(`/${guest.id}/checkpoint.json`) && others.has(`/${guest.id}/agents`));
+    assert.deepEqual(docPuts(guest.id, since), [], 'and nothing is written');
+    assert.equal(record(guest.id)!.provisionalPlayAnchor, anchor, 'the owner provisioned again is whole');
+  } finally {
+    await janitor.stop();
   }
 });
 
@@ -3108,7 +3358,7 @@ test('I7: the tombstone a first sign-in leaves on a pod deleted before tombstone
   assert.equal(r.status, 409, `${JSON.stringify(r.json)}${out()}`);
   assert.ok(record(k.userId)!.deletedAt, 'tombstone');
   assert.equal(record(k.userId)!.sessionEpoch, 5);
-  assert.deepEqual(docPuts(k.userId, since).map(p => [p.ifMatch, p.status]), [[etag, 201]]);
+  assert.deepEqual(docPuts(k.userId, since).map(p => [p.ifMatch, p.status]), [[etag, 205]]);
   assert.match(primary.output(), new RegExp(`identity_deleted_before_tombstone userId=${k.userId} evidence=auth-methods.jsonld without credentials`));
 
   // Another writer (the other instance) puts a wallet on such a record while the tombstone is on

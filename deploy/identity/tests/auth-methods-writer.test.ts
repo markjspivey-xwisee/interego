@@ -56,6 +56,9 @@ function serverLock() {
  * conditions are Community Solid Server 7.2's (BasicConditions.matchesMetadata), the live store's:
  * If-None-Match: * fails where there is a document, and If-Match on an ETag fails only where there
  * is a document with another ETag. On a missing document it is applied, as only If-Match: * fails there.
+ * Every write takes a new ETag, as the live store's does (CSS 7.2 with the PGSL accessor, probed:
+ * identical bytes included). The ETag's spelling (`"<version>-application/ld+json"`) is not the live
+ * store's (`"sha256:<revision>-<16 hex>"`); nothing here reads it but to send it back.
  */
 function pod(initial: (Record_ & Record<string, unknown>) | null, userId = 'u-pk-000000000001') {
   let doc: (Record_ & Record<string, unknown>) | null = initial ? structuredClone(initial) : null;
@@ -66,7 +69,9 @@ function pod(initial: (Record_ & Record<string, unknown>) | null, userId = 'u-pk
   let readFailures = 0;
   let writeFailures = 0;
   let applyThenFail = false;
-  // A store whose ETag does not change on a write (the same for the same content, say).
+  // A store whose ETag does not change on a write (the same for the same content, say). Not the live
+  // one, whose ETag moved at every write when probed, identical bytes included: this is for settle's
+  // last check, which a store like that would reach.
   let etagSticks = false;
   let beforeWrite: (() => void) | null = null;
   // Writes the pod never answers ('hang', the client times out), and when each would still be
@@ -309,8 +314,9 @@ test('a create whose fence\'s container PUT gets no answer stops settling there,
 
 test('a fence that leaves the record where the write found it settles nothing: the copy expires and the error carries the pending condition', async () => {
   // The fence is answered with an error the pod did not apply (a 500), so the record has not moved;
-  // and a store whose ETag stays the same takes the fence ('ok') without moving it either. Either
-  // way the held write's condition still holds, and it can still land.
+  // and a store whose ETag stays the same (unlike the live one, whose ETag moves at every write)
+  // takes the fence ('ok') without moving it either. Either way the held write's condition still
+  // holds, and it can still land.
   const refused = pod(account());
   refused.hang('later');
   refused.failWrites(1);

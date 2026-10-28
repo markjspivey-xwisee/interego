@@ -39,7 +39,7 @@ type Methods = {
   userId: string; provisionalPlayAnchor?: string;
   webAuthnCredentials: Array<{ id: string; counter?: number; publicKey?: string }>;
   walletAddresses: string[]; didKeys: Array<{ did: string }>;
-  sessionEpoch?: number; deletedAt?: string;
+  sessionEpoch?: number; deletedAt?: string; provisionalPlayPurgePending?: true;
 };
 const hasAnyCredential = (m: Methods) => m.webAuthnCredentials.length + m.walletAddresses.length + m.didKeys.length > 0;
 const empty = (owner = userId): Methods => ({ userId: owner, webAuthnCredentials: [], walletAddresses: [], didKeys: [] });
@@ -73,6 +73,8 @@ function fixture() {
   const { withIdentityPodMutex, assertLockHeld } = productionLock();
   let beforePersist: () => Promise<void> = async () => {};
   let beforeDelete: () => Promise<void> = async () => {};
+  // DELETEs of the pod's resources by the purge that the pod answers 500 (the next N).
+  let failingDeletes = 0;
   let duringVerification: () => Promise<void> = async () => {};
   let duringAccountDelete: () => Promise<void> = async () => {};
   const etag = () => `"${version}-application/ld+json"`;
@@ -186,31 +188,43 @@ function fixture() {
     return { response, run: (params = {}, body = {}) => run({ params, body }, response) as Promise<void> };
   };
   const root = `https://css.test/${userId}/`;
-  // The janitor's purge, as server.ts makes it: the account is closed (its tombstone written on the
-  // ETag of the record checked) before anything is deleted, and its record stays.
-  const cleanup = () => withIdentityPodMutex(userId, () => purgeProvisionalPlayPod({
-    userId, cssUrl: 'https://css.test/',
-    close: async () => !(await deleteUserCompletely(userId, { lockHeld: true, stillDeletable: playOwnerPurgeable })).kept,
-    fetcher: (async (input: string | URL | Request, init?: RequestInit) => {
-      const url = String(input);
-      if (init?.method === 'DELETE') {
-        await beforeDelete();
-        deletions.push(url);
-        if (url === root + 'checkpoint') checkpoint = false;
-        if (url === root + 'auth-methods.jsonld') document = null;
-        return new Response(null, { status: 205 });
-      }
-      return new Response(`<${root}> ldp:contains <${root}checkpoint>, <${root}auth-methods.jsonld>.`);
-    }) as typeof fetch,
-  }));
+  const fetcher = (async (input: string | URL | Request, init?: RequestInit) => {
+    const url = String(input);
+    if (init?.method === 'DELETE') {
+      await beforeDelete();
+      if (failingDeletes > 0) { failingDeletes--; return new Response(null, { status: 500 }); }
+      deletions.push(url);
+      if (url === root + 'checkpoint') checkpoint = false;
+      if (url === root + 'auth-methods.jsonld') document = null;
+      return new Response(null, { status: 205 });
+    }
+    return new Response(`<${root}> ldp:contains <${root}checkpoint>, <${root}auth-methods.jsonld>.`);
+  }) as typeof fetch;
+  // The janitor's purge, exactly as server.ts makes it (purgePlayOwner): the account is closed (its
+  // tombstone, marked as a purge not yet finished, written on the ETag of the record checked) before
+  // anything is deleted, the mark is cleared once everything else is, and the record stays.
+  const janitorLog: string[] = [];
+  const unfinishedPlayPurges = new Set<string>();
+  const finishPlayPurge = new Function('applyUpdate', 'NoWrite', 'Write', 'isTombstone', 'authMethodsCache', 'removeFromIndexes',
+    `${productionFunction('finishPlayPurge')}; return finishPlayPurge;`)(
+    applyUpdate, NoWrite, Write, isTombstone, authMethodsCache, () => {});
+  const purgePlayOwner = new Function('withIdentityPodMutex', 'purgeProvisionalPlayPod', 'CSS_URL', 'deleteUserCompletely',
+    'playOwnerPurgeable', 'unfinishedPlayPurges', 'finishPlayPurge', 'log',
+    `${productionFunction('purgePlayOwner')}; return purgePlayOwner;`)(
+    withIdentityPodMutex, (o: Parameters<typeof purgeProvisionalPlayPod>[0]) => purgeProvisionalPlayPod({ ...o, fetcher }),
+    'https://css.test/', deleteUserCompletely, playOwnerPurgeable, unfinishedPlayPurges, finishPlayPurge,
+    (line: string) => { janitorLog.push(line); },
+  ) as (owner: string) => Promise<void>;
+  const cleanup = () => purgePlayOwner(userId);
   return {
-    commit, authenticate, signIn, cleanup, control, deletions,
+    commit, authenticate, signIn, cleanup, control, deletions, janitorLog, unfinishedPlayPurges,
     get document() { return document; }, get cached() { return cached; },
     get checkpoint() { return checkpoint; }, get puts() { return puts; }, get installs() { return installs; },
     get openCalls() { return openCalls; },
     set now(value: number) { now = value; },
     set beforePersist(value: () => Promise<void>) { beforePersist = value; },
     set beforeDelete(value: () => Promise<void>) { beforeDelete = value; },
+    set failingDeletes(value: number) { failingDeletes = value; },
     set duringVerification(value: () => Promise<void>) { duringVerification = value; },
     set duringAccountDelete(value: () => Promise<void>) { duringAccountDelete = value; },
     /** An edit by another writer (the other instance, an operator): the ETag moves on. */
@@ -259,8 +273,48 @@ test('cleanup that wins the lock cannot be followed by successful enrollment or 
   assert.equal(hasAnyCredential(f.document!), false);
   assert.equal(f.document!.provisionalPlayAnchor, undefined);
   assert.equal(f.checkpoint, false);
-  assert.equal(f.puts, 1, 'the tombstone, and nothing after it');
+  // The tombstone marked as a purge not yet finished, then, once the checkpoint is deleted, the same
+  // tombstone without the mark: nothing else, and nothing that lists a credential.
+  assert.equal(f.puts, 2, 'the tombstone, and the same one once the purge is finished');
+  assert.equal(f.document!.provisionalPlayPurgePending, undefined, 'a finished purge leaves no mark');
+  assert.equal(f.unfinishedPlayPurges.size, 0);
   assert.equal(f.deletions.includes(`https://css.test/${userId}/auth-methods.jsonld`), false);
+});
+
+test('a purge whose deletion fails stays open for the next pass: the account is closed and its tombstone marked, and the next pass deletes the rest and clears the mark', async () => {
+  const f = fixture();
+  f.now = 20;
+  f.failingDeletes = 1;
+  await f.cleanup();
+  assert.equal(f.checkpoint, true, 'the pod refused the DELETE');
+  assert.equal(typeof f.document!.deletedAt, 'string', 'the account is closed');
+  assert.equal(f.document!.provisionalPlayPurgePending, true, 'its tombstone says the purge is unfinished, for a restart');
+  assert.deepEqual([...f.unfinishedPlayPurges], [userId], 'and the janitor comes back to it at its next pass');
+  assert.match(f.janitorLog.join('\n'), /purge of u-try-play-1+ unfinished/);
+  assert.doesNotMatch(f.janitorLog.join('\n'), /kept/, 'an owner closed is not logged as kept');
+  // It used to forget the owner once it was closed, and the checkpoint stayed for good.
+  const puts = f.puts;
+  await f.cleanup();
+  assert.equal(f.checkpoint, false);
+  assert.equal(f.puts, puts + 1, 'the account is not closed again: only the mark is cleared');
+  assert.equal(f.document!.provisionalPlayPurgePending, undefined);
+  assert.equal(typeof f.document!.deletedAt, 'string');
+  assert.equal(f.unfinishedPlayPurges.size, 0);
+});
+
+test('a deletion\'s tombstone is not purged: its owner may be provisioned again over it until its guest deadline, so the janitor only forgets it', async () => {
+  // The guest deleted the owner through the other instance, its anchor still open (now 0 < 10).
+  // That instance's provisioning does not wait for this server's lock, so a purge here could
+  // delete the resources of the owner provisioned again meanwhile. It used to be purged.
+  const f = fixture();
+  f.outOfBand(m => { delete m.provisionalPlayAnchor; m.sessionEpoch = 1; m.deletedAt = '2026-10-28'; });
+  const puts = f.puts;
+  await f.cleanup();
+  assert.equal(f.checkpoint, true);
+  assert.deepEqual(f.deletions, [], 'nothing of the pod is deleted, its agent registry included');
+  assert.equal(f.puts, puts, 'and nothing is written');
+  assert.equal(f.unfinishedPlayPurges.size, 0);
+  assert.match(f.janitorLog.join('\n'), /forgot u-try-play-1+/);
 });
 
 test('a failed durable enrollment never exposes a credential through cache or success', async () => {

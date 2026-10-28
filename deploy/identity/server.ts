@@ -612,6 +612,12 @@ interface AuthMethods {
    * derived id may never be opened again; see deletionTombstone.
    */
   deletedAt?: string;
+  /**
+   * Set (true) on the tombstone the janitor writes when it purges a Play owner, until every other
+   * resource of the pod is deleted (purgePlayOwner): a purge that fails part-way is retried from
+   * it, at the next pass and after a restart (loadAccountFromPod). A deletion's tombstone has none.
+   */
+  provisionalPlayPurgePending?: true;
 }
 
 function emptyAuthMethods(userId: string, name = userId, agentId?: string): AuthMethods {
@@ -713,6 +719,14 @@ const podLockContext = new AsyncLocalStorage<ReadonlyMap<string, { held: boolean
 // editing its tombstone into a record that lists a credential (see the Deletion tombstone
 // block) and restarts the process to clear this.
 const deletedUserIds = new Set<string>();
+
+// Play owners whose purge by the janitor closed the account (its tombstone written, marked
+// provisionalPlayPurgePending) but did not delete every other resource of the pod: a DELETE failed,
+// or the process stopped. The janitor tries each again at its next pass (purgePlayOwner), and the
+// startup scan finds the marked tombstone again after a restart (loadAccountFromPod), so a purge
+// that fails part-way is retried, never dropped: the account, closed, is no longer in `identities`,
+// which is all the janitor's sweep walks.
+const unfinishedPlayPurges = new Set<string>();
 
 async function withIdentityPodMutex<T>(userId: string, fn: () => Promise<T>): Promise<T> {
   const outer = podLockContext.getStore();
@@ -921,7 +935,9 @@ async function reconcileAfterWriteFailure(userId: string, err: unknown, pre: Wri
  * An account deleted in this process is settled as it is, with nothing read or written. Its
  * deletion already moved the record off every state a write still pending there could apply to:
  * the tombstone is written on the ETag read, or with If-None-Match: * where there was no document
- * (a write that landed first makes it read again), and stays, for every id (deleteUserCompletely).
+ * (a write that landed first makes it read again), and stays (deleteUserCompletely never removes
+ * one, for any id; a Play owner's, which is never marked deleted here, is replaced only by its
+ * provisioning, on its ETag, which a pending write cannot match either).
  * A pending write is conditional on an ETag the record had before the tombstone, or on there
  * being no document; the tombstone is a document with an ETag of its own, so neither can hold
  * again, and no such write can land afterwards, before a restart or after one. (The record is
@@ -1120,9 +1136,12 @@ function playOwnerWritable(userId: string, m: AuthMethods): boolean {
 }
 
 /**
- * Whether the janitor may close a Play owner whose record is `m`: unclaimed (no credential) with
- * its guest deadline passed, or closed already (a tombstone: a deletion whose memory was not
- * cleared here). A record whose anchor cannot be opened is kept.
+ * Whether the janitor visits a Play owner whose record is `m` (purgePlayOwner): unclaimed (no
+ * credential) with its guest deadline passed, which it closes and purges; or closed already (a
+ * tombstone), which it does not close again: one its own purge left marked (an unfinished purge)
+ * it finishes, and a deletion's (the other instance's, whose memory was not cleared here) it only
+ * forgets, leaving the pod alone. A record whose anchor cannot be opened is kept. As a deletion's
+ * `stillDeletable` it is never asked about a tombstone (deleteUserCompletely finds those first).
  */
 function playOwnerPurgeable(m: AuthMethods): boolean {
   if (isTombstone(m)) return true;
@@ -1719,6 +1738,7 @@ function normaliseAuthMethods(raw: unknown, userId: string): AuthMethods {
     ...(typeof src.provisionalPlayAnchor === 'string' ? { provisionalPlayAnchor: src.provisionalPlayAnchor } : {}),
     ...(Array.isArray(src.provisionalPlayReceipts) ? { provisionalPlayReceipts: src.provisionalPlayReceipts } : {}),
     ...(typeof src.deletedAt === 'string' ? { deletedAt: src.deletedAt } : {}),
+    ...(src.provisionalPlayPurgePending === true ? { provisionalPlayPurgePending: true as const } : {}),
   };
 }
 
@@ -1751,8 +1771,9 @@ function isTombstone(m: AuthMethods): boolean {
   return typeof m.deletedAt === 'string';
 }
 
-function deletionTombstone(userId: string, sessionEpoch: number): AuthMethods {
-  return { ...emptyAuthMethods(userId), sessionEpoch: sessionEpoch + 1, deletedAt: new Date().toISOString().slice(0, 10) };
+function deletionTombstone(userId: string, sessionEpoch: number, purgePending = false): AuthMethods {
+  return { ...emptyAuthMethods(userId), sessionEpoch: sessionEpoch + 1, deletedAt: new Date().toISOString().slice(0, 10),
+    ...(purgePending ? { provisionalPlayPurgePending: true as const } : {}) };
 }
 
 // One refresh of an account's copy at a time: every reader that finds the entry stale while a
@@ -1965,6 +1986,8 @@ async function loadAccountFromPod(userId: string): Promise<boolean> {
   }
   if (body === null) return false;
   const m = normaliseAuthMethods(body, userId);
+  // A janitor's purge of this Play owner that did not finish (purgePlayOwner): its next pass does.
+  if (isTombstone(m) && m.provisionalPlayPurgePending && userId.startsWith('u-try-play-')) unfinishedPlayPurges.add(userId);
   if (!holdsAnAccount(userId, m)) return false;
   return adoptAccount(userId, m);
 }
@@ -6248,26 +6271,37 @@ app.post('/tokens/me/sign-out-everywhere', tokenLimiter, async (req, res) => {
  * time it is read: a 412 reads it again); when it fails nothing is changed and `kept` is set (the
  * janitor's decision was made on this server's copy, or before an enrolment the other instance
  * made). A tombstone already there is a closed account, whatever `stillDeletable` says.
+ *
+ * `playPurge`: the janitor's purge of a Play owner (purgePlayOwner). The tombstone it writes is
+ * marked (provisionalPlayPurgePending) until the purge has deleted the pod's other resources, and
+ * `purgePending` in the result says the record is such a tombstone (written now, or left by an
+ * earlier pass whose deletions did not all succeed), so the purge goes on. A tombstone it finds
+ * unmarked is a deletion's (the other instance's) or a finished purge's: the account is only
+ * forgotten here, and nothing of the pod is touched, its registry included.
  */
-type DeletionResult = { agents: string[]; tombstoned: true; kept?: true; podCleanup: { agents: number } };
+type DeletionResult = { agents: string[]; tombstoned: true; kept?: true; purgePending?: true; podCleanup: { agents: number } };
 async function deleteUserCompletely(
   userId: string,
-  opts: { lockHeld?: boolean; stillDeletable?: (methods: AuthMethods) => boolean } = {},
+  opts: { lockHeld?: boolean; stillDeletable?: (methods: AuthMethods) => boolean; playPurge?: true } = {},
 ): Promise<DeletionResult> {
   const podCleanup = { agents: 0 };
+  // The tombstone the pod holds once the account is closed: the one written here, or one found.
+  let closedOn: AuthMethods | null = null;
   const close = async (): Promise<boolean> => {
     // Above every epoch a token was issued or checked under: the pod's and this server's copy's.
     const cachedEpoch = authMethodsCache.get(userId)?.value.sessionEpoch ?? 0;
     try {
       const outcome = await applyUpdate(userId, 'delete-account', (draft, live) => {
+        closedOn = null;
         // Closed already (a deletion the pod took without confirming it, retried; or the
         // other instance's): nothing to write, and what follows clears this server's memory.
-        if (live && isTombstone(live)) return NoWrite('closed');
+        if (live && isTombstone(live)) { closedOn = live; return NoWrite('closed'); }
         // Kept: the writer makes this server's copy what the pod holds, so the next decision sees it.
         if (opts.stillDeletable && !opts.stillDeletable(live ?? emptyAuthMethods(userId))) return NoWrite('kept');
-        const tombstone = deletionTombstone(userId, Math.max(live?.sessionEpoch ?? 0, cachedEpoch));
+        const tombstone = deletionTombstone(userId, Math.max(live?.sessionEpoch ?? 0, cachedEpoch), opts.playPurge === true);
         for (const k of Object.keys(draft)) delete (draft as unknown as Record<string, unknown>)[k];
         Object.assign(draft, tombstone);
+        closedOn = tombstone;
         return Write;
       }, { tombstone: 'replace', absent: 'create' });
       if (outcome.written === false && outcome.reason === 'kept') return false;
@@ -6278,6 +6312,7 @@ async function deleteUserCompletely(
       // and the account stays whole, here and on the pod.
       const after = err instanceof AuthMethodsWriteError ? err.podRecord as AuthMethods | null | undefined : undefined;
       if (!after || !isTombstone(after)) throw err;
+      closedOn = after;
       log(`WARN: deletion of ${userId}: the pod took the tombstone without confirming it (${(err as Error).message})`);
     }
     if (!userId.startsWith('u-try-play-')) deletedUserIds.add(userId);
@@ -6296,6 +6331,7 @@ async function deleteUserCompletely(
     closed = await withIdentityPodMutex(userId, close);
   }
   if (!closed) return { agents: [], tombstoned: true, kept: true, podCleanup };
+  const purgePending = (closedOn as AuthMethods | null)?.provisionalPlayPurgePending === true;
 
   const ownedAgentIds = [...identities.values()]
     .filter(i => i.type === 'agent' && i.owner === userId)
@@ -6311,6 +6347,11 @@ async function deleteUserCompletely(
   surfaceAgentRestores.forgetUser(userId);
   podRegistryCache.delete(userId);
 
+  // The janitor's purge that found a deletion's tombstone (one no purge marked: the other
+  // instance's deletion, whose memory was not cleared here) only forgets the account: that
+  // deletion removed the registry, and its owner may be provisioned again until its guest deadline
+  // (provisional-play-store.ts), so a registry here now may be the relay's for the reopened owner.
+  if (opts.playPurge && !purgePending) return { agents: ownedAgentIds, tombstoned: true, podCleanup };
   // Bounded like every request of this function: the janitor's purge of a Play owner makes it
   // holding the owner's lock (lockHeld), and the route's answer waits for it.
   try {
@@ -6318,7 +6359,70 @@ async function deleteUserCompletely(
     podCleanup.agents = r.status;
   } catch { /* best-effort */ }
 
-  return { agents: ownedAgentIds, tombstoned: true, podCleanup };
+  return { agents: ownedAgentIds, tombstoned: true, ...(purgePending ? { purgePending: true as const } : {}), podCleanup };
+}
+
+/**
+ * The janitor's purge of a Play owner (provisional-play-cleanup.ts), under the owner's lock. Nothing
+ * is deleted until the account is closed: its tombstone written on the ETag of the record checked
+ * under this lock (deleteUserCompletely, playPurge), so an enrolment that lands after the read (the
+ * other instance's) makes that write fail, and the record read again keeps the account. The
+ * tombstone is marked (provisionalPlayPurgePending) and the owner is put in unfinishedPlayPurges
+ * before the pod's other resources are deleted; once they all are, the mark is cleared
+ * (finishPlayPurge) and the owner taken out. A deletion that fails leaves both, and the next pass
+ * (or, after a restart, the startup scan) comes back to it: the account is already closed, so
+ * close() finds the marked tombstone, writes nothing, and the remaining deletions are sent again.
+ * It used to close the account and forget it before deleting anything, and a DELETE that failed
+ * once (a 5xx, a timeout) left the pod's data for good: the janitor walks only `identities`, and a
+ * tombstone loads no account. The record and its container stay, as the tombstone.
+ *
+ * A tombstone the purge did not mark (a deletion's, the other instance's, or a purge finished
+ * elsewhere) is not purged: its owner is only forgotten here. A deleted Play owner may be
+ * provisioned again over its tombstone until its guest deadline (provisional-play-store.ts), and
+ * the other instance's provisioning does not wait for this server's lock, so deleting the pod's
+ * resources then could delete those of an owner provisioned again meanwhile. A purge marks only a
+ * tombstone it writes over an anchor whose deadline has passed, which provisioning refuses to restore.
+ */
+async function purgePlayOwner(userId: string): Promise<void> {
+  let closed = false;
+  try {
+    await withIdentityPodMutex(userId, async () => {
+      const purge = await purgeProvisionalPlayPod({ userId, cssUrl: CSS_URL,
+        close: async () => {
+          const r = await deleteUserCompletely(userId, { lockHeld: true, stillDeletable: playOwnerPurgeable, playPurge: true });
+          if (r.kept) return 'kept';
+          closed = true;
+          if (!r.purgePending) return 'closed';
+          unfinishedPlayPurges.add(userId);
+          return 'purge';
+        },
+      });
+      if (purge === 'purged') await finishPlayPurge(userId);
+      unfinishedPlayPurges.delete(userId);
+      if (purge === 'kept') log(`Janitor: kept ${userId}: it holds a credential now, or its anchor has not expired`);
+      if (purge === 'closed') log(`Janitor: forgot ${userId}: its record is a tombstone no purge left unfinished (a deletion's); its pod is left as it is`);
+    });
+  } catch (err) {
+    log(closed || unfinishedPlayPurges.has(userId)
+      ? `Janitor: purge of ${userId} unfinished, its account closed; tried again at the next pass: ${(err as Error).message}`
+      : `Janitor: provisional cleanup kept ${userId}: ${(err as Error).message}`);
+  }
+}
+
+/**
+ * The end of a Play owner's purge, under its lock, once every other resource of the pod is
+ * deleted: its tombstone is written again without the mark (on its ETag), so neither the janitor
+ * nor a restart comes back to it. The account was forgotten when it closed, so the record the
+ * writer installs is dropped again.
+ */
+async function finishPlayPurge(userId: string): Promise<void> {
+  await applyUpdate(userId, 'play-purge-finished', (draft, live) => {
+    if (!live || !isTombstone(live) || live.provisionalPlayPurgePending !== true) return NoWrite('finished');
+    delete draft.provisionalPlayPurgePending;
+    return Write;
+  }, { tombstone: 'replace', absent: 'pass' });
+  authMethodsCache.delete(userId);
+  removeFromIndexes(userId);
 }
 
 app.post('/users/me/delete', tokenLimiter, async (req, res) => {
@@ -7335,7 +7439,8 @@ app.listen(PORT, () => {
             // Read through to the pod before deletion; never infer "unclaimed"
             // from a transient dependency failure or a process-local timestamp.
             const methods = (await readLive(u.id)).methods ?? emptyAuthMethods(u.id);
-            // A tombstone: a deletion whose memory was not cleared here (the other instance's), finished below.
+            // A tombstone: a purge left unfinished, finished below, or a deletion whose memory was
+            // not cleared here (the other instance's), only forgotten (playOwnerPurgeable).
             if (!isTombstone(methods)) provisionalPlay.open(methods.provisionalPlayAnchor, true);
             if (playOwnerPurgeable(methods)) toPurge.add(u.id);
           } catch (error) { log(`Janitor: kept unreadable provisional owner ${u.id}: ${(error as Error).name}`); }
@@ -7355,20 +7460,13 @@ app.listen(PORT, () => {
         toPurge.add(u.id);
         unclaimedTry.add(u.id);
       }
+      // Play purges a pass closed but could not finish, and those the startup scan found unfinished.
+      for (const id of unfinishedPlayPurges) toPurge.add(id);
       if (toPurge.size === 0) return;
       log(`Janitor: purging ${toPurge.size} stale user(s) (test + try-it)`);
       for (const uid of toPurge) {
         if (uid.startsWith('u-try-play-')) {
-          void withIdentityPodMutex(uid, async () => {
-            // Nothing is deleted until the account is closed: its tombstone written on the ETag of the
-            // record checked under this lock, so an enrolment that lands after the read (the other
-            // instance's) makes that write fail, and the record read again keeps the account. The
-            // record and its container stay, as the tombstone (provisional-play-cleanup.ts).
-            const purge = await purgeProvisionalPlayPod({ userId: uid, cssUrl: CSS_URL,
-              close: async () => !(await deleteUserCompletely(uid, { lockHeld: true, stillDeletable: playOwnerPurgeable })).kept,
-            });
-            if (purge === 'kept') log(`Janitor: kept ${uid}: it holds a credential now, or its anchor has not expired`);
-          }).catch(err => log(`Janitor: provisional cleanup kept ${uid}: ${(err as Error).message}`));
+          void purgePlayOwner(uid);
           continue;
         }
         deleteUserCompletely(uid, unclaimedTry.has(uid) ? { stillDeletable: m => !hasAnyCredential(m) } : {})

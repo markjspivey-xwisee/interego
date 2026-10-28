@@ -4,23 +4,30 @@
  * The pod's tree is listed and checked first (own pod only, at most 128 resources over eight
  * levels), and nothing is changed when that fails. Then `close()`, under the owner's lock the
  * caller holds, closes the owner's account on its record as the pod holds it (server.ts
- * deleteUserCompletely: auth-methods.jsonld is overwritten with the deletion's tombstone, on the
- * ETag of the record it checked). An enrolment that read the anchor before it (the other
- * instance's, during a deploy's overlap) then fails its own If-Match, and one that reads it after
- * finds the account closed; an enrolment that lands first makes the tombstone's write fail, and
- * close() reads the record again and keeps the account: 'kept', and nothing is deleted. Only then
- * are the pod's other resources deleted. The record itself stays, as the tombstone, and so does the
+ * purgePlayOwner: auth-methods.jsonld is overwritten with the purge's tombstone, marked as a purge
+ * not yet finished, on the ETag of the record it checked). An enrolment that read the anchor before
+ * it (the other instance's, during a deploy's overlap) then fails its own If-Match, and one that
+ * reads it after finds the account closed; an enrolment that lands first makes the tombstone's write
+ * fail, and close() reads the record again and keeps the account: 'kept', and nothing is deleted.
+ * A record that is a tombstone already is not closed again: close() says 'purge' for one an earlier
+ * pass marked (its purge did not finish: the deletions are sent again) and 'closed' for any other (a
+ * deletion's, whose owner may be provisioned again until its guest deadline: nothing is deleted).
+ * Only on 'purge' are the pod's other resources deleted, and a deletion that fails throws, leaving
+ * the purge marked for the next pass. The record itself stays, as the tombstone, and so does the
  * container that holds it: a write still pending from before the purge is conditional on the
  * record's ETag, which Community Solid Server 7.2 applies to a missing document too (only
  * If-Match: * fails there), so a purge that deleted the record (it used to, last but the root) let
- * such a write re-create the owner afterwards. Provisioning may replace the tombstone
- * (provisional-play-store.ts).
+ * such a write re-create the owner afterwards.
  */
 export async function purgeProvisionalPlayPod(options: {
   userId: string; cssUrl: string; fetcher?: typeof fetch;
-  /** Close the owner's account under its lock: true once its record is the tombstone, false when it is kept. */
-  close(): Promise<boolean>;
-}): Promise<'purged' | 'kept'> {
+  /**
+   * Close the owner's account under its lock: 'purge' once its record is the purge's tombstone,
+   * 'closed' when it is another tombstone (nothing of the pod is deleted then), 'kept' when the
+   * account is kept.
+   */
+  close(): Promise<'purge' | 'closed' | 'kept'>;
+}): Promise<'purged' | 'closed' | 'kept'> {
   if (!/^u-try-play-[a-f0-9]{32}$/.test(options.userId)) throw new Error('Refusing non-Play pod cleanup');
   const root = new URL(`${options.userId}/`, options.cssUrl);
   const fetcher = options.fetcher ?? fetch;
@@ -48,7 +55,8 @@ export async function purgeProvisionalPlayPod(options: {
   };
   // Discover and validate the entire bounded tree before changing anything.
   await visit(root, 0);
-  if (!await options.close()) return 'kept';
+  const closed = await options.close();
+  if (closed !== 'purge') return closed;
   // Children before their containers (the order visit listed them in); never the record, nor the
   // container that holds it.
   const anchor = new URL('auth-methods.jsonld', root).href;

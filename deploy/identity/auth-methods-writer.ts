@@ -47,7 +47,7 @@
 /** The top-level keys server.ts reads from an auth-methods document (normaliseAuthMethods). */
 export const AUTH_METHODS_KEYS: ReadonlySet<string> = new Set([
   '@context', '@id', '@type', 'userId', 'name', 'agentId', 'walletAddresses', 'webAuthnCredentials', 'didKeys',
-  'sessionEpoch', 'provisionalPlayAnchor', 'provisionalPlayReceipts', 'deletedAt',
+  'sessionEpoch', 'provisionalPlayAnchor', 'provisionalPlayReceipts', 'deletedAt', 'provisionalPlayPurgePending',
 ]);
 
 /**
@@ -199,9 +199,11 @@ export async function applyUpdate<M>(
 ): Promise<UpdateResult<M>> {
   deps.assertLockHeld(userId);
   const tombstone = opts.tombstone ?? 'refuse';
-  // A Play owner's record is created only by its provisioning (the anchor), or as its deletion's
-  // tombstone: no other write re-creates a purged one, and only a deletion ('replace') changes an
-  // unclaimed owner whose anchor no longer opens.
+  // A Play owner's record is created only by its provisioning (the anchor), as its deletion's
+  // tombstone, and as the empty record a settlement's fence creates where the document went missing
+  // under a write the pod never answered (settle: no anchor, no credential, so it holds no account,
+  // and its provisioning replaces it). No other write re-creates a missing one: a write here refuses
+  // it ('refuse'), and only a deletion ('replace') changes an unclaimed owner whose anchor no longer opens.
   const deletion = tombstone === 'replace';
   const absent = isPlayOwner(userId) && !deletion ? 'refuse' : (opts.absent ?? 'refuse');
   const attempts = Math.max(1, opts.attempts ?? 3);
