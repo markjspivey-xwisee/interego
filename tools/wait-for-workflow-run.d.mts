@@ -27,6 +27,11 @@ export interface WorkflowRunLike {
   readonly name?: string;
   readonly workflow_id?: number | string;
   readonly event?: string;
+  /** For pull_request and pull_request_target, the pull request a run is a try of: runs of one
+   *  workflow for one event are tries of one check only for the same pull request (a head can be
+   *  the head of two, to two bases). A run that lists none (GitHub lists none for a fork's branch)
+   *  or more than one stands alone, like a dispatch: only its own re-run answers it. */
+  readonly pull_requests?: readonly { readonly number?: number | null; readonly base?: { readonly ref?: string } | null }[] | null;
   readonly check_suite_id?: number | string;
   readonly status?: string | null;
   readonly conclusion?: string | null;
@@ -93,6 +98,11 @@ export interface KeptRun {
   readonly run_attempt: number;
   /** What it was refused with, as `failed` named it then. */
   readonly failed: readonly string[];
+  /** The check runs listed as its jobs when it was read. Until a listing shows it re-run, it is read
+   *  with these beside the ones listed now, so a listing that leaves one out does not take that job
+   *  out of it: a newer run must still have run each of its red jobs again, its last job's end
+   *  still times a newer try, and a run with a job listed is never read as one that ran nothing. */
+  readonly jobs: readonly CheckRunLike[];
 }
 
 /** What earlier polls read red, carried from one reading to the next by identity, not as a word. */
@@ -108,9 +118,12 @@ export interface KeptReds {
  * `detail` names what failed or was still running, and for a red that a newer run of its group
  * left standing, why, and what answers it. `kept` is what the previous poll's call returned in
  * `kept`: a run's red stands until a listing shows that run re-run and passed (a larger
- * run_attempt) or answered by a newer run of its group, another app's until a later check run of
- * its name answers it, and a report's always; a listing that leaves it out, or that cannot be
- * trusted, does not let it go.
+ * run_attempt) or answered by a newer run of its group that has concluded (or, for a run that
+ * ran nothing, until a newer run of its group has concluded), another app's until a later check
+ * run of its name answers it, and a report's always. A newer run still going answers a red only
+ * for now: the red is not refused, but it is kept, as is a red first read beside such a run. A
+ * listing that leaves it out, that leaves out a job it was read with, or that cannot be trusted
+ * does not let it go.
  */
 export declare function otherChecksState(
   runs: readonly WorkflowRunLike[],
