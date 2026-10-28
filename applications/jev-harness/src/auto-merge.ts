@@ -67,7 +67,8 @@
  *      tried each of its red jobs again after it finished, without skipping it; a dispatch only
  *      by its own re-run) and every other check run by itself (another app's, a report created
  *      through the API, an Actions job whose run is not listed yet), reads them again on every
- *      poll until the wait returns (only a red check or a refused listing is kept), and hands the
+ *      poll until the wait returns (only a refused listing is kept as a word; a red is kept by
+ *      identity, until a listing shows its run re-run and passed or answered), and hands the
  *      decision a second word: success holds (each concluded success, neutral or skipped);
  *      failure (one concluded failure, cancelled, timed_out, action_required, startup_failure
  *      or anything else), timeout (one still running at the deadline), untrusted (the listings

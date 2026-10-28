@@ -204,13 +204,15 @@ jobs:
       # workflow run and check run for the head, leaves out this workflow's own by its workflow id
       # (GITHUB_RUN_ID names the run; a name is not an id), reads each run by its own conclusion
       # (an older run's red answered only by a newer run, made after it, that tried its red jobs
-      # again after it finished), reads them again on every poll, and writes a second word, `checks` (success, failure, timeout,
-      # untrusted, error, and pending only when advisory), with `checks_detail` naming what failed
-      # or was still running. One deadline for both: the fifty minutes below. On 2026-10-26 and
-      # 27 Mutation Gate's 63 successful runs (of 66) took 18 to 47 minutes from the push, median
-      # 29, so the wait is fifty minutes, and this job's timeout-minutes is 70 to hold it with the
-      # selection and the gate before it. A check still running at the deadline means no merge,
-      # and the next push decides again. SUITE_GATE leaves an advisory suite out of `checks`.
+      # again after it finished), reads them again on every poll (a red kept by identity until a
+      # listing shows its run re-run and passed, or answered), and writes a second word, `checks`
+      # (success, failure, timeout, untrusted, error, and pending only when advisory), with
+      # `checks_detail` naming what failed or was still running. One deadline for both: the fifty
+      # minutes below. On 2026-10-26 and 27 Mutation Gate's 63 successful runs (of 66) took 18 to
+      # 47 minutes from the push, median 29, so the wait is fifty minutes, and this job's
+      # timeout-minutes is 70 to hold it with the selection and the gate before it. A check still
+      # running at the deadline means no merge, and the next push decides again. SUITE_GATE leaves
+      # an advisory suite out of `checks`.
       - name: Wait for the whole suite and every other check on this head
         id: suite
         if: ${{ always() && github.event_name == 'pull_request' }}

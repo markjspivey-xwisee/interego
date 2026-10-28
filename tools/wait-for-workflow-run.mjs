@@ -41,14 +41,17 @@
  *
  *   success    every other check concluded success, neutral or skipped     → holds
  *   failure    one concluded anything else (failure, cancelled, timed_out, action_required,
- *              startup_failure, stale, none)    → fails, and the wait for checks stops there
- *              (the one word kept from poll to poll, with error: any other is read again on
- *              every poll until the wait returns, so a green read while an advisory suite
- *              still runs is not what is returned once a check has gone red or a run started)
+ *              startup_failure, stale, none)    → fails; read once the suite's word is in, the
+ *              wait ends there. Every word but error is read again on every poll until the wait
+ *              returns (a green read while an advisory suite still runs is not what is returned
+ *              once a check has gone red or a run started), and a red is kept by identity, not
+ *              as a word (see A RED IS KEPT BY IDENTITY below)
  *   timeout    the deadline passed with a check still running              → fails
  *   untrusted  the listings never held this run and its own job            → fails at the deadline
  *   error      GitHub could not be asked (a 4xx at once, a 5xx at the deadline, a listing
- *              longer than MAX_PAGES pages, no GITHUB_RUN_ID)             → fails
+ *              longer than MAX_PAGES pages, no GITHUB_RUN_ID)             → fails (where the
+ *              last poll that read the checks read a red, that red is the word: nothing
+ *              unread lets it go)
  *   pending    only when advisory (CHECKS_GATE=false): still running when the suite wait ended
  *
  * with `checks_detail`, one line naming what failed or what was still running (and, for a red
@@ -78,33 +81,37 @@
  *     not caught up with the check runs (a re-run of a concluded run gives each job a new check
  *     run, and a new try that passed says nothing of the job behind it, whose old try still
  *     stands in the listing until its new check run is created).
- *   - TRIES OF ONE CHECK. Runs of one workflow for one event are tries of the same check (a
- *     reopen starts every pull_request workflow again); a dispatch is its own, since two carry
- *     their own inputs (two GHCR builds), so only its own re-run answers it. A run that did not
- *     pass is answered only by a newer run of its group (made after it, so a re-run of an older
- *     run, which tests the merge commit of its own event, never answers a newer one) that tried
- *     again after it finished: made after it last finished (updated_at, which a re-run moves on),
- *     or whose every try at each job that went red in it started in the second the last of its
- *     listed jobs ended or later, or has not started yet (a run a concurrency group held until
- *     this one ended; one whose cancel-in-progress landed before the newer run's job started).
- *     The start is timed against the jobs, not updated_at: GitHub writes a run's updated_at up to
- *     a second after its last job ends, and the run that took a cancel-in-progress slot can start
- *     its job in that second. Whole seconds cut both ways: a try started in the very second the
- *     red run's last job ended counts as after it, though it may have begun up to a second
- *     before. It must also have run each of those jobs again, without skipping it; one still
- *     going answers for now and decides by its own conclusion. So two runs that overlapped and
- *     disagree refuse; so does a cancel that landed in a later second than the newer run's try at
- *     that job started (a cancel by hand, or a job that timed out, which GitHub lists as
- *     cancelled: the newer run's try may never have answered the hang; one that landed in the
- *     second that try started reads as answered); and so does a red job the newer run skipped (a
- *     reporter that runs only on failure) or has no job of that name for (a job the base
- *     renamed). Each says so in the detail, with its remedy. A cancelled run that lists no red
- *     job has no try to time: a newer run made after it finished answers it by its own
- *     conclusion, if that run ran something (a job it did not skip), and one made before it
- *     finished refuses at once. Any other run whose red jobs are not listed is answered by no run
- *     that has concluded, and a run cancelled before it made any job ran nothing and is left out
- *     once a newer run of its group exists (a dispatch's group is itself, so never). The next
- *     push decides again.
+ *   - TRIES OF ONE CHECK. Runs of one workflow for one event are tries of the same check (a reopen
+ *     starts every pull_request workflow again); a dispatch is its own, since two carry their own
+ *     inputs (two GHCR builds), so only its own re-run answers it. A run that did not pass is
+ *     answered only by a newer run of its group (made after it, so a re-run of an older run, which
+ *     tests the merge commit of its own event, never answers a newer one) that tried again after
+ *     it finished: made after it last finished (updated_at, which a re-run moves on), or whose
+ *     every try at each job that went red in it started in the second its tries ended or later, or
+ *     has not started yet (a run a concurrency group held until this one ended; one whose
+ *     cancel-in-progress landed before the newer run's job started). Its tries ended when the last
+ *     of its listed jobs ended, so long as its updated_at is no more than a second after that:
+ *     GitHub usually writes updated_at in that second, and the run that took a cancel-in-progress
+ *     slot can start its job there. Otherwise they ended in the second before its updated_at: the
+ *     check runs carry no attempt, so a listing that has not caught up with a re-run of the red
+ *     run still shows its try before, and GitHub can write updated_at minutes after the last job
+ *     ended (jev-harness run 40517341630, head 52cb2d73: updated_at 14:07:56, last job ended
+ *     14:03:03, a skipped job created at 14:07:10), where a try that started in between is
+ *     refused. Whole seconds cut both ways: a try started in the very second the red run's tries
+ *     ended counts as after it, though it may have begun up to a second before. It must also have
+ *     run each of those jobs again, without skipping it; one still going answers for now and
+ *     decides by its own conclusion. So two runs that overlapped and disagree refuse; so does a
+ *     cancel that landed in a later second than the newer run's try at that job started (a cancel
+ *     by hand, or a job that timed out, which GitHub lists as cancelled: the newer run's try may
+ *     never have answered the hang; one that landed in the second that try started reads as
+ *     answered); and so does a red job the newer run skipped (a reporter that runs only on
+ *     failure) or has no job of that name for (a job the base renamed). Each says so in the
+ *     detail, with its remedy. A cancelled run that lists no red job has no try to time: a newer
+ *     run made after it finished answers it by its own conclusion, if that run ran something (a
+ *     job it did not skip), and one made before it finished refuses at once. Any other run whose
+ *     red jobs are not listed is answered by no run that has concluded, and a run cancelled before
+ *     it made any job ran nothing and is left out once a newer run of its group exists (a
+ *     dispatch's group is itself, so never). The next push decides again.
  *   - EVERY OTHER CHECK RUN BY ITSELF: another app's, a report a workflow created through the
  *     API, and an Actions job whose run the runs listing does not hold yet (it waits for that
  *     run, whatever it concluded: a job that passed says nothing of the jobs behind it). Another
@@ -119,6 +126,17 @@
  *     its name cannot be shown to be the same check tried again (another workflow's, dispatch's
  *     or leg's did not run the tests behind it). A red one refuses until the next push, and the
  *     detail says so.
+ *   - A RED IS KEPT BY IDENTITY, from the poll it was read on to the end of the wait, not as a
+ *     word. A run's red stands until a listing shows that run re-run and passed (a larger
+ *     run_attempt; while the re-run goes, its own reading says pending) or answered by a newer
+ *     run of its group; another app's, until a later check run of its name answers it; a
+ *     report's, always. A listing that leaves it out, shows it as it was, or cannot be trusted
+ *     does not let it go: GitHub's listings answer short. So a red the operator re-runs while the
+ *     suite is still running is read again (head 52cb2d73, #714: pgsl-css-accessor run
+ *     40513757150 went red at 13:38:53 and was re-run at 13:39:14; replayed over GitHub's records
+ *     of the head, a wait started at 13:39:01 that kept its first red as a word returns failure,
+ *     and one started 19 seconds later success), and the word and detail returned are those of
+ *     the poll the wait ends on.
  *   - THE SUITE TOO, unless its word is advisory. With SUITE_GATE=false (the repository
  *     variable JEV_MERGE_WAITS_FOR_SUITE=false) the runs named SUITE_WORKFLOW and their check
  *     runs are left out of this word as well, and the detail says so: counted here, a red or
@@ -216,6 +234,24 @@ function names(list, max = 8) {
   return list.length <= max ? list.join(', ') : `${list.slice(0, max).join(', ')} and ${list.length - max} more`;
 }
 
+/** A check run read by itself, named with its app unless that is GitHub Actions. */
+function label(c) {
+  const app = c?.app?.slug;
+  return app && app !== ACTIONS ? `${c?.name ?? '(unnamed)'} (${app})` : String(c?.name ?? '(unnamed)');
+}
+
+/** Another app's check is one per name in its check suite (or its app, where no suite is listed). */
+function appCheckKey(c) {
+  const suiteId = suiteIdOf(c);
+  return `${suiteId !== undefined ? `suite:${suiteId}` : `app:${c?.app?.id ?? c?.app?.slug ?? '?'}`}|${c?.name}`;
+}
+
+/** What failed, with what was still running and what each refusal needs, as one line. */
+function failureDetail(failed, pending, notes, aside = '') {
+  const why = notes.length ? ` (${notes.length <= 3 ? notes.join('; ') : `${notes.slice(0, 3).join('; ')}; and ${notes.length - 3} more`})` : '';
+  return `did not pass: ${names(failed)}${why}${pending.length ? `; still running: ${names(pending)}` : ''}${aside}`;
+}
+
 /**
  * What the two listings say about every check on this head but this workflow's own. Pure.
  *
@@ -228,13 +264,30 @@ function names(list, max = 8) {
  * is advisory) leaves the runs named `suite` and their check runs out as well, so that the
  * checks word does not gate on the suite after all.
  *
- * Returns { state: success | failure | pending | untrusted, failed, pending, passed, left, detail }.
+ * `kept` is what an earlier poll read red, as that call returned it: a red is kept by identity,
+ * not as a word. A run's stands until a listing shows that run re-run and passed (a larger
+ * run_attempt: while the re-run is going, its own reading says pending) or answered by a newer run
+ * of its group; another app's check, until a later check run of its name answers it; a report,
+ * always. A listing that leaves it out, or shows it as it was, does not let it go: GitHub's
+ * listings answer short, and a short listing must not hide a red.
+ *
+ * Returns { state: success | failure | pending | untrusted, failed, pending, passed, left, detail,
+ * kept }, `kept` being the reds the next poll carries.
  */
-export function otherChecksState(runs, checkRuns, { selfRunId, suite = SUITE_WORKFLOW, suiteGates = true }) {
+export function otherChecksState(runs, checkRuns, { selfRunId, suite = SUITE_WORKFLOW, suiteGates = true, kept }) {
+  const keptRuns = [...(kept?.runs ?? [])];
+  const keptChecks = [...(kept?.checks ?? [])];
+  // A listing not to decide on releases nothing: what earlier polls read red still stands.
+  const untrusted = (detail) => {
+    const carried = { runs: keptRuns, checks: keptChecks };
+    const failed = [...keptRuns.flatMap((k) => k.failed), ...keptChecks.map((c) => `${label(c)}: ${c.conclusion ?? 'no conclusion'}`)];
+    if (!failed.length) return { state: 'untrusted', failed, pending: [], passed: 0, left: 0, detail, kept: carried };
+    return { state: 'failure', failed, pending: [], passed: 0, left: 0, detail: failureDetail(failed, [], [`read red on an earlier poll, and ${detail}`]), kept: carried };
+  };
   const selfId = String(selfRunId ?? '');
   const self = selfId ? runs.find((r) => String(r?.id) === selfId) : undefined;
   if (!self) {
-    return { state: 'untrusted', failed: [], pending: [], passed: 0, left: 0, detail: `the runs listed for this head do not hold this run (${selfId || 'no run id'}), so they are not a listing to decide on` };
+    return untrusted(`the runs listed for this head do not hold this run (${selfId || 'no run id'}), so they are not a listing to decide on`);
   }
   const own = runs.filter((r) => r?.workflow_id === self.workflow_id);
   const ownSuites = new Set(own.map((r) => String(r.check_suite_id)));
@@ -249,7 +302,7 @@ export function otherChecksState(runs, checkRuns, { selfRunId, suite = SUITE_WOR
     return suiteId !== undefined && suites.has(suiteId) && !c?.html_url && !c?.details_url;
   };
   if (!checkRuns.some((c) => suiteIdOf(c) === String(self.check_suite_id) || jobRunOf(c) === selfId)) {
-    return { state: 'untrusted', failed: [], pending: [], passed: 0, left: 0, detail: 'the check runs listed for this head do not hold this run\'s own job, so they are not a listing to decide on' };
+    return untrusted('the check runs listed for this head do not hold this run\'s own job, so they are not a listing to decide on');
   }
 
   // An advisory suite is condition 10's to print. Counted here, its red would refuse the merge anyway.
@@ -296,8 +349,7 @@ export function otherChecksState(runs, checkRuns, { selfRunId, suite = SUITE_WOR
     // it). Each is read alone.
     if (c?.app?.slug === ACTIONS) { reports.push(c); continue; }
     // Another app's check is one per name in its check suite.
-    const suiteId = suiteIdOf(c);
-    const key = `${suiteId !== undefined ? `suite:${suiteId}` : `app:${c?.app?.id ?? c?.app?.slug ?? '?'}`}|${c?.name}`;
+    const key = appCheckKey(c);
     if (!byName.has(key)) byName.set(key, []);
     byName.get(key).push(c);
   }
@@ -309,17 +361,20 @@ export function otherChecksState(runs, checkRuns, { selfRunId, suite = SUITE_WOR
   // older run, which tests the merge commit of its own event, never answers a newer one) that
   // tried again after it finished: made after it last finished (its updated_at, which a re-run
   // moves on, as does anything else that touches the run: later is the safe side), or whose
-  // every try at each job that went red in it started in the second its last listed job ended or
-  // later, or has not started yet (a run a concurrency group held until this one ended, or one
-  // whose cancel-in-progress landed before the newer run's job started). The start is timed
-  // against the jobs, not updated_at: GitHub writes a run's updated_at up to a second after its
-  // last job ends, and the run that took a cancel-in-progress slot can start its job in that
-  // second. So two runs that overlapped and disagree refuse, and so does a cancel that landed in
-  // a later second than the newer run's try at that job started: GitHub lists a job that timed
-  // out as cancelled, and the newer run's try may never have answered the hang. Whole seconds cut
-  // both ways: a try started in the very second the red run's last job ended counts as after it,
-  // though it may have begun up to a second before, so a cancel by hand or a timeout that landed
-  // in that same second reads as answered.
+  // every try at each job that went red in it started in the second its tries ended or later, or
+  // has not started yet (a run a concurrency group held until this one ended, or one whose
+  // cancel-in-progress landed before the newer run's job started). Its tries ended when its last
+  // listed job ended, so long as its updated_at is no more than a second after that: GitHub
+  // usually writes it in that second, and the run that took a cancel-in-progress slot can start
+  // its job there. Otherwise they ended in the second before its updated_at: the check runs carry
+  // no attempt, so a listing that has not caught up with a re-run of the red run still shows its
+  // try before, and GitHub can write updated_at minutes after the last job ended (jev-harness run
+  // 40517341630: a skipped job created five minutes late). So two runs that overlapped and
+  // disagree refuse, and so does a cancel that landed in a later second than the newer run's try
+  // at that job started: GitHub lists a job that timed out as cancelled, and the newer run's try
+  // may never have answered the hang. Whole seconds cut both ways: a try started in the very
+  // second the red run's tries ended counts as after it, though it may have begun up to a second
+  // before, so a cancel by hand or a timeout that landed in that same second reads as answered.
   const dispatch = (e) => e === 'workflow_dispatch' || e === 'repository_dispatch';
   const groupOf = (r) => (dispatch(r?.event) ? `run:${r.id}` : `wf:${r.workflow_id}|${r.event}`);
   const groups = new Map();
@@ -335,7 +390,13 @@ export function otherChecksState(runs, checkRuns, { selfRunId, suite = SUITE_WOR
     return times.length ? Math.max(...times) : NaN;
   };
   const finishedAt = (r) => (r?.updated_at ? Date.parse(String(r.updated_at)) : lastJobEnded(r));
-  const triesEnded = (r) => (Number.isNaN(lastJobEnded(r)) ? finishedAt(r) : lastJobEnded(r));
+  // When a run's tries ended, to time a newer run's try against: its last listed job's end, or the
+  // second before its updated_at when that is later (the block above says why).
+  const triesEnded = (r) => {
+    const jobs = lastJobEnded(r);
+    const updated = finishedAt(r);
+    return Number.isNaN(jobs) ? updated : Math.max(jobs, updated - 1000);
+  };
   // A try that started in the second `t` or later (GitHub's times are whole seconds, so one that
   // started in the second `t` counts as after it); one that has neither started nor concluded can
   // only start later still. One concluded with no start time says nothing of when it ran.
@@ -394,8 +455,24 @@ export function otherChecksState(runs, checkRuns, { selfRunId, suite = SUITE_WOR
   const notes = [];
   let passed = 0;
   const counted = [];
+  // What earlier polls read red, by run id, and the reds the next poll carries (see `kept` above).
+  const keptRun = new Map(keptRuns.map((k) => [String(k.id), k]));
+  const nextRuns = [];
+  const nextChecks = [];
+  // An earlier poll's red that this listing does not let go stands as it was read.
+  const standing = (k, why) => {
+    failed.push(...k.failed);
+    notes.push(`${k.name ?? '(unnamed)'} run ${k.id} went red on an earlier poll, and ${why}: re-run ${k.id}`);
+    nextRuns.push(k);
+  };
   for (const r of others) {
-    if (ranNothing(r)) continue;
+    const k = keptRun.get(String(r.id));
+    // Re-run since that poll read it red: GitHub numbers each try of a run (run_attempt).
+    const rerun = k !== undefined && Number(r.run_attempt ?? 1) > Number(k.run_attempt ?? 1);
+    if (ranNothing(r)) {
+      if (k) standing(k, 'this listing shows no re-run of it');
+      continue;
+    }
     const jobs = jobsOf.get(String(r.id)) ?? [];
     // Listed as concluded, while a job of it is still going, started after the run concluded, or
     // went red after it: the runs listing has not caught up with the check runs (they are read one
@@ -410,8 +487,10 @@ export function otherChecksState(runs, checkRuns, { selfRunId, suite = SUITE_WOR
     if (r.status !== 'completed') {
       // Still going: its own conclusion decides, and a job of it already red does not yet, since
       // a job that may fail (continue-on-error, as nightly-emergent's advisory legs) leaves its
-      // run green. It names what is still running, and what has gone red so far.
+      // run green. It names what is still running, and what has gone red so far. A red an earlier
+      // poll read of it is carried until the re-run concludes, and let go if it passed.
       counted.push(r);
+      if (k) nextRuns.push(k);
       const running = jobs.filter((c) => c?.status !== 'completed');
       const red = jobs.filter((c) => c?.status === 'completed' && !passes(c.conclusion));
       for (const c of running) pending.push(`${r.name} / ${c.name}`);
@@ -419,23 +498,33 @@ export function otherChecksState(runs, checkRuns, { selfRunId, suite = SUITE_WOR
       if (!running.length && !red.length) pending.push(`${r.name} (${r.status ?? 'not concluded'})`);
     } else if (lagging.length) {
       counted.push(r);
+      if (k) nextRuns.push(k);
       for (const c of lagging) {
         if (c?.status !== 'completed') pending.push(`${r.name} / ${c.name} (its run is listed as concluded ${r.conclusion ?? 'with no conclusion'}; the listings have not caught up)`);
         else if (lateRed(c)) pending.push(`${r.name} / ${c.name} (${c.conclusion ?? 'no conclusion'} after its run concluded; the listings have not caught up)`);
         else pending.push(`${r.name} / ${c.name} (${c.conclusion ?? 'no conclusion'}, a try started after its run concluded; the listings have not caught up)`);
       }
     } else if (passes(r.conclusion)) {
+      // Green, but the try an earlier poll read red is the one listed: nothing let it go.
+      if (k && !rerun) {
+        standing(k, 'this listing shows no re-run of it');
+        continue;
+      }
       counted.push(r);
       passed += jobs.filter((c) => c?.status === 'completed' && passes(c.conclusion)).length;
     } else if (!answered(r)) {
       counted.push(r);
       const red = jobs.filter((c) => c?.status === 'completed' && !passes(c.conclusion));
-      if (red.length) for (const c of red) failed.push(`${r.name} / ${c.name}: ${c.conclusion ?? 'no conclusion'}`);
-      else failed.push(`${r.name}: ${r.conclusion ?? 'no conclusion'}`);
+      const said = red.length ? red.map((c) => `${r.name} / ${c.name}: ${c.conclusion ?? 'no conclusion'}`) : [`${r.name}: ${r.conclusion ?? 'no conclusion'}`];
+      failed.push(...said);
+      nextRuns.push({ id: r.id, name: r.name, run_attempt: Number(r.run_attempt ?? 1), failed: said });
       const note = remedy(r);
       if (note) notes.push(note);
     }
+    // Answered: a newer run of its group decides for it, and lets go of what an earlier poll read.
   }
+  // An earlier poll's red that this listing leaves out: a short listing does not answer it.
+  for (const k of keptRun.values()) if (!byId.has(String(k.id))) standing(k, 'this listing leaves it out');
   // Another app re-runs its check by creating a new check run of its name: what did not pass is
   // answered only by a later one of its name in its check suite (a larger id) that is a result
   // (not a skip, not a cancel) and started in the second it concluded or later, or that has not
@@ -445,15 +534,19 @@ export function otherChecksState(runs, checkRuns, { selfRunId, suite = SUITE_WOR
     if (c?.conclusion === 'skipped' || (c?.status === 'completed' && c?.conclusion === 'cancelled')) return false;
     return startedFrom(c, Date.parse(String(than.completed_at)));
   };
-  const label = (c) => {
-    const app = c?.app?.slug;
-    return app && app !== ACTIONS ? `${c?.name ?? '(unnamed)'} (${app})` : String(c?.name ?? '(unnamed)');
+  const reportNote = (c, earlier = false) => `${label(c)}${earlier ? ' went red on an earlier poll and' : ''} is a report a workflow created through the API, which no later report can be shown to try again (nothing it carries names the run that posted it): only the next push decides again`;
+  const redNow = new Set();
+  const refuse = (c, note) => {
+    failed.push(`${label(c)}: ${c.conclusion ?? 'no conclusion'}`);
+    if (note) notes.push(note);
+    nextChecks.push(c);
+    redNow.add(String(c?.id));
   };
   for (const group of byName.values()) {
     for (const c of group) {
       if (group.some((o) => answers(o, c))) continue;
       if (c?.status !== 'completed') pending.push(label(c));
-      else if (!passes(c.conclusion)) failed.push(`${label(c)}: ${c.conclusion ?? 'no conclusion'}`);
+      else if (!passes(c.conclusion)) refuse(c);
       else passed++;
     }
   }
@@ -462,10 +555,16 @@ export function otherChecksState(runs, checkRuns, { selfRunId, suite = SUITE_WOR
   for (const c of reports) {
     if (c?.status !== 'completed') pending.push(label(c));
     else if (passes(c.conclusion)) passed++;
-    else {
-      failed.push(`${label(c)}: ${c.conclusion ?? 'no conclusion'}`);
-      notes.push(`${label(c)} is a report a workflow created through the API, which no later report can be shown to try again (nothing it carries names the run that posted it): only the next push decides again`);
-    }
+    else refuse(c, reportNote(c));
+  }
+  // An earlier poll's red of a check read by itself stands until a later check run of its name
+  // answers it; a report's, always (an Actions job is read through its run, so a github-actions
+  // check run kept here is a report).
+  for (const k of keptChecks) {
+    if (redNow.has(String(k?.id))) continue;
+    const report = k?.app?.slug === ACTIONS;
+    if (!report && (byName.get(appCheckKey(k)) ?? []).some((o) => answers(o, k))) continue;
+    refuse(k, report ? reportNote(k, true) : `${label(k)} went red on an earlier poll, and this listing holds no later check run of its name that answers it`);
   }
   // An Actions job whose run the runs listing does not hold yet (GitHub's listings catch up with
   // each other): its run decides, and a job of it that passed says nothing of the jobs behind it
@@ -473,14 +572,14 @@ export function otherChecksState(runs, checkRuns, { selfRunId, suite = SUITE_WOR
   for (const c of unlisted) pending.push(`${c?.name ?? '(unnamed)'} (its run is not listed yet)`);
 
   const aside = suiteLeft > 0 ? `; ${suite} left out (${suiteLeft} run(s) and job(s)), as its word is advisory` : '';
+  const carried = { runs: nextRuns, checks: nextChecks };
   if (failed.length > 0) {
-    const why = notes.length ? ` (${notes.length <= 3 ? notes.join('; ') : `${notes.slice(0, 3).join('; ')}; and ${notes.length - 3} more`})` : '';
-    return { state: 'failure', failed, pending, passed, left, detail: `did not pass: ${names(failed)}${why}${pending.length ? `; still running: ${names(pending)}` : ''}${aside}` };
+    return { state: 'failure', failed, pending, passed, left, detail: failureDetail(failed, pending, notes, aside), kept: carried };
   }
   if (pending.length > 0) {
-    return { state: 'pending', failed, pending, passed, left, detail: `still running: ${names(pending)}${aside}` };
+    return { state: 'pending', failed, pending, passed, left, detail: `still running: ${names(pending)}${aside}`, kept: carried };
   }
-  return { state: 'success', failed, pending, passed, left, detail: `${passed} check run(s) from ${counted.length} other workflow run(s) and any other app concluded success, neutral or skipped; ${left} run(s) and job(s) of this workflow left out${aside}` };
+  return { state: 'success', failed, pending, passed, left, detail: `${passed} check run(s) from ${counted.length} other workflow run(s) and any other app concluded success, neutral or skipped; ${left} run(s) and job(s) of this workflow left out${aside}`, kept: carried };
 }
 
 /**
@@ -526,7 +625,8 @@ const named = (r) => ({ name: r?.name ?? '(unnamed)', status: r?.status, conclus
 /**
  * The wait itself, with its clock, its sleep and GitHub injected so the deadline is testable.
  * Polls until the suite's word is final and the checks' word read on that same poll is too (a
- * red check, or a refused listing, is kept from the poll it was read on), or the deadline passes.
+ * refused listing is kept from the poll it was read on, and a red, by identity, until a listing
+ * shows it re-run and passed or answered), or the deadline passes.
  * Returns { suite?: { result, url, detail }, checks: { result, detail }, fatal?: string }:
  * `fatal`, and no `suite`, when the runs could not be listed at all.
  */
@@ -537,12 +637,22 @@ export async function waitForHead({
   const opts = { repo, token, fetchFn };
   const deadline = now() + timeoutMs;
   let suiteDone;
-  // Only a red check or a listing GitHub refused is kept from one poll to the next: nothing a
-  // later poll reads can make either a merge. Any other word is this poll's alone, and the checks
-  // are read again on every poll until the wait returns. While an advisory suite (left out of the
-  // checks) still runs, a green word read early would otherwise be returned at the end over a check
-  // that went red, or a run that started, in between.
+  // Only a listing GitHub refused is kept from one poll to the next as a word (error, or the red
+  // the last poll that read the checks read, which nothing unread lets go). Every other word is
+  // this poll's alone, and the checks are read again on every poll until the wait returns. While an
+  // advisory suite (left out of the checks) still runs, a green word read early would otherwise be
+  // returned at the end over a check that went red, or a run that started, in between. A red is
+  // kept by identity, not as a word (`kept`, carried into each reading): it stands until a listing
+  // shows its run re-run and passed, or answered by a newer run of its group (another app's check:
+  // by a later check run of its name), and a listing that leaves it out does not let it go. A red
+  // the operator re-runs while the suite is still running is read again, and the word returned is
+  // the one read on the poll the wait ends on, with that poll's detail. A red read once the suite's
+  // word is in ends the wait there, as a check still running would not.
   let checksFinal;
+  let kept;
+  // The word of the last poll that read the check runs, when it was failure: a later poll that
+  // cannot list them cannot let its reds go.
+  let lastRed;
   for (;;) {
     const expired = now() > deadline;
     let runs;
@@ -554,7 +664,7 @@ export async function waitForHead({
         await sleep(pollMs);
         continue;
       }
-      const checks = checksFinal ?? { result: 'error', detail: `the workflow runs for this head could not be listed: ${err.message}` };
+      const checks = checksFinal ?? lastRed ?? { result: 'error', detail: `the workflow runs for this head could not be listed: ${err.message}` };
       if (suiteDone) return { suite: suiteDone, checks };
       return { checks, fatal: `could not list the runs for ${sha.slice(0, 12)}: ${err.message}` };
     }
@@ -579,19 +689,25 @@ export async function waitForHead({
           checkRuns = await listCheckRuns(sha, opts);
         } catch (err) {
           // Advisory checks get no time of their own here either: once the suite's word is in, an
-          // outage is what they say, not a reason to keep the decision waiting to the deadline.
-          if (retryable(err) && !expired && (checksGate || !suiteDone)) log(`GitHub is not answering for the check runs (${err.message}); asking again`);
-          else checksNow = checksFinal = { result: 'error', detail: `the check runs for this head could not be listed: ${err.message}` };
+          // outage is what they say, not a reason to keep the decision waiting to the deadline. A
+          // red the last poll read stands: nothing unread lets it go.
+          if (retryable(err) && !expired && (checksGate || !suiteDone)) {
+            log(`GitHub is not answering for the check runs (${err.message}); asking again`);
+            checksNow = lastRed;
+          } else {
+            checksNow = checksFinal = lastRed ?? { result: 'error', detail: `the check runs for this head could not be listed: ${err.message}` };
+          }
         }
         if (checkRuns) {
-          const c = otherChecksState(runs, checkRuns, { selfRunId, suite, suiteGates: suiteGate });
+          const c = otherChecksState(runs, checkRuns, { selfRunId, suite, suiteGates: suiteGate, kept });
+          kept = c.kept;
+          lastRed = c.state === 'failure' ? { result: 'failure', detail: c.detail } : undefined;
           // Advisory checks get no time of their own: what they say once the suite's word is in is what is printed.
           if (keepWaiting(c.state, expired) && (checksGate || !suiteDone)) {
             log(`other checks: ${c.detail}; asking again in ${Math.round(pollMs / 1000)} s`);
           } else {
             checksNow = { result: c.state === 'pending' ? (expired ? 'timeout' : 'pending') : c.state, detail: c.detail };
-            if (c.state === 'failure') checksFinal = checksNow;
-            log(`other checks on ${sha.slice(0, 12)}: ${checksNow.result} — ${c.detail}${suiteDone || checksFinal ? '' : '; read again until the suite\'s word is in'}`);
+            log(`other checks on ${sha.slice(0, 12)}: ${checksNow.result} — ${c.detail}${suiteDone ? '' : '; read again until the suite\'s word is in'}`);
           }
         }
       }

@@ -34,13 +34,19 @@ export interface WorkflowRunLike {
   readonly created_at?: string;
   /** When the run last changed: once it has concluded, when it finished (a re-run moves it on).
    *  What did not pass is answered only by a newer run of its group made after this, or whose
-   *  every try at each job that went red in it started in the second the last of the run's listed
-   *  jobs ended or later (GitHub writes this up to a second after that). A job of a concluded run
-   *  that started after this, or concluded red after it, means the listings have not caught up. */
+   *  every try at each job that went red in it started in the second its tries ended or later:
+   *  when the last of the run's listed jobs ended, unless that is more than a second before this,
+   *  and then the second before this. GitHub usually writes it in the second the last job ended,
+   *  but not always: jev-harness run 40517341630 reads 14:07:56, while its last job ended at
+   *  14:03:03, because a skipped job was created at 14:07:10. And the check runs carry no attempt,
+   *  so a listing behind a re-run still shows the try before it. A job of a concluded run that
+   *  started after this, or concluded red after it, means the listings have not caught up. */
   readonly updated_at?: string;
-  /** Not read: a run's own conclusion is its latest try's, which is what the wait reads. */
+  /** Which try of the run the listing shows. Its own conclusion is its latest try's, which is what
+   *  the wait reads; this is read only to tell, of a run an earlier poll read red, whether it has
+   *  been re-run since (a larger number). */
   readonly run_attempt?: number;
-  /** Not read, for the same reason. */
+  /** Not read. */
   readonly run_started_at?: string;
   readonly html_url?: string;
 }
@@ -52,10 +58,12 @@ export interface CheckRunLike {
   readonly status?: string | null;
   readonly conclusion?: string | null;
   /** Whether a try started after something else finished: a newer run's try at a job that went
-   *  red in an older run, after that run's last listed job ended, and another app's later check
-   *  run of a name, after a red one concluded; and whether a job of a concluded run started after
-   *  the run's updated_at. Whole seconds: the same second counts as after, though the try may have
-   *  begun up to a second before. */
+   *  red in an older run, after that run's tries ended, and another app's later check run of a
+   *  name, after a red one concluded; and whether a job of a concluded run started after the run's
+   *  updated_at. Whole seconds: for the first two, the same second counts as after, though the try
+   *  may have begun up to a second before; for the third, a job that started (or went red) in the
+   *  run's updated_at second is not counted as after it, since a run's last job usually ends in
+   *  that second. */
   readonly started_at?: string | null;
   /** When it concluded: read for another app's check, to say when a run's tries ended (and when
    *  it finished, when its listing gives no updated_at), and to tell a red that concluded after
@@ -77,17 +85,38 @@ export interface CheckRunLike {
   readonly app?: { readonly id?: number | string; readonly slug?: string } | null;
 }
 
+/** A run an earlier poll read red, as otherChecksState returned it in `kept`. */
+export interface KeptRun {
+  readonly id: number | string;
+  readonly name?: string;
+  /** The try read red: the run listed with a larger one has been re-run since. */
+  readonly run_attempt: number;
+  /** What it was refused with, as `failed` named it then. */
+  readonly failed: readonly string[];
+}
+
+/** What earlier polls read red, carried from one reading to the next by identity, not as a word. */
+export interface KeptReds {
+  readonly runs: readonly KeptRun[];
+  /** Another app's check runs and reports, as they were read red. */
+  readonly checks: readonly CheckRunLike[];
+}
+
 /**
  * What the two listings say about every check on the head but this workflow's own (and the
  * suite's, when `suiteGates` is false: its word is then advisory, and counted here it would gate).
  * `detail` names what failed or was still running, and for a red that a newer run of its group
- * left standing, why, and what answers it.
+ * left standing, why, and what answers it. `kept` is what the previous poll's call returned in
+ * `kept`: a run's red stands until a listing shows that run re-run and passed (a larger
+ * run_attempt) or answered by a newer run of its group, another app's until a later check run of
+ * its name answers it, and a report's always; a listing that leaves it out, or that cannot be
+ * trusted, does not let it go.
  */
 export declare function otherChecksState(
   runs: readonly WorkflowRunLike[],
   checkRuns: readonly CheckRunLike[],
-  opts: { selfRunId: string | number | undefined; suite?: string; suiteGates?: boolean },
-): { state: 'success' | 'failure' | 'pending' | 'untrusted'; failed: string[]; pending: string[]; passed: number; left: number; detail: string };
+  opts: { selfRunId: string | number | undefined; suite?: string; suiteGates?: boolean; kept?: KeptReds },
+): { state: 'success' | 'failure' | 'pending' | 'untrusted'; failed: string[]; pending: string[]; passed: number; left: number; detail: string; kept: KeptReds };
 
 /** Every item of a paginated GitHub listing; throws with `status` on a refused answer. */
 export declare function listAll(
@@ -99,7 +128,12 @@ export declare function listAll(
 export declare function listWorkflowRuns(sha: string, opts: { repo: string; token: string; fetchFn?: typeof fetch; maxPages?: number }): Promise<unknown[]>;
 export declare function listCheckRuns(sha: string, opts: { repo: string; token: string; fetchFn?: typeof fetch; maxPages?: number }): Promise<unknown[]>;
 
-/** The wait: the suite's word and the other checks' word, within one deadline. */
+/**
+ * The wait: the suite's word and the other checks' word, within one deadline. The checks are read
+ * again on every poll until the wait returns, with what earlier polls read red carried by identity
+ * (`kept`), so a red re-run and passed during the wait is let go, and one a listing leaves out is
+ * not; a red read once the suite's word is in ends the wait there.
+ */
 export declare function waitForHead(opts: {
   sha: string;
   repo: string;
