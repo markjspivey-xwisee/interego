@@ -1,18 +1,25 @@
 /**
  * Bounded, own-pod-only cleanup; physical PGSL history reclamation is separate.
  *
- * `stillUnclaimed` reads the owner's record and says whether it may go, with the ETag it was
- * read under and the document read. Before anything is deleted, that document is written back
- * unchanged on that ETag (If-Match), a fence: an enrolment that read the anchor before it (the
- * other instance's, during a deploy's overlap) then fails its own If-Match, and one that reads
- * it after finds the anchor expired, which no writer accepts (server.ts playOwnerWritable). A
- * 412 on the fence means such an enrolment landed first: 'kept', and nothing is deleted. Only
- * then are the pod's resources deleted, the anchor last but the root. A pod that sends no ETag
- * gets no fence.
+ * The pod's tree is listed and checked first (own pod only, at most 128 resources over eight
+ * levels), and nothing is changed when that fails. Then `close()`, under the owner's lock the
+ * caller holds, closes the owner's account on its record as the pod holds it (server.ts
+ * deleteUserCompletely: auth-methods.jsonld is overwritten with the deletion's tombstone, on the
+ * ETag of the record it checked). An enrolment that read the anchor before it (the other
+ * instance's, during a deploy's overlap) then fails its own If-Match, and one that reads it after
+ * finds the account closed; an enrolment that lands first makes the tombstone's write fail, and
+ * close() reads the record again and keeps the account: 'kept', and nothing is deleted. Only then
+ * are the pod's other resources deleted. The record itself stays, as the tombstone, and so does the
+ * container that holds it: a write still pending from before the purge is conditional on the
+ * record's ETag, which Community Solid Server 7.2 applies to a missing document too (only
+ * If-Match: * fails there), so a purge that deleted the record (it used to, last but the root) let
+ * such a write re-create the owner afterwards. Provisioning may replace the tombstone
+ * (provisional-play-store.ts).
  */
 export async function purgeProvisionalPlayPod(options: {
   userId: string; cssUrl: string; fetcher?: typeof fetch;
-  stillUnclaimed(): Promise<{ ok: boolean; etag: string | null; document?: unknown }>;
+  /** Close the owner's account under its lock: true once its record is the tombstone, false when it is kept. */
+  close(): Promise<boolean>;
 }): Promise<'purged' | 'kept'> {
   if (!/^u-try-play-[a-f0-9]{32}$/.test(options.userId)) throw new Error('Refusing non-Play pod cleanup');
   const root = new URL(`${options.userId}/`, options.cssUrl);
@@ -39,23 +46,13 @@ export async function purgeProvisionalPlayPod(options: {
     }
     ordered.push(url.href);
   };
-  // Discover and validate the entire bounded tree before deleting anything.
+  // Discover and validate the entire bounded tree before changing anything.
   await visit(root, 0);
-  const unclaimed = await options.stillUnclaimed();
-  if (!unclaimed.ok) return 'kept';
+  if (!await options.close()) return 'kept';
+  // Children before their containers (the order visit listed them in); never the record, nor the
+  // container that holds it.
   const anchor = new URL('auth-methods.jsonld', root).href;
-  if (unclaimed.etag && unclaimed.document !== undefined) {
-    const fence = await request(anchor, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/ld+json', 'If-Match': unclaimed.etag },
-      body: JSON.stringify(unclaimed.document, null, 2),
-    });
-    if (fence.status === 412) return 'kept';
-    if (!fence.ok && fence.status !== 205) throw new Error('Provisional cleanup fence failed');
-  }
   const targets = ordered.filter(url => url !== root.href && url !== anchor);
-  if (ordered.includes(anchor)) targets.push(anchor);
-  if (ordered.includes(root.href)) targets.push(root.href);
   for (const url of targets) {
     const response = await request(url, { method: 'DELETE' });
     if (!response.ok && response.status !== 404) throw new Error('Provisional cleanup deletion incomplete');

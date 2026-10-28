@@ -1,10 +1,15 @@
 /**
  * Every write of an account's auth-methods.jsonld starts from the record as the pod holds it,
  * through the routes: server.ts is started as a child process (twice, where two instances share
- * the pods as during a deploy's overlap) against a stand-in pod server that answers like stock
- * CSS 7 (an ETag of `"<modified ms>-application/ld+json"`, If-Match and If-None-Match: * honoured
- * with 412) and lets a test hold, fail or delay its requests and edit a record out of band (the
- * other instance, an operator). Passkeys come from the software authenticator in
+ * the pods as during a deploy's overlap) against a stand-in pod server that answers like
+ * Community Solid Server 7.2, stock or with the PGSL accessor production runs (an ETag of
+ * `"<modified ms>-application/ld+json"`; its conditions are CSS's BasicConditions.matchesMetadata:
+ * If-None-Match: * fails with 412 where there is a document, If-Match fails where there is a
+ * document with another ETag, and on a missing document only If-Match: * fails: a PUT sent with
+ * If-Match on an ETag creates it, and a DELETE of it is a 404 whatever its condition) and lets a
+ * test hold, fail or delay its requests and edit a record out of band (the other instance, an
+ * operator). It used to refuse If-Match on a missing document, which CSS does not, and so passed a
+ * deletion that removed a record while a write conditional on its ETag was still pending. Passkeys come from the software authenticator in
  * tests/soft-authenticator.ts.
  *
  * The identity server keeps a 10 s copy of each account's record. Its writers used to save a
@@ -52,6 +57,15 @@ type Logged = { method: string; userId: string; target: 'doc' | 'container'; ifM
 const docs = new Map<string, { doc: Doc; modified: number }>();
 let clock = Date.now();
 const etagOf = (userId: string) => { const d = docs.get(userId); return d ? `"${d.modified}-application/ld+json"` : null; };
+/**
+ * Whether CSS 7.2 refuses (412) a write of `userId`'s record sent with these conditions, now
+ * (BasicConditions.matchesMetadata): with no document, only If-Match: * fails.
+ */
+function preconditionFails(entry: { ifMatch?: string; ifNoneMatch?: string }, userId: string): boolean {
+  if (!docs.has(userId)) return entry.ifMatch === '*';
+  if (entry.ifNoneMatch === '*') return true;
+  return entry.ifMatch !== undefined && entry.ifMatch !== '*' && entry.ifMatch !== etagOf(userId);
+}
 const unlisted = new Set<string>();
 const failingGets = new Map<string, number>();
 const nonJson = new Set<string>();
@@ -73,9 +87,6 @@ const heldOutcomes: Array<{ userId: string; applied: boolean }> = [];
 function applyLate(ids: readonly string[]): void {
   for (const w of lateWrites.filter(x => ids.includes(x.userId))) { lateWrites.splice(lateWrites.indexOf(w), 1); w.apply(); }
 }
-const failingDeletes = new Set<string>();
-/** Records whose next DELETE is never answered, and applied (if its If-Match still holds) only at applyLate(). */
-const lateDeletes = new Set<string>();
 const hangingContainers = new Set<string>();
 /** Pods whose container GET lists their auth-methods.jsonld (a Play owner's, which the janitor walks to purge it). */
 const listedContainers = new Set<string>();
@@ -188,7 +199,7 @@ async function servePods(req: http.IncomingMessage, res: http.ServerResponse): P
     if (fault === 'hang-then-apply' || fault === 'hang-then-apply-late') {
       const body = entry.body;
       const apply = () => {
-        const applied = !(entry.ifNoneMatch === '*' && docs.has(userId)) && !(entry.ifMatch && entry.ifMatch !== etagOf(userId));
+        const applied = !preconditionFails(entry, userId);
         if (applied) docs.set(userId, { doc: body, modified: clock = Math.max(clock + 1, Date.now()) });
         heldOutcomes.push({ userId, applied });
       };
@@ -197,24 +208,17 @@ async function servePods(req: http.IncomingMessage, res: http.ServerResponse): P
     }
     if (fault === '500') { answer(500); return; }
     if (fault === '403') { answer(403); return; }
-    if (entry.ifNoneMatch === '*' && docs.has(userId)) { answer(412); return; }
-    if (entry.ifMatch && entry.ifMatch !== etagOf(userId)) { answer(412); return; }
+    if (preconditionFails(entry, userId)) { answer(412); return; }
     docs.set(userId, { doc: entry.body, modified: clock = Math.max(clock + 1, Date.now()) });
     if (fault === 'apply-then-hang') return;   // stored, and never answered: the write times out
     answer(fault === 'apply-then-500' ? 500 : 201);
     return;
   }
   if (req.method === 'DELETE') {
-    if (failingDeletes.has(userId)) { answer(500); return; }
-    if (lateDeletes.delete(userId)) {
-      lateWrites.push({ userId, apply: () => {
-        const applied = !(entry.ifMatch && entry.ifMatch !== etagOf(userId));
-        if (applied) docs.delete(userId);
-        heldOutcomes.push({ userId, applied });
-      } });
-      return;
-    }
-    if (entry.ifMatch && entry.ifMatch !== etagOf(userId)) { answer(412); return; }
+    // The identity server sends none (a deletion writes a tombstone); answered as CSS would.
+    // A missing document is a 404 before any condition is checked (DataAccessorBasedStore.deleteResource).
+    if (!docs.has(userId)) { answer(404); return; }
+    if (preconditionFails(entry, userId)) { answer(412); return; }
     docs.delete(userId);
     answer(205);
     return;
@@ -519,6 +523,8 @@ const p7 = { wallet: account({ keys: [P()] }), did: account({ keys: [P()] }) };
 const p8 = { wallet: account({ keys: [P()] }), did: account({ keys: [P()] }), stranger: account({ keys: [P()] }) };
 // Owners whose bearer adds nothing could settle, while first sign-ins fill their share of the records (S10).
 const s10 = [account({ keys: [P()] }), account({ keys: [P()] }), account({ keys: [P()] })];
+// An owner whose bearer add of a did:key nothing could settle, after did:key first sign-ins filled their share (S11).
+const s11 = account({ keys: [P()] });
 // A claimed u-try- account for L2's deletion, made in before() so that no other /try runs beside the
 // /try cases of the concurrent block below (they find their own id by its shape).
 let l2Try: Reply;
@@ -1414,7 +1420,9 @@ describe('writes the pod never answers', { concurrency: true }, () => {
     unanswered(invites.fenceBlind.userId, true);
     unanswered(invites.fenceBlindDid.userId, true);
     unanswered(invites.fencePk.userId);
-    lateDeletes.add(tryId);
+    // The u-try- account's deletion: its tombstone is never answered and stored only at applyLate();
+    // the fence after it is answered, so the route settles it.
+    failPuts(tryId, 'hang-then-apply-late');
     // First sign-ins whose probe of the derived id's pod (deleted before tombstones?) is never
     // answered: the pod's root, where there is no record; its agent registry, where one without
     // credentials is.
@@ -1617,7 +1625,7 @@ describe('writes the pod never answers', { concurrency: true }, () => {
     }
   });
 
-  test('U1: a u-try- account whose record the pod refuses to remove stays whole (503), so an add recorded against it lands on a live account; once it is removed, nothing pending lands, and the wallet signs in on its own', { timeout: 60_000 }, async () => {
+  test('U1: a u-try- account whose tombstone the pod refuses stays whole (503), so an add recorded against it lands on a live account; once the tombstone is written, nothing pending lands, and the wallet signs in on its own', { timeout: 60_000 }, async () => {
     const derivedOf = (w: AnyWallet) => deriveUserIdFromWallet(w.address.toLowerCase());
     assert.equal(u1Try.status, 200, JSON.stringify(u1Try.json));
     const tryId = String(u1Try.json['userId']);
@@ -1632,50 +1640,90 @@ describe('writes the pod never answers', { concurrency: true }, () => {
       const add = await siwe(w, { bearer: tryToken });
       assert.equal(add.status, 503, `${JSON.stringify(add.json)}${out()}`);
       assert.match(String(add.json['detail']), /may or may not/);
-      // The account is deleted, and the pod refuses the DELETE of its record (which lists no
-      // credential: the add has not landed). The account stays, here and on the pod: 503, and its
-      // token still works. It used to be deleted here all the same (200), its record left on the pod
-      // in the state the held add was conditional on, so the add landed afterwards, and a restart
-      // loaded the deleted account with the wallet, its /try token verifying again.
-      failingDeletes.add(tryId);
+      // The account is deleted, and the pod refuses its tombstone (a 403; the add has not landed).
+      // The account stays, here and on the pod: 503, and its token still works. It used to be
+      // deleted here all the same (200), its record left on the pod in the state the held add was
+      // conditional on, so the add landed afterwards, and a restart loaded the deleted account with
+      // the wallet, its /try token verifying again.
+      putFaults.set(tryId, ['403']);
       const refused = await post('/users/me/delete', {}, tryToken);
       assert.equal(refused.status, 503, `${JSON.stringify(refused.json)}${out()}`);
       assert.equal(refused.json['error'], 'Deletion not completed');
-      assert.ok(docs.has(tryId), 'the pod still holds the record');
+      assert.ok(docs.has(tryId) && !record(tryId)!.deletedAt, 'the pod still holds the record');
       assert.equal((await verify(tryToken)).json['valid'], true, 'the account was kept');
-      failingDeletes.delete(tryId);
+      putFaults.delete(tryId);
       // The pod stores the held add now: on an account that is still open, which is what the 503
       // said. The wallet's next request settles the recorded write first, and signs in there.
       applyLate([tryId]);
       assert.deepEqual(heldOutcomes.filter(o => o.userId === tryId).map(o => o.applied), [true]);
-      putFaults.delete(tryId);
       await signsInTo(siwe(w), tryId);
       assert.equal(docs.has(derivedOf(w)), false, 'no account is opened for the wallet');
-      // A second add the same way, recorded against the account; then the deletion goes through. The
-      // record's DELETE was conditional on the state the held add was too, so that add can no longer
-      // land: nothing is left on the pod for a restart to load.
+      // A second add the same way, recorded against the account; then the deletion goes through. Its
+      // tombstone is written on the ETag the held add was conditional on too, and stays, so that add
+      // can no longer land. The record used to be removed instead (a DELETE on that ETag), and CSS
+      // 7.2 applies a PUT sent with If-Match on an ETag to a missing document: the held add re-created
+      // the deleted account with its wallet (this stand-in refused it then, unlike the store).
       failPuts(tryId, 'hang-then-apply-late', ...Array.from({ length: 100 }, () => '500' as const));
       const again = await siwe(v, { bearer: tryToken });
       assert.equal(again.status, 503, `${JSON.stringify(again.json)}${out()}`);
       putFaults.delete(tryId);
       const deleted = await post('/users/me/delete', {}, tryToken);
       assert.equal(deleted.status, 200, `${JSON.stringify(deleted.json)}${out()}`);
-      assert.equal(docs.has(tryId), false, 'the record is gone');
+      assert.ok(record(tryId)?.deletedAt, 'the record is the tombstone');
       applyLate([tryId]);
       assert.deepEqual(heldOutcomes.filter(o => o.userId === tryId).map(o => o.applied), [true, false], 'the held add does not land');
-      assert.equal(docs.has(tryId), false);
+      assert.ok(record(tryId)!.deletedAt);
+      assert.deepEqual(record(tryId)!.walletAddresses, [], 'the tombstone lists nothing a restart could load');
       assert.equal((await verify(tryToken)).json['valid'], false);
       // The second wallet's next request settles its record without a request to the deleted
-      // account's pod (its deletion left nothing a pending write could land on), and the wallet
-      // opens its own account.
+      // account's pod (its tombstone is off every state a pending write could land on), and the
+      // wallet opens its own account.
       const since = mark();
       await signsInTo(siwe(v), derivedOf(v));
       assert.equal(docGets(tryId, since).length, 0, 'the deleted account\'s pod is not read');
       assert.deepEqual(record(derivedOf(v))!.walletAddresses, [v.address.toLowerCase()]);
     } finally {
-      failingDeletes.delete(tryId);
       putFaults.delete(tryId);
       applyLate([tryId]);
+    }
+  });
+
+  test('U4: a Play owner its guest deletes while the guest\'s wallet add is pending stays closed: the add cannot land on its tombstone, the guest token stays refused, and the wallet opens its own account', { timeout: 60_000 }, async () => {
+    const derivedOf = (w: AnyWallet) => deriveUserIdFromWallet(w.address.toLowerCase());
+    const port = await freePort();
+    const guest = livePlayGuest(`http://127.0.0.1:${port}`);
+    const inst = await startIdentity(port, { CSS_PUBLIC_URL: 'https://pods.example/', PROVISIONAL_PLAY_CLIENTS: PLAY_CLIENTS });
+    const w = W();
+    try {
+      // The guest adds a wallet with its bearer; the pod never answers that PUT (it stores it, if its
+      // If-Match still holds, only at applyLate()), and every fence after it is answered 500: recorded.
+      failPuts(guest.id, 'hang-then-apply-late', ...Array.from({ length: 100 }, () => '500' as const));
+      const add = await siwe(w, { bearer: guest.token }, inst);
+      assert.equal(add.status, 503, `${JSON.stringify(add.json)}${out(inst)}`);
+      assert.match(String(add.json['detail']), /may or may not/);
+      putFaults.delete(guest.id);
+      // The guest deletes the owner: its tombstone is written on the record read (no anchor, no
+      // credential), and stays.
+      const deleted = await post('/users/me/delete', {}, guest.token, inst);
+      assert.equal(deleted.status, 200, `${JSON.stringify(deleted.json)}${out(inst)}`);
+      assert.ok(record(guest.id)?.deletedAt, 'the record is the tombstone');
+      assert.equal((record(guest.id) as unknown as Doc)['provisionalPlayAnchor'], undefined);
+      assert.equal((await verify(guest.token, inst)).json['valid'], false);
+      // The pod gets round to the held add. It used to find no document (the anchor was removed with
+      // a DELETE on its ETag), and CSS 7.2 applied it there: the owner came back with the wallet and
+      // its anchor, and the guest token verified again at once (Play ids are not kept as deleted).
+      applyLate([guest.id]);
+      assert.deepEqual(heldOutcomes.filter(o => o.userId === guest.id).map(o => o.applied), [false], 'the held add does not land');
+      assert.ok(record(guest.id)!.deletedAt);
+      assert.deepEqual(record(guest.id)!.walletAddresses, []);
+      assert.equal((await verify(guest.token, inst)).json['valid'], false, 'the guest token stays refused');
+      // The wallet's next request settles the recorded add on the owner's tombstone, and the wallet
+      // opens its own account.
+      await signsInTo(siwe(w, {}, inst), derivedOf(w), inst);
+    } finally {
+      putFaults.delete(guest.id);
+      applyLate([guest.id]);
+      await inst.stop();
     }
   });
 
@@ -1834,11 +1882,11 @@ test('U3: a u-try- account whose record another writer changes under every attem
   assert.equal(tried.status, 200, JSON.stringify(tried.json));
   const id = String(tried.json['userId']);
   const token = String(tried.json['token']);
-  // Each conditional DELETE meets a change made just before it (the other instance, say): 412, three
-  // times. The record still lists no credential, and it used to be closed here all the same (200),
-  // left on the pod as the last writer made it.
+  // Each conditional write of the tombstone meets a change made just before it (the other instance,
+  // say): 412, three times. The record still lists no credential, and it used to be closed here all
+  // the same (200), left on the pod as the last writer made it.
   for (let i = 0; i < 3; i++) {
-    const h = hold('DELETE', id, 1, x => outOfBand(x, d => { d['name'] = `renamed-${i}`; }));
+    const h = hold('PUT', id, 1, x => outOfBand(x, d => { d['name'] = `renamed-${i}`; }));
     void h.arrived.then(() => h.release());
   }
   const r = await post('/users/me/delete', {}, token);
@@ -1849,7 +1897,7 @@ test('U3: a u-try- account whose record another writer changes under every attem
   assert.match(primary.output(), new RegExp(`identity_authmethods_write_conflict userId=${id} context=delete-account attempts=3`));
   const done = await post('/users/me/delete', {}, token);
   assert.equal(done.status, 200, JSON.stringify(done.json));
-  assert.equal(docs.has(id), false);
+  assert.ok(record(id)?.deletedAt, 'the record is the tombstone, which stays');
 });
 
 test('J2: a bootstrap passkey the pod took without confirming it signs in to the seeded account, and spends the invite', async () => {
@@ -1962,10 +2010,12 @@ test('C13, J6: one request the pod never answers holds an account\'s lock for no
   try {
     const deletion = await waitFor(() => otherRequests.find(r => r.method === 'DELETE' && r.path === registry), 15_000);
     assert.ok(deletion, `the janitor never purged ${expiredPlay.id}${out(janitor)}`);
-    assert.equal(docs.has(expiredPlay.id), false, 'the anchor is purged');
+    assert.ok(record(expiredPlay.id)?.deletedAt, 'the anchor is replaced by the tombstone, which stays');
     const probe = post('/auth/webauthn/register-options', { name: 'Probe', bootstrapUserId: expiredPlay.id, bootstrapInvite: expiredPlay.invite }, undefined, janitor);
     assert.ok(await within(probe, 17_000), `a request for the owner's lock was still waiting 17 s after the registry DELETE was sent${out(janitor)}`);
-    assert.equal((await probe).status, 200, JSON.stringify((await probe).json));
+    // It read the owner's record once the lock was free: the purge's tombstone, so the claim is refused as deleted.
+    assert.equal((await probe).status, 409, JSON.stringify((await probe).json));
+    assert.match(String((await probe).json['error']), /This account was deleted/);
     assert.ok(deletion.abandonedAt !== undefined && deletion.abandonedAt - deletion.at < 16_500,
       `the registry DELETE was given up ${deletion.abandonedAt === undefined ? 'never' : `after ${deletion.abandonedAt - deletion.at} ms`}`);
   } finally {
@@ -1983,7 +2033,7 @@ test('C13, J6: one request the pod never answers holds an account\'s lock for no
   assert.equal(docs.has(deriveUserIdFromDid(k.did)), false, 'no account is opened for the did:key');
 });
 
-test('C16: the janitor writes a Play owner\'s anchor back on the ETag it checked before it deletes anything: an enrolment landing in between keeps the whole account', async () => {
+test('C16: the janitor writes a Play owner\'s tombstone on the ETag it checked before it deletes anything: an enrolment landing in between keeps the whole account', async () => {
   const port = await freePort();
   docs.set(fencedPlay.id, { modified: clock = Math.max(clock + 1, Date.now()), doc: { userId: fencedPlay.id, name: 'Play guest',
     walletAddresses: [], webAuthnCredentials: [], didKeys: [], provisionalPlayAnchor: expiredAnchor(`http://127.0.0.1:${port}`, fencedPlay) } });
@@ -2000,8 +2050,8 @@ test('C16: the janitor writes a Play owner\'s anchor back on the ETag it checked
   const janitor = await startIdentity(port, { JANITOR_INTERVAL_MS: '1000' });
   try {
     const fence = await waitFor(() => docPuts(fencedPlay.id, since).find(r => r.status !== undefined), 15_000);
-    assert.ok(fence, `the janitor never wrote the anchor back${out(janitor)}`);
-    assert.ok(fence.ifMatch, 'the write-back is conditional on the ETag checked');
+    assert.ok(fence, `the janitor never wrote the tombstone${out(janitor)}`);
+    assert.ok(fence.ifMatch, 'the tombstone is conditional on the ETag checked');
     assert.equal(fence.status, 412);
     await sleep(1_500);
     assert.equal(requests.slice(since).some(r => r.userId === fencedPlay.id && r.method === 'DELETE'), false, `the anchor or the pod was deleted${out(janitor)}`);
@@ -2481,7 +2531,9 @@ test('K6: a wallet or did:key sent with a bearer that does not verify is refused
   await signsInTo(siwe(wc, bootstrap(invites.bearerClaim)), invites.bearerClaim.userId);
   await signsInTo(didSignIn(kw, { did: web, ...bootstrap(invites.bearerClaimWeb) }), invites.bearerClaimWeb.userId);
   // The /connect page sends the add-device token with every request while its field is filled, so
-  // a stale one there makes a sign-in or an invite claim 401: the page says to clear it.
+  // a stale one there makes a first sign-in (a wallet no account holds yet), an add or an invite
+  // claim 401: the page says to clear it. A wallet an account already lists signs in whatever bearer
+  // comes with it.
   const page = await (await fetch(`${primary.base}/connect`)).text();
   const script = page.slice(page.indexOf('<script>') + '<script>'.length, page.lastIndexOf('</script>'));
   assert.doesNotThrow(() => new Function(script), 'the page\'s script parses');
@@ -2493,6 +2545,15 @@ test('K6: a wallet or did:key sent with a bearer that does not verify is refused
   assert.match(hint(401, 'Invalid bearer token: Token expired', { addDeviceToken: 'x', bootstrapUserId: '' }), /clear it to sign in/);
   assert.equal(hint(401, 'This wallet is not registered.', { addDeviceToken: 'x', bootstrapUserId: '' }), '');
   assert.equal(hint(401, 'Invalid bearer token: Token expired', { addDeviceToken: '', bootstrapUserId: '' }), '');
+  // And the page shows it: both requests that send the token append the hint to the error they
+  // show (a passkey's registration options, a wallet's sign-in). Without these calls the function
+  // above was still there and still passed, and no user saw a hint.
+  for (const [fn, call] of [['passkeyCreate', /\+ staleTokenHint\(optRes\.status, failed\.error, adv\)/],
+    ['connectMetaMask', /\+ staleTokenHint\(authResp\.status, result\.error, adv\)/]] as const) {
+    const at = script.indexOf(`async function ${fn}(`);
+    assert.ok(at >= 0, `the page has ${fn}`);
+    assert.match(script.slice(at, script.indexOf('\n}', at)), call, `${fn} appends the hint to the error it shows`);
+  }
   // A bearer whose account could not be read is a 503 on the other routes that act on the bearer's
   // own account too: a link, a device's registration options, a removal. They answered 401, which
   // tells a client its token is no good.
@@ -2568,23 +2629,23 @@ test('K7: a Play guest\'s bearer whose owner\'s record cannot be read for a mome
     assert.deepEqual(record(sealedElsewhere.id)!.walletAddresses, []);
     assert.deepEqual(record(sealedElsewhere.id)!.didKeys, []);
     for (const id of [derivedOf(w2), deriveUserIdFromDid(k2.did), derivedOf(w3)]) assert.equal(docs.has(id), false, `${id}: no account is opened`);
-    // A guest's deletion whose DELETE the pod refuses: 503, and the owner stays, its token working.
+    // A guest's deletion whose tombstone the pod refuses: 503, and the owner stays, its token working.
     // It answered 200 deleted, while the anchor stayed on the pod, so the guest token verified again
     // at once.
-    failingDeletes.add(leaving.id);
+    failPuts(leaving.id, '403');
     const refused = await post('/users/me/delete', {}, leaving.token, play);
     assert.equal(refused.status, 503, `${JSON.stringify(refused.json)}${out(play)}`);
     assert.equal(refused.json['error'], 'Deletion not completed');
-    assert.ok(docs.has(leaving.id));
+    assert.ok(docs.has(leaving.id) && !record(leaving.id)!.deletedAt);
     assert.equal((await verify(leaving.token, play)).json['valid'], true);
-    failingDeletes.delete(leaving.id);
+    putFaults.delete(leaving.id);
     const deleted = await post('/users/me/delete', {}, leaving.token, play);
     assert.equal(deleted.status, 200, `${JSON.stringify(deleted.json)}${out(play)}`);
-    assert.equal(docs.has(leaving.id), false);
+    assert.ok(record(leaving.id)?.deletedAt, 'the record is the tombstone, which stays');
     assert.equal((await verify(leaving.token, play)).json['valid'], false);
   } finally {
     failingGets.delete(owner.id);
-    failingDeletes.delete(leaving.id);
+    putFaults.delete(leaving.id);
     await play.stop();
   }
 });
@@ -2752,6 +2813,44 @@ test('S10: unconfirmed writes are settled in the background when their credentia
   }
 });
 
+test('S11: did:key first sign-ins (/auth/did) take only the first-sign-in half of the unconfirmed records too, so a bearer\'s add is still recorded after them', async () => {
+  // /auth/did marks a first sign-in of the account derived from the did:key as one (its
+  // recordUnconfirmed(..., firstSignIn)), as /auth/siwe does for a wallet (S10). Without the mark the
+  // three below are all recorded, under the overall bound alone, and a flood of them fills every record.
+  const bg = await startIdentity(await freePort(), { UNCONFIRMED_WRITES_MAX: '4' });
+  const unconfirmedWrites = async () => ((await (await fetch(`${bg.base}/health`)).json()) as { unconfirmedWrites: number }).unconfirmedWrites;
+  const ks = [didKey(), didKey(), didKey()];
+  const added = didKey();
+  const ids = [...ks.map(k => deriveUserIdFromDid(k.did)), s11.userId];
+  /** The pod applies the next write of `id`, answers 500, and then cannot be read: nothing settles it. */
+  const unsettled = (id: string) => {
+    failPuts(id, 'apply-then-500');
+    const put = hold('PUT', id, 1, () => { failingGets.set(id, 1_000); });
+    void put.arrived.then(() => put.release());
+  };
+  try {
+    const token = await tokenFor(s11.keys[0]!, 1, s11.userId, bg);
+    for (const [i, k] of ks.entries()) {
+      unsettled(ids[i]!);
+      const r = await didSignIn(k, {}, bg);
+      assert.equal(r.status, 503, `${JSON.stringify(r.json)}${out(bg)}`);
+      assert.match(String(r.json['detail']), /may or may not/);
+    }
+    assert.equal(await unconfirmedWrites(), 2, 'the third first sign-in was not recorded');
+    assert.match(bg.output(), new RegExp(`identity_unconfirmed_writes_full max=2 scope=first-sign-ins userId=${ids[2]}`));
+    // The records are not full: a did:key added with a bearer, that nothing could settle, is recorded.
+    unsettled(s11.userId);
+    const add = await didSignIn(added, { bearer: token }, bg);
+    assert.equal(add.status, 503, `${JSON.stringify(add.json)}${out(bg)}`);
+    assert.match(String(add.json['detail']), /Try signing in with this DID/);
+    assert.equal(await unconfirmedWrites(), 3);
+    assert.doesNotMatch(bg.output(), /identity_unconfirmed_writes_full max=4/);
+  } finally {
+    for (const id of ids) failingGets.delete(id);
+    await bg.stop();
+  }
+});
+
 // ── D, E. Counters and epochs ───────────────────────────────────────────────────────────────
 test('D2: a sign counter raised out of band is the one an assertion must beat', async () => {
   const key = d2.keys[0]!;
@@ -2789,12 +2888,15 @@ test('F2: a Play owner\'s passkey sign-in and a wallet added meanwhile both land
   assert.equal(containerPuts(play.id, since).length, 0);
 });
 
-test('F4, I5: a claimed u-try- account is kept: by the janitor if it was claimed after its decision, and when its removal fails', async () => {
+test('F4, I5: a claimed u-try- account is kept: by the janitor if it was claimed after its decision, and when its tombstone fails', async () => {
   const janitor = await startIdentity(await freePort(), { JANITOR_INTERVAL_MS: '400', TRY_USER_TTL_MS: '1' });
-  // The janitor decides on its copy (no credential) and deletes the record only if it still is
-  // the one it read: here a credential lands on the pod just as its deletion arrives.
+  // The janitor decides on its copy (no credential) and writes the tombstone only on the record it
+  // read: here a credential lands on the pod just as that write arrives. The first write of the new
+  // id's record is /try's own; the second, the janitor's.
   const k = didKey();
-  const held = hold('DELETE', id => id.startsWith('u-try-'), 1, id => outOfBand(id, d => { (d['didKeys'] as unknown[]).push(didEntry(k)); }));
+  const existing = new Set(docs.keys());
+  const fresh = (id: string) => id.startsWith('u-try-') && !id.startsWith('u-try-play-') && !existing.has(id);
+  const held = hold('PUT', fresh, 2, id => outOfBand(id, d => { (d['didKeys'] as unknown[]).push(didEntry(k)); }));
   const tried = await post('/try', {}, undefined, janitor);
   assert.equal(tried.status, 200, JSON.stringify(tried.json));
   const tryId = String(tried.json['userId']);
@@ -2804,18 +2906,18 @@ test('F4, I5: a claimed u-try- account is kept: by the janitor if it was claimed
   assert.deepEqual(record(tryId)?.didKeys.map(x => x.did), [k.did], `the claimed account was deleted${out(janitor)}`);
   assert.equal((await me(String(tried.json['token']), janitor)).status, 200);
   await janitor.stop();
-  // A claimed u-try- account whose removal the pod refuses stays whole: 503, and it still signs in.
+  // A claimed u-try- account whose tombstone the pod refuses stays whole: 503, and it still signs in.
   const own = await post('/try', {});
   assert.equal(own.status, 200, JSON.stringify(own.json));
   const ownId = String(own.json['userId']);
   const key = P();
   assert.equal((await addDevice(key, String(own.json['token']))).status, 200, out());
-  failingDeletes.add(ownId);
+  failPuts(ownId, '403');
   try {
     const r = await post('/users/me/delete', {}, String(own.json['token']));
     assert.equal(r.status, 503, JSON.stringify(r.json));
   } finally {
-    failingDeletes.delete(ownId);
+    putFaults.delete(ownId);
   }
   await signsInTo(signIn(key, 1), ownId);
 });
@@ -2965,6 +3067,8 @@ test('I4: deleting an account takes its lock once, for every kind of id, and ans
       assert.equal(r.status, 200, JSON.stringify(r.json));
       return { token: String(r.json['token']), userId: String(r.json['userId']) };
     }],
+    // A random id too: its record used to be removed, which let a write still pending on its ETag re-create it.
+    ['u-try-', async () => { const r = await post('/try', {}); return { token: String(r.json['token']), userId: String(r.json['userId']) }; }],
   ];
   for (const [kind, open] of kinds) {
     const { token, userId } = await open();
@@ -2974,6 +3078,7 @@ test('I4: deleting an account takes its lock once, for every kind of id, and ans
     assert.ok(Date.now() - started < 2_000, `${kind}: took ${Date.now() - started} ms`);
     assert.ok(record(userId)!.deletedAt, `${kind}: tombstone`);
   }
+  assert.equal(requests.some(r => r.target === 'doc' && r.method === 'DELETE'), false, 'no record was ever removed');
 });
 
 test('I6: a bootstrap passkey for a seeded account claimed meanwhile is refused, and leaves no account shell', async () => {

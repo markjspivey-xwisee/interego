@@ -704,8 +704,8 @@ const identityPodWriteMutexes = new Map<string, Promise<unknown>>();
 const podLockContext = new AsyncLocalStorage<ReadonlyMap<string, { held: boolean }>>();
 
 // Accounts deleted in this process. deleteUserCompletely adds the id under the account's lock
-// once the pod has the tombstone (or, for a random `u-try-` id other than Play's, once the pod
-// no longer has its record); from then on every write of that id except the tombstone is refused
+// once the pod has the tombstone (every id but a Play owner's, which may be provisioned again);
+// from then on every write of that id except the tombstone is refused
 // (writeLive, applyUpdate) and nothing it reads is installed (installAuthMethods). Every writer
 // reads the record under the same lock, so it runs wholly before the tombstone (which is then
 // written over its result) or after this mark. Process-local, like the lock: a second replica writing
@@ -793,8 +793,8 @@ function podAuthMethodsUrl(userId: string): string {
 // account index incomplete for good).
 const POD_READ_TIMEOUT_MS = 30_000;
 const podFetch: FetchLike = (url, init) => fetch(url, { ...init, signal: AbortSignal.timeout(POD_READ_TIMEOUT_MS) });
-// Reads and writes of an account's auth-methods.jsonld made under its lock (readLive, writeLive,
-// deleteLive) give up sooner: one that never answered would hold every sign-in, enrolment and
+// Reads and writes of an account's auth-methods.jsonld made under its lock (readLive, writeLive)
+// give up sooner: one that never answered would hold every sign-in, enrolment and
 // sign-out of that account behind it. A writer makes at most two such requests in a row that a
 // pod can leave unanswered: its write, then one request of the settlement that follows a failed
 // write (a read, the fence that writes the record back, a read: auth-methods-writer.ts settle),
@@ -888,22 +888,6 @@ async function writeLive(userId: string, doc: AuthMethods, pre: WritePreconditio
   throw failed(String(r.status), `${r.status} ${r.statusText}`, r.status >= 500);
 }
 
-/** Delete the account's document, conditionally on `etag` when there is one. A 404 is done. */
-async function deleteLive(userId: string, etag: string | null): Promise<{ result: WriteResult; status: number }> {
-  const url = podAuthMethodsUrl(userId);
-  let r: Response;
-  try {
-    r = await fetch(url, { method: 'DELETE', headers: etag ? { 'If-Match': etag } : {}, signal: AbortSignal.timeout(POD_RECORD_TIMEOUT_MS) });
-  } catch (err) {
-    log(`WARN identity_authmethods_write_failed userId=${userId} context=delete status=${(err as Error).name === 'TimeoutError' ? 'timeout' : 'network'}`);
-    throw new AuthMethodsWriteError(`DELETE ${url} failed: ${(err as Error).message}`, true, true);
-  }
-  if (r.ok || r.status === 404) return { result: 'ok', status: r.status };
-  if (r.status === 412) return { result: 'precondition-failed', status: r.status };
-  log(`WARN identity_authmethods_write_failed userId=${userId} context=delete status=${r.status}`);
-  throw new AuthMethodsWriteError(`DELETE ${url} failed: ${r.status} ${r.statusText}`, r.status >= 500);
-}
-
 /**
  * After a write sent on `pre` that failed (`err`), for a caller writing outside applyUpdate: the
  * pod may hold the new record (a timeout, or a store that applied it and then answered 500) or
@@ -935,15 +919,20 @@ async function reconcileAfterWriteFailure(userId: string, err: unknown, pre: Wri
  * refresh it never answers with a copy, nor joins a read already in flight.
  *
  * An account deleted in this process is settled as it is, with nothing read or written. Its
- * deletion already moved the record off every state a write still pending there was conditional
- * on: the tombstone is written on the ETag read (a write that landed first makes it read again),
- * and a `u-try-` or Play account is closed only once the pod no longer has its record (a write
- * conditional on an ETag, or on there being no document, cannot apply to it then). So no such
- * write can land afterwards, before a restart or after one; nothing read from the account is
- * installed here anyway (installAuthMethods), and writeLive refuses every write of it but the
- * tombstone, so a fence could never be sent. It used to be tried all the same, and a write of a
- * wallet or DID recorded against a deleted `u-try-` account could never be settled: that
- * credential answered 503 until the process restarted.
+ * deletion already moved the record off every state a write still pending there could apply to:
+ * the tombstone is written on the ETag read, or with If-None-Match: * where there was no document
+ * (a write that landed first makes it read again), and stays, for every id (deleteUserCompletely).
+ * A pending write is conditional on an ETag the record had before the tombstone, or on there
+ * being no document; the tombstone is a document with an ETag of its own, so neither can hold
+ * again, and no such write can land afterwards, before a restart or after one. (The record is
+ * never removed: Community Solid Server 7.2 applies a write sent with If-Match on an ETag to a
+ * missing document, so a removed record is off no such state. A `u-try-` account's used to be
+ * removed, and this comment said that a removed record could take no such write: an add recorded
+ * against it landed after the 200, and the deleted account loaded at the next restart.) Nothing
+ * read from the account is installed here anyway (installAuthMethods), and writeLive refuses every
+ * write of it but the tombstone, so a fence could never be sent. It used to be tried all the same,
+ * and a write of a wallet or DID recorded against a deleted `u-try-` account could never be
+ * settled: that credential answered 503 until the process restarted.
  */
 async function readAccountNow(userId: string, pending?: WritePrecondition): Promise<AuthMethods> {
   return withIdentityPodMutex(userId, async () => {
@@ -1128,6 +1117,17 @@ const REMOVE_AGAIN = 'Sending the same removal again is safe: it removes the cre
 function playOwnerWritable(userId: string, m: AuthMethods): boolean {
   if (hasAnyCredential(m)) return true;
   try { return provisionalPlay.open(m.provisionalPlayAnchor).userId === userId; } catch { return false; }
+}
+
+/**
+ * Whether the janitor may close a Play owner whose record is `m`: unclaimed (no credential) with
+ * its guest deadline passed, or closed already (a tombstone: a deletion whose memory was not
+ * cleared here). A record whose anchor cannot be opened is kept.
+ */
+function playOwnerPurgeable(m: AuthMethods): boolean {
+  if (isTombstone(m)) return true;
+  if (hasAnyCredential(m)) return false;
+  try { return provisionalPlay.open(m.provisionalPlayAnchor, true).expiresAt * 1000 <= Date.now(); } catch { return false; }
 }
 
 const authMethodsWriter: WriterDeps<AuthMethods> = {
@@ -6211,7 +6211,7 @@ app.post('/tokens/me/sign-out-everywhere', tokenLimiter, async (req, res) => {
  * Tear down the calling user entirely:
  *   - all in-memory identities (user + every owned agent)
  *   - all bearer tokens issued for that user
- *   - the user's pod-side auth-methods.jsonld
+ *   - the user's pod-side auth-methods.jsonld (overwritten with its tombstone)
  *   - the user's pod-side agents file
  *
  * Bearer-gated by the user's own token, so the operation is self-
@@ -6221,94 +6221,64 @@ app.post('/tokens/me/sign-out-everywhere', tokenLimiter, async (req, res) => {
  *
  * The pod's other files and its container remain (CSS does not prune containers, and
  * removing them requires storage-account credentials the identity server doesn't carry). So
- * for an account whose id can come back (derived from a credential, or a seeded alias),
- * auth-methods.jsonld is overwritten with a tombstone (deletionTombstone) rather than
- * removed, and nothing in memory is dropped until the pod has it: a deletion the pod did not
- * take throws, and the route says so. A write that failed but may have landed (a 5xx, a
- * timeout) is decided on the record the writer settled after it (a write the pod never answered
- * is fenced first, so it cannot land later): a tombstone there closes the account here too. When
- * it could not be settled, the route's 503 says the deletion may have taken, and the retry
- * finishes it (unfinishedDeletion; a tombstone already there is not
- * written again). `u-try-*` ids are random (and `u-try-play-` pods are purged by their own
- * cleanup), so theirs is removed, conditionally on the record read, and the account is closed
- * here only once the pod no longer has that record: one whose removal fails stays whole,
- * claimed or not (the route answers 503), unless the pod no longer has it when settled. An
- * unclaimed one used to be closed all the same, its record left on the pod in the state it was
- * read in, so a write still pending there (an add nothing could settle, conditional on that
- * state) could land after the 200, and the next restart loaded the deleted account with it, its
- * tokens verifying again; a Play owner's guest token verified again at once.
+ * auth-methods.jsonld is overwritten with a tombstone (deletionTombstone) rather than removed,
+ * for every id, and nothing in memory is dropped until the pod has it: a deletion the pod did not
+ * take throws, and the route says so. A write that failed but may have landed (a 5xx, a timeout)
+ * is decided on the record the writer settled after it (a write the pod never answered is fenced
+ * first, so it cannot land later): a tombstone there closes the account here too. When it could
+ * not be settled, the route's 503 says the deletion may have taken, and the retry finishes it
+ * (unfinishedDeletion; a tombstone already there is not written again).
+ *
+ * The record is never removed, `u-try-*` ids' included (random ids, which used to be removed
+ * with a DELETE conditional on the record read): a write still pending from before the deletion
+ * (an add nothing could settle, recorded for its credential's next turn) is conditional on the
+ * record's ETag or on there being no document, and Community Solid Server 7.2 applies a PUT sent
+ * with If-Match on an ETag to a missing document (BasicConditions.matchesMetadata fails only
+ * If-Match: * there), as it applies one sent with If-None-Match: *. So a removed record let such
+ * a write re-create the account after the 200, listing its credential: at the next restart (a
+ * Play owner's guest token at once) its tokens verified again. The tombstone is a document with
+ * an ETag of its own, so neither condition can hold again, before a restart or after one. A Play
+ * owner's tombstone is not permanent: it is not marked deleted here (its id is derived from a
+ * game's proof key), and its provisioning may replace it (provisional-play-store.ts).
  *
  * Under the account's lock, which it takes unless the caller holds it already (`lockHeld`: the
  * janitor's Play purge), so no writer runs between reading the record and closing it, and every
  * one after is refused. The tombstone is written with the lock-free applyUpdate: the lock is not
- * re-entrant. `stillDeletable`: checked on the record as the pod holds it, under the lock; when
- * it fails nothing is changed and `kept` is set (the janitor's decision was made on this
- * server's copy, which another instance's enrolment may have overtaken). A Play id is not
- * marked deleted: it is derived from a game's proof key and may be provisioned again once
- * purged.
+ * re-entrant. `stillDeletable`: checked on the record as the pod holds it, under the lock (each
+ * time it is read: a 412 reads it again); when it fails nothing is changed and `kept` is set (the
+ * janitor's decision was made on this server's copy, or before an enrolment the other instance
+ * made). A tombstone already there is a closed account, whatever `stillDeletable` says.
  */
-type DeletionResult = { agents: string[]; tombstoned: boolean; kept?: true; podCleanup: { authMethods: number; agents: number } };
+type DeletionResult = { agents: string[]; tombstoned: true; kept?: true; podCleanup: { agents: number } };
 async function deleteUserCompletely(
   userId: string,
   opts: { lockHeld?: boolean; stillDeletable?: (methods: AuthMethods) => boolean } = {},
 ): Promise<DeletionResult> {
-  const tombstoned = !userId.startsWith('u-try-');
-  const podCleanup = { authMethods: 0, agents: 0 };
+  const podCleanup = { agents: 0 };
   const close = async (): Promise<boolean> => {
-    if (tombstoned) {
-      // Above every epoch a token was issued or checked under: the pod's and this server's copy's.
-      const cachedEpoch = authMethodsCache.get(userId)?.value.sessionEpoch ?? 0;
-      try {
-        await applyUpdate(userId, 'delete-account', (draft, live) => {
-          // Closed already (a deletion the pod took without confirming it, retried; or the
-          // other instance's): nothing to write, and what follows clears this server's memory.
-          if (live && isTombstone(live)) return NoWrite('closed');
-          const tombstone = deletionTombstone(userId, Math.max(live?.sessionEpoch ?? 0, cachedEpoch));
-          for (const k of Object.keys(draft)) delete (draft as unknown as Record<string, unknown>)[k];
-          Object.assign(draft, tombstone);
-          return Write;
-        }, { tombstone: 'replace', absent: 'create' });
-      } catch (err) {
-        // A write whose outcome is unknown (a 5xx, a timeout) may have landed: the writer settled
-        // what the pod holds under this lock. A tombstone there is a closed account, so the
-        // deletion goes on to clear memory and the agent registry; anything else is answered 503.
-        const after = err instanceof AuthMethodsWriteError ? err.podRecord as AuthMethods | null | undefined : undefined;
-        if (!after || !isTombstone(after)) throw err;
-        log(`WARN: deletion of ${userId}: the pod took the tombstone without confirming it (${(err as Error).message})`);
-      }
-    } else {
-      for (let attempt = 1; ; attempt++) {
-        const live = await readLive(userId);
-        if (opts.stillDeletable && !opts.stillDeletable(live.methods ?? emptyAuthMethods(userId))) {
-          // Kept: this server's copy is made what the pod holds, so the next decision sees it.
-          installAuthMethods(userId, live.methods ?? emptyAuthMethods(userId));
-          return false;
-        }
-        if (!live.methods) break;
-        let removed: { result: WriteResult; status: number };
-        try {
-          removed = await deleteLive(userId, live.etag);
-        } catch (err) {
-          // The account stays as it is, in memory too, claimed or not: the route answers 503.
-          // Unless the pod applied the removal all the same (a 5xx after it, a timeout): then it
-          // is gone. A removal it never answered is settled first (fenced, so it cannot land
-          // afterwards). A record that lists no credential used to be dropped here all the same,
-          // left on the pod as read: a write still pending there could land after the 200.
-          const after = await reconcileAfterWriteFailure(userId, err, live.etag ? { kind: 'match', etag: live.etag } : { kind: 'none' }, 'delete-account');
-          if (after !== null) {
-            if (err instanceof AuthMethodsWriteError) err.podRecord = after;
-            throw err;
-          }
-          log(`WARN: removal of the record of ${userId} not confirmed, but the pod no longer has it`);
-          break;
-        }
-        if (removed.result === 'ok') { podCleanup.authMethods = removed.status; break; }
-        // Written since the read: read it again, and check again.
-        if (attempt >= 3) {
-          logWriteConflict(userId, 'delete-account', attempt);
-          throw new AuthMethodsConflictError(`${userId}: auth-methods document changed under ${attempt} deletion(s)`);
-        }
-      }
+    // Above every epoch a token was issued or checked under: the pod's and this server's copy's.
+    const cachedEpoch = authMethodsCache.get(userId)?.value.sessionEpoch ?? 0;
+    try {
+      const outcome = await applyUpdate(userId, 'delete-account', (draft, live) => {
+        // Closed already (a deletion the pod took without confirming it, retried; or the
+        // other instance's): nothing to write, and what follows clears this server's memory.
+        if (live && isTombstone(live)) return NoWrite('closed');
+        // Kept: the writer makes this server's copy what the pod holds, so the next decision sees it.
+        if (opts.stillDeletable && !opts.stillDeletable(live ?? emptyAuthMethods(userId))) return NoWrite('kept');
+        const tombstone = deletionTombstone(userId, Math.max(live?.sessionEpoch ?? 0, cachedEpoch));
+        for (const k of Object.keys(draft)) delete (draft as unknown as Record<string, unknown>)[k];
+        Object.assign(draft, tombstone);
+        return Write;
+      }, { tombstone: 'replace', absent: 'create' });
+      if (outcome.written === false && outcome.reason === 'kept') return false;
+    } catch (err) {
+      // A write whose outcome is unknown (a 5xx, a timeout) may have landed: the writer settled
+      // what the pod holds under this lock. A tombstone there is a closed account, so the
+      // deletion goes on to clear memory and the agent registry; anything else is answered 503,
+      // and the account stays whole, here and on the pod.
+      const after = err instanceof AuthMethodsWriteError ? err.podRecord as AuthMethods | null | undefined : undefined;
+      if (!after || !isTombstone(after)) throw err;
+      log(`WARN: deletion of ${userId}: the pod took the tombstone without confirming it (${(err as Error).message})`);
     }
     if (!userId.startsWith('u-try-play-')) deletedUserIds.add(userId);
     // Token revocation: the tombstone has no credentials, so the account does not load and
@@ -6325,7 +6295,7 @@ async function deleteUserCompletely(
   } else {
     closed = await withIdentityPodMutex(userId, close);
   }
-  if (!closed) return { agents: [], tombstoned, kept: true, podCleanup };
+  if (!closed) return { agents: [], tombstoned: true, kept: true, podCleanup };
 
   const ownedAgentIds = [...identities.values()]
     .filter(i => i.type === 'agent' && i.owner === userId)
@@ -6348,7 +6318,7 @@ async function deleteUserCompletely(
     podCleanup.agents = r.status;
   } catch { /* best-effort */ }
 
-  return { agents: ownedAgentIds, tombstoned, podCleanup };
+  return { agents: ownedAgentIds, tombstoned: true, podCleanup };
 }
 
 app.post('/users/me/delete', tokenLimiter, async (req, res) => {
@@ -7057,10 +7027,12 @@ function onEnrolled(result) {
     + '<br><a href="' + dash + '" style="color:#6ae66a;text-decoration:underline">Open your dashboard &rarr;</a>';
 }
 
-// A request sent with the token from "Add this credential to an account you already have" whose
-// token no longer verifies (expired, signed out, deleted, or the dashboard's own copy gone stale)
-// is refused with 401 and changes nothing: it does not go on as a sign-in, or an invite claim,
-// without the token. Say so, and how to go on.
+// A first sign-in (a credential no account holds yet), an add or an invite claim sent with the
+// token from "Add this credential to an account you already have" whose token no longer verifies
+// (expired, signed out, deleted, or the dashboard's own copy gone stale) is refused with 401 and
+// changes nothing: it does not go on without the token. (A wallet an account already lists signs
+// in whatever bearer comes with it: /auth/siwe checks the bearer only when no account holds the
+// wallet.) Say so, and how to go on.
 function staleTokenHint(status, error, adv) {
   if (status !== 401 || !adv.addDeviceToken || !/^Invalid bearer token/.test(String(error || ''))) return '';
   return ' The token under Advanced options ("Add this credential to an account you already have") no longer works: '
@@ -7363,8 +7335,9 @@ app.listen(PORT, () => {
             // Read through to the pod before deletion; never infer "unclaimed"
             // from a transient dependency failure or a process-local timestamp.
             const methods = (await readLive(u.id)).methods ?? emptyAuthMethods(u.id);
-            const owner = provisionalPlay.open(methods.provisionalPlayAnchor, true);
-            if (owner.expiresAt * 1000 <= now && !hasAnyCredential(methods)) toPurge.add(u.id);
+            // A tombstone: a deletion whose memory was not cleared here (the other instance's), finished below.
+            if (!isTombstone(methods)) provisionalPlay.open(methods.provisionalPlayAnchor, true);
+            if (playOwnerPurgeable(methods)) toPurge.add(u.id);
           } catch (error) { log(`Janitor: kept unreadable provisional owner ${u.id}: ${(error as Error).name}`); }
           continue;
         }
@@ -7387,21 +7360,14 @@ app.listen(PORT, () => {
       for (const uid of toPurge) {
         if (uid.startsWith('u-try-play-')) {
           void withIdentityPodMutex(uid, async () => {
+            // Nothing is deleted until the account is closed: its tombstone written on the ETag of the
+            // record checked under this lock, so an enrolment that lands after the read (the other
+            // instance's) makes that write fail, and the record read again keeps the account. The
+            // record and its container stay, as the tombstone (provisional-play-cleanup.ts).
             const purge = await purgeProvisionalPlayPod({ userId: uid, cssUrl: CSS_URL,
-              // Nothing is deleted unless the record read here is fenced first (written back on its
-              // ETag): an enrolment that lands after this read (the other instance's) keeps the account.
-              stillUnclaimed: async () => {
-                const live = await readLive(uid);
-                if (!live.methods) return { ok: false, etag: null };
-                const owner = provisionalPlay.open(live.methods.provisionalPlayAnchor, true);
-                return { ok: owner.expiresAt * 1000 <= Date.now() && !hasAnyCredential(live.methods), etag: live.etag, document: live.raw };
-              },
+              close: async () => !(await deleteUserCompletely(uid, { lockHeld: true, stillDeletable: playOwnerPurgeable })).kept,
             });
-            if (purge === 'kept') return;
-            // A concurrent canonical enrollment wins: keep that account.
-            const remaining = await readPodJson(recordFetch, podAuthMethodsUrl(uid));
-            if (remaining !== null) return;
-            await deleteUserCompletely(uid, { lockHeld: true });
+            if (purge === 'kept') log(`Janitor: kept ${uid}: it holds a credential now, or its anchor has not expired`);
           }).catch(err => log(`Janitor: provisional cleanup kept ${uid}: ${(err as Error).message}`));
           continue;
         }

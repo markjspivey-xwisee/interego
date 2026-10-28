@@ -23,9 +23,11 @@
  * write the pod answered (a 5xx, a 4xx) is over, so one read settles it. A write the pod never
  * answered (a timeout, a dropped connection) may still be applied after that read: a store keeps
  * working on a request its client gave up on, and a read can overtake a queued write. So while
- * the record is still in the state the write was conditional on, settle writes it back as read
- * on the same condition (a fence: the pending write's condition can then never hold) and reads
- * again; the record it returns is final.
+ * the record is still in a state the write could apply to, settle writes it back as read on the
+ * same condition (a fence: the pending write's condition can then never hold), or creates one
+ * where there is no document, and reads again; the record it returns is final. A missing
+ * document fences nothing: a write sent with If-Match on an ETag is applied to one by Community
+ * Solid Server 7.2 (only If-Match: * fails there), as a write sent with If-None-Match: * is.
  * This server's copy and indexes therefore change only from a record read or written under the
  * lock. When settling fails (a request of it fails), the copy is marked stale (`expire`) and
  * kept, with its index entries, and the error carries the condition the pending write was sent
@@ -132,7 +134,11 @@ export type Delta<M> = (draft: M, live: Readonly<M> | null) => Promise<DeltaOutc
 export interface UpdateOptions {
   /** The pod has no document: 'refuse' (AccountRecordMissingError), 'create' it, or 'pass' null to the delta. */
   absent?: 'refuse' | 'create' | 'pass';
-  /** The pod holds a deletion tombstone: 'refuse' (AccountDeletedError) or 'replace' it. */
+  /**
+   * The pod holds a deletion tombstone: 'refuse' (AccountDeletedError) or 'replace' it. 'replace'
+   * is a deletion's, which writes the tombstone: it may close a Play owner whatever its anchor
+   * says, and leave its tombstone where the pod has no document ('create').
+   */
   tombstone?: 'refuse' | 'replace';
   /** Reads (and writes) before giving up on a record others keep writing. Default 3. */
   attempts?: number;
@@ -193,9 +199,11 @@ export async function applyUpdate<M>(
 ): Promise<UpdateResult<M>> {
   deps.assertLockHeld(userId);
   const tombstone = opts.tombstone ?? 'refuse';
-  // A Play owner's record is created only by its provisioning (the anchor); a write never
-  // re-creates a purged one.
-  const absent = isPlayOwner(userId) ? 'refuse' : (opts.absent ?? 'refuse');
+  // A Play owner's record is created only by its provisioning (the anchor), or as its deletion's
+  // tombstone: no other write re-creates a purged one, and only a deletion ('replace') changes an
+  // unclaimed owner whose anchor no longer opens.
+  const deletion = tombstone === 'replace';
+  const absent = isPlayOwner(userId) && !deletion ? 'refuse' : (opts.absent ?? 'refuse');
   const attempts = Math.max(1, opts.attempts ?? 3);
   if (deps.isDeleted(userId) && tombstone !== 'replace') throw new AccountDeletedError(`${userId}: account deleted`);
   for (let attempt = 0; attempt < attempts; attempt++) {
@@ -209,7 +217,7 @@ export async function applyUpdate<M>(
       deps.install(userId, deps.empty(userId));
       throw new AccountRecordMissingError(`${userId}: no auth-methods document`);
     }
-    if (read !== null && isPlayOwner(userId) && !deps.playGuard(userId, read)) {
+    if (read !== null && isPlayOwner(userId) && !deletion && !deps.playGuard(userId, read)) {
       deps.install(userId, read);
       throw new PlayOwnerUnavailableError(`${userId}: Provisional owner unavailable`);
     }
@@ -252,10 +260,13 @@ export async function applyUpdate<M>(
   throw new AuthMethodsConflictError(`${userId}: auth-methods document changed under ${attempts} write(s)`);
 }
 
-/** Whether `now` is off the state a write sent on `pending` was conditional on, so that write can no longer apply. */
+/** Whether `now` is off every state a write sent on `pending` could apply to, so that write can no longer apply. */
 function movedOff<M>(now: LiveRecord<M>, pending: WritePrecondition): boolean {
   if (pending.kind === 'absent') return now.methods !== null;
-  if (pending.kind === 'match') return now.etag !== pending.etag;
+  // If-Match on an ETag holds where the document has that ETag, and, on Community Solid Server 7.2
+  // (BasicConditions.matchesMetadata), where there is no document at all: only If-Match: * fails on
+  // a missing one. So only a document with another ETag is off it.
+  if (pending.kind === 'match') return now.methods !== null && now.etag !== pending.etag;
   // Sent unconditionally (the pod sends no ETag): nothing can fence it, and a read is all there is.
   return true;
 }
@@ -264,11 +275,14 @@ function movedOff<M>(now: LiveRecord<M>, pending: WritePrecondition): boolean {
  * The record as the pod holds it once a failed write can no longer change it, for a caller that
  * holds the account's lock. `pending`: the condition of a write the pod never answered (undefined
  * when it answered, or when there is none): such a write may still be applied after any read, so
- * long as the record is in the state it was conditional on (the ETag it was sent with; no
- * document, for If-None-Match: *). Then the record is written back as read, on that same
- * condition (an empty record where there is no document), so that the pending write's condition
- * can never hold again, and read once more. Any write since (the pending one, the fence, another
- * writer's) moves the record off that state, and the read that finds it moved is final.
+ * long as the record is in a state it can apply to (the ETag it was sent with, or no document at
+ * all: a store may apply If-Match to a missing document, movedOff; no document, for
+ * If-None-Match: *). Then the record is written back as read, on that same condition, or, where
+ * there is no document, an empty record is created (If-None-Match: *), so that the pending
+ * write's condition can never hold again, and read once more. Any write since (the pending one,
+ * the fence, another writer's) moves the record off that state, and the read that finds it moved
+ * is final. It used to take a missing document as off an If-Match write's state, which on CSS 7.2
+ * it is not: the write landed on it afterwards, and re-created a record that had been removed.
  *
  * Throws (UnsettledWriteError, or the read's error) when it cannot get there: a read fails, the
  * fence gets no answer (it may still apply too; for a create, its container PUT got none), or the
@@ -280,9 +294,10 @@ export async function settle<M>(deps: WriterDeps<M>, userId: string, pending: Wr
   deps.assertLockHeld(userId);
   const now = await deps.readLive(userId);
   if (!pending || movedOff(now, pending)) return now;
-  const fence = (pending.kind === 'absent' ? deps.empty(userId) : { ...unknownTopLevelKeys(now.raw), ...now.methods }) as M;
+  const missing = now.methods === null;
+  const fence = (missing ? deps.empty(userId) : { ...unknownTopLevelKeys(now.raw), ...now.methods }) as M;
   try {
-    await deps.writeLive(userId, fence, pending, `${context}-settle`);
+    await deps.writeLive(userId, fence, missing ? { kind: 'absent' } : pending, `${context}-settle`);
   } catch (err) {
     // A fence the pod did not answer may apply later, as may the write: neither is over. A fence
     // whose container PUT got no answer was never sent, and the pod is not answering: stop here

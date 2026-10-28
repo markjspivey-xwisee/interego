@@ -51,7 +51,12 @@ function serverLock() {
   return { podLockContext, lock, assertLockHeld };
 }
 
-/** One account's pod, with an ETag per version, and the module's dependencies over it. */
+/**
+ * One account's pod, with an ETag per version, and the module's dependencies over it. Its
+ * conditions are Community Solid Server 7.2's (BasicConditions.matchesMetadata), the live store's:
+ * If-None-Match: * fails where there is a document, and If-Match on an ETag fails only where there
+ * is a document with another ETag. On a missing document it is applied, as only If-Match: * fails there.
+ */
 function pod(initial: (Record_ & Record<string, unknown>) | null, userId = 'u-pk-000000000001') {
   let doc: (Record_ & Record<string, unknown>) | null = initial ? structuredClone(initial) : null;
   let version = 1;
@@ -104,7 +109,7 @@ function pod(initial: (Record_ & Record<string, unknown>) | null, userId = 'u-pk
       if (hang) {
         // Its precondition is checked when the pod gets round to it, as a store does.
         const apply = () => {
-          if (pre.kind === 'absent' ? doc !== null : pre.kind === 'match' && pre.etag !== `"${version}-application/ld+json"`) { log.push('late PUT 412'); return; }
+          if (pre.kind === 'absent' ? doc !== null : pre.kind === 'match' && doc !== null && pre.etag !== `"${version}-application/ld+json"`) { log.push('late PUT 412'); return; }
           doc = structuredClone(written) as typeof doc;
           version++;
           log.push('late PUT applied');
@@ -119,7 +124,7 @@ function pod(initial: (Record_ & Record<string, unknown>) | null, userId = 'u-pk
         throw new AuthMethodsWriteError('PUT failed: 500', true);
       }
       if (pre.kind === 'absent' && doc) return 'precondition-failed';
-      if (pre.kind === 'match' && pre.etag !== `"${version}-application/ld+json"`) return 'precondition-failed';
+      if (pre.kind === 'match' && doc !== null && pre.etag !== `"${version}-application/ld+json"`) return 'precondition-failed';
       doc = structuredClone(written) as typeof doc;
       if (!etagSticks) version++;
       return 'ok';
@@ -137,6 +142,8 @@ function pod(initial: (Record_ & Record<string, unknown>) | null, userId = 'u-pk
     get expired() { return expired; },
     /** Another writer's change (the other instance, an operator): the ETag moves on. */
     outOfBand(edit: (m: Record_) => void) { edit(doc!); version++; },
+    /** Another writer removes the document (an operator, or an instance running code that removed records). */
+    remove() { doc = null; version++; },
     failReads(n: number) { readFailures = n; },
     failWrites(n: number, applied = false) { writeFailures = n; applyThenFail = applied; },
     /** The next writes are never answered; each is applied (if its condition still holds) when `when` says. */
@@ -323,6 +330,37 @@ test('a fence that leaves the record where the write found it settles nothing: t
   }
 });
 
+test('a write the pod never answered whose record is removed meanwhile is fenced by creating one: a missing document does not stop a write sent with If-Match', async () => {
+  // The record is removed while the write is pending (an operator; an instance running code that
+  // removed records). CSS 7.2 applies a PUT sent with If-Match on an ETag to a missing document, so
+  // the settlement took the missing document as final, and the write landed afterwards, re-creating
+  // the record with its change. Now a record is created where there is none (If-None-Match: *),
+  // and the pending write meets a document with another ETag.
+  const p = pod(account());
+  let removed = false;
+  p.beforeWrite = () => { if (!removed) { removed = true; p.remove(); } };
+  p.hang('later');
+  const err = await updateAuthMethods(p.deps, p.userId, 'test', addWallet('0xbbb')).then(() => null, (e: unknown) => e);
+  assert.ok(err instanceof AuthMethodsWriteError, String(err));
+  assert.deepEqual(p.log, ['GET', 'PUT match "1-application/ld+json"', 'GET', 'PUT absent', 'GET']);
+  assert.deepEqual(err.podRecord, empty(p.userId), 'what the pod holds, final');
+  p.applyLater();
+  assert.equal(p.log.at(-1), 'late PUT 412');
+  assert.deepEqual(p.doc, empty(p.userId), 'the held write can no longer land');
+  // settle on its own does the same for a write recorded with that condition.
+  const q = pod(account());
+  q.hang('later');
+  const first = await updateAuthMethods(q.deps, q.userId, 'test', addWallet('0xccc')).then(() => null, (e: unknown) => e);
+  assert.ok(first instanceof AuthMethodsWriteError);
+  q.remove();
+  const before = q.log.length;
+  const now = await q.deps.lock(q.userId, () => settle(q.deps, q.userId, { kind: 'match', etag: '"1-application/ld+json"' }, 'later'));
+  assert.deepEqual(q.log.slice(before), ['GET', 'PUT absent', 'GET']);
+  assert.deepEqual(now.methods, empty(q.userId));
+  q.applyLater();
+  assert.deepEqual(q.doc!.walletAddresses, [], 'the held write can no longer land');
+});
+
 test('a precondition failure re-reads and re-runs the delta on the new record, and gives up after three', async () => {
   const p = pod(account());
   let runs = 0;
@@ -418,6 +456,32 @@ test('an unclaimed Play owner whose anchor no longer opens is refused, and a mis
     await assert.rejects(updateAuthMethods(purged.deps, playId, 'test', addWallet('0xbbb'), { absent }), AccountRecordMissingError);
     assert.deepEqual(purged.log, ['GET'], absent);
   }
+});
+
+test('a deletion closes a Play owner whatever its anchor says, and leaves its tombstone where the pod has none', async () => {
+  // Only a deletion (tombstone: 'replace'): it used to be refused for an owner whose anchor had
+  // expired (PlayOwnerUnavailableError) and for one with no document (AccountRecordMissingError).
+  const playId = `u-try-play-${'b'.repeat(32)}`;
+  const close = (draft: Record_) => {
+    for (const k of Object.keys(draft)) delete (draft as Record<string, unknown>)[k];
+    Object.assign(draft, { ...empty(playId), sessionEpoch: 1, deletedAt: '2026-10-28' });
+    return Write;
+  };
+  const expired = pod({ ...empty(playId), provisionalPlayAnchor: 'expired' }, playId);
+  expired.anchorOpens = false;
+  assert.equal((await updateAuthMethods(expired.deps, playId, 'delete', close, { tombstone: 'replace', absent: 'create' })).written, true);
+  assert.deepEqual(expired.log, ['GET', 'PUT match "1-application/ld+json"']);
+  assert.equal(expired.doc!.deletedAt, '2026-10-28');
+  assert.equal(expired.doc!.provisionalPlayAnchor, undefined);
+  const purged = pod(null, playId);
+  assert.equal((await updateAuthMethods(purged.deps, playId, 'delete', close, { tombstone: 'replace', absent: 'create' })).written, true);
+  assert.deepEqual(purged.log, ['GET', 'PUT absent']);
+  assert.equal(purged.doc!.deletedAt, '2026-10-28');
+  // Any other write of either is refused as before.
+  const other = pod({ ...empty(playId), provisionalPlayAnchor: 'expired' }, playId);
+  other.anchorOpens = false;
+  await assert.rejects(updateAuthMethods(other.deps, playId, 'test', addWallet('0xbbb')), PlayOwnerUnavailableError);
+  await assert.rejects(updateAuthMethods(pod(null, playId).deps, playId, 'test', addWallet('0xbbb'), { absent: 'create' }), AccountRecordMissingError);
 });
 
 test('keys this server does not read are kept; a tombstone keeps none of them', async () => {

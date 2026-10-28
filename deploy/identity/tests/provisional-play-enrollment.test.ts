@@ -7,7 +7,7 @@ import { purgeProvisionalPlayPod } from '../provisional-play-cleanup.js';
 import { PodReadError, readPodJsonWithEtag } from '../account-index.js';
 import {
   AccountDeletedError, AccountRecordMissingError, AuthMethodsConflictError, AuthMethodsWriteError, NoWrite,
-  PlayOwnerUnavailableError, PodLockReentryError, Write, updateAuthMethods as updateAuthMethodsWith,
+  PlayOwnerUnavailableError, PodLockReentryError, Write, applyUpdate as applyUpdateWith, updateAuthMethods as updateAuthMethodsWith,
   type WritePrecondition,
 } from '../auth-methods-writer.js';
 import { createCredentialDecisions } from '../credential-decisions.js';
@@ -88,10 +88,11 @@ function fixture() {
     return 'ok' as const;
   };
   const installAuthMethods = (_owner: string, m: Methods) => { installs++; cached = structuredClone(m); return cached; };
-  const provisionalPlay = { open(anchor: string) {
+  // The guest deadline is at 10: before it the anchor opens; after it, it opens only when expiry is allowed (the janitor's check).
+  const provisionalPlay = { open(anchor: string, allowExpired = false) {
     openCalls++;
-    if (anchor !== 'original-owner-anchor' || now >= 10) throw new Error('Provisional owner unavailable');
-    return { userId };
+    if (anchor !== 'original-owner-anchor' || (now >= 10 && !allowExpired)) throw new Error('Provisional owner unavailable');
+    return { userId, expiresAt: now >= 10 ? 0 : Number.MAX_SAFE_INTEGER };
   } };
   const deletedUserIds = new Set<string>();
   // The guard on an unclaimed Play owner, and the writer's wiring, exactly as server.ts has them:
@@ -111,7 +112,7 @@ function fixture() {
     `${productionFunction('commitCredentialEnrollment')}; return commitCredentialEnrollment;`)(
     updateAuthMethods, NoWrite, Write,
   ) as (owner: string, context: string, update: (m: Methods) => boolean | void, opts?: { absent?: 'refuse' | 'create' }) => Promise<unknown>;
-  const authMethodsCache = { get: () => cached ? { value: cached } : undefined };
+  const authMethodsCache = { get: () => cached ? { value: cached } : undefined, delete: () => { cached = null; } };
   const log = () => {};
   // How a route reads a failed write's settled record, exactly as server.ts has it.
   const changeOnPod = new Function('AuthMethodsWriteError', 'isTombstone',
@@ -136,10 +137,27 @@ function fixture() {
     'ACCOUNT_DELETED_MESSAGE', 'log', `${productionSyncFunction('sendAccountWriteRefusal')}; return sendAccountWriteRefusal;`)(
     PodReadError, AccountDeletedError, AccountRecordMissingError, 'account deleted', log);
   const refuseRemoval = new Function(`${productionSyncFunction('refuseRemoval')}; return refuseRemoval;`)();
-  // The production deletion takes the account's lock itself (deleteUserCompletely).
-  const deleteUserCompletely = (owner: string) => withIdentityPodMutex(owner, async () => {
-    await duringAccountDelete(); document = null; cached = null; return { agents: [] };
-  });
+  // The production deletion (deleteUserCompletely, which takes the account's lock unless its caller
+  // holds it), over the same writer: it overwrites the record with its tombstone, and never removes it.
+  const applyUpdate = new Function('applyAuthMethodsUpdate', 'authMethodsWriter',
+    `${productionFunction('applyUpdate')}; return applyUpdate;`)(applyUpdateWith, authMethodsWriter);
+  const deletionTombstone = new Function('emptyAuthMethods',
+    `${productionSyncFunction('deletionTombstone')}; return deletionTombstone;`)((owner: string) => empty(owner));
+  const podFetch = async (url: string, init?: RequestInit) => {
+    if (init?.method === 'DELETE') { await beforeDelete(); deletions.push(url); }
+    return new Response(null, { status: 205 });
+  };
+  const deleteUserCompletely = new Function('applyUpdate', 'NoWrite', 'Write', 'isTombstone', 'deletionTombstone', 'emptyAuthMethods',
+    'authMethodsCache', 'AuthMethodsWriteError', 'log', 'deletedUserIds', 'removeFromIndexes', 'recordWatchers', 'assertLockHeld',
+    'withIdentityPodMutex', 'identities', 'keys', 'surfaceAgentRestores', 'podRegistryCache', 'fetch', 'CSS_URL', 'POD_RECORD_TIMEOUT_MS',
+    `${productionFunction('deleteUserCompletely')}; return deleteUserCompletely;`)(
+    applyUpdate, NoWrite, Write, isTombstone, deletionTombstone, (owner: string) => empty(owner),
+    authMethodsCache, AuthMethodsWriteError, () => {}, deletedUserIds, () => {}, { changed: () => {} }, assertLockHeld,
+    async <T>(owner: string, work: () => Promise<T>) => withIdentityPodMutex(owner, async () => { await duringAccountDelete(); return work(); }),
+    new Map(), new Map(), { forgetUser: () => {} }, new Map(), podFetch, 'https://css.test/', 15_000,
+  ) as (owner: string, opts?: { lockHeld?: boolean; stillDeletable?: (m: Methods) => boolean }) => Promise<{ kept?: true }>;
+  const playOwnerPurgeable = new Function('isTombstone', 'hasAnyCredential', 'provisionalPlay',
+    `${productionSyncFunction('playOwnerPurgeable')}; return playOwnerPurgeable;`)(isTombstone, hasAnyCredential, provisionalPlay);
   // A wallet or DID removal runs in the credential's turn (inRemovalTurn, as server.ts has it, over
   // a decisions instance of its own); the owner's copy lists every credential here.
   const credentialDecisions = createCredentialDecisions({ readAccount: async () => undefined, waitMs: 5_000 });
@@ -168,21 +186,13 @@ function fixture() {
     return { response, run: (params = {}, body = {}) => run({ params, body }, response) as Promise<void> };
   };
   const root = `https://css.test/${userId}/`;
+  // The janitor's purge, as server.ts makes it: the account is closed (its tombstone written on the
+  // ETag of the record checked) before anything is deleted, and its record stays.
   const cleanup = () => withIdentityPodMutex(userId, () => purgeProvisionalPlayPod({
     userId, cssUrl: 'https://css.test/',
-    stillUnclaimed: async () => {
-      const live = await readLive();
-      return { ok: now >= 10 && !!live.methods && !hasAnyCredential(live.methods), etag: live.etag, document: live.raw };
-    },
+    close: async () => !(await deleteUserCompletely(userId, { lockHeld: true, stillDeletable: playOwnerPurgeable })).kept,
     fetcher: (async (input: string | URL | Request, init?: RequestInit) => {
       const url = String(input);
-      if (init?.method === 'PUT' && url === root + 'auth-methods.jsonld') {
-        // The fence: the anchor written back as read, on the ETag read.
-        if (new Headers(init.headers).get('if-match') !== etag()) return new Response(null, { status: 412 });
-        document = JSON.parse(String(init.body)) as Methods;
-        version++;
-        return new Response(null, { status: 205 });
-      }
       if (init?.method === 'DELETE') {
         await beforeDelete();
         deletions.push(url);
@@ -239,13 +249,18 @@ test('cleanup that wins the lock cannot be followed by successful enrollment or 
   const cleanup = f.cleanup();
   await started.promise;
   const enrollment = f.commit(userId, 'webauthn-register', enroll);
-  const rejected = assert.rejects(enrollment, AccountRecordMissingError);
+  const rejected = assert.rejects(enrollment, AccountDeletedError);
   release.resolve();
   await cleanup;
   await rejected;
-  assert.equal(f.document, null);
+  // The record is the tombstone, written once, and stays: it used to be deleted, and a write still
+  // pending on its ETag could then re-create the owner (CSS 7.2 applies If-Match to a missing document).
+  assert.equal(typeof f.document!.deletedAt, 'string');
+  assert.equal(hasAnyCredential(f.document!), false);
+  assert.equal(f.document!.provisionalPlayAnchor, undefined);
   assert.equal(f.checkpoint, false);
-  assert.equal(f.puts, 0);
+  assert.equal(f.puts, 1, 'the tombstone, and nothing after it');
+  assert.equal(f.deletions.includes(`https://css.test/${userId}/auth-methods.jsonld`), false);
 });
 
 test('a failed durable enrollment never exposes a credential through cache or success', async () => {
@@ -438,15 +453,19 @@ test('self-deletion waits for an in-flight enrollment and later mutations cannot
   await enrollment;
   await deleted;
   assert.equal(deletion.response.statusCode, 200);
-  assert.equal(f.document, null);
+  // The deletion ran after the enrolment and closed the account over it: the record is its
+  // tombstone (no credential, no anchor), which stays on the pod.
+  assert.equal(typeof f.document!.deletedAt, 'string');
+  assert.equal(hasAnyCredential(f.document!), false);
+  const after = structuredClone(f.document);
   const puts = f.puts;
   await assert.rejects(f.commit(userId, 'did-add-did', m => { m.didKeys.push({ did: 'did:key:late' }); }),
-    AccountRecordMissingError);
-  // Nor does a sign-out, which may create a canonical account's document, create a Play owner's.
+    AccountDeletedError);
+  // Nor does a sign-out write anything over it.
   const signOut = f.control('post', '/tokens/me/sign-out-everywhere');
   await signOut.run();
-  assert.equal(signOut.response.statusCode, 404, JSON.stringify(signOut.response.body));
-  assert.equal(f.document, null);
+  assert.equal(signOut.response.statusCode, 409, JSON.stringify(signOut.response.body));
+  assert.deepEqual(f.document, after);
   assert.equal(f.puts, puts);
 });
 
