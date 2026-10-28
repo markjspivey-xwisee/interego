@@ -2287,10 +2287,15 @@ test('C13, J6: one request the pod never answers holds an account\'s lock for no
   // answers the deletion of its agent registry, which the janitor makes holding the owner's lock.
   // A request for that lock waits for it: here a bootstrap claim's read of the owner's pod (the
   // same owner's provisioning waits the same way, holding every other provisioning behind it).
+  // The pod holds the registry, as every Play pod does once the relay's exchange has bootstrapped
+  // it. The purge used to send it two DELETEs one after the other (the deletion's own, then the
+  // purge's of what it listed), so the lock was held for two timeouts; with no registry stored, as
+  // this test had it, the listing named none and only the first was sent.
   const port = await freePort();
   docs.set(expiredPlay.id, { modified: clock = Math.max(clock + 1, Date.now()), doc: { userId: expiredPlay.id, name: 'Play guest',
     walletAddresses: [], webAuthnCredentials: [], didKeys: [], provisionalPlayAnchor: expiredAnchor(`http://127.0.0.1:${port}`) } });
   const registry = `/${expiredPlay.id}/agents`;
+  putOther(registry);
   hangingOther.add(`DELETE ${registry}`);
   const janitor = await startIdentity(port, { JANITOR_INTERVAL_MS: '1000',
     BOOTSTRAP_INVITES: [...Object.values(invites).map(i => `${i.userId}:${i.token}`), `${expiredPlay.id}:${expiredPlay.invite}`].join(',') });
@@ -2305,9 +2310,17 @@ test('C13, J6: one request the pod never answers holds an account\'s lock for no
     assert.match(String((await probe).json['error']), /This account was deleted/);
     assert.ok(deletion.abandonedAt !== undefined && deletion.abandonedAt - deletion.at < 16_500,
       `the registry DELETE was given up ${deletion.abandonedAt === undefined ? 'never' : `after ${deletion.abandonedAt - deletion.at} ms`}`);
+    // A DELETE of the registry that fails leaves the purge unfinished, its tombstone marked, for the next pass.
+    assert.ok(await waitFor(() => (new RegExp(`purge of ${expiredPlay.id} unfinished`).test(janitor.output()) || undefined), 5_000),
+      `the registry DELETE's timeout did not leave the purge unfinished${out(janitor)}`);
+    assert.equal(record(expiredPlay.id)?.provisionalPlayPurgePending, true);
   } finally {
     await janitor.stop();
     hangingOther.clear();
+    // What the next pass does once the pod answers, so the instances of the tests below find no
+    // purge left open by this one.
+    others.delete(registry);
+    if (record(expiredPlay.id)?.provisionalPlayPurgePending) outOfBand(expiredPlay.id, d => { delete d['provisionalPlayPurgePending']; });
   }
   const [walletReply, didReply] = await Promise.all([walletClaim, didClaim]);
   assert.equal(walletReply.status, 200, `${JSON.stringify(walletReply.json)}${out()}`);
@@ -2400,6 +2413,19 @@ test('P9: a Play purge that fails part-way is finished, at the janitor\'s next p
     assert.deepEqual(deletesOf(saves.get(once.id)!).map(r => r.status), [409], 'the save\'s DELETE is sent once, at the pass that finished');
     assert.ok(await logged(janitor, new RegExp(`finished the purge of ${once.id}, keeping 2 resource\\(s\\)[^\\n]*hallowmarch/checkpoints/[0-9a-f]{64}\\.json`)),
       `the kept heads are not logged${out(janitor)}`);
+    // The registry's 500 stopped the first pass, which left the purge unfinished and its tombstone
+    // marked; a later pass of the same instance found that tombstone, wrote nothing over it, sent
+    // the DELETEs again and cleared the mark. The 500 used to fall on a DELETE of the registry the
+    // deletion sent first, best-effort, which nothing saw: the purge finished at its first pass.
+    const onceLog = janitor.output();
+    const leftUnfinished = onceLog.search(new RegExp(`purge of ${once.id} unfinished`));
+    assert.ok(leftUnfinished >= 0 && leftUnfinished < onceLog.search(new RegExp(`finished the purge of ${once.id}`)),
+      `the registry's 500 did not leave the purge unfinished${out(janitor)}`);
+    const [refused, sentAgain] = deletesOf(`/${once.id}/agents`);
+    assert.ok(sentAgain!.at - refused!.at >= 500, `the registry's DELETE was sent again ${sentAgain!.at - refused!.at} ms later, in the same pass`);
+    assert.deepEqual(docPuts(once.id).map(r => r.body?.['provisionalPlayPurgePending'] === true), [true, false],
+      'the marked tombstone, written once, then the same without the mark');
+    assert.ok(docPuts(once.id)[1]!.at >= sentAgain!.at, 'the mark is cleared by the pass that deleted the registry');
     const finished = podRequests(once);
     assert.ok(await waitFor(() => deletesOf(`/${stuck.id}/profile/card`).length >= 2 || undefined, 10_000), `a purge whose DELETE failed was not tried again${out(janitor)}`);
     assert.ok(record(stuck.id)!.deletedAt, 'the account is closed');
@@ -2432,7 +2458,8 @@ test('P10: a Play owner its guest deleted through the other instance is only for
   // The other instance's provisioning replaces a deletion's tombstone on its ETag, with the owner's
   // original anchor, until its guest deadline, and does not wait for this server's lock. The janitor
   // here used to purge any tombstone it found (writing nothing first), so a guest who bootstrapped
-  // again meanwhile lost its checkpoint and its agent registry.
+  // again meanwhile lost its agent registry; it was sent a DELETE for its game save too, which the
+  // store refuses with 409 (a native head), so the save stayed.
   const port = await freePort();
   const guest = livePlayGuest(`http://127.0.0.1:${port}`);   // its anchor has an hour left
   const anchor = record(guest.id)!.provisionalPlayAnchor;

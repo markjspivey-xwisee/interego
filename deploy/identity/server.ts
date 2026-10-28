@@ -849,8 +849,9 @@ const podFetch: FetchLike = (url, init) => fetch(url, { ...init, signal: AbortSi
 // A 412 makes the writer read and write again (three reads in all), and a settlement makes up to
 // three requests, which takes longer only while the pod keeps answering; a Play owner's
 // provisioning and the janitor's purge of one make requests of their own under the lock, 15 s
-// each (provisional-play-*.ts, and deleteUserCompletely's delete of the owner's agent registry),
-// and so do the HEAD probes a first sign-in makes before it creates a derived id
+// each (provisional-play-*.ts, whose purge deletes the owner's agent registry with the pod's other
+// resources, and deleteUserCompletely's delete of it where the purge finishes a deletion answered
+// 503), and so do the HEAD probes a first sign-in makes before it creates a derived id
 // (deletedBeforeTombstones): a probe that hangs ends the claim, as a read does.
 const POD_RECORD_TIMEOUT_MS = 15_000;
 const recordFetch: FetchLike = (url, init) => fetch(url, { ...init, signal: AbortSignal.timeout(POD_RECORD_TIMEOUT_MS) });
@@ -6342,7 +6343,8 @@ app.post('/tokens/me/sign-out-everywhere', tokenLimiter, async (req, res) => {
  * `playPurge`: the janitor's purge of a Play owner (purgePlayOwner). The tombstone it writes is
  * marked (provisionalPlayPurgePending) until the purge has deleted the pod's other resources, and
  * `purgePending` in the result says the record is such a tombstone (written now, or left by an
- * earlier pass whose deletions did not all succeed), so the purge goes on. A tombstone it finds
+ * earlier pass whose deletions did not all succeed), so the purge goes on. No registry DELETE is
+ * sent here then: the agent registry is one of the resources the purge deletes. A tombstone it finds
  * unmarked is a deletion's (the other instance's) or a finished purge's: the account is only
  * forgotten here, and nothing of the pod is written or deleted, its registry included. Except a
  * deletion this process answered 503 (unconfirmedPlayDeletions): before its guest deadline it is
@@ -6472,6 +6474,13 @@ async function deleteUserCompletely(
   const unconfirmed = unconfirmedPlayDeletions.has(userId);
   if (opts.playPurge && !purgePending && !unconfirmed) return { agents: ownedAgentIds, tombstoned: true, podCleanup };
   unconfirmedPlayDeletions.delete(userId);
+  // A purge's own tombstone: the purge deletes the registry with the pod's other resources (its
+  // listing names it when the pod holds it), and a DELETE of it that fails there leaves the purge
+  // unfinished. It used to be sent here first as well, best-effort, so every purge sent it twice
+  // under the owner's lock, and a registry the pod never answered held that lock for two timeouts.
+  if (opts.playPurge && purgePending) {
+    return { agents: ownedAgentIds, tombstoned: true, purgePending: true, ...(unconfirmed ? { unconfirmed: true as const } : {}), podCleanup };
+  }
   // Bounded like every request of this function: the janitor's purge of a Play owner makes it
   // holding the owner's lock (lockHeld), and the route's answer waits for it.
   try {
@@ -6489,7 +6498,8 @@ async function deleteUserCompletely(
  * under this lock (deleteUserCompletely, playPurge), so an enrolment that lands after the read (the
  * other instance's) makes that write fail, and the record read again keeps the account. The
  * tombstone is marked (provisionalPlayPurgePending) and the owner is put in unfinishedPlayPurges
- * before the pod's other resources are deleted; once they all are, the mark is cleared
+ * before the pod's other resources (the relay's agent registry among them; none is sent more than one
+ * DELETE a pass) are deleted; once they all are, the mark is cleared
  * (finishPlayPurge) and the owner taken out. A deletion that fails leaves both, and the next pass
  * (or, after a restart, the startup scan) comes back to it: the account is already closed, so
  * close() finds the marked tombstone, writes nothing, and the remaining deletions are sent again.

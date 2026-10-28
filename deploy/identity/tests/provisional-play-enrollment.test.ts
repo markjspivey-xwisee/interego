@@ -309,6 +309,9 @@ test('a purge whose deletion fails stays open for the next pass: the account is 
   assert.equal(f.document!.provisionalPlayPurgePending, undefined);
   assert.equal(typeof f.document!.deletedAt, 'string');
   assert.equal(f.unfinishedPlayPurges.size, 0);
+  // Each pass sends a DELETE only to what it listed (this pod lists no agent registry): a purge
+  // used to send the deletion's own registry DELETE first at every pass, on top of its listing's.
+  assert.deepEqual(f.deletions, [`https://css.test/${userId}/checkpoint`]);
 });
 
 test('a deletion\'s tombstone is not purged: its owner may be provisioned again over it until its guest deadline, so the janitor only forgets it', async () => {

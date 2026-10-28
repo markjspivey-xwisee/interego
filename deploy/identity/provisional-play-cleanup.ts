@@ -16,7 +16,8 @@
  * (not confirmed): that one is 'kept' until its guest deadline, and after it close() itself deletes
  * the owner's agent registry, as the deletion's retry would have, before answering 'closed'
  * (server.ts deleteUserCompletely).
- * Only on 'purge' are the pod's other resources deleted, and a deletion that fails throws, leaving
+ * Only on 'purge' are the pod's other resources deleted (the relay's agent registry among them: on
+ * 'purge', close() sends it no DELETE of its own), and a deletion that fails throws, leaving
  * the purge marked for the next pass. The record itself stays, as the tombstone, and so does the
  * container that holds it: a write still pending from before the purge is conditional on the
  * record's ETag, which Community Solid Server 7.2 applies to a missing document too (only
