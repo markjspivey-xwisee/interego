@@ -65,7 +65,12 @@ const TTL_WAIT_MS = 10_600;
 
 // ── The stand-in pod server ─────────────────────────────────────────────────────────────────
 type Doc = Record<string, unknown>;
-type Logged = { method: string; userId: string; target: 'doc' | 'container'; ifMatch?: string; ifNoneMatch?: string; body?: Doc; status?: number; at: number };
+/**
+ * Which identity server sent a request: the primary reaches the stand-in on a port of its own
+ * (primaryPodPort), every other instance on podPort.
+ */
+type Sender = 'primary' | 'other';
+type Logged = { method: string; userId: string; target: 'doc' | 'container'; sender: Sender; ifMatch?: string; ifNoneMatch?: string; body?: Doc; status?: number; at: number };
 const docs = new Map<string, { doc: Doc; modified: number }>();
 let clock = Date.now();
 /**
@@ -154,15 +159,18 @@ let latencyMs = 0;
 const slowPuts: Array<{ matches: (userId: string) => boolean; ms: number }> = [];
 const slowPutFor = (userId: string) => slowPuts.find(x => x.matches(userId))?.ms ?? 0;
 type Hold = { arrived: Promise<void>; release: () => void };
-type HoldEntry = { method: string; matches: (userId: string) => boolean; arrive: (userId: string) => void; released: Promise<void>; skip: number };
+type HoldEntry = { method: string; matches: (userId: string, sender: Sender) => boolean; arrive: (userId: string) => void; released: Promise<void>; skip: number };
 const holds: HoldEntry[] = [];
 
 /**
  * Hold the `nth` next `method` request for the auth-methods.jsonld of `userId` (or of any id it
  * matches) until released. A GET answers with the record as it was when it arrived; a PUT or a
  * DELETE checks its precondition when released. `onArrive` runs as it arrives, with the id.
+ * A hold takes a matching request whoever sends it: every identity server on these pods reads
+ * every account's record at startup, so a test that holds a read for one server's route, while a
+ * test beside it starts another server, matches on the sender too (fromPrimary).
  */
-function hold(method: 'GET' | 'PUT' | 'DELETE', userId: string | ((id: string) => boolean), nth = 1, onArrive?: (id: string) => void): Hold {
+function hold(method: 'GET' | 'PUT' | 'DELETE', userId: string | ((id: string, sender: Sender) => boolean), nth = 1, onArrive?: (id: string) => void): Hold {
   let arrive!: () => void; let release!: () => void;
   const arrived = new Promise<void>(resolve => { arrive = resolve; });
   const released = new Promise<void>(resolve => { release = resolve; });
@@ -207,6 +215,9 @@ type PodRecord = { walletAddresses: string[]; didKeys: Array<{ did: string }>; s
   webAuthnCredentials: Array<{ id: string; counter: number; rpId?: string; rpOrigin?: string }> };
 const docPuts = (userId: string, since = 0) => requests.slice(since).filter(r => r.userId === userId && r.target === 'doc' && r.method === 'PUT');
 const docGets = (userId: string, since = 0) => requests.slice(since).filter(r => r.userId === userId && r.target === 'doc' && r.method === 'GET');
+/** A hold's match of the primary's requests for `userId`'s record (or of any id `matches` takes) alone. */
+const fromPrimary = (matches: string | ((id: string) => boolean)) => (id: string, sender: Sender) =>
+  sender === 'primary' && (typeof matches === 'string' ? id === matches : matches(id));
 const containerPuts = (userId: string, since = 0) => requests.slice(since).filter(r => r.userId === userId && r.target === 'container');
 const mark = () => requests.length;
 
@@ -233,6 +244,7 @@ function listing(children: readonly string[]): string {
  */
 async function servePods(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
   const path = new URL(req.url ?? '/', 'http://pods').pathname;
+  const sender: Sender = req.socket.localPort === primaryPodPort ? 'primary' : 'other';
   let raw = '';
   for await (const chunk of req) raw += String(chunk);
   if (latencyMs) await sleep(latencyMs);
@@ -255,7 +267,7 @@ async function servePods(req: http.IncomingMessage, res: http.ServerResponse): P
   const container = /^\/([^/]+)\/$/.exec(path);
   if (container) {
     const id = container[1]!;
-    requests.push({ method: req.method!, userId: id, target: 'container', at: Date.now() });
+    requests.push({ method: req.method!, userId: id, target: 'container', sender, at: Date.now() });
     if (req.method === 'PUT' && slowPutFor(id)) await sleep(slowPutFor(id));
     if (req.method === 'PUT' && hangingContainers.has(id)) return;   // never answered
     if (req.method === 'PUT') {
@@ -341,11 +353,11 @@ async function servePods(req: http.IncomingMessage, res: http.ServerResponse): P
     return;
   }
   const userId = m[1]!;
-  const entry: Logged = { method: req.method!, userId, target: 'doc', at: Date.now(), ...conditions };
+  const entry: Logged = { method: req.method!, userId, target: 'doc', sender, at: Date.now(), ...conditions };
   requests.push(entry);
   const answer = (status: number, headers: Record<string, string> = {}, body = '') => { entry.status = status; res.writeHead(status, headers).end(body); };
   const snapshot = docs.get(userId) ? structuredClone(docs.get(userId)!) : undefined;
-  const held = holds.find(h => h.method === req.method && h.matches(userId) && h.skip-- <= 0);
+  const held = holds.find(h => h.method === req.method && h.matches(userId, sender) && h.skip-- <= 0);
   if (held) {
     holds.splice(holds.indexOf(held), 1);
     held.arrive(userId);
@@ -479,6 +491,10 @@ function tokenSignedElsewhere(userId: string): string {
 }
 let podServer: http.Server;
 let podPort = 0;
+// The same stand-in, on a port only the primary is given (its CSS_URL), so that a request can be
+// told to be the primary's (Logged.sender, fromPrimary).
+let primaryPodServer: http.Server;
+let primaryPodPort = 0;
 async function freePort(): Promise<number> {
   const s = net.createServer();
   await new Promise<void>(resolve => s.listen(0, '127.0.0.1', resolve));
@@ -866,6 +882,9 @@ before(async () => {
   podServer = http.createServer((req, res) => { void servePods(req, res); });
   await new Promise<void>(resolve => podServer.listen(0, '127.0.0.1', resolve));
   podPort = (podServer.address() as net.AddressInfo).port;
+  primaryPodServer = http.createServer((req, res) => { void servePods(req, res); });
+  await new Promise<void>(resolve => primaryPodServer.listen(0, '127.0.0.1', resolve));
+  primaryPodPort = (primaryPodServer.address() as net.AddressInfo).port;
   const port = await freePort();
   const origin = `http://127.0.0.1:${port}`;
   // Passkeys whose relying party is pinned already (a counter-0 synced passkey, and a counting one).
@@ -895,7 +914,7 @@ before(async () => {
   seed(unloaded(j5.did.from), { dids: [j5.did.holds] });
   seed(unloaded(j5.passkey.from), { keys: [j5.passkey.holds] });
   for (const x of Object.values(j5)) unlisted.add(unloaded(x.from));
-  primary = await startIdentity(port);
+  primary = await startIdentity(port, { CSS_URL: `http://127.0.0.1:${primaryPodPort}/` });
   l2Try = await post('/try', {});
   u1Try = await post('/try', {});
 });
@@ -903,6 +922,7 @@ before(async () => {
 after(async () => {
   for (const inst of instances) await inst.stop();
   await closeServer(podServer);
+  await closeServer(primaryPodServer);
 });
 
 // ── S0. The stand-in itself ─────────────────────────────────────────────────────────────────
@@ -1603,30 +1623,38 @@ test('C9: every writer whose read of the pod fails answers 503 and writes nothin
 
 // ── C11 and L1 side by side: both wait out the writer's 15 s timeout, so they share it, which
 // keeps the file's running time down (npm test runs this file on its own, with a 300 s limit).
-// They touch different accounts. L: writes the pod never answers, and stores later. ─────────────
+// They touch different accounts, but U4 starts a server of its own, whose startup scan reads every
+// account's record, C11's included: C11 holds the primary's reads alone (fromPrimary). Its hold of
+// the first read once took that scan's read, so the sign-out's was answered (200, not 503).
+// L: writes the pod never answers, and stores later. ──────────────────────────────────────────
 describe('writes the pod never answers', { concurrency: true }, () => {
   test('C11: a pod that never answers holds an account\'s lock for at most 15 s for a read, and 30 s for a write and the read after it', { timeout: 50_000 }, async () => {
     const timed = async (reply: Promise<Reply>, from = Date.now()) => ({ ...(await reply), took: Date.now() - from });
     const tokenAnswered = await tokenFor(f11.keys[0]!, 1, f11.userId);
     const tokenWrite = await tokenFor(hung.write.keys[0]!, 1, hung.write.userId);
-    const tokenRead = await tokenFor(hung.read.keys[0]!, 1, hung.read.userId);
     const tokenCreate = await tokenFor(hung.create.keys[0]!, 1, hung.create.userId);
+    // Last, so the bearer check of the sign-out below answers from the copy this sign-in installed
+    // (under 10 s old) and reads nothing: the sign-out's read under its lock is the primary's only
+    // read of this record, and the one firstRead holds.
+    const tokenRead = await tokenFor(hung.read.keys[0]!, 1, hung.read.userId);
     const since = mark();
     /** A GET of `userId`'s record that arrives once a PUT of `target` was sent: the read after a failed write. */
     const afterPut = (userId: string, target: 'doc' | 'container') => (id: string) => id === userId
       && requests.slice(since).some(r => r.userId === userId && r.target === target && r.method === 'PUT');
+    // Every hold here takes the primary's request alone: U4's server, starting beside this test,
+    // reads each of these records in its startup scan.
     // A write the pod never answers; the read after it is answered.
     failPuts(f11.userId, 'hang');
     // A write the pod never answers, and the read after it neither.
     failPuts(hung.write.userId, 'hang');
-    const rereadWrite = hold('GET', afterPut(hung.write.userId, 'doc'));
+    const rereadWrite = hold('GET', fromPrimary(afterPut(hung.write.userId, 'doc')));
     // A first read the pod never answers.
-    const firstRead = hold('GET', hung.read.userId);
+    const firstRead = hold('GET', fromPrimary(hung.read.userId));
     // A create (sign-out of an account whose document is gone): the container's PUT is never
     // answered, and the read after it neither. The document's PUT shares the write's timeout.
     docs.delete(hung.create.userId);
     hangingContainers.add(hung.create.userId);
-    const rereadCreate = hold('GET', afterPut(hung.create.userId, 'container'));
+    const rereadCreate = hold('GET', fromPrimary(afterPut(hung.create.userId, 'container')));
     try {
       const started = Date.now();
       const answered = timed(siwe(W(), { bearer: tokenAnswered }));
@@ -1638,21 +1666,27 @@ describe('writes the pod never answers', { concurrency: true }, () => {
       const behindWrite = timed(signIn(hung.write.keys[0]!, 2), started);
       const behindRead = timed(signIn(hung.read.keys[0]!, 2), started);
       const [a, w, r, c, bw, br] = await Promise.all([answered, write, read, create, behindWrite, behindRead]);
+      // Each also waits out every timeout it should (one request held 15 s, two 30 s): a request a
+      // hold was meant for that was answered at once fails here, rather than passing sooner.
       assert.equal(a.status, 503, JSON.stringify(a.json));
-      assert.ok(a.took < 17_000, `a write and an answered read took ${a.took} ms`);
+      assert.ok(a.took >= 14_500 && a.took < 17_000, `a write and an answered read took ${a.took} ms`);
       assert.equal(w.status, 503, JSON.stringify(w.json));
-      assert.ok(w.took < 32_000, `a write and a read, neither answered, took ${w.took} ms`);
+      assert.ok(w.took >= 29_000 && w.took < 32_000, `a write and a read, neither answered, took ${w.took} ms`);
       assert.equal(r.status, 503, JSON.stringify(r.json));
-      assert.ok(r.took < 17_000, `a read never answered took ${r.took} ms`);
+      assert.ok(r.took >= 14_500 && r.took < 17_000, `a read never answered took ${r.took} ms`);
       assert.equal(c.status, 500, JSON.stringify(c.json));
-      assert.ok(c.took < 32_000, `a create and a read, neither answered, took ${c.took} ms`);
+      assert.ok(c.took >= 29_000 && c.took < 32_000, `a create and a read, neither answered, took ${c.took} ms`);
       assert.equal(docPuts(hung.create.userId, since).length, 0, 'no document is sent once the container used up the timeout');
-      // Each writer read the record first, and read it again after its write failed.
-      for (const id of [hung.write.userId, hung.create.userId]) assert.ok(docGets(id, since).length >= 2, `${id}: ${docGets(id, since).length} read(s)`);
+      // Each writer read the record first, and read it again after its write failed (the primary's
+      // reads: U4's server's startup scan reads these records too).
+      for (const id of [hung.write.userId, hung.create.userId]) {
+        const reads = docGets(id, since).filter(g => g.sender === 'primary').length;
+        assert.ok(reads >= 2, `${id}: ${reads} read(s)`);
+      }
       assert.equal(bw.status, 200, JSON.stringify(bw.json));
-      assert.ok(bw.took < 32_000, `a sign-in behind the write was answered after ${bw.took} ms`);
+      assert.ok(bw.took >= 29_000 && bw.took < 32_000, `a sign-in behind the write was answered after ${bw.took} ms`);
       assert.equal(br.status, 200, JSON.stringify(br.json));
-      assert.ok(br.took < 17_000, `a sign-in behind the read was answered after ${br.took} ms`);
+      assert.ok(br.took >= 14_500 && br.took < 17_000, `a sign-in behind the read was answered after ${br.took} ms`);
     } finally {
       for (const h of [rereadWrite, firstRead, rereadCreate]) h.release();
       hangingContainers.delete(hung.create.userId);
