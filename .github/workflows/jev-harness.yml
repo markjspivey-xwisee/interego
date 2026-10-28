@@ -12,6 +12,8 @@ name: jev-harness (System One judgments)
 #                    the JEV_MERGE_TOKEN secret; the policy is applications/jev-harness/src/auto-merge.ts),
 #                    after waiting for the whole-suite run (bridge-typecheck.yml) on the same head:
 #                    a red suite never merges (JEV_MERGE_WAITS_FOR_SUITE=false makes it advisory);
+#                    and for every other check on that head, within the same deadline: a red or
+#                    unfinished one never merges (JEV_MERGE_WAITS_FOR_CHECKS=false makes it advisory);
 #                    unarmed, it prints the decision it would have taken
 #
 # Secrets: TYPESAFE_API_KEY (required). INTEREGO_AGENT_KEY_JSON (optional) makes the runner's bridge the
@@ -63,6 +65,12 @@ env:
   # Unset or anything but `false`: the decision waits for the whole-suite run on the head and
   # refuses over a red one. `false`: the suite's word is printed, not gating.
   JEV_MERGE_WAITS_FOR_SUITE: ${{ vars.JEV_MERGE_WAITS_FOR_SUITE }}
+  # Unset or anything but `false`: the decision also waits, within the suite's deadline, for
+  # every other check on the head and refuses over a red or unfinished one. `false`: what the
+  # other checks say once the suite's word is in is printed, not gating, and not waited for.
+  # With JEV_MERGE_WAITS_FOR_SUITE=false the suite is not one of those other checks either, so
+  # each switch makes its own word advisory without the other.
+  JEV_MERGE_WAITS_FOR_CHECKS: ${{ vars.JEV_MERGE_WAITS_FOR_CHECKS }}
 
 jobs:
   # ── One machine for the whole pull request ────────────────────────────────────────────────
@@ -75,7 +83,14 @@ jobs:
     name: "select tests → run → gate → decide"
     if: ${{ github.event_name != 'pull_request' || github.event.action != 'closed' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 40
+    timeout-minutes: 70
+    # The workflow's two, restated (a job's block replaces the workflow's), and the two reads only
+    # this job's wait makes; the close-time job lists neither runs nor check runs.
+    permissions:
+      contents: read
+      pull-requests: write
+      actions: read # the wait before the decision lists the workflow runs on the head
+      checks: read # ... and the check runs on it, from every app
     steps:
       - uses: actions/checkout@v6
         with:
@@ -184,7 +199,22 @@ jobs:
       # (two tests about that workflow's own trigger, never selected) and seven merged over it.
       # tools/wait-for-workflow-run.mjs polls the runs listed for the head until the suite has
       # concluded and writes one word for the decision (success, absent, failure, timeout, ...).
-      - name: Wait for the whole suite on this head (Bridge Typecheck)
+      # ★ And every other check on the head, since 2026-10-27, when #707 and #716 merged with
+      # Mutation Gate and Base without verticals still running on them. The same loop lists every
+      # workflow run and check run for the head, leaves out this workflow's own by its workflow id
+      # (GITHUB_RUN_ID names the run; a name is not an id), reads each run by its own conclusion
+      # (an older run's red answered only by a newer run of its workflow and event, and for a
+      # pull_request run of its pull request, made after it, that tried its red jobs again after it
+      # finished), reads them again on every poll (a red kept by identity until a listing shows its
+      # run re-run and passed, or answered by a run that has concluded), and writes a second word,
+      # `checks` (success, failure, timeout, untrusted, error, and pending only when advisory),
+      # with `checks_detail` naming what failed or was still running. One deadline for both: the
+      # fifty minutes below. On 2026-10-26 and 27 Mutation Gate's 63 successful runs (of 66) took
+      # 18 to 47 minutes from the push, median 29, so the wait is fifty minutes, and this job's
+      # timeout-minutes is 70 to hold it with the selection and the gate before it. A check still
+      # running at the deadline means no merge, and the next push decides again. SUITE_GATE leaves
+      # an advisory suite out of `checks`.
+      - name: Wait for the whole suite and every other check on this head
         id: suite
         if: ${{ always() && github.event_name == 'pull_request' }}
         env:
@@ -192,14 +222,17 @@ jobs:
           GITHUB_REPOSITORY: ${{ github.repository }}
           SELF_WORKFLOW: jev-harness (System One judgments)
           SUITE_WORKFLOW: Bridge Typecheck
-          SUITE_WAIT_MS: '1200000'
+          SUITE_WAIT_MS: '3000000'
+          CHECKS_GATE: ${{ env.JEV_MERGE_WAITS_FOR_CHECKS != 'false' }}
+          SUITE_GATE: ${{ env.JEV_MERGE_WAITS_FOR_SUITE != 'false' }}
         run: node tools/wait-for-workflow-run.mjs "${{ github.event.pull_request.head.sha }}"
       # ── Gated auto-merge ──────────────────────────────────────────────────────────────────
       # Merges without a person once the operator armed it (repository variable JEV_AUTO_MERGE=true)
       # and a token that triggers auto-deploy is present (secret JEV_MERGE_TOKEN — a merge made with
       # GITHUB_TOKEN starts no workflows, so it would land the commit and ship nothing), the
-      # selection ran green, the gate found no secret (block), GitHub reports the branch mergeable
-      # and master has not moved since this run's merge ref (a moved base is updated instead). With
+      # selection ran green, the gate found no secret (block), GitHub reports the branch mergeable,
+      # master has not moved since this run's merge ref (a moved base is updated instead), the whole
+      # suite passed on the head and every other check on it concluded success, neutral or skipped. With
       # JEV_REQUIRE_HUMAN_REVIEW=true the bar rises: auto-ok and an earned calibration
       # (applications/jev-harness/src/auto-merge.ts is the policy, with its tests). Unarmed, it
       # prints the decision it would have taken. An automatic merge is labelled
@@ -221,6 +254,10 @@ jobs:
           SUITE_RESULT: ${{ steps.suite.outputs.result }}
           SUITE_URL: ${{ steps.suite.outputs.url }}
           SUITE_GATES: ${{ env.JEV_MERGE_WAITS_FOR_SUITE != 'false' }}
+          # Check names are data: they reach the decision through the environment, never the script.
+          CHECKS_RESULT: ${{ steps.suite.outputs.checks }}
+          CHECKS_DETAIL: ${{ steps.suite.outputs.checks_detail }}
+          CHECKS_GATES: ${{ env.JEV_MERGE_WAITS_FOR_CHECKS != 'false' }}
         run: |
           cd "$HARNESS_DIR"
           npx tsx bin/auto-merge.ts --pr "${{ github.event.pull_request.number }}" --repo "${{ github.repository }}" \
@@ -228,7 +265,8 @@ jobs:
             --dir "${{ github.workspace }}/.jev-harness/follower" --calibration-url "$CALIBRATION_URL" \
             --armed "$ARMED" --token-present "$TOKEN_PRESENT" --selection-result "$SELECTION_RESULT" \
             --require-human-review "$JEV_REQUIRE_HUMAN_REVIEW" --reputation-url "$REPUTATION_URL" \
-            --suite-result "$SUITE_RESULT" --suite-gates "$SUITE_GATES" --suite-url "$SUITE_URL"
+            --suite-result "$SUITE_RESULT" --suite-gates "$SUITE_GATES" --suite-url "$SUITE_URL" \
+            --checks-result "$CHECKS_RESULT" --checks-gates "$CHECKS_GATES" --checks-detail "$CHECKS_DETAIL"
   outcomes-on-close:
     name: "score the judgments when the pull request closes"
     if: ${{ github.event_name == 'pull_request' && github.event.action == 'closed' }}
