@@ -75,6 +75,9 @@ function fixture() {
   let beforeDelete: () => Promise<void> = async () => {};
   // DELETEs of the pod's resources by the purge that the pod answers 500 (the next N).
   let failingDeletes = 0;
+  // How the pod answers the next DELETEs deleteUserCompletely sends (its agent registry's), in turn:
+  // not at all ('timeout': the request's own 15 s timeout fires), or with a status. Then 205.
+  let registryFailures: Array<'timeout' | number> = [];
   let duringVerification: () => Promise<void> = async () => {};
   let duringAccountDelete: () => Promise<void> = async () => {};
   const etag = () => `"${version}-application/ld+json"`;
@@ -146,7 +149,13 @@ function fixture() {
   const deletionTombstone = new Function('emptyAuthMethods',
     `${productionSyncFunction('deletionTombstone')}; return deletionTombstone;`)((owner: string) => empty(owner));
   const podFetch = async (url: string, init?: RequestInit) => {
-    if (init?.method === 'DELETE') { await beforeDelete(); deletions.push(url); }
+    if (init?.method === 'DELETE') {
+      await beforeDelete();
+      const failure = registryFailures.shift();
+      if (failure === 'timeout') throw new DOMException('The operation was aborted due to timeout', 'TimeoutError');
+      if (failure !== undefined) return new Response(null, { status: failure });
+      deletions.push(url);
+    }
     return new Response(null, { status: 205 });
   };
   // Play owners whose deletion was answered 503 (not confirmed), with their guest deadline, and the
@@ -238,6 +247,7 @@ function fixture() {
     set beforePersist(value: () => Promise<void>) { beforePersist = value; },
     set beforeDelete(value: () => Promise<void>) { beforeDelete = value; },
     set failingDeletes(value: number) { failingDeletes = value; },
+    set registryFailures(value: Array<'timeout' | number>) { registryFailures = value; },
     set duringVerification(value: () => Promise<void>) { duringVerification = value; },
     set duringAccountDelete(value: () => Promise<void>) { duringAccountDelete = value; },
     /** An edit by another writer (the other instance, an operator): the ETag moves on. */
@@ -393,6 +403,41 @@ test('a guest\'s deletion answered 503 (not confirmed) is left to the guest\'s r
   assert.equal(f.puts, puts, 'nothing is written over the tombstone');
   assert.equal(f.unconfirmedPlayDeletions.size, 0);
   assert.match(f.janitorLog.join('\n'), /finished the deletion of u-try-play-1+/);
+});
+
+test('a deletion answered 503 that the janitor finishes after the guest deadline is finished only once its agent registry DELETE succeeds: one that fails is sent again at the next pass', async () => {
+  // The janitor finished such a deletion with a best-effort registry DELETE: it took the owner out of
+  // unconfirmedPlayDeletions first, and logged "its agent registry deleted" whatever the DELETE's
+  // answer. A DELETE that timed out or was answered 5xx left the registry on the pod, and nothing sent
+  // it again: the owner was out of `identities`, of unconfirmedPlayDeletions, and its tombstone unmarked.
+  const f = fixture();
+  f.outOfBand(m => { delete m.provisionalPlayAnchor; m.sessionEpoch = 1; m.deletedAt = '2026-10-28'; });
+  f.unconfirmedPlayDeletions.set(userId, Date.now() - 1);
+  const puts = f.puts;
+  const registry = `https://css.test/${userId}/agents`;
+  f.registryFailures = ['timeout', 503];
+  await f.cleanup();
+  assert.deepEqual(f.deletions, [], 'the registry DELETE timed out');
+  assert.equal(f.cached, null, 'the owner is forgotten here, its account closed');
+  assert.ok(f.unconfirmedPlayDeletions.has(userId), 'its deletion stays recorded as unfinished');
+  assert.deepEqual([...f.unfinishedPlayPurges], [userId], 'and the janitor comes back to it at its next pass');
+  assert.doesNotMatch(f.janitorLog.join('\n'), /registry deleted/);
+  assert.match(f.janitorLog.at(-1)!, /deletion of u-try-play-1+ .* is unfinished: its agent registry's DELETE failed \(The operation was aborted due to timeout\); tried again at the next pass/);
+  // The next pass sends it again, and the pod answers 503.
+  await f.cleanup();
+  assert.deepEqual(f.deletions, []);
+  assert.ok(f.unconfirmedPlayDeletions.has(userId));
+  assert.deepEqual([...f.unfinishedPlayPurges], [userId]);
+  assert.match(f.janitorLog.at(-1)!, /its agent registry's DELETE failed \(answered 503\); tried again at the next pass/);
+  // The pass after deletes it: the deletion is finished, and logged so.
+  await f.cleanup();
+  assert.deepEqual(f.deletions, [registry], 'its agent registry is deleted, and nothing else');
+  assert.equal(f.unconfirmedPlayDeletions.size, 0);
+  assert.equal(f.unfinishedPlayPurges.size, 0, 'no pass comes back to it');
+  assert.match(f.janitorLog.at(-1)!, /finished the deletion of u-try-play-1+ .*: its agent registry deleted/);
+  assert.equal(f.janitorLog.filter(line => /registry deleted/.test(line)).length, 1);
+  assert.equal(f.checkpoint, true);
+  assert.equal(f.puts, puts, 'nothing is written over the tombstone');
 });
 
 test('a failed durable enrollment never exposes a credential through cache or success', async () => {

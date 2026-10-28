@@ -13,9 +13,10 @@
  * pass marked (its purge did not finish: the deletions are sent again), and 'closed' for any other
  * tombstone, and nothing of the pod is deleted here (a deletion's, whose owner may be provisioned
  * again until its guest deadline). The exception is a deletion the caller's process answered 503
- * (not confirmed): that one is 'kept' until its guest deadline, and after it close() itself deletes
- * the owner's agent registry, as the deletion's retry would have, before answering 'closed'
- * (server.ts deleteUserCompletely).
+ * (not confirmed): that one is 'kept' until its guest deadline, and after it close() itself sends
+ * the owner's agent registry a DELETE, as the deletion's retry would have, before answering 'closed'
+ * (server.ts deleteUserCompletely); one the pod does not answer with a 2xx or a 404 leaves the
+ * deletion for the caller's next pass (server.ts purgePlayOwner).
  * Only on 'purge' are the pod's other resources deleted (the relay's agent registry among them: on
  * 'purge', close() sends it no DELETE of its own), and a deletion that fails throws, leaving
  * the purge marked for the next pass. The record itself stays, as the tombstone, and so does the
@@ -51,8 +52,8 @@ export async function purgeProvisionalPlayPod(options: {
   /**
    * Close the owner's account under its lock: 'purge' once its record is the purge's tombstone,
    * 'closed' when it is another tombstone (nothing of the pod is deleted here; for a deletion its
-   * process answered 503, once its guest deadline has passed, close() has deleted the owner's agent
-   * registry first), 'kept' when the account is kept.
+   * process answered 503, once its guest deadline has passed, close() has sent the owner's agent
+   * registry a DELETE first, which may have failed), 'kept' when the account is kept.
    */
   close(): Promise<'purge' | 'closed' | 'kept'>;
 }): Promise<PlayPodPurge> {

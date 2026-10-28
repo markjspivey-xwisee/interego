@@ -2799,6 +2799,66 @@ test('P14: a Play guest token renewed (POST /tokens) at an instance whose copy o
   }
 });
 
+test('P15: an owner its old guest token found deleted at A, provisioned again and claimed with a DID through B, is that DID\'s account at A at once: its token verifies, renews and reads there, and its deletion there deletes', { timeout: 90_000 }, async () => {
+  // The guest token's check at A found the owner's tombstone and made A's copy that tombstone (for the
+  // retry of a deletion A answered 503), fresh, so A decided on it for the next 10 s; nothing on a
+  // guest token's path refreshed it. The guest then bootstrapped again through B and claimed the owner
+  // with a DID there. At A that DID's token was "Account deleted" (/tokens/verify, GET /auth-methods/me,
+  // POST /tokens), and its deletion at A was taken for that retry and answered 409 ("Account not
+  // deleted"). Two ways the owner is deleted: through B (200), and at A, answered 503.
+  for (const deletion of ['through B', 'at A, answered 503'] as const) {
+    const guest = await playGuestOnTwoInstances();
+    const { id, a, b } = guest;
+    const what = (x: string) => `${deletion}: ${x}`;
+    try {
+      let t1: string;
+      if (deletion === 'through B') {
+        t1 = (await guest.provision(b)).token;
+        // The game's requests reach A too, which loads the owner.
+        assert.equal((await verify(t1, a)).json['valid'], true, out(a));
+        const r = await post('/users/me/delete', {}, t1, b);
+        assert.equal(r.status, 200, `${JSON.stringify(r.json)}${out(b)}`);
+      } else {
+        t1 = (await guest.provision(a)).token;
+        // The pod applies the tombstone and answers 500, and the read after it fails.
+        failPuts(id, 'apply-then-500');
+        const put = hold('PUT', id, 1, () => { failingGets.set(id, 1_000); });
+        void put.arrived.then(() => put.release());
+        const r = await post('/users/me/delete', {}, t1, a);
+        failingGets.delete(id);
+        putFaults.delete(id);
+        assert.equal(r.status, 503, `${JSON.stringify(r.json)}${out(a)}`);
+      }
+      assert.ok(record(id)!.deletedAt, what('the pod holds the tombstone'));
+      // The relay introspects the old guest token at A.
+      assert.equal((await verify(t1, a)).json['reason'], 'Account deleted');
+      // The guest bootstraps again through B, and claims its owner there with a DID.
+      const t2 = (await guest.provision(b)).token;
+      const k = didKey();
+      const claimed = await didSignIn(k, { bearer: t2 }, b);
+      assert.equal(claimed.status, 200, `${JSON.stringify(claimed.json)}${out(b)}`);
+      assert.equal(claimed.json['userId'], id);
+      assert.deepEqual(record(id)!.didKeys.map(x => x.did), [k.did]);
+      const dt = String(claimed.json['token']);
+      // At A, at once (well inside the 10 s a fresh copy is decided on).
+      assert.equal((await verify(dt, a)).json['valid'], true, what(`the DID's token verifies at A${out(a)}`));
+      const mine = await me(dt, a);
+      assert.equal(mine.status, 200, what(`${JSON.stringify(mine.json)}${out(a)}`));
+      assert.match(JSON.stringify(mine.json), new RegExp(k.did));
+      const renewed = await post('/tokens', { userId: id, agentId: String(claimed.json['agentId']) }, dt, a);
+      assert.equal(renewed.status, 200, what(`${JSON.stringify(renewed.json)}${out(a)}`));
+      const deleted = await post('/users/me/delete', {}, dt, a);
+      assert.equal(deleted.status, 200, what(`${JSON.stringify(deleted.json)}${out(a)}`));
+      assert.ok(record(id)!.deletedAt, what('the owner is deleted'));
+      assert.equal((await verify(dt, a)).json['valid'], false);
+    } finally {
+      putFaults.delete(id);
+      failingGets.delete(id);
+      await guest.stop();
+    }
+  }
+});
+
 test('C17: a passkey or DID removal, and a sign-out-everywhere, that nothing could settle each say so, and that sending the same request again is safe', async () => {
   const token = await tokenFor(c17.keys[0]!, 1, c17.userId);
   // The pod applies the write and answers 500, and the read after it fails.

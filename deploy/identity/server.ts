@@ -727,7 +727,9 @@ const deletedUserIds = new Set<string>();
 // the purge finishes without it), or the process stopped. The janitor tries each again at its next
 // pass (purgePlayOwner), and the startup scan finds the marked tombstone again after a restart
 // (loadAccountFromPod), so a purge that fails part-way is retried, never dropped: the account,
-// closed, is no longer in `identities`, which is all the janitor's sweep walks.
+// closed, is no longer in `identities`, which is all the janitor's sweep walks. Also a Play owner
+// whose deletion this process answered 503, which the janitor took up after its guest deadline, but
+// whose agent registry DELETE failed then (unconfirmedPlayDeletions): its next pass sends it again.
 const unfinishedPlayPurges = new Set<string>();
 
 // Play owners whose purge (purgePlayOwner) is waiting for the owner's lock or running. A purge
@@ -745,7 +747,8 @@ const playPurgesInFlight = new Set<string>();
 // and a fresh grant can provision the owner again over the tombstone (provisional-play-store.ts), so
 // the janitor leaves such an owner as it is, in memory and on the pod, for the retry to finish
 // (unfinishedDeletion). After it, the janitor finishes the deletion itself, as the retry would have:
-// the agent registry DELETE, which no provisioning can race any more. Its purge used to find the
+// the agent registry DELETE, which no provisioning can race any more, and the id stays here (and in
+// unfinishedPlayPurges) until that DELETE is answered with a 2xx or a 404. Its purge used to find the
 // tombstone unmarked and only forget the owner, so the retry was refused and the registry stayed.
 // Process-local: after a restart such a tombstone loads no account, and its registry stays, as for
 // any account whose deletion was answered 503 and not retried before the restart.
@@ -2710,9 +2713,17 @@ async function verifyToken(token: string): Promise<{ valid: boolean; record?: To
       // copy is made the tombstone (read under the lock), so that POST /users/me/delete accepts the
       // retry of a deletion the pod took without confirming it (unfinishedDeletion). It was answered
       // "Provisional owner unavailable", which no route accepts, so that retry was refused (401).
+      // The copy is left stale (expireAuthMethods): unfinishedDeletion reads only its value, and every
+      // reader that decides on the copy (a token other than a guest's, GET /auth-methods/me, POST
+      // /tokens) reads the pod first. It was left fresh, the copy for the next 10 s, which nothing on a
+      // guest token's path refreshes: when the other instance provisioned the owner again and a DID or
+      // wallet claimed it there meanwhile, that credential's tokens were "Account deleted" here, and
+      // their deletion here was taken for that retry and answered 409 ("Account not deleted").
       if (isTombstone(methods)) {
         const copy = authMethodsCache.get(payload.userId)?.value;
-        if (identities.has(payload.userId) && !(copy && isTombstone(copy))) await refreshAuthMethods(payload.userId).catch(() => undefined);
+        if (identities.has(payload.userId) && !(copy && isTombstone(copy))) {
+          await refreshAuthMethods(payload.userId).then(() => expireAuthMethods(payload.userId), () => undefined);
+        }
         return { valid: false, reason: 'Account deleted' };
       }
       const owner = provisionalPlay.open(methods.provisionalPlayAnchor);
@@ -6382,7 +6393,9 @@ app.post('/tokens/me/sign-out-everywhere', tokenLimiter, async (req, res) => {
  * forgotten here, and nothing of the pod is written or deleted, its registry included. Except a
  * deletion this process answered 503 (unconfirmedPlayDeletions): before its guest deadline it is
  * left as it is (`kept`: memory too), for the guest's retry; after it, the deletion is finished
- * here as the retry would have finished it (the registry DELETE), and `unconfirmed` says so.
+ * here as the retry would have finished it (the registry DELETE), and `unconfirmed` says so. A
+ * registry DELETE answered other than with a 2xx or a 404, or not answered, leaves the deletion
+ * recorded there, and `registryLeft` says why: the janitor's next pass sends it again.
  *
  * A Play owner's deletion whose tombstone the pod may have taken, which nothing could settle (the
  * route's 503), is recorded in unconfirmedPlayDeletions here, under the lock, before the janitor's
@@ -6399,7 +6412,7 @@ app.post('/tokens/me/sign-out-everywhere', tokenLimiter, async (req, res) => {
  */
 type DeletionResult = {
   agents: string[]; tombstoned: true; kept?: true; purgePending?: true; unconfirmed?: true;
-  reopened?: { sessionEpoch: number }; podCleanup: { agents: number };
+  reopened?: { sessionEpoch: number }; registryLeft?: string; podCleanup: { agents: number };
 };
 async function deleteUserCompletely(
   userId: string,
@@ -6506,7 +6519,9 @@ async function deleteUserCompletely(
   // send the deletion's registry DELETE.
   const unconfirmed = unconfirmedPlayDeletions.has(userId);
   if (opts.playPurge && !purgePending && !unconfirmed) return { agents: ownedAgentIds, tombstoned: true, podCleanup };
-  unconfirmedPlayDeletions.delete(userId);
+  // The janitor finishing such a deletion keeps it recorded until its registry DELETE below succeeds.
+  const finishingUnconfirmed = opts.playPurge === true && !purgePending;
+  if (!finishingUnconfirmed) unconfirmedPlayDeletions.delete(userId);
   // A purge's own tombstone: the purge deletes the registry with the pod's other resources (its
   // listing names it when the pod holds it), and a DELETE of it that fails there leaves the purge
   // unfinished. It used to be sent here first as well, best-effort, so every purge sent it twice
@@ -6515,14 +6530,22 @@ async function deleteUserCompletely(
     return { agents: ownedAgentIds, tombstoned: true, purgePending: true, ...(unconfirmed ? { unconfirmed: true as const } : {}), podCleanup };
   }
   // Bounded like every request of this function: the janitor's purge of a Play owner makes it
-  // holding the owner's lock (lockHeld), and the route's answer waits for it.
+  // holding the owner's lock (lockHeld), and the route's answer waits for it. Best-effort for the
+  // route (its answer gives the status). The janitor finishing a deletion answered 503 counts it
+  // deleted only on a 2xx or a 404: otherwise the owner stays in unconfirmedPlayDeletions and
+  // `registryLeft` says why, so its next pass sends the DELETE again (purgePlayOwner). It used to
+  // log the registry deleted whatever the DELETE's answer, and nothing sent it again.
+  let registryError: string | undefined;
   try {
     const r = await fetch(`${CSS_URL}${userId}/agents`, { method: 'DELETE', signal: AbortSignal.timeout(POD_RECORD_TIMEOUT_MS) });
     podCleanup.agents = r.status;
-  } catch { /* best-effort */ }
+  } catch (err) { registryError = (err as Error).message; }
+  const registryDeleted = (podCleanup.agents >= 200 && podCleanup.agents < 300) || podCleanup.agents === 404;
+  if (finishingUnconfirmed && registryDeleted) unconfirmedPlayDeletions.delete(userId);
 
   return { agents: ownedAgentIds, tombstoned: true, ...(purgePending ? { purgePending: true as const } : {}),
-    ...(opts.playPurge && unconfirmed ? { unconfirmed: true as const } : {}), podCleanup };
+    ...(finishingUnconfirmed ? { unconfirmed: true as const } : {}),
+    ...(finishingUnconfirmed && !registryDeleted ? { registryLeft: registryError ?? `answered ${podCleanup.agents}` } : {}), podCleanup };
 }
 
 /**
@@ -6554,7 +6577,9 @@ async function deleteUserCompletely(
  * passes over before its guest deadline (the guest's retry finishes it), and which close() keeps if
  * a purge decided before the 503 reaches it all the same. After that deadline, close() finishes
  * the deletion (the registry DELETE, as the retry would have): no provisioning restores the owner
- * then.
+ * then. A registry DELETE answered other than with a 2xx or a 404, or not answered, leaves the owner
+ * in unconfirmedPlayDeletions and in unfinishedPlayPurges, and the next pass sends it again; the
+ * deletion is logged finished only once that DELETE has succeeded.
  *
  * At most one purge of an owner is queued on its lock or running (playPurgesInFlight): one asked
  * for while another is returns at once, and the janitor's first pass after that other has returned
@@ -6568,6 +6593,8 @@ async function purgePlayOwner(userId: string): Promise<void> {
   playPurgesInFlight.add(userId);
   let closed = false;
   let finished = false;
+  // Why the agent registry DELETE failed, of a deletion answered 503 that close() took up (deleteUserCompletely).
+  let registryLeft: string | undefined;
   try {
     await withIdentityPodMutex(userId, async () => {
       const purge = await purgeProvisionalPlayPod({ userId, cssUrl: CSS_URL,
@@ -6575,13 +6602,15 @@ async function purgePlayOwner(userId: string): Promise<void> {
           const r = await deleteUserCompletely(userId, { lockHeld: true, stillDeletable: playOwnerPurgeable, playPurge: true });
           if (r.kept) return 'kept';
           closed = true;
-          if (!r.purgePending) { finished = r.unconfirmed === true; return 'closed'; }
+          if (!r.purgePending) { finished = r.unconfirmed === true; registryLeft = r.registryLeft; return 'closed'; }
           unfinishedPlayPurges.add(userId);
           return 'purge';
         },
       });
       if (purge.outcome === 'purged') await finishPlayPurge(userId);
-      unfinishedPlayPurges.delete(userId);
+      // The owner, forgotten when its account closed, is walked only from here at the next pass.
+      if (registryLeft === undefined) unfinishedPlayPurges.delete(userId);
+      else unfinishedPlayPurges.add(userId);
       // Logged once: the mark is cleared, so neither a later pass nor a restart comes back to them.
       if (purge.outcome === 'purged' && purge.retained.length > 0) {
         const pod = `${CSS_URL}${userId}/`;
@@ -6591,9 +6620,11 @@ async function purgePlayOwner(userId: string): Promise<void> {
       if (purge.outcome === 'kept') log(awaitsGuestRetry(userId)
         ? `Janitor: left ${userId} to its guest's retry: its deletion was answered 503 (not confirmed), and its guest deadline has not passed`
         : `Janitor: kept ${userId}: it holds a credential now, or its anchor has not expired`);
-      if (purge.outcome === 'closed') log(finished
-        ? `Janitor: finished the deletion of ${userId} answered 503 (not confirmed) and not retried before its guest deadline: its agent registry deleted`
-        : `Janitor: forgot ${userId}: its record is a tombstone no purge left unfinished (a deletion's); its pod is left as it is`);
+      if (purge.outcome === 'closed') log(!finished
+        ? `Janitor: forgot ${userId}: its record is a tombstone no purge left unfinished (a deletion's); its pod is left as it is`
+        : registryLeft === undefined
+          ? `Janitor: finished the deletion of ${userId} answered 503 (not confirmed) and not retried before its guest deadline: its agent registry deleted`
+          : `Janitor: the deletion of ${userId} answered 503 (not confirmed) and not retried before its guest deadline is unfinished: its agent registry's DELETE failed (${registryLeft}); tried again at the next pass`);
     });
   } catch (err) {
     log(closed || unfinishedPlayPurges.has(userId)
@@ -7672,7 +7703,8 @@ app.listen(PORT, () => {
         toPurge.add(u.id);
         unclaimedTry.add(u.id);
       }
-      // Play purges a pass closed but could not finish, and those the startup scan found unfinished.
+      // Play purges a pass closed but could not finish, those the startup scan found unfinished, and
+      // deletions answered 503 a pass took up after their guest deadline whose registry DELETE failed.
       // One still waiting for its owner's lock or running is not queued again (purgePlayOwner
       // returns at once: playPurgesInFlight).
       for (const id of unfinishedPlayPurges) toPurge.add(id);
