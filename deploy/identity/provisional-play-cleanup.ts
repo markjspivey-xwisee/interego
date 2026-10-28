@@ -10,24 +10,51 @@
  * reads it after finds the account closed; an enrolment that lands first makes the tombstone's write
  * fail, and close() reads the record again and keeps the account: 'kept', and nothing is deleted.
  * A record that is a tombstone already is not closed again: close() says 'purge' for one an earlier
- * pass marked (its purge did not finish: the deletions are sent again) and 'closed' for any other (a
- * deletion's, whose owner may be provisioned again until its guest deadline: nothing is deleted).
+ * pass marked (its purge did not finish: the deletions are sent again), and 'closed' for any other
+ * tombstone, and nothing of the pod is deleted here (a deletion's, whose owner may be provisioned
+ * again until its guest deadline). The exception is a deletion the caller's process answered 503
+ * (not confirmed): that one is 'kept' until its guest deadline, and after it close() itself deletes
+ * the owner's agent registry, as the deletion's retry would have, before answering 'closed'
+ * (server.ts deleteUserCompletely).
  * Only on 'purge' are the pod's other resources deleted, and a deletion that fails throws, leaving
  * the purge marked for the next pass. The record itself stays, as the tombstone, and so does the
  * container that holds it: a write still pending from before the purge is conditional on the
  * record's ETag, which Community Solid Server 7.2 applies to a missing document too (only
  * If-Match: * fails there), so a purge that deleted the record (it used to, last but the root) let
  * such a write re-create the owner afterwards.
+ *
+ * A document whose DELETE the pod answers 409 is kept, and the purge goes on: on the production
+ * store (CSS 7.2 with the PGSL accessor) that is a native-committed head, which only a native
+ * conditional commit changes or removes; no plain request deletes it (its DELETE, with or without
+ * If-Match, is a 409 every time). A guest's game saves (`hallowmarch/checkpoints/<sha>.json`) and its
+ * write budget (`play-budget.json`) are such heads: the css-gate writes them only as native commits.
+ * The containers that hold a kept document are not sent a DELETE (CSS answers 409 to a container that
+ * is not empty), and stay with it. The purge finishes with the kept documents listed in `retained`.
+ * It used to throw at the first of them, so the purge never finished: it was sent again at every
+ * pass, and after every restart, for every guest who ever saved, and met the same 409 each time. A
+ * 409 on a container that holds nothing kept fails the pass as any other failure does (something
+ * written in it since the listing, which the next pass lists).
  */
+export interface PlayPodPurge {
+  /**
+   * 'purged': close() said 'purge', and every resource but the record, its container, `retained`
+   * and the containers that hold those is deleted. 'closed' and 'kept': close()'s answer.
+   */
+  outcome: 'purged' | 'closed' | 'kept';
+  /** The documents kept because the pod refused their DELETE with 409 (native heads), by URL. */
+  retained: string[];
+}
+
 export async function purgeProvisionalPlayPod(options: {
   userId: string; cssUrl: string; fetcher?: typeof fetch;
   /**
    * Close the owner's account under its lock: 'purge' once its record is the purge's tombstone,
-   * 'closed' when it is another tombstone (nothing of the pod is deleted then), 'kept' when the
-   * account is kept.
+   * 'closed' when it is another tombstone (nothing of the pod is deleted here; for a deletion its
+   * process answered 503, once its guest deadline has passed, close() has deleted the owner's agent
+   * registry first), 'kept' when the account is kept.
    */
   close(): Promise<'purge' | 'closed' | 'kept'>;
-}): Promise<'purged' | 'closed' | 'kept'> {
+}): Promise<PlayPodPurge> {
   if (!/^u-try-play-[a-f0-9]{32}$/.test(options.userId)) throw new Error('Refusing non-Play pod cleanup');
   const root = new URL(`${options.userId}/`, options.cssUrl);
   const fetcher = options.fetcher ?? fetch;
@@ -56,14 +83,20 @@ export async function purgeProvisionalPlayPod(options: {
   // Discover and validate the entire bounded tree before changing anything.
   await visit(root, 0);
   const closed = await options.close();
-  if (closed !== 'purge') return closed;
+  if (closed !== 'purge') return { outcome: closed, retained: [] };
   // Children before their containers (the order visit listed them in); never the record, nor the
   // container that holds it.
   const anchor = new URL('auth-methods.jsonld', root).href;
   const targets = ordered.filter(url => url !== root.href && url !== anchor);
+  const retained: string[] = [];
   for (const url of targets) {
+    const container = url.endsWith('/');
+    // A container that holds a kept document is not empty: it stays with it.
+    if (container && retained.some(kept => kept.startsWith(url))) continue;
     const response = await request(url, { method: 'DELETE' });
-    if (!response.ok && response.status !== 404) throw new Error('Provisional cleanup deletion incomplete');
+    if (response.ok || response.status === 404) continue;
+    if (response.status === 409 && !container) { retained.push(url); continue; }
+    throw new Error('Provisional cleanup deletion incomplete');
   }
-  return 'purged';
+  return { outcome: 'purged', retained };
 }

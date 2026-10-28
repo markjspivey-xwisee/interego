@@ -614,8 +614,9 @@ interface AuthMethods {
   deletedAt?: string;
   /**
    * Set (true) on the tombstone the janitor writes when it purges a Play owner, until every other
-   * resource of the pod is deleted (purgePlayOwner): a purge that fails part-way is retried from
-   * it, at the next pass and after a restart (loadAccountFromPod). A deletion's tombstone has none.
+   * resource of the pod is deleted (purgePlayOwner), but those the pod refuses to delete with 409
+   * (native-committed heads, which stay): a purge that fails part-way is retried from it, at the
+   * next pass and after a restart (loadAccountFromPod). A deletion's tombstone has none.
    */
   provisionalPlayPurgePending?: true;
 }
@@ -721,11 +722,12 @@ const podLockContext = new AsyncLocalStorage<ReadonlyMap<string, { held: boolean
 const deletedUserIds = new Set<string>();
 
 // Play owners whose purge by the janitor closed the account (its tombstone written, marked
-// provisionalPlayPurgePending) but did not delete every other resource of the pod: a DELETE failed,
-// or the process stopped. The janitor tries each again at its next pass (purgePlayOwner), and the
-// startup scan finds the marked tombstone again after a restart (loadAccountFromPod), so a purge
-// that fails part-way is retried, never dropped: the account, closed, is no longer in `identities`,
-// which is all the janitor's sweep walks.
+// provisionalPlayPurgePending) but did not delete every other resource of the pod: a DELETE failed
+// (a 5xx, a timeout; a 409 on a native-committed head is no failure, as no pass can delete one, and
+// the purge finishes without it), or the process stopped. The janitor tries each again at its next
+// pass (purgePlayOwner), and the startup scan finds the marked tombstone again after a restart
+// (loadAccountFromPod), so a purge that fails part-way is retried, never dropped: the account,
+// closed, is no longer in `identities`, which is all the janitor's sweep walks.
 const unfinishedPlayPurges = new Set<string>();
 
 // Play owners whose deletion (POST /users/me/delete) the pod may have taken without confirming it,
@@ -2664,6 +2666,9 @@ async function verifyToken(token: string): Promise<{ valid: boolean; record?: To
     || payload.provisionalPlay.expiresAt * 1000 <= Date.now())) {
     return { valid: false, reason: 'Provisional owner expired' };
   }
+  // A Play guest token's session epoch is checked against the owner's record as read here from the
+  // pod, never against this server's copy (below): see the end of this branch.
+  let epochCheckedOnPod = false;
   if (payload.provisionalPlay) {
     try {
       const body = await readPodJson(podFetch, podAuthMethodsUrl(payload.userId));
@@ -2682,6 +2687,15 @@ async function verifyToken(token: string): Promise<{ valid: boolean; record?: To
       if (owner.userId !== payload.userId || owner.authenticatedAgentId !== payload.agentId
         || owner.audience !== payload.provisionalPlay.audience || owner.proofKeyThumbprint !== payload.provisionalPlay.proofKeyThumbprint
         || owner.expiresAt !== payload.provisionalPlay.expiresAt) return { valid: false, reason: 'Provisional owner binding mismatch' };
+      // The record just read decides, not this server's copy, which can be behind it: the copy made
+      // the tombstone above (a deletion this process answered 503) stays one after the other
+      // instance's provisioning puts the owner back over it, keeping its session epoch. Decided on
+      // that copy, the new session's tokens were refused ("Account deleted"), and the old token's
+      // retry of the deletion was accepted (unfinishedDeletion) and closed the owner provisioned
+      // again. On the pod's record the old token is "Token revoked" and the new one valid, as on an
+      // instance that never held a copy.
+      if (payload.epoch < (methods.sessionEpoch ?? 0)) return { valid: false, reason: 'Token revoked (signed out everywhere)' };
+      epochCheckedOnPod = true;
     } catch (err) {
       // An owner's record the pod could not read is a "try again" (a 503: refuseUnverifiedBearer,
       // refuseBearer), not a refusal: only an anchor that does not open to this owner is.
@@ -2708,17 +2722,20 @@ async function verifyToken(token: string): Promise<{ valid: boolean; record?: To
   // Revocation check: token's embedded epoch must be ≥ pod's current
   // sessionEpoch. A sign-out-everywhere bumps the pod's value, making
   // every prior token verify-fail until the user authenticates again.
-  try {
-    const methods = await readAuthMethods(payload.userId, /* allowStale */ true);
-    if (isTombstone(methods)) return { valid: false, reason: 'Account deleted' };
-    const podEpoch = methods.sessionEpoch ?? 0;
-    if (payload.epoch < podEpoch) {
-      return { valid: false, reason: 'Token revoked (signed out everywhere)' };
+  // (A Play guest token's was checked above, on the record read from the pod.)
+  if (!epochCheckedOnPod) {
+    try {
+      const methods = await readAuthMethods(payload.userId, /* allowStale */ true);
+      if (isTombstone(methods)) return { valid: false, reason: 'Account deleted' };
+      const podEpoch = methods.sessionEpoch ?? 0;
+      if (payload.epoch < podEpoch) {
+        return { valid: false, reason: 'Token revoked (signed out everywhere)' };
+      }
+    } catch {
+      // If we can't read the pod, fall through: signature + expiry +
+      // identities-map already bound the trust. A transient pod outage
+      // is a partition, not a security event.
     }
-  } catch {
-    // If we can't read the pod, fall through: signature + expiry +
-    // identities-map already bound the trust. A transient pod outage
-    // is a partition, not a security event.
   }
   // The token's agent may be a surface agent forgotten by a restart, as the anonymous DID
   // document route would restore it. This server signed that agent id for this user, so it
@@ -5977,11 +5994,13 @@ app.get('/me', authEnrollLimiter, async (req, res) => {
   });
 });
 
-// Shared helper: resolve bearer token to the user, refuse if invalid.
+// Shared helper: resolve bearer token to the user, refuse if invalid. `closedOnPod`: accept, too,
+// a token refused only because its account is closed on the pod while this process still holds
+// it (unfinishedDeletion), which is called with the session epoch the token was issued at.
 async function requireUserFromBearer(
   req: express.Request,
   res: express.Response,
-  opts: { closedOnPod?: 'accept' } = {},
+  opts: { closedOnPod?: (tokenEpoch: number) => void } = {},
 ): Promise<Identity | null> {
   const authHeader = req.headers.authorization;
   if (!authHeader?.startsWith('Bearer ')) {
@@ -5990,8 +6009,11 @@ async function requireUserFromBearer(
   }
   const tr = await verifyToken(authHeader.slice(7));
   if (!tr.valid) {
-    const closing = opts.closedOnPod === 'accept' && tr.reason === 'Account deleted' ? unfinishedDeletion(authHeader.slice(7)) : null;
-    if (closing) return closing;
+    const closing = opts.closedOnPod && tr.reason === 'Account deleted' ? unfinishedDeletion(authHeader.slice(7)) : null;
+    if (closing) {
+      opts.closedOnPod!(tokenEpoch(authHeader.slice(7)));
+      return closing;
+    }
     refuseBearer(res, tr);
     return null;
   }
@@ -6009,10 +6031,12 @@ async function requireUserFromBearer(
  * deletedUserIds. That is a deletion the pod took without confirming it (a 5xx after applying
  * the tombstone, a timeout) whose read afterwards failed too, so the route answered 503; or a
  * deletion by the other instance or an operator. Only POST /users/me/delete accepts it, to
- * finish the deletion (memory and the agent registry); it writes nothing over the tombstone. A Play
- * guest's token is one too (verifyToken answers it "Account deleted" on its owner's tombstone), and
- * the janitor leaves a Play owner whose deletion was answered 503 here to this retry until its guest
- * deadline (unconfirmedPlayDeletions).
+ * finish the deletion (memory and the agent registry); it writes nothing over the tombstone, and
+ * nothing at all when the record its lock reads is no tombstone (deleteUserCompletely, finishOnly:
+ * a Play owner provisioned again over it, an id re-opened by hand). A Play guest's token is one too
+ * (verifyToken answers it "Account deleted" on its owner's tombstone), and the janitor leaves a Play
+ * owner whose deletion was answered 503 here to this retry until its guest deadline
+ * (unconfirmedPlayDeletions).
  */
 function unfinishedDeletion(token: string): Identity | null {
   const parsed = parseAndVerifySignature(token);
@@ -6328,15 +6352,29 @@ app.post('/tokens/me/sign-out-everywhere', tokenLimiter, async (req, res) => {
  * A Play owner's deletion whose tombstone the pod may have taken, which nothing could settle (the
  * route's 503), is recorded in unconfirmedPlayDeletions here, under the lock, before the janitor's
  * purge (which may be waiting for it) can find that tombstone.
+ *
+ * `finishOnly`: the retry of a deletion with a token refused because its account is closed on the
+ * pod (unfinishedDeletion). It finishes that deletion and writes nothing: a record that is no
+ * tombstone under the lock is a Play owner provisioned again over the tombstone (the other
+ * instance's provisioning, which does not wait for this lock, keeping the tombstone's session
+ * epoch, above the old token's) or an id re-opened by hand. That record is kept and made this
+ * server's copy, and `reopened` gives its session epoch. It used to be closed like any other, so a
+ * guest token whose own deletion had been answered 503 closed the owner its guest had been
+ * provisioned as again, and deleted that owner's agent registry.
  */
-type DeletionResult = { agents: string[]; tombstoned: true; kept?: true; purgePending?: true; unconfirmed?: true; podCleanup: { agents: number } };
+type DeletionResult = {
+  agents: string[]; tombstoned: true; kept?: true; purgePending?: true; unconfirmed?: true;
+  reopened?: { sessionEpoch: number }; podCleanup: { agents: number };
+};
 async function deleteUserCompletely(
   userId: string,
-  opts: { lockHeld?: boolean; stillDeletable?: (methods: AuthMethods) => boolean; playPurge?: true } = {},
+  opts: { lockHeld?: boolean; stillDeletable?: (methods: AuthMethods) => boolean; playPurge?: true; finishOnly?: true } = {},
 ): Promise<DeletionResult> {
   const podCleanup = { agents: 0 };
   // The tombstone the pod holds once the account is closed: the one written here, or one found.
   let closedOn: AuthMethods | null = null;
+  // The record a finishOnly retry found in place of a tombstone, and kept.
+  let reopened: AuthMethods | null = null;
   // The record the tombstone was last written over (or meant to be): its anchor gives a Play
   // owner's guest deadline.
   let writtenOver: Readonly<AuthMethods> | null = null;
@@ -6346,6 +6384,7 @@ async function deleteUserCompletely(
     try {
       const outcome = await applyUpdate(userId, 'delete-account', (draft, live) => {
         closedOn = null;
+        reopened = null;
         // Closed already (a deletion the pod took without confirming it, retried; or the
         // other instance's): nothing to write, and what follows clears this server's memory. The
         // janitor's purge leaves one this process answered 503 to its guest's retry, until its guest
@@ -6354,6 +6393,11 @@ async function deleteUserCompletely(
           if (opts.playPurge && live.provisionalPlayPurgePending !== true && awaitsGuestRetry(userId)) return NoWrite('kept');
           closedOn = live;
           return NoWrite('closed');
+        }
+        // A retry that finishes a deletion closes nothing: the record is no tombstone any more.
+        if (opts.finishOnly) {
+          reopened = live ?? emptyAuthMethods(userId);
+          return NoWrite('reopened');
         }
         writtenOver = live;
         // Kept: the writer makes this server's copy what the pod holds, so the next decision sees it.
@@ -6364,7 +6408,7 @@ async function deleteUserCompletely(
         closedOn = tombstone;
         return Write;
       }, { tombstone: 'replace', absent: 'create' });
-      if (outcome.written === false && outcome.reason === 'kept') return false;
+      if (outcome.written === false && (outcome.reason === 'kept' || outcome.reason === 'reopened')) return false;
     } catch (err) {
       // A write whose outcome is unknown (a 5xx, a timeout) may have landed: the writer settled
       // what the pod holds under this lock. A tombstone there is a closed account, so the
@@ -6398,7 +6442,10 @@ async function deleteUserCompletely(
   } else {
     closed = await withIdentityPodMutex(userId, close);
   }
-  if (!closed) return { agents: [], tombstoned: true, kept: true, podCleanup };
+  if (!closed) {
+    const kept = reopened as AuthMethods | null;
+    return { agents: [], tombstoned: true, kept: true, ...(kept ? { reopened: { sessionEpoch: kept.sessionEpoch ?? 0 } } : {}), podCleanup };
+  }
   const purgePending = (closedOn as AuthMethods | null)?.provisionalPlayPurgePending === true;
 
   const ownedAgentIds = [...identities.values()]
@@ -6448,7 +6495,11 @@ async function deleteUserCompletely(
  * close() finds the marked tombstone, writes nothing, and the remaining deletions are sent again.
  * It used to close the account and forget it before deleting anything, and a DELETE that failed
  * once (a 5xx, a timeout) left the pod's data for good: the janitor walks only `identities`, and a
- * tombstone loads no account. The record and its container stay, as the tombstone.
+ * tombstone loads no account. The record and its container stay, as the tombstone. So do the
+ * documents the pod refuses to delete with 409 (native-committed heads: a guest's game saves and its
+ * write budget, which no plain request deletes) and the containers that hold them: the purge is
+ * finished without them, and logs them once. It used to stay unfinished for them, and send them
+ * again at every pass and after every restart.
  *
  * A tombstone the purge did not mark (a deletion's, the other instance's, or a purge finished
  * elsewhere) is not purged: its owner is only forgotten here. A deleted Play owner may be
@@ -6477,12 +6528,18 @@ async function purgePlayOwner(userId: string): Promise<void> {
           return 'purge';
         },
       });
-      if (purge === 'purged') await finishPlayPurge(userId);
+      if (purge.outcome === 'purged') await finishPlayPurge(userId);
       unfinishedPlayPurges.delete(userId);
-      if (purge === 'kept') log(awaitsGuestRetry(userId)
+      // Logged once: the mark is cleared, so neither a later pass nor a restart comes back to them.
+      if (purge.outcome === 'purged' && purge.retained.length > 0) {
+        const pod = `${CSS_URL}${userId}/`;
+        log(`Janitor: finished the purge of ${userId}, keeping ${purge.retained.length} resource(s) its pod's store deletes only by a native conditional commit (409 to a DELETE): `
+          + purge.retained.map(url => (url.startsWith(pod) ? url.slice(pod.length) : url)).join(', '));
+      }
+      if (purge.outcome === 'kept') log(awaitsGuestRetry(userId)
         ? `Janitor: left ${userId} to its guest's retry: its deletion was answered 503 (not confirmed), and its guest deadline has not passed`
         : `Janitor: kept ${userId}: it holds a credential now, or its anchor has not expired`);
-      if (purge === 'closed') log(finished
+      if (purge.outcome === 'closed') log(finished
         ? `Janitor: finished the deletion of ${userId} answered 503 (not confirmed) and not retried before its guest deadline: its agent registry deleted`
         : `Janitor: forgot ${userId}: its record is a tombstone no purge left unfinished (a deletion's); its pod is left as it is`);
     });
@@ -6495,7 +6552,8 @@ async function purgePlayOwner(userId: string): Promise<void> {
 
 /**
  * The end of a Play owner's purge, under its lock, once every other resource of the pod is
- * deleted: its tombstone is written again without the mark (on its ETag), so neither the janitor
+ * deleted (but those the pod refuses to delete with 409, which no pass could delete):
+ * its tombstone is written again without the mark (on its ETag), so neither the janitor
  * nor a restart comes back to it. The account was forgotten when it closed, so the record the
  * writer installs is dropped again.
  */
@@ -6512,13 +6570,14 @@ async function finishPlayPurge(userId: string): Promise<void> {
 app.post('/users/me/delete', tokenLimiter, async (req, res) => {
   // A token refused only because the pod holds this account's tombstone, while this process
   // still holds the account, finishes the deletion (unfinishedDeletion): the retry a 503 below
-  // asks for, of a deletion the pod took without confirming it.
-  const user = await requireUserFromBearer(req, res, { closedOnPod: 'accept' });
+  // asks for, of a deletion the pod took without confirming it. It finishes nothing else.
+  const finishing: { tokenEpoch?: number } = {};
+  const user = await requireUserFromBearer(req, res, { closedOnPod: epoch => { finishing.tokenEpoch = epoch; } });
   if (!user) return;
   let result: DeletionResult;
   try {
     // It takes the account's lock itself, for every id.
-    result = await deleteUserCompletely(user.id);
+    result = await deleteUserCompletely(user.id, finishing.tokenEpoch === undefined ? {} : { finishOnly: true });
   } catch (err) {
     log(`WARN: deletion of ${user.id} not completed: ${(err as Error).message}`);
     if (err instanceof AuthMethodsWriteError && err.unknownOutcome && err.podRecord === undefined) {
@@ -6534,6 +6593,17 @@ app.post('/users/me/delete', tokenLimiter, async (req, res) => {
       return;
     }
     res.status(503).json({ error: 'Deletion not completed', detail: 'The pod did not take the deletion. Nothing was changed; try again in a minute.' });
+    return;
+  }
+  if (result.reopened) {
+    // That retry found the record no tombstone under the lock (a Play owner provisioned again over
+    // it, an id re-opened by hand): nothing was written or deleted, and this server's copy is now
+    // that record, so the token is answered on it from here on.
+    if (result.reopened.sessionEpoch > (finishing.tokenEpoch ?? 0)) {
+      res.status(401).json({ error: 'Invalid bearer token: Token revoked (signed out everywhere)' });
+      return;
+    }
+    res.status(409).json({ error: 'Account not deleted', detail: 'This account\'s record on its pod is no longer its deletion\'s tombstone, so this request finished nothing. Nothing was changed; send the deletion again to delete the account.' });
     return;
   }
   log(`Deleted user ${user.id} (agents removed: ${result.agents.join(', ') || 'none'})`);

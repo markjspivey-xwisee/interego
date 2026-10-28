@@ -16,7 +16,7 @@ test('cleanup closes the account once the tree is checked, then removes the othe
       if (init?.method === 'DELETE') return new Response(null, { status: 204 });
       return new Response(listings.get(url), { status: 200 });
     }) as typeof fetch });
-  assert.equal(result, 'purged');
+  assert.deepEqual(result, { outcome: 'purged', retained: [] });
   const closedAt = events.indexOf('close');
   assert.ok(closedAt > 0 && events.slice(0, closedAt).every(e => e.startsWith('GET ')), `the tree is listed, and nothing changed, before the account is closed: ${events}`);
   const deleted = events.filter(e => e.startsWith('DELETE ')).map(e => e.slice('DELETE '.length));
@@ -57,7 +57,7 @@ test('an account close() keeps (an enrolment landed, or its anchor has not expir
       if (init?.method === 'DELETE') deletions++;
       return new Response('ldp:contains <auth-methods.jsonld>, <checkpoint> .');
     }) as typeof fetch });
-  assert.equal(result, 'kept');
+  assert.deepEqual(result, { outcome: 'kept', retained: [] });
   assert.equal(deletions, 0);
 });
 test('a record that is a tombstone no purge marked (a deletion\'s, whose owner may be provisioned again) keeps every resource', async () => {
@@ -70,7 +70,7 @@ test('a record that is a tombstone no purge marked (a deletion\'s, whose owner m
       if (init?.method === 'DELETE') deletions++;
       return new Response('ldp:contains <auth-methods.jsonld>, <checkpoint> .');
     }) as typeof fetch });
-  assert.equal(result, 'closed');
+  assert.deepEqual(result, { outcome: 'closed', retained: [] });
   assert.equal(deletions, 0);
 });
 test('a deletion that fails after the close throws, so its caller keeps the purge for another pass, and one sent again finishes it', async () => {
@@ -85,8 +85,42 @@ test('a deletion that fails after the close throws, so its caller keeps the purg
     }) as typeof fetch });
   await assert.rejects(run(), /deletion incomplete/);
   assert.deepEqual(deleted, []);
-  assert.equal(await run(), 'purged');
+  assert.equal((await run()).outcome, 'purged');
   assert.deepEqual(deleted, [`${root}checkpoint`, `${root}agents`]);
+});
+test('a document the pod refuses to delete with 409 (a native-committed head) is kept, the containers that hold it are not asked, and the purge finishes', async () => {
+  // A guest's game save and write budget, as the production store keeps them: native heads, whose
+  // every plain DELETE is a 409, and whose containers are not empty while they stay. The purge used
+  // to throw at the first such 409, so it never finished, and was sent again at every pass.
+  const save = `${root}hallowmarch/checkpoints/${'b'.repeat(64)}.json`;
+  const budget = `${root}play-budget.json`;
+  const listings = new Map([
+    [root, 'ldp:contains <agents>, <auth-methods.jsonld>, <hallowmarch/>, <play-budget.json>, <profile/> .'],
+    [`${root}hallowmarch/`, 'ldp:contains <checkpoints/> .'],
+    [`${root}hallowmarch/checkpoints/`, `ldp:contains <${'b'.repeat(64)}.json> .`],
+    [`${root}profile/`, 'ldp:contains <card> .'],
+  ]);
+  const deletes: Array<[string, number]> = [];
+  const result = await purgeProvisionalPlayPod({ userId, cssUrl, close: async () => 'purge',
+    fetcher: (async (input, init) => {
+      const url = String(input);
+      if (init?.method !== 'DELETE') return new Response(listings.get(url) ?? '', { status: listings.has(url) ? 200 : 404 });
+      const status = url === save || url === budget || url.startsWith(`${root}hallowmarch/`) ? 409 : 205;
+      deletes.push([url, status]);
+      return new Response(null, { status });
+    }) as typeof fetch });
+  assert.deepEqual(result, { outcome: 'purged', retained: [save, budget] });
+  assert.deepEqual(deletes, [[`${root}agents`, 205], [save, 409], [budget, 409], [`${root}profile/card`, 205], [`${root}profile/`, 205]],
+    'every other resource is deleted, an emptied container included; the containers of a kept head are not sent a DELETE');
+});
+test('a 409 on a container that holds nothing kept fails the pass, as any refused deletion does', async () => {
+  // Something written in it since the listing: the next pass lists it again.
+  await assert.rejects(purgeProvisionalPlayPod({ userId, cssUrl, close: async () => 'purge',
+    fetcher: (async (input, init) => {
+      const url = String(input);
+      if (init?.method === 'DELETE') return new Response(null, { status: url.endsWith('/') ? 409 : 205 });
+      return new Response(url === root ? 'ldp:contains <auth-methods.jsonld>, <resources/> .' : 'ldp:contains <a.json> .');
+    }) as typeof fetch }), /deletion incomplete/);
 });
 test('a close that fails changes nothing more', async () => {
   let deletions = 0;

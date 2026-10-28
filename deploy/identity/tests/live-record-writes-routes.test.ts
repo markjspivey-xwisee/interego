@@ -16,6 +16,12 @@
  * its ETag was still pending; and its header said it answered like CSS with the accessor while it
  * gave stock CSS's ETag (`"<modified ms>-application/ld+json"`), answered 201 to every PUT it
  * applied, had no containers, and answered 205 to anything but a GET of a pod's other documents.
+ * The containers below a pod's own list their children and refuse a DELETE while they hold anything
+ * (409), and a document committed natively (putNative: a Play guest's game saves and its write
+ * budget, which the css-gate writes only that way) refuses every plain PUT and DELETE (409) and
+ * stays. The stand-in used to have neither: a test's "checkpoint" was a plain document at the pod's
+ * top level, which it deleted with 205, so a purge passed that the production store never lets
+ * finish that way.
  * Passkeys come from the software authenticator in tests/soft-authenticator.ts.
  *
  * The identity server keeps a 10 s copy of each account's record. Its writers used to save a
@@ -81,13 +87,39 @@ function conditionFails(entry: { ifMatch?: string; ifNoneMatch?: string }, etag:
   return entry.ifMatch !== undefined && entry.ifMatch !== '*' && entry.ifMatch !== etag;
 }
 const preconditionFails = (entry: { ifMatch?: string; ifNoneMatch?: string }, userId: string) => conditionFails(entry, etagOf(userId));
-/** The pods' other documents (an agent registry, a game's checkpoint, the root's admission ledger), by path. */
-const others = new Map<string, { body: string; contentType: string; modified: number }>();
+/**
+ * The pods' other documents (an agent registry, a game's saves and write budget, the root's admission
+ * ledger), by path. `native`: a native-committed head (putNative), as a game's saves and budget are.
+ */
+const others = new Map<string, { body: string; contentType: string; modified: number; native?: true }>();
 /** Pods whose container was created and stays: CSS keeps a container once its documents are deleted. */
 const containers = new Set<string>();
-const othersIn = (userId: string) => [...others.keys()].filter(p => p.startsWith(`/${userId}/`));
+/** Containers below a pod's own ('/<id>/a/', '/<id>/a/b/') that stay once emptied, as CSS keeps them. */
+const subContainers = new Set<string>();
+/** The other documents and sub-containers below `prefix` (a pod's '/<id>/', or a sub-container's path). */
+const below = (prefix: string) => [...others.keys(), ...subContainers].filter(p => p.startsWith(prefix) && p !== prefix);
+/** A container's children, as its listing names them: the first segment of each path below it ('<name>/' for a container). */
+function childrenOf(prefix: string): string[] {
+  const names = new Set<string>();
+  for (const p of below(prefix)) {
+    const rest = p.slice(prefix.length);
+    const slash = rest.indexOf('/');
+    names.add(slash < 0 ? rest : rest.slice(0, slash + 1));
+  }
+  return [...names];
+}
+/** CSS keeps the containers of a resource it deletes: the pod's, and those between it and the resource. */
+function keepContainersOf(path: string): void {
+  const segments = path.split('/').filter(Boolean);
+  if (segments.length < 2) return;   // a document of the root (the admission ledger)
+  containers.add(segments[0]!);
+  for (let i = 2; i < segments.length; i++) subContainers.add(`/${segments.slice(0, i).join('/')}/`);
+}
 /** A pod's container exists once it was PUT, or once a document was written in it (CSS creates it then). */
-const containerExists = (userId: string) => containers.has(userId) || docs.has(userId) || othersIn(userId).length > 0;
+const containerExists = (userId: string) => containers.has(userId) || docs.has(userId) || below(`/${userId}/`).length > 0;
+/** The body CSS sends with a 409 (its error handler's JSON), as the probe recorded it. */
+const conflictBody = (message: string) => JSON.stringify({ name: 'ConflictHttpError', message, statusCode: 409, errorCode: 'H409' });
+const NATIVE_REQUIRED = 'This resource requires a native conditional commit';
 const unlisted = new Set<string>();
 const failingGets = new Map<string, number>();
 const nonJson = new Set<string>();
@@ -150,6 +182,25 @@ function outOfBand(userId: string, edit: (doc: Doc) => void): void {
 function putOther(path: string, body = '', contentType = 'text/turtle'): void {
   others.set(path, { body, contentType, modified: clock = Math.max(clock + 1, Date.now()) });
 }
+/**
+ * A document committed natively (a PUT of `application/vnd.interego.native-commit+json`, which the
+ * css-gate makes for a Play guest's game saves and its write budget, and which nothing here sends):
+ * the PGSL store keeps it as a native-managed head, and its accessor refuses every plain PUT or DELETE
+ * of it with 409 (NATIVE_REQUIRED), whatever its conditions.
+ */
+function putNative(path: string, body = '{}', contentType = 'application/json'): void {
+  others.set(path, { body, contentType, modified: clock = Math.max(clock + 1, Date.now()), native: true });
+}
+/**
+ * A Play guest's game, saved as the css-gate saves it: its write budget (`play-budget.json`) and a
+ * checkpoint at `hallowmarch/checkpoints/<sha>.json`, both native commits. Returns the checkpoint's path.
+ */
+function saveGame(userId: string): string {
+  const checkpoint = `/${userId}/hallowmarch/checkpoints/${crypto.createHash('sha256').update(userId).digest('hex')}.json`;
+  putNative(`/${userId}/play-budget.json`);
+  putNative(checkpoint);
+  return checkpoint;
+}
 const record = (userId: string) => docs.get(userId)?.doc as unknown as PodRecord | undefined;
 type PodRecord = { walletAddresses: string[]; didKeys: Array<{ did: string }>; sessionEpoch?: number; deletedAt?: string; name?: string;
   provisionalPlayAnchor?: string; provisionalPlayPurgePending?: true;
@@ -175,8 +226,10 @@ function listing(children: readonly string[]): string {
  * at every write; a PUT that creates is answered 201 and one that replaces 205; conditions as
  * conditionFails; a DELETE of a missing document is a 404 before any condition is checked; a PUT
  * of a container that exists is a 409 (the container is left as it is), and a container is created
- * by a PUT of a document in it and stays once its documents are deleted. Containers are the pods'
- * own (one level); their listings and HEADs answer as CSS's do.
+ * by a PUT of a document in it and stays once its documents are deleted. A pod's container and the
+ * containers below it list their children by name, and a DELETE of one that is not empty is a 409
+ * ("Can only delete empty containers."). A native-committed head (putNative) answers every plain
+ * PUT or DELETE that its conditions pass with a 409 (NATIVE_REQUIRED), and stays.
  */
 async function servePods(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
   const path = new URL(req.url ?? '/', 'http://pods').pathname;
@@ -194,7 +247,7 @@ async function servePods(req: http.IncomingMessage, res: http.ServerResponse): P
   }
   if (path === '/') {
     if (req.method !== 'GET' && req.method !== 'HEAD') { res.writeHead(req.method === 'PUT' ? 409 : 405).end(); return; }
-    const pods = new Set([...docs.keys(), ...containers, ...[...others.keys()].filter(p => /^\/[^/]+\//.test(p)).map(p => p.split('/')[1]!)]);
+    const pods = new Set([...docs.keys(), ...containers, ...[...others.keys(), ...subContainers].filter(p => /^\/[^/]+\//.test(p)).map(p => p.split('/')[1]!)]);
     const children = [...[...pods].filter(p => !unlisted.has(p)).map(p => `${p}/`), ...[...others.keys()].filter(p => /^\/[^/]+$/.test(p)).map(p => p.slice(1))];
     res.writeHead(200, { 'Content-Type': 'text/turtle' }).end(req.method === 'GET' ? listing(children) : undefined);
     return;
@@ -213,13 +266,13 @@ async function servePods(req: http.IncomingMessage, res: http.ServerResponse): P
     }
     if (req.method === 'GET' || req.method === 'HEAD') {
       if (!containerExists(id)) { res.writeHead(404).end(); return; }
-      const children = [...(docs.has(id) ? ['auth-methods.jsonld'] : []), ...othersIn(id).map(p => p.slice(id.length + 2))];
+      const children = [...(docs.has(id) ? ['auth-methods.jsonld'] : []), ...childrenOf(`/${id}/`)];
       res.writeHead(200, { 'Content-Type': 'text/turtle', ETag: `"${clock}-text/turtle"` }).end(req.method === 'GET' ? listing(children) : undefined);
       return;
     }
     if (req.method === 'DELETE') {
       if (!containerExists(id)) { res.writeHead(404).end(); return; }
-      if (docs.has(id) || othersIn(id).length > 0) { res.writeHead(409).end(); return; }
+      if (docs.has(id) || below(`/${id}/`).length > 0) { res.writeHead(409, { 'Content-Type': 'application/json' }).end(conflictBody('Can only delete empty containers.')); return; }
       containers.delete(id);
       res.writeHead(205).end();
       return;
@@ -232,6 +285,33 @@ async function servePods(req: http.IncomingMessage, res: http.ServerResponse): P
     const other: (typeof otherRequests)[number] = { method: req.method!, path, at: Date.now() };
     otherRequests.push(other);
     const answerOther = (status: number, headers: Record<string, string> = {}, body?: string) => { other.status = status; res.writeHead(status, headers).end(body); };
+    const conflict = (message: string) => answerOther(409, { 'Content-Type': 'application/json' }, conflictBody(message));
+    if (path.endsWith('/')) {
+      // A container below a pod's own: it exists once something was written in it (or it was PUT),
+      // and stays once emptied; a DELETE of it while it holds anything is a 409.
+      const exists = subContainers.has(path) || below(path).length > 0;
+      if (req.method === 'GET' || req.method === 'HEAD') {
+        if (!exists) answerOther(404);
+        else answerOther(200, { 'Content-Type': 'text/turtle', ETag: `"${clock}-text/turtle"` }, req.method === 'GET' ? listing(childrenOf(path)) : undefined);
+        return;
+      }
+      if (req.method === 'PUT') {
+        if (exists) { answerOther(409); return; }
+        subContainers.add(path);
+        answerOther(201);
+        return;
+      }
+      if (req.method === 'DELETE') {
+        if (!exists) { answerOther(404); return; }
+        if (below(path).length > 0) { conflict('Can only delete empty containers.'); return; }
+        subContainers.delete(path);
+        keepContainersOf(path);
+        answerOther(205);
+        return;
+      }
+      answerOther(405);
+      return;
+    }
     const stored = others.get(path);
     const etag = stored ? nativeEtag(path, stored.modified, stored.contentType) : null;
     if (req.method === 'GET' || req.method === 'HEAD') {
@@ -241,6 +321,7 @@ async function servePods(req: http.IncomingMessage, res: http.ServerResponse): P
     }
     if (req.method === 'PUT') {
       if (conditionFails(conditions, etag)) { answerOther(412); return; }
+      if (stored?.native) { conflict(NATIVE_REQUIRED); return; }
       others.set(path, { body: raw, contentType: String(req.headers['content-type'] ?? 'application/octet-stream').split(';')[0]!, modified: clock = Math.max(clock + 1, Date.now()) });
       answerOther(stored ? 205 : 201);
       return;
@@ -250,8 +331,8 @@ async function servePods(req: http.IncomingMessage, res: http.ServerResponse): P
       if (failing > 0) { failingOtherDeletes.set(path, failing - 1); answerOther(500); return; }
       if (!stored) { answerOther(404); return; }
       if (conditionFails(conditions, etag)) { answerOther(412); return; }
-      const owner = /^\/([^/]+)\//.exec(path)?.[1];
-      if (owner) containers.add(owner);   // the container stays
+      if (stored.native) { conflict(NATIVE_REQUIRED); return; }
+      keepContainersOf(path);   // its containers stay
       others.delete(path);
       answerOther(205);
       return;
@@ -617,6 +698,9 @@ const c21 = account({ keys: [P()] });
 const j7 = account({ keys: [P()] });
 const p7 = { wallet: account({ keys: [P()] }), did: account({ keys: [P()] }) };
 const p8 = { wallet: account({ keys: [P()] }), did: account({ keys: [P()] }), stranger: account({ keys: [P()] }) };
+// Accounts whose deletion was answered 503 and that an operator re-opens by hand before its retry:
+// as documented (the tombstone's session epoch kept), and with the epoch put back to the token's.
+const p13 = { kept: account({ keys: [P()] }), reset: account({ keys: [P()] }) };
 // Owners whose bearer adds nothing could settle, while first sign-ins fill their share of the records (S10).
 const s10 = [account({ keys: [P()] }), account({ keys: [P()] }), account({ keys: [P()] })];
 // An owner whose bearer add of a did:key nothing could settle, after did:key first sign-ins filled their share (S11).
@@ -820,12 +904,41 @@ test('S0: the stand-in pod answers as CSS 7.2 with the PGSL accessor answered th
   assert.match(await (await send('GET', `/${a}/`)).text(), /ldp:contains <agents>, <auth-methods\.jsonld>/, 'its children, by name');
   assert.equal((await send('DELETE', `/${a}/agents`)).status, 205);
   assert.equal((await send('DELETE', `/${a}/agents`)).status, 404);
+  // A guest's game save and its write budget, committed natively as the css-gate commits them: the
+  // store keeps each as a native-managed head and refuses every plain PUT or DELETE of it with 409,
+  // whatever its If-Match (the probe sent none, its ETag, and *), and keeps it. A container that
+  // holds one is not empty, and its DELETE is a 409 too. The stand-in used to have no native heads
+  // and no containers below a pod's own, and deleted a "checkpoint" with 205.
+  const save = saveGame(a);
+  const nativeRefusal = async (r: Response) => {
+    assert.equal(r.status, 409);
+    assert.match(await r.text(), /"message":"This resource requires a native conditional commit"/);
+  };
+  const saveEtag = String(await etagOfGet(save));
+  assert.match(saveEtag, /^"sha256:[0-9a-f]{64}-bacb769b46f6d169"$/);
+  await nativeRefusal(await send('DELETE', save));
+  await nativeRefusal(await send('DELETE', save, { 'If-Match': saveEtag }));
+  await nativeRefusal(await send('DELETE', save, { 'If-Match': '*' }));
+  await nativeRefusal(await send('PUT', save, { 'Content-Type': 'application/json' }, '{}'));
+  await nativeRefusal(await send('DELETE', `/${a}/play-budget.json`));
+  await nativeRefusal(await send('DELETE', `/${a}/play-budget.json`, { 'If-Match': String(await etagOfGet(`/${a}/play-budget.json`)) }));
+  assert.equal((await send('GET', save)).status, 200);
+  assert.equal(await etagOfGet(save), saveEtag, 'nothing of it changed');
+  // Listed by name, as the store lists children (above); the probe recorded these listings only in part.
+  assert.match(await (await send('GET', `/${a}/`)).text(), /ldp:contains <auth-methods\.jsonld>, <hallowmarch\/>, <play-budget\.json>/);
+  assert.match(await (await send('GET', `/${a}/hallowmarch/`)).text(), /ldp:contains <checkpoints\/>/);
+  for (const container of [`/${a}/hallowmarch/checkpoints/`, `/${a}/hallowmarch/`]) {
+    const r = await send('DELETE', container);
+    assert.equal(r.status, 409);
+    assert.match(await r.text(), /"message":"Can only delete empty containers\."/);
+  }
   // The root lists both pods, as containers.
   const root = await (await send('GET', '/')).text();
   assert.ok(root.includes(`<${a}/>`) && root.includes(`<${b}/>`), root);
   // Out of the way of every test after this one, its requests included (I4 checks that no record
   // was ever removed).
   for (const id of [a, b]) { docs.delete(id); containers.delete(id); unlisted.add(id); }
+  for (const p of [...others.keys(), ...subContainers]) if (p.startsWith(`/${a}/`)) { others.delete(p); subContainers.delete(p); }
   for (let i = requests.length - 1; i >= 0; i--) if (requests[i]!.userId.startsWith(a)) requests.splice(i, 1);
   for (let i = otherRequests.length - 1; i >= 0; i--) if (otherRequests[i]!.path.startsWith(`/${a}`)) otherRequests.splice(i, 1);
 });
@@ -2238,50 +2351,78 @@ test('C16: the janitor writes a Play owner\'s tombstone on the ETag it checked b
   }
 });
 
-test('P9: a Play purge that fails part-way is finished, at the janitor\'s next pass and after a restart: the account it closed is not forgotten with its pod half purged', { timeout: 90_000 }, async () => {
+test('P9: a Play purge that fails part-way is finished, at the janitor\'s next pass and after a restart; the game\'s saves and write budget, which no plain request deletes, are kept and do not hold it open', { timeout: 90_000 }, async () => {
   // The janitor closes an expired unclaimed owner (its tombstone, marked as a purge not yet
-  // finished) and then deletes the pod's other resources. One DELETE fails once (`once`), and one
-  // fails until the instance restarts (`stuck`). It used to forget the owner as soon as it was
-  // closed: its sweep walks only the accounts it holds and a tombstone loads none, so the resource
-  // a failed DELETE left stayed for good, through every later pass and every restart.
+  // finished) and then deletes the pod's other resources: the relay's agent registry and profile
+  // card, and the guest's game save and write budget, which the css-gate writes only as native
+  // commits, and whose every plain DELETE the production store refuses with 409. One DELETE fails
+  // once (`once`, the registry), and one fails until the instance restarts (`stuck`, the card). It
+  // used to forget the owner as soon as it was closed: its sweep walks only the accounts it holds and
+  // a tombstone loads none, so the resource a failed DELETE left stayed for good. Then it kept the
+  // purge open on any refused DELETE, a native head's 409 included, so on the production store a
+  // guest who had saved was purged again at every pass and after every restart, never finished.
   const port = await freePort();
   const issuer = `http://127.0.0.1:${port}`;
   const once = playOwner();
   const stuck = playOwner();
-  const checkpointOf = (o: { id: string }) => `/${o.id}/checkpoint.json`;
+  const saves = new Map<string, string>();
   for (const o of [once, stuck]) {
     docs.set(o.id, { modified: clock = Math.max(clock + 1, Date.now()), doc: { userId: o.id, name: 'Play guest',
       walletAddresses: [], webAuthnCredentials: [], didKeys: [], provisionalPlayAnchor: expiredAnchor(issuer, o) } });
-    putOther(checkpointOf(o), '{}', 'application/json');
+    putOther(`/${o.id}/agents`);
+    putOther(`/${o.id}/profile/card`);
+    saves.set(o.id, saveGame(o.id));
   }
-  failingOtherDeletes.set(checkpointOf(once), 1);
-  failingOtherDeletes.set(checkpointOf(stuck), 1_000);
-  const deletesOf = (o: { id: string }) => otherRequests.filter(r => r.method === 'DELETE' && r.path === checkpointOf(o));
+  failingOtherDeletes.set(`/${once.id}/agents`, 1);
+  failingOtherDeletes.set(`/${stuck.id}/profile/card`, 1_000);
+  const deletesOf = (path: string) => otherRequests.filter(r => r.method === 'DELETE' && r.path === path);
+  const podRequests = (o: { id: string }) => otherRequests.filter(r => r.path.startsWith(`/${o.id}/`)).length;
   const gone = (path: string) => (others.has(path) ? undefined : true);
+  const unmarked = (o: { id: string }) => (record(o.id)?.provisionalPlayPurgePending ? undefined : true);
+  const logged = (inst: Instance, line: RegExp) => waitFor(() => (line.test(inst.output()) ? true : undefined), 5_000);
+  // What stays of a finished purge: the record (the tombstone) and the native heads, with the
+  // containers that hold them. The registry, the card, and the card's container, emptied, are deleted.
+  const purgedButNative = (o: { id: string }) => {
+    assert.ok(record(o.id)!.deletedAt, 'the record stays, as the tombstone');
+    assert.ok(others.has(saves.get(o.id)!) && others.has(`/${o.id}/play-budget.json`), 'the native heads stay');
+    assert.equal(others.has(`/${o.id}/agents`) || others.has(`/${o.id}/profile/card`), false);
+    assert.equal(subContainers.has(`/${o.id}/profile/`), false, 'the emptied container is deleted too');
+    assert.equal(otherRequests.some(r => r.method === 'DELETE' && r.path.startsWith(`/${o.id}/hallowmarch/`) && r.path.endsWith('/')), false,
+      'a container that holds a native head is not asked to be deleted');
+  };
   let janitor = await startIdentity(port, { JANITOR_INTERVAL_MS: '1000' });
   try {
-    assert.ok(await waitFor(() => gone(checkpointOf(once)), 20_000),
-      `the checkpoint a failed DELETE left was never deleted (${deletesOf(once).length} DELETE(s))${out(janitor)}`);
-    assert.deepEqual(deletesOf(once).map(r => r.status), [500, 205], 'refused once, then sent again at the next pass');
-    assert.ok(await waitFor(() => (record(once.id)?.provisionalPlayPurgePending ? undefined : true), 5_000), 'the mark is cleared once the purge is done');
-    assert.ok(record(once.id)!.deletedAt, 'the record stays, as the tombstone');
-    assert.ok(await waitFor(() => deletesOf(stuck).length >= 2 || undefined, 10_000), `a purge whose DELETE failed was not tried again${out(janitor)}`);
+    assert.ok(await waitFor(() => gone(`/${once.id}/agents`), 20_000),
+      `the registry a failed DELETE left was never deleted (${deletesOf(`/${once.id}/agents`).length} DELETE(s))${out(janitor)}`);
+    assert.deepEqual(deletesOf(`/${once.id}/agents`).map(r => r.status), [500, 205], 'refused once, then sent again at the next pass');
+    assert.ok(await waitFor(() => unmarked(once), 5_000), `the mark is cleared once the purge is done, the native heads kept${out(janitor)}`);
+    purgedButNative(once);
+    assert.deepEqual(deletesOf(saves.get(once.id)!).map(r => r.status), [409], 'the save\'s DELETE is sent once, at the pass that finished');
+    assert.ok(await logged(janitor, new RegExp(`finished the purge of ${once.id}, keeping 2 resource\\(s\\)[^\\n]*hallowmarch/checkpoints/[0-9a-f]{64}\\.json`)),
+      `the kept heads are not logged${out(janitor)}`);
+    const finished = podRequests(once);
+    assert.ok(await waitFor(() => deletesOf(`/${stuck.id}/profile/card`).length >= 2 || undefined, 10_000), `a purge whose DELETE failed was not tried again${out(janitor)}`);
     assert.ok(record(stuck.id)!.deletedAt, 'the account is closed');
     assert.equal(record(stuck.id)!.provisionalPlayPurgePending, true, 'and its tombstone says its purge is unfinished');
     assert.match(janitor.output(), new RegExp(`purge of ${stuck.id} unfinished`));
     assert.doesNotMatch(janitor.output(), new RegExp(`kept ${stuck.id}`), 'an owner whose account is closed is not logged as kept');
+    assert.equal(podRequests(once), finished, 'a finished purge is not visited again');
   } finally {
     await janitor.stop();
   }
   // Nothing loads a closed account at the restart, but the startup scan finds the mark.
-  failingOtherDeletes.delete(checkpointOf(stuck));
-  const before = deletesOf(stuck).length;
+  failingOtherDeletes.delete(`/${stuck.id}/profile/card`);
+  const before = deletesOf(`/${stuck.id}/profile/card`).length;
+  const onceRequests = podRequests(once);
   janitor = await startIdentity(port, { JANITOR_INTERVAL_MS: '1000' });
   try {
-    assert.ok(await waitFor(() => gone(checkpointOf(stuck)), 15_000), `the restarted janitor never finished the purge${out(janitor)}`);
-    assert.equal(deletesOf(stuck).length, before + 1);
-    assert.ok(await waitFor(() => (record(stuck.id)?.provisionalPlayPurgePending ? undefined : true), 5_000));
-    assert.ok(record(stuck.id)!.deletedAt);
+    assert.ok(await waitFor(() => gone(`/${stuck.id}/profile/card`), 15_000), `the restarted janitor never finished the purge${out(janitor)}`);
+    assert.equal(deletesOf(`/${stuck.id}/profile/card`).length, before + 1);
+    assert.ok(await waitFor(() => unmarked(stuck), 5_000), `the restarted janitor never cleared the mark${out(janitor)}`);
+    purgedButNative(stuck);
+    assert.ok(await logged(janitor, new RegExp(`finished the purge of ${stuck.id}, keeping 2 resource`)), `the kept heads are not logged${out(janitor)}`);
+    await sleep(1_200);
+    assert.equal(podRequests(once), onceRequests, 'nor after a restart: its tombstone has no mark left');
   } finally {
     await janitor.stop();
   }
@@ -2295,7 +2436,7 @@ test('P10: a Play owner its guest deleted through the other instance is only for
   const port = await freePort();
   const guest = livePlayGuest(`http://127.0.0.1:${port}`);   // its anchor has an hour left
   const anchor = record(guest.id)!.provisionalPlayAnchor;
-  putOther(`/${guest.id}/checkpoint.json`, '{}', 'application/json');
+  const save = saveGame(guest.id);
   putOther(`/${guest.id}/agents`);
   const janitor = await startIdentity(port, { JANITOR_INTERVAL_MS: '1000', CSS_PUBLIC_URL: 'https://pods.example/', PROVISIONAL_PLAY_CLIENTS: PLAY_CLIENTS });
   const since = mark();
@@ -2317,7 +2458,7 @@ test('P10: a Play owner its guest deleted through the other instance is only for
     outOfBand(guest.id, d => { delete d['deletedAt']; Object.assign(d, { name: 'Play guest', provisionalPlayAnchor: anchor, provisionalPlayReceipts: [] }); });
     await sleep(1_200);
     assert.deepEqual(deleted(), [], 'nor after it is provisioned again');
-    assert.ok(others.has(`/${guest.id}/checkpoint.json`) && others.has(`/${guest.id}/agents`));
+    assert.ok(others.has(save) && others.has(`/${guest.id}/agents`));
     assert.deepEqual(docPuts(guest.id, since), [], 'and nothing is written');
     assert.equal(record(guest.id)!.provisionalPlayAnchor, anchor, 'the owner provisioned again is whole');
   } finally {
@@ -2335,9 +2476,10 @@ test('P11: a Play guest\'s deletion the pod took without confirming it is finish
   const inst = await startIdentity(port, { JANITOR_INTERVAL_MS: '1000', CSS_PUBLIC_URL: 'https://pods.example/', PROVISIONAL_PLAY_CLIENTS: PLAY_CLIENTS });
   const retrying = livePlayGuest(issuer);                         // an hour to its guest deadline
   const lapsing = livePlayGuest(issuer, undefined, 6);            // its guest never retries
+  const saves = new Map<string, string>();
   for (const g of [retrying, lapsing]) {
     putOther(`/${g.id}/agents`);
-    putOther(`/${g.id}/checkpoint.json`, '{}', 'application/json');
+    saves.set(g.id, saveGame(g.id));
   }
   const registryDeletes = (g: { id: string }) => otherRequests.filter(r => r.method === 'DELETE' && r.path === `/${g.id}/agents`);
   const deletedAt: Record<string, number> = {};
@@ -2358,9 +2500,13 @@ test('P11: a Play guest\'s deletion the pod took without confirming it is finish
     const finished = await waitFor(() => registryDeletes(lapsing)[0], 15_000);
     assert.ok(finished, `the janitor never finished the deletion of ${lapsing.id}${out(inst)}`);
     assert.ok(finished.at >= lapsing.expiresAt * 1000, `its registry was deleted ${lapsing.expiresAt * 1000 - finished.at} ms before its guest deadline`);
-    assert.match(inst.output(), new RegExp(`finished the deletion of ${lapsing.id}`));
+    // Logged once the registry DELETE is answered and the purge returns, and then read through the
+    // child's stdout: waited for, as the DELETE's arrival at the pod comes first. It was matched at
+    // once, and failed when a poll fell in between.
+    assert.ok(await waitFor(() => (inst.output().includes(`finished the deletion of ${lapsing.id}`) ? true : undefined), 5_000),
+      `no 'finished the deletion' log${out(inst)}`);
     assert.equal(others.has(`/${lapsing.id}/agents`), false);
-    assert.ok(others.has(`/${lapsing.id}/checkpoint.json`), 'a deletion deletes the agent registry only');
+    assert.ok(others.has(saves.get(lapsing.id)!) && others.has(`/${lapsing.id}/play-budget.json`), 'a deletion deletes the agent registry only');
     assert.deepEqual(docPuts(lapsing.id, deletedAt[lapsing.id]), [], 'nothing is written over the tombstone');
     assert.equal((await call(inst, 'GET', `/users/${lapsing.id}/did.json`)).status, 404);
     // The guest who retries: across those passes the janitor sent nothing for its owner, and forgot nothing.
@@ -2378,6 +2524,170 @@ test('P11: a Play guest\'s deletion the pod took without confirming it is finish
   } finally {
     for (const g of [retrying, lapsing]) { putFaults.delete(g.id); failingGets.delete(g.id); }
     await inst.stop();
+  }
+});
+
+test('P12: a Play guest token whose deletion was answered 503 cannot close the owner its guest is provisioned as again through the other instance: that token is refused and the new one verifies on both, and a retry the provisioning overtakes writes nothing', { timeout: 90_000 }, async () => {
+  // Two instances on the same pods (a deploy's overlap); the guest bootstraps through the
+  // provisioning route of either, against a stand-in relay that vouches for the game's service
+  // agent. Its deletion through A is answered 503 (the pod applied the tombstone, answered 500, and
+  // the read after it failed), and its token's next use at A made A's copy that tombstone, for the
+  // deletion's retry. B's provisioning then puts the owner back over the tombstone, keeping its
+  // session epoch. A decided both tokens on that copy: the new one was "Account deleted" there, and
+  // the old one's retry of the deletion was accepted, closed the owner provisioned again (a new
+  // tombstone) and deleted its agent registry.
+  const relayWallet = Wallet.createRandom();
+  const GAME_POD = 'https://pod.example/game/';
+  const relay = http.createServer((req, res) => {
+    req.resume();
+    req.on('end', () => {
+      if (req.url !== '/tool/verify_agent') { res.writeHead(404).end(); return; }
+      res.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify({ verified: true, subject_pod_url: GAME_POD,
+        signing: { relayAnchor: relayWallet.address, canSignDelegatedRequests: true } }));
+    });
+  });
+  await new Promise<void>(resolve => relay.listen(0, '127.0.0.1', resolve));
+  const { publicKey, privateKey } = crypto.generateKeyPairSync('ec', { namedCurve: 'P-256' });
+  const jwk = publicJwk(publicKey) as { x: string; y: string };
+  const key = { crv: 'P-256', kty: 'EC', x: jwk.x, y: jwk.y } as const;
+  const thumb = playKeyThumbprint(key as Parameters<typeof playKeyThumbprint>[0]);
+  const id = provisionalUserId(PLAY_AUDIENCE, thumb);
+  /** A fresh grant for the guest's key, signed as the relay signs one, with the key's proof over it. */
+  const grant = async () => {
+    const _signed_payload = JSON.stringify({ audience: PLAY_AUDIENCE, purpose: 'interego-play-provisional-v1',
+      agent_id: 'did:web:game.example:agents:game', subject_pod_url: GAME_POD, publicKeyThumbprint: thumb,
+      challenge: crypto.randomBytes(24).toString('base64url'), timestamp: new Date().toISOString(), expiresAt: Math.floor(Date.now() / 1000) + 60 });
+    const _signature = await relayWallet.signMessage(`sha256:${crypto.createHash('sha256').update(_signed_payload, 'utf8').digest('hex')}`);
+    const proof = crypto.sign('sha256', Buffer.from(`interego-play-provisional-v1\n${_signed_payload}\n${_signature}`, 'utf8'),
+      { key: privateKey, dsaEncoding: 'ieee-p1363' }).toString('base64url');
+    return { playGrant: { _signed_payload, _signature }, publicKeyJwk: key, proof };
+  };
+  const portA = await freePort();
+  const env = { CSS_PUBLIC_URL: 'https://pods.example/', PROVISIONAL_PLAY_CLIENTS: PLAY_CLIENTS,
+    RELAY_URL: `http://127.0.0.1:${(relay.address() as net.AddressInfo).port}` };
+  const a = await startIdentity(portA, env);
+  const b = await startIdentity(await freePort(), { ...env, BASE_URL: `http://127.0.0.1:${portA}` });
+  /** The guest's bootstrap through `inst`: its guest token. */
+  const provision = async (inst: Instance) => {
+    const r = await post('/play/provisional', await grant(), undefined, inst);
+    assert.equal(r.status, 200, `${JSON.stringify(r.json)}${out(inst)}`);
+    assert.equal(r.json['userId'], id);
+    return String(r.json['token']);
+  };
+  /** The guest's deletion through A, which the pod applies and answers 500, the read after it failing: 503. */
+  const unconfirmedDeletion = async (token: string) => {
+    failPuts(id, 'apply-then-500');
+    const put = hold('PUT', id, 1, () => { failingGets.set(id, 1_000); });
+    void put.arrived.then(() => put.release());
+    const r = await post('/users/me/delete', {}, token, a);
+    failingGets.delete(id);
+    putFaults.delete(id);
+    assert.equal(r.status, 503, `${JSON.stringify(r.json)}${out(a)}`);
+    assert.equal(r.json['error'], 'Deletion not confirmed');
+    assert.ok(record(id)!.deletedAt, 'the pod holds the tombstone');
+  };
+  const revoked = 'Invalid bearer token: Token revoked (signed out everywhere)';
+  try {
+    const t1 = await provision(a);
+    putOther(`/${id}/agents`);   // the relay's registry, for the guest's session
+    const save = saveGame(id);
+    await unconfirmedDeletion(t1);
+    assert.equal(record(id)!.sessionEpoch, 1);
+    // The game's next request with T1 (the relay introspects it at A): "Account deleted", and A's
+    // copy is the tombstone, which the deletion's retry needs.
+    assert.equal((await verify(t1, a)).json['reason'], 'Account deleted');
+    // The guest bootstraps again through B, over the tombstone, at its session epoch.
+    const t2 = await provision(b);
+    assert.equal(record(id)!.deletedAt, undefined);
+    assert.equal(record(id)!.sessionEpoch, 1);
+    const since = mark();
+    const otherSince = otherRequests.length;
+    assert.equal((await verify(t2, a)).json['valid'], true, `the new session's token verifies at A${out(a)}`);
+    assert.equal((await verify(t1, a)).json['reason'], 'Token revoked (signed out everywhere)');
+    const retry = await post('/users/me/delete', {}, t1, a);
+    assert.equal(retry.status, 401, `${JSON.stringify(retry.json)}${out(a)}`);
+    assert.equal(retry.json['error'], revoked);
+    assert.deepEqual(docPuts(id, since), [], 'nothing is written');
+    assert.deepEqual(otherRequests.slice(otherSince).filter(r => r.method === 'DELETE'), [], 'nothing is deleted');
+    assert.equal(record(id)!.deletedAt, undefined);
+    assert.ok(others.has(`/${id}/agents`) && others.has(save));
+    for (const inst of [a, b]) assert.equal((await verify(t2, inst)).json['valid'], true);
+
+    // The same retry, sent while the pod still holds the tombstone and overtaken by a provisioning
+    // through B before its deletion reads the record under the owner's lock: T2's deletion through A
+    // is answered 503 as T1's was, its retry's token check reads the tombstone, and B provisions the
+    // owner again before that request goes on. The record its lock reads is no tombstone.
+    await unconfirmedDeletion(t2);
+    assert.equal(record(id)!.sessionEpoch, 2);
+    let t3: string | Error = '';
+    const check = hold('GET', id);
+    void check.arrived.then(() => provision(b)).then(t => { t3 = t; }, (err: Error) => { t3 = err; }).finally(() => check.release());
+    const since2 = mark();
+    const otherSince2 = otherRequests.length;
+    const raced = await post('/users/me/delete', {}, t2, a);
+    assert.equal(typeof t3, 'string', `B did not provision the owner again: ${String(t3)}`);
+    assert.equal(raced.status, 401, `${JSON.stringify(raced.json)}${out(a)}`);
+    assert.equal(raced.json['error'], revoked);
+    assert.deepEqual(docPuts(id, since2).filter(r => r.body?.['deletedAt'] !== undefined), [], 'no tombstone is written');
+    assert.deepEqual(otherRequests.slice(otherSince2).filter(r => r.method === 'DELETE'), [], 'nothing is deleted');
+    assert.equal(record(id)!.deletedAt, undefined);
+    assert.equal(record(id)!.sessionEpoch, 2);
+    for (const inst of [a, b]) assert.equal((await verify(t3 as string, inst)).json['valid'], true, 'the owner provisioned again stays');
+  } finally {
+    putFaults.delete(id);
+    failingGets.delete(id);
+    await b.stop();
+    await a.stop();
+    await new Promise<void>(resolve => relay.close(() => resolve()));
+  }
+});
+
+test('P13: the retry of a deletion answered 503 writes nothing over a record re-opened by hand: the old token is refused, or, where the record\'s epoch passes it, told to send the deletion again', async () => {
+  // An operator re-opens the id (AUTH-ARCHITECTURE.md, Re-opening a deleted id by hand) before the
+  // deletion's retry, while this server's copy is still the tombstone, so the retry is taken as the
+  // finishing of that deletion (unfinishedDeletion). It used to close the re-opened account again.
+  for (const [x, epoch] of [[p13.kept, undefined], [p13.reset, 0]] as const) {
+    putOther(`/${x.userId}/agents`);
+    const token = await tokenFor(x.keys[0]!, 1, x.userId);
+    failPuts(x.userId, 'apply-then-500');
+    const put = hold('PUT', x.userId, 1, () => { failingGets.set(x.userId, 1); });
+    void put.arrived.then(() => put.release());
+    const first = await post('/users/me/delete', {}, token);
+    assert.equal(first.status, 503, JSON.stringify(first.json));
+    assert.equal(first.json['error'], 'Deletion not confirmed');
+    // A verify refreshes this server's stale copy: it then holds the tombstone.
+    for (let i = 0; i < 30 && (await verify(token)).json['reason'] !== 'Account deleted'; i++) await sleep(100);
+    assert.equal((await verify(token)).json['reason'], 'Account deleted');
+    // Re-opened: deletedAt removed and the passkey listed again, the session epoch kept (as
+    // documented) or put back to the token's.
+    outOfBand(x.userId, d => {
+      delete d['deletedAt'];
+      Object.assign(d, { name: x.userId, webAuthnCredentials: [stored(x.keys[0]!, 1)], ...(epoch === undefined ? {} : { sessionEpoch: epoch }) });
+    });
+    const since = mark();
+    const otherSince = otherRequests.length;
+    const retry = await post('/users/me/delete', {}, token);
+    if (epoch === undefined) {
+      assert.equal(retry.status, 401, `${JSON.stringify(retry.json)}${out()}`);
+      assert.equal(retry.json['error'], 'Invalid bearer token: Token revoked (signed out everywhere)');
+    } else {
+      assert.equal(retry.status, 409, `${JSON.stringify(retry.json)}${out()}`);
+      assert.equal(retry.json['error'], 'Account not deleted');
+    }
+    assert.deepEqual(docPuts(x.userId, since), [], 'nothing is written');
+    assert.deepEqual(otherRequests.slice(otherSince).filter(r => r.method === 'DELETE'), [], 'nothing is deleted');
+    assert.equal(record(x.userId)!.deletedAt, undefined);
+    assert.ok(others.has(`/${x.userId}/agents`));
+    if (epoch === undefined) {
+      // The account is open again: its passkey signs in, and the old token stays refused.
+      await tokenFor(x.keys[0]!, 2, x.userId);
+      assert.equal((await verify(token)).json['reason'], 'Token revoked (signed out everywhere)');
+    } else {
+      // As the answer says: sent again, the deletion is decided on the record the pod holds now.
+      const again = await post('/users/me/delete', {}, token);
+      assert.equal(again.status, 200, `${JSON.stringify(again.json)}${out()}`);
+      assert.ok(record(x.userId)!.deletedAt);
+    }
   }
 });
 
