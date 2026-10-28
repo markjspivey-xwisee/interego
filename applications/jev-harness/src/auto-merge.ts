@@ -63,10 +63,11 @@
  *      wait, against the same deadline (no second budget), now also lists every workflow run
  *      and check run GitHub holds for the head, leaves out this workflow's own by its workflow
  *      id (never by name), reads each workflow run by its own conclusion (a run that did not
- *      pass is answered only by a newer run of its workflow for its event, made after it
- *      finished, that ran its red jobs again; a dispatch only by its own re-run) and another
- *      app's check run by itself, reads them again on every poll
- *      until the wait returns (only a red check or a refused listing is kept), and hands the
+ *      pass is answered only by a newer run of its workflow for its event, made after it, that
+ *      tried each of its red jobs again after it finished, without skipping it; a dispatch only
+ *      by its own re-run) and every other check run by itself (another app's, a report created
+ *      through the API, an Actions job whose run is not listed yet), reads them again on every
+ *      poll until the wait returns (only a red check or a refused listing is kept), and hands the
  *      decision a second word: success holds (each concluded success, neutral or skipped);
  *      failure (one concluded failure, cancelled, timed_out, action_required, startup_failure
  *      or anything else), timeout (one still running at the deadline), untrusted (the listings

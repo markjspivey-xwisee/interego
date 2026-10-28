@@ -51,36 +51,60 @@
  *              longer than MAX_PAGES pages, no GITHUB_RUN_ID)             → fails
  *   pending    only when advisory (CHECKS_GATE=false): still running when the suite wait ended
  *
- * with `checks_detail`, one line naming what failed or what was still running. Which checks
- * count, and which try of each (`otherChecksState`):
+ * with `checks_detail`, one line naming what failed or what was still running (and, for a red
+ * that a newer run of its group left standing, why, and what answers it: re-run that run, or
+ * reopen). Which checks count, and which try of each (`otherChecksState`):
  *
  *   - THIS WORKFLOW'S OWN are left out by workflow id, never by name: every run of this
  *     workflow on the head (this one, one a reopen left, the close-time one), every Actions
- *     job whose page names one of them, and a check run with no page at all whose check suite
- *     is one of theirs. A name is a string any workflow can carry, and a check run created
- *     through the API in their suite has a page of its own and is another check. Counted, this
- *     job would wait for itself until the deadline.
+ *     job of one of them, and a check run that names no page at all (neither html_url nor
+ *     details_url) whose check suite is one of theirs. A name is a string any workflow can
+ *     carry, and a check run created through the API in their suite has a page of its own and
+ *     is another check. Counted, this job would wait for itself until the deadline.
+ *   - AN ACTIONS JOB is a check run of the github-actions app whose html_url is a job page,
+ *     `/actions/runs/<run>/job/<job>`, and only that files a check run under a workflow run.
+ *     GitHub sets html_url; details_url is whatever a check's creator sets (a report created
+ *     through the API may link back to the run that made it), so it never decides which run a
+ *     check run belongs to, and a page that names a run but no job of it files nothing.
  *   - A WORKFLOW RUN DECIDES FOR ITS JOBS. GitHub concludes a run from every job of its latest
  *     try (a job its re-run kept, two legs that share a name, a job never created behind
  *     another, a job that timed out, which its check run lists as cancelled), so each run is
  *     read by its own conclusion and its check runs only name what it says. A run still going
  *     is pending whatever its jobs said so far: a job that may fail (continue-on-error) leaves
- *     its run green. Runs of one workflow for one event are tries of the same check (a reopen
- *     starts every pull_request workflow again); a dispatch is its own, since two carry their
- *     own inputs (two GHCR builds). A run that did not pass is answered only by a run of its
- *     group made after it last finished (updated_at, which a re-run moves on) that ran again,
- *     without skipping, each job that went red in it; one still going answers for now and
- *     decides by its own conclusion. So two runs that overlapped and disagree refuse; a re-run
- *     of an older run, which tests the merge commit of its own event, never answers a newer
- *     one; a concurrency group's cancel on one head, landing as the newer run starts, refuses,
- *     since a cancel and a timeout look alike; and the next push decides again. A cancelled
- *     run that lists no red job is answered by the newer run's own conclusion; a run cancelled
- *     before it made any job ran nothing and is left out once a newer run of its group exists.
+ *     its run green. So is a run listed as concluded while a job of it is still going, or while a
+ *     job of it concluded red after the run's updated_at: the runs listing, read first, has not
+ *     caught up with the check runs (a re-run of a concluded run gives each job a new check run).
+ *   - TRIES OF ONE CHECK. Runs of one workflow for one event are tries of the same check (a
+ *     reopen starts every pull_request workflow again); a dispatch is its own, since two carry
+ *     their own inputs (two GHCR builds), so only its own re-run answers it. A run that did not
+ *     pass is answered only by a newer run of its group (made after it, so a re-run of an older
+ *     run, which tests the merge commit of its own event, never answers a newer one) that tried
+ *     again after it finished: made after it last finished (updated_at, which a re-run moves on),
+ *     or whose every try at each job that went red in it started in that second or later, or has
+ *     not started yet (a run a concurrency group held until this one ended; one whose
+ *     cancel-in-progress landed before the newer run's job started). It must also have run each
+ *     of those jobs again, without skipping it; one still going answers for now and decides by
+ *     its own conclusion. So two runs that overlapped and disagree refuse; so does a cancel that
+ *     landed after the newer run had started that job (a cancel by hand, or a job that timed
+ *     out, which GitHub lists as cancelled: the newer run's try may never have answered the
+ *     hang); and so does a red job the newer run skipped (a reporter that runs only on failure)
+ *     or has no job of that name for (a job the base renamed). Each says so in the detail, with
+ *     its remedy. A cancelled run that lists no red job has no try to time: a newer run made
+ *     after it finished answers it by its own conclusion, if that run ran something. Any other
+ *     run whose red jobs are not listed is answered by no run that has concluded, and a run
+ *     cancelled before it made any job ran nothing and is left out once a newer run of its group
+ *     exists (a dispatch's group is itself, so never). The next push decides again.
  *   - EVERY OTHER CHECK RUN BY ITSELF: another app's, one created through the API, and an
- *     Actions job whose run the runs listing does not hold yet (it waits for it, unless it
- *     passed). Another app re-runs a check by creating a new check run of its name, so a red
- *     one is answered only by a later one of its name that is a result (not a skip or a
- *     cancel) and that started after it concluded, or has not started yet.
+ *     Actions job whose run the runs listing does not hold yet (it waits for that run, whatever
+ *     it concluded: a job that passed says nothing of the jobs behind it). Another app re-runs a
+ *     check by creating a new check run of its name, so a red one is answered only by a later
+ *     one of its name (a larger id) that is a result (not a skip or a cancel) and that started
+ *     in the second it concluded or later (GitHub's times are whole seconds), or has not started
+ *     yet. An app's checks are one per name in its check suite; a github-actions check run with
+ *     a page of its own (created through the API with GITHUB_TOKEN) is one per name across the
+ *     head, since the suite it lands in is GitHub's pick, so a report of that name from any
+ *     workflow answers it. An app that starts the replacement before it closes the old check as
+ *     cancelled is not answered: the cancel landed after the replacement started.
  *   - THE SUITE TOO, unless its word is advisory. With SUITE_GATE=false (the repository
  *     variable JEV_MERGE_WAITS_FOR_SUITE=false) the runs named SUITE_WORKFLOW and their check
  *     runs are left out of this word as well, and the detail says so: counted here, a red or
@@ -151,15 +175,19 @@ export function keepWaiting(state, expired) {
   return !expired && (state === 'pending' || state === 'untrusted');
 }
 
-const RUN_PAGE = /\/actions\/runs\/(\d+)(?:[/?#]|$)/;
+// GitHub sets a check run's html_url: an Actions job's is its page in its workflow run,
+// `.../actions/runs/<run>/job/<job>`, and a check run created through the API gets a page of its
+// own, `.../<owner>/<repo>/runs/<id>`. Its details_url is whatever its creator set (a report
+// created through the API may link the run that made it), so it never says which run a check
+// run belongs to.
+const JOB_PAGE = /\/actions\/runs\/(\d+)\/job\/\d+(?:[/?#]|$)/;
+const CHECK_PAGE = /^https?:\/\/[^/]+\/[^/]+\/[^/]+\/runs\/\d+(?:[/?#]|$)/;
+const ACTIONS = 'github-actions';
 
-/** The workflow run an Actions check run's page names (`.../actions/runs/<id>/job/<id>`), if it names one. */
-function runIdOf(checkRun) {
-  for (const u of [checkRun?.html_url, checkRun?.details_url]) {
-    const m = typeof u === 'string' ? RUN_PAGE.exec(u) : null;
-    if (m) return m[1];
-  }
-  return undefined;
+/** The workflow run an Actions job belongs to: named only by a github-actions check run whose html_url is a job page. */
+function jobRunOf(checkRun) {
+  if (checkRun?.app?.slug !== ACTIONS || typeof checkRun?.html_url !== 'string') return undefined;
+  return JOB_PAGE.exec(checkRun.html_url)?.[1];
 }
 
 function suiteIdOf(checkRun) {
@@ -198,16 +226,16 @@ export function otherChecksState(runs, checkRuns, { selfRunId, suite = SUITE_WOR
   const own = runs.filter((r) => r?.workflow_id === self.workflow_id);
   const ownSuites = new Set(own.map((r) => String(r.check_suite_id)));
   const ownRuns = new Set(own.map((r) => String(r.id)));
-  // An Actions job is matched by the run its page names. Only a check run with no page at all is
-  // matched by its check suite alone: one a workflow creates through the API (a test reporter)
-  // can land in any suite on the head and has a page of its own, so it is another check.
+  // An Actions job is matched by the run its page names. Only a check run that names no page at
+  // all (neither html_url nor details_url) is matched by its check suite alone: one a workflow creates through the API (a test
+  // reporter) can land in any suite on the head and has a page of its own, so it is another check.
   const ofRuns = (c, suites, ids) => {
-    const run = runIdOf(c);
+    const run = jobRunOf(c);
     if (run !== undefined) return ids.has(run);
     const suiteId = suiteIdOf(c);
     return suiteId !== undefined && suites.has(suiteId) && !c?.html_url && !c?.details_url;
   };
-  if (!checkRuns.some((c) => suiteIdOf(c) === String(self.check_suite_id) || runIdOf(c) === selfId)) {
+  if (!checkRuns.some((c) => suiteIdOf(c) === String(self.check_suite_id) || jobRunOf(c) === selfId)) {
     return { state: 'untrusted', failed: [], pending: [], passed: 0, left: 0, detail: 'the check runs listed for this head do not hold this run\'s own job, so they are not a listing to decide on' };
   }
 
@@ -216,15 +244,16 @@ export function otherChecksState(runs, checkRuns, { selfRunId, suite = SUITE_WOR
   const advisorySuites = new Set(advisory.map((r) => String(r.check_suite_id)));
   const advisoryRuns = new Set(advisory.map((r) => String(r.id)));
   const others = runs.filter((r) => r?.workflow_id !== self.workflow_id && !advisory.includes(r));
-  const bySuite = new Map(others.map((r) => [String(r.check_suite_id), r]));
   const byId = new Map(others.map((r) => [String(r.id), r]));
 
   // A workflow run decides for its jobs. GitHub's conclusion of a run covers every job of its
   // latest try: a job its re-run kept, two legs that share a name, a job that timed out (which
   // its check run lists as cancelled), a job behind another that was never created. So the
-  // check runs of a run only name what it says. Every other check run is read by itself: one
-  // from another app, one a workflow created through the API (it has a page of its own), and an
-  // Actions job whose run is not listed yet.
+  // check runs of a run only name what it says. A check run is filed under a run only when it is
+  // an Actions job of it: app github-actions, html_url that run's job page. Every other check run
+  // is read by itself: one from another app, one a workflow created through the API (it has a
+  // page of its own, whatever its details_url links), and an Actions job whose run is not
+  // listed yet.
   const jobsOf = new Map();
   const byName = new Map();
   const unlisted = [];
@@ -238,29 +267,37 @@ export function otherChecksState(runs, checkRuns, { selfRunId, suite = SUITE_WOR
       if (seen.has(String(c.id))) continue;
       seen.add(String(c.id));
     }
-    const page = runIdOf(c);
-    const r = page !== undefined ? byId.get(page) : (!c?.html_url && !c?.details_url ? bySuite.get(suiteIdOf(c) ?? '') : undefined);
-    if (r) {
+    const page = jobRunOf(c);
+    if (page !== undefined) {
+      const r = byId.get(page);
+      if (!r) { unlisted.push(c); continue; }
       if (!jobsOf.has(String(r.id))) jobsOf.set(String(r.id), []);
       jobsOf.get(String(r.id)).push(c);
-    } else if (page !== undefined) {
-      unlisted.push(c);
-    } else {
-      const suiteId = suiteIdOf(c);
-      const key = `${suiteId !== undefined ? `suite:${suiteId}` : `app:${c?.app?.id ?? c?.app?.slug ?? '?'}`}|${c?.name}`;
-      if (!byName.has(key)) byName.set(key, []);
-      byName.get(key).push(c);
+      continue;
     }
+    // Another app's check is one per name in its check suite. A github-actions check run with a
+    // page of its own was created through the API, and the suite it lands in is GitHub's pick,
+    // not the check's: it is one per name, whichever workflow posted it.
+    const suiteId = suiteIdOf(c);
+    const key = c?.app?.slug === ACTIONS && CHECK_PAGE.test(String(c?.html_url ?? ''))
+      ? `actions|${c?.name}`
+      : `${suiteId !== undefined ? `suite:${suiteId}` : `app:${c?.app?.id ?? c?.app?.slug ?? '?'}`}|${c?.name}`;
+    if (!byName.has(key)) byName.set(key, []);
+    byName.get(key).push(c);
   }
 
   // Runs of one workflow for one event on one head are tries of the same thing: a reopen starts
   // every pull_request workflow again. A dispatch is its own: two dispatches carry their own
-  // inputs (two GHCR builds for two images). A run that did not pass is answered only by a run
-  // of its group made after it last finished (its updated_at, which a re-run moves on, as does
-  // anything else that touches the run: later is the safe side). So a re-run of an older run,
-  // which tests the merge commit of its own event, never answers a newer one; two runs that
-  // overlapped and disagree refuse; and a concurrency group's cancel, landing as the newer run
-  // starts, refuses too, since a cancel and a timeout look alike. The next push decides again.
+  // inputs (two GHCR builds for two images), so only its own re-run answers it. A run that did
+  // not pass is answered only by a newer run of its group (made after it, so a re-run of an
+  // older run, which tests the merge commit of its own event, never answers a newer one) that
+  // tried again after it finished: made after it last finished (its updated_at, which a re-run
+  // moves on, as does anything else that touches the run: later is the safe side), or whose
+  // every try at each job that went red in it started in that second or later, or has not started
+  // yet (a run a concurrency group held until this one ended, or one whose cancel-in-progress
+  // landed before the newer run's job started). So two runs that overlapped and disagree refuse, and so does a
+  // cancel that landed after the newer run had started that job: GitHub lists a job that timed
+  // out as cancelled, and the newer run's try may never have answered the hang.
   const dispatch = (e) => e === 'workflow_dispatch' || e === 'repository_dispatch';
   const groupOf = (r) => (dispatch(r?.event) ? `run:${r.id}` : `wf:${r.workflow_id}|${r.event}`);
   const groups = new Map();
@@ -275,19 +312,52 @@ export function otherChecksState(runs, checkRuns, { selfRunId, suite = SUITE_WOR
     const times = (jobsOf.get(String(r?.id)) ?? []).map((c) => Date.parse(String(c?.completed_at))).filter((t) => !Number.isNaN(t));
     return times.length ? Math.max(...times) : NaN;
   };
-  // ... and that ran again what went red in it: a job of each red job's name that was not skipped
-  // (a newer run whose condition skipped that job never tested it; one it cancelled is the newer
-  // run's own red, read as such).
-  // A newer run still going may yet run it, so it answers for now and decides by its own
-  // conclusion. A cancelled run that lists no red job (its unfinished jobs were never created)
-  // is answered by the newer run's own conclusion, which covers them; any other run whose red
-  // jobs are not listed (the listing lags) is answered by nothing.
-  const ran = (n, name) => (jobsOf.get(String(n.id)) ?? []).some((c) => c?.name === name && c?.conclusion !== 'skipped');
+  // A try that started in the second `t` or later (GitHub's times are whole seconds, so one that
+  // started in the second `t` counts as after it); one that has neither started nor concluded can
+  // only start later still. One concluded with no start time says nothing of when it ran.
+  const startedFrom = (c, t) => (c?.started_at ? Date.parse(String(c.started_at)) >= t : c?.status !== 'completed');
+  const tries = (n, name) => (jobsOf.get(String(n.id)) ?? []).filter((c) => c?.name === name);
   const redNames = (r) => [...new Set((jobsOf.get(String(r.id)) ?? []).filter((c) => c?.status === 'completed' && !passes(c.conclusion)).map((c) => c?.name))];
-  const answered = (r) => {
+  // Why the newer run n does not answer r, or undefined when it does. Beyond trying again after r
+  // finished, it must have run again what went red in r: a job of each red job's name that was not
+  // skipped (a newer run whose condition skipped that job never tested it; one it cancelled is the
+  // newer run's own red, read as such). A newer run still going may yet run it, so it answers for
+  // now and decides by its own conclusion. A cancelled run that lists no red job (its unfinished
+  // jobs were never created) has no try to time: a newer run made after it finished answers it by
+  // its own conclusion, which covers them, if that run ran something. Any other run whose red jobs
+  // are not listed (the listing lags) is answered by no run that has concluded. `reopen`: a
+  // reopen, which makes a run after it, would answer it.
+  const notAnswer = (n, r) => {
     const red = redNames(r);
-    return (groups.get(groupOf(r)) ?? []).some((n) => n !== r && madeAt(n) > finishedAt(r) && n.conclusion !== 'skipped'
-      && (n.status !== 'completed' || (red.length > 0 ? red.every((name) => ran(n, name)) : r.conclusion === 'cancelled')));
+    const done = finishedAt(r);
+    if (n.conclusion === 'skipped') return { cause: 'was skipped whole' };
+    if (!(madeAt(n) > done)) {
+      if (!red.length) return { cause: 'was made before the red run finished', reopen: true };
+      const early = red.find((name) => !tries(n, name).every((c) => startedFrom(c, done)));
+      if (early !== undefined) return { cause: `started ${early} before the red run finished`, reopen: true };
+    }
+    if (n.status !== 'completed') return undefined;
+    for (const name of red) {
+      const t = tries(n, name);
+      if (!t.length) return { cause: `has no job named ${name}` };
+      if (t.every((c) => c?.conclusion === 'skipped')) return { cause: `skipped ${name}` };
+    }
+    if (red.length) return undefined;
+    if (r.conclusion !== 'cancelled') return { cause: 'cannot be shown to have run again what went red, as the red run lists no red job' };
+    if (!(jobsOf.get(String(n.id)) ?? []).some((c) => c?.conclusion !== 'skipped')) return { cause: 'ran nothing', reopen: true };
+    return undefined;
+  };
+  const newer = (r) => (groups.get(groupOf(r)) ?? []).filter((n) => n !== r && after(n, r));
+  const answered = (r) => newer(r).some((n) => notAnswer(n, r) === undefined);
+  // What a refusal that a newer run left standing needs: its cause, from the newest of them, and
+  // the remedy. A dispatch is told to re-run, since another dispatch does not answer it.
+  const remedy = (r) => {
+    if (dispatch(r?.event)) return `${r.name} run ${r.id} is a dispatch, answered only by its own re-run (a new dispatch does not answer it): re-run ${r.id}`;
+    const ns = newer(r);
+    if (!ns.length) return undefined;
+    const n = ns.reduce((a, b) => (after(b, a) ? b : a));
+    const why = notAnswer(n, r);
+    return why && `${r.name} run ${r.id} is not answered by the newer run ${n.id}, which ${why.cause}: re-run ${r.id}${why.reopen ? ', or reopen' : ''}`;
   };
   // A run cancelled before it made any job (a concurrency group's cancel of a queued run) ran
   // nothing, so it hides no result: a newer run of its group is what replaced it.
@@ -296,11 +366,19 @@ export function otherChecksState(runs, checkRuns, { selfRunId, suite = SUITE_WOR
 
   const failed = [];
   const pending = [];
+  const notes = [];
   let passed = 0;
   const counted = [];
   for (const r of others) {
     if (ranNothing(r)) continue;
     const jobs = jobsOf.get(String(r.id)) ?? [];
+    // Listed as concluded, while a job of it is still going, or went red after the run concluded:
+    // the runs listing has not caught up with the check runs (they are read one after the other,
+    // and a re-run of a concluded run gives each job a new check run). Its conclusion is not yet
+    // the one to read, so it waits. A red that concluded before its run did (continue-on-error)
+    // follows the run's conclusion.
+    const lagging = r.status === 'completed' ? jobs.filter((c) => c?.status !== 'completed'
+      || (!passes(c.conclusion) && Date.parse(String(c?.completed_at)) > Date.parse(String(r.updated_at)))) : [];
     if (r.status !== 'completed') {
       // Still going: its own conclusion decides, and a job of it already red does not yet, since
       // a job that may fail (continue-on-error, as nightly-emergent's advisory legs) leaves its
@@ -311,6 +389,13 @@ export function otherChecksState(runs, checkRuns, { selfRunId, suite = SUITE_WOR
       for (const c of running) pending.push(`${r.name} / ${c.name}`);
       for (const c of red) pending.push(`${r.name} / ${c.name} (${c.conclusion ?? 'no conclusion'}; its run has not concluded)`);
       if (!running.length && !red.length) pending.push(`${r.name} (${r.status ?? 'not concluded'})`);
+    } else if (lagging.length) {
+      counted.push(r);
+      for (const c of lagging) {
+        pending.push(c?.status !== 'completed'
+          ? `${r.name} / ${c.name} (its run is listed as concluded ${r.conclusion ?? 'with no conclusion'}; the listings have not caught up)`
+          : `${r.name} / ${c.name} (${c.conclusion ?? 'no conclusion'} after its run concluded; the listings have not caught up)`);
+      }
     } else if (passes(r.conclusion)) {
       counted.push(r);
       passed += jobs.filter((c) => c?.status === 'completed' && passes(c.conclusion)).length;
@@ -319,20 +404,22 @@ export function otherChecksState(runs, checkRuns, { selfRunId, suite = SUITE_WOR
       const red = jobs.filter((c) => c?.status === 'completed' && !passes(c.conclusion));
       if (red.length) for (const c of red) failed.push(`${r.name} / ${c.name}: ${c.conclusion ?? 'no conclusion'}`);
       else failed.push(`${r.name}: ${r.conclusion ?? 'no conclusion'}`);
+      const note = remedy(r);
+      if (note) notes.push(note);
     }
   }
   // Another app's check (or one a workflow created through the API) re-run by creating a new
-  // check run of its name: what did not pass is answered only by a later one of its name that is
-  // a result (not a skip, not a cancel) and started after it concluded, or that has not started.
+  // check run of its name: what did not pass is answered only by a later one of its name (a larger
+  // id) that is a result (not a skip, not a cancel) and started in the second it concluded or
+  // later, or that has not started.
   const answers = (c, than) => {
     if (c === than || than?.status !== 'completed' || passes(than.conclusion) || Number(c?.id ?? 0) <= Number(than?.id ?? 0)) return false;
     if (c?.conclusion === 'skipped' || (c?.status === 'completed' && c?.conclusion === 'cancelled')) return false;
-    if (!c?.started_at) return c?.status !== 'completed';
-    return Date.parse(String(c.started_at)) > Date.parse(String(than.completed_at));
+    return startedFrom(c, Date.parse(String(than.completed_at)));
   };
   const label = (c) => {
     const app = c?.app?.slug;
-    return app && app !== 'github-actions' ? `${c?.name ?? '(unnamed)'} (${app})` : String(c?.name ?? '(unnamed)');
+    return app && app !== ACTIONS ? `${c?.name ?? '(unnamed)'} (${app})` : String(c?.name ?? '(unnamed)');
   };
   for (const group of byName.values()) {
     for (const c of group) {
@@ -343,14 +430,14 @@ export function otherChecksState(runs, checkRuns, { selfRunId, suite = SUITE_WOR
     }
   }
   // An Actions job whose run the runs listing does not hold yet (GitHub's listings catch up with
-  // each other): it waits for its run, unless it already passed.
-  for (const c of unlisted) {
-    if (c?.status !== 'completed' || !passes(c.conclusion)) pending.push(`${c?.name ?? '(unnamed)'} (its run is not listed yet)`);
-  }
+  // each other): its run decides, and a job of it that passed says nothing of the jobs behind it
+  // that are not created yet, so it waits for its run whatever it concluded.
+  for (const c of unlisted) pending.push(`${c?.name ?? '(unnamed)'} (its run is not listed yet)`);
 
   const aside = suiteLeft > 0 ? `; ${suite} left out (${suiteLeft} run(s) and job(s)), as its word is advisory` : '';
   if (failed.length > 0) {
-    return { state: 'failure', failed, pending, passed, left, detail: `did not pass: ${names(failed)}${pending.length ? `; still running: ${names(pending)}` : ''}${aside}` };
+    const why = notes.length ? ` (${notes.length <= 3 ? notes.join('; ') : `${notes.slice(0, 3).join('; ')}; and ${notes.length - 3} more`})` : '';
+    return { state: 'failure', failed, pending, passed, left, detail: `did not pass: ${names(failed)}${why}${pending.length ? `; still running: ${names(pending)}` : ''}${aside}` };
   }
   if (pending.length > 0) {
     return { state: 'pending', failed, pending, passed, left, detail: `still running: ${names(pending)}${aside}` };
