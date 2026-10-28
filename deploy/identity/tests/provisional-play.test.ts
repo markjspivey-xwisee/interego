@@ -147,6 +147,28 @@ test('deleted or unavailable canonical anchor never validates a public source pr
   const f = fixture(); const result = await f.bootstrap(); f.docs.delete(String(result.userId));
   await assert.rejects(f.verify(String(result.attestation)), errorCode('provisional_owner_unavailable'));
 });
+test('a deleted owner whose record is its tombstone resumes with a fresh grant: the tombstone is replaced on its ETag, its session epoch kept', async () => {
+  // A deletion overwrites the owner's record with its tombstone (it used to remove it, and a write still
+  // pending on the record's ETag could then re-create it: CSS 7.2 applies If-Match to a missing document).
+  const f = fixture(); const first = await f.bootstrap(); const id = String(first.userId);
+  const revision = f.docs.get(id)!.revision + 1;
+  f.docs.set(id, { document: { userId: id, walletAddresses: [], webAuthnCredentials: [], didKeys: [], sessionEpoch: 4, deletedAt: '2026-10-28' }, revision });
+  await assert.rejects(f.verify(String(first.attestation)), errorCode('provisional_owner_unavailable'));
+  f.setTime(f.now + 100); f.restart();
+  const next = await f.bootstrap();
+  assert.equal(next.userId, id); assert.equal(next.attestation, first.attestation);
+  assert.equal(next.guestExpiresAt, first.guestExpiresAt, 'the original deadline');
+  const row = f.docs.get(id)!;
+  assert.equal(row.revision, revision + 1, 'one write, conditional on the tombstone\'s revision');
+  assert.equal(row.document['deletedAt'], undefined);
+  assert.equal(row.document['sessionEpoch'], 4, 'the tokens issued before the deletion stay refused');
+  assert.equal((await f.verify(String(next.attestation))).valid, true);
+  assert.equal(Object.keys(f.ledger!.owners).length, 1, 'no second admission');
+  // A record that lists a credential is an owner's, anchor or not: never replaced.
+  f.docs.set(id, { document: { userId: id, walletAddresses: ['0xowner'], webAuthnCredentials: [], didKeys: [] }, revision: row.revision + 1 });
+  await assert.rejects(f.bootstrap(), errorCode('provisional_owner_conflict'));
+  assert.deepEqual(f.docs.get(id)!.document['walletAddresses'], ['0xowner']);
+});
 test('expired owner cannot refresh, even after pod deletion or provider restart', async () => {
   const f = fixture(); const result = await f.bootstrap(); f.setTime(f.now + 86401); f.docs.clear(); f.restart();
   await assert.rejects(f.bootstrap(), errorCode('provisional_owner_expired'));

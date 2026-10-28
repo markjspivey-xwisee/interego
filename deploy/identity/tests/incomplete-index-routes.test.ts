@@ -325,7 +325,7 @@ test('while accounts are loading, a did:web only an unloaded account lists is no
   assert.match(String(r.json['detail']), /added to no account/);
   // The cost: a did:web nobody lists waits too.
   assertStillLoading(await didSignIn(didWeb, { publicKeyMultibase: didWeb.multibase }, bearer));
-  await new Promise(resolve => setTimeout(resolve, 300));   // a deferred write would land by now
+  await new Promise(resolve => setTimeout(resolve, 300));   // a write made after the response would land by now
   assert.equal(snapshot(walletUser(adder)), before);
   assert.equal(writesTo(walletUser(adder)), 0);
   assert.equal(writesTo(deriveUserIdFromDid(owner.soleWeb.did)), 0);
@@ -406,7 +406,7 @@ test('while accounts are loading, a passkey is not added to a loaded account wit
   assert.equal(opened.json['userId'], walletUser(linked));
   const before = snapshot(walletUser(linked));
   assertStillLoading(await registerOptions({ bearer: String(opened.json['token']) }));
-  await new Promise(resolve => setTimeout(resolve, 300));   // a deferred write would land by now
+  await new Promise(resolve => setTimeout(resolve, 300));   // a write made after the response would land by now
   assert.equal(snapshot(walletUser(linked)), before);
   assert.equal(writesTo(walletUser(linked)), 0);
 });
@@ -415,7 +415,7 @@ test('while accounts are loading, a passkey bootstrap claim starts no ceremony, 
   // The options used to read the seeded pod, which wrote it an empty document, and hand out a
   // ceremony /register then refused.
   assertStillLoading(await registerOptions({ bootstrap: invites.passkey }));
-  await new Promise(resolve => setTimeout(resolve, 300));   // a deferred write would land by now
+  await new Promise(resolve => setTimeout(resolve, 300));   // a write made after the response would land by now
   assert.equal(readsOf(invites.passkey.userId), 0);
   assert.equal(writesTo(invites.passkey.userId), 0);
   assert.equal(pods.has(invites.passkey.userId), false);
@@ -447,7 +447,7 @@ test('while accounts are loading, a passkey whose derived account is unreadable 
   assert.match(String(r.json['detail']), /Nothing was changed/);
   assert.equal(r.json['token'], undefined);
   assert.equal(r.json['userId'], undefined);
-  await new Promise(resolve => setTimeout(resolve, 300));   // a deferred write would land by now
+  await new Promise(resolve => setTimeout(resolve, 300));   // a write made after the response would land by now
   assert.equal(writesTo(copyHolder), 0);
   assert.equal(writesTo(derivedOwner.userId), 0);
 });

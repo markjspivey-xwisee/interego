@@ -19,6 +19,12 @@ export interface PlayAnchorStorage {
   now?: () => number;
 }
 
+const listed = (value: unknown) => Array.isArray(value) && value.length > 0;
+/** Whether an owner's document lists a passkey, wallet or DID (a claimed owner). */
+function holdsCredential(document: PlayAnchorDocument): boolean {
+  return listed(document['webAuthnCredentials']) || listed(document['walletAddresses']) || listed(document['didKeys']);
+}
+
 /** Bounded receipts live beside the immutable signed anchor in the owner's pod. */
 export async function provisionPlayAnchor(storage: PlayAnchorStorage, claims: PlayClaims,
   attestation: string, maxPods: number, receipt: PlayReceipt): Promise<string> {
@@ -27,9 +33,17 @@ export async function provisionPlayAnchor(storage: PlayAnchorStorage, claims: Pl
   // requests race. New owners reserve the durable lifetime budget before writing.
   for (let attempt = 0; attempt < 3; attempt++) {
     const existing = await storage.read(claims.userId);
-    const document = existing?.document ?? storage.empty(claims);
+    // A record that holds no owner (no anchor, no credential: a deletion's tombstone, or the empty
+    // record a write's settlement leaves where a document was missing) is replaced, on its ETag, as
+    // a missing one is created. It stays on the pod rather than being removed, because a store may
+    // apply a write sent with If-Match to a missing document (CSS 7.2 does), and a write still
+    // pending from before the deletion would then re-create the owner. Its session epoch is kept, so
+    // the tokens issued before the deletion stay refused.
+    const vacant = existing !== null && !existing.document.provisionalPlayAnchor && !holdsCredential(existing.document);
+    const document = existing && !vacant ? existing.document : storage.empty(claims);
+    if (vacant && Number.isInteger(existing.document['sessionEpoch'])) document['sessionEpoch'] = existing.document['sessionEpoch'];
     if (document.userId !== claims.userId) throw new PlayError(409, 'provisional_owner_conflict');
-    if (existing) {
+    if (existing && !vacant) {
       if (!document.provisionalPlayAnchor) throw new PlayError(409, 'provisional_owner_conflict');
       const live = storage.validate(document.provisionalPlayAnchor);
       if (live.userId !== claims.userId || live.audience !== claims.audience || live.proofKeyThumbprint !== claims.proofKeyThumbprint)

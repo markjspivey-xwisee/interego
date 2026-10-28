@@ -62,6 +62,8 @@ const files = new Set<string>();        // '/<pod>/profile/card', '/<pod>/agents
 const containers = new Set<string>();   // pods whose container exists
 const failing = new Set<string>();      // paths whose HEAD or GET answers 502
 const requests: Array<{ method: string; path: string }> = [];
+/** `<METHOD> <path>` → something another writer does as that request arrives (once). */
+const onArrival = new Map<string, () => void>();
 
 function podOf(path: string): string | null { return /^\/([^/]+)\//.exec(path)?.[1] ?? null; }
 function exists(path: string): boolean {
@@ -75,6 +77,8 @@ function exists(path: string): boolean {
 function servePods(req: http.IncomingMessage, res: http.ServerResponse): void {
   const path = new URL(req.url ?? '/', 'http://pods').pathname;
   requests.push({ method: req.method ?? '', path });
+  const arrival = onArrival.get(`${req.method} ${path}`);
+  if (arrival) { onArrival.delete(`${req.method} ${path}`); arrival(); }
   if (path === '/') {
     const pods = new Set([...containers, ...docs.keys(), ...[...files].map(f => podOf(f)!)]);
     res.writeHead(200, { 'Content-Type': 'text/turtle' });
@@ -347,6 +351,23 @@ test('u-eth: a record without credentials over the deleted shape keeps its epoch
   assert.equal(r.status, 409, JSON.stringify(r.json));
   assert.ok(isTombstone(id));
   assert.equal(docs.get(id)!['sessionEpoch'], 5);
+});
+
+test('u-eth: a record another writer creates while the pod is probed is never replaced by the tombstone', async () => {
+  // The claim reads no record, then probes the pod; meanwhile another writer (the other instance)
+  // creates a record without credentials. The tombstone is conditional on the claim's own read
+  // (If-None-Match: *), so it is refused, and the other writer's record stays as it wrote it.
+  const w = Wallet.createRandom();
+  const pod = walletUser(w);
+  deletedBeforeTombstones(pod);
+  const other = { userId: pod, name: 'Other writer', otherKey: 'kept', sessionEpoch: 7, walletAddresses: [], webAuthnCredentials: [], didKeys: [] };
+  onArrival.set(`HEAD /${pod}/profile/card`, () => { docs.set(pod, structuredClone(other)); });
+  const since = requests.length;
+  const r = await siwe(w);
+  assert.equal(r.status, 409, JSON.stringify(r.json));
+  assert.match(String(r.json['error']), DELETED);
+  assert.deepEqual(docs.get(pod), other, 'the other writer\'s record is not replaced');
+  assert.equal(authWritesOf(pod, since), 1, 'one tombstone write, refused');
 });
 
 test('u-eth: a pod that kept its agents registry (a lost sign-in record) is its owner\'s, as before', async () => {

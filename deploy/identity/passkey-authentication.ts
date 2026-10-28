@@ -6,32 +6,34 @@ export interface StoredPasskey {
   rpId?: string; rpOrigin?: string;
 }
 
-export class PasskeyPersistenceError extends Error {}
+export type PasskeyAssertionCheck = { ok: true; newCounter: number } | { ok: false; error: Error };
 
-/** Pin legacy credentials only to the RP proven by a verified assertion. */
-export async function authenticatePasskey(input: {
-  credential: StoredPasskey; response: AuthenticationResponseJSON;
-  challenge: string; rpId: string; origin: string; persist: () => Promise<void>;
-}): Promise<void> {
-  const { credential, response, challenge, rpId, origin, persist } = input;
-  if (credential.rpId && credential.rpId !== rpId) throw new Error('Credential belongs to a different relying party');
-  // Preserve identity's lazy loading: DID and wallet login never load WebAuthn.
-  const { verifyAuthenticationResponse } = await import('@simplewebauthn/server');
-  const verification = await verifyAuthenticationResponse({
-    response, expectedChallenge: challenge, expectedOrigin: origin, expectedRPID: rpId,
-    requireUserVerification: true,
-    credential: { id: credential.id, publicKey: Buffer.from(credential.publicKey, 'base64url'),
-      counter: credential.counter, transports: (credential.transports ?? []) as AuthenticatorTransportFuture[] },
-  });
-  if (!verification.verified) throw new Error('WebAuthn assertion not verified');
-  const previous = { counter: credential.counter, rpId: credential.rpId, rpOrigin: credential.rpOrigin };
-  credential.counter = verification.authenticationInfo.newCounter;
-  credential.rpId = rpId;
-  credential.rpOrigin ??= origin;
-  try { await persist(); }
-  catch {
-    Object.assign(credential, previous);
-    throw new PasskeyPersistenceError('transient: failed to persist passkey counter and RP binding; retry');
+/**
+ * Whether `response` is an assertion by the key stored in `credential`, for this challenge and
+ * relying party. Changes nothing (the caller writes the counter and RP binding, on the record as
+ * the pod holds it) and never throws: a failure to verify is an answer, `ok: false`, so a caller
+ * trying several holders can tell it from an error reading or writing one. A credential pinned to
+ * another relying party does not verify.
+ */
+export async function verifyPasskeyAssertion(input: {
+  credential: Readonly<StoredPasskey>; response: AuthenticationResponseJSON;
+  challenge: string; rpId: string; origin: string;
+}): Promise<PasskeyAssertionCheck> {
+  const { credential, response, challenge, rpId, origin } = input;
+  if (credential.rpId && credential.rpId !== rpId) return { ok: false, error: new Error('Credential belongs to a different relying party') };
+  try {
+    // Preserve identity's lazy loading: DID and wallet login never load WebAuthn.
+    const { verifyAuthenticationResponse } = await import('@simplewebauthn/server');
+    const verification = await verifyAuthenticationResponse({
+      response, expectedChallenge: challenge, expectedOrigin: origin, expectedRPID: rpId,
+      requireUserVerification: true,
+      credential: { id: credential.id, publicKey: Buffer.from(credential.publicKey, 'base64url'),
+        counter: credential.counter, transports: [...(credential.transports ?? [])] as AuthenticatorTransportFuture[] },
+    });
+    if (!verification.verified) return { ok: false, error: new Error('WebAuthn assertion not verified') };
+    return { ok: true, newCounter: verification.authenticationInfo.newCounter };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err : new Error(String(err)) };
   }
 }
 
