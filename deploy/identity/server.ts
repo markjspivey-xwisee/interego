@@ -2560,19 +2560,37 @@ function parseAndVerifySignature(token: string): { valid: true; payload: SignedT
   return { valid: true, payload };
 }
 
-async function issueToken(userId: string, agentId: string, scope: string, provisional?: ProvisionalTokenGrant): Promise<TokenRecord> {
+/**
+ * `epochOnPod`: the session epoch of the account's record as the presented token's check has just
+ * read it from the pod (verifyToken's `epochOnPod`, a Play guest token's), for a renewal
+ * (POST /tokens). The token is issued at that epoch, not at this server's copy's.
+ */
+async function issueToken(userId: string, agentId: string, scope: string, provisional?: ProvisionalTokenGrant,
+  epochOnPod?: number): Promise<TokenRecord> {
   const now = new Date();
   // Pod is the source of truth for the user's current sessionEpoch.
-  // Stale-while-revalidate cache is fine here — issuing under a
-  // slightly-stale epoch still works (the verify check uses the same
-  // cache), and a sign-out-everywhere invalidates the cache so the next
-  // issue picks up the bumped value.
+  // A token other than a Play guest's is checked on this server's copy
+  // (stale-while-revalidate), and is issued at the copy's epoch; a
+  // sign-out-everywhere made here puts the bumped value in the copy, so
+  // the next issue picks it up. A Play guest token's epoch is checked on
+  // the owner's record as read from the pod (verifyToken), and nothing on
+  // its path reads this copy, which can stay behind the pod for good: the
+  // other instance's deletion and provisioning of the owner, or its
+  // sign-out-everywhere, raise the epoch there. Its renewal was issued at
+  // the copy's lower epoch, and refused at its first use on every
+  // instance ("Token revoked"). It is issued at the epoch its check read
+  // (never above it: a sign-out landing since then has ended the token
+  // presented, and ends this one too).
   let epoch = 0;
-  try {
-    const methods = await readAuthMethods(userId, /* allowStale */ true);
-    epoch = methods.sessionEpoch ?? 0;
-  } catch {
-    // Fresh user, no pod yet — epoch 0 is correct.
+  if (epochOnPod !== undefined) {
+    epoch = epochOnPod;
+  } else {
+    try {
+      const methods = await readAuthMethods(userId, /* allowStale */ true);
+      epoch = methods.sessionEpoch ?? 0;
+    } catch {
+      // Fresh user, no pod yet — epoch 0 is correct.
+    }
   }
   const payload: SignedTokenPayload = {
     userId,
@@ -2655,7 +2673,11 @@ function tokenEpoch(token: string): number {
 const signedOutSince = (m: AuthMethods, epoch: number): boolean => (m.sessionEpoch ?? 0) > epoch;
 const SIGNED_OUT_DURING_ADD = 'Invalid bearer token: Token revoked (signed out everywhere)';
 
-async function verifyToken(token: string): Promise<{ valid: boolean; record?: TokenRecord; reason?: string; unreadable?: boolean }> {
+/**
+ * `epochOnPod`, on a valid Play guest token: the session epoch of the owner's record as read from
+ * the pod for this check (POST /tokens issues the renewal at it).
+ */
+async function verifyToken(token: string): Promise<{ valid: boolean; record?: TokenRecord; reason?: string; unreadable?: boolean; epochOnPod?: number }> {
   const parsed = parseAndVerifySignature(token);
   if (parsed.valid !== true) {
     return { valid: false, reason: (parsed as { valid: false; reason: string }).reason };
@@ -2678,7 +2700,7 @@ async function verifyToken(token: string): Promise<{ valid: boolean; record?: To
   }
   // A Play guest token's session epoch is checked against the owner's record as read here from the
   // pod, never against this server's copy (below): see the end of this branch.
-  let epochCheckedOnPod = false;
+  let epochOnPod: number | undefined;
   if (payload.provisionalPlay) {
     try {
       const body = await readPodJson(podFetch, podAuthMethodsUrl(payload.userId));
@@ -2705,7 +2727,7 @@ async function verifyToken(token: string): Promise<{ valid: boolean; record?: To
       // again. On the pod's record the old token is "Token revoked" and the new one valid, as on an
       // instance that never held a copy.
       if (payload.epoch < (methods.sessionEpoch ?? 0)) return { valid: false, reason: 'Token revoked (signed out everywhere)' };
-      epochCheckedOnPod = true;
+      epochOnPod = methods.sessionEpoch ?? 0;
     } catch (err) {
       // An owner's record the pod could not read is a "try again" (a 503: refuseUnverifiedBearer,
       // refuseBearer), not a refusal: only an anchor that does not open to this owner is.
@@ -2733,7 +2755,7 @@ async function verifyToken(token: string): Promise<{ valid: boolean; record?: To
   // sessionEpoch. A sign-out-everywhere bumps the pod's value, making
   // every prior token verify-fail until the user authenticates again.
   // (A Play guest token's was checked above, on the record read from the pod.)
-  if (!epochCheckedOnPod) {
+  if (epochOnPod === undefined) {
     try {
       const methods = await readAuthMethods(payload.userId, /* allowStale */ true);
       if (isTombstone(methods)) return { valid: false, reason: 'Account deleted' };
@@ -2762,7 +2784,7 @@ async function verifyToken(token: string): Promise<{ valid: boolean; record?: To
     expiresAt: payload.expiresAt,
     ...(payload.provisionalPlay ? { provisionalPlay: payload.provisionalPlay } : {}),
   };
-  return { valid: true, record };
+  return { valid: true, record, ...(epochOnPod !== undefined ? { epochOnPod } : {}) };
 }
 
 // ── DID Document Builder ────────────────────────────────────
@@ -5380,7 +5402,9 @@ app.post('/tokens', tokenLimiter, async (req, res) => {
     return;
   }
 
-  const record = await issueToken(userId, agentId, agent.scope ?? 'ReadWrite', authResult.record!.provisionalPlay);
+  // A Play guest token's renewal is issued at the epoch of the owner's record as its check read it
+  // from the pod (issueToken), not at this server's copy's, which can be behind it.
+  const record = await issueToken(userId, agentId, agent.scope ?? 'ReadWrite', authResult.record!.provisionalPlay, authResult.epochOnPod);
   res.json({ token: record.token, expiresAt: record.expiresAt, scope: record.scope });
 });
 

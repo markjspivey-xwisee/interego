@@ -798,6 +798,70 @@ function livePlayGuest(issuer: string, sealKey = Buffer.from(tokenSigningKey, 'b
     token: `cg2_${b64}.${crypto.createHmac('sha256', Buffer.from(tokenSigningKey, 'base64')).update(b64).digest('base64url')}` };
 }
 
+/**
+ * Two identity instances on the same pods (a deploy's overlap), A and B, whose provisioning routes
+ * (`/play/provisional`) ask a stand-in relay that vouches for the game's service agent; and one
+ * guest key, whose owner is `id`. `provision(inst)` is the guest's bootstrap through `inst`, with a
+ * fresh grant for its key (signed as the relay signs one, with the key's proof over it): its guest
+ * token and agent. `stop()` stops both instances and the relay.
+ */
+async function playGuestOnTwoInstances(): Promise<{ id: string; a: Instance; b: Instance;
+  provision(inst: Instance): Promise<{ token: string; agentId: string }>; stop(): Promise<void> }> {
+  const relayWallet = Wallet.createRandom();
+  const GAME_POD = 'https://pod.example/game/';
+  const relay = http.createServer((req, res) => {
+    req.resume();
+    req.on('end', () => {
+      if (req.url !== '/tool/verify_agent') { res.writeHead(404).end(); return; }
+      res.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify({ verified: true, subject_pod_url: GAME_POD,
+        signing: { relayAnchor: relayWallet.address, canSignDelegatedRequests: true } }));
+    });
+  });
+  await new Promise<void>(resolve => relay.listen(0, '127.0.0.1', resolve));
+  const closeRelay = () => new Promise<void>(resolve => relay.close(() => resolve()));
+  const { publicKey, privateKey } = crypto.generateKeyPairSync('ec', { namedCurve: 'P-256' });
+  const jwk = publicJwk(publicKey) as { x: string; y: string };
+  const key = { crv: 'P-256', kty: 'EC', x: jwk.x, y: jwk.y } as const;
+  const thumb = playKeyThumbprint(key as Parameters<typeof playKeyThumbprint>[0]);
+  const id = provisionalUserId(PLAY_AUDIENCE, thumb);
+  const grant = async () => {
+    const _signed_payload = JSON.stringify({ audience: PLAY_AUDIENCE, purpose: 'interego-play-provisional-v1',
+      agent_id: 'did:web:game.example:agents:game', subject_pod_url: GAME_POD, publicKeyThumbprint: thumb,
+      challenge: crypto.randomBytes(24).toString('base64url'), timestamp: new Date().toISOString(), expiresAt: Math.floor(Date.now() / 1000) + 60 });
+    const _signature = await relayWallet.signMessage(`sha256:${crypto.createHash('sha256').update(_signed_payload, 'utf8').digest('hex')}`);
+    const proof = crypto.sign('sha256', Buffer.from(`interego-play-provisional-v1\n${_signed_payload}\n${_signature}`, 'utf8'),
+      { key: privateKey, dsaEncoding: 'ieee-p1363' }).toString('base64url');
+    return { playGrant: { _signed_payload, _signature }, publicKeyJwk: key, proof };
+  };
+  const portA = await freePort();
+  const env = { CSS_PUBLIC_URL: 'https://pods.example/', PROVISIONAL_PLAY_CLIENTS: PLAY_CLIENTS,
+    RELAY_URL: `http://127.0.0.1:${(relay.address() as net.AddressInfo).port}` };
+  let a: Instance | undefined;
+  let b: Instance;
+  try {
+    a = await startIdentity(portA, env);
+    b = await startIdentity(await freePort(), { ...env, BASE_URL: `http://127.0.0.1:${portA}` });
+  } catch (err) {
+    await a?.stop();
+    await closeRelay();
+    throw err;
+  }
+  return {
+    id, a, b,
+    provision: async inst => {
+      const r = await post('/play/provisional', await grant(), undefined, inst);
+      assert.equal(r.status, 200, `${JSON.stringify(r.json)}${out(inst)}`);
+      assert.equal(r.json['userId'], id);
+      return { token: String(r.json['token']), agentId: String(r.json['agentId']) };
+    },
+    stop: async () => {
+      await b.stop();
+      await a!.stop();
+      await closeRelay();
+    },
+  };
+}
+
 before(async () => {
   podServer = http.createServer((req, res) => { void servePods(req, res); });
   await new Promise<void>(resolve => podServer.listen(0, '127.0.0.1', resolve));
@@ -2563,44 +2627,10 @@ test('P12: a Play guest token whose deletion was answered 503 cannot close the o
   // session epoch. A decided both tokens on that copy: the new one was "Account deleted" there, and
   // the old one's retry of the deletion was accepted, closed the owner provisioned again (a new
   // tombstone) and deleted its agent registry.
-  const relayWallet = Wallet.createRandom();
-  const GAME_POD = 'https://pod.example/game/';
-  const relay = http.createServer((req, res) => {
-    req.resume();
-    req.on('end', () => {
-      if (req.url !== '/tool/verify_agent') { res.writeHead(404).end(); return; }
-      res.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify({ verified: true, subject_pod_url: GAME_POD,
-        signing: { relayAnchor: relayWallet.address, canSignDelegatedRequests: true } }));
-    });
-  });
-  await new Promise<void>(resolve => relay.listen(0, '127.0.0.1', resolve));
-  const { publicKey, privateKey } = crypto.generateKeyPairSync('ec', { namedCurve: 'P-256' });
-  const jwk = publicJwk(publicKey) as { x: string; y: string };
-  const key = { crv: 'P-256', kty: 'EC', x: jwk.x, y: jwk.y } as const;
-  const thumb = playKeyThumbprint(key as Parameters<typeof playKeyThumbprint>[0]);
-  const id = provisionalUserId(PLAY_AUDIENCE, thumb);
-  /** A fresh grant for the guest's key, signed as the relay signs one, with the key's proof over it. */
-  const grant = async () => {
-    const _signed_payload = JSON.stringify({ audience: PLAY_AUDIENCE, purpose: 'interego-play-provisional-v1',
-      agent_id: 'did:web:game.example:agents:game', subject_pod_url: GAME_POD, publicKeyThumbprint: thumb,
-      challenge: crypto.randomBytes(24).toString('base64url'), timestamp: new Date().toISOString(), expiresAt: Math.floor(Date.now() / 1000) + 60 });
-    const _signature = await relayWallet.signMessage(`sha256:${crypto.createHash('sha256').update(_signed_payload, 'utf8').digest('hex')}`);
-    const proof = crypto.sign('sha256', Buffer.from(`interego-play-provisional-v1\n${_signed_payload}\n${_signature}`, 'utf8'),
-      { key: privateKey, dsaEncoding: 'ieee-p1363' }).toString('base64url');
-    return { playGrant: { _signed_payload, _signature }, publicKeyJwk: key, proof };
-  };
-  const portA = await freePort();
-  const env = { CSS_PUBLIC_URL: 'https://pods.example/', PROVISIONAL_PLAY_CLIENTS: PLAY_CLIENTS,
-    RELAY_URL: `http://127.0.0.1:${(relay.address() as net.AddressInfo).port}` };
-  const a = await startIdentity(portA, env);
-  const b = await startIdentity(await freePort(), { ...env, BASE_URL: `http://127.0.0.1:${portA}` });
+  const guest = await playGuestOnTwoInstances();
+  const { id, a, b } = guest;
   /** The guest's bootstrap through `inst`: its guest token. */
-  const provision = async (inst: Instance) => {
-    const r = await post('/play/provisional', await grant(), undefined, inst);
-    assert.equal(r.status, 200, `${JSON.stringify(r.json)}${out(inst)}`);
-    assert.equal(r.json['userId'], id);
-    return String(r.json['token']);
-  };
+  const provision = async (inst: Instance) => (await guest.provision(inst)).token;
   /** The guest's deletion through A, which the pod applies and answers 500, the read after it failing: 503. */
   const unconfirmedDeletion = async (token: string) => {
     failPuts(id, 'apply-then-500');
@@ -2663,9 +2693,7 @@ test('P12: a Play guest token whose deletion was answered 503 cannot close the o
   } finally {
     putFaults.delete(id);
     failingGets.delete(id);
-    await b.stop();
-    await a.stop();
-    await new Promise<void>(resolve => relay.close(() => resolve()));
+    await guest.stop();
   }
 });
 
@@ -2715,6 +2743,59 @@ test('P13: the retry of a deletion answered 503 writes nothing over a record re-
       assert.equal(again.status, 200, `${JSON.stringify(again.json)}${out()}`);
       assert.ok(record(x.userId)!.deletedAt);
     }
+  }
+});
+
+test('P14: a Play guest token renewed (POST /tokens) at an instance whose copy of the owner is behind the pod is issued at the pod\'s session epoch, and verifies on both instances', { timeout: 90_000 }, async () => {
+  // Two instances on the same pods (a deploy's overlap). A guest token's session epoch is checked
+  // on its owner's record as read from the pod, and nothing on its path reads this server's copy,
+  // so A's copy of an owner it loaded at epoch 0 stays there while B deletes the owner and
+  // provisions it again (epoch 1), or signs it out everywhere (epoch 2), however long the relay
+  // goes on introspecting the guest's tokens at A. A renewal at A was issued at its copy's epoch:
+  // that token was refused on both instances ("Token revoked") at its first use, and the guest of
+  // a live owner had to start again.
+  const guest = await playGuestOnTwoInstances();
+  const { id, a, b } = guest;
+  const epochOf = (token: string): unknown =>
+    JSON.parse(Buffer.from(token.slice(4, token.lastIndexOf('.')), 'base64url').toString('utf8'))['epoch'];
+  /** The guest's renewal of its session's token at A; it verifies on both instances. */
+  const renewAtA = async (session: { token: string; agentId: string }, when: string) => {
+    const r = await post('/tokens', { userId: id, agentId: session.agentId }, session.token, a);
+    assert.equal(r.status, 200, `${when}: ${JSON.stringify(r.json)}${out(a)}`);
+    const token = String(r.json['token']);
+    assert.equal(epochOf(token), record(id)!.sessionEpoch, `${when}: the renewal is issued at the pod's session epoch`);
+    for (const inst of [a, b]) {
+      assert.equal((await verify(token, inst)).json['valid'], true, `${when}: the renewal verifies at ${inst === a ? 'A' : 'B'}${out(inst)}`);
+    }
+    return { token, agentId: session.agentId };
+  };
+  try {
+    // The guest bootstraps through B; the game's requests reach A too, which loads the owner (epoch 0).
+    const first = await guest.provision(b);
+    assert.equal((await verify(first.token, a)).json['valid'], true, out(a));
+    // The guest deletes its owner through B (200), and bootstraps again through B, over the tombstone
+    // at its session epoch (1).
+    const deleted = await post('/users/me/delete', {}, first.token, b);
+    assert.equal(deleted.status, 200, `${JSON.stringify(deleted.json)}${out(b)}`);
+    const second = await guest.provision(b);
+    assert.equal(record(id)!.sessionEpoch, 1);
+    assert.equal((await verify(second.token, a)).json['valid'], true, `the new session's token verifies at A${out(a)}`);
+    await renewAtA(second, 'at once');
+    // The relay goes on introspecting the session's token at A, past this server's 10 s copy.
+    await sleep(TTL_WAIT_MS);
+    for (let i = 0; i < 3; i++) assert.equal((await verify(second.token, a)).json['valid'], true);
+    const renewed = await renewAtA(second, 'past the copy\'s 10 s');
+    // The guest signs out everywhere through B (epoch 2): a token that ended is not renewed at A, and
+    // the session the guest bootstraps through B next renews there.
+    const signedOut = await post('/tokens/me/sign-out-everywhere', {}, renewed.token, b);
+    assert.equal(signedOut.status, 200, `${JSON.stringify(signedOut.json)}${out(b)}`);
+    assert.equal(record(id)!.sessionEpoch, 2);
+    const ended = await post('/tokens', { userId: id, agentId: renewed.agentId }, renewed.token, a);
+    assert.equal(ended.status, 401, `${JSON.stringify(ended.json)}${out(a)}`);
+    assert.equal(ended.json['error'], 'Token revoked (signed out everywhere)');
+    await renewAtA(await guest.provision(b), 'after a sign-out everywhere through B');
+  } finally {
+    await guest.stop();
   }
 });
 
