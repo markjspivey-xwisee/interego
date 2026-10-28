@@ -728,6 +728,32 @@ const deletedUserIds = new Set<string>();
 // which is all the janitor's sweep walks.
 const unfinishedPlayPurges = new Set<string>();
 
+// Play owners whose deletion (POST /users/me/delete) the pod may have taken without confirming it,
+// nothing having settled it, so the route answered 503 and asked for a retry with the same token:
+// each id with its guest deadline (playGuestDeadline). Until then a guest token can make that retry,
+// and a fresh grant can provision the owner again over the tombstone (provisional-play-store.ts), so
+// the janitor leaves such an owner as it is, in memory and on the pod, for the retry to finish
+// (unfinishedDeletion). After it, the janitor finishes the deletion itself, as the retry would have:
+// the agent registry DELETE, which no provisioning can race any more. Its purge used to find the
+// tombstone unmarked and only forget the owner, so the retry was refused and the registry stayed.
+// Process-local: after a restart such a tombstone loads no account, and its registry stays, as for
+// any account whose deletion was answered 503 and not retried before the restart.
+const unconfirmedPlayDeletions = new Map<string, number>();
+
+/** Whether a Play owner's deletion this process answered 503 may still be retried by its guest (unconfirmedPlayDeletions). */
+function awaitsGuestRetry(userId: string): boolean {
+  return (unconfirmedPlayDeletions.get(userId) ?? 0) > Date.now();
+}
+
+/**
+ * The guest deadline (ms) of the Play owner whose record is `m`: its anchor's, after which no guest
+ * token verifies and no grant provisions the owner again. Where the anchor cannot be opened, the
+ * longest an anchor can be valid (seven days, provisional-play.ts) from now.
+ */
+function playGuestDeadline(m: Readonly<AuthMethods> | null): number {
+  try { return provisionalPlay.open(m?.provisionalPlayAnchor, true).expiresAt * 1000; } catch { return Date.now() + 604_800_000; }
+}
+
 async function withIdentityPodMutex<T>(userId: string, fn: () => Promise<T>): Promise<T> {
   const outer = podLockContext.getStore();
   if (outer?.get(userId)?.held) throw new PodLockReentryError(`${userId}: this request already holds the account's lock`);
@@ -937,7 +963,9 @@ async function reconcileAfterWriteFailure(userId: string, err: unknown, pre: Wri
  * the tombstone is written on the ETag read, or with If-None-Match: * where there was no document
  * (a write that landed first makes it read again), and stays (deleteUserCompletely never removes
  * one, for any id; a Play owner's, which is never marked deleted here, is replaced only by its
- * provisioning, on its ETag, which a pending write cannot match either).
+ * provisioning, and written again only by the janitor's purge that marked it: finishPlayPurge
+ * clearing the mark, and the fence a settlement writes back when the pod does not answer that.
+ * Each is written on the tombstone's ETag, which a pending write cannot match either).
  * A pending write is conditional on an ETag the record had before the tombstone, or on there
  * being no document; the tombstone is a document with an ETag of its own, so neither can hold
  * again, and no such write can land afterwards, before a restart or after one. (The record is
@@ -1140,8 +1168,10 @@ function playOwnerWritable(userId: string, m: AuthMethods): boolean {
  * credential) with its guest deadline passed, which it closes and purges; or closed already (a
  * tombstone), which it does not close again: one its own purge left marked (an unfinished purge)
  * it finishes, and a deletion's (the other instance's, whose memory was not cleared here) it only
- * forgets, leaving the pod alone. A record whose anchor cannot be opened is kept. As a deletion's
- * `stillDeletable` it is never asked about a tombstone (deleteUserCompletely finds those first).
+ * forgets, writing and deleting nothing of the pod; one this process answered 503 it finishes once
+ * its guest deadline has passed (unconfirmedPlayDeletions). A record whose anchor cannot be opened
+ * is kept. As a deletion's `stillDeletable` it is never asked about a tombstone
+ * (deleteUserCompletely finds those first).
  */
 function playOwnerPurgeable(m: AuthMethods): boolean {
   if (isTombstone(m)) return true;
@@ -2638,6 +2668,16 @@ async function verifyToken(token: string): Promise<{ valid: boolean; record?: To
     try {
       const body = await readPodJson(podFetch, podAuthMethodsUrl(payload.userId));
       const methods = normaliseAuthMethods(body, payload.userId);
+      // A tombstone (the guest's deletion, or the janitor's purge) has no anchor to open: the token
+      // is a closed account's, and is answered as one. While this process still holds the owner, its
+      // copy is made the tombstone (read under the lock), so that POST /users/me/delete accepts the
+      // retry of a deletion the pod took without confirming it (unfinishedDeletion). It was answered
+      // "Provisional owner unavailable", which no route accepts, so that retry was refused (401).
+      if (isTombstone(methods)) {
+        const copy = authMethodsCache.get(payload.userId)?.value;
+        if (identities.has(payload.userId) && !(copy && isTombstone(copy))) await refreshAuthMethods(payload.userId).catch(() => undefined);
+        return { valid: false, reason: 'Account deleted' };
+      }
       const owner = provisionalPlay.open(methods.provisionalPlayAnchor);
       if (owner.userId !== payload.userId || owner.authenticatedAgentId !== payload.agentId
         || owner.audience !== payload.provisionalPlay.audience || owner.proofKeyThumbprint !== payload.provisionalPlay.proofKeyThumbprint
@@ -5969,7 +6009,10 @@ async function requireUserFromBearer(
  * deletedUserIds. That is a deletion the pod took without confirming it (a 5xx after applying
  * the tombstone, a timeout) whose read afterwards failed too, so the route answered 503; or a
  * deletion by the other instance or an operator. Only POST /users/me/delete accepts it, to
- * finish the deletion (memory and the agent registry); it writes nothing over the tombstone.
+ * finish the deletion (memory and the agent registry); it writes nothing over the tombstone. A Play
+ * guest's token is one too (verifyToken answers it "Account deleted" on its owner's tombstone), and
+ * the janitor leaves a Play owner whose deletion was answered 503 here to this retry until its guest
+ * deadline (unconfirmedPlayDeletions).
  */
 function unfinishedDeletion(token: string): Identity | null {
   const parsed = parseAndVerifySignature(token);
@@ -6277,9 +6320,16 @@ app.post('/tokens/me/sign-out-everywhere', tokenLimiter, async (req, res) => {
  * `purgePending` in the result says the record is such a tombstone (written now, or left by an
  * earlier pass whose deletions did not all succeed), so the purge goes on. A tombstone it finds
  * unmarked is a deletion's (the other instance's) or a finished purge's: the account is only
- * forgotten here, and nothing of the pod is touched, its registry included.
+ * forgotten here, and nothing of the pod is written or deleted, its registry included. Except a
+ * deletion this process answered 503 (unconfirmedPlayDeletions): before its guest deadline it is
+ * left as it is (`kept`: memory too), for the guest's retry; after it, the deletion is finished
+ * here as the retry would have finished it (the registry DELETE), and `unconfirmed` says so.
+ *
+ * A Play owner's deletion whose tombstone the pod may have taken, which nothing could settle (the
+ * route's 503), is recorded in unconfirmedPlayDeletions here, under the lock, before the janitor's
+ * purge (which may be waiting for it) can find that tombstone.
  */
-type DeletionResult = { agents: string[]; tombstoned: true; kept?: true; purgePending?: true; podCleanup: { agents: number } };
+type DeletionResult = { agents: string[]; tombstoned: true; kept?: true; purgePending?: true; unconfirmed?: true; podCleanup: { agents: number } };
 async function deleteUserCompletely(
   userId: string,
   opts: { lockHeld?: boolean; stillDeletable?: (methods: AuthMethods) => boolean; playPurge?: true } = {},
@@ -6287,6 +6337,9 @@ async function deleteUserCompletely(
   const podCleanup = { agents: 0 };
   // The tombstone the pod holds once the account is closed: the one written here, or one found.
   let closedOn: AuthMethods | null = null;
+  // The record the tombstone was last written over (or meant to be): its anchor gives a Play
+  // owner's guest deadline.
+  let writtenOver: Readonly<AuthMethods> | null = null;
   const close = async (): Promise<boolean> => {
     // Above every epoch a token was issued or checked under: the pod's and this server's copy's.
     const cachedEpoch = authMethodsCache.get(userId)?.value.sessionEpoch ?? 0;
@@ -6294,8 +6347,15 @@ async function deleteUserCompletely(
       const outcome = await applyUpdate(userId, 'delete-account', (draft, live) => {
         closedOn = null;
         // Closed already (a deletion the pod took without confirming it, retried; or the
-        // other instance's): nothing to write, and what follows clears this server's memory.
-        if (live && isTombstone(live)) { closedOn = live; return NoWrite('closed'); }
+        // other instance's): nothing to write, and what follows clears this server's memory. The
+        // janitor's purge leaves one this process answered 503 to its guest's retry, until its guest
+        // deadline: nothing is cleared (unconfirmedPlayDeletions).
+        if (live && isTombstone(live)) {
+          if (opts.playPurge && live.provisionalPlayPurgePending !== true && awaitsGuestRetry(userId)) return NoWrite('kept');
+          closedOn = live;
+          return NoWrite('closed');
+        }
+        writtenOver = live;
         // Kept: the writer makes this server's copy what the pod holds, so the next decision sees it.
         if (opts.stillDeletable && !opts.stillDeletable(live ?? emptyAuthMethods(userId))) return NoWrite('kept');
         const tombstone = deletionTombstone(userId, Math.max(live?.sessionEpoch ?? 0, cachedEpoch), opts.playPurge === true);
@@ -6311,7 +6371,15 @@ async function deleteUserCompletely(
       // deletion goes on to clear memory and the agent registry; anything else is answered 503,
       // and the account stays whole, here and on the pod.
       const after = err instanceof AuthMethodsWriteError ? err.podRecord as AuthMethods | null | undefined : undefined;
-      if (!after || !isTombstone(after)) throw err;
+      if (!after || !isTombstone(after)) {
+        // A Play owner's deletion nothing could settle: the pod may hold its tombstone, and the
+        // route answers 503 and asks for the retry, which the janitor leaves it to until its guest
+        // deadline.
+        if (!opts.playPurge && userId.startsWith('u-try-play-') && err instanceof AuthMethodsWriteError && err.unknownOutcome && after === undefined) {
+          unconfirmedPlayDeletions.set(userId, playGuestDeadline(writtenOver as Readonly<AuthMethods> | null));
+        }
+        throw err;
+      }
       closedOn = after;
       log(`WARN: deletion of ${userId}: the pod took the tombstone without confirming it (${(err as Error).message})`);
     }
@@ -6351,7 +6419,12 @@ async function deleteUserCompletely(
   // instance's deletion, whose memory was not cleared here) only forgets the account: that
   // deletion removed the registry, and its owner may be provisioned again until its guest deadline
   // (provisional-play-store.ts), so a registry here now may be the relay's for the reopened owner.
-  if (opts.playPurge && !purgePending) return { agents: ownedAgentIds, tombstoned: true, podCleanup };
+  // A deletion this process answered 503 is finished instead (its guest deadline has passed, or
+  // close() would have kept it): no provisioning restores the owner any more, and nothing else would
+  // send the deletion's registry DELETE.
+  const unconfirmed = unconfirmedPlayDeletions.has(userId);
+  if (opts.playPurge && !purgePending && !unconfirmed) return { agents: ownedAgentIds, tombstoned: true, podCleanup };
+  unconfirmedPlayDeletions.delete(userId);
   // Bounded like every request of this function: the janitor's purge of a Play owner makes it
   // holding the owner's lock (lockHeld), and the route's answer waits for it.
   try {
@@ -6359,7 +6432,8 @@ async function deleteUserCompletely(
     podCleanup.agents = r.status;
   } catch { /* best-effort */ }
 
-  return { agents: ownedAgentIds, tombstoned: true, ...(purgePending ? { purgePending: true as const } : {}), podCleanup };
+  return { agents: ownedAgentIds, tombstoned: true, ...(purgePending ? { purgePending: true as const } : {}),
+    ...(opts.playPurge && unconfirmed ? { unconfirmed: true as const } : {}), podCleanup };
 }
 
 /**
@@ -6382,9 +6456,15 @@ async function deleteUserCompletely(
  * the other instance's provisioning does not wait for this server's lock, so deleting the pod's
  * resources then could delete those of an owner provisioned again meanwhile. A purge marks only a
  * tombstone it writes over an anchor whose deadline has passed, which provisioning refuses to restore.
+ * One exception: a deletion this process answered 503 (unconfirmedPlayDeletions), which the sweep
+ * passes over before its guest deadline (the guest's retry finishes it), and which close() keeps if
+ * a purge decided before the 503 reaches it all the same. After that deadline, close() finishes
+ * the deletion (the registry DELETE, as the retry would have): no provisioning restores the owner
+ * then.
  */
 async function purgePlayOwner(userId: string): Promise<void> {
   let closed = false;
+  let finished = false;
   try {
     await withIdentityPodMutex(userId, async () => {
       const purge = await purgeProvisionalPlayPod({ userId, cssUrl: CSS_URL,
@@ -6392,15 +6472,19 @@ async function purgePlayOwner(userId: string): Promise<void> {
           const r = await deleteUserCompletely(userId, { lockHeld: true, stillDeletable: playOwnerPurgeable, playPurge: true });
           if (r.kept) return 'kept';
           closed = true;
-          if (!r.purgePending) return 'closed';
+          if (!r.purgePending) { finished = r.unconfirmed === true; return 'closed'; }
           unfinishedPlayPurges.add(userId);
           return 'purge';
         },
       });
       if (purge === 'purged') await finishPlayPurge(userId);
       unfinishedPlayPurges.delete(userId);
-      if (purge === 'kept') log(`Janitor: kept ${userId}: it holds a credential now, or its anchor has not expired`);
-      if (purge === 'closed') log(`Janitor: forgot ${userId}: its record is a tombstone no purge left unfinished (a deletion's); its pod is left as it is`);
+      if (purge === 'kept') log(awaitsGuestRetry(userId)
+        ? `Janitor: left ${userId} to its guest's retry: its deletion was answered 503 (not confirmed), and its guest deadline has not passed`
+        : `Janitor: kept ${userId}: it holds a credential now, or its anchor has not expired`);
+      if (purge === 'closed') log(finished
+        ? `Janitor: finished the deletion of ${userId} answered 503 (not confirmed) and not retried before its guest deadline: its agent registry deleted`
+        : `Janitor: forgot ${userId}: its record is a tombstone no purge left unfinished (a deletion's); its pod is left as it is`);
     });
   } catch (err) {
     log(closed || unfinishedPlayPurges.has(userId)
@@ -7435,12 +7519,16 @@ app.listen(PORT, () => {
       for (const u of identities.values()) {
         if (u.type !== 'user' || !u.id.startsWith('u-try-')) continue;
         if (u.id.startsWith('u-try-play-')) {
+          // A deletion answered 503 here is left to its guest's retry until its guest deadline, and
+          // not read meanwhile (unconfirmedPlayDeletions).
+          if (awaitsGuestRetry(u.id)) continue;
           try {
             // Read through to the pod before deletion; never infer "unclaimed"
             // from a transient dependency failure or a process-local timestamp.
             const methods = (await readLive(u.id)).methods ?? emptyAuthMethods(u.id);
             // A tombstone: a purge left unfinished, finished below, or a deletion whose memory was
-            // not cleared here (the other instance's), only forgotten (playOwnerPurgeable).
+            // not cleared here (the other instance's), only forgotten (playOwnerPurgeable), or one
+            // answered 503 here whose guest deadline has passed, finished below.
             if (!isTombstone(methods)) provisionalPlay.open(methods.provisionalPlayAnchor, true);
             if (playOwnerPurgeable(methods)) toPurge.add(u.id);
           } catch (error) { log(`Janitor: kept unreadable provisional owner ${u.id}: ${(error as Error).name}`); }

@@ -149,14 +149,23 @@ function fixture() {
     if (init?.method === 'DELETE') { await beforeDelete(); deletions.push(url); }
     return new Response(null, { status: 205 });
   };
+  // Play owners whose deletion was answered 503 (not confirmed), with their guest deadline, and the
+  // production functions that read it.
+  const unconfirmedPlayDeletions = new Map<string, number>();
+  const awaitsGuestRetry = new Function('unconfirmedPlayDeletions',
+    `${productionSyncFunction('awaitsGuestRetry')}; return awaitsGuestRetry;`)(unconfirmedPlayDeletions) as (owner: string) => boolean;
+  const playGuestDeadline = new Function('provisionalPlay',
+    `${productionSyncFunction('playGuestDeadline')}; return playGuestDeadline;`)(provisionalPlay) as (m: Methods | null) => number;
   const deleteUserCompletely = new Function('applyUpdate', 'NoWrite', 'Write', 'isTombstone', 'deletionTombstone', 'emptyAuthMethods',
     'authMethodsCache', 'AuthMethodsWriteError', 'log', 'deletedUserIds', 'removeFromIndexes', 'recordWatchers', 'assertLockHeld',
     'withIdentityPodMutex', 'identities', 'keys', 'surfaceAgentRestores', 'podRegistryCache', 'fetch', 'CSS_URL', 'POD_RECORD_TIMEOUT_MS',
+    'unconfirmedPlayDeletions', 'awaitsGuestRetry', 'playGuestDeadline',
     `${productionFunction('deleteUserCompletely')}; return deleteUserCompletely;`)(
     applyUpdate, NoWrite, Write, isTombstone, deletionTombstone, (owner: string) => empty(owner),
     authMethodsCache, AuthMethodsWriteError, () => {}, deletedUserIds, () => {}, { changed: () => {} }, assertLockHeld,
     async <T>(owner: string, work: () => Promise<T>) => withIdentityPodMutex(owner, async () => { await duringAccountDelete(); return work(); }),
     new Map(), new Map(), { forgetUser: () => {} }, new Map(), podFetch, 'https://css.test/', 15_000,
+    unconfirmedPlayDeletions, awaitsGuestRetry, playGuestDeadline,
   ) as (owner: string, opts?: { lockHeld?: boolean; stillDeletable?: (m: Methods) => boolean }) => Promise<{ kept?: true }>;
   const playOwnerPurgeable = new Function('isTombstone', 'hasAnyCredential', 'provisionalPlay',
     `${productionSyncFunction('playOwnerPurgeable')}; return playOwnerPurgeable;`)(isTombstone, hasAnyCredential, provisionalPlay);
@@ -209,15 +218,15 @@ function fixture() {
     `${productionFunction('finishPlayPurge')}; return finishPlayPurge;`)(
     applyUpdate, NoWrite, Write, isTombstone, authMethodsCache, () => {});
   const purgePlayOwner = new Function('withIdentityPodMutex', 'purgeProvisionalPlayPod', 'CSS_URL', 'deleteUserCompletely',
-    'playOwnerPurgeable', 'unfinishedPlayPurges', 'finishPlayPurge', 'log',
+    'playOwnerPurgeable', 'unfinishedPlayPurges', 'finishPlayPurge', 'log', 'awaitsGuestRetry',
     `${productionFunction('purgePlayOwner')}; return purgePlayOwner;`)(
     withIdentityPodMutex, (o: Parameters<typeof purgeProvisionalPlayPod>[0]) => purgeProvisionalPlayPod({ ...o, fetcher }),
     'https://css.test/', deleteUserCompletely, playOwnerPurgeable, unfinishedPlayPurges, finishPlayPurge,
-    (line: string) => { janitorLog.push(line); },
+    (line: string) => { janitorLog.push(line); }, awaitsGuestRetry,
   ) as (owner: string) => Promise<void>;
   const cleanup = () => purgePlayOwner(userId);
   return {
-    commit, authenticate, signIn, cleanup, control, deletions, janitorLog, unfinishedPlayPurges,
+    commit, authenticate, signIn, cleanup, control, deletions, janitorLog, unfinishedPlayPurges, unconfirmedPlayDeletions,
     get document() { return document; }, get cached() { return cached; },
     get checkpoint() { return checkpoint; }, get puts() { return puts; }, get installs() { return installs; },
     get openCalls() { return openCalls; },
@@ -315,6 +324,29 @@ test('a deletion\'s tombstone is not purged: its owner may be provisioned again 
   assert.equal(f.puts, puts, 'and nothing is written');
   assert.equal(f.unfinishedPlayPurges.size, 0);
   assert.match(f.janitorLog.join('\n'), /forgot u-try-play-1+/);
+});
+
+test('a guest\'s deletion answered 503 (not confirmed) is left to the guest\'s retry until its guest deadline, and finished by the janitor after it', async () => {
+  // The route answered the guest's deletion 503: the pod holds its tombstone, and nothing settled it.
+  // The janitor's purge used to find that tombstone unmarked and only forget the owner, so the retry
+  // was refused and the agent registry stayed on the pod.
+  const f = fixture();
+  f.outOfBand(m => { delete m.provisionalPlayAnchor; m.sessionEpoch = 1; m.deletedAt = '2026-10-28'; });
+  f.unconfirmedPlayDeletions.set(userId, Date.now() + 60_000);
+  const puts = f.puts;
+  await f.cleanup();
+  assert.deepEqual(f.deletions, [], 'nothing is deleted before the guest deadline');
+  assert.ok(f.cached?.deletedAt, 'and the owner is not forgotten: its retry finishes the deletion');
+  assert.match(f.janitorLog.join('\n'), /left u-try-play-1+ to its guest's retry/);
+  // The deadline passes without a retry: the janitor finishes the deletion as the retry would have.
+  f.unconfirmedPlayDeletions.set(userId, Date.now() - 1);
+  await f.cleanup();
+  assert.deepEqual(f.deletions, [`https://css.test/${userId}/agents`], 'its agent registry is deleted, and nothing else');
+  assert.equal(f.checkpoint, true);
+  assert.equal(f.cached, null, 'the owner is forgotten');
+  assert.equal(f.puts, puts, 'nothing is written over the tombstone');
+  assert.equal(f.unconfirmedPlayDeletions.size, 0);
+  assert.match(f.janitorLog.join('\n'), /finished the deletion of u-try-play-1+/);
 });
 
 test('a failed durable enrollment never exposes a credential through cache or success', async () => {

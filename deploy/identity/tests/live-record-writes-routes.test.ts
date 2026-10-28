@@ -159,9 +159,14 @@ const docGets = (userId: string, since = 0) => requests.slice(since).filter(r =>
 const containerPuts = (userId: string, since = 0) => requests.slice(since).filter(r => r.userId === userId && r.target === 'container');
 const mark = () => requests.length;
 
-/** A container's listing as CSS writes it: `ldp:contains` with its children's relative IRIs (containers end in '/'). */
+/**
+ * A container's listing as CSS writes it: `ldp:contains` with its children's relative IRIs (containers
+ * end in '/'), sorted by name as the PGSL store lists them (packages/pgsl-store ldp.ts listChildren).
+ * It used to list a pod's record first and its other documents in the order they were written.
+ */
 function listing(children: readonly string[]): string {
-  return `@prefix ldp: <http://www.w3.org/ns/ldp#> .\n<> a ldp:BasicContainer${children.length ? ` ; ldp:contains ${children.map(c => `<${c}>`).join(', ')}` : ''} .\n`;
+  const sorted = [...children].sort();
+  return `@prefix ldp: <http://www.w3.org/ns/ldp#> .\n<> a ldp:BasicContainer${sorted.length ? ` ; ldp:contains ${sorted.map(c => `<${c}>`).join(', ')}` : ''} .\n`;
 }
 
 /**
@@ -681,12 +686,13 @@ function expiredAnchor(issuer: string, owner = expiredPlay): string {
 const PLAY_AUDIENCE = 'https://game.example';
 const PLAY_CLIENTS = JSON.stringify({ [PLAY_AUDIENCE]: { agentDid: 'did:web:game.example:agents:game', podUrl: 'https://pod.example/game/' } });
 /**
- * A Play owner whose anchor an identity server at `issuer` sealed a minute ago (valid for an hour,
- * for the audience PLAY_CLIENTS allows), seeded on its pod, and a guest token for it as that server
- * issues one. The anchor is sealed with `sealKey`: by default the key the servers share; any other
- * makes an anchor that does not open to the owner (the token itself is still a good one).
+ * A Play owner whose anchor an identity server at `issuer` sealed a minute ago (valid for
+ * `ttlSeconds` from now, an hour by default, for the audience PLAY_CLIENTS allows), seeded on its
+ * pod, and a guest token for it as that server issues one; `expiresAt` is its guest deadline (s).
+ * The anchor is sealed with `sealKey`: by default the key the servers share; any other makes an
+ * anchor that does not open to the owner (the token itself is still a good one).
  */
-function livePlayGuest(issuer: string, sealKey = Buffer.from(tokenSigningKey, 'base64')): { id: string; token: string } {
+function livePlayGuest(issuer: string, sealKey = Buffer.from(tokenSigningKey, 'base64'), ttlSeconds = 3600): { id: string; token: string; expiresAt: number } {
   const jwk = publicJwk(crypto.generateKeyPairSync('ec', { namedCurve: 'P-256' }).publicKey) as { x: string; y: string };
   const key = { crv: 'P-256', kty: 'EC', x: jwk.x, y: jwk.y } as const;
   const thumb = playKeyThumbprint(key as Parameters<typeof playKeyThumbprint>[0]);
@@ -695,7 +701,7 @@ function livePlayGuest(issuer: string, sealKey = Buffer.from(tokenSigningKey, 'b
   const agentId = `play-${id}`;
   const claims = { version: 1, issuer, audience: PLAY_AUDIENCE, userId: id, ownerDid: `did:web:x:users:${id}`, webId: `${issuer}/users/${id}/profile#me`,
     podUrl: `http://127.0.0.1:${podPort}/${id}/`, authenticatedAgentId: agentId, authenticatedAgentDid: `did:web:x:agents:${agentId}`,
-    publicKeyJwk: key, proofKeyThumbprint: thumb, issuedAt: now - 60, expiresAt: now + 3600,
+    publicKeyJwk: key, proofKeyThumbprint: thumb, issuedAt: now - 60, expiresAt: now + ttlSeconds,
     capabilities: ['human-play', 'own-pod-checkpoint'], provisional: true };
   const encoded = Buffer.from(JSON.stringify(claims)).toString('base64url');
   const seal = crypto.createHmac('sha256', sealKey).update(`interego-play-attestation-v1\0${encoded}`).digest('base64url');
@@ -704,7 +710,8 @@ function livePlayGuest(issuer: string, sealKey = Buffer.from(tokenSigningKey, 'b
   const b64 = Buffer.from(JSON.stringify({ userId: id, agentId, scope: 'ReadWrite', issuedAt: new Date().toISOString(),
     expiresAt: new Date(Date.now() + 3_600_000).toISOString(), epoch: 0,
     provisionalPlay: { audience: PLAY_AUDIENCE, proofKeyThumbprint: thumb, expiresAt: claims.expiresAt } })).toString('base64url');
-  return { id, token: `cg2_${b64}.${crypto.createHmac('sha256', Buffer.from(tokenSigningKey, 'base64')).update(b64).digest('base64url')}` };
+  return { id, expiresAt: claims.expiresAt,
+    token: `cg2_${b64}.${crypto.createHmac('sha256', Buffer.from(tokenSigningKey, 'base64')).update(b64).digest('base64url')}` };
 }
 
 before(async () => {
@@ -807,7 +814,10 @@ test('S0: the stand-in pod answers as CSS 7.2 with the PGSL accessor answered th
   assert.equal((await send('PUT', `/${a}/agents`, { 'Content-Type': 'text/turtle' }, '')).status, 201);
   assert.match(String(await etagOfGet(`/${a}/agents`)), /^"sha256:[0-9a-f]{64}-d295df4e11ae61a5"$/);
   assert.equal((await send('PUT', `/${a}/agents`, { 'Content-Type': 'text/turtle' }, '')).status, 205);
-  assert.match(await (await send('GET', `/${a}/`)).text(), /ldp:contains <auth-methods\.jsonld>, <agents>/);
+  // Its listing names its children sorted by name, as the store lists them (listChildren in
+  // packages/pgsl-store; the probe on Postgres recorded no listing body, the accessor's in-memory
+  // backend answered this order). It used to assert the record first, which the store never gives.
+  assert.match(await (await send('GET', `/${a}/`)).text(), /ldp:contains <agents>, <auth-methods\.jsonld>/, 'its children, by name');
   assert.equal((await send('DELETE', `/${a}/agents`)).status, 205);
   assert.equal((await send('DELETE', `/${a}/agents`)).status, 404);
   // The root lists both pods, as containers.
@@ -1414,9 +1424,9 @@ test('C9: every writer whose read of the pod fails answers 503 and writes nothin
   assert.equal(record(f9.userId)!.deletedAt, undefined);
 });
 
-// ── C11 and L1 side by side: both wait out the writer's 15 s timeout, so they share it (the
-// file stays well inside the suite's 2-minute bound). They touch different accounts. L: writes the
-// pod never answers, and stores later. ─────────────────────────────────────────────────────────
+// ── C11 and L1 side by side: both wait out the writer's 15 s timeout, so they share it, which
+// keeps the file's running time down (npm test runs this file on its own, with a 300 s limit).
+// They touch different accounts. L: writes the pod never answers, and stores later. ─────────────
 describe('writes the pod never answers', { concurrency: true }, () => {
   test('C11: a pod that never answers holds an account\'s lock for at most 15 s for a read, and 30 s for a write and the read after it', { timeout: 50_000 }, async () => {
     const timed = async (reply: Promise<Reply>, from = Date.now()) => ({ ...(await reply), took: Date.now() - from });
@@ -2312,6 +2322,62 @@ test('P10: a Play owner its guest deleted through the other instance is only for
     assert.equal(record(guest.id)!.provisionalPlayAnchor, anchor, 'the owner provisioned again is whole');
   } finally {
     await janitor.stop();
+  }
+});
+
+test('P11: a Play guest\'s deletion the pod took without confirming it is finished by the guest\'s retry, which the janitor leaves it to until the guest deadline, and by the janitor after that deadline', { timeout: 60_000 }, async () => {
+  // The pod applies each guest's tombstone and answers 500, and the read after it fails: 503, "the
+  // retry finishes it either way". The retry was refused (401 "Provisional owner unavailable": a
+  // guest token's check opened the anchor, which a tombstone does not have), and the janitor's
+  // purge found the tombstone unmarked and only forgot the owner, so its agent registry stayed.
+  const port = await freePort();
+  const issuer = `http://127.0.0.1:${port}`;
+  const inst = await startIdentity(port, { JANITOR_INTERVAL_MS: '1000', CSS_PUBLIC_URL: 'https://pods.example/', PROVISIONAL_PLAY_CLIENTS: PLAY_CLIENTS });
+  const retrying = livePlayGuest(issuer);                         // an hour to its guest deadline
+  const lapsing = livePlayGuest(issuer, undefined, 6);            // its guest never retries
+  for (const g of [retrying, lapsing]) {
+    putOther(`/${g.id}/agents`);
+    putOther(`/${g.id}/checkpoint.json`, '{}', 'application/json');
+  }
+  const registryDeletes = (g: { id: string }) => otherRequests.filter(r => r.method === 'DELETE' && r.path === `/${g.id}/agents`);
+  const deletedAt: Record<string, number> = {};
+  try {
+    for (const g of [retrying, lapsing]) {
+      failPuts(g.id, 'apply-then-500');
+      const put = hold('PUT', g.id, 1, () => { failingGets.set(g.id, 1_000); });
+      void put.arrived.then(() => put.release());
+      const r = await post('/users/me/delete', {}, g.token, inst);
+      failingGets.delete(g.id);
+      assert.equal(r.status, 503, `${JSON.stringify(r.json)}${out(inst)}`);
+      assert.equal(r.json['error'], 'Deletion not confirmed');
+      assert.ok(record(g.id)!.deletedAt, 'the pod holds the tombstone');
+      deletedAt[g.id] = mark();
+    }
+    // The guest who never retries: once its guest deadline has passed (no guest token verifies, and
+    // no grant provisions the owner again), the janitor finishes the deletion as the retry would have.
+    const finished = await waitFor(() => registryDeletes(lapsing)[0], 15_000);
+    assert.ok(finished, `the janitor never finished the deletion of ${lapsing.id}${out(inst)}`);
+    assert.ok(finished.at >= lapsing.expiresAt * 1000, `its registry was deleted ${lapsing.expiresAt * 1000 - finished.at} ms before its guest deadline`);
+    assert.match(inst.output(), new RegExp(`finished the deletion of ${lapsing.id}`));
+    assert.equal(others.has(`/${lapsing.id}/agents`), false);
+    assert.ok(others.has(`/${lapsing.id}/checkpoint.json`), 'a deletion deletes the agent registry only');
+    assert.deepEqual(docPuts(lapsing.id, deletedAt[lapsing.id]), [], 'nothing is written over the tombstone');
+    assert.equal((await call(inst, 'GET', `/users/${lapsing.id}/did.json`)).status, 404);
+    // The guest who retries: across those passes the janitor sent nothing for its owner, and forgot nothing.
+    assert.deepEqual(requests.slice(deletedAt[retrying.id]).filter(r => r.userId === retrying.id), [], 'its pod is not even read');
+    assert.deepEqual(registryDeletes(retrying), []);
+    assert.doesNotMatch(inst.output(), new RegExp(`forgot ${retrying.id}`));
+    assert.equal((await verify(retrying.token, inst)).json['reason'], 'Account deleted');
+    const since = mark();
+    const retry = await post('/users/me/delete', {}, retrying.token, inst);
+    assert.equal(retry.status, 200, `${JSON.stringify(retry.json)}${out(inst)}`);
+    assert.equal(registryDeletes(retrying).length, 1, 'its agent registry is deleted');
+    assert.equal(others.has(`/${retrying.id}/agents`), false);
+    assert.deepEqual(docPuts(retrying.id, since), [], 'and the tombstone is not written again');
+    assert.equal((await post('/users/me/delete', {}, retrying.token, inst)).status, 401, 'finished: the token finishes nothing more');
+  } finally {
+    for (const g of [retrying, lapsing]) { putFaults.delete(g.id); failingGets.delete(g.id); }
+    await inst.stop();
   }
 });
 
