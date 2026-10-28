@@ -231,6 +231,15 @@ describe('★ every other check on the head: what the two listings say', () => {
     expect(s.state).toBe('success');
     expect(s.left).toBe(2); // the run and that one job
     expect(state(runs, [...others, noPage({ status: 'in_progress', conclusion: null }), noPage({ conclusion: 'failure' })])).toMatchObject({ state: 'success', left: 3 });
+    // Any run of this workflow's suite counts, not this run's alone: a page-less check run in an
+    // earlier run's suite (a reopen left it) is left out too ...
+    const earlier = wfRun(40509100000, 'jev-harness (System One judgments)', JEV, { conclusion: 'cancelled', created_at: '2026-10-27T13:00:00Z' });
+    const earlierNoPage = { ...job(earlier, 'select tests → run → gate → decide', { conclusion: 'failure' }), html_url: null, details_url: null };
+    expect(state([...runs, earlier], [...checkRuns, earlierNoPage])).toMatchObject({ state: 'success', left: 5 });
+    // ... while one with a details_url, in this run's own suite, is another check: whatever its
+    // creator linked, it names a page, so it is not matched by its suite alone.
+    const linked = { ...noPage({ conclusion: 'failure' }), name: 'report', details_url: 'https://example.com/r' };
+    expect(state(runs, [...checkRuns, linked])).toMatchObject({ state: 'failure', failed: ['report: failure'], left: 3 });
   });
 
   it('★ counts another workflow that merely carries this workflow\'s name', () => {
@@ -359,6 +368,22 @@ describe('★ every other check on the head: what the two listings say', () => {
     // Every try of it counts: a second leg of lint that started during the red overlapped it.
     expect(state([...runs, lintOld, held], [...checkRuns, red(), job(held, 'lint', { started_at: '2026-10-27T12:41:40Z' }), job(held, 'lint', { started_at: '2026-10-27T12:41:20Z' })]))
       .toMatchObject({ state: 'failure', failed: ['ESLint / lint: failure'] });
+    // Every red job counts: with lint and test red (the run finished at 12:42:00), a newer run made
+    // during it whose try at either one started before then overlapped it, whichever it is.
+    const twoRed = wfRun(40509000100, 'ESLint', ESLINT, { conclusion: 'failure', created_at: '2026-10-27T12:40:00Z', updated_at: '2026-10-27T12:42:00Z' });
+    const twoRedJobs = () => [
+      job(twoRed, 'lint', { conclusion: 'failure', started_at: '2026-10-27T12:40:30Z', completed_at: '2026-10-27T12:41:30Z' }),
+      job(twoRed, 'test', { conclusion: 'failure', started_at: '2026-10-27T12:40:30Z', completed_at: '2026-10-27T12:42:00Z' }),
+    ];
+    const reopened = lintNew({ status: 'completed', conclusion: 'success', created_at: '2026-10-27T12:41:00Z' });
+    const tried = (lintAt: string, testAt: string) => state([...runs, twoRed, reopened], [...checkRuns, ...twoRedJobs(),
+      job(reopened, 'lint', { started_at: lintAt }), job(reopened, 'test', { started_at: testAt })]);
+    expect(tried('2026-10-27T12:42:05Z', '2026-10-27T12:41:10Z')).toMatchObject({
+      state: 'failure', failed: ['ESLint / lint: failure', 'ESLint / test: failure'],
+      detail: 'did not pass: ESLint / lint: failure, ESLint / test: failure (ESLint run 40509000100 is not answered by the newer run 40509213300, which started test before the red run finished: re-run 40509000100, or reopen)',
+    });
+    expect(tried('2026-10-27T12:41:10Z', '2026-10-27T12:42:05Z').detail).toContain('which started lint before the red run finished');
+    expect(tried('2026-10-27T12:42:05Z', '2026-10-27T12:42:05Z').state).toBe('success');
     // A cancel is answered the same way. A concurrency group's cancel-in-progress, landing as a
     // reopen starts the newer run, lands before that run's job starts: the newer run answers it.
     const cancelled = wfRun(40509000100, 'ESLint', ESLINT, { conclusion: 'cancelled', created_at: '2026-10-27T12:40:00Z' });
@@ -372,6 +397,10 @@ describe('★ every other check on the head: what the two listings say', () => {
       state: 'failure', failed: ['ESLint / lint: cancelled'],
       detail: 'did not pass: ESLint / lint: cancelled (ESLint run 40509000100 is not answered by the newer run 40509213300, which started lint before the red run finished: re-run 40509000100, or reopen)',
     });
+    // GitHub's times are whole seconds, and a try started in the very second the cancel landed
+    // counts as after it, though it may have begun up to a second before: a cancel by hand landing
+    // in that second reads as answered (one landing a second after the try started, above, refuses).
+    expect(state([...runs, cancelled, during2], [...checkRuns, cancelledJob(), job(during2, 'lint', { started_at: '2026-10-27T12:41:02Z' })]).state).toBe('success');
     // A run made after the cancel landed answers it.
     const after2 = lintNew({ status: 'completed', conclusion: 'success', created_at: '2026-10-27T12:42:00Z' });
     expect(state([...runs, cancelled, after2], [...checkRuns, cancelledJob(), job(after2, 'lint', { started_at: '2026-10-27T12:42:10Z' })]).state).toBe('success');
@@ -488,6 +517,13 @@ describe('★ every other check on the head: what the two listings say', () => {
       detail: 'did not pass: ESLint: cancelled (ESLint run 40509000100 is not answered by the newer run 40509213300, which was made before the red run finished: re-run 40509000100, or reopen); still running: ESLint (queued)',
     });
     expect(state([...runs, cancelledEarly, lintNew({ created_at: '2026-10-27T12:41:01Z' })], [...checkRuns, built()])).toMatchObject({ state: 'pending', pending: ['ESLint (queued)'] });
+    // A failed run that lists no red job is answered by no run that has concluded, so a reopen
+    // would not answer it either: the detail says to re-run it, and only that.
+    const failedEarly = { ...cancelledEarly, conclusion: 'failure' };
+    expect(state([...runs, failedEarly, lintNew({ created_at: '2026-10-27T12:41:00Z' })], [...checkRuns, built()])).toMatchObject({
+      state: 'failure', failed: ['ESLint: failure'],
+      detail: 'did not pass: ESLint: failure (ESLint run 40509000100 is not answered by the newer run 40509213300, which was made before the red run finished: re-run 40509000100); still running: ESLint (queued)',
+    });
     // A cancel waits for a queued newer run made after it landed, which answers it for now and
     // decides by what it concludes ...
     const cancelledRun = wfRun(40509000100, 'ESLint', ESLINT, { conclusion: 'cancelled', created_at: '2026-10-27T12:40:00Z' });
@@ -519,6 +555,38 @@ describe('★ every other check on the head: what the two listings say', () => {
       state: 'failure', failed: [`Base without verticals / ${BASE}: cancelled`],
       detail: `did not pass: Base without verticals / ${BASE}: cancelled (Base without verticals run 40509000100 is not answered by the newer run 40509000200, which started ${BASE} before the red run finished: re-run 40509000100, or reopen)`,
     });
+  });
+
+  it('★ a cancel-in-progress is timed by its jobs, not by the run\'s updated_at, which GitHub writes up to a second after them', () => {
+    const { runs, checkRuns } = green();
+    // PGSL collector topology regressions (cancel-in-progress) on two consecutive heads: run
+    // 39534484226's collector-topology was cancelled at 02:43:36 and the run's updated_at reads
+    // 02:43:37; run 39534606891, which took its slot (made 02:43:35), started its collector-topology
+    // at 02:43:36. On one head (a reopen during the run) the newer run answers the cancel.
+    const PGSL = 391194621;
+    const at = (t: string) => `2026-10-27T${t}Z`;
+    const cancelled = wfRun(39534484226, 'PGSL collector topology regressions', PGSL, { conclusion: 'cancelled', created_at: at('02:42:16'), updated_at: at('02:43:37') });
+    const took = (over: Partial<WorkflowRunLike> = {}) => wfRun(39534606891, 'PGSL collector topology regressions', PGSL, { created_at: at('02:43:35'), updated_at: at('02:45:07'), ...over });
+    const cancelledJob = () => job(cancelled, 'collector-topology', { conclusion: 'cancelled', started_at: at('02:42:17'), completed_at: at('02:43:36') });
+    const listing = (n: WorkflowRunLike, startedAt: string, over: Partial<CheckRunLike> = {}) =>
+      state([...runs, cancelled, n], [...checkRuns, cancelledJob(), job(n, 'collector-topology', { started_at: at(startedAt), completed_at: at('02:45:06'), ...over })]);
+    expect(listing(took(), '02:43:36')).toMatchObject({ state: 'success', failed: [] });
+    // Still going, it answers for now and decides by its own conclusion.
+    expect(listing(took({ status: 'in_progress', conclusion: null }), '02:43:36', { status: 'in_progress', conclusion: null, completed_at: null })).toMatchObject({ state: 'pending', failed: [] });
+    // A try that started a second before the cancelled job ended overlapped it.
+    expect(listing(took(), '02:43:35')).toMatchObject({
+      state: 'failure', failed: ['PGSL collector topology regressions / collector-topology: cancelled'],
+      detail: 'did not pass: PGSL collector topology regressions / collector-topology: cancelled (PGSL collector topology regressions run 39534484226 is not answered by the newer run 39534606891, which started collector-topology before the red run finished: re-run 39534484226, or reopen)',
+    });
+    // A run whose last job ended at 13:10:00, with updated_at in that same second, and a newer try
+    // started in that second: after it, by GitHub's whole seconds. One a second earlier is not.
+    const r = wfRun(40509215001, 'Identity Server Tests', 420000001, { conclusion: 'failure', created_at: '2026-10-27T13:06:52Z', updated_at: '2026-10-27T13:10:00Z' });
+    const n = wfRun(40509215101, 'Identity Server Tests', 420000001, { created_at: '2026-10-27T13:09:58Z', updated_at: '2026-10-27T13:12:00Z' });
+    const unit = (startedAt: string) => state([...runs, r, n], [...checkRuns,
+      job(r, 'identity-unit', { conclusion: 'failure', started_at: '2026-10-27T13:07:00Z', completed_at: '2026-10-27T13:10:00Z' }),
+      job(n, 'identity-unit', { started_at: startedAt, completed_at: '2026-10-27T13:11:59Z' })]);
+    expect(unit('2026-10-27T13:10:00Z').state).toBe('success');
+    expect(unit('2026-10-27T13:09:59Z')).toMatchObject({ state: 'failure', failed: ['Identity Server Tests / identity-unit: failure'] });
   });
 
   it('★ a run that did not pass is read by its own conclusion when none of the check runs it lists says so (the listing lags)', () => {
@@ -569,7 +637,7 @@ describe('★ every other check on the head: what the two listings say', () => {
     expect(state(runs, [...checkRuns, report])).toMatchObject({ state: 'failure', failed: ['Test Results: failure'] });
   });
 
-  it('★ a check run is filed under a workflow run only as an Actions job of it (app github-actions, html_url its job page); details_url is never read', () => {
+  it('★ a check run is filed under a workflow run only as an Actions job of it (app github-actions, html_url its job page); details_url never files a check run under a run', () => {
     const { runs, checkRuns } = green();
     // A report created through the API (a step posting results with checks.create) has a page of
     // its own, and links back to the run that made it with whatever details_url its creator set.
@@ -596,28 +664,49 @@ describe('★ every other check on the head: what the two listings say', () => {
     expect(state(runs, [...checkRuns, report({ ...otherApp, html_url: `${toBase}/job/9001` })])).toMatchObject({ state: 'failure', failed: ['Test Results (some-ci-app): failure'] });
   });
 
-  it('★ a report created through the API by GitHub Actions is one check per name, whichever check suite GitHub filed it in; another app\'s stay one per suite', () => {
+  it('★ a report created through the API by GitHub Actions is read alone: no later report of its name answers its red, from a reopen, another workflow, another dispatch or the same suite; another app\'s stay one per suite', () => {
     const { runs, checkRuns } = green();
+    const report = (id: number, name: string, conclusion: string, inSuiteOf: WorkflowRunLike, at: string): CheckRunLike => ({
+      id, name, status: 'completed', conclusion, started_at: at, completed_at: at,
+      check_suite: { id: inSuiteOf.check_suite_id ?? null }, app: { id: 15368, slug: 'github-actions' }, html_url: `https://github.com/o/r/runs/${id}`,
+    });
+    // Nothing a report carries names the run that posted it, and the suite it lands in is GitHub's
+    // pick: a red one refuses until the next push, and the detail says so.
+    const alone = (name: string) => `${name} is a report a workflow created through the API, which no later report can be shown to try again (nothing it carries names the run that posted it): only the next push decides again`;
     // r failed and n, a reopen made after it, ran its test again green. Each run posted a 'Jest
-    // Results' report through the API, and GitHub filed each in a suite of its own pick.
+    // Results' report through the API, and GitHub filed each in a suite of its own pick. n answers
+    // r's red test; nothing shows that n's report is r's tried again, so r's red report stands.
     const r = wfRun(40509000100, 'CI', 355555555, { conclusion: 'failure', created_at: '2026-10-27T12:40:00Z', updated_at: '2026-10-27T12:45:00Z' });
     const n = wfRun(40509213300, 'CI', 355555555, { created_at: '2026-10-27T13:06:52Z' });
     const ciJobs = [job(r, 'test', { conclusion: 'failure', started_at: '2026-10-27T12:41:00Z' }), job(n, 'test', { started_at: '2026-10-27T13:07:10Z' })];
-    const report = (id: number, conclusion: string, inSuiteOf: WorkflowRunLike, at: string): CheckRunLike => ({
-      id, name: 'Jest Results', status: 'completed', conclusion, started_at: at, completed_at: at,
-      check_suite: { id: inSuiteOf.check_suite_id ?? null }, app: { id: 15368, slug: 'github-actions' }, html_url: `https://github.com/o/r/runs/${id}`,
-    });
     for (const newerIn of [n, r, selfRun]) {
-      expect(state([...runs, r, n], [...checkRuns, ...ciJobs, report(8000, 'failure', r, '2026-10-27T12:44:00Z'), report(8001, 'success', newerIn, '2026-10-27T13:09:00Z')]).state, String(newerIn.id))
-        .toBe('success');
+      expect(state([...runs, r, n], [...checkRuns, ...ciJobs, report(8000, 'Jest Results', 'failure', r, '2026-10-27T12:44:00Z'), report(8001, 'Jest Results', 'success', newerIn, '2026-10-27T13:09:00Z')]), String(newerIn.id))
+        .toMatchObject({ state: 'failure', failed: ['Jest Results: failure'], detail: `did not pass: Jest Results: failure (${alone('Jest Results')})` });
     }
+    // Alone and green, a report passes; still running, it is waited for.
+    expect(state([...runs, r, n], [...checkRuns, ...ciJobs, report(8001, 'Jest Results', 'success', n, '2026-10-27T13:09:00Z')])).toMatchObject({ state: 'success', passed: 6 });
+    // Two workflows that each post 'Test results': W1's red at 13:11 is not answered by W2's green
+    // at 13:14, whichever suite GitHub filed either in. W2 did not run W1's tests.
+    const w1 = wfRun(40509214001, 'Identity Server Tests', 410000001, { check_suite_id: 40509214002 });
+    const w2 = wfRun(40509214101, 'Deploy Surface Tests', 410000002, { check_suite_id: 40509214102 });
+    const wJobs = [job(w1, 'identity', { started_at: '2026-10-27T13:08:00Z' }), job(w2, 'deploy-surface', { started_at: '2026-10-27T13:09:00Z' })];
+    for (const [redIn, greenIn] of [[w1, w2], [w1, selfRun], [w1, w1], [w2, w2]] as const) {
+      expect(state([...runs, w1, w2], [...checkRuns, ...wJobs, report(9001, 'Test results', 'failure', redIn, '2026-10-27T13:11:00Z'), report(9002, 'Test results', 'success', greenIn, '2026-10-27T13:14:00Z')]), `${redIn.id} ${greenIn.id}`)
+        .toMatchObject({ state: 'failure', failed: ['Test results: failure'] });
+    }
+    // Two 'Build & push to GHCR' dispatches (relay, then identity) that each post 'Image scan':
+    // a dispatch is its own check, and so is its report. Relay's red scan stands beside identity's green one.
+    const relay = relayRun({ updated_at: '2026-10-27T13:09:00Z' });
+    const ghcrJobs = [job(relay, 'interego-relay', { started_at: '2026-10-27T13:01:30Z' }), identityJob()];
+    expect(state([...runs, relay, identityRun], [...checkRuns, ...ghcrJobs, report(9101, 'Image scan', 'failure', relay, '2026-10-27T13:08:30Z'), report(9102, 'Image scan', 'success', identityRun, '2026-10-27T13:11:30Z')]))
+      .toMatchObject({ state: 'failure', failed: ['Image scan: failure'], detail: `did not pass: Image scan: failure (${alone('Image scan')})` });
     // Two apps' checks that share a name are two checks: one app's green does not answer the other's red.
     const railway: CheckRunLike = { id: 7000, name: 'deploy', status: 'completed', conclusion: 'failure', started_at: '2026-10-27T13:00:00Z', completed_at: '2026-10-27T13:05:00Z', check_suite: { id: 5 }, app: { id: 9, slug: 'railway-app' }, html_url: 'https://github.com/o/r/runs/7000' };
     const vercel: CheckRunLike = { ...railway, id: 7001, conclusion: 'success', started_at: '2026-10-27T13:06:00Z', completed_at: '2026-10-27T13:07:00Z', check_suite: { id: 6 }, app: { id: 10, slug: 'vercel' }, html_url: 'https://github.com/o/r/runs/7001' };
     expect(state(runs, [...checkRuns, railway, vercel])).toMatchObject({ state: 'failure', failed: ['deploy (railway-app): failure'] });
   });
 
-  it('★ a run listed as concluded while a job of it is still going, or went red after the run concluded, waits: the runs listing has not caught up', () => {
+  it('★ a run listed as concluded while a job of it is still going, started after the run concluded, or went red after it, waits: the runs listing has not caught up', () => {
     const { runs, checkRuns } = green();
     const BASE = 'Emergence with the verticals; the base without them';
     const others = checkRuns.filter((c) => c.name !== BASE);
@@ -633,9 +722,26 @@ describe('★ every other check on the head: what the two listings say', () => {
     expect(direct([...others, job(base, BASE, { conclusion: 'failure', started_at: '2026-10-27T13:40:00Z', completed_at: '2026-10-27T13:41:00Z' })])).toMatchObject({
       state: 'pending', failed: [], pending: [`Base without verticals / ${BASE} (failure after its run concluded; the listings have not caught up)`],
     });
-    // A job that may fail (continue-on-error), red before its run concluded green: the run's own conclusion stands.
+    // A red that started before the run concluded but is listed as concluding after it: the listings
+    // disagree about when the run ended, so it waits too.
+    expect(direct([...others, job(base, BASE, { conclusion: 'failure', started_at: '2026-10-27T13:19:30Z', completed_at: '2026-10-27T13:21:00Z' })])).toMatchObject({
+      state: 'pending', failed: [], pending: [`Base without verticals / ${BASE} (failure after its run concluded; the listings have not caught up)`],
+    });
+    // The re-run's first job (a gate the next job needs) passed at 13:40:20, and the job behind it
+    // has no new check run yet, so the listing (filter=latest) still holds its old try, green. A new
+    // try that passed says nothing of the job behind it: the run waits for the listings.
+    const gate = job(base, 'changes', { started_at: '2026-10-27T13:40:00Z', completed_at: '2026-10-27T13:40:20Z' });
+    const oldTry = job(base, BASE, { started_at: '2026-10-27T13:08:00Z', completed_at: '2026-10-27T13:19:58Z' });
+    expect(direct([...others, gate, oldTry])).toMatchObject({
+      state: 'pending', failed: [], pending: ['Base without verticals / changes (success, a try started after its run concluded; the listings have not caught up)'],
+    });
+    // ... and with the job behind it listed as queued, the same.
+    expect(direct([...others, gate, job(base, BASE, { status: 'queued', conclusion: null, started_at: null })])).toMatchObject({ state: 'pending', failed: [] });
+    // A job that may fail (continue-on-error), red before its run concluded green: the run's own
+    // conclusion stands, and only what passed counts as passed (two jobs of the suite, one of
+    // Mutation Gate and one of Base, not the red leg).
     expect(direct([...others, job(base, BASE, { started_at: '2026-10-27T13:07:00Z' }), job(base, 'an advisory leg', { conclusion: 'failure', started_at: '2026-10-27T13:08:00Z' })]))
-      .toMatchObject({ state: 'success', failed: [], pending: [] });
+      .toMatchObject({ state: 'success', failed: [], pending: [], passed: 4 });
   });
 
   it('★ the detail says why a newer run left a red standing: it skipped the red job (a reporter that runs only on failure), or has no job of that name (renamed on the base)', () => {
@@ -684,6 +790,12 @@ describe('★ every other check on the head: what the two listings say', () => {
     // A repository_dispatch is a dispatch too.
     const fromRepo = (r: WorkflowRunLike): WorkflowRunLike => ({ ...r, event: 'repository_dispatch' });
     expect(state([...runs, fromRepo(d1), fromRepo(d2)], [...checkRuns, ...ghcrJobs])).toMatchObject({ state: 'failure', failed: ['Build & push to GHCR / interego-relay: failure'] });
+    // Four red dispatches, four notes: the detail names three and counts the rest, to stay one line.
+    const four = [0, 1, 2, 3].map((i) => wfRun(40509300000 + i * 100, 'Build & push to GHCR', GHCR, { event: 'workflow_dispatch', created_at: `2026-10-27T12:4${i}:00Z` }));
+    const s = state([...runs, ...four], [...checkRuns, ...four.map((d, i) => job(d, `image-${i}`, { conclusion: 'failure', started_at: `2026-10-27T12:4${i}:30Z` }))]);
+    expect(s.failed).toEqual([0, 1, 2, 3].map((i) => `Build & push to GHCR / image-${i}: failure`));
+    const note = (id: number) => `Build & push to GHCR run ${id} is a dispatch, answered only by its own re-run (a new dispatch does not answer it): re-run ${id}`;
+    expect(s.detail).toBe(`did not pass: ${s.failed.join(', ')} (${note(40509300000)}; ${note(40509300100)}; ${note(40509300200)}; and 1 more)`);
   });
 
   it('★ a run is read by its own conclusion, which covers its latest try: a re-run that left a same-named leg red refuses', () => {
@@ -717,11 +829,21 @@ describe('★ every other check on the head: what the two listings say', () => {
     });
     expect(state([...runs, cancelled, heldOut], [...checkRuns, build()]).detail)
       .toContain('ESLint run 40509000100 is not answered by the newer run 40509213300, which ran nothing: re-run 40509000100, or reopen');
+    // A newer run that concluded success with every job it lists skipped ran nothing either.
+    const allSkipped = lintNew({ status: 'completed', conclusion: 'success', created_at: '2026-10-27T12:45:00Z' });
+    expect(state([...runs, cancelled, allSkipped], [...checkRuns, build(),
+      job(allSkipped, 'build', { conclusion: 'skipped', started_at: '2026-10-27T12:45:05Z' }), job(allSkipped, 'test', { conclusion: 'skipped', started_at: '2026-10-27T12:45:05Z' })])).toMatchObject({
+      state: 'failure', failed: ['ESLint: cancelled'],
+      detail: 'did not pass: ESLint: cancelled (ESLint run 40509000100 is not answered by the newer run 40509213300, which ran nothing: re-run 40509000100, or reopen)',
+    });
     // A failed run that lists no red job (the listing has not caught up) is answered by no run that has concluded.
     const failedRun = wfRun(40509000100, 'ESLint', ESLINT, { conclusion: 'failure', created_at: '2026-10-27T12:40:00Z', updated_at: '2026-10-27T12:41:00Z' });
     expect(state([...runs, failedRun, newer], [...checkRuns,
       job(failedRun, 'build', { started_at: '2026-10-27T12:40:05Z', completed_at: '2026-10-27T12:40:50Z' }),
-      job(newer, 'build', { started_at: '2026-10-27T12:45:05Z' })])).toMatchObject({ state: 'failure', failed: ['ESLint: failure'] });
+      job(newer, 'build', { started_at: '2026-10-27T12:45:05Z' })])).toMatchObject({
+      state: 'failure', failed: ['ESLint: failure'],
+      detail: 'did not pass: ESLint: failure (ESLint run 40509000100 is not answered by the newer run 40509213300, which cannot be shown to have run again what went red, as the red run lists no red job: re-run 40509000100)',
+    });
   });
 
   it('★ a newer run answers only what it ran again: a job it skipped, or a run it skipped whole, answers nothing', () => {
@@ -731,6 +853,11 @@ describe('★ every other check on the head: what the two listings say', () => {
     const newer = lintNew({ status: 'completed', conclusion: 'success', created_at: '2026-10-27T12:50:00Z' });
     expect(state([...runs, lintOld, newer], [...checkRuns, red(), job(newer, 'lint', { conclusion: 'skipped', started_at: '2026-10-27T12:50:05Z' }), job(newer, 'types', { started_at: '2026-10-27T12:50:05Z' })]))
       .toMatchObject({ state: 'failure', failed: ['ESLint / lint: failure'] });
+    // Two reopens: the first ran lint again green, the newest skipped it. One newer run that
+    // answers is enough, whichever it is.
+    const first = wfRun(40509213200, 'ESLint', ESLINT, { created_at: '2026-10-27T12:45:00Z' });
+    expect(state([...runs, lintOld, first, newer], [...checkRuns, red(), job(first, 'lint', { started_at: '2026-10-27T12:45:05Z' }),
+      job(newer, 'lint', { conclusion: 'skipped', started_at: '2026-10-27T12:50:05Z' }), job(newer, 'types', { started_at: '2026-10-27T12:50:05Z' })])).toMatchObject({ state: 'success', failed: [] });
     // A cancelled run that lists no red job is answered by a newer run's own conclusion, but not
     // by a newer run that was skipped whole.
     const cancelled = wfRun(40509000100, 'ESLint', ESLINT, { conclusion: 'cancelled', created_at: '2026-10-27T12:40:00Z', updated_at: '2026-10-27T12:41:00Z' });

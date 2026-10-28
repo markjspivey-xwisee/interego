@@ -34,8 +34,9 @@ export interface WorkflowRunLike {
   readonly created_at?: string;
   /** When the run last changed: once it has concluded, when it finished (a re-run moves it on).
    *  What did not pass is answered only by a newer run of its group made after this, or whose
-   *  every try at each job that went red in it started in this second or later. A job of a
-   *  concluded run that concluded red after this means the listings have not caught up. */
+   *  every try at each job that went red in it started in the second the last of the run's listed
+   *  jobs ended or later (GitHub writes this up to a second after that). A job of a concluded run
+   *  that started after this, or concluded red after it, means the listings have not caught up. */
   readonly updated_at?: string;
   /** Not read: a run's own conclusion is its latest try's, which is what the wait reads. */
   readonly run_attempt?: number;
@@ -51,15 +52,18 @@ export interface CheckRunLike {
   readonly status?: string | null;
   readonly conclusion?: string | null;
   /** Whether a try started after something else finished: a newer run's try at a job that went
-   *  red in an older run, after that run finished, and another app's later check run of a name,
-   *  after a red one concluded. Whole seconds: the same second counts as after. */
+   *  red in an older run, after that run's last listed job ended, and another app's later check
+   *  run of a name, after a red one concluded; and whether a job of a concluded run started after
+   *  the run's updated_at. Whole seconds: the same second counts as after, though the try may have
+   *  begun up to a second before. */
   readonly started_at?: string | null;
-  /** When it concluded: read for another app's check, to say when a run finished when its
-   *  listing gives no updated_at, and to tell a red that concluded after its run did. */
+  /** When it concluded: read for another app's check, to say when a run's tries ended (and when
+   *  it finished, when its listing gives no updated_at), and to tell a red that concluded after
+   *  its run did. */
   readonly completed_at?: string | null;
   /** GitHub's page for it. Only a github-actions check run whose page is a job of a workflow run
-   *  (`/actions/runs/<run>/job/<job>`) is that run's job; one with a page of its own
-   *  (`/<owner>/<repo>/runs/<id>`) was created through the API. */
+   *  (`/actions/runs/<run>/job/<job>`) is that run's job; any other github-actions check run was
+   *  created through the API (its page is `/<owner>/<repo>/runs/<id>`). */
   readonly html_url?: string | null;
   /** Whatever the check's creator set: never read to say which run a check run belongs to. A
    *  check run with neither page is matched to this workflow's own runs (or an advisory suite's)
@@ -67,7 +71,9 @@ export interface CheckRunLike {
   readonly details_url?: string | null;
   /** Another app's checks are one per name in their check suite. */
   readonly check_suite?: { readonly id?: number | string | null } | null;
-  /** `github-actions` for a workflow's jobs, and for a report a workflow created with GITHUB_TOKEN. */
+  /** `github-actions` for a workflow's jobs, and for a report a workflow created with GITHUB_TOKEN.
+   *  A report is answered by nothing: no later report of its name can be shown to be the same
+   *  check tried again, so a red one refuses until the next push. */
   readonly app?: { readonly id?: number | string; readonly slug?: string } | null;
 }
 
