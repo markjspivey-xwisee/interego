@@ -2576,8 +2576,10 @@ async function issueToken(userId: string, agentId: string, scope: string, provis
   // (stale-while-revalidate), and is issued at the copy's epoch; a
   // sign-out-everywhere made here puts the bumped value in the copy, so
   // the next issue picks it up. A Play guest token's epoch is checked on
-  // the owner's record as read from the pod (verifyToken), and nothing on
-  // its path reads this copy, which can stay behind the pod for good: the
+  // the owner's record as read from the pod (verifyToken), and once this
+  // process holds the owner, neither that check nor this renewal installs
+  // anything of a live owner's record (the check refreshes this copy only
+  // on a tombstone), so this copy can stay behind the pod for good: the
   // other instance's deletion and provisioning of the owner, or its
   // sign-out-everywhere, raise the epoch there. Its renewal was issued at
   // the copy's lower epoch, and refused at its first use on every
@@ -2715,8 +2717,8 @@ async function verifyToken(token: string): Promise<{ valid: boolean; record?: To
       // "Provisional owner unavailable", which no route accepts, so that retry was refused (401).
       // The copy is left stale (expireAuthMethods): unfinishedDeletion reads only its value, and every
       // reader that decides on the copy (a token other than a guest's, GET /auth-methods/me, POST
-      // /tokens) reads the pod first. It was left fresh, the copy for the next 10 s, which nothing on a
-      // guest token's path refreshes: when the other instance provisioned the owner again and a DID or
+      // /tokens) reads the pod first. It was left fresh, the copy for the next 10 s, which no guest token's
+      // check or renewal refreshes: when the other instance provisioned the owner again and a DID or
       // wallet claimed it there meanwhile, that credential's tokens were "Account deleted" here, and
       // their deletion here was taken for that retry and answered 409 ("Account not deleted").
       if (isTombstone(methods)) {

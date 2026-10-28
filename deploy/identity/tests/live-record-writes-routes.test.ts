@@ -2782,10 +2782,11 @@ test('P13: the retry of a deletion answered 503 writes nothing over a record re-
 
 test('P14: a Play guest token renewed (POST /tokens) at an instance whose copy of the owner is behind the pod is issued at the pod\'s session epoch, and verifies on both instances', { timeout: 90_000 }, async () => {
   // Two instances on the same pods (a deploy's overlap). A guest token's session epoch is checked
-  // on its owner's record as read from the pod, and nothing on its path reads this server's copy,
-  // so A's copy of an owner it loaded at epoch 0 stays there while B deletes the owner and
-  // provisions it again (epoch 1), or signs it out everywhere (epoch 2), however long the relay
-  // goes on introspecting the guest's tokens at A. A renewal at A was issued at its copy's epoch:
+  // on its owner's record as read from the pod, and its check and renewal install nothing of a live
+  // owner's record (only a check that finds the owner's tombstone on the pod refreshes this server's
+  // copy, and none is made at A while it is there), so A's copy of an owner it loaded at epoch 0
+  // stays there while B deletes the owner and provisions it again (epoch 1), or signs it out
+  // everywhere (epoch 2), however long the relay goes on introspecting the guest's tokens at A. A renewal at A was issued at its copy's epoch:
   // that token was refused on both instances ("Token revoked") at its first use, and the guest of
   // a live owner had to start again.
   const guest = await playGuestOnTwoInstances();
@@ -2835,8 +2836,8 @@ test('P14: a Play guest token renewed (POST /tokens) at an instance whose copy o
 
 test('P15: an owner its old guest token found deleted at A, provisioned again and claimed with a DID through B, is that DID\'s account at A at once: its token verifies, renews and reads there, and its deletion there deletes', { timeout: 90_000 }, async () => {
   // The guest token's check at A found the owner's tombstone and made A's copy that tombstone (for the
-  // retry of a deletion A answered 503), fresh, so A decided on it for the next 10 s; nothing on a
-  // guest token's path refreshed it. The guest then bootstrapped again through B and claimed the owner
+  // retry of a deletion A answered 503), fresh, so A decided on it for the next 10 s; no guest token's
+  // check or renewal refreshed it. The guest then bootstrapped again through B and claimed the owner
   // with a DID there. At A that DID's token was "Account deleted" (/tokens/verify, GET /auth-methods/me,
   // POST /tokens), and its deletion at A was taken for that retry and answered 409 ("Account not
   // deleted"). Two ways the owner is deleted: through B (200), and at A, answered 503.
