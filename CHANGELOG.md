@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-10-28 — Identity: the Chromium passkey regression uses the assertion check identity now uses
+
+`tools/passkey-signing-browser.mjs`, which CI's Identity Server Tests run in Chromium, still imported `authenticatePasskey` and `PasskeyPersistenceError`. This branch removed both from `deploy/identity/passkey-authentication.ts` when the counter and RP binding moved into the write of the record as the pod holds it. The script failed at import, before any browser step. It now calls `verifyPasskeyAssertion` and applies what the passkey sign-in writes (the counter, the RP id, and the origin when none is set) before the receipt is signed. The old persistence-failure check is replaced by these checks: a wrong challenge and a conflicting RP binding do not verify, and verifying leaves the stored credential unchanged. A refused write is covered by the identity route tests. Run locally in Chromium, the script passes; the previous one fails at the same import.
+
 ## 2026-10-28 — Identity: a Play purge sends the agent registry at most one DELETE a pass, not two in a row
 
 Corrections to the entry below, from a review of it. The behaviour fix has two route tests (C13, P9) and a purge test that fail with it reverted.
