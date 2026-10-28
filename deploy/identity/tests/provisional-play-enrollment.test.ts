@@ -197,6 +197,8 @@ function fixture() {
     return { response, run: (params = {}, body = {}) => run({ params, body }, response) as Promise<void> };
   };
   const root = `https://css.test/${userId}/`;
+  // Listings of the pod (the purge lists it before it closes anything).
+  let listings = 0;
   const fetcher = (async (input: string | URL | Request, init?: RequestInit) => {
     const url = String(input);
     if (init?.method === 'DELETE') {
@@ -207,6 +209,7 @@ function fixture() {
       if (url === root + 'auth-methods.jsonld') document = null;
       return new Response(null, { status: 205 });
     }
+    listings++;
     return new Response(`<${root}> ldp:contains <${root}checkpoint>, <${root}auth-methods.jsonld>.`);
   }) as typeof fetch;
   // The janitor's purge, exactly as server.ts makes it (purgePlayOwner): the account is closed (its
@@ -214,22 +217,23 @@ function fixture() {
   // anything is deleted, the mark is cleared once everything else is, and the record stays.
   const janitorLog: string[] = [];
   const unfinishedPlayPurges = new Set<string>();
+  const playPurgesInFlight = new Set<string>();
   const finishPlayPurge = new Function('applyUpdate', 'NoWrite', 'Write', 'isTombstone', 'authMethodsCache', 'removeFromIndexes',
     `${productionFunction('finishPlayPurge')}; return finishPlayPurge;`)(
     applyUpdate, NoWrite, Write, isTombstone, authMethodsCache, () => {});
   const purgePlayOwner = new Function('withIdentityPodMutex', 'purgeProvisionalPlayPod', 'CSS_URL', 'deleteUserCompletely',
-    'playOwnerPurgeable', 'unfinishedPlayPurges', 'finishPlayPurge', 'log', 'awaitsGuestRetry',
+    'playOwnerPurgeable', 'unfinishedPlayPurges', 'finishPlayPurge', 'log', 'awaitsGuestRetry', 'playPurgesInFlight',
     `${productionFunction('purgePlayOwner')}; return purgePlayOwner;`)(
     withIdentityPodMutex, (o: Parameters<typeof purgeProvisionalPlayPod>[0]) => purgeProvisionalPlayPod({ ...o, fetcher }),
     'https://css.test/', deleteUserCompletely, playOwnerPurgeable, unfinishedPlayPurges, finishPlayPurge,
-    (line: string) => { janitorLog.push(line); }, awaitsGuestRetry,
+    (line: string) => { janitorLog.push(line); }, awaitsGuestRetry, playPurgesInFlight,
   ) as (owner: string) => Promise<void>;
   const cleanup = () => purgePlayOwner(userId);
   return {
     commit, authenticate, signIn, cleanup, control, deletions, janitorLog, unfinishedPlayPurges, unconfirmedPlayDeletions,
     get document() { return document; }, get cached() { return cached; },
     get checkpoint() { return checkpoint; }, get puts() { return puts; }, get installs() { return installs; },
-    get openCalls() { return openCalls; },
+    get openCalls() { return openCalls; }, get listings() { return listings; },
     set now(value: number) { now = value; },
     set beforePersist(value: () => Promise<void>) { beforePersist = value; },
     set beforeDelete(value: () => Promise<void>) { beforeDelete = value; },
@@ -312,6 +316,45 @@ test('a purge whose deletion fails stays open for the next pass: the account is 
   // Each pass sends a DELETE only to what it listed (this pod lists no agent registry): a purge
   // used to send the deletion's own registry DELETE first at every pass, on top of its listing's.
   assert.deepEqual(f.deletions, [`https://css.test/${userId}/checkpoint`]);
+});
+
+test('a pass that starts while an owner\'s purge hangs queues no purge of its own: the one purge lists the pod and sends its DELETEs, and nothing logs the owner forgotten', async () => {
+  // Every janitor pass calls purgePlayOwner for each owner in unfinishedPlayPurges, which a purge
+  // enters before its DELETEs. A pass that started while one hung used to queue another purge of
+  // the same owner behind it on the owner's lock, one a pass: each listed the pod and sent its
+  // DELETEs again, and one that ran after the purge had finished logged that it forgot the owner.
+  const f = fixture();
+  f.now = 20;
+  // The purge's first DELETE is not answered until `answer`, and then fails (a 5xx after a hang).
+  const sent = deferred(), answer = deferred();
+  let held = false;
+  f.beforeDelete = async () => { if (held) return; held = true; sent.resolve(); await answer.promise; };
+  f.failingDeletes = 1;
+  const purge = f.cleanup();
+  await sent.promise;
+  assert.deepEqual([...f.unfinishedPlayPurges], [userId], 'every pass from now on walks the owner');
+  // Two passes start while the DELETE hangs.
+  let waiting = 2;
+  const passes = [f.cleanup(), f.cleanup()].map(p => p.then(() => { waiting--; }));
+  await new Promise(resolve => setImmediate(resolve));
+  const queued = waiting;
+  answer.resolve();
+  await Promise.all([purge, ...passes]);
+  assert.equal(queued, 0, 'a pass queued a purge of the owner behind the one in flight');
+  assert.equal(f.listings, 1, 'the pod is listed by the one purge');
+  assert.deepEqual(f.deletions, [], 'its DELETE failed, and no other purge sent it again');
+  assert.equal(f.document!.provisionalPlayPurgePending, true, 'the purge is unfinished');
+  const log = f.janitorLog.join('\n');
+  assert.equal(log.match(/not queuing another purge of u-try-play-1+/g)?.length, 2, log);
+  assert.match(log, /purge of u-try-play-1+ unfinished/);
+  assert.doesNotMatch(log, /forgot/);
+  // The purge that failed let go of the owner: the first pass after it takes the owner up again, and finishes it.
+  await f.cleanup();
+  assert.equal(f.listings, 2);
+  assert.deepEqual(f.deletions, [`https://css.test/${userId}/checkpoint`]);
+  assert.equal(f.document!.provisionalPlayPurgePending, undefined);
+  assert.equal(f.unfinishedPlayPurges.size, 0);
+  assert.doesNotMatch(f.janitorLog.join('\n'), /forgot/);
 });
 
 test('a deletion\'s tombstone is not purged: its owner may be provisioned again over it until its guest deadline, so the janitor only forgets it', async () => {

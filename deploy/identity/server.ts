@@ -730,6 +730,15 @@ const deletedUserIds = new Set<string>();
 // closed, is no longer in `identities`, which is all the janitor's sweep walks.
 const unfinishedPlayPurges = new Set<string>();
 
+// Play owners whose purge (purgePlayOwner) is waiting for the owner's lock or running. A purge
+// puts its owner in unfinishedPlayPurges before it sends its DELETEs, so every pass that started
+// while one hung (a DELETE the pod did not answer for its timeout) queued another purge of the same
+// owner behind it on the lock: each listed the pod and sent its DELETEs again, and one that ran
+// after the purge had finished found the tombstone unmarked and logged that it forgot the owner, as
+// if the tombstone were a deletion's. Now a purge of an owner already here returns at once, so at
+// most one purge of an owner is queued or running; the purge takes its owner out when it returns.
+const playPurgesInFlight = new Set<string>();
+
 // Play owners whose deletion (POST /users/me/delete) the pod may have taken without confirming it,
 // nothing having settled it, so the route answered 503 and asked for a retry with the same token:
 // each id with its guest deadline (playGuestDeadline). Until then a guest token can make that retry,
@@ -6522,8 +6531,17 @@ async function deleteUserCompletely(
  * a purge decided before the 503 reaches it all the same. After that deadline, close() finishes
  * the deletion (the registry DELETE, as the retry would have): no provisioning restores the owner
  * then.
+ *
+ * At most one purge of an owner is queued on its lock or running (playPurgesInFlight): one asked
+ * for while another is returns at once, and the janitor's first pass after that other has returned
+ * takes the owner up again if its purge is still unfinished.
  */
 async function purgePlayOwner(userId: string): Promise<void> {
+  if (playPurgesInFlight.has(userId)) {
+    log(`Janitor: not queuing another purge of ${userId}: the one an earlier pass started is still waiting for its lock or running`);
+    return;
+  }
+  playPurgesInFlight.add(userId);
   let closed = false;
   let finished = false;
   try {
@@ -6557,6 +6575,8 @@ async function purgePlayOwner(userId: string): Promise<void> {
     log(closed || unfinishedPlayPurges.has(userId)
       ? `Janitor: purge of ${userId} unfinished, its account closed; tried again at the next pass: ${(err as Error).message}`
       : `Janitor: provisional cleanup kept ${userId}: ${(err as Error).message}`);
+  } finally {
+    playPurgesInFlight.delete(userId);
   }
 }
 
@@ -7629,6 +7649,8 @@ app.listen(PORT, () => {
         unclaimedTry.add(u.id);
       }
       // Play purges a pass closed but could not finish, and those the startup scan found unfinished.
+      // One still waiting for its owner's lock or running is not queued again (purgePlayOwner
+      // returns at once: playPurgesInFlight).
       for (const id of unfinishedPlayPurges) toPurge.add(id);
       if (toPurge.size === 0) return;
       log(`Janitor: purging ${toPurge.size} stale user(s) (test + try-it)`);

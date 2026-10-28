@@ -1,16 +1,18 @@
 # Changelog
 
-## 2026-10-28 — Identity: a Play purge sends the agent registry at most one DELETE a pass, not two in a row
+## 2026-10-28 — Identity: a Play purge sends the agent registry at most one DELETE a pass, not two in a row, and a janitor pass queues no second purge of an owner
 
-Corrections to the entry below, from a review of it. The behaviour fix has two route tests (C13, P9) and a purge test that fail with it reverted.
+Corrections to the entry below, from a review of it. The first behaviour fix has two route tests (C13, P9) and a purge test that fail with it reverted; the second has a purge test that fails with it reverted.
 
 - **A Play purge sent the owner's agent registry two `DELETE`s, one after the other, under the owner's lock.** When the janitor's purge closed a Play owner, or found the tombstone an earlier pass had marked, `deleteUserCompletely` sent a best-effort `DELETE <pod>/agents`, and the purge then sent a `DELETE` to every resource it had listed, the registry included, each with a 15 s timeout of its own. Every Play pod holds that registry once the relay's `/play/provisional/exchange` has bootstrapped it. So a registry the pod did not answer held the owner's lock for 30 s, and the owner's provisioning and every bootstrap read of its pod waited behind it; on a pod that answers, every pass sent one more `DELETE`, which the store answers `404`. Now the deletion sends no registry `DELETE` for a purge's tombstone. The purge deletes the registry with the pod's other resources, sending it at most one `DELETE` a pass, and a failed one leaves the purge unfinished for the next pass (the deletion's own failure was swallowed). A deletion this process answered `503`, which the janitor finishes after the guest deadline, still sends its one registry `DELETE` from the deletion.
+- **Every janitor pass that started while a Play purge hung queued another purge of the same owner behind it.** A pass calls `purgePlayOwner` for every owner in `unfinishedPlayPurges`, and a purge puts its owner there before it sends its `DELETE`s. While one of them waited for a pod that did not answer (up to 15 s a request, for each of up to 128 resources), each pass that started queued one more purge of that owner on its lock. Each listed the pod and sent its `DELETE`s again, and one that ran after the purge had finished found the tombstone unmarked and logged `forgot <id>: its record is a tombstone no purge left unfinished (a deletion's)`. Now `purgePlayOwner` returns at once for an owner whose purge is waiting for the lock or running (`playPurgesInFlight` in `server.ts`, released in a `finally`) and logs `not queuing another purge of <id>`. The first pass after that purge has returned takes the owner up again if the purge is still unfinished.
 
-Documentation (this file, `deploy/identity/AUTH-ARCHITECTURE.md`, code and test comments):
+Documentation (this file, `deploy/identity/AUTH-ARCHITECTURE.md`, `deploy/identity/PROVISIONAL-PLAY.md`, code and test comments):
 
 - The entry below says P9's registry `DELETE` fails once. That failure fell on the deletion's own `DELETE`, so the purge finished at its first pass (above). The entry now says so.
 - The entry below corrected the claim that the old janitor could delete the checkpoint of an owner provisioned again, but P10's comment still said such a guest "lost its checkpoint and its agent registry". It lost its registry. The janitor sent a `DELETE` for its game save too, which the store refuses with `409` (a native-committed head), so the save stayed. The comment now says so.
 - `AUTH-ARCHITECTURE.md`, `server.ts` and `provisional-play-cleanup.ts` say the purge deletes the registry with the pod's other resources, at most one `DELETE` a pass.
+- `AUTH-ARCHITECTURE.md`, `PROVISIONAL-PLAY.md` and `server.ts` say at most one purge of an owner is queued or running at a time, and that the first pass after it has returned takes the owner up again.
 
 Tests:
 
@@ -18,7 +20,9 @@ Tests:
   - C13's pod holds the agent registry, as a production Play pod does. Its stand-in pod held none, so the purge's listing named none and only the first of the two `DELETE`s was sent; with the registry stored and the fix reverted, the request for the owner's lock waits 30 s and C13 fails. C13 also asserts that the registry `DELETE`'s timeout leaves the purge unfinished, its tombstone marked, and afterwards clears what that leaves on its pod, so the instances of the tests after it find no purge open.
   - P9: the registry's `500` now stops the first pass of the first owner's purge. P9 asserts that pass's `purge of <id> unfinished` line before the `finished the purge` line, the registry's second `DELETE` at least 500 ms after the first (the next pass), and the tombstone written marked once and then, after that second `DELETE`, without the mark. Its assertion message "refused once, then sent again at the next pass" was false: the `205` came from the same pass. With the fix reverted, P9 fails.
   - The file takes about 132 s against its 300 s limit.
-- **`provisional-play-enrollment.test.ts`**: a purge whose deletion fails once sends `DELETE`s, over its two passes, only to the resource it listed. With the fix reverted, the registry, which its pod does not list, gets one at each pass as well.
+- **`provisional-play-enrollment.test.ts`**:
+  - A purge whose deletion fails once sends `DELETE`s, over its two passes, only to the resource it listed. With the fix reverted, the registry, which its pod does not list, gets one at each pass as well.
+  - Two passes start while a purge's `DELETE` hangs, and that `DELETE` then fails. Neither pass waits for the owner's lock, the pod is listed once, nothing is deleted, and nothing logs `forgot`; the next pass lists the pod again and finishes the purge. With the guard reverted, both passes queue on the lock: the first lists the pod and finishes the purge, the second lists it and logs `forgot`. With the guard never released, that next pass returns at once and the purge is never finished.
 
 ## 2026-10-28 — Identity: a Play guest token is checked on its owner's record as the pod holds it, a deletion's retry closes nothing it finds open, and a Play purge keeps the game's saves instead of never finishing
 
