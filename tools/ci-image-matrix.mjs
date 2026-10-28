@@ -35,7 +35,9 @@ import { dirname, resolve } from 'node:path';
 const here = dirname(fileURLToPath(import.meta.url));
 const file = resolve(here, '..', 'deploy', 'images.json');
 
-/** @type {{ images: { image: string, dockerfile: string, build_args?: string, prebuild?: string, target?: string }[] }} */
+// Each row becomes one leg as written. `prebuild` and `seed` name recipes in the workflow (the steps
+// gated on `matrix.prebuild` / `matrix.seed`); a leg without one simply runs no such steps.
+/** @type {{ images: { image: string, dockerfile: string, build_args?: string, prebuild?: string, seed?: string, target?: string }[] }} */
 let manifest;
 try {
   manifest = JSON.parse(readFileSync(file, 'utf8'));
