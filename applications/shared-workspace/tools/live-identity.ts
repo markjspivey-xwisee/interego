@@ -56,8 +56,8 @@ export async function mintBearer(
   // Discord bot is a LONG-LIVED identity whose DID contains `clientName` (see
   // `discord/src/identity.ts`), so "did this caller pass its own name?" is worth a test — and
   // the only place that question is answerable is the `/register` body below. Patching
-  // `globalThis.fetch` to read it would leak across the shared vitest realm. Every existing
-  // caller omits this and gets the global `fetch`, unchanged.
+  // `globalThis.fetch` to read it would leak into every later test in the same process.
+  // Every existing caller omits this and gets the global `fetch`, unchanged.
   fetchImpl: typeof fetch = fetch,
 ): Promise<RelayOAuthBearer> {
   const verifier = b64u(randomBytes(32));

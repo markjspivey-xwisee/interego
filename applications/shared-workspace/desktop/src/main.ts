@@ -22,7 +22,7 @@
 
 import { app, BrowserWindow, dialog, ipcMain, Notification, shell, type WebContents } from 'electron';
 import { randomUUID } from 'node:crypto';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { clearPending, nominate, readPending, readSettings, revokeGrant, writeGrant } from './permission.js';
 import { composeGate } from './turnsetup.js';
 import {
@@ -2099,14 +2099,23 @@ app.whenReady().then(() => {
    * other code could send; one arriving from `showOpenDialog` was pointed at by the person sitting
    * in front of the machine. Widening an agent's boundary is exactly the operation that should
    * require a hand on the mouse.
+   *
+   * ★ IT OPENS WHERE THE LAST PICK WAS MADE. Up to Electron 42 a picker with no `defaultPath` let
+   * the OS restore the folder it was last left in. From 43 Electron opens it in Downloads every
+   * time, and the OS no longer remembers. A project is rarely in Downloads, so the folder that
+   * held the last project picked here is handed back as `defaultPath`. It is kept in memory for
+   * this run of the app only, so the first pick after a launch starts in Downloads.
    */
+  let lastPickedFrom: string | undefined;
   ipcMain.handle('permission:nominate', async () => {
     const picked = await dialog.showOpenDialog({
       title: 'Choose a project your agents may work in',
       properties: ['openDirectory'],
+      ...(lastPickedFrom ? { defaultPath: lastPickedFrom } : {}),
     });
     const dir = picked.filePaths[0];
     if (picked.canceled || !dir) return { ok: false, why: '' };
+    lastPickedFrom = dirname(dir);
     return nominate(app.getPath('userData'), dir, true);
   });
 
@@ -2163,6 +2172,12 @@ function watchForRequests(): void {
    *
    * Neither is as good as a toast. Both are visible when the toast is not, and between them the
    * claim "you will be told" survives a machine where notifications are off.
+   *
+   * ★ ON macOS THE TOAST NEVER ARRIVES AT ALL, by design rather than by setting. From Electron 42
+   * notifications there go through Apple's UNNotification API, which shows nothing for an app that
+   * is not code-signed and emits `failed` on the Notification instead. This app is unsigned (see
+   * electron-builder.yml), so on a Mac the dock bounce (`flashFrame`) and the title are the whole
+   * signal.
    */
   const signal = (count: number): void => {
     const win = BrowserWindow.getAllWindows()[0];

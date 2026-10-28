@@ -25,7 +25,8 @@
  * So the property "these tests share one live resource" was true, load-bearing, and not
  * discoverable from any file a reader of the pool config would open. This module is the one
  * place that states it, `shared-live-externals.test.ts` is what keeps every field below true,
- * and the `poolOptions` comment in `vitest.config.ts` points here.
+ * and the pool comment in `vitest.config.ts` (on `maxWorkers`, since vitest 4 removed
+ * `poolOptions`) points here.
  *
  * ★★ AND THE FIRST VERSION OF THIS FILE SAID "THE THREE LIVE THINGS" WHILE MISSING THE ONLY
  * ONE CI ACTUALLY ARMS. `RUN_PUBLIC_RELAY` — a third-party Nostr relay — is read by two
@@ -551,6 +552,13 @@ export const SHARED_BUT_NOT_LIVE: readonly { readonly name: string; readonly why
       + 'neither an address nor the CSS/PGSL prerequisites and cannot activate a suite by itself. '
       + 'The isolated CI fixture uses its own synthetic capability rather than this variable.',
   },
+  {
+    name: 'PATH',
+    why: 'Two suites read it themselves only to put a stand-in binary first on it: '
+      + 'tests/pgsl-store-gc-headroom-ipc.test.ts, and the Foxxi seed wiring test, which runs the '
+      + 'workflow\'s own shell with a stand-in docker. The desktop app also splits it to look for a '
+      + 'node binary (applications/shared-workspace/desktop/src/turnsetup.ts). It addresses nothing.',
+  },
   //
   // The single candidate that once looked like it needed a line — FOXXI_WALLET_SEED — is read
   // in the TEST TREE by exactly ONE module, `applications/foxxi-content-intelligence/tests/
@@ -916,12 +924,6 @@ export const SHARED_ONLY_THROUGH_IMPORTED_CODE: readonly {
     readIn: 'deploy/mcp-relay/egress.ts',
     why: 'the same deadline for the longer invoke path, defaulted to 120_000. Same read site '
       + 'and same argument as the fetch timeout above.',
-  },
-  {
-    name: 'PATH',
-    readIn: 'applications/shared-workspace/desktop/src/turnsetup.ts',
-    why: 'split on the platform delimiter to search the directories already on it for a node '
-      + 'binary. The most ambient variable there is, and it addresses nothing of ours.',
   },
   {
     name: 'ProgramFiles',

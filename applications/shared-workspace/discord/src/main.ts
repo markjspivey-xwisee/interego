@@ -22,7 +22,7 @@
  * importing this module authenticated against Discord, minted a SIWE bearer against the live
  * relay, wrote `~/.interego/discord-workspace.json`, opened a real gateway socket and installed
  * two `process.on(SIG…)` handlers — and swallowed any throw into `process.exitCode = 1`, which
- * in a shared vitest worker is a green-looking import that quietly poisons the run. There was
+ * in a vitest worker is a green-looking import that quietly poisons the run. There was
  * therefore no way to reach `onInteraction`, `onMessage` or the per-pod queue at all, and this
  * file — the wiring between the Discord half and the substrate half, the only part of the bot
  * neither `tests/gateway.test.ts` nor `tests/record.test.ts` touches — was the least-proven code
@@ -102,8 +102,8 @@ export interface Boot {
   /** Defaults to `new BotSession(relay, identity, INTEREGO_BOT_KEY)`. */
   readonly session?: SessionLike;
   /**
-   * Defaults to `process.on`. A test must not leave SIGINT/SIGTERM listeners behind in a
-   * single-threaded vitest worker, and a listener that calls `process.exit(0)` least of all.
+   * Defaults to `process.on`. A test must not leave SIGINT/SIGTERM listeners behind in its
+   * vitest worker, and a listener that calls `process.exit(0)` least of all.
    */
   readonly installSignalHandler?: (signal: 'SIGINT' | 'SIGTERM', handler: () => void) => void;
   /**

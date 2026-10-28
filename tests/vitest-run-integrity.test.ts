@@ -67,11 +67,12 @@ const INCLUDE = [
 ];
 
 /**
- * ★ `process.exitCode` IS RESTORED AROUND EVERY CASE. vitest pins singleThread/singleFork
- * here, so every file shares one globalThis and one process: a case that exercises the
- * failure path sets the REAL exit code to 1 and would turn a fully green suite red from
- * here — and it would be blamed on whichever file ran last, not on this one. That is the
- * shared-realm pollution class. The `finally` below is load-bearing; do not simplify it.
+ * ★ `process.exitCode` IS RESTORED AROUND EVERY CASE. A case that exercises the failure path
+ * sets the REAL exit code of the process it runs in to 1. Under vitest 3's singleFork every
+ * file shared that process, so it would turn a fully green suite red from here — blamed on
+ * whichever file ran last, not on this one. That is the shared-realm pollution class. Since
+ * vitest 4 the worker is this file's alone, which narrows the damage to this file's process
+ * without making it harmless. The `finally` below is load-bearing; do not simplify it.
  */
 async function drive(opts: { root: string; specs: string[]; planned: number; shard?: { index: number; count: number }; ran?: number }): Promise<{
   failed: boolean; out: string;
@@ -111,13 +112,15 @@ describe('★ under --shard the plan is this shard\'s slice, not every specifica
   // bridge-typecheck.yml, 2026-09-23: the complement part ran as two shards, vitest handed the
   // reporter all 420 surviving specifications, the second shard ran its 210, and the gate
   // called the other 210 "never finished".
-  it('plans vitest\'s own slice: ceil(total / n) per shard, the last one shorter, everything without a shard', async () => {
+  it('plans vitest\'s own slice: floor(total / n) per shard, one more in each of the first total % n, everything without a shard', async () => {
     const { shardPlan } = await import(new URL('../tools/vitest-run-integrity.mjs', import.meta.url).href) as { shardPlan: (t: number, s?: { index: number; count: number }) => number };
     expect(shardPlan(420, { index: 1, count: 2 })).toBe(210);
     expect(shardPlan(420, { index: 2, count: 2 })).toBe(210);
     expect(shardPlan(5, { index: 1, count: 2 })).toBe(3);
     expect(shardPlan(5, { index: 2, count: 2 })).toBe(2);
     expect(shardPlan(5, { index: 3, count: 3 })).toBe(1);
+    // The case vitest 3 and 4 disagree on: 4's sequencer cuts 10 files 3, 3, 2, 2 (3 cut 3, 3, 3, 1).
+    expect([1, 2, 3, 4].map(index => shardPlan(10, { index, count: 4 }))).toEqual([3, 3, 2, 2]);
     expect(shardPlan(5, undefined)).toBe(5);
     expect(shardPlan(5, { index: 1, count: 1 })).toBe(5);
   });

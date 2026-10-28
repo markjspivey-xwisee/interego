@@ -39,8 +39,8 @@ interface Captured { url: string; method: string; body: string }
 
 /** Records every write the publisher attempts and answers 201/200, so the bytes
  *  that WOULD have reached a pod can be validated. Never assigned to
- *  globalThis.fetch — vitest shares one realm here and a global patch would break
- *  unrelated pod-touching suites in a full run only. */
+ *  globalThis.fetch — a global patch reaches every later test in the same process
+ *  (since vitest 4, the rest of this file; under vitest 3, every later file). */
 function captureFetch(): { fetchFn: typeof fetch; calls: Captured[] } {
   const calls: Captured[] = [];
   const fetchFn = (async (input: RequestInfo | URL, init?: RequestInit) => {

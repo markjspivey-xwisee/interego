@@ -29,7 +29,7 @@ const PEER_AUTHORITATIVE_SOURCE = process.env.PEER_AUTHORITATIVE_SOURCE
 // this bearer from a fetch patch inside bridge/server.ts, which a standalone tsx
 // script never loads, so the capability had to be extracted to be reusable.
 // Patching globalThis here is safe ONLY because this is a one-shot script; never
-// do it from a test (vitest shares one realm).
+// do it from a test, where it reaches every later test in the same process.
 if (!process.env.FOXXI_POD_WRITE_SECRET) {
   console.error('  FOXXI_POD_WRITE_SECRET is unset — every write to the live css-gate 401s. Set it to the gate WRITE_SECRET.');
   process.exit(1);

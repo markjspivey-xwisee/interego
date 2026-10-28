@@ -267,9 +267,9 @@ describe('★ the address screen is WIRED: a socket, from the far side', () => {
       expect.soft(status, 'the guarded fetch COMPLETED against a loopback listener — this is the SSRF itself')
         .toBeUndefined();
     } finally {
-      // vitest runs this repo single-threaded (`poolOptions.threads.singleThread`), so a
-      // global dispatcher or resolver left installed here is installed for every later
-      // test FILE in the run. Restored in a `finally`, not at the end of the happy path.
+      // A global dispatcher or resolver left installed here is installed for every later test
+      // in this process: every later FILE under vitest 3's single fork, every later test in
+      // this file since vitest 4. Restored in a `finally`, not at the end of the happy path.
       if (previousGlobal) setGlobalDispatcher(previousGlobal);
       restoreResolver?.();
       await egress?.close();

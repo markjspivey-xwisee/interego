@@ -99,7 +99,10 @@ jobs:
       - uses: actions/checkout@v6
       - uses: actions/setup-node@v6
         with:
-          node-version: '20'
+          # 22, not 20, because the desktop's own toolchain needs it: electron's npm package (40+)
+          # and electron-builder 26's @electron/rebuild declare node >=22.12, and electron's
+          # on-demand binary download failed outright on Node 20 when measured.
+          node-version: '22'
       - name: Install workspace deps
         run: npm ci --no-audit --no-fund
       - name: Build the substrate packages the renderer bundles
@@ -130,7 +133,8 @@ jobs:
       - uses: actions/checkout@v6
       - uses: actions/setup-node@v6
         with:
-          node-version: '20'
+          # 22 for the same reason as the job above: the packaging toolchain declares node >=22.12.
+          node-version: '22'
       - name: Install workspace deps
         run: npm ci --no-audit --no-fund
       - name: Build the substrate packages the shell bundles

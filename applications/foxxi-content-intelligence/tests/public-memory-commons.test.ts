@@ -149,12 +149,13 @@ describe('public-memory commons — resource isolation', () => {
     expect(puts.every(u => u.endsWith('/foxxi-lattice/public-memories.holon.json'))).toBe(true);
     expect(puts.some(u => u.endsWith('/shared-lattice.holon.json'))).toBe(false);
     // ★ AN EXPLICIT BUDGET, BECAUSE THE DEFAULT 5s WAS MEASURING MACHINE LOAD, NOT THIS CODE.
-    // vitest.config.ts pins singleThread/singleFork, so every file shares one worker: under the
-    // whole-suite run in CI (4,400+ tests, ~300s) this test's timer can expire while it is queued
-    // behind a neighbour. It timed out in CI, passed on a bare re-run of the same commit, and passes
-    // locally — the classic shape. Nothing here is latency-sensitive; the assertions are about WHICH
-    // resource was written, so a larger budget weakens nothing and stops a false red on a gate that
-    // is now a deploy precondition.
+    // vitest.config.ts runs the files one at a time on one worker (singleFork under vitest 3, a
+    // single isolated worker since vitest 4): under the whole-suite run in CI (4,400+ tests,
+    // ~300s) this test's timer can expire while it is queued behind a neighbour. It timed out in
+    // CI, passed on a bare re-run of the same commit, and passes locally — the classic shape.
+    // Nothing here is latency-sensitive; the assertions are about WHICH resource was written, so a
+    // larger budget weakens nothing and stops a false red on a gate that is now a deploy
+    // precondition.
   }, 30000);
 });
 

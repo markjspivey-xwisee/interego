@@ -38,7 +38,7 @@ const POD = 'https://pod.example.test/me/';
 
 /** Records every write the publisher attempts, so the BYTES it would have sent to a pod can
  *  be asserted on. Same idiom as agp-stage2.test.ts, which has driven this function all
- *  along. Never assigned to globalThis.fetch — one realm is shared across suites. */
+ *  along. Never assigned to globalThis.fetch, for the reason given there. */
 function captureFetch(): { fetchFn: typeof fetch; bodies: string[] } {
   const bodies: string[] = [];
   const fetchFn = (async (input: RequestInfo | URL, init?: RequestInit) => {

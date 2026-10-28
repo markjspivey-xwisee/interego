@@ -74,9 +74,9 @@ let egressResolver: OsResolver = dnsLookup as unknown as OsResolver;
 
 /**
  * Point the egress screen at a stand-in resolver. Returns the restore function;
- * call it in a `finally`, because vitest runs this repo's suite in ONE thread
- * (`poolOptions.threads.singleThread`) and a resolver left installed is installed
- * for every later test file in the run.
+ * call it in a `finally`, because a resolver left installed stays installed for
+ * every later test in the same process. Since vitest 4 that is the rest of the
+ * test file that installed it, as each file runs in a process of its own.
  */
 export function setEgressResolverForTests(resolver: OsResolver): () => void {
   const previous = egressResolver;

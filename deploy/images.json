@@ -20,13 +20,18 @@
     "",
     "★ AND ONE FILE RATHER THAN TWO COPIES. The validator's whole purpose is that a dispatch",
     "which would build nothing must fail rather than go green; that only holds while it and the",
-    "matrix cannot disagree. Same file, same list, no sed parsing of YAML."
+    "matrix cannot disagree. Same file, same list, no sed parsing of YAML.",
+    "",
+    "`prebuild` and `seed` name recipes in build-ghcr.yml, the steps gated on `matrix.prebuild` or",
+    "`matrix.seed`. `seed: i2idlx-upper` passes the Foxxi build's pinned upper-ontology sources to that",
+    "leg alone as the `upper-seed` build context: an image of them that the leg pushes once per set",
+    "of pins, after fetching and verifying them on the runner."
   ],
   "images": [
     { "image": "interego-relay", "dockerfile": "deploy/Dockerfile.relay", "target": "reference" },
     { "image": "interego-identity", "dockerfile": "deploy/Dockerfile.identity" },
     { "image": "interego-css-gate", "dockerfile": "deploy/Dockerfile.css-gate" },
-    { "image": "interego-foxxi-bridge", "dockerfile": "deploy/Dockerfile.foxxi-bridge", "prebuild": "dist" },
+    { "image": "interego-foxxi-bridge", "dockerfile": "deploy/Dockerfile.foxxi-bridge", "prebuild": "dist", "seed": "i2idlx-upper" },
     { "image": "interego-jev-harness-bridge", "dockerfile": "deploy/Dockerfile.jev-harness-bridge", "prebuild": "dist" },
     { "image": "interego-agp-bridge", "dockerfile": "deploy/Dockerfile.agp-bridge", "prebuild": "dist" },
     { "image": "interego-wsp-bridge", "dockerfile": "deploy/Dockerfile.wsp-bridge", "prebuild": "dist" },

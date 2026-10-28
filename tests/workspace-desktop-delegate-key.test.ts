@@ -527,8 +527,9 @@ beforeAll(() => {
 });
 
 afterAll(() => {
-  // ★ RESTORED, BECAUSE THE POOL IS SINGLE-THREADED. A `globalThis.fetch` left overridden is a
-  // trap for whichever file runs next, and it would fail there rather than here.
+  // ★ RESTORED, although since vitest 4 no other file shares this process. Under vitest 3 every
+  // file ran in one process, and a `globalThis.fetch` left overridden was a trap for whichever
+  // file ran next, failing there rather than here. Now only a later hook in this file could meet it.
   globalThis.fetch = realFetch;
   // Any renewal an aborted case left armed — an hour out, and enough to hold the worker open long
   // after the file has finished. Cleared through the real function, then both are put back.
