@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-10-29 — Browser wallet: identity selection, context inspection, and reviewed private captures
+
+`applications/browser-wallet` adds a dependency-free Manifest V3 extension for Chrome and Chromium-based Edge. It follows the relay's public-client OAuth metadata with PKCE and state, keeps access tokens in browser session storage, discovers its four admitted tool affordances, and displays the current session agent and recent pod descriptors. A toolbar click captures selected text for an editable review; saving requires an explicit write connection and approval of the exact private `remember` payload. Reviews expire and are consumed before dispatch, so duplicate approvals and uncertain writes cannot automatically replay a save. Receipts distinguish accepted writes, readable returned descriptors, refusals, and uncertain outcomes. Private notes use the relay's current encryption path for the session agent; the extension does not take custody of identity keys or claim client-side end-to-end encryption.
+
+Validation covers OAuth binding, live-catalog boundaries, read-only enforcement, changed identities, expired and replayed approvals, uncertain writes, storage isolation, and extension-package checks. Browser testing uses an isolated Chromium profile and offline OAuth/network fixtures; live public catalog and OAuth discovery were checked separately. Live account sign-in and save remain manual checks. A scoped CI workflow runs the dependency-free checks.
+
 ## 2026-10-29 — PGSL native heads can be deleted with an explicit exact-revision protocol
 
 The PGSL store now has an atomic compare-and-delete operation for native-managed documents. It requires a strong expected revision, restates the resource-head predicate with the transaction adapter's compare-and-set operation, and clears the head and both overlay directions in that transaction while leaving content-addressed nodes for garbage collection. An absent or changed head is a conflict; legacy heads and containers are not accepted.

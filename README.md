@@ -72,6 +72,7 @@ The underlying surface is a small categorical kernel — eight verbs: `mint`, `d
 | Run a SOC 2 / EU AI Act / NIST RMF audit against an Interego pod | [`spec/SOC2-PREPARATION.md`](spec/SOC2-PREPARATION.md) |
 | Set up Interego for a non-technical friend or family member | [The hosted front door](https://identity.interego.xwisee.com/) — they enroll a passkey or wallet directly (~30s, no command line), or their MCP client drives it on first call |
 | Browse the protocol primitives via web UI | [Identity Dashboard](https://identity.interego.xwisee.com/dashboard) + [PGSL Browser](https://pgsl-browser.interego.xwisee.com) |
+| Choose an identity and review private browser captures | [Interego Wallet](applications/browser-wallet/) — an unpacked Chrome/Edge extension with session-only OAuth and explicit save review |
 
 ---
 
