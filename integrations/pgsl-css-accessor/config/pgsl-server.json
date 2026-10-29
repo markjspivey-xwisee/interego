@@ -54,14 +54,14 @@
   ],
   "@graph": [
     {
+      "comment": "CSS 7.2 declares the conditions parser inline, with no @id, inside the RequestParser (config/ldp/handler/components/request-parser.json), so it is replaced through a same-type BasicRequestParser override that changes only conditionsParser. NativeConditionsParser records the Interego-Native-Delete opt-in; every other condition is parsed as CSS parses it.",
       "@type": "Override",
-      "overrideInstance": {
-        "@id": "urn:solid-server:default:ConditionsParser"
-      },
+      "overrideInstance": { "@id": "urn:solid-server:default:RequestParser" },
       "overrideParameters": {
-        "@type": "NativeConditionsParser",
-        "eTagHandler": {
-          "@id": "urn:solid-server:default:ETagHandler"
+        "@type": "BasicRequestParser",
+        "conditionsParser": {
+          "@type": "NativeConditionsParser",
+          "eTagHandler": { "@id": "urn:solid-server:default:ETagHandler" }
         }
       }
     },

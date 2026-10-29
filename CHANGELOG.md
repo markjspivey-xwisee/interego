@@ -6,6 +6,15 @@ The PGSL store now has an atomic compare-and-delete operation for native-managed
 
 The CSS accessor exposes this only through its ordinary authorized delete path when a request supplies both `Interego-Native-Delete: 1` and exactly one strong native `If-Match`. Plain `DELETE`, and `DELETE` with only `If-Match`, retain the existing `409` response for a native head. A stale or disappeared exact target is `412`, and `OPTIONS` advertises the capability. Both live accessor configurations install the condition parser and native delete handler. Store tests cover exact deletion, stale and absent heads, retained canonical content, refused legacy/container targets, and the native commit/delete race under PostgreSQL `READ COMMITTED`.
 
+Two fixes to the first version of this change, which CI caught before any deploy:
+- **Server start-up.** CSS could not start with either accessor configuration (`Missing type for override target urn:solid-server:default:ConditionsParser`), so CI's `css-server` and native-commit jobs failed. CSS 7.2.0 declares its conditions parser inline, with no `@id`, inside `urn:solid-server:default:RequestParser`. Both configurations now replace it through a same-type `BasicRequestParser` override that changes only `conditionsParser`.
+- **Missing target.** CSS answers `404` for a missing document before the accessor runs, so a native delete of an absent document was answered `404` where `412` was intended. `NativeDeleteOperationHandler` now answers `412` for it, on opted-in requests only.
+
+Run locally against a deploy-shaped tree:
+- `PGSL_INMEM=1 npm run test:server`: all pass.
+- `test/native-commit.it.ts` on PostgreSQL 16, native-delete phase included: all pass.
+- `tests/pgsl-store-native-commit.test.ts` with `TEST_NATIVE_PG_URL`: 28 of 28, including the four PostgreSQL race and recovery tests.
+
 ## 2026-10-28 — Identity tests: C11 holds the primary's reads alone, so U4's server cannot take them
 
 CI's identity build failed C11 in `deploy/identity/tests/live-record-writes-routes.test.ts`. The sign-out-everywhere whose first read of its record the stand-in pod should never answer got `200 {"revoked":true,...,"sessionEpoch":1}` instead of `503`. The server behaved correctly; the defect was in the test. `hold()` holds the next matching request for a record, whoever sends it. U4 runs in the same concurrent describe and starts a second identity server, whose startup scan reads every account's record, C11's included. When the scan's read reached the stand-in after C11 set its holds and before the sign-out's own read, it took the hold. The sign-out's read was then answered, and the scan's read hung for 30 s, so U4 took about 48 s instead of 18. The scan could take C11's hold of the read after a timed-out write in the same way. That write then answered after 15 s, and C11 passed without exercising its "a write and the read after it, neither answered" case.
