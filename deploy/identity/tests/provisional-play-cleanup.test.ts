@@ -109,12 +109,16 @@ test('cleanup closes the account once the tree is checked, then deletes the othe
 });
 
 test('only the game data is sent a native delete: a native head outside it gets a plain DELETE, is kept on its 409, holds its containers, and does not hold the purge open', async () => {
-  // A native head the css-gate does not write: an upper-case or short digest, another name, the
-  // budget's name in another container or with another extension. Nothing here expects one, and no
-  // plain request deletes it,
-  // so a purge kept open for it would never finish.
-  const unexpected = [`hallowmarch/checkpoints/${sha('save').toUpperCase()}.json`, `hallowmarch/checkpoints/${sha('save').slice(1)}.json`,
-    'hallowmarch/notes.json', 'saves/play-budget.json', 'play-budget.json.bak'];
+  // A native head the css-gate does not write: a save's name with an upper-case, short or long
+  // digest, with something after its `.json` or in place of its dot, or under another container;
+  // another name; the budget's name in another container, with another extension, in place of its
+  // dot, or in upper case. Nothing here expects one, and no plain request deletes it, so a purge kept
+  // open for it would never finish.
+  const digest = sha('save');
+  const unexpected = [`hallowmarch/checkpoints/${digest.toUpperCase()}.json`, `hallowmarch/checkpoints/${digest.slice(1)}.json`,
+    `hallowmarch/checkpoints/${digest}0.json`, `hallowmarch/checkpoints/${digest}.json.bak`, `hallowmarch/checkpoints/${digest}_json`,
+    `saves/hallowmarch/checkpoints/${digest}.json`,
+    'hallowmarch/notes.json', 'saves/play-budget.json', 'play-budget.json.bak', 'play-budget_json', 'PLAY-BUDGET.json'];
   const pod = fakePod({ 'auth-methods.jsonld': 'plain', [save]: 'native', [budget]: 'native', ...Object.fromEntries(unexpected.map(p => [p, 'native' as const])) });
   const result = await purge(pod);
   assert.equal(result.outcome, 'purged');
@@ -138,8 +142,12 @@ test('the native delete refuses the pod and its sign-in record, and anything out
   const del = deleteGameData(new URL(root), async (url, init) => { requests.push(`${init?.method} ${url}`); return new Response(null, { status: 500 }); });
   for (const url of [root, anchor, `${root}auth%2Dmethods.jsonld`, `${root}./auth-methods.jsonld`])
     await assert.rejects(del(url), /Refusing a native delete of the pod or its sign-in record/, url);
-  for (const url of [`${root}agents`, `${root}profile/card`, `${root}hallowmarch/checkpoints/`, `${cssUrl}u-try-play-${'b'.repeat(32)}/${budget}`, `${root}${budget}#x`])
+  // The budget's path on another origin, or with a user name or password in its URL, is not this pod's.
+  const elsewhere = [`https://other.example/${userId}/${budget}`, `https://u:p@css.example/${userId}/${budget}`,
+    `https://u@css.example/${userId}/${budget}`, `https://:p@css.example/${userId}/${budget}`];
+  for (const url of [`${root}agents`, `${root}profile/card`, `${root}hallowmarch/checkpoints/`, `${cssUrl}u-try-play-${'b'.repeat(32)}/${budget}`, `${root}${budget}#x`, ...elsewhere])
     await assert.rejects(del(url), /Refusing a native delete outside the Play game data/, url);
+  for (const url of elsewhere) assert.equal(isPlayGameData(new URL(root), url), false, url);
   assert.deepEqual(requests, []);
   // The game data itself: the capability, the ETag, then the exact delete on it.
   const sent: Array<{ method: string; headers: Headers }> = [];
@@ -168,7 +176,7 @@ test('a store that does not advertise native delete is sent none: the purge stop
   assert.equal(pod.changes().filter(e => e.startsWith('OPTIONS ')).length, 1);
 });
 
-test('game data that changed since its ETag was read (412), or is not a native head (409), stops the purge, which stays open; the next pass reads it again and deletes it', async () => {
+test('game data that changed since its ETag was read (412), or is not a native head (409), stops the purge, which stays open; after a 412 the next pass reads it again and deletes it, and a 409 is met again at every pass', async () => {
   const pod = fakePod({ 'auth-methods.jsonld': 'plain', agents: 'plain', [budget]: 'native' });
   // A write the gate authorized before the tombstone lands between the budget's HEAD and its DELETE.
   let raced = false;
@@ -178,10 +186,12 @@ test('game data that changed since its ETag was read (412), or is not a native h
   assert.equal(pod.changes().includes('DELETE agents 205'), true);
   assert.equal((await purge(pod)).outcome, 'purged', 'the next pass reads its ETag again, and deletes it');
   assert.equal(pod.has(budget), false);
-  // A document under the game data's name that is not a native head is never sent a plain DELETE.
+  // A document under the game data's name that is not a native head (the css-gate writes none) is
+  // never sent a plain DELETE: every pass meets the same 409, and the purge stays open.
   const legacy = fakePod({ 'auth-methods.jsonld': 'plain', [budget]: 'plain' });
-  await assert.rejects(purge(legacy), /native delete of play-budget\.json was answered 409/);
-  assert.deepEqual(legacy.changes(), [`OPTIONS ${budget} 204`, `HEAD ${budget} 200`, `NATIVE-DELETE ${budget} 409`]);
+  for (let pass = 1; pass <= 2; pass++) await assert.rejects(purge(legacy), /native delete of play-budget\.json was answered 409/, `pass ${pass}`);
+  const refused = [`OPTIONS ${budget} 204`, `HEAD ${budget} 200`, `NATIVE-DELETE ${budget} 409`];
+  assert.deepEqual(legacy.changes(), [...refused, ...refused]);
   assert.ok(legacy.has(budget));
   // Any other answer, to the read or to the delete, stops it the same way.
   for (const [label, status] of [[`HEAD ${budget}`, 500], [`NATIVE-DELETE ${budget}`, 500], [`NATIVE-DELETE ${budget}`, 404]] as const) {
@@ -197,6 +207,14 @@ test('game data that changed since its ETag was read (412), or is not a native h
     return init?.method === 'HEAD' ? new Response(null, { status: 200, headers: { ETag: `W/${r.headers.get('etag')}` } }) : r;
   }) as typeof fetch }), /no strong ETag/);
   assert.equal(weak.changes().some(e => e.startsWith('NATIVE-DELETE ')), false, 'no delete is sent on a weak ETag');
+  // A read that is not a 2xx is no read of the document, whatever strong ETag it carries.
+  const unread = fakePod({ 'auth-methods.jsonld': 'plain', [budget]: 'native' });
+  await assert.rejects(purgeProvisionalPlayPod({ userId, cssUrl, close: async () => 'purge', fetcher: (async (input, init) => {
+    const r = await unread.fetcher(input, init);
+    return init?.method === 'HEAD' ? new Response(null, { status: 500, headers: { ETag: r.headers.get('etag')! } }) : r;
+  }) as typeof fetch }), /the read of play-budget\.json was answered 500/);
+  assert.equal(unread.changes().some(e => e.startsWith('NATIVE-DELETE ')), false, 'no delete is sent on a failed read');
+  assert.ok(unread.has(budget));
 });
 
 test('game data whose read is a 404 (gone since the listing) is gone: the purge goes on and finishes', async () => {

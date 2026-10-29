@@ -35,8 +35,12 @@
  * 1` on OPTIONS), and only after close() said 'purge'. A HEAD answered 404 is a document already
  * gone. Anything else (no such capability, a 412 because the document changed or went since the
  * HEAD, a 409 because it is not a native head, any other answer) throws, and the purge stays marked
- * for the next pass, which lists the pod and reads each document again. The game data used to be
- * kept, as `retained`, and the purge finished without it, so every guest's saves stayed on the pod.
+ * for the next pass, which lists the pod and reads each document again. After a 412 that pass
+ * deletes the new revision; a document at one of those paths that is not a native head is answered
+ * 409 at every pass instead, and holds the purge open until someone removes it (it is never sent a
+ * plain DELETE). The css-gate writes those paths only as native commits, so it never leaves one
+ * there. The game data used to be kept, as `retained`, and the purge finished without it, so every
+ * guest's saves stayed on the pod.
  * The containers that held it are deleted after it, through the ordinary DELETE, children first.
  *
  * A document outside the game data whose DELETE the pod answers 409 (a native head nothing here
@@ -116,8 +120,10 @@ export function deleteGameData(root: URL, request: PodRequest): (url: string) =>
     if (!await advertised) throw new Error('Provisional cleanup: the pod\'s store does not advertise native delete (Interego-Native-Delete: 1 on OPTIONS)');
     const read = await request(url, { method: 'HEAD' });
     if (read.status === 404) return;   // gone already
+    // A read that is not a 2xx is no validator, whatever ETag it carries.
+    if (!read.ok) throw new Error(`Provisional cleanup: the read of ${relative} was answered ${read.status}`);
     const etag = read.headers.get('etag');
-    if (!read.ok || !etag || !/^"[^"]+"$/.test(etag)) throw new Error(`Provisional cleanup: no strong ETag for ${relative} (${read.status})`);
+    if (!etag || !/^"[^"]+"$/.test(etag)) throw new Error(`Provisional cleanup: no strong ETag for ${relative} (${read.status})`);
     const response = await request(url, { method: 'DELETE', headers: { 'Interego-Native-Delete': '1', 'If-Match': etag } });
     if (!response.ok) throw new Error(`Provisional cleanup: the native delete of ${relative} was answered ${response.status}`);
   };
