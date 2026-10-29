@@ -1,5 +1,13 @@
 # Changelog
 
+## 2026-10-29 — Explicit deployment configuration and a durable local runtime
+
+Added `@interego/deployment-config` with validated local and hosted profiles, separate federation settings, instance-scoped cache identifiers, and a machine-readable capability matrix. The stdio MCP entry point consumes a pure compatibility resolver that preserves existing settings, environment precedence, and mode selection.
+
+Added `@interego/local-node`, an opt-in file-backed Community Solid Server runtime behind an authenticated loopback gateway. CSS uses a private Unix socket or Windows named pipe, with an explicit durable data directory, persistent local service credential, exclusive writer lock, and asynchronous shutdown. It bundles its configuration and does not install dependencies at startup. This first slice does not include consumer installation, owner-key recovery, notification transport, or federation transport; enabling local federation is refused. Hosted deployment and existing bridge behavior remain separate.
+
+The offline integration test publishes an encrypted graph through the existing Solid binding, restarts the real runtime, and verifies discovery and decryption while refusing non-loopback TCP connections. Configuration and boundary tests cover legacy settings, optional federation, unauthorized requests, profile scope, and local lifecycle failures. See `docs/LOCAL-DEPLOYMENT.md` for the capability matrix and current limits.
+
 ## 2026-10-29 — PGSL native heads can be deleted with an explicit exact-revision protocol
 
 The PGSL store now has an atomic compare-and-delete operation for native-managed documents. It requires a strong expected revision, restates the resource-head predicate with the transaction adapter's compare-and-set operation, and clears the head and both overlay directions in that transaction while leaving content-addressed nodes for garbage collection. An absent or changed head is a conflict; legacy heads and containers are not accepted.

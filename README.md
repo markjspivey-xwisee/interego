@@ -141,6 +141,8 @@ For dated detail see [`CHANGELOG.md`](CHANGELOG.md).
 
 ## Hosted vs self-hosted: which path is right for you
 
+The new [local deployment foundation](docs/LOCAL-DEPLOYMENT.md) adds explicit local/hosted configuration and an importable durable local pod runtime. Its capability matrix distinguishes storage support from MCP, account, installer, and federation features that remain separate. Existing hosted and personal-bridge paths below continue to work.
+
 Two complementary deployment paths. Both are open-source; both federate; pick by what you need.
 
 | Path | What it is | Best for |
