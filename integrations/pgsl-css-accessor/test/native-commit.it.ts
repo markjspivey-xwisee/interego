@@ -10,6 +10,11 @@
  * This test deliberately refuses PGSL_INMEM: separate in-memory backends cannot
  * establish either cross-server exclusion or recovery after process death.
  * Child IPC controls readiness and Date.now only; storage and HTTP are not mocked.
+ *
+ * One phase runs first in this process, with no CSS server: the native-delete
+ * accessor contract over CSS's own DataAccessorBasedStore and the in-memory PGSL
+ * engine, including engine answers HTTP cannot reach (CSS's own If-Match check
+ * answers a stale ETag before the accessor runs).
  */
 import assert from 'node:assert/strict';
 import { fork, type ChildProcess } from 'node:child_process';
@@ -334,6 +339,107 @@ async function concurrentReadCoherence(left: Worker, right: Worker, resource: st
   return { receipt: current, bytes, etag };
 }
 
+/**
+ * Native delete at the accessor seam, no CSS server. CSS 7.2's DataAccessorBasedStore deletes a
+ * document's auxiliary resources (<doc>.acl, <doc>.meta) before the document itself, so a native
+ * delete that is refused or loses the engine compare-and-delete must not have removed them.
+ */
+async function accessorNativeDeleteContract(): Promise<void> {
+  const css = await import('@solid/community-server');
+  const { PgslDataAccessor } = await import('../dist/PgslDataAccessor.js');
+  const { nativeDeleteScope } = await import('../dist/NativeDelete.js');
+  const { NativeDeleteOperationHandler } = await import('../dist/NativeDeleteOperationHandler.js');
+  const { NativeETagHandler } = await import('../dist/NativeETagHandler.js');
+  const { LdpStore } = await import('../../../packages/pgsl-store/dist/ldp.js');
+  const { openStore } = await import('../../../packages/pgsl-store/dist/store.js');
+  const { InMemoryFdb } = await import('../../../packages/pgsl-store/dist/mem-fdb.js');
+  const { CodecRegistry } = await import('../../../packages/pgsl-store/dist/codec.js');
+  const { rdfCodec } = await import('../../../packages/pgsl-store/dist/codec-rdf.js');
+  type Ldp = InstanceType<typeof LdpStore>;
+  const pod = 'css';
+  const base = 'http://accessor.native-delete.test/';
+  const strong = `sha256:${'1'.repeat(64)}`;
+
+  // An engine conflict is a failed precondition whether the head changed or disappeared.
+  for (const conflict of [{ status: 'conflict', revision: 'x' }, { status: 'conflict', revision: null }] as const) {
+    const calls: unknown[][] = [];
+    const stub = { deleteResourceConditionally: async (...args: unknown[]) => { calls.push(args); return conflict; } } as unknown as Ldp;
+    const target = `${base}stub.bin`;
+    await assert.rejects(
+      nativeDeleteScope.run({ resource: target, expectedRevision: strong, deferredAuxiliaries: [] },
+        () => new PgslDataAccessor(stub).deleteResource({ path: target })),
+      (error: unknown) => css.PreconditionFailedHttpError.isInstance(error),
+      `an engine conflict with revision ${String(conflict.revision)} must reject as a failed precondition`);
+    assert.deepEqual(calls, [[pod, target, strong]], 'the accessor must ask the engine for exactly the scoped revision');
+  }
+
+  // CSS's own store, auxiliary strategies (as css:config/util/auxiliary/acl.json) and the native
+  // delete handler, over a real LdpStore on the in-memory engine.
+  const ldp = new LdpStore(openStore(new InMemoryFdb()), new CodecRegistry().register(rdfCodec));
+  const engineDelete = ldp.deleteResourceConditionally.bind(ldp);
+  let beforeEngineDelete: (() => Promise<unknown>) | undefined;
+  ldp.deleteResourceConditionally = async (...args: Parameters<Ldp['deleteResourceConditionally']>) => {
+    const step = beforeEngineDelete;
+    beforeEngineDelete = undefined;
+    await step?.();
+    return engineDelete(...args);
+  };
+  const accessor = new PgslDataAccessor(ldp, pod);
+  const metaStrategy = new css.ComposedAuxiliaryStrategy(new css.SuffixAuxiliaryIdentifierStrategy('.meta'), undefined, undefined, false, false);
+  const aclStrategy = new css.ComposedAuxiliaryStrategy(new css.SuffixAuxiliaryIdentifierStrategy('.acl'), undefined, undefined, true, true);
+  const store = new css.DataAccessorBasedStore(accessor, new css.SingleRootIdentifierStrategy(base),
+    new css.RoutingAuxiliaryStrategy([aclStrategy, metaStrategy]), metaStrategy);
+  const handler = new NativeDeleteOperationHandler(store);
+  const eTags = new NativeETagHandler();
+  const exists = async (path: string): Promise<boolean> => (await ldp.stat(pod, path)) !== null;
+  const nativeDelete = async (path: string) => {
+    const etag = eTags.getETag(await accessor.getMetadata({ path }));
+    assert.ok(etag);
+    const conditions = Object.assign(new css.BasicConditions(eTags, { matchesETag: [etag] }), { nativeDelete: true as const });
+    return handler.handle({ operation: { method: 'DELETE', target: { path }, preferences: {}, conditions, body: new css.BasicRepresentation() } });
+  };
+  const aclBody = (subject: string): Uint8Array => Buffer.from(`@prefix acl: <http://www.w3.org/ns/auth/acl#>.\n<#public> a acl:Authorization; acl:agentClass <http://xmlns.com/foaf/0.1/Agent>; acl:accessTo <${subject}>; acl:mode acl:Read.\n`);
+  const commitBytes = async (path: string, value: string, expectedRevision: string | null): Promise<string> => {
+    const committed = await ldp.commitResource(pod, path, Buffer.from(value), 'application/octet-stream', { expectedRevision });
+    assert.equal(committed.status, 'committed');
+    return committed.revision;
+  };
+
+  // Another writer commits after CSS's If-Match check passed: the engine refuses, the .acl stays.
+  const raced = `${base}raced.bin`;
+  const first = await commitBytes(raced, 'first', null);
+  await ldp.writeResource(pod, `${raced}.acl`, aclBody(raced), 'text/turtle');
+  let second: string | undefined;
+  beforeEngineDelete = async () => { second = await commitBytes(raced, 'second', first); };
+  await assert.rejects(nativeDelete(raced), (error: unknown) => css.PreconditionFailedHttpError.isInstance(error),
+    'a native delete that loses the engine compare-and-delete must be a failed precondition');
+  assert.ok(second, 'the interleaved writer must have committed before the engine delete');
+  assert.equal((await ldp.stat(pod, raced))?.revision, second, 'the interleaved writer must keep its head');
+  assert.ok(await exists(`${raced}.acl`), 'a native delete that loses the engine compare-and-delete must keep the .acl');
+
+  // The exact delete removes the document, then the auxiliary CSS asked to delete first.
+  assert.equal((await nativeDelete(raced)).statusCode, 205);
+  assert.ok(!await exists(raced), 'the exact native delete must remove the document');
+  assert.ok(!await exists(`${raced}.acl`), 'the exact native delete must remove the deferred .acl');
+
+  // A legacy head is refused by the engine (409), and its .acl stays.
+  const legacy = `${base}legacy.bin`;
+  await ldp.writeResource(pod, legacy, Buffer.from('legacy'), 'application/octet-stream');
+  await ldp.writeResource(pod, `${legacy}.acl`, aclBody(legacy), 'text/turtle');
+  await assert.rejects(nativeDelete(legacy), (error: unknown) => css.ConflictHttpError.isInstance(error),
+    'a native delete of a legacy head must be refused');
+  assert.ok(await exists(legacy), 'a refused native delete must keep the legacy document');
+  assert.ok(await exists(`${legacy}.acl`), 'a refused native delete must keep the .acl');
+
+  // An absent auxiliary is answered NotFound (CSS ignores it) and is not held for deletion.
+  const deferredAuxiliaries: { path: string }[] = [];
+  await assert.rejects(
+    nativeDeleteScope.run({ resource: legacy, expectedRevision: strong, deferredAuxiliaries },
+      () => accessor.deleteResource({ path: `${legacy}.meta` })),
+    (error: unknown) => css.NotFoundHttpError.isInstance(error), 'an absent auxiliary must be answered NotFound');
+  assert.deepEqual(deferredAuxiliaries, [], 'an absent auxiliary must not be held for deletion');
+}
+
 async function main(): Promise<void> {
   assert.notEqual(process.env.PGSL_INMEM, '1', 'native multiwriter/restart proof requires real shared PostgreSQL; PGSL_INMEM is only a wiring smoke');
   assert.ok(process.env.PGSL_PG_CONNSTR, 'PGSL_PG_CONNSTR must point to the isolated integration-test PostgreSQL database');
@@ -341,6 +447,8 @@ async function main(): Promise<void> {
   assert.ok(diagnosticProbe.message.includes('BasicETagHandler'));
   assert.ok(!/fixture-password|fixture-secret/.test(diagnosticProbe.message), 'startup diagnostics must redact fixture credentials');
   assert.ok(diagnosticProbe.message.length <= 800);
+  beginPhase('accessor-native-delete');
+  await accessorNativeDeleteContract();
   const canonicalPort = await freePort();
   const baseUrl = `http://127.0.0.1:${canonicalPort}/`;
   const prefix = `native-commit-${randomUUID()}`;
@@ -349,6 +457,9 @@ async function main(): Promise<void> {
   const coherenceResource = `${baseUrl}${prefix}-coherence.bin`;
   const invalidResource = `${baseUrl}${prefix}-invalid.bin`;
   const deleteResource = `${baseUrl}${prefix}-delete.bin`;
+  const guardResource = `${baseUrl}${prefix}-delete-guards.bin`;
+  const aclResource = `${baseUrl}${prefix}-delete-acl.bin`;
+  const legacyAclResource = `${baseUrl}${prefix}-delete-legacy-acl.bin`;
   const bodyA = Buffer.from([0, 255, 1, 13, 10, 200, 65]);
   const bodyB = Buffer.from([0, 254, 2, 13, 10, 199, 66]);
   const bodyC = Buffer.from([0, 253, 3, 13, 10, 198, 67]);
@@ -435,6 +546,59 @@ async function main(): Promise<void> {
     assert.equal((await wire(left, baseUrl, 'DELETE', {
       'if-match': deleteEtag, 'interego-native-delete': '1',
     })).status, 400, 'native deletion must refuse containers');
+
+    // Each malformed or unknown opt-in leaves the live native document in place.
+    beginPhase('native-delete-guards');
+    const guarded = receipt(await commit(left, guardResource, null, bodyC), guardResource, null, bodyC);
+    const guardEtag = await read(right, guardResource, guarded, bodyC);
+    const zeroEtag = `"sha256:${'0'.repeat(64)}"`;
+    for (const [headers, status, why] of [
+      [{ 'interego-native-delete': '1', 'if-match': `${guardEtag}, ${zeroEtag}` }, 400, 'native delete must refuse two If-Match validators'],
+      [{ 'interego-native-delete': '1', 'if-match': guardEtag, 'if-none-match': zeroEtag }, 400, 'native delete must refuse If-None-Match beside If-Match'],
+      [{ 'interego-native-delete': '2', 'if-match': guardEtag }, 409, 'an unknown native-delete version must stay an ordinary DELETE of a native head'],
+      [{ 'interego-native-delete': '1' }, 400, 'native delete must refuse a missing If-Match'],
+      [{ 'interego-native-delete': '1', 'if-match': '*' }, 400, 'native delete must refuse If-Match: *'],
+      [{ 'interego-native-delete': '1', 'if-match': `W/${guardEtag}` }, 400, 'native delete must refuse a weak validator'],
+    ] as const) {
+      assert.equal((await wire(left, guardResource, 'DELETE', headers)).status, status, why);
+      await read(right, guardResource, guarded, bodyC, guardEtag);
+    }
+
+    // CSS deletes a document's auxiliaries before the document; a native delete that does not
+    // delete the document must not have deleted its .acl.
+    beginPhase('native-delete-auxiliaries');
+    const aclBody = (subject: string): Buffer => Buffer.from(`@prefix acl: <http://www.w3.org/ns/auth/acl#>.\n<#public> a acl:Authorization; acl:agentClass <http://xmlns.com/foaf/0.1/Agent>; acl:accessTo <${subject}>; acl:mode acl:Read.\n`);
+    const putAcl = async (subject: string): Promise<void> => {
+      assert.equal((await wire(left, `${subject}.acl`, 'PUT', { 'content-type': 'text/turtle' }, aclBody(subject))).status, 201,
+        'this configuration must accept a per-document .acl');
+      assert.equal((await wire(right, `${subject}.acl`, 'GET', { accept: 'text/turtle' })).status, 200);
+    };
+    const aclStatus = async (subject: string): Promise<number> => (await wire(right, `${subject}.acl`, 'GET', { accept: 'text/turtle' })).status;
+    const withAcl = receipt(await commit(left, aclResource, null, bodyD), aclResource, null, bodyD);
+    const withAclEtag = await read(right, aclResource, withAcl, bodyD);
+    await putAcl(aclResource);
+    assert.equal((await wire(left, aclResource, 'DELETE', { 'if-match': zeroEtag, 'interego-native-delete': '1' })).status, 412,
+      'a stale native delete of a document with an .acl must fail its precondition');
+    assert.equal(await aclStatus(aclResource), 200, 'a stale native delete must keep the document .acl');
+    await read(right, aclResource, withAcl, bodyD, withAclEtag);
+    assert.equal((await wire(left, aclResource, 'DELETE', { 'if-match': withAclEtag, 'interego-native-delete': '1' })).status, 205,
+      'an exact native delete of a document with an .acl must succeed');
+    assert.equal((await wire(right, aclResource)).status, 404);
+    assert.equal(await aclStatus(aclResource), 404, 'an exact native delete must delete the document .acl');
+    // A legacy head passes CSS's If-Match check with its own strong ETag, so the engine is what
+    // refuses it (409), after CSS has asked for the .acl to be deleted.
+    assert.equal((await wire(left, legacyAclResource, 'PUT', { 'content-type': binaryType }, bodyA)).status, 201);
+    const legacyRead = await wire(right, legacyAclResource, 'GET', { accept: binaryType });
+    assert.equal(legacyRead.status, 200);
+    const legacyEtag = strongEtag(legacyRead);
+    await putAcl(legacyAclResource);
+    assert.equal((await wire(left, legacyAclResource, 'DELETE', { 'if-match': legacyEtag, 'interego-native-delete': '1' })).status, 409,
+      'a native delete of a legacy head must be refused');
+    assert.equal(await aclStatus(legacyAclResource), 200, 'a refused native delete must keep the document .acl');
+    assert.deepEqual((await wire(right, legacyAclResource, 'GET', { accept: binaryType })).body, bodyA, 'a refused native delete must keep the legacy document');
+    assert.equal((await wire(left, legacyAclResource, 'DELETE')).status, 205, 'an ordinary DELETE of a legacy head still succeeds');
+    assert.equal(await aclStatus(legacyAclResource), 404, 'an ordinary DELETE still deletes the document .acl');
+
     beginPhase('concurrent-get-coherence');
     const coherent = await concurrentReadCoherence(left, right, coherenceResource);
 
@@ -483,7 +647,7 @@ async function main(): Promise<void> {
 
     // Native-managed heads deliberately reject ordinary deletion. This isolated
     // CI database owns cleanup; random resource names prevent cross-run collisions.
-    console.log('CSS native commit HTTP: exact-target OPTIONS, shared-PG multiwriter CAS, coherent GET metadata/bytes, same-clock ABA, and process-death recovery ALL PASS');
+    console.log('CSS native commit HTTP: native-delete accessor contract, exact-target OPTIONS, shared-PG multiwriter CAS, native delete guards and auxiliaries, coherent GET metadata/bytes, same-clock ABA, and process-death recovery ALL PASS');
   } catch (error) {
     await reportFixtureDatabaseWaits();
     throw error;

@@ -1,5 +1,5 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
-import { BadRequestHttpError, type Conditions } from '@solid/community-server';
+import { BadRequestHttpError, type Conditions, type ResourceIdentifier } from '@solid/community-server';
 import { nativeRevisionFromEtag } from './NativeCommit.js';
 
 export const NATIVE_DELETE_HEADER = 'Interego-Native-Delete';
@@ -7,6 +7,11 @@ export const NATIVE_DELETE_HEADER = 'Interego-Native-Delete';
 export interface NativeDeleteScope {
   readonly resource: string;
   readonly expectedRevision: string;
+  /**
+   * Auxiliary resources of `resource` (`<doc>.acl`, ...) that CSS asked the accessor to delete
+   * before the target. They are deleted only after the exact native delete of the target succeeds.
+   */
+  readonly deferredAuxiliaries: ResourceIdentifier[];
 }
 
 export const nativeDeleteScope = new AsyncLocalStorage<NativeDeleteScope>();

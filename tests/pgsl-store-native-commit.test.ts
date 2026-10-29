@@ -5,7 +5,7 @@ import {
   atomAddress, nodeAddrFromUrn, representationDigest, resourceCollection,
   NativeResourceManagedError, type FdbLike, type FdbTxn, type NativeResourceReceipt,
 } from '../packages/pgsl-store/src/index.js';
-import { cpKey, nodeKey } from '../packages/pgsl-store/src/keyspace.js';
+import { cpKey, nodeKey, ovKey, ovrKey } from '../packages/pgsl-store/src/keyspace.js';
 
 const enc = new TextEncoder();
 const dec = new TextDecoder();
@@ -288,14 +288,31 @@ describe('native PGSL resource commits', () => {
     expect(await ldp.deleteResource(POD, 'legacy')).toBe(false);
   });
 
+  it('rejects omitted, weak and malformed delete preconditions before any transaction', async () => {
+    const { ldp, fdb } = fixture();
+    await put(ldp, 'guarded', null, 'native-delete-guard');
+    const transact = vi.spyOn(fdb, 'transact');
+    for (const bad of [null, undefined, '', '*', 'W/"x"', `W/"sha256:${'a'.repeat(64)}"`, `"sha256:${'a'.repeat(64)}"`,
+      'sha256:bad', `sha256:${'A'.repeat(64)}`, `sha256:${'a'.repeat(63)}`, 1]) {
+      await expect(ldp.deleteResourceConditionally(POD, 'native-delete-guard', bad as string)).rejects.toThrow(/precondition/);
+    }
+    expect(transact).not.toHaveBeenCalled();
+  });
+
   it('atomically compare-deletes a native head and overlays while retaining canonical content', async () => {
-    const { ldp, store } = fixture();
+    const { ldp, store, fdb } = fixture();
     const receipt = await put(ldp, 'native delete payload', null, 'native-delete');
     const canonical = await store.resolve(receipt.opaqueUri);
+    const raw = (key: Uint8Array) => fdb.transact(txn => txn.get(key));
+    const overlay = ovKey(POD, 'native-delete'), reverse = ovrKey(nodeAddrFromUrn(receipt.topUri).hash, POD, 'native-delete');
+    expect(dec.decode((await raw(overlay))!)).toBe(receipt.topUri);
+    expect(await raw(reverse)).toBeDefined();
     expect((await ldp.deleteResourceConditionally(POD, 'native-delete', receipt.revision))).toEqual({
       status: 'deleted', revision: receipt.revision,
     });
     expect(await store.resourceHead(POD, 'native-delete')).toBeNull();
+    expect(await raw(overlay)).toBeUndefined();
+    expect(await raw(reverse)).toBeUndefined();
     expect(await store.resolveResource(POD, 'native-delete')).toBeNull();
     expect(await store.resolve(receipt.opaqueUri)).toEqual(canonical);
     expect(await ldp.deleteResourceConditionally(POD, 'native-delete', receipt.revision)).toEqual({ status: 'conflict', revision: null });
@@ -362,6 +379,47 @@ describe.skipIf(!PG_URL)('native atomic resource commits over the real PGSL engi
       const head = await original.store.resourceHead(POD, path);
       if (write.status === 'committed') expect(head?.revision).toBe(write.revision);
       else expect(head).toBeNull();
+    } finally {
+      await right.close();
+      await left.close();
+    }
+  }, 30_000);
+
+  it('refuses a compare-delete whose captured head a native commit replaced before its CAS', async () => {
+    // Deterministic order: the deleter reads the initial head, the writer then commits a new
+    // head, and only then does the deleter continue to its compare-and-set. Without that CAS the
+    // deleter would clear the writer's committed head and both callers would be told success.
+    const left = await openPgStore({ connectionString: PG_URL!, table: 'pgsl_kv' });
+    const right = await openPgStore({ connectionString: PG_URL!, table: 'pgsl_kv' });
+    const path = 'delete-after-commit-' + randomUUID();
+    try {
+      const original = fixture(left);
+      const initial = await put(original.ldp, 'initial ' + path, null, path);
+      const key = cpKey(resourceCollection(POD), path), captured = deferred(), committed = deferred();
+      let paused = false;
+      const deleter = fixture({
+        close: async () => {},
+        transact<T>(fn: (txn: FdbTxn) => Promise<T>): Promise<T> {
+          return right.transact(txn => fn({ ...txn, async get(requested) {
+            const result = await txn.get(requested);
+            if (!paused && Buffer.from(requested).equals(Buffer.from(key))) {
+              paused = true;
+              captured.resolve();
+              await committed.promise;
+            }
+            return result;
+          } }));
+        },
+      });
+      const deletion = deleter.ldp.deleteResourceConditionally(POD, path, initial.revision);
+      await captured.promise;
+      const write = await original.ldp.commitResource(POD, path, bytes('new ' + path), CT, { expectedRevision: initial.revision });
+      committed.resolve();
+      expect(write.status).toBe('committed');
+      if (write.status !== 'committed') throw new Error('the writer must commit while the deleter holds its captured head');
+      expect(await deletion).toEqual({ status: 'conflict', revision: write.revision });
+      expect((await original.store.resourceHead(POD, path))?.revision).toBe(write.revision);
+      expect((await original.store.resolveResource(POD, path))?.uri).toBe(write.topUri);
     } finally {
       await right.close();
       await left.close();

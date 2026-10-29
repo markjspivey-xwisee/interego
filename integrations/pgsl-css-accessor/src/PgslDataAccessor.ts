@@ -36,6 +36,8 @@ import {
   toNamedTerm,
   PreconditionFailedHttpError,
   ConflictHttpError,
+  createErrorMessage,
+  getLoggerFor,
   type DataAccessor,
   type Representation,
   type ResourceIdentifier,
@@ -64,6 +66,8 @@ async function guardNativeHead<T>(operation: () => Promise<T>): Promise<T> {
 }
 
 export class PgslDataAccessor implements DataAccessor {
+  protected readonly logger = getLoggerFor(this);
+
   constructor(
     private readonly ldp: LdpStore,
     private readonly pod = 'css',
@@ -189,9 +193,24 @@ export class PgslDataAccessor implements DataAccessor {
 
   async deleteResource(identifier: ResourceIdentifier): Promise<void> {
     const native = nativeDeleteScope.getStore();
+    if (native && identifier.path !== native.resource && identifier.path.startsWith(native.resource)) {
+      // CSS 7.2's DataAccessorBasedStore.deleteResource deletes the target's auxiliary resources
+      // (<doc>.acl, <doc>.meta, named by its auxiliary strategy) before it deletes the target, one
+      // call here each, and safelyDeleteAuxiliaryResources logs and ignores any error from them. A
+      // native delete that is then refused (legacy head, 409) or loses the engine CAS (412) would
+      // already have removed them, so they are held here and deleted only once the target is.
+      // An absent one is answered NotFound, which CSS ignores without reporting it deleted.
+      // CSS also rewrites the parent container's modified date before the target; a refused or
+      // conflicting native delete leaves that bump (the container's validator moves, its
+      // membership does not).
+      if (!await this.ldp.stat(this.pod, identifier.path)) throw new NotFoundHttpError();
+      native.deferredAuxiliaries.push(identifier);
+      return;
+    }
     if (native?.resource === identifier.path) {
       const result = await guardNativeHead(() => this.ldp.deleteResourceConditionally(this.pod, identifier.path, native.expectedRevision));
       if (result.status === 'conflict') throw new PreconditionFailedHttpError('Native resource revision changed or disappeared');
+      await this.deleteDeferredAuxiliaries(native.deferredAuxiliaries.splice(0));
       return;
     }
     const existed = await guardNativeHead(() => this.ldp.deleteResource(this.pod, identifier.path));
@@ -199,6 +218,18 @@ export class PgslDataAccessor implements DataAccessor {
   }
 
   // �� helpers ��
+
+  /**
+   * Deletes the auxiliaries a native delete held back, after its target is gone. An already-absent
+   * one is skipped; any other failure is logged and skipped, as CSS's own
+   * safelyDeleteAuxiliaryResources does, because the target's deletion has already committed.
+   */
+  private async deleteDeferredAuxiliaries(auxiliaries: ResourceIdentifier[]): Promise<void> {
+    await Promise.all(auxiliaries.map(async (auxiliary) => {
+      try { await guardNativeHead(() => this.ldp.deleteResource(this.pod, auxiliary.path)); }
+      catch (error) { this.logger.error(`Error deleting auxiliary resource ${auxiliary.path}: ${createErrorMessage(error)}`); }
+    }));
+  }
 
   /** Base metadata = a fresh object re-hydrated with any persisted non-derived quads. */
   private async baseMetadata(identifier: ResourceIdentifier, meta?: string): Promise<RepresentationMetadata> {
