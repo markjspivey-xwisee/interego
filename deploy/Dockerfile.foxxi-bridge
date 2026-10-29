@@ -124,6 +124,14 @@ RUN mkdir -p node_modules/@interego \
   && ln -sfn /app/packages/constitutional node_modules/@interego/constitutional
 
 
+# The pinned upper-ontology sources, already verified on the runner. build-ghcr.yml replaces this
+# stage with an image of them that it pushed once for these pins (`--build-context
+# upper-seed=docker-image://...`), or with a directory when it has no complete set
+# (`upper-seed=<dir>`); see the COPY into .cache/upper below. Built without either, it stays this
+# empty stage, the COPY copies nothing, and the build fetches every source from its publisher, as
+# a local build always has.
+FROM scratch AS upper-seed
+
 # I2IDL-X pages are generated natively from verified publisher evidence and an immutable
 # canonical glossary commit. New upstream versions cannot silently enter an image.
 FROM bridge-base AS i2idlx-builder
@@ -139,9 +147,27 @@ ENV I2IDLX_MODIFIED=2026-10-19
 ENV I2IDLX_NOW=2026-10-19T00:51:00+00:00
 RUN npx tsx applications/foxxi-content-intelligence/i2idlx/typescript/prepare-source.ts \
   /app/applications/foxxi-content-intelligence/i2idlx /tmp/i2idlx-canonical-source
+# ★ prepare-build-inputs.ts below restores 21 sources that evidence/upper/manifest.json pins by
+# SHA-256, and it used to fetch every one from its publisher every time this stage ran rather than
+# came from the layer cache. On 2026-10-27 data.europa.eu timed out on ESCO (four attempts in under
+# a minute), this stage failed, and the all-or-nothing auto-deploy held back every service; a re-run
+# of the same jobs succeeded. CI now fetches and verifies them on the runner and passes them here as
+# the upper-seed stage (build-ghcr.yml, "seed: i2idlx-upper"). Nothing is trusted for having been
+# kept: refresh-upper.ts checks each file against the manifest's SHA-256 exactly as it checks a
+# fresh fetch, and a source the seed does not carry is fetched live as before.
+# The COPY makes this stage's layer cache keyed on the seed too. Whenever the seed is not what the
+# cached build had (other bytes, or the same bytes from a directory instead of the image), the COPY
+# and every step after it run again (the seed step, prepare-build-inputs.ts, build.ts, which reads
+# gate.interego.xwisee.com, and the output check), even when bridge-base has not changed and the
+# whole stage used to come from the layer cache. That is why CI passes the same image for the same
+# pins every time, not whatever its Actions cache holds. The COPY sits after prepare-source.ts, so apt-get, the workbench's npm ci and the clone do
+# not run again. .cache never reaches the runtime stage, which copies only site-ts, dist-ts and
+# app/build-ts out of this one.
+COPY --from=upper-seed / /app/applications/foxxi-content-intelligence/i2idlx/.cache/upper/
 # gUFO's persistent URL serves whatever its publisher last committed, and bytes that differ from
 # the manifest's pin are refused, so the pinned bytes come from the publisher's own commit
-# (tools/seed-pinned-upper.mjs); refresh-upper.ts still checks them against the pin.
+# (tools/seed-pinned-upper.mjs); refresh-upper.ts still checks them against the pin. When the seed
+# above carried gUFO, this step finds it already matching and fetches nothing.
 RUN node applications/foxxi-content-intelligence/i2idlx/tools/seed-pinned-upper.mjs \
   /app/applications/foxxi-content-intelligence/i2idlx
 # Use exactly the golden gate's retained snapshots. Only missing xAPI TTLs and

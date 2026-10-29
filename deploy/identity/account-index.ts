@@ -33,6 +33,7 @@ export interface FetchResponseLike {
   status: number;
   statusText: string;
   text(): Promise<string>;
+  headers?: { get(name: string): string | null };
 }
 export type FetchLike = (url: string, init?: { method?: string; headers?: Record<string, string>; signal?: AbortSignal }) => Promise<FetchResponseLike>;
 
@@ -42,13 +43,22 @@ export type FetchLike = (url: string, init?: { method?: string; headers?: Record
  * PodReadError, so a caller can never mistake an outage for an empty account.
  */
 export async function readPodJson(fetchFn: FetchLike, url: string): Promise<unknown | null> {
+  return (await readPodJsonWithEtag(fetchFn, url)).body;
+}
+
+/**
+ * readPodJson, with the ETag the pod answered with (null when it sent none, or for a 404): what
+ * a conditional write of the same document is sent with (If-Match), so that it fails when
+ * someone else wrote the document since this read.
+ */
+export async function readPodJsonWithEtag(fetchFn: FetchLike, url: string): Promise<{ body: unknown | null; etag: string | null }> {
   let r: FetchResponseLike;
   try {
     r = await fetchFn(url, { headers: { 'Accept': 'application/ld+json' } });
   } catch (err) {
     throw new PodReadError(url, (err as Error).message);
   }
-  if (r.status === 404) return null;
+  if (r.status === 404) return { body: null, etag: null };
   if (!r.ok) throw new PodReadError(url, `${r.status} ${r.statusText}`.trim());
   let text: string;
   try {
@@ -56,11 +66,13 @@ export async function readPodJson(fetchFn: FetchLike, url: string): Promise<unkn
   } catch (err) {
     throw new PodReadError(url, `body unreadable: ${(err as Error).message}`);
   }
+  let body: unknown;
   try {
-    return JSON.parse(text);
+    body = JSON.parse(text);
   } catch {
     throw new PodReadError(url, 'body is not JSON');
   }
+  return { body, etag: r.headers?.get('etag') ?? null };
 }
 
 /**

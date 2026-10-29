@@ -200,7 +200,7 @@ async function assertRefused(key: SoftPasskey): Promise<void> {
   assert.equal(r.status, 409, `${JSON.stringify(r.json)}\n${output}`);
   assert.match(String(r.json['error']), /cannot be registered as a new account/);
   assert.equal(r.json['token'], undefined);
-  // A deferred write would land after the response; give it the time one takes.
+  // A write made after the response would land by now; give it the time one takes.
   await new Promise(resolve => setTimeout(resolve, 300));
   assert.deepEqual(writesTo(key.userId), []);
   assert.deepEqual(snapshot(key.userId), before);
@@ -305,7 +305,7 @@ test('registration options for a bootstrap invite write nothing to the seeded po
   assert.equal(down.json['challenge'], undefined);
   const abandoned = await post('/auth/webauthn/register-options', body);
   assert.equal(abandoned.status, 200, `${JSON.stringify(abandoned.json)}\n${output}`);
-  // A deferred write would land after the response; give it the time one takes.
+  // A write made after the response would land by now; give it the time one takes.
   await new Promise(resolve => setTimeout(resolve, 300));
   assert.deepEqual(writesTo(invite.userId), []);
   assert.equal(pods.has(invite.userId), false);

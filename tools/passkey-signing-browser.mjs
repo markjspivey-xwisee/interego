@@ -4,7 +4,7 @@ import { readFileSync } from 'node:fs';
 import { randomBytes } from 'node:crypto';
 import { chromium } from '@playwright/test';
 import { verifyRegistrationResponse } from '@simplewebauthn/server';
-import { authenticatePasskey, PasskeyPersistenceError } from '../deploy/identity/passkey-authentication.ts';
+import { verifyPasskeyAssertion } from '../deploy/identity/passkey-authentication.ts';
 import { clientKeyId, verifyClientAuthorization } from '../integrations/application-runtime/client-authorization.ts';
 
 const origin = 'https://relay.example.test';
@@ -54,8 +54,13 @@ try {
       if (path === '/challenges') { authChallenge = randomBytes(32).toString('base64url'); result = { nonce: authChallenge, rpId }; }
       else if (path === '/auth/webauthn/authenticate') {
         assertion = body.response;
-        await authenticatePasskey({ credential, response: assertion, challenge: authChallenge, rpId, origin,
-          persist: async () => { persisted = structuredClone(credential); } });
+        const checked = await verifyPasskeyAssertion({ credential, response: assertion, challenge: authChallenge, rpId, origin });
+        if (!checked.ok) throw checked.error;
+        // What identity's passkey sign-in then writes, on the record as the pod holds it (server.ts).
+        credential.counter = Math.max(credential.counter, checked.newCounter);
+        credential.rpId = rpId;
+        credential.rpOrigin ??= origin;
+        persisted = structuredClone(credential);
         result = { token: 'fixture-holder-session' };
       } else if (path === '/client-interactions/' + requestId) result = { status: 'pending' };
       else if (path.endsWith('/review')) {
@@ -102,17 +107,15 @@ try {
   await page.waitForFunction(() => document.getElementById('status').textContent.includes('Signed, verified and submitted'));
   assert.equal(committed, 1);
   assert.equal((await verifyClientAuthorization(retained, receipt)).keyId, fingerprint); // retained-proof replay
-  // Failed cryptography and failed persistence must never pin legacy metadata.
+  // Failed cryptography never verifies, and verifying never pins legacy metadata: identity writes
+  // the counter and RP binding itself, only once the pod has taken them.
   const unbound = structuredClone(original);
-  await assert.rejects(authenticatePasskey({ credential: unbound, response: assertion, challenge: 'wrong', rpId, origin,
-    persist: async () => { throw new Error('must not persist'); } }));
+  assert.equal((await verifyPasskeyAssertion({ credential: unbound, response: assertion, challenge: 'wrong', rpId, origin })).ok, false);
+  assert.equal((await verifyPasskeyAssertion({ credential: unbound, response: assertion, challenge: authChallenge, rpId, origin })).ok, true);
   assert.deepEqual(unbound, original);
-  await assert.rejects(authenticatePasskey({ credential: unbound, response: assertion, challenge: authChallenge, rpId, origin,
-    persist: async () => { throw new Error('pod unavailable'); } }), PasskeyPersistenceError);
-  assert.equal(unbound.counter, original.counter);
-  assert.equal(unbound.rpId, undefined);
-  assert.equal(unbound.rpOrigin, undefined);
-  await assert.rejects(authenticatePasskey({ credential: { ...original, rpId: 'example.test' }, response: assertion,
-    challenge: authChallenge, rpId, origin, persist: async () => {} }), /different relying party/);
-  console.log('PASS: identity-to-registration-site recovery preserves request ID without transferring tokens; Chromium WebAuthn login → legacy RP migration → receipt signing → retained proof replay; ambiguous RP, invalid assertion, conflicting binding and persistence failure refused.');
+  const conflicting = await verifyPasskeyAssertion({ credential: { ...original, rpId: 'example.test' }, response: assertion,
+    challenge: authChallenge, rpId, origin });
+  assert.equal(conflicting.ok, false);
+  assert.match(conflicting.error.message, /different relying party/);
+  console.log('PASS: identity-to-registration-site recovery preserves request ID without transferring tokens; Chromium WebAuthn login → legacy RP migration → receipt signing → retained proof replay; ambiguous RP, invalid assertion and conflicting binding refused; verifying leaves the stored credential unchanged.');
 } finally { await browser.close(); }

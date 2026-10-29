@@ -9,4 +9,6 @@ benchmarks/locomo
 .claude
 relay-agent-key-prod.json
 # The native I2IDL-X builder restores these byte-pinned inputs; local caches must not enter bridge-base.
+# That includes .cache/upper-seed, where build-ghcr.yml keeps the verified upper-ontology sources it
+# passes to the Foxxi build as its own `upper-seed` context: they reach i2idlx-builder only that way.
 applications/foxxi-content-intelligence/i2idlx/.cache
