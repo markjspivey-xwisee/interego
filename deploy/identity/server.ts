@@ -90,6 +90,7 @@ import {
 import { clientIp, createLimiter, limitByIp, rateLimit, sendRateLimited } from './rate-limit.js';
 import { forwardAsyncRouteErrors, installProcessSafetyNet, routeErrorHandler } from './route-errors.js';
 import { parseSiweMessage, SIWE_DOMAIN_SUFFIX } from './siwe-message.js';
+import { ED25519_MULTICODEC, base58btcDecode, encodeEd25519Multibase, x25519PublicKeyEncodings } from './key-encoding.js';
 
 // ── Lazy heavy imports ──────────────────────────────────────
 //
@@ -322,112 +323,6 @@ interface KeyPair {
   x25519PublicKeyBase64: string;
 }
 
-// ── base58btc (Bitcoin alphabet) — for W3C did:key + multibase ──
-//
-// `did:key:z<...>` per the W3C did:key Method Spec is multibase-encoded
-// with prefix 'z' = base58btc, and the decoded bytes are
-//   multicodec_prefix || raw_public_key
-// For Ed25519 the multicodec prefix is the varint 0xed 0x01, followed by
-// the 32-byte raw public key — total 34 bytes.
-//
-// Why hand-rolled: this deploy package intentionally keeps zero runtime
-// deps beyond express/ethers/@simplewebauthn (see package.json) and
-// pulls no separate base58/multibase library. The implementation is
-// ~30 LOC of unambiguous arithmetic; correctness is verified against
-// the W3C did:key test vectors at runtime via the round-trip
-// emit-then-parse done on every new registration.
-const BASE58_ALPHABET = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
-const BASE58_INDEX: Record<string, number> = (() => {
-  const m: Record<string, number> = {};
-  for (let i = 0; i < BASE58_ALPHABET.length; i++) m[BASE58_ALPHABET[i]!] = i;
-  return m;
-})();
-
-function base58btcEncode(bytes: Uint8Array): string {
-  // Count leading zero bytes — each maps to a '1' in the output.
-  let zeros = 0;
-  while (zeros < bytes.length && bytes[zeros] === 0) zeros++;
-  // Convert the big-endian byte string to base58 by repeated division.
-  // Work on a copy because we mutate.
-  const buf = Array.from(bytes);
-  const out: number[] = [];
-  let start = zeros;
-  while (start < buf.length) {
-    let carry = 0;
-    for (let i = start; i < buf.length; i++) {
-      const v = (buf[i]! & 0xff) + carry * 256;
-      buf[i] = Math.floor(v / 58);
-      carry = v % 58;
-    }
-    out.push(carry);
-    if (buf[start] === 0) start++;
-  }
-  let result = '';
-  for (let i = 0; i < zeros; i++) result += BASE58_ALPHABET[0];
-  for (let i = out.length - 1; i >= 0; i--) result += BASE58_ALPHABET[out[i]!];
-  return result;
-}
-
-function base58btcDecode(str: string): Uint8Array {
-  if (str.length === 0) return new Uint8Array(0);
-  let zeros = 0;
-  while (zeros < str.length && str[zeros] === BASE58_ALPHABET[0]) zeros++;
-  const buf: number[] = [];
-  for (let i = 0; i < str.length; i++) {
-    const ch = str[i]!;
-    const digit = BASE58_INDEX[ch];
-    if (digit === undefined) throw new Error(`invalid base58 character '${ch}' at position ${i}`);
-    let carry = digit;
-    for (let j = 0; j < buf.length; j++) {
-      const v = buf[j]! * 58 + carry;
-      buf[j] = v & 0xff;
-      carry = v >> 8;
-    }
-    while (carry > 0) {
-      buf.push(carry & 0xff);
-      carry >>= 8;
-    }
-  }
-  // The leading-zero-character count from base58 reflects leading zero
-  // bytes in the original. Append them.
-  const out = new Uint8Array(zeros + buf.length);
-  for (let i = 0; i < buf.length; i++) out[zeros + i] = buf[buf.length - 1 - i]!;
-  return out;
-}
-
-// Multicodec varint for Ed25519 public key: 0xed 0x01.
-const ED25519_MULTICODEC = Uint8Array.from([0xed, 0x01]);
-// Multicodec varint for X25519 public key: 0xec 0x01.
-const X25519_MULTICODEC = Uint8Array.from([0xec, 0x01]);
-
-/**
- * Encode a 32-byte raw Ed25519 public key as a W3C-spec multibase string:
- *   'z' + base58btc(0xed 0x01 || rawKey)
- * This is the canonical form for `did:key:z…` and for the
- * `publicKeyMultibase` field of `Ed25519VerificationKey2020`.
- */
-function encodeEd25519Multibase(rawKey: Buffer): string {
-  if (rawKey.length !== 32) throw new Error(`Ed25519 raw key must be 32 bytes, got ${rawKey.length}`);
-  const buf = new Uint8Array(ED25519_MULTICODEC.length + 32);
-  buf.set(ED25519_MULTICODEC, 0);
-  buf.set(rawKey, ED25519_MULTICODEC.length);
-  return 'z' + base58btcEncode(buf);
-}
-
-/**
- * Encode a 32-byte raw X25519 public key as a W3C-spec multibase string:
- *   'z' + base58btc(0xec 0x01 || rawKey)
- * Canonical form for `publicKeyMultibase` on `X25519KeyAgreementKey2020`
- * verification methods (W3C Security Vocabulary — X25519 Key Agreement 2020).
- */
-function encodeX25519Multibase(rawKey: Buffer): string {
-  if (rawKey.length !== 32) throw new Error(`X25519 raw key must be 32 bytes, got ${rawKey.length}`);
-  const buf = new Uint8Array(X25519_MULTICODEC.length + 32);
-  buf.set(X25519_MULTICODEC, 0);
-  buf.set(rawKey, X25519_MULTICODEC.length);
-  return 'z' + base58btcEncode(buf);
-}
-
 /**
  * Parse a `did:key:z…` Ed25519 DID and return the 32-byte raw public key.
  *
@@ -526,19 +421,10 @@ function generateEd25519(): KeyPair {
   // X25519 — keyAgreement (envelope-recipient key for cross-pod E2EE
   // sharing). Per-identity so each agent has its own encryption key
   // (FIX 6 with FIX 3). The raw 32 bytes are the end of the 44-byte SPKI
-  // DER, as for Ed25519 above. Not via JWK: on Node 20 a JWK export of a
-  // freshly generated key holds the key pair's mutex while it allocates,
-  // a GC there can run the finished keygen job's destructor, which takes
-  // the same mutex, and the thread deadlocks with itself (see
-  // tests/public-jwk.ts). The SPKI export takes no lock.
+  // DER, as for Ed25519 above, and never a JWK export, which on Node 20
+  // can deadlock this thread (see x25519PublicKeyEncodings).
   const { publicKey: x25519PublicKey, privateKey: x25519PrivateKey } = crypto.generateKeyPairSync('x25519');
-  const xSpki = x25519PublicKey.export({ type: 'spki', format: 'der' });
-  if (xSpki.length !== 44) {
-    throw new Error(`X25519 SPKI must be 44 bytes, got ${xSpki.length}`);
-  }
-  const xRaw = xSpki.subarray(xSpki.length - 32);
-  const x25519PublicKeyMultibase = encodeX25519Multibase(xRaw);
-  const x25519PublicKeyBase64 = xRaw.toString('base64');
+  const { multibase: x25519PublicKeyMultibase, base64: x25519PublicKeyBase64 } = x25519PublicKeyEncodings(x25519PublicKey);
 
   return {
     publicKeyMultibase,
