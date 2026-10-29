@@ -366,7 +366,7 @@ async function accessorNativeDeleteContract(): Promise<void> {
     const stub = { deleteResourceConditionally: async (...args: unknown[]) => { calls.push(args); return conflict; } } as unknown as Ldp;
     const target = `${base}stub.bin`;
     await assert.rejects(
-      nativeDeleteScope.run({ resource: target, expectedRevision: strong, deferredAuxiliaries: [] },
+      nativeDeleteScope.run({ resource: target, expectedRevision: strong, auxiliaries: new Set<string>(), deferredAuxiliaries: [], settled: false },
         () => new PgslDataAccessor(stub).deleteResource({ path: target })),
       (error: unknown) => css.PreconditionFailedHttpError.isInstance(error),
       `an engine conflict with revision ${String(conflict.revision)} must reject as a failed precondition`);
@@ -387,9 +387,10 @@ async function accessorNativeDeleteContract(): Promise<void> {
   const accessor = new PgslDataAccessor(ldp, pod);
   const metaStrategy = new css.ComposedAuxiliaryStrategy(new css.SuffixAuxiliaryIdentifierStrategy('.meta'), undefined, undefined, false, false);
   const aclStrategy = new css.ComposedAuxiliaryStrategy(new css.SuffixAuxiliaryIdentifierStrategy('.acl'), undefined, undefined, true, true);
+  const auxiliaryStrategy = new css.RoutingAuxiliaryStrategy([aclStrategy, metaStrategy]);
   const store = new css.DataAccessorBasedStore(accessor, new css.SingleRootIdentifierStrategy(base),
-    new css.RoutingAuxiliaryStrategy([aclStrategy, metaStrategy]), metaStrategy);
-  const handler = new NativeDeleteOperationHandler(store);
+    auxiliaryStrategy, metaStrategy);
+  const handler = new NativeDeleteOperationHandler(store, auxiliaryStrategy);
   const eTags = new NativeETagHandler();
   const exists = async (path: string): Promise<boolean> => (await ldp.stat(pod, path)) !== null;
   const nativeDelete = async (path: string) => {
@@ -433,11 +434,30 @@ async function accessorNativeDeleteContract(): Promise<void> {
 
   // An absent auxiliary is answered NotFound (CSS ignores it) and is not held for deletion.
   const deferredAuxiliaries: { path: string }[] = [];
+  const legacyAuxiliaries = new Set([`${legacy}.acl`, `${legacy}.meta`]);
   await assert.rejects(
-    nativeDeleteScope.run({ resource: legacy, expectedRevision: strong, deferredAuxiliaries },
+    nativeDeleteScope.run({ resource: legacy, expectedRevision: strong, auxiliaries: legacyAuxiliaries, deferredAuxiliaries, settled: false },
       () => accessor.deleteResource({ path: `${legacy}.meta` })),
     (error: unknown) => css.NotFoundHttpError.isInstance(error), 'an absent auxiliary must be answered NotFound');
   assert.deepEqual(deferredAuxiliaries, [], 'an absent auxiliary must not be held for deletion');
+
+  // Only the target's own auxiliaries are held, and only until the target is decided. A path that
+  // merely starts with the target's (CSS's own /.internal/ records under a target named /.i), and
+  // any delete made in the scope after the target settled, are ordinary deletes.
+  const prefix = `${base}.i`;
+  const internal = `${base}.internal/notifications/record.json`;
+  await commitBytes(prefix, 'prefix', null);
+  await ldp.writeResource(pod, internal, Buffer.from('{}'), 'application/json');
+  const prefixAuxiliaries = new Set([`${prefix}.acl`, `${prefix}.meta`]);
+  const prefixScope = { resource: prefix, expectedRevision: strong, auxiliaries: prefixAuxiliaries, deferredAuxiliaries: [] as { path: string }[], settled: false };
+  await nativeDeleteScope.run(prefixScope, () => accessor.deleteResource({ path: internal }));
+  assert.ok(!await exists(internal), 'a path that only starts with the target must be deleted as an ordinary delete');
+  assert.deepEqual(prefixScope.deferredAuxiliaries, [], 'a path that only starts with the target must not be held');
+  const settledAcl = `${legacy}.acl`;
+  const settledScope = { resource: legacy, expectedRevision: strong, auxiliaries: legacyAuxiliaries, deferredAuxiliaries: [] as { path: string }[], settled: true };
+  await nativeDeleteScope.run(settledScope, () => accessor.deleteResource({ path: settledAcl }));
+  assert.ok(!await exists(settledAcl), 'an auxiliary deleted after the target settled must be an ordinary delete');
+  assert.deepEqual(settledScope.deferredAuxiliaries, [], 'nothing may be held once the target settled');
 }
 
 async function main(): Promise<void> {

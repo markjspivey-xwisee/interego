@@ -7,11 +7,18 @@ export const NATIVE_DELETE_HEADER = 'Interego-Native-Delete';
 export interface NativeDeleteScope {
   readonly resource: string;
   readonly expectedRevision: string;
+  /** Paths of the auxiliary resources CSS's auxiliary strategy names for `resource` (`<doc>.acl`, `<doc>.meta`). */
+  readonly auxiliaries: ReadonlySet<string>;
   /**
-   * Auxiliary resources of `resource` (`<doc>.acl`, ...) that CSS asked the accessor to delete
-   * before the target. They are deleted only after the exact native delete of the target succeeds.
+   * Those of `auxiliaries` that CSS asked the accessor to delete before the target. They are
+   * deleted only after the exact native delete of the target succeeds.
    */
   readonly deferredAuxiliaries: ResourceIdentifier[];
+  /**
+   * Set once the target's own delete has been decided. From then on every delete made inside the
+   * scope (CSS work this request started, such as notification cleanup) is an ordinary one.
+   */
+  settled: boolean;
 }
 
 export const nativeDeleteScope = new AsyncLocalStorage<NativeDeleteScope>();
