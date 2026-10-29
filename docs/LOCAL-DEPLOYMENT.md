@@ -1,6 +1,6 @@
 # Local and hosted deployment configuration
 
-**Layer 3 implementation documentation.** Local installation is being developed as a supported deployment alongside the hosted relay. This first slice supplies an explicit configuration model, an importable durable local storage runtime, and a capability matrix. It does not supply a consumer installer or replace the existing stdio MCP server or hosted account flow.
+**Layer 3 implementation documentation.** Local installation is being developed as a supported deployment alongside the hosted relay. The foundation supplies an explicit configuration model, an importable durable local storage runtime, and a capability matrix. The separate [Interego Windows application](../applications/pod-desktop/README.md) composes it into a consumer installer with local encrypted notes and backup/restore. The low-level runtime does not replace the existing stdio MCP server or hosted account flow.
 
 ## Shared configuration
 
@@ -37,7 +37,7 @@ The local runtime bundles its own Community Solid Server configuration and depen
 
 Every gateway read and write requires authorization. Host and browser-origin checks reject unrelated callers. The returned fetch function carries the service credential only to this node and refuses redirects. This initial gateway supports GET, HEAD, PUT, DELETE, and OPTIONS with bounded media types. It rejects JSON-LD contexts, conversion profiles, and PATCH until a controlled conversion path exists, so those paths cannot trigger external loading. Graph encryption remains the publisher's responsibility; arbitrary plaintext writes remain plaintext on disk. The service credential does not replace content encryption keys, and other processes running as the same OS user remain inside the local trust boundary.
 
-Graceful shutdown releases the lock. After a crash, startup fails closed on a leftover `runtime.lock`; confirm the old process has stopped before removing it. Automatic crash-lock recovery, OS-backed owner keys, per-client authorization, portable recovery, and endpoint migration are later milestones.
+Graceful shutdown releases the lock. The low-level runtime fails closed on a leftover `runtime.lock` after a crash. The Windows application supplies conservative recovery of a demonstrably dead process's lock while holding its single-instance lock, a Windows-protected notes key, and portable encrypted notes backups. Other hosts must supply their own key custody and recovery. Per-client authorization and endpoint migration remain later milestones.
 
 ## Capability matrix
 
@@ -47,7 +47,7 @@ The machine-readable authority is `CAPABILITY_MATRIX` / `capabilitiesFor()` in `
 |---|---|---|---|
 | Solid pod storage | Durable file-backed CSS | Existing hosted storage | Separate Solid composition required |
 | Encrypted graph payloads | Existing publisher with caller-owned keys | Existing encrypted publishing | Separate encrypted P2P shares |
-| Owner key custody and recovery | Caller-managed; consumer vault/recovery pending | Existing hosted account model | Private bridge key configuration required |
+| Owner key custody and recovery | Caller-managed; Windows app adds protected notes key and notes backup/restore | Existing hosted account model | Private bridge key configuration required |
 | MCP tools | Adapter not included in this runtime | Existing tool surface retained | Six P2P tools |
 | Hosted OAuth | Not required or started | Existing flow retained | Not included |
 | Solid notifications | Gateway support pending | Existing service | Not included |
@@ -55,7 +55,7 @@ The machine-readable authority is `CAPABILITY_MATRIX` / `capabilitiesFor()` in `
 | Encrypted relay sharing | Transport not included | Separate bridge composition required | Explicit selected-relay configuration |
 | Reliable cross-domain offline delivery | Not guaranteed | Not guaranteed | Durable outbox pending |
 
-The explicit configuration model can represent federation intent. This first local runtime refuses `federation.enabled: true` because it does not yet implement a transport. Existing hosted and personal-bridge federation behavior is unchanged. Consumer installation, optional local sharing, and offline delivery should each be released only after their own acceptance tests pass.
+The explicit configuration model can represent federation intent. This first local runtime refuses `federation.enabled: true` because it does not yet implement a transport. Existing hosted and personal-bridge federation behavior is unchanged. The Windows installer is a separate consumer preview with its own packaged lifecycle check. Optional local sharing and offline delivery remain later milestones.
 
 ## Verification
 

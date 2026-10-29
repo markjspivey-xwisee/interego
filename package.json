@@ -21,7 +21,8 @@
     "applications/lrs-adapter/bridge",
     "applications/jev-harness/bridge",
     "applications/shared-workspace/desktop",
-    "applications/shared-workspace/discord"
+    "applications/shared-workspace/discord",
+    "applications/pod-desktop"
   ],
   "scripts": {
     "build": "npm run build:core && npm run build:leaves && npm run build --workspace @interego/mcp",
