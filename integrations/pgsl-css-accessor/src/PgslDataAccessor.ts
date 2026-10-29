@@ -47,6 +47,7 @@ import {
   isNativeCommitMediaType, NATIVE_REVISION_PREDICATE, NATIVE_BODY_DIGEST_PREDICATE,
   nativeSnapshot, readNativeCommitCommand, requireNativeCommitScope, setNativeCommitReceipt,
 } from './NativeCommit.js';
+import { nativeDeleteScope } from './NativeDelete.js';
 
 const CONTAINER_MARKER_CT = 'internal/container';
 const NQUADS = 'application/n-quads';
@@ -187,6 +188,12 @@ export class PgslDataAccessor implements DataAccessor {
   }
 
   async deleteResource(identifier: ResourceIdentifier): Promise<void> {
+    const native = nativeDeleteScope.getStore();
+    if (native?.resource === identifier.path) {
+      const result = await guardNativeHead(() => this.ldp.deleteResourceConditionally(this.pod, identifier.path, native.expectedRevision));
+      if (result.status === 'conflict') throw new PreconditionFailedHttpError('Native resource revision changed or disappeared');
+      return;
+    }
     const existed = await guardNativeHead(() => this.ldp.deleteResource(this.pod, identifier.path));
     if (!existed) throw new NotFoundHttpError();
   }

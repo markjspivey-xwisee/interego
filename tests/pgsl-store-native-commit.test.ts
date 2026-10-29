@@ -288,6 +288,44 @@ describe('native PGSL resource commits', () => {
     expect(await ldp.deleteResource(POD, 'legacy')).toBe(false);
   });
 
+  it('atomically compare-deletes a native head and overlays while retaining canonical content', async () => {
+    const { ldp, store } = fixture();
+    const receipt = await put(ldp, 'native delete payload', null, 'native-delete');
+    const canonical = await store.resolve(receipt.opaqueUri);
+    expect((await ldp.deleteResourceConditionally(POD, 'native-delete', receipt.revision))).toEqual({
+      status: 'deleted', revision: receipt.revision,
+    });
+    expect(await store.resourceHead(POD, 'native-delete')).toBeNull();
+    expect(await store.resolveResource(POD, 'native-delete')).toBeNull();
+    expect(await store.resolve(receipt.opaqueUri)).toEqual(canonical);
+    expect(await ldp.deleteResourceConditionally(POD, 'native-delete', receipt.revision)).toEqual({ status: 'conflict', revision: null });
+  });
+
+  it('preserves a changed native head when conditional deletion is stale', async () => {
+    const { ldp, store } = fixture();
+    const old = await put(ldp, 'old', null, 'native-delete-race');
+    const current = await put(ldp, 'current', old.revision, 'native-delete-race');
+    expect(await ldp.deleteResourceConditionally(POD, 'native-delete-race', old.revision)).toEqual({
+      status: 'conflict', revision: current.revision,
+    });
+    expect((await store.resourceHead(POD, 'native-delete-race'))!.revision).toBe(current.revision);
+    expect(dec.decode((await ldp.readResource(POD, 'native-delete-race'))!.bytes)).toBe('current');
+  });
+
+  it('refuses native conditional deletion of legacy and container heads', async () => {
+    const { ldp, store } = fixture();
+    await ldp.writeResource(POD, 'legacy-delete', bytes('legacy'), CT);
+    const legacy = (await store.resourceHead(POD, 'legacy-delete'))!;
+    await expect(ldp.deleteResourceConditionally(POD, 'legacy-delete', legacy.revision)).rejects.toBeInstanceOf(NativeResourceManagedError);
+    await store.commitResource([], {
+      pod: POD, resource: 'container/', expectedRevision: null,
+      record: { topUri: legacy.record.topUri, opaqueUri: legacy.record.opaqueUri, contentType: 'internal/container',
+        updatedAt: Date.now(), size: legacy.record.size, bodyDigest: legacy.record.bodyDigest },
+    });
+    const container = (await store.resourceHead(POD, 'container/'))!;
+    await expect(ldp.deleteResourceConditionally(POD, 'container/', container.revision)).rejects.toBeInstanceOf(NativeResourceManagedError);
+  });
+
   it('preserves chunk bytes and ordered structural indexes in the atomic path', async () => {
     const { ldp, store } = fixture();
     const data = new Uint8Array(600_000);
@@ -305,6 +343,31 @@ describe('native PGSL resource commits', () => {
 const PG_URL = process.env.TEST_NATIVE_PG_URL;
 if (process.env.REQUIRE_LRS_NATIVE_TESTS === '1' && !PG_URL) throw new Error('TEST_NATIVE_PG_URL is required for native engine commit tests');
 describe.skipIf(!PG_URL)('native atomic resource commits over the real PGSL engine', () => {
+  it('serializes native commit against compare-delete under PostgreSQL READ COMMITTED', async () => {
+    const left = await openPgStore({ connectionString: PG_URL!, table: 'pgsl_kv' });
+    const right = await openPgStore({ connectionString: PG_URL!, table: 'pgsl_kv' });
+    const path = 'delete-race-' + randomUUID();
+    try {
+      const original = fixture(left);
+      const initial = await put(original.ldp, 'initial ' + path, null, path);
+      const arrived = { count: 0, gate: deferred() }, key = cpKey(resourceCollection(POD), path);
+      const writer = fixture(overlapping(left, key, arrived));
+      const deleter = fixture(overlapping(right, key, arrived));
+      const [write, deletion] = await Promise.all([
+        writer.ldp.commitResource(POD, path, bytes('new ' + path), CT, { expectedRevision: initial.revision }),
+        deleter.ldp.deleteResourceConditionally(POD, path, initial.revision),
+      ]);
+      expect(arrived.count).toBeGreaterThanOrEqual(2);
+      expect([write.status, deletion.status].filter(status => status !== 'conflict')).toHaveLength(1);
+      const head = await original.store.resourceHead(POD, path);
+      if (write.status === 'committed') expect(head?.revision).toBe(write.revision);
+      else expect(head).toBeNull();
+    } finally {
+      await right.close();
+      await left.close();
+    }
+  }, 30_000);
+
   it('serializes overlapping exact-head CAS and reconstructs after pool closure', async () => {
     const left = await openPgStore({ connectionString: PG_URL!, table: 'pgsl_kv' });
     const right = await openPgStore({ connectionString: PG_URL!, table: 'pgsl_kv' });

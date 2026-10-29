@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-10-29 — PGSL native heads can be deleted with an explicit exact-revision protocol
+
+The PGSL store now has an atomic compare-and-delete operation for native-managed documents. It requires a strong expected revision, restates the resource-head predicate with the transaction adapter's compare-and-set operation, and clears the head and both overlay directions in that transaction while leaving content-addressed nodes for garbage collection. An absent or changed head is a conflict; legacy heads and containers are not accepted.
+
+The CSS accessor exposes this only through its ordinary authorized delete path when a request supplies both `Interego-Native-Delete: 1` and exactly one strong native `If-Match`. Plain `DELETE`, and `DELETE` with only `If-Match`, retain the existing `409` response for a native head. A stale or disappeared exact target is `412`, and `OPTIONS` advertises the capability. Both live accessor configurations install the condition parser and native delete handler. Store tests cover exact deletion, stale and absent heads, retained canonical content, refused legacy/container targets, and the native commit/delete race under PostgreSQL `READ COMMITTED`.
+
 ## 2026-10-28 — Identity tests: C11 holds the primary's reads alone, so U4's server cannot take them
 
 CI's identity build failed C11 in `deploy/identity/tests/live-record-writes-routes.test.ts`. The sign-out-everywhere whose first read of its record the stand-in pod should never answer got `200 {"revoked":true,...,"sessionEpoch":1}` instead of `503`. The server behaved correctly; the defect was in the test. `hold()` holds the next matching request for a record, whoever sends it. U4 runs in the same concurrent describe and starts a second identity server, whose startup scan reads every account's record, C11's included. When the scan's read reached the stand-in after C11 set its holds and before the sign-out's own read, it took the hold. The sign-out's read was then answered, and the scan's read hung for 30 s, so U4 took about 48 s instead of 18. The scan could take C11's hold of the read after a timed-out write in the same way. That write then answered after 15 s, and C11 passed without exercising its "a write and the read after it, neither answered" case.

@@ -273,6 +273,7 @@ async function expectNativeOptions(worker: Worker, resource: string): Promise<vo
   const putTypes = String(response.headers['accept-put'] ?? '').split(',').map(value => value.split(';', 1)[0]!.trim().toLowerCase());
   assert.ok(putTypes.includes(mediaType), 'OPTIONS Accept-Put must include the native commit media type');
   assert.equal(response.headers['interego-native-commit'], '1', 'OPTIONS must advertise native commit version 1 explicitly');
+  assert.equal(response.headers['interego-native-delete'], '1', 'OPTIONS must advertise native delete version 1 explicitly');
   assert.equal((await wire(worker, resource)).status, 404, 'OPTIONS must not create the probed resource');
 }
 
@@ -347,6 +348,7 @@ async function main(): Promise<void> {
   const abaResource = `${baseUrl}${prefix}-aba.bin`;
   const coherenceResource = `${baseUrl}${prefix}-coherence.bin`;
   const invalidResource = `${baseUrl}${prefix}-invalid.bin`;
+  const deleteResource = `${baseUrl}${prefix}-delete.bin`;
   const bodyA = Buffer.from([0, 255, 1, 13, 10, 200, 65]);
   const bodyB = Buffer.from([0, 254, 2, 13, 10, 199, 66]);
   const bodyC = Buffer.from([0, 253, 3, 13, 10, 198, 67]);
@@ -413,6 +415,26 @@ async function main(): Promise<void> {
     const rawResponse = await commit(left, resource, updated.revision, bodyA);
     const raw = receipt(rawResponse, resource, updated.revision, bodyA);
     etag = await read(right, resource, raw, bodyA);
+
+    beginPhase('native-conditional-delete');
+    const deletable = receipt(await commit(left, deleteResource, null, bodyB), deleteResource, null, bodyB);
+    const deleteEtag = await read(right, deleteResource, deletable, bodyB);
+    assert.equal((await wire(left, deleteResource, 'DELETE', { 'if-match': deleteEtag })).status, 409,
+      'If-Match alone must not opt an ordinary DELETE into native deletion');
+    assert.equal((await wire(left, deleteResource, 'DELETE', {
+      'if-match': `"sha256:${'0'.repeat(64)}"`, 'interego-native-delete': '1',
+    })).status, 412, 'a stale native delete must fail its precondition');
+    await read(right, deleteResource, deletable, bodyB, deleteEtag);
+    assert.equal((await wire(left, deleteResource, 'DELETE', {
+      'if-match': deleteEtag, 'interego-native-delete': '1',
+    })).status, 205, 'an exact native delete must use CSS normal successful DELETE response');
+    assert.equal((await wire(right, deleteResource)).status, 404);
+    assert.equal((await wire(right, deleteResource, 'DELETE', {
+      'if-match': deleteEtag, 'interego-native-delete': '1',
+    })).status, 412, 'an absent exact target must be a precondition failure');
+    assert.equal((await wire(left, baseUrl, 'DELETE', {
+      'if-match': deleteEtag, 'interego-native-delete': '1',
+    })).status, 400, 'native deletion must refuse containers');
     beginPhase('concurrent-get-coherence');
     const coherent = await concurrentReadCoherence(left, right, coherenceResource);
 

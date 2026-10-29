@@ -58,6 +58,18 @@
   ],
   "@graph": [
     {
+      "@type": "Override",
+      "overrideInstance": {
+        "@id": "urn:solid-server:default:ConditionsParser"
+      },
+      "overrideParameters": {
+        "@type": "NativeConditionsParser",
+        "eTagHandler": {
+          "@id": "urn:solid-server:default:ETagHandler"
+        }
+      }
+    },
+    {
       "comment": "The internal value storage walks every document under /.internal/, including keyless reader counts left in /.internal/locks/ from when LockStorage was pod-backed. Skipping keyless entries keeps them from crashing the hourly expired-entry sweep.",
       "@type": "Override",
       "overrideInstance": {
@@ -156,6 +168,12 @@
             },
             "metadataStrategy": {
               "@id": "urn:solid-server:default:MetadataStrategy"
+            }
+          },
+          {
+            "@type": "NativeDeleteOperationHandler",
+            "store": {
+              "@id": "urn:solid-server:default:ResourceStore"
             }
           },
           {

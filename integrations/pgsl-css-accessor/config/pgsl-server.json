@@ -54,6 +54,18 @@
   ],
   "@graph": [
     {
+      "@type": "Override",
+      "overrideInstance": {
+        "@id": "urn:solid-server:default:ConditionsParser"
+      },
+      "overrideParameters": {
+        "@type": "NativeConditionsParser",
+        "eTagHandler": {
+          "@id": "urn:solid-server:default:ETagHandler"
+        }
+      }
+    },
+    {
       "comment": [
         "Resource-lock expiry: 90000 ms instead of css:config/util/resource-locker/memory.json's 6000.",
         "The expiry is a stuck-lock release, not a deadline for the work: when it fires, CSS answers 500",
@@ -185,6 +197,12 @@
             },
             "metadataStrategy": {
               "@id": "urn:solid-server:default:MetadataStrategy"
+            }
+          },
+          {
+            "@type": "NativeDeleteOperationHandler",
+            "store": {
+              "@id": "urn:solid-server:default:ResourceStore"
             }
           },
           {

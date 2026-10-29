@@ -35,6 +35,12 @@ export interface NativeResourceConflict {
   revision: string | null;
 }
 export type NativeResourceCommitResult = NativeResourceReceipt | NativeResourceConflict;
+export interface NativeResourceDeleteReceipt {
+  status: 'deleted';
+  /** The exact revision whose head and overlays were removed. */
+  revision: string;
+}
+export type NativeResourceDeleteResult = NativeResourceDeleteReceipt | NativeResourceConflict;
 export function resourceCollection(pod: string): string { return `ldp ${pod}`; }
 export function resourceRevision(pod: string, path: string, recordBytes: Uint8Array): string {
   return `sha256:${createHash('sha256').update(JSON.stringify([pod, path])).update('\0').update(recordBytes).digest('hex')}`;
@@ -45,6 +51,12 @@ export function representationDigest(bytes: Uint8Array): string {
 export function assertExpectedResourceRevision(expected: unknown): asserts expected is string | null {
   if (expected !== null && (typeof expected !== 'string' || !/^sha256:[a-f0-9]{64}$/.test(expected))) {
     throw new Error('native resource commit requires an explicit absent or strong revision precondition');
+  }
+}
+
+export function assertDeleteResourceRevision(expected: unknown): asserts expected is string {
+  if (typeof expected !== 'string' || !/^sha256:[a-f0-9]{64}$/.test(expected)) {
+    throw new Error('native resource delete requires an explicit strong revision precondition');
   }
 }
 

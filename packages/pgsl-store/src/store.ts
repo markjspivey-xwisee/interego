@@ -47,8 +47,8 @@ import {
 import { decodeJson, decodeNode, encodeJson, encodeNode, type StoredNode } from './node.js';
 import type { AtomAccessAttributes } from './attributes.js';
 import {
-  assertExpectedResourceRevision, resourceCollection, resourceRevision, NativeResourceManagedError,
-  type NativeResourceRecord, type NativeResourceHead, type NativeResourceCommitResult,
+  assertDeleteResourceRevision, assertExpectedResourceRevision, resourceCollection, resourceRevision, NativeResourceManagedError,
+  type NativeResourceRecord, type NativeResourceHead, type NativeResourceCommitResult, type NativeResourceDeleteResult,
 } from './resource.js';
 
 const EMPTY = new Uint8Array(0);
@@ -303,6 +303,33 @@ export class PgslStore {
       }
     }
     throw new Error('native resource changed repeatedly during legacy delete');
+  }
+
+  /** Atomically remove one exact managed head and both overlay directions. */
+  async deleteResource(pod: string, path: string, expectedRevision: string): Promise<NativeResourceDeleteResult> {
+    assertDeleteResourceRevision(expectedRevision);
+    const key = cpKey(resourceCollection(pod), path);
+    try {
+      return await this.fdb.transact(async txn => {
+        const previous = await txn.get(key);
+        if (previous === undefined) return { status: 'conflict' as const, revision: null };
+        const record = decodeJson<NativeResourceRecord>(previous);
+        if (!record.nativeManaged || record.contentType === 'internal/container') throw new NativeResourceManagedError();
+        const observed = resourceRevision(pod, path, previous);
+        if (observed !== expectedRevision) return { status: 'conflict' as const, revision: observed };
+        // The identical-value CAS is a row-lock predicate proof on PostgreSQL
+        // READ COMMITTED; every clear below belongs to the same transaction.
+        if (!await txn.compareAndSet(key, previous, previous)) throw new ResourceWriteRace();
+        txn.clear(key);
+        const top = await txn.get(ovKey(pod, path));
+        txn.clear(ovKey(pod, path));
+        if (top !== undefined) txn.clear(ovrKey(nodeAddrFromUrn(dec.decode(top)).hash, pod, path));
+        return { status: 'deleted' as const, revision: observed };
+      });
+    } catch (error) {
+      if (!(error instanceof ResourceWriteRace)) throw error;
+      return { status: 'conflict', revision: (await this.resourceHead(pod, path))?.revision ?? null };
+    }
   }
 
   /** Point read of a node by its content-address URN. */

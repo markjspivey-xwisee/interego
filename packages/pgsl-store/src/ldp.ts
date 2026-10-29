@@ -27,7 +27,7 @@ import { createHash } from 'node:crypto';
 import type { StoredNode } from './node.js';
 import {
   assertExpectedResourceRevision, resourceCollection, representationDigest, NativeResourceManagedError,
-  type NativeResourceRecord, type NativeResourceCommitResult,
+  type NativeResourceRecord, type NativeResourceCommitResult, type NativeResourceDeleteResult,
 } from './resource.js';
 
 export interface LdpResource {
@@ -272,6 +272,13 @@ export class LdpStore {
    */
   async deleteResource(pod: string, path: string): Promise<boolean> {
     return this.store.deleteLegacyResource(pod, path);
+  }
+
+  /** Required-precondition deletion of one exact native-managed document head. */
+  async deleteResourceConditionally(
+    pod: string, path: string, expectedRevision: string,
+  ): Promise<NativeResourceDeleteResult> {
+    return this.store.deleteResource(pod, path, expectedRevision);
   }
 
   /** Direct child PATHS of a container (LDP containment derived from the paths). */
