@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-10-30 — Keep hosted container builds independent of the MCP application
+
+Hosted images that copy the package libraries now build those libraries explicitly, while the normal root build still builds the MCP application. Images with a separate dependency-install layer include the library manifests before installation, so newly added local-runtime and federation dependencies are available during cold builds. Existing prebuilt-artifact checks and deployment gates remain active.
+
 ## 2026-10-30 — Open existing accounts with their usual Interego passkey
 
 The account page can sign returning users in with the Windows Hello or device passkey they already use on the relay's sign-in site. A dedicated popup verifies that existing credential at its original site; a short-lived, single-use exchange returns the session only to the initiating account page. The provider's protected browser cookie binds both sides of the exchange. Fresh credential and session-epoch checks refuse cancelled, expired, revoked or replayed requests. Adding a local PC key still requires its separate fresh verification and native approval. No replacement account, enrollment, game-data migration, federation or public bridge is needed.

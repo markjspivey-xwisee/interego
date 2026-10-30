@@ -2734,6 +2734,8 @@ test('P16: a Play purge sends the game data a native delete only where the store
     assert.equal(others.has(save) || others.has(budget) || others.has(late) || others.has(`/${o.id}/agents`), false);
     assert.deepEqual(below(`/${o.id}/`), [], 'nothing of the pod is left but the record');
     assert.ok(record(o.id)!.deletedAt, 'which is the tombstone');
+    // The persisted completion precedes delivery of the child's completion log.
+    await logs(janitor, new RegExp(`finished the purge of ${o.id}(?![,\\w-])`));
     assert.match(janitor.output(), new RegExp(`finished the purge of ${o.id}(?![,\\w-])`));
   } finally {
     nativeDeleteAdvertised = true;

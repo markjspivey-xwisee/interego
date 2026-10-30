@@ -64,6 +64,7 @@ on:
       - 'demos/**'
       - 'integrations/**'
       - 'tsconfig.base.json'
+      - 'tsconfig.json'
       - 'tsconfig.check.json'
       # ★ NOT just `tools/typecheck-gate.mjs`. This job is the ONLY workflow that runs
       # `npx vitest run`, and vitest.config.ts holds the `include` globs, the `globalSetup`
