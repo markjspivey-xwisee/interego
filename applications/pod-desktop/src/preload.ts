@@ -2,6 +2,7 @@ import { contextBridge, ipcRenderer } from 'electron';
 import type { DesktopApi, FileActionResult, LocalNote, NoteInput, PodStatus } from './types.js';
 import type { AgentConnection, AgentConnectionInput, AgentSetup } from './agent-types.js';
 import type { BridgeClient, BridgeStartInput, BridgeStatus, StableBridgeInput, StableBridgeView } from './bridge-types.js';
+import type { FederationStatus, FederationResource } from '@interego/pod-federation';
 
 async function invoke<T>(operation: string, argument?: unknown): Promise<T> {
   const reply = await ipcRenderer.invoke(`pod:${operation}`, argument) as
@@ -39,6 +40,23 @@ const api: DesktopApi = Object.freeze({
   forgetStableBridge: () => invoke<BridgeStatus>('forgetStableBridge'),
   copyStableBridgeTarget: () => invoke<void>('copyStableBridgeTarget'),
   openStableBridgeSetup: () => invoke<void>('openStableBridgeSetup'),
+  browserExtensionIds: () => invoke<readonly string[]>('browserExtensionIds'),
+  setBrowserExtensionIds: (ids: readonly string[]) => invoke<readonly string[]>('setBrowserExtensionIds', ids),
+  federationStatus: () => invoke<FederationStatus>('federationStatus'),
+  enableFederation: (name: string) => invoke<FederationStatus>('enableFederation', name),
+  disableFederation: () => invoke<FederationStatus>('disableFederation'),
+  createFederationInvite: () => invoke<{ id: string; code: string; expiresAt: string }>('createFederationInvite'),
+  copyFederationInvite: (code: string) => invoke<void>('copyFederationInvite', code),
+  acceptFederationInvite: (code: string) => invoke<FederationStatus>('acceptFederationInvite', code),
+  approveFederation: (id: string, verificationCode: string) => invoke<FederationStatus>('approveFederation', { id, verificationCode }),
+  denyFederation: (id: string) => invoke<FederationStatus>('denyFederation', id),
+  refreshFederation: () => invoke<FederationStatus>('refreshFederation'),
+  shareFederation: (input: { peerId: string; noteIds: readonly string[] }) => invoke<FederationStatus>('shareFederation', input),
+  readFederation: (id: string) => invoke<FederationResource & { note?: { title: string; body: string } }>('readFederation', id),
+  revokeFederation: (id: string) => invoke<FederationStatus>('revokeFederation', id),
+  forgetFederation: () => invoke<FederationStatus>('forgetFederation'),
+  removeFederationSnapshot: (id: string) => invoke<FederationStatus>('removeFederationSnapshot', id),
+  clearFederationHistory: () => invoke<FederationStatus>('clearFederationHistory'),
 });
 contextBridge.exposeInMainWorld('interego', api);
 

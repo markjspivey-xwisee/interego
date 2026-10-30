@@ -734,6 +734,9 @@ export class InteregoOAuthProvider implements OAuthServerProvider {
     const redirectHost = escapeHtml(new URL(params.redirectUri).host);
     const identityOrigin = new URL(this.cfg.identityUrl).origin;
     const identityHost = escapeHtml(new URL(this.cfg.identityUrl).host);
+    const federationConsent = params.scopes?.includes('federation:manage')
+      ? '<div class="client" id="federation-consent" role="note"><strong>Manage pod sharing</strong><p>This app can turn on pod sharing, approve or disconnect other pods, and send selected copies from your pod. A recipient can keep copies already received. Authorize this only if you trust the app to manage your pod connections.</p></div>'
+      : '';
 
     res.setHeader('Content-Type', 'text/html; charset=utf-8');
     res.send(`<!doctype html>
@@ -792,6 +795,8 @@ export class InteregoOAuthProvider implements OAuthServerProvider {
     <div class="name">${clientName}</div>
     <div class="meta">redirect: ${redirectHost} \u00b7 scopes: ${scopeList}</div>
   </div>
+
+  ${federationConsent}
 
   <h2>Choose a sign-in method</h2>
 

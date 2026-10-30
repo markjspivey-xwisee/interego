@@ -47,7 +47,8 @@ function date(value: unknown): string {
 }
 function statusResult(value: unknown, connectionId: string): AgentStatus {
   const result = object(value); const grant = object(result['connection']);
-  if (result['localOnly'] !== true || result['federationEnabled'] !== false || typeof result['running'] !== 'boolean'
+  if (typeof result['localOnly'] !== 'boolean' || typeof result['federationEnabled'] !== 'boolean'
+    || result['localOnly'] === result['federationEnabled'] || typeof result['running'] !== 'boolean'
     || grant['id'] !== connectionId || !['waiting', 'active'].includes(String(grant['state']))
     || !Array.isArray(grant['permissions']) || !grant['permissions'].length
     || grant['permissions'].some(p => !['notes:read', 'notes:create'].includes(String(p)))
@@ -59,7 +60,7 @@ function statusResult(value: unknown, connectionId: string): AgentStatus {
     permissions: [...grant['permissions']] as AgentConnection['permissions'], createdAt: date(grant['createdAt']), expiresAt: date(grant['expiresAt']),
     state: grant['state'] as AgentConnection['state'], ...(grant['lastUsedAt'] !== undefined ? { lastUsedAt: date(grant['lastUsedAt']) } : {}),
   };
-  return { connection, running: result['running'], localOnly: true, federationEnabled: false };
+  return { connection, running: result['running'], localOnly: result['localOnly'], federationEnabled: result['federationEnabled'] };
 }
 function noteSummary(value: unknown) {
   const row = object(value);

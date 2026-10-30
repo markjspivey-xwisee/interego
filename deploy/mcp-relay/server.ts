@@ -60,6 +60,10 @@ import { Server } from '@modelcontextprotocol/server';
 import { createRelayMcpHandler } from './mcp-serving.js';
 import { clientInteractionMcpResult, clientInteractionToolResult } from './client-interaction-mcp.js';
 import { clientInteractionHttpHandler } from './client-interaction-http.js';
+import { FederationService } from '@interego/pod-federation';
+import { FEDERATION_MANAGE_SCOPE, FederationHttpError, federationOwnerFromOAuth, hostedFederationHttp, type HostedFederationOwner } from './pod-federation-http.js';
+import { encryptedFederationStore } from './pod-federation-store.js';
+import { hostedFederationResources } from './pod-federation-resources.js';
 import { mcpOutputSchema, toStructuredContent,
   // Turtle term serialisers. IRIs and prefixed names are REFUSED when unusable
   // (Turtle defines no escape for their terminators); literals are escaped.
@@ -13515,7 +13519,7 @@ app.get('/.well-known/oauth-authorization-server', (req, res) => {
     // such a bearer via the standard OAuth authorize flow:
     //   GET /authorize?...&scope=mcp:read
     // and then observe the 403 insufficient_scope from any write tool.
-    scopes_supported: ['mcp', 'mcp:read', 'mcp:write'],
+    scopes_supported: ['mcp', 'mcp:read', 'mcp:write', FEDERATION_MANAGE_SCOPE],
     // RFC 9449 §5.1 — advertise DPoP support to clients.
     dpop_signing_alg_values_supported: DPOP_SIGNING_ALGS,
     // Hydra affordances — every OAuth endpoint as a hydra:Operation so
@@ -13561,7 +13565,7 @@ app.get('/.well-known/oauth-protected-resource', (req, res) => {
     authorization_servers: [DEFAULT_ISSUER.href],
     // Mirror the authorization-server metadata's scope vocabulary. See
     // the long comment above for the read/write split rationale.
-    scopes_supported: ['mcp', 'mcp:read', 'mcp:write'],
+    scopes_supported: ['mcp', 'mcp:read', 'mcp:write', FEDERATION_MANAGE_SCOPE],
     resource_name: 'Interego MCP',
     // RFC 9449 §5.1 — advertise DPoP support at the resource as well so
     // clients that only fetch the protected-resource metadata document
@@ -14306,7 +14310,7 @@ app.use(interegoOAuthRouter({
   // the access token's `scopes` claim, which is what the /mcp middleware
   // and the per-tool write-side gate (see WRITE_SIDE_OAUTH_SCOPES below
   // and handlePublishContext) inspect to decide read vs. write.
-  scopesSupported: ['mcp', 'mcp:read', 'mcp:write'],
+  scopesSupported: ['mcp', 'mcp:read', 'mcp:write', FEDERATION_MANAGE_SCOPE],
 }));
 
 /**
@@ -14788,7 +14792,7 @@ First call triggers an OAuth flow in your browser. You'll be asked to enroll a <
 </script>
 
 <footer>
-Open-source substrate · <a href="https://github.com/markjspivey-xwisee/interego">github</a> · this deployment is the maintainer's reference instance
+Open-source substrate · <a href="https://github.com/markjspivey-xwisee/interego">github</a> · <a href="/pod-federation">Connect your pod</a> · this deployment is the maintainer's reference instance
 </footer>
 </body>
 </html>`;
@@ -14824,6 +14828,7 @@ app.get('/', (req, res) => {
       { name: 'audit-lineage',    target: '/audit/lineage?descriptor=<url>', method: 'GET',  description: 'Walk prov:wasDerivedFrom + iep:supersedes for one descriptor.' },
       { name: 'audit-compliance', target: '/audit/compliance/{framework}',   method: 'GET',  description: 'Generate a regulatory framework report.' },
       { name: 'inbox',            target: '/inbox?pod=<url>',                method: 'GET',  description: 'What\'s new on a pod (consumer-friendly framing of /audit/events).' },
+      { name: 'pod-connections', target: '/pod-federation/profile',         method: 'GET', description: 'Opt-in invitations and encrypted snapshot sharing. Owner management requires separate federation:manage consent; existing MCP grants confer none.' },
       { name: 'oauth-as-meta',    target: '/.well-known/oauth-authorization-server', method: 'GET', description: 'OAuth 2.0 Authorization Server Metadata (RFC 8414) + Hydra.' },
       { name: 'oauth-pr-meta',    target: '/.well-known/oauth-protected-resource',    method: 'GET', description: 'OAuth Protected Resource Metadata (RFC 9728) + Hydra.' },
       { name: 'operations',       target: '/.well-known/operations',         method: 'GET',  description: 'Typed substrate-operation catalog — 8 kernel verbs + every thin-facade shim as iep:Affordance entries (FIX 4).' },
@@ -16326,6 +16331,46 @@ app.get('/client-check', (_req, res) => {
   res.setHeader('Cache-Control', 'no-store');
   res.type('text/html').send(CLIENT_CHECK_HTML);
 });
+
+// Opt-in L3 federation. The page obtains its OWN explicit grant; existing assistant
+// MCP tokens, static API keys, signed tool envelopes and provisional play confer none.
+// Every new process starts with an empty service map and hence no active peers.
+const hostedPodFederation = new Map<string, FederationService>();
+const readHostedSharingDescriptor = async (owner: HostedFederationOwner, id: string) => JSON.parse(await handleGetDescriptor({ url: id, bypass_cache: true,
+  _session_user_id: owner.userId, _session_agent_did: owner.agentId,
+  _session_agent_id: owner.agentId, _session_principal: owner.principal, _identity_token: owner.identityToken }, false)) as Record<string, unknown>;
+const federationSelection = hostedFederationResources({
+  entries: owner => discover(owner.podUrl, undefined, { fetch: solidFetch }),
+  ownResource: (owner, url) => mayUseRelayKey({ targetUrl: normalizeCssUrl(url), ownPodUrl: owner.podUrl, storeOrigins: STORE_ORIGINS }),
+  descriptor: readHostedSharingDescriptor,
+  title: async (owner, id) => {
+    const result = await readHostedSharingDescriptor(owner, id);
+    return typeof result.rendered === 'string' ? /^# (.+)$/m.exec(result.rendered)?.[1] : undefined;
+  },
+});
+app.use('/pod-federation', bearerVerifyLimiter, hostedFederationHttp({
+  publicUrl: PUBLIC_BASE_URL || `http://localhost:${PORT}`,
+  authorize: async authorization => {
+    if (!authorization?.startsWith('Bearer ')) throw new FederationHttpError(401, 'Sign in to manage your pod connections.');
+    let auth: Awaited<ReturnType<typeof oauthProvider.verifyAccessToken>>;
+    try { auth = await oauthProvider.verifyAccessToken(authorization.slice(7)); }
+    catch { throw new FederationHttpError(401, 'Your sign-in expired. Sign in again to manage this pod.'); }
+    return federationOwnerFromOAuth(auth, CSS_URL, normalizeCssUrl);
+  },
+  service: async (userId, ownerOperation) => {
+    const existing = hostedPodFederation.get(userId);
+    if (existing || !ownerOperation) return existing;
+    // Public routes never allocate instances. Authenticated owners are bounded too.
+    if (hostedPodFederation.size >= 64) return undefined;
+    const podUrl = CSS_URL + userId + '/';
+    const service = new FederationService({ binding: async () => podUrl, refreshState: true,
+      store: encryptedFederationStore({ podUrl, fetch: solidFetch, encryptionKey: relayAgentKey }) });
+    hostedPodFederation.set(userId, service);
+    return service;
+  },
+  listResources: owner => federationSelection.list(owner),
+  resources: (owner, ids) => federationSelection.selected(owner, ids),
+}));
 
 app.get('/tools', (req, res) => {
   // Mirror the MCP /mcp tools/list response so HTTP-browseable

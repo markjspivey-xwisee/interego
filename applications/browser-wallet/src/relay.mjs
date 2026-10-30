@@ -109,7 +109,7 @@ export async function discoverCatalog(relay, { fetchImpl } = {}) {
 
 // The four admitted tools currently publish simple object schemas. Validate those
 // live constraints; an unfamiliar validation vocabulary fails closed for a new contract.
-function validate(value, schema, path = 'arguments', depth = 0) {
+export function validate(value, schema, path = 'arguments', depth = 0) {
   if (depth > 12 || !object(schema)) throw new Error('The tool schema cannot be validated.');
   const supported = new Set(['type', 'properties', 'required', 'additionalProperties', 'description', 'title', 'default', 'examples', 'enum', 'const', 'items', 'minItems', 'maxItems', 'minLength', 'maxLength', 'pattern', 'minimum', 'maximum', 'format', '$schema', '$id', 'deprecated']);
   for (const key of Object.keys(schema)) if (!supported.has(key)) throw new Error(`The tool schema uses an unsupported constraint: ${key}.`);

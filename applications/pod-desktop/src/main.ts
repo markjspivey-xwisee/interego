@@ -17,6 +17,10 @@ import { StableBridgeTunnel } from './stable-tunnel.js';
 import { StableBridgeStore } from './stable-bridge.js';
 import { BridgeManager } from './bridge-manager.js';
 import type { BridgeClient, BridgeStartInput, StableBridgeInput } from './bridge-types.js';
+import { BrowserExtensionStore } from './browser-extensions.js';
+import { FederationService, ProtectedFederationStore } from '@interego/pod-federation';
+import { presentSharedResource } from './federation-notes.js';
+import { shareSelectedNotes } from './federation-owner.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const entry = join(here, '..', 'index.html');
@@ -51,7 +55,10 @@ let window: BrowserWindow | null = null;
 let controller: PodController | undefined;
 let agentService: AgentService | undefined;
 let webBridge: BridgeManager | undefined;
+let podFederation: FederationService | undefined;
+let federationGeneration = 0;
 let smokeBridgeOrigin: string | undefined;
+let smokeFederationPeer: FederationService | undefined;
 let pairingError: string | undefined;
 let closing = false;
 const pending = new Set<Promise<unknown>>();
@@ -159,6 +166,22 @@ function bridge(): BridgeManager {
   return webBridge;
 }
 
+function sharing(): FederationService {
+  if (!podFederation) throw new Error('Pod sharing is unavailable. Reopen Interego to try again.');
+  return podFederation;
+}
+
+async function pauseFederation(): Promise<void> {
+  ++federationGeneration;
+  await podFederation?.setEnabled(false).catch(() => {}); // Disable aborts synchronously even when saved state needs recovery.
+}
+
+async function federationFlags(): Promise<{ localOnly: boolean; federationEnabled: boolean }> {
+  // Unreadable sharing state must not prevent access to the authoritative local pod.
+  const enabled = await podFederation?.status().then(value => value.enabled).catch(() => false) ?? false;
+  return { localOnly: !enabled, federationEnabled: enabled };
+}
+
 function approvalId(value: unknown): string {
   if (typeof value !== 'string' || !/^[a-zA-Z0-9_-]{16,128}$/.test(value)) throw new Error('Choose a pending connection request.');
   return value;
@@ -181,15 +204,37 @@ async function bootstrap(): Promise<void> {
   const options = { dataDir: join(userData, 'local-pod'), vault: keyVault(userData) };
   controller = new PodController(options);
   const pod = controller;
+  const extensions = new BrowserExtensionStore(join(userData, 'browser-access'), agentProtector);
+  const smokeFederationTransport: typeof fetch = async (input, init) => {
+    if (!smoke) throw new Error('The isolated peer transport is unavailable.');
+    const request = new Request(input, init); const url = new URL(request.url);
+    if (url.origin === 'https://packaged-peer.example' && smokeFederationPeer) return smokeFederationPeer.handle(request);
+    if (url.origin !== 'https://packaged-stable.example' || !smokeBridgeOrigin) throw new Error('Unknown isolated peer address.');
+    return fetch(`${smokeBridgeOrigin}${url.pathname}`, { method: request.method, headers: request.headers,
+      body: request.method === 'POST' ? await request.text() : undefined, signal: request.signal, redirect: 'error' });
+  };
+  podFederation = new FederationService({
+    store: new ProtectedFederationStore({ dataDir: join(userData, 'pod-federation'), protector: agentProtector }),
+    binding: () => controller!.agentPodBinding(),
+    ...(smoke ? { fetch: smokeFederationTransport } : {}),
+  });
+  if (smoke) smokeFederationPeer = new FederationService({
+    store: new ProtectedFederationStore({ dataDir: join(userData, 'smoke-independent-peer'), protector: agentProtector }),
+    binding: async () => 'isolated-independent-peer', fetch: smokeFederationTransport,
+  });
   const access = new AgentService({ dataDir: join(userData, 'agent-access'), protector: agentProtector,
-    getPodBinding: () => controller!.agentPodBinding(), execute: (operation, args, authorize) => controller!.executeAgent(operation, args ?? {}, authorize) });
+    getPodBinding: () => controller!.agentPodBinding(), execute: async (operation, args, authorize) => {
+      const result = await controller!.executeAgent(operation, args ?? {}, authorize);
+      return operation === 'status' ? { ...(result as Record<string, unknown>), ...await federationFlags() } : result;
+    } });
   try { await access.start(); agentService = access; }
   catch {
     pairingError = 'Agent connections could not open. Your saved notes are safe. Reopen Interego to try again.';
     await access.close().catch(() => {});
   }
   if (agentService) {
-    const server = new BridgeServer({ agents: access, persistence: {
+    const server = new BridgeServer({ agents: access, allowedBrowserOrigins: () => extensions.origins(),
+      federation: request => sharing().handle(request), persistence: {
       dataDir: join(userData, 'web-bridge', 'authorization'), protector: agentProtector,
       getPodBinding: () => controller!.agentPodBinding(),
     } });
@@ -202,17 +247,17 @@ async function bootstrap(): Promise<void> {
     } : new StableBridgeTunnel({
       resourcesDir: app.isPackaged ? app.getAppPath() : join(app.getAppPath(), '.staging', 'app'),
       dataDir: join(userData, 'web-bridge'),
-      onUnexpectedExit: () => { void webBridge?.connectionLost().catch(() => {}); },
+      onUnexpectedExit: () => { void pauseFederation().then(() => webBridge?.connectionLost()).catch(() => {}); },
     });
     // Construction does not bind a port, launch a tunnel or restore web access.
     webBridge = new BridgeManager(server, tunnel, { settings, ...(smoke ? { verifyPublic: async () => {} } : {}) });
   }
-  handle('status', async () => pod.getStatus());
+  handle('status', async () => ({ ...await pod.getStatus(), ...await federationFlags() }));
   handle('setup', async () => pod.setup());
   handle('start', async () => pod.start());
   handle('stop', async () => {
     // The owner's Stop control closes remote access as well as local storage.
-    try { await webBridge?.stop(); }
+    try { await pauseFederation(); await webBridge?.stop(); }
     finally { await pod.stop(); }
     return pod.getStatus();
   });
@@ -244,7 +289,7 @@ async function bootstrap(): Promise<void> {
     if (!state.running || !state.configured || state.restorePending) throw new Error('Start your local space before connecting a web app.');
     return bridge().start(value as BridgeStartInput);
   });
-  handle('stopBridge', async () => bridge().stop());
+  handle('stopBridge', async () => { await pauseFederation(); return bridge().stop(); });
   handle('approveBridge', async value => bridge().approve(approvalId(value)));
   handle('denyBridge', async value => bridge().deny(approvalId(value)));
   handle('copyBridgeUrl', async () => {
@@ -263,13 +308,65 @@ async function bootstrap(): Promise<void> {
     if (!state.running || state.restorePending) throw new Error('Start your local space before enabling web access.');
     return bridge().resume();
   });
-  handle('forgetStableBridge', async () => bridge().forget());
+  handle('forgetStableBridge', async () => { await pauseFederation(); return bridge().forget(); });
   handle('copyStableBridgeTarget', async () => {
     const saved = await bridge().settings();
     if (!saved) throw new Error('Save a permanent address before copying its local target.');
     clipboard.writeText(`http://127.0.0.1:${saved.port}`);
   });
   handle('openStableBridgeSetup', async () => shell.openExternal('https://one.dash.cloudflare.com/'));
+  handle('browserExtensionIds', async () => extensions.list());
+  handle('setBrowserExtensionIds', async value => extensions.save(value));
+  handle('federationStatus', async () => sharing().status());
+  handle('enableFederation', async value => {
+    if (typeof value !== 'string' || !value.trim() || value.length > 80) throw new Error('Give your pod a name of up to 80 characters.');
+    const generation = ++federationGeneration;
+    const state = await pod.getStatus();
+    const saved = await bridge().settings();
+    if (!state.running || state.restorePending) throw new Error('Start your local pod before enabling sharing.');
+    if (!saved) throw new Error('Save a permanent web address above before enabling pod sharing.');
+    const current = () => {
+      if (closing || generation !== federationGeneration) throw new Error('Pod sharing was paused. Enable it again when you are ready.');
+    };
+    current();
+    await sharing().configure({ name: value.trim(), endpoint: `${saved.origin}/pod-federation`, kind: 'local' });
+    current();
+    const before = await bridge().status(); current();
+    if (before.state !== 'ready') throw new Error('Enable your permanent web address above before turning on pod sharing. This also lets you review any saved assistant connections.');
+    const enabled = await sharing().setEnabled(true);
+    if (generation !== federationGeneration || closing) { await sharing().setEnabled(false); current(); }
+    return enabled;
+  });
+  handle('disableFederation', async () => { await pauseFederation(); return sharing().status(); });
+  handle('createFederationInvite', async () => sharing().createInvite());
+  handle('copyFederationInvite', async value => {
+    if (typeof value !== 'string' || !value || value.length > 16384 || /[\u0000-\u0020\u007f]/.test(value)) throw new Error('Create an invitation before copying it.');
+    clipboard.writeText(value);
+  });
+  handle('acceptFederationInvite', async value => {
+    if (typeof value !== 'string') throw new Error('Paste the invitation from the person you want to connect with.');
+    return sharing().acceptInvite(value);
+  });
+  handle('approveFederation', async value => {
+    if (!value || typeof value !== 'object') throw new Error('Choose a pending pod invitation.');
+    const input = value as { id?: unknown; verificationCode?: unknown };
+    if (typeof input.id !== 'string' || typeof input.verificationCode !== 'string') throw new Error('Compare the invitation codes before accepting.');
+    return sharing().approve(input.id, input.verificationCode);
+  });
+  handle('denyFederation', async value => { if (typeof value !== 'string') throw new Error('Choose an invitation.'); return sharing().deny(value); });
+  handle('refreshFederation', async () => sharing().refresh());
+  handle('shareFederation', async value => {
+    if (!value || typeof value !== 'object') throw new Error('Choose a connection and the notes to share.');
+    const input = value as { peerId?: unknown; noteIds?: unknown };
+    if (typeof input.peerId !== 'string' || !Array.isArray(input.noteIds) || input.noteIds.some(id => typeof id !== 'string')) throw new Error('Choose saved notes to share.');
+    return shareSelectedNotes({ generation: () => federationGeneration, closing: () => closing,
+      resources: ids => pod.federationResources(ids), share: (peerId, resources) => sharing().share(peerId, resources) }, input.peerId, input.noteIds as string[]);
+  });
+  handle('readFederation', async value => { if (typeof value !== 'string') throw new Error('Choose a received snapshot.'); return presentSharedResource(await sharing().received(value)); });
+  handle('revokeFederation', async value => { if (typeof value !== 'string') throw new Error('Choose a connected pod.'); return sharing().revoke(value); });
+  handle('forgetFederation', async () => { ++federationGeneration; return sharing().forget(); });
+  handle('removeFederationSnapshot', async value => { if (typeof value !== 'string') throw new Error('Choose a received snapshot.'); return sharing().removeReceived(value); });
+  handle('clearFederationHistory', async () => sharing().clearSentHistory());
   handle('openBridgeClient', async value => {
     const links: Record<BridgeClient, string> = {
       'chatgpt-web': 'https://chatgpt.com/',
@@ -363,9 +460,17 @@ async function bootstrap(): Promise<void> {
       const smokeInvoke = <T>(method: string, argument?: unknown) => window!.webContents.executeJavaScript(`window.interego[${JSON.stringify(method)}](${argument === undefined ? '' : JSON.stringify(argument)})`) as Promise<T>;
       if (!initial.configured) await verifyWebBridge({ invoke: smokeInvoke, loopback: () => smokeBridgeOrigin });
       const { verifyStableBridge } = await import('./stable-bridge-smoke.js');
+      const { verifyFederation } = await import('./federation-smoke.js');
+      const checkFederation = () => verifyFederation({ invoke: smokeInvoke, loopback: () => smokeBridgeOrigin,
+        expectPrevious: initial.configured, peer: smokeFederationPeer!,
+        approve: (id, code) => window!.webContents.executeJavaScript(`window.interego.approveFederation(${JSON.stringify(id)},${JSON.stringify(code)})`),
+        save: async value => atomicWrite(join(userData, 'smoke-peer-journal.bin'), Buffer.from(agentProtector.protect(JSON.stringify(value)), 'utf8')),
+        load: async () => JSON.parse(agentProtector.unprotect(await readFile(join(userData, 'smoke-peer-journal.bin'), 'utf8'))) as import('./federation-smoke.js').FederationSmokeJournal });
+      if (initial.configured) await checkFederation();
       await verifyStableBridge({ invoke: smokeInvoke, loopback: () => smokeBridgeOrigin, expectPrevious: initial.configured,
         saveClient: async client => atomicWrite(join(userData, 'smoke-web-client.bin'), Buffer.from(agentProtector.protect(JSON.stringify(client)), 'utf8')),
         loadClient: async () => JSON.parse(agentProtector.unprotect(await readFile(join(userData, 'smoke-web-client.bin'), 'utf8'))) as import('./stable-bridge-smoke.js').SavedSmokeClient });
+      if (!initial.configured) await checkFederation();
       await window.webContents.executeJavaScript('window.interego.stop()');
       const reopened = new PodController(options);
       controller = reopened;
@@ -417,6 +522,7 @@ else {
       try {
         // Stop admitting agent work before waiting for any owner dialog or action.
         trace('closing web connections');
+        await pauseFederation();
         await webBridge?.stop();
         trace('closing local app connections');
         await agentService?.close();

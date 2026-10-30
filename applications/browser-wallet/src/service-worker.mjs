@@ -1,3 +1,4 @@
+/* global chrome */
 import { signIn } from './oauth.mjs';
 import { normalizeRelay, discoverCatalog, callTool } from './relay.mjs';
 import { createWallet } from './wallet.mjs';

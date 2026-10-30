@@ -12,6 +12,7 @@ import type { LocalNode, LocalNodeOptions } from '@interego/local-node';
 import { discover, fetchGraphContent, parseDistributionFromDescriptorTurtle, publish, type FetchFn } from '@interego/solid';
 import type { LocalNote, NoteInput, PodState, PodStatus } from './types.js';
 import type { AgentOperation, AgentPrincipal } from './agent-types.js';
+import type { FederationResource } from '@interego/pod-federation';
 
 export interface PodKeyVault {
   load(): Promise<EncryptionKeyPair | null>;
@@ -346,6 +347,39 @@ export class PodController {
     return this.action('Your notes could not be read. Your saved data was kept unchanged.', async () => {
       const notes = await this.readNotes(this.runningNode(), keyPair(await this.vault.load()));
       this.noteCount = notes.length; return notes;
+    });
+  }
+
+  /** Owner-selected source representations. Transport never rewrites their graph identities. */
+  federationResources(ids: readonly string[]): Promise<readonly FederationResource[]> {
+    return this.action('The selected notes could not be prepared for sharing. No other notes were shared.', async () => {
+      if (!Array.isArray(ids) || !ids.length || ids.length > 10 || new Set(ids).size !== ids.length || ids.some(id => !UUID.test(id))) {
+        throw new PodError('Choose between one and ten saved notes to share.');
+      }
+      const node = this.runningNode();
+      const key = keyPair(await this.vault.load());
+      const entries = await discover(node.podUrl, undefined, { fetch: node.fetch as FetchFn });
+      const result: FederationResource[] = [];
+      for (const id of ids) {
+        const iri = `${GRAPH_PREFIX}${id}`;
+        const matches = entries.filter(entry => entry.describes.includes(iri as IRI));
+        if (matches.length !== 1) throw new PodError('A selected note could not be found. Refresh your notes before sharing.');
+        const response = await node.fetch(matches[0]!.descriptorUrl, { headers: { accept: 'text/turtle' } });
+        if (!response.ok) throw new PodError('A selected note could not be read.');
+        const distribution = parseDistributionFromDescriptorTurtle(await response.text());
+        if (!distribution?.encrypted || distribution.visibility !== 'private') throw new PodError('A selected note has an unfamiliar privacy record.');
+        const payload = await fetchGraphContent(distribution.accessURL, { fetch: node.fetch as FetchFn, recipientKeyPair: key });
+        if (!payload.encrypted || payload.content === null) throw new PodError('A selected note could not be decrypted.');
+        const subject = parseTrig(payload.content).subjects.find(row => row.subject === `urn:uuid:${id}`);
+        const values = subject?.properties.get(RDF_VALUE);
+        if (values?.length !== 1 || values[0]?.kind !== 'literal' || savedNote(JSON.parse(values[0].value)).id !== id) {
+          throw new PodError('A selected note does not match its protected content. No snapshot was sent.');
+        }
+        // The encrypted publisher stores Turtle plaintext inside the envelope. Its bytes
+        // remain the source representation; the new transport envelope has separate keys.
+        result.push({ iri, mediaType: 'text/turtle', content: payload.content });
+      }
+      return result;
     });
   }
 

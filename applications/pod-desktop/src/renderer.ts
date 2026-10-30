@@ -1,6 +1,7 @@
 import type { DesktopApi, LocalNote, PodStatus } from './types.js';
 import type { AgentClient, AgentConnection, AgentPermission, AgentSetup } from './agent-types.js';
 import { installBridgeUi } from './bridge-renderer.js';
+import { installFederationUi } from './federation-renderer.js';
 
 const element = <T extends HTMLElement = HTMLElement>(id: string): T => {
   const found = document.getElementById(id);
@@ -67,6 +68,7 @@ const bridgeUi = installBridgeUi(api, {
   showConnections: () => selectPage('connections'),
   onAccessChanged: () => { drawConnections(); void loadConnections(); },
 });
+const federationUi = installFederationUi(api, { pod: () => status, locallyBusy: () => busy !== null });
 
 function connectionDate(value: string): string {
   return Number.isFinite(Date.parse(value)) ? new Intl.DateTimeFormat(undefined, {
@@ -407,6 +409,7 @@ function controls(): void {
       : 'Choose at least one permission to continue.';
   document.body.setAttribute('aria-busy', String(occupied));
   bridgeUi.updateAvailability();
+  federationUi.updateAvailability();
 }
 
 function applyStatus(next: PodStatus): void {
@@ -426,7 +429,7 @@ function applyStatus(next: PodStatus): void {
     unconfigured: ['Your private space is ready to begin', 'Saved on this computer. Federation is off.'],
     stopped: ['Resting on this computer', 'Your saved notes are safe here. Start when you are ready.'],
     starting: ['Getting your space ready…', 'Your local space is starting.'],
-    running: ['Ready on this computer', 'Your saved notes are encrypted. Federation is off.'],
+    running: ['Ready on this computer', status?.federationEnabled ? 'Your saved notes are encrypted. Selected pod sharing is on.' : 'Your saved notes are encrypted. Federation is off.'],
     stopping: ['Putting your space to rest…', 'Finishing up safely on this computer.'],
     error: ['Your space needs a moment', 'Interego could not start. Try again when you are ready.'],
   };
@@ -491,6 +494,7 @@ function schedulePoll(): void {
 
 async function refreshStatus(initial: boolean): Promise<void> {
   void bridgeUi.refresh();
+  void federationUi.refresh();
   if (busy) { schedulePoll(); return; }
   const requested = ++statusRequest;
   try {

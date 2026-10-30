@@ -20,15 +20,15 @@ function callbackUri(raw) {
   return url;
 }
 
-export async function signIn({ relay, redirectUri, scope = 'mcp:read', launch, fetchImpl = globalThis.fetch, cryptoImpl = globalThis.crypto }) {
+export async function signIn({ relay, redirectUri, scope = 'mcp:read', mode = 'hosted', launch, fetchImpl = globalThis.fetch, cryptoImpl = globalThis.crypto }) {
   relay = normalizeRelay(relay);
   const redirect = callbackUri(redirectUri);
-  if (!['mcp:read', 'mcp', 'mcp:write'].includes(scope)) throw new Error('Choose an Interego read or write scope.');
+  if (!['hosted', 'local'].includes(mode) || !(mode === 'local' ? ['notes:read', 'notes:read notes:create'] : ['mcp:read', 'mcp', 'mcp:write']).includes(scope)) throw new Error('Choose an Interego read or write scope.');
   if (typeof launch !== 'function' || !cryptoImpl?.subtle || !cryptoImpl?.getRandomValues) throw new Error('Browser sign-in is unavailable.');
   const metadata = await requestJson(`${relay}/.well-known/oauth-authorization-server`, { headers: { Accept: 'application/json' } }, { fetchImpl });
   if (!object(metadata) || normalizeRelay(metadata.issuer) !== relay) throw new Error('The OAuth issuer does not match this relay.');
   if (!Array.isArray(metadata.code_challenge_methods_supported) || !metadata.code_challenge_methods_supported.includes('S256')
-    || !Array.isArray(metadata.scopes_supported) || !metadata.scopes_supported.includes(scope)
+    || !Array.isArray(metadata.scopes_supported) || !scope.split(' ').every(item => metadata.scopes_supported.includes(item))
     || (metadata.token_endpoint_auth_methods_supported && (!Array.isArray(metadata.token_endpoint_auth_methods_supported)
       || !metadata.token_endpoint_auth_methods_supported.includes('none')))) throw new Error('The relay does not advertise the required public-client sign-in contract.');
   const authorization = endpoint(metadata.authorization_endpoint, relay);
@@ -57,5 +57,10 @@ export async function signIn({ relay, redirectUri, scope = 'mcp:read', launch, f
   if (!object(tokens) || typeof tokens.access_token !== 'string' || !tokens.access_token || /[\r\n]/.test(tokens.access_token)
     || tokens.token_type?.toLowerCase() !== 'bearer' || !Number.isFinite(tokens.expires_in) || tokens.expires_in <= 0 || tokens.expires_in > 86_400
     || granted !== scope) throw new Error('The relay returned an invalid or unexpected token grant.');
-  return { accessToken: tokens.access_token, expiresAt: Date.now() + tokens.expires_in * 1000, scope: granted, relay };
+  const grant = { accessToken: tokens.access_token, expiresAt: Date.now() + tokens.expires_in * 1000, scope: granted, relay };
+  if (mode === 'local') {
+    if (typeof tokens.refresh_token !== 'string' || !/^[A-Za-z0-9_-]{43}$/.test(tokens.refresh_token)) throw new Error('The local bridge did not return a valid refresh grant.');
+    return { ...grant, refreshToken: tokens.refresh_token, clientId: client.client_id, tokenEndpoint };
+  }
+  return grant;
 }

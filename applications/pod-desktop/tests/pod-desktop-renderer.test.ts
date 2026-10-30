@@ -8,6 +8,7 @@ import { JSDOM } from 'jsdom';
 import type { DesktopApi, LocalNote, PodStatus } from '../src/types.js';
 import type { AgentConnection, AgentSetup } from '../src/agent-types.js';
 import type { BridgeStatus, StableBridgeView } from '../src/bridge-types.js';
+import type { FederationStatus } from '@interego/pod-federation';
 
 const APP = join(dirname(fileURLToPath(import.meta.url)), '..');
 let bundle: string;
@@ -42,6 +43,7 @@ const webReady = (): BridgeStatus => ({ state: 'ready', client: 'chatgpt-web', n
   url: 'https://sample.trycloudflare.com/mcp', permissions: ['notes:read'], expiresInDays: 30, pendingApprovals: [], connections: [] });
 const webRequest = () => ({ id: 'request-1', clientName: 'ChatGPT', redirectOrigin: 'https://chatgpt.com',
   permissions: ['notes:read'] as const, createdAt: '2026-10-29T12:00:00Z', expiresAt: '2026-10-29T12:10:00Z', verificationCode: '1234-5678' });
+const sharingOff = (): FederationStatus => ({ enabled: false, configured: false, invites: [], pending: [], peers: [], joining: [], received: [], sent: [] });
 const stableView = (): StableBridgeView => ({ provider: 'cloudflare', origin: 'https://memory.example.com', port: 49111, hasCredential: true,
   policy: { client: 'chatgpt-web', name: 'My web assistant', permissions: ['notes:read'], expiresInDays: 30 } });
 const webPaused = (settings = stableView(), connections: BridgeStatus['connections'] = []): BridgeStatus => ({
@@ -126,6 +128,23 @@ async function mount(initial = state('unconfigured'), overrides: Partial<Desktop
     }),
     copyStableBridgeTarget: vi.fn(async () => undefined),
     openStableBridgeSetup: vi.fn(async () => undefined),
+    browserExtensionIds: vi.fn(async () => []),
+    setBrowserExtensionIds: vi.fn(async ids => ids),
+    federationStatus: vi.fn(async () => sharingOff()),
+    enableFederation: vi.fn(async () => ({ ...sharingOff(), configured: true, enabled: true })),
+    disableFederation: vi.fn(async () => sharingOff()),
+    createFederationInvite: vi.fn(async () => ({ id: 'invite-1', code: 'interego-invite:v1:example', expiresAt: '2026-10-30T12:15:00Z' })),
+    copyFederationInvite: vi.fn(async () => undefined),
+    acceptFederationInvite: vi.fn(async () => sharingOff()),
+    approveFederation: vi.fn(async () => sharingOff()),
+    denyFederation: vi.fn(async () => sharingOff()),
+    refreshFederation: vi.fn(async () => sharingOff()),
+    shareFederation: vi.fn(async () => sharingOff()),
+    readFederation: vi.fn(async () => ({ iri: 'urn:test:snapshot', mediaType: 'text/plain', content: 'A shared snapshot.' })),
+    revokeFederation: vi.fn(async () => sharingOff()),
+    forgetFederation: vi.fn(async () => sharingOff()),
+    removeFederationSnapshot: vi.fn(async () => sharingOff()),
+    clearFederationHistory: vi.fn(async () => sharingOff()),
     ...overrides,
   };
   const dom = new JSDOM(readFileSync(join(APP, 'index.html'), 'utf8'), {
@@ -163,6 +182,75 @@ async function mount(initial = state('unconfigured'), overrides: Partial<Desktop
     },
   };
 }
+
+describe('consumer pod sharing and browser consent', () => {
+  const peer = { id: 'did:key:brother', name: 'My brother', endpoint: 'https://brother.example/pod-federation', kind: 'local' as const,
+    signingKey: 'public-signing-key', encryptionKey: 'public-encryption-key', fingerprint: 'public-fingerprint', connectedAt: '2026-10-30T12:00:00Z' };
+  const active = (): FederationStatus => ({ ...sharingOff(), enabled: true, configured: true, peers: [peer] });
+  it('requires explicit consent and a running pod before enabling, and starts off', async () => {
+    const app = await mount(state('running')); app.click('nav-connections'); await flush();
+    expect(app.get('federation-status').textContent).toBe('Pod sharing off');
+    expect(app.api.enableFederation).not.toHaveBeenCalled();
+    expect(app.get<HTMLButtonElement>('enable-federation').disabled).toBe(true);
+    app.get<HTMLInputElement>('federation-consent').checked = true;
+    app.get('federation-consent').dispatchEvent(new app.dom.window.Event('change'));
+    app.fill('federation-name', 'My private pod'); app.submit('federation-enable-form'); await flush();
+    expect(app.api.enableFederation).toHaveBeenCalledWith('My private pod');
+    expect(app.get('federation-status').textContent).toBe('Pod sharing on');
+    app.click('disable-federation'); await flush();
+    expect(app.api.disableFederation).toHaveBeenCalledOnce();
+    expect(app.get('federation-status').textContent).toBe('Pod sharing off');
+  });
+  it('requires code comparison and preserves that choice through an unchanged status poll', async () => {
+    const value: FederationStatus = { ...active(), pending: [{ id: 'request-1', peer, verificationCode: '1234-5678', expiresAt: '2026-10-30T12:15:00Z' }] };
+    const app = await mount(state('running'), { federationStatus: vi.fn(async () => value) });
+    app.click('nav-connections'); await flush();
+    let approve = app.get('federation-pending').querySelector<HTMLButtonElement>('button[data-approve]')!;
+    expect(approve.disabled).toBe(true);
+    const check = app.get<HTMLInputElement>('federation-verify-request-1'); check.checked = true; check.dispatchEvent(new app.dom.window.Event('change'));
+    await app.poll();
+    approve = app.get('federation-pending').querySelector<HTMLButtonElement>('button[data-approve]')!;
+    expect(approve.disabled).toBe(false); approve.click(); await flush();
+    expect(app.api.approveFederation).toHaveBeenCalledWith('request-1', '1234-5678');
+  });
+  it('sends only checked notes after snapshot consent, consuming review before an uncertain send', async () => {
+    const sent = deferred<FederationStatus>();
+    const app = await mount(state('running'), { federationStatus: vi.fn(async () => active()), shareFederation: vi.fn(() => sent.promise) }, [note('Chosen note'), { ...note('Other note'), id: 'note-2' }]);
+    app.click('nav-connections'); await flush(); app.click('load-federation-notes'); await flush();
+    const choice = app.get('federation-note-choices').querySelector<HTMLInputElement>('input')!; choice.checked = true;
+    app.submit('federation-share-form'); await flush(); expect(app.api.shareFederation).not.toHaveBeenCalled();
+    app.get<HTMLInputElement>('federation-share-consent').checked = true;
+    app.submit('federation-share-form'); app.submit('federation-share-form'); await flush();
+    expect(app.api.shareFederation).toHaveBeenCalledExactlyOnceWith({ peerId: peer.id, noteIds: ['note-1'] });
+    expect(choice.checked).toBe(false); expect(app.get<HTMLInputElement>('federation-share-consent').checked).toBe(false);
+    sent.reject(new Error('Delivery could not be confirmed.')); await flush();
+    expect(app.get('federation-message').textContent).toContain('could not be confirmed');
+    expect(app.api.shareFederation).toHaveBeenCalledOnce();
+  });
+  it('keeps Pause and confirmed Reset usable when saved sharing state cannot be read', async () => {
+    const app = await mount(state('running'), { federationStatus: vi.fn(async () => { throw new Error('corrupt'); }) });
+    app.click('nav-connections'); await flush();
+    expect(app.get('federation-status').textContent).toBe('Sharing status unavailable');
+    expect(app.get<HTMLButtonElement>('disable-federation').disabled).toBe(false);
+    expect(app.get<HTMLButtonElement>('enable-federation').disabled).toBe(true);
+    app.click('reset-federation'); expect(app.api.forgetFederation).not.toHaveBeenCalled();
+    expect(app.get('federation-message').textContent).toContain('received snapshots');
+    app.click('reset-federation'); await flush(); expect(app.api.forgetFederation).toHaveBeenCalledOnce();
+    expect(app.get('federation-status').textContent).toBe('Pod sharing off');
+  });
+  it('does not let a delayed status read restore a paused sharing screen', async () => {
+    const delayed = deferred<FederationStatus>();
+    const app = await mount(state('running'), { federationStatus: vi.fn(() => delayed.promise) });
+    app.click('disable-federation'); await flush(); delayed.resolve(active()); await flush();
+    expect(app.get('federation-status').textContent).toBe('Pod sharing off');
+  });
+  it('saves exact native extension IDs without approving a notes grant or enabling sharing', async () => {
+    const app = await mount(state('running')); app.click('nav-connections'); await flush();
+    const id = 'a'.repeat(32); app.fill('browser-extension-ids', id); app.submit('browser-extension-form'); await flush();
+    expect(app.api.setBrowserExtensionIds).toHaveBeenCalledWith([id]);
+    expect(app.api.approveBridge).not.toHaveBeenCalled(); expect(app.api.enableFederation).not.toHaveBeenCalled();
+  });
+});
 
 describe('Interego consumer desktop', () => {
   it('offers local setup and hosted use explicitly without starting either automatically', async () => {
@@ -621,7 +709,7 @@ describe('optional web bridge owner controls', () => {
     expect(app.get<HTMLInputElement>('bridge-token').type).toBe('password');
     expect(app.get('bridge-provider-help').textContent).toContain('your own Cloudflare account');
     expect(app.get('bridge-provider-help').textContent).toContain('without running the command');
-    expect(app.get('bridge-dialog').textContent).toContain('Federation stays off');
+    expect(app.get('bridge-dialog').textContent).toContain('Pod sharing has its own enable control');
     expect(app.get('bridge-address-mode').textContent).toContain('existing HTTPS gateway');
     expect(app.get('bridge-address-mode').textContent).toContain('temporary address');
     expect(app.api.resumeBridge).not.toHaveBeenCalled();
@@ -829,7 +917,7 @@ describe('optional web bridge owner controls', () => {
     expect(app.get<HTMLButtonElement>('confirm-bridge-start').disabled).toBe(true);
     expect(app.get('bridge-dialog').textContent).toContain('Cloudflare handles connection traffic');
     expect(app.get('bridge-dialog').textContent).toContain('address changes');
-    expect(app.get('bridge-dialog').textContent).toContain('federation stays off');
+    expect(app.get('bridge-dialog').textContent).toContain('Pod sharing needs a permanent address and its own consent');
     app.submit('bridge-form'); await flush();
     expect(app.api.startBridge).not.toHaveBeenCalled();
     app.click('cancel-bridge'); app.click('connections-hosted'); await flush();

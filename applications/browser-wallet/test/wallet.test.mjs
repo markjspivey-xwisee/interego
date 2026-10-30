@@ -28,11 +28,12 @@ function fixture() {
     identity: { getRedirectURL: p => `https://wallet.chromiumapp.org/${p}`, launchWebAuthFlow: async () => 'callback' },
     permissions: { contains: async () => true, remove: async () => true },
   };
-  const modes = { status: profile, entries: [{ descriptorUrl: descriptor, describes: ['urn:graph:test'] }], saveError: false, readError: false, save: null, echo: pod };
+  const modes = { status: profile, entries: [{ descriptorUrl: descriptor, describes: ['urn:graph:test'] }], saveError: false, readError: false, save: null, echo: pod, descriptor, refreshError: false, refreshes: 0, revokeError: false, revokes: 0 };
   const deps = {
     chrome, normalizeRelay,
     now: () => clock, uuid: () => `id-${++id}`,
-    signIn: async ({ scope }) => ({ accessToken: 'session-secret', scope, expiresAt: clock + 3600000, relay }),
+    signIn: async ({ scope, mode }) => ({ accessToken: 'session-secret', scope, expiresAt: clock + (mode === 'local' ? 300000 : 3600000), relay,
+      ...(mode === 'local' ? { refreshToken: 'refresh-secret', clientId: 'public-client', tokenEndpoint: relay + '/token' } : {}) }),
     discoverCatalog: async () => ({ relay, tools: {} }),
     callTool: async (origin, token, catalog, name, args) => {
       calls.push({ origin, token, name, args });
@@ -40,7 +41,7 @@ function fixture() {
       if (name === 'discover_context') return { pod: modes.echo, entries: modes.entries };
       if (name === 'remember') {
         if (modes.saveError) throw new Error('Network ended after dispatch');
-        return modes.save ?? { remembered: true, visibility: 'private', descriptorUrl: descriptor };
+        return modes.save ?? { remembered: true, visibility: 'private', descriptorUrl: modes.descriptor };
       }
       if (name === 'get_descriptor') {
         if (modes.readError) throw new Error('Not readable yet');
@@ -49,6 +50,14 @@ function fixture() {
       throw new Error('Unexpected tool');
     },
   };
+  deps.discoverLocalCatalog = deps.discoverCatalog;
+  deps.callLocalTool = deps.callTool;
+  deps.refreshLocalSession = async session => {
+    modes.refreshes++;
+    if (modes.refreshError) throw new Error('Response lost after rotation');
+    return { ...session, accessToken: 'rotated-session-secret', refreshToken: 'rotated-refresh-secret', expiresAt: clock + 300000 };
+  };
+  deps.revokeLocalSession = async () => { modes.revokes++; if (modes.revokeError) throw new Error('Bridge offline'); };
   const wallet = createWallet(deps);
   const sender = { id: runtime.id, url: runtime.getURL('app.html') };
   const dispatch = (type, fields = {}) => wallet.dispatch({ type, expectedAccountId: chrome.storage.local.snapshot().activeId, ...fields }, sender);
@@ -178,4 +187,74 @@ test('removed browser permission refuses the operation before any network call',
   await assert.rejects(f.dispatch('SAVE', { reviewId: review.id }), /access to this relay was removed/);
   assert.equal(f.calls.length, count);
   assert.equal((await f.dispatch('STATE')).receipts.length, 0);
+});
+
+function localFixture() {
+  const f = fixture();
+  const id = '9b31a3e0-82d6-467b-b2e0-ac30ec1d29d4';
+  f.modes.status = { storageLocal: true, remoteBridge: true, running: true,
+    connection: { id, name: 'My browser', state: 'active', permissions: ['notes:read', 'notes:create'] } };
+  f.modes.echo = relay + '/mcp';
+  f.modes.descriptor = 'urn:graph:pod-note:213334d9-e9cb-4b98-8b1b-b9a1791e2d09';
+  f.modes.entries = [{ descriptorUrl: f.modes.descriptor }];
+  return f;
+}
+
+test('local mode labels a connection honestly, reviews private saves and keeps refresh credentials session-only', async () => {
+  const f = localFixture();
+  const state = await f.dispatch('CONNECT', { relay, mode: 'local', scope: 'mcp:write' });
+  assert.equal(state.accounts[0].mode, 'local');
+  assert.match(state.accounts[0].principal, /^Local connection:/);
+  assert.equal(state.accounts[0].scope, 'notes:read notes:create');
+  assert.equal(state.extensionId, 'wallet');
+  for (const value of [state, f.chrome.storage.local.snapshot()]) assert.equal(JSON.stringify(value).includes('refresh-secret'), false);
+  assert.equal(f.chrome.storage.session.snapshot().sessions[state.activeId].refreshToken, 'refresh-secret');
+  await f.dispatch('REFRESH');
+  const review = await f.dispatch('PREPARE', note);
+  assert.equal(review.destination, relay + '/mcp');
+  const saved = await f.dispatch('SAVE', { reviewId: review.id });
+  assert.equal(saved.status, 'read-back');
+  assert.equal(f.calls.filter(c => c.name === 'remember').length, 1);
+});
+
+test('local access renewal rotates once without losing review or retrying a save', async () => {
+  const f = localFixture(); await f.dispatch('CONNECT', { relay, mode: 'local', scope: 'mcp:write' });
+  const review = await f.dispatch('PREPARE', note);
+  f.advance(275000);
+  await f.dispatch('SAVE', { reviewId: review.id });
+  assert.equal(f.modes.refreshes, 1);
+  assert.equal(f.calls.filter(c => c.name === 'remember').length, 1);
+  assert.equal(f.calls.at(-1).token, 'rotated-session-secret');
+  assert.equal(JSON.stringify(await f.dispatch('STATE')).includes('rotated-'), false);
+});
+
+test('uncertain refresh clears the old authority and review before any write and cannot replay it', async () => {
+  const f = localFixture(); await f.dispatch('CONNECT', { relay, mode: 'local', scope: 'mcp:write' });
+  const review = await f.dispatch('PREPARE', note); f.advance(275000); f.modes.refreshError = true;
+  await assert.rejects(f.dispatch('SAVE', { reviewId: review.id }), /No note was sent/);
+  await assert.rejects(f.dispatch('SAVE', { reviewId: review.id }), /Sign in/);
+  assert.equal(f.modes.refreshes, 1);
+  assert.equal(f.calls.filter(c => c.name === 'remember').length, 0);
+  assert.deepEqual(f.chrome.storage.session.snapshot().sessions, {});
+  assert.equal(f.chrome.storage.session.snapshot().review, null);
+});
+
+test('local read-only grants cannot prepare and long local titles fail before review', async () => {
+  const f = localFixture(); await f.dispatch('CONNECT', { relay, mode: 'local', scope: 'mcp:read' });
+  await assert.rejects(f.dispatch('PREPARE', note), /permission to save/);
+  await f.dispatch('CONNECT', { relay, mode: 'local', scope: 'mcp:write' });
+  await assert.rejects(f.dispatch('PREPARE', { ...note, title: 'x'.repeat(161) }), /160/);
+  assert.equal(f.calls.filter(c => c.name === 'remember').length, 0);
+});
+
+test('local forget clears browser authority first and reports uncertain remote revocation honestly', async () => {
+  for (const offline of [false, true]) {
+    const f = localFixture(); await f.dispatch('CONNECT', { relay, mode: 'local', scope: 'mcp:write' });
+    f.modes.revokeError = offline;
+    const result = await f.dispatch('DISCONNECT');
+    assert.equal(f.modes.revokes, 1);
+    assert.deepEqual(result.disconnect, { local: true, revoked: !offline });
+    assert.deepEqual(f.chrome.storage.session.snapshot().sessions, {});
+    assert.equal(result.accounts.length, 0);
+  }
 });

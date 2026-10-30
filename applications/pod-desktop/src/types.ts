@@ -1,13 +1,14 @@
 export type PodState = 'unconfigured' | 'stopped' | 'starting' | 'running' | 'stopping' | 'error';
 import type { AgentConnection, AgentConnectionInput, AgentSetup } from './agent-types.js';
 import type { BridgeClient, BridgeStartInput, BridgeStatus, StableBridgeInput, StableBridgeView } from './bridge-types.js';
+import type { FederationStatus, FederationResource } from '@interego/pod-federation';
 
 export interface PodStatus {
   readonly state: PodState;
   readonly configured: boolean;
   readonly running: boolean;
-  readonly localOnly: true;
-  readonly federationEnabled: false;
+  readonly localOnly: boolean;
+  readonly federationEnabled: boolean;
   readonly noteCount: number;
   readonly lastError?: string;
   readonly restorePending?: boolean;
@@ -54,4 +55,21 @@ export interface DesktopApi {
   forgetStableBridge(): Promise<BridgeStatus>;
   copyStableBridgeTarget(): Promise<void>;
   openStableBridgeSetup(): Promise<void>;
+  browserExtensionIds(): Promise<readonly string[]>;
+  setBrowserExtensionIds(ids: readonly string[]): Promise<readonly string[]>;
+  federationStatus(): Promise<FederationStatus>;
+  enableFederation(name: string): Promise<FederationStatus>;
+  disableFederation(): Promise<FederationStatus>;
+  createFederationInvite(): Promise<{ id: string; code: string; expiresAt: string }>;
+  copyFederationInvite(code: string): Promise<void>;
+  acceptFederationInvite(code: string): Promise<FederationStatus>;
+  approveFederation(id: string, verificationCode: string): Promise<FederationStatus>;
+  denyFederation(id: string): Promise<FederationStatus>;
+  refreshFederation(): Promise<FederationStatus>;
+  shareFederation(input: { peerId: string; noteIds: readonly string[] }): Promise<FederationStatus>;
+  readFederation(id: string): Promise<FederationResource & { note?: { title: string; body: string } }>;
+  revokeFederation(id: string): Promise<FederationStatus>;
+  forgetFederation(): Promise<FederationStatus>;
+  removeFederationSnapshot(id: string): Promise<FederationStatus>;
+  clearFederationHistory(): Promise<FederationStatus>;
 }

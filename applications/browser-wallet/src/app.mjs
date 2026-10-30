@@ -1,3 +1,4 @@
+/* global chrome */
 import { normalizeRelay } from './relay.mjs';
 
 const $ = id => document.getElementById(id);
@@ -23,21 +24,34 @@ function showReview(review) {
   if (!review) return;
   $('review-body').textContent = review.body;
   $('review-destination').replaceChildren();
-  for (const [label, value] of [['Title', review.title], ['Relay', review.relay], ['Pod', review.destination], ['Agent', review.principal], ['Visibility', 'Private · current session agent']]) $('review-destination').append(el('dt', label), el('dd', value));
+  const local = state?.accounts.find(a => a.id === state.activeId)?.mode === 'local';
+  for (const [label, value] of [['Title', review.title], ['Connection', review.relay], ['Destination', review.destination], [local ? 'Local grant' : 'Agent', review.principal], ['Visibility', local ? 'Private · your local pod' : 'Private · current session agent']]) $('review-destination').append(el('dt', label), el('dd', value));
+}
+function connectionMode() {
+  const local = $('connection-mode').value === 'local';
+  $('local-setup').hidden = !local;
+  $('relay-label').textContent = local ? 'Secure local bridge address' : 'Interego relay';
+  $('connect').textContent = local ? 'Connect local pod' : 'Connect identity ↗';
+  $('capture-title').maxLength = local ? 160 : 200;
+  if (!state?.accounts.some(a => a.id === state.activeId)) $('identity').textContent = local
+    ? 'Approve this browser’s note access in the Interego app.' : 'Sign in with the relay’s passkey, wallet, or key flow.';
 }
 function renderState(s) {
   state = s;
+  $('extension-id').textContent = s.extensionId ?? chrome.runtime.id;
   $('account-select').replaceChildren();
   for (const a of s.accounts) { const option = el('option', a.principal + (a.connected ? '' : ' · sign-in needed')); option.value = a.id; $('account-select').append(option); }
-  if (!s.accounts.length) $('account-select').append(el('option', 'No identity connected'));
+  if (!s.accounts.length) $('account-select').append(el('option', 'No connection yet'));
   $('account-select').value = s.activeId ?? '';
   const account = s.accounts.find(a => a.id === s.activeId);
   $('disconnect').disabled = !account;
   $('identity').replaceChildren();
   if (account) {
     $('relay').value = account.relay;
-    $('identity').append(el('p', account.connected ? 'Authenticated session agent' : 'Sign-in required', 'identity-label'), el('p', account.principal), el('p', account.podUrl, 'fine'), el('p', account.scope.includes('write') ? 'May read and save private notes' : 'Read context only', 'fine'));
+    $('connection-mode').value = account.mode === 'local' ? 'local' : 'hosted';
+    $('identity').append(el('p', account.connected ? account.mode === 'local' ? 'Approved local note connection' : 'Authenticated session agent' : 'Sign-in required', 'identity-label'), el('p', account.principal), el('p', account.podUrl, 'fine'), el('p', /write|notes:create/.test(account.scope) ? 'May read and save private notes' : 'Read context only', 'fine'));
   } else $('identity').textContent = 'Sign in with the relay’s passkey, wallet, or key flow.';
+  connectionMode();
   $('receipts').replaceChildren();
   for (const r of s.receipts) {
     const row = el('div', null, 'receipt');
@@ -55,14 +69,15 @@ async function refresh() {
   $('contexts').replaceChildren();
   for (const entry of entries) {
     const row = el('div', null, 'context-row');
-    const title = entry.describes?.join(', ') || entry.descriptorUrl || 'Context descriptor';
+    const title = entry.title || entry.describes?.join(', ') || entry.descriptorUrl || 'Context descriptor';
     const button = el('button', title, 'context-link');
     button.type = 'button';
     button.addEventListener('click', () => run(async () => {
       const d = await request('DESCRIPTOR', { url: entry.descriptorUrl });
       $('descriptor-body').textContent = d.graph?.content || d.turtle || 'No readable content was returned.';
+      $('descriptor-heading').textContent = d.kind === 'local-note' ? 'Local note' : 'Descriptor';
       const a = d.authorship;
-      $('proof').textContent = a?.authorshipVerified ? `Signature verified by relay. Authority: ${a.signatureAuthority ?? 'not classified'}. Content binding: ${a.contentBinding ?? 'not reported'}.` : 'Authorship verification was not established by this response.';
+      $('proof').textContent = a?.authorshipVerified ? `Signature verified by relay. Authority: ${a.signatureAuthority ?? 'not classified'}. Content binding: ${a.contentBinding ?? 'not reported'}.` : d.kind === 'local-note' ? 'Read through your approved local connection. This notes adapter does not return a signed descriptor.' : 'Authorship verification was not established by this response.';
       $('descriptor').hidden = false;
       status('Descriptor opened.');
     }));
@@ -81,11 +96,20 @@ $('connect-form').addEventListener('submit', event => {
   run(async () => {
     if (!await permission) throw new Error('Relay access was declined.');
     status('Complete sign-in in the identity window…');
-    renderState(await request('CONNECT', { relay, scope: $('scope').value }));
+    renderState(await request('CONNECT', { relay, mode: $('connection-mode').value, scope: $('scope').value }));
     await refresh();
     status('Identity connected.');
   });
 });
+$('connection-mode').addEventListener('change', () => {
+  connectionMode();
+  $('relay').value = $('connection-mode').value === 'local' ? '' : 'https://relay.interego.xwisee.com';
+});
+$('copy-extension-id').addEventListener('click', () => run(async () => {
+  try { await navigator.clipboard.writeText(chrome.runtime.id); }
+  catch { throw new Error('Copy the displayed extension ID into Interego’s browser extension settings.'); }
+  status('Extension ID copied. Paste it into Interego’s browser extension settings.');
+}));
 $('account-select').addEventListener('change', () => run(async () => { renderState(await request('SWITCH', { accountId: $('account-select').value })); $('contexts').textContent = 'Refresh to inspect this identity’s context.'; $('descriptor').hidden = true; status('Identity selected.'); }));
 $('refresh').addEventListener('click', () => run(async () => { await refresh(); status('Recent context updated.'); }));
 $('capture-form').addEventListener('submit', event => {
@@ -107,7 +131,13 @@ $('confirm-save').addEventListener('click', () => run(async () => {
   } finally { renderState(await request('STATE')); }
 }));
 $('cancel-review').addEventListener('click', () => run(async () => { await request('CANCEL'); showReview(null); status('Save cancelled.'); }));
-$('disconnect').addEventListener('click', () => run(async () => { renderState(await request('DISCONNECT')); $('contexts').textContent = 'Connect an identity to explore its pod.'; $('descriptor').hidden = true; status('Local connection forgotten. Existing notes and server grants remain at the relay.'); }));
+$('disconnect').addEventListener('click', () => run(async () => {
+  const next = await request('DISCONNECT'); renderState(next);
+  $('contexts').textContent = 'Connect a pod to explore its context.'; $('descriptor').hidden = true;
+  status(next.disconnect?.local ? next.disconnect.revoked ? 'Local connection forgotten; its OAuth session was revoked.'
+    : 'Local connection forgotten. Remote revocation was not confirmed; use Disconnect in Interego to revoke the saved grant.'
+    : 'Local connection forgotten. Existing notes and server grants remain at the relay.');
+}));
 
 await run(async () => {
   renderState(await request('STATE'));
