@@ -1,9 +1,9 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createHash, randomUUID } from 'node:crypto';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
-import { request as httpRequest } from 'node:http';
+import { createServer, request as httpRequest } from 'node:http';
 import { BridgeServer } from '../src/bridge-server.js';
 import { AgentService, type AgentServiceOptions } from '../src/agent-service.js';
 import type { BridgeStartInput } from '../src/bridge-types.js';
@@ -16,11 +16,11 @@ const directories: string[] = [];
 const servers: BridgeServer[] = [];
 const agents: AgentService[] = [];
 const originalNote = { id: randomUUID(), title: 'Private local note', body: 'Only grant holders can read this.', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() };
-async function fixture(configuration: BridgeStartInput = input, execute?: AgentServiceOptions['execute']) {
+async function fixture(configuration: BridgeStartInput = input, execute?: AgentServiceOptions['execute'], stable = false) {
   const directory = await mkdtemp(join(tmpdir(), 'interego-bridge-test-')); directories.push(directory);
   let binding = 'this-local-pod'; let writes = 0;
   const notes = [originalNote];
-  const service = new AgentService({ dataDir: directory, protector: { protect: value => Buffer.from(value).toString('base64'), unprotect: value => Buffer.from(value, 'base64').toString() },
+  const options: AgentServiceOptions = { dataDir: directory, protector: { protect: value => Buffer.from(value).toString('base64'), unprotect: value => Buffer.from(value, 'base64').toString() },
     getPodBinding: async () => binding,
     execute: execute ?? (async (operation, args, authorize) => {
       const principal = await authorize();
@@ -32,12 +32,23 @@ async function fixture(configuration: BridgeStartInput = input, execute?: AgentS
         author: { connectionId: principal.id, name: principal.name } };
       notes.push(note); writes++; return { note };
     }),
-  });
+  };
+  const service = new AgentService(options);
   agents.push(service);
-  const server = new BridgeServer({ agents: service }); servers.push(server);
-  const loopback = await server.start(configuration);
-  server.setPublicUrl(publicOrigin);
-  return { server, service, loopback, notes, writes: () => writes, changePod: () => { binding = 'different-pod'; } };
+  const persistence = stable ? { dataDir: join(directory, 'bridge-pairings'), protector: options.protector, getPodBinding: options.getPodBinding } : undefined;
+  const server = new BridgeServer({ agents: service, persistence }); servers.push(server);
+  let port = 0;
+  if (stable) {
+    const reserve = createServer(); await new Promise<void>(done => reserve.listen(0, '127.0.0.1', done));
+    const address = reserve.address(); if (!address || typeof address === 'string') throw new Error('No test port.'); port = address.port;
+    await new Promise<void>(done => reserve.close(() => done()));
+  }
+  const origin = stable ? 'https://permanent-pod.example' : publicOrigin;
+  const address = stable ? { origin, port } : undefined;
+  const loopback = await server.start(configuration, address);
+  server.setPublicUrl(origin);
+  return { server, service, loopback, notes, options, persistence, address, origin, resource: `${origin}/mcp`, directory,
+    writes: () => writes, changePod: () => { binding = 'different-pod'; } };
 }
 type Fixture = Awaited<ReturnType<typeof fixture>>;
 async function json(f: Fixture, path: string, method = 'GET', body?: unknown, headers: Record<string, string> = {}) {
@@ -50,13 +61,13 @@ async function register(f: Fixture, redirects = [redirect]) {
 }
 async function begin(f: Fixture, clientId: string, overrides: Record<string, string> = {}) {
   const verifier = 'secure-pkce-verifier-for-this-test-01234567890123456789';
-  const q = new URLSearchParams({ response_type: 'code', client_id: clientId, redirect_uri: redirect, resource,
+  const q = new URLSearchParams({ response_type: 'code', client_id: clientId, redirect_uri: redirect, resource: f.resource,
     code_challenge_method: 'S256', code_challenge: createHash('sha256').update(verifier).digest('base64url'), state: 'bound-client-state', ...overrides });
   const response = await fetch(`${f.loopback}/authorize?${q}`); const html = await response.text();
   return { status: response.status, html, verifier, poll: html.match(/const request=(\{[^;]+\});/)?.[1] };
 }
 async function token(f: Fixture, values: Record<string, string>) {
-  const response = await fetch(`${f.loopback}/token`, { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ resource, ...values }) });
+  const response = await fetch(`${f.loopback}/token`, { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ resource: f.resource, ...values }) });
   return { status: response.status, body: await response.json() as Record<string, unknown> };
 }
 async function pair(f: Fixture, scopes?: string) {
@@ -70,7 +81,7 @@ async function pair(f: Fixture, scopes?: string) {
   const allowed = await json(f, '/approval-status', 'POST', polling);
   const callback = new URL(String(allowed.body['redirect']));
   expect(callback.origin + callback.pathname).toBe(redirect);
-  expect(callback.searchParams.get('state')).toBe('bound-client-state'); expect(callback.searchParams.get('iss')).toBe(publicOrigin);
+  expect(callback.searchParams.get('state')).toBe('bound-client-state'); expect(callback.searchParams.get('iss')).toBe(f.origin);
   const code = callback.searchParams.get('code')!;
   const issued = await token(f, { grant_type: 'authorization_code', client_id: clientId, code, redirect_uri: redirect, code_verifier: approval.verifier });
   expect(issued.status).toBe(200);
@@ -282,5 +293,93 @@ describe('optional temporary web MCP bridge', () => {
     expect(status).toBe(403);
     const response = await fetch(`${f.loopback}/register`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ client_name: 'x'.repeat(33 * 1024), redirect_uris: [redirect] }) });
     expect(response.status).toBe(413); expect((await f.server.status()).connections).toEqual([]);
+  });
+});
+
+async function freshStableInstance(f: Fixture) {
+  await f.server.stop(); await f.service.close();
+  const service = new AgentService(f.options); agents.push(service);
+  const server = new BridgeServer({ agents: service, persistence: f.persistence }); servers.push(server);
+  f.service = service; f.server = server;
+  return server;
+}
+
+describe('remembered stable web authorization', () => {
+  it('keeps the address and approved OAuth credentials across fresh instances while starting off', async () => {
+    const f = await fixture(input, undefined, true); const grant = await pair(f);
+    expect((await mcp(f, grant.access, 'tools/list')).status).toBe(200);
+    const firstChallenge = f.server.readiness();
+    expect(await json(f, firstChallenge.path)).toMatchObject({ status: 200, body: { challenge: firstChallenge.expected } });
+    const file = await readFile(join(f.directory, 'bridge-pairings', 'oauth-state.json'), 'utf8');
+    const saved = JSON.parse(Buffer.from((JSON.parse(file) as { ciphertext: string }).ciphertext, 'base64').toString()) as unknown;
+    expect(JSON.stringify(saved)).not.toContain(grant.access); expect(JSON.stringify(saved)).not.toContain(grant.refresh);
+    await freshStableInstance(f);
+    expect(await f.server.status()).toMatchObject({ state: 'off', mode: 'stable', remembered: true, url: f.resource,
+      connections: [{ id: grant.connection.id, state: 'active' }] });
+    await expect(fetch(`${f.loopback}/mcp`)).rejects.toThrow();
+    await expect(f.server.start(input)).rejects.toThrow('Forget the saved');
+    f.loopback = await f.server.start(input, f.address); f.server.setPublicUrl(f.origin);
+    expect(f.server.readiness().expected).not.toBe(firstChallenge.expected);
+    expect((await mcp(f, grant.access, 'tools/list')).status).toBe(200);
+    const rotated = await token(f, { grant_type: 'refresh_token', client_id: grant.clientId, refresh_token: grant.refresh });
+    expect(rotated.status).toBe(200);
+    await freshStableInstance(f);
+    f.loopback = await f.server.start(input, f.address); f.server.setPublicUrl(f.origin);
+    expect((await mcp(f, String(rotated.body['access_token']), 'tools/list')).status).toBe(200);
+    expect((await token(f, { grant_type: 'refresh_token', client_id: grant.clientId, refresh_token: grant.refresh })).status).toBe(400);
+    await freshStableInstance(f);
+    f.loopback = await f.server.start(input, f.address); f.server.setPublicUrl(f.origin);
+    expect((await mcp(f, String(rotated.body['access_token']), 'tools/list')).status).toBe(401);
+  });
+
+  it('never restores pending browser approvals or authorization codes', async () => {
+    const f = await fixture(input, undefined, true); const clientId = await register(f);
+    const approved = await begin(f, clientId); const pending = (await f.server.status()).pendingApprovals[0]!;
+    await f.server.approve(pending.id);
+    const allowed = await json(f, '/approval-status', 'POST', JSON.parse(approved.poll!));
+    const code = new URL(String(allowed.body['redirect'])).searchParams.get('code')!;
+    const waiting = await begin(f, clientId); const waitingId = (await f.server.status()).pendingApprovals[0]!.id;
+    await freshStableInstance(f);
+    expect((await f.server.status()).pendingApprovals).toEqual([]);
+    f.loopback = await f.server.start(input, f.address); f.server.setPublicUrl(f.origin);
+    await expect(f.server.approve(waitingId)).rejects.toThrow('expired');
+    expect((await json(f, '/approval-status', 'POST', JSON.parse(waiting.poll!))).status).toBe(400);
+    expect((await token(f, { grant_type: 'authorization_code', client_id: clientId, code, redirect_uri: redirect, code_verifier: approved.verifier })).status).toBe(400);
+  });
+
+  it.each(['origin', 'permissions', 'pod'] as const)('invalidates remembered authorization after changing %s', async change => {
+    const f = await fixture(input, undefined, true); const grant = await pair(f);
+    await f.server.stop(); if (change === 'pod') f.changePod();
+    await freshStableInstance(f);
+    if (change === 'origin') { f.origin = 'https://replacement-pod.example'; f.resource = `${f.origin}/mcp`; f.address = { ...f.address!, origin: f.origin }; }
+    const policy: BridgeStartInput = change === 'permissions' ? { ...input, permissions: ['notes:create'] } : input;
+    f.loopback = await f.server.start(policy, f.address); f.server.setPublicUrl(f.origin);
+    expect((await f.service.get(grant.connection.id)).state).toBe('revoked');
+    expect((await mcp(f, grant.access, 'tools/list')).status).toBe(401);
+    expect((await token(f, { grant_type: 'refresh_token', client_id: grant.clientId, refresh_token: grant.refresh })).status).not.toBe(200);
+  });
+
+  it('forgets saved authority while off and never restores a disconnected grant', async () => {
+    const f = await fixture(input, undefined, true); const grant = await pair(f);
+    await f.server.stop(); await f.server.forget();
+    expect((await f.service.get(grant.connection.id)).state).toBe('revoked');
+    await freshStableInstance(f);
+    expect(await f.server.status()).toEqual({ state: 'off', permissions: [], pendingApprovals: [], connections: [] });
+    f.loopback = await f.server.start(input, f.address); f.server.setPublicUrl(f.origin);
+    expect((await mcp(f, grant.access, 'tools/list')).status).toBe(401);
+    const fresh = await pair(f); await f.service.revoke(fresh.connection.id); await freshStableInstance(f);
+    f.loopback = await f.server.start(input, f.address); f.server.setPublicUrl(f.origin);
+    expect((await mcp(f, fresh.access, 'tools/list')).status).toBe(401);
+    expect((await token(f, { grant_type: 'refresh_token', client_id: fresh.clientId, refresh_token: fresh.refresh })).status).toBe(400);
+  });
+
+  it('fails closed on a fixed port conflict and resumes existing authorization once the conflict is removed', async () => {
+    const f = await fixture(input, undefined, true); const grant = await pair(f); await f.server.stop();
+    const collision = createServer(); await new Promise<void>(done => collision.listen(f.address!.port, '127.0.0.1', done));
+    try { await expect(f.server.start(input, f.address)).rejects.toThrow(/EADDRINUSE|address.*in use/); }
+    finally { await new Promise<void>(done => collision.close(() => done())); }
+    expect((await f.server.status()).state).toBe('off');
+    f.loopback = await f.server.start(input, f.address); f.server.setPublicUrl(f.origin);
+    expect((await mcp(f, grant.access, 'tools/list')).status).toBe(200);
   });
 });

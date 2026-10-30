@@ -50,7 +50,7 @@ await new Promise((done, fail) => {
         installation: 'per-user; no elevation', preservesUserDataOnUninstall: true,
         bundledRuntime: true, published: false,
         optionalWebBridge: {
-          default: 'off-every-launch', provider: 'Cloudflare Quick Tunnel', temporaryUrl: true,
+          default: 'off-every-launch', provider: 'User-owned Cloudflare Tunnel or HTTPS gateway; temporary link optional', rememberedPairings: true,
           componentVersion: bridgeComponent.version, sha256: bridgeComponent.sha256,
         },
       };

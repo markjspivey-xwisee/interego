@@ -42,22 +42,50 @@ The formats were checked against current official documentation. Codex and Claud
 
 A web connector or a process on another computer cannot start this Windows command or use its loopback address. In particular, [Grok Bot's cloud computer](https://docs.x.ai/grok-bot/computer-and-apps) is distinct from Grok Build running on your PC. Claude's [remote connectors](https://support.claude.com/en/articles/11175166-get-started-with-custom-connectors-using-remote-mcp) also run through hosted infrastructure.
 
-The optional **temporary web connection** gives those clients a separate HTTPS address. It is off every time Interego opens. You need an internet connection, and Interego and your computer must stay running while the web app uses your notes.
+The optional web bridge gives those clients an HTTPS address. **A user-owned permanent address is the default setup choice.** An existing HTTPS gateway and the temporary preview link are alternatives. Web access is off every time Interego opens. You need an internet connection, and Interego and your computer must stay running while the web app uses your notes.
 
-1. Start your local space, open **Connections**, and choose the web connection option.
-2. Choose **ChatGPT web**, **Grok Bot**, or another remote MCP client. Decide whether it may read all current and future notes, save new notes, or both, and choose an expiry.
-3. Review the privacy explanation, then start the temporary link. Interego includes the connection helper; no terminal, tunnel account or domain is required.
-4. Copy the MCP URL shown by Interego. In ChatGPT web, add a custom MCP server under Plugins, paste the URL, and select OAuth authentication. Account and workspace policies may restrict this option. In Grok Bot, ask it to add an MCP server using that URL, or follow its Connect apps flow. Your other Bots on that Grok account may share its connected apps.
-5. Follow the client's sign-in prompt. The browser shows a verification code and asks you to return to Interego. Compare the code with the request displayed in Interego, check the requested permissions and destination, and approve only the request you started. A client's chosen name is not proof of who operates it.
-6. Return to the browser and finish connecting. Ask the client to check its Interego status, then search for a note you expect it to find. Saving is available only if you enabled it separately.
+### Keep the same address with your own Cloudflare account
 
-**Turn off** closes the link, invalidates its authorization and disconnects the grants it created. You can also disconnect an individual connection. **Stop Interego** and quitting also close the web connection; it is never automatically restored. A new session has a new URL, so update the web client's URL and authorize it again. Expired requests need a fresh sign-in attempt.
+Cloudflare requires an account and a domain on Cloudflare to publish a permanent application hostname. See [Cloudflare setup](https://developers.cloudflare.com/tunnel/get-started/). Interego does not purchase a domain, create a provider account or create a central Interego-operated relay.
 
-This preview uses [Cloudflare Quick Tunnels](https://developers.cloudflare.com/tunnel/get-started/quick-tunnels/). They are temporary preview connections with no uptime guarantee, and are not a permanent always-on address. They do not support SSE; this bridge uses JSON responses over Streamable HTTP. A stable hosted relay or a named tunnel is a separate deployment choice.
+1. Start your local space, open **Connections**, choose **Connect a web assistant**, and keep the user-owned Cloudflare option selected.
+2. Choose your assistant, read and/or save permissions, and maximum access duration. Enter the dedicated public address you will own, such as `https://memory.example.com`.
+3. Open the Cloudflare setup button. In your own dashboard create a **dedicated remotely managed tunnel** for Interego. Copy its connector token or the displayed `cloudflared service install` command into Interego's masked field. Interego reads the command as text; it does not execute it. Do not paste the token into an AI chat.
+4. Save the address. Saving does not enable web access. Interego displays a fixed local target such as `http://127.0.0.1:51234`; use the actual value in your app and copy it with the provided button.
+5. In that tunnel's published application route, choose your hostname without `https://` or `/mcp`, select an **HTTP** service and use Interego's copied local target. Keep the hostname dedicated to this bridge and avoid extra paths or an additional browser-login gate in front of MCP. Interego's OAuth flow provides its own approval.
+6. Return to Interego and choose **Check and enable**. Interego verifies that the public address reaches this exact local listener before showing it as ready. A wrong route or occupied local port fails with a retry message; the app does not silently choose a new address.
+7. Follow the client connection steps below once. On later app launches, enable web access again to resume the same URL and saved authorization.
+
+**Use a dedicated tunnel.** Cloudflare's remote tunnel configuration controls its published routes; a connector token does not let Interego audit or override that configuration. Do not reuse a tunnel that publishes other local services. Interego's public route check confirms its own hostname reaches its MCP listener. You manage the provider's other routes and DNS in your own account.
+
+The connector token is protected with Windows storage at rest and never returned in status or setup text. The bundled helper receives a private temporary token file while running; it is removed when the helper stops. The app does not put the token in process arguments, inherited environment variables or logs. See [Cloudflare token authority](https://developers.cloudflare.com/tunnel/reference/tunnel-tokens/) and [token-file support](https://developers.cloudflare.com/tunnel/reference/run-parameters/).
+
+### Other connection choices
+
+**Existing HTTPS gateway:** use a stable public hostname whose reverse proxy or tunnel you already manage. Save it in Interego, copy the fixed local target into that gateway, then check and enable it. Interego starts and stops its local authenticated listener; you manage the external gateway and its credentials separately. The gateway must forward the hostname's MCP and OAuth routes to that listener, preserve the public or local Host header, and support JSON Streamable HTTP. Avoid a shared path prefix or a separate interactive authentication layer in front of MCP.
+
+**Temporary link:** choose the temporary option when you do not want a domain or provider account. It retains the preview's Cloudflare Quick Tunnel behavior: a new URL and new pairing on each session. Forget a saved permanent setup before switching to this mode. Quick Tunnels have no uptime guarantee and do not support SSE; the bridge uses JSON Streamable HTTP. See [Quick Tunnel limits](https://developers.cloudflare.com/tunnel/get-started/quick-tunnels/).
+
+**Hosted Interego** remains available separately. It stores and serves its own hosted space; opening it does not copy local notes or create a managed permanent address for this local pod.
+
+### Add the URL in your assistant
+
+1. Review the privacy explanation and enable the connection. Copy the MCP URL shown by Interego.
+2. In ChatGPT web, add a custom MCP server under Plugins, paste the URL, and select OAuth authentication. Account and workspace policies may restrict this option. In Grok Bot, ask it to add an MCP server using that URL, or follow its Connect apps flow. Your other Bots on that Grok account may share its connected apps.
+3. Follow the client's sign-in prompt. The browser shows a verification code and asks you to return to Interego. Compare the code with the request displayed in Interego, check the permissions and destination, and approve only the request you started. A client's chosen name is not proof of its vendor's identity.
+4. Return to the browser and finish connecting. Ask the client to check its Interego status, then search for a note you expect it to find. Saving is available only if you enabled it separately.
+
+### Pause, disconnect and forget
+
+For a permanent address, **Pause web access**, **Stop Interego** and quitting close the listener and connector, abort current requests, and preserve approved pairings in protected local storage. The same address and authorization resume when you explicitly enable access again. No requests through this bridge can use the local pod while web access is off. The assistant may show an unavailable connection while the PC is off; enable access and retry. Client policies can still require a fresh sign-in, and expired or disconnected grants need new approval.
+
+**Disconnect** removes an individual app's permission, including while web access is paused. **Forget permanent address** confirms removal of all saved web authorization and the locally stored connector token. It does not delete your Cloudflare account, tunnel or DNS route; remove those separately in your provider if desired. Changing the address, pod or permission policy requires new authorization. Notes backups exclude these credentials and pairings.
+
+For a temporary link, stopping still revokes that session's grants and changes the URL next time.
 
 If your assistant or browser says the server cannot be found immediately after starting the link, wait for the new address to become available and retry connecting. Some networks block temporary tunnel domains. Interego does not change your computer's DNS, proxy or firewall settings. Your local notes remain available when a web connection cannot be established.
 
-**Cloudflare terminates HTTPS and can process requests and note content passing through the bridge. The connected AI provider can receive notes it reads.** Encryption at rest still protects your stored notes, but this route does not provide end-to-end encryption from Interego to the AI model. The helper forwards only the dedicated, authenticated MCP and authorization service; it never forwards your Solid storage endpoint, backups, pod key or local agent broker. Tokens are held in memory, not exported in setup text or notes backups.
+**Cloudflare or your chosen gateway terminates HTTPS and can process requests and note content passing through it. The connected AI provider can receive notes it reads.** Encryption at rest still protects stored notes; this route does not provide end-to-end encryption from Interego to the AI model. The Interego bridge exposes only scoped MCP and authorization routes, not Solid storage, backups, the pod key or the local agent broker. Permanent OAuth state is protected at rest and stores token hashes. Pending approvals and unused authorization codes do not survive a restart. Saved state is bound to the exact public origin, local port, pod and permission policy.
 
 The OAuth flow uses discovery, dynamic registration, authorization codes with PKCE S256, resource binding and native owner approval. See [OpenAI authentication requirements](https://developers.openai.com/plugins/build/auth), [ChatGPT custom MCP setup](https://developers.openai.com/api/docs/guides/custom-mcp-server), [Grok Bot apps](https://docs.x.ai/grok-bot/computer-and-apps), and [Grok's tunneling guide](https://docs.x.ai/grok/connectors/custom-mcp-tunneling). These describe supported connection routes; they do not establish that every account has the feature enabled.
 
@@ -70,3 +98,5 @@ The bundled executable's `--mcp-stdio` mode is a transport companion. It never s
 The app checks grants again when queued note operations execute, binds them to the current pod, and rejects revoked, expired, disconnected or mismatched connections. Tool discovery is permission-filtered, and operation handlers enforce the same permissions. There are no agent tools for backups, restore, grant management, arbitrary URLs, shell execution or federation. At the connection limit, old inactive grants can be pruned while current grants remain intact.
 
 The packaged verification launches separate copies of the actual executable in stdio mode. It tests read-only and save-only grants, private-note creation and retrieval, bounded search excerpts, revocation of an open MCP session, and persistence after a runtime restart. Backend tests additionally cover corrupted credentials, request/response binding, replay, expiry, pod changes, browser origins, request limits, cancellation and queued authorization. The existing hosted and stdio configuration tests remain regression checks.
+
+The two-process packaged check also saves a simulated cloud client's credentials under Windows protection, quits the first app, then resumes the same stable URL and OAuth refresh grant in a new app process without a new approval. It reads the previously saved encrypted note, checks individual Disconnect and Forget, and verifies web access starts off. The outbound gateway is simulated for this offline check. Live named-tunnel provisioning and individual vendor sign-ins require an owner's provider account and separate validation.

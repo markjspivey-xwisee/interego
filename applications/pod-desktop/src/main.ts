@@ -13,9 +13,10 @@ import { AgentService } from './agent-service.js';
 import type { AgentConnectionInput, AgentProtector } from './agent-types.js';
 import { buildAgentSetup } from './agent-setup.js';
 import { BridgeServer } from './bridge-server.js';
-import { BridgeTunnel } from './bridge-tunnel.js';
+import { StableBridgeTunnel } from './stable-tunnel.js';
+import { StableBridgeStore } from './stable-bridge.js';
 import { BridgeManager } from './bridge-manager.js';
-import type { BridgeClient, BridgeStartInput } from './bridge-types.js';
+import type { BridgeClient, BridgeStartInput, StableBridgeInput } from './bridge-types.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const entry = join(here, '..', 'index.html');
@@ -188,19 +189,23 @@ async function bootstrap(): Promise<void> {
     await access.close().catch(() => {});
   }
   if (agentService) {
-    const server = new BridgeServer({ agents: access });
+    const server = new BridgeServer({ agents: access, persistence: {
+      dataDir: join(userData, 'web-bridge', 'authorization'), protector: agentProtector,
+      getPodBinding: () => controller!.agentPodBinding(),
+    } });
+    const settings = new StableBridgeStore({ dataDir: join(userData, 'web-bridge', 'settings'), protector: agentProtector });
     const tunnel = smoke ? {
       // The packaged offline check exercises real HTTP/OAuth and trusted IPC,
       // while deliberately replacing the external provider with an isolated URL.
-      async start(port: number) { smokeBridgeOrigin = `http://127.0.0.1:${port}`; return 'https://packaged-verification.trycloudflare.com'; },
+      async start(port: number, stable?: { origin: string }) { smokeBridgeOrigin = `http://127.0.0.1:${port}`; return stable?.origin ?? 'https://packaged-verification.trycloudflare.com'; },
       async stop() { smokeBridgeOrigin = undefined; },
-    } : new BridgeTunnel({
+    } : new StableBridgeTunnel({
       resourcesDir: app.isPackaged ? app.getAppPath() : join(app.getAppPath(), '.staging', 'app'),
       dataDir: join(userData, 'web-bridge'),
       onUnexpectedExit: () => { void webBridge?.connectionLost().catch(() => {}); },
     });
     // Construction does not bind a port, launch a tunnel or restore web access.
-    webBridge = new BridgeManager(server, tunnel);
+    webBridge = new BridgeManager(server, tunnel, { settings, ...(smoke ? { verifyPublic: async () => {} } : {}) });
   }
   handle('status', async () => pod.getStatus());
   handle('setup', async () => pod.setup());
@@ -244,9 +249,27 @@ async function bootstrap(): Promise<void> {
   handle('denyBridge', async value => bridge().deny(approvalId(value)));
   handle('copyBridgeUrl', async () => {
     const state = await bridge().status();
-    if (state.state !== 'ready' || !state.url) throw new Error('Start your web connection before copying its link.');
+    if (!state.url || (state.state !== 'ready' && !state.remembered)) throw new Error('Set up your web connection before copying its link.');
     clipboard.writeText(state.url);
   });
+  handle('stableBridgeSettings', async () => bridge().settings());
+  handle('saveStableBridge', async value => {
+    const state = await pod.getStatus();
+    if (!state.configured || state.restorePending) throw new Error('Finish setting up your local space before saving its web address.');
+    return bridge().save(value as StableBridgeInput);
+  });
+  handle('resumeBridge', async () => {
+    const state = await pod.getStatus();
+    if (!state.running || state.restorePending) throw new Error('Start your local space before enabling web access.');
+    return bridge().resume();
+  });
+  handle('forgetStableBridge', async () => bridge().forget());
+  handle('copyStableBridgeTarget', async () => {
+    const saved = await bridge().settings();
+    if (!saved) throw new Error('Save a permanent address before copying its local target.');
+    clipboard.writeText(`http://127.0.0.1:${saved.port}`);
+  });
+  handle('openStableBridgeSetup', async () => shell.openExternal('https://one.dash.cloudflare.com/'));
   handle('openBridgeClient', async value => {
     const links: Record<BridgeClient, string> = {
       'chatgpt-web': 'https://chatgpt.com/',
@@ -324,8 +347,9 @@ async function bootstrap(): Promise<void> {
       // Exercise the shipping sandboxed preload and trusted renderer IPC, too.
       const initial = await window.webContents.executeJavaScript('window.interego.status()') as PodStatus;
       if (!initial.localOnly || initial.federationEnabled) throw new Error('The packaged renderer bridge has an invalid local profile.');
-      const bridgeStatus = await window.webContents.executeJavaScript('window.interego.bridgeStatus()') as { state: string; url?: string; pendingApprovals: unknown[]; connections: unknown[] };
-      if (bridgeStatus.state !== 'off' || bridgeStatus.url || bridgeStatus.pendingApprovals.length || bridgeStatus.connections.length) throw new Error('Web connections must start disabled on every app launch.');
+      const bridgeStatus = await window.webContents.executeJavaScript('window.interego.bridgeStatus()') as { state: string; url?: string; remembered?: boolean; pendingApprovals: unknown[]; connections: unknown[] };
+      if (bridgeStatus.state !== 'off' || bridgeStatus.pendingApprovals.length
+        || (!initial.configured && (bridgeStatus.url || bridgeStatus.remembered || bridgeStatus.connections.length))) throw new Error('Web connections must start disabled on every app launch.');
       await window.webContents.executeJavaScript(initial.configured ? 'window.interego.start()' : 'window.interego.setup()');
       const note = await window.webContents.executeJavaScript('window.interego.saveNote({title:"Packaged local pod verification",body:"This private note survives a packaged runtime restart."})') as LocalNote;
       const { verifyAgentPairing } = await import('./pairing-smoke.js');
@@ -336,10 +360,12 @@ async function bootstrap(): Promise<void> {
         list: () => window!.webContents.executeJavaScript('window.interego.connections()'),
         notes: () => window!.webContents.executeJavaScript('window.interego.notes()') });
       const { verifyWebBridge } = await import('./bridge-smoke.js');
-      await verifyWebBridge({
-        invoke: <T>(method: string, argument?: unknown) => window!.webContents.executeJavaScript(`window.interego[${JSON.stringify(method)}](${argument === undefined ? '' : JSON.stringify(argument)})`) as Promise<T>,
-        loopback: () => smokeBridgeOrigin,
-      });
+      const smokeInvoke = <T>(method: string, argument?: unknown) => window!.webContents.executeJavaScript(`window.interego[${JSON.stringify(method)}](${argument === undefined ? '' : JSON.stringify(argument)})`) as Promise<T>;
+      if (!initial.configured) await verifyWebBridge({ invoke: smokeInvoke, loopback: () => smokeBridgeOrigin });
+      const { verifyStableBridge } = await import('./stable-bridge-smoke.js');
+      await verifyStableBridge({ invoke: smokeInvoke, loopback: () => smokeBridgeOrigin, expectPrevious: initial.configured,
+        saveClient: async client => atomicWrite(join(userData, 'smoke-web-client.bin'), Buffer.from(agentProtector.protect(JSON.stringify(client)), 'utf8')),
+        loadClient: async () => JSON.parse(agentProtector.unprotect(await readFile(join(userData, 'smoke-web-client.bin'), 'utf8'))) as import('./stable-bridge-smoke.js').SavedSmokeClient });
       await window.webContents.executeJavaScript('window.interego.stop()');
       const reopened = new PodController(options);
       controller = reopened;

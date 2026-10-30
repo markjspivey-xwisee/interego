@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { BridgeManager, type BridgeServerPort, type BridgeTunnelPort } from '../src/bridge-manager.js';
-import type { BridgeStartInput, BridgeStatus } from '../src/bridge-types.js';
+import type { BridgeStartInput, BridgeStatus, StoredStableBridge } from '../src/bridge-types.js';
+import { BridgeRouteError, type BridgeReadiness } from '../src/bridge-probe.js';
 
 const input: BridgeStartInput = { client: 'chatgpt-web', name: 'ChatGPT web', permissions: ['notes:read'], expiresInDays: 7 };
 const off = (): BridgeStatus => ({ state: 'off', permissions: [], pendingApprovals: [], connections: [] });
@@ -73,5 +74,87 @@ describe('desktop web bridge lifecycle', () => {
   it('stops the tunnel even when gateway cleanup fails, without claiming success', async () => {
     const f = fixture(); vi.mocked(f.server.stop).mockRejectedValue(new Error('write denied'));
     expect((await f.manager.stop()).state).toBe('error'); expect(f.tunnel.stop).toHaveBeenCalled();
+  });
+});
+
+describe('saved bridge lifecycle', () => {
+  function savedFixture() {
+    const f = fixture();
+    let record: StoredStableBridge | null = { provider: 'cloudflare', origin: 'https://memory.example.com', port: 43123,
+      token: 'never-return-this-native-token', policy: input };
+    const settings = {
+      get: vi.fn(async () => record),
+      view: vi.fn(async () => record ? { provider: record.provider, origin: record.origin, port: record.port, hasCredential: !!record.token, policy: record.policy } : null),
+      save: vi.fn(), clear: vi.fn(async () => { record = null; }),
+    };
+    f.server.forget = vi.fn(async () => {});
+    f.server.readiness = vi.fn(() => ({ path: '/.well-known/interego-bridge', expected: 'fresh-per-listener-proof' }));
+    vi.mocked(f.tunnel.start).mockResolvedValue('https://memory.example.com');
+    const verifyPublic = vi.fn(async (_origin: string, _proof: BridgeReadiness, _signal: AbortSignal) => {});
+    const manager = new BridgeManager(f.server, f.tunnel, { settings, verifyPublic });
+    return { ...f, settings, verifyPublic, manager };
+  }
+
+  it('shows the remembered address while staying off until explicit resume', async () => {
+    const f = savedFixture();
+    expect(await f.manager.status()).toMatchObject({ state: 'off', remembered: true, mode: 'stable', url: 'https://memory.example.com/mcp' });
+    expect(f.server.start).not.toHaveBeenCalled(); expect(f.tunnel.start).not.toHaveBeenCalled();
+    expect(JSON.stringify(await f.manager.status())).not.toContain('never-return-this-native-token');
+    expect((await f.manager.resume()).state).toBe('ready');
+    expect(f.server.start).toHaveBeenCalledWith(input, { origin: 'https://memory.example.com', port: 43123 });
+    expect(f.verifyPublic).toHaveBeenCalledOnce();
+    expect(await f.manager.stop()).toMatchObject({ state: 'off', remembered: true, url: 'https://memory.example.com/mcp' });
+    expect(f.server.forget).not.toHaveBeenCalled(); expect(f.settings.clear).not.toHaveBeenCalled();
+    expect((await f.manager.resume()).state).toBe('ready');
+  });
+
+  it('forgets authorization before removing the saved provider settings', async () => {
+    const f = savedFixture(); await f.manager.resume();
+    vi.mocked(f.server.forget!).mockImplementation(async () => { expect(f.settings.clear).not.toHaveBeenCalled(); });
+    expect(await f.manager.forget()).toEqual(off());
+    expect(f.server.forget).toHaveBeenCalledOnce(); expect(f.settings.clear).toHaveBeenCalledOnce();
+  });
+
+  it('keeps a saved address and pairings when the public route fails verification', async () => {
+    const f = savedFixture(); f.verifyPublic.mockRejectedValue(new BridgeRouteError());
+    expect(await f.manager.resume()).toMatchObject({ state: 'error', remembered: true, url: 'https://memory.example.com/mcp' });
+    expect(f.server.stop).toHaveBeenCalled(); expect(f.server.forget).not.toHaveBeenCalled();
+    expect(f.settings.clear).not.toHaveBeenCalled();
+  });
+
+  it('cancels public verification when paused without enabling access later', async () => {
+    const f = savedFixture(); const entered = deferred<void>();
+    f.verifyPublic.mockImplementation(async (_origin, _proof, signal) => {
+      entered.resolve(); await new Promise<void>((_done, fail) => signal.addEventListener('abort', () => fail(new Error('canceled')), { once: true }));
+    });
+    const starting = f.manager.resume(); await entered.promise;
+    await f.manager.stop(); await starting;
+    expect(await f.manager.status()).toMatchObject({ state: 'off', remembered: true });
+  });
+
+  it('does not replace saved authority with a temporary connection', async () => {
+    const f = savedFixture();
+    expect(await f.manager.start(input)).toMatchObject({ state: 'error', remembered: true });
+    expect(f.tunnel.start).not.toHaveBeenCalled(); expect(f.settings.clear).not.toHaveBeenCalled();
+  });
+
+  for (const operation of ['stop', 'forget'] as const) it(`cannot resume from a saved-settings read that finishes after ${operation}`, async () => {
+    const f = savedFixture(); const previous = await f.settings.get();
+    const reading = deferred<StoredStableBridge | null>(); f.settings.get.mockReturnValue(reading.promise);
+    const resuming = f.manager.resume(); await Promise.resolve();
+    await f.manager[operation](); reading.resolve(previous); await resuming;
+    expect(f.server.start).not.toHaveBeenCalled(); expect(f.tunnel.start).not.toHaveBeenCalled();
+    expect((await f.manager.status()).state).toBe('off');
+  });
+
+  it('lets the owner forget unreadable authorization while retaining a truthful error state', async () => {
+    const f = savedFixture(); vi.mocked(f.server.status).mockRejectedValueOnce(new Error('corrupt private snapshot'));
+    const state = await f.manager.status();
+    expect(state).toMatchObject({ state: 'error', remembered: true, url: 'https://memory.example.com/mcp' });
+    expect(JSON.stringify(state)).not.toContain('corrupt private snapshot');
+    vi.mocked(f.server.status).mockRejectedValueOnce(new Error('corrupt private snapshot'));
+    expect(await f.manager.resume()).toMatchObject({ state: 'error', message: expect.stringContaining('Forget the saved address') });
+    expect(f.tunnel.start).not.toHaveBeenCalled();
+    expect(await f.manager.forget()).toEqual(off());
   });
 });

@@ -1,6 +1,6 @@
 import type { DesktopApi, PodStatus } from './types.js';
 import type { AgentPermission } from './agent-types.js';
-import type { BridgeClient, BridgePendingApproval, BridgeStatus } from './bridge-types.js';
+import type { BridgeClient, BridgePendingApproval, BridgeStatus, StableBridgeInput, StableBridgeView } from './bridge-types.js';
 
 interface BridgeUiContext {
   pod(): PodStatus | null;
@@ -36,6 +36,8 @@ export function installBridgeUi(api: DesktopApi, context: BridgeUiContext): {
   const dialog = element<HTMLDialogElement>('bridge-dialog');
   const form = element<HTMLFormElement>('bridge-form');
   let bridge: BridgeStatus | undefined;
+  let saved: StableBridgeView | null = null;
+  let confirmingForget = false;
   let unknown = true;
   let checked = false;
   let changing: string | null = null;
@@ -48,6 +50,8 @@ export function installBridgeUi(api: DesktopApi, context: BridgeUiContext): {
   const seenConnections = new Set<string>();
   const acknowledged = new Map<string, string>();
   const live = () => bridge?.state === 'ready' && !unknown && changing === null;
+  const remembered = () => !!saved || bridge?.mode === 'stable' || bridge?.remembered === true;
+  const editable = () => !unknown && changing === null;
   const mayStart = () => !!context.pod()?.configured && !!context.pod()?.running
     && !context.pod()?.restorePending && !context.locallyBusy() && !unknown && changing === null
     && (bridge?.state === 'off' || bridge?.state === 'error');
@@ -73,9 +77,9 @@ export function installBridgeUi(api: DesktopApi, context: BridgeUiContext): {
     if (changing) return;
     const requested = ++read; const began = epoch;
     try {
-      const received = await api.bridgeStatus();
+      const [received, settings] = await Promise.all([api.bridgeStatus(), api.stableBridgeSettings()]);
       if (requested !== read || began !== epoch) return;
-      bridge = received; unknown = false; checked = true;
+      bridge = received; saved = settings; unknown = false; checked = true;
       for (const grant of received.connections) seenConnections.add(grant.id);
       const nextConnections = JSON.stringify(received.connections);
       if (nextConnections !== connectionState) { connectionState = nextConnections; context.onAccessChanged(); }
@@ -86,17 +90,22 @@ export function installBridgeUi(api: DesktopApi, context: BridgeUiContext): {
     render();
   }
 
-  async function mutate(name: string, operation: () => Promise<BridgeStatus>, success: string, failure: string): Promise<void> {
+  async function mutate(name: string, operation: () => Promise<BridgeStatus>, success: string, failure: string, reloadSettings = false): Promise<void> {
     if (changing && (name !== 'stop' || changing === 'stop')) return;
     const began = ++epoch; read++; changing = name;
-    if (name === 'start') bridge = { state: 'starting', permissions: [], pendingApprovals: [], connections: [] };
+    if (name === 'start' || name === 'resume') bridge = { ...bridge, state: 'starting', permissions: bridge?.permissions ?? [], pendingApprovals: [], connections: bridge?.connections ?? [] };
     message(''); render();
     try {
       const received = await operation();
       if (began !== epoch) return;
+      if (reloadSettings) {
+        const settings = await api.stableBridgeSettings();
+        if (began !== epoch) return;
+        saved = settings;
+      }
       bridge = received; unknown = false; changing = null;
       for (const grant of received.connections) seenConnections.add(grant.id);
-      const succeeded = received.state !== 'error' && (name !== 'start' || received.state === 'ready')
+      const succeeded = received.state !== 'error' && (!['start', 'resume'].includes(name) || received.state === 'ready')
         && (name !== 'stop' || received.state === 'off');
       message(succeeded ? success : received.message ?? failure, !succeeded); render(); context.onAccessChanged();
     } catch {
@@ -124,7 +133,8 @@ export function installBridgeUi(api: DesktopApi, context: BridgeUiContext): {
       origin.textContent = `App-supplied name · Returns to ${request.redirectOrigin}`;
       const permissions = document.createElement('p'); permissions.className = 'connection-permissions'; permissions.textContent = scopes(request.permissions);
       const duration = document.createElement('p'); duration.className = 'connection-info';
-      duration.textContent = bridge?.expiresInDays ? `Maximum access: ${bridge.expiresInDays} days. Stopping Interego or web access ends it sooner.`
+      duration.textContent = remembered() ? `Maximum access: ${bridge?.expiresInDays ?? saved?.policy.expiresInDays ?? 30} days. Pausing blocks access; Disconnect or Forget removes permission.`
+        : bridge?.expiresInDays ? `Maximum access: ${bridge.expiresInDays} days. Stopping Interego or web access ends it sooner.`
         : 'Stopping Interego or web access ends this connection.';
       const codeLabel = document.createElement('p'); codeLabel.className = 'connection-info'; codeLabel.textContent = 'Compare this code with the authorization page you just opened:';
       const code = document.createElement('strong'); code.className = 'bridge-code'; code.textContent = request.verificationCode;
@@ -159,7 +169,7 @@ export function installBridgeUi(api: DesktopApi, context: BridgeUiContext): {
 
   function drawConnections(): void {
     const grants = !unknown ? bridge?.connections ?? [] : [];
-    const signature = JSON.stringify([grants, changing, unknown]);
+    const signature = JSON.stringify([grants, bridge?.state, remembered(), changing, unknown]);
     if (signature === connectionsSignature) return;
     connectionsSignature = signature;
     const list = element('bridge-connections'); list.replaceChildren();
@@ -170,13 +180,13 @@ export function installBridgeUi(api: DesktopApi, context: BridgeUiContext): {
       const detail = document.createElement('p'); detail.className = 'connection-meta';
       const active = grant.state === 'waiting' || grant.state === 'active';
       const labels = { waiting: 'Waiting for first use', active: 'Access allowed', revoked: 'Disconnected', expired: 'Expired', 'pod-changed': 'Different space' };
-      detail.textContent = `${labels[grant.state]} · ${scopes(grant.permissions)} · Expires ${date(grant.expiresAt)}`;
+      detail.textContent = `${active && remembered() && bridge?.state !== 'ready' ? 'Paused (pairing saved)' : labels[grant.state]} · ${scopes(grant.permissions)} · Expires ${date(grant.expiresAt)}`;
       row.append(name, detail);
       if (active) {
         const revoke = document.createElement('button'); revoke.type = 'button'; revoke.className = 'danger'; revoke.textContent = 'Disconnect';
         revoke.setAttribute('aria-label', `Disconnect web connection ${grant.name}`); revoke.disabled = changing !== null;
         revoke.addEventListener('click', () => {
-          if (!live()) return;
+          if (!editable()) return;
           void mutate('revoke', async () => { await api.revokeConnection(grant.id); return api.bridgeStatus(); }, 'This web connection is disconnected.', 'The disconnection could not be confirmed. Refresh web access or stop it to block all web connections.');
         });
         row.append(revoke);
@@ -185,40 +195,87 @@ export function installBridgeUi(api: DesktopApi, context: BridgeUiContext): {
     }
   }
 
+  function renderStableSetup(active: boolean): void {
+    const stable = remembered();
+    const mode = element<HTMLSelectElement>('bridge-address-mode').value;
+    const permanent = mode !== 'temporary';
+    element('bridge-owned-fields').hidden = !permanent;
+    element('bridge-token-field').hidden = mode !== 'cloudflare';
+    input('bridge-origin').required = permanent;
+    input('bridge-token').required = mode === 'cloudflare' && !saved;
+    for (const id of ['bridge-origin', 'bridge-token']) input(id).disabled = active || changing !== null || (id === 'bridge-token' && mode !== 'cloudflare');
+    element<HTMLSelectElement>('bridge-address-mode').disabled = active || changing !== null;
+    element('bridge-provider-help').textContent = mode === 'cloudflare'
+      ? 'Use a domain in your own Cloudflare account and a dedicated Cloudflare Tunnel. Paste its connector token or install command; Interego extracts the token without running the command.'
+      : mode === 'external' ? 'Use your existing HTTPS gateway or reverse proxy. You manage its address, certificate and route. Interego shows the local target and checks that it reaches this pod.'
+        : 'Try a temporary Cloudflare link without an account or domain. Its address changes when restarted and its pairings must be set up again.';
+    element('bridge-connection-disclosure').textContent = mode === 'external'
+      ? 'Your gateway provider can process requests and returned notes. Notes the assistant reads may reach its AI provider. Your encrypted note storage stays on this computer.'
+      : 'Cloudflare handles connection traffic and can see requests and returned notes. Notes the assistant reads may reach its AI provider. Your encrypted note storage stays on this computer.';
+    element('bridge-session-disclosure').textContent = permanent
+      ? 'Your permanent address and approved pairings will be saved on this PC. Web access stays off until you enable it. Pausing or closing Interego blocks access without forgetting those pairings; Disconnect or Forget removes permission. Federation stays off.'
+      : 'This preview address changes when web access restarts. You will need to update the assistant’s connector and authorize it again. Keep Interego and this computer on while connected. Stopping Interego or closing the app turns web access off. It does not restart automatically; federation stays off.';
+    element('bridge-consent-label').textContent = permanent ? 'Save my address and chosen permissions. I will enable access separately.' : 'I want to turn on this temporary web connection.';
+    element('bridge-saved').hidden = !stable || unknown;
+    element('bridge-saved-url').textContent = saved ? saved.origin + '/mcp' : bridge?.url ?? '';
+    element('bridge-saved-policy').textContent = saved ? CLIENTS[saved.policy.client] + ' · ' + scopes(saved.policy.permissions) + ' · Up to ' + saved.policy.expiresInDays + ' days' : '';
+    element('bridge-target').textContent = saved ? 'http://127.0.0.1:' + saved.port : '';
+    element('bridge-saved-provider').textContent = saved?.provider === 'cloudflare' ? 'A permanent address in your Cloudflare account' : 'Your existing HTTPS gateway';
+    element('bridge-route-instructions').textContent = saved?.provider === 'cloudflare'
+      ? 'In your dedicated Cloudflare Tunnel, use the hostname from your saved address, without https:// or /mcp. Set its service type to HTTP and paste the local target below. Your Cloudflare configuration controls routing: use this dedicated tunnel only for Interego and remove other routes. Return here, then choose Check and enable web access.'
+      : 'Point your HTTPS gateway at the exact local target below. Keep its certificate and public hostname stable. Return here, then choose Check and enable web access.';
+    for (const id of ['copy-stable-bridge-url', 'copy-stable-bridge-target', 'open-stable-bridge-setup', 'forget-stable-bridge']) button(id).disabled = !saved || !editable();
+    button('open-stable-bridge-setup').hidden = saved?.provider !== 'cloudflare';
+    button('open-stable-bridge-onboarding').disabled = active || !editable();
+    const mayForget = changing === null && (stable || unknown);
+    button('reset-web-setup').hidden = !checked || (!unknown && !(stable && !saved));
+    button('reset-web-setup').disabled = changing !== null;
+    element('bridge-forget-review').hidden = !confirmingForget || (!stable && !unknown);
+    input('bridge-forget-confirm').disabled = !mayForget;
+    button('confirm-forget-stable-bridge').disabled = !mayForget || !input('bridge-forget-confirm').checked;
+    button('cancel-forget-stable-bridge').disabled = changing !== null;
+    for (const id of ['resume-bridge', 'resume-bridge-setup']) {
+      button(id).hidden = !stable || active;
+      button(id).disabled = !mayStart();
+      button(id).textContent = bridge?.state === 'error' ? 'Check and try again' : 'Check and enable web access';
+    }
+  }
+
   function render(): void {
-    const starting = changing === 'start' || bridge?.state === 'starting';
+    const stable = remembered();
+    const starting = changing === 'start' || changing === 'resume' || bridge?.state === 'starting';
     const stopping = changing === 'stop';
     const active = starting || bridge?.state === 'ready';
     const title = stopping ? 'Stopping web access…' : !checked ? 'Checking web access…' : unknown ? 'Web access could not be checked'
-      : starting ? 'Preparing temporary web access…' : bridge?.state === 'ready' ? 'Temporary web access is on'
-        : bridge?.state === 'error' ? 'Web access needs another try' : 'Web access is off';
+      : starting ? 'Preparing web access…' : bridge?.state === 'ready' ? stable ? 'Web access is on' : 'Temporary web access is on'
+        : bridge?.state === 'error' ? 'Web access needs another try' : stable ? 'Web access is paused' : 'Web access is off';
     element('bridge-status-label').textContent = title;
     element('bridge-status-label').classList.toggle('inactive', !live());
-    element('bridge-status-detail').textContent = stopping ? 'Blocking requests and closing the temporary connection.'
+    element('bridge-status-detail').textContent = stopping ? 'Blocking requests and closing the connection.'
       : !checked ? 'Reading the current connection status.'
       : unknown ? 'Refresh to check. Use Stop web access if you want to block all web connections.'
         : starting ? 'This can take a little while. Your local notes remain available; you can close this setup and come back.'
           : bridge?.state === 'ready' ? 'Only connections you approve can use their granted tools. Keep Interego and this computer on.'
-            : bridge?.state === 'error' ? bridge.message ?? 'Your local notes are still available. Retry to create a new temporary URL.'
-              : 'Web assistants cannot reach your local notes through this bridge. Local app connections are managed separately.';
-    button('start-bridge').hidden = active;
+            : bridge?.state === 'error' ? bridge.message ?? 'Your local notes are still available. Check the connection settings, then try again.'
+              : stable ? 'Your address and approved pairings are remembered. Enable web access when you want to use them.' : 'Web assistants cannot reach your local notes through this bridge. Local app connections are managed separately.';
+    button('start-bridge').hidden = active || stable;
     button('start-bridge').disabled = !mayStart();
     button('start-bridge').textContent = bridge?.state === 'error' ? 'Try web setup again' : 'Connect a web assistant';
-    button('bridge-setup-details').hidden = !active;
+    button('bridge-setup-details').hidden = !active && !stable;
     const stoppable = active || unknown || bridge?.state === 'error' || changing !== null;
     for (const id of ['stop-bridge', 'stop-bridge-setup', 'bridge-alert-stop']) {
       button(id).hidden = !stoppable; button(id).disabled = stopping;
-      button(id).textContent = stopping ? 'Stopping…' : 'Stop web access';
+      button(id).textContent = stopping ? 'Stopping…' : stable ? 'Pause web access' : 'Stop web access';
     }
     const permissions = (input('bridge-read').checked ? 1 : 0) + (input('bridge-create').checked ? 1 : 0);
-    button('confirm-bridge-start').disabled = !mayStart() || !permissions || !input('bridge-consent').checked;
-    button('confirm-bridge-start').textContent = starting ? 'Preparing…' : 'Turn on temporary web access';
+    button('confirm-bridge-start').disabled = !mayStart() || stable || !permissions || !input('bridge-consent').checked;
+    button('confirm-bridge-start').textContent = changing === 'save' ? 'Saving…' : starting ? 'Preparing…' : element<HTMLSelectElement>('bridge-address-mode').value === 'temporary' ? 'Turn on temporary web access' : 'Save my permanent address';
     for (const id of ['bridge-client', 'bridge-expiry']) element<HTMLSelectElement>(id).disabled = active || changing !== null;
     for (const id of ['bridge-name', 'bridge-read', 'bridge-create', 'bridge-consent']) input(id).disabled = active || changing !== null;
     element('bridge-scope-help').textContent = input('bridge-read').checked
       ? 'The assistant may read all current and future notes, and send what it reads to its AI provider.'
       : input('bridge-create').checked ? 'The assistant may save new notes. It cannot read your existing notes.' : 'Choose at least one permission.';
-    element('bridge-form').hidden = active || stopping;
+    element('bridge-form').hidden = active || stopping || stable;
     element('bridge-setup').hidden = !active && !stopping;
     element('bridge-setup-progress').hidden = !starting;
     element('bridge-setup-ready').hidden = !live();
@@ -231,9 +288,9 @@ export function installBridgeUi(api: DesktopApi, context: BridgeUiContext): {
     element('bridge-client-instructions').textContent = client === 'chatgpt-web'
       ? 'In ChatGPT Plugins, choose +, then Add custom MCP server. Paste this URL, choose OAuth and dynamic client registration if asked, then create and install the plugin. Choose Connect or Authenticate to open authorization.'
       : client === 'grok-bot'
-        ? 'In Grok Bot, ask to add an MCP server using this URL, then open its authorization card. You can also use New Connector → Custom in Grok connectors. Complete OAuth in your browser.'
+        ? 'In Grok Bot, ask to add an MCP server using this URL, then open its authorization card. You can also use New Connector → Custom in Grok connectors. Complete OAuth in your browser. Other Bots on your account may share connected apps.'
         : 'Add a remote MCP server in your assistant, paste this URL and choose OAuth. Use dynamic client registration if asked, then open authorization.';
-    element('bridge-setup-permissions').textContent = bridge?.permissions.length ? `${scopes(bridge.permissions)}${bridge.expiresInDays ? ` · Up to ${bridge.expiresInDays} days, ending sooner when Interego or web access stops.` : ''}` : '';
+    element('bridge-setup-permissions').textContent = bridge?.permissions.length ? `${scopes(bridge.permissions)}${bridge.expiresInDays ? ` · Up to ${bridge.expiresInDays} days.${stable ? ' Pausing blocks access without forgetting this pairing.' : ''}` : ''}` : '';
     const pending = !unknown && bridge?.state === 'ready' && changing !== 'stop' ? bridge.pendingApprovals.length : 0;
     const alert = element('bridge-alert');
     alert.hidden = !checked || (!active && !unknown && bridge?.state !== 'error');
@@ -244,22 +301,34 @@ export function installBridgeUi(api: DesktopApi, context: BridgeUiContext): {
     button('bridge-setup-review').hidden = !pending;
     element('bridge-availability').textContent = context.pod()?.restorePending ? 'Finish restoring your local space before creating web access.'
       : !context.pod()?.running ? 'Start your local space to set up a web connection.' : 'Optional. Starts only when you choose it, and turns off when Interego closes.';
-    drawPending(); drawConnections();
+    renderStableSetup(active); drawPending(); drawConnections();
   }
 
   function begin(): void {
-    if (!mayStart()) return;
+    if (!mayStart() || remembered()) return;
     form.reset(); previousClient = 'chatgpt-web'; input('bridge-name').value = 'ChatGPT web'; message(''); render();
     context.openDialog(dialog); element('bridge-client').focus();
   }
-  const stop = () => { void mutate('stop', () => api.stopBridge(), 'Web access is off. Bridge connections must be set up again to reconnect.', 'Stopping could not be confirmed. Try Stop web access again.'); };
+  const stop = () => { void mutate('stop', () => api.stopBridge(), remembered() ? 'Web access is paused. Your address and approved pairings are kept.' : 'Web access is off. Bridge connections must be set up again to reconnect.', 'Stopping could not be confirmed. Try Stop web access again.'); };
+  const resume = () => {
+    if (!mayStart() || !remembered()) return;
+    void mutate('resume', () => api.resumeBridge(), 'Web access is on at your saved address. Existing approved pairings can resume.', 'Web access could not be enabled. Your address is kept; check the provider route and try again.');
+  };
   button('start-bridge').addEventListener('click', begin);
+  for (const id of ['resume-bridge', 'resume-bridge-setup']) button(id).addEventListener('click', resume);
   button('bridge-setup-details').addEventListener('click', () => { context.openDialog(dialog); button('close-bridge').focus(); });
   for (const id of ['stop-bridge', 'stop-bridge-setup', 'bridge-alert-stop']) button(id).addEventListener('click', stop);
   for (const id of ['bridge-review', 'bridge-setup-review']) button(id).addEventListener('click', review);
   for (const id of ['refresh-bridge', 'bridge-dialog-refresh']) button(id).addEventListener('click', () => { void refresh(); });
-  for (const id of ['close-bridge', 'cancel-bridge']) button(id).addEventListener('click', () => context.closeDialog(dialog));
-  dialog.addEventListener('cancel', event => { event.preventDefault(); context.closeDialog(dialog); });
+  const closeSetup = () => { input('bridge-token').value = ''; context.closeDialog(dialog); };
+  for (const id of ['close-bridge', 'cancel-bridge']) button(id).addEventListener('click', closeSetup);
+  dialog.addEventListener('cancel', event => { event.preventDefault(); closeSetup(); });
+  element<HTMLSelectElement>('bridge-address-mode').addEventListener('change', () => { input('bridge-token').value = ''; render(); });
+  button('open-stable-bridge-onboarding').addEventListener('click', () => {
+    const began = epoch;
+    if (!editable()) return;
+    void api.openStableBridgeSetup().then(() => { if (began === epoch) message('Cloudflare setup opened in your browser.'); }, () => { if (began === epoch) message('Open your Cloudflare dashboard to create a dedicated tunnel.', true); });
+  });
   element<HTMLSelectElement>('bridge-client').addEventListener('change', () => {
     const next = element<HTMLSelectElement>('bridge-client').value as BridgeClient;
     if (!(next in CLIENTS)) return;
@@ -269,7 +338,7 @@ export function installBridgeUi(api: DesktopApi, context: BridgeUiContext): {
   for (const id of ['bridge-read', 'bridge-create', 'bridge-consent']) input(id).addEventListener('change', render);
   form.addEventListener('submit', event => {
     event.preventDefault();
-    if (!mayStart()) return;
+    if (!mayStart() || remembered()) return;
     const client = element<HTMLSelectElement>('bridge-client').value as BridgeClient;
     const name = input('bridge-name').value.trim();
     const days = Number(element<HTMLSelectElement>('bridge-expiry').value);
@@ -277,10 +346,49 @@ export function installBridgeUi(api: DesktopApi, context: BridgeUiContext): {
     if (input('bridge-read').checked) permissions.push('notes:read');
     if (input('bridge-create').checked) permissions.push('notes:create');
     if (!(client in CLIENTS) || !name || name.length > 80 || ![7, 30, 90].includes(days) || !permissions.length || !input('bridge-consent').checked) {
-      message('Choose an app, a name and permissions, then confirm temporary web access.', true); return;
+      message('Choose an app, a name and permissions, then confirm web access.', true); return;
     }
-    void mutate('start', () => api.startBridge({ client, name, permissions, expiresInDays: days as 7 | 30 | 90 }),
-      'Your temporary URL is ready. Add it in your assistant, then approve the matching request in Interego.', 'Web access could not start. Your choices are still here. Refresh and try again.');
+    const policy = { client, name, permissions, expiresInDays: days as 7 | 30 | 90 };
+    const mode = element<HTMLSelectElement>('bridge-address-mode').value;
+    if (mode === 'temporary') {
+      void mutate('start', () => api.startBridge(policy),
+        'Your temporary URL is ready. Add it in your assistant, then approve the matching request in Interego.', 'Web access could not start. Your choices are still here. Refresh and try again.');
+      return;
+    }
+    const origin = input('bridge-origin').value.trim();
+    const token = input('bridge-token').value;
+    if (!['cloudflare', 'external'].includes(mode) || !origin || (mode === 'cloudflare' && !token.trim())) {
+      message('Enter your permanent HTTPS address and its connector token, or choose your existing HTTPS gateway.', true); return;
+    }
+    const settings: StableBridgeInput = { provider: mode as 'cloudflare' | 'external', origin, policy, ...(mode === 'cloudflare' ? { token } : {}) };
+    input('bridge-token').value = '';
+    void mutate('save', async () => { await api.saveStableBridge(settings); return api.bridgeStatus(); },
+      'Your address is saved. Configure the provider route below, then check and enable access. Nothing has been connected automatically.', 'Your address could not be saved. Enter the connector token again and try once more.', true);
+  });
+  const beginForget = () => {
+    if (changing !== null || (!remembered() && !unknown)) return;
+    confirmingForget = true; input('bridge-forget-confirm').checked = false; render();
+    if (!dialog.open) context.openDialog(dialog);
+    input('bridge-forget-confirm').focus();
+  };
+  button('forget-stable-bridge').addEventListener('click', beginForget);
+  button('reset-web-setup').addEventListener('click', beginForget);
+  button('cancel-forget-stable-bridge').addEventListener('click', () => { confirmingForget = false; input('bridge-forget-confirm').checked = false; render(); });
+  input('bridge-forget-confirm').addEventListener('change', render);
+  button('confirm-forget-stable-bridge').addEventListener('click', () => {
+    if (changing !== null || (!remembered() && !unknown) || !input('bridge-forget-confirm').checked) return;
+    void mutate('forget', () => api.forgetStableBridge(), 'The saved address and its pairings have been forgotten on this PC. Your provider’s tunnel and DNS remain in your account.', 'Forgetting could not be confirmed. Keep access paused and try again.', true).then(() => {
+      if (!saved) { confirmingForget = false; input('bridge-forget-confirm').checked = false; render(); }
+    });
+  });
+  for (const [id, operation, success, failure] of [
+    ['copy-stable-bridge-url', () => api.copyBridgeUrl(), 'Your permanent URL was copied. It stays the same after a restart.', 'The URL could not be copied.'],
+    ['copy-stable-bridge-target', () => api.copyStableBridgeTarget(), 'Local target copied. Paste it into the service route in your provider’s settings.', 'The local target could not be copied.'],
+    ['open-stable-bridge-setup', () => api.openStableBridgeSetup(), 'Cloudflare setup opened in your browser.', 'The setup page could not be opened. Open your Cloudflare dashboard manually.'],
+  ] as const) button(id).addEventListener('click', () => {
+    if (!saved || !editable()) return;
+    const began = epoch;
+    void operation().then(() => { if (began === epoch) message(success); }, () => { if (began === epoch) message(failure, true); });
   });
   for (const [id, operation, success, failure] of [
     ['copy-bridge-url', () => api.copyBridgeUrl(), 'URL copied. Paste it into your assistant’s remote MCP setup.', 'The URL could not be copied. Please try again.'],
@@ -293,6 +401,6 @@ export function installBridgeUi(api: DesktopApi, context: BridgeUiContext): {
   render();
   return { refresh, updateAvailability: render, isWebConnection: id => seenConnections.has(id), openSetup: () => {
     context.showConnections();
-    if (bridge?.state === 'ready' || bridge?.state === 'starting') { context.openDialog(dialog); button('close-bridge').focus(); }
+    if (remembered() || bridge?.state === 'ready' || bridge?.state === 'starting') { context.openDialog(dialog); button('close-bridge').focus(); }
   } };
 }

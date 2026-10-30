@@ -7,7 +7,7 @@ import { build } from 'esbuild';
 import { JSDOM } from 'jsdom';
 import type { DesktopApi, LocalNote, PodStatus } from '../src/types.js';
 import type { AgentConnection, AgentSetup } from '../src/agent-types.js';
-import type { BridgeStatus } from '../src/bridge-types.js';
+import type { BridgeStatus, StableBridgeView } from '../src/bridge-types.js';
 
 const APP = join(dirname(fileURLToPath(import.meta.url)), '..');
 let bundle: string;
@@ -42,6 +42,12 @@ const webReady = (): BridgeStatus => ({ state: 'ready', client: 'chatgpt-web', n
   url: 'https://sample.trycloudflare.com/mcp', permissions: ['notes:read'], expiresInDays: 30, pendingApprovals: [], connections: [] });
 const webRequest = () => ({ id: 'request-1', clientName: 'ChatGPT', redirectOrigin: 'https://chatgpt.com',
   permissions: ['notes:read'] as const, createdAt: '2026-10-29T12:00:00Z', expiresAt: '2026-10-29T12:10:00Z', verificationCode: '1234-5678' });
+const stableView = (): StableBridgeView => ({ provider: 'cloudflare', origin: 'https://memory.example.com', port: 49111, hasCredential: true,
+  policy: { client: 'chatgpt-web', name: 'My web assistant', permissions: ['notes:read'], expiresInDays: 30 } });
+const webPaused = (settings = stableView(), connections: BridgeStatus['connections'] = []): BridgeStatus => ({
+  state: 'off', mode: 'stable', remembered: true, url: `${settings.origin}/mcp`, client: settings.policy.client,
+  name: settings.policy.name, permissions: settings.policy.permissions, expiresInDays: settings.policy.expiresInDays, pendingApprovals: [], connections,
+});
 function deferred<T>() {
   let resolve!: (value: T) => void;
   let reject!: (reason: unknown) => void;
@@ -52,11 +58,12 @@ async function flush(): Promise<void> {
   for (let i = 0; i < 3; i++) await new Promise<void>(done => setImmediate(done));
 }
 
-async function mount(initial = state('unconfigured'), overrides: Partial<DesktopApi> = {}, initialNotes: readonly LocalNote[] = [], initialConnections: readonly AgentConnection[] = []) {
+async function mount(initial = state('unconfigured'), overrides: Partial<DesktopApi> = {}, initialNotes: readonly LocalNote[] = [], initialConnections: readonly AgentConnection[] = [], initialStable: StableBridgeView | null = null) {
   let current = initial;
   let saved = [...initialNotes];
   let grants = [...initialConnections];
-  let bridge: BridgeStatus = { state: 'off', permissions: [], pendingApprovals: [], connections: [] };
+  let stableSettings = initialStable;
+  let bridge: BridgeStatus = initialStable ? webPaused(initialStable) : { state: 'off', permissions: [], pendingApprovals: [], connections: [] };
   const api: DesktopApi = {
     status: vi.fn(async () => current),
     setup: vi.fn(async () => { current = state('running', saved.length); return current; }),
@@ -92,7 +99,7 @@ async function mount(initial = state('unconfigured'), overrides: Partial<Desktop
         permissions: value.permissions, expiresInDays: value.expiresInDays, pendingApprovals: [], connections: [] };
       return bridge;
     }),
-    stopBridge: vi.fn(async () => { bridge = { state: 'off', permissions: [], pendingApprovals: [], connections: [] }; return bridge; }),
+    stopBridge: vi.fn(async () => { bridge = stableSettings ? { ...webPaused(stableSettings, bridge.connections) } : { state: 'off', permissions: [], pendingApprovals: [], connections: [] }; return bridge; }),
     approveBridge: vi.fn(async id => {
       const pending = bridge.pendingApprovals.find(value => value.id === id);
       const grant = { ...connection('web-connection-1'), client: 'other' as const, name: bridge.name ?? 'Web assistant', permissions: pending?.permissions ?? [] };
@@ -102,6 +109,23 @@ async function mount(initial = state('unconfigured'), overrides: Partial<Desktop
     denyBridge: vi.fn(async id => { bridge = { ...bridge, pendingApprovals: bridge.pendingApprovals.filter(value => value.id !== id) }; return bridge; }),
     copyBridgeUrl: vi.fn(async () => undefined),
     openBridgeClient: vi.fn(async () => undefined),
+    stableBridgeSettings: vi.fn(async () => stableSettings),
+    saveStableBridge: vi.fn(async value => {
+      stableSettings = { provider: value.provider, origin: value.origin, port: 49111, hasCredential: value.provider === 'cloudflare', policy: value.policy };
+      bridge = webPaused(stableSettings);
+      return stableSettings;
+    }),
+    resumeBridge: vi.fn(async () => {
+      if (!stableSettings) throw new Error('No saved address');
+      bridge = { ...webPaused(stableSettings, bridge.connections), state: 'ready' }; return bridge;
+    }),
+    forgetStableBridge: vi.fn(async () => {
+      const ids = bridge.connections.map(value => value.id);
+      grants = grants.map(value => ids.includes(value.id) ? { ...value, state: 'revoked' } : value);
+      stableSettings = null; bridge = { state: 'off', permissions: [], pendingApprovals: [], connections: [] }; return bridge;
+    }),
+    copyStableBridgeTarget: vi.fn(async () => undefined),
+    openStableBridgeSetup: vi.fn(async () => undefined),
     ...overrides,
   };
   const dom = new JSDOM(readFileSync(join(APP, 'index.html'), 'utf8'), {
@@ -130,6 +154,8 @@ async function mount(initial = state('unconfigured'), overrides: Partial<Desktop
     setStatus: (value: PodStatus) => { current = value; },
     setConnections: (value: readonly AgentConnection[]) => { grants = [...value]; },
     setBridge: (value: BridgeStatus) => { bridge = value; },
+    setStable: (value: StableBridgeView | null) => { stableSettings = value; },
+    temporary: () => { get<HTMLSelectElement>('bridge-address-mode').value = 'temporary'; get('bridge-address-mode').dispatchEvent(new dom.window.Event('change')); },
     poll: async () => {
       const scheduled = [...timers.entries()].pop();
       if (!scheduled) throw new Error('No renderer poll was scheduled');
@@ -588,20 +614,220 @@ describe('Interego consumer desktop', () => {
 });
 
 describe('optional web bridge owner controls', () => {
+  it('defaults to a user-owned address while keeping temporary and hosted alternatives', async () => {
+    const app = await mount(state('running'));
+    app.click('nav-connections'); await flush(); app.click('start-bridge');
+    expect(app.get<HTMLSelectElement>('bridge-address-mode').value).toBe('cloudflare');
+    expect(app.get<HTMLInputElement>('bridge-token').type).toBe('password');
+    expect(app.get('bridge-provider-help').textContent).toContain('your own Cloudflare account');
+    expect(app.get('bridge-provider-help').textContent).toContain('without running the command');
+    expect(app.get('bridge-dialog').textContent).toContain('Federation stays off');
+    expect(app.get('bridge-address-mode').textContent).toContain('existing HTTPS gateway');
+    expect(app.get('bridge-address-mode').textContent).toContain('temporary address');
+    expect(app.api.resumeBridge).not.toHaveBeenCalled();
+    expect(app.api.startBridge).not.toHaveBeenCalled();
+    expect(app.api.saveStableBridge).not.toHaveBeenCalled();
+    app.click('open-stable-bridge-onboarding'); await flush();
+    expect(app.api.openStableBridgeSetup).toHaveBeenCalledOnce();
+    expect(app.api.openHosted).not.toHaveBeenCalled();
+  });
+
+  it('saves a masked connector credential and guides routing without enabling access', async () => {
+    const app = await mount(state('running'));
+    app.click('nav-connections'); await flush(); app.click('start-bridge');
+    app.fill('bridge-origin', 'https://memory.example.com'); app.fill('bridge-token', 'PRIVATE-CONNECTOR-TOKEN');
+    app.fill('bridge-name', 'My remembered ChatGPT'); app.get<HTMLInputElement>('bridge-consent').checked = true;
+    app.submit('bridge-form');
+    expect(app.get<HTMLInputElement>('bridge-token').value).toBe('');
+    await flush();
+    expect(app.api.saveStableBridge).toHaveBeenCalledWith({ provider: 'cloudflare', origin: 'https://memory.example.com', token: 'PRIVATE-CONNECTOR-TOKEN',
+      policy: { client: 'chatgpt-web', name: 'My remembered ChatGPT', permissions: ['notes:read'], expiresInDays: 30 } });
+    expect(app.get('bridge-status-label').textContent).toBe('Web access is paused');
+    expect(app.get('bridge-saved-url').textContent).toBe('https://memory.example.com/mcp');
+    expect(app.get('bridge-target').textContent).toBe('http://127.0.0.1:49111');
+    expect(app.get('bridge-route-instructions').textContent).toContain('dedicated Cloudflare Tunnel');
+    expect(app.dom.window.document.body.textContent).not.toContain('PRIVATE-CONNECTOR-TOKEN');
+    expect(app.get('bridge-form').hidden).toBe(true);
+    expect(app.get('bridge-setup-ready').hidden).toBe(true);
+    expect(app.api.resumeBridge).not.toHaveBeenCalled(); expect(app.api.startBridge).not.toHaveBeenCalled();
+    app.click('copy-stable-bridge-target'); await flush();
+    expect(app.api.copyStableBridgeTarget).toHaveBeenCalledOnce();
+  });
+
+  it('supports an existing HTTPS gateway without sending a Cloudflare credential', async () => {
+    const app = await mount(state('running'));
+    app.click('nav-connections'); await flush(); app.click('start-bridge');
+    app.fill('bridge-token', 'DO-NOT-SEND'); app.fill('bridge-address-mode', 'external');
+    app.get('bridge-address-mode').dispatchEvent(new app.dom.window.Event('change'));
+    expect(app.get('bridge-token-field').hidden).toBe(true);
+    expect(app.get<HTMLInputElement>('bridge-token').value).toBe('');
+    app.fill('bridge-origin', 'https://memory.example.com'); app.get<HTMLInputElement>('bridge-consent').checked = true;
+    app.submit('bridge-form'); await flush();
+    expect(app.api.saveStableBridge).toHaveBeenCalledWith({ provider: 'external', origin: 'https://memory.example.com',
+      policy: { client: 'chatgpt-web', name: 'ChatGPT web', permissions: ['notes:read'], expiresInDays: 30 } });
+    expect(app.get('bridge-saved-provider').textContent).toContain('existing HTTPS gateway');
+    expect(app.get('open-stable-bridge-setup').hidden).toBe(true);
+    expect(app.api.resumeBridge).not.toHaveBeenCalled();
+  });
+
+  it('loads remembered settings and approvals while staying paused after a new app launch', async () => {
+    const settings = stableView();
+    const app = await mount(state('running'), {}, [], [], settings);
+    app.setBridge(webPaused(settings, [connection('remembered-web', 'active')])); await app.poll();
+    app.click('nav-connections'); await flush();
+    expect(app.get('bridge-status-label').textContent).toBe('Web access is paused');
+    expect(app.get('start-bridge').hidden).toBe(true);
+    expect(app.get('resume-bridge').hidden).toBe(false);
+    expect(app.get('bridge-connections').textContent).toContain('Paused (pairing saved)');
+    expect(app.get('bridge-alert').hidden).toBe(true);
+    expect(app.api.resumeBridge).not.toHaveBeenCalled(); expect(app.api.startBridge).not.toHaveBeenCalled();
+    app.click('bridge-setup-details'); app.click('copy-stable-bridge-url'); await flush();
+    expect(app.api.copyBridgeUrl).toHaveBeenCalledOnce();
+    expect(app.get('bridge-saved-url').textContent).toBe('https://memory.example.com/mcp');
+    expect(app.get('bridge-setup-ready').hidden).toBe(true);
+  });
+
+  it('resumes the saved address explicitly and pauses it without forgetting pairings', async () => {
+    const settings = stableView(); const app = await mount(state('running'), {}, [], [], settings);
+    app.setBridge(webPaused(settings, [connection('remembered-web', 'active')])); await app.poll();
+    app.click('resume-bridge'); await flush();
+    expect(app.api.resumeBridge).toHaveBeenCalledOnce(); expect(app.api.startBridge).not.toHaveBeenCalled();
+    expect(app.get('bridge-status-label').textContent).toBe('Web access is on');
+    expect(app.get('bridge-url').textContent).toBe('https://memory.example.com/mcp');
+    expect(app.api.approveBridge).not.toHaveBeenCalled();
+    app.click('stop-bridge'); await flush();
+    expect(app.get('bridge-status-label').textContent).toBe('Web access is paused');
+    expect(app.get('bridge-connections').textContent).toContain('Paused (pairing saved)');
+    expect(app.api.forgetStableBridge).not.toHaveBeenCalled();
+    expect(app.get('bridge-message').textContent).toContain('approved pairings are kept');
+  });
+
+  it('disconnects an individual remembered pairing while web access is paused', async () => {
+    const app = await mount(state('stopped'), {}, [], [], stableView());
+    app.setBridge(webPaused(stableView(), [connection('remembered-web', 'active')])); await app.poll();
+    app.get('bridge-connections').querySelector<HTMLButtonElement>('.danger')!.click(); await flush();
+    expect(app.api.revokeConnection).toHaveBeenCalledWith('remembered-web');
+    expect(app.get('bridge-connections').textContent).toContain('Disconnected');
+    expect(app.api.resumeBridge).not.toHaveBeenCalled();
+  });
+
+  it('requires a separate confirmation to forget an address and preserves notes', async () => {
+    const app = await mount(state('running', 1), {}, [note()], [], stableView());
+    app.click('bridge-setup-details'); app.click('forget-stable-bridge');
+    expect(app.get('bridge-forget-review').hidden).toBe(false);
+    expect(app.get<HTMLButtonElement>('confirm-forget-stable-bridge').disabled).toBe(true);
+    expect(app.api.forgetStableBridge).not.toHaveBeenCalled();
+    app.get<HTMLInputElement>('bridge-forget-confirm').checked = true;
+    app.get('bridge-forget-confirm').dispatchEvent(new app.dom.window.Event('change'));
+    app.click('confirm-forget-stable-bridge'); await flush();
+    expect(app.api.forgetStableBridge).toHaveBeenCalledOnce();
+    expect(app.get('bridge-status-label').textContent).toBe('Web access is off');
+    expect(app.get('bridge-saved').hidden).toBe(true); expect(app.get('bridge-form').hidden).toBe(false);
+    expect(app.get('bridge-message').textContent).toContain('provider’s tunnel and DNS remain');
+    expect(app.get('notes-list').textContent).toContain('A note to keep');
+    expect(app.api.setup).not.toHaveBeenCalled(); expect(app.api.restore).not.toHaveBeenCalled();
+  });
+
+  it('can cancel forgetting without changing the stored address', async () => {
+    const app = await mount(state('running'), {}, [], [], stableView());
+    app.click('bridge-setup-details'); app.click('forget-stable-bridge'); app.click('cancel-forget-stable-bridge');
+    expect(app.get('bridge-forget-review').hidden).toBe(true);
+    expect(app.get('bridge-saved-url').textContent).toBe('https://memory.example.com/mcp');
+    expect(app.api.forgetStableBridge).not.toHaveBeenCalled();
+  });
+
+  it('keeps a failed public route paused and its saved settings available to retry', async () => {
+    const failed = { ...webPaused(), state: 'error' as const, message: 'The provider route did not reach this pod.' };
+    const app = await mount(state('running'), { resumeBridge: vi.fn(async (): Promise<BridgeStatus> => failed) }, [], [], stableView());
+    app.click('resume-bridge'); await flush();
+    expect(app.get('bridge-status-label').textContent).toBe('Web access needs another try');
+    expect(app.get('bridge-message').textContent).toBe('The provider route did not reach this pod.');
+    expect(app.get('bridge-saved-url').textContent).toBe('https://memory.example.com/mcp');
+    expect(app.get('bridge-setup-ready').hidden).toBe(true);
+    expect(app.get<HTMLButtonElement>('resume-bridge').disabled).toBe(false);
+    expect(app.api.approveBridge).not.toHaveBeenCalled();
+  });
+
+  it('ignores old settings that return after the owner forgets an address', async () => {
+    const oldStatus = deferred<BridgeStatus>(); const oldSettings = deferred<StableBridgeView | null>();
+    const statusCheck = vi.fn<DesktopApi['bridgeStatus']>().mockResolvedValueOnce(webPaused()).mockImplementationOnce(() => oldStatus.promise)
+      .mockResolvedValue({ state: 'off', permissions: [], pendingApprovals: [], connections: [] });
+    const settingsCheck = vi.fn<DesktopApi['stableBridgeSettings']>().mockResolvedValueOnce(stableView()).mockImplementationOnce(() => oldSettings.promise).mockResolvedValue(null);
+    const app = await mount(state('running'), { bridgeStatus: statusCheck, stableBridgeSettings: settingsCheck }, [], [], stableView());
+    app.click('bridge-setup-details'); app.click('refresh-bridge'); app.click('forget-stable-bridge');
+    app.get<HTMLInputElement>('bridge-forget-confirm').checked = true; app.get('bridge-forget-confirm').dispatchEvent(new app.dom.window.Event('change'));
+    app.click('confirm-forget-stable-bridge'); await flush();
+    oldStatus.resolve(webPaused()); oldSettings.resolve(stableView()); await flush();
+    expect(app.get('bridge-status-label').textContent).toBe('Web access is off');
+    expect(app.get('bridge-saved-url').textContent).toBe(''); expect(app.get('bridge-saved').hidden).toBe(true);
+    expect(app.api.resumeBridge).not.toHaveBeenCalled();
+  });
+
+  it('ignores a late stable resume after the owner pauses the connection', async () => {
+    const ready = deferred<BridgeStatus>();
+    const app = await mount(state('running'), { resumeBridge: vi.fn(() => ready.promise) }, [], [], stableView());
+    app.click('resume-bridge'); app.click('stop-bridge'); await flush();
+    ready.resolve({ ...webPaused(), state: 'ready' }); await flush();
+    expect(app.get('bridge-status-label').textContent).toBe('Web access is paused');
+    expect(app.get('bridge-setup-ready').hidden).toBe(true);
+    expect(app.get('bridge-saved-url').textContent).toBe('https://memory.example.com/mcp');
+  });
+
+  it('clears a submitted credential even if saving fails and never displays the error secret', async () => {
+    const app = await mount(state('running'), { saveStableBridge: vi.fn(async () => { throw new Error('PRIVATE-SECRET'); }) });
+    app.click('start-bridge'); app.fill('bridge-origin', 'https://memory.example.com'); app.fill('bridge-token', 'PRIVATE-SECRET');
+    app.get<HTMLInputElement>('bridge-consent').checked = true; app.submit('bridge-form'); await flush();
+    expect(app.get<HTMLInputElement>('bridge-token').value).toBe('');
+    expect(app.get('bridge-dialog-message').textContent).toContain('could not be saved');
+    expect(app.dom.window.document.body.textContent).not.toContain('PRIVATE-SECRET');
+    expect(app.api.resumeBridge).not.toHaveBeenCalled();
+  });
+
+  it('clears an unsubmitted token when setup closes', async () => {
+    const app = await mount(state('running'));
+    app.click('start-bridge'); app.fill('bridge-token', 'PRIVATE-UNSUBMITTED'); app.click('close-bridge');
+    expect(app.get<HTMLInputElement>('bridge-token').value).toBe('');
+    expect(app.api.saveStableBridge).not.toHaveBeenCalled();
+  });
+
+  it('can explicitly reset unreadable saved settings without claiming access is off first', async () => {
+    const settings = vi.fn<DesktopApi['stableBridgeSettings']>().mockRejectedValueOnce(new Error('Protected settings unavailable')).mockResolvedValue(null);
+    const app = await mount(state('running'), { stableBridgeSettings: settings });
+    expect(app.get('bridge-status-label').textContent).toContain('could not be checked');
+    expect(app.get<HTMLButtonElement>('start-bridge').disabled).toBe(true);
+    expect(app.get<HTMLButtonElement>('stop-bridge').disabled).toBe(false);
+    expect(app.get('reset-web-setup').hidden).toBe(false);
+    app.click('reset-web-setup');
+    expect(app.get<HTMLDialogElement>('bridge-dialog').open).toBe(true);
+    expect(app.get('bridge-forget-review').hidden).toBe(false);
+    expect(app.get('bridge-forget-review').closest('[hidden]')).toBeNull();
+    expect(app.get<HTMLButtonElement>('confirm-forget-stable-bridge').disabled).toBe(true);
+    expect(app.api.forgetStableBridge).not.toHaveBeenCalled();
+    app.get<HTMLInputElement>('bridge-forget-confirm').checked = true;
+    app.get('bridge-forget-confirm').dispatchEvent(new app.dom.window.Event('change'));
+    app.click('confirm-forget-stable-bridge'); await flush();
+    expect(app.api.forgetStableBridge).toHaveBeenCalledOnce();
+    expect(app.get('bridge-status-label').textContent).toBe('Web access is off');
+    expect(app.get('reset-web-setup').hidden).toBe(true);
+    expect(app.get('bridge-form').hidden).toBe(false);
+    expect(app.get<HTMLSelectElement>('bridge-address-mode').value).toBe('cloudflare');
+    expect(app.api.startBridge).not.toHaveBeenCalled(); expect(app.api.resumeBridge).not.toHaveBeenCalled();
+  });
+
   it('stays off by default and keeps local and hosted choices separate', async () => {
     const app = await mount(state('running'));
     app.click('nav-connections'); await flush();
     expect(app.get('bridge-status-label').textContent).toBe('Web access is off');
     expect(app.get('bridge-alert').hidden).toBe(true);
     expect(app.api.startBridge).not.toHaveBeenCalled();
-    app.click('start-bridge');
+    app.click('start-bridge'); app.temporary();
     expect(app.get<HTMLDialogElement>('bridge-dialog').open).toBe(true);
     expect(app.get<HTMLInputElement>('bridge-read').checked).toBe(true);
     expect(app.get<HTMLInputElement>('bridge-create').checked).toBe(false);
     expect(app.get<HTMLInputElement>('bridge-consent').checked).toBe(false);
     expect(app.get<HTMLSelectElement>('bridge-expiry').value).toBe('30');
     expect(app.get<HTMLButtonElement>('confirm-bridge-start').disabled).toBe(true);
-    expect(app.get('bridge-dialog').textContent).toContain('Cloudflare handles this traffic');
+    expect(app.get('bridge-dialog').textContent).toContain('Cloudflare handles connection traffic');
     expect(app.get('bridge-dialog').textContent).toContain('address changes');
     expect(app.get('bridge-dialog').textContent).toContain('federation stays off');
     app.submit('bridge-form'); await flush();
@@ -613,7 +839,7 @@ describe('optional web bridge owner controls', () => {
 
   it('requires explicit consent, preserves choices and starts only the selected permissions', async () => {
     const app = await mount(state('running'));
-    app.click('nav-connections'); await flush(); app.click('start-bridge');
+    app.click('nav-connections'); await flush(); app.click('start-bridge'); app.temporary();
     app.fill('bridge-client', 'grok-bot'); app.get('bridge-client').dispatchEvent(new app.dom.window.Event('change'));
     expect(app.get<HTMLInputElement>('bridge-name').value).toBe('Grok Bot');
     app.fill('bridge-name', 'My Grok Bot'); app.fill('bridge-expiry', '7');
@@ -637,7 +863,7 @@ describe('optional web bridge owner controls', () => {
 
   it('validates missing permissions and lets web setup be retried without changing the pod', async () => {
     const app = await mount(state('running'));
-    app.click('nav-connections'); await flush(); app.click('start-bridge');
+    app.click('nav-connections'); await flush(); app.click('start-bridge'); app.temporary();
     app.get<HTMLInputElement>('bridge-read').checked = false;
     app.get<HTMLInputElement>('bridge-consent').checked = true;
     app.get('bridge-read').dispatchEvent(new app.dom.window.Event('change'));
@@ -654,7 +880,7 @@ describe('optional web bridge owner controls', () => {
   it('keeps Stop and local notes usable while startup is pending, and ignores its late ready result', async () => {
     const start = deferred<BridgeStatus>();
     const app = await mount(state('running'), { startBridge: vi.fn(() => start.promise) });
-    app.click('nav-connections'); await flush(); app.click('start-bridge');
+    app.click('nav-connections'); await flush(); app.click('start-bridge'); app.temporary();
     app.get<HTMLInputElement>('bridge-consent').checked = true; app.submit('bridge-form');
     expect(app.get('bridge-setup-progress').hidden).toBe(false);
     expect(app.get<HTMLButtonElement>('stop-bridge-setup').disabled).toBe(false);
@@ -806,7 +1032,7 @@ describe('optional web bridge owner controls', () => {
 
   it('shows a truthful startup failure and keeps the selected form available to retry', async () => {
     const app = await mount(state('running'), { startBridge: vi.fn(async () => { throw new Error('Unavailable'); }) });
-    app.click('nav-connections'); await flush(); app.click('start-bridge'); app.fill('bridge-name', 'Keep this name');
+    app.click('nav-connections'); await flush(); app.click('start-bridge'); app.temporary(); app.fill('bridge-name', 'Keep this name');
     app.get<HTMLInputElement>('bridge-consent').checked = true; app.submit('bridge-form'); await flush();
     expect(app.get('bridge-dialog-message').textContent).toContain('could not start');
     expect(app.get('bridge-form').hidden).toBe(false);
@@ -819,7 +1045,7 @@ describe('optional web bridge owner controls', () => {
   it('does not claim the URL is ready when native startup resolves with an error status', async () => {
     const app = await mount(state('running'), { startBridge: vi.fn(async (): Promise<BridgeStatus> => ({ state: 'error',
       message: 'The temporary link could not open.', permissions: [], pendingApprovals: [], connections: [] })) });
-    app.click('nav-connections'); await flush(); app.click('start-bridge');
+    app.click('nav-connections'); await flush(); app.click('start-bridge'); app.temporary();
     app.get<HTMLInputElement>('bridge-consent').checked = true; app.submit('bridge-form'); await flush();
     expect(app.get('bridge-status-label').textContent).toBe('Web access needs another try');
     expect(app.get('bridge-dialog-message').textContent).toBe('The temporary link could not open.');

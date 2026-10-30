@@ -8,8 +8,8 @@ import { appRoot, assertStagePath } from './paths.mjs';
 const manifest = JSON.parse(await readFile(join(appRoot, 'bridge-manifest.json'), 'utf8'));
 const releaseHosts = new Set(['github.com', 'release-assets.githubusercontent.com']);
 export const bridgeBuildInfo = Object.freeze({
-  default: 'off-every-launch', provider: 'Cloudflare Quick Tunnel', componentVersion: manifest.version,
-  sha256: manifest.sha256, temporaryUrl: true,
+  default: 'off-every-launch', provider: 'User-owned Cloudflare Tunnel or HTTPS gateway; temporary link optional', componentVersion: manifest.version,
+  sha256: manifest.sha256, rememberedPairings: true,
 });
 
 async function hashFile(path, maximum) {
@@ -72,6 +72,6 @@ export async function stageBridge(root) {
   await copyFile(binary, join(target, manifest.filename));
   await copyFile(license, join(target, 'LICENSE.txt'));
   await writeFile(join(target, 'component.json'), `${JSON.stringify(manifest, null, 2)}\n`);
-  await writeFile(join(target, 'NOTICE.txt'), `cloudflared ${manifest.version}\nCopyright Cloudflare, Inc. and contributors.\nUnmodified official Windows x64 binary, Apache License 2.0 (LICENSE.txt).\nSource and dependency notices: ${manifest.sourceUrl}\nRelease: ${manifest.url}\nSHA256: ${manifest.sha256}\n\nUsed only when the owner explicitly enables Interego's temporary web bridge.\nCloudflare Quick Tunnels are subject to https://www.cloudflare.com/website-terms/\n`);
+  await writeFile(join(target, 'NOTICE.txt'), `cloudflared ${manifest.version}\nCopyright Cloudflare, Inc. and contributors.\nUnmodified official Windows x64 binary, Apache License 2.0 (LICENSE.txt).\nSource and dependency notices: ${manifest.sourceUrl}\nRelease: ${manifest.url}\nSHA256: ${manifest.sha256}\n\nUsed only when the owner explicitly enables Interego's web bridge.\nCloudflare services are subject to https://www.cloudflare.com/website-terms/\n`);
   process.stdout.write(`Staged verified cloudflared ${manifest.version}; the bridge stays off until enabled.\n`);
 }

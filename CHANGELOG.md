@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-10-29 — Saved user-owned bridge addresses and pairings
+
+The Windows preview defaults web setup to a permanent hostname in the user's own Cloudflare account, with an existing HTTPS gateway and temporary link as alternatives. Setup masks the connector token, saves it under Windows protection, displays a fixed local target, and checks that the public route reaches this exact app before enabling access. A dedicated named tunnel uses the pinned helper with a private token file; its provider configuration remains under the user's control.
+
+Stable OAuth registrations, grant references and token hashes persist under protected storage bound to the origin, local port, pod and permission policy. Pausing and quitting close transport while retaining approved pairings. Disconnect and Forget remove authorization; pending approvals and unused codes do not survive restart. Web access still starts off, hosted remains available separately, and federation stays disabled. The deployment guide documents the existing hypermedia boundary and a scoped adapter/cache path without adding a general proxy or changing the protocol.
+
 ## 2026-10-29 — Windows bridge helper artifact verification
 
 Windows packaging tests avoid importing platform-builder internals into a lightweight configuration test. The real packaging path verifies the pinned helper bytes, and delivered artifact checks inspect its original publisher signature. This documents the standalone installer-test maintenance commit without claiming a historical changelog backfill.
