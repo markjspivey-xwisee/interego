@@ -1,5 +1,13 @@
 # Changelog
 
+## 2026-10-29 — Windows local pod installer and consumer application
+
+Added the separate `@interego/pod-desktop` application, composing the local-node runtime into a per-user Windows installer. First launch offers a local space without a cloud account, encrypted notes, start/stop and automatic reopen, and an explicit hosted dashboard action. Federation stays disabled. Keys remain in the main process and use Windows-protected storage; the renderer is isolated, cannot load network content, and accesses a narrow authenticated IPC surface. Quitting drains admitted work and stops the pod.
+
+The app includes portable encrypted notes backups and a validated, resumable restore into a new space. Setup records its known endpoint before startup so a failed initial start remains retryable; stale runtime locks are recovered only when the former process is demonstrably gone while the desktop host holds its single-instance lock. Existing data is preserved during uninstall.
+
+Packaging uses a reviewed production dependency graph with physical CSS assets, produces an NSIS executable, checksums and an actual signature report, and never auto-publishes. The no-certificate build is an unsigned preview. A Windows workflow builds the installer and drives an offline lifecycle against the packaged application. Controller and renderer behavior tests cover persistence, encryption, backup failures and recovery, safe UI states, and explicit hosted selection. Agent pairing and local federation remain later milestones.
+
 ## 2026-10-29 — Explicit deployment configuration and a durable local runtime
 
 Added `@interego/deployment-config` with validated local and hosted profiles, separate federation settings, instance-scoped cache identifiers, and a machine-readable capability matrix. The stdio MCP entry point consumes a pure compatibility resolver that preserves existing settings, environment precedence, and mode selection.
