@@ -43,6 +43,8 @@ COPY deploy/identity/route-errors.ts ./
 COPY deploy/identity/siwe-message.ts ./
 COPY deploy/identity/local-identity-link.ts ./
 COPY deploy/identity/local-identity-link-dashboard.ts ./
+COPY deploy/identity/returning-passkey-login.ts ./
+COPY deploy/identity/returning-passkey-dashboard.ts ./
 RUN npx tsc
 
 # ────────────────────────────────────────────────────────────

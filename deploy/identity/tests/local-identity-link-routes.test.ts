@@ -1,6 +1,6 @@
 import { after, before, beforeEach, test } from 'node:test';
 import { strict as assert } from 'node:assert';
-import { generateKeyPairSync, randomBytes, sign } from 'node:crypto';
+import { createHash, generateKeyPairSync, randomBytes, sign } from 'node:crypto';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { createServer, type Server } from 'node:http';
 import { createServer as createProbe, type AddressInfo } from 'node:net';
@@ -82,7 +82,7 @@ before(async () => {
   });
   await new Promise<void>(resolve => store.listen(0, '127.0.0.1', resolve)); podBase = `http://127.0.0.1:${(store.address() as AddressInfo).port}/`;
 });
-async function startIdentity() {
+async function startIdentity(authenticateWallet = true) {
   const env = { ...process.env, PORT: new URL(base).port, BASE_URL: base, CSS_URL: podBase, CSS_PUBLIC_URL: 'https://pods.example.com/', RELAY_URL: relayOrigin, RELAY_PUBLIC_URL: relayOrigin,
     WEBAUTHN_RP_ORIGINS: `${base},${relayOrigin}`, TOKEN_SIGNING_KEY: randomBytes(32).toString('base64'), JANITOR_INTERVAL_MS: '0', UNCONFIRMED_SETTLE_MS: '0' };
   identity = spawn(process.execPath, ['--import', 'tsx', 'server.ts'], { cwd: fileURLToPath(new URL('..', import.meta.url)), env, stdio: ['ignore', 'pipe', 'pipe'] });
@@ -93,6 +93,7 @@ async function startIdentity() {
     try { const health = await (await fetch(base + '/health')).json() as RecordValue; if (health.accountIndex.complete) break; } catch { /* startup */ }
     if (Date.now() > deadline) throw new Error('Identity fixture did not become ready: ' + output); await new Promise(resolve => setTimeout(resolve, 100));
   }
+  if (!authenticateWallet) return;
   const challenge = (await post('/challenges', { purpose: 'siwe' })).body;
   const message = `${new URL(base).host} wants you to sign in with your Ethereum account:\n${wallet.address}\n\nSign in to Interego.\n\nURI: ${base}\nVersion: 1\nChain ID: 1\nNonce: ${challenge.nonce}\nIssued At: ${new Date().toISOString()}`;
   const signed = await post('/auth/siwe', { message, nonce: challenge.nonce, signature: await wallet.signMessage(message) }, { origin: base }); assert.equal(signed.status, 200, JSON.stringify(signed.body)); bearer = signed.body.token;
@@ -103,6 +104,98 @@ beforeEach(async () => {
   await startIdentity();
 });
 after(async () => { await stopChild(identity); await closeServer(store); });
+
+async function returningLogin() {
+  let cookie = '';
+  const request = async (path: string, body: unknown, rp = false) => {
+    const response = await fetch(base + '/local-identity/login/' + path, { method: 'POST', headers: { 'content-type': 'application/json',
+      origin: rp ? relayOrigin : base, 'sec-fetch-site': rp ? 'same-site' : 'same-origin', ...(cookie ? { cookie } : {}) }, body: JSON.stringify(body) });
+    const result = { status: response.status, body: await response.json() as RecordValue };
+    if (path === 'start' && response.headers.get('set-cookie')) cookie = response.headers.get('set-cookie')!.split(';')[0]!;
+    return result;
+  };
+  const start = await request('start', {}); assert.equal(start.status, 200, JSON.stringify(start.body));
+  const loginCode = new URL(start.body.authorizationUrl).hash.slice(1);
+  const context = await request('context', { loginCode }, true); assert.equal(context.status, 200, JSON.stringify(context.body));
+  const response = assertion(relayPasskey, context.body.options.challenge, relayOrigin, '127.0.0.1', 1);
+  return { request, start: start.body, context: context.body, response,
+    complete: () => request('complete', { completionCode: context.body.completionCode, response }, true),
+    result: () => request('result', { receipt: start.body.receipt }) };
+}
+
+test('a relay-only returning passkey starts with no identity session, then links the local key to the same owner without changing progress', async () => {
+  await stopChild(identity);
+  const existing = fixtureAccount(); existing.walletAddresses = []; existing.webAuthnCredentials = existing.webAuthnCredentials.slice(1);
+  pods.set(ownerId, existing); revisions.set(ownerId, revisions.get(ownerId)! + 1); writes.splice(0); bearer = '';
+  await startIdentity(false);
+  const flow = await returningLogin();
+  // This dedicated proof cannot be exchanged through the generic login route.
+  assert.equal((await post('/auth/webauthn/authenticate', { response: flow.response }, { origin: relayOrigin })).status, 401);
+  assert.deepEqual((await flow.complete()).body, { verified: true });
+  const loggedIn = await flow.result(); assert.equal(loggedIn.status, 200, JSON.stringify(loggedIn.body));
+  assert.equal(loggedIn.body.userId, ownerId); assert.equal(loggedIn.body.did, `did:web:${new URL(base).host}:users:${ownerId}`);
+  assert.equal(loggedIn.body.podUrl, `https://pods.example.com/${ownerId}/`); bearer = loggedIn.body.token;
+  assert.equal((await flow.result()).status, 401);
+  // A normal login session still cannot add a native key without another fresh
+  // action-bound proof and separate native owner approval.
+  assert.equal((await dashboard('start', {})).status, 400);
+  const prepared = await dashboard('prepare', { method: 'passkey', rpOrigin: relayOrigin }); assert.equal(prepared.status, 200);
+  const stepUpCode = new URL(prepared.body.stepUpUrl).hash.slice(1);
+  const step = await post('/local-identity/link/step-up/context', { stepUpCode }, { origin: relayOrigin }); assert.equal(step.status, 200);
+  const verified = await post('/local-identity/link/step-up/complete', { completionCode: step.body.completionCode,
+    response: assertion(relayPasskey, step.body.options.challenge, relayOrigin, '127.0.0.1', 2) }, { origin: relayOrigin });
+  assert.deepEqual(verified.body, { verified: true });
+  const ready = await dashboard('step-up/result', { stepUpId: prepared.body.stepUpId }); assert.equal(ready.body.state, 'ready');
+  const key = nativeKey(); const ctx = await post('/local-identity/link/context', { handoffCode: ready.body.handoffCode, did: key.did }); assert.equal(ctx.status, 200);
+  const linked = await complete(key, ctx.body); assert.equal(linked.status, 200, JSON.stringify(linked.body)); assert.equal(linked.body.owner.userId, ownerId);
+  assert.deepEqual(pods.get(ownerId)!.walletAddresses, []); assert.equal(pods.get(ownerId)!.didKeys.length, 1);
+  assert.equal(pods.has(deriveUserIdFromDid(key.did)), false);
+  assert.equal(await (await fetch(`${podBase}${ownerId}/hallowmarch/progress.json`)).text(), progress);
+  assert.ok(writes.every(write => write.path === `/${ownerId}/auth-methods.jsonld` && write.condition));
+});
+
+test('returning login refuses removal, key replacement, epoch changes and unreadable owner storage before issuing its provider token', async () => {
+  for (const change of ['remove', 'replace', 'epoch', 'unreadable']) {
+    pods.set(ownerId, fixtureAccount()); revisions.set(ownerId, revisions.get(ownerId)! + 1);
+    const flow = await returningLogin(); assert.equal((await flow.complete()).status, 200);
+    const account = pods.get(ownerId)!;
+    if (change === 'remove') account.webAuthnCredentials = account.webAuthnCredentials.filter((entry: { id: string }) => entry.id !== relayPasskey.id);
+    if (change === 'replace') account.webAuthnCredentials.find((entry: { id: string }) => entry.id === relayPasskey.id).publicKey = softPasskey().cose.toString('base64url');
+    if (change === 'epoch') account.sessionEpoch++;
+    if (change === 'unreadable') brokenOwner = ownerId;
+    revisions.set(ownerId, revisions.get(ownerId)! + 1);
+    const result = await flow.result(); assert.ok(result.status === 401 || result.status === 503, change + ': ' + JSON.stringify(result.body));
+    assert.equal(result.body.token, undefined); brokenOwner = undefined;
+  }
+});
+
+test('returning login resolves a copied credential ID by its genuine stored key and never creates an account for an unknown passkey', async () => {
+  const impostor = softPasskey(relayPasskey.rawId), id = impostor.userId;
+  pods.set(id, { userId: id, name: 'Different credential holder', walletAddresses: [], didKeys: [], sessionEpoch: 0,
+    webAuthnCredentials: [{ id: impostor.id, publicKey: impostor.cose.toString('base64url'), counter: 0, createdAt: new Date().toISOString(), rpId: '127.0.0.1', rpOrigin: relayOrigin }] }); revisions.set(id, 1);
+  try {
+    const flow = await returningLogin(); assert.equal((await flow.complete()).status, 200); const answer = await flow.result(); assert.equal(answer.status, 200); assert.equal(answer.body.userId, ownerId);
+    assert.equal(pods.get(id)!.webAuthnCredentials[0].counter, 0);
+  } finally { pods.delete(id); revisions.delete(id); }
+  const unknown = softPasskey(), flow = await returningLogin();
+  const rejected = await flow.request('complete', { completionCode: flow.context.completionCode,
+    response: assertion(unknown, flow.context.options.challenge, relayOrigin, '127.0.0.1', 1) }, true);
+  assert.equal(rejected.status, 401); assert.equal(pods.has(unknown.userId), false); assert.equal((await flow.result()).body.token, undefined);
+});
+
+test('returning login verifies the genuine signed RP origin and UV flag rather than trusting client options', async () => {
+  for (const weakUv of [false, true]) {
+    const flow = await returningLogin();
+    const response = assertion(relayPasskey, flow.context.options.challenge, weakUv ? relayOrigin : base, '127.0.0.1', 1);
+    if (weakUv) {
+      const authData = Buffer.from(response.response.authenticatorData, 'base64url'); authData[32] &= ~4;
+      response.response.authenticatorData = authData.toString('base64url');
+      response.response.signature = sign('sha256', Buffer.concat([authData, createHash('sha256').update(Buffer.from(response.response.clientDataJSON, 'base64url')).digest()]), relayPasskey.privateKey).toString('base64url');
+    }
+    const rejected = await flow.request('complete', { completionCode: flow.context.completionCode, response }, true);
+    assert.equal(rejected.status, 401); assert.equal((await flow.result()).body.token, undefined);
+  }
+});
 
 test('fresh owner wallet proof and native proof add only a credential; unchanged DID login returns the same existing game owner and pod', async () => {
   const html = await (await fetch(base + '/dashboard')).text();

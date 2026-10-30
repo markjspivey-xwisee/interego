@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-10-30 — Open existing accounts with their usual Interego passkey
+
+The account page can sign returning users in with the Windows Hello or device passkey they already use on the relay's sign-in site. A dedicated popup verifies that existing credential at its original site; a short-lived, single-use exchange returns the session only to the initiating account page. The provider's protected browser cookie binds both sides of the exchange. Fresh credential and session-epoch checks refuse cancelled, expired, revoked or replayed requests. Adding a local PC key still requires its separate fresh verification and native approval. No replacement account, enrollment, game-data migration, federation or public bridge is needed.
+
 ## 2026-10-30 — Show the local app's first screen before exercising its backend
 
 Windows preview.8 loads the renderer after every identity dialog has been parsed, fixing a first-start exception that left the installed app at “Opening your space…”. Parser-driven renderer tests now use the shipping HTML's script position. The packaged check requires a usable welcome screen on its first launch and a configured space on its second launch before it exercises the preload, storage, native signing and optional connection lifecycle.

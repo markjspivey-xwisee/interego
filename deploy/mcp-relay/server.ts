@@ -81,6 +81,7 @@ import { InteregoOAuthProvider, renewIdentityToken } from './oauth-provider.js';
 import { LocalIdentityHandoffs } from './local-identity-handoff.js';
 import { fetchLocalIdentityChallenge, localIdentityContextHandler } from './local-identity-http.js';
 import { localIdentityLinkStepUpPage } from './local-identity-link-step-up.js';
+import { localIdentitySignInPage } from './local-identity-sign-in.js';
 import { assertLivePlay, bootstrapProvisionalPod, chargeProvisionalExchange, claimProvisionalExchange, createProvisionalToolGuard, parseProvisionalPlay,
   ProvisionalPlayError, validateProvisionalTool, verifyProvisionalExchange,
   type ProvisionalPlay, type ProvisionalPrincipal } from './provisional-play.js';
@@ -14390,6 +14391,15 @@ app.get('/local-identity/link-step-up', (_req, res) => {
     res.setHeader('Content-Security-Policy', `default-src 'none'; script-src 'nonce-${nonce}'; connect-src ${provider}; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'`);
     res.type('html').send(html);
   } catch { res.status(404).type('text').send('Account linking is unavailable here. Use your existing hosted sign-in.'); }
+});
+app.get('/local-identity/sign-in', (_req, res) => {
+  try {
+    const provider = new URL(IDENTITY_URL).origin, nonce = randomBytes(18).toString('base64url');
+    res.setHeader('Cache-Control', 'no-store'); res.setHeader('Referrer-Policy', 'no-referrer'); res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('Cross-Origin-Opener-Policy', 'same-origin');
+    res.setHeader('Content-Security-Policy', `default-src 'none'; script-src 'nonce-${nonce}'; connect-src ${provider}; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'`);
+    res.type('html').send(localIdentitySignInPage(provider, nonce));
+  } catch { res.status(404).type('text').send('Returning sign-in is unavailable here. Use your existing account sign-in.'); }
 });
 app.post('/oauth/local-identity/context', oauthVerifyLimiter, (req, res, next) => {
   if (!localIdentityHandoffs) { res.status(404).json({ error: 'Installed-app sign-in is not available on this relay.' }); return; }

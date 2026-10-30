@@ -92,6 +92,8 @@ import { forwardAsyncRouteErrors, installProcessSafetyNet, routeErrorHandler } f
 import { parseSiweMessage, SIWE_DOMAIN_SUFFIX } from './siwe-message.js';
 import { mountLocalIdentityLink, LocalIdentityLinkError, localLinkPublicKey, type LinkSession, type LinkOwner, type LinkHumanCredential, type LinkAccount, type LinkStepUp } from './local-identity-link.js';
 import { localIdentityLinkDashboard } from './local-identity-link-dashboard.js';
+import { mountReturningPasskeyLogin, returningPasskeyRelay, ReturningPasskeyLoginError, type ReturningPasskeyProof } from './returning-passkey-login.js';
+import { returningPasskeyLoginDashboard } from './returning-passkey-dashboard.js';
 
 // ── Lazy heavy imports ──────────────────────────────────────
 //
@@ -4431,6 +4433,7 @@ async function signInWithPasskey(
   challenge: string,
   rpId: string,
   origin: string,
+  onVerified?: (proof: ReturningPasskeyProof) => void,
 ): Promise<PasskeySignIn> {
   // Taken before any lock: a deletion clears this server's copy of the account it deletes.
   const snapshot = new Map(holders.map(id => [id, authMethodsCache.get(id)?.value] as const));
@@ -4455,6 +4458,8 @@ async function signInWithPasskey(
         if (triedKeys.has(key)) return NoWrite('same-key');
         const verified = await verifyPasskeyAssertion({ credential: cred, response, challenge, rpId, origin });
         if (verified.ok === false) return NoWrite('not-verified', verified.error);
+        onVerified?.({ userId, epoch: live?.sessionEpoch ?? 0,
+          credential: { method: 'passkey', id: cred.id, publicKey: cred.publicKey, rpId, rpOrigin: origin } });
         const stored = Number.isFinite(cred.counter) ? cred.counter : 0;
         if (verified.newCounter <= stored && cred.rpId === rpId && cred.rpOrigin) return NoWrite('verified-unchanged');
         cred.counter = Math.max(stored, verified.newCounter);
@@ -6210,6 +6215,47 @@ mountLocalIdentityLink(app, {
   },
 });
 
+// This dedicated nonce never enters /challenges: the original RP cannot exchange its
+// assertion for an owner bearer. Only the initiating provider page can finish login.
+const returningRelay = returningPasskeyRelay(localLinkOrigin,
+  [...localLinkPasskeyOrigins].find(origin => origin !== localLinkOrigin));
+mountReturningPasskeyLogin(app, {
+  identityOrigin: localLinkOrigin, relayOrigin: returningRelay, limiter: authEnrollLimiter,
+  pollLimiter: rateLimit('returning-passkey-login-poll', { windowMs: 60_000, max: 180 }),
+  verify: async (response, challenge, rpOrigin) => {
+    if (!response || typeof response.id !== 'string' || !response.id || response.id.length > 2048) throw new ReturningPasskeyLoginError();
+    if (!credentialIndex.has(response.id)) await awaitInitialIndexWithBudget(50);
+    const derived = deriveUserIdFromCredentialId(response.id);
+    if (!credentialIndex.candidates(response.id).includes(derived) && await ensureAccountLoaded(derived) === 'unreadable') throw new ReturningPasskeyLoginError(503);
+    if (!credentialIndex.has(response.id)) throw new ReturningPasskeyLoginError(accountIndexState.complete ? 401 : 503);
+    const candidates = credentialIndex.candidates(response.id, derived);
+    if (!await loadIndexedHolders(candidates)) throw new ReturningPasskeyLoginError(503);
+    const holders = candidates.filter(id => identities.get(id)?.type === 'user' && !deletedUserIds.has(id));
+    let proof: ReturningPasskeyProof | undefined;
+    const outcome = await signInWithPasskey(holders.slice(0, MAX_HOLDERS), response, challenge, new URL(rpOrigin).hostname, rpOrigin, value => { proof = value; });
+    if (outcome.kind !== 'signed-in' || !proof || proof.userId !== outcome.userId) {
+      throw new ReturningPasskeyLoginError(['unreadable', 'unpersisted', 'undetermined'].includes(outcome.kind) || !accountIndexState.complete ? 503 : 401);
+    }
+    return proof;
+  },
+  issue: async (proof, active) => withIdentityPodMutex(proof.userId, async () => {
+    const live = await readLive(proof.userId);
+    const session = { userId: proof.userId, epoch: proof.epoch, sessionHash: '' };
+    if (!active() || !linkRecordMatches(live.methods, session) || !linkHumanPresent(live.methods, proof.credential)
+      || live.methods.provisionalPlayAnchor) throw new ReturningPasskeyLoginError();
+    installAuthMethods(proof.userId, live.methods);
+    const user = identities.get(proof.userId); if (!user) throw new ReturningPasskeyLoginError();
+    const agent = ensureSurfaceAgent(user, undefined);
+    // Pin the freshly read epoch: never renew this proof across sign-out or use
+    // issueToken's cached-epoch/read-failure fallback for this login handoff.
+    if (!active()) throw new ReturningPasskeyLoginError();
+    const token = await issueToken(proof.userId, agent.id, agent.scope ?? 'ReadWrite', undefined, proof.epoch);
+    if (!active()) throw new ReturningPasskeyLoginError();
+    const owner = linkOwner(proof.userId, live.methods);
+    return { token: token.token, expiresAt: token.expiresAt, userId: owner.userId, did: owner.did, webId: owner.webId, podUrl: owner.podUrl };
+  }),
+});
+
 /**
  * The account a genuine, unexpired token names when this server's copy of its record is a
  * tombstone the process has not acted on: the identity shell is still here and the id is not in
@@ -7166,6 +7212,7 @@ app.get('/dashboard', (_req, res) => {
     }
   }
 
+${returningPasskeyLoginDashboard(localLinkOrigin, returningRelay)}
   function renderAuthRequired(opts) {
     const reason = opts && opts.reason;
     const app = document.getElementById('app');
@@ -7185,13 +7232,14 @@ app.get('/dashboard', (_req, res) => {
     } else {
       html += '<p style="margin-bottom:16px;font-size:0.9rem;color:#9aa0ac">Your session ended. Use the credential you originally enrolled with — no new identity needed.</p>';
     }
-    html += '<button id="signInPasskeyBtn" style="width:100%;padding:13px;border:none;border-radius:9px;font-size:0.97rem;font-weight:600;cursor:pointer;background:#6366f1;color:white;margin-bottom:10px">Sign in with your passkey</button>';
+    html += '<button id="signInPasskeyBtn" style="width:100%;padding:13px;border:none;border-radius:9px;font-size:0.97rem;font-weight:600;cursor:pointer;background:#252540;color:white;margin-bottom:10px">Use a passkey created on this account site</button>';
     html += '<a href="/connect" style="display:block;text-align:center;padding:13px;border-radius:9px;font-size:0.92rem;background:#1a1a2e;color:#e0e0e8;border:1px solid #2a2a3a;text-decoration:none;margin-bottom:10px">Sign in with your wallet / enroll a new credential</a>';
     html += '<p style="margin-top:14px;font-size:0.8rem;color:#7a818d"><a href="/" style="color:#8a8af0">← Back to the overview</a></p>';
     div.innerHTML = html;
     app.appendChild(div);
     var btn = document.getElementById('signInPasskeyBtn');
     if (btn) btn.onclick = signInWithPasskey;
+    installReturningPasskeyLogin(div);
   }
 
   // Auth-class error messages from the identity server — when the
@@ -7207,6 +7255,7 @@ app.get('/dashboard', (_req, res) => {
   }
 
   async function renderDashboard() {
+    cancelReturningPasskeyLogin();
     const app = document.getElementById('app');
     app.innerHTML = '';
 
