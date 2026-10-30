@@ -246,6 +246,8 @@ export class InteregoOAuthProvider implements OAuthServerProvider {
   constructor(
     private readonly cfg: {
       identityUrl: string;
+      /** Optional adapter for signing an existing OAuth request in the installed app. */
+      nativeLoginHandoff?: (pendingId: string) => { handoffCode: string; expiresAt: string } | undefined;
       tokenTtlSec?: number;
       /** Renew before rotation, while the identity grant is still valid. */
       renewIdentityToken?: (identity: Readonly<ResolvedIdentity>) => Promise<string>;
@@ -732,6 +734,11 @@ export class InteregoOAuthProvider implements OAuthServerProvider {
     const clientName = escapeHtml(client.client_name || '(unnamed client)');
     const scopeList = escapeHtml((params.scopes || ['mcp']).join(', '));
     const redirectHost = escapeHtml(new URL(params.redirectUri).host);
+    let nativeLogin = '';
+    try {
+      const handoff = this.cfg.nativeLoginHandoff?.(pendingId);
+      if (handoff) nativeLogin = `<div class="method"><h3>Interego on this computer</h3><p>Keep your sign-in key in the installed app. Review this app and its permissions there, then approve the matching code.</p><button id="interego-local-identity" type="button" disabled data-handoff-code="${escapeHtml(handoff.handoffCode)}" data-expires-at="${escapeHtml(handoff.expiresAt)}">Sign in with my installed Interego</button><p id="interego-local-identity-status" role="status">Enable local sign-in for this relay in Interego Wallet, then reload this page.</p></div>`;
+    } catch { /* Other sign-in methods remain available when a local handoff cannot be issued. */ }
     const identityOrigin = new URL(this.cfg.identityUrl).origin;
     const identityHost = escapeHtml(new URL(this.cfg.identityUrl).host);
     const federationConsent = params.scopes?.includes('federation:manage')
@@ -799,6 +806,8 @@ export class InteregoOAuthProvider implements OAuthServerProvider {
   ${federationConsent}
 
   <h2>Choose a sign-in method</h2>
+
+  ${nativeLogin}
 
   <div class="method">
     <h3>Passkey</h3>

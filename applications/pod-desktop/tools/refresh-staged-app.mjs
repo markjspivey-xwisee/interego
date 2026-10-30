@@ -1,4 +1,4 @@
-import { copyFile, lstat, readFile, writeFile } from 'node:fs/promises';
+import { copyFile, lstat, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { dirname, join } from 'node:path';
 import { appRoot, assertStagePath, stageRoot } from './paths.mjs';
@@ -22,6 +22,8 @@ if (!Array.isArray(graph.packages) || graph.packages.length === 0) throw new Err
 for (const name of ['main.mjs', 'preload.cjs', 'renderer.js']) {
   await copyFile(join(appRoot, 'dist', name), join(stageRoot, 'dist', name));
 }
+await mkdir(join(stageRoot, 'dist/native-host'), { recursive: true });
+await copyFile(join(appRoot, 'dist/native-host/Interego-Identity.exe'), join(stageRoot, 'dist/native-host/Interego-Identity.exe'));
 await copyFile(join(appRoot, 'index.html'), join(stageRoot, 'index.html'));
 await copyFile(join(appRoot, 'assets/icon.png'), join(stageRoot, 'assets/icon.png'));
 const appRequire = createRequire(import.meta.url);
@@ -30,6 +32,7 @@ await writeFile(join(stageRoot, 'build-info.json'), `${JSON.stringify({
   signing: process.env.WIN_CSC_LINK || process.env.CSC_LINK ? 'certificate-requested; inspect the built installer signature' : 'unsigned-preview',
   installation: 'per-user', bundledRuntime: true, federation: 'disabled',
   optionalPodFederation: { default: 'off', delivery: 'selected-encrypted-snapshots', offlineQueue: false },
+  optionalLocalIdentity: { custody: 'windows-protected-native', approval: 'every-request', publicBridgeRequired: false, browserAccess: 'explicit-extension-ids' },
   optionalWebBridge: bridgeBuildInfo,
 }, null, 2)}\n`);
 process.stdout.write('Refreshed compiled application files; the staged production dependency graph is unchanged.\n');

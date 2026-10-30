@@ -78,6 +78,8 @@ import { fileURLToPath } from 'node:url';
 import { interegoOAuthRouter } from './oauth-router.js';
 import { requireBearerAuth } from '@modelcontextprotocol/express';
 import { InteregoOAuthProvider, renewIdentityToken } from './oauth-provider.js';
+import { LocalIdentityHandoffs } from './local-identity-handoff.js';
+import { fetchLocalIdentityChallenge, localIdentityContextHandler } from './local-identity-http.js';
 import { assertLivePlay, bootstrapProvisionalPod, chargeProvisionalExchange, claimProvisionalExchange, createProvisionalToolGuard, parseProvisionalPlay,
   ProvisionalPlayError, validateProvisionalTool, verifyProvisionalExchange,
   type ProvisionalPlay, type ProvisionalPrincipal } from './provisional-play.js';
@@ -678,6 +680,7 @@ function surfaceAgentFromClient(clientName: string | undefined): string {
 //   here is intentionally `let` so the async init can assign it before
 //   any top-level consumer (mcpAuthRouter, requireBearerAuth) runs.
 let oauthProvider!: InteregoOAuthProvider;
+let localIdentityHandoffs: LocalIdentityHandoffs | undefined;
 
 // Org-level IPFS/CDP keys — used as defaults when users don't provide their own.
 //
@@ -1597,6 +1600,7 @@ log(`OAuth token store: pod=${oauthStorePodUrl} access=${_oauthInitialAccessToke
 
 oauthProvider = new InteregoOAuthProvider({
   identityUrl: IDENTITY_URL,
+  nativeLoginHandoff: pendingId => localIdentityHandoffs?.issue(pendingId),
   renewIdentityToken: identity => renewIdentityToken(IDENTITY_URL, identity),
   tokenTtlSec: 3600,
   // RFC 8707 canonical resource identifier of this resource server. The AS is
@@ -1628,6 +1632,19 @@ oauthProvider = new InteregoOAuthProvider({
   lookupRefreshTokenByRaw: (token) => loadOAuthRefreshTokenByRaw(token, oauthTokenStoreCfg),
   log: (msg: string) => log(msg),
 });
+
+try {
+  if (PUBLIC_BASE_URL) localIdentityHandoffs = new LocalIdentityHandoffs({
+    issuer: PUBLIC_BASE_URL, identityOrigin: IDENTITY_URL,
+    pending: pendingId => {
+      const pending = oauthProvider.getPendingAuthorization(pendingId);
+      return pending ? { pendingId, clientId: pending.client.client_id, clientName: pending.client.client_name || '(unnamed client)',
+        redirectUri: pending.params.redirectUri, scopes: pending.params.scopes?.length ? pending.params.scopes : ['mcp'], resource: pending.params.resource?.href ?? null,
+        codeChallenge: pending.params.codeChallenge, state: pending.params.state || '', expiresAt: pending.expiresAt } : undefined;
+    },
+    challenge: signal => fetchLocalIdentityChallenge(IDENTITY_URL, signal),
+  });
+} catch { log('Installed-app sign-in requires configured canonical HTTPS relay and identity origins; other sign-in methods remain available.'); }
 
 const provisionalStoreAliases = { internalStoreUrl: CSS_URL, publicStoreUrl: CSS_PUBLIC_URL };
 const provisionalTools = createProvisionalToolGuard({ podUrl: oauthStorePodUrl, fetch: solidFetch, withMutex: withPodMutex,
@@ -14363,6 +14380,10 @@ app.post('/play/provisional/exchange', provisionalExchangeLimiter, async (req, r
     res.status(503).json({ error: 'provisional_exchange_unavailable' });
   }
 });
+app.post('/oauth/local-identity/context', oauthVerifyLimiter, (req, res, next) => {
+  if (!localIdentityHandoffs) { res.status(404).json({ error: 'Installed-app sign-in is not available on this relay.' }); return; }
+  void localIdentityContextHandler(localIdentityHandoffs)(req, res, next);
+});
 app.post('/oauth/verify', oauthVerifyLimiter, async (req, res) => {
   const { pending_id, method, ...proofBody } = req.body as {
     pending_id?: string;
@@ -14372,6 +14393,15 @@ app.post('/oauth/verify', oauthVerifyLimiter, async (req, res) => {
   if (!pending_id || !method) {
     res.status(400).json({ error: 'pending_id and method are required' });
     return;
+  }
+
+  if (Object.hasOwn(proofBody, 'native_handoff')) {
+    res.setHeader('Cache-Control', 'no-store');
+    try {
+      if (method !== 'did' || !localIdentityHandoffs || typeof proofBody.native_handoff !== 'string') throw new Error('Invalid handoff');
+      localIdentityHandoffs.consume(proofBody.native_handoff, pending_id, proofBody.nonce);
+      delete proofBody.native_handoff;
+    } catch { res.status(400).json({ error: 'This local sign-in request expired or could not be verified. Start sign-in again.' }); return; }
   }
 
   const endpointByMethod: Record<typeof method, string> = {

@@ -1,5 +1,6 @@
 /* global chrome */
 import { normalizeRelay } from './relay.mjs';
+import { relayOrigin } from './native-identity.mjs';
 
 const $ = id => document.getElementById(id);
 let state;
@@ -139,7 +140,22 @@ $('disconnect').addEventListener('click', () => run(async () => {
     : 'Local connection forgotten. Existing notes and server grants remain at the relay.');
 }));
 
+function renderNativeIdentity(value) {
+  $('native-identity-status').textContent = value.relays.length ? 'Installed-app sign-in enabled for ' + value.relays.join(', ') + '. Reload an open sign-in page to use it.' : 'Installed-app sign-in is off.';
+  $('native-identity-forget').disabled = !value.relays.length;
+}
+$('native-identity-form').addEventListener('submit', event => {
+  event.preventDefault();
+  // Request optional host access in the actual form gesture, before any async work.
+  let origin;
+  try { origin = relayOrigin($('native-identity-relay').value); } catch (error) { status(error.message, true); return; }
+  const permission = chrome.permissions.request({ origins: [origin + '/*'] });
+  void run(async () => { if (!await permission) throw new Error('Relay access was not granted.'); renderNativeIdentity(await request('NATIVE_CONFIGURE', { relays: [origin] })); status('Local sign-in enabled. Approve website requests in the Interego app.'); });
+});
+$('native-identity-forget').addEventListener('click', () => run(async () => { renderNativeIdentity(await request('NATIVE_CONFIGURE', { relays: [] })); status('Installed-app sign-in turned off.'); }));
+
 await run(async () => {
+  renderNativeIdentity(await request('NATIVE_STATE'));
   renderState(await request('STATE'));
   if (state.draft) { for (const [id, key] of [['capture-title', 'title'], ['capture-url', 'url'], ['capture-text', 'text'], ['purpose', 'purpose']]) $(id).value = state.draft[key] ?? ''; }
   if (state.captureNotice) status(state.captureNotice);

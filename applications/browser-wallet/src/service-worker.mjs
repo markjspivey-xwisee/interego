@@ -2,10 +2,14 @@
 import { signIn } from './oauth.mjs';
 import { normalizeRelay, discoverCatalog, callTool } from './relay.mjs';
 import { createWallet } from './wallet.mjs';
+import { createNativeIdentity } from './native-identity.mjs';
 
 const wallet = createWallet({ chrome, signIn, normalizeRelay, discoverCatalog, callTool });
+const nativeIdentity = createNativeIdentity({ chrome });
+chrome.runtime.onConnect.addListener(nativeIdentity.handlePort);
 chrome.runtime.onMessage.addListener((message, sender, respond) => {
-  wallet.dispatch(message, sender).then(value => respond({ ok: true, value }), error => respond({ ok: false, error: error.message }));
+  const operation = message?.type?.startsWith('NATIVE_') ? nativeIdentity.dispatch(message, sender) : wallet.dispatch(message, sender);
+  operation.then(value => respond({ ok: true, value }), error => respond({ ok: false, error: error.message }));
   return true;
 });
 

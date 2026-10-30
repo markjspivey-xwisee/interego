@@ -6,13 +6,13 @@ const root = new URL('../', import.meta.url);
 const manifest = JSON.parse(await readFile(new URL('manifest.json', root), 'utf8'));
 assert.equal(manifest.manifest_version, 3);
 assert.equal(manifest.background.type, 'module');
-assert.deepEqual(manifest.permissions, ['identity', 'storage', 'activeTab', 'scripting']);
+assert.deepEqual(manifest.permissions, ['identity', 'storage', 'activeTab', 'scripting', 'nativeMessaging']);
 assert.equal(manifest.host_permissions, undefined);
 assert.equal(manifest.content_scripts, undefined);
 assert.equal(manifest.externally_connectable, undefined);
 assert.equal(manifest.web_accessible_resources, undefined);
 for (const name of await readdir(new URL('src/', root))) {
-  if (!name.endsWith('.mjs')) continue;
+  if (!/\.m?js$/.test(name)) continue;
   const path = fileURLToPath(new URL(`src/${name}`, root));
   const result = spawnSync(process.execPath, ['--check', path], { encoding: 'utf8' });
   assert.equal(result.status, 0, result.stderr);

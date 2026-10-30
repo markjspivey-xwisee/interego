@@ -44,6 +44,7 @@ module.exports = {
     artifactName: 'Interego-${version}-windows-${arch}-setup.${ext}',
   },
   nsis: {
+    include: join(__dirname, 'tools/native-identity-uninstall.nsh'),
     oneClick: false,
     perMachine: false,
     allowElevation: false,
