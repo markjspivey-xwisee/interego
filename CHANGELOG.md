@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-10-30 — Show the local app's first screen before exercising its backend
+
+Windows preview.8 loads the renderer after every identity dialog has been parsed, fixing a first-start exception that left the installed app at “Opening your space…”. Parser-driven renderer tests now use the shipping HTML's script position. The packaged check requires a usable welcome screen on its first launch and a configured space on its second launch before it exercises the preload, storage, native signing and optional connection lifecycle.
+
 ## 2026-10-30 — Complete local-pod release validation
 
 Root-suite CI builds the MCP server after restoring cached package artifacts, so a fresh checkout includes the staged shared deployment configuration. The deployment-config, local-node and pod-federation packages are recorded as Layer 3 base adapters. A runtime-lock fixture uses a naturally terminating child process, the local diagnostic switch is documented in the environment census, and the wallet status test checks the complete expected message. The offline browser smoke uses an explicit dummy OAuth token with its authentication and redaction assertions preserved. Existing ownership, test-execution, security and test-budget gates remain active.

@@ -4,7 +4,7 @@ import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { build } from 'esbuild';
-import { JSDOM } from 'jsdom';
+import { JSDOM, type DOMWindow } from 'jsdom';
 import type { DesktopApi, LocalNote, PodStatus } from '../src/types.js';
 import type { AgentConnection, AgentSetup } from '../src/agent-types.js';
 import type { BridgeStatus, StableBridgeView } from '../src/bridge-types.js';
@@ -60,7 +60,7 @@ async function flush(): Promise<void> {
   for (let i = 0; i < 3; i++) await new Promise<void>(done => setImmediate(done));
 }
 
-async function mount(initial = state('unconfigured'), overrides: Partial<DesktopApi> = {}, initialNotes: readonly LocalNote[] = [], initialConnections: readonly AgentConnection[] = [], initialStable: StableBridgeView | null = null) {
+async function mount(initial = state('unconfigured'), overrides: Partial<DesktopApi> = {}, initialNotes: readonly LocalNote[] = [], initialConnections: readonly AgentConnection[] = [], initialStable: StableBridgeView | null = null, parsedBoot?: { html?: string }) {
   let current = initial;
   let saved = [...initialNotes];
   let grants = [...initialConnections];
@@ -156,25 +156,41 @@ async function mount(initial = state('unconfigured'), overrides: Partial<Desktop
     clearFederationHistory: vi.fn(async () => sharingOff()),
     ...overrides,
   };
-  const dom = new JSDOM(readFileSync(join(APP, 'index.html'), 'utf8'), {
-    url: 'file:///interego/index.html', runScripts: 'outside-only', pretendToBeVisual: true,
-  });
-  documents.push(dom);
   const timers = new Map<number, () => void>();
   let timerId = 0;
-  // Advance only the renderer's own polling turn, without wall-clock assertions.
-  dom.window.setTimeout = ((handler: unknown) => {
-    if (typeof handler !== 'function') throw new Error('Unexpected string timer');
-    timers.set(++timerId, handler as () => void);
-    return timerId;
-  }) as typeof dom.window.setTimeout;
-  dom.window.clearTimeout = ((id: number) => { timers.delete(id); }) as typeof dom.window.clearTimeout;
-  Object.defineProperty(dom.window, 'interego', { value: api });
-  dom.window.eval(bundle);
+  const startupErrors: string[] = [];
+  let parserScriptLoads = 0;
+  const preload = (window: DOMWindow): void => {
+    // Advance only the renderer's own polling turn, without wall-clock assertions.
+    window.setTimeout = ((handler: unknown) => {
+      if (typeof handler !== 'function') throw new Error('Unexpected string timer');
+      timers.set(++timerId, handler as () => void);
+      return timerId;
+    }) as typeof window.setTimeout;
+    window.clearTimeout = ((id: number) => { timers.delete(id); }) as typeof window.clearTimeout;
+    Object.defineProperty(window, 'interego', { value: api });
+    if (parsedBoot) window.addEventListener('error', event => { startupErrors.push(event.message); event.preventDefault(); });
+  };
+  let html = parsedBoot?.html ?? readFileSync(join(APP, 'index.html'), 'utf8');
+  if (parsedBoot) {
+    // JSDOM does not pause its parser for an asynchronously fetched external script.
+    // Inline only the shipping bundle at its actual tag, preserving the browser's
+    // synchronous classic-script order and every surrounding shipped HTML node.
+    html = html.replace('<script src="./dist/renderer.js"></script>', () => {
+      parserScriptLoads++;
+      return `<script>${bundle.replace(/<\/script/gi, '<\\/script')}</script>`;
+    });
+  }
+  const dom = new JSDOM(html, {
+    url: 'file:///interego/index.html', runScripts: parsedBoot ? 'dangerously' : 'outside-only', pretendToBeVisual: true,
+    beforeParse: preload,
+  });
+  documents.push(dom);
+  if (!parsedBoot) dom.window.eval(bundle);
   await flush();
   const get = <T extends HTMLElement = HTMLElement>(id: string): T => dom.window.document.getElementById(id) as T;
   return {
-    api, dom, get,
+    api, dom, get, startupErrors, parserScriptLoads,
     click: (id: string) => get<HTMLButtonElement>(id).click(),
     submit: (id: string) => get(id).dispatchEvent(new dom.window.Event('submit', { bubbles: true, cancelable: true })),
     fill: (id: string, value: string) => { get<HTMLInputElement>(id).value = value; },
@@ -191,6 +207,36 @@ async function mount(initial = state('unconfigured'), overrides: Partial<Desktop
     },
   };
 }
+
+describe('the installed page starts in HTML parser order', () => {
+  it('opens the first-use screen and completes explicit setup through the shipping script', async () => {
+    const app = await mount(state('unconfigured'), {}, [], [], null, {});
+    expect(app.parserScriptLoads).toBe(1);
+    expect(app.startupErrors).toEqual([]);
+    expect(app.api.status).toHaveBeenCalledOnce();
+    expect(app.get('loading-screen').hidden).toBe(true);
+    expect(app.get('welcome').hidden).toBe(false);
+    expect(app.api.setup).not.toHaveBeenCalled();
+    app.click('setup-local'); await flush();
+    expect(app.api.setup).toHaveBeenCalledOnce();
+    expect(app.get('welcome').hidden).toBe(true);
+    expect(app.get('shell').hidden).toBe(false);
+    expect(app.startupErrors).toEqual([]);
+  });
+
+  it('catches the previous early-script crash before any local-space request', async () => {
+    const script = '<script src="./dist/renderer.js"></script>';
+    const oldOrder = readFileSync(join(APP, 'index.html'), 'utf8').replace(script, '')
+      .replace('<dialog id="identity-backup-dialog"', `${script}\n  <dialog id="identity-backup-dialog"`);
+    const app = await mount(state('unconfigured'), {}, [], [], null, { html: oldOrder });
+    expect(app.parserScriptLoads).toBe(1);
+    expect(app.startupErrors).toEqual(['Missing identity element: identity-backup-dialog']);
+    expect(app.api.status).not.toHaveBeenCalled();
+    expect(app.api.setup).not.toHaveBeenCalled();
+    expect(app.get('loading-screen').hidden).toBe(false);
+    expect(app.get('welcome').hidden).toBe(true);
+  });
+});
 
 describe('consumer pod sharing and browser consent', () => {
   const peer = { id: 'did:key:brother', name: 'My brother', endpoint: 'https://brother.example/pod-federation', kind: 'local' as const,

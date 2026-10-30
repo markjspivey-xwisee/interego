@@ -526,9 +526,25 @@ async function bootstrap(): Promise<void> {
       return Reflect.apply(original, this, args) as Socket;
     } as typeof Socket.prototype.connect;
     try {
+      const firstScreen = await window.webContents.executeJavaScript(`new Promise((resolve, reject) => {
+        const deadline = Date.now() + 15000;
+        const check = () => {
+          const loading = document.getElementById('loading-screen');
+          const welcome = document.getElementById('welcome');
+          const shell = document.getElementById('shell');
+          const setup = document.getElementById('setup-local');
+          if (loading?.hidden && welcome && shell && welcome.hidden !== shell.hidden
+            && (welcome.hidden || (setup && !setup.disabled)) && document.getElementById('identity-backup-dialog')) {
+            resolve({ configured: !shell.hidden });
+          } else if (Date.now() >= deadline) reject(new Error('The packaged app did not reach its usable first screen.'));
+          else setTimeout(check, 50);
+        };
+        check();
+      })`) as { configured: boolean };
+      process.stdout.write(`INTEREGO_POD_UI_READY:${firstScreen.configured ? 'space' : 'welcome'}\n`);
       // Exercise the shipping sandboxed preload and trusted renderer IPC, too.
       const initial = await window.webContents.executeJavaScript('window.interego.status()') as PodStatus;
-      if (!initial.localOnly || initial.federationEnabled) throw new Error('The packaged renderer bridge has an invalid local profile.');
+      if (!initial.localOnly || initial.federationEnabled || firstScreen.configured !== initial.configured) throw new Error('The packaged renderer bridge has an invalid local profile.');
       const bridgeStatus = await window.webContents.executeJavaScript('window.interego.bridgeStatus()') as { state: string; url?: string; remembered?: boolean; pendingApprovals: unknown[]; connections: unknown[] };
       if (bridgeStatus.state !== 'off' || bridgeStatus.pendingApprovals.length
         || (!initial.configured && (bridgeStatus.url || bridgeStatus.remembered || bridgeStatus.connections.length))) throw new Error('Web connections must start disabled on every app launch.');
