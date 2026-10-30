@@ -48,7 +48,7 @@ The machine-readable authority is `CAPABILITY_MATRIX` / `capabilitiesFor()` in `
 | Solid pod storage | Durable file-backed CSS | Existing hosted storage | Separate Solid composition required |
 | Encrypted graph payloads | Existing publisher with caller-owned keys | Existing encrypted publishing | Separate encrypted P2P shares |
 | Owner key custody and recovery | Caller-managed; Windows app adds protected notes key and notes backup/restore | Existing hosted account model | Private bridge key configuration required |
-| MCP tools | Windows app adds scoped local notes tools; low-level runtime has no adapter | Existing tool surface retained | Six P2P tools |
+| MCP tools | Windows app adds scoped local notes tools and an explicitly enabled temporary remote MCP bridge; low-level runtime has no adapter | Existing tool surface retained | Six P2P tools |
 | Hosted OAuth | Not required or started | Existing flow retained | Not included |
 | Solid notifications | Gateway support pending | Existing service | Not included |
 | Cross-pod Solid federation | Transport not included | Existing selected sharing/discovery | Separate Solid composition required |
@@ -56,6 +56,8 @@ The machine-readable authority is `CAPABILITY_MATRIX` / `capabilitiesFor()` in `
 | Reliable cross-domain offline delivery | Not guaranteed | Not guaranteed | Durable outbox pending |
 
 The explicit configuration model can represent federation intent. This first local runtime refuses `federation.enabled: true` because it does not yet implement a transport. Existing hosted and personal-bridge federation behavior is unchanged. The Windows installer is a separate consumer preview with its own packaged lifecycle check and [revocable agent connections](../applications/pod-desktop/AGENT-CONNECTIONS.md). Pairing a local agent does not enable federation. Optional local federation and offline delivery remain later milestones.
+
+The Windows app's optional web bridge forwards only a separate OAuth-gated MCP listener through a temporary Cloudflare connection. The storage runtime remains on loopback. Native approval maps each web authorization to a scoped, revocable local grant; turning off the bridge invalidates its tokens and grants. This is remote tool access, not pod federation or cloud synchronization. It is disabled after every app launch. The provider can process in-transit tool traffic, and changing preview URLs require reconnecting the remote client. The low-level deployment capability matrix does not imply this consumer adapter exists on every local host.
 
 ## Verification
 

@@ -12,6 +12,10 @@ import { readBackupFile } from './read-backup.js';
 import { AgentService } from './agent-service.js';
 import type { AgentConnectionInput, AgentProtector } from './agent-types.js';
 import { buildAgentSetup } from './agent-setup.js';
+import { BridgeServer } from './bridge-server.js';
+import { BridgeTunnel } from './bridge-tunnel.js';
+import { BridgeManager } from './bridge-manager.js';
+import type { BridgeClient, BridgeStartInput } from './bridge-types.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const entry = join(here, '..', 'index.html');
@@ -45,6 +49,8 @@ if (smoke || agentMode) app.disableHardwareAcceleration();
 let window: BrowserWindow | null = null;
 let controller: PodController | undefined;
 let agentService: AgentService | undefined;
+let webBridge: BridgeManager | undefined;
+let smokeBridgeOrigin: string | undefined;
 let pairingError: string | undefined;
 let closing = false;
 const pending = new Set<Promise<unknown>>();
@@ -147,6 +153,16 @@ function connections(): AgentService {
   return agentService;
 }
 
+function bridge(): BridgeManager {
+  if (!webBridge) throw new Error('Web connections are unavailable. Reopen Interego and try again. Your local notes are safe.');
+  return webBridge;
+}
+
+function approvalId(value: unknown): string {
+  if (typeof value !== 'string' || !/^[a-zA-Z0-9_-]{16,128}$/.test(value)) throw new Error('Choose a pending connection request.');
+  return value;
+}
+
 async function connectionSetup(id: unknown) {
   if (typeof id !== 'string') throw new Error('Choose an agent connection.');
   const connection = await connections().get(id);
@@ -171,10 +187,30 @@ async function bootstrap(): Promise<void> {
     pairingError = 'Agent connections could not open. Your saved notes are safe. Reopen Interego to try again.';
     await access.close().catch(() => {});
   }
+  if (agentService) {
+    const server = new BridgeServer({ agents: access });
+    const tunnel = smoke ? {
+      // The packaged offline check exercises real HTTP/OAuth and trusted IPC,
+      // while deliberately replacing the external provider with an isolated URL.
+      async start(port: number) { smokeBridgeOrigin = `http://127.0.0.1:${port}`; return 'https://packaged-verification.trycloudflare.com'; },
+      async stop() { smokeBridgeOrigin = undefined; },
+    } : new BridgeTunnel({
+      resourcesDir: app.isPackaged ? app.getAppPath() : join(app.getAppPath(), '.staging', 'app'),
+      dataDir: join(userData, 'web-bridge'),
+      onUnexpectedExit: () => { void webBridge?.connectionLost().catch(() => {}); },
+    });
+    // Construction does not bind a port, launch a tunnel or restore web access.
+    webBridge = new BridgeManager(server, tunnel);
+  }
   handle('status', async () => pod.getStatus());
   handle('setup', async () => pod.setup());
   handle('start', async () => pod.start());
-  handle('stop', async () => pod.stop());
+  handle('stop', async () => {
+    // The owner's Stop control closes remote access as well as local storage.
+    try { await webBridge?.stop(); }
+    finally { await pod.stop(); }
+    return pod.getStatus();
+  });
   handle('notes', async () => pod.listNotes());
   handle('saveNote', async value => pod.saveNote(value as NoteInput));
   handle('connections', async () => connections().list());
@@ -196,6 +232,29 @@ async function bootstrap(): Promise<void> {
     const text = input.format === 'command' ? setup.command : setup.configuration;
     if (!text) throw new Error('This connection uses configuration settings. Copy those settings instead.');
     clipboard.writeText(text);
+  });
+  handle('bridgeStatus', async () => bridge().status());
+  handle('startBridge', async value => {
+    const state = await pod.getStatus();
+    if (!state.running || !state.configured || state.restorePending) throw new Error('Start your local space before connecting a web app.');
+    return bridge().start(value as BridgeStartInput);
+  });
+  handle('stopBridge', async () => bridge().stop());
+  handle('approveBridge', async value => bridge().approve(approvalId(value)));
+  handle('denyBridge', async value => bridge().deny(approvalId(value)));
+  handle('copyBridgeUrl', async () => {
+    const state = await bridge().status();
+    if (state.state !== 'ready' || !state.url) throw new Error('Start your web connection before copying its link.');
+    clipboard.writeText(state.url);
+  });
+  handle('openBridgeClient', async value => {
+    const links: Record<BridgeClient, string> = {
+      'chatgpt-web': 'https://chatgpt.com/',
+      'grok-bot': 'https://grok.com/',
+      'other-web': 'https://modelcontextprotocol.io/',
+    };
+    if (typeof value !== 'string' || !Object.hasOwn(links, value)) throw new Error('Choose a supported web app.');
+    await shell.openExternal(links[value as BridgeClient]);
   });
   handle('openDataFolder', async () => {
     const result = await shell.openPath(userData);
@@ -265,6 +324,8 @@ async function bootstrap(): Promise<void> {
       // Exercise the shipping sandboxed preload and trusted renderer IPC, too.
       const initial = await window.webContents.executeJavaScript('window.interego.status()') as PodStatus;
       if (!initial.localOnly || initial.federationEnabled) throw new Error('The packaged renderer bridge has an invalid local profile.');
+      const bridgeStatus = await window.webContents.executeJavaScript('window.interego.bridgeStatus()') as { state: string; url?: string; pendingApprovals: unknown[]; connections: unknown[] };
+      if (bridgeStatus.state !== 'off' || bridgeStatus.url || bridgeStatus.pendingApprovals.length || bridgeStatus.connections.length) throw new Error('Web connections must start disabled on every app launch.');
       await window.webContents.executeJavaScript(initial.configured ? 'window.interego.start()' : 'window.interego.setup()');
       const note = await window.webContents.executeJavaScript('window.interego.saveNote({title:"Packaged local pod verification",body:"This private note survives a packaged runtime restart."})') as LocalNote;
       const { verifyAgentPairing } = await import('./pairing-smoke.js');
@@ -274,6 +335,11 @@ async function bootstrap(): Promise<void> {
         revoke: id => window!.webContents.executeJavaScript(`window.interego.revokeConnection(${JSON.stringify(id)})`),
         list: () => window!.webContents.executeJavaScript('window.interego.connections()'),
         notes: () => window!.webContents.executeJavaScript('window.interego.notes()') });
+      const { verifyWebBridge } = await import('./bridge-smoke.js');
+      await verifyWebBridge({
+        invoke: <T>(method: string, argument?: unknown) => window!.webContents.executeJavaScript(`window.interego[${JSON.stringify(method)}](${argument === undefined ? '' : JSON.stringify(argument)})`) as Promise<T>,
+        loopback: () => smokeBridgeOrigin,
+      });
       await window.webContents.executeJavaScript('window.interego.stop()');
       const reopened = new PodController(options);
       controller = reopened;
@@ -324,9 +390,16 @@ else {
     void (async () => {
       try {
         // Stop admitting agent work before waiting for any owner dialog or action.
+        trace('closing web connections');
+        await webBridge?.stop();
+        trace('closing local app connections');
         await agentService?.close();
+        trace('finishing owner actions');
         await Promise.allSettled([...pending]);
-        await controller?.stop(); app.exit(0);
+        trace('closing local storage');
+        await controller?.stop();
+        trace('shutdown complete');
+        app.exit(0);
       }
       catch { app.exit(1); }
     })();

@@ -1,6 +1,7 @@
 import { contextBridge, ipcRenderer } from 'electron';
 import type { DesktopApi, FileActionResult, LocalNote, NoteInput, PodStatus } from './types.js';
 import type { AgentConnection, AgentConnectionInput, AgentSetup } from './agent-types.js';
+import type { BridgeClient, BridgeStartInput, BridgeStatus } from './bridge-types.js';
 
 async function invoke<T>(operation: string, argument?: unknown): Promise<T> {
   const reply = await ipcRenderer.invoke(`pod:${operation}`, argument) as
@@ -25,6 +26,13 @@ const api: DesktopApi = Object.freeze({
   revokeConnection: (id: string) => invoke<void>('revokeConnection', id),
   connectionSetup: (id: string) => invoke<AgentSetup>('connectionSetup', id),
   copyConnectionSetup: (id: string, format: 'configuration' | 'command') => invoke<void>('copyConnectionSetup', { id, format }),
+  bridgeStatus: () => invoke<BridgeStatus>('bridgeStatus'),
+  startBridge: (input: BridgeStartInput) => invoke<BridgeStatus>('startBridge', input),
+  stopBridge: () => invoke<BridgeStatus>('stopBridge'),
+  approveBridge: (id: string) => invoke<BridgeStatus>('approveBridge', id),
+  denyBridge: (id: string) => invoke<BridgeStatus>('denyBridge', id),
+  copyBridgeUrl: () => invoke<void>('copyBridgeUrl'),
+  openBridgeClient: (client: BridgeClient) => invoke<void>('openBridgeClient', client),
 });
 contextBridge.exposeInMainWorld('interego', api);
 

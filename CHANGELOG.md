@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-10-29 — Optional temporary web connections for local Windows pods
+
+The Windows preview adds an explicit temporary web connection for ChatGPT web, Grok Bot and other remote MCP clients. Owners choose read and append permissions, create a temporary URL, compare the browser verification code with a request in Interego, and approve or deny access. A bundled, pinned Cloudflare helper forwards only the dedicated MCP and OAuth listener. The setup explains provider processing, changing URLs, client account requirements, and the need to keep the computer running.
+
+Authorization uses PKCE, resource-bound tokens and existing local grants with queued authorization checks. Turning off the bridge invalidates web access; app launches always start with the bridge disabled. Hosted Interego remains available separately, and federation defaults remain off. This L3 application change does not alter the protocol, generic stdio server or hosted relay.
+
 ## 2026-10-29 — Scoped local agent connections
 
 The Windows application now includes a consumer Connections flow for local ChatGPT desktop, Codex, Claude Code, Claude Desktop, Grok Build, OpenClaw and other stdio MCP clients. Owners choose read and append permissions plus expiry, copy client-specific setup, see authenticated usage, and disconnect access. Setup does not export the pod's key or storage credential; online AI provider processing and separate cloud-only connection requirements are explained in the app and guide.

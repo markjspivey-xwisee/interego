@@ -1,5 +1,6 @@
 import type { DesktopApi, LocalNote, PodStatus } from './types.js';
 import type { AgentClient, AgentConnection, AgentPermission, AgentSetup } from './agent-types.js';
+import { installBridgeUi } from './bridge-renderer.js';
 
 const element = <T extends HTMLElement = HTMLElement>(id: string): T => {
   const found = document.getElementById(id);
@@ -61,6 +62,11 @@ const CONNECTION_LABELS: Record<AgentConnection['state'], string> = {
   waiting: 'Waiting for first use', active: 'Access allowed', revoked: 'Disconnected', expired: 'Expired', 'pod-changed': 'Different space',
 };
 const usable = (connection: AgentConnection | null): boolean => !!connection && ['waiting', 'active'].includes(connection.state);
+const bridgeUi = installBridgeUi(api, {
+  pod: () => status, locallyBusy: () => busy !== null, openDialog, closeDialog,
+  showConnections: () => selectPage('connections'),
+  onAccessChanged: () => { drawConnections(); void loadConnections(); },
+});
 
 function connectionDate(value: string): string {
   return Number.isFinite(Date.parse(value)) ? new Intl.DateTimeFormat(undefined, {
@@ -106,7 +112,7 @@ function drawConnections(): void {
       const top = document.createElement('div'); top.className = 'connection-top';
       const identity = document.createElement('div');
       const name = document.createElement('h3'); name.className = 'connection-name'; name.textContent = connection.name;
-      const client = document.createElement('p'); client.className = 'connection-client'; client.textContent = CLIENT_NAMES[connection.client];
+      const client = document.createElement('p'); client.className = 'connection-client'; client.textContent = bridgeUi.isWebConnection(connection.id) ? 'Web assistant' : CLIENT_NAMES[connection.client];
       identity.append(name, client);
       const badge = document.createElement('span'); badge.className = `connection-badge${usable(connection) ? '' : ' inactive'}`;
       badge.textContent = CONNECTION_LABELS[connection.state]; top.append(identity, badge);
@@ -117,9 +123,9 @@ function drawConnections(): void {
       card.append(top, permissions, meta);
       if (usable(connection)) {
         const actions = document.createElement('div'); actions.className = 'connection-actions';
-        const configure = document.createElement('button'); configure.className = 'secondary'; configure.textContent = 'Setup details';
+        const configure = document.createElement('button'); configure.className = 'secondary'; configure.textContent = bridgeUi.isWebConnection(connection.id) ? 'Web setup' : 'Setup details';
         configure.setAttribute('aria-label', `Setup details for ${connection.name}`);
-        configure.addEventListener('click', () => beginConnection(connection));
+        configure.addEventListener('click', () => { if (bridgeUi.isWebConnection(connection.id)) bridgeUi.openSetup(); else beginConnection(connection); });
         const revoke = document.createElement('button'); revoke.className = 'danger'; revoke.textContent = 'Disconnect';
         revoke.setAttribute('aria-label', `Disconnect ${connection.name}`);
         revoke.addEventListener('click', () => {
@@ -400,6 +406,7 @@ function controls(): void {
     : input('permission-create').checked ? 'This app may save new notes. It will not be allowed to read your existing notes.'
       : 'Choose at least one permission to continue.';
   document.body.setAttribute('aria-busy', String(occupied));
+  bridgeUi.updateAvailability();
 }
 
 function applyStatus(next: PodStatus): void {
@@ -483,6 +490,7 @@ function schedulePoll(): void {
 }
 
 async function refreshStatus(initial: boolean): Promise<void> {
+  void bridgeUi.refresh();
   if (busy) { schedulePoll(); return; }
   const requested = ++statusRequest;
   try {

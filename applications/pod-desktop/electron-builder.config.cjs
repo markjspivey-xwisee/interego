@@ -25,7 +25,7 @@ module.exports = {
     enableNodeOptionsEnvironmentVariable: false,
     enableNodeCliInspectArguments: false,
   },
-  files: ['dist/**/*', 'index.html', 'assets/icon.png', 'package.json', 'production-graph.json', 'build-info.json', 'node_modules/**/*'],
+  files: ['dist/**/*', 'index.html', 'assets/icon.png', 'bridge/**/*', 'package.json', 'production-graph.json', 'build-info.json', 'node_modules/**/*'],
   npmRebuild: false,
   nodeGypRebuild: false,
   buildDependenciesFromSource: false,
@@ -38,6 +38,8 @@ module.exports = {
     // Keep resource editing enabled. Supplied CSC_LINK/WIN_CSC_LINK credentials are honored;
     // without them the preview is unsigned and build-info.json explicitly says so.
     signAndEditExecutable: true,
+    // Preserve the third-party publisher signature and runtime-pinned bytes.
+    signExts: ['!cloudflared.exe'],
     signtoolOptions: { signingHashAlgorithms: ['sha256'] },
     artifactName: 'Interego-${version}-windows-${arch}-setup.${ext}',
   },

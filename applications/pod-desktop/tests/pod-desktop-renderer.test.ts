@@ -7,6 +7,7 @@ import { build } from 'esbuild';
 import { JSDOM } from 'jsdom';
 import type { DesktopApi, LocalNote, PodStatus } from '../src/types.js';
 import type { AgentConnection, AgentSetup } from '../src/agent-types.js';
+import type { BridgeStatus } from '../src/bridge-types.js';
 
 const APP = join(dirname(fileURLToPath(import.meta.url)), '..');
 let bundle: string;
@@ -37,6 +38,10 @@ const connectionSetup = (id = 'connection-1'): AgentSetup => ({
   steps: ['Add this local connection in your app.'], configuration: '{"command":"Interego.exe","args":["--agent"]}',
   command: 'Interego.exe --agent',
 });
+const webReady = (): BridgeStatus => ({ state: 'ready', client: 'chatgpt-web', name: 'My web assistant',
+  url: 'https://sample.trycloudflare.com/mcp', permissions: ['notes:read'], expiresInDays: 30, pendingApprovals: [], connections: [] });
+const webRequest = () => ({ id: 'request-1', clientName: 'ChatGPT', redirectOrigin: 'https://chatgpt.com',
+  permissions: ['notes:read'] as const, createdAt: '2026-10-29T12:00:00Z', expiresAt: '2026-10-29T12:10:00Z', verificationCode: '1234-5678' });
 function deferred<T>() {
   let resolve!: (value: T) => void;
   let reject!: (reason: unknown) => void;
@@ -51,6 +56,7 @@ async function mount(initial = state('unconfigured'), overrides: Partial<Desktop
   let current = initial;
   let saved = [...initialNotes];
   let grants = [...initialConnections];
+  let bridge: BridgeStatus = { state: 'off', permissions: [], pendingApprovals: [], connections: [] };
   const api: DesktopApi = {
     status: vi.fn(async () => current),
     setup: vi.fn(async () => { current = state('running', saved.length); return current; }),
@@ -74,9 +80,28 @@ async function mount(initial = state('unconfigured'), overrides: Partial<Desktop
       };
       grants = [...grants, created]; return created;
     }),
-    revokeConnection: vi.fn(async id => { grants = grants.map(grant => grant.id === id ? { ...grant, state: 'revoked' } : grant); }),
+    revokeConnection: vi.fn(async id => {
+      grants = grants.map(grant => grant.id === id ? { ...grant, state: 'revoked' } : grant);
+      bridge = { ...bridge, connections: bridge.connections.map(grant => grant.id === id ? { ...grant, state: 'revoked' } : grant) };
+    }),
     connectionSetup: vi.fn(async id => connectionSetup(id)),
     copyConnectionSetup: vi.fn(async () => undefined),
+    bridgeStatus: vi.fn(async () => bridge),
+    startBridge: vi.fn(async value => {
+      bridge = { state: 'ready', url: 'https://sample.trycloudflare.com/mcp', client: value.client, name: value.name,
+        permissions: value.permissions, expiresInDays: value.expiresInDays, pendingApprovals: [], connections: [] };
+      return bridge;
+    }),
+    stopBridge: vi.fn(async () => { bridge = { state: 'off', permissions: [], pendingApprovals: [], connections: [] }; return bridge; }),
+    approveBridge: vi.fn(async id => {
+      const pending = bridge.pendingApprovals.find(value => value.id === id);
+      const grant = { ...connection('web-connection-1'), client: 'other' as const, name: bridge.name ?? 'Web assistant', permissions: pending?.permissions ?? [] };
+      bridge = { ...bridge, pendingApprovals: bridge.pendingApprovals.filter(value => value.id !== id), connections: [...bridge.connections, grant] };
+      grants = [...grants, grant]; return bridge;
+    }),
+    denyBridge: vi.fn(async id => { bridge = { ...bridge, pendingApprovals: bridge.pendingApprovals.filter(value => value.id !== id) }; return bridge; }),
+    copyBridgeUrl: vi.fn(async () => undefined),
+    openBridgeClient: vi.fn(async () => undefined),
     ...overrides,
   };
   const dom = new JSDOM(readFileSync(join(APP, 'index.html'), 'utf8'), {
@@ -104,6 +129,7 @@ async function mount(initial = state('unconfigured'), overrides: Partial<Desktop
     setNotes: (value: readonly LocalNote[]) => { saved = [...value]; },
     setStatus: (value: PodStatus) => { current = value; },
     setConnections: (value: readonly AgentConnection[]) => { grants = [...value]; },
+    setBridge: (value: BridgeStatus) => { bridge = value; },
     poll: async () => {
       const scheduled = [...timers.entries()].pop();
       if (!scheduled) throw new Error('No renderer poll was scheduled');
@@ -558,5 +584,248 @@ describe('Interego consumer desktop', () => {
     expect(app.get('notes-list').textContent).not.toContain('Verified');
     app.get('notes-list').querySelector<HTMLButtonElement>('.note-item')!.click();
     expect(app.get('read-note-date').textContent).toContain('Saved by <img src=x> My assistant');
+  });
+});
+
+describe('optional web bridge owner controls', () => {
+  it('stays off by default and keeps local and hosted choices separate', async () => {
+    const app = await mount(state('running'));
+    app.click('nav-connections'); await flush();
+    expect(app.get('bridge-status-label').textContent).toBe('Web access is off');
+    expect(app.get('bridge-alert').hidden).toBe(true);
+    expect(app.api.startBridge).not.toHaveBeenCalled();
+    app.click('start-bridge');
+    expect(app.get<HTMLDialogElement>('bridge-dialog').open).toBe(true);
+    expect(app.get<HTMLInputElement>('bridge-read').checked).toBe(true);
+    expect(app.get<HTMLInputElement>('bridge-create').checked).toBe(false);
+    expect(app.get<HTMLInputElement>('bridge-consent').checked).toBe(false);
+    expect(app.get<HTMLSelectElement>('bridge-expiry').value).toBe('30');
+    expect(app.get<HTMLButtonElement>('confirm-bridge-start').disabled).toBe(true);
+    expect(app.get('bridge-dialog').textContent).toContain('Cloudflare handles this traffic');
+    expect(app.get('bridge-dialog').textContent).toContain('address changes');
+    expect(app.get('bridge-dialog').textContent).toContain('federation stays off');
+    app.submit('bridge-form'); await flush();
+    expect(app.api.startBridge).not.toHaveBeenCalled();
+    app.click('cancel-bridge'); app.click('connections-hosted'); await flush();
+    expect(app.api.openHosted).toHaveBeenCalledTimes(1);
+    expect(app.api.createConnection).not.toHaveBeenCalled();
+  });
+
+  it('requires explicit consent, preserves choices and starts only the selected permissions', async () => {
+    const app = await mount(state('running'));
+    app.click('nav-connections'); await flush(); app.click('start-bridge');
+    app.fill('bridge-client', 'grok-bot'); app.get('bridge-client').dispatchEvent(new app.dom.window.Event('change'));
+    expect(app.get<HTMLInputElement>('bridge-name').value).toBe('Grok Bot');
+    app.fill('bridge-name', 'My Grok Bot'); app.fill('bridge-expiry', '7');
+    app.get<HTMLInputElement>('bridge-read').checked = false;
+    app.get<HTMLInputElement>('bridge-create').checked = true;
+    app.get('bridge-create').dispatchEvent(new app.dom.window.Event('change'));
+    expect(app.get('bridge-scope-help').textContent).toContain('cannot read');
+    await app.poll();
+    expect(app.get<HTMLInputElement>('bridge-name').value).toBe('My Grok Bot');
+    app.get<HTMLInputElement>('bridge-consent').checked = true;
+    app.get('bridge-consent').dispatchEvent(new app.dom.window.Event('change'));
+    app.submit('bridge-form'); app.submit('bridge-form'); await flush();
+    expect(app.api.startBridge).toHaveBeenCalledTimes(1);
+    expect(app.api.startBridge).toHaveBeenCalledWith({ client: 'grok-bot', name: 'My Grok Bot', permissions: ['notes:create'], expiresInDays: 7 });
+    expect(app.get('bridge-status-label').textContent).toBe('Temporary web access is on');
+    expect(app.get('bridge-client-instructions').textContent).toContain('Grok Bot');
+    expect(app.get('bridge-url').textContent).toBe('https://sample.trycloudflare.com/mcp');
+    expect(app.get('bridge-setup-ready').textContent).toContain('does not connect your assistant');
+    expect(app.api.approveBridge).not.toHaveBeenCalled();
+  });
+
+  it('validates missing permissions and lets web setup be retried without changing the pod', async () => {
+    const app = await mount(state('running'));
+    app.click('nav-connections'); await flush(); app.click('start-bridge');
+    app.get<HTMLInputElement>('bridge-read').checked = false;
+    app.get<HTMLInputElement>('bridge-consent').checked = true;
+    app.get('bridge-read').dispatchEvent(new app.dom.window.Event('change'));
+    expect(app.get<HTMLButtonElement>('confirm-bridge-start').disabled).toBe(true);
+    app.submit('bridge-form'); await flush();
+    expect(app.api.startBridge).not.toHaveBeenCalled();
+    app.get<HTMLInputElement>('bridge-read').checked = true;
+    app.fill('bridge-name', ''); app.submit('bridge-form'); await flush();
+    expect(app.api.startBridge).not.toHaveBeenCalled();
+    expect(app.get('bridge-dialog-message').getAttribute('role')).toBe('alert');
+    expect(app.api.setup).not.toHaveBeenCalled();
+  });
+
+  it('keeps Stop and local notes usable while startup is pending, and ignores its late ready result', async () => {
+    const start = deferred<BridgeStatus>();
+    const app = await mount(state('running'), { startBridge: vi.fn(() => start.promise) });
+    app.click('nav-connections'); await flush(); app.click('start-bridge');
+    app.get<HTMLInputElement>('bridge-consent').checked = true; app.submit('bridge-form');
+    expect(app.get('bridge-setup-progress').hidden).toBe(false);
+    expect(app.get<HTMLButtonElement>('stop-bridge-setup').disabled).toBe(false);
+    app.click('close-bridge'); app.click('nav-memory');
+    expect(app.get<HTMLButtonElement>('save-note').disabled).toBe(false);
+    app.fill('note-title', 'Still local'); app.fill('note-body', 'Still available.'); app.submit('note-form'); await flush();
+    expect(app.api.saveNote).toHaveBeenCalledTimes(1);
+    app.click('bridge-alert-stop'); await flush();
+    expect(app.api.stopBridge).toHaveBeenCalledTimes(1);
+    expect(app.get('bridge-status-label').textContent).toBe('Web access is off');
+    start.resolve(webReady()); await flush();
+    expect(app.get('bridge-status-label').textContent).toBe('Web access is off');
+    expect(app.get('bridge-url').textContent).toBe('');
+  });
+
+  it('checks incoming approvals on the memory page and requires a code match before allowing', async () => {
+    const app = await mount(state('running'));
+    app.setBridge({ ...webReady(), pendingApprovals: [webRequest()] }); await app.poll();
+    expect(app.get('memory-page').hidden).toBe(false);
+    expect(app.get('bridge-alert').hidden).toBe(false);
+    expect(app.get('bridge-alert-title').textContent).toContain('asking to connect');
+    app.click('bridge-review'); await flush();
+    expect(app.get('connections-page').hidden).toBe(false);
+    const request = app.get('bridge-approvals').querySelector<HTMLElement>('[data-approval-id="request-1"]')!;
+    expect(request.textContent).toContain('1234-5678');
+    expect(request.textContent).toContain('https://chatgpt.com');
+    expect(request.textContent).toContain('Maximum access: 30 days');
+    const allow = request.querySelector<HTMLButtonElement>('.primary')!;
+    expect(allow.disabled).toBe(true); allow.click();
+    expect(app.api.approveBridge).not.toHaveBeenCalled();
+    const match = request.querySelector<HTMLInputElement>('input')!; match.checked = true;
+    match.dispatchEvent(new app.dom.window.Event('change'));
+    await app.poll();
+    expect(app.get('bridge-approvals').querySelector<HTMLInputElement>('input')!.checked).toBe(true);
+    app.get('bridge-approvals').querySelector<HTMLButtonElement>('.primary')!.click(); await flush();
+    expect(app.api.approveBridge).toHaveBeenCalledWith('request-1');
+    expect(app.get('bridge-approvals-section').hidden).toBe(true);
+    expect(app.get('bridge-connections').textContent).toContain('Waiting for first use');
+    expect(app.get('connections-list').textContent).toContain('Web assistant');
+    expect(app.get('connections-list').querySelector<HTMLButtonElement>('.secondary')!.textContent).toBe('Web setup');
+    app.get('connections-list').querySelector<HTMLButtonElement>('.secondary')!.click(); await flush();
+    expect(app.api.connectionSetup).not.toHaveBeenCalled();
+  });
+
+  it('denies unsolicited requests without requiring a match and renders app names literally', async () => {
+    const app = await mount(state('running'));
+    app.setBridge({ ...webReady(), pendingApprovals: [{ ...webRequest(), clientName: '<img src=x onerror=bad()>' }] }); await app.poll();
+    app.click('bridge-review'); await flush();
+    expect(app.get('bridge-approvals').textContent).toContain('<img src=x');
+    expect(app.get('bridge-approvals').querySelector('img')).toBeNull();
+    app.get('bridge-approvals').querySelector<HTMLButtonElement>('.secondary')!.click(); await flush();
+    expect(app.api.denyBridge).toHaveBeenCalledWith('request-1');
+    expect(app.api.approveBridge).not.toHaveBeenCalled();
+    expect(app.get('bridge-approvals-section').hidden).toBe(true);
+  });
+
+  it('drops code acknowledgements when the request code changes', async () => {
+    const app = await mount(state('running'));
+    app.setBridge({ ...webReady(), pendingApprovals: [webRequest()] }); await app.poll();
+    const match = app.get('bridge-approvals').querySelector<HTMLInputElement>('input')!;
+    match.checked = true; match.dispatchEvent(new app.dom.window.Event('change'));
+    app.setBridge({ ...webReady(), pendingApprovals: [{ ...webRequest(), verificationCode: '9999-1111' }] }); await app.poll();
+    expect(app.get('bridge-approvals').querySelector<HTMLInputElement>('input')!.checked).toBe(false);
+    expect(app.get('bridge-approvals').querySelector<HTMLButtonElement>('.primary')!.disabled).toBe(true);
+    expect(app.get('bridge-approvals').textContent).toContain('9999-1111');
+  });
+
+  it('shows unknown instead of off after a failed check and blocks stale approvals until retry', async () => {
+    const check = vi.fn<DesktopApi['bridgeStatus']>().mockResolvedValue({ ...webReady(), pendingApprovals: [webRequest()] });
+    const app = await mount(state('running'), { bridgeStatus: check });
+    check.mockRejectedValueOnce(new Error('Unavailable')); await app.poll();
+    expect(app.get('bridge-status-label').textContent).toContain('could not be checked');
+    expect(app.get('bridge-status-label').textContent).not.toBe('Web access is off');
+    expect(app.get('bridge-approvals').querySelector('button')).toBeNull();
+    expect(app.get<HTMLButtonElement>('copy-bridge-url').disabled).toBe(true);
+    expect(app.get<HTMLButtonElement>('stop-bridge').disabled).toBe(false);
+    app.click('refresh-bridge'); await flush();
+    expect(app.get('bridge-status-label').textContent).toBe('Temporary web access is on');
+    expect(app.get('bridge-approvals').querySelector<HTMLInputElement>('input')!.checked).toBe(false);
+  });
+
+  it('ignores an old status response that arrives after Stop', async () => {
+    const stale = deferred<BridgeStatus>();
+    const check = vi.fn<DesktopApi['bridgeStatus']>().mockResolvedValueOnce(webReady()).mockImplementationOnce(() => stale.promise)
+      .mockResolvedValue({ state: 'off', permissions: [], pendingApprovals: [], connections: [] });
+    const app = await mount(state('running'), { bridgeStatus: check });
+    app.click('refresh-bridge'); app.click('stop-bridge'); await flush();
+    stale.resolve({ ...webReady(), pendingApprovals: [webRequest()] }); await flush();
+    expect(app.get('bridge-status-label').textContent).toBe('Web access is off');
+    expect(app.get('bridge-approvals').textContent).toBe('');
+    expect(app.get('bridge-url').textContent).toBe('');
+  });
+
+  it('ignores a late approval result when the owner has stopped web access', async () => {
+    const approval = deferred<BridgeStatus>();
+    const app = await mount(state('running'), { approveBridge: vi.fn(() => approval.promise) });
+    app.setBridge({ ...webReady(), pendingApprovals: [webRequest()] }); await app.poll();
+    const match = app.get('bridge-approvals').querySelector<HTMLInputElement>('input')!;
+    match.checked = true; match.dispatchEvent(new app.dom.window.Event('change'));
+    app.get('bridge-approvals').querySelector<HTMLButtonElement>('.primary')!.click();
+    app.click('bridge-alert-stop'); await flush();
+    approval.resolve({ ...webReady(), connections: [connection('web-grant', 'active')] }); await flush();
+    expect(app.get('bridge-status-label').textContent).toBe('Web access is off');
+    expect(app.get('bridge-connections').textContent).toBe('');
+    expect(app.get('bridge-message').textContent).not.toContain('Connection allowed');
+  });
+
+  it('copies the safe URL and opens only the chosen client through owner APIs', async () => {
+    const app = await mount(state('running'));
+    app.setBridge({ ...webReady(), client: 'grok-bot' }); await app.poll();
+    app.click('bridge-setup-details'); app.click('copy-bridge-url'); await flush();
+    expect(app.api.copyBridgeUrl).toHaveBeenCalledWith();
+    expect(app.get('bridge-dialog-message').textContent).toContain('URL copied');
+    app.click('open-bridge-client'); await flush();
+    expect(app.api.openBridgeClient).toHaveBeenCalledWith('grok-bot');
+    expect(app.api.approveBridge).not.toHaveBeenCalled();
+  });
+
+  it('reports clipboard failure without claiming copy or starting a new connection', async () => {
+    const app = await mount(state('running'), { copyBridgeUrl: vi.fn(async () => { throw new Error('Unavailable'); }) });
+    app.setBridge(webReady()); await app.poll(); app.click('bridge-setup-details'); app.click('copy-bridge-url'); await flush();
+    expect(app.get('bridge-dialog-message').textContent).toContain('could not be copied');
+    expect(app.get('bridge-dialog-message').textContent).not.toContain('URL copied');
+    expect(app.api.startBridge).not.toHaveBeenCalled();
+  });
+
+  it('waits for confirmed revocation before labelling a web grant disconnected', async () => {
+    const revoke = deferred<void>();
+    const app = await mount(state('running'), { revokeConnection: vi.fn(() => revoke.promise) });
+    app.setBridge({ ...webReady(), connections: [connection('web-grant', 'active')] }); await app.poll();
+    app.get('bridge-connections').querySelector<HTMLButtonElement>('.danger')!.click();
+    expect(app.get('bridge-connections').textContent).toContain('Access allowed');
+    app.setBridge({ ...webReady(), connections: [connection('web-grant', 'revoked')] }); revoke.resolve(); await flush();
+    expect(app.api.revokeConnection).toHaveBeenCalledWith('web-grant');
+    expect(app.get('bridge-connections').textContent).toContain('Disconnected');
+    expect(app.get('bridge-connections').querySelector('button')).toBeNull();
+  });
+
+  it('disables creation while the pod is stopped or restoring without blocking Stop', async () => {
+    const app = await mount(state('stopped'));
+    expect(app.get<HTMLButtonElement>('start-bridge').disabled).toBe(true);
+    expect(app.get('bridge-availability').textContent).toContain('Start your local space');
+    app.setStatus({ ...state('running'), restorePending: true }); await app.poll();
+    expect(app.get<HTMLButtonElement>('start-bridge').disabled).toBe(true);
+    app.setBridge(webReady()); await app.poll();
+    expect(app.get<HTMLButtonElement>('stop-bridge').disabled).toBe(false);
+    expect(app.get('bridge-availability').textContent).toContain('Finish restoring');
+  });
+
+  it('shows a truthful startup failure and keeps the selected form available to retry', async () => {
+    const app = await mount(state('running'), { startBridge: vi.fn(async () => { throw new Error('Unavailable'); }) });
+    app.click('nav-connections'); await flush(); app.click('start-bridge'); app.fill('bridge-name', 'Keep this name');
+    app.get<HTMLInputElement>('bridge-consent').checked = true; app.submit('bridge-form'); await flush();
+    expect(app.get('bridge-dialog-message').textContent).toContain('could not start');
+    expect(app.get('bridge-form').hidden).toBe(false);
+    expect(app.get<HTMLInputElement>('bridge-name').value).toBe('Keep this name');
+    expect(app.get('bridge-setup-ready').hidden).toBe(true);
+    expect(app.get<HTMLButtonElement>('confirm-bridge-start').disabled).toBe(false);
+    expect(app.api.setup).not.toHaveBeenCalled();
+  });
+
+  it('does not claim the URL is ready when native startup resolves with an error status', async () => {
+    const app = await mount(state('running'), { startBridge: vi.fn(async (): Promise<BridgeStatus> => ({ state: 'error',
+      message: 'The temporary link could not open.', permissions: [], pendingApprovals: [], connections: [] })) });
+    app.click('nav-connections'); await flush(); app.click('start-bridge');
+    app.get<HTMLInputElement>('bridge-consent').checked = true; app.submit('bridge-form'); await flush();
+    expect(app.get('bridge-status-label').textContent).toBe('Web access needs another try');
+    expect(app.get('bridge-dialog-message').textContent).toBe('The temporary link could not open.');
+    expect(app.get('bridge-dialog-message').getAttribute('role')).toBe('alert');
+    expect(app.get('bridge-url').textContent).toBe('');
+    expect(app.get('bridge-setup-ready').hidden).toBe(true);
+    expect(app.get<HTMLButtonElement>('confirm-bridge-start').disabled).toBe(false);
   });
 });
