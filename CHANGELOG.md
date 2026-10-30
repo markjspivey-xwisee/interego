@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-10-29 — Windows bridge helper artifact verification
+
+Windows packaging tests avoid importing platform-builder internals into a lightweight configuration test. The real packaging path verifies the pinned helper bytes, and delivered artifact checks inspect its original publisher signature. This documents the standalone installer-test maintenance commit without claiming a historical changelog backfill.
+
 ## 2026-10-29 — Optional temporary web connections for local Windows pods
 
 The Windows preview adds an explicit temporary web connection for ChatGPT web, Grok Bot and other remote MCP clients. Owners choose read and append permissions, create a temporary URL, compare the browser verification code with a request in Interego, and approve or deny access. A bundled, pinned Cloudflare helper forwards only the dedicated MCP and OAuth listener. The setup explains provider processing, changing URLs, client account requirements, and the need to keep the computer running.
