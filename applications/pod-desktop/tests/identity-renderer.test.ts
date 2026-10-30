@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { build } from 'esbuild';
 import { JSDOM } from 'jsdom';
 import type { DesktopApi, PodStatus } from '../src/types.js';
-import type { LocalIdentityApproval, LocalIdentityStatus } from '../src/local-identity-types.js';
+import type { LocalIdentityApproval, LocalIdentityLinkApproval, LocalIdentitySignInApproval, LocalIdentityStatus } from '../src/local-identity-types.js';
 
 const APP = join(dirname(fileURLToPath(import.meta.url)), '..'); let bundle = '';
 const documents: JSDOM[] = [];
@@ -18,9 +18,12 @@ afterEach(() => { for (const dom of documents.splice(0)) dom.window.close(); });
 const off = (): LocalIdentityStatus => ({ configured: false, pending: [] });
 const ready = (pending: readonly LocalIdentityApproval[] = []): LocalIdentityStatus => ({ configured: true,
   identity: { did: 'did:key:z6MkPublicIdentity', fingerprint: 'FINGERPRINT-THIS-PC', createdAt: '2026-10-30T12:00:00Z' }, pending });
-const request = (patch: Partial<LocalIdentityApproval> = {}): LocalIdentityApproval => ({ id: 'request-one', state: 'waiting', clientId: 'https://game.example/identity/client.json', clientName: 'My game',
+const request = (patch: Partial<LocalIdentitySignInApproval> = {}): LocalIdentitySignInApproval => ({ id: 'request-one', state: 'waiting', clientId: 'https://game.example/identity/client.json', clientName: 'My game',
   relayOrigin: 'https://relay.example', identityOrigin: 'https://identity.example', redirectOrigin: 'https://game.example', redirectUri: 'https://game.example/identity/callback?flow=game',
   scopes: ['mcp:read'], resource: 'https://relay.example/mcp', verificationCode: 'ABCD 1234', expiresAt: new Date(Date.now() + 120_000).toISOString(), ...patch });
+const link = (patch: Partial<LocalIdentityLinkApproval> = {}): LocalIdentityLinkApproval => ({ purpose: 'link', id: 'link-one', state: 'waiting', identityOrigin: 'https://identity.example',
+  owner: { userId: 'existing-account', did: 'did:pkh:eip155:1:existing-owner', webId: 'https://hosted.example/existing/profile/card#me', podUrl: 'https://hosted.example/existing/', displayName: 'Existing player' },
+  credentialDid: 'did:key:z6MkPublicIdentity', credentialFingerprint: 'FINGERPRINT-THIS-PC', verificationCode: 'CDAB 4321', expiresAt: new Date(Date.now() + 120_000).toISOString(), ...patch });
 const pod: PodStatus = { state: 'stopped', configured: true, running: false, localOnly: true, federationEnabled: false, noteCount: 0 };
 function deferred<T>() { let resolve!: (value: T) => void; const promise = new Promise<T>(done => { resolve = done; }); return { promise, resolve }; }
 async function flush(): Promise<void> { for (let i = 0; i < 3; i++) await new Promise<void>(done => setImmediate(done)); }
@@ -36,6 +39,7 @@ async function mount(initial = off(), overrides: Partial<DesktopApi> = {}) {
     setIdentityExtensionIds: vi.fn(async (next: readonly string[]) => { ids = next; return ids; }),
     backupLocalIdentity: vi.fn(async (_passphrase: string) => ({ cancelled: false, status: current })),
     restoreLocalIdentity: vi.fn(async (_passphrase: string) => { current = ready(); return { cancelled: false, status: current }; }),
+    openHosted: vi.fn(async () => {}),
     ...overrides,
   };
   const dom = new JSDOM(readFileSync(join(APP, 'index.html'), 'utf8'), { url: 'file:///interego/index.html', runScripts: 'outside-only' }); documents.push(dom);
@@ -56,14 +60,43 @@ async function mount(initial = off(), overrides: Partial<DesktopApi> = {}) {
 }
 
 describe('native Identity page', () => {
-  it('creates no credential automatically, requires fresh-account consent, and works while notes are stopped', async () => {
+  it('creates no credential automatically, makes linking existing accounts the first path, and works while notes are stopped', async () => {
     const app = await mount(); expect(app.api.setupLocalIdentity).not.toHaveBeenCalled();
     expect(app.get<HTMLButtonElement>('create-local-identity').disabled).toBe(true);
-    expect(app.get('identity-create-fields').textContent).toContain('separate hosted account');
-    expect(app.get('identity-create-fields').textContent).toContain('Hallowmarch');
+    expect(app.get('identity-create-fields').textContent).toContain('does not connect it to your existing account');
+    expect(app.get('identity-page').textContent).toContain('Add this PC key'); expect(app.get('identity-page').textContent).toContain('Hallowmarch');
+    app.click('open-identity-dashboard'); await flush(); expect(app.api.openHosted).toHaveBeenCalledOnce(); expect(app.api.setupLocalIdentity).not.toHaveBeenCalled();
     app.check('identity-create-consent'); app.click('create-local-identity'); await flush();
     expect(app.api.setupLocalIdentity).toHaveBeenCalledOnce(); expect(app.get('identity-fingerprint').textContent).toBe('FINGERPRINT-THIS-PC');
     expect(app.get('identity-create-fields').hidden).toBe(true); expect(app.get<HTMLButtonElement>('restore-local-identity').disabled).toBe(true);
+  });
+  it('shows the exact existing account and PC key, and requires explicit link consent without creating or signing into another account', async () => {
+    const pending = link({ owner: { ...link().owner, displayName: '<img src=x onerror=steal()>' } }); const app = await mount(ready([pending]));
+    const text = app.get('identity-pending').textContent!;
+    for (const value of [pending.owner.displayName, pending.owner.userId, pending.owner.did, pending.owner.webId, pending.owner.podUrl, pending.identityOrigin,
+      pending.credentialDid, pending.credentialFingerprint, pending.verificationCode, 'adds a sign-in method', 'does not move my character, progress or data']) expect(text).toContain(value);
+    expect(app.get('identity-pending').querySelector('img')).toBeNull(); expect(app.pendingApprove().textContent).toBe('Add PC key'); expect(app.pendingApprove().disabled).toBe(true);
+    app.pendingApprove().click(); expect(app.api.approveLocalIdentity).not.toHaveBeenCalled();
+    app.check('identity-verify-link-one'); expect(app.pendingApprove().disabled).toBe(false); app.pendingApprove().click(); await flush();
+    expect(app.api.approveLocalIdentity).toHaveBeenCalledWith(pending.id, pending.verificationCode); expect(app.api.setupLocalIdentity).not.toHaveBeenCalled();
+    expect(app.get('identity-message').textContent).toContain('added to your existing account');
+  });
+  it('resets link consent for any owner, provider, key or code change and blocks a key that differs from this PC', async () => {
+    const original = link(); const app = await mount(ready([original]));
+    for (const changed of [link({ owner: { ...original.owner, podUrl: 'https://hosted.example/other/' } }),
+      link({ owner: { ...original.owner, did: 'did:key:other-owner' } }), link({ identityOrigin: 'https://other-identity.example' }),
+      link({ verificationCode: 'EEEE 1111' }), link({ credentialFingerprint: 'OTHER-PC-KEY' })]) {
+      app.setState(ready([original])); await app.ui.refresh(); app.check('identity-verify-link-one'); expect(app.pendingApprove().disabled).toBe(false);
+      app.setState(ready([changed])); await app.ui.refresh(); expect(app.pendingApprove().disabled).toBe(true); expect(app.get<HTMLInputElement>('identity-verify-link-one').checked).toBe(false);
+    }
+    app.check('identity-verify-link-one'); expect(app.pendingApprove().disabled).toBe(true); expect(app.get('identity-pending').textContent).toContain('no longer matches the key on this PC');
+    expect(app.api.approveLocalIdentity).not.toHaveBeenCalled();
+  });
+  it('declines enrollment without adding the key and labels an in-progress link separately from sign-in', async () => {
+    const pending = link(); const app = await mount(ready([pending]));
+    [...app.get('identity-pending').querySelectorAll<HTMLButtonElement>('button')].find(button => button.textContent === 'Decline')!.click(); await flush();
+    expect(app.api.denyLocalIdentity).toHaveBeenCalledWith(pending.id); expect(app.api.approveLocalIdentity).not.toHaveBeenCalled();
+    app.setState(ready([link({ state: 'completing' })])); await app.ui.refresh(); expect(app.pendingApprove()).toBeNull(); expect(app.get('identity-pending').textContent).toContain('Adding this PC key');
   });
   it('shows exact server-derived details as text and needs started-request/code-match consent', async () => {
     const pending = request({ clientName: '<img src=x onerror=steal()>' }); const app = await mount(ready([pending]));
@@ -79,6 +112,8 @@ describe('native Identity page', () => {
     const pending = request(); const app = await mount(ready([pending])); app.check('identity-verify-request-one');
     app.setState(ready([{ ...pending, scopes: ['mcp:write'] }])); await app.ui.refresh(); expect(app.pendingApprove().disabled).toBe(true);
     expect(app.get<HTMLInputElement>('identity-verify-request-one').checked).toBe(false);
+    app.check('identity-verify-request-one'); app.setState({ ...ready([pending]), identity: { ...ready().identity!, fingerprint: 'CHANGED-PC-KEY' } }); await app.ui.refresh();
+    expect(app.get<HTMLInputElement>('identity-verify-request-one').checked).toBe(false); expect(app.pendingApprove().disabled).toBe(true);
     app.setState(ready([{ ...pending, expiresAt: new Date(Date.now() - 1).toISOString() }])); await app.ui.refresh(); app.check('identity-verify-request-one'); expect(app.pendingApprove().disabled).toBe(true);
     app.setState(ready([{ ...pending, state: 'completing' }])); await app.ui.refresh(); expect(app.pendingApprove()).toBeNull(); expect(app.get('identity-pending').textContent).toContain('Finishing sign-in');
     expect(app.api.approveLocalIdentity).not.toHaveBeenCalled();

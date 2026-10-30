@@ -3,7 +3,7 @@ import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { createHash, createPublicKey, randomBytes, randomUUID, verify as verifySignature } from 'node:crypto';
 import { lstat, readFile, writeFile } from 'node:fs/promises';
 import { isAbsolute, join } from 'node:path';
-import type { LocalIdentityContext, LocalIdentityStatus, LocalIdentityTicket } from './local-identity-types.js';
+import type { LocalIdentityContext, LocalIdentityLinkContext, LocalIdentityStatus, LocalIdentityTicket } from './local-identity-types.js';
 
 export interface IdentitySmokeOptions {
   readonly invoke: <T>(method: string, argument?: unknown) => Promise<T>;
@@ -88,11 +88,24 @@ class NativePort {
 interface Ceremony { readonly context: LocalIdentityContext; readonly state: string; readonly redirect: string }
 export function createIdentitySmoke(): { readonly fetch: typeof fetch; readonly verify: (options: IdentitySmokeOptions) => Promise<void> } {
   const handoffs = new Map<string, Ceremony>(); const completions = new Map<string, Ceremony>(); const privateValues = new Set<string>();
-  let expectedDid: string | undefined; let proofs = 0;
+  const linkHandoffs = new Map<string, LocalIdentityLinkContext>(); const linkCompletions = new Map<string, LocalIdentityLinkContext>();
+  let expectedDid: string | undefined; let proofs = 0; let linkProofs = 0;
   const transport: typeof fetch = async (input, init) => {
     const request = new Request(input, init);
-    insist(request.method === 'POST' && [relay + '/oauth/local-identity/context', relay + '/oauth/verify'].includes(request.url), 'isolated relay route');
+    insist(request.method === 'POST' && [relay + '/oauth/local-identity/context', relay + '/oauth/verify', provider + '/local-identity/link/context', provider + '/local-identity/link/complete'].includes(request.url), 'isolated identity route');
     const body = object(JSON.parse(await request.text()));
+    if (request.url === provider + '/local-identity/link/context') {
+      insist(sameKeys(body, ['handoffCode', 'did']) && body['did'] === expectedDid && typeof body['handoffCode'] === 'string', 'local key link request');
+      const context = linkHandoffs.get(body['handoffCode']); insist(context, 'one-time link request'); linkHandoffs.delete(body['handoffCode']);
+      linkCompletions.set(context.completionCode, context); return Response.json(context);
+    }
+    if (request.url === provider + '/local-identity/link/complete') {
+      insist(sameKeys(body, ['completionCode', 'did', 'nonce', 'signature']) && body['did'] === expectedDid && typeof body['completionCode'] === 'string' && typeof body['signature'] === 'string', 'native link proof');
+      const context = linkCompletions.get(body['completionCode']); insist(context, 'one-time link completion'); linkCompletions.delete(body['completionCode']);
+      insist(body['nonce'] === context.nonce && expectedDid && verifySignature(null, Buffer.from(context.message), publicKey(expectedDid), Buffer.from(body['signature'], 'base64url')), 'actual account-link signature');
+      privateValues.add(body['signature']); linkProofs++;
+      return Response.json({ linked: true, identityOrigin: provider, owner: context.owner, credentialDid: expectedDid });
+    }
     if (request.url.endsWith('/context')) {
       insist(sameKeys(body, ['handoffCode']) && typeof body['handoffCode'] === 'string', 'handoff request');
       const ceremony = handoffs.get(body['handoffCode']); insist(ceremony, 'one-time handoff'); handoffs.delete(body['handoffCode']);
@@ -117,6 +130,17 @@ export function createIdentitySmoke(): { readonly fetch: typeof fetch; readonly 
     handoffs.set(handoffCode, { context, state, redirect }); privateValues.add(nonce); privateValues.add(completionCode);
     return { handoffCode, redirect };
   }
+  function linkCeremony() {
+    insist(expectedDid, 'local link credential');
+    const owner = { userId: 'u-pk-packaged-existing-owner', did: 'did:web:identity.interego.xwisee.com:users:u-pk-packaged-existing-owner',
+      webId: provider + '/users/u-pk-packaged-existing-owner/profile#me', podUrl: 'https://store.interego.xwisee.com/u-pk-packaged-existing-owner/', displayName: 'Existing packaged test account' };
+    const context: LocalIdentityLinkContext = { version: 1, purpose: 'link', issuer: provider, identityOrigin: provider, pendingId: opaque(), owner,
+      credentialDid: expectedDid, nonce: opaque(), message: '', expiresAt: new Date(Date.now() + 120_000).toISOString(), challengeExpiresAt: new Date(Date.now() + 120_000).toISOString(),
+      completionCode: `interego-link-result:v1:${opaque()}.${opaque()}` };
+    const message = `Interego local identity link v1\nHost: ${new URL(provider).host}\nAccount: ${owner.did}\nPod: ${owner.podUrl}\nCredential: ${expectedDid}\nRequest: ${context.pendingId}\nNonce: ${context.nonce}\nExpires: ${context.expiresAt}`;
+    const handoffCode = `interego-link:v1:${opaque()}.${opaque()}`; linkHandoffs.set(handoffCode, { ...context, message });
+    privateValues.add(context.nonce); privateValues.add(context.completionCode); return { handoffCode, owner };
+  }
   function privateReply(value: unknown): void {
     const text = JSON.stringify(value);
     insist(!/"(?:privateKey|signature|native_handoff|nonce|completionCode)"|MC4CAQAwBQYDK2VwBCIEI/.test(text)
@@ -135,11 +159,26 @@ export function createIdentitySmoke(): { readonly fetch: typeof fetch; readonly 
         const previous = object(JSON.parse(await readFile(journal, 'utf8')));
         insist(sameKeys(previous, ['version', 'did']) && previous['version'] === 1 && previous['did'] === expectedDid, 'retained identity credential');
       } else await writeFile(journal, JSON.stringify({ version: 1, did: expectedDid }), { flag: 'wx', mode: 0o600 });
-      await options.allow([extensionId]); const native = new NativePort(options, privateReply); ports.push(native); const first = ceremony();
+      await options.allow([extensionId]); const native = new NativePort(options, privateReply); ports.push(native);
+      const existing = linkCeremony(); const linkTicket = object(await native.call('start', { relayOrigin: provider, handoffCode: existing.handoffCode })) as unknown as LocalIdentityTicket;
+      const linkPending = (await options.invoke<LocalIdentityStatus>('localIdentityStatus')).pending.find(row => row.id === linkTicket.id);
+      insist(linkPending?.purpose === 'link' && linkPending.owner.did === existing.owner.did && linkPending.owner.podUrl === existing.owner.podUrl
+        && linkPending.credentialDid === expectedDid && linkPending.verificationCode === linkTicket.verificationCode, 'exact existing account consent');
+      const beforeLinks = linkProofs; const linkReceipt = { requestId: linkTicket.id, receipt: linkTicket.receipt };
+      insist(object(await native.call('poll', linkReceipt))['state'] === 'waiting' && linkProofs === beforeLinks, 'link waits for native approval');
+      await options.approve(linkTicket.id, linkTicket.verificationCode);
+      const linked = object(await native.call('poll', linkReceipt));
+      insist(linked['state'] === 'linked' && linked['identityOrigin'] === provider && linked['credentialDid'] === expectedDid
+        && JSON.stringify(linked['owner']) === JSON.stringify(existing.owner) && linkProofs === beforeLinks + 1, 'same account link receipt');
+      insist(object(await native.call('poll', linkReceipt))['state'] === 'expired', 'one-use link receipt');
+      const unapproved = linkCeremony(); const noLink = object(await native.call('start', { relayOrigin: provider, handoffCode: unapproved.handoffCode })) as unknown as LocalIdentityTicket;
+      await options.invoke<LocalIdentityStatus>('denyLocalIdentity', noLink.id);
+      insist(object(await native.call('poll', { requestId: noLink.id, receipt: noLink.receipt }))['state'] === 'denied' && linkProofs === beforeLinks + 1, 'link denial');
+      const first = ceremony();
       const ticket = object(await native.call('start', { relayOrigin: relay, handoffCode: first.handoffCode })) as unknown as LocalIdentityTicket;
       insist(sameKeys(ticket as unknown as Record<string, unknown>, ['id', 'receipt', 'verificationCode', 'expiresAt']), 'native ticket shape'); privateReply(ticket);
       const pending = await options.invoke<LocalIdentityStatus>('localIdentityStatus'); const approval = pending.pending.find(row => row.id === ticket.id);
-      insist(approval && pending.pending.length === 1 && approval.verificationCode === ticket.verificationCode && approval.relayOrigin === relay
+      insist(approval && approval.purpose !== 'link' && pending.pending.length === 1 && approval.verificationCode === ticket.verificationCode && approval.relayOrigin === relay
         && approval.identityOrigin === provider && approval.clientId === 'packaged-hosted-app' && approval.redirectUri === callback
         && approval.scopes.join(',') === 'mcp:read' && approval.resource === relay + '/mcp', 'native owner consent'); privateReply(pending);
       const receipt = { requestId: ticket.id, receipt: ticket.receipt };
@@ -156,7 +195,7 @@ export function createIdentitySmoke(): { readonly fetch: typeof fetch; readonly 
       const final = await options.invoke<LocalIdentityStatus>('localIdentityStatus'); insist(final.identity?.did === expectedDid && final.pending.length === 0, 'retained private credential');
     } finally {
       try { for (const port of ports) await port.close(); }
-      finally { await options.allow([]); handoffs.clear(); completions.clear(); privateValues.clear(); }
+      finally { await options.allow([]); handoffs.clear(); completions.clear(); linkHandoffs.clear(); linkCompletions.clear(); privateValues.clear(); }
     }
   } };
 }

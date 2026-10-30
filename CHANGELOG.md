@@ -1,5 +1,13 @@
 # Changelog
 
+## 2026-10-30 — Link a Windows-held key to an existing account
+
+The hosted dashboard can add a local Windows signing key to the same account using a fresh action-bound proof by an existing passkey or wallet, followed by native approval of the exact owner, pod, key and comparison code. Passkeys registered on the relay verify at that original site through a short-lived popup capability; no account bearer is sent to the popup, extension or native app. Hosted sign-in remains available, while federation and public bridge access stay off by default and are unnecessary for linking.
+
+The identity adapter binds challenges to the original owner session and epoch, consumes proof and completion capabilities once, checks that the existing credential remains registered, and uses conditional writes to add only the new DID credential. It refuses a key already bound to another owner, missing write validators, unconfirmed writes and unreadable holder records. Original credentials, canonical identity and game data are preserved. Polling has its own bounded rate bucket and client backoff so it cannot exhaust the unchanged authentication mutation budget; concurrent result readers cannot both receive a one-use handoff.
+
+Tests cover real server routes and signatures, native approval and recovery regressions, dashboard and extension behavior, a real Chromium original-RP assertion, and the unchanged Hallowmarch adapter retaining the same owner, character, pod and exact progress bytes. The packaged Windows check exercises link approval, denial and one-use receipts across two launches. These checks use disposable accounts and isolated transports; hosted deployment and a live account link remain separate actions.
+
 ## 2026-10-30 — Native-held identity sign-in for Windows pods
 
 The Windows preview offers a separate local sign-in key, protected storage, encrypted recovery and approval for every login. An exact-ID Chrome/Edge native companion carries encrypted local requests; the extension never receives the private key or raw proof. Browser policy changes are serialized and block admission on failure. The native UI displays server-derived provider, client, callback, permissions and comparison code before approval.

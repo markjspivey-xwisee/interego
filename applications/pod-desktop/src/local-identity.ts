@@ -1,14 +1,16 @@
 /** Local credential custody with native consent; private proof completes only its relay handoff. */
 import { createCipheriv, createDecipheriv, pbkdf2, randomBytes, randomUUID } from 'node:crypto';
 import { promisify } from 'node:util';
-import type { LocalIdentityApproval, LocalIdentityContext, LocalIdentityResult, LocalIdentityServiceOptions, LocalIdentityStart, LocalIdentityStatus, LocalIdentityTicket } from './local-identity-types.js';
+import type { LocalIdentityApproval, LocalIdentityContext, LocalIdentityLinkContext, LocalIdentityLinkedReceipt, LocalIdentityResult, LocalIdentityServiceOptions, LocalIdentityStart, LocalIdentityStatus, LocalIdentityTicket } from './local-identity-types.js';
 import { IDENTITY_ERROR, IDENTITY_HANDOFF, IDENTITY_NONCE, identityHash, identityObject, identityOrigin, identitySame, identityText,
   localIdentityContext, localIdentityPublic, localIdentityRedirect, newLocalIdentity, savedLocalIdentity, signLocalIdentity, type LocalIdentitySaved } from './local-identity-protocol.js';
 import { identityAbortable, localIdentityJson, localIdentityNetwork } from './local-identity-network.js';
+import { IDENTITY_LINK_HANDOFF, localIdentityLinkContext, localIdentityLinkedReceipt } from './local-identity-link.js';
 export type { LocalIdentityApproval, LocalIdentityResult, LocalIdentityServiceOptions, LocalIdentityStart, LocalIdentityStatus, LocalIdentityTicket } from './local-identity-types.js';
 export { ProtectedLocalIdentityStore } from './local-identity-store.js';
 
 interface Pending {
+  readonly purpose: 'signin' | 'link';
   readonly id: string;
   readonly channel: string;
   readonly receiptHash: string;
@@ -19,11 +21,14 @@ interface Pending {
   expiresAt: number;
   state: 'preparing' | 'waiting' | 'completing' | 'complete' | 'failed' | 'denied';
   context?: LocalIdentityContext;
+  linkContext?: LocalIdentityLinkContext;
+  linked?: LocalIdentityLinkedReceipt;
   redirect?: string;
 }
 const MAX_REQUESTS = 8;
 const CANCELLED = 'This sign-in was stopped. Start a new sign-in when you are ready.';
 const FAILED = 'Sign-in could not be confirmed. Start a new sign-in rather than retrying this request.';
+const LINK_FAILED = 'The account link could not be confirmed. Check your registered credentials in the hosted dashboard before starting again. Your progress has not been moved.';
 const NOT_CONFIGURED = 'Create a local sign-in identity in Interego before connecting a website.';
 const BACKUP_ERROR = 'This identity backup could not be unlocked. Check the passphrase and file.';
 const BACKUP_AAD = Buffer.from('interego-local-identity-backup:v1:PBKDF2-SHA256:600000:AES-256-GCM');
@@ -50,12 +55,14 @@ export class LocalIdentityService {
   private ownerQueue: Promise<unknown> = Promise.resolve();
   private readonly pending = new Map<string, Pending>();
   private readonly trusted = new Map<string, string>();
+  private readonly providers = new Set<string>();
   constructor(private readonly options: LocalIdentityServiceOptions) {
     for (const pair of options.trustedRelays) {
       const relay = identityOrigin(pair.relayOrigin, options.allowLoopbackForTests);
       const provider = identityOrigin(pair.identityOrigin, options.allowLoopbackForTests);
       if (this.trusted.has(relay)) throw new Error('Each sign-in service needs exactly one trusted identity provider.');
       this.trusted.set(relay, provider);
+      this.providers.add(provider);
     }
   }
   private now(): number { return (this.options.now ?? Date.now)(); }
@@ -83,7 +90,15 @@ export class LocalIdentityService {
   private view(saved: LocalIdentitySaved | null): LocalIdentityStatus {
     this.prune(); const pending: LocalIdentityApproval[] = [];
     for (const entry of this.pending.values()) {
-      if (!entry.context || !['waiting', 'completing'].includes(entry.state)) continue;
+      if (!['waiting', 'completing'].includes(entry.state)) continue;
+      if (entry.linkContext) {
+        const context = entry.linkContext;
+        pending.push({ purpose: 'link', id: entry.id, state: entry.state as 'waiting' | 'completing', identityOrigin: context.identityOrigin,
+          owner: { ...context.owner }, credentialDid: context.credentialDid, credentialFingerprint: identityHash(context.credentialDid),
+          verificationCode: entry.verificationCode, expiresAt: new Date(entry.expiresAt).toISOString() });
+        continue;
+      }
+      if (!entry.context) continue;
       const context = entry.context;
       pending.push({ id: entry.id, state: entry.state as 'waiting' | 'completing', relayOrigin: context.issuer, identityOrigin: context.identityOrigin,
         clientId: context.clientId, clientName: context.clientName, redirectOrigin: new URL(context.redirectUri).origin, redirectUri: context.redirectUri,
@@ -117,7 +132,7 @@ export class LocalIdentityService {
   }
   private async post(origin: string, path: string, value: unknown, signal: AbortSignal): Promise<unknown> {
     const url = new URL(path, origin); const body = JSON.stringify(value);
-    if (url.origin !== origin || !['/oauth/local-identity/context', '/oauth/verify'].includes(url.pathname) || Buffer.byteLength(body) > 16 * 1024) throw new Error(IDENTITY_ERROR);
+    if (url.origin !== origin || !['/oauth/local-identity/context', '/oauth/verify', '/local-identity/link/context', '/local-identity/link/complete'].includes(url.pathname) || Buffer.byteLength(body) > 16 * 1024) throw new Error(IDENTITY_ERROR);
     const request = new Request(url, { method: 'POST', headers: { accept: 'application/json', 'content-type': 'application/json' }, body, redirect: 'error', signal });
     const timeout = new AbortController(); const timer = setTimeout(() => timeout.abort(), 15_000);
     const active = AbortSignal.any([signal, timeout.signal]);
@@ -132,39 +147,55 @@ export class LocalIdentityService {
   async request(input: LocalIdentityStart, channel: string): Promise<LocalIdentityTicket> {
     if (this.resetting) throw new Error('Local identity setup is changing. Please wait a moment.');
     channelValue(channel); const raw = identityObject(input, ['relayOrigin', 'handoffCode']);
-    const relay = identityOrigin(raw['relayOrigin'], this.options.allowLoopbackForTests); const provider = this.trusted.get(relay);
-    const code = identityText(raw['handoffCode'], 256); if (!provider || !IDENTITY_HANDOFF.test(code)) throw new Error(IDENTITY_ERROR);
+    const relay = identityOrigin(raw['relayOrigin'], this.options.allowLoopbackForTests);
+    const code = identityText(raw['handoffCode'], 256); const linking = IDENTITY_LINK_HANDOFF.test(code);
+    const provider = linking ? (this.providers.has(relay) ? relay : undefined) : this.trusted.get(relay);
+    if (!provider || !linking && !IDENTITY_HANDOFF.test(code)) throw new Error(IDENTITY_ERROR);
     this.prune(); if (this.pending.size >= MAX_REQUESTS) throw new Error('Finish or cancel an existing sign-in request before starting another.');
     const generation = this.generation;
-    const receipt = opaque(); const entry: Pending = { id: randomUUID(), channel, receiptHash: identityHash(receipt), verificationCode: randomBytes(4).toString('hex').toUpperCase().replace(/(.{4})(.{4})/, '$1 $2'),
-      generation, cancel: new AbortController(), expiresAt: this.now() + 300_000, state: 'preparing' };
+    const receipt = opaque(); const entry: Pending = { purpose: linking ? 'link' : 'signin', id: randomUUID(), channel, receiptHash: identityHash(receipt), verificationCode: randomBytes(4).toString('hex').toUpperCase().replace(/(.{4})(.{4})/, '$1 $2'),
+      generation, cancel: new AbortController(), expiresAt: this.now() + (linking ? 120_000 : 300_000), state: 'preparing' };
     this.pending.set(entry.id, entry);
     try {
       entry.identity = await identityAbortable(this.required(), entry.cancel.signal); this.current(entry);
-      const context = localIdentityContext(await this.post(relay, '/oauth/local-identity/context', { handoffCode: code }, entry.cancel.signal), relay, provider, this.now(), this.options.allowLoopbackForTests);
+      const context = linking
+        ? localIdentityLinkContext(await this.post(provider, '/local-identity/link/context', { handoffCode: code, did: localIdentityPublic(entry.identity).did }, entry.cancel.signal), provider,
+          localIdentityPublic(entry.identity).did, this.now(), this.options.allowLoopbackForTests)
+        : localIdentityContext(await this.post(relay, '/oauth/local-identity/context', { handoffCode: code }, entry.cancel.signal), relay, provider, this.now(), this.options.allowLoopbackForTests);
       await this.bound(entry);
-      entry.expiresAt = Math.min(entry.expiresAt, Date.parse(context.expiresAt), Date.parse(context.challengeExpiresAt)); entry.context = context; entry.state = 'waiting'; this.current(entry);
+      entry.expiresAt = Math.min(entry.expiresAt, Date.parse(context.expiresAt), Date.parse(context.challengeExpiresAt));
+      if ('purpose' in context && context.purpose === 'link') entry.linkContext = context; else entry.context = context as LocalIdentityContext;
+      entry.state = 'waiting'; this.current(entry);
       return { id: entry.id, receipt, verificationCode: entry.verificationCode, expiresAt: new Date(entry.expiresAt).toISOString() };
-    } catch (error) { entry.cancel.abort(); this.pending.delete(entry.id); throw new Error(error instanceof Error && error.message === NOT_CONFIGURED ? NOT_CONFIGURED : 'This sign-in request could not be prepared. Start a new sign-in from the app you want to use.'); }
+    } catch (error) { entry.cancel.abort(); this.pending.delete(entry.id); throw new Error(error instanceof Error && error.message === NOT_CONFIGURED ? NOT_CONFIGURED : linking
+      ? 'This account link could not be prepared. Start a new link from your signed-in hosted dashboard.' : 'This sign-in request could not be prepared. Start a new sign-in from the app you want to use.'); }
   }
   async approve(id: string, verificationCode: string): Promise<void> {
     this.prune(); const entry = this.pending.get(id);
-    if (!entry || entry.state !== 'waiting' || typeof verificationCode !== 'string' || !identitySame(verificationCode, entry.verificationCode) || !entry.context || !entry.identity) throw new Error('Compare the sign-in code before approving this request.');
+    if (!entry || entry.state !== 'waiting' || typeof verificationCode !== 'string' || !identitySame(verificationCode, entry.verificationCode) || (!entry.context && !entry.linkContext) || !entry.identity) throw new Error('Compare the code before approving this request.');
     entry.state = 'completing'; const context = entry.context; const identity = entry.identity;
     try {
       await this.bound(entry);
+      if (entry.linkContext) {
+        const link = entry.linkContext;
+        const signature = signLocalIdentity(identity, link.message);
+        const result = await this.post(link.identityOrigin, '/local-identity/link/complete', { completionCode: link.completionCode, did: link.credentialDid,
+          nonce: link.nonce, signature }, entry.cancel.signal);
+        await this.bound(entry); entry.linked = localIdentityLinkedReceipt(result, link); entry.linkContext = undefined; entry.state = 'complete'; return;
+      }
+      if (!context) throw new Error(IDENTITY_ERROR);
       const signature = signLocalIdentity(identity, context.message);
       const result = await this.post(context.issuer, '/oauth/verify', { pending_id: context.pendingId, method: 'did', did: localIdentityPublic(identity).did,
         nonce: context.nonce, signature, native_handoff: context.completionCode }, entry.cancel.signal);
       await this.bound(entry); entry.redirect = localIdentityRedirect(result, context, this.options.allowLoopbackForTests); entry.context = undefined; entry.state = 'complete';
     } catch {
-      if (this.pending.get(id) === entry && entry.state === 'completing') { entry.state = 'failed'; entry.context = undefined; entry.redirect = undefined; }
-      throw new Error(FAILED);
+      if (this.pending.get(id) === entry && entry.state === 'completing') { entry.state = 'failed'; entry.context = undefined; entry.linkContext = undefined; entry.linked = undefined; entry.redirect = undefined; }
+      throw new Error(entry.purpose === 'link' ? LINK_FAILED : FAILED);
     }
   }
   deny(id: string): void {
     const entry = this.pending.get(id); if (!entry || !['waiting', 'completing'].includes(entry.state)) throw new Error('This sign-in request is no longer available.');
-    entry.cancel.abort(); entry.context = undefined; entry.redirect = undefined; entry.state = 'denied';
+    entry.cancel.abort(); entry.context = undefined; entry.linkContext = undefined; entry.linked = undefined; entry.redirect = undefined; entry.state = 'denied';
   }
   private receipt(id: string, receipt: string, channel: string): Pending | undefined {
     channelValue(channel); if (typeof id !== 'string' || typeof receipt !== 'string' || !IDENTITY_NONCE.test(receipt)) throw new Error(IDENTITY_ERROR);
@@ -178,12 +209,13 @@ export class LocalIdentityService {
     if (entry.state === 'preparing' || entry.state === 'waiting') return { state: 'waiting' };
     if (entry.state === 'completing') return { state: 'completing' };
     this.pending.delete(id); // Consume terminal OAuth authority before returning it to its native channel.
+    if (entry.state === 'complete' && entry.linked) return { state: 'linked', identityOrigin: entry.linked.identityOrigin, owner: { ...entry.linked.owner }, credentialDid: entry.linked.credentialDid };
     return entry.state === 'complete' && entry.redirect ? { state: 'complete', redirect: entry.redirect }
-      : { state: entry.state === 'denied' ? 'denied' : 'failed', message: entry.state === 'denied' ? 'You declined this sign-in.' : FAILED };
+      : { state: entry.state === 'denied' ? 'denied' : 'failed', message: entry.state === 'denied' ? 'You declined this request.' : entry.purpose === 'link' ? LINK_FAILED : FAILED };
   }
   cancel(id: string, receipt: string, channel: string): void {
     const entry = this.receipt(id, receipt, channel); if (!entry) return;
-    entry.cancel.abort(); entry.context = undefined; entry.redirect = undefined; this.pending.delete(id);
+    entry.cancel.abort(); entry.context = undefined; entry.linkContext = undefined; entry.linked = undefined; entry.redirect = undefined; this.pending.delete(id);
   }
   cancelChannel(channel: string): void {
     for (const [id, entry] of this.pending) if (entry.channel === channel) { entry.cancel.abort(); this.pending.delete(id); }

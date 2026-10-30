@@ -4,6 +4,8 @@ import { fileURLToPath } from 'node:url';
 import assert from 'node:assert/strict';
 const root = new URL('../', import.meta.url);
 const manifest = JSON.parse(await readFile(new URL('manifest.json', root), 'utf8'));
+const pkg = JSON.parse(await readFile(new URL('package.json', root), 'utf8'));
+assert.equal(manifest.version, pkg.version);
 assert.equal(manifest.manifest_version, 3);
 assert.equal(manifest.background.type, 'module');
 assert.deepEqual(manifest.permissions, ['identity', 'storage', 'activeTab', 'scripting', 'nativeMessaging']);

@@ -10,7 +10,6 @@ interface Context {
 const METHODS = ['localIdentityStatus', 'setupLocalIdentity', 'approveLocalIdentity', 'denyLocalIdentity', 'forgetLocalIdentity', 'identityExtensionIds',
   'setIdentityExtensionIds', 'backupLocalIdentity', 'restoreLocalIdentity'] as const;
 const fingerprint = (value: LocalIdentityStatus | undefined) => value?.identity?.fingerprint;
-const signature = (request: LocalIdentityApproval) => JSON.stringify(request);
 const fresh = (request: LocalIdentityApproval) => Number.isFinite(Date.parse(request.expiresAt)) && Date.parse(request.expiresAt) > Date.now();
 const permissionLabel = (scope: string) => {
   const label: Record<string, string> = { 'mcp:read': 'Read hosted pod context', 'mcp:write': 'Read and change hosted pod context', mcp: 'Full hosted pod tool access', 'federation:manage': 'Manage pod sharing' };
@@ -28,6 +27,7 @@ export function installIdentityUi(api: DesktopApi, context: Context): { refresh(
   const button = (id: string) => el<HTMLButtonElement>(id);
   const dialog = el<HTMLDialogElement>('identity-backup-dialog');
   let state: LocalIdentityStatus | undefined;
+  const signature = (request: LocalIdentityApproval) => JSON.stringify([request, state?.identity?.did, fingerprint(state)]);
   let readFailure = false;
   let changing = false; let epoch = 0; let reading = 0; let extensionsLoaded = false; let extensionsDirty = false;
   let backupMode: 'backup' | 'restore' = 'backup'; let forgetFingerprint: string | undefined;
@@ -48,6 +48,7 @@ export function installIdentityUi(api: DesktopApi, context: Context): { refresh(
   function controls(): void {
     const blocked = occupied() || !available();
     for (const control of Array.from(el('identity-page').querySelectorAll<HTMLInputElement | HTMLButtonElement | HTMLTextAreaElement>('input,button,textarea'))) control.disabled = blocked;
+    button('open-identity-dashboard').disabled = occupied() || typeof api.openHosted !== 'function';
     button('refresh-identity').disabled = occupied() || !supported;
     button('create-local-identity').disabled = blocked || !state || state.configured || !input('identity-create-consent').checked;
     button('save-identity-extensions').disabled = blocked || !state?.configured || !extensionsLoaded || !input('identity-extension-consent').checked;
@@ -57,7 +58,9 @@ export function installIdentityUi(api: DesktopApi, context: Context): { refresh(
     button('confirm-forget-local-identity').disabled = blocked || !forgetFingerprint || forgetFingerprint !== currentFingerprint() || !input('identity-forget-consent').checked;
     for (const approve of Array.from(el('identity-pending').querySelectorAll<HTMLButtonElement>('button[data-identity-approve]'))) {
       const request = state?.pending.find(item => item.id === approve.dataset['identityApprove']);
-      approve.disabled = blocked || !request || request.state !== 'waiting' || !fresh(request) || !acknowledged.has(signature(request));
+      approve.disabled = blocked || !request || !state?.identity || request.state !== 'waiting' || !fresh(request)
+        || request.purpose === 'link' && (request.credentialDid !== state.identity.did || request.credentialFingerprint !== state.identity.fingerprint)
+        || !acknowledged.has(signature(request));
     }
     for (const control of Array.from(dialog.querySelectorAll<HTMLInputElement | HTMLButtonElement>('input,button'))) control.disabled = occupied();
     button('confirm-identity-backup').disabled = blocked || (backupMode === 'backup' ? !state?.configured && !readFailure : !state || state.configured);
@@ -81,25 +84,42 @@ export function installIdentityUi(api: DesktopApi, context: Context): { refresh(
     for (const acknowledgedSignature of acknowledged) if (!validSignatures.has(acknowledgedSignature)) acknowledged.delete(acknowledgedSignature);
     for (const request of state?.pending ?? []) {
       const card = document.createElement('article'); card.className = 'connection-card'; card.style.overflowWrap = 'anywhere';
-      const heading = document.createElement('h3'); heading.textContent = request.clientName + ' wants to sign in'; card.append(heading);
-      appendDetail(card, 'App identifier', request.clientId); appendDetail(card, 'Identity provider', request.identityOrigin);
-      appendDetail(card, 'Sign-in relay', request.relayOrigin); appendDetail(card, 'Return to site', request.redirectOrigin); appendDetail(card, 'Exact callback', request.redirectUri);
-      appendDetail(card, 'Requested permissions', request.scopes.map(permissionLabel).join(', ')); appendDetail(card, 'Resource', request.resource ?? 'The provider’s default resource');
+      const linking = request.purpose === 'link';
+      const heading = document.createElement('h3'); heading.textContent = linking ? 'Add this PC key to your existing account' : request.clientName + ' wants to sign in'; card.append(heading);
+      appendDetail(card, 'Identity provider', request.identityOrigin);
+      if (request.purpose === 'link') {
+        const explanation = document.createElement('p'); explanation.textContent = 'Add a sign-in method to the account below. Your account, Hallowmarch character, progress and hosted data stay with that account.'; card.append(explanation);
+        appendDetail(card, 'Existing account name', request.owner.displayName); appendDetail(card, 'Account ID', request.owner.userId);
+        appendDetail(card, 'Account DID', request.owner.did); appendDetail(card, 'Web identity', request.owner.webId); appendDetail(card, 'Hosted pod', request.owner.podUrl);
+        appendDetail(card, 'PC key identity', request.credentialDid); appendDetail(card, 'PC key fingerprint', request.credentialFingerprint);
+        if (request.credentialDid !== state?.identity?.did || request.credentialFingerprint !== state?.identity?.fingerprint) {
+          const warning = document.createElement('p'); warning.className = 'bridge-disclosure'; warning.textContent = 'This request no longer matches the key on this PC. Decline it and start again from your existing account.'; card.append(warning);
+        }
+      } else {
+        appendDetail(card, 'App identifier', request.clientId); appendDetail(card, 'Sign-in relay', request.relayOrigin);
+        appendDetail(card, 'Return to site', request.redirectOrigin); appendDetail(card, 'Exact callback', request.redirectUri);
+        appendDetail(card, 'Requested permissions', request.scopes.map(permissionLabel).join(', ')); appendDetail(card, 'Resource', request.resource ?? 'The provider’s default resource');
+        appendDetail(card, 'Your PC key fingerprint', state?.identity?.fingerprint ?? 'Unavailable');
+      }
       appendDetail(card, 'Expires', Number.isFinite(Date.parse(request.expiresAt)) ? new Date(request.expiresAt).toLocaleString() : 'Unavailable');
       const code = document.createElement('p'); code.className = 'bridge-url'; code.textContent = request.verificationCode; card.append(code);
-      if (request.state === 'completing') { const finishing = document.createElement('p'); finishing.textContent = 'Finishing sign-in…'; card.append(finishing); }
+      if (request.state === 'completing') { const finishing = document.createElement('p'); finishing.textContent = linking ? 'Adding this PC key…' : 'Finishing sign-in…'; card.append(finishing); }
       else {
         const check = document.createElement('input'); check.type = 'checkbox'; check.id = 'identity-verify-' + request.id; check.checked = acknowledged.has(signature(request));
-        const label = document.createElement('label'); label.className = 'scope-choice'; label.append(check, document.createTextNode('I started this sign-in, checked the app and permissions, and the code matches my browser.')); card.append(label);
-        const approve = document.createElement('button'); approve.className = 'primary'; approve.textContent = 'Approve sign-in'; approve.dataset['identityApprove'] = request.id;
+        const label = document.createElement('label'); label.className = 'scope-choice'; label.append(check, document.createTextNode(linking
+          ? 'I checked this existing account, this PC key and the matching browser code. I understand this adds a sign-in method; it does not move my character, progress or data.'
+          : 'I started this sign-in, checked the app and permissions, and the code matches my browser.')); card.append(label);
+        const approve = document.createElement('button'); approve.className = 'primary'; approve.textContent = linking ? 'Add PC key' : 'Approve sign-in'; approve.dataset['identityApprove'] = request.id;
         check.addEventListener('change', () => { if (check.checked) acknowledged.add(signature(request)); else acknowledged.delete(signature(request)); controls(); });
         approve.addEventListener('click', () => {
           const current = state?.pending.find(item => item.id === request.id);
-          if (!current || signature(current) !== signature(request) || !acknowledged.has(signature(current)) || current.state !== 'waiting' || !fresh(current)) return;
-          acknowledged.delete(signature(current)); void change(async () => { state = await identityApi.approveLocalIdentity(current.id, current.verificationCode); }, 'Sign-in approved. Return to your browser.');
+          if (!current || !state?.identity || signature(current) !== signature(request) || !acknowledged.has(signature(current)) || current.state !== 'waiting' || !fresh(current)
+            || current.purpose === 'link' && (current.credentialDid !== state.identity.did || current.credentialFingerprint !== state.identity.fingerprint)) return;
+          acknowledged.delete(signature(current)); void change(async () => { state = await identityApi.approveLocalIdentity(current.id, current.verificationCode); }, linking
+            ? 'Your PC key was added to your existing account. Return to your browser.' : 'Sign-in approved. Return to your browser.');
         });
         const deny = document.createElement('button'); deny.className = 'secondary'; deny.textContent = 'Decline';
-        deny.addEventListener('click', () => { void change(async () => { state = await identityApi.denyLocalIdentity(request.id); }, 'Sign-in declined.'); });
+        deny.addEventListener('click', () => { void change(async () => { state = await identityApi.denyLocalIdentity(request.id); }, linking ? 'Adding this PC key was declined.' : 'Sign-in declined.'); });
         card.append(approve, deny);
       }
       pending.append(card);
@@ -145,10 +165,14 @@ export function installIdentityUi(api: DesktopApi, context: Context): { refresh(
     controls(); context.openDialog(dialog); input('identity-passphrase').focus();
   }
   button('refresh-identity').addEventListener('click', () => { void refresh(); });
+  button('open-identity-dashboard').addEventListener('click', () => {
+    if (occupied() || typeof api.openHosted !== 'function') return;
+    void api.openHosted().catch(() => message('Your hosted account settings could not be opened. Try again.', true));
+  });
   input('identity-create-consent').addEventListener('change', controls);
   button('create-local-identity').addEventListener('click', () => {
     if (!input('identity-create-consent').checked || state?.configured || !state) return;
-    void change(async () => { state = await identityApi.setupLocalIdentity(); input('identity-create-consent').checked = false; }, 'Your sign-in key is ready. Back it up before relying on it to access an account.');
+    void change(async () => { state = await identityApi.setupLocalIdentity(); input('identity-create-consent').checked = false; }, 'Your PC key is ready. Add it to your existing account from its account settings, and keep an encrypted identity backup.');
   });
   el('identity-extension-ids').addEventListener('input', () => { extensionsDirty = true; input('identity-extension-consent').checked = false; controls(); });
   input('identity-extension-consent').addEventListener('change', controls);

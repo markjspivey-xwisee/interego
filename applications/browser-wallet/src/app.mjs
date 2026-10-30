@@ -1,13 +1,15 @@
 /* global chrome */
 import { normalizeRelay } from './relay.mjs';
 import { relayOrigin } from './native-identity.mjs';
+import { identityProviderOrigin } from './native-linking.mjs';
 
 const $ = id => document.getElementById(id);
 let state;
 let reviewId;
 let busy = false;
 async function request(type, payload = {}) {
-  const response = await chrome.runtime.sendMessage({ type, expectedAccountId: state?.activeId, ...payload });
+  const account = type.startsWith('NATIVE_') ? {} : { expectedAccountId: state?.activeId };
+  const response = await chrome.runtime.sendMessage({ type, ...account, ...payload });
   if (!response?.ok) throw new Error(response?.error ?? 'The wallet did not answer.');
   return response.value;
 }
@@ -143,6 +145,9 @@ $('disconnect').addEventListener('click', () => run(async () => {
 function renderNativeIdentity(value) {
   $('native-identity-status').textContent = value.relays.length ? 'Installed-app sign-in enabled for ' + value.relays.join(', ') + '. Reload an open sign-in page to use it.' : 'Installed-app sign-in is off.';
   $('native-identity-forget').disabled = !value.relays.length;
+  const providers = value.providers ?? [];
+  $('native-linking-status').textContent = providers.length ? 'Account linking enabled for ' + providers.join(', ') + '. Authenticate freshly on that provider’s dashboard to prepare a link request.' : 'Account linking is off.';
+  $('native-linking-forget').disabled = !providers.length;
 }
 $('native-identity-form').addEventListener('submit', event => {
   event.preventDefault();
@@ -153,6 +158,25 @@ $('native-identity-form').addEventListener('submit', event => {
   void run(async () => { if (!await permission) throw new Error('Relay access was not granted.'); renderNativeIdentity(await request('NATIVE_CONFIGURE', { relays: [origin] })); status('Local sign-in enabled. Approve website requests in the Interego app.'); });
 });
 $('native-identity-forget').addEventListener('click', () => run(async () => { renderNativeIdentity(await request('NATIVE_CONFIGURE', { relays: [] })); status('Installed-app sign-in turned off.'); }));
+$('native-linking-form').addEventListener('submit', event => {
+  event.preventDefault(); if (busy) return;
+  let providers;
+  try {
+    if (!$('native-linking-consent').checked) throw new Error('Confirm that these dashboards may request account linking.');
+    const values = $('native-linking-providers').value.trim().split(/\s+/).filter(Boolean);
+    if (!values.length || values.length > 4) throw new Error('Choose up to four identity provider origins, one per line.');
+    providers = [...new Set(values.map(identityProviderOrigin))];
+  } catch (error) { status(error.message, true); return; }
+  // Explicit optional-origin access is requested only in this linking form's gesture.
+  const permission = chrome.permissions.request({ origins: providers.map(origin => origin + '/*') });
+  void run(async () => {
+    if (!await permission) throw new Error('Identity provider access was not granted.');
+    renderNativeIdentity(await request('NATIVE_CONFIGURE_LINKING', { providers })); $('native-linking-consent').checked = false;
+    status('Account linking enabled for the selected dashboards. Freshly authenticate there, then approve the exact account in Interego.');
+  });
+});
+$('native-linking-providers').addEventListener('input', () => { $('native-linking-consent').checked = false; });
+$('native-linking-forget').addEventListener('click', () => run(async () => { renderNativeIdentity(await request('NATIVE_CONFIGURE_LINKING', { providers: [] })); status('Dashboard account linking turned off. Existing linked credentials are unchanged.'); }));
 
 await run(async () => {
   renderNativeIdentity(await request('NATIVE_STATE'));

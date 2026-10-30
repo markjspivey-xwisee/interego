@@ -80,6 +80,7 @@ import { requireBearerAuth } from '@modelcontextprotocol/express';
 import { InteregoOAuthProvider, renewIdentityToken } from './oauth-provider.js';
 import { LocalIdentityHandoffs } from './local-identity-handoff.js';
 import { fetchLocalIdentityChallenge, localIdentityContextHandler } from './local-identity-http.js';
+import { localIdentityLinkStepUpPage } from './local-identity-link-step-up.js';
 import { assertLivePlay, bootstrapProvisionalPod, chargeProvisionalExchange, claimProvisionalExchange, createProvisionalToolGuard, parseProvisionalPlay,
   ProvisionalPlayError, validateProvisionalTool, verifyProvisionalExchange,
   type ProvisionalPlay, type ProvisionalPrincipal } from './provisional-play.js';
@@ -14379,6 +14380,16 @@ app.post('/play/provisional/exchange', provisionalExchangeLimiter, async (req, r
     if (error instanceof ProvisionalPlayError) { res.status(error.status).json({ error: error.code }); return; }
     res.status(503).json({ error: 'provisional_exchange_unavailable' });
   }
+});
+app.get('/local-identity/link-step-up', (_req, res) => {
+  try {
+    const provider = new URL(IDENTITY_URL).origin; const nonce = randomBytes(18).toString('base64url');
+    const html = localIdentityLinkStepUpPage(provider, nonce);
+    res.setHeader('Cache-Control', 'no-store'); res.setHeader('Referrer-Policy', 'no-referrer');
+    res.setHeader('X-Content-Type-Options', 'nosniff'); res.setHeader('Cross-Origin-Opener-Policy', 'same-origin');
+    res.setHeader('Content-Security-Policy', `default-src 'none'; script-src 'nonce-${nonce}'; connect-src ${provider}; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'`);
+    res.type('html').send(html);
+  } catch { res.status(404).type('text').send('Account linking is unavailable here. Use your existing hosted sign-in.'); }
 });
 app.post('/oauth/local-identity/context', oauthVerifyLimiter, (req, res, next) => {
   if (!localIdentityHandoffs) { res.status(404).json({ error: 'Installed-app sign-in is not available on this relay.' }); return; }

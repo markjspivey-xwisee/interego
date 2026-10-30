@@ -1,12 +1,12 @@
 # Interego Wallet
 
-A Manifest V3 browser extension for choosing an Interego connection, inspecting pod context, and reviewing a selected passage before saving it as a private memory. This first version targets desktop Chrome and Chromium-based Edge and has no runtime dependencies or build step.
+A Manifest V3 browser extension for choosing an Interego connection, inspecting pod context, and reviewing a selected passage before saving it as a private memory. The extension targets desktop Chrome and Chromium-based Edge and has no runtime dependencies or build step.
 
 ## Why a wallet?
 
 OpenLink YouID provides a useful precedent: a browser interface for selecting hyperlink-based identities backed by verifiable credentials. Virtuoso's WebID implementation connects an identity URI to a public key in its profile graph. Interego benefits from the same visible identity choice, extended to context and consent: **which identity is connected, what context is available, and what exactly is being sent where?**
 
-Hosted connections use the relay's existing identity flow and live tool affordances. Local connections use the installed pod's explicit OAuth approval and scoped MCP notes adapter. The extension does not issue certificates, hold private identity keys, implement WebID-TLS, or provide a general website-facing wallet API. Its optional installed-app sign-in is limited to an explicitly enabled relay OAuth page. A local note connection, configured label or successfully retrieved descriptor does not by itself establish a person's identity. Hosted authenticated agents and relay-reported signature status are displayed with their source; local access is labeled as an approved connection rather than a verified human identity.
+Hosted connections use the relay's existing identity flow and live tool affordances. Local connections use the installed pod's explicit OAuth approval and scoped MCP notes adapter. The extension does not issue certificates, hold private identity keys, implement WebID-TLS, or provide a general website-facing wallet API. Its optional installed-app flows are limited to explicitly enabled relay OAuth pages and identity provider dashboards. A local note connection, configured label or successfully retrieved descriptor does not by itself establish a person's identity. Hosted authenticated agents and relay-reported signature status are displayed with their source; local access is labeled as an approved connection rather than a verified human identity.
 
 ## Install locally
 
@@ -43,9 +43,25 @@ This connection does not enable federation. Pod-to-pod sharing is a separate own
 
 This uses the browser's Native Messaging channel to the installed app. No public tunnel or web bridge is needed for sign-in. Only the opted-in relay's top-level `/authorize` page gets an isolated content script; ordinary websites have no wallet API. The native app fetches fresh server-derived OAuth metadata and the identity provider's host-bound challenge, signs privately after explicit approval, and submits the proof directly to that relay. Private keys, raw signatures, native completion capabilities and identity bearer tokens never return to the page or extension. The browser receives only the OAuth callback and ordinary authorization code. The existing PKCE, state, scope and resource checks still apply. The signature's existing v1 bytes bind the provider host and nonce; the one-use native handoff separately binds the current app and OAuth session.
 
-A **new local sign-in key creates a separate hosted account**. It does not gain access to an existing character or existing owner's progress. Linking a new credential to an existing owner requires a separate owner-authenticated account-link ceremony. This sign-in option does not change identity policy, migrate saves, or store hosted game data in the local pod.
+A **new local sign-in key creates a separate hosted account unless it is explicitly linked before first use**. To retain an existing account, use the dedicated owner-authenticated linking flow below. Sign-in does not merge accounts, migrate saves, or store hosted game data in the local pod.
 
 The [Hallowmarch identity adapter](https://github.com/markjspivey-xwisee/hallowmarch/blob/fix/native-transport-recovery-20261019/server/gaming/player-identity.js) still checks its configured provider, canonical owner and agent DIDs, registry owner and trusted hosted pod bases. Native-held sign-in uses those existing contracts; local game-resource access needs a separately scoped capability adapter. Federation and local note access remain optional and independent.
+
+## Add this computer to an existing account
+
+Account linking is **off by default**, separate from relay sign-in and note access. It adds a sign-in credential to an existing owner; it does not move the owner, pod, character or hosted data.
+
+1. In the Windows app's **Identity** page, create and back up a local sign-in key and allow this extension's ID. Link a new key before using it to create a different hosted account.
+2. In the wallet, choose **Use my existing account**, enter the exact HTTPS origin of your identity provider (up to four, one per line), acknowledge the separate linking permission, and select **Enable existing-account linking**. Approve optional browser access to those exact origins. Enabling a relay alone does not enable its identity provider.
+3. Open that provider's ordinary **/dashboard**, signed into the account you want to retain. Start its dedicated **link this computer** ceremony and prove ownership again with the requested fresh passkey or wallet step. An existing dashboard login or a notes/MCP access token does not authorize credential enrollment.
+4. After fresh authentication, the dashboard prepares a short-lived request. Choose its installed-app linking button, then open Interego. Check the provider, existing account, local credential and matching code; approve only if those are the account and computer you intended.
+5. The dashboard shows a public completion receipt. Select **Refresh this dashboard** to inspect the updated credential list. Subsequent website sign-in with that local key resolves to the same existing owner and remains subject to the website's normal ownership checks.
+
+A key already bound to a different account cannot be reassigned by this flow. No accounts are silently merged. Keep a recovery backup or another working credential before changing local keys or removing any provider credential. **Turn off dashboard account linking** blocks future extension requests; it does not remove credentials already linked at the provider. Remove those using the provider's authenticated credential settings.
+
+The extension's isolated listener runs only for explicitly enabled provider dashboards and validates the exact top-level `/dashboard` path. It waits for server-prepared markup after fresh authentication, requires an actual user click, and passes only an opaque one-use handoff to the installed app. Dashboard query credentials, account claims, passkey/wallet proofs, identity bearers and private keys are never read from the page or forwarded to the native companion. Main-process proof submission and server enrollment remain outside the extension. The returned public receipt is checked against that provider's canonical owner DID and WebID and the local credential shape; pod URLs are display metadata and are never fetched or used for navigation. Only a deliberate refresh of the same dashboard is offered.
+
+Changing either native-browser policy or removing browser permission cancels active channels. Configuration changes are serialized, denied before persistence, and stay denied in the worker if a save or script-registration step fails. Old injected scripts cannot bypass current settings or origin permission checks. No bridge or federation is required for linking, and hosted account access remains available.
 
 ## Use
 
@@ -61,11 +77,11 @@ Private `remember` saves are encrypted by the relay for the current session agen
 
 OAuth uses authorization code flow with PKCE and state. Access tokens are held only in `chrome.storage.session`; hosted refresh tokens are discarded, and local rotating refresh tokens are held only in that same temporary session area. No tokens are persisted in durable local storage. Closing or restarting the browser ends the authenticated browser session. Non-secret connection metadata and the last 50 save receipts are held locally. Receipts contain metadata rather than the captured passage; local storage should still be considered sensitive because titles and source links can reveal context.
 
-`identity` supports the relay sign-in flow, `storage` holds session and local state, and `activeTab` plus `scripting` support user-invoked selection capture. HTTPS relay access is requested through optional host permissions for the selected origin. The optional installed-app sign-in uses `nativeMessaging` and an isolated content script registered only for the exact trusted relay origins you enable. Disabling it unregisters that script; worker checks also refuse requests from already injected pages. There is no externally connectable website bridge, remote runtime script, analytics, or certificate/key custody in the extension. External strings are rendered as text, and privileged requests are handled in the extension worker.
+`identity` supports the relay sign-in flow, `storage` holds session and local state, and `activeTab` plus `scripting` support user-invoked selection capture. HTTPS relay access is requested through optional host permissions for the selected origin. Optional installed-app sign-in and account linking use `nativeMessaging` with separate opt-ins and isolated scripts for the exact trusted relay or provider origins you enable. Linking providers are stored separately as `nativeIdentityProviders`; no provider is inferred from a relay or note connection. Disabling it unregisters that script; worker checks also refuse requests from already injected pages. There is no externally connectable website bridge, remote runtime script, analytics, or certificate/key custody in the extension. External strings are rendered as text, and privileged requests are handled in the extension worker.
 
 ## Validate
 
-Use Node.js 22 or newer. The deterministic tests and package checks require no dependency installation:
+Use Node.js 22 or newer. The deterministic tests and package checks require no dependency installation. They cover separate linking opt-in, exact dashboard/frame checks, trusted clicks, fresh-ceremony updates, canonical receipt checks, query-token isolation, channel cancellation, one-use page behavior and settings races alongside existing sign-in and notes regressions:
 
 ```sh
 npm --prefix applications/browser-wallet test
