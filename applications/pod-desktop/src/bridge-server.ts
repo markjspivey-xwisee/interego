@@ -1,4 +1,4 @@
-/** Opt-in, temporary remote transport over a dedicated loopback listener. */
+/** Opt-in remote transport over a dedicated loopback listener. */
 import { createHash, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
 import { createServer, type IncomingMessage, type Server as HttpServer, type ServerResponse } from 'node:http';
 import { Server, WebStandardStreamableHTTPServerTransport, createMcpHandler, isLegacyRequest, type McpHttpHandler } from '@modelcontextprotocol/server';
@@ -7,6 +7,7 @@ import { agentArguments } from './agent-client.js';
 import { AGENT_TOOLS, agentToolResult } from './agent-stdio.js';
 import type { AgentConnection, AgentPermission } from './agent-types.js';
 import type { BridgePendingApproval, BridgeStartInput, BridgeStatus } from './bridge-types.js';
+import { BridgeStateStore, type BridgeStateOptions, type BridgeSavedState } from './bridge-state.js';
 
 interface RegisteredClient { id: string; name: string; redirects: readonly string[]; expires: number }
 interface Pending extends BridgePendingApproval {
@@ -16,7 +17,8 @@ interface Pending extends BridgePendingApproval {
 interface Code { clientId: string; redirect: string; challenge: string; connectionId: string; scopes: readonly AgentPermission[]; expires: number }
 interface TokenFamily { id: string; clientId: string; connectionId: string; scopes: readonly AgentPermission[]; expires: number; refreshHash: string }
 interface Access { familyId: string; expires: number }
-export interface BridgeServerOptions { readonly agents: AgentService }
+export interface BridgeStableAddress { readonly origin: string; readonly port: number }
+export interface BridgeServerOptions { readonly agents: AgentService; readonly persistence?: BridgeStateOptions }
 const MAX_BODY = 512 * 1024;
 const MAX_RESPONSE = 2 * 1024 * 1024;
 const APPROVAL_TTL = 5 * 60_000;
@@ -64,6 +66,15 @@ function escapeHtml(value: string): string { return value.replace(/[&<>"']/g, ch
 
 export class BridgeServer {
   private readonly agents: AgentService;
+  private readonly store: BridgeStateStore | undefined;
+  private saved: BridgeSavedState | null = null;
+  private initialized: Promise<void> | undefined;
+  private storeRevision = 0;
+  private authority: Promise<unknown> = Promise.resolve();
+  private activeStable: (BridgeStableAddress & { readonly podBinding: string }) | undefined;
+  private stopping: Promise<void> | undefined;
+  private persistenceFailed = false;
+  private readinessChallenge: string | undefined;
   private server: HttpServer | undefined;
   private loopback: string | undefined;
   private publicOrigin: string | undefined;
@@ -82,13 +93,82 @@ export class BridgeServer {
   private readonly limits = new Map<string, { count: number; reset: number }>();
   private readonly handlers = new Set<McpHttpHandler>();
 
-  constructor(options: BridgeServerOptions) { this.agents = options.agents; }
+  constructor(options: BridgeServerOptions) { this.agents = options.agents; this.store = options.persistence ? new BridgeStateStore(options.persistence) : undefined; }
 
-  async start(input: BridgeStartInput): Promise<string> {
-    if (this.server) throw new Error('Turn off the current web bridge before starting another.');
-    this.configuration = startInput(input);
-    this.lifetime = new AbortController();
+  private serializeAuthority<T>(action: () => Promise<T>): Promise<T> {
+    const result = this.authority.then(action); this.authority = result.catch(() => undefined); return result;
+  }
+
+  private async initializeSaved(): Promise<void> {
+    if (!this.store) return;
+    const revision = this.storeRevision;
+    this.initialized ??= (async () => {
+      const saved = await this.store!.load();
+      if (revision !== this.storeRevision) return;
+      this.saved = saved;
+      if (saved && saved.podBinding !== await this.store!.binding()) await this.discardSaved();
+    })();
+    await this.initialized;
+  }
+
+  private async discardSaved(): Promise<void> {
+    const ids = this.saved?.connections ?? [];
+    await this.store?.save(null); this.saved = null;
+    const results = await Promise.allSettled(ids.map(id => this.agents.revoke(id)));
+    if (results.some(result => result.status === 'rejected')) throw new Error('The saved authorization is removed. Some connection labels could not be updated.');
+  }
+
+  private clearAuthority(): void {
+    this.clients.clear(); this.families.clear(); this.access.clear(); this.consumedRefresh.clear(); this.connections.clear();
+  }
+
+  private restoreAuthority(saved: BridgeSavedState): void {
+    this.clearAuthority();
+    for (const client of saved.clients) this.clients.set(client.id, client);
+    for (const family of saved.families) this.families.set(family.id, family);
+    for (const [key, value] of saved.access) this.access.set(key, value);
+    for (const [key, value] of saved.retired) this.consumedRefresh.set(key, value);
+    for (const id of saved.connections) this.connections.add(id);
+    this.prune();
+  }
+
+  private async persistAuthority(): Promise<void> {
+    const stable = this.activeStable; const configuration = this.configuration;
+    if (!stable || !this.store || !configuration) return;
+    this.prune();
+    const saved: BridgeSavedState = { version: 1, ...stable, configuration, clients: [...this.clients.values()], families: [...this.families.values()],
+      access: [...this.access.entries()], retired: [...this.consumedRefresh.entries()], connections: [...this.connections] };
+    try { await this.store.save(saved); this.saved = saved; }
+    catch { this.persistenceFailed = true; this.lifetime.abort(); throw new Error('Saved web connections could not be updated. Stop web access and try again, or forget the saved address.'); }
+  }
+
+  async start(input: BridgeStartInput, stable?: BridgeStableAddress): Promise<string> {
+    if (this.server || this.stopping) throw new Error('Turn off the current web bridge before starting another.');
     const generation = ++this.generation;
+    const configuration = startInput(input);
+    await this.initializeSaved();
+    if (generation !== this.generation) throw new Error('The web bridge was stopped.');
+    if (!stable && this.saved) throw new Error('Forget the saved web address before using a temporary link.');
+    this.lifetime = new AbortController(); this.persistenceFailed = false;
+    this.readinessChallenge = randomUUID();
+    if (stable) {
+      let url: URL;
+      try { url = new URL(stable.origin); } catch { throw new Error('Choose a valid secure web address.'); }
+      if (!this.store || url.protocol !== 'https:' || url.origin !== stable.origin || url.username || url.password || !url.hostname.includes('.')
+        || url.hostname.startsWith('[') || !Number.isInteger(stable.port) || stable.port < 1024 || stable.port > 65535) throw new Error('Choose a secure web address and its fixed local port.');
+      const podBinding = await this.store.binding();
+      if (!podBinding) throw new Error('Set up your local pod before enabling the saved web address.');
+      if (generation !== this.generation) throw new Error('The web bridge was stopped.');
+      const policy = (value: BridgeStartInput) => JSON.stringify({ ...value, permissions: [...value.permissions].sort() });
+      if (this.saved && (this.saved.origin !== stable.origin || this.saved.port !== stable.port || this.saved.podBinding !== podBinding
+        || policy(this.saved.configuration) !== policy(configuration))) await this.discardSaved();
+      if (generation !== this.generation) throw new Error('The web bridge was stopped.');
+      this.configuration = configuration;
+      this.activeStable = { ...stable, podBinding };
+      if (this.saved) this.restoreAuthority(this.saved); else this.clearAuthority();
+      await this.serializeAuthority(() => this.persistAuthority());
+      if (generation !== this.generation) throw new Error('The web bridge was stopped.');
+    } else this.configuration = configuration;
     const server = createServer((request, response) => { void this.handle(request, response); });
     this.server = server;
     server.maxConnections = 48;
@@ -98,7 +178,7 @@ export class BridgeServer {
     try {
       await new Promise<void>((done, fail) => {
         server.once('error', fail);
-        server.listen(0, '127.0.0.1', () => { server.off('error', fail); done(); });
+        server.listen(stable?.port ?? 0, '127.0.0.1', () => { server.off('error', fail); done(); });
       });
       if (this.server !== server || this.generation !== generation || this.lifetime.signal.aborted) {
         server.closeAllConnections();
@@ -115,8 +195,14 @@ export class BridgeServer {
   setPublicUrl(origin: string): void {
     const url = new URL(origin);
     if (!this.server?.listening || this.publicOrigin || url.protocol !== 'https:' || url.origin !== origin
-      || url.username || url.password || url.hostname.startsWith('[') || !url.hostname.includes('.')) throw new Error('The web bridge did not provide a valid secure link.');
+      || url.username || url.password || url.hostname.startsWith('[') || !url.hostname.includes('.')
+      || (this.activeStable && this.activeStable.origin !== origin)) throw new Error('The web bridge did not provide a valid secure link.');
     this.publicOrigin = origin;
+  }
+
+  readiness(): { readonly path: string; readonly expected: string } {
+    if (!this.server?.listening || !this.readinessChallenge) throw new Error('The web bridge is not listening.');
+    return { path: '/.well-known/interego-bridge', expected: this.readinessChallenge };
   }
 
   private prune(): void {
@@ -124,20 +210,38 @@ export class BridgeServer {
     for (const [key, row] of this.clients) if (row.expires <= now) this.clients.delete(key);
     for (const [key, row] of this.pending) if (Date.parse(row.expiresAt) <= now) this.pending.delete(key);
     for (const [key, row] of this.codes) if (row.expires <= now) this.codes.delete(key);
+    for (const [key, row] of this.families) if (row.expires <= now || !this.clients.has(row.clientId)) this.families.delete(key);
     for (const [key, row] of this.access) if (row.expires <= now || !this.families.has(row.familyId)) this.access.delete(key);
-    for (const [key, row] of this.families) if (row.expires <= now) this.families.delete(key);
     for (const [key, row] of this.consumedRefresh) if (!this.families.has(row.familyId) || row.expires <= now) this.consumedRefresh.delete(key);
   }
 
+  private async pruneConnections(): Promise<boolean> {
+    let changed = false;
+    for (const id of this.connections) {
+      const grant = await this.agents.get(id).catch(() => undefined);
+      if (!grant || !['waiting', 'active'].includes(grant.state)) {
+        this.connections.delete(id); changed = true;
+        for (const [key, family] of this.families) if (family.connectionId === id) this.families.delete(key);
+      }
+    }
+    this.prune(); return changed;
+  }
+
   async status(): Promise<BridgeStatus> {
+    await this.initializeSaved();
     this.prune();
     const connections: AgentConnection[] = [];
-    for (const id of this.connections) { try { connections.push(await this.agents.get(id)); } catch { /* Removed grants have no remaining authority. */ } }
+    const ids = this.server ? this.connections : this.saved?.connections ?? [];
+    for (const id of ids) { try { connections.push(await this.agents.get(id)); } catch { /* Removed grants have no remaining authority. */ } }
+    const configuration = this.configuration ?? this.saved?.configuration;
+    const origin = this.publicOrigin ?? (!this.server ? this.saved?.origin : undefined);
     return {
-      state: !this.server ? 'off' : this.publicOrigin ? 'ready' : 'starting',
-      ...(this.publicOrigin ? { url: `${this.publicOrigin}/mcp` } : {}),
-      ...(this.configuration ? { client: this.configuration.client, name: this.configuration.name, expiresInDays: this.configuration.expiresInDays } : {}),
-      permissions: [...this.configuration?.permissions ?? []], connections,
+      state: this.persistenceFailed ? 'error' : !this.server ? 'off' : this.publicOrigin ? 'ready' : 'starting',
+      ...(this.persistenceFailed ? { message: 'Saved web connections could not be updated. Stop web access and try again, or forget the saved address.' } : {}),
+      ...(this.activeStable || this.saved ? { mode: 'stable' as const, remembered: !!this.saved } : {}),
+      ...(origin ? { url: `${origin}/mcp` } : {}),
+      ...(configuration ? { client: configuration.client, name: configuration.name, expiresInDays: configuration.expiresInDays } : {}),
+      permissions: [...configuration?.permissions ?? []], connections,
       pendingApprovals: [...this.pending.values()].filter(row => !row.result).map(row => ({ id: row.id, clientName: row.clientName,
         redirectOrigin: row.redirectOrigin, permissions: [...row.permissions], createdAt: row.createdAt, expiresAt: row.expiresAt, verificationCode: row.verificationCode })),
     };
@@ -148,11 +252,18 @@ export class BridgeServer {
       this.prune();
       const pending = this.pending.get(id); const configuration = this.configuration; const generation = this.generation;
       if (!pending || pending.result || !configuration || !this.publicOrigin || this.lifetime.signal.aborted) throw new Error('This request has expired. Ask the app to connect again.');
+      if (this.connections.size >= 16) throw new Error('Disconnect an existing web app before allowing another connection.');
       const grant = await this.agents.create({ name: configuration.name, client: 'other', permissions: [...pending.permissions], expiresInDays: configuration.expiresInDays });
       if (this.generation !== generation || this.lifetime.signal.aborted || this.pending.get(id) !== pending || pending.result || Date.parse(pending.expiresAt) <= Date.now()) {
         await this.agents.revoke(grant.id); throw new Error('This request is no longer available.');
       }
       this.connections.add(grant.id);
+      try { await this.serializeAuthority(() => this.persistAuthority()); }
+      catch (error) { this.connections.delete(grant.id); await this.agents.revoke(grant.id); throw error; }
+      if (this.generation !== generation || this.lifetime.signal.aborted || this.pending.get(id) !== pending || pending.result) {
+        this.connections.delete(grant.id); await this.agents.revoke(grant.id); await this.serializeAuthority(() => this.persistAuthority());
+        throw new Error('This request is no longer available.');
+      }
       const code = opaque();
       this.codes.set(hash(code), { clientId: pending.clientId, redirect: pending.redirect, challenge: pending.challenge,
         connectionId: grant.id, scopes: [...pending.permissions], expires: Date.now() + 60_000 });
@@ -167,21 +278,46 @@ export class BridgeServer {
     if (pending && !pending.result) pending.result = { denied: true };
   }
 
-  /** The abort and token removal happen synchronously, before grant persistence. */
-  async stop(): Promise<void> {
+  /** A stable bridge pauses transport; forgetting it separately revokes authority. */
+  stop(): Promise<void> {
+    if (this.stopping) return this.stopping;
+    const task = this.stopInternal(); this.stopping = task;
+    void task.finally(() => { if (this.stopping === task) this.stopping = undefined; }).catch(() => {});
+    return task;
+  }
+
+  private async stopInternal(): Promise<void> {
     this.generation++;
     this.lifetime.abort();
-    this.publicOrigin = undefined; this.configuration = undefined;
-    this.pending.clear(); this.codes.clear(); this.families.clear(); this.access.clear(); this.clients.clear(); this.consumedRefresh.clear(); this.limits.clear();
+    const stable = this.activeStable;
+    this.publicOrigin = undefined; this.readinessChallenge = undefined;
+    this.pending.clear(); this.codes.clear(); this.limits.clear();
     const server = this.server; this.server = undefined; this.loopback = undefined;
     server?.closeAllConnections();
     const handlers = [...this.handlers]; this.handlers.clear();
     await Promise.all(handlers.map(handler => handler.close()));
     if (server?.listening) await new Promise<void>(done => server.close(() => done()));
     await this.approving;
-    const ids = [...this.connections]; this.connections.clear();
+    await this.authority;
+    if (stable && this.activeStable === stable) await this.serializeAuthority(() => this.persistAuthority());
+    const ids = stable ? [] : [...this.connections]; this.clearAuthority();
+    this.activeStable = undefined; this.configuration = undefined;
     const results = await Promise.allSettled(ids.map(id => this.agents.revoke(id)));
     if (results.some(result => result.status === 'rejected')) throw new Error('The web bridge is off. Some saved connection labels could not be updated.');
+    this.persistenceFailed = false;
+  }
+
+  async forget(): Promise<void> {
+    await this.stop().catch(() => {});
+    ++this.storeRevision;
+    const ids = new Set([...this.saved?.connections ?? [], ...this.connections]);
+    await this.serializeAuthority(async () => {
+      await this.store?.save(null); this.saved = null; this.clearAuthority();
+      this.configuration = undefined; this.activeStable = undefined; this.persistenceFailed = false;
+      const results = await Promise.allSettled([...ids].map(id => this.agents.revoke(id)));
+      if (results.some(result => result.status === 'rejected')) throw new Error('The saved authorization is removed. Some connection labels could not be updated.');
+    });
+    this.initialized = Promise.resolve();
   }
 
   private rate(key: string, maximum: number): void {
@@ -228,11 +364,14 @@ export class BridgeServer {
     this.send(response, 200, html, { 'content-type': 'text/html; charset=utf-8', 'content-security-policy': `default-src 'none'; script-src 'nonce-${nonce}'; style-src 'nonce-${nonce}'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'` });
   }
 
-  private issue(family: TokenFamily): Record<string, unknown> {
+  private async issue(family: TokenFamily): Promise<Record<string, unknown>> {
     const access = opaque(); const refresh = opaque(); const now = Date.now();
     const expires = Math.min(now + ACCESS_TTL, family.expires);
     const current = { ...family, refreshHash: hash(refresh) };
+    const previous = this.families.get(family.id);
     this.families.set(family.id, current); this.access.set(hash(access), { familyId: family.id, expires });
+    try { await this.persistAuthority(); }
+    catch (error) { this.access.delete(hash(access)); if (previous) this.families.set(family.id, previous); else this.families.delete(family.id); throw error; }
     return { access_token: access, token_type: 'Bearer', expires_in: Math.max(0, Math.floor((expires - now) / 1000)),
       refresh_token: refresh, scope: family.scopes.join(' ') };
   }
@@ -253,7 +392,7 @@ export class BridgeServer {
 
   private createMcpServer(family: TokenFamily, signal: AbortSignal): Server {
     const server = new Server({ name: 'interego-local-pod-bridge', version: '0.1.0' }, { capabilities: { tools: {} },
-      instructions: 'This is a temporary web bridge to the user’s local Interego pod. Keep the Interego app and computer running. Use only granted tools. Results read through this bridge pass through the tunnel provider and your AI provider. Saving appends notes; it never edits or deletes. Federation remains off.' });
+      instructions: `This is ${this.activeStable ? 'a saved web connection' : 'a temporary web bridge'} to the user’s local Interego pod. Keep the Interego app and computer running. Use only granted tools. Results read through this bridge pass through the tunnel provider and your AI provider. Saving appends notes; it never edits or deletes. Federation remains off.` });
     server.setRequestHandler('tools/list', async () => {
       await this.agents.executeGranted(family.connectionId, 'status', {}, signal);
       return { tools: AGENT_TOOLS.filter(entry => !entry.permission || family.scopes.includes(entry.permission)).map(entry => {
@@ -343,6 +482,9 @@ export class BridgeServer {
       if ([...url.searchParams.keys()].some(key => url.searchParams.getAll(key).length !== 1)) throw new HttpFailure(400, 'invalid_request');
       this.rate('all', 600);
       const resource = `${this.publicOrigin}/mcp`;
+      if (request.method === 'GET' && path === '/.well-known/interego-bridge' && !url.search) {
+        this.send(response, 200, { challenge: this.readinessChallenge }); return;
+      }
       if (request.method === 'GET' && (path === '/.well-known/oauth-protected-resource' || path === '/.well-known/oauth-protected-resource/mcp')) {
         this.send(response, 200, { resource, authorization_servers: [this.publicOrigin], bearer_methods_supported: ['header'], scopes_supported: this.configuration!.permissions }); return;
       }
@@ -364,7 +506,14 @@ export class BridgeServer {
           || (body['response_types'] !== undefined && (!Array.isArray(body['response_types']) || body['response_types'].join(',') !== 'code'))) throw new HttpFailure(400, 'invalid_client_metadata');
         const redirects = body['redirect_uris'].map(redirectUri);
         const name = body['client_name'] === undefined ? 'Web app' : plain(body['client_name'], 80);
-        const id = opaque(); this.clients.set(id, { id, name, redirects, expires: Date.now() + CLIENT_TTL });
+        const id = opaque();
+        await this.serializeAuthority(async () => {
+          assertCurrent();
+          if (this.clients.size >= 64) throw new HttpFailure(429, 'temporarily_unavailable');
+          this.clients.set(id, { id, name, redirects, expires: Date.now() + CLIENT_TTL });
+          try { await this.persistAuthority(); } catch (error) { this.clients.delete(id); throw error; }
+          assertCurrent();
+        });
         this.send(response, 201, { client_id: id, client_id_issued_at: Math.floor(Date.now() / 1000), client_name: name, redirect_uris: redirects,
           token_endpoint_auth_method: 'none', grant_types: ['authorization_code', 'refresh_token'], response_types: ['code'] }); return;
       }
@@ -377,6 +526,7 @@ export class BridgeServer {
           || q.get('resource') !== resource || state.length > 1024 || /[\u0000-\u001f\u007f]/.test(state)) throw new HttpFailure(400, 'invalid_request');
         const scopes = q.get('scope') === null ? [...this.configuration!.permissions] : q.get('scope')!.split(' ');
         if (!scopes.length || scopes.some(scope => !this.configuration!.permissions.includes(scope as AgentPermission)) || new Set(scopes).size !== scopes.length) throw new HttpFailure(400, 'invalid_scope');
+        await this.serializeAuthority(async () => { assertCurrent(); if (await this.pruneConnections()) await this.persistAuthority(); assertCurrent(); });
         if (this.pending.size >= 8 || this.connections.size >= 16) throw new HttpFailure(429, 'temporarily_unavailable');
         const now = Date.now(); const pending: Pending = { id: randomUUID(), clientName: client.name, clientId: client.id, redirect: q.get('redirect_uri')!,
           redirectOrigin: new URL(q.get('redirect_uri')!).origin, permissions: scopes as AgentPermission[], createdAt: new Date(now).toISOString(),
@@ -404,35 +554,47 @@ export class BridgeServer {
           const codeText = form.get('code') ?? ''; const code = this.codes.get(hash(codeText)); const verifier = form.get('code_verifier') ?? '';
           if (!OPAQUE.test(codeText) || !code || code.expires <= Date.now() || code.clientId !== client.id || code.redirect !== form.get('redirect_uri')
             || !VERIFIER.test(verifier) || !same(hash(verifier), code.challenge)) throw new HttpFailure(400, 'invalid_grant');
-          this.codes.delete(hash(codeText));
-          const grant = await this.agents.get(code.connectionId);
-          assertCurrent();
-          if (!['waiting', 'active'].includes(grant.state)) throw new HttpFailure(400, 'invalid_grant');
-          const family: TokenFamily = { id: randomUUID(), clientId: client.id, connectionId: grant.id, scopes: code.scopes,
-            expires: Date.parse(grant.expiresAt), refreshHash: '' };
-          this.send(response, 200, this.issue(family)); return;
+          const issued = await this.serializeAuthority(async () => {
+            assertCurrent();
+            if (this.codes.get(hash(codeText)) !== code || this.clients.get(client.id) !== client) throw new HttpFailure(400, 'invalid_grant');
+            this.codes.delete(hash(codeText));
+            const grant = await this.agents.get(code.connectionId);
+            assertCurrent();
+            if (!['waiting', 'active'].includes(grant.state)) throw new HttpFailure(400, 'invalid_grant');
+            const family: TokenFamily = { id: randomUUID(), clientId: client.id, connectionId: grant.id, scopes: code.scopes,
+              expires: Date.parse(grant.expiresAt), refreshHash: '' };
+            const tokens = await this.issue(family); assertCurrent(); return tokens;
+          });
+          this.send(response, 200, issued); return;
         }
         if (form.get('grant_type') === 'refresh_token') {
           const refresh = form.get('refresh_token') ?? ''; const digest = hash(refresh);
-          const replayed = this.consumedRefresh.get(digest);
-          if (replayed) { this.families.delete(replayed.familyId); throw new HttpFailure(400, 'invalid_grant'); }
-          const family = [...this.families.values()].find(row => row.refreshHash === digest);
-          if (!OPAQUE.test(refresh) || !family || family.clientId !== client.id || family.expires <= Date.now()
-            || (form.get('scope') !== null && form.get('scope') !== family.scopes.join(' '))) throw new HttpFailure(400, 'invalid_grant');
-          const grant = await this.agents.get(family.connectionId);
-          assertCurrent();
-          if (!['waiting', 'active'].includes(grant.state)) { this.families.delete(family.id); throw new HttpFailure(400, 'invalid_grant'); }
-          if (this.families.get(family.id)?.refreshHash !== digest) { this.families.delete(family.id); throw new HttpFailure(400, 'invalid_grant'); }
-          if (this.consumedRefresh.size >= 512) throw new HttpFailure(429, 'temporarily_unavailable');
-          this.consumedRefresh.set(digest, { familyId: family.id, expires: Date.now() + REFRESH_REPLAY_TTL });
-          this.send(response, 200, this.issue(family)); return;
+          const issued = await this.serializeAuthority(async () => {
+            assertCurrent();
+            const replayed = this.consumedRefresh.get(digest);
+            if (replayed) { this.families.delete(replayed.familyId); await this.persistAuthority(); throw new HttpFailure(400, 'invalid_grant'); }
+            const family = [...this.families.values()].find(row => row.refreshHash === digest);
+            if (!OPAQUE.test(refresh) || !family || family.clientId !== client.id || family.expires <= Date.now()
+              || this.clients.get(client.id) !== client || (form.get('scope') !== null && form.get('scope') !== family.scopes.join(' '))) throw new HttpFailure(400, 'invalid_grant');
+            const grant = await this.agents.get(family.connectionId); assertCurrent();
+            if (!['waiting', 'active'].includes(grant.state)) { this.families.delete(family.id); await this.persistAuthority(); throw new HttpFailure(400, 'invalid_grant'); }
+            if (this.consumedRefresh.size >= 512) throw new HttpFailure(429, 'temporarily_unavailable');
+            this.consumedRefresh.set(digest, { familyId: family.id, expires: Date.now() + REFRESH_REPLAY_TTL });
+            try { const tokens = await this.issue(family); assertCurrent(); return tokens; }
+            catch (error) { this.consumedRefresh.delete(digest); throw error; }
+          });
+          this.send(response, 200, issued); return;
         }
         throw new HttpFailure(400, 'unsupported_grant_type');
       }
       if (request.method === 'POST' && path === '/revoke' && !url.search) {
         this.rate('token', 90); const form = await this.form(request); assertCurrent(); const digest = hash(form.get('token') ?? '');
         const family = [...this.families.values()].find(row => row.refreshHash === digest) ?? this.families.get(this.access.get(digest)?.familyId ?? '');
-        if (family && form.get('client_id') === family.clientId) this.families.delete(family.id);
+        await this.serializeAuthority(async () => {
+          assertCurrent();
+          if (family && form.get('client_id') === family.clientId) { this.families.delete(family.id); await this.persistAuthority(); }
+          assertCurrent();
+        });
         this.send(response, 200, {}); return;
       }
       throw new HttpFailure(404, 'not_found');
