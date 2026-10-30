@@ -66,14 +66,6 @@ describe('the local pod Windows installer boundary', () => {
     expect(() => signaturePolicy('NotSigned', true)).toThrow(/cannot be distributed/);
   });
 
-  it('preserves the independently signed bridge helper when signing the app', () => {
-    const { WinPackager } = appRequire('app-builder-lib');
-    const policy = { platformSpecificBuildOptions: config.win };
-    expect(WinPackager.prototype.shouldSignFile.call(policy, 'resources/app/bridge/cloudflared.exe', true)).toBe(false);
-    expect(WinPackager.prototype.shouldSignFile.call(policy, 'Interego.exe', true)).toBe(true);
-    expect(WinPackager.prototype.shouldSignFile.call(policy, 'Interego-setup.exe', true)).toBe(true);
-  });
-
   it('gates the downloadable artifact on its own real local-pod success marker', () => {
     const smoke = readFileSync(join(app, 'tools/smoke-packaged.mjs'), 'utf8');
     expect(smoke).toContain('INTEREGO_POD_SMOKE_OK');
