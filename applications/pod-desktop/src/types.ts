@@ -1,4 +1,5 @@
 export type PodState = 'unconfigured' | 'stopped' | 'starting' | 'running' | 'stopping' | 'error';
+import type { AgentConnection, AgentConnectionInput, AgentSetup } from './agent-types.js';
 
 export interface PodStatus {
   readonly state: PodState;
@@ -17,6 +18,7 @@ export interface LocalNote {
   readonly body: string;
   readonly createdAt: string;
   readonly updatedAt: string;
+  readonly author?: { readonly connectionId: string; readonly name: string };
 }
 
 export interface NoteInput { readonly title: string; readonly body: string; }
@@ -33,4 +35,9 @@ export interface DesktopApi {
   restore(passphrase: string): Promise<FileActionResult>;
   openDataFolder(): Promise<void>;
   openHosted(): Promise<void>;
+  connections(): Promise<readonly AgentConnection[]>;
+  createConnection(input: AgentConnectionInput): Promise<AgentConnection>;
+  revokeConnection(id: string): Promise<void>;
+  connectionSetup(id: string): Promise<AgentSetup>;
+  copyConnectionSetup(id: string, format: 'configuration' | 'command'): Promise<void>;
 }

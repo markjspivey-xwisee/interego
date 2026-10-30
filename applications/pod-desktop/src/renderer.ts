@@ -1,4 +1,5 @@
 import type { DesktopApi, LocalNote, PodStatus } from './types.js';
+import type { AgentClient, AgentConnection, AgentPermission, AgentSetup } from './agent-types.js';
 
 const element = <T extends HTMLElement = HTMLElement>(id: string): T => {
   const found = document.getElementById(id);
@@ -12,12 +13,15 @@ const noteForm = element<HTMLFormElement>('note-form');
 const backupForm = element<HTMLFormElement>('backup-form');
 const backupDialog = element<HTMLDialogElement>('backup-dialog');
 const noteDialog = element<HTMLDialogElement>('note-dialog');
+const connectionDialog = element<HTMLDialogElement>('connection-dialog');
+const connectionForm = element<HTMLFormElement>('connection-form');
 let status: PodStatus | null = null;
 let notes: readonly LocalNote[] = [];
 let notesLoaded = false;
 let notesError = false;
 let busy: string | null = null;
-type Page = 'memory' | 'backup' | 'settings';
+type Page = 'memory' | 'connections' | 'backup' | 'settings';
+let currentPage: Page = 'memory';
 let backupMode: 'backup' | 'restore' = 'backup';
 let statusRequest = 0;
 let noteRequest = 0;
@@ -25,9 +29,212 @@ let stateEpoch = 0;
 let pollTimer: ReturnType<typeof setTimeout> | undefined;
 let previousFocus: HTMLElement | null = null;
 let pendingFocus: HTMLElement | null = null;
-type NoticeSource = 'action' | 'status' | 'notes' | 'profile';
+type NoticeSource = 'action' | 'status' | 'notes' | 'profile' | 'connections';
 let noticeSource: NoticeSource | null = null;
 let profileErrorSignature: string | null = null;
+let connections: readonly AgentConnection[] = [];
+let connectionsLoaded = false;
+let connectionsError = false;
+let connectionRequest = 0;
+let setupRequest = 0;
+let selectedConnection: AgentConnection | null = null;
+let selectedConnectionId: string | null = null;
+let setup: AgentSetup | null = null;
+let setupLoading = false;
+let notePollInFlight = false;
+let previousClient: AgentClient = 'chatgpt-desktop';
+
+const CLIENT_NAMES: Record<AgentClient, string> = {
+  'chatgpt-desktop': 'ChatGPT desktop', codex: 'Codex', 'claude-code': 'Claude Code',
+  'claude-desktop': 'Claude Desktop', 'grok-build': 'Grok Build', openclaw: 'OpenClaw', other: 'Other local MCP app',
+};
+const CLIENT_HELP: Record<AgentClient, string> = {
+  'chatgpt-desktop': 'Uses local tools through the setup shared with Codex. Keep Interego open while you use it.',
+  codex: 'Connect Codex running on this computer. Keep Interego open while you use it.',
+  'claude-code': 'Connect the local Claude Code app. Keep Interego open while you use it.',
+  'claude-desktop': 'Add the local connection to Claude Desktop, then restart that app if its setup asks you to.',
+  'grok-build': 'For the local Grok Build client. Web Grok and cloud-hosted bots need a different connection route.',
+  openclaw: 'Run the connector on this computer. A cloud-hosted bot cannot reach this local pod directly.',
+  other: 'For an MCP app running on this computer. Follow its instructions for adding local tools.',
+};
+const CONNECTION_LABELS: Record<AgentConnection['state'], string> = {
+  waiting: 'Waiting for first use', active: 'Access allowed', revoked: 'Disconnected', expired: 'Expired', 'pod-changed': 'Different space',
+};
+const usable = (connection: AgentConnection | null): boolean => !!connection && ['waiting', 'active'].includes(connection.state);
+
+function connectionDate(value: string): string {
+  return Number.isFinite(Date.parse(value)) ? new Intl.DateTimeFormat(undefined, {
+    year: 'numeric', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit',
+  }).format(new Date(value)) : 'Unavailable';
+}
+
+function connectionMessage(message: string, error = false): void {
+  element('connection-message').hidden = false;
+  element('connection-message').classList.toggle('error', error);
+  element('connection-message').setAttribute('role', error ? 'alert' : 'status');
+  element('connection-message').textContent = message;
+}
+
+function setupState(): void {
+  element('connection-setup-state').textContent = selectedConnection
+    ? CONNECTION_LABELS[selectedConnection.state] : 'Connection unavailable';
+  element('connection-setup-state').classList.toggle('inactive', !usable(selectedConnection));
+  element('connection-setup-help').textContent = !usable(selectedConnection)
+    ? 'This connection cannot access your notes. Create a new connection if you want to allow access again.'
+    : selectedConnection?.lastUsedAt ? `Last used ${connectionDate(selectedConnection.lastUsedAt)}.`
+      : 'Finish setup in your app. Interego will show when this connection is first used.';
+}
+
+function drawConnections(): void {
+  const list = element('connections-list');
+  list.replaceChildren();
+  element('connections-empty').hidden = connectionsLoaded && !connectionsError && connections.length > 0;
+  if (connectionsError) {
+    element('connections-empty-title').textContent = 'Connections could not be checked';
+    element('connections-empty-description').textContent = 'Refresh to see which apps have access. Existing permissions have not been changed.';
+  } else if (!connectionsLoaded) {
+    element('connections-empty-title').textContent = 'Checking your connections…';
+    element('connections-empty-description').textContent = 'Reading the apps allowed to use your space.';
+  } else if (connections.length === 0) {
+    element('connections-empty-title').textContent = 'Your AI, your choice';
+    element('connections-empty-description').textContent = 'No apps have been added. Choose an app and the access you want to allow.';
+  } else {
+    for (const connection of connections) {
+      const card = document.createElement('article');
+      card.className = 'connection-card card';
+      card.dataset.connectionId = connection.id;
+      const top = document.createElement('div'); top.className = 'connection-top';
+      const identity = document.createElement('div');
+      const name = document.createElement('h3'); name.className = 'connection-name'; name.textContent = connection.name;
+      const client = document.createElement('p'); client.className = 'connection-client'; client.textContent = CLIENT_NAMES[connection.client];
+      identity.append(name, client);
+      const badge = document.createElement('span'); badge.className = `connection-badge${usable(connection) ? '' : ' inactive'}`;
+      badge.textContent = CONNECTION_LABELS[connection.state]; top.append(identity, badge);
+      const permissions = document.createElement('p'); permissions.className = 'connection-permissions';
+      permissions.textContent = connection.permissions.map(value => value === 'notes:read' ? 'Read notes' : 'Save new notes').join(' · ');
+      const meta = document.createElement('p'); meta.className = 'connection-meta';
+      meta.textContent = `Expires ${connectionDate(connection.expiresAt)}${connection.lastUsedAt ? ` · Last used ${connectionDate(connection.lastUsedAt)}` : ''}`;
+      card.append(top, permissions, meta);
+      if (usable(connection)) {
+        const actions = document.createElement('div'); actions.className = 'connection-actions';
+        const configure = document.createElement('button'); configure.className = 'secondary'; configure.textContent = 'Setup details';
+        configure.setAttribute('aria-label', `Setup details for ${connection.name}`);
+        configure.addEventListener('click', () => beginConnection(connection));
+        const revoke = document.createElement('button'); revoke.className = 'danger'; revoke.textContent = 'Disconnect';
+        revoke.setAttribute('aria-label', `Disconnect ${connection.name}`);
+        revoke.addEventListener('click', () => {
+          void action('connection-revoke', async () => {
+            connectionRequest++; // A read started before revocation cannot restore an old active card.
+            try { await api.revokeConnection(connection.id); }
+            catch (error) { await loadConnections(); throw error; }
+            const refreshed = await loadConnections();
+            notice(refreshed ? 'This connection is disconnected. Future access is blocked.'
+              : 'This connection is disconnected. Refresh the list to see its updated status.');
+          }, 'The access change could not be confirmed. Refresh connections before trying again.');
+        });
+        actions.append(configure, revoke); card.append(actions);
+      }
+      list.append(card);
+    }
+  }
+  controls();
+}
+
+async function loadConnections(): Promise<boolean> {
+  if (!status?.configured) return false;
+  const requested = ++connectionRequest;
+  try {
+    const received = await api.connections();
+    if (requested !== connectionRequest || !status?.configured) return false;
+    connections = received; connectionsLoaded = true; connectionsError = false;
+    clearNotice('connections');
+    if (selectedConnectionId) {
+      selectedConnection = received.find(value => value.id === selectedConnectionId) ?? null;
+      if (!usable(selectedConnection)) {
+        setupRequest++; setup = null; setupLoading = false;
+        element('connection-setup-loading').hidden = true;
+        element('connection-setup-configuration').textContent = '';
+        element('connection-setup-command').textContent = '';
+        element('connection-setup-steps').replaceChildren();
+        button('retry-connection-setup').hidden = true;
+      }
+      setupState();
+    }
+    drawConnections();
+    return true;
+  } catch (error) {
+    if (requested !== connectionRequest || !status?.configured) return false;
+    connectionsError = true;
+    drawConnections();
+    notice('Your connections could not be checked. Refresh to try again.', error, true, 'connections');
+    return false;
+  }
+}
+
+async function loadSetup(id: string): Promise<void> {
+  const requested = ++setupRequest;
+  setup = null; setupLoading = true;
+  element('connection-message').hidden = true;
+  button('retry-connection-setup').hidden = true;
+  element('connection-setup-loading').hidden = false;
+  element('connection-setup-configuration').textContent = '';
+  element('connection-setup-command').textContent = '';
+  controls();
+  try {
+    const received = await api.connectionSetup(id);
+    if (requested !== setupRequest || selectedConnectionId !== id || !connectionDialog.open) return;
+    if (received.connectionId !== id) throw new Error('The setup did not match the selected connection.');
+    if (!usable(selectedConnection)) return;
+    setup = received;
+    element('connection-dialog-title').textContent = received.title;
+    element('connection-setup-location').textContent = received.configLocation;
+    const steps = element('connection-setup-steps'); steps.replaceChildren();
+    for (const text of received.steps) { const item = document.createElement('li'); item.textContent = text; steps.append(item); }
+    element('connection-setup-configuration').textContent = received.configuration;
+    element('connection-setup-command').textContent = received.command ?? '';
+    element('connection-setup-command').hidden = !received.command;
+    setupState();
+  } catch {
+    if (requested !== setupRequest || selectedConnectionId !== id || !connectionDialog.open) return;
+    button('retry-connection-setup').hidden = false;
+    connectionMessage('The connection is saved, but its setup could not be loaded. Try again.', true);
+  } finally {
+    if (requested === setupRequest) { setupLoading = false; element('connection-setup-loading').hidden = true; controls(); }
+  }
+}
+
+function clientHelp(previous?: AgentClient): void {
+  const client = element<HTMLSelectElement>('connection-client').value as AgentClient;
+  if (!(client in CLIENT_NAMES)) return;
+  if (!input('connection-name').value || (previous && input('connection-name').value === CLIENT_NAMES[previous])) input('connection-name').value = CLIENT_NAMES[client];
+  element('connection-client-help').textContent = CLIENT_HELP[client];
+}
+
+function beginConnection(existing?: AgentConnection): void {
+  if (busy || !status?.configured || (!existing && status.restorePending) || (existing && !usable(existing))) return;
+  setupRequest++; setup = null; setupLoading = false;
+  selectedConnection = existing ?? null; selectedConnectionId = existing?.id ?? null;
+  element('connection-message').hidden = true;
+  element('connection-setup-steps').replaceChildren();
+  element('connection-setup-location').textContent = '';
+  element('connection-setup-configuration').textContent = '';
+  element('connection-setup-command').textContent = '';
+  element<HTMLDetailsElement>('connection-setup-details').open = false;
+  element('connection-form').hidden = !!existing;
+  element('connection-setup').hidden = !existing;
+  element('connection-dialog-title').textContent = existing ? `Set up ${existing.name}` : 'Connect your AI app';
+  element('connection-dialog-intro').textContent = existing ? 'This connection has only the permissions you allowed.'
+    : 'Choose an app on this computer, then decide what it can do.';
+  if (!existing) {
+    connectionForm.reset(); input('connection-name').value = '';
+    previousClient = element<HTMLSelectElement>('connection-client').value as AgentClient;
+    clientHelp();
+  }
+  controls();
+  openDialog(connectionDialog);
+  if (existing) { setupState(); button('close-connection').focus(); void loadSetup(existing.id); }
+  else element<HTMLSelectElement>('connection-client').focus();
+}
 
 function notice(message: string, detail?: unknown, error = false, source: NoticeSource = 'action'): void {
   noticeSource = source;
@@ -76,6 +283,13 @@ function closeDialog(dialog: HTMLDialogElement): void {
     element('read-note-body').textContent = '';
     element('read-note-date').textContent = '';
   }
+  if (dialog === connectionDialog) {
+    setupRequest++; setup = null; setupLoading = false;
+    selectedConnectionId = null; selectedConnection = null;
+    element('connection-setup-configuration').textContent = '';
+    element('connection-setup-command').textContent = '';
+    element('connection-message').hidden = true;
+  }
   if (previousFocus?.matches(':disabled')) pendingFocus = previousFocus;
   else previousFocus?.focus();
   previousFocus = null;
@@ -117,10 +331,15 @@ function drawNotes(): void {
       date.className = 'note-date';
       date.textContent = dateLabel(note.updatedAt);
       item.append(title, preview, date);
+      if (note.author) {
+        const author = document.createElement('span'); author.className = 'note-author';
+        author.textContent = `Saved by ${note.author.name}`;
+        item.append(author);
+      }
       item.addEventListener('click', () => {
         element('read-note-title').textContent = note.title;
         element('read-note-body').textContent = note.body;
-        element('read-note-date').textContent = `Saved ${dateLabel(note.updatedAt, true)}`;
+        element('read-note-date').textContent = `Saved ${dateLabel(note.updatedAt, true)}${note.author ? ` · Saved by ${note.author.name}` : ''}`;
         openDialog(noteDialog);
         button('close-note').focus();
       });
@@ -133,7 +352,7 @@ function controls(): void {
   const occupied = busy !== null;
   const running = status?.running ?? false;
   const moving = status?.state === 'starting' || status?.state === 'stopping';
-  for (const id of ['setup-local', 'welcome-hosted', 'welcome-restore', 'open-hosted']) button(id).disabled = occupied;
+  for (const id of ['setup-local', 'welcome-hosted', 'welcome-restore', 'open-hosted', 'connections-hosted']) button(id).disabled = occupied;
   button('setup-local').disabled = occupied || !!status?.restorePending;
   button('setup-local').textContent = busy === 'setup' ? 'Setting up your space…' : 'Set up on this computer →';
   element('setup-progress').hidden = busy !== 'setup';
@@ -159,21 +378,48 @@ function controls(): void {
   input('backup-confirmation').disabled = occupied;
   button('confirm-backup').textContent = occupied && (busy === 'backup' || busy === 'restore') ? 'Please wait…'
     : backupMode === 'backup' ? 'Choose where to save' : 'Choose your backup';
+  const mayCreate = !!status?.configured && !status.restorePending;
+  button('add-connection').disabled = occupied || !mayCreate;
+  button('refresh-connections').disabled = occupied || !status?.configured;
+  element('connections-availability').textContent = status?.restorePending
+    ? 'Finish restoring before adding an app. Existing connections can still be disconnected.'
+    : !running ? 'Your connections can be managed while Interego is stopped. Apps can use notes when your local space is running.'
+      : 'Choose which apps can read or save notes. You can disconnect them at any time.';
+  for (const control of Array.from(element('connections-list').querySelectorAll<HTMLButtonElement>('button'))) control.disabled = occupied;
+  for (const id of ['connection-client', 'connection-expiry']) element<HTMLSelectElement>(id).disabled = occupied;
+  for (const id of ['connection-name', 'permission-read', 'permission-create']) input(id).disabled = occupied;
+  button('create-connection').disabled = occupied || !mayCreate || (!input('permission-read').checked && !input('permission-create').checked);
+  button('create-connection').textContent = busy === 'connection-create' ? 'Creating…' : 'Create connection';
+  for (const id of ['cancel-connection', 'close-connection']) button(id).disabled = occupied;
+  button('copy-connection-config').disabled = occupied || setupLoading || !setup || !usable(selectedConnection);
+  button('copy-connection-command').disabled = occupied || setupLoading || !setup?.command || !usable(selectedConnection);
+  button('copy-connection-command').hidden = !setup?.command;
+  button('retry-connection-setup').disabled = occupied || setupLoading || !usable(selectedConnection);
+  element('connection-consent').textContent = input('permission-read').checked
+    ? 'If this app uses an online AI service, notes it reads may be sent to that service. Your pod stays on this computer.'
+    : input('permission-create').checked ? 'This app may save new notes. It will not be allowed to read your existing notes.'
+      : 'Choose at least one permission to continue.';
   document.body.setAttribute('aria-busy', String(occupied));
 }
 
 function applyStatus(next: PodStatus): void {
   const wasRunning = !!status?.running;
+  if (status?.configured !== next.configured) {
+    connectionRequest++; connections = []; connectionsLoaded = false; connectionsError = false;
+    element('connections-list').replaceChildren();
+    element('connections-empty').hidden = false;
+    if (!next.configured && connectionDialog.open) closeDialog(connectionDialog);
+  }
   if (status?.state !== next.state || status?.configured !== next.configured) stateEpoch++;
   status = next;
   element('loading-screen').hidden = true;
   element('welcome').hidden = next.configured;
   element('shell').hidden = !next.configured;
   const descriptions: Record<PodStatus['state'], [string, string]> = {
-    unconfigured: ['Your private space is ready to begin', 'Saved on this computer. Sharing is off.'],
+    unconfigured: ['Your private space is ready to begin', 'Saved on this computer. Federation is off.'],
     stopped: ['Resting on this computer', 'Your saved notes are safe here. Start when you are ready.'],
     starting: ['Getting your space ready…', 'Your local space is starting.'],
-    running: ['Ready on this computer', 'Your saved notes are encrypted. Sharing is off.'],
+    running: ['Ready on this computer', 'Your saved notes are encrypted. Federation is off.'],
     stopping: ['Putting your space to rest…', 'Finishing up safely on this computer.'],
     error: ['Your space needs a moment', 'Interego could not start. Try again when you are ready.'],
   };
@@ -242,7 +488,14 @@ async function refreshStatus(initial: boolean): Promise<void> {
   try {
     if (!api) throw new Error('Open the installed Interego application to use your local space.');
     const next = await api.status();
-    if (requested === statusRequest) { clearNotice('status'); applyStatus(next); }
+    if (requested === statusRequest) {
+      clearNotice('status'); applyStatus(next);
+      if (currentPage === 'connections') await loadConnections();
+      if (currentPage === 'memory' && next.running && notesLoaded && next.noteCount !== notes.length && !notePollInFlight) {
+        notePollInFlight = true;
+        void loadNotes().finally(() => { notePollInFlight = false; });
+      }
+    }
   } catch (error) {
     if (requested !== statusRequest) return;
     if (initial || !status) {
@@ -275,6 +528,11 @@ async function action(name: string, operation: () => Promise<void>, failure: str
     controls();
     if (pendingFocus && !pendingFocus.closest('[hidden]')) pendingFocus.focus();
     else if (backupDialog.open) input('backup-passphrase').focus();
+    else if (connectionDialog.open) {
+      if (setup && usable(selectedConnection)) button('copy-connection-config').focus();
+      else if (selectedConnectionId) button('close-connection').focus();
+      else input('connection-name').focus();
+    }
     else if (['setup', 'restore', 'save'].includes(name) && status?.running && !element('memory-page').hidden) input('note-title').focus();
     pendingFocus = null;
     schedulePoll();
@@ -282,18 +540,22 @@ async function action(name: string, operation: () => Promise<void>, failure: str
 }
 
 function selectPage(next: Page): void {
+  currentPage = next;
   const headings = {
     memory: ['Your memory', 'A little space for what matters.'],
+    connections: ['Your AI, your memory', 'Choose the apps you want to let in.'],
     backup: ['Backup & recovery', 'Keep a safe copy of your saved notes.'],
     settings: ['Your space, your way', 'A few things to make yourself at home.'],
   };
   element('page-title').textContent = headings[next][0]!;
   element('page-description').textContent = headings[next][1]!;
-  for (const name of ['memory', 'backup', 'settings'] as const) {
+  for (const name of ['memory', 'connections', 'backup', 'settings'] as const) {
     element(`${name}-page`).hidden = next !== name;
     if (name === next) button(`nav-${name}`).setAttribute('aria-current', 'page');
     else button(`nav-${name}`).removeAttribute('aria-current');
   }
+  element('settings-ai-disclosure').hidden = next !== 'settings';
+  if (next === 'connections') void loadConnections();
 }
 
 function dialogMessage(message: string, error = true): void {
@@ -334,8 +596,8 @@ button('toggle-running').addEventListener('click', () => {
   }, stop ? 'Interego could not stop safely. Please try again.' : 'Your local space could not start. Please try again.');
 });
 button('retry-notes').addEventListener('click', () => { void loadNotes(); });
-for (const name of ['memory', 'backup', 'settings'] as const) button(`nav-${name}`).addEventListener('click', () => selectPage(name));
-for (const id of ['welcome-hosted', 'open-hosted']) button(id).addEventListener('click', () => {
+for (const name of ['memory', 'connections', 'backup', 'settings'] as const) button(`nav-${name}`).addEventListener('click', () => selectPage(name));
+for (const id of ['welcome-hosted', 'open-hosted', 'connections-hosted']) button(id).addEventListener('click', () => {
   void action('hosted', () => api.openHosted(), 'Hosted Interego could not be opened. Please try again.');
 });
 button('open-folder').addEventListener('click', () => {
@@ -347,6 +609,49 @@ button('cancel-backup').addEventListener('click', () => { if (!busy) closeDialog
 button('close-note').addEventListener('click', () => closeDialog(noteDialog));
 backupDialog.addEventListener('cancel', event => { event.preventDefault(); if (!busy) closeDialog(backupDialog); });
 noteDialog.addEventListener('cancel', event => { event.preventDefault(); closeDialog(noteDialog); });
+connectionDialog.addEventListener('cancel', event => { event.preventDefault(); if (!busy) closeDialog(connectionDialog); });
+for (const id of ['cancel-connection', 'close-connection']) button(id).addEventListener('click', () => { if (!busy) closeDialog(connectionDialog); });
+button('add-connection').addEventListener('click', () => beginConnection());
+button('refresh-connections').addEventListener('click', () => { void loadConnections(); });
+element<HTMLSelectElement>('connection-client').addEventListener('change', () => {
+  clientHelp(previousClient);
+  previousClient = element<HTMLSelectElement>('connection-client').value as AgentClient;
+});
+for (const id of ['permission-read', 'permission-create']) input(id).addEventListener('change', controls);
+button('retry-connection-setup').addEventListener('click', () => { if (selectedConnectionId) void loadSetup(selectedConnectionId); });
+for (const [id, format] of [['copy-connection-config', 'configuration'], ['copy-connection-command', 'command']] as const) {
+  button(id).addEventListener('click', () => {
+    const connectionId = selectedConnectionId;
+    if (!connectionId || !setup || !usable(selectedConnection)) return;
+    void action('connection-copy', async () => {
+      await api.copyConnectionSetup(connectionId, format);
+      if (selectedConnectionId === connectionId && connectionDialog.open) connectionMessage('Setup copied. Paste it into your app to finish connecting.');
+    }, '', () => connectionMessage('Setup could not be copied. Please try again.', true));
+  });
+}
+connectionForm.addEventListener('submit', event => {
+  event.preventDefault();
+  if (busy || selectedConnectionId || !status?.configured || status.restorePending) return;
+  const name = input('connection-name').value.trim();
+  const client = element<HTMLSelectElement>('connection-client').value as AgentClient;
+  const days = Number(element<HTMLSelectElement>('connection-expiry').value);
+  const permissions: AgentPermission[] = [];
+  if (input('permission-read').checked) permissions.push('notes:read');
+  if (input('permission-create').checked) permissions.push('notes:create');
+  if (!name || name.length > 80 || !(client in CLIENT_NAMES) || ![7, 30, 90].includes(days) || !permissions.length) {
+    connectionMessage('Choose an app, a connection name, and at least one permission.', true); return;
+  }
+  void action('connection-create', async () => {
+    connectionRequest++;
+    const created = await api.createConnection({ name, client, permissions, expiresInDays: days as 7 | 30 | 90 });
+    selectedConnection = created; selectedConnectionId = created.id;
+    element('connection-form').hidden = true; element('connection-setup').hidden = false;
+    element('connection-dialog-intro').textContent = 'This connection has only the permissions you allowed.';
+    setupState();
+    await loadConnections();
+    await loadSetup(created.id);
+  }, '', () => connectionMessage('This connection could not be created. Your choices are still here.', true));
+});
 
 noteForm.addEventListener('submit', event => {
   event.preventDefault();

@@ -18,6 +18,13 @@ module.exports = {
   },
   // CSS and ComponentsJS resolve their installed JSON and config graph through the filesystem.
   asar: false,
+  // The same executable is a GUI and an MCP companion. An inherited Node host
+  // environment must never change its entry point or inject runtime options.
+  electronFuses: {
+    runAsNode: false,
+    enableNodeOptionsEnvironmentVariable: false,
+    enableNodeCliInspectArguments: false,
+  },
   files: ['dist/**/*', 'index.html', 'assets/icon.png', 'package.json', 'production-graph.json', 'build-info.json', 'node_modules/**/*'],
   npmRebuild: false,
   nodeGypRebuild: false,

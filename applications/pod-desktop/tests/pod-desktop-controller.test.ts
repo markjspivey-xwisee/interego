@@ -7,6 +7,7 @@ import { basename, dirname, join, resolve } from 'node:path';
 import { Socket } from 'node:net';
 import { generateKeyPair, type EncryptionKeyPair } from '@interego/core';
 import { PodController, type PodKeyVault } from '../src/controller.js';
+import type { AgentPrincipal } from '../src/agent-types.js';
 
 class MemoryVault implements PodKeyVault {
   key: EncryptionKeyPair | null = null;
@@ -133,4 +134,66 @@ describe('the consumer pod controller uses the real local encrypted pod', () => 
     vault.key = original;
     expect((await controller.start()).running).toBe(true);
   }, 180_000);
+
+  it('keeps agent permissions, private authorship and portable recovery on the real encrypted store', async () => {
+    const { controller, directory } = await fixture();
+    await controller.setup();
+    const owner = await controller.saveNote({ title: 'Owner memory', body: 'An owner-written private record.' });
+    const reader: AgentPrincipal = { id: randomUUID(), name: 'Read connection', permissions: ['notes:read'] };
+    const writer: AgentPrincipal = { id: randomUUID(), name: 'A chosen agent label', permissions: ['notes:create'] };
+    await expect(controller.executeAgent('notes.create', { title: 'Refused', body: 'A reader cannot save this.' }, async () => reader))
+      .rejects.toThrow(/permission/);
+    expect((await controller.getStatus()).state).toBe('running');
+    const body = `A private agent record ${'x'.repeat(300)} complete-tail`;
+    const { note } = await controller.executeAgent('notes.create', { title: 'Agent memory', body }, async () => writer) as { note: { id: string } };
+    await expect(controller.executeAgent('notes.read', { id: owner.id }, async () => writer)).rejects.toThrow(/permission/);
+    await expect(controller.executeAgent('notes.create', { title: 'Spoofed', body: 'No', author: { connectionId: reader.id } }, async () => writer))
+      .rejects.toThrow(/unsupported/);
+    const search = await controller.executeAgent('notes.search', { query: 'Agent memory', limit: 1 }, async () => reader) as { notes: { id: string; excerpt: string }[] };
+    expect(search.notes).toHaveLength(1);
+    expect(search.notes[0]!.id).toBe(note.id);
+    expect(search.notes[0]!.excerpt).not.toContain('complete-tail');
+    const opened = await controller.executeAgent('notes.read', { id: note.id }, async () => reader) as { note: unknown };
+    expect(opened.note).toMatchObject({ body, author: { connectionId: writer.id, name: writer.name } });
+    const stored = await fileContents(join(directory, 'store'));
+    expect(stored).not.toContain(body);
+    expect(stored).not.toContain(writer.name);
+    // The descriptor names a local connection, rather than asserting the owner's authorship.
+    expect(stored).toContain(`urn:uuid:${writer.id}`);
+    const backup = await controller.exportBackup(phrase);
+    const restored = await fixture();
+    await restored.controller.restoreBackup(backup, phrase);
+    expect(await restored.controller.listNotes()).toContainEqual(expect.objectContaining({
+      id: note.id, body, author: { connectionId: writer.id, name: writer.name },
+    }));
+    expect((await readdir(restored.directory))).not.toContain('agent-access');
+    await controller.stop();
+    await expect(controller.executeAgent('notes.read', { id: owner.id }, async () => reader)).rejects.toThrow(/Start your pod/);
+    expect((await controller.getStatus()).state).toBe('stopped');
+  }, 300_000);
+
+  it('rechecks queued agent authority before touching storage', async () => {
+    const { controller, vault } = await fixture();
+    const principal: AgentPrincipal = { id: randomUUID(), name: 'Queued connection', permissions: ['notes:read', 'notes:create'] };
+    let release!: () => void;
+    let entered!: () => void;
+    const gate = new Promise<void>(done => { release = done; });
+    const started = new Promise<void>(done => { entered = done; });
+    let revoked = false;
+    let checks = 0;
+    const first = controller.executeAgent('notes.search', {}, async () => { entered(); await gate; return principal; }).catch(() => undefined);
+    await started;
+    const second = controller.executeAgent('notes.create', { title: 'Must not be saved', body: 'The queued grant has been revoked.' }, async () => {
+      checks++; if (revoked) throw new Error('Connection revoked before execution.'); return principal;
+    });
+    // Attach the rejection observer before releasing the queued operation.
+    const denied = expect(second).rejects.toThrow(/revoked before execution/);
+    await Promise.resolve();
+    expect(checks).toBe(0);
+    revoked = true; release();
+    await first; await denied;
+    expect(checks).toBe(1);
+    expect(vault.key).toBeNull();
+    expect((await controller.getStatus()).state).toBe('unconfigured');
+  });
 });

@@ -1,5 +1,13 @@
 # Changelog
 
+## 2026-10-29 — Scoped local agent connections
+
+The Windows application now includes a consumer Connections flow for local ChatGPT desktop, Codex, Claude Code, Claude Desktop, Grok Build, OpenClaw and other stdio MCP clients. Owners choose read and append permissions plus expiry, copy client-specific setup, see authenticated usage, and disconnect access. Setup does not export the pod's key or storage credential; online AI provider processing and separate cloud-only connection requirements are explained in the app and guide.
+
+Each connection uses a Windows-protected credential and an encrypted, session-bound loopback channel to the app. The bundled MCP companion never opens a second pod or reads the content key. The app checks authorization when queued note work executes and before returning results; revocation, expiry, pod binding, replay limits, closed callers and request bounds fail closed. Agent-authored notes retain their local connection attribution inside encrypted content and portable notes backups. Backups exclude agent grants. Shutdown closes agent access before draining owner work.
+
+The L3 application composes the existing encrypted Solid publisher and MCP SDK without changing hosted services, the generic stdio server or federation defaults. Tests cover scoped stdio tooling, encrypted broker boundaries, permission and revocation races, recovery and consumer UI behavior. The Windows smoke launches real companion executable processes and checks their access limits plus persisted encrypted notes.
+
 ## 2026-10-29 — Windows local pod installer and consumer application
 
 Added the separate `@interego/pod-desktop` application, composing the local-node runtime into a per-user Windows installer. First launch offers a local space without a cloud account, encrypted notes, start/stop and automatic reopen, and an explicit hosted dashboard action. Federation stays disabled. Keys remain in the main process and use Windows-protected storage; the renderer is isolated, cannot load network content, and accesses a narrow authenticated IPC surface. Quitting drains admitted work and stops the pod.
