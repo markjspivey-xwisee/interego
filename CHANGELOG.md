@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-10-29 — Saved user-owned bridge addresses and pairings
+
+The Windows preview defaults web setup to a permanent hostname in the user's own Cloudflare account, with an existing HTTPS gateway and temporary link as alternatives. Setup masks the connector token, saves it under Windows protection, displays a fixed local target, and checks that the public route reaches this exact app before enabling access. A dedicated named tunnel uses the pinned helper with a private token file; its provider configuration remains under the user's control.
+
+Stable OAuth registrations, grant references and token hashes persist under protected storage bound to the origin, local port, pod and permission policy. Pausing and quitting close transport while retaining approved pairings. Disconnect and Forget remove authorization; pending approvals and unused codes do not survive restart. Web access still starts off, hosted remains available separately, and federation stays disabled. The deployment guide documents the existing hypermedia boundary and a scoped adapter/cache path without adding a general proxy or changing the protocol.
+
 ## 2026-10-29 — Optional temporary web connections for local Windows pods
 
 The Windows preview adds an explicit temporary web connection for ChatGPT web, Grok Bot and other remote MCP clients. Owners choose read and append permissions, create a temporary URL, compare the browser verification code with a request in Interego, and approve or deny access. A bundled, pinned Cloudflare helper forwards only the dedicated MCP and OAuth listener. The setup explains provider processing, changing URLs, client account requirements, and the need to keep the computer running.

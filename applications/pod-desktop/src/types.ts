@@ -1,6 +1,6 @@
 export type PodState = 'unconfigured' | 'stopped' | 'starting' | 'running' | 'stopping' | 'error';
 import type { AgentConnection, AgentConnectionInput, AgentSetup } from './agent-types.js';
-import type { BridgeClient, BridgeStartInput, BridgeStatus } from './bridge-types.js';
+import type { BridgeClient, BridgeStartInput, BridgeStatus, StableBridgeInput, StableBridgeView } from './bridge-types.js';
 
 export interface PodStatus {
   readonly state: PodState;
@@ -48,4 +48,10 @@ export interface DesktopApi {
   denyBridge(id: string): Promise<BridgeStatus>;
   copyBridgeUrl(): Promise<void>;
   openBridgeClient(client: BridgeClient): Promise<void>;
+  stableBridgeSettings(): Promise<StableBridgeView | null>;
+  saveStableBridge(input: StableBridgeInput): Promise<StableBridgeView>;
+  resumeBridge(): Promise<BridgeStatus>;
+  forgetStableBridge(): Promise<BridgeStatus>;
+  copyStableBridgeTarget(): Promise<void>;
+  openStableBridgeSetup(): Promise<void>;
 }
