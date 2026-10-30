@@ -41,6 +41,10 @@ COPY deploy/identity/first-sign-in.ts ./
 COPY deploy/identity/auth-methods-writer.ts ./
 COPY deploy/identity/route-errors.ts ./
 COPY deploy/identity/siwe-message.ts ./
+COPY deploy/identity/local-identity-link.ts ./
+COPY deploy/identity/local-identity-link-dashboard.ts ./
+COPY deploy/identity/returning-passkey-login.ts ./
+COPY deploy/identity/returning-passkey-dashboard.ts ./
 RUN npx tsc
 
 # ────────────────────────────────────────────────────────────

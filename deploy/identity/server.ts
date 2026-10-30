@@ -90,6 +90,10 @@ import {
 import { clientIp, createLimiter, limitByIp, rateLimit, sendRateLimited } from './rate-limit.js';
 import { forwardAsyncRouteErrors, installProcessSafetyNet, routeErrorHandler } from './route-errors.js';
 import { parseSiweMessage, SIWE_DOMAIN_SUFFIX } from './siwe-message.js';
+import { mountLocalIdentityLink, LocalIdentityLinkError, localLinkPublicKey, type LinkSession, type LinkOwner, type LinkHumanCredential, type LinkAccount, type LinkStepUp } from './local-identity-link.js';
+import { localIdentityLinkDashboard } from './local-identity-link-dashboard.js';
+import { mountReturningPasskeyLogin, returningPasskeyRelay, ReturningPasskeyLoginError, type ReturningPasskeyProof } from './returning-passkey-login.js';
+import { returningPasskeyLoginDashboard } from './returning-passkey-dashboard.js';
 
 // ── Lazy heavy imports ──────────────────────────────────────
 //
@@ -4429,6 +4433,7 @@ async function signInWithPasskey(
   challenge: string,
   rpId: string,
   origin: string,
+  onVerified?: (proof: ReturningPasskeyProof) => void,
 ): Promise<PasskeySignIn> {
   // Taken before any lock: a deletion clears this server's copy of the account it deletes.
   const snapshot = new Map(holders.map(id => [id, authMethodsCache.get(id)?.value] as const));
@@ -4453,6 +4458,8 @@ async function signInWithPasskey(
         if (triedKeys.has(key)) return NoWrite('same-key');
         const verified = await verifyPasskeyAssertion({ credential: cred, response, challenge, rpId, origin });
         if (verified.ok === false) return NoWrite('not-verified', verified.error);
+        onVerified?.({ userId, epoch: live?.sessionEpoch ?? 0,
+          credential: { method: 'passkey', id: cred.id, publicKey: cred.publicKey, rpId, rpOrigin: origin } });
         const stored = Number.isFinite(cred.counter) ? cred.counter : 0;
         if (verified.newCounter <= stored && cred.rpId === rpId && cred.rpOrigin) return NoWrite('verified-unchanged');
         cred.counter = Math.max(stored, verified.newCounter);
@@ -6075,6 +6082,180 @@ async function requireUserFromBearer(
   return user;
 }
 
+// Account linking is deliberately separate from generic bearer enrollment and token renewal.
+// Each link requires a fresh action-bound assertion by an existing passkey/wallet, followed by
+// a separately approved proof by the new native key. Neither step issues a login token.
+const localLinkOrigin = new URL(BASE_URL).origin;
+const localLinkPasskeyOrigins = new Set([localLinkOrigin]);
+try {
+  const relayOrigin = new URL(resolveRelayBase()).origin;
+  if (RP_ALLOWLIST.has(relayOrigin)) localLinkPasskeyOrigins.add(relayOrigin);
+} catch { /* No original-RP relay popup is available on this deployment. */ }
+const linkRefused = (code = 'link_session_ended') => new LocalIdentityLinkError(401, code, 'This account-link approval is no longer valid. Sign in to your existing account and start again.');
+function linkRecordMatches(methods: Readonly<AuthMethods> | null, session: LinkSession): methods is Readonly<AuthMethods> {
+  return !!methods && methods.userId === session.userId && !isTombstone(methods) && !deletedUserIds.has(session.userId)
+    && (methods.sessionEpoch ?? 0) === session.epoch && hasAnyCredential(methods);
+}
+function linkHumanPresent(methods: Readonly<AuthMethods>, credential: LinkHumanCredential): boolean {
+  return credential.method === 'wallet' ? methods.walletAddresses.some(address => address.toLowerCase() === credential.address.toLowerCase())
+    : methods.webAuthnCredentials.some(key => key.id === credential.id && key.publicKey === credential.publicKey
+      && (key.rpId ?? RP_ID) === credential.rpId && (key.rpOrigin ?? RP_ORIGIN) === credential.rpOrigin);
+}
+function linkOwner(userId: string, methods: Readonly<AuthMethods>): LinkOwner {
+  const displayName = String(methods.name || identities.get(userId)?.name || userId).replace(/[\u0000-\u001f\u007f]/g, ' ').trim().slice(0, 160) || userId;
+  return { userId, did: `did:web:${BASE_URL_HOST}:users:${userId}`, webId: `${BASE_URL}/users/${userId}/profile#me`,
+    podUrl: `${process.env['CSS_PUBLIC_URL'] ?? CSS_URL}${userId}/`, displayName };
+}
+async function linkAccount(session: LinkSession): Promise<LinkAccount> {
+  return withIdentityPodMutex(session.userId, async () => {
+    const live = await readLive(session.userId); if (!linkRecordMatches(live.methods, session)) throw linkRefused();
+    const methods = live.methods; installAuthMethods(session.userId, methods);
+    return { owner: linkOwner(session.userId, methods), walletAddresses: [...methods.walletAddresses],
+      passkeys: methods.webAuthnCredentials.map(key => ({ id: key.id, publicKey: key.publicKey, rpId: key.rpId ?? RP_ID,
+        rpOrigin: key.rpOrigin ?? RP_ORIGIN, ...(key.transports ? { transports: key.transports } : {}) })) };
+  });
+}
+const localLinkWriter: WriterDeps<AuthMethods> = {
+  ...authMethodsWriter,
+  writeLive: (userId, doc, condition, context) => {
+    if (condition.kind !== 'match') throw new LocalIdentityLinkError(503, 'link_conditional_write_required', 'This pod did not provide a condition for a safe credential update. No account-link success was issued.');
+    return writeLive(userId, doc, condition, context);
+  },
+};
+async function verifyLinkStepUp(step: LinkStepUp, body: Record<string, unknown>): Promise<LinkHumanCredential> {
+  if (step.method === 'wallet') {
+    if (typeof body.signature !== 'string' || !/^0x[0-9a-fA-F]{130}$/.test(body.signature) || !step.message || !step.address) throw linkRefused('link_proof_required');
+    return withIdentityPodMutex(step.session.userId, async () => {
+      const live = await readLive(step.session.userId); const credential: LinkHumanCredential = { method: 'wallet', address: step.address!.toLowerCase() };
+      if (!linkRecordMatches(live.methods, step.session) || !linkHumanPresent(live.methods, credential) || step.expiresAt <= Date.now()) throw linkRefused();
+      const signer = (await loadEthers()).verifyMessage(step.message!, body.signature as string);
+      if (signer.toLowerCase() !== credential.address) throw linkRefused('link_proof_required');
+      return credential;
+    });
+  }
+  const response = body.response as import('@simplewebauthn/server').AuthenticationResponseJSON | undefined;
+  if (!response || typeof response.id !== 'string' || !step.rpId || !step.rpOrigin) throw linkRefused('link_proof_required');
+  const snapshot = step.passkeys?.find(key => key.id === response.id); if (!snapshot) throw linkRefused('link_proof_required');
+  let approved: LinkHumanCredential | undefined;
+  const result = await updateAuthMethodsWith(localLinkWriter, step.session.userId, 'local-identity-link-step-up', async (draft, live) => {
+    approved = undefined;
+    if (!linkRecordMatches(live, step.session) || step.expiresAt <= Date.now()) return NoWrite('link-session-ended');
+    const key = draft.webAuthnCredentials.find(entry => entry.id === response.id);
+    if (!key || key.publicKey !== snapshot.publicKey || (key.rpId ?? RP_ID) !== step.rpId || (key.rpOrigin ?? RP_ORIGIN) !== step.rpOrigin) return NoWrite('link-credential-gone');
+    const proof = await verifyPasskeyAssertion({ credential: key, response, challenge: step.nonce, rpId: step.rpId!, origin: step.rpOrigin! });
+    if (!proof.ok) return NoWrite('link-proof-invalid');
+    approved = { method: 'passkey', id: key.id, publicKey: key.publicKey, rpId: step.rpId!, rpOrigin: step.rpOrigin! };
+    const previous = Number.isFinite(key.counter) ? key.counter : 0;
+    if (proof.newCounter <= previous && key.rpId === step.rpId && key.rpOrigin === step.rpOrigin) return NoWrite('link-verified');
+    key.counter = Math.max(previous, proof.newCounter); key.rpId = step.rpId; key.rpOrigin ??= step.rpOrigin; return Write;
+  });
+  if (!approved || result.written === false && result.reason !== 'link-verified') throw linkRefused('link_proof_required');
+  return approved;
+}
+async function checkLinkHuman(session: LinkSession, credential: LinkHumanCredential): Promise<void> {
+  await withIdentityPodMutex(session.userId, async () => {
+    const live = await readLive(session.userId);
+    if (!linkRecordMatches(live.methods, session) || !linkHumanPresent(live.methods, credential)) throw linkRefused();
+  });
+}
+async function availableLocalLinkDid(did: string, ownerId: string): Promise<void> {
+  // A complete fresh listing, plus the derived account even when unlisted. Reads remain
+  // read-only; a missing/unreadable account never becomes a claim that no other owner exists.
+  const publicKey = localLinkPublicKey(did); let users: string[];
+  try { users = [...new Set([...(await listPods(podFetch, CSS_URL)), ...[...identities.values()].filter(value => value.type === 'user').map(value => value.id), deriveUserIdFromDid(did)])]; }
+  catch { throw new LocalIdentityLinkError(503, 'link_owners_unavailable', 'The local key account binding could not be confirmed. Review your account credentials before retrying.'); }
+  if (users.length > 4096) throw new LocalIdentityLinkError(503, 'link_owners_unavailable', 'Credential-holder checking is busy. Review your account credentials before retrying.');
+  let next = 0;
+  await Promise.all(Array.from({ length: Math.min(16, users.length) }, async () => {
+    while (next < users.length) {
+      const userId = users[next++]!; if (userId === ownerId) continue;
+      const live = await withIdentityPodMutex(userId, () => readLive(userId)); const methods = live.methods;
+      if (!methods || isTombstone(methods)) continue;
+      if (methods.didKeys.some(key => key.did === did || decodeEd25519PublicKeyMultibase(key.publicKeyMultibase)?.publicKey.equals(publicKey))) {
+        throw new LocalIdentityLinkError(409, 'local_key_has_another_account', 'This local key already belongs to another account. Keep that identity backup and use a fresh local key for this account; accounts and progress cannot be merged here.');
+      }
+    }
+  }));
+}
+mountLocalIdentityLink(app, {
+  identityOrigin: localLinkOrigin, trustedPasskeyOrigins: localLinkPasskeyOrigins, limiter: authEnrollLimiter,
+  pollLimiter: rateLimit('local-identity-link-poll', { windowMs: 60_000, max: 180 }),
+  authenticate: async token => {
+    const verified = await verifyToken(token); const signed = parseAndVerifySignature(token);
+    if (!verified.valid || !verified.record || verified.record.provisionalPlay || signed.valid !== true
+      || !Number.isSafeInteger(signed.payload.epoch) || signed.payload.epoch < 0) throw linkRefused();
+    return { userId: verified.record.userId, epoch: signed.payload.epoch, sessionHash: crypto.createHash('sha256').update(token).digest('base64url') };
+  },
+  account: linkAccount,
+  walletAddress: async value => (await loadEthers()).getAddress(value),
+  verifyStepUp: verifyLinkStepUp,
+  check: checkLinkHuman,
+  available: availableLocalLinkDid,
+  commit: async (session, credential, did, active) => {
+    const turn = await credentialDecisions.decide(didCredential(did), async () => {
+      await availableLocalLinkDid(did, session.userId);
+      try {
+        const result = await updateAuthMethodsWith(localLinkWriter, session.userId, 'local-identity-link', (draft, live) => {
+          if (!active() || !linkRecordMatches(live, session) || !linkHumanPresent(live, credential)) return NoWrite('link-session-ended');
+          if (draft.didKeys.some(key => key.did === did)) return NoWrite('link-already-present');
+          draft.didKeys.push({ did, publicKeyMultibase: encodeEd25519Multibase(localLinkPublicKey(did)), keyType: 'Ed25519VerificationKey2020', createdAt: new Date().toISOString() });
+          return Write;
+        });
+        if (result.written === false && result.reason !== 'link-already-present') throw linkRefused();
+      } catch (error) {
+        // Even a write that appears to have landed receives no success on uncertainty. Preserve
+        // the existing credential-turn settlement protection, so a later sign-in cannot create
+        // a competing derived account while this account's write remains unanswered.
+        await credentialAfterFailedAdd(didCredential(did), session.userId, error, methods => methods.didKeys.some(key => key.did === did));
+        throw error;
+      }
+      await checkLinkHuman(session, credential); await availableLocalLinkDid(did, session.userId);
+    });
+    if (turn.kind !== 'decided') throw new LocalIdentityLinkError(503, 'link_credential_busy', 'Another request for this local key has not settled. Review your account credentials before trying again.');
+  },
+});
+
+// This dedicated nonce never enters /challenges: the original RP cannot exchange its
+// assertion for an owner bearer. Only the initiating provider page can finish login.
+const returningRelay = returningPasskeyRelay(localLinkOrigin,
+  [...localLinkPasskeyOrigins].find(origin => origin !== localLinkOrigin));
+mountReturningPasskeyLogin(app, {
+  identityOrigin: localLinkOrigin, relayOrigin: returningRelay, limiter: authEnrollLimiter,
+  pollLimiter: rateLimit('returning-passkey-login-poll', { windowMs: 60_000, max: 180 }),
+  verify: async (response, challenge, rpOrigin) => {
+    if (!response || typeof response.id !== 'string' || !response.id || response.id.length > 2048) throw new ReturningPasskeyLoginError();
+    if (!credentialIndex.has(response.id)) await awaitInitialIndexWithBudget(50);
+    const derived = deriveUserIdFromCredentialId(response.id);
+    if (!credentialIndex.candidates(response.id).includes(derived) && await ensureAccountLoaded(derived) === 'unreadable') throw new ReturningPasskeyLoginError(503);
+    if (!credentialIndex.has(response.id)) throw new ReturningPasskeyLoginError(accountIndexState.complete ? 401 : 503);
+    const candidates = credentialIndex.candidates(response.id, derived);
+    if (!await loadIndexedHolders(candidates)) throw new ReturningPasskeyLoginError(503);
+    const holders = candidates.filter(id => identities.get(id)?.type === 'user' && !deletedUserIds.has(id));
+    let proof: ReturningPasskeyProof | undefined;
+    const outcome = await signInWithPasskey(holders.slice(0, MAX_HOLDERS), response, challenge, new URL(rpOrigin).hostname, rpOrigin, value => { proof = value; });
+    if (outcome.kind !== 'signed-in' || !proof || proof.userId !== outcome.userId) {
+      throw new ReturningPasskeyLoginError(['unreadable', 'unpersisted', 'undetermined'].includes(outcome.kind) || !accountIndexState.complete ? 503 : 401);
+    }
+    return proof;
+  },
+  issue: async (proof, active) => withIdentityPodMutex(proof.userId, async () => {
+    const live = await readLive(proof.userId);
+    const session = { userId: proof.userId, epoch: proof.epoch, sessionHash: '' };
+    if (!active() || !linkRecordMatches(live.methods, session) || !linkHumanPresent(live.methods, proof.credential)
+      || live.methods.provisionalPlayAnchor) throw new ReturningPasskeyLoginError();
+    installAuthMethods(proof.userId, live.methods);
+    const user = identities.get(proof.userId); if (!user) throw new ReturningPasskeyLoginError();
+    const agent = ensureSurfaceAgent(user, undefined);
+    // Pin the freshly read epoch: never renew this proof across sign-out or use
+    // issueToken's cached-epoch/read-failure fallback for this login handoff.
+    if (!active()) throw new ReturningPasskeyLoginError();
+    const token = await issueToken(proof.userId, agent.id, agent.scope ?? 'ReadWrite', undefined, proof.epoch);
+    if (!active()) throw new ReturningPasskeyLoginError();
+    const owner = linkOwner(proof.userId, live.methods);
+    return { token: token.token, expiresAt: token.expiresAt, userId: owner.userId, did: owner.did, webId: owner.webId, podUrl: owner.podUrl };
+  }),
+});
+
 /**
  * The account a genuine, unexpired token names when this server's copy of its record is a
  * tombstone the process has not acted on: the identity shell is still here and the id is not in
@@ -7031,6 +7212,7 @@ app.get('/dashboard', (_req, res) => {
     }
   }
 
+${returningPasskeyLoginDashboard(localLinkOrigin, returningRelay)}
   function renderAuthRequired(opts) {
     const reason = opts && opts.reason;
     const app = document.getElementById('app');
@@ -7050,13 +7232,14 @@ app.get('/dashboard', (_req, res) => {
     } else {
       html += '<p style="margin-bottom:16px;font-size:0.9rem;color:#9aa0ac">Your session ended. Use the credential you originally enrolled with — no new identity needed.</p>';
     }
-    html += '<button id="signInPasskeyBtn" style="width:100%;padding:13px;border:none;border-radius:9px;font-size:0.97rem;font-weight:600;cursor:pointer;background:#6366f1;color:white;margin-bottom:10px">Sign in with your passkey</button>';
+    html += '<button id="signInPasskeyBtn" style="width:100%;padding:13px;border:none;border-radius:9px;font-size:0.97rem;font-weight:600;cursor:pointer;background:#252540;color:white;margin-bottom:10px">Use a passkey created on this account site</button>';
     html += '<a href="/connect" style="display:block;text-align:center;padding:13px;border-radius:9px;font-size:0.92rem;background:#1a1a2e;color:#e0e0e8;border:1px solid #2a2a3a;text-decoration:none;margin-bottom:10px">Sign in with your wallet / enroll a new credential</a>';
     html += '<p style="margin-top:14px;font-size:0.8rem;color:#7a818d"><a href="/" style="color:#8a8af0">← Back to the overview</a></p>';
     div.innerHTML = html;
     app.appendChild(div);
     var btn = document.getElementById('signInPasskeyBtn');
     if (btn) btn.onclick = signInWithPasskey;
+    installReturningPasskeyLogin(div);
   }
 
   // Auth-class error messages from the identity server — when the
@@ -7072,6 +7255,7 @@ app.get('/dashboard', (_req, res) => {
   }
 
   async function renderDashboard() {
+    cancelReturningPasskeyLogin();
     const app = document.getElementById('app');
     app.innerHTML = '';
 
@@ -7267,6 +7451,7 @@ app.get('/dashboard', (_req, res) => {
     });
   }
 </script>
+${localIdentityLinkDashboard()}
 </body>
 </html>`);
 });

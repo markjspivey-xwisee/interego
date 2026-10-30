@@ -1,5 +1,86 @@
 # Changelog
 
+## 2026-10-30 — Open existing accounts with their usual Interego passkey
+
+The account page can sign returning users in with the Windows Hello or device passkey they already use on the relay's sign-in site. A dedicated popup verifies that existing credential at its original site; a short-lived, single-use exchange returns the session only to the initiating account page. The provider's protected browser cookie binds both sides of the exchange. Fresh credential and session-epoch checks refuse cancelled, expired, revoked or replayed requests. Adding a local PC key still requires its separate fresh verification and native approval. No replacement account, enrollment, game-data migration, federation or public bridge is needed.
+
+## 2026-10-30 — Show the local app's first screen before exercising its backend
+
+Windows preview.8 loads the renderer after every identity dialog has been parsed, fixing a first-start exception that left the installed app at “Opening your space…”. Parser-driven renderer tests now use the shipping HTML's script position. The packaged check requires a usable welcome screen on its first launch and a configured space on its second launch before it exercises the preload, storage, native signing and optional connection lifecycle.
+
+## 2026-10-30 — Complete local-pod release validation
+
+Root-suite CI builds the MCP server after restoring cached package artifacts, so a fresh checkout includes the staged shared deployment configuration. The deployment-config, local-node and pod-federation packages are recorded as Layer 3 base adapters. A runtime-lock fixture uses a naturally terminating child process, the local diagnostic switch is documented in the environment census, and the wallet status test checks the complete expected message. The offline browser smoke uses an explicit dummy OAuth token with its authentication and redaction assertions preserved. Existing ownership, test-execution, security and test-budget gates remain active.
+
+## 2026-10-30 — Link a Windows-held key to an existing account
+
+The hosted dashboard can add a local Windows signing key to the same account using a fresh action-bound proof by an existing passkey or wallet, followed by native approval of the exact owner, pod, key and comparison code. Passkeys registered on the relay verify at that original site through a short-lived popup capability; no account bearer is sent to the popup, extension or native app. Hosted sign-in remains available, while federation and public bridge access stay off by default and are unnecessary for linking.
+
+The identity adapter binds challenges to the original owner session and epoch, consumes proof and completion capabilities once, checks that the existing credential remains registered, and uses conditional writes to add only the new DID credential. It refuses a key already bound to another owner, missing write validators, unconfirmed writes and unreadable holder records. Original credentials, canonical identity and game data are preserved. Polling has its own bounded rate bucket and client backoff so it cannot exhaust the unchanged authentication mutation budget; concurrent result readers cannot both receive a one-use handoff.
+
+Tests cover real server routes and signatures, native approval and recovery regressions, dashboard and extension behavior, a real Chromium original-RP assertion, and the unchanged Hallowmarch adapter retaining the same owner, character, pod and exact progress bytes. The packaged Windows check exercises link approval, denial and one-use receipts across two launches. These checks use disposable accounts and isolated transports; hosted deployment and a live account link remain separate actions.
+
+## 2026-10-30 — Native-held identity sign-in for Windows pods
+
+The Windows preview offers a separate local sign-in key, protected storage, encrypted recovery and approval for every login. An exact-ID Chrome/Edge native companion carries encrypted local requests; the extension never receives the private key or raw proof. Browser policy changes are serialized and block admission on failure. The native UI displays server-derived provider, client, callback, permissions and comparison code before approval.
+
+The hosted relay adds a one-use handoff bound to the existing OAuth client, PKCE, state, callback, resource and fresh DID challenge. Existing hosted login choices remain available. This needs a later hosted deployment; a fresh key creates a separate hosted owner, and existing-account linking and local game saves remain separate work. Federation and public web access remain off by default and are not needed for native signing.
+
+Tests cover the real Windows companion, DPAPI/CNG interoperability, consent, proof and callback replay refusal, cancellation, policy failure ordering, recovery and the unchanged Hallowmarch login adapter with isolated accounts. Cross-machine federation also passed between the laptop and VPS through pinned SSH forwarding; public DNS/TLS and named tunnels were not exercised. A reproduced Electron first-profile timing issue now waits for the protected profile key to appear on disk before issuing companion access.
+
+## 2026-10-30 — Invited local and hosted pod sharing, and local browser wallet access
+
+The Windows app and hosted relay compose a new Layer 3 pod federation adapter. Owners enable it explicitly, exchange short-lived one-use invitations, compare codes, approve a peer, and send selected encrypted representations. Separate sharing keys, signed audience-bound requests and replies, durable replay history, protected state, cancellation and queued permission checks preserve the storage boundary. Canonical graph identities, media types and original representation bytes remain unchanged. Pausing retains approved peers and received snapshots; disconnect blocks new transfers. Local copy removal, sent-history cleanup and confirmed reset remain owner actions. Sharing starts off after restart; live synchronization and reliable offline delivery are not included.
+
+Hosted peer management requires a separate `federation:manage` OAuth consent and derives the account and pod from the authenticated session. State is encrypted in the owner's pod and uses conditional writes; refreshed authority and a conditional send intent prevent transmission using already revoked shared-store authority. The new hosted page and routes require a later deployment. Existing hosted identity, notes and assistant permissions remain available. The owner page keeps its browser fields distinct from vocabulary IRIs so the repository's ontology check remains accurate.
+
+The browser wallet also supports local pods through the saved HTTPS MCP bridge, with exact native-approved extension origins, explicit notes scopes, reviewed captures, session refresh and disconnect. This is local context access, not a website identity signer. Hallowmarch's existing hosted owner and pod checks remain intact; local-held website identity and game storage require a separate adapter. Tests cover real local runtimes, cross-adapter local/hosted sharing, privacy boundaries, lifecycle races, storage conflicts, and browser/native connection behavior.
+
+## 2026-10-29 — Saved user-owned bridge addresses and pairings
+
+The Windows preview defaults web setup to a permanent hostname in the user's own Cloudflare account, with an existing HTTPS gateway and temporary link as alternatives. Setup masks the connector token, saves it under Windows protection, displays a fixed local target, and checks that the public route reaches this exact app before enabling access. A dedicated named tunnel uses the pinned helper with a private token file; its provider configuration remains under the user's control.
+
+Stable OAuth registrations, grant references and token hashes persist under protected storage bound to the origin, local port, pod and permission policy. Pausing and quitting close transport while retaining approved pairings. Disconnect and Forget remove authorization; pending approvals and unused codes do not survive restart. Web access still starts off, hosted remains available separately, and federation stays disabled. The deployment guide documents the existing hypermedia boundary and a scoped adapter/cache path without adding a general proxy or changing the protocol.
+
+## 2026-10-29 — Windows bridge helper artifact verification
+
+Windows packaging tests avoid importing platform-builder internals into a lightweight configuration test. The real packaging path verifies the pinned helper bytes, and delivered artifact checks inspect its original publisher signature. This documents the standalone installer-test maintenance commit without claiming a historical changelog backfill.
+
+## 2026-10-29 — Optional temporary web connections for local Windows pods
+
+The Windows preview adds an explicit temporary web connection for ChatGPT web, Grok Bot and other remote MCP clients. Owners choose read and append permissions, create a temporary URL, compare the browser verification code with a request in Interego, and approve or deny access. A bundled, pinned Cloudflare helper forwards only the dedicated MCP and OAuth listener. The setup explains provider processing, changing URLs, client account requirements, and the need to keep the computer running.
+
+Authorization uses PKCE, resource-bound tokens and existing local grants with queued authorization checks. Turning off the bridge invalidates web access; app launches always start with the bridge disabled. Hosted Interego remains available separately, and federation defaults remain off. This L3 application change does not alter the protocol, generic stdio server or hosted relay.
+
+## 2026-10-29 — Scoped local agent connections
+
+The Windows application now includes a consumer Connections flow for local ChatGPT desktop, Codex, Claude Code, Claude Desktop, Grok Build, OpenClaw and other stdio MCP clients. Owners choose read and append permissions plus expiry, copy client-specific setup, see authenticated usage, and disconnect access. Setup does not export the pod's key or storage credential; online AI provider processing and separate cloud-only connection requirements are explained in the app and guide.
+
+Each connection uses a Windows-protected credential and an encrypted, session-bound loopback channel to the app. The bundled MCP companion never opens a second pod or reads the content key. The app checks authorization when queued note work executes and before returning results; revocation, expiry, pod binding, replay limits, closed callers and request bounds fail closed. Agent-authored notes retain their local connection attribution inside encrypted content and portable notes backups. Backups exclude agent grants. Shutdown closes agent access before draining owner work.
+
+The L3 application composes the existing encrypted Solid publisher and MCP SDK without changing hosted services, the generic stdio server or federation defaults. Tests cover scoped stdio tooling, encrypted broker boundaries, permission and revocation races, recovery and consumer UI behavior. The Windows smoke launches real companion executable processes and checks their access limits plus persisted encrypted notes.
+
+## 2026-10-29 — Windows local pod installer and consumer application
+
+Added the separate `@interego/pod-desktop` application, composing the local-node runtime into a per-user Windows installer. First launch offers a local space without a cloud account, encrypted notes, start/stop and automatic reopen, and an explicit hosted dashboard action. Federation stays disabled. Keys remain in the main process and use Windows-protected storage; the renderer is isolated, cannot load network content, and accesses a narrow authenticated IPC surface. Quitting drains admitted work and stops the pod.
+
+The app includes portable encrypted notes backups and a validated, resumable restore into a new space. Setup records its known endpoint before startup so a failed initial start remains retryable; stale runtime locks are recovered only when the former process is demonstrably gone while the desktop host holds its single-instance lock. Existing data is preserved during uninstall.
+
+Packaging uses a reviewed production dependency graph with physical CSS assets, produces an NSIS executable, checksums and an actual signature report, and never auto-publishes. The no-certificate build is an unsigned preview. A Windows workflow builds the installer and drives an offline lifecycle against the packaged application. Controller and renderer behavior tests cover persistence, encryption, backup failures and recovery, safe UI states, and explicit hosted selection. Agent pairing and local federation remain later milestones.
+
+## 2026-10-29 — Explicit deployment configuration and a durable local runtime
+
+Added `@interego/deployment-config` with validated local and hosted profiles, separate federation settings, instance-scoped cache identifiers, and a machine-readable capability matrix. The stdio MCP entry point consumes a pure compatibility resolver that preserves existing settings, environment precedence, and mode selection.
+
+Added `@interego/local-node`, an opt-in file-backed Community Solid Server runtime behind an authenticated loopback gateway. CSS uses a private Unix socket or Windows named pipe, with an explicit durable data directory, persistent local service credential, exclusive writer lock, and asynchronous shutdown. It bundles its configuration and does not install dependencies at startup. This first slice does not include consumer installation, owner-key recovery, notification transport, or federation transport; enabling local federation is refused. Hosted deployment and existing bridge behavior remain separate.
+
+The offline integration test publishes an encrypted graph through the existing Solid binding, restarts the real runtime, and verifies discovery and decryption while refusing non-loopback TCP connections. Configuration and boundary tests cover legacy settings, optional federation, unauthorized requests, profile scope, and local lifecycle failures. See `docs/LOCAL-DEPLOYMENT.md` for the capability matrix and current limits.
+
+## 2026-10-29 — Browser wallet: identity selection, context inspection, and reviewed private captures
+
+`applications/browser-wallet` adds a dependency-free Manifest V3 extension for Chrome and Chromium-based Edge. It follows the relay's public-client OAuth metadata with PKCE and state, keeps access tokens in browser session storage, discovers its four admitted tool affordances, and displays the current session agent and recent pod descriptors. A toolbar click captures selected text for an editable review; saving requires an explicit write connection and approval of the exact private `remember` payload. Reviews expire and are consumed before dispatch, so duplicate approvals and uncertain writes cannot automatically replay a save. Receipts distinguish accepted writes, readable returned descriptors, refusals, and uncertain outcomes. Private notes use the relay's current encryption path for the session agent; the extension does not take custody of identity keys or claim client-side end-to-end encryption.
+
+Validation covers OAuth binding, live-catalog boundaries, read-only enforcement, changed identities, expired and replayed approvals, uncertain writes, storage isolation, and extension-package checks. Browser testing uses an isolated Chromium profile and offline OAuth/network fixtures; live public catalog and OAuth discovery were checked separately. Live account sign-in and save remain manual checks. A scoped CI workflow runs the dependency-free checks.
 ## 2026-10-29 — Identity: a Play purge deletes the guest's game saves and write budget with the store's native conditional delete
 
 This is the identity half of #728 (`deploy/identity` only). Until now the janitor's purge of a Play owner kept the guest's game saves (`hallowmarch/checkpoints/<64 lowercase hex>.json`) and its write budget (`play-budget.json`). The css-gate writes both only as native commits, the production store (CSS 7.2 with the PGSL accessor) refuses every plain `DELETE` of a native head with `409`, and the purge finished with them listed as retained, so every guest's game data stayed on the pod after its purge. The store now has a native conditional delete (the entry below), and the purge uses it (`provisional-play-cleanup.ts`):
@@ -4252,7 +4333,7 @@ you rely on it. Both are now checked by `node tools/changelog-lint.mjs`, which r
   A branch tip is not a durable anchor. Either point it at the merge-base (a commit already
   on `master`, which always resolves) or move it to the squash commit afterwards.
 
-<!-- documented-through: 919e47344169eaf0a097da0051544c8b28e84a8f -->
+<!-- documented-through: 08ff734230db0569e888c652dd6bb9d71736a3bc -->
 
 ### 2026-09-16 — General LLM telemetry and private HyperMarkdown reports
 
@@ -4625,6 +4706,20 @@ PR #303 (`2ecd0031`) replaces the final fleet-wide check in a single-service rol
 `tools/railway-singleton-settings.ts` adds a plan-by-default command; explicit apply updates declared replica and overlap settings, then verifies readback. It refuses automatic draining changes and does not trigger a deployment. The lint and test-module floors account for the new tools and suite. These entries describe the historical source changes, not independently verified production redeployments.
 
 This backfill covers only PRs #303 and #304 immediately after the already documented PR #302. The continuous marker advances only through PR #304's existing default-branch commit; later gaps remain measured backlog.
+
+## 2026-08-09 — Historical backfill: CSS deployment checks and Discord recovery (#305–#310)
+
+PR #305 (`615543d9`) added log-verified CSS deployment using its `Listening to server at` boot message. The deploy tool checks live singleton settings before mutation, queries deployment-scoped filtered logs, counts matching boot messages, and distinguishes missing proof, crash loops and a deployment that stopped after booting. A read-only current-image tool lets the workflow verify the outgoing image remains pullable before replacement. The CSS integration test captures the boot message and checks a read immediately afterwards.
+
+PR #306 (`17a0e7f7`) corrected the operational claims: an unfiltered CSS log tail can contain the boot line when polling starts early enough, so filtered lookup removes a timing race. Recorded rollout observations did not establish that explicitly setting zero overlap eliminated container overlap; the comments distinguish the observed startup gap from the setting's intended constraint.
+
+PR #307 (`673b24e3`) taught deployment-scope checks to resolve a matrix leg's prebuild artifacts to tracked workspace inputs, transitive workspace dependencies, compiler configuration chains and installation inputs. Recipe resolution applies even to committed generated output and reads repository inputs as of HEAD. Unknown recipes, unexplained artifacts, unsupported ONBUILD instructions and build scripts escaping their workspace remain refusals. Tests cover recipe parsing, malformed inputs, generated artifacts and real repository history.
+
+PR #308 (`f560873d`) kept Discord reconnect timers alive until retry or explicit stop, bounded consecutive attempts, added a HELLO deadline and guarded abandoned socket generations. Fatal gateway failure and an unexpectedly empty event loop exit nonzero. Deployment boot proof moved to the gateway READY event, and command registration compares definitions before publishing again. Child-process tests cover liveness and acknowledgments before unfinished substrate work.
+
+PR #309 (`23533dcb`) added a workflow that builds workspace dependencies and runs the Discord bot's tests and deployment boot-proof checks. PR #310 (`08ff7342`) quoted boot-proof phrases before Railway log queries so `discord:` is not treated as a field selector, added quoting regressions, and included redeploy-tool changes in the workflow triggers.
+
+This backfill covers only the six existing first-parent steps immediately after PR #304. The continuous marker advances through PR #310; later undocumented steps remain measured backlog. The backlog ceiling is unchanged.
 
 ## 2026-08-09 — an entry naming an agent it was not signed by, and a request nobody could read
 

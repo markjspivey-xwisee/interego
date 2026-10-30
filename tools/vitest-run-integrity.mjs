@@ -284,7 +284,8 @@ const REPO_ROOT = fileURLToPath(new URL('..', import.meta.url));
 // tests/vitest-run-integrity.test.ts refuses. The work-redesign and practice-evidence sign-in
 // round added four modules (the relay-delegated verifier and the web UI sign-in, two per
 // vertical); the rest are the rounds since the last pin. None was removed.
-export const MIN_TEST_MODULES = 567;
+// Native identity and Windows diagnostics crossed the measured drift allowance.
+export const MIN_TEST_MODULES = 590;
 
 /**
  * How far below the real module count MIN_TEST_MODULES may sit before that is itself a
