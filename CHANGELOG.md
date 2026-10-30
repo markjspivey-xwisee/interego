@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-10-30 — Complete local-pod release validation
+
+Root-suite CI builds the MCP server after restoring cached package artifacts, so a fresh checkout includes the staged shared deployment configuration. The deployment-config, local-node and pod-federation packages are recorded as Layer 3 base adapters. A runtime-lock fixture uses a naturally terminating child process, the local diagnostic switch is documented in the environment census, and the wallet status test checks the complete expected message. The offline browser smoke uses an explicit dummy OAuth token with its authentication and redaction assertions preserved. Existing ownership, test-execution, security and test-budget gates remain active.
+
 ## 2026-10-30 — Link a Windows-held key to an existing account
 
 The hosted dashboard can add a local Windows signing key to the same account using a fresh action-bound proof by an existing passkey or wallet, followed by native approval of the exact owner, pod, key and comparison code. Passkeys registered on the relay verify at that original site through a short-lived popup capability; no account bearer is sent to the popup, extension or native app. Hosted sign-in remains available, while federation and public bridge access stay off by default and are unnecessary for linking.

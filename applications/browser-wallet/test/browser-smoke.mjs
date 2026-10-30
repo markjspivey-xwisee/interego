@@ -62,7 +62,7 @@ try {
       if (url.pathname === '/token') {
         const body = new URLSearchParams(init.body);
         if (!body.get('code_verifier') || body.get('client_secret')) throw new Error('PKCE missing or shared secret present');
-        return json({ access_token: 'offline-fixture-access-token', token_type: 'Bearer', expires_in: 3600, scope: fixture.scope });
+        return json({ access_token: 'fixture-token', token_type: 'Bearer', expires_in: 3600, scope: fixture.scope });
       }
       const schemas = {
         get_pod_status: { type: 'object', properties: {} },
@@ -74,7 +74,7 @@ try {
       const name = url.pathname.slice('/tool/'.length);
       const args = JSON.parse(init.body || '{}');
       fixture.calls.push({ name, args });
-      if (init.headers.Authorization !== 'Bearer offline-fixture-access-token') throw new Error('Token was absent');
+      if (init.headers.Authorization !== 'Bearer fixture-token') throw new Error('Token was absent');
       if (name === 'get_pod_status') return json({ pod: 'http://css.railway.internal:3456/offline-fixture/', displayName: '<img src=x onerror=alert(1)>Fixture person', webId: 'https://identity.example/profile#me', sessionAgent: { id: fixture.agent, did: 'did:web:identity.example:agents:' + fixture.agent }, descriptors: 1 });
       if (name === 'discover_context') return json({ pod: 'http://css.railway.internal:3456/offline-fixture/', entries: [{ descriptorUrl: 'http://css.railway.internal:3456/offline-fixture/context/existing.ttl', describes: ['urn:graph:fixture:existing'], validFrom: '2026-10-29T12:00:00Z', trustLevel: 'SelfAsserted' }] });
       if (name === 'remember') {
@@ -108,7 +108,7 @@ try {
   assert.match(await page.locator('#contexts').textContent(), /fixture:existing/);
   const state = await send({ type: 'STATE' });
   assert.equal(state.ok, true);
-  assert.equal(JSON.stringify(state).includes('offline-fixture-access-token'), false);
+  assert.equal(JSON.stringify(state).includes('fixture-token'), false);
   checks.push('OAuth PKCE/read-only connect, authenticated identity, bounded context list, text-only external rendering');
   const beforePermissionRemoval = await worker.evaluate(() => {
     globalThis.__walletFixture.hasPermission = false;
@@ -144,7 +144,7 @@ try {
   assert.equal(await page.evaluate(() => globalThis.fixtureXss), undefined);
   assert.equal(await page.locator('#review script').count(), 0);
   const storage = await worker.evaluate(async () => ({ local: await chrome.storage.local.get(null), session: await chrome.storage.session.get(null) }));
-  assert.equal(JSON.stringify(storage.local).includes('offline-fixture-access-token'), false);
+  assert.equal(JSON.stringify(storage.local).includes('fixture-token'), false);
   assert.equal(JSON.stringify(storage.local).includes('Selected text with'), false);
   checks.push('Capture review precedes a single private save; descriptor readback; no token or selected text in durable storage');
 
@@ -187,7 +187,7 @@ try {
   await page.locator('#disconnect').click();
   await page.waitForFunction(() => !document.querySelector('#identity').textContent.includes('browser-fixture'));
   const disconnected = await worker.evaluate(async () => await chrome.storage.session.get(null));
-  assert.equal(JSON.stringify(disconnected).includes('offline-fixture-access-token'), false);
+  assert.equal(JSON.stringify(disconnected).includes('fixture-token'), false);
   await worker.evaluate(() => {
     const hostedFetch = globalThis.fetch;
     globalThis.__walletLocalFixture = { writes: [], refreshes: 0, tokenNumber: 0,

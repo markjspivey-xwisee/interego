@@ -240,6 +240,9 @@ these layers.
 | `packages/pgsl` | L1 | base | The content-addressed lattice. |
 | `packages/pgsl-store` | L3 | base | A durable store for the lattice. |
 | `packages/solid` | L3 binding of L1 | base | Solid/LDP publish, discover and subscribe. |
+| `packages/deployment-config` | L3 | base | Shared explicit configuration for local and hosted runtimes. |
+| `packages/local-node` | L3 | base | Durable local pod storage behind an authenticated loopback gateway. |
+| `packages/pod-federation` | L3 | base | Opt-in invitations and encrypted sharing between local and hosted pods. |
 | `packages/abac` | L2 | base | The `abac:` pattern's runtime. |
 | `packages/registry` | L2 | base | The `registry:` pattern's runtime. |
 | `packages/passport` | L2 | base | The `passport:` pattern's runtime. |

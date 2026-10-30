@@ -104,7 +104,7 @@ describe('the consumer pod controller uses the real local encrypted pod', () => 
     const { controller, directory } = await fixture();
     await controller.setup(); await controller.stop();
     const deadPid = await new Promise<number>((done, fail) => {
-      const child = spawn(process.execPath, ['-e', 'process.exit(0)'], { stdio: 'ignore', windowsHide: true });
+      const child = spawn(process.execPath, ['-e', 'void 0'], { stdio: 'ignore', windowsHide: true });
       child.once('error', fail);
       child.once('exit', () => child.pid ? done(child.pid) : fail(new Error('No child pid.')));
     });
