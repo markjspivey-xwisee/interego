@@ -2,15 +2,17 @@
  * A root npm build can compile workspaces a partial image never copied, or discover
  * their manifests only after npm installed dependencies. Read both boundaries in
  * order; successful workstation builds and prebuilt dist/ cannot satisfy them.
+ * This integration check reads application and library inputs across the hosted
+ * fleet, including workspaces deliberately absent from the base-only checkout.
  */
 import { existsSync, readFileSync, statSync } from 'node:fs';
 import { dirname, join, posix, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import ts from 'typescript';
 import { describe, expect, it } from 'vitest';
-import { copySources, matrixDockerfiles, prebuildRecipe, producedDirs, workspaceDirs } from '../tools/deploy-bundle-scope.js';
+import { copySources, matrixDockerfiles, prebuildRecipe, producedDirs, workspaceDirs } from '../../tools/deploy-bundle-scope.js';
 
-const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
+const ROOT = join(dirname(fileURLToPath(import.meta.url)), '../..');
 interface Manifest {
   workspaces?: string[] | { packages?: string[] };
   scripts?: Record<string, string>;
