@@ -1,0 +1,201 @@
+name: Hosted image build validation
+
+# Build the shipping images on pull requests before a repair can merge. A full
+# workspace build on the runner cannot prove that a Docker stage copied enough
+# of that workspace to execute its own install and build commands.
+#
+# These are cold builds only. No registry login, image publication, deployment,
+# restored dist directories or shared build caches are involved.
+on:
+  pull_request:
+    branches: [master]
+    paths:
+      - 'deploy/Dockerfile.relay'
+      - 'deploy/Dockerfile.dashboard'
+      - 'deploy/Dockerfile.pgsl-browser'
+      - 'deploy/Dockerfile.interego-bridge'
+      - 'deploy/Dockerfile.discord'
+      - 'deploy/images.json'
+      - 'deploy/mcp-relay/**'
+      - 'examples/dashboard/**'
+      - 'examples/pgsl-browser/**'
+      - 'examples/multi-agent/css-config.json'
+      - 'demos/**'
+      - 'applications/shared-workspace/**'
+      - 'package.json'
+      - 'package-lock.json'
+      - '**/package.json'
+      - '**/package-lock.json'
+      - 'tsconfig*.json'
+      - 'packages/**'
+      - 'scripts/**'
+      - 'docs/**'
+      - 'spec/**'
+      - 'README.md'
+      - '.dockerignore'
+      - '.github/workflows/hosted-image-builds.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  cold-build:
+    name: Cold Docker build (${{ matrix.image }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - image: interego-relay
+            dockerfile: deploy/Dockerfile.relay
+            target: reference
+          - image: interego-dashboard
+            dockerfile: deploy/Dockerfile.dashboard
+            target: ''
+          - image: interego-pgsl-browser
+            dockerfile: deploy/Dockerfile.pgsl-browser
+            target: ''
+          - image: interego-bridge
+            dockerfile: deploy/Dockerfile.interego-bridge
+            target: ''
+          - image: interego-discord
+            dockerfile: deploy/Dockerfile.discord
+            target: ''
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Build the actual Dockerfile from the clean checkout
+        env:
+          DOCKER_BUILDKIT: '1'
+          IMAGE: ${{ matrix.image }}
+          DOCKERFILE: ${{ matrix.dockerfile }}
+          TARGET: ${{ matrix.target }}
+          EXPECTED_SHA: ${{ github.sha }}
+          EVIDENCE_DIR: ${{ runner.temp }}/hosted-image-build/${{ matrix.image }}
+        run: |
+          python3 - <<'PY'
+          import collections
+          import datetime
+          import json
+          import os
+          import pathlib
+          import platform
+          import re
+          import shutil
+          import subprocess
+          import sys
+
+          evidence = pathlib.Path(os.environ['EVIDENCE_DIR'])
+          evidence.mkdir(parents=True, exist_ok=True)
+          log_path = evidence / 'build.log'
+          metadata_path = evidence / 'status.json'
+          image_id_path = evidence / 'image-id.txt'
+          log_path.touch()
+          max_log_bytes = 4 * 1024 * 1024
+          chunks = collections.deque()
+          retained_bytes = 0
+          total_bytes = 0
+          metadata = {
+              'status': 'running',
+              'image': os.environ['IMAGE'],
+              'dockerfile': os.environ['DOCKERFILE'],
+              'target': os.environ['TARGET'] or None,
+              'startedAt': datetime.datetime.now(datetime.timezone.utc).isoformat(),
+              'architecture': platform.machine(),
+              'freeDiskBytesBefore': shutil.disk_usage('.').free,
+              'prebuilt': False,
+              'cache': False,
+              'published': False,
+              'deployed': False,
+              'maxLogBytes': max_log_bytes,
+          }
+          metadata_path.write_text(json.dumps(metadata, indent=2) + '\n')
+          success = False
+          try:
+              source_sha = subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True, timeout=15).strip()
+              if source_sha != os.environ['EXPECTED_SHA'] or not re.fullmatch(r'[0-9a-f]{40}', source_sha):
+                  raise RuntimeError('Checkout does not match the pull request commit under test')
+              metadata['sourceCommit'] = source_sha
+              recipes = json.loads(pathlib.Path('deploy/images.json').read_text())['images']
+              shipping = next((recipe for recipe in recipes if recipe['image'] == os.environ['IMAGE']), None)
+              if not shipping or shipping['dockerfile'] != os.environ['DOCKERFILE'] or (shipping.get('target') or '') != os.environ['TARGET']:
+                  raise RuntimeError('Validation recipe does not match the shipping image manifest')
+              metadata['dockerVersion'] = json.loads(subprocess.check_output(
+                  ['docker', 'version', '--format', '{{json .}}'], text=True, timeout=15))
+              engine_os = subprocess.check_output(['docker', 'info', '--format', '{{.OSType}}'], text=True, timeout=15).strip()
+              if engine_os != 'linux':
+                  raise RuntimeError('The image validation requires a Linux Docker engine')
+              metadata['engineOS'] = engine_os
+              command = [
+                  'docker', 'build', '--no-cache', '--pull', '--progress=plain',
+                  '--build-arg', 'PREBUILT=0', '--build-arg', 'GIT_SHA=' + source_sha,
+                  '--iidfile', str(image_id_path),
+                  '--tag', 'interego-validation/' + os.environ['IMAGE'] + ':' + source_sha,
+                  '--file', os.environ['DOCKERFILE'],
+              ]
+              if os.environ['TARGET']:
+                  command.extend(['--target', os.environ['TARGET']])
+              command.append('.')
+              metadata['command'] = command
+              # Finish before the job deadline so failure evidence can upload.
+              # GNU timeout also terminates a stalled build without hiding its exit.
+              process = subprocess.Popen(
+                  ['timeout', '--signal=TERM', '--kill-after=30s', '25m', *command],
+                  stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+              )
+              while True:
+                  chunk = process.stdout.read1(65536)
+                  if not chunk:
+                      break
+                  sys.stdout.buffer.write(chunk)
+                  sys.stdout.buffer.flush()
+                  chunks.append(chunk)
+                  retained_bytes += len(chunk)
+                  total_bytes += len(chunk)
+                  while retained_bytes > max_log_bytes:
+                      excess = retained_bytes - max_log_bytes
+                      first = chunks.popleft()
+                      if len(first) > excess:
+                          chunks.appendleft(first[excess:])
+                          retained_bytes -= excess
+                      else:
+                          retained_bytes -= len(first)
+              return_code = process.wait()
+              metadata['exitCode'] = return_code
+              metadata['timedOut'] = True if return_code == 124 else None if return_code == 137 else False
+              if return_code != 0:
+                  raise RuntimeError('Docker build failed with exit code ' + str(return_code))
+              image_id = image_id_path.read_text().strip()
+              if not re.fullmatch(r'sha256:[0-9a-f]{64}', image_id):
+                  raise RuntimeError('Docker did not produce a completed image ID')
+              metadata['imageId'] = image_id
+              metadata['status'] = 'passed'
+              success = True
+          except Exception as error:
+              metadata['status'] = 'failed'
+              metadata['error'] = str(error)[:4000]
+              print(metadata['error'], file=sys.stderr)
+          finally:
+              with log_path.open('wb') as log:
+                  for chunk in chunks:
+                      log.write(chunk)
+              metadata['finishedAt'] = datetime.datetime.now(datetime.timezone.utc).isoformat()
+              metadata['freeDiskBytesAfter'] = shutil.disk_usage('.').free
+              metadata['totalLogBytes'] = total_bytes
+              metadata['retainedLogBytes'] = retained_bytes
+              metadata['logTruncated'] = total_bytes > retained_bytes
+              metadata_path.write_text(json.dumps(metadata, indent=2) + '\n')
+          sys.exit(0 if success else 1)
+          PY
+
+      - name: Preserve build status and bounded log
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: cold-build-${{ matrix.image }}-${{ github.sha }}
+          path: ${{ runner.temp }}/hosted-image-build/${{ matrix.image }}/
+          if-no-files-found: error
+          retention-days: 7

@@ -43,15 +43,21 @@ WORKDIR /app
 # nothing).
 COPY package.json package-lock.json tsconfig.base.json tsconfig.json ./
 COPY packages/abac/package.json ./packages/abac/
+COPY packages/agent-interop/package.json ./packages/agent-interop/
 COPY packages/compliance/package.json ./packages/compliance/
 COPY packages/connectors/package.json ./packages/connectors/
 COPY packages/constitutional/package.json ./packages/constitutional/
 COPY packages/core/package.json ./packages/core/
+COPY packages/deployment-config/package.json ./packages/deployment-config/
 COPY packages/extractors/package.json ./packages/extractors/
+COPY packages/local-node/package.json ./packages/local-node/
+COPY packages/mdvault/package.json ./packages/mdvault/
 COPY packages/ops/package.json ./packages/ops/
 COPY packages/p2p/package.json ./packages/p2p/
 COPY packages/passport/package.json ./packages/passport/
 COPY packages/pgsl/package.json ./packages/pgsl/
+COPY packages/pgsl-store/package.json ./packages/pgsl-store/
+COPY packages/pod-federation/package.json ./packages/pod-federation/
 COPY packages/privacy/package.json ./packages/privacy/
 COPY packages/registry/package.json ./packages/registry/
 COPY packages/security-txt/package.json ./packages/security-txt/
@@ -105,7 +111,7 @@ COPY applications/shared-workspace/ ./applications/shared-workspace/
 # and passes PREBUILT=1, and the build below is skipped when they are present. A local build
 # without them still builds. (.dockerignore stopped excluding dist/ for this.)
 ARG PREBUILT=0
-RUN if [ "$PREBUILT" = "1" ] && [ -f packages/registry/dist/index.js ]; then echo "prebuilt packages present; skipping the build"; else npm run build; fi
+RUN if [ "$PREBUILT" = "1" ] && [ -f packages/registry/dist/index.js ]; then echo "prebuilt packages present; skipping the build"; else (npm run build:core && npm run build:leaves); fi
 
 # Make the packages resolvable by name from anywhere under /app. npm ci already
 # creates these; explicit and idempotent, mirroring the other bridge images.

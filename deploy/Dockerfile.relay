@@ -27,8 +27,9 @@ COPY packages/ ./packages/
 # package imports (@interego/abac → @interego/core etc.) work.
 RUN npm install --workspaces --include-workspace-root --no-audit --no-fund
 
-# Build every @interego/* workspace package (core + 13 verticals).
-RUN npm run build
+# Build the library workspaces copied into this stage. The MCP application has
+# its own sources and build; it is not part of this tarball-producing stage.
+RUN npm run build:core && npm run build:leaves
 
 # Pack each workspace package into /tarballs/*.tgz so the relay's
 # install stage can install them directly without depending on the

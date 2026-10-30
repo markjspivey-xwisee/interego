@@ -38,13 +38,16 @@ COPY packages/compliance/package.json ./packages/compliance/
 COPY packages/connectors/package.json ./packages/connectors/
 COPY packages/constitutional/package.json ./packages/constitutional/
 COPY packages/core/package.json ./packages/core/
+COPY packages/deployment-config/package.json ./packages/deployment-config/
 COPY packages/extractors/package.json ./packages/extractors/
+COPY packages/local-node/package.json ./packages/local-node/
 COPY packages/mdvault/package.json ./packages/mdvault/
 COPY packages/ops/package.json ./packages/ops/
 COPY packages/p2p/package.json ./packages/p2p/
 COPY packages/passport/package.json ./packages/passport/
 COPY packages/pgsl/package.json ./packages/pgsl/
 COPY packages/pgsl-store/package.json ./packages/pgsl-store/
+COPY packages/pod-federation/package.json ./packages/pod-federation/
 COPY packages/privacy/package.json ./packages/privacy/
 COPY packages/registry/package.json ./packages/registry/
 COPY packages/security-txt/package.json ./packages/security-txt/
