@@ -33,7 +33,8 @@ test('linking UI requires separate consent before the explicit optional-origin p
   assert.equal(f.messages.filter(v => v.type === 'NATIVE_CONFIGURE_LINKING').length, 0);
   f.permission.resolve(true); await flush();
   const configured = f.messages.find(v => v.type === 'NATIVE_CONFIGURE_LINKING'); assert.deepEqual(JSON.parse(JSON.stringify(configured)), { type: 'NATIVE_CONFIGURE_LINKING', providers: ['https://identity.example'] });
-  assert.equal(f.get('native-linking-consent').checked, false); assert.ok(f.get('native-linking-status').textContent.includes('https://identity.example'));
+  assert.equal(f.get('native-linking-consent').checked, false);
+  assert.equal(f.get('native-linking-status').textContent, 'Account linking enabled for https://identity.example. Authenticate freshly on that provider’s dashboard to prepare a link request.');
 });
 test('denied host permission and pasted dashboard query credentials never configure linking', async () => {
   const denied = await fixture(); denied.get('native-linking-providers').value = 'https://identity.example'; denied.get('native-linking-consent').checked = true;
