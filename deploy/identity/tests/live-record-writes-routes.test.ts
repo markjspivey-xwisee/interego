@@ -21,7 +21,12 @@
  * budget, which the css-gate writes only that way) refuses every plain PUT and DELETE (409) and
  * stays. The stand-in used to have neither: a test's "checkpoint" was a plain document at the pod's
  * top level, which it deleted with 205, so a purge passed that the production store never lets
- * finish that way.
+ * finish that way. It answers the store's native conditional delete as the store does (a DELETE with
+ * `Interego-Native-Delete: 1` and one strong `If-Match`: 205 for a native head at that revision, 412
+ * for another revision or no document, 409 for a document that is not a native head, 400 for a
+ * container or a missing, `*`, weak or listed validator), and advertises it on OPTIONS, unless a test
+ * turns that off (nativeDeleteAdvertised); a test can also run a write the moment a request is
+ * answered (onAnswered), as a write the css-gate let through earlier lands then.
  * Passkeys come from the software authenticator in tests/soft-authenticator.ts.
  *
  * The identity server keeps a 10 s copy of each account's record. Its writers used to save a
@@ -123,8 +128,36 @@ function keepContainersOf(path: string): void {
 /** A pod's container exists once it was PUT, or once a document was written in it (CSS creates it then). */
 const containerExists = (userId: string) => containers.has(userId) || docs.has(userId) || below(`/${userId}/`).length > 0;
 /** The body CSS sends with a 409 (its error handler's JSON), as the probe recorded it. */
-const conflictBody = (message: string) => JSON.stringify({ name: 'ConflictHttpError', message, statusCode: 409, errorCode: 'H409' });
+const conflictBody = (message: string) => httpErrorBody(409, 'ConflictHttpError', message);
+/** The JSON body CSS's error handler sends with an error answer. */
+const httpErrorBody = (status: number, name: string, message: string) => JSON.stringify({ name, message, statusCode: status, errorCode: `H${status}` });
 const NATIVE_REQUIRED = 'This resource requires a native conditional commit';
+/**
+ * Whether OPTIONS advertises the store's native conditional delete (`Interego-Native-Delete: 1`), as
+ * the production store (NativeCapabilityHeaders) does on every OPTIONS. A test turns it off to stand
+ * for a store without it.
+ */
+let nativeDeleteAdvertised = true;
+/**
+ * Writes run the moment the stand-in has answered a request, once each, by `<METHOD> <path> <status>`
+ * (a native delete is `NATIVE-DELETE`): a write the css-gate authorized earlier, landing then.
+ */
+const onAnswered = new Map<string, () => void>();
+/**
+ * The answer the conditions alone decide for a native delete (`Interego-Native-Delete: 1`) of `path`,
+ * as the production store gave them when probed (its conditions parser, then
+ * NativeDeleteOperationHandler): 400 for no If-Match, for a container, and for an If-Match that is not
+ * exactly one strong native validator (`*`, a weak one, a list) or comes with If-None-Match.
+ */
+function nativeDeleteRefusal(path: string, conditions: { ifMatch?: string; ifNoneMatch?: string }): { status: number; body: string } | undefined {
+  if (conditions.ifMatch === undefined && conditions.ifNoneMatch === undefined) return { status: 400, body: httpErrorBody(400, 'BadRequestHttpError', 'Native delete requires If-Match') };
+  if (path.endsWith('/')) return { status: 400, body: httpErrorBody(400, 'BadRequestHttpError', 'Native delete targets document resources') };
+  if (conditions.ifNoneMatch !== undefined || revisionOf(conditions.ifMatch) === undefined)
+    return { status: 400, body: httpErrorBody(400, 'BadRequestHttpError', 'Native delete requires exactly one strong native If-Match') };
+  return undefined;
+}
+/** The native revision an ETag names (`sha256:<64 hex>`), compared as the store compares its validators. */
+const revisionOf = (etag: string | null | undefined) => (etag ? /^"(sha256:[0-9a-f]{64})(?:-[0-9a-f]{16})?"$/.exec(etag)?.[1] : undefined);
 const unlisted = new Set<string>();
 const failingGets = new Map<string, number>();
 const nonJson = new Set<string>();
@@ -149,7 +182,7 @@ function applyLate(ids: readonly string[]): void {
 const hangingContainers = new Set<string>();
 const requests: Logged[] = [];
 /** Requests for the pods' other documents (an account's agent registry, say), and when the client gave up one never answered. */
-const otherRequests: Array<{ method: string; path: string; at: number; status?: number; abandonedAt?: number }> = [];
+const otherRequests: Array<{ method: string; path: string; at: number; status?: number; abandonedAt?: number; native?: true }> = [];
 /** `<METHOD> <path>` of requests for a pod's container or other documents that are never answered. */
 const hangingOther = new Set<string>();
 /** Paths of other documents whose next N DELETEs answer 500 (and delete nothing). */
@@ -240,7 +273,13 @@ function listing(children: readonly string[]): string {
  * by a PUT of a document in it and stays once its documents are deleted. A pod's container and the
  * containers below it list their children by name, and a DELETE of one that is not empty is a 409
  * ("Can only delete empty containers."). A native-committed head (putNative) answers every plain
- * PUT or DELETE that its conditions pass with a 409 (NATIVE_REQUIRED), and stays.
+ * PUT or DELETE that its conditions pass with a 409 (NATIVE_REQUIRED), and stays. A native delete
+ * (a DELETE with `Interego-Native-Delete: 1`) is refused for its conditions as nativeDeleteRefusal
+ * says, is a 412 for a document that is missing or at another revision, a 409 for one that is not a
+ * native head (identity's records included), and deletes a native head at that revision (205); an
+ * `Interego-Native-Delete` of any other value is an ordinary DELETE. OPTIONS answers 204, advertising
+ * the native commit and delete while nativeDeleteAdvertised holds. onAnswered's writes run as soon as
+ * their request is answered.
  */
 async function servePods(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
   const path = new URL(req.url ?? '/', 'http://pods').pathname;
@@ -251,10 +290,23 @@ async function servePods(req: http.IncomingMessage, res: http.ServerResponse): P
   const conditions = {
     ...(req.headers['if-match'] ? { ifMatch: String(req.headers['if-match']) } : {}),
     ...(req.headers['if-none-match'] ? { ifNoneMatch: String(req.headers['if-none-match']) } : {}) };
+  const nativeDelete = req.method === 'DELETE' && req.headers['interego-native-delete'] === '1';
+  // A write a test set to land once this request is answered (onAnswered).
+  res.on('finish', () => {
+    const key = `${nativeDelete ? 'NATIVE-DELETE' : req.method} ${path} ${res.statusCode}`;
+    const write = onAnswered.get(key);
+    if (write) { onAnswered.delete(key); write(); }
+  });
   if (hangingOther.has(`${req.method} ${path}`)) {
-    const other: (typeof otherRequests)[number] = { method: req.method!, path, at: Date.now() };
+    const other: (typeof otherRequests)[number] = { method: req.method!, path, at: Date.now(), ...(nativeDelete ? { native: true as const } : {}) };
     otherRequests.push(other);
     res.on('close', () => { other.abandonedAt = Date.now(); });
+    return;
+  }
+  if (req.method === 'OPTIONS') {
+    otherRequests.push({ method: 'OPTIONS', path, at: Date.now(), status: 204 });
+    res.writeHead(204, nativeDeleteAdvertised
+      ? { 'Accept-Put': 'application/vnd.interego.native-commit+json', 'Interego-Native-Commit': '1', 'Interego-Native-Delete': '1' } : {}).end();
     return;
   }
   if (path === '/') {
@@ -283,6 +335,8 @@ async function servePods(req: http.IncomingMessage, res: http.ServerResponse): P
       return;
     }
     if (req.method === 'DELETE') {
+      const refused = nativeDelete ? nativeDeleteRefusal(path, conditions) : undefined;
+      if (refused) { res.writeHead(refused.status, { 'Content-Type': 'application/json' }).end(refused.body); return; }
       if (!containerExists(id)) { res.writeHead(404).end(); return; }
       if (docs.has(id) || below(`/${id}/`).length > 0) { res.writeHead(409, { 'Content-Type': 'application/json' }).end(conflictBody('Can only delete empty containers.')); return; }
       containers.delete(id);
@@ -294,7 +348,7 @@ async function servePods(req: http.IncomingMessage, res: http.ServerResponse): P
   }
   const m = /^\/([^/]+)\/auth-methods\.jsonld$/.exec(path);
   if (!m) {
-    const other: (typeof otherRequests)[number] = { method: req.method!, path, at: Date.now() };
+    const other: (typeof otherRequests)[number] = { method: req.method!, path, at: Date.now(), ...(nativeDelete ? { native: true as const } : {}) };
     otherRequests.push(other);
     const answerOther = (status: number, headers: Record<string, string> = {}, body?: string) => { other.status = status; res.writeHead(status, headers).end(body); };
     const conflict = (message: string) => answerOther(409, { 'Content-Type': 'application/json' }, conflictBody(message));
@@ -314,6 +368,8 @@ async function servePods(req: http.IncomingMessage, res: http.ServerResponse): P
         return;
       }
       if (req.method === 'DELETE') {
+        const refused = nativeDelete ? nativeDeleteRefusal(path, conditions) : undefined;
+        if (refused) { answerOther(refused.status, { 'Content-Type': 'application/json' }, refused.body); return; }
         if (!exists) { answerOther(404); return; }
         if (below(path).length > 0) { conflict('Can only delete empty containers.'); return; }
         subContainers.delete(path);
@@ -341,6 +397,19 @@ async function servePods(req: http.IncomingMessage, res: http.ServerResponse): P
     if (req.method === 'DELETE') {
       const failing = failingOtherDeletes.get(path) ?? 0;
       if (failing > 0) { failingOtherDeletes.set(path, failing - 1); answerOther(500); return; }
+      if (nativeDelete) {
+        const refused = nativeDeleteRefusal(path, conditions);
+        if (refused) { answerOther(refused.status, { 'Content-Type': 'application/json' }, refused.body); return; }
+        if (!stored || revisionOf(conditions.ifMatch) !== revisionOf(etag)) {
+          answerOther(412, { 'Content-Type': 'application/json' }, httpErrorBody(412, 'PreconditionFailedHttpError', stored ? '' : 'Native resource revision changed or disappeared'));
+          return;
+        }
+        if (!stored.native) { conflict(NATIVE_REQUIRED); return; }
+        keepContainersOf(path);   // its containers stay
+        others.delete(path);
+        answerOther(205);
+        return;
+      }
       if (!stored) { answerOther(404); return; }
       if (conditionFails(conditions, etag)) { answerOther(412); return; }
       if (stored.native) { conflict(NATIVE_REQUIRED); return; }
@@ -404,6 +473,14 @@ async function servePods(req: http.IncomingMessage, res: http.ServerResponse): P
   }
   if (req.method === 'DELETE') {
     // The identity server sends none (a deletion writes a tombstone); answered as CSS would.
+    // A native delete of it is refused (409) where its conditions pass: a record is never a native head.
+    if (nativeDelete) {
+      const refused = nativeDeleteRefusal(path, conditions);
+      if (refused) { answer(refused.status, { 'Content-Type': 'application/json' }, refused.body); return; }
+      if (!docs.has(userId) || revisionOf(conditions.ifMatch) !== revisionOf(etagOf(userId))) { answer(412); return; }
+      answer(409, { 'Content-Type': 'application/json' }, conflictBody(NATIVE_REQUIRED));
+      return;
+    }
     // A missing document is a 404 before any condition is checked (DataAccessorBasedStore.deleteResource).
     if (!docs.has(userId)) { answer(404); return; }
     if (preconditionFails(entry, userId)) { answer(412); return; }
@@ -1016,6 +1093,51 @@ test('S0: the stand-in pod answers as CSS 7.2 with the PGSL accessor answered th
     assert.equal(r.status, 409);
     assert.match(await r.text(), /"message":"Can only delete empty containers\."/);
   }
+  // The store's native conditional delete (Interego-Native-Delete: 1 with one strong If-Match),
+  // as CSS 7.2.0 with the PGSL accessor answered it when probed (alike on its in-memory backend and
+  // on PostgreSQL 16). OPTIONS
+  // advertises it on any target, an absent document's included; HEAD gives the ETag GET gives.
+  const native = (path: string, headers: Record<string, string>) => send('DELETE', path, { 'Interego-Native-Delete': '1', ...headers });
+  for (const path of [save, `/${a}/hallowmarch/checkpoints/${'0'.repeat(64)}.json`, `/${a}/`]) {
+    const r = await send('OPTIONS', path);
+    assert.equal(r.status, 204);
+    assert.equal(r.headers.get('interego-native-delete'), '1');
+    assert.equal(r.headers.get('interego-native-commit'), '1');
+    assert.equal(r.headers.get('accept-put'), 'application/vnd.interego.native-commit+json');
+  }
+  assert.equal((await send('HEAD', save)).headers.get('etag'), saveEtag);
+  const refusedAs = async (r: Response, status: number, message: string) => {
+    assert.equal(r.status, status);
+    assert.equal((JSON.parse(await r.text()) as { message: string }).message, message);
+  };
+  await refusedAs(await native(save, { 'If-Match': `"sha256:${'0'.repeat(64)}"` }), 412, '');
+  await refusedAs(await native(save, {}), 400, 'Native delete requires If-Match');
+  await refusedAs(await native(save, { 'If-Match': '*' }), 400, 'Native delete requires exactly one strong native If-Match');
+  await refusedAs(await native(save, { 'If-Match': `W/${saveEtag}` }), 400, 'Native delete requires exactly one strong native If-Match');
+  await refusedAs(await native(save, { 'If-Match': `${saveEtag}, "sha256:${'0'.repeat(64)}"` }), 400, 'Native delete requires exactly one strong native If-Match');
+  await refusedAs(await native(save, { 'If-Match': saveEtag, 'If-None-Match': `"sha256:${'0'.repeat(64)}"` }), 400, 'Native delete requires exactly one strong native If-Match');
+  await nativeRefusal(await send('DELETE', save, { 'Interego-Native-Delete': '2', 'If-Match': saveEtag }));
+  await refusedAs(await native(`/${a}/hallowmarch/checkpoints/`, { 'If-Match': saveEtag }), 400, 'Native delete targets document resources');
+  await refusedAs(await native(`/${a}/`, { 'If-Match': saveEtag }), 400, 'Native delete targets document resources');
+  // A document that is not a native head (a record) is refused, and stays.
+  const recordEtag = String(await etagOfGet(doc(a)));
+  await refusedAs(await native(doc(a), { 'If-Match': recordEtag }), 409, NATIVE_REQUIRED);
+  assert.equal(await etagOfGet(doc(a)), recordEtag, 'the record is as it was');
+  assert.equal(await etagOfGet(save), saveEtag, 'every refused native delete left the save as it was');
+  // The exact revision: deleted (205); then the document is gone (a HEAD is 404), a native delete of
+  // it is a 412 and a plain one a 404. Its containers stay, empty, until their own (ordinary) DELETE.
+  assert.equal((await native(save, { 'If-Match': saveEtag })).status, 205);
+  assert.equal((await send('HEAD', save)).status, 404);
+  await refusedAs(await native(save, { 'If-Match': saveEtag }), 412, 'Native resource revision changed or disappeared');
+  assert.equal((await send('DELETE', save)).status, 404);
+  assert.doesNotMatch(await (await send('GET', `/${a}/hallowmarch/checkpoints/`)).text(), /ldp:contains/);
+  assert.equal((await send('DELETE', `/${a}/hallowmarch/checkpoints/`)).status, 205);
+  assert.equal((await send('DELETE', `/${a}/hallowmarch/`)).status, 205);
+  assert.equal((await native(`/${a}/play-budget.json`, { 'If-Match': String(await etagOfGet(`/${a}/play-budget.json`)) })).status, 205);
+  assert.match(await (await send('GET', `/${a}/`)).text(), /ldp:contains <auth-methods\.jsonld> \./);
+  // A native commit landing afterwards (one the css-gate let through earlier) puts its containers back.
+  putNative(save);
+  assert.match(await (await send('GET', `/${a}/`)).text(), /ldp:contains <auth-methods\.jsonld>, <hallowmarch\/> \./);
   // The root lists both pods, as containers.
   const root = await (await send('GET', '/')).text();
   assert.ok(root.includes(`<${a}/>`) && root.includes(`<${b}/>`), root);
@@ -2462,16 +2584,19 @@ test('C16: the janitor writes a Play owner\'s tombstone on the ETag it checked b
   }
 });
 
-test('P9: a Play purge that fails part-way is finished, at the janitor\'s next pass and after a restart; the game\'s saves and write budget, which no plain request deletes, are kept and do not hold it open', { timeout: 90_000 }, async () => {
+test('P9: a Play purge that fails part-way is finished, at the janitor\'s next pass and after a restart; the game\'s saves and write budget are deleted by native delete, and a native head outside them is kept and does not hold it open', { timeout: 90_000 }, async () => {
   // The janitor closes an expired unclaimed owner (its tombstone, marked as a purge not yet
   // finished) and then deletes the pod's other resources: the relay's agent registry and profile
   // card, and the guest's game save and write budget, which the css-gate writes only as native
-  // commits, and whose every plain DELETE the production store refuses with 409. One DELETE fails
-  // once (`once`, the registry), and one fails until the instance restarts (`stuck`, the card). It
-  // used to forget the owner as soon as it was closed: its sweep walks only the accounts it holds and
-  // a tombstone loads none, so the resource a failed DELETE left stayed for good. Then it kept the
-  // purge open on any refused DELETE, a native head's 409 included, so on the production store a
-  // guest who had saved was purged again at every pass and after every restart, never finished.
+  // commits, and whose every plain DELETE the production store refuses with 409, so each is deleted
+  // by the store's native conditional delete on the ETag read just before it. One DELETE fails once
+  // (`once`, the registry), and one fails until the instance restarts (`stuck`, the card). It used to
+  // forget the owner as soon as it was closed: its sweep walks only the accounts it holds and a
+  // tombstone loads none, so the resource a failed DELETE left stayed for good. Then it kept the purge
+  // open on any refused DELETE, a native head's 409 included, so a guest who had saved was purged
+  // again at every pass and after every restart; and then it finished without the game data, which
+  // stayed on the pod for good. A native head outside the game data (`hallowmarch/notes.json`, which
+  // the gate never writes) is still kept, and finishes the purge.
   const port = await freePort();
   const issuer = `http://127.0.0.1:${port}`;
   const once = playOwner();
@@ -2484,6 +2609,8 @@ test('P9: a Play purge that fails part-way is finished, at the janitor\'s next p
     putOther(`/${o.id}/profile/card`);
     saves.set(o.id, saveGame(o.id));
   }
+  const notes = `/${once.id}/hallowmarch/notes.json`;
+  putNative(notes);
   failingOtherDeletes.set(`/${once.id}/agents`, 1);
   failingOtherDeletes.set(`/${stuck.id}/profile/card`, 1_000);
   const deletesOf = (path: string) => otherRequests.filter(r => r.method === 'DELETE' && r.path === path);
@@ -2491,26 +2618,32 @@ test('P9: a Play purge that fails part-way is finished, at the janitor\'s next p
   const gone = (path: string) => (others.has(path) ? undefined : true);
   const unmarked = (o: { id: string }) => (record(o.id)?.provisionalPlayPurgePending ? undefined : true);
   const logged = (inst: Instance, line: RegExp) => waitFor(() => (line.test(inst.output()) ? true : undefined), 5_000);
-  // What stays of a finished purge: the record (the tombstone) and the native heads, with the
-  // containers that hold them. The registry, the card, and the card's container, emptied, are deleted.
-  const purgedButNative = (o: { id: string }) => {
+  // What stays of a finished purge: the record (the tombstone), and a native head outside the game
+  // data with the container that holds it. The registry, the card, the save and the budget are
+  // deleted, and so are the containers they emptied. The save and the budget are sent native
+  // deletes only (never a plain DELETE, which the store refuses).
+  const purged = (o: { id: string }) => {
     assert.ok(record(o.id)!.deletedAt, 'the record stays, as the tombstone');
-    assert.ok(others.has(saves.get(o.id)!) && others.has(`/${o.id}/play-budget.json`), 'the native heads stay');
-    assert.equal(others.has(`/${o.id}/agents`) || others.has(`/${o.id}/profile/card`), false);
-    assert.equal(subContainers.has(`/${o.id}/profile/`), false, 'the emptied container is deleted too');
-    assert.equal(otherRequests.some(r => r.method === 'DELETE' && r.path.startsWith(`/${o.id}/hallowmarch/`) && r.path.endsWith('/')), false,
-      'a container that holds a native head is not asked to be deleted');
+    for (const path of [`/${o.id}/agents`, `/${o.id}/profile/card`, saves.get(o.id)!, `/${o.id}/play-budget.json`]) assert.equal(others.has(path), false, path);
+    for (const path of [saves.get(o.id)!, `/${o.id}/play-budget.json`]) {
+      assert.ok(deletesOf(path).length > 0 && deletesOf(path).every(r => r.native), `${path}: native deletes only (${JSON.stringify(deletesOf(path))})`);
+    }
+    assert.equal(subContainers.has(`/${o.id}/profile/`) || subContainers.has(`/${o.id}/hallowmarch/checkpoints/`), false, 'the emptied containers are deleted too');
   };
   let janitor = await startIdentity(port, { JANITOR_INTERVAL_MS: '1000' });
   try {
     assert.ok(await waitFor(() => gone(`/${once.id}/agents`), 20_000),
       `the registry a failed DELETE left was never deleted (${deletesOf(`/${once.id}/agents`).length} DELETE(s))${out(janitor)}`);
     assert.deepEqual(deletesOf(`/${once.id}/agents`).map(r => r.status), [500, 205], 'refused once, then sent again at the next pass');
-    assert.ok(await waitFor(() => unmarked(once), 5_000), `the mark is cleared once the purge is done, the native heads kept${out(janitor)}`);
-    purgedButNative(once);
-    assert.deepEqual(deletesOf(saves.get(once.id)!).map(r => r.status), [409], 'the save\'s DELETE is sent once, at the pass that finished');
-    assert.ok(await logged(janitor, new RegExp(`finished the purge of ${once.id}, keeping 2 resource\\(s\\)[^\\n]*hallowmarch/checkpoints/[0-9a-f]{64}\\.json`)),
-      `the kept heads are not logged${out(janitor)}`);
+    assert.ok(await waitFor(() => unmarked(once), 5_000), `the mark is cleared once the purge is done${out(janitor)}`);
+    purged(once);
+    assert.deepEqual(deletesOf(saves.get(once.id)!).map(r => r.status), [205], 'the save\'s native delete is sent once, at the pass that finished');
+    // A native head outside the game data: one plain DELETE (409), kept with its container, and logged.
+    assert.ok(others.has(notes), 'the native head outside the game data stays');
+    assert.deepEqual(deletesOf(notes).map(r => [r.status, r.native ?? false]), [[409, false]]);
+    assert.equal(otherRequests.some(r => r.method === 'DELETE' && r.path === `/${once.id}/hallowmarch/`), false, 'the container that holds it is not asked to be deleted');
+    assert.ok(await logged(janitor, new RegExp(`finished the purge of ${once.id}, keeping 1 resource\\(s\\) outside its game data[^\\n]*: hallowmarch/notes\\.json`)),
+      `the kept head is not logged${out(janitor)}`);
     // The registry's 500 stopped the first pass, which left the purge unfinished and its tombstone
     // marked; a later pass of the same instance found that tombstone, wrote nothing over it, sent
     // the DELETEs again and cleared the mark. The 500 used to fall on a DELETE of the registry the
@@ -2530,6 +2663,9 @@ test('P9: a Play purge that fails part-way is finished, at the janitor\'s next p
     assert.equal(record(stuck.id)!.provisionalPlayPurgePending, true, 'and its tombstone says its purge is unfinished');
     assert.match(janitor.output(), new RegExp(`purge of ${stuck.id} unfinished`));
     assert.doesNotMatch(janitor.output(), new RegExp(`kept ${stuck.id}`), 'an owner whose account is closed is not logged as kept');
+    // Its game data went at its first pass (it is listed before the card), and is not sent again.
+    assert.equal(others.has(saves.get(stuck.id)!) || others.has(`/${stuck.id}/play-budget.json`), false);
+    assert.deepEqual(deletesOf(saves.get(stuck.id)!).map(r => r.status), [205]);
     assert.equal(podRequests(once), finished, 'a finished purge is not visited again');
   } finally {
     await janitor.stop();
@@ -2543,11 +2679,65 @@ test('P9: a Play purge that fails part-way is finished, at the janitor\'s next p
     assert.ok(await waitFor(() => gone(`/${stuck.id}/profile/card`), 15_000), `the restarted janitor never finished the purge${out(janitor)}`);
     assert.equal(deletesOf(`/${stuck.id}/profile/card`).length, before + 1);
     assert.ok(await waitFor(() => unmarked(stuck), 5_000), `the restarted janitor never cleared the mark${out(janitor)}`);
-    purgedButNative(stuck);
-    assert.ok(await logged(janitor, new RegExp(`finished the purge of ${stuck.id}, keeping 2 resource`)), `the kept heads are not logged${out(janitor)}`);
+    purged(stuck);
+    assert.equal(subContainers.has(`/${stuck.id}/hallowmarch/`) || below(`/${stuck.id}/`).length > 0, false, 'nothing of its pod is left but the record');
+    assert.ok(await logged(janitor, new RegExp(`finished the purge of ${stuck.id}(?![,\\w-])`)), `the finished purge is not logged${out(janitor)}`);
     await sleep(1_200);
     assert.equal(podRequests(once), onceRequests, 'nor after a restart: its tombstone has no mark left');
   } finally {
+    await janitor.stop();
+  }
+});
+
+test('P16: a Play purge sends the game data a native delete only where the store offers it, and a save or budget that changes under it or lands after its deletion (a write the gate let through before the tombstone) keeps the purge open until a later pass deletes it', { timeout: 90_000 }, async () => {
+  // The janitor's purge of an expired, unclaimed owner who saved: the store first offers no native
+  // delete (OPTIONS without `Interego-Native-Delete: 1`), then a budget write lands between the
+  // budget's ETag read and its native delete (a 412), then a save lands once the budget is deleted,
+  // after every deletion of the pass (the closure fence finds it at the purge's last listing). Each
+  // leaves the purge unfinished, its tombstone marked; the next pass deletes what is there and
+  // finishes. The purge used to finish without the game data, which stayed on the pod.
+  const port = await freePort();
+  const o = playOwner();
+  docs.set(o.id, { modified: clock = Math.max(clock + 1, Date.now()), doc: { userId: o.id, name: 'Play guest',
+    walletAddresses: [], webAuthnCredentials: [], didKeys: [], provisionalPlayAnchor: expiredAnchor(`http://127.0.0.1:${port}`, o) } });
+  putOther(`/${o.id}/agents`);
+  const save = saveGame(o.id);
+  const budget = `/${o.id}/play-budget.json`;
+  const late = `/${o.id}/hallowmarch/checkpoints/${crypto.createHash('sha256').update(`${o.id} late`).digest('hex')}.json`;
+  const nativeDeletes = (path: string) => otherRequests.filter(r => r.method === 'DELETE' && r.path === path && r.native).map(r => r.status);
+  const logs = (inst: Instance, line: RegExp) => waitFor(() => (line.test(inst.output()) ? true : undefined), 15_000);
+  nativeDeleteAdvertised = false;
+  const janitor = await startIdentity(port, { JANITOR_INTERVAL_MS: '1000' });
+  try {
+    assert.ok(await logs(janitor, new RegExp(`purge of ${o.id} unfinished[^\\n]*does not advertise native delete`)),
+      `the purge did not stop for want of the native delete${out(janitor)}`);
+    assert.equal(record(o.id)!.provisionalPlayPurgePending, true, 'the account is closed, its purge marked unfinished');
+    assert.ok(others.has(save) && others.has(budget), 'the game data is not deleted');
+    assert.equal(otherRequests.some(r => r.path.startsWith(`/${o.id}/`) && r.native), false, 'no native delete was sent');
+    assert.equal(otherRequests.some(r => r.method === 'DELETE' && (r.path === save || r.path === budget)), false, 'nor a plain one');
+    // The store offers it from now on. A budget write lands right after the next pass reads the
+    // budget's ETag, and a save once the pass after it has deleted the budget.
+    onAnswered.set(`HEAD ${budget} 200`, () => putNative(budget));
+    onAnswered.set(`NATIVE-DELETE ${budget} 205`, () => putNative(late));
+    nativeDeleteAdvertised = true;
+    assert.ok(await logs(janitor, new RegExp(`purge of ${o.id} unfinished[^\\n]*the native delete of play-budget\\.json was answered 412`)),
+      `the 412 did not leave the purge unfinished${out(janitor)}`);
+    assert.deepEqual(nativeDeletes(budget), [412]);
+    assert.deepEqual(nativeDeletes(save), [205], 'the save, listed before the budget, is deleted');
+    assert.ok(others.has(budget), 'the budget written meanwhile stays');
+    assert.ok(await logs(janitor, new RegExp(`purge of ${o.id} unfinished[^\\n]*game data is on the pod again after its deletion \\(hallowmarch/checkpoints/[0-9a-f]{64}\\.json\\)`)),
+      `the save landing after the deletions did not leave the purge unfinished${out(janitor)}`);
+    assert.deepEqual(nativeDeletes(budget), [412, 205]);
+    assert.equal(record(o.id)!.provisionalPlayPurgePending, true, 'the purge is still unfinished');
+    assert.ok(await waitFor(() => (record(o.id)?.provisionalPlayPurgePending ? undefined : true), 15_000), `the purge never finished${out(janitor)}`);
+    assert.deepEqual(nativeDeletes(late), [205]);
+    assert.equal(others.has(save) || others.has(budget) || others.has(late) || others.has(`/${o.id}/agents`), false);
+    assert.deepEqual(below(`/${o.id}/`), [], 'nothing of the pod is left but the record');
+    assert.ok(record(o.id)!.deletedAt, 'which is the tombstone');
+    assert.match(janitor.output(), new RegExp(`finished the purge of ${o.id}(?![,\\w-])`));
+  } finally {
+    nativeDeleteAdvertised = true;
+    onAnswered.clear();
     await janitor.stop();
   }
 });
@@ -2576,8 +2766,9 @@ test('P10: a Play owner its guest deleted through the other instance is only for
     // Its sweep reads the tombstone, and so does the purge's close under the owner's lock.
     assert.ok(await waitFor(() => docGets(guest.id, tombstoned).length >= 2 || undefined, 10_000), `the janitor never read the tombstone${out(janitor)}`);
     await sleep(1_200);
-    const deleted = () => otherRequests.slice(otherSince).filter(r => r.method === 'DELETE' && r.path.startsWith(`/${guest.id}/`)).map(r => r.path);
-    assert.deepEqual(deleted(), [], 'nothing of the pod is deleted, its agent registry included');
+    // Nor is the store asked for its native delete, nor a document's ETag for one.
+    const deleted = () => otherRequests.slice(otherSince).filter(r => ['DELETE', 'OPTIONS', 'HEAD'].includes(r.method) && r.path.startsWith(`/${guest.id}/`)).map(r => r.path);
+    assert.deepEqual(deleted(), [], 'nothing of the pod is deleted, its agent registry and game data included');
     assert.match(janitor.output(), new RegExp(`forgot ${guest.id}`));
     // The guest bootstraps again through the other instance: its provisioning puts the original anchor back.
     outOfBand(guest.id, d => { delete d['deletedAt']; Object.assign(d, { name: 'Play guest', provisionalPlayAnchor: anchor, provisionalPlayReceipts: [] }); });
