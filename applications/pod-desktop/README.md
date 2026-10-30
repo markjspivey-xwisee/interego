@@ -14,7 +14,9 @@ The Windows data folder is separate from the installed program, normally under `
 
 The **Connections** page pairs local MCP clients with separate read and append permissions, expiry and Disconnect controls. See [agent setup](AGENT-CONNECTIONS.md) for ChatGPT desktop, Codex, Claude, Grok Build, OpenClaw and other local clients. Notes an agent reads may be sent to its AI provider; local storage does not make that inference local. Setup does not expose the pod key or storage credential.
 
-Federation stays off. Automatic cloud synchronization, shared workspaces, cloud-only agent access and a local federation transport are later capabilities. The existing hosted and personal-bridge deployments remain separate supported paths. A notes backup preserves this app's current notes and encryption key, including historical connection labels; it does not restore agent credentials and is not a byte-for-byte migration archive of every signed record in an arbitrary pod.
+An optional temporary web connection lets ChatGPT web, Grok Bot and other remote MCP clients request scoped access. Start it explicitly, copy its URL, and approve the matching sign-in request in Interego. It uses a bundled Cloudflare helper and needs no terminal or domain. Cloudflare can process traffic and note content passing through it; the AI provider can receive notes it reads. The link changes after restart, has no uptime guarantee, and is off every time the app opens. See [web setup and privacy details](AGENT-CONNECTIONS.md#connect-chatgpt-web-or-grok-bot).
+
+Federation stays off. Automatic cloud synchronization, shared workspaces and a local federation transport are later capabilities. The existing hosted and personal-bridge deployments remain separate supported paths. A notes backup preserves this app's current notes and encryption key, including historical connection labels; it does not restore agent credentials and is not a byte-for-byte migration archive of every signed record in an arbitrary pod.
 
 ## Windows preview signing
 
@@ -30,10 +32,12 @@ npm run package:win --workspace @interego/pod-desktop
 npm run smoke:packaged --workspace @interego/pod-desktop
 ```
 
-The packaging stage copies an explicit production dependency graph, including the built Interego packages and CSS configuration/assets. It does not copy the repository or install packages at startup. CSS stays outside an asar archive so its configuration loader can resolve its packaged files. The installer is per-user and requires no elevation.
+The packaging stage copies an explicit production dependency graph, including the built Interego packages and CSS configuration/assets, plus a pinned, SHA256-verified Windows cloudflared helper and its license. No connection helper is downloaded or launched at app startup. CSS stays outside an asar archive so its configuration loader can resolve its packaged files. The installer is per-user and requires no elevation.
 
 For edits confined to this app's main process, preload, renderer or HTML, `npm run package:win:refresh --workspace @interego/pod-desktop` can reuse an already staged runtime graph. Run the full packaging command after any runtime workspace or dependency change, even if its version and dependency names stayed the same. CI always uses the full command.
 
 The packaged smoke starts the shipping application with a new temporary data directory and real Windows-protected keys. It creates encrypted notes through both the isolated window and separately launched MCP companion processes, verifies read/save scopes and revocation, stops and reopens the runtime, checks persistence and disabled federation, and fails on non-loopback Node connections in the app. A fresh app process then reopens the same directory, verifying protected keys and revoked grants survive quitting. Each expanded lifecycle has a five-minute deadline. Renderer tests exercise the actual HTML and renderer bundle; controller tests exercise real storage, encryption, authorization at queued execution, backup authentication, restore recovery and process-lock checks.
 
 The Windows packaging workflow uploads the installer, checksums and signature report as PR artifacts. Consumer installers are built from reviewed source without auto-deploying the hosted services. For an isolated developer or QA run, `INTEREGO_POD_DATA_DIR` can select a separate absolute user-data directory; normal users need no configuration.
+
+The packaged check also verifies that web access starts off, then exercises real HTTP MCP, PKCE, desktop approval, scoped saving and revocation against the encrypted local store. Its tunnel is simulated so that check remains offline; the bundled helper's public HTTPS transport is checked separately with disposable test data. Vendor account sign-ins require separate live validation.

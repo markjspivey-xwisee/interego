@@ -10,6 +10,7 @@ import signaturePolicy from './signature-policy.cjs';
 if (process.platform !== 'win32') throw new Error('The Windows installer and its signature are verified on Windows.');
 const require = createRequire(import.meta.url);
 const source = JSON.parse(await readFile(join(appRoot, 'package.json'), 'utf8'));
+const bridgeComponent = JSON.parse(await readFile(join(appRoot, 'bridge-manifest.json'), 'utf8'));
 const staged = JSON.parse(await readFile(join(stageRoot, 'package.json'), 'utf8'));
 if (staged.version !== source.version || staged.main !== 'dist/main.mjs') throw new Error('Build and stage this desktop version before packaging.');
 const cli = require.resolve('electron-builder/cli.js');
@@ -23,6 +24,9 @@ await new Promise((done, fail) => {
 });
 const artifact = `Interego-${source.version}-windows-x64-setup.exe`;
 const installer = join(releaseRoot, artifact);
+const helperHash = createHash('sha256');
+for await (const chunk of createReadStream(join(releaseRoot, 'win-unpacked', 'resources', 'app', 'bridge', bridgeComponent.filename))) helperHash.update(chunk);
+if (helperHash.digest('hex') !== bridgeComponent.sha256) throw new Error('Packaging changed the pinned bridge helper. Its original bytes and publisher signature must be preserved.');
 if ((await stat(installer)).size < 1024 * 1024) throw new Error('The expected Windows setup artifact is missing or unexpectedly small.');
 const sha256 = createHash('sha256');
 for await (const chunk of createReadStream(installer)) sha256.update(chunk);
@@ -45,6 +49,10 @@ await new Promise((done, fail) => {
         signature, distribution,
         installation: 'per-user; no elevation', preservesUserDataOnUninstall: true,
         bundledRuntime: true, published: false,
+        optionalWebBridge: {
+          default: 'off-every-launch', provider: 'Cloudflare Quick Tunnel', temporaryUrl: true,
+          componentVersion: bridgeComponent.version, sha256: bridgeComponent.sha256,
+        },
       };
       await writeFile(join(releaseRoot, 'BUILD-INFO.json'), `${JSON.stringify(info, null, 2)}\n`);
       process.stdout.write(`${artifact}: ${info.distribution}. No release was published.\n`);

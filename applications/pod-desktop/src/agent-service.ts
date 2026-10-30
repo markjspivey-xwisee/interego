@@ -230,6 +230,28 @@ export class AgentService {
     response.end(JSON.stringify(value));
   }
 
+  /** In-process transport adapter; the caller never receives a ticket or pod key. */
+  async executeGranted(id: string, operation: AgentOperation, args: unknown, signal: AbortSignal): Promise<unknown> {
+    await this.initialize();
+    const authorize = async () => {
+      signal.throwIfAborted();
+      const principal = await this.authorize(id, operation);
+      signal.throwIfAborted();
+      return principal;
+    };
+    await authorize();
+    const value = await this.options.execute(operation, args, authorize);
+    await authorize();
+    await this.serialize(async () => {
+      await authorize();
+      const current = this.records.find(record => record.id === id)!;
+      await this.persist(this.records.map(record => record.id === id ? { ...current, lastUsedAt: new Date().toISOString() } : record));
+    });
+    const result = operation === 'status' ? { ...object(value), connection: await this.get(id) } : value;
+    await authorize();
+    return result;
+  }
+
   private async handle(request: IncomingMessage, response: ServerResponse): Promise<void> {
     const endpoint = this.endpoint;
     if (!endpoint || this.closed) { this.reply(response, 503, { error: 'Agent access is unavailable.' }); return; }

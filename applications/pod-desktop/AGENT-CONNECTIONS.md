@@ -38,11 +38,30 @@ ChatGPT desktop and Codex share MCP configuration; available settings can be res
 
 The formats were checked against current official documentation. Codex and Claude Code CLI syntax was also checked locally. The packaged executable is exercised with a real MCP protocol client, but this is not a claim that every vendor client or account was signed in and tested.
 
-## Web and cloud agents
+## Connect ChatGPT web or Grok Bot
 
 A web connector or a process on another computer cannot start this Windows command or use its loopback address. In particular, [Grok Bot's cloud computer](https://docs.x.ai/grok-bot/computer-and-apps) is distinct from Grok Build running on your PC. Claude's [remote connectors](https://support.claude.com/en/articles/11175166-get-started-with-custom-connectors-using-remote-mcp) also run through hosted infrastructure.
 
-An optional remote-access transport would need a separately configured, authenticated bridge. This preview does not open a tunnel or publish your local pod. **Use hosted Interego** continues to open the existing hosted service; it does not copy local notes or grant hosted access to this pod. Cloud-only connection setup is a separate milestone.
+The optional **temporary web connection** gives those clients a separate HTTPS address. It is off every time Interego opens. You need an internet connection, and Interego and your computer must stay running while the web app uses your notes.
+
+1. Start your local space, open **Connections**, and choose the web connection option.
+2. Choose **ChatGPT web**, **Grok Bot**, or another remote MCP client. Decide whether it may read all current and future notes, save new notes, or both, and choose an expiry.
+3. Review the privacy explanation, then start the temporary link. Interego includes the connection helper; no terminal, tunnel account or domain is required.
+4. Copy the MCP URL shown by Interego. In ChatGPT web, add a custom MCP server under Plugins, paste the URL, and select OAuth authentication. Account and workspace policies may restrict this option. In Grok Bot, ask it to add an MCP server using that URL, or follow its Connect apps flow. Your other Bots on that Grok account may share its connected apps.
+5. Follow the client's sign-in prompt. The browser shows a verification code and asks you to return to Interego. Compare the code with the request displayed in Interego, check the requested permissions and destination, and approve only the request you started. A client's chosen name is not proof of who operates it.
+6. Return to the browser and finish connecting. Ask the client to check its Interego status, then search for a note you expect it to find. Saving is available only if you enabled it separately.
+
+**Turn off** closes the link, invalidates its authorization and disconnects the grants it created. You can also disconnect an individual connection. **Stop Interego** and quitting also close the web connection; it is never automatically restored. A new session has a new URL, so update the web client's URL and authorize it again. Expired requests need a fresh sign-in attempt.
+
+This preview uses [Cloudflare Quick Tunnels](https://developers.cloudflare.com/tunnel/get-started/quick-tunnels/). They are temporary preview connections with no uptime guarantee, and are not a permanent always-on address. They do not support SSE; this bridge uses JSON responses over Streamable HTTP. A stable hosted relay or a named tunnel is a separate deployment choice.
+
+If your assistant or browser says the server cannot be found immediately after starting the link, wait for the new address to become available and retry connecting. Some networks block temporary tunnel domains. Interego does not change your computer's DNS, proxy or firewall settings. Your local notes remain available when a web connection cannot be established.
+
+**Cloudflare terminates HTTPS and can process requests and note content passing through the bridge. The connected AI provider can receive notes it reads.** Encryption at rest still protects your stored notes, but this route does not provide end-to-end encryption from Interego to the AI model. The helper forwards only the dedicated, authenticated MCP and authorization service; it never forwards your Solid storage endpoint, backups, pod key or local agent broker. Tokens are held in memory, not exported in setup text or notes backups.
+
+The OAuth flow uses discovery, dynamic registration, authorization codes with PKCE S256, resource binding and native owner approval. See [OpenAI authentication requirements](https://developers.openai.com/plugins/build/auth), [ChatGPT custom MCP setup](https://developers.openai.com/api/docs/guides/custom-mcp-server), [Grok Bot apps](https://docs.x.ai/grok-bot/computer-and-apps), and [Grok's tunneling guide](https://docs.x.ai/grok/connectors/custom-mcp-tunneling). These describe supported connection routes; they do not establish that every account has the feature enabled.
+
+**Use hosted Interego** continues to open the existing hosted service separately. It does not copy local notes or grant hosted access to this pod. Enabling a web connection does not enable federation or synchronize your pod with other pods.
 
 ## Implementation and verification
 

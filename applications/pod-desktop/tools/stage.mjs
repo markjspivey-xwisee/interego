@@ -2,6 +2,7 @@ import { copyFile, lstat, mkdir, readFile, readdir, realpath, rm, writeFile } fr
 import { createRequire } from 'node:module';
 import { dirname, join, relative, resolve } from 'node:path';
 import { appRoot, assertStagePath, repoRoot, stageRoot, within } from './paths.mjs';
+import { bridgeBuildInfo, stageBridge } from './stage-bridge.mjs';
 
 const sourceManifest = JSON.parse(await readFile(join(appRoot, 'package.json'), 'utf8'));
 const workspaceNames = new Set(['@interego/local-node', '@interego/deployment-config', '@interego/core', '@interego/solid']);
@@ -125,5 +126,7 @@ await writeFile(join(stageRoot, 'build-info.json'), `${JSON.stringify({
   product: 'Interego', version: sourceManifest.version, electron: require('electron/package.json').version,
   signing: signingRequested ? 'certificate-requested; inspect the built installer signature' : 'unsigned-preview',
   installation: 'per-user', bundledRuntime: true, federation: 'disabled',
+  optionalWebBridge: bridgeBuildInfo,
 }, null, 2)}\n`);
 process.stdout.write(`Staged ${graph.length} production packages at ${relative(repoRoot, stageRoot)}.\n`);
+await stageBridge(stageRoot);

@@ -141,7 +141,7 @@ For dated detail see [`CHANGELOG.md`](CHANGELOG.md).
 
 ## Hosted vs self-hosted: which path is right for you
 
-For a local installation without developer tools, see the [Interego Windows app preview](applications/pod-desktop/README.md). It bundles a local pod, encrypted private notes, notes backup/restore and scoped local MCP agent connections, with federation disabled and an explicit option to open hosted Interego.
+For a local installation without developer tools, see the [Interego Windows app preview](applications/pod-desktop/README.md). It bundles a local pod, encrypted private notes, notes backup/restore, scoped local MCP agent connections and an optional temporary web bridge. Federation stays disabled, web access starts off on every launch, and hosted Interego remains available separately.
 
 The new [local deployment foundation](docs/LOCAL-DEPLOYMENT.md) adds explicit local/hosted configuration and an importable durable local pod runtime. Its capability matrix distinguishes storage support from MCP, account, installer, and federation features that remain separate. Existing hosted and personal-bridge paths below continue to work.
 

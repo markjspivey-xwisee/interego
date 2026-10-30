@@ -17,7 +17,7 @@ export interface AgentStdioHandle {
 }
 
 const INSTRUCTIONS = 'Use only this connection’s granted Interego tools. Search returns summaries; read a note only when needed for the user’s task. Saving appends a new note and never edits or deletes existing notes. Tool results you read can reach your AI provider. The Interego app must remain open. Permissions, expiry and revocation are checked by the app for every operation. If access is refused, ask the user to review the connection in Interego.';
-const tools: ReadonlyArray<{ permission?: 'notes:read' | 'notes:create'; operation: AgentOperation; tool: Tool }> = [
+export const AGENT_TOOLS: ReadonlyArray<{ permission?: 'notes:read' | 'notes:create'; operation: AgentOperation; tool: Tool }> = [
   { operation: 'status', tool: { name: 'interego_status', description: 'Check this local Interego connection, its granted permissions and whether the pod is running.',
     inputSchema: { type: 'object', properties: {}, additionalProperties: false },
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false } } },
@@ -70,7 +70,7 @@ function noteSummary(value: unknown) {
   return { id, title: text(row['title'], 160), createdAt: date(row['createdAt']), updatedAt: date(row['updatedAt']),
     ...(author ? { author: { connectionId: String(author['connectionId']), name: text(author['name'], 80) } } : {}) };
 }
-function toolResult(operation: AgentOperation, value: unknown, connectionId: string): Record<string, unknown> {
+export function agentToolResult(operation: AgentOperation, value: unknown, connectionId: string): Record<string, unknown> {
   if (operation === 'status') return { ...statusResult(value, connectionId) };
   const result = object(value);
   if (operation === 'notes.search') {
@@ -96,17 +96,17 @@ export async function runAgentStdio(options: AgentStdioOptions): Promise<AgentSt
     server.setRequestHandler('tools/list', async (_request, context) => {
       const signal = AbortSignal.any([lifetime.signal, context.mcpReq.signal]);
       const status = statusResult(await client.request('status', {}, signal), options.connectionId);
-      return { tools: tools.filter(entry => !entry.permission || status.connection.permissions.includes(entry.permission)).map(entry => entry.tool) };
+      return { tools: AGENT_TOOLS.filter(entry => !entry.permission || status.connection.permissions.includes(entry.permission)).map(entry => entry.tool) };
     });
     server.setRequestHandler('tools/call', async (request, context) => {
       try {
         const signal = AbortSignal.any([lifetime.signal, context.mcpReq.signal]);
-        const entry = tools.find(item => item.tool.name === request.params.name);
+        const entry = AGENT_TOOLS.find(item => item.tool.name === request.params.name);
         if (!entry) throw new Error('That tool is not available for this connection.');
         const args = agentArguments(entry.operation, request.params.arguments);
         const status = statusResult(await client.request('status', {}, signal), options.connectionId);
         if (entry.permission && !status.connection.permissions.includes(entry.permission)) throw new Error('That tool is not permitted for this connection.');
-        const value = toolResult(entry.operation, entry.operation === 'status' ? status : await client.request(entry.operation, args, signal), options.connectionId);
+        const value = agentToolResult(entry.operation, entry.operation === 'status' ? status : await client.request(entry.operation, args, signal), options.connectionId);
         return { content: [{ type: 'text', text: JSON.stringify(value) }], structuredContent: value };
       } catch (error) {
         return { isError: true, content: [{ type: 'text', text: error instanceof Error ? error.message : 'The Interego request could not be completed.' }] };
