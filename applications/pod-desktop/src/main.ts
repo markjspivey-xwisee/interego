@@ -7,6 +7,7 @@ import { Socket } from 'node:net';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import type { EncryptionKeyPair } from '@interego/core';
 import { PodController } from './controller.js';
+import { waitForProtectedStorage } from './protected-storage-ready.js';
 import type { FileActionResult, LocalNote, NoteInput, PodStatus } from './types.js';
 import { readBackupFile } from './read-backup.js';
 import { AgentService } from './agent-service.js';
@@ -198,6 +199,11 @@ async function bootstrap(): Promise<void> {
   trace('waiting for Electron');
   await app.whenReady();
   trace('Electron ready');
+  if (process.platform === 'win32') {
+    requireProtection();
+    safeStorage.encryptString('Interego protected storage readiness');
+    await waitForProtectedStorage(app.getPath('sessionData'));
+  }
   Menu.setApplicationMenu(null);
   const userData = app.getPath('userData');
   await mkdir(userData, { recursive: true, mode: 0o700 });
