@@ -1,6 +1,7 @@
 /** Packaged verification only: real executable, MCP stdio, protected ticket and app broker. */
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { createInterface } from 'node:readline';
+import { AGENT_DIAGNOSTIC_LINE } from './agent-client.js';
 import type { AgentConnection, AgentConnectionInput } from './agent-types.js';
 import type { LocalNote } from './types.js';
 
@@ -53,10 +54,14 @@ class Peer {
       }
       else pending.resolve(message.result);
     });
-    // Drain diagnostics without including them or any local paths in the result.
-    this.child.stderr.resume();
+    // Retain only fixed application stage labels, never Chromium/OS output,
+    // credential contents, request payloads, paths, or exception messages.
+    const diagnostics = createInterface({ input: this.child.stderr });
+    diagnostics.on('line', line => {
+      if (AGENT_DIAGNOSTIC_LINE.test(line)) process.stderr.write(`${line}\n`);
+    });
     this.child.on('error', fail);
-    this.exit = new Promise(done => this.child.once('close', () => { this.exited = true; fail(); lines.close(); done(); }));
+    this.exit = new Promise(done => this.child.once('close', () => { this.exited = true; fail(); lines.close(); diagnostics.close(); done(); }));
   }
 
   request(method: string, params: unknown = {}): Promise<unknown> {
