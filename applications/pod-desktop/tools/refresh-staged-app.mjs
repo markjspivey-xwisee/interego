@@ -29,6 +29,7 @@ await writeFile(join(stageRoot, 'build-info.json'), `${JSON.stringify({
   product: 'Interego', version: source.version, electron: appRequire('electron/package.json').version,
   signing: process.env.WIN_CSC_LINK || process.env.CSC_LINK ? 'certificate-requested; inspect the built installer signature' : 'unsigned-preview',
   installation: 'per-user', bundledRuntime: true, federation: 'disabled',
+  optionalPodFederation: { default: 'off', delivery: 'selected-encrypted-snapshots', offlineQueue: false },
   optionalWebBridge: bridgeBuildInfo,
 }, null, 2)}\n`);
 process.stdout.write('Refreshed compiled application files; the staged production dependency graph is unchanged.\n');

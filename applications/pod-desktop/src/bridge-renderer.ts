@@ -213,8 +213,8 @@ export function installBridgeUi(api: DesktopApi, context: BridgeUiContext): {
       ? 'Your gateway provider can process requests and returned notes. Notes the assistant reads may reach its AI provider. Your encrypted note storage stays on this computer.'
       : 'Cloudflare handles connection traffic and can see requests and returned notes. Notes the assistant reads may reach its AI provider. Your encrypted note storage stays on this computer.';
     element('bridge-session-disclosure').textContent = permanent
-      ? 'Your permanent address and approved pairings will be saved on this PC. Web access stays off until you enable it. Pausing or closing Interego blocks access without forgetting those pairings; Disconnect or Forget removes permission. Federation stays off.'
-      : 'This preview address changes when web access restarts. You will need to update the assistant’s connector and authorize it again. Keep Interego and this computer on while connected. Stopping Interego or closing the app turns web access off. It does not restart automatically; federation stays off.';
+      ? 'Your permanent address and approved pairings will be saved on this PC. Web access stays off until you enable it. Pausing or closing Interego blocks access without forgetting those pairings; Disconnect or Forget removes permission. Pod sharing has its own enable control.'
+      : 'This preview address changes when web access restarts. You will need to update the assistant’s connector and authorize it again. Keep Interego and this computer on while connected. Stopping Interego or closing the app turns web access off. It does not restart automatically. Pod sharing needs a permanent address and its own consent.';
     element('bridge-consent-label').textContent = permanent ? 'Save my address and chosen permissions. I will enable access separately.' : 'I want to turn on this temporary web connection.';
     element('bridge-saved').hidden = !stable || unknown;
     element('bridge-saved-url').textContent = saved ? saved.origin + '/mcp' : bridge?.url ?? '';
@@ -296,7 +296,7 @@ export function installBridgeUi(api: DesktopApi, context: BridgeUiContext): {
     alert.hidden = !checked || (!active && !unknown && bridge?.state !== 'error');
     element('bridge-alert-title').textContent = pending ? `${pending === 1 ? 'A web app is' : `${pending} web apps are`} asking to connect` : title;
     element('bridge-alert-description').textContent = pending ? 'Allow only a request you started. Compare its code with your browser before approving.'
-      : unknown ? 'Connection status is unknown. Refresh or stop web access to check.' : 'Your pod stays on this computer. Federation is off.';
+      : unknown ? 'Connection status is unknown. Refresh or stop web access to check.' : 'Your pod stays on this computer. Pod sharing is managed separately below.';
     button('bridge-review').textContent = pending ? 'Review request' : 'View web access';
     button('bridge-setup-review').hidden = !pending;
     element('bridge-availability').textContent = context.pod()?.restorePending ? 'Finish restoring your local space before creating web access.'

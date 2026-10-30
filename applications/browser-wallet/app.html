@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Interego Wallet</title>
+  <link rel="stylesheet" href="style.css">
+  <script type="module" src="src/app.mjs"></script>
+</head>
+<body>
+  <header><a class="brand" href="app.html"><span class="mark">i</span> interego<span class="wordmark">wallet</span></a><span class="preview">EARLY ACCESS · 0.2</span></header>
+  <main>
+    <div class="intro"><p class="eyebrow">YOUR IDENTITY. YOUR CONTEXT.</p><h1>Carry your context.<br>Choose what travels.</h1><p class="lede">Connect your pod, inspect its context, and turn a selected passage into a private memory.</p></div>
+    <p id="status" class="status" role="status" aria-live="polite">Ready to connect.</p>
+    <div class="layout">
+      <aside>
+        <section class="card"><h2>Your connection</h2>
+          <form id="connect-form"><label for="connection-mode">Where is your pod?</label><select id="connection-mode"><option value="hosted">Hosted Interego</option><option value="local">Interego installed on my computer</option></select>
+          <div id="local-setup" class="fine" hidden><p>In Interego, allow this browser extension ID, then enable your secure web bridge. Use the bridge's HTTPS address below. The app and PC must stay running.</p><p><b id="extension-id"></b></p><button id="copy-extension-id" type="button" class="quiet compact">Copy extension ID</button></div>
+          <label id="relay-label" for="relay">Interego relay</label><input id="relay" type="url" value="https://relay.interego.xwisee.com" required spellcheck="false">
+          <label for="scope">Permission for this connection</label><select id="scope"><option value="mcp:read">Read context</option><option value="mcp:write">Read and save private notes</option></select>
+          <button id="connect" type="submit">Connect identity <span aria-hidden="true">↗</span></button></form>
+          <label for="account-select">Your connections</label><select id="account-select" aria-label="Your connections"><option>No connection yet</option></select>
+          <div id="identity" class="identity">Sign in with the relay’s passkey, wallet, or key flow.</div>
+          <button id="disconnect" class="quiet" type="button" disabled>Forget this connection</button>
+          <p class="fine">Credentials stay with your provider or local Interego app. This browser session holds only the granted connection. Local note access does not sign you into websites.</p>
+        </section>
+        <section class="card principles"><p class="eyebrow">IN YOUR HANDS</p><p><b>One selection at a time.</b><br>Click the toolbar icon on a page to bring selected text here.</p><p><b>A deliberate save.</b><br>Review the exact note and destination before sending it.</p><p><b>Choose its home.</b><br>Hosted saves belong to the session agent. Local saves stay encrypted in your installed pod.</p></section>
+      </aside>
+      <div class="content">
+        <section class="card"><div class="section-head"><h2>Create a memory</h2><span class="pill">PRIVATE</span></div>
+          <form id="capture-form"><label for="capture-title">Title</label><input id="capture-title" maxlength="200" placeholder="A thought worth keeping" required>
+          <label for="capture-url">Source page <span class="optional">optional</span></label><input id="capture-url" type="url" maxlength="4096" placeholder="https://…" spellcheck="false">
+          <label for="capture-text">Selected passage or note</label><textarea id="capture-text" rows="6" maxlength="16000" placeholder="Select text on a web page, or write your note here." required></textarea>
+          <label for="purpose">Why keep this?</label><input id="purpose" maxlength="500" placeholder="For example: background for my research" required>
+          <button id="prepare" type="submit">Review private save <span aria-hidden="true">→</span></button></form>
+        </section>
+        <section id="review" class="card review" hidden><p class="eyebrow">REVIEW BEFORE SENDING</p><h2>Save this exact note?</h2><dl id="review-destination"></dl><pre id="review-body"></pre><p class="fine">This sends the reviewed text through the displayed connection. Hosted saves use relay-managed encryption; local saves use your installed pod's encryption. A tunnel provider can process bridge traffic.</p><div class="button-row"><button id="confirm-save" type="button">Approve private save</button><button id="cancel-review" type="button" class="quiet">Cancel</button></div></section>
+        <section class="card"><div class="section-head"><h2>Recent context</h2><button id="refresh" class="quiet compact" type="button">Refresh</button></div><div id="contexts" class="empty">Connect an identity to explore its pod.</div><div id="descriptor" hidden><h3 id="descriptor-heading">Descriptor</h3><p id="proof" class="fine"></p><pre id="descriptor-body"></pre></div></section>
+        <section class="card"><div class="section-head"><h2>Save receipts</h2><span class="optional">Stored on this device · last 50</span></div><div id="receipts" class="empty">Your save history will appear here.</div></section>
+      </div>
+    </div>
+    <footer>Interego Wallet · Identity and context, with a decision at every disclosure.</footer>
+  </main>
+</body>
+</html>

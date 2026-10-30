@@ -4,7 +4,7 @@ import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
 import { createServer, request as httpRequest } from 'node:http';
-import { BridgeServer } from '../src/bridge-server.js';
+import { BridgeServer, type BridgeServerOptions } from '../src/bridge-server.js';
 import { AgentService, type AgentServiceOptions } from '../src/agent-service.js';
 import type { BridgeStartInput } from '../src/bridge-types.js';
 
@@ -16,7 +16,7 @@ const directories: string[] = [];
 const servers: BridgeServer[] = [];
 const agents: AgentService[] = [];
 const originalNote = { id: randomUUID(), title: 'Private local note', body: 'Only grant holders can read this.', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() };
-async function fixture(configuration: BridgeStartInput = input, execute?: AgentServiceOptions['execute'], stable = false) {
+async function fixture(configuration: BridgeStartInput = input, execute?: AgentServiceOptions['execute'], stable = false, extra: Pick<BridgeServerOptions, 'federation' | 'allowedBrowserOrigins'> = {}) {
   const directory = await mkdtemp(join(tmpdir(), 'interego-bridge-test-')); directories.push(directory);
   let binding = 'this-local-pod'; let writes = 0;
   const notes = [originalNote];
@@ -36,7 +36,7 @@ async function fixture(configuration: BridgeStartInput = input, execute?: AgentS
   const service = new AgentService(options);
   agents.push(service);
   const persistence = stable ? { dataDir: join(directory, 'bridge-pairings'), protector: options.protector, getPodBinding: options.getPodBinding } : undefined;
-  const server = new BridgeServer({ agents: service, persistence }); servers.push(server);
+  const server = new BridgeServer({ agents: service, persistence, ...extra }); servers.push(server);
   let port = 0;
   if (stable) {
     const reserve = createServer(); await new Promise<void>(done => reserve.listen(0, '127.0.0.1', done));
@@ -101,6 +101,44 @@ afterEach(async () => {
 });
 
 describe('optional temporary web MCP bridge', () => {
+  it('forwards only the signed peer namespace, rejects hostile request-target normalization and bounds adapter responses', async () => {
+    const handler = vi.fn(async (request: Request) => Response.json({ url: request.url }));
+    const f = await fixture(input, undefined, false, { federation: handler });
+    expect((await json(f, '/pod-federation/profile')).body['url']).toBe(`${f.origin}/pod-federation/profile`);
+    const target = new URL(f.loopback);
+    const raw = await new Promise<number>((done, fail) => {
+      const request = httpRequest({ hostname: target.hostname, port: target.port, path: '/' + String.fromCharCode(92) + 'attacker.example/pod-federation/profile' }, response => { response.resume(); response.once('end', () => done(response.statusCode!)); });
+      request.once('error', fail); request.end();
+    });
+    expect(raw).toBe(400); expect(handler).toHaveBeenCalledOnce();
+    expect((await json(f, '/pod-federation/profile', 'GET', undefined, { origin: f.origin })).status).toBe(403);
+    handler.mockImplementation(async () => new Response('x'.repeat(2 * 1024 * 1024 + 1)));
+    expect((await json(f, '/pod-federation/profile')).status).toBe(502);
+  });
+
+  it('aborts peer work on caller disconnect and closes even when an adapter ignores cancellation', async () => {
+    let entered!: () => void; const began = new Promise<void>(done => { entered = done; }); let signal: AbortSignal | undefined;
+    const f = await fixture(input, undefined, false, { federation: async request => { signal = request.signal; entered(); return new Promise<Response>(() => {}); } });
+    const cancel = new AbortController();
+    const pending = fetch(`${f.loopback}/pod-federation/profile`, { signal: cancel.signal }).catch(() => undefined);
+    await began; cancel.abort(); await pending;
+    await vi.waitFor(() => expect(signal?.aborted).toBe(true));
+    await f.server.stop(); expect((await f.server.status()).state).toBe('off');
+  });
+
+  it('admits only exact native-allowed extension origins and never permits browser approval or peer routes', async () => {
+    const allowed = `chrome-extension://${'a'.repeat(32)}`;
+    const f = await fixture(input, undefined, false, { allowedBrowserOrigins: async () => [allowed], federation: async () => Response.json({ shouldNot: 'reach' }) });
+    const discovery = await json(f, '/.well-known/oauth-authorization-server', 'GET', undefined, { origin: allowed });
+    expect(discovery.status).toBe(200); expect(discovery.headers.get('access-control-allow-origin')).toBe(allowed);
+    const preflight = await fetch(`${f.loopback}/mcp`, { method: 'OPTIONS', headers: { origin: allowed, 'access-control-request-method': 'POST', 'access-control-request-headers': 'authorization, content-type, mcp-protocol-version' } });
+    expect(preflight.status).toBe(204);
+    expect((await json(f, '/mcp', 'POST', {}, { origin: allowed, accept: 'application/json' })).status).toBe(401);
+    expect((await json(f, '/approval-status', 'POST', {}, { origin: allowed })).status).toBe(403);
+    expect((await json(f, '/pod-federation/profile', 'GET', undefined, { origin: allowed })).status).toBe(403);
+    expect((await json(f, '/register', 'POST', {}, { origin: `chrome-extension://${'b'.repeat(32)}` })).status).toBe(403);
+    expect((await json(f, '/register', 'POST', {}, { origin: 'https://unapproved.example' })).status).toBe(403);
+  });
   it('advertises resource-bound OAuth and exposes no pod or tools without a bearer', async () => {
     const f = await fixture();
     expect(new URL(f.loopback).hostname).toBe('127.0.0.1');

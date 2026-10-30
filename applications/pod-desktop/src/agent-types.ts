@@ -40,8 +40,8 @@ export interface AgentPrincipal {
 export type AgentOperation = 'status' | 'notes.search' | 'notes.read' | 'notes.create';
 export interface AgentPodStatus {
   readonly running: boolean;
-  readonly localOnly: true;
-  readonly federationEnabled: false;
+  readonly localOnly: boolean;
+  readonly federationEnabled: boolean;
 }
 
 export interface AgentStatus extends AgentPodStatus {

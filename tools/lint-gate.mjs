@@ -705,7 +705,7 @@ const BASELINE = {};
 // and the exact-version guard (tests/canonicalizer-versions-are-exact.test.ts) bring it to 683;
 // the gate named 650.
 // 2026-10-27: both, merged, bring the linted scope to 686; the gate named 653.
-export const MIN_FILES = 659;
+export const MIN_FILES = 667;
 
 /**
  * How far below the real linted-file count MIN_FILES may sit before that is itself a failure.

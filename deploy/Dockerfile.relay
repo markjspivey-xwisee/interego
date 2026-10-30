@@ -36,7 +36,7 @@ RUN npm run build
 # image boundaries).
 RUN mkdir -p /tarballs && \
     cd packages/core && npm pack --pack-destination /tarballs && cd /workspace && \
-    for pkg in pgsl pgsl-store solid abac compliance connectors constitutional extractors ops p2p passport privacy registry security-txt skills transactions mdvault agent-interop; do \
+    for pkg in pgsl pgsl-store solid abac compliance connectors constitutional extractors ops p2p passport privacy registry security-txt skills transactions mdvault agent-interop pod-federation; do \
       cd packages/$pkg && npm pack --pack-destination /tarballs && cd /workspace ; \
     done
 
@@ -122,7 +122,8 @@ RUN node -e "const fs=require('fs');const p=JSON.parse(fs.readFileSync('./packag
       /tarballs/interego-security-txt-0.2.0.tgz \
       /tarballs/interego-ops-0.2.0.tgz \
       /tarballs/interego-mdvault-0.1.0.tgz \
-      /tarballs/interego-agent-interop-0.2.0.tgz
+      /tarballs/interego-agent-interop-0.2.0.tgz \
+      /tarballs/interego-pod-federation-0.1.0.tgz
 
 COPY deploy/mcp-relay/tsconfig.json ./
 COPY deploy/mcp-relay/server.ts ./
@@ -192,6 +193,10 @@ COPY deploy/mcp-relay/client-authorization.ts ./
 COPY deploy/mcp-relay/client-registration.ts ./
 COPY deploy/mcp-relay/client-interactions.ts ./
 COPY deploy/mcp-relay/client-interaction-http.ts ./
+COPY deploy/mcp-relay/pod-federation-http.ts ./
+COPY deploy/mcp-relay/pod-federation-page.ts ./
+COPY deploy/mcp-relay/pod-federation-store.ts ./
+COPY deploy/mcp-relay/pod-federation-resources.ts ./
 COPY deploy/mcp-relay/client-interaction-mcp.ts ./
 COPY deploy/mcp-relay/mcp-serving.ts ./
 COPY deploy/mcp-relay/hmd-app-logic.ts ./

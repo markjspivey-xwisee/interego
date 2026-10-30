@@ -2,6 +2,8 @@
 
 **Layer 3 Windows application, preview.** These connections use the installed Interego app. They do not change the hosted service or enable federation.
 
+For invitations and selected snapshots between people, see [Connect with another pod](POD-SHARING.md). Peer sharing has separate approval and keys. The [Interego browser wallet](../browser-wallet/README.md) can also use the saved local HTTPS bridge: allow its exact installed extension ID in Interego, then complete its own read or read-and-save OAuth approval. That provides note access, not website login identity.
+
 1. Open Interego and set up or restore your local pod.
 2. Open **Connections**, choose **Connect an app**, and select the client that runs on this computer.
 3. Name the connection, choose its permissions and expiry, then create it. Read access is selected by default; saving notes is a separate choice.

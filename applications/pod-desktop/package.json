@@ -1,6 +1,6 @@
 {
   "name": "@interego/pod-desktop",
-  "version": "0.1.0-preview.4",
+  "version": "0.1.0-preview.5",
   "description": "Interego for Windows: a personal local pod with private notes, scoped agent connections and encrypted backup.",
   "author": "Mark Spivey",
   "license": "MIT",
@@ -8,7 +8,10 @@
   "type": "module",
   "main": "dist/main.mjs",
   "homepage": "https://github.com/markjspivey-xwisee/interego",
-  "repository": { "type": "git", "url": "https://github.com/markjspivey-xwisee/interego.git" },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/markjspivey-xwisee/interego.git"
+  },
   "scripts": {
     "build": "node tools/build.mjs",
     "stage": "npm run build && node tools/stage.mjs",
@@ -17,13 +20,16 @@
     "smoke:packaged": "node tools/smoke-packaged.mjs",
     "start": "npm run build && electron ."
   },
-  "engines": { "node": ">=22.12.0" },
+  "engines": {
+    "node": ">=22.12.0"
+  },
   "dependencies": {
     "@modelcontextprotocol/server": "^2.0.0",
     "@interego/local-node": "*",
     "@interego/deployment-config": "*",
     "@interego/core": "*",
-    "@interego/solid": "*"
+    "@interego/solid": "*",
+    "@interego/pod-federation": "*"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

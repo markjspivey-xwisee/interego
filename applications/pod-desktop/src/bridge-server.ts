@@ -18,7 +18,12 @@ interface Code { clientId: string; redirect: string; challenge: string; connecti
 interface TokenFamily { id: string; clientId: string; connectionId: string; scopes: readonly AgentPermission[]; expires: number; refreshHash: string }
 interface Access { familyId: string; expires: number }
 export interface BridgeStableAddress { readonly origin: string; readonly port: number }
-export interface BridgeServerOptions { readonly agents: AgentService; readonly persistence?: BridgeStateOptions }
+export interface BridgeServerOptions {
+  readonly agents: AgentService;
+  readonly persistence?: BridgeStateOptions;
+  readonly allowedBrowserOrigins?: () => Promise<readonly string[]>;
+  readonly federation?: (request: Request) => Promise<Response>;
+}
 const MAX_BODY = 512 * 1024;
 const MAX_RESPONSE = 2 * 1024 * 1024;
 const APPROVAL_TTL = 5 * 60_000;
@@ -63,6 +68,14 @@ function startInput(raw: BridgeStartInput): BridgeStartInput {
   return { client: raw.client, name: plain(raw.name, 80).trim(), permissions: [...raw.permissions], expiresInDays: raw.expiresInDays };
 }
 function escapeHtml(value: string): string { return value.replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char]!); }
+function untilAbort<T>(operation: Promise<T>, signal: AbortSignal): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const abort = () => reject(new HttpFailure(503, 'temporarily_unavailable'));
+    signal.addEventListener('abort', abort, { once: true });
+    if (signal.aborted) abort();
+    operation.then(resolve, reject).finally(() => signal.removeEventListener('abort', abort)).catch(() => {});
+  });
+}
 
 export class BridgeServer {
   private readonly agents: AgentService;
@@ -93,7 +106,7 @@ export class BridgeServer {
   private readonly limits = new Map<string, { count: number; reset: number }>();
   private readonly handlers = new Set<McpHttpHandler>();
 
-  constructor(options: BridgeServerOptions) { this.agents = options.agents; this.store = options.persistence ? new BridgeStateStore(options.persistence) : undefined; }
+  constructor(private readonly options: BridgeServerOptions) { this.agents = options.agents; this.store = options.persistence ? new BridgeStateStore(options.persistence) : undefined; }
 
   private serializeAuthority<T>(action: () => Promise<T>): Promise<T> {
     const result = this.authority.then(action); this.authority = result.catch(() => undefined); return result;
@@ -474,13 +487,63 @@ export class BridgeServer {
       if (!this.server || this.lifetime.signal.aborted || !this.publicOrigin || !this.loopback) throw new HttpFailure(503, 'temporarily_unavailable');
       const host = request.headers.host;
       if (host !== new URL(this.loopback).host && host !== new URL(this.publicOrigin).host) throw new HttpFailure(403, 'invalid_request');
-      if (request.headers.origin !== undefined && request.headers.origin !== this.publicOrigin) throw new HttpFailure(403, 'invalid_request');
-      if (typeof request.url !== 'string' || request.url.length > 8192 || !request.url.startsWith('/') || request.url.startsWith('//')) throw new HttpFailure(400, 'invalid_request');
+      if (typeof request.url !== 'string' || request.url.length > 8192 || !request.url.startsWith('/') || request.url.startsWith('//') || request.url.includes('\\')) throw new HttpFailure(400, 'invalid_request');
       if (this.inFlight >= 16) throw new HttpFailure(429, 'temporarily_unavailable');
       this.inFlight++; counted = true; this.prune();
       const url = new URL(request.url, this.publicOrigin); const path = url.pathname;
+      if (url.origin !== this.publicOrigin) throw new HttpFailure(400, 'invalid_request');
       if ([...url.searchParams.keys()].some(key => url.searchParams.getAll(key).length !== 1)) throw new HttpFailure(400, 'invalid_request');
+      const origin = request.headers.origin;
+      const browserPaths = ['/.well-known/oauth-protected-resource', '/.well-known/oauth-protected-resource/mcp',
+        '/.well-known/oauth-authorization-server', '/register', '/token', '/revoke', '/mcp'];
+      if (origin !== undefined && origin !== this.publicOrigin) {
+        if (!/^chrome-extension:\/\/[a-p]{32}$/.test(origin) || !browserPaths.includes(path) || url.search
+          || !(await this.options.allowedBrowserOrigins?.())?.includes(origin)) throw new HttpFailure(403, 'invalid_request');
+        assertCurrent();
+        response.setHeader('access-control-allow-origin', origin);
+        response.setHeader('vary', 'Origin');
+        response.setHeader('access-control-expose-headers', 'WWW-Authenticate, MCP-Protocol-Version, Mcp-Session-Id');
+        if (request.method === 'OPTIONS') {
+          const method = request.headers['access-control-request-method'];
+          const headers = String(request.headers['access-control-request-headers'] ?? '').toLowerCase().split(',').map(value => value.trim()).filter(Boolean);
+          if (!['GET', 'POST', 'DELETE'].includes(String(method)) || headers.some(value =>
+            !['authorization', 'content-type', 'accept', 'mcp-protocol-version', 'mcp-session-id'].includes(value))) throw new HttpFailure(403, 'invalid_request');
+          this.send(response, 204, '', { 'access-control-allow-methods': 'GET, POST, DELETE',
+            'access-control-allow-headers': 'Authorization, Content-Type, Accept, MCP-Protocol-Version, Mcp-Session-Id', 'access-control-max-age': '0' });
+          return;
+        }
+      }
       this.rate('all', 600);
+      if ((path === '/pod-federation' || path.startsWith('/pod-federation/')) && this.options.federation && !url.search) {
+        if (origin !== undefined) throw new HttpFailure(403, 'invalid_request');
+        const cancel = new AbortController();
+        const disconnected = () => { if (!response.writableEnded) cancel.abort(); };
+        response.once('close', disconnected); request.once('aborted', disconnected);
+        const timeout = setTimeout(() => cancel.abort(), 15_000);
+        const signal = AbortSignal.any([lifetime, cancel.signal]);
+        const stopReading = () => { if (!request.complete) request.destroy(); };
+        signal.addEventListener('abort', stopReading, { once: true });
+        try {
+          const body = request.method === 'GET' || request.method === 'HEAD' ? undefined : new Uint8Array(await untilAbort(this.body(request), signal));
+          assertCurrent(); signal.throwIfAborted();
+          const headers = new Headers();
+          if (request.headers['content-type']) headers.set('content-type', request.headers['content-type']);
+          const result = await untilAbort(this.options.federation(new Request(url, { method: request.method ?? 'GET', headers, body, signal })), signal);
+          if (Number(result.headers.get('content-length') ?? 0) > MAX_RESPONSE) throw new HttpFailure(502, 'temporarily_unavailable');
+          const reader = result.body?.getReader(); const chunks: Uint8Array[] = []; let size = 0;
+          if (reader) {
+            try {
+              while (true) {
+                const chunk = await untilAbort(reader.read(), signal); if (chunk.done) break;
+                size += chunk.value.length; if (size > MAX_RESPONSE) throw new HttpFailure(502, 'temporarily_unavailable'); chunks.push(chunk.value);
+              }
+            } finally { await reader.cancel().catch(() => {}); reader.releaseLock(); }
+          }
+          assertCurrent(); signal.throwIfAborted();
+          this.send(response, result.status, Buffer.concat(chunks).toString('utf8'), { 'content-type': 'application/json' });
+        } finally { clearTimeout(timeout); signal.removeEventListener('abort', stopReading); response.off('close', disconnected); request.off('aborted', disconnected); }
+        return;
+      }
       const resource = `${this.publicOrigin}/mcp`;
       if (request.method === 'GET' && path === '/.well-known/interego-bridge' && !url.search) {
         this.send(response, 200, { challenge: this.readinessChallenge }); return;

@@ -15,6 +15,19 @@ export interface AgentClientOptions {
   readonly protector: AgentProtector;
 }
 const UNAVAILABLE = 'This agent connection is unavailable. Open Interego and check its permissions.';
+type DiagnosticStage = 'ticket-read' | 'ticket-wrapper' | 'ticket-unprotect' | 'ticket-parse' | 'ticket-validate'
+  | 'endpoint-read' | 'endpoint-validate' | 'request-seal' | 'broker-connect' | 'broker-http'
+  | 'response-json' | 'response-bind' | 'response-authenticate' | 'response-shape' | 'broker-refusal';
+interface Diagnostic { stage: DiagnosticStage; status?: number }
+/** Fixed labels only: safe to retain in a packaged CI log without ticket, note, or OS error text. */
+export const AGENT_DIAGNOSTIC_LINE = /^interego-agent-failure:(ticket-read|ticket-wrapper|ticket-unprotect|ticket-parse|ticket-validate|endpoint-read|endpoint-validate|request-seal|broker-connect|broker-http|response-json|response-bind|response-authenticate|response-shape|broker-refusal):(unavailable|ENOENT|EACCES|EPERM|ECONNREFUSED|ECONNRESET|ETIMEDOUT|ABORT_ERR|http-[1-5][0-9]{2})$/;
+function diagnosticFailure(diagnostic: Diagnostic, error?: unknown): void {
+  if (process.env['INTEREGO_POD_DIAGNOSTICS'] !== '1') return;
+  const code = error && typeof error === 'object' && 'code' in error ? error.code : undefined;
+  const kind = diagnostic.status && Number.isInteger(diagnostic.status) && diagnostic.status >= 100 && diagnostic.status <= 599
+    ? `http-${diagnostic.status}` : typeof code === 'string' && ['ENOENT', 'EACCES', 'EPERM', 'ECONNREFUSED', 'ECONNRESET', 'ETIMEDOUT', 'ABORT_ERR'].includes(code) ? code : 'unavailable';
+  process.stderr.write(`interego-agent-failure:${diagnostic.stage}:${kind}\n`);
+}
 export const NOTE_ID_PATTERN = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$/;
 
 function record(value: unknown): Record<string, unknown> {
@@ -69,15 +82,23 @@ export class AgentClient {
     this.directory = resolve(options.dataDir);
   }
 
-  private async context(): Promise<{ ticket: AgentTicket; endpoint: AgentEndpoint }> {
+  private async context(diagnostic: Diagnostic): Promise<{ ticket: AgentTicket; endpoint: AgentEndpoint }> {
+    diagnostic.stage = 'ticket-read';
     const wrapper = record(await readJson(join(this.directory, 'tickets', `${this.options.connectionId}.json`), 32 * 1024));
+    diagnostic.stage = 'ticket-wrapper';
     if (Object.keys(wrapper).sort().join(',') !== 'ciphertext,version' || wrapper['version'] !== 1
       || typeof wrapper['ciphertext'] !== 'string' || !wrapper['ciphertext']) throw new Error(UNAVAILABLE);
-    const raw = record(JSON.parse(this.options.protector.unprotect(wrapper['ciphertext'])));
+    diagnostic.stage = 'ticket-unprotect';
+    const plaintext = this.options.protector.unprotect(wrapper['ciphertext']);
+    diagnostic.stage = 'ticket-parse';
+    const raw = record(JSON.parse(plaintext));
+    diagnostic.stage = 'ticket-validate';
     if (Object.keys(raw).sort().join(',') !== 'connectionId,secret,version' || raw['version'] !== 1
       || raw['connectionId'] !== this.options.connectionId || typeof raw['secret'] !== 'string'
       || Buffer.from(raw['secret'], 'base64').length !== 32 || Buffer.from(raw['secret'], 'base64').toString('base64') !== raw['secret']) throw new Error(UNAVAILABLE);
+    diagnostic.stage = 'endpoint-read';
     const location = record(await readJson(join(this.directory, 'endpoint.json'), 4096));
+    diagnostic.stage = 'endpoint-validate';
     if (Object.keys(location).sort().join(',') !== 'sessionId,url,version' || location['version'] !== 1
       || typeof location['sessionId'] !== 'string' || !AGENT_ID_PATTERN.test(location['sessionId']) || typeof location['url'] !== 'string') throw new Error(UNAVAILABLE);
     const url = new URL(location['url']);
@@ -89,21 +110,27 @@ export class AgentClient {
   async request(operation: AgentOperation, input: unknown = {}, signal?: AbortSignal): Promise<unknown> {
     const args = agentArguments(operation, input);
     let authenticatedError: string | undefined;
+    const diagnostic: Diagnostic = { stage: 'ticket-read' };
     try {
       signal?.throwIfAborted();
-      const { ticket, endpoint } = await this.context();
+      const { ticket, endpoint } = await this.context(diagnostic);
       signal?.throwIfAborted();
       const requestId = randomUUID();
+      diagnostic.stage = 'request-seal';
       const envelope = sealAgentMessage(ticket, endpoint, requestId, 'request', { issuedAt: Date.now(), operation, arguments: args });
       const body = Buffer.from(JSON.stringify(envelope));
       if (body.length > MAX_AGENT_REQUEST_BYTES) throw new Error(UNAVAILABLE);
       const url = new URL(endpoint.url);
+      diagnostic.stage = 'broker-connect';
       const response = await new Promise<unknown>((done, fail) => {
         const timeout = AbortSignal.timeout(180_000);
         const request = httpRequest({ hostname: '127.0.0.1', port: Number(url.port), path: '/agent', method: 'POST', agent: false,
           signal: signal ? AbortSignal.any([signal, timeout]) : timeout,
           headers: { host: url.host, 'content-type': 'application/json', 'content-length': body.length } }, incoming => {
-          if (incoming.statusCode !== 200) { incoming.destroy(); fail(new Error(UNAVAILABLE)); return; }
+          if (incoming.statusCode !== 200) {
+            diagnostic.stage = 'broker-http'; diagnostic.status = incoming.statusCode;
+            incoming.destroy(); fail(new Error(UNAVAILABLE)); return;
+          }
           const chunks: Buffer[] = [];
           let size = 0;
           incoming.on('data', (chunk: Buffer) => {
@@ -114,6 +141,7 @@ export class AgentClient {
           incoming.once('error', fail);
           incoming.once('aborted', () => fail(new Error(UNAVAILABLE)));
           incoming.once('end', () => {
+            diagnostic.stage = 'response-json';
             try { done(JSON.parse(Buffer.concat(chunks).toString('utf8'))); } catch { fail(new Error(UNAVAILABLE)); }
           });
         });
@@ -121,11 +149,17 @@ export class AgentClient {
         request.once('error', fail);
         request.end(body);
       });
+      diagnostic.stage = 'response-bind';
       if (record(response)['requestId'] !== requestId) throw new Error(UNAVAILABLE);
+      diagnostic.stage = 'response-authenticate';
       const result = record(openAgentMessage(ticket, endpoint, response, 'response'));
+      diagnostic.stage = 'response-shape';
       if (result['ok'] === true && Object.keys(result).sort().join(',') === 'ok,value') return result['value'];
-      if (result['ok'] === false && Object.keys(result).sort().join(',') === 'error,ok' && typeof result['error'] === 'string' && result['error'].length <= 350) authenticatedError = result['error'];
-    } catch { /* File, OS protection, network and unauthenticated details stay out of MCP replies. */ }
+      if (result['ok'] === false && Object.keys(result).sort().join(',') === 'error,ok' && typeof result['error'] === 'string' && result['error'].length <= 350) {
+        authenticatedError = result['error']; diagnostic.stage = 'broker-refusal';
+      }
+      diagnosticFailure(diagnostic);
+    } catch (error) { diagnosticFailure(diagnostic, error); /* Details stay out of MCP replies and diagnostic logs. */ }
     throw new Error(authenticatedError ?? UNAVAILABLE);
   }
 }

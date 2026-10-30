@@ -5,7 +5,7 @@ import { appRoot, assertStagePath, repoRoot, stageRoot, within } from './paths.m
 import { bridgeBuildInfo, stageBridge } from './stage-bridge.mjs';
 
 const sourceManifest = JSON.parse(await readFile(join(appRoot, 'package.json'), 'utf8'));
-const workspaceNames = new Set(['@interego/local-node', '@interego/deployment-config', '@interego/core', '@interego/solid']);
+const workspaceNames = new Set(['@interego/local-node', '@interego/deployment-config', '@interego/core', '@interego/solid', '@interego/pod-federation']);
 const productionRoots = new Set([...workspaceNames, '@modelcontextprotocol/server']);
 const installedRoot = resolve(repoRoot, 'node_modules');
 const workspaceRoot = resolve(repoRoot, 'packages');
@@ -126,6 +126,7 @@ await writeFile(join(stageRoot, 'build-info.json'), `${JSON.stringify({
   product: 'Interego', version: sourceManifest.version, electron: require('electron/package.json').version,
   signing: signingRequested ? 'certificate-requested; inspect the built installer signature' : 'unsigned-preview',
   installation: 'per-user', bundledRuntime: true, federation: 'disabled',
+  optionalPodFederation: { default: 'off', delivery: 'selected-encrypted-snapshots', offlineQueue: false },
   optionalWebBridge: bridgeBuildInfo,
 }, null, 2)}\n`);
 process.stdout.write(`Staged ${graph.length} production packages at ${relative(repoRoot, stageRoot)}.\n`);

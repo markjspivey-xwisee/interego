@@ -1,0 +1,10 @@
+{
+  "name": "@interego/browser-wallet",
+  "version": "0.2.0",
+  "private": true,
+  "type": "module",
+  "license": "MIT",
+  "description": "Manifest V3 identity and context wallet for Interego",
+  "scripts": {"test": "node --test test/*.test.mjs", "test:browser": "node test/browser-smoke.mjs", "test:live": "node tools/live-check.mjs", "check": "node tools/check.mjs"},
+  "engines": {"node": ">=22"}
+}

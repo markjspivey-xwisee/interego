@@ -72,6 +72,7 @@ The underlying surface is a small categorical kernel — eight verbs: `mint`, `d
 | Run a SOC 2 / EU AI Act / NIST RMF audit against an Interego pod | [`spec/SOC2-PREPARATION.md`](spec/SOC2-PREPARATION.md) |
 | Set up Interego for a non-technical friend or family member | [The hosted front door](https://identity.interego.xwisee.com/) — they enroll a passkey or wallet directly (~30s, no command line), or their MCP client drives it on first call |
 | Browse the protocol primitives via web UI | [Identity Dashboard](https://identity.interego.xwisee.com/dashboard) + [PGSL Browser](https://pgsl-browser.interego.xwisee.com) |
+| Choose an identity and review private browser captures | [Interego Wallet](applications/browser-wallet/) — an unpacked Chrome/Edge extension with session-only OAuth and explicit save review |
 
 ---
 
@@ -141,7 +142,7 @@ For dated detail see [`CHANGELOG.md`](CHANGELOG.md).
 
 ## Hosted vs self-hosted: which path is right for you
 
-For a local installation without developer tools, see the [Interego Windows app preview](applications/pod-desktop/README.md). It bundles a local pod, encrypted private notes, notes backup/restore, scoped local MCP connections and optional web access with a saved user-owned address or temporary link. Federation stays disabled, web access starts off on every launch, and hosted Interego remains available separately.
+For a local installation without developer tools, see the [Interego Windows app preview](applications/pod-desktop/README.md). It bundles a local pod, encrypted private notes, notes backup/restore, scoped local MCP connections and optional web access with a saved user-owned address or temporary link. [Invited pod sharing](applications/pod-desktop/POD-SHARING.md) adds selected encrypted snapshots between local and hosted peers; the [browser wallet](applications/browser-wallet/README.md) can use local notes through an approved HTTPS bridge. Federation and web access start off on every launch, and hosted Interego remains available separately.
 
 The new [local deployment foundation](docs/LOCAL-DEPLOYMENT.md) adds explicit local/hosted configuration and an importable durable local pod runtime. Its capability matrix distinguishes storage support from MCP, account, installer, and federation features that remain separate. Existing hosted and personal-bridge paths below continue to work.
 

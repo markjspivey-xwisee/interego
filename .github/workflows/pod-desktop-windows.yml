@@ -6,6 +6,7 @@ on:
       - 'applications/pod-desktop/**'
       - 'packages/local-node/**'
       - 'packages/deployment-config/**'
+      - 'packages/pod-federation/**'
       - 'packages/core/**'
       - 'packages/solid/**'
       - 'package.json'

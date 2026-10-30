@@ -1,5 +1,13 @@
 # Changelog
 
+## 2026-10-30 — Invited local and hosted pod sharing, and local browser wallet access
+
+The Windows app and hosted relay compose a new Layer 3 pod federation adapter. Owners enable it explicitly, exchange short-lived one-use invitations, compare codes, approve a peer, and send selected encrypted representations. Separate sharing keys, signed audience-bound requests and replies, durable replay history, protected state, cancellation and queued permission checks preserve the storage boundary. Canonical graph identities, media types and original representation bytes remain unchanged. Pausing retains approved peers and received snapshots; disconnect blocks new transfers. Local copy removal, sent-history cleanup and confirmed reset remain owner actions. Sharing starts off after restart; live synchronization and reliable offline delivery are not included.
+
+Hosted peer management requires a separate `federation:manage` OAuth consent and derives the account and pod from the authenticated session. State is encrypted in the owner's pod and uses conditional writes; refreshed authority and a conditional send intent prevent transmission using already revoked shared-store authority. The new hosted page and routes require a later deployment. Existing hosted identity, notes and assistant permissions remain available. The owner page keeps its browser fields distinct from vocabulary IRIs so the repository's ontology check remains accurate.
+
+The browser wallet also supports local pods through the saved HTTPS MCP bridge, with exact native-approved extension origins, explicit notes scopes, reviewed captures, session refresh and disconnect. This is local context access, not a website identity signer. Hallowmarch's existing hosted owner and pod checks remain intact; local-held website identity and game storage require a separate adapter. Tests cover real local runtimes, cross-adapter local/hosted sharing, privacy boundaries, lifecycle races, storage conflicts, and browser/native connection behavior.
+
 ## 2026-10-29 — Saved user-owned bridge addresses and pairings
 
 The Windows preview defaults web setup to a permanent hostname in the user's own Cloudflare account, with an existing HTTPS gateway and temporary link as alternatives. Setup masks the connector token, saves it under Windows protection, displays a fixed local target, and checks that the public route reaches this exact app before enabling access. A dedicated named tunnel uses the pinned helper with a private token file; its provider configuration remains under the user's control.
@@ -39,6 +47,12 @@ Added `@interego/deployment-config` with validated local and hosted profiles, se
 Added `@interego/local-node`, an opt-in file-backed Community Solid Server runtime behind an authenticated loopback gateway. CSS uses a private Unix socket or Windows named pipe, with an explicit durable data directory, persistent local service credential, exclusive writer lock, and asynchronous shutdown. It bundles its configuration and does not install dependencies at startup. This first slice does not include consumer installation, owner-key recovery, notification transport, or federation transport; enabling local federation is refused. Hosted deployment and existing bridge behavior remain separate.
 
 The offline integration test publishes an encrypted graph through the existing Solid binding, restarts the real runtime, and verifies discovery and decryption while refusing non-loopback TCP connections. Configuration and boundary tests cover legacy settings, optional federation, unauthorized requests, profile scope, and local lifecycle failures. See `docs/LOCAL-DEPLOYMENT.md` for the capability matrix and current limits.
+
+## 2026-10-29 — Browser wallet: identity selection, context inspection, and reviewed private captures
+
+`applications/browser-wallet` adds a dependency-free Manifest V3 extension for Chrome and Chromium-based Edge. It follows the relay's public-client OAuth metadata with PKCE and state, keeps access tokens in browser session storage, discovers its four admitted tool affordances, and displays the current session agent and recent pod descriptors. A toolbar click captures selected text for an editable review; saving requires an explicit write connection and approval of the exact private `remember` payload. Reviews expire and are consumed before dispatch, so duplicate approvals and uncertain writes cannot automatically replay a save. Receipts distinguish accepted writes, readable returned descriptors, refusals, and uncertain outcomes. Private notes use the relay's current encryption path for the session agent; the extension does not take custody of identity keys or claim client-side end-to-end encryption.
+
+Validation covers OAuth binding, live-catalog boundaries, read-only enforcement, changed identities, expired and replayed approvals, uncertain writes, storage isolation, and extension-package checks. Browser testing uses an isolated Chromium profile and offline OAuth/network fixtures; live public catalog and OAuth discovery were checked separately. Live account sign-in and save remain manual checks. A scoped CI workflow runs the dependency-free checks.
 
 ## 2026-10-29 — PGSL native heads can be deleted with an explicit exact-revision protocol
 
