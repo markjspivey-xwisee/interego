@@ -3,6 +3,7 @@ import type { DesktopApi, FileActionResult, LocalNote, NoteInput, PodStatus } fr
 import type { AgentConnection, AgentConnectionInput, AgentSetup } from './agent-types.js';
 import type { BridgeClient, BridgeStartInput, BridgeStatus, StableBridgeInput, StableBridgeView } from './bridge-types.js';
 import type { FederationStatus, FederationResource } from '@interego/pod-federation';
+import type { LocalIdentityStatus } from './local-identity-types.js';
 
 async function invoke<T>(operation: string, argument?: unknown): Promise<T> {
   const reply = await ipcRenderer.invoke(`pod:${operation}`, argument) as
@@ -12,6 +13,15 @@ async function invoke<T>(operation: string, argument?: unknown): Promise<T> {
 }
 
 const api: DesktopApi = Object.freeze({
+  localIdentityStatus: () => invoke<LocalIdentityStatus>('localIdentityStatus'),
+  setupLocalIdentity: () => invoke<LocalIdentityStatus>('setupLocalIdentity'),
+  approveLocalIdentity: (id: string, verificationCode: string) => invoke<LocalIdentityStatus>('approveLocalIdentity', { id, verificationCode }),
+  denyLocalIdentity: (id: string) => invoke<LocalIdentityStatus>('denyLocalIdentity', id),
+  forgetLocalIdentity: () => invoke<LocalIdentityStatus>('forgetLocalIdentity'),
+  identityExtensionIds: () => invoke<readonly string[]>('identityExtensionIds'),
+  setIdentityExtensionIds: (ids: readonly string[]) => invoke<readonly string[]>('setIdentityExtensionIds', ids),
+  backupLocalIdentity: (passphrase: string) => invoke<{ cancelled: boolean; status: LocalIdentityStatus }>('backupLocalIdentity', passphrase),
+  restoreLocalIdentity: (passphrase: string) => invoke<{ cancelled: boolean; status: LocalIdentityStatus }>('restoreLocalIdentity', passphrase),
   status: () => invoke<PodStatus>('status'),
   setup: () => invoke<PodStatus>('setup'),
   start: () => invoke<PodStatus>('start'),

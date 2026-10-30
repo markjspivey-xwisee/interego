@@ -1,5 +1,13 @@
 # Changelog
 
+## 2026-10-30 — Native-held identity sign-in for Windows pods
+
+The Windows preview offers a separate local sign-in key, protected storage, encrypted recovery and approval for every login. An exact-ID Chrome/Edge native companion carries encrypted local requests; the extension never receives the private key or raw proof. Browser policy changes are serialized and block admission on failure. The native UI displays server-derived provider, client, callback, permissions and comparison code before approval.
+
+The hosted relay adds a one-use handoff bound to the existing OAuth client, PKCE, state, callback, resource and fresh DID challenge. Existing hosted login choices remain available. This needs a later hosted deployment; a fresh key creates a separate hosted owner, and existing-account linking and local game saves remain separate work. Federation and public web access remain off by default and are not needed for native signing.
+
+Tests cover the real Windows companion, DPAPI/CNG interoperability, consent, proof and callback replay refusal, cancellation, policy failure ordering, recovery and the unchanged Hallowmarch login adapter with isolated accounts. Cross-machine federation also passed between the laptop and VPS through pinned SSH forwarding; public DNS/TLS and named tunnels were not exercised. A reproduced Electron first-profile timing issue now waits for the protected profile key to appear on disk before issuing companion access.
+
 ## 2026-10-30 — Invited local and hosted pod sharing, and local browser wallet access
 
 The Windows app and hosted relay compose a new Layer 3 pod federation adapter. Owners enable it explicitly, exchange short-lived one-use invitations, compare codes, approve a peer, and send selected encrypted representations. Separate sharing keys, signed audience-bound requests and replies, durable replay history, protected state, cancellation and queued permission checks preserve the storage boundary. Canonical graph identities, media types and original representation bytes remain unchanged. Pausing retains approved peers and received snapshots; disconnect blocks new transfers. Local copy removal, sent-history cleanup and confirmed reset remain owner actions. Sharing starts off after restart; live synchronization and reliable offline delivery are not included.
@@ -4282,7 +4290,7 @@ you rely on it. Both are now checked by `node tools/changelog-lint.mjs`, which r
   A branch tip is not a durable anchor. Either point it at the merge-base (a commit already
   on `master`, which always resolves) or move it to the squash commit afterwards.
 
-<!-- documented-through: 919e47344169eaf0a097da0051544c8b28e84a8f -->
+<!-- documented-through: 08ff734230db0569e888c652dd6bb9d71736a3bc -->
 
 ### 2026-09-16 — General LLM telemetry and private HyperMarkdown reports
 
@@ -4655,6 +4663,20 @@ PR #303 (`2ecd0031`) replaces the final fleet-wide check in a single-service rol
 `tools/railway-singleton-settings.ts` adds a plan-by-default command; explicit apply updates declared replica and overlap settings, then verifies readback. It refuses automatic draining changes and does not trigger a deployment. The lint and test-module floors account for the new tools and suite. These entries describe the historical source changes, not independently verified production redeployments.
 
 This backfill covers only PRs #303 and #304 immediately after the already documented PR #302. The continuous marker advances only through PR #304's existing default-branch commit; later gaps remain measured backlog.
+
+## 2026-08-09 — Historical backfill: CSS deployment checks and Discord recovery (#305–#310)
+
+PR #305 (`615543d9`) added log-verified CSS deployment using its `Listening to server at` boot message. The deploy tool checks live singleton settings before mutation, queries deployment-scoped filtered logs, counts matching boot messages, and distinguishes missing proof, crash loops and a deployment that stopped after booting. A read-only current-image tool lets the workflow verify the outgoing image remains pullable before replacement. The CSS integration test captures the boot message and checks a read immediately afterwards.
+
+PR #306 (`17a0e7f7`) corrected the operational claims: an unfiltered CSS log tail can contain the boot line when polling starts early enough, so filtered lookup removes a timing race. Recorded rollout observations did not establish that explicitly setting zero overlap eliminated container overlap; the comments distinguish the observed startup gap from the setting's intended constraint.
+
+PR #307 (`673b24e3`) taught deployment-scope checks to resolve a matrix leg's prebuild artifacts to tracked workspace inputs, transitive workspace dependencies, compiler configuration chains and installation inputs. Recipe resolution applies even to committed generated output and reads repository inputs as of HEAD. Unknown recipes, unexplained artifacts, unsupported ONBUILD instructions and build scripts escaping their workspace remain refusals. Tests cover recipe parsing, malformed inputs, generated artifacts and real repository history.
+
+PR #308 (`f560873d`) kept Discord reconnect timers alive until retry or explicit stop, bounded consecutive attempts, added a HELLO deadline and guarded abandoned socket generations. Fatal gateway failure and an unexpectedly empty event loop exit nonzero. Deployment boot proof moved to the gateway READY event, and command registration compares definitions before publishing again. Child-process tests cover liveness and acknowledgments before unfinished substrate work.
+
+PR #309 (`23533dcb`) added a workflow that builds workspace dependencies and runs the Discord bot's tests and deployment boot-proof checks. PR #310 (`08ff7342`) quoted boot-proof phrases before Railway log queries so `discord:` is not treated as a field selector, added quoting regressions, and included redeploy-tool changes in the workflow triggers.
+
+This backfill covers only the six existing first-parent steps immediately after PR #304. The continuous marker advances through PR #310; later undocumented steps remain measured backlog. The backlog ceiling is unchanged.
 
 ## 2026-08-09 — an entry naming an agent it was not signed by, and a request nobody could read
 

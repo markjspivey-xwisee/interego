@@ -1,6 +1,6 @@
 {
   "name": "@interego/pod-desktop",
-  "version": "0.1.0-preview.5",
+  "version": "0.1.0-preview.6",
   "description": "Interego for Windows: a personal local pod with private notes, scoped agent connections and encrypted backup.",
   "author": "Mark Spivey",
   "license": "MIT",

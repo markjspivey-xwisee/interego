@@ -4,6 +4,7 @@ import { createRequire } from 'node:module';
 import { join } from 'node:path';
 import { build } from 'esbuild';
 import { appRoot } from './paths.mjs';
+import { buildNativeHost } from './build-native-host.mjs';
 
 const require = createRequire(import.meta.url);
 const tsc = require.resolve('typescript/bin/tsc');
@@ -18,3 +19,4 @@ await Promise.all([
   build({ entryPoints: [join(appRoot, 'src/preload.ts')], outfile: join(appRoot, 'dist/preload.cjs'), bundle: true, platform: 'node', format: 'cjs', target: 'node22', packages: 'external' }),
   build({ entryPoints: [join(appRoot, 'src/renderer.ts')], outfile: join(appRoot, 'dist/renderer.js'), bundle: true, platform: 'browser', format: 'iife', target: 'chrome130' }),
 ]);
+await buildNativeHost();

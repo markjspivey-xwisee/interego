@@ -2,6 +2,7 @@ import type { DesktopApi, LocalNote, PodStatus } from './types.js';
 import type { AgentClient, AgentConnection, AgentPermission, AgentSetup } from './agent-types.js';
 import { installBridgeUi } from './bridge-renderer.js';
 import { installFederationUi } from './federation-renderer.js';
+import { installIdentityUi } from './identity-renderer.js';
 
 const element = <T extends HTMLElement = HTMLElement>(id: string): T => {
   const found = document.getElementById(id);
@@ -22,7 +23,7 @@ let notes: readonly LocalNote[] = [];
 let notesLoaded = false;
 let notesError = false;
 let busy: string | null = null;
-type Page = 'memory' | 'connections' | 'backup' | 'settings';
+type Page = 'memory' | 'connections' | 'identity' | 'backup' | 'settings';
 let currentPage: Page = 'memory';
 let backupMode: 'backup' | 'restore' = 'backup';
 let statusRequest = 0;
@@ -69,6 +70,7 @@ const bridgeUi = installBridgeUi(api, {
   onAccessChanged: () => { drawConnections(); void loadConnections(); },
 });
 const federationUi = installFederationUi(api, { pod: () => status, locallyBusy: () => busy !== null });
+const identityUi = installIdentityUi(api, { pod: () => status, locallyBusy: () => busy !== null, openDialog, closeDialog });
 
 function connectionDate(value: string): string {
   return Number.isFinite(Date.parse(value)) ? new Intl.DateTimeFormat(undefined, {
@@ -410,6 +412,7 @@ function controls(): void {
   document.body.setAttribute('aria-busy', String(occupied));
   bridgeUi.updateAvailability();
   federationUi.updateAvailability();
+  identityUi.updateAvailability();
 }
 
 function applyStatus(next: PodStatus): void {
@@ -495,6 +498,7 @@ function schedulePoll(): void {
 async function refreshStatus(initial: boolean): Promise<void> {
   void bridgeUi.refresh();
   void federationUi.refresh();
+  void identityUi.refresh();
   if (busy) { schedulePoll(); return; }
   const requested = ++statusRequest;
   try {
@@ -556,18 +560,20 @@ function selectPage(next: Page): void {
   const headings = {
     memory: ['Your memory', 'A little space for what matters.'],
     connections: ['Your AI, your memory', 'Choose the apps you want to let in.'],
+    identity: ['Your identity', 'A sign-in key you keep, with a choice for every website.'],
     backup: ['Backup & recovery', 'Keep a safe copy of your saved notes.'],
     settings: ['Your space, your way', 'A few things to make yourself at home.'],
   };
   element('page-title').textContent = headings[next][0]!;
   element('page-description').textContent = headings[next][1]!;
-  for (const name of ['memory', 'connections', 'backup', 'settings'] as const) {
+  for (const name of ['memory', 'connections', 'identity', 'backup', 'settings'] as const) {
     element(`${name}-page`).hidden = next !== name;
     if (name === next) button(`nav-${name}`).setAttribute('aria-current', 'page');
     else button(`nav-${name}`).removeAttribute('aria-current');
   }
   element('settings-ai-disclosure').hidden = next !== 'settings';
   if (next === 'connections') void loadConnections();
+  if (next === 'identity') void identityUi.refresh();
 }
 
 function dialogMessage(message: string, error = true): void {
@@ -608,7 +614,7 @@ button('toggle-running').addEventListener('click', () => {
   }, stop ? 'Interego could not stop safely. Please try again.' : 'Your local space could not start. Please try again.');
 });
 button('retry-notes').addEventListener('click', () => { void loadNotes(); });
-for (const name of ['memory', 'connections', 'backup', 'settings'] as const) button(`nav-${name}`).addEventListener('click', () => selectPage(name));
+for (const name of ['memory', 'connections', 'identity', 'backup', 'settings'] as const) button(`nav-${name}`).addEventListener('click', () => selectPage(name));
 for (const id of ['welcome-hosted', 'open-hosted', 'connections-hosted']) button(id).addEventListener('click', () => {
   void action('hosted', () => api.openHosted(), 'Hosted Interego could not be opened. Please try again.');
 });

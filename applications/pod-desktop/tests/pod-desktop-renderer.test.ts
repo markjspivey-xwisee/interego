@@ -67,6 +67,15 @@ async function mount(initial = state('unconfigured'), overrides: Partial<Desktop
   let stableSettings = initialStable;
   let bridge: BridgeStatus = initialStable ? webPaused(initialStable) : { state: 'off', permissions: [], pendingApprovals: [], connections: [] };
   const api: DesktopApi = {
+    localIdentityStatus: vi.fn(async () => ({ configured: false, pending: [] })),
+    setupLocalIdentity: vi.fn(async () => ({ configured: false, pending: [] })),
+    approveLocalIdentity: vi.fn(async () => ({ configured: false, pending: [] })),
+    denyLocalIdentity: vi.fn(async () => ({ configured: false, pending: [] })),
+    forgetLocalIdentity: vi.fn(async () => ({ configured: false, pending: [] })),
+    identityExtensionIds: vi.fn(async () => []),
+    setIdentityExtensionIds: vi.fn(async ids => ids),
+    backupLocalIdentity: vi.fn(async () => ({ cancelled: true, status: { configured: false, pending: [] } })),
+    restoreLocalIdentity: vi.fn(async () => ({ cancelled: true, status: { configured: false, pending: [] } })),
     status: vi.fn(async () => current),
     setup: vi.fn(async () => { current = state('running', saved.length); return current; }),
     start: vi.fn(async () => { current = state('running', saved.length); return current; }),
@@ -253,6 +262,14 @@ describe('consumer pod sharing and browser consent', () => {
 });
 
 describe('Interego consumer desktop', () => {
+  it('opens the separate Identity page without creating a credential or enabling sharing', async () => {
+    const app = await mount(state('stopped')); app.click('nav-identity'); await flush();
+    expect(app.get('identity-page').hidden).toBe(false); expect(app.get('memory-page').hidden).toBe(true);
+    expect(app.get('nav-identity').getAttribute('aria-current')).toBe('page');
+    expect(app.get('page-title').textContent).toBe('Your identity');
+    expect(app.api.setupLocalIdentity).not.toHaveBeenCalled(); expect(app.api.enableFederation).not.toHaveBeenCalled();
+    app.click('nav-memory'); expect(app.get('identity-page').hidden).toBe(true);
+  });
   it('offers local setup and hosted use explicitly without starting either automatically', async () => {
     const app = await mount();
     expect(app.get('welcome').hidden).toBe(false);

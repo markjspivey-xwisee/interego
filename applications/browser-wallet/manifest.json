@@ -1,10 +1,10 @@
 {
   "manifest_version": 3,
   "name": "Interego Wallet",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Choose an Interego identity, inspect context, and review selected text before saving it privately to your pod.",
   "minimum_chrome_version": "120",
-  "permissions": ["identity", "storage", "activeTab", "scripting"],
+  "permissions": ["identity", "storage", "activeTab", "scripting", "nativeMessaging"],
   "optional_host_permissions": ["https://*/*"],
   "action": {"default_title": "Review selection in Interego Wallet"},
   "background": {"service_worker": "src/service-worker.mjs", "type": "module"},

@@ -2,6 +2,7 @@ export type PodState = 'unconfigured' | 'stopped' | 'starting' | 'running' | 'st
 import type { AgentConnection, AgentConnectionInput, AgentSetup } from './agent-types.js';
 import type { BridgeClient, BridgeStartInput, BridgeStatus, StableBridgeInput, StableBridgeView } from './bridge-types.js';
 import type { FederationStatus, FederationResource } from '@interego/pod-federation';
+import type { LocalIdentityStatus } from './local-identity-types.js';
 
 export interface PodStatus {
   readonly state: PodState;
@@ -27,6 +28,15 @@ export interface NoteInput { readonly title: string; readonly body: string; }
 export interface FileActionResult { readonly cancelled: boolean; readonly status: PodStatus; }
 
 export interface DesktopApi {
+  localIdentityStatus(): Promise<LocalIdentityStatus>;
+  setupLocalIdentity(): Promise<LocalIdentityStatus>;
+  approveLocalIdentity(id: string, verificationCode: string): Promise<LocalIdentityStatus>;
+  denyLocalIdentity(id: string): Promise<LocalIdentityStatus>;
+  forgetLocalIdentity(): Promise<LocalIdentityStatus>;
+  identityExtensionIds(): Promise<readonly string[]>;
+  setIdentityExtensionIds(ids: readonly string[]): Promise<readonly string[]>;
+  backupLocalIdentity(passphrase: string): Promise<{ cancelled: boolean; status: LocalIdentityStatus }>;
+  restoreLocalIdentity(passphrase: string): Promise<{ cancelled: boolean; status: LocalIdentityStatus }>;
   status(): Promise<PodStatus>;
   setup(): Promise<PodStatus>;
   start(): Promise<PodStatus>;

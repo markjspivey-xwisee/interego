@@ -18,7 +18,11 @@ import { StableBridgeTunnel } from './stable-tunnel.js';
 import { StableBridgeStore } from './stable-bridge.js';
 import { BridgeManager } from './bridge-manager.js';
 import type { BridgeClient, BridgeStartInput, StableBridgeInput } from './bridge-types.js';
-import { BrowserExtensionStore } from './browser-extensions.js';
+import { BrowserExtensionStore, extensionIds } from './browser-extensions.js';
+import { LocalIdentityService, ProtectedLocalIdentityStore } from './local-identity.js';
+import { IdentityBrowser } from './identity-browser.js';
+import { NativeIdentityHost } from './native-identity-host.js';
+import { IdentityBrowserPolicy } from './identity-browser-policy.js';
 import { FederationService, ProtectedFederationStore } from '@interego/pod-federation';
 import { presentSharedResource } from './federation-notes.js';
 import { shareSelectedNotes } from './federation-owner.js';
@@ -57,6 +61,9 @@ let controller: PodController | undefined;
 let agentService: AgentService | undefined;
 let webBridge: BridgeManager | undefined;
 let podFederation: FederationService | undefined;
+let localIdentity: LocalIdentityService | undefined;
+let identityBrowser: IdentityBrowser | undefined;
+let identityBrowserError: string | undefined;
 let federationGeneration = 0;
 let smokeBridgeOrigin: string | undefined;
 let smokeFederationPeer: FederationService | undefined;
@@ -211,6 +218,78 @@ async function bootstrap(): Promise<void> {
   controller = new PodController(options);
   const pod = controller;
   const extensions = new BrowserExtensionStore(join(userData, 'browser-access'), agentProtector);
+  const identityExtensions = new BrowserExtensionStore(join(userData, 'identity-browser', 'allowed-extensions'), agentProtector);
+  const identitySmoke = smoke ? (await import('./identity-smoke.js')).createIdentitySmoke() : undefined;
+  localIdentity = new LocalIdentityService({
+    store: new ProtectedLocalIdentityStore({ dataDir: join(userData, 'local-identity'), protector: agentProtector }),
+    binding: () => controller!.agentPodBinding(),
+    trustedRelays: [{ relayOrigin: 'https://relay.interego.xwisee.com', identityOrigin: 'https://identity.interego.xwisee.com' }],
+    ...(identitySmoke ? { fetch: identitySmoke.fetch } : {}),
+  });
+  const identity = localIdentity;
+  const nativeIdentityHost = new NativeIdentityHost({ dataDir: join(userData, 'identity-browser'),
+    executable: join(app.getAppPath(), 'dist', 'native-host', 'Interego-Identity.exe') });
+  let identityAdmission = true;
+  const identityPolicy = new IdentityBrowserPolicy({
+    saveAllowed: ids => identityExtensions.save(ids), configureHost: ids => nativeIdentityHost.configure(ids), closing: () => closing,
+    revoke: () => { identityAdmission = false; identityBrowser?.revokeChannels(); },
+    allowAdmission: () => { identityAdmission = true; },
+  });
+  if (process.platform === 'win32') {
+    const browser = new IdentityBrowser({ dataDir: join(userData, 'identity-browser'), service: identity,
+      allowedOrigins: () => identityAdmission ? identityExtensions.origins() : Promise.resolve([]), protectTicket: value => nativeIdentityHost.protectTicket(value),
+      onPending: () => { if (!smoke && window && !window.isDestroyed()) { window.restore(); window.show(); window.focus(); } },
+    });
+    try { await browser.start(); identityBrowser = browser; }
+    catch { identityBrowserError = 'Local browser sign-in could not open. Reopen Interego or reinstall this Windows preview.'; await browser.close().catch(() => {}); }
+  }
+  handle('localIdentityStatus', async () => identity.status());
+  handle('setupLocalIdentity', async () => identity.setup());
+  handle('approveLocalIdentity', async value => {
+    if (!value || typeof value !== 'object') throw new Error('Choose a pending sign-in.');
+    const input = value as { id?: unknown; verificationCode?: unknown };
+    if (typeof input.id !== 'string' || typeof input.verificationCode !== 'string') throw new Error('Choose a pending sign-in and check its code.');
+    await identity.approve(input.id, input.verificationCode); return identity.status();
+  });
+  handle('denyLocalIdentity', async value => {
+    if (typeof value !== 'string') throw new Error('Choose a pending sign-in.');
+    identity.deny(value); return identity.status();
+  });
+  handle('forgetLocalIdentity', async () => identity.forget());
+  handle('identityExtensionIds', async () => identityExtensions.list());
+  handle('setIdentityExtensionIds', async value => {
+    const ids = extensionIds(value);
+    if (!identityBrowser) throw new Error(identityBrowserError ?? 'Local browser sign-in is available in the Windows preview.');
+    if (userData.toLowerCase() !== join(app.getPath('appData'), 'Interego').toLowerCase()) {
+      throw new Error('Browser registration is available in the standard installed Interego data folder. This isolated profile has not been registered.');
+    }
+    return identityPolicy.save(ids);
+  });
+  handle('backupLocalIdentity', async value => {
+    const phrase = passphrase(value);
+    const chosen = await dialog.showSaveDialog(window!, { title: 'Back up your local sign-in identity',
+      defaultPath: 'Interego-identity.interego-identity', filters: [{ name: 'Encrypted Interego identity', extensions: ['interego-identity'] }] });
+    if (!chosen.canceled && chosen.filePath) await atomicWrite(chosen.filePath, await identity.exportBackup(phrase));
+    // A valid recovery export can succeed even when its old notes pod is unavailable.
+    return { cancelled: chosen.canceled || !chosen.filePath, status: await identity.status().catch(() => ({ configured: true, pending: [] })) };
+  });
+  handle('restoreLocalIdentity', async value => {
+    const phrase = passphrase(value);
+    const chosen = await dialog.showOpenDialog(window!, { title: 'Restore your local sign-in identity', properties: ['openFile'],
+      filters: [{ name: 'Encrypted Interego identity', extensions: ['interego-identity'] }] });
+    if (!chosen.canceled && chosen.filePaths[0]) {
+      const file = await open(chosen.filePaths[0], 'r');
+      try {
+        const stat = await file.stat();
+        if (!stat.isFile() || stat.size > 32 * 1024) throw new Error('Choose an encrypted Interego identity backup, up to 32 KB.');
+        const bytes = Buffer.alloc(32 * 1024 + 1); let size = 0;
+        while (size < bytes.length) { const result = await file.read(bytes, size, bytes.length - size, null); if (!result.bytesRead) break; size += result.bytesRead; }
+        if (size > 32 * 1024) throw new Error('This identity backup is too large.');
+        await identity.restoreBackup(bytes.subarray(0, size), phrase);
+      } finally { await file.close(); }
+    }
+    return { cancelled: chosen.canceled || !chosen.filePaths[0], status: await identity.status() };
+  });
   const smokeFederationTransport: typeof fetch = async (input, init) => {
     if (!smoke) throw new Error('The isolated peer transport is unavailable.');
     const request = new Request(input, init); const url = new URL(request.url);
@@ -464,6 +543,9 @@ async function bootstrap(): Promise<void> {
         notes: () => window!.webContents.executeJavaScript('window.interego.notes()') });
       const { verifyWebBridge } = await import('./bridge-smoke.js');
       const smokeInvoke = <T>(method: string, argument?: unknown) => window!.webContents.executeJavaScript(`window.interego[${JSON.stringify(method)}](${argument === undefined ? '' : JSON.stringify(argument)})`) as Promise<T>;
+      await identitySmoke!.verify({ invoke: smokeInvoke, executable: join(app.getAppPath(), 'dist/native-host/Interego-Identity.exe'),
+        approve: (id, code) => window!.webContents.executeJavaScript(`window.interego.approveLocalIdentity(${JSON.stringify(id)},${JSON.stringify(code)})`),
+        dataDir: userData, allow: ids => identityExtensions.save(ids), expectPrevious: initial.configured });
       if (!initial.configured) await verifyWebBridge({ invoke: smokeInvoke, loopback: () => smokeBridgeOrigin });
       const { verifyStableBridge } = await import('./stable-bridge-smoke.js');
       const { verifyFederation } = await import('./federation-smoke.js');
@@ -527,10 +609,13 @@ else {
     void (async () => {
       try {
         // Stop admitting agent work before waiting for any owner dialog or action.
+        localIdentity?.stop();
+        const identityClosing = identityBrowser?.close();
         trace('closing web connections');
         await pauseFederation();
         await webBridge?.stop();
         trace('closing local app connections');
+        await identityClosing;
         await agentService?.close();
         trace('finishing owner actions');
         await Promise.allSettled([...pending]);

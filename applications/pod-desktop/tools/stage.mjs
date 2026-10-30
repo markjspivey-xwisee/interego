@@ -127,6 +127,7 @@ await writeFile(join(stageRoot, 'build-info.json'), `${JSON.stringify({
   signing: signingRequested ? 'certificate-requested; inspect the built installer signature' : 'unsigned-preview',
   installation: 'per-user', bundledRuntime: true, federation: 'disabled',
   optionalPodFederation: { default: 'off', delivery: 'selected-encrypted-snapshots', offlineQueue: false },
+  optionalLocalIdentity: { custody: 'windows-protected-native', approval: 'every-request', publicBridgeRequired: false, browserAccess: 'explicit-extension-ids' },
   optionalWebBridge: bridgeBuildInfo,
 }, null, 2)}\n`);
 process.stdout.write(`Staged ${graph.length} production packages at ${relative(repoRoot, stageRoot)}.\n`);
