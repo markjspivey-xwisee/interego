@@ -1,0 +1,118 @@
+import { normalizeRelay } from './relay.mjs';
+
+const $ = id => document.getElementById(id);
+let state;
+let reviewId;
+let busy = false;
+async function request(type, payload = {}) {
+  const response = await chrome.runtime.sendMessage({ type, expectedAccountId: state?.activeId, ...payload });
+  if (!response?.ok) throw new Error(response?.error ?? 'The wallet did not answer.');
+  return response.value;
+}
+function status(text, error = false) { $('status').textContent = text; $('status').classList.toggle('error', error); }
+function el(tag, text, className) { const n = document.createElement(tag); if (text != null) n.textContent = text; if (className) n.className = className; return n; }
+async function run(fn) {
+  if (busy) return;
+  busy = true;
+  document.body.classList.add('busy');
+  try { await fn(); } catch (e) { status(e.message, true); } finally { busy = false; document.body.classList.remove('busy'); }
+}
+function showReview(review) {
+  reviewId = review?.id;
+  $('review').hidden = !review;
+  if (!review) return;
+  $('review-body').textContent = review.body;
+  $('review-destination').replaceChildren();
+  for (const [label, value] of [['Title', review.title], ['Relay', review.relay], ['Pod', review.destination], ['Agent', review.principal], ['Visibility', 'Private · current session agent']]) $('review-destination').append(el('dt', label), el('dd', value));
+}
+function renderState(s) {
+  state = s;
+  $('account-select').replaceChildren();
+  for (const a of s.accounts) { const option = el('option', a.principal + (a.connected ? '' : ' · sign-in needed')); option.value = a.id; $('account-select').append(option); }
+  if (!s.accounts.length) $('account-select').append(el('option', 'No identity connected'));
+  $('account-select').value = s.activeId ?? '';
+  const account = s.accounts.find(a => a.id === s.activeId);
+  $('disconnect').disabled = !account;
+  $('identity').replaceChildren();
+  if (account) {
+    $('relay').value = account.relay;
+    $('identity').append(el('p', account.connected ? 'Authenticated session agent' : 'Sign-in required', 'identity-label'), el('p', account.principal), el('p', account.podUrl, 'fine'), el('p', account.scope.includes('write') ? 'May read and save private notes' : 'Read context only', 'fine'));
+  } else $('identity').textContent = 'Sign in with the relay’s passkey, wallet, or key flow.';
+  $('receipts').replaceChildren();
+  for (const r of s.receipts) {
+    const row = el('div', null, 'receipt');
+    const labels = { 'read-back': 'Accepted · descriptor read back', accepted: 'Accepted · read-back not confirmed', uncertain: 'Uncertain · inspect pod before retry', refused: 'Refused · no note sent' };
+    row.append(el('strong', r.title), el('p', labels[r.status] ?? r.status, 'receipt-status'), el('p', new Date(r.at).toLocaleString(), 'fine'));
+    if (r.descriptorUrl) row.append(el('p', r.descriptorUrl, 'fine'));
+    $('receipts').append(row);
+  }
+  if (!s.receipts.length) $('receipts').textContent = 'Your save history will appear here.';
+  showReview(s.review);
+}
+async function refresh() {
+  $('descriptor').hidden = true;
+  const { entries } = await request('REFRESH');
+  $('contexts').replaceChildren();
+  for (const entry of entries) {
+    const row = el('div', null, 'context-row');
+    const title = entry.describes?.join(', ') || entry.descriptorUrl || 'Context descriptor';
+    const button = el('button', title, 'context-link');
+    button.type = 'button';
+    button.addEventListener('click', () => run(async () => {
+      const d = await request('DESCRIPTOR', { url: entry.descriptorUrl });
+      $('descriptor-body').textContent = d.graph?.content || d.turtle || 'No readable content was returned.';
+      const a = d.authorship;
+      $('proof').textContent = a?.authorshipVerified ? `Signature verified by relay. Authority: ${a.signatureAuthority ?? 'not classified'}. Content binding: ${a.contentBinding ?? 'not reported'}.` : 'Authorship verification was not established by this response.';
+      $('descriptor').hidden = false;
+      status('Descriptor opened.');
+    }));
+    row.append(button, el('p', `${entry.modalStatus ?? 'Context'} · ${entry.validFrom ? new Date(entry.validFrom).toLocaleDateString() : 'No date reported'}`, 'fine'));
+    $('contexts').append(row);
+  }
+  if (!entries.length) $('contexts').textContent = 'This pod returned no recent descriptors.';
+}
+$('connect-form').addEventListener('submit', event => {
+  event.preventDefault();
+  if (busy) return;
+  let relay;
+  try { relay = normalizeRelay($('relay').value); } catch (e) { status(e.message, true); return; }
+  // Initiate the permission request directly in this user gesture.
+  const permission = chrome.permissions.request({ origins: [`${relay}/*`] });
+  run(async () => {
+    if (!await permission) throw new Error('Relay access was declined.');
+    status('Complete sign-in in the identity window…');
+    renderState(await request('CONNECT', { relay, scope: $('scope').value }));
+    await refresh();
+    status('Identity connected.');
+  });
+});
+$('account-select').addEventListener('change', () => run(async () => { renderState(await request('SWITCH', { accountId: $('account-select').value })); $('contexts').textContent = 'Refresh to inspect this identity’s context.'; $('descriptor').hidden = true; status('Identity selected.'); }));
+$('refresh').addEventListener('click', () => run(async () => { await refresh(); status('Recent context updated.'); }));
+$('capture-form').addEventListener('submit', event => {
+  event.preventDefault();
+  run(async () => {
+    showReview(await request('PREPARE', { title: $('capture-title').value, url: $('capture-url').value, text: $('capture-text').value, purpose: $('purpose').value }));
+    $('review').scrollIntoView({ behavior: 'smooth', block: 'center' });
+    status('Review the note, identity, and destination. Approval sends this exact text.');
+  });
+});
+$('confirm-save').addEventListener('click', () => run(async () => {
+  const id = reviewId;
+  showReview(null);
+  status('Saving once and checking the returned descriptor…');
+  try {
+    const saved = await request('SAVE', { reviewId: id });
+    $('capture-form').reset();
+    status(saved.status === 'read-back' ? 'Private note accepted; descriptor read back.' : 'Private note accepted. Read-back could not be confirmed.');
+  } finally { renderState(await request('STATE')); }
+}));
+$('cancel-review').addEventListener('click', () => run(async () => { await request('CANCEL'); showReview(null); status('Save cancelled.'); }));
+$('disconnect').addEventListener('click', () => run(async () => { renderState(await request('DISCONNECT')); $('contexts').textContent = 'Connect an identity to explore its pod.'; $('descriptor').hidden = true; status('Local connection forgotten. Existing notes and server grants remain at the relay.'); }));
+
+await run(async () => {
+  renderState(await request('STATE'));
+  if (state.draft) { for (const [id, key] of [['capture-title', 'title'], ['capture-url', 'url'], ['capture-text', 'text'], ['purpose', 'purpose']]) $(id).value = state.draft[key] ?? ''; }
+  if (state.captureNotice) status(state.captureNotice);
+  const account = state.accounts.find(a => a.id === state.activeId);
+  if (account?.connected) await refresh();
+});
