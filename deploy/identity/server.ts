@@ -616,9 +616,10 @@ interface AuthMethods {
   deletedAt?: string;
   /**
    * Set (true) on the tombstone the janitor writes when it purges a Play owner, until every other
-   * resource of the pod is deleted (purgePlayOwner), but those the pod refuses to delete with 409
-   * (native-committed heads, which stay): a purge that fails part-way is retried from it, at the
-   * next pass and after a restart (loadAccountFromPod). A deletion's tombstone has none.
+   * resource of the pod is deleted (purgePlayOwner), the guest's game data included (by the store's
+   * native delete), but the documents outside it that the pod refuses to delete with 409 (native
+   * heads nothing expects, which stay): a purge that fails part-way is retried from it, at the next
+   * pass and after a restart (loadAccountFromPod). A deletion's tombstone has none.
    */
   provisionalPlayPurgePending?: true;
 }
@@ -725,9 +726,11 @@ const deletedUserIds = new Set<string>();
 
 // Play owners whose purge by the janitor closed the account (its tombstone written, marked
 // provisionalPlayPurgePending) but did not delete every other resource of the pod: a DELETE failed
-// (a 5xx, a timeout; a 409 on a native-committed head is no failure, as no pass can delete one, and
-// the purge finishes without it), or the process stopped. The janitor tries each again at its next
-// pass (purgePlayOwner), and the startup scan finds the marked tombstone again after a restart
+// (a 5xx, a timeout; a native delete of the guest's game data that the store refused or does not
+// offer; game data on the pod again at the purge's last listing; a 409 on a native head outside the
+// game data is no failure, as no pass deletes one, and the purge finishes without it), or the
+// process stopped. The janitor tries each again at its next pass (purgePlayOwner), and the
+// startup scan finds the marked tombstone again after a restart
 // (loadAccountFromPod), so a purge that fails part-way is retried, never dropped: the account,
 // closed, is no longer in `identities`, which is all the janitor's sweep walks. Also a Play owner
 // whose deletion this process answered 503, which the janitor took up after its guest deadline, but
@@ -6698,11 +6701,17 @@ async function deleteUserCompletely(
  * close() finds the marked tombstone, writes nothing, and the remaining deletions are sent again.
  * It used to close the account and forget it before deleting anything, and a DELETE that failed
  * once (a 5xx, a timeout) left the pod's data for good: the janitor walks only `identities`, and a
- * tombstone loads no account. The record and its container stay, as the tombstone. So do the
- * documents the pod refuses to delete with 409 (native-committed heads: a guest's game saves and its
- * write budget, which no plain request deletes) and the containers that hold them: the purge is
- * finished without them, and logs them once. It used to stay unfinished for them, and send them
- * again at every pass and after every restart.
+ * tombstone loads no account. The record and its container stay, as the tombstone. The guest's
+ * game data (its saves and its write budget, which the css-gate writes only as native commits and
+ * no plain request deletes) is deleted by the store's native conditional delete, on the ETag read
+ * just before it, and the containers that held it after it (provisional-play-cleanup.ts): a store
+ * that does not offer that delete, or refuses it (a 412: the document changed since its ETag was
+ * read), leaves the purge unfinished, and so does game data a write authorized before the tombstone
+ * put back on the pod before the purge's last listing. The purge used to finish without that data,
+ * and every guest's saves stayed on the pod. A document outside the game data that the pod refuses
+ * to delete with 409 (a native head nothing here expects) stays, with the containers that hold it:
+ * the purge is finished without it, and logs it once, so such a document never holds a purge open
+ * at every pass and after every restart.
  *
  * A tombstone the purge did not mark (a deletion's, the other instance's, or a purge finished
  * elsewhere) is not purged: its owner is only forgotten here. A deleted Play owner may be
@@ -6748,11 +6757,13 @@ async function purgePlayOwner(userId: string): Promise<void> {
       // The owner, forgotten when its account closed, is walked only from here at the next pass.
       if (registryLeft === undefined) unfinishedPlayPurges.delete(userId);
       else unfinishedPlayPurges.add(userId);
-      // Logged once: the mark is cleared, so neither a later pass nor a restart comes back to them.
-      if (purge.outcome === 'purged' && purge.retained.length > 0) {
+      // Logged once: the mark is cleared, so neither a later pass nor a restart comes back to it. A
+      // finished purge was logged only with what it kept, which every guest who had saved had.
+      if (purge.outcome === 'purged') {
         const pod = `${CSS_URL}${userId}/`;
-        log(`Janitor: finished the purge of ${userId}, keeping ${purge.retained.length} resource(s) its pod's store deletes only by a native conditional commit (409 to a DELETE): `
-          + purge.retained.map(url => (url.startsWith(pod) ? url.slice(pod.length) : url)).join(', '));
+        log(purge.retained.length === 0 ? `Janitor: finished the purge of ${userId}`
+          : `Janitor: finished the purge of ${userId}, keeping ${purge.retained.length} resource(s) outside its game data that its pod's store refused to delete (409: a native head): `
+            + purge.retained.map(url => (url.startsWith(pod) ? url.slice(pod.length) : url)).join(', '));
       }
       if (purge.outcome === 'kept') log(awaitsGuestRetry(userId)
         ? `Janitor: left ${userId} to its guest's retry: its deletion was answered 503 (not confirmed), and its guest deadline has not passed`
@@ -6774,7 +6785,8 @@ async function purgePlayOwner(userId: string): Promise<void> {
 
 /**
  * The end of a Play owner's purge, under its lock, once every other resource of the pod is
- * deleted (but those the pod refuses to delete with 409, which no pass could delete):
+ * deleted, its game data included (but the documents outside it that the pod refuses to delete
+ * with 409, which no pass deletes):
  * its tombstone is written again without the mark (on its ETag), so neither the janitor
  * nor a restart comes back to it. The account was forgotten when it closed, so the record the
  * writer installs is dropped again.
