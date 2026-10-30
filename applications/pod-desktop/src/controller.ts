@@ -11,6 +11,7 @@ import { resolveDeploymentConfig, type LocalDeploymentConfig } from '@interego/d
 import type { LocalNode, LocalNodeOptions } from '@interego/local-node';
 import { discover, fetchGraphContent, parseDistributionFromDescriptorTurtle, publish, type FetchFn } from '@interego/solid';
 import type { LocalNote, NoteInput, PodState, PodStatus } from './types.js';
+import type { AgentOperation, AgentPrincipal } from './agent-types.js';
 
 export interface PodKeyVault {
   load(): Promise<EncryptionKeyPair | null>;
@@ -99,7 +100,15 @@ function savedNote(value: unknown): LocalNote {
     || typeof record.updatedAt !== 'string' || !Number.isFinite(Date.parse(record.updatedAt))) {
     throw new PodError('A saved note could not be read.');
   }
-  return { id: record.id, ...input, createdAt: record.createdAt, updatedAt: record.updatedAt };
+  let author: LocalNote['author'];
+  if (record.author !== undefined) {
+    if (!record.author || typeof record.author.connectionId !== 'string' || !UUID.test(record.author.connectionId)
+      || typeof record.author.name !== 'string' || !record.author.name.trim() || record.author.name.length > 80) {
+      throw new PodError('A saved note has an unfamiliar author record.');
+    }
+    author = { connectionId: record.author.connectionId, name: record.author.name };
+  }
+  return { id: record.id, ...input, createdAt: record.createdAt, updatedAt: record.updatedAt, ...(author ? { author } : {}) };
 }
 
 function passphrase(value: string): void {
@@ -252,6 +261,12 @@ export class PodController {
       noteCount: this.noteCount, ...(this.lastError ? { lastError: this.lastError } : {}), ...(restorePending ? { restorePending: true } : {}) };
   }
 
+  /** Non-secret binding for application grants; never returns the pod's key or bearer. */
+  async agentPodBinding(): Promise<string | null> {
+    if (await exists(this.restorePath)) return null;
+    return (await this.profile())?.keyFingerprint ?? null;
+  }
+
   setup(): Promise<PodStatus> {
     return this.action('Your pod could not be created. Your saved data was kept unchanged.', async () => {
       if (await this.profile()) throw new PodError('Your pod is already set up. Start it to see your notes.');
@@ -336,8 +351,15 @@ export class PodController {
 
   private async publishNote(node: LocalNode, key: EncryptionKeyPair, note: LocalNote): Promise<void> {
     const graph = `${GRAPH_PREFIX}${note.id}` as IRI;
-    const descriptor = ContextDescriptor.create(`urn:uuid:${note.id}` as IRI).describes(graph)
-      .validFrom(note.createdAt).selfAsserted(`urn:sha256:${fingerprint(key)}` as IRI).build();
+    const builder = ContextDescriptor.create(`urn:uuid:${note.id}` as IRI).describes(graph)
+      .validFrom(note.createdAt).selfAsserted(`urn:sha256:${fingerprint(key)}` as IRI);
+    if (note.author) {
+      // The authenticated local connection supplied this record. A chosen app label
+      // is not a vendor identity, and the owner is not substituted as its author.
+      const actor = `urn:uuid:${note.author.connectionId}` as IRI;
+      builder.generatedBy(actor, { endedAt: note.createdAt }).agent({ identity: actor, isSoftwareAgent: true }, 'Author');
+    }
+    const descriptor = builder.build();
     const subject = turtleIriRef(`urn:uuid:${note.id}`);
     const predicate = turtleIriRef(RDF_VALUE);
     if (!subject || !predicate) throw new PodError('This note could not be prepared for storage. Your saved notes have not been changed.');
@@ -354,6 +376,63 @@ export class PodController {
       await this.publishNote(this.runningNode(), keyPair(await this.vault.load()), note);
       this.noteCount++; return note;
     });
+  }
+
+  /** Authorize at execution time, after earlier owner/agent work has left the queue. */
+  executeAgent(operation: AgentOperation, args: unknown, authorize: () => Promise<AgentPrincipal>): Promise<unknown> {
+    // Connection initialization must stay responsive while CSS is starting. This
+    // status reveals no stored content and still reauthorizes every request.
+    if (operation === 'status') {
+      if (!args || typeof args !== 'object' || Array.isArray(args) || Object.keys(args).length) {
+        return Promise.reject(new PodError('The agent request has invalid arguments.'));
+      }
+      return authorize().then(() => ({ running: Boolean(this.node), localOnly: true, federationEnabled: false }));
+    }
+    const pending = this.queue.then(async () => {
+      const principal = await authorize();
+      if (!principal.permissions.includes(operation === 'notes.create' ? 'notes:create' : 'notes:read')) {
+        throw new PodError('This connection does not have permission for that action.');
+      }
+      if (!args || typeof args !== 'object' || Array.isArray(args)) throw new PodError('The agent request has invalid arguments.');
+      const values = args as Record<string, unknown>;
+      const allowed = operation === 'notes.search' ? ['query', 'limit'] : operation === 'notes.read' ? ['id'] : ['title', 'body'];
+      if (Object.keys(values).some(key => !allowed.includes(key))) throw new PodError('The agent request contains unsupported arguments.');
+      try {
+        if (operation === 'notes.create') {
+          const input = noteInput(values as unknown as NoteInput);
+          const now = new Date().toISOString();
+          const note: LocalNote = { id: randomUUID(), ...input, createdAt: now, updatedAt: now,
+            author: { connectionId: principal.id, name: principal.name } };
+          await this.publishNote(this.runningNode(), keyPair(await this.vault.load()), note);
+          this.noteCount++;
+          return { note };
+        }
+        if (operation === 'notes.read') {
+          if (typeof values['id'] !== 'string' || !UUID.test(values['id'])) throw new PodError('Choose a valid note identifier.');
+          const notes = await this.readNotes(this.runningNode(), keyPair(await this.vault.load()));
+          const note = notes.find(value => value.id === values['id']);
+          if (!note) throw new PodError('This note could not be found in your local pod.');
+          return { note };
+        }
+        if (operation !== 'notes.search') throw new PodError('This agent action is not available.');
+        const query = values['query'] ?? '';
+        const limit = values['limit'] ?? 20;
+        if (typeof query !== 'string' || query.length > 200 || !Number.isSafeInteger(limit) || Number(limit) < 1 || Number(limit) > 50) {
+          throw new PodError('Use a search of up to 200 characters and a limit between 1 and 50.');
+        }
+        const notes = await this.readNotes(this.runningNode(), keyPair(await this.vault.load()));
+        const needle = query.trim().toLocaleLowerCase();
+        return { notes: notes.filter(note => `${note.title}\n${note.body}`.toLocaleLowerCase().includes(needle)).slice(0, Number(limit))
+          .map(note => ({ id: note.id, title: note.title, excerpt: note.body.slice(0, 240), createdAt: note.createdAt,
+            updatedAt: note.updatedAt, ...(note.author ? { author: note.author } : {}) })) };
+      } catch (error) {
+        if (error instanceof PodError) throw error;
+        throw new PodError('Your local notes could not be accessed. Your saved data was kept unchanged.');
+      }
+    });
+    // Agent input/access failures do not turn the owner's healthy pod into an error state.
+    this.queue = pending.catch(() => undefined);
+    return pending;
   }
 
   exportBackup(phrase: string): Promise<Uint8Array> {

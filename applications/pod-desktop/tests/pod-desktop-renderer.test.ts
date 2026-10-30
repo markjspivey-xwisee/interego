@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { build } from 'esbuild';
 import { JSDOM } from 'jsdom';
 import type { DesktopApi, LocalNote, PodStatus } from '../src/types.js';
+import type { AgentConnection, AgentSetup } from '../src/agent-types.js';
 
 const APP = join(dirname(fileURLToPath(import.meta.url)), '..');
 let bundle: string;
@@ -27,6 +28,15 @@ const state = (value: PodStatus['state'], noteCount = 0): PodStatus => ({
 const note = (title = 'A note to keep', body = 'The exact words I want to remember.'): LocalNote => ({
   id: 'note-1', title, body, createdAt: '2026-10-29T12:00:00Z', updatedAt: '2026-10-29T12:00:00Z',
 });
+const connection = (id = 'connection-1', value: AgentConnection['state'] = 'waiting'): AgentConnection => ({
+  id, name: id === 'connection-1' ? 'My AI app' : 'Another app', client: 'codex', permissions: ['notes:read'],
+  createdAt: '2026-10-29T12:00:00Z', expiresAt: '2026-11-28T12:00:00Z', state: value,
+});
+const connectionSetup = (id = 'connection-1'): AgentSetup => ({
+  connectionId: id, title: 'Set up your app', configLocation: 'Your app settings',
+  steps: ['Add this local connection in your app.'], configuration: '{"command":"Interego.exe","args":["--agent"]}',
+  command: 'Interego.exe --agent',
+});
 function deferred<T>() {
   let resolve!: (value: T) => void;
   let reject!: (reason: unknown) => void;
@@ -37,9 +47,10 @@ async function flush(): Promise<void> {
   for (let i = 0; i < 3; i++) await new Promise<void>(done => setImmediate(done));
 }
 
-async function mount(initial = state('unconfigured'), overrides: Partial<DesktopApi> = {}, initialNotes: readonly LocalNote[] = []) {
+async function mount(initial = state('unconfigured'), overrides: Partial<DesktopApi> = {}, initialNotes: readonly LocalNote[] = [], initialConnections: readonly AgentConnection[] = []) {
   let current = initial;
   let saved = [...initialNotes];
+  let grants = [...initialConnections];
   const api: DesktopApi = {
     status: vi.fn(async () => current),
     setup: vi.fn(async () => { current = state('running', saved.length); return current; }),
@@ -55,6 +66,17 @@ async function mount(initial = state('unconfigured'), overrides: Partial<Desktop
     restore: vi.fn(async () => { current = state('running', saved.length); return { cancelled: false, status: current }; }),
     openDataFolder: vi.fn(async () => undefined),
     openHosted: vi.fn(async () => undefined),
+    connections: vi.fn(async () => grants),
+    createConnection: vi.fn(async value => {
+      const created: AgentConnection = {
+        ...value, id: `connection-${grants.length + 1}`, state: 'waiting',
+        createdAt: '2026-10-29T12:00:00Z', expiresAt: '2026-11-28T12:00:00Z',
+      };
+      grants = [...grants, created]; return created;
+    }),
+    revokeConnection: vi.fn(async id => { grants = grants.map(grant => grant.id === id ? { ...grant, state: 'revoked' } : grant); }),
+    connectionSetup: vi.fn(async id => connectionSetup(id)),
+    copyConnectionSetup: vi.fn(async () => undefined),
     ...overrides,
   };
   const dom = new JSDOM(readFileSync(join(APP, 'index.html'), 'utf8'), {
@@ -81,6 +103,7 @@ async function mount(initial = state('unconfigured'), overrides: Partial<Desktop
     fill: (id: string, value: string) => { get<HTMLInputElement>(id).value = value; },
     setNotes: (value: readonly LocalNote[]) => { saved = [...value]; },
     setStatus: (value: PodStatus) => { current = value; },
+    setConnections: (value: readonly AgentConnection[]) => { grants = [...value]; },
     poll: async () => {
       const scheduled = [...timers.entries()].pop();
       if (!scheduled) throw new Error('No renderer poll was scheduled');
@@ -359,11 +382,181 @@ describe('Interego consumer desktop', () => {
     const app = await mount(state('running'));
     app.click('nav-settings');
     expect(app.get('settings-page').hidden).toBe(false);
-    expect(app.get('settings-page').textContent).toContain('Sharing & federation');
-    expect(app.dom.window.document.querySelector('.privacy-pill')?.textContent).toContain('Sharing is off');
+    expect(app.get('settings-page').textContent).toContain('Pod-to-pod sharing');
+    expect(app.dom.window.document.querySelector('.privacy-pill')?.textContent).toContain('Federation off');
     app.click('open-folder'); await flush(); app.click('open-hosted'); await flush();
     expect(app.api.openDataFolder).toHaveBeenCalledTimes(1);
     expect(app.api.openHosted).toHaveBeenCalledTimes(1);
     expect(app.api.setup).not.toHaveBeenCalled();
+  });
+
+  it('creates an explicitly chosen local connection with read-only access and a 30-day default', async () => {
+    const app = await mount(state('running'));
+    app.click('nav-connections'); await flush(); app.click('add-connection');
+    expect(app.get<HTMLDialogElement>('connection-dialog').open).toBe(true);
+    expect(Array.from(app.get<HTMLSelectElement>('connection-client').options).map(option => option.value)).toEqual([
+      'chatgpt-desktop', 'codex', 'claude-code', 'claude-desktop', 'grok-build', 'openclaw', 'other',
+    ]);
+    expect(app.get<HTMLInputElement>('permission-read').checked).toBe(true);
+    expect(app.get<HTMLInputElement>('permission-create').checked).toBe(false);
+    expect(app.get<HTMLSelectElement>('connection-expiry').value).toBe('30');
+    expect(app.get('connection-consent').textContent).toContain('online AI service');
+    app.fill('connection-name', 'My desktop assistant'); app.submit('connection-form'); await flush();
+    expect(app.api.createConnection).toHaveBeenCalledWith({ name: 'My desktop assistant', client: 'chatgpt-desktop', permissions: ['notes:read'], expiresInDays: 30 });
+    expect(app.get('connection-setup-state').textContent).toBe('Waiting for first use');
+    expect(app.get('connections-list').textContent).toContain('Waiting for first use');
+    expect(app.get('connection-form').hidden).toBe(true);
+    expect(app.api.openHosted).not.toHaveBeenCalled();
+  });
+
+  it('preserves connection choices across polls and validates permissions before creating', async () => {
+    const app = await mount(state('running'));
+    app.click('nav-connections'); await flush(); app.click('add-connection');
+    app.fill('connection-name', 'A custom name');
+    app.fill('connection-client', 'openclaw');
+    app.get('connection-client').dispatchEvent(new app.dom.window.Event('change'));
+    expect(app.get<HTMLInputElement>('connection-name').value).toBe('A custom name');
+    app.get<HTMLInputElement>('permission-read').checked = false;
+    app.get('permission-read').dispatchEvent(new app.dom.window.Event('change'));
+    expect(app.get<HTMLButtonElement>('create-connection').disabled).toBe(true);
+    app.submit('connection-form'); await flush();
+    expect(app.api.createConnection).not.toHaveBeenCalled();
+    app.get<HTMLInputElement>('permission-create').checked = true;
+    app.get('permission-create').dispatchEvent(new app.dom.window.Event('change'));
+    app.fill('connection-expiry', '7'); await app.poll();
+    expect(app.get<HTMLInputElement>('connection-name').value).toBe('A custom name');
+    expect(app.get<HTMLSelectElement>('connection-expiry').value).toBe('7');
+    expect(app.get('connection-consent').textContent).toContain('not be allowed to read');
+    app.submit('connection-form'); await flush();
+    expect(app.api.createConnection).toHaveBeenCalledWith({ name: 'A custom name', client: 'openclaw', permissions: ['notes:create'], expiresInDays: 7 });
+  });
+
+  it('copies setup for the existing grant without manufacturing a successful connection', async () => {
+    const app = await mount(state('running'));
+    app.click('nav-connections'); await flush(); app.click('add-connection'); app.submit('connection-form'); await flush();
+    expect(app.get('copy-connection-command').textContent).toBe('Copy PowerShell command');
+    app.click('copy-connection-config'); await flush(); app.click('copy-connection-command'); await flush();
+    expect(app.api.copyConnectionSetup).toHaveBeenNthCalledWith(1, 'connection-1', 'configuration');
+    expect(app.api.copyConnectionSetup).toHaveBeenNthCalledWith(2, 'connection-1', 'command');
+    expect(app.api.createConnection).toHaveBeenCalledTimes(1);
+    expect(app.get('connection-setup-state').textContent).toBe('Waiting for first use');
+    expect(app.get('connection-message').textContent).toContain('Setup copied');
+    app.setConnections([{ ...connection(), state: 'active', lastUsedAt: '2026-10-29T12:15:00Z' }]); await app.poll();
+    expect(app.get('connection-setup-state').textContent).toBe('Access allowed');
+    expect(app.get('connection-setup-help').textContent).toContain('Last used');
+  });
+
+  it('retries setup loading for the same saved grant and handles clipboard failure honestly', async () => {
+    const setupRead = vi.fn<DesktopApi['connectionSetup']>().mockRejectedValueOnce(new Error('Unavailable')).mockResolvedValue(connectionSetup());
+    const app = await mount(state('running'), {
+      connectionSetup: setupRead, copyConnectionSetup: vi.fn(async () => { throw new Error('Clipboard unavailable'); }),
+    });
+    app.click('nav-connections'); await flush(); app.click('add-connection'); app.submit('connection-form'); await flush();
+    expect(app.get('connection-message').textContent).toContain('setup could not be loaded');
+    expect(app.get<HTMLButtonElement>('copy-connection-config').disabled).toBe(true);
+    app.click('retry-connection-setup'); await flush();
+    expect(app.api.createConnection).toHaveBeenCalledTimes(1);
+    expect(setupRead).toHaveBeenNthCalledWith(2, 'connection-1');
+    expect(app.get<HTMLButtonElement>('copy-connection-config').disabled).toBe(false);
+    app.click('copy-connection-config'); await flush();
+    expect(app.get('connection-message').textContent).toContain('could not be copied');
+    expect(app.get('connection-message').textContent).not.toContain('Setup copied');
+  });
+
+  it('shows unavailable connections on read failure, then displays the authoritative retry', async () => {
+    const read = vi.fn<DesktopApi['connections']>().mockRejectedValueOnce(new Error('Read failed')).mockResolvedValue([connection()]);
+    const app = await mount(state('running'), { connections: read });
+    app.click('nav-connections'); await flush();
+    expect(app.get('connections-empty-title').textContent).toBe('Connections could not be checked');
+    expect(app.get('connections-empty-description').textContent).not.toContain('No apps');
+    app.click('refresh-connections'); await flush();
+    expect(app.get('connections-list').textContent).toContain('My AI app');
+    expect(app.get('connections-empty').hidden).toBe(true);
+    expect(app.get('notice').hidden).toBe(true);
+  });
+
+  it('allows connection management while stopped and waits for revocation before changing its state', async () => {
+    const revoking = deferred<void>();
+    const app = await mount(state('stopped'), { revokeConnection: vi.fn(() => revoking.promise) }, [], [connection(), connection('connection-2', 'active')]);
+    app.click('nav-connections'); await flush();
+    expect(app.get<HTMLButtonElement>('add-connection').disabled).toBe(false);
+    const target = app.get('connections-list').querySelector<HTMLElement>('[data-connection-id="connection-1"]')!;
+    target.querySelector<HTMLButtonElement>('.danger')!.click();
+    expect(app.api.revokeConnection).toHaveBeenCalledWith('connection-1');
+    expect(target.textContent).toContain('Waiting for first use');
+    app.setConnections([{ ...connection(), state: 'revoked' }, connection('connection-2', 'active')]);
+    revoking.resolve(); await flush();
+    expect(app.get('connections-list').querySelector('[data-connection-id="connection-1"]')?.textContent).toContain('Disconnected');
+    expect(app.get('connections-list').querySelector('[data-connection-id="connection-2"]')?.textContent).toContain('Access allowed');
+    expect(app.api.start).not.toHaveBeenCalled();
+  });
+
+  it('does not let a stale list response restore access after revocation', async () => {
+    const stale = deferred<readonly AgentConnection[]>();
+    const read = vi.fn<DesktopApi['connections']>()
+      .mockResolvedValueOnce([connection()]).mockImplementationOnce(() => stale.promise)
+      .mockResolvedValue([{ ...connection(), state: 'revoked' }]);
+    const app = await mount(state('running'), { connections: read });
+    app.click('nav-connections'); await flush(); app.click('refresh-connections');
+    app.get('connections-list').querySelector<HTMLButtonElement>('.danger')!.click(); await flush();
+    expect(app.get('connections-list').textContent).toContain('Disconnected');
+    stale.resolve([connection()]); await flush();
+    expect(app.get('connections-list').textContent).toContain('Disconnected');
+    expect(app.get('connections-list').querySelector('.danger')).toBeNull();
+  });
+
+  it('keeps actual access visible when revocation fails, without claiming disconnection', async () => {
+    const app = await mount(state('running'), { revokeConnection: vi.fn(async () => { throw new Error('Not saved'); }) }, [], [connection()]);
+    app.click('nav-connections'); await flush(); app.get('connections-list').querySelector<HTMLButtonElement>('.danger')!.click(); await flush();
+    expect(app.get('connections-list').textContent).toContain('Waiting for first use');
+    expect(app.get('notice-message').textContent).toContain('could not be confirmed');
+    expect(app.get<HTMLButtonElement>('add-connection').disabled).toBe(false);
+  });
+
+  it('disables setup for revoked, expired, or changed-pod connections and for interrupted restores', async () => {
+    const app = await mount({ ...state('error'), restorePending: true }, {}, [], [
+      connection('revoked', 'revoked'), connection('expired', 'expired'), connection('changed', 'pod-changed'),
+    ]);
+    app.click('nav-connections'); await flush();
+    expect(app.get('connections-list').textContent).toContain('Disconnected');
+    expect(app.get('connections-list').textContent).toContain('Expired');
+    expect(app.get('connections-list').textContent).toContain('Different space');
+    expect(app.get('connections-list').querySelector('button')).toBeNull();
+    expect(app.get<HTMLButtonElement>('add-connection').disabled).toBe(true);
+    app.click('add-connection');
+    expect(app.get<HTMLDialogElement>('connection-dialog').open).toBe(false);
+  });
+
+  it('ignores setup arriving after its dialog is closed and renders configuration literally', async () => {
+    const pendingSetup = deferred<AgentSetup>();
+    const app = await mount(state('running'), { connectionSetup: vi.fn(() => pendingSetup.promise) }, [], [connection()]);
+    app.click('nav-connections'); await flush(); app.get('connections-list').querySelector<HTMLButtonElement>('.secondary')!.click();
+    app.click('close-connection');
+    pendingSetup.resolve({ ...connectionSetup(), configuration: '<img src=x onerror="bad()">' }); await flush();
+    expect(app.get('connection-setup-configuration').textContent).toBe('');
+    expect(app.get<HTMLDialogElement>('connection-dialog').open).toBe(false);
+    app.get('connections-list').querySelector<HTMLButtonElement>('.secondary')!.click(); await flush();
+    expect(app.get('connection-setup-configuration').textContent).toContain('<img');
+    expect(app.get('connection-setup-configuration').querySelector('img')).toBeNull();
+  });
+
+  it('offers hosted use separately without creating a local grant or enabling federation', async () => {
+    const app = await mount(state('running'));
+    app.click('nav-connections'); await flush();
+    expect(app.get('connections-page').textContent).toContain('cloud-hosted bots');
+    app.click('connections-hosted'); await flush();
+    expect(app.api.openHosted).toHaveBeenCalledTimes(1);
+    expect(app.api.createConnection).not.toHaveBeenCalled();
+    expect(app.dom.window.document.querySelector('.privacy-pill')?.textContent).toContain('Federation off');
+  });
+
+  it('shows agent-authored note labels literally without claiming a verified vendor identity', async () => {
+    const authored = { ...note(), author: { connectionId: 'connection-1', name: '<img src=x> My assistant' } };
+    const app = await mount(state('running', 1), {}, [authored]);
+    expect(app.get('notes-list').textContent).toContain('Saved by <img src=x> My assistant');
+    expect(app.get('notes-list').querySelector('img')).toBeNull();
+    expect(app.get('notes-list').textContent).not.toContain('Verified');
+    app.get('notes-list').querySelector<HTMLButtonElement>('.note-item')!.click();
+    expect(app.get('read-note-date').textContent).toContain('Saved by <img src=x> My assistant');
   });
 });

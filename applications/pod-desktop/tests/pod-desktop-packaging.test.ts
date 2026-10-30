@@ -25,6 +25,10 @@ describe('the local pod Windows installer boundary', () => {
   it('packages the exact installed Electron runtime and a dedicated filesystem staging tree', () => {
     expect(config.electronVersion).toBe(appRequire('electron/package.json').version);
     expect(config.asar).toBe(false);
+    expect(config.electronFuses).toMatchObject({
+      runAsNode: false, enableNodeOptionsEnvironmentVariable: false, enableNodeCliInspectArguments: false,
+    });
+    expect(config.electronFuses.onlyLoadAppFromAsar).not.toBe(true);
     expect(resolve(config.directories.app)).toBe(resolve(app, '.staging/app'));
     expect(resolve(config.directories.app)).not.toBe(root);
     expect(config.files).toContain('node_modules/**/*');
@@ -40,7 +44,7 @@ describe('the local pod Windows installer boundary', () => {
     expect(build).toContain("'dist/preload.cjs'");
     expect(build).toContain("packages: 'external'");
     expect(Object.keys(manifest.dependencies).sort()).toEqual([
-      '@interego/core', '@interego/deployment-config', '@interego/local-node', '@interego/solid',
+      '@interego/core', '@interego/deployment-config', '@interego/local-node', '@interego/solid', '@modelcontextprotocol/server',
     ]);
     expect(manifest.dependencies).not.toHaveProperty('electron');
     expect(manifest.scripts).not.toHaveProperty('postinstall');

@@ -5,6 +5,7 @@ import { appRoot, assertStagePath, repoRoot, stageRoot, within } from './paths.m
 
 const sourceManifest = JSON.parse(await readFile(join(appRoot, 'package.json'), 'utf8'));
 const workspaceNames = new Set(['@interego/local-node', '@interego/deployment-config', '@interego/core', '@interego/solid']);
+const productionRoots = new Set([...workspaceNames, '@modelcontextprotocol/server']);
 const installedRoot = resolve(repoRoot, 'node_modules');
 const workspaceRoot = resolve(repoRoot, 'packages');
 const graph = [];
@@ -104,7 +105,7 @@ if (await exists(stageRoot) && (await lstat(stageRoot)).isSymbolicLink()) throw 
 await rm(stageRoot, { recursive: true, force: true });
 await mkdir(stageRoot, { recursive: true });
 for (const name of Object.keys(sourceManifest.dependencies)) {
-  if (!workspaceNames.has(name)) throw new Error(`Unexpected desktop production root ${name}; review its packaging scope first.`);
+  if (!productionRoots.has(name)) throw new Error(`Unexpected desktop production root ${name}; review its packaging scope first.`);
   await addPackage(name, appRoot);
 }
 await copyTree(join(appRoot, 'dist'), join(stageRoot, 'dist'), join(appRoot, 'dist'));
@@ -118,7 +119,7 @@ const productionManifest = {
   dependencies: sourceManifest.dependencies,
 };
 await writeFile(join(stageRoot, 'package.json'), `${JSON.stringify(productionManifest, null, 2)}\n`);
-await writeFile(join(stageRoot, 'production-graph.json'), `${JSON.stringify({ roots: [...workspaceNames], packages: graph.sort((a, b) => a.target.localeCompare(b.target)) }, null, 2)}\n`);
+await writeFile(join(stageRoot, 'production-graph.json'), `${JSON.stringify({ roots: Object.keys(sourceManifest.dependencies), packages: graph.sort((a, b) => a.target.localeCompare(b.target)) }, null, 2)}\n`);
 const require = createRequire(import.meta.url);
 await writeFile(join(stageRoot, 'build-info.json'), `${JSON.stringify({
   product: 'Interego', version: sourceManifest.version, electron: require('electron/package.json').version,

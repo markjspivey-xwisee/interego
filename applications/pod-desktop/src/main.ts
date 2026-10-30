@@ -1,5 +1,6 @@
-import { app, BrowserWindow, dialog, ipcMain, Menu, safeStorage, shell, type IpcMainInvokeEvent } from 'electron';
+import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, safeStorage, shell, type IpcMainInvokeEvent } from 'electron';
 import { randomUUID } from 'node:crypto';
+import { createReadStream } from 'node:fs';
 import { mkdir, open, readFile, rename, unlink } from 'node:fs/promises';
 import { dirname, isAbsolute, join } from 'node:path';
 import { Socket } from 'node:net';
@@ -8,24 +9,43 @@ import type { EncryptionKeyPair } from '@interego/core';
 import { PodController } from './controller.js';
 import type { FileActionResult, LocalNote, NoteInput, PodStatus } from './types.js';
 import { readBackupFile } from './read-backup.js';
+import { AgentService } from './agent-service.js';
+import type { AgentConnectionInput, AgentProtector } from './agent-types.js';
+import { buildAgentSetup } from './agent-setup.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const entry = join(here, '..', 'index.html');
 const entryUrl = pathToFileURL(entry).href;
-const smoke = process.env['INTEREGO_POD_SMOKE'] === '1';
-const trace = (phase: string): void => { if (smoke || process.env['INTEREGO_POD_DIAGNOSTICS'] === '1') process.stdout.write(`[Interego] ${phase}\n`); };
+const agentMode = process.argv.includes('--mcp-stdio') || app.commandLine.hasSwitch('mcp-stdio');
+const smoke = !agentMode && process.env['INTEREGO_POD_SMOKE'] === '1';
+const trace = (phase: string): void => {
+  if (!agentMode && (smoke || process.env['INTEREGO_POD_DIAGNOSTICS'] === '1')) process.stdout.write(`[Interego] ${phase}\n`);
+};
 trace('main module loaded');
-const override = smoke ? process.env['INTEREGO_POD_SMOKE_DATA'] : process.env['INTEREGO_POD_DATA_DIR'];
+function argument(name: string): string | undefined {
+  const switchValue = app.commandLine.getSwitchValue(name.slice(2));
+  if (switchValue) return switchValue;
+  const matches = process.argv.flatMap((value, index) => value === name ? [index] : []);
+  if (matches.length > 1) throw new Error('The local agent command has repeated arguments. Copy its setup again.');
+  if (!matches.length) return undefined;
+  const value = process.argv[matches[0]! + 1];
+  if (!value || value.startsWith('--')) throw new Error('The local agent command is incomplete. Copy its setup again.');
+  return value;
+}
+const override = agentMode ? argument('--pod-data-dir') ?? process.env['INTEREGO_POD_DATA_DIR']
+  : smoke ? process.env['INTEREGO_POD_SMOKE_DATA'] : process.env['INTEREGO_POD_DATA_DIR'];
 app.setName('Interego');
 if (smoke && !override) throw new Error('Packaged verification requires an isolated data directory.');
 if (override) {
   if (!isAbsolute(override)) throw new Error('Interego data directory must be absolute.');
   app.setPath('userData', override);
 }
-if (smoke) app.disableHardwareAcceleration();
+if (smoke || agentMode) app.disableHardwareAcceleration();
 
 let window: BrowserWindow | null = null;
 let controller: PodController | undefined;
+let agentService: AgentService | undefined;
+let pairingError: string | undefined;
 let closing = false;
 const pending = new Set<Promise<unknown>>();
 
@@ -43,15 +63,21 @@ async function atomicWrite(path: string, value: Uint8Array): Promise<void> {
   }
 }
 
+function requireProtection(): void {
+  if (!safeStorage.isEncryptionAvailable()
+    || (process.platform === 'linux' && safeStorage.getSelectedStorageBackend() === 'basic_text')) {
+    throw new Error('Your computer’s protected key storage is unavailable. Your pod has not been changed.');
+  }
+}
+
+const agentProtector: AgentProtector = {
+  protect(value) { requireProtection(); return safeStorage.encryptString(value).toString('base64'); },
+  unprotect(value) { requireProtection(); return safeStorage.decryptString(Buffer.from(value, 'base64')); },
+};
+
 function keyVault(userData: string) {
   const directory = join(userData, 'vault');
   const path = join(directory, 'notes-key.bin');
-  const requireProtection = () => {
-    if (!safeStorage.isEncryptionAvailable()
-      || (process.platform === 'linux' && safeStorage.getSelectedStorageBackend() === 'basic_text')) {
-      throw new Error('Your computer’s protected key storage is unavailable. Your pod has not been changed.');
-    }
-  };
   return {
     async load(): Promise<EncryptionKeyPair | null> {
       let bytes: Buffer;
@@ -116,6 +142,18 @@ function passphrase(value: unknown): string {
   return value;
 }
 
+function connections(): AgentService {
+  if (!agentService) throw new Error(pairingError ?? 'Agent connections are unavailable. Reopen Interego and try again.');
+  return agentService;
+}
+
+async function connectionSetup(id: unknown) {
+  if (typeof id !== 'string') throw new Error('Choose an agent connection.');
+  const connection = await connections().get(id);
+  if (!['waiting', 'active'].includes(connection.state)) throw new Error('This connection is no longer available. Create a new connection to continue.');
+  return buildAgentSetup(connection, { command: process.execPath, args: app.isPackaged ? [] : [app.getAppPath()] }, app.getPath('userData'));
+}
+
 async function bootstrap(): Promise<void> {
   trace('waiting for Electron');
   await app.whenReady();
@@ -126,12 +164,39 @@ async function bootstrap(): Promise<void> {
   const options = { dataDir: join(userData, 'local-pod'), vault: keyVault(userData) };
   controller = new PodController(options);
   const pod = controller;
+  const access = new AgentService({ dataDir: join(userData, 'agent-access'), protector: agentProtector,
+    getPodBinding: () => controller!.agentPodBinding(), execute: (operation, args, authorize) => controller!.executeAgent(operation, args ?? {}, authorize) });
+  try { await access.start(); agentService = access; }
+  catch {
+    pairingError = 'Agent connections could not open. Your saved notes are safe. Reopen Interego to try again.';
+    await access.close().catch(() => {});
+  }
   handle('status', async () => pod.getStatus());
   handle('setup', async () => pod.setup());
   handle('start', async () => pod.start());
   handle('stop', async () => pod.stop());
   handle('notes', async () => pod.listNotes());
   handle('saveNote', async value => pod.saveNote(value as NoteInput));
+  handle('connections', async () => connections().list());
+  handle('createConnection', async value => {
+    const state = await pod.getStatus();
+    if (!state.configured || state.restorePending) throw new Error('Finish setting up or restoring your local pod before connecting an app.');
+    return connections().create(value as AgentConnectionInput);
+  });
+  handle('revokeConnection', async value => {
+    if (typeof value !== 'string') throw new Error('Choose an agent connection.');
+    await connections().revoke(value);
+  });
+  handle('connectionSetup', connectionSetup);
+  handle('copyConnectionSetup', async value => {
+    if (!value || typeof value !== 'object') throw new Error('Choose setup instructions to copy.');
+    const input = value as { id?: unknown; format?: unknown };
+    if (input.format !== 'configuration' && input.format !== 'command') throw new Error('Choose a setup format.');
+    const setup = await connectionSetup(input.id);
+    const text = input.format === 'command' ? setup.command : setup.configuration;
+    if (!text) throw new Error('This connection uses configuration settings. Copy those settings instead.');
+    clipboard.writeText(text);
+  });
   handle('openDataFolder', async () => {
     const result = await shell.openPath(userData);
     if (result) throw new Error('Your data folder could not be opened. Please try again.');
@@ -173,6 +238,7 @@ async function bootstrap(): Promise<void> {
       nodeIntegration: false, webSecurity: true, webviewTag: false, navigateOnDragDrop: false },
   });
   trace('window created');
+  window.on('closed', () => { window = null; });
   window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   window.webContents.on('will-navigate', event => event.preventDefault());
   window.webContents.session.setPermissionRequestHandler((_contents, _permission, callback) => callback(false));
@@ -180,6 +246,7 @@ async function bootstrap(): Promise<void> {
   window.webContents.session.webRequest.onBeforeRequest({ urls: ['http://*/*', 'https://*/*', 'ws://*/*', 'wss://*/*'] }, (_details, callback) => callback({ cancel: true }));
   await window.loadFile(entry);
   trace('window loaded');
+  if (closing) return;
   if (smoke) {
     const original = Socket.prototype.connect;
     let outbound = 0;
@@ -200,13 +267,21 @@ async function bootstrap(): Promise<void> {
       if (!initial.localOnly || initial.federationEnabled) throw new Error('The packaged renderer bridge has an invalid local profile.');
       await window.webContents.executeJavaScript(initial.configured ? 'window.interego.start()' : 'window.interego.setup()');
       const note = await window.webContents.executeJavaScript('window.interego.saveNote({title:"Packaged local pod verification",body:"This private note survives a packaged runtime restart."})') as LocalNote;
+      const { verifyAgentPairing } = await import('./pairing-smoke.js');
+      const pairedNoteId = await verifyAgentPairing({ command: process.execPath, args: app.isPackaged ? [] : [app.getAppPath()], userData,
+        packaged: app.isPackaged, expectPrevious: initial.configured,
+        create: input => window!.webContents.executeJavaScript(`window.interego.createConnection(${JSON.stringify(input)})`),
+        revoke: id => window!.webContents.executeJavaScript(`window.interego.revokeConnection(${JSON.stringify(id)})`),
+        list: () => window!.webContents.executeJavaScript('window.interego.connections()'),
+        notes: () => window!.webContents.executeJavaScript('window.interego.notes()') });
       await window.webContents.executeJavaScript('window.interego.stop()');
       const reopened = new PodController(options);
       controller = reopened;
       await reopened.start();
       const notes = await reopened.listNotes();
       const status = await reopened.getStatus();
-      if (!notes.some(item => item.id === note.id && item.body === note.body) || status.federationEnabled || outbound) {
+      if (!notes.some(item => item.id === note.id && item.body === note.body) || !notes.some(item => item.id === pairedNoteId && item.author)
+        || status.federationEnabled || outbound) {
         throw new Error('Packaged offline persistence verification failed.');
       }
       await reopened.stop();
@@ -221,16 +296,38 @@ async function bootstrap(): Promise<void> {
   }
 }
 
-if (!app.requestSingleInstanceLock()) { trace('another instance owns this space'); app.quit(); }
+if (agentMode) {
+  void (async () => {
+    await app.whenReady();
+    const connectionId = argument('--connection');
+    if (!connectionId) throw new Error('Choose a local agent connection. Copy its setup from Interego.');
+    const { runAgentStdio } = await import('./agent-stdio.js');
+    // Electron's Windows main-process stdin is a dummy Readable. Read the
+    // inherited pipe itself so MCP messages and a real client EOF both work.
+    const input = createReadStream('', { fd: 0, autoClose: false });
+    const companion = await runAgentStdio({ dataDir: join(app.getPath('userData'), 'agent-access'), connectionId, protector: agentProtector, input });
+    await companion.closed;
+    await companion.close();
+    app.exit(0);
+  })().catch(error => {
+    if (process.env['INTEREGO_POD_DIAGNOSTICS'] === '1') process.stderr.write(`Interego companion diagnostic: ${error instanceof Error ? error.stack : 'startup failed'}\n`);
+    process.stderr.write('Interego could not open this local agent connection. Open the app and copy its setup again.\n'); app.exit(1);
+  });
+}
+else if (!app.requestSingleInstanceLock()) { trace('another instance owns this space'); app.quit(); }
 else {
-  app.on('second-instance', () => { window?.restore(); window?.show(); window?.focus(); });
+  app.on('second-instance', () => { if (window && !window.isDestroyed()) { window.restore(); window.show(); window.focus(); } });
   app.on('window-all-closed', () => app.quit());
   app.on('before-quit', event => {
     if (closing) return;
     event.preventDefault(); closing = true;
     void (async () => {
-      await Promise.allSettled([...pending]);
-      try { await controller?.stop(); app.exit(0); }
+      try {
+        // Stop admitting agent work before waiting for any owner dialog or action.
+        await agentService?.close();
+        await Promise.allSettled([...pending]);
+        await controller?.stop(); app.exit(0);
+      }
       catch { app.exit(1); }
     })();
   });

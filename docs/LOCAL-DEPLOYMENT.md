@@ -48,14 +48,14 @@ The machine-readable authority is `CAPABILITY_MATRIX` / `capabilitiesFor()` in `
 | Solid pod storage | Durable file-backed CSS | Existing hosted storage | Separate Solid composition required |
 | Encrypted graph payloads | Existing publisher with caller-owned keys | Existing encrypted publishing | Separate encrypted P2P shares |
 | Owner key custody and recovery | Caller-managed; Windows app adds protected notes key and notes backup/restore | Existing hosted account model | Private bridge key configuration required |
-| MCP tools | Adapter not included in this runtime | Existing tool surface retained | Six P2P tools |
+| MCP tools | Windows app adds scoped local notes tools; low-level runtime has no adapter | Existing tool surface retained | Six P2P tools |
 | Hosted OAuth | Not required or started | Existing flow retained | Not included |
 | Solid notifications | Gateway support pending | Existing service | Not included |
 | Cross-pod Solid federation | Transport not included | Existing selected sharing/discovery | Separate Solid composition required |
 | Encrypted relay sharing | Transport not included | Separate bridge composition required | Explicit selected-relay configuration |
 | Reliable cross-domain offline delivery | Not guaranteed | Not guaranteed | Durable outbox pending |
 
-The explicit configuration model can represent federation intent. This first local runtime refuses `federation.enabled: true` because it does not yet implement a transport. Existing hosted and personal-bridge federation behavior is unchanged. The Windows installer is a separate consumer preview with its own packaged lifecycle check. Optional local sharing and offline delivery remain later milestones.
+The explicit configuration model can represent federation intent. This first local runtime refuses `federation.enabled: true` because it does not yet implement a transport. Existing hosted and personal-bridge federation behavior is unchanged. The Windows installer is a separate consumer preview with its own packaged lifecycle check and [revocable agent connections](../applications/pod-desktop/AGENT-CONNECTIONS.md). Pairing a local agent does not enable federation. Optional local federation and offline delivery remain later milestones.
 
 ## Verification
 
