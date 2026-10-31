@@ -66,6 +66,20 @@ function ownerPod(css: URL, userId: unknown): URL {
   if (pod.origin !== css.origin || pod.pathname !== css.pathname + userId + '/' || pod.search || pod.hash) throw new Error('Invalid account pod');
   return pod;
 }
+/** The inbox can read only its owner's hot index and sibling archive segments. */
+export function dashboardInboxIndexTarget(css: URL, userId: string, url: string, method?: string): string {
+  const pod = ownerPod(css, userId);
+  const target = new URL(url);
+  if (target.origin !== pod.origin || !target.pathname.startsWith(pod.pathname) || target.search || target.hash
+    || target.username || target.password || /%(?:2e|2f|5c)/i.test(target.pathname)
+    || method && method !== 'GET') throw new Error('Inbox read left its owner pod');
+  const basename = /^\.well-known\/(context-graphs(?:-archive-\d+)?)$/.exec(target.pathname.slice(pod.pathname.length))?.[1];
+  if (!basename) throw new Error('Inbox read did not name a manifest index');
+  // Validate the advertised location, then discard it. Only the configured storage
+  // base and escaped owner/index path components reach the storage transport.
+  return css.origin + css.pathname + encodeURIComponent(userId) + '/.well-known/' + encodeURIComponent(basename);
+}
+
 function windowFor(query: Record<string, unknown>, now: number): { since: string; limit: number } | null {
   if (Object.keys(query).some(key => key !== 'since' && key !== 'limit')) return null;
   const limit = query['limit'] === undefined ? 20 : typeof query['limit'] === 'string' && /^[1-9][0-9]?$/.test(query['limit']) ? Number(query['limit']) : NaN;
@@ -113,12 +127,9 @@ export function dashboardInboxHandler(options: DashboardInboxOptions): RequestHa
       // owner pod, uses GET only, and refuses redirects before the storage transport runs.
       const privateRead: FetchFn = async (url, init) => {
         active();
-        const target = new URL(url);
-        if (target.origin !== pod.origin || !target.pathname.startsWith(pod.pathname) || target.search || target.hash
-          || target.username || target.password || /%(?:2e|2f|5c)/i.test(target.pathname)
-          || init?.method && init.method !== 'GET') throw new Error('Inbox read left its owner pod');
+        const target = dashboardInboxIndexTarget(css, auth.userId, url, init?.method);
         const read = { method: 'GET', headers: { Accept: 'text/turtle' }, redirect: 'manual', signal: lifetime.signal } as const;
-        const result = await options.fetch(target.href, read);
+        const result = await options.fetch(target, read);
         const stream = (result as { body?: ReadableStream<Uint8Array> | null }).body;
         active();
         if (result.status >= 300 && result.status < 400) { await stream?.cancel(); throw new Error('Inbox redirects are not followed'); }

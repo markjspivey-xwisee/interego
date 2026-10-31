@@ -135,7 +135,7 @@ A pod that cannot be read is not a pod without credentials (`account-index.ts`).
 
 The identity dashboard holds an identity-server bearer, including after a returning passkey sign-in. It reads metadata through the relay's `GET /dashboard/inbox`; the existing `GET /inbox?pod=...` remains OAuth-only. These token types are not interchangeable. The dashboard route verifies the identity session through the configured identity server, requires a metadata-reading scope, derives the owner pod on the server, and checks the session again before returning metadata using the existing identity verification policy. It accepts browser requests only from the configured identity origin and never forwards the browser bearer to pod storage.
 
-The read follows manifest archives within that owner pod, refuses redirects, and bounds streamed storage data, request duration and returned metadata. Responses are not cached. Inbox failure does not clear the identity session or change a PC-key linking request; adding a key still requires the separate existing-credential proof and native owner approval.
+The read accepts only the hot manifest index and its sibling archive indexes. It reconstructs each storage address from the configured storage base and escaped owner/index path components, refuses redirects, and bounds streamed storage data, request duration and returned metadata. Responses are not cached. Inbox failure does not clear the identity session or change a PC-key linking request; adding a key still requires the separate existing-credential proof and native owner approval.
 
 ### Discovery endpoints — WebFinger (RFC 7033)
 

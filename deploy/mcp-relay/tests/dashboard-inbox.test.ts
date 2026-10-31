@@ -8,7 +8,7 @@ import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createServer, type AddressInfo } from 'node:net';
 import express from 'express';
-import { dashboardInboxHandler, DASHBOARD_INBOX_MAX_BYTES, DASHBOARD_INBOX_MAX_READ_BYTES } from '../dashboard-inbox.js';
+import { dashboardInboxHandler, dashboardInboxIndexTarget, DASHBOARD_INBOX_MAX_BYTES, DASHBOARD_INBOX_MAX_READ_BYTES } from '../dashboard-inbox.js';
 import { createEgress } from '../egress.js';
 import { listenLoopback, type TestListener } from './listen-loopback.js';
 import { closeServer, stopChild } from '../../identity/tests/teardown.js';
@@ -19,7 +19,7 @@ const secret = randomBytes(32); const signingKey = randomBytes(32);
 const requests: Array<{ method: string; path: string; authorization?: string }> = [];
 const children: ChildProcess[] = []; const listeners: TestListener[] = [];
 let identity = '', relay = '', store = '', temporary = '', output = '';
-let mode: 'normal' | 'redirect' | 'foreign-archive' | 'crosspod-archive' | 'oversize' | 'large-stream' | 'stalled-stream' | 'cumulative-stream' = 'normal';
+let mode: 'normal' | 'archive' | 'redirect' | 'foreign-archive' | 'crosspod-archive' | 'oversize' | 'large-stream' | 'stalled-stream' | 'cumulative-stream' = 'normal';
 let upstreamClosed = false; let upstreamWritten = 0;
 const signedToken = (extra: Record<string, unknown> = {}) => {
   const encoded = Buffer.from(JSON.stringify({ userId: owner, agentId: `mcp-client-${owner}`, scope: 'ReadWrite', epoch: 0,
@@ -33,6 +33,7 @@ function manifest() {
     `<${store}/${owner}/context-graphs/${index}.ttl> a iep:ManifestEntry ;\n    iep:describes <urn:graph:${index}:${mode === 'oversize' ? 'a'.repeat(3000) : index}> ;\n    iep:validFrom "${new Date(Date.now() - index * 1000).toISOString()}"^^xsd:dateTime ;\n    iep:modalStatus "Asserted" .`).join('\n');
   if (mode === 'foreign-archive') return prefixes + `<> iep:manifestArchive <http://169.254.169.254/private> .` + entries;
   if (mode === 'crosspod-archive') return prefixes + `<> iep:manifestArchive <${store}/${other}/private> .` + entries;
+  if (mode === 'archive') return prefixes + '<> iep:manifestArchive <context-graphs-archive-0001> .\n' + entries;
   return prefixes + entries;
 }
 async function freePort(): Promise<number> {
@@ -90,6 +91,9 @@ before(async () => {
     if (mode === 'cumulative-stream' && req.path === `/${owner}/.well-known/context-graphs-archive-0001`) {
       res.type('text/turtle').send('#' + 'a'.repeat(9 * 1024 * 1024) + '\n'); return;
     }
+    if (mode === 'archive' && req.path === `/${owner}/.well-known/context-graphs-archive-0001`) {
+      res.type('text/turtle').send(prefixes + `<${store}/${owner}/context-graphs/3.ttl> a iep:ManifestEntry ;\n    iep:describes <urn:graph:archived> ;\n    iep:validFrom "${new Date().toISOString()}"^^xsd:dateTime ;\n    iep:modalStatus "Asserted" .`); return;
+    }
     res.status(404).end();
   });
   const pod = await listenLoopback(app); listeners.push(pod); store = pod.base;
@@ -121,6 +125,48 @@ test('fresh identity cg2 works at /me and the dashboard inbox while original /in
   const legacy = await read('/inbox?pod=' + encodeURIComponent(`${store}/${owner}/`)); assert.equal(legacy.response.status, 401); assert.match(legacy.text, /Invalid access token/);
   assert.ok(requests.every(req => ['GET', 'HEAD'].includes(req.method)), JSON.stringify(requests));
   assert.ok(requests.every(req => req.authorization !== 'Bearer ' + bearer && req.authorization !== 'Bearer ' + secret.toString('hex')));
+});
+test('the actual relay reads canonical hot and archive indexes from its verified owner pod', async () => {
+  mode = 'archive';
+  const answer = await read(); assert.equal(answer.response.status, 200, answer.text);
+  assert.equal(answer.body['count'], 4); assert.equal(answer.body['totalOnPod'], 4);
+  assert.ok((answer.body['events'] as Array<{ graphIris: string[] }>).some(entry => entry.graphIris.includes('urn:graph:archived')));
+  assert.deepEqual(requests.filter(req => req.path.includes('/.well-known/')).map(req => ({ method: req.method, path: req.path })), [
+    { method: 'GET', path: `/${owner}/.well-known/context-graphs` },
+    { method: 'GET', path: `/${owner}/.well-known/context-graphs-archive-0001` },
+  ]);
+  assert.ok(requests.every(req => ['GET', 'HEAD'].includes(req.method)));
+  assert.ok(requests.every(req => req.authorization !== 'Bearer ' + bearer && req.authorization !== 'Bearer ' + secret.toString('hex')));
+});
+test('index transport targets retain only the trusted storage prefix and allowed owner/index components', () => {
+  const css = new URL('http://css.fixture.example:3456/storage/');
+  for (const basename of ['context-graphs', 'context-graphs-archive-0000', 'context-graphs-archive-12']) {
+    const expected = css.href + owner + '/.well-known/' + basename;
+    assert.equal(dashboardInboxIndexTarget(css, owner, expected), expected);
+    assert.equal(dashboardInboxIndexTarget(css, owner, expected, 'GET'), expected);
+    assert.equal(dashboardInboxIndexTarget(css, owner, expected.replace('http://css.', 'HTTP://CSS.')), expected);
+  }
+});
+test('index transport rejects foreign, nested, encoded and double-encoded locations and unsafe methods', () => {
+  const css = new URL('http://css.fixture.example:3456/storage/');
+  const base = css.href + owner + '/.well-known/';
+  const hot = base + 'context-graphs';
+  const rejected = [
+    'http://169.254.169.254/latest/meta-data/',
+    hot.replace('css.fixture.example', 'foreign.example'), hot.replace(':3456/', ':3457/'),
+    hot.replace('http://', 'http://user:secret@'), hot + '?pod=' + other, hot + '#fragment',
+    hot.replace('/' + owner + '/', '/' + other + '/'), hot.replace('/' + owner + '/', '/' + owner + '-suffix/'),
+    base + 'private', base + 'nested/context-graphs', base + '../auth-methods.jsonld',
+    base + 'context-graphs-archive-', base + 'context-graphs-archive-1.ttl', base + 'context-graphs-archive-1/private',
+    base + '%2e%2e/private', base + 'context-graphs%2fprivate', base + 'context-graphs%5cprivate',
+    base + '%252e%252e/private', base + 'context-graphs%252fprivate', base + 'context-graphs%255cprivate',
+    hot.replace('/' + owner + '/', '/' + owner + '%252f' + other + '/'),
+  ];
+  for (const url of rejected) assert.throws(() => dashboardInboxIndexTarget(css, owner, url), /Inbox read/, url);
+  for (const method of ['POST', 'HEAD', 'DELETE', 'get', 'PATCH']) assert.throws(() => dashboardInboxIndexTarget(css, owner, hot, method), /Inbox read/);
+  for (const userId of ['../other', owner + '/../../other', '%252fother', 'https://foreign.example', '']) {
+    assert.throws(() => dashboardInboxIndexTarget(css, userId, hot), /Invalid account owner/);
+  }
 });
 test('the actual server preflight and frozen CORS headers permit only the configured identity account page', async () => {
   const response = await fetch(relay + '/dashboard/inbox?limit=20', { method: 'OPTIONS', headers: { origin: identity,
