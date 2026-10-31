@@ -12,7 +12,7 @@ The own-LMS gradebook waits for its tenant snapshot before serving stateful laun
 
 This gradebook opts into immutable version graphs and descriptors with a conditionally updated latest head. Readers follow the advertised distribution and bind the graph identity, type and payload digest. Writers verify their artifacts before updating the exact head they observed, refuse conflicting writes and stop stale in-memory retries. Existing snapshot users keep their current publication path.
 
-Tests exercise delayed startup, failed-read recovery, original-row restoration without another score post, two actual Solid publications, cold-registry hydration, immutable graph refusal, stale-head conflicts and publication deadlines through isolated HTTP transports. A mismatched legacy descriptor and graph remains unavailable; this change does not reconstruct historical grades. AGS score acknowledgments retain their existing asynchronous snapshot semantics.
+Tests exercise delayed startup, failed-read recovery, original-row restoration without another score post, two actual Solid publications, cold-registry hydration, immutable graph refusal, stale-head conflicts and publication deadlines through explicitly injected isolated HTTP transports, without configuring the live tenant environment. A mismatched legacy descriptor and graph remains unavailable; this change does not reconstruct historical grades. AGS score acknowledgments retain their existing asynchronous snapshot semantics.
 
 ## 2026-10-31 — Make PC-key linking and sign-in approval easier to review
 

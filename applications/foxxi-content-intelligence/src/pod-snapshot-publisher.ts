@@ -90,6 +90,7 @@ interface SnapshotRegistration {
   latestHead?: SnapshotLatestHead;
   headConflict: boolean;
   publicationTimeoutMs: number;
+  config?: SnapshotPodConfig | null;
 }
 
 const registry = new Map<string, SnapshotRegistration>();
@@ -202,7 +203,7 @@ function snapshotGraph(args: {
 }
 
 async function doPublish(reg: SnapshotRegistration): Promise<void> {
-  const config = podConfig();
+  const config = reg.config === undefined ? podConfig() : reg.config;
   if (!config) return;
   let payload: unknown;
   try { payload = reg.collect(); } catch (err) {
@@ -272,6 +273,8 @@ export function registerSnapshot(args: {
   /** Opt-in head-CAS and immutable version artifacts; currently used only by the own-LMS gradebook. */
   immutableLatest?: boolean;
   publicationTimeoutMs?: number;
+  /** Explicit transport for an isolated consumer; omitted registrations keep the service environment configuration. */
+  config?: SnapshotPodConfig | null;
 }): void {
   const existing = registry.get(args.surface);
   if (existing && existing.scheduled) clearTimeout(existing.scheduled);
@@ -288,6 +291,7 @@ export function registerSnapshot(args: {
     latestHead: existing?.latestHead,
     headConflict: existing?.headConflict ?? false,
     publicationTimeoutMs: Math.max(1, Math.min(args.publicationTimeoutMs ?? 45_000, 45_000)),
+    config: args.config,
   });
 }
 

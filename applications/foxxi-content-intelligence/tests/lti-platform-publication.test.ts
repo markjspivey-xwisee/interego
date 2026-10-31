@@ -1,11 +1,12 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import type { IRI } from '@interego/core';
 import { LtiPlatform } from '../src/lti-platform.js';
 import { isPlatformSnapshot } from '../src/lti-platform-readiness.js';
 import { FOXXI_SNAPSHOT_TYPES, flushSnapshot, loadLatestSnapshotStrict, registerSnapshot, seedLatestSnapshotHead } from '../src/pod-snapshot-publisher.js';
 import { withPublishLock } from '../src/bridge-signer.js';
 
 const pod = 'https://pod.example/lms/';
-const source = 'did:web:lms.example';
+const source = 'did:web:lms.example' as IRI;
 const typeIri = FOXXI_SNAPSHOT_TYPES.LtiPlatformGradebook;
 const person = 'https://identity.example/users/synthetic/profile#me';
 let sequence = 0;
@@ -42,26 +43,24 @@ class SolidFixture {
 
 function fixture(timeoutMs?: number) {
   const solid = new SolidFixture();
-  vi.stubGlobal('fetch', solid.fetch);
-  vi.stubEnv('FOXXI_TENANT_POD_URL', pod);
-  vi.stubEnv('FOXXI_AUTHORITATIVE_SOURCE', source);
+  const config = { podUrl: pod, authoritativeSource: source, fetch: solid.fetch };
   const surface = `lti-platform-test-${++sequence}`;
   const latest = `${pod}foxxi/snapshots/${surface}-snapshot.ttl`;
   const legacyGraph = `${pod}foxxi/snapshots/${surface}-snapshot-graph.trig`;
   const platform = new LtiPlatform({ selfBaseUrl: 'https://bridge.example' });
   const start = platform.beginLaunch({ sub: person, podUrl: 'https://pod.example/person/' }, { id: 'signalkeeper-fixture', title: 'Synthetic course' });
   if (!start.ok) throw new Error('fixture launch failed');
-  const read = () => loadLatestSnapshotStrict(surface, { typeIri, validate: isPlatformSnapshot, followLatestDescriptor: true });
-  registerSnapshot({ surface, typeIri, collect: () => platform.snapshot(), immutableLatest: true, publicationTimeoutMs: timeoutMs });
+  const read = () => loadLatestSnapshotStrict(surface, { config, typeIri, validate: isPlatformSnapshot, followLatestDescriptor: true });
+  registerSnapshot({ surface, typeIri, collect: () => platform.snapshot(), immutableLatest: true, publicationTimeoutMs: timeoutMs, config });
   const prime = async () => { const value = await read(); seedLatestSnapshotHead(surface, value); return value; };
   const score = () => expect(platform.acceptScore(platform.context.id, String(start.lineItem.id).split('/').at(-1)!, {
     userId: person, scoreGiven: 100, scoreMaximum: 100, activityProgress: 'Completed', gradingProgress: 'FullyGraded',
     timestamp: '2026-10-31T18:00:00.000Z',
   }, Date.parse('2026-10-31T18:00:00.000Z'))).toEqual({ ok: true });
-  return { solid, surface, platform, latest, legacyGraph, read, prime, score };
+  return { solid, surface, platform, latest, legacyGraph, read, prime, score, config };
 }
 
-afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); vi.unstubAllEnvs(); });
+afterEach(() => { vi.restoreAllMocks(); });
 
 describe('LTI-only immutable versions and a CAS latest head', () => {
   it('publishes TWO different snapshots through REAL Solid publish and restores the SECOND score', async () => {
@@ -125,15 +124,15 @@ describe('LTI-only immutable versions and a CAS latest head', () => {
     vi.resetModules();
     const fresh = await import('../src/pod-snapshot-publisher.js');
     const cold = new LtiPlatform({ selfBaseUrl: 'https://bridge.example' });
-    fresh.registerSnapshot({ surface: f.surface, typeIri, collect: () => cold.snapshot(), immutableLatest: true });
-    const loaded = await fresh.loadLatestSnapshotStrict(f.surface, { typeIri, validate: isPlatformSnapshot, followLatestDescriptor: true });
+    fresh.registerSnapshot({ surface: f.surface, typeIri, collect: () => cold.snapshot(), immutableLatest: true, config: f.config });
+    const loaded = await fresh.loadLatestSnapshotStrict(f.surface, { config: f.config, typeIri, validate: isPlatformSnapshot, followLatestDescriptor: true });
     if (loaded.state !== 'loaded') throw new Error('restart hydration failed');
     cold.restore(loaded.snapshot);
     fresh.seedLatestSnapshotHead(f.surface, loaded);
     expect(cold.acceptScore(cold.context.id, cold.snapshot().lineItems[0]!.id, { userId: person, scoreGiven: 100, scoreMaximum: 100,
       activityProgress: 'Completed', gradingProgress: 'FullyGraded', timestamp: '2026-10-31T18:00:00.000Z' }, Date.parse('2026-10-31T18:00:00.000Z'))).toEqual({ ok: true });
     await fresh.flushSnapshot(f.surface);
-    const kept = await fresh.loadLatestSnapshotStrict(f.surface, { typeIri, validate: isPlatformSnapshot, followLatestDescriptor: true });
+    const kept = await fresh.loadLatestSnapshotStrict(f.surface, { config: f.config, typeIri, validate: isPlatformSnapshot, followLatestDescriptor: true });
     expect(kept.state).toBe('loaded');
     if (kept.state !== 'loaded' || originalHead.state !== 'loaded') throw new Error('restart snapshot unavailable');
     expect(kept.revision.version).toBe(2);

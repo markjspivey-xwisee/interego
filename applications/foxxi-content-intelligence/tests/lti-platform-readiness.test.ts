@@ -7,7 +7,7 @@ import { readFileSync } from 'node:fs';
 import type { IRI } from '@interego/core';
 import { LtiPlatform, attachLtiPlatformRoutes, type PlatformSnapshot } from '../src/lti-platform.js';
 import { LtiPlatformReadiness, isPlatformSnapshot } from '../src/lti-platform-readiness.js';
-import { FOXXI_SNAPSHOT_TYPES, dirty, flushAll, loadLatestSnapshotStrict, registerSnapshot, type StrictSnapshotResult } from '../src/pod-snapshot-publisher.js';
+import { FOXXI_SNAPSHOT_TYPES, dirty, flushSnapshot, loadLatestSnapshotStrict, registerSnapshot, type StrictSnapshotResult } from '../src/pod-snapshot-publisher.js';
 import { FOXXI_NS } from '../src/foxxi-vocab.js';
 import { AGS_SCOPE } from '../src/lti13.js';
 
@@ -43,7 +43,7 @@ const strict = (fetch: typeof globalThis.fetch, timeoutMs?: number) => loadLates
 });
 const loaded = (snapshot: PlatformSnapshot): StrictSnapshotResult<PlatformSnapshot> => ({ state: 'loaded', snapshot, revision: { sha256: 'a'.repeat(64), version: 7 } });
 const servers: Server[] = [];
-afterEach(async () => { vi.unstubAllGlobals(); vi.unstubAllEnvs(); await Promise.all(servers.splice(0).map((s) => new Promise<void>((r) => s.close(() => r())))); });
+afterEach(async () => { await Promise.all(servers.splice(0).map((s) => new Promise<void>((r) => s.close(() => r())))); });
 
 describe('strict opt-in snapshot read', () => {
   it('reads the exact graph, validates type/shape/digest, and reports a bounded content revision', async () => {
@@ -154,24 +154,21 @@ describe('one gradebook hydration barrier', () => {
   });
 
   it('does not publish or mark a successful revision from dirty/flush while unavailable, and never dirties a restored snapshot', async () => {
-    vi.stubEnv('FOXXI_TENANT_POD_URL', 'https://pod.example/tenant/');
-    vi.stubEnv('FOXXI_AUTHORITATIVE_SOURCE', source);
     const targetRequests: string[] = [];
-    const network = vi.fn(async (url: string) => {
+    const network = vi.fn<typeof globalThis.fetch>(async (url) => {
       if (String(url).includes('lti-platform-test-readiness')) targetRequests.push(String(url));
-      // Other modules register their own surfaces at import time; this fixture blocks all real I/O.
       throw new Error('synthetic publisher transport is disabled');
     });
-    vi.stubGlobal('fetch', network);
     const changed = vi.fn();
     const platform = new LtiPlatform({ selfBaseUrl: base, onChange: changed });
     const readiness = new LtiPlatformReadiness({ load: async () => ({ state: 'unavailable', reason: 'transport' }),
       restore: (s) => platform.restore(s), collect: () => platform.snapshot() });
-    registerSnapshot({ surface: 'lti-platform-test-readiness', typeIri, collect: () => readiness.snapshotForPublish(), debounceMs: 1 });
+    registerSnapshot({ surface: 'lti-platform-test-readiness', typeIri, collect: () => readiness.snapshotForPublish(), debounceMs: 1,
+      config: config(network) });
     dirty('lti-platform-test-readiness');
-    await flushAll();
+    await flushSnapshot('lti-platform-test-readiness');
     expect(await readiness.ensureReady()).toBe(false);
-    await flushAll();
+    await flushSnapshot('lti-platform-test-readiness');
     expect(targetRequests).toEqual([]);
     expect(changed).not.toHaveBeenCalled();
   });
