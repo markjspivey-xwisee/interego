@@ -181,9 +181,9 @@ export function createHealthBridge(config) {
     let url;
     try {
       url=new URL(req.url,base);if(url.origin!==base)fail(400,'request_url','Invalid request URL.');
-      const host=req.headers.host?.split(':')[0];if(host && ![new URL(base).hostname,'127.0.0.1','localhost'].includes(host))fail(421,'request_host','Use the configured health connections address.');
       const path=url.pathname;
       if(req.method==='GET' && path==='/health')return json(res,200,{ok:true,service:'interego-health-bridge',version:'0.1.0',sourceConnectionsAreNotImplied:true});
+      const host=req.headers.host?.split(':')[0];if(host && ![new URL(base).hostname,'127.0.0.1','localhost'].includes(host))fail(421,'request_host','Use the configured health connections address.');
       if(req.method==='GET' && path==='/profile')return json(res,200,profile());
       if(req.method==='GET' && path==='/setup')return json(res,200,setup());
       if(req.method==='GET' && path==='/.well-known/jwks.json'){

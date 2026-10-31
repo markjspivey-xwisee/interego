@@ -29,6 +29,8 @@ test('public setup and assets expose connection requirements but no private acco
   const f=await fixture(t);const setup=await(await fetch(f.origin+'/setup')).json();assert.equal(setup.duke.configured,false);assert.equal(setup.oura.configured,false);assert.equal(setup.apple.supported,true);assert.equal(setup.publication.automatic,false);
   for(const path of ['/','/ui/app.js','/ui/style.css','/profile']){const r=await fetch(f.origin+path);assert.equal(r.status,200);assert.match(r.headers.get('cache-control'),/no-store/);}
   assert.equal((await fetch(f.origin+'/api/status')).status,401);assert.equal((await fetch(f.origin+'/api/records')).status,401);
+  assert.equal((await fetch(f.origin+'/health',{headers:{Host:'healthcheck.railway.app'}})).status,200);
+  assert.equal((await fetch(f.origin+'/setup',{headers:{Host:'healthcheck.railway.app'}})).status,421);
 });
 test('imports require private consent, and owner actions use only the signed params',async t=>{
   const f=await fixture(t);assert.equal((await f.call('apple/pair',{metrics:['heartRate']})).status,403);
