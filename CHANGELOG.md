@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-10-30 — Archive the older Workspace desktop app for selective feature reuse
+
+Interego Workspace is archived for new desktop feature work, with the local pod app as the active desktop direction. Its source, installation, shared libraries, tests, Discord adapter and hosted compatibility are retained. Human-and-agent chat spaces and two-way Discord conversation bridging are the main features to evaluate bringing forward. The status notes distinguish retained implementation from capabilities not yet available in the local app; no runtime, identity migration, deployment or federation setting changes are included.
+
 ## 2026-10-30 — Keep hosted container builds independent of the MCP application
 
 Hosted images that copy the package libraries now build those libraries explicitly, while the normal root build still builds the MCP application. Images with a separate dependency-install layer include the library manifests before installation, so newly added local-runtime and federation dependencies are available during cold builds. Existing prebuilt-artifact checks and deployment gates remain active.
