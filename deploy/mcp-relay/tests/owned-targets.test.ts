@@ -11,7 +11,6 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { createServer, type AddressInfo } from 'node:net';
 import express from 'express';
 import { createWallet, signDescriptor, computeCid, type IRI } from '@interego/core';
-import { parseManifest, parseManifestArchiveUrls } from '@interego/solid';
 import { createOwnedTargets, fetchWithoutRedirect } from '../owned-targets.js';
 import { listenLoopback, type TestListener } from './listen-loopback.js';
 import { stopChild } from '../../identity/tests/teardown.js';
@@ -116,10 +115,9 @@ before(async () => {
       if (req.headers['if-match'] !== (req.path === hotPath ? '"hot-v1"' : '"archive-v1"')) { res.status(412).end(); return; }
       const body = typeof req.body === 'string' ? req.body : '';
       const expected = canonicalIndex(req.path, true);
-      const rows = parseManifest(body), expectedRows = parseManifest(expected);
-      if (body !== expected || rows.length !== 1 || rows[0]?.descriptorUrl !== expectedRows[0]?.descriptorUrl
-        || rows[0]?.cid !== expectedRows[0]?.cid || JSON.stringify(rows[0]?.describes) !== JSON.stringify(expectedRows[0]?.describes)
-        || JSON.stringify(parseManifestArchiveUrls(body, storage + req.path)) !== JSON.stringify(parseManifestArchiveUrls(expected, storage + req.path))) {
+      // This fixture accepts one known canonical representation per index. Compare
+      // bytes before changing state; no parser needs to process a submitted body.
+      if (body !== expected) {
         res.status(400).json({ error: 'fixture_manifest_rejected' }); return;
       }
       // Keep the submitted bytes only for assertions. GETs regenerate a known valid
