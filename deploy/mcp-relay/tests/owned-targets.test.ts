@@ -11,26 +11,31 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { createServer, type AddressInfo } from 'node:net';
 import express from 'express';
 import { createWallet, signDescriptor, computeCid, type IRI } from '@interego/core';
+import { parseManifest, parseManifestArchiveUrls } from '@interego/solid';
 import { createOwnedTargets, fetchWithoutRedirect } from '../owned-targets.js';
-import { persistAccessToken } from '../oauth-token-store.js';
 import { listenLoopback, type TestListener } from './listen-loopback.js';
 import { stopChild } from '../../identity/tests/teardown.js';
 
 const owner = 'u-owned-existing', other = 'u-owned-other';
 const publicStore = 'https://gate.fixture.example';
-const oauthToken = randomBytes(32).toString('hex');
-const peerOAuthToken = randomBytes(32).toString('hex');
+// Public, nonsecret example identifiers accepted only by this ephemeral test relay.
+// These fixed lookup keys are the SHA-256 values of the two documented sample strings.
+// They are fixture data, never production grants, and no secret/password is hashed here.
+const oauthToken = 'public-test-only-owned-oauth';
+const peerOAuthToken = 'public-test-only-peer-oauth';
+const oauthLookupKey = '65be7465a91f9667a70aaa9e4cb75e828a2f36cf58d9b04a9afc8899ce42aed9';
+const peerOAuthLookupKey = '9b3f2c1c111e2d561629c6a3db2faeefa420e440a577ac4bbf32772abbe09c49';
 const adminToken = randomBytes(32).toString('hex');
 const listeners: TestListener[] = [];
 const storageRequests: Array<{ method: string; path: string; authorization?: string; ifMatch?: string }> = [];
 const committedWrites: Array<{ path: string; body: string }> = [];
 const privateRequests: string[] = [];
 const peerRequests: string[] = [];
-const documents = new Map<string, string>();
-const oauthRows = new Map<string, string>();
+const mirroredIndexes = new Set<string>();
 let child: ChildProcess | undefined;
 let storage = '', privateOrigin = '', peerOrigin = '', relay = '', temporary = '', output = '';
 let signature: unknown;
+let descriptorCid = '', coldCid = '';
 let mode: 'normal' | 'audit-redirect' | 'signature-redirect' | 'hot-redirect' | 'archive-redirect' | 'descriptor-redirect'
   | 'write-redirect' | 'poison-private' | 'poison-crosspod' | 'bad-archive' | 'cas' | 'peer-redirect' = 'normal';
 let redirectKind: 'private' | 'crosspod' | 'samepod' = 'private';
@@ -41,15 +46,24 @@ const archivePath = `/${owner}/.well-known/context-graphs-archive-0001`;
 const descriptorPath = `/${owner}/context-graphs/d.ttl`;
 const coldPath = `/${owner}/context-graphs/cold.ttl`;
 const prefixes = '@prefix iep: <https://markjspivey-xwisee.github.io/interego/ns/iep#> .\n';
-function entry(url: string, graph: string): string {
-  return `<${url}> a iep:ManifestEntry ;\n    iep:describes <${graph}> .\n`;
+function entry(url: string, graph: string, cid?: string): string {
+  return `<${url}> a iep:ManifestEntry ;\n`
+    + (cid ? `    iep:contentCid "${cid}" ;\n` : '')
+    + `    iep:describes <${graph}> .\n`;
 }
 function hotManifest(): string {
   const link = mode === 'bad-archive' ? privateOrigin + '/private-index' : 'context-graphs-archive-0001';
-  let body = prefixes + `<> iep:manifestArchive <${link}> .\n` + entry(storage + descriptorPath, 'urn:fixture:graph');
+  let body = prefixes + `<> iep:manifestArchive <${link}> .\n`
+    + entry(storage + descriptorPath, 'urn:fixture:graph', mirroredIndexes.has(hotPath) ? descriptorCid : undefined);
   if (mode === 'poison-private') body += entry(privateOrigin + '/private.ttl', 'urn:fixture:poison');
   if (mode === 'poison-crosspod') body += entry(storage + `/${other}/private.ttl`, 'urn:fixture:poison');
   return body;
+}
+function canonicalIndex(path: string, mirrored: boolean): string {
+  if (path === hotPath) return prefixes + '<> iep:manifestArchive <context-graphs-archive-0001> .\n'
+    + entry(storage + descriptorPath, 'urn:fixture:graph', mirrored ? descriptorCid : undefined);
+  if (path === archivePath) return prefixes + entry(storage + coldPath, 'urn:fixture:cold', mirrored ? coldCid : undefined);
+  throw new Error('Unknown fixture index');
 }
 function redirectTarget(): string {
   return redirectKind === 'private' ? privateOrigin + '/private'
@@ -85,20 +99,32 @@ before(async () => {
   const privateServer = await listenLoopback(privateApp); listeners.push(privateServer); privateOrigin = privateServer.base;
 
   const storeApp = express(); storeApp.use(express.text({ type: () => true }));
+  storeApp.use((_req, res, next) => { res.setHeader('X-Content-Type-Options', 'nosniff'); next(); });
   storeApp.use((req, res) => {
     storageRequests.push({ method: req.method, path: req.path, authorization: req.headers.authorization, ifMatch: req.headers['if-match'] });
     if (req.path === '/maintainer/amep/state/release42.json') { res.json({ exchange: 'release42', openHeads: [], order: [], acts: {} }); return; }
-    if (req.method === 'PUT' && req.path.startsWith('/svc-relay-dcr/tokens/')) {
-      oauthRows.set(req.path, String(req.body)); res.status(201).end(); return;
-    }
-    if (req.method === 'GET' && oauthRows.has(req.path)) {
-      res.type('application/ld+json').send(oauthRows.get(req.path)); return;
+    const account = req.path === `/svc-relay-dcr/tokens/${oauthLookupKey}.jsonld` ? { key: oauthLookupKey, pod: `${storage}/${owner}/` }
+      : req.path === `/svc-relay-dcr/tokens/${peerOAuthLookupKey}.jsonld` ? { key: peerOAuthLookupKey, pod: `${peerOrigin}/people/${owner}/` } : null;
+    if (req.method === 'GET' && account) {
+      res.json({ token_sha256: account.key, clientId: 'owned-target-fixture', scopes: ['mcp:tools'], expiresAt: Math.floor(Date.now() / 1000) + 3600,
+        extra: { userId: owner, agentId: 'mcp-owned-fixture', ownerWebId: `${publicStore}/${owner}/profile#me`,
+          podUrl: account.pod, identityToken: 'synthetic-identity-fixture' } }); return;
     }
     if (req.method === 'PUT' && [hotPath, archivePath].includes(req.path)) {
       if (mode === 'write-redirect') { res.redirect(307, redirectTarget()); return; }
       if (mode === 'cas') { res.status(412).end(); return; }
       if (req.headers['if-match'] !== (req.path === hotPath ? '"hot-v1"' : '"archive-v1"')) { res.status(412).end(); return; }
-      committedWrites.push({ path: req.path, body: String(req.body) }); documents.set(req.path, String(req.body)); res.status(204).end(); return;
+      const body = typeof req.body === 'string' ? req.body : '';
+      const expected = canonicalIndex(req.path, true);
+      const rows = parseManifest(body), expectedRows = parseManifest(expected);
+      if (body !== expected || rows.length !== 1 || rows[0]?.descriptorUrl !== expectedRows[0]?.descriptorUrl
+        || rows[0]?.cid !== expectedRows[0]?.cid || JSON.stringify(rows[0]?.describes) !== JSON.stringify(expectedRows[0]?.describes)
+        || JSON.stringify(parseManifestArchiveUrls(body, storage + req.path)) !== JSON.stringify(parseManifestArchiveUrls(expected, storage + req.path))) {
+        res.status(400).json({ error: 'fixture_manifest_rejected' }); return;
+      }
+      // Keep the submitted bytes only for assertions. GETs regenerate a known valid
+      // fixture document from validated state; arbitrary request bodies are never echoed.
+      committedWrites.push({ path: req.path, body }); mirroredIndexes.add(req.path); res.status(204).end(); return;
     }
     if (!['GET', 'HEAD'].includes(req.method)) { res.status(201).end(); return; }
     if (req.path === descriptorPath) {
@@ -112,26 +138,18 @@ before(async () => {
     if (req.path === coldPath) { res.type('text/turtle').send(coldBody); return; }
     if (req.path === hotPath) {
       if (mode === 'hot-redirect') { res.redirect(redirectTarget()); return; }
-      res.setHeader('ETag', '"hot-v1"'); res.type('text/turtle').send(documents.get(hotPath) ?? hotManifest()); return;
+      res.setHeader('ETag', '"hot-v1"'); res.type('text/turtle').send(hotManifest()); return;
     }
     if (req.path === archivePath) {
       if (mode === 'archive-redirect') { res.redirect(redirectTarget()); return; }
-      res.setHeader('ETag', '"archive-v1"'); res.type('text/turtle').send(documents.get(archivePath) ?? prefixes + entry(storage + coldPath, 'urn:fixture:cold')); return;
+      res.setHeader('ETag', '"archive-v1"'); res.type('text/turtle').send(canonicalIndex(archivePath, mirroredIndexes.has(archivePath))); return;
     }
     if (req.path.startsWith(`/${other}/`) || req.path === `/${owner}/redirected.ttl`) { res.send('CROSSPOD_FIXTURE_MUST_NOT_ESCAPE'); return; }
     if (req.path.endsWith('/')) { res.type('text/turtle').send('@prefix ldp: <http://www.w3.org/ns/ldp#> . <> a ldp:Container .'); return; }
     res.status(404).end();
   });
   const store = await listenLoopback(storeApp); listeners.push(store); storage = store.base;
-  // Exercise the production persistence format and opaque bearer lookup instead
-  // of reimplementing its token indexing or hand-writing persisted credentials.
-  for (const [token, podUrl] of [[oauthToken, `${storage}/${owner}/`], [peerOAuthToken, `${peerOrigin}/people/${owner}/`]]) {
-    await persistAccessToken(token!, { token: token!, clientId: 'owned-target-fixture', scopes: ['mcp:tools'],
-      expiresAt: Math.floor(Date.now() / 1000) + 3600,
-      extra: { userId: owner, agentId: 'mcp-owned-fixture', ownerWebId: `${publicStore}/${owner}/profile#me`,
-        podUrl: podUrl!, identityToken: 'synthetic-identity-fixture' } },
-    { podUrl: storage + '/svc-relay-dcr/', fetch: (url, init) => fetch(url, init) });
-  }
+  descriptorCid = await computeCid(descriptorBody); coldCid = await computeCid(coldBody);
   signature = await signDescriptor('urn:fixture:descriptor' as IRI, descriptorBody, await createWallet('agent', 'owned-target-fixture'));
   const probe = createServer(); await new Promise<void>(done => probe.listen(0, '127.0.0.1', done));
   const port = (probe.address() as AddressInfo).port; await new Promise<void>((done, reject) => probe.close(error => error ? reject(error) : done()));
@@ -150,7 +168,7 @@ before(async () => {
     await new Promise(done => setTimeout(done, 100));
   }
 });
-beforeEach(() => { mode = 'normal'; redirectKind = 'private'; documents.clear(); storageRequests.length = 0; committedWrites.length = 0; privateRequests.length = 0; peerRequests.length = 0; });
+beforeEach(() => { mode = 'normal'; redirectKind = 'private'; mirroredIndexes.clear(); storageRequests.length = 0; committedWrites.length = 0; privateRequests.length = 0; peerRequests.length = 0; });
 after(async () => {
   await stopChild(child); await Promise.all(listeners.map(listener => listener.close()));
   if (temporary) {
@@ -263,6 +281,12 @@ test('admin read redirects refuse out-of-pod responses and the descriptor whitel
 });
 
 test('CAS conflicts preserve 412 and write redirects cannot cause a second PUT', async () => {
+  const malformed = await fetch(storage + hotPath, { method: 'PUT', headers: { 'Content-Type': 'text/turtle', 'If-Match': '"hot-v1"' },
+    body: canonicalIndex(hotPath, true).replace(descriptorCid, 'INVALID_FIXTURE_CID') });
+  assert.equal(malformed.status, 400); assert.deepEqual(committedWrites, []);
+  const unchanged = await fetch(storage + hotPath);
+  assert.equal(unchanged.headers.get('content-type')?.split(';')[0], 'text/turtle'); assert.equal(unchanged.headers.get('x-content-type-options'), 'nosniff');
+  assert.equal(await unchanged.text(), canonicalIndex(hotPath, false)); storageRequests.length = 0;
   mode = 'cas'; const conflict = await backfill(); assert.equal(conflict.response.status, 412, conflict.text); assert.equal(conflict.body['retryable'], true);
   assert.deepEqual(committedWrites, []); storageRequests.length = 0;
   mode = 'write-redirect'; const refused = await backfill(); assert.equal(refused.response.status, 502, refused.text);
