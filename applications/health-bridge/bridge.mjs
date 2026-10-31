@@ -5,6 +5,10 @@ import { ouraAuthorizationRequest, exchangeOuraCode, refreshOuraToken, syncOura 
 import { normalizeAppleBatch } from './apple.mjs';
 
 export const ACTION = 'urn:interego:health:';
+// Oura app registration and user OAuth do not authorize retained AI-facing imports.
+// A future provider-authorized design requires a separately reviewed code change.
+const OURA_IMPORT_ENABLED = false;
+const OURA_RESTRICTION = 'Oura retained imports need provider authorization; app registration and OAuth alone are insufficient.';
 const hash = value => createHash('sha256').update(value).digest('hex');
 const random = () => randomBytes(32).toString('base64url');
 const equal = (a,b) => typeof a==='string' && typeof b==='string' && a.length===b.length && timingSafeEqual(Buffer.from(a),Buffer.from(b));
@@ -52,6 +56,7 @@ export function createHealthBridge(config) {
   };
   const saveOwner=(actor,value)=>store.put(ownerKey(actor),value);
   const requireConsent=owner=>{if(!owner.consent.enabled)fail(403,'consent_required','Enable private health imports before connecting a source.');};
+  const requireSourceAllowed=source=>{if(source==='oura'&&!OURA_IMPORT_ENABLED)fail(403,'authorization_required',OURA_RESTRICTION);};
   const session=req=>{
     const s=sessions.get(cookie(req,sessionCookie));if(!s||s.expiresAt<=now())fail(401,'sign_in_required','Sign in with Interego.');return s;
   };
@@ -60,21 +65,23 @@ export function createHealthBridge(config) {
     if(write && (!equal(req.headers['x-csrf-token'],s.csrfToken)||req.headers.origin!==base))fail(403,'request_origin','Open the health connections page to make this change.');
     return s;
   };
-  const setup=()=>({version:1,publicUrl:base,privacyUrl:base+'/privacy',status:config.duke?.clientId&&config.oura?.clientId?'ready':'setup-required',
+  const setup=()=>({version:1,publicUrl:base,privacyUrl:base+'/privacy',status:config.duke?.clientId?'ready':'setup-required',
     duke:{configured:!!config.duke?.clientId,registrationRequired:!config.duke?.clientId,redirectUri:base+'/oauth/duke/callback',jwksUri:base+'/.well-known/jwks.json',fhirBase:'https://health-apis.duke.edu/FHIR/api/FHIR/R4'},
-    oura:{configured:!!(config.oura?.clientId&&config.oura?.clientSecret),registrationRequired:!config.oura?.clientId,redirectUri:base+'/oauth/oura/callback'},
+    oura:{configured:false,importEnabled:false,registrationRequired:false,authorizationRequired:true,status:'authorization_required',message:OURA_RESTRICTION,redirectUri:base+'/oauth/oura/callback'},
     apple:{supported:true,requiresIphone:true,endpoint:base+'/ingest/apple',mode:'selected-sample uploads',backgroundSyncVerified:false},
     publication:{automatic:false,rawSources:'private encrypted storage'}});
   const status=async(actor)=>{
     const o=await loadOwner(actor),s=setup(),sources={};
     for(const name of ['duke','oura','apple']){
       const v=o.sources[name]||{};
+      if(name==='oura'&&!OURA_IMPORT_ENABLED){sources.oura={configured:false,importEnabled:false,connected:false,status:'authorization_required',authorizationRequired:true,message:OURA_RESTRICTION,lastSync:null,recordCount:0,coverage:[]};continue;}
       sources[name]={configured:name==='apple'||s[name].configured,connected:!!v.connected,status:v.status||(name==='apple'?'waiting_for_iphone':s[name].configured?'not_connected':'registration_required'),lastSync:v.lastSync||null,recordCount:o.records.filter(x=>x.source===name).length,coverage:v.coverage||[],...(name==='apple'?{pairingCount:(v.tokenHashes||[]).length}:{}),...(v.patientId?{patientId:v.patientId}:{})};
     }
-    return {owner:{userId:actor.userId,principal:actor.principal},consent:o.consent,sources,recordCount:o.records.length,automaticPolling:false,publicAtlasSync:false};
+    return {owner:{userId:actor.userId,principal:actor.principal},consent:o.consent,sources,recordCount:o.records.filter(r=>r.source!=='oura'||OURA_IMPORT_ENABLED).length,automaticPolling:false,publicAtlasSync:false};
   };
   const resourceKey=(actor,id)=>'record:'+hash(actor.principal+':'+id);
   const importRecords=async(actor,o,source,records)=>{
+    requireSourceAllowed(source);
     let added=0,updated=0,unchanged=0;
     const index=new Map(o.records.map(x=>[x.id,x]));
     for(const r of records){
@@ -93,8 +100,9 @@ export function createHealthBridge(config) {
   const records=async(actor,params={})=>{
     const o=await loadOwner(actor);const source=params.source;
     if(source&&!['duke','oura','apple'].includes(source))fail(400,'source_invalid','Choose a known source.');
+    requireSourceAllowed(source);
     const offset=Math.max(0,Math.min(20000,Number(params.offset)||0)),limit=Math.max(1,Math.min(100,Number(params.limit)||30));
-    const selected=o.records.filter(r=>!source||r.source===source).sort((a,b)=>String(b.clinicalDate||b.retrievedAt).localeCompare(String(a.clinicalDate||a.retrievedAt)));
+    const selected=o.records.filter(r=>(r.source!=='oura'||OURA_IMPORT_ENABLED)&&(!source||r.source===source)).sort((a,b)=>String(b.clinicalDate||b.retrievedAt).localeCompare(String(a.clinicalDate||a.retrievedAt)));
     return {records:selected.slice(offset,offset+limit).map(({digest,...r})=>r),total:selected.length,nextOffset:offset+limit<selected.length?offset+limit:null,sourceRecordsArePrivate:true};
   };
   const metadata=async()=>{
@@ -122,6 +130,7 @@ export function createHealthBridge(config) {
   const tokenRecord=(token)=>({...token,expiresAt:now()+Math.min(31536000,Number(token.expires_in)||3600)*1000});
 
   const syncSource=async(actor,source,params={})=>serialized(ownerKey(actor),async()=>{
+    requireSourceAllowed(source);
     const o=await loadOwner(actor);requireConsent(o);const connection=o.sources[source];
     if(!connection?.token?.access_token)fail(409,'source_not_connected','Connect this source before syncing.');
     let token=connection.token;
@@ -161,6 +170,7 @@ export function createHealthBridge(config) {
     if(operation==='records')return records(actor,params);
     if(operation==='record'){
       const o=await loadOwner(actor);if(typeof params.id!=='string'||!o.records.some(r=>r.id===params.id))fail(404,'record_not_found','This record is not in your health import index.');
+      requireSourceAllowed(o.records.find(r=>r.id===params.id).source);
       return {record:await store.get(resourceKey(actor,params.id)),private:true};
     }
     if(operation==='consent')return serialized(ownerKey(actor),async()=>{if(typeof params.enabled!=='boolean')fail(400,'consent_invalid','Choose whether private imports are enabled.');const o=await loadOwner(actor);o.consent={enabled:params.enabled,changedAt:new Date(now()).toISOString()};await saveOwner(actor,o);return {consent:o.consent};});
@@ -170,10 +180,41 @@ export function createHealthBridge(config) {
     fail(404,'operation_not_found','This health operation is not supported.');
   };
   const profile=()=>({
-    '@context':{hydra:'http://www.w3.org/ns/hydra/core#',schema:'https://schema.org/'},'@id':base+'/profile','@type':'hydra:EntryPoint',name:'Interego Private Health Connections',version:'0.1.0',setup:base+'/setup',human:base+'/',rawRecords:'encrypted private source records',publicAtlasPublishing:false,
+    '@context':{hydra:'http://www.w3.org/ns/hydra/core#',schema:'https://schema.org/'},'@id':base+'/profile','@type':'hydra:EntryPoint',name:'Interego Private Health Connections',version:'0.1.0',setup:base+'/setup',human:base+'/',turtle:base+'/profile.ttl',rawRecords:'encrypted private source records',publicAtlasPublishing:false,
     authentication:{kind:'Interego relay-delegated signature',signWith:'sign_request',signedFields:['action','target','params','nonce'],target:base,nonce:'fresh random string, at least 16 characters',timestamp:'stamped by the relay; checked for freshness',identity:'derived from verified agent controller; never caller-selected owner'},
-    affordances:['status','records','record','consent','apple/pair','duke/sync','oura/sync','revoke'].map(op=>({action:ACTION+op,target:base+'/actions',method:'POST',description:op==='records'?'List private source record metadata, 30 per page; no public publication.':op==='record'?'Read one record from the verified owner index.':op==='consent'?'Enable or disable private imports; does not change provider permissions.':op,parameters:op==='records'?{source:'optional duke|oura|apple',limit:'1–100',offset:'0–20000'}:op==='record'?{id:'owned record id'}:op==='consent'?{enabled:'boolean'}:op==='apple/pair'?{metrics:'selected allowed Apple Health metrics'}:op==='revoke'?{source:'duke|oura|apple'}:{}}))
+    affordances:['status','records','record','consent','apple/pair','duke/sync','oura/sync','revoke'].map(op=>({action:ACTION+op,target:base+'/actions',method:'POST',description:op==='oura/sync'?OURA_RESTRICTION:op==='records'?'List private source record metadata, 30 per page; no public publication.':op==='record'?'Read one record from the verified owner index.':op==='consent'?'Enable or disable private imports; does not change provider permissions.':op,parameters:op==='records'?{source:'optional duke|oura|apple',limit:'1–100',offset:'0–20000'}:op==='record'?{id:'owned record id'}:op==='consent'?{enabled:'boolean'}:op==='apple/pair'?{metrics:'selected allowed Apple Health metrics'}:op==='revoke'?{source:'duke|oura|apple'}:{}}))
   });
+  // The generic Interego follower parses Turtle, not arbitrary JSON. Derive its declarations
+  // from the same action list as /profile so discovery cannot drift from the active routes.
+  const profileTurtle=()=>{
+    const p=profile(),iri=value=>{if(/[\s<>"{}|\\^`]/.test(value))throw new Error('Unserializable profile IRI');return '<'+value+'>';},literal=value=>JSON.stringify(String(value));
+    const subject=iri(p.turtle),shape=iri(p.turtle+'#SignedEnvelope');
+    const control=a=>iri(p.turtle+'#action-'+encodeURIComponent(a.action.slice(ACTION.length)));
+    const lines=[
+      '@prefix iep: <https://markjspivey-xwisee.github.io/interego/ns/iep#> .',
+      '@prefix hydra: <http://www.w3.org/ns/hydra/core#> .',
+      '@prefix dcat: <http://www.w3.org/ns/dcat#> .',
+      '@prefix dct: <http://purl.org/dc/terms/> .',
+      '@prefix schema: <https://schema.org/> .',
+      '@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .',
+      '@prefix sh: <http://www.w3.org/ns/shacl#> .',
+      '@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .',
+      `${subject} a hydra:EntryPoint ; schema:name ${literal(p.name)} ; dct:hasFormat ${iri(p['@id'])} ;`,
+      `  schema:url ${iri(p.human)} ; rdfs:comment ${literal('Sign {action,target,params,nonce} with Interego sign_request. target inside the signed payload is '+base+'. Send the returned {_signed_payload,_signature} envelope unchanged to the selected hydra:target using descriptor_url '+p.turtle+' and action_iri. No account credential or private record is included in this profile.')} ;`,
+      `  iep:affordance ${p.affordances.map(control).join(', ')} .`,
+      `${shape} a sh:NodeShape ;`,
+      '  sh:property [ sh:path <urn:interego:health:field:_signed_payload> ; sh:name "_signed_payload" ; sh:datatype xsd:string ; sh:minCount 1 ; sh:maxCount 1 ; sh:description "Exact signed payload string returned by sign_request; do not parse and reserialize it." ] ;',
+      '  sh:property [ sh:path <urn:interego:health:field:_signature> ; sh:name "_signature" ; sh:datatype xsd:string ; sh:minCount 1 ; sh:maxCount 1 ; sh:description "Exact relay signature returned by sign_request." ] .',
+    ];
+    for(const a of p.affordances){
+      const template={signWith:'sign_request',payload:{action:a.action,target:p.authentication.target,params:{},nonce:'<fresh-random-string-at-least-16-characters>'},parameterDescriptions:a.parameters,submit:'Pass the returned signed envelope unchanged to the declared hydra:target.'};
+      lines.push(`${control(a)} a iep:Affordance, hydra:Operation ;`,
+        `  iep:action ${iri(a.action)} ; hydra:target ${iri(a.target)} ; hydra:method ${literal(a.method)} ;`,
+        `  dcat:mediaType "application/json" ; hydra:expects ${shape} ;`,
+        `  rdfs:label ${literal(a.description)} ; iep:inputTemplate ${literal(JSON.stringify(template))} .`);
+    }
+    return lines.join('\n')+'\n';
+  };
 
   const handler=async(req,res)=>{
     res.setHeader('Cache-Control','no-store');res.setHeader('X-Content-Type-Options','nosniff');res.setHeader('Referrer-Policy','no-referrer');res.setHeader('X-Robots-Tag','noindex, nofollow');
@@ -184,7 +225,8 @@ export function createHealthBridge(config) {
       const path=url.pathname;
       if(req.method==='GET' && path==='/health')return json(res,200,{ok:true,service:'interego-health-bridge',version:'0.1.0',sourceConnectionsAreNotImplied:true});
       const host=req.headers.host?.split(':')[0];if(host && ![new URL(base).hostname,'127.0.0.1','localhost'].includes(host))fail(421,'request_host','Use the configured health connections address.');
-      if(req.method==='GET' && path==='/profile')return json(res,200,profile());
+      if(req.method==='GET' && path==='/profile'){res.setHeader('Link',`<${base}/profile.ttl>; rel="alternate"; type="text/turtle"`);return json(res,200,profile());}
+      if(req.method==='GET' && path==='/profile.ttl'){res.setHeader('Link',`<${base}/profile>; rel="alternate"; type="application/json"`);res.writeHead(200,{'Content-Type':'text/turtle; charset=utf-8'});return res.end(profileTurtle());}
       if(req.method==='GET' && path==='/setup')return json(res,200,setup());
       if(req.method==='GET' && path==='/.well-known/jwks.json'){
         if(!config.duke?.privateKeyPem)return json(res,200,{keys:[]});
@@ -207,7 +249,7 @@ export function createHealthBridge(config) {
         setCookie(res,sessionCookie,id,Math.min(3600,Number(t.expires_in)||3600));return redirect(res,base+'/?connected=interego');
       }
       if(req.method==='GET' && /^\/oauth\/(duke|oura)\/callback$/.test(path)){
-        consumeLimit(req,'callback',15);const source=path.split('/')[2],f=takeFlow(req,url,source);const s=session(req);if(s.actor.principal!==f.actor.principal)fail(403,'owner_mismatch','Use the account that started this connection.');
+        consumeLimit(req,'callback',15);const source=path.split('/')[2];requireSourceAllowed(source);const f=takeFlow(req,url,source);const s=session(req);if(s.actor.principal!==f.actor.principal)fail(403,'owner_mismatch','Use the account that started this connection.');
         await serialized(ownerKey(f.actor),async()=>{
           const o=await loadOwner(f.actor);requireConsent(o);
           const t=source==='duke'?await exchangeDukeCode({metadata:f.metadata,...config.duke,code:f.code,verifier:f.verifier,redirectUri:base+'/oauth/duke/callback',fetch:fetcher}):await exchangeOuraCode({...config.oura,code:f.code,verifier:f.verifier,redirectUri:base+'/oauth/oura/callback',fetch:fetcher});
@@ -220,7 +262,7 @@ export function createHealthBridge(config) {
       if(req.method==='POST' && /^\/api\//.test(path)){
         consumeLimit(req,'manage',60);const s=browserOwner(req,true),body=await readJson(req);const op=path.slice(5);
         if(op==='duke/start'||op==='oura/start'){
-          const source=op.split('/')[0],o=await loadOwner(s.actor);requireConsent(o);const settings=config[source];
+          const source=op.split('/')[0];requireSourceAllowed(source);const o=await loadOwner(s.actor);requireConsent(o);const settings=config[source];
           if(!settings?.clientId||(source==='oura'&&!settings.clientSecret))fail(409,'registration_required',`${source==='duke'?'Epic / Duke':'Oura'} app registration must be configured before source sign-in.`);
           const m=source==='duke'?await discoverDuke({clientId:settings.clientId,fetch:fetcher}):undefined;
           const f=newFlow(res,source,s,{metadata:m});const auth=source==='duke'?authorizationRequest({metadata:m,clientId:settings.clientId,redirectUri:base+'/oauth/duke/callback',state:f.state,verifier:f.verifier}):ouraAuthorizationRequest({clientId:settings.clientId,redirectUri:base+'/oauth/oura/callback',state:f.state,verifier:f.verifier});

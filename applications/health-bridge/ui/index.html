@@ -53,12 +53,12 @@
 
         <article class="connection-card" aria-labelledby="oura-title">
           <div class="card-top"><span class="source-mark oura-mark" aria-hidden="true">o</span><span id="oura-badge" class="status-badge">Checking setup</span></div>
-          <p class="eyebrow">RING & DAILY PATTERNS</p><h3 id="oura-title">Oura</h3><p class="card-description">Connect the wearer’s Oura account for the supported sleep, activity, readiness, and heart-rate information they approve.</p>
+          <p class="eyebrow">RING & DAILY PATTERNS</p><h3 id="oura-title">Oura</h3><p class="card-description">A planned source connection. Retained imports into Interego remain disabled while provider authorization for this use is unresolved.</p>
           <dl class="source-facts"><div><dt>Last sync</dt><dd id="oura-last-sync">Not checked</dd></div><div><dt>Imported records</dt><dd id="oura-count">—</dd></div></dl>
           <p id="oura-detail" class="source-detail">Checking the connection requirements.</p>
           <div class="card-actions"><button id="oura-connect" class="button primary" type="button" disabled>Connect Oura <span aria-hidden="true">↗</span></button><button id="oura-sync" class="button quiet" type="button" disabled>Sync now</button><button id="oura-revoke" class="text-button subtle" type="button" disabled>Disconnect</button></div>
           <p class="source-footnote">Oura scores and Apple Health samples keep their own source labels. Mirrored readings are not added together.</p>
-          <details id="oura-registration" class="setup-details" hidden><summary>Application setup details</summary><p>An Oura OAuth application and the wearer’s approval are required. The account holder reviews Oura’s terms during registration.</p><dl id="oura-setup-fields"></dl><a href="https://cloud.ouraring.com/docs" target="_blank" rel="noopener noreferrer">Oura developer documentation ↗</a></details>
+          <details id="oura-registration" class="setup-details" hidden><summary>Provider authorization and application setup</summary><p>An Oura account, application registration, and OAuth approval alone do not enable retained Interego imports or agent access. Additional provider authorization and a compliant connection design are required. No alternative Oura MCP connection is implemented here.</p><dl id="oura-setup-fields"></dl><a href="https://cloud.ouraring.com/docs" target="_blank" rel="noopener noreferrer">Oura developer documentation ↗</a></details>
           <details id="oura-coverage" class="setup-details" hidden><summary>Coverage from the last sync</summary><div id="oura-coverage-list"></div></details>
         </article>
       </div>

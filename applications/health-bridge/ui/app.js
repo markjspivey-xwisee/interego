@@ -78,7 +78,9 @@ function render() {
     const source = sourceState(name);
     const connected = isConnected(name);
     const ready = configured(name);
+    const providerBlocked = name === 'oura' && (setup?.oura?.importEnabled === false || source.status === 'authorization_required');
     if (!setup) setBadge(name, 'Setup unavailable', 'warning');
+    else if (providerBlocked) setBadge(name, 'Provider authorization needed', 'warning');
     else if (!ready) setBadge(name, 'App registration needed', 'warning');
     else if (!signed) setBadge(name, 'Sign in to connect');
     else if (connected) setBadge(name, source.status === 'connected-session-only' ? 'Connected for this session' : 'Connected', 'connected');
@@ -86,15 +88,17 @@ function render() {
     else setBadge(name, 'Not connected');
     $(`${name}-last-sync`).textContent = signed ? dateText(source.lastSync) : 'Sign in to check';
     $(`${name}-count`).textContent = signed ? count(source.recordCount ?? 0) : '—';
-    $(`${name}-connect`).disabled = !mayImport() || !ready;
+    $(`${name}-connect`).disabled = !mayImport() || !ready || providerBlocked;
     $(`${name}-connect`).firstChild.textContent = connected ? 'Reconnect ' + (name === 'duke' ? 'MyChart ' : 'Oura ') : 'Connect ' + (name === 'duke' ? 'MyChart ' : 'Oura ');
-    $(`${name}-sync`).disabled = !mayImport() || !connected;
+    $(`${name}-sync`).disabled = !mayImport() || !connected || providerBlocked;
     $(`${name}-revoke`).disabled = !signed || !connected || busy;
-    $(`${name}-registration`).hidden = !setup || ready;
+    $(`${name}-registration`).hidden = !setup || (ready && !providerBlocked);
     fieldList($(`${name}-setup-fields`), [['Registered callback',setup?.[name]?.redirectUri],['Public signing keys',setup?.[name]?.jwksUri]]);
     $(`${name}-detail`).textContent = !setup
       ? 'Connection setup could not be verified. Refresh status to try again.'
-      : !ready
+      : providerBlocked
+        ? 'Retained Oura imports and Interego agent access are disabled. An Oura account and OAuth approval alone do not authorize this use; additional provider authorization and a compliant connection design are required.'
+        : !ready
         ? name === 'duke' ? 'The bridge is waiting for its Epic application registration. No Duke record access has been established.' : 'The bridge is waiting for its Oura application registration. No ring data access has been established.'
         : !signed ? 'Sign in to check this source and begin the account holder’s authorization.'
         : connected ? (name === 'duke' ? 'Authorization is recorded. Sync now to retrieve the information Duke makes available under the approved access.' : 'Authorization is recorded. Sync now to retrieve the data available under the wearer’s approved access.')
@@ -131,6 +135,9 @@ async function request(path, body) {
   if (response.status === 401) { status = null; render(); throw new Error('Sign in with Interego to continue.'); }
   const data = await response.json().catch(() => ({}));
   if (!response.ok) {
+    if (data.code === 'authorization_required' || data.error === 'authorization_required' || data.status === 'authorization_required') {
+      throw new Error('Retained Oura imports require provider authorization. An Oura account or OAuth approval alone does not enable this connection.');
+    }
     const messages = {403:'The action was not authorized. Refresh your session and try again.',409:'The connection needs attention. Refresh status before trying again.',413:'The upload exceeded this endpoint’s size limit.',429:'Too many requests. Try again shortly.',503:'This connection is not ready. Check the application setup details.'};
     throw new Error(messages[response.status] || 'The request could not finish. Your existing source records were kept.');
   }
@@ -224,7 +231,8 @@ $('copy-token').addEventListener('click',async()=>{
 $('load-records').addEventListener('click',() => perform(async()=>{const source=$('record-source').value;renderRecords(await request('/api/records'+(source?'?source='+encodeURIComponent(source):'')));}));
 
 const query=new URLSearchParams(location.search);
-if (['duke','oura'].includes(query.get('connected'))) notify(`${sourceNames[query.get('connected')]} authorization returned. Check the connection status below before syncing.`);
+if (query.get('connected') === 'duke') notify('Duke MyChart authorization returned. Check the connection status below before syncing.');
+else if (query.get('connected') === 'oura') notify('Retained Oura imports are not enabled. Review the provider authorization status below.',true);
 else if (query.has('error')) notify('The connection did not finish. Sign in and try again, or review the source’s setup requirements.',true);
 if (query.has('connected') || query.has('error')) history.replaceState(null,'',location.pathname);
 refresh();
