@@ -10,12 +10,14 @@ on:
   pull_request:
     branches: [master]
     paths:
+      - 'deploy/Dockerfile.identity'
       - 'deploy/Dockerfile.relay'
       - 'deploy/Dockerfile.dashboard'
       - 'deploy/Dockerfile.pgsl-browser'
       - 'deploy/Dockerfile.interego-bridge'
       - 'deploy/Dockerfile.discord'
       - 'deploy/images.json'
+      - 'deploy/identity/**'
       - 'deploy/mcp-relay/**'
       - 'examples/dashboard/**'
       - 'examples/pgsl-browser/**'
@@ -47,6 +49,9 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          - image: interego-identity
+            dockerfile: deploy/Dockerfile.identity
+            target: ''
           - image: interego-relay
             dockerfile: deploy/Dockerfile.relay
             target: reference

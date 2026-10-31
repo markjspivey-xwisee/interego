@@ -477,7 +477,7 @@ export function wrapAsTriG(
   // else is treated as graph body.
   // A line is a prefix directive only when its name is a PN_PREFIX (isPnPrefix); a line with
   // some other name is not Turtle, and is left where the caller wrote it.
-  const directiveRe = new RegExp(String.raw`^\s*(@prefix\s+(?<at>${PREFIX_NAME}):\s*<[^>]+>\s*\.|@base\s+<[^>]+>\s*\.|PREFIX\s+(?<sparql>${PREFIX_NAME}):\s*<[^>]+>|BASE\s+<[^>]+>)\s*$`, 'iu');
+  const directiveRe = new RegExp(String.raw`^\s*(@prefix\s+(?<at>${PREFIX_NAME}):\s*<[^<>]+>\s*\.|@base\s+<[^<>]+>\s*\.|PREFIX\s+(?<sparql>${PREFIX_NAME}):\s*<[^<>]+>|BASE\s+<[^<>]+>)\s*$`, 'iu');
   const isDirective = (line: string): boolean => {
     const m = directiveRe.exec(line);
     const name = m?.groups?.['at'] ?? m?.groups?.['sparql'];
@@ -516,14 +516,14 @@ export function wrapAsTriG(
       // @base / BASE — no prefix name to carry; normalise SPARQL form to Turtle.
       callerPrefixLines.push(
         /^\s*BASE\s/i.test(directive)
-          ? directive.replace(/^\s*BASE\s+(<[^>]+>)\s*$/i, '@base $1 .')
+          ? directive.replace(/^\s*BASE\s+(<[^<>]+>)\s*$/i, '@base $1 .')
           : directive,
       );
       continue;
     }
     callerPrefixLines.push(
       /^\s*PREFIX\s/i.test(directive)
-        ? directive.replace(new RegExp(String.raw`^\s*PREFIX\s+(${PREFIX_NAME}):\s*(<[^>]+>)\s*$`, 'iu'), '@prefix $1: $2 .')
+        ? directive.replace(new RegExp(String.raw`^\s*PREFIX\s+(${PREFIX_NAME}):\s*(<[^<>]+>)\s*$`, 'iu'), '@prefix $1: $2 .')
         : directive,
     );
   }
@@ -538,7 +538,7 @@ export function wrapAsTriG(
   const seenCallerNs = new Map<string, string>();
   let aliasRebound: string | null = null;
   for (const directive of callerPrefixLines) {
-    const m = directive.match(new RegExp(String.raw`^@prefix\s+(${PREFIX_NAME}):\s*(<[^>]+>)`, 'u'));
+    const m = directive.match(new RegExp(String.raw`^@prefix\s+(${PREFIX_NAME}):\s*(<[^<>]+>)`, 'u'));
     if (!m) continue;
     const prior = seenCallerNs.get(m[1]!);
     if (prior !== undefined && prior !== m[2]!) aliasRebound = m[1]!;
@@ -652,7 +652,7 @@ export function graphIriFromDescriptorTurtle(turtle: string): string | null {
   // `iep:describes <IRI>` in the emitted descriptor; the legacy `cg:` alias is still on
   // pods written before the protocol rename, and refusing to read those would silently
   // downgrade every one of them to unverifiable.
-  const m = turtle.match(/\b(?:iep|cg):describes\s+<([^>]+)>/);
+  const m = turtle.match(/\b(?:iep|cg):describes\s+<([^<>]+)>/);
   return m ? m[1]! : null;
 }
 
@@ -944,7 +944,7 @@ function splitManifestDocument(turtle: string): { head: string; entries: string[
   let current: string[] | null = null;
   for (const raw of lines) {
     const trimmed = raw.trim();
-    if (/^<[^>]+>\s+a\s+iep:ManifestEntry/.test(trimmed)) {
+    if (/^<[^<>]+>\s+a\s+iep:ManifestEntry/.test(trimmed)) {
       if (current) entries.push(current.join('\n'));
       current = [raw];
       // A single-line entry (`<u> a iep:ManifestEntry .`) opens and closes here.
@@ -1079,10 +1079,12 @@ export function archiveFetchTarget(linkIri: string, manifestUrl: string): string
 export function parseManifestArchiveUrls(turtle: string, baseUrl: string): string[] {
   const out: string[] = [];
   const seen = new Set<string>();
-  const predicate = /(?:iep:manifestArchive|hydra:previous)\s*((?:<[^>]*>\s*,\s*)*<[^>]*>)/g;
+  // Raw '<' cannot occur inside Turtle IRIREF. Excluding it bounds each
+  // candidate at its next delimiter instead of rescanning every nested opener.
+  const predicate = /(?:iep:manifestArchive|hydra:previous)\s*((?:<[^<>]*>\s*,\s*)*<[^<>]*>)/g;
   let m: RegExpExecArray | null;
   while ((m = predicate.exec(turtle)) !== null) {
-    for (const iri of m[1]!.matchAll(/<([^>]*)>/g)) {
+    for (const iri of m[1]!.matchAll(/<([^<>]*)>/g)) {
       let abs: string;
       try { abs = new URL(iri[1]!, baseUrl).href; } catch { continue; }
       if (!seen.has(abs)) { seen.add(abs); out.push(abs); }
@@ -1640,7 +1642,7 @@ export function parseManifest(turtle: string): ManifestEntry[] {
   for (const rawLine of turtle.split('\n')) {
     const line = rawLine.trim();
 
-    const entryMatch = line.match(/^<([^>]+)>\s+a\s+iep:ManifestEntry/);
+    const entryMatch = line.match(/^<([^<>]+)>\s+a\s+iep:ManifestEntry/);
     if (entryMatch) {
       if (current) {
         entries.push(finalize(current));
@@ -1660,7 +1662,10 @@ export function parseManifest(turtle: string): ManifestEntry[] {
       current.cid = cidMatch[1]!;
     }
 
-    const describesMatch = line.match(/iep:describes\s+<([^>]+)>/);
+    // IRI captures retain their lexical bytes, including percent/Unicode escapes.
+    // Reject nested raw '<': apart from being invalid IRIREF, it lets an unanchored
+    // search revisit a growing suffix at every repeated predicate on one line.
+    const describesMatch = line.match(/iep:describes\s+<([^<>]+)>/);
     if (describesMatch) {
       current.describes.push(describesMatch[1]!);
     }
@@ -1690,18 +1695,18 @@ export function parseManifest(turtle: string): ManifestEntry[] {
       current.trustLevel = trustMatch[1]! as TrustLevel;
     }
 
-    const issuerMatch = line.match(/iep:issuer\s+<([^>]+)>/);
+    const issuerMatch = line.match(/iep:issuer\s+<([^<>]+)>/);
     if (issuerMatch) {
       current.issuer = issuerMatch[1]!;
     }
 
-    const conformsMatch = line.match(/dct:conformsTo\s+<([^>]+)>/);
+    const conformsMatch = line.match(/dct:conformsTo\s+<([^<>]+)>/);
     if (conformsMatch) {
       current.conformsTo = current.conformsTo ?? [];
       current.conformsTo.push(conformsMatch[1]!);
     }
 
-    const supersedesMatch = line.match(/iep:supersedes\s+<([^>]+)>/);
+    const supersedesMatch = line.match(/iep:supersedes\s+<([^<>]+)>/);
     if (supersedesMatch) {
       current.supersedes = current.supersedes ?? [];
       current.supersedes.push(supersedesMatch[1]!);
@@ -1710,7 +1715,7 @@ export function parseManifest(turtle: string): ManifestEntry[] {
     // PGSL lattice pointer (Stage 3 projection) — links a manifest row back to
     // the holon it projects. Content-addressed, so structural overlap across
     // pods is detectable from the manifest alone. Additive: legacy rows omit it.
-    const pgslUriMatch = line.match(/iep:pgslUri\s+<([^>]+)>/);
+    const pgslUriMatch = line.match(/iep:pgslUri\s+<([^<>]+)>/);
     if (pgslUriMatch) {
       current.pgslUri = pgslUriMatch[1]!;
     }
@@ -1766,17 +1771,17 @@ function manifestEntryFromDescriptorTurtle(descriptorUrl: string, ttl: string): 
     while ((m = re.exec(ttl)) !== null) out.push(m[1]!);
     return out;
   };
-  const describes = grabAll('iep:describes\\s+<([^>]+)>');
+  const describes = grabAll('iep:describes\\s+<([^<>]+)>');
   if (describes.length === 0) return null;
   const one = (src: string): string | undefined => (ttl.match(new RegExp(src)) ?? [])[1];
   const validFrom = one('iep:validFrom\\s+"([^"]+)"');
   const validUntil = one('iep:validUntil\\s+"([^"]+)"');
-  const conformsTo = grabAll('dct:conformsTo\\s+<([^>]+)>');
-  const supersedes = grabAll('iep:supersedes\\s+<([^>]+)>');
+  const conformsTo = grabAll('dct:conformsTo\\s+<([^<>]+)>');
+  const supersedes = grabAll('iep:supersedes\\s+<([^<>]+)>');
   const facetTypes = [...new Set(grabAll('a\\s+iep:(\\w+)Facet\\b'))]; // 'TemporalFacet' → 'Temporal'
   const modalStatus = one('iep:modalStatus\\s+iep:(\\w+)');
   const trustLevel = one('iep:trustLevel\\s+iep:(\\w+)');
-  const issuer = one('iep:issuer\\s+<([^>]+)>');
+  const issuer = one('iep:issuer\\s+<([^<>]+)>');
   const cid = one('iep:contentCid\\s+"([^"]+)"');
 
   const lines: string[] = [`<${iescIri(descriptorUrl)}> a iep:ManifestEntry ;`];
@@ -3612,12 +3617,12 @@ export function parseAuthorshipProofFromDescriptorTurtle(
     const m = body.match(re);
     return m?.[1];
   };
-  const issuer = read(/iep:issuer\s+<([^>]+)>/);
-  const verificationMethod = read(/iep:verificationMethod\s+<([^>]+)>/);
+  const issuer = read(/iep:issuer\s+<([^<>]+)>/);
+  const verificationMethod = read(/iep:verificationMethod\s+<([^<>]+)>/);
   const signerAddress = read(/iep:signerAddress\s+"([^"]+)"/);
   const created = read(/iep:created\s+"([^"]+)"/);
-  const ownerWebId = read(/iep:ownerWebId\s+<([^>]+)>/);
-  const descriptorId = read(/iep:descriptorId\s+<([^>]+)>/);
+  const ownerWebId = read(/iep:ownerWebId\s+<([^<>]+)>/);
+  const descriptorId = read(/iep:descriptorId\s+<([^<>]+)>/);
   const proofValue = read(/iep:proofValue\s+"([^"]+)"/);
   const scheme = read(/iep:scheme\s+"([^"]+)"/) ?? 'EcdsaSecp256k1Signature2019';
   const agentDid = read(/iep:agentDid\s+"([^"]+)"/);
@@ -3672,7 +3677,7 @@ export function parseDistributionFromDescriptorTurtle(turtle: string): Distribut
   // Prefer hydra:target over dcat:accessURL (they're synonymous in our
   // emission, but hydra:target is the operation-centric view for
   // dispatch; dcat:accessURL is the catalog-centric view. Either works).
-  const accessUrlMatch = block.match(/hydra:target\s+<([^>]+)>/) || block.match(/dcat:accessURL\s+<([^>]+)>/);
+  const accessUrlMatch = block.match(/hydra:target\s+<([^<>]+)>/) || block.match(/dcat:accessURL\s+<([^<>]+)>/);
   const mediaTypeMatch = block.match(/dcat:mediaType\s+"([^"]+)"/);
   const encryptedMatch = block.match(/iep:encrypted\s+(true|false)/);
   const algoMatch = block.match(/iep:encryptionAlgorithm\s+"([^"]+)"/);
@@ -3933,7 +3938,7 @@ export async function subscribe(
 
   // Parse Link header for storageDescription
   const linkHeader = headResponse.headers?.get('link') ?? headResponse.headers?.get('Link') ?? '';
-  const storageDescMatch = linkHeader.match(/<([^>]+)>;\s*rel="http:\/\/www\.w3\.org\/ns\/solid\/terms#storageDescription"/);
+  const storageDescMatch = linkHeader.match(/<([^<>]+)>;\s*rel="http:\/\/www\.w3\.org\/ns\/solid\/terms#storageDescription"/);
   if (storageDescMatch) {
     storageDescUrl = storageDescMatch[1]!;
   }
@@ -3963,15 +3968,18 @@ export async function subscribe(
   // The URL may be relative (CSS uses relative IRIs) — resolve against the description URL.
   let subscriptionEndpoint: string | undefined;
 
-  const wsEndpointMatch = descBody.match(/<([^>]*WebSocketChannel2023[^>]*)>/);
-  if (wsEndpointMatch) {
-    const raw = wsEndpointMatch[1]!;
+  // Scan each bounded IRIREF once, then inspect its value. Two overlapping
+  // wildcards around the marker can backtrack quadratically on an unclosed IRI.
+  for (const endpoint of descBody.matchAll(/<([^<>]*)>/g)) {
+    const raw = endpoint[1]!;
+    if (!raw.includes('WebSocketChannel2023')) continue;
     // Resolve relative URLs against the storage description URL
     try {
       subscriptionEndpoint = new URL(raw, storageDescUrl).href;
     } catch {
       subscriptionEndpoint = raw;
     }
+    break;
   }
 
   // Fallback: construct the conventional CSS path

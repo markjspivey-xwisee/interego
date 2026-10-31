@@ -253,9 +253,11 @@ export function createEgress(config: EgressConfig): Egress {
       // Requests with no dispatcher stay on the global fetch exactly as before, so this
       // changes nothing for CSS reads/writes.
       const dispatching = (init as { dispatcher?: unknown } | undefined)?.dispatcher !== undefined;
+      const callerSignal = (init as { signal?: AbortSignal } | undefined)?.signal;
+      const signal = callerSignal ? AbortSignal.any([ac.signal, callerSignal]) : ac.signal;
       const resp = dispatching
-        ? await (undiciFetch as unknown as typeof fetch)(target, { ...(init as RequestInit), signal: ac.signal })
-        : await fetch(target, { ...(init as RequestInit), signal: ac.signal });
+        ? await (undiciFetch as unknown as typeof fetch)(target, { ...(init as RequestInit), signal })
+        : await fetch(target, { ...(init as RequestInit), signal });
       return {
         ok: resp.ok,
         status: resp.status,

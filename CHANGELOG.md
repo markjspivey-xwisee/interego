@@ -1,5 +1,15 @@
 # Changelog
 
+## 2026-10-31 — Correct account inbox sessions and confine relay requests
+
+The identity dashboard now reads inbox metadata through a dedicated identity-authenticated relay route. The server derives the pod from the verified account, refuses foreign origins, caller-selected pod addresses, redirects and oversized responses, and rechecks the session before releasing metadata. Existing OAuth inbox access and PC-key linking keep their separate authorization rules. Inbox text and errors render as text, so descriptor metadata cannot insert markup into the account page. No account, credential, game progress or federation settings are changed by an inbox read.
+
+Plaintext note projections now use the same guarded outbound transport as descriptor lookup and encrypted payload reads, so direct or redirected payload links cannot reach an untrusted private service.
+
+Signature audits rebuild resource addresses from verified OAuth ownership, including third-party pods, and refuse redirects. Administrative CID backfill is confined to one pod on the configured store, validating descriptor reads and manifest writes before changes while retaining archive traversal, selective backfill and ETag/CAS behavior. Other stores are maintained through their own relay.
+
+Solid metadata readers stop an IRI match at either angle bracket, avoiding repeated suffix scans on malformed nested openers. Archive links, graph references, authorship and distribution metadata retain valid relative, Unicode and escaped IRI spelling. Notification discovery scans each complete IRI once. These changes bound the affected scans; they do not replace the existing Turtle readers with a complete grammar parser.
+
 ## 2026-10-30 — Keep hosted container builds independent of the MCP application
 
 Hosted images that copy the package libraries now build those libraries explicitly, while the normal root build still builds the MCP application. Images with a separate dependency-install layer include the library manifests before installation, so newly added local-runtime and federation dependencies are available during cold builds. Existing prebuilt-artifact checks and deployment gates remain active.
