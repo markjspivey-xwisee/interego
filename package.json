@@ -122,6 +122,7 @@
     "@noble/hashes": "^2.0.1",
     "@types/ws": "^8.18.1",
     "ethers": "^6.16.0",
+    "express-rate-limit": "8.6.1",
     "jsonld": "9.0.0",
     "multiformats": "^13.4.2",
     "pdf-parse": "^2.4.5",

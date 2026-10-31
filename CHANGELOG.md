@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-10-31 — Bound own-LMS authorization requests before snapshot work
+
+Foxxi's GET and POST LTI authorization routes share a per-client limit and a fixed total budget before snapshot hydration, form parsing or token signing. Standard middleware returns 429 with a retry delay, groups IPv6 clients by subnet and uses the framework's existing trusted-proxy policy. The total budget bounds admission to the rotating client-bucket store. Discovery and key metadata remain independent; learner identity, one-use grants and gradebook checks remain required.
+
 ## 2026-10-31 — Keep browser sign-in working after Windows app updates
 
 The installed Windows app repairs browser companion registration removed by an older installer, using only the valid, nonempty extension allowance the owner already saved. It does not create a key, change hosted account ownership, enable a disabled or unreadable allowance, or replace another installation’s registration. A queued owner change or shutdown prevents late admission, and repair never rewrites the saved allowance.

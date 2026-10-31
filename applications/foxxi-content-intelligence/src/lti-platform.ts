@@ -29,6 +29,7 @@
  */
 
 import express, { type Express, type Request, type Response, type RequestHandler } from 'express';
+import { rateLimit } from 'express-rate-limit';
 import { createHash, randomBytes } from 'node:crypto';
 import { AGS_SCOPE, LTI_CLAIMS, es256Keys, jwsSignEs256, jwsVerifyRs256OrEs256, type Es256Keys, type PlatformRegistration } from './lti13.js';
 import { sendServerError } from './http-errors.js';
@@ -572,6 +573,18 @@ export function attachLtiPlatformRoutes(app: Express, platform: LtiPlatform): vo
   app.get(`${base}/.well-known/openid-configuration`, (_req, res) => { res.json(platform.configuration()); });
   app.get(`${base}/jwks.json`, (_req, res) => { res.json(platform.jwks()); });
 
+  // Both methods spend the same budgets before hydration, parsing or signing.
+  // The fixed outer budget also bounds distinct IP buckets admitted to the
+  // rotating MemoryStore. The default IP key uses Express's existing trust
+  // policy and groups IPv6 clients by /56; never accept a raw forwarding header.
+  const authGlobalLimit = rateLimit({ windowMs: 60_000, limit: 300,
+    keyGenerator: () => 'lti-platform-auth', identifier: 'lti-auth-total',
+    standardHeaders: 'draft-8', legacyHeaders: false,
+    message: { error: 'too_many_requests' } });
+  const authIpLimit = rateLimit({ windowMs: 60_000, limit: 30, ipv6Subnet: 56,
+    identifier: 'lti-auth-client', standardHeaders: 'draft-8', legacyHeaders: false,
+    message: { error: 'too_many_requests' } });
+
   const ready: RequestHandler = (_req, res, next) => {
     void platform.ensureReady().then((available) => {
       if (!available) { res.set('Retry-After', '1').status(503).json({ error: 'lti_gradebook_unavailable' }); return; }
@@ -591,8 +604,8 @@ export function attachLtiPlatformRoutes(app: Express, platform: LtiPlatform): vo
     if (req.accepts(['html', 'json']) === 'json') { res.json({ form_post: { action: r.action, method: 'POST', fields: r.fields } }); return; }
     res.set('Referrer-Policy', 'no-referrer').type('html').send(autoPostForm(r.action, r.fields));
   };
-  app.get(`${base}/auth`, ready, authorize);
-  app.post(`${base}/auth`, ready, formBody, authorize);
+  app.get(`${base}/auth`, authGlobalLimit, authIpLimit, ready, authorize);
+  app.post(`${base}/auth`, authGlobalLimit, authIpLimit, ready, formBody, authorize);
 
   app.post(`${base}/token`, formBody, (req, res) => { void (async () => {
     const r = await platform.token((req.body ?? {}) as Record<string, unknown>);
