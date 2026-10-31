@@ -946,7 +946,7 @@ describe('native LRS slow-query diagnostics', () => {
     // Only factory construction sees this private stream. The worker's real
     // stderr is restored before the query, so test output and OS streams remain normal.
     // Do not attach a test error listener: that would mask the production defect.
-    const getStderr = vi.spyOn(process, 'stderr', 'get').mockReturnValue(sink as NodeJS.WriteStream);
+    const getStderr = vi.spyOn(process, 'stderr', 'get').mockReturnValue(Object.assign(sink, { fd: 2 as const }) as typeof process.stderr);
     let db: NativeInteregoLrsDatabase;
     try {
       db = createConfiguredNativeLrsDatabase({ NODE_ENV: 'production', FOXXI_LRS_BACKEND: 'interego',
