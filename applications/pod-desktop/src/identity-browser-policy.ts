@@ -2,6 +2,7 @@
 import { extensionIds } from './browser-extensions.js';
 
 export interface IdentityBrowserPolicyOptions {
+  readonly loadAllowed: () => Promise<readonly string[]>;
   readonly saveAllowed: (ids: readonly string[]) => Promise<readonly string[]>;
   readonly revoke: () => void;
   readonly allowAdmission: () => void;
@@ -15,9 +16,36 @@ function same(actual: readonly string[], expected: readonly string[]): void {
 
 export class IdentityBrowserPolicy {
   private queue: Promise<unknown> = Promise.resolve();
+  private generation = 0;
   constructor(private readonly options: IdentityBrowserPolicyOptions) {}
+  /** Repair an upgrade's removed host registration using retained owner consent only. */
+  reconcile(): Promise<readonly string[]> {
+    const generation = this.generation;
+    const current = () => !this.options.closing() && generation === this.generation;
+    const task = this.queue.then(async () => {
+      this.options.revoke();
+      try {
+        if (!current()) return [];
+        const ids = extensionIds(await this.options.loadAllowed());
+        // An empty or unreadable policy is never a request to register or disconnect.
+        if (!ids.length || !current()) return [];
+        same(await this.options.configureHost(ids), ids);
+        if (!current()) return [];
+        same(await this.options.loadAllowed(), ids);
+        if (!current()) return [];
+        this.options.allowAdmission();
+        return ids;
+      } catch (error) {
+        this.options.revoke();
+        throw error;
+      }
+    });
+    this.queue = task.catch(() => {}); return task;
+  }
   save(value: unknown): Promise<readonly string[]> {
     const ids = extensionIds(value);
+    // Supersede any pending startup repair as soon as the owner makes a choice.
+    ++this.generation;
     const task = this.queue.then(async () => {
       try {
         this.options.revoke();
@@ -27,7 +55,7 @@ export class IdentityBrowserPolicy {
         if (this.options.closing()) throw new Error(interrupted);
         same(await this.options.saveAllowed(ids), ids);
         if (this.options.closing()) throw new Error(interrupted);
-        this.options.allowAdmission();
+        if (ids.length) this.options.allowAdmission();
         return ids;
       } catch (error) {
         // Revoke again after the asynchronous work. Failed/closing transactions never

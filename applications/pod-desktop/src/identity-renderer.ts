@@ -173,6 +173,7 @@ export function installIdentityUi(api: DesktopApi, context: Context): { refresh(
           if (!extensionsDirty) el<HTMLTextAreaElement>('identity-extension-ids').value = ids.join('\n'); extensionsLoaded = true;
         } catch { if (requested === reading && began === epoch) message('Browser sign-in access could not be checked. Refresh before changing it.', true); }
       }
+      if (value.browserError && extensionsLoaded) message(value.browserError, true);
     } catch { if (requested === reading && began === epoch) { state = undefined; readFailure = true; acknowledged.clear(); message('Your sign-in identity could not be checked. Refresh to try again.', true); } }
     if (requested === reading && began === epoch) { render(); revealNewRequests(); }
   }

@@ -229,9 +229,10 @@ async function bootstrap(): Promise<void> {
   const identity = localIdentity;
   const nativeIdentityHost = new NativeIdentityHost({ dataDir: join(userData, 'identity-browser'),
     executable: join(app.getAppPath(), 'dist', 'native-host', 'Interego-Identity.exe') });
-  let identityAdmission = true;
+  let identityAdmission = false;
   const identityPolicy = new IdentityBrowserPolicy({
-    saveAllowed: ids => identityExtensions.save(ids), configureHost: ids => nativeIdentityHost.configure(ids), closing: () => closing,
+    loadAllowed: () => identityExtensions.list(), saveAllowed: ids => identityExtensions.save(ids),
+    configureHost: ids => nativeIdentityHost.configure(ids), closing: () => closing,
     revoke: () => { identityAdmission = false; identityBrowser?.revokeChannels(); },
     allowAdmission: () => { identityAdmission = true; },
   });
@@ -242,8 +243,13 @@ async function bootstrap(): Promise<void> {
     });
     try { await browser.start(); identityBrowser = browser; }
     catch { identityBrowserError = 'Local browser sign-in could not open. Reopen Interego or reinstall this Windows preview.'; await browser.close().catch(() => {}); }
+    if (identityBrowser && app.isPackaged && !smoke
+      && userData.toLowerCase() === join(app.getPath('appData'), 'Interego').toLowerCase()) {
+      try { await identityPolicy.reconcile(); }
+      catch { identityBrowserError = 'Saved browser sign-in could not be restored. Review and save the allowed extension IDs in Identity.'; }
+    }
   }
-  handle('localIdentityStatus', async () => identity.status());
+  handle('localIdentityStatus', async () => ({ ...await identity.status(), ...(identityBrowserError ? { browserError: identityBrowserError } : {}) }));
   handle('setupLocalIdentity', async () => identity.setup());
   handle('approveLocalIdentity', async value => {
     if (!value || typeof value !== 'object') throw new Error('Choose a pending sign-in.');
@@ -263,7 +269,9 @@ async function bootstrap(): Promise<void> {
     if (userData.toLowerCase() !== join(app.getPath('appData'), 'Interego').toLowerCase()) {
       throw new Error('Browser registration is available in the standard installed Interego data folder. This isolated profile has not been registered.');
     }
-    return identityPolicy.save(ids);
+    const saved = await identityPolicy.save(ids);
+    identityBrowserError = undefined;
+    return saved;
   });
   handle('backupLocalIdentity', async value => {
     const phrase = passphrase(value);
@@ -561,7 +569,11 @@ async function bootstrap(): Promise<void> {
       const smokeInvoke = <T>(method: string, argument?: unknown) => window!.webContents.executeJavaScript(`window.interego[${JSON.stringify(method)}](${argument === undefined ? '' : JSON.stringify(argument)})`) as Promise<T>;
       await identitySmoke!.verify({ invoke: smokeInvoke, executable: join(app.getAppPath(), 'dist/native-host/Interego-Identity.exe'),
         approve: (id, code) => window!.webContents.executeJavaScript(`window.interego.approveLocalIdentity(${JSON.stringify(id)},${JSON.stringify(code)})`),
-        dataDir: userData, allow: ids => identityExtensions.save(ids), expectPrevious: initial.configured });
+        dataDir: userData, allow: async ids => {
+          // Isolated smoke consent never registers a browser in the owner's Windows profile.
+          identityAdmission = false;
+          const saved = await identityExtensions.save(ids); identityAdmission = saved.length > 0; return saved;
+        }, expectPrevious: initial.configured });
       if (!initial.configured) await verifyWebBridge({ invoke: smokeInvoke, loopback: () => smokeBridgeOrigin });
       const { verifyStableBridge } = await import('./stable-bridge-smoke.js');
       const { verifyFederation } = await import('./federation-smoke.js');

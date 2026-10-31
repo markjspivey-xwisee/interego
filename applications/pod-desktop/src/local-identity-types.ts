@@ -42,6 +42,8 @@ export interface LocalIdentityStatus {
   readonly configured: boolean;
   readonly identity?: LocalIdentityPublic;
   readonly pending: readonly LocalIdentityApproval[];
+  /** Fixed native-host setup status; never an identity/provider exception. */
+  readonly browserError?: string;
 }
 export interface LocalIdentityStart { readonly relayOrigin: string; readonly handoffCode: string }
 export interface LocalIdentityTicket {

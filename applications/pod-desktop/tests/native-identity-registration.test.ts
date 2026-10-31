@@ -1,8 +1,10 @@
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { IDENTITY_HOST_NAME, NativeIdentityHost } from '../src/native-identity-host.js';
+import { BrowserExtensionStore } from '../src/browser-extensions.js';
+import { IdentityBrowserPolicy } from '../src/identity-browser-policy.js';
 
 const directories: string[] = [];
 afterEach(async () => {
@@ -31,7 +33,71 @@ async function fixture(foreign = false) {
   return { host, root, executable, calls, registry, refuse: (value = true) => { refusal = value; }, protectedReply: (value: typeof protectedReply) => { protectedReply = value; } };
 }
 
+// Isolated policy bytes and injected registry commands; no Windows profile or registry is opened.
+const protector = {
+  protect: (value: string) => 'fixture:' + Buffer.from(value).toString('base64'),
+  unprotect: (value: string) => {
+    if (!value.startsWith('fixture:')) throw new Error('Fixture protected storage refused');
+    return Buffer.from(value.slice('fixture:'.length), 'base64').toString();
+  },
+};
+async function retainedPolicy(f: Awaited<ReturnType<typeof fixture>>, ids: readonly string[] | null) {
+  const directory = join(f.root, 'allowed-extensions'); const store = new BrowserExtensionStore(directory, protector);
+  if (ids !== null) await store.save(ids);
+  let admitted = false;
+  const saveAllowed = vi.fn((value: readonly string[]) => store.save(value));
+  const policy = new IdentityBrowserPolicy({ loadAllowed: () => store.list(), saveAllowed,
+    configureHost: value => f.host.configure(value), closing: () => false,
+    revoke: () => { admitted = false; }, allowAdmission: () => { admitted = true; } });
+  return { policy, store, saveAllowed, admitted: () => admitted, path: join(directory, 'browser-extensions.bin') };
+}
+
 describe('owner-only browser companion registration', () => {
+  it('repairs a legacy uninstall deletion on restart using the identical protected owner policy', async () => {
+    const f = await fixture(); const ids = ['a'.repeat(32), 'p'.repeat(32)]; const saved = await retainedPolicy(f, ids);
+    await f.host.configure(ids); const manifest = await readFile(f.host.manifestPath, 'utf8');
+    const policyBytes = await readFile(saved.path);
+    const sentinel = join(f.root, 'retained-identity.sentinel'); await writeFile(sentinel, 'untouched fixture identity data');
+    // Older uninstallers remove both registration values even during an in-place update.
+    f.registry.clear(); f.calls.length = 0;
+    await expect(saved.policy.reconcile()).resolves.toEqual(ids);
+    expect([...f.registry.values()]).toEqual([f.host.manifestPath, f.host.manifestPath]);
+    expect(await readFile(f.host.manifestPath, 'utf8')).toBe(manifest);
+    expect(await readFile(saved.path)).toEqual(policyBytes); expect(saved.saveAllowed).not.toHaveBeenCalled();
+    expect(await saved.store.list()).toEqual(ids); expect(saved.admitted()).toBe(true);
+    expect(await readFile(sentinel, 'utf8')).toBe('untouched fixture identity data');
+    const registered = [...f.registry.entries()];
+    await expect(saved.policy.reconcile()).resolves.toEqual(ids);
+    expect([...f.registry.entries()]).toEqual(registered); expect(await readFile(f.host.manifestPath, 'utf8')).toBe(manifest);
+    expect(await readFile(saved.path)).toEqual(policyBytes); expect(saved.saveAllowed).not.toHaveBeenCalled();
+  });
+
+  it.each([{ name: 'missing', ids: null }, { name: 'disabled', ids: [] }])('does not touch registration for a $name saved policy', async ({ ids }) => {
+    const f = await fixture(); const saved = await retainedPolicy(f, ids);
+    f.registry.set('HKCU\\Software\\Google\\Chrome\\NativeMessagingHosts\\com.interego.identity', f.host.manifestPath);
+    f.registry.set('HKCU\\Software\\Microsoft\\Edge\\NativeMessagingHosts\\com.interego.identity', 'C:\\OtherApp\\foreign.json');
+    const before = [...f.registry.entries()];
+    await expect(saved.policy.reconcile()).resolves.toEqual([]);
+    expect(f.calls).toEqual([]); expect([...f.registry.entries()]).toEqual(before);
+    expect(saved.admitted()).toBe(false); expect(saved.saveAllowed).not.toHaveBeenCalled();
+    await expect(readFile(f.host.manifestPath)).rejects.toMatchObject({ code: 'ENOENT' });
+  });
+
+  it.each(['damaged', protector.protect(JSON.stringify(['*']))])('refuses unreadable or malformed retained policy without registry or policy writes (%#)', async bytes => {
+    const f = await fixture(); const saved = await retainedPolicy(f, ['a'.repeat(32)]); await writeFile(saved.path, bytes);
+    await expect(saved.policy.reconcile()).rejects.toThrow('could not be opened');
+    expect(f.calls).toEqual([]); expect(f.registry.size).toBe(0); expect(await readFile(saved.path, 'utf8')).toBe(bytes);
+    expect(saved.admitted()).toBe(false); expect(saved.saveAllowed).not.toHaveBeenCalled();
+  });
+
+  it('retained consent cannot replace another installation or lose its saved policy after a failed repair', async () => {
+    const f = await fixture(true); const saved = await retainedPolicy(f, ['a'.repeat(32)]); const bytes = await readFile(saved.path);
+    await expect(saved.policy.reconcile()).rejects.toThrow('Another Interego');
+    expect(f.calls.every(call => call.args[0] === 'query')).toBe(true);
+    await expect(readFile(f.host.manifestPath)).rejects.toMatchObject({ code: 'ENOENT' });
+    expect(await readFile(saved.path)).toEqual(bytes); expect(saved.saveAllowed).not.toHaveBeenCalled(); expect(saved.admitted()).toBe(false);
+  });
+
   it('does no registration until requested, then allows only exact owner-selected IDs', async () => {
     const f = await fixture(); expect(f.calls).toEqual([]);
     const ids = ['a'.repeat(32), 'p'.repeat(32)]; expect(await f.host.configure([...ids].reverse())).toEqual(ids);
