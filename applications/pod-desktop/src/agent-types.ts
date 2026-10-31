@@ -1,5 +1,5 @@
 /** Application-level grants; these labels do not attest a vendor's identity. */
-export type AgentPermission = 'notes:read' | 'notes:create';
+export type AgentPermission = 'notes:read' | 'notes:create' | 'workspaces:read' | 'workspaces:chat';
 export type AgentClient = 'chatgpt-desktop' | 'codex' | 'claude-code' | 'claude-desktop' | 'grok-build' | 'openclaw' | 'other';
 export type AgentConnectionState = 'waiting' | 'active' | 'revoked' | 'expired' | 'pod-changed';
 
@@ -8,6 +8,8 @@ export interface AgentConnection {
   readonly name: string;
   readonly client: AgentClient;
   readonly permissions: readonly AgentPermission[];
+  /** An explicit selection, never a wildcard or an implied grant to future workspaces. */
+  readonly workspaceIds?: readonly string[];
   readonly createdAt: string;
   readonly expiresAt: string;
   readonly state: AgentConnectionState;
@@ -19,6 +21,7 @@ export interface AgentConnectionInput {
   readonly name: string;
   readonly client: AgentClient;
   readonly permissions: readonly AgentPermission[];
+  readonly workspaceIds?: readonly string[];
   readonly expiresInDays: 7 | 30 | 90;
 }
 
@@ -35,9 +38,10 @@ export interface AgentPrincipal {
   readonly id: string;
   readonly name: string;
   readonly permissions: readonly AgentPermission[];
+  readonly workspaceIds?: readonly string[];
 }
 
-export type AgentOperation = 'status' | 'notes.search' | 'notes.read' | 'notes.create';
+export type AgentOperation = 'status' | 'notes.search' | 'notes.read' | 'notes.create' | 'workspaces.discover' | 'workspaces.act';
 export interface AgentPodStatus {
   readonly running: boolean;
   readonly localOnly: boolean;

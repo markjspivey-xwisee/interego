@@ -5,7 +5,8 @@ import { promisify } from 'node:util';
 import { createServer } from 'node:net';
 import {
   ContextDescriptor, escapeTurtleLiteral, generateKeyPair, turtleIriRef,
-  parseTrig, type EncryptionKeyPair, type IRI,
+  parseTrig, createEncryptedEnvelope, openEncryptedEnvelope, envelopeToJson, envelopeFromJson,
+  type EncryptionKeyPair, type IRI,
 } from '@interego/core';
 import { resolveDeploymentConfig, type LocalDeploymentConfig } from '@interego/deployment-config';
 import type { LocalNode, LocalNodeOptions } from '@interego/local-node';
@@ -266,6 +267,50 @@ export class PodController {
   async agentPodBinding(): Promise<string | null> {
     if (await exists(this.restorePath)) return null;
     return (await this.profile())?.keyFingerprint ?? null;
+  }
+
+  /** Private application state in the actual local pod; no service credential or content key escapes. */
+  readVerticalState(namespace: string): Promise<unknown | null> {
+    return this.action('The local application data could not be opened. Your stored data was kept unchanged.', async () => {
+      if (!/^[a-z][a-z0-9-]{1,30}$/.test(namespace)) throw new PodError('Choose a supported local application.');
+      const node = this.runningNode();
+      const response = await node.fetch(new URL(`app-${namespace}.bin`, node.podUrl).href, { headers: { accept: 'application/octet-stream' } });
+      if (response.status === 404) return null;
+      if (!response.ok) throw new PodError('The local application data could not be opened.');
+      const bytes = new Uint8Array(await response.arrayBuffer());
+      if (bytes.byteLength > 8 * 1024 * 1024) throw new PodError('The local application data is too large.');
+      const key = keyPair(await this.vault.load());
+      const envelope = envelopeFromJson(Buffer.from(bytes).toString('utf8'));
+      const plain = openEncryptedEnvelope(envelope, key);
+      if (plain === null) throw new PodError('The local application data could not be decrypted with this pod key.');
+      const value = JSON.parse(plain) as Record<string, unknown>;
+      if (value['format'] !== 'interego-private-vertical-state' || value['version'] !== 1
+        || value['namespace'] !== namespace || value['binding'] !== fingerprint(key) || !Object.hasOwn(value, 'value')) {
+        throw new PodError('The local application data does not match this pod.');
+      }
+      return value['value'];
+    });
+  }
+
+  /** Caller owns application transactions; this queue excludes backup, restore and pod shutdown races. */
+  writeVerticalState(namespace: string, value: unknown, expectedBinding?: string, authorize?: () => Promise<void>): Promise<void> {
+    return this.action('The local application data could not be saved. Keep your work and try again.', async () => {
+      if (!/^[a-z][a-z0-9-]{1,30}$/.test(namespace)) throw new PodError('Choose a supported local application.');
+      const node = this.runningNode();
+      const key = keyPair(await this.vault.load());
+      if (expectedBinding !== undefined && expectedBinding !== fingerprint(key)) {
+        throw new PodError('This application request belongs to a different pod. Discover its available actions again.');
+      }
+      const plain = JSON.stringify({ format: 'interego-private-vertical-state', version: 1, namespace, binding: fingerprint(key), value });
+      if (Buffer.byteLength(plain) > 6 * 1024 * 1024) throw new PodError('The local application data is full.');
+      const encrypted = envelopeToJson(createEncryptedEnvelope(plain, [key.publicKey], key));
+      // Base64 and envelope metadata also count toward the reader's ciphertext limit.
+      if (Buffer.byteLength(encrypted) > 8 * 1024 * 1024) throw new PodError('The local application data is full.');
+      await authorize?.();
+      const response = await node.fetch(new URL(`app-${namespace}.bin`, node.podUrl).href,
+        { method: 'PUT', headers: { 'content-type': 'application/octet-stream' }, body: encrypted });
+      if (!response.ok) throw new PodError('The local application data could not be saved.');
+    });
   }
 
   setup(): Promise<PodStatus> {

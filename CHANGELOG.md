@@ -1,5 +1,15 @@
 # Changelog
 
+## 2026-10-30 — Optional human-and-agent Workspaces in the local Windows app
+
+Windows preview.9 adds an optional Workspace vertical with encrypted local conversation records, human and separately attributed agent messages, selected-workspace read/chat grants, invitations, acceptance and membership removal. The consumer UI and two scoped MCP tools discover state-dependent JSON-LD affordances for the supported workflows. The implementation reuses the retained Workspace vocabulary and serializers without impersonating the hosted relay or claiming distributed per-participant pod storage or website-key signatures.
+
+An independently enabled Discord adapter connects one selected workspace, channel and allowlisted set of incoming participants. Its token is protected locally; saving setup sends nothing, every launch starts paused, and stop, revocation and queued writes are checked again at execution. Tests exercise real local storage and the MCP companion, the shipping renderer, JSON-LD expansion, permissions, persistence and an isolated two-way Discord connection. The packaged lifecycle includes workspace persistence and a real scoped agent conversation across launches. Hosted remains available, federation stays off by default, and neither optional connection is enabled by setup. Existing notes backups remain notes-only; hosted workspace import, multi-pod live chat, web-bridge workspace scopes, portable conversation backup and automatic model execution are separate capabilities.
+
+## 2026-10-30 — Archive the older Workspace desktop app for selective feature reuse
+
+Interego Workspace is archived for new desktop feature work, with the local pod app as the active desktop direction. Its source, installation, shared libraries, tests, Discord adapter and hosted compatibility are retained. Human-and-agent chat spaces and two-way Discord conversation bridging are the main features to evaluate bringing forward. The status notes distinguish retained implementation from capabilities not yet available in the local app; no runtime, identity migration, deployment or federation setting changes are included.
+
 ## 2026-10-30 — Keep hosted container builds independent of the MCP application
 
 Hosted images that copy the package libraries now build those libraries explicitly, while the normal root build still builds the MCP application. Images with a separate dependency-install layer include the library manifests before installation, so newly added local-runtime and federation dependencies are available during cold builds. Existing prebuilt-artifact checks and deployment gates remain active.

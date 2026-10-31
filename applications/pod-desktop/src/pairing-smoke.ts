@@ -17,7 +17,7 @@ interface SmokeOptions {
   readonly notes: () => Promise<readonly LocalNote[]>;
 }
 
-class Peer {
+export class Peer {
   private readonly child: ChildProcessWithoutNullStreams;
   private readonly requests = new Map<number, { method: string; resolve: (value: unknown) => void; reject: (error: Error) => void }>();
   private next = 0;

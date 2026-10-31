@@ -19,7 +19,7 @@ export function buildAgentSetup(connection: AgentConnection, launch: AgentLaunch
   const entry = { command: launch.command, args, env: ENV };
   const json = JSON.stringify({ mcpServers: { [name]: entry } }, null, 2);
   const commandArgs = [launch.command, ...args].map(quote).join(' ');
-  const common = ['Keep Interego open and start your local pod.', 'Add this connection to the selected agent, keeping its other settings.', 'Restart or reconnect the agent, then ask it to check its Interego connection.', 'Notes an agent reads may be sent to its AI provider. Revoke this connection in Interego to stop future access.'];
+  const common = ['Keep Interego open and start your local pod.', 'Add this connection to the selected agent, keeping its other settings.', 'Restart or reconnect the agent, then ask it to check its Interego connection.', 'Notes and workspace messages an agent reads may be sent to its AI provider. Workspace permissions cover only your selected spaces and active membership; use interego_discover to find their current controls. Revoke this connection in Interego to stop future access.'];
   let title: string;
   let configLocation: string;
   let configuration = json;

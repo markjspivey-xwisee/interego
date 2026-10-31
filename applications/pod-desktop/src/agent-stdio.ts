@@ -4,8 +4,9 @@ import { serveStdio, StdioServerTransport } from '@modelcontextprotocol/server/s
 import type { Readable, Writable } from 'node:stream';
 import { AgentClient, agentArguments, NOTE_ID_PATTERN, type AgentClientOptions } from './agent-client.js';
 import { AGENT_ID_PATTERN } from './agent-protocol.js';
-import type { AgentConnection, AgentOperation, AgentStatus } from './agent-types.js';
+import type { AgentConnection, AgentOperation, AgentPermission, AgentStatus } from './agent-types.js';
 import type { LocalNote } from './types.js';
+import { WORKSPACE_ID_PATTERN } from './workspace-types.js';
 
 export interface AgentStdioOptions extends AgentClientOptions {
   readonly input?: Readable;
@@ -16,8 +17,11 @@ export interface AgentStdioHandle {
   close(): Promise<void>;
 }
 
-const INSTRUCTIONS = 'Use only this connection’s granted Interego tools. Search returns summaries; read a note only when needed for the user’s task. Saving appends a new note and never edits or deletes existing notes. Tool results you read can reach your AI provider. The Interego app must remain open. Permissions, expiry and revocation are checked by the app for every operation. If access is refused, ask the user to review the connection in Interego.';
-export const AGENT_TOOLS: ReadonlyArray<{ permission?: 'notes:read' | 'notes:create'; operation: AgentOperation; tool: Tool }> = [
+const INSTRUCTIONS = 'Use only this connection’s granted Interego tools. Search returns summaries; read a note only when needed for the user’s task. Saving appends a new note and never edits or deletes existing notes. For optional Workspaces, discover the current representation and follow its advertised actions and input schemas with interego_act; never invent actions or targets. Workspace access covers only the owner-selected spaces, and posts are visibly attributed to this agent connection. Tool results you read can reach your AI provider. The Interego app must remain open. Permissions, expiry and revocation are checked by the app for every operation. If access is refused, ask the user to review the connection in Interego.';
+interface AgentTool { readonly permission?: AgentPermission; readonly anyPermissions?: readonly AgentPermission[]; readonly operation: AgentOperation; readonly tool: Tool }
+export const agentToolPermitted = (entry: AgentTool, permissions: readonly AgentPermission[]): boolean =>
+  (!entry.permission || permissions.includes(entry.permission)) && (!entry.anyPermissions || entry.anyPermissions.some(permission => permissions.includes(permission)));
+export const AGENT_TOOLS: ReadonlyArray<AgentTool> = [
   { operation: 'status', tool: { name: 'interego_status', description: 'Check this local Interego connection, its granted permissions and whether the pod is running.',
     inputSchema: { type: 'object', properties: {}, additionalProperties: false },
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false } } },
@@ -29,6 +33,14 @@ export const AGENT_TOOLS: ReadonlyArray<{ permission?: 'notes:read' | 'notes:cre
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false } } },
   { permission: 'notes:create', operation: 'notes.create', tool: { name: 'interego_save_note', description: 'Append a new private note on the user’s computer. This does not edit or delete any existing note.',
     inputSchema: { type: 'object', properties: { title: { type: 'string', minLength: 1, maxLength: 160 }, body: { type: 'string', minLength: 1, maxLength: 50_000 } }, required: ['title', 'body'], additionalProperties: false },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false } } },
+  { anyPermissions: ['workspaces:read', 'workspaces:chat'], operation: 'workspaces.discover', tool: {
+    name: 'interego_discover', description: 'Discover optional Workspaces available to this connection, with linked-data identities, current affordances and input schemas. Follow the returned actions; read and chat permissions are separate and limited to selected spaces.',
+    inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false } } },
+  { anyPermissions: ['workspaces:read', 'workspaces:chat'], operation: 'workspaces.act', tool: {
+    name: 'interego_act', description: 'Follow an action advertised by an Interego Workspace representation. Copy its action and target and follow its input schema. Reading and posting require their respective grants and active membership. Posts are attributed to this connection, never to the human owner.',
+    inputSchema: { type: 'object', properties: { action: { type: 'string', minLength: 1, maxLength: 512 }, target: { type: 'string', minLength: 1, maxLength: 1024 }, input: { type: 'object' } }, required: ['action'], additionalProperties: false },
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false } } },
 ];
 
@@ -51,14 +63,21 @@ function statusResult(value: unknown, connectionId: string): AgentStatus {
     || result['localOnly'] === result['federationEnabled'] || typeof result['running'] !== 'boolean'
     || grant['id'] !== connectionId || !['waiting', 'active'].includes(String(grant['state']))
     || !Array.isArray(grant['permissions']) || !grant['permissions'].length
-    || grant['permissions'].some(p => !['notes:read', 'notes:create'].includes(String(p)))
+    || grant['permissions'].some(p => !['notes:read', 'notes:create', 'workspaces:read', 'workspaces:chat'].includes(String(p)))
     || !['chatgpt-desktop', 'codex', 'claude-code', 'claude-desktop', 'grok-build', 'openclaw', 'other'].includes(String(grant['client']))) {
     throw new Error('This Interego connection is no longer available.');
+  }
+  const workspaceIds = grant['workspaceIds'];
+  if (grant['permissions'].some(p => String(p).startsWith('workspaces:'))
+    && (!Array.isArray(workspaceIds) || !workspaceIds.length || workspaceIds.length > 32
+      || workspaceIds.some(id => typeof id !== 'string' || !WORKSPACE_ID_PATTERN.test(id)) || new Set(workspaceIds).size !== workspaceIds.length)) {
+    throw new Error('This Interego workspace connection is no longer available.');
   }
   const connection: AgentConnection = {
     id: connectionId, name: text(grant['name'], 80), client: grant['client'] as AgentConnection['client'],
     permissions: [...grant['permissions']] as AgentConnection['permissions'], createdAt: date(grant['createdAt']), expiresAt: date(grant['expiresAt']),
     state: grant['state'] as AgentConnection['state'], ...(grant['lastUsedAt'] !== undefined ? { lastUsedAt: date(grant['lastUsedAt']) } : {}),
+    ...(Array.isArray(workspaceIds) ? { workspaceIds: [...workspaceIds] as string[] } : {}),
   };
   return { connection, running: result['running'], localOnly: result['localOnly'], federationEnabled: result['federationEnabled'] };
 }
@@ -74,6 +93,12 @@ function noteSummary(value: unknown) {
 export function agentToolResult(operation: AgentOperation, value: unknown, connectionId: string): Record<string, unknown> {
   if (operation === 'status') return { ...statusResult(value, connectionId) };
   const result = object(value);
+  if (operation.startsWith('workspaces.')) {
+    // The authenticated app supplies the representation, including its JSON-LD links and controls.
+    // Preserve them rather than flattening hypermedia into an unlinked message list.
+    if (Buffer.byteLength(JSON.stringify(result)) > 1024 * 1024 || !Array.isArray(result['affordances'])) throw new Error('Interego returned an unfamiliar workspace representation.');
+    return result;
+  }
   if (operation === 'notes.search') {
     if (!Array.isArray(result['notes']) || result['notes'].length > 50) throw new Error('Interego returned too many notes.');
     return { notes: result['notes'].map(raw => ({ ...noteSummary(raw), excerpt: text(object(raw)['excerpt'], 240) })) };
@@ -97,7 +122,7 @@ export async function runAgentStdio(options: AgentStdioOptions): Promise<AgentSt
     server.setRequestHandler('tools/list', async (_request, context) => {
       const signal = AbortSignal.any([lifetime.signal, context.mcpReq.signal]);
       const status = statusResult(await client.request('status', {}, signal), options.connectionId);
-      return { tools: AGENT_TOOLS.filter(entry => !entry.permission || status.connection.permissions.includes(entry.permission)).map(entry => entry.tool) };
+      return { tools: AGENT_TOOLS.filter(entry => agentToolPermitted(entry, status.connection.permissions)).map(entry => entry.tool) };
     });
     server.setRequestHandler('tools/call', async (request, context) => {
       try {
@@ -106,7 +131,7 @@ export async function runAgentStdio(options: AgentStdioOptions): Promise<AgentSt
         if (!entry) throw new Error('That tool is not available for this connection.');
         const args = agentArguments(entry.operation, request.params.arguments);
         const status = statusResult(await client.request('status', {}, signal), options.connectionId);
-        if (entry.permission && !status.connection.permissions.includes(entry.permission)) throw new Error('That tool is not permitted for this connection.');
+        if (!agentToolPermitted(entry, status.connection.permissions)) throw new Error('That tool is not permitted for this connection.');
         const value = agentToolResult(entry.operation, entry.operation === 'status' ? status : await client.request(entry.operation, args, signal), options.connectionId);
         return { content: [{ type: 'text', text: JSON.stringify(value) }], structuredContent: value };
       } catch (error) {

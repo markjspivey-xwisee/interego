@@ -9,6 +9,8 @@ import type { DesktopApi, LocalNote, PodStatus } from '../src/types.js';
 import type { AgentConnection, AgentSetup } from '../src/agent-types.js';
 import type { BridgeStatus, StableBridgeView } from '../src/bridge-types.js';
 import type { FederationStatus } from '@interego/pod-federation';
+import type { WorkspaceRepresentation } from '../src/workspace-types.js';
+import type { DiscordWorkspaceStatus } from '../src/discord-workspaces.js';
 
 const APP = join(dirname(fileURLToPath(import.meta.url)), '..');
 let bundle: string;
@@ -44,6 +46,16 @@ const webReady = (): BridgeStatus => ({ state: 'ready', client: 'chatgpt-web', n
 const webRequest = () => ({ id: 'request-1', clientName: 'ChatGPT', redirectOrigin: 'https://chatgpt.com',
   permissions: ['notes:read'] as const, createdAt: '2026-10-29T12:00:00Z', expiresAt: '2026-10-29T12:10:00Z', verificationCode: '1234-5678' });
 const sharingOff = (): FederationStatus => ({ enabled: false, configured: false, invites: [], pending: [], peers: [], joining: [], received: [], sent: [] });
+const workspacesOff = (): WorkspaceRepresentation => ({
+  '@context': { hydra: 'http://www.w3.org/ns/hydra/core#' }, '@id': 'urn:interego:local-workspaces:fixture',
+  '@type': 'hydra:Collection', id: 'urn:interego:local-workspaces:fixture', enabled: false, configured: true,
+  localOnly: true, federationEnabled: false, transport: { kind: 'local-capability', discovery: 'interego_discover', action: 'interego_act' },
+  attribution: 'authenticated-local-connection', affordances: [], notice: 'Workspaces are off.',
+});
+const discordOff = (): DiscordWorkspaceStatus => ({
+  configured: false, running: false, state: 'off', participants: [], receivedCount: 0, sentCount: 0,
+  disclosure: 'Discord starts paused and needs a separate choice.',
+});
 const stableView = (): StableBridgeView => ({ provider: 'cloudflare', origin: 'https://memory.example.com', port: 49111, hasCredential: true,
   policy: { client: 'chatgpt-web', name: 'My web assistant', permissions: ['notes:read'], expiresInDays: 30 } });
 const webPaused = (settings = stableView(), connections: BridgeStatus['connections'] = []): BridgeStatus => ({
@@ -67,6 +79,14 @@ async function mount(initial = state('unconfigured'), overrides: Partial<Desktop
   let stableSettings = initialStable;
   let bridge: BridgeStatus = initialStable ? webPaused(initialStable) : { state: 'off', permissions: [], pendingApprovals: [], connections: [] };
   const api: DesktopApi = {
+    workspaceStatus: vi.fn(async () => workspacesOff()),
+    workspaceAct: vi.fn(async () => workspacesOff()),
+    discordWorkspaceStatus: vi.fn(async () => discordOff()),
+    configureDiscordWorkspace: vi.fn(async () => discordOff()),
+    startDiscordWorkspace: vi.fn(async () => discordOff()),
+    stopDiscordWorkspace: vi.fn(async () => discordOff()),
+    disconnectDiscordWorkspace: vi.fn(async () => discordOff()),
+    openDiscordWorkspaceSetup: vi.fn(async () => undefined),
     localIdentityStatus: vi.fn(async () => ({ configured: false, pending: [] })),
     setupLocalIdentity: vi.fn(async () => ({ configured: false, pending: [] })),
     approveLocalIdentity: vi.fn(async () => ({ configured: false, pending: [] })),

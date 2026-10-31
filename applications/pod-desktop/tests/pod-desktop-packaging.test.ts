@@ -44,7 +44,8 @@ describe('the local pod Windows installer boundary', () => {
     expect(build).toContain("'dist/preload.cjs'");
     expect(build).toContain("packages: 'external'");
     expect(Object.keys(manifest.dependencies).sort()).toEqual([
-      '@interego/core', '@interego/deployment-config', '@interego/local-node', '@interego/pod-federation', '@interego/solid', '@modelcontextprotocol/server',
+      '@interego/core', '@interego/deployment-config', '@interego/local-node', '@interego/pod-federation', '@interego/solid',
+      '@interego/workspace-client', '@modelcontextprotocol/server', 'ws',
     ]);
     expect(manifest.dependencies).not.toHaveProperty('electron');
     expect(manifest.scripts).not.toHaveProperty('postinstall');

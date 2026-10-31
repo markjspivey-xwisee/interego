@@ -3,6 +3,7 @@ import type { AgentClient, AgentConnection, AgentPermission, AgentSetup } from '
 import { installBridgeUi } from './bridge-renderer.js';
 import { installFederationUi } from './federation-renderer.js';
 import { installIdentityUi } from './identity-renderer.js';
+import { installWorkspacesUi } from './workspaces-renderer.js';
 
 const element = <T extends HTMLElement = HTMLElement>(id: string): T => {
   const found = document.getElementById(id);
@@ -23,7 +24,7 @@ let notes: readonly LocalNote[] = [];
 let notesLoaded = false;
 let notesError = false;
 let busy: string | null = null;
-type Page = 'memory' | 'connections' | 'identity' | 'backup' | 'settings';
+type Page = 'memory' | 'workspaces' | 'connections' | 'identity' | 'backup' | 'settings';
 let currentPage: Page = 'memory';
 let backupMode: 'backup' | 'restore' = 'backup';
 let statusRequest = 0;
@@ -71,6 +72,7 @@ const bridgeUi = installBridgeUi(api, {
 });
 const federationUi = installFederationUi(api, { pod: () => status, locallyBusy: () => busy !== null });
 const identityUi = installIdentityUi(api, { pod: () => status, locallyBusy: () => busy !== null, openDialog, closeDialog });
+const workspacesUi = installWorkspacesUi(api, { pod: () => status, busy: () => busy !== null });
 
 function connectionDate(value: string): string {
   return Number.isFinite(Date.parse(value)) ? new Intl.DateTimeFormat(undefined, {
@@ -121,7 +123,7 @@ function drawConnections(): void {
       const badge = document.createElement('span'); badge.className = `connection-badge${usable(connection) ? '' : ' inactive'}`;
       badge.textContent = CONNECTION_LABELS[connection.state]; top.append(identity, badge);
       const permissions = document.createElement('p'); permissions.className = 'connection-permissions';
-      permissions.textContent = connection.permissions.map(value => value === 'notes:read' ? 'Read notes' : 'Save new notes').join(' · ');
+      permissions.textContent = connection.permissions.map(value => ({ 'notes:read': 'Read notes', 'notes:create': 'Save new notes', 'workspaces:read': 'Read selected workspaces', 'workspaces:chat': 'Chat in selected workspaces' })[value]).join(' · ');
       const meta = document.createElement('p'); meta.className = 'connection-meta';
       meta.textContent = `Expires ${connectionDate(connection.expiresAt)}${connection.lastUsedAt ? ` · Last used ${connectionDate(connection.lastUsedAt)}` : ''}`;
       card.append(top, permissions, meta);
@@ -239,6 +241,12 @@ function beginConnection(existing?: AgentConnection): void {
     connectionForm.reset(); input('connection-name').value = '';
     previousClient = element<HTMLSelectElement>('connection-client').value as AgentClient;
     clientHelp();
+    const selector = element<HTMLSelectElement>('connection-workspaces'); selector.replaceChildren();
+    void workspacesUi.choices().then(choices => {
+      if (selectedConnectionId || !connectionDialog.open) return;
+      for (const workspace of choices) { const option = document.createElement('option'); option.value = workspace.id; option.textContent = workspace.title; selector.append(option); }
+      element('connection-workspaces-help').textContent = choices.length ? 'Choose only the conversations this app needs. Hold Ctrl to select more than one.' : 'Enable Workspaces and create a conversation first.';
+    }).catch(() => { element('connection-workspaces-help').textContent = 'Start Interego and enable Workspaces to choose conversations.'; });
   }
   controls();
   openDialog(connectionDialog);
@@ -396,16 +404,20 @@ function controls(): void {
     : !running ? 'Your connections can be managed while Interego is stopped. Apps can use notes when your local space is running.'
       : 'Choose which apps can read or save notes. You can disconnect them at any time.';
   for (const control of Array.from(element('connections-list').querySelectorAll<HTMLButtonElement>('button'))) control.disabled = occupied;
-  for (const id of ['connection-client', 'connection-expiry']) element<HTMLSelectElement>(id).disabled = occupied;
-  for (const id of ['connection-name', 'permission-read', 'permission-create']) input(id).disabled = occupied;
-  button('create-connection').disabled = occupied || !mayCreate || (!input('permission-read').checked && !input('permission-create').checked);
+  for (const id of ['connection-client', 'connection-expiry', 'connection-workspaces']) element<HTMLSelectElement>(id).disabled = occupied;
+  for (const id of ['connection-name', 'permission-read', 'permission-create', 'permission-workspaces-read', 'permission-workspaces-chat']) input(id).disabled = occupied;
+  const anyWorkspaceAccess = input('permission-workspaces-read').checked || input('permission-workspaces-chat').checked;
+  button('create-connection').disabled = occupied || !mayCreate || (!input('permission-read').checked && !input('permission-create').checked && !anyWorkspaceAccess);
   button('create-connection').textContent = busy === 'connection-create' ? 'Creating…' : 'Create connection';
   for (const id of ['cancel-connection', 'close-connection']) button(id).disabled = occupied;
   button('copy-connection-config').disabled = occupied || setupLoading || !setup || !usable(selectedConnection);
   button('copy-connection-command').disabled = occupied || setupLoading || !setup?.command || !usable(selectedConnection);
   button('copy-connection-command').hidden = !setup?.command;
   button('retry-connection-setup').disabled = occupied || setupLoading || !usable(selectedConnection);
-  element('connection-consent').textContent = input('permission-read').checked
+  element('connection-consent').textContent = anyWorkspaceAccess
+    ? input('permission-workspaces-read').checked ? 'This app may send workspace messages it reads to its AI provider. Access is limited to the selected conversations and their membership permissions.'
+      : 'This app may post in the selected workspaces. This workspace permission does not allow reading conversation history.'
+    : input('permission-read').checked
     ? 'If this app uses an online AI service, notes it reads may be sent to that service. Your pod stays on this computer.'
     : input('permission-create').checked ? 'This app may save new notes. It will not be allowed to read your existing notes.'
       : 'Choose at least one permission to continue.';
@@ -413,6 +425,7 @@ function controls(): void {
   bridgeUi.updateAvailability();
   federationUi.updateAvailability();
   identityUi.updateAvailability();
+  workspacesUi.updateAvailability();
 }
 
 function applyStatus(next: PodStatus): void {
@@ -499,6 +512,7 @@ async function refreshStatus(initial: boolean): Promise<void> {
   void bridgeUi.refresh();
   void federationUi.refresh();
   void identityUi.refresh();
+  void workspacesUi.refresh();
   if (busy) { schedulePoll(); return; }
   const requested = ++statusRequest;
   try {
@@ -559,6 +573,7 @@ function selectPage(next: Page): void {
   currentPage = next;
   const headings = {
     memory: ['Your memory', 'A little space for what matters.'],
+    workspaces: ['Your workspaces', 'A place for people and agents to think together.'],
     connections: ['Your AI, your memory', 'Choose the apps you want to let in.'],
     identity: ['Your identity', 'A sign-in key you keep, with a choice for every website.'],
     backup: ['Backup & recovery', 'Keep a safe copy of your saved notes.'],
@@ -566,7 +581,7 @@ function selectPage(next: Page): void {
   };
   element('page-title').textContent = headings[next][0]!;
   element('page-description').textContent = headings[next][1]!;
-  for (const name of ['memory', 'connections', 'identity', 'backup', 'settings'] as const) {
+  for (const name of ['memory', 'workspaces', 'connections', 'identity', 'backup', 'settings'] as const) {
     element(`${name}-page`).hidden = next !== name;
     if (name === next) button(`nav-${name}`).setAttribute('aria-current', 'page');
     else button(`nav-${name}`).removeAttribute('aria-current');
@@ -574,6 +589,7 @@ function selectPage(next: Page): void {
   element('settings-ai-disclosure').hidden = next !== 'settings';
   if (next === 'connections') void loadConnections();
   if (next === 'identity') void identityUi.refresh();
+  workspacesUi.show(next === 'workspaces');
 }
 
 function dialogMessage(message: string, error = true): void {
@@ -614,7 +630,7 @@ button('toggle-running').addEventListener('click', () => {
   }, stop ? 'Interego could not stop safely. Please try again.' : 'Your local space could not start. Please try again.');
 });
 button('retry-notes').addEventListener('click', () => { void loadNotes(); });
-for (const name of ['memory', 'connections', 'identity', 'backup', 'settings'] as const) button(`nav-${name}`).addEventListener('click', () => selectPage(name));
+for (const name of ['memory', 'workspaces', 'connections', 'identity', 'backup', 'settings'] as const) button(`nav-${name}`).addEventListener('click', () => selectPage(name));
 for (const id of ['welcome-hosted', 'open-hosted', 'connections-hosted']) button(id).addEventListener('click', () => {
   void action('hosted', () => api.openHosted(), 'Hosted Interego could not be opened. Please try again.');
 });
@@ -635,7 +651,7 @@ element<HTMLSelectElement>('connection-client').addEventListener('change', () =>
   clientHelp(previousClient);
   previousClient = element<HTMLSelectElement>('connection-client').value as AgentClient;
 });
-for (const id of ['permission-read', 'permission-create']) input(id).addEventListener('change', controls);
+for (const id of ['permission-read', 'permission-create', 'permission-workspaces-read', 'permission-workspaces-chat']) input(id).addEventListener('change', controls);
 button('retry-connection-setup').addEventListener('click', () => { if (selectedConnectionId) void loadSetup(selectedConnectionId); });
 for (const [id, format] of [['copy-connection-config', 'configuration'], ['copy-connection-command', 'command']] as const) {
   button(id).addEventListener('click', () => {
@@ -656,12 +672,19 @@ connectionForm.addEventListener('submit', event => {
   const permissions: AgentPermission[] = [];
   if (input('permission-read').checked) permissions.push('notes:read');
   if (input('permission-create').checked) permissions.push('notes:create');
+  if (input('permission-workspaces-read').checked) permissions.push('workspaces:read');
+  if (input('permission-workspaces-chat').checked) permissions.push('workspaces:chat');
+  const workspaceIds = Array.from(element<HTMLSelectElement>('connection-workspaces').selectedOptions).map(option => option.value);
+  if (permissions.some(permission => permission.startsWith('workspaces:')) && !workspaceIds.length) {
+    connectionMessage('Choose at least one workspace for this connection.', true); return;
+  }
   if (!name || name.length > 80 || !(client in CLIENT_NAMES) || ![7, 30, 90].includes(days) || !permissions.length) {
     connectionMessage('Choose an app, a connection name, and at least one permission.', true); return;
   }
   void action('connection-create', async () => {
     connectionRequest++;
-    const created = await api.createConnection({ name, client, permissions, expiresInDays: days as 7 | 30 | 90 });
+    const created = await api.createConnection({ name, client, permissions, expiresInDays: days as 7 | 30 | 90,
+      ...(permissions.some(permission => permission.startsWith('workspaces:')) ? { workspaceIds } : {}) });
     selectedConnection = created; selectedConnectionId = created.id;
     element('connection-form').hidden = true; element('connection-setup').hidden = false;
     element('connection-dialog-intro').textContent = 'This connection has only the permissions you allowed.';
