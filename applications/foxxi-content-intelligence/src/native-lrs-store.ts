@@ -6,7 +6,7 @@
 import { createHash, createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
 import {
   NativeCommitConflictError, createNativeByteArtifact, readNativeByteArtifact,
-  type NativeCommitClient, type NativeSnapshot, type NativeSnapshotReference,
+  type NativeArtifact, type NativeArtifactReference, type NativeCommitClient, type NativeSnapshot, type NativeSnapshotReference,
 } from '@interego/pgsl';
 import type { IRI } from '@interego/core';
 import {
@@ -17,6 +17,20 @@ import { utcTimestamp, validateAgentObject } from './xapi-validate.js';
 import { RFC3339_UTC_TIMESTAMP } from './spec/patterns.js';
 
 export interface LrsAttachment { data: Buffer; contentType: string; }
+type NativeLrsQueryPhase = 'ready' | 'head' | 'index' | 'scan';
+export interface NativeLrsQueryDiagnostic {
+  readonly event: 'ongoing' | 'complete';
+  readonly phase: NativeLrsQueryPhase;
+  readonly outcome: 'ongoing' | 'success' | 'error';
+  readonly elapsedMs: number;
+  readonly readyMs: number;
+  readonly headMs: number;
+  readonly indexMs: number;
+  readonly scanMs: number;
+  readonly indexedRows: number;
+  readonly scannedRows: number;
+  readonly returnedRows: number;
+}
 export interface NativeInteregoLrsOptions {
   client: NativeCommitClient;
   owner: IRI;
@@ -27,6 +41,9 @@ export interface NativeInteregoLrsOptions {
   verifyReadiness?: () => Promise<void>;
   allowClear?: boolean;
   now?: () => number;
+  /** Optional, value-free diagnostics for range queries taking at least five seconds.
+   * Observer failures (including asynchronous rejection) never affect the query. */
+  onSlowQuery?: (event: NativeLrsQueryDiagnostic) => void;
 }
 type NativeChange = Parameters<NativeCommitClient['commit']>[0]['changes'][number];
 type ByteArtifact = ReturnType<typeof createNativeByteArtifact>;
@@ -38,6 +55,9 @@ interface NativeCursor {
 const PREFIX = 'foxxi-lrs/v1/';
 const RECORD_TYPE = 'application/vnd.foxxi.lrs-record+json';
 const MAX_SCAN = 4096;
+const QUERY_PREFETCH = 8;
+const QUERY_ARTIFACT_CACHE_SIZE = 32;
+const SLOW_QUERY_MS = 5000;
 const CURSOR_LIFETIME = 60 * 60 * 1000;
 const UTC_TIMESTAMP = new RegExp(RFC3339_UTC_TIMESTAMP);
 export class InvalidLrsQueryError extends Error {
@@ -107,6 +127,78 @@ function checkedStatement(value: StoredStatement, id: string): StoredStatement {
   return value;
 }
 
+/** One immutable query head only. Reuse verified artifacts, never decoded records
+ * or a proof borrowed from another ciphertext reference. Bound plaintext retention
+ * independently of the raw scan budget and stop follow-on speculative reads. */
+class NativeQueryArtifactCache {
+  private closed = false;
+  private readonly pending = new Map<string, Promise<NativeArtifact>>();
+  private readonly settled = new Map<string, NativeArtifact>();
+  constructor(private readonly client: NativeCommitClient) {}
+  async read(reference: NativeArtifactReference): Promise<NativeArtifact> {
+    if (this.closed) throw new Error('native LRS query read is closed');
+    const bound = { resourceUrl: reference.resourceUrl, bodyDigest: reference.bodyDigest,
+      plaintextDigest: reference.plaintextDigest, topUri: reference.topUri };
+    const key = JSON.stringify([bound.resourceUrl, bound.bodyDigest, bound.plaintextDigest, bound.topUri]);
+    const cached = this.settled.get(key);
+    if (cached) { this.settled.delete(key); this.settled.set(key, cached); return cached; }
+    const existing = this.pending.get(key);
+    if (existing) return existing;
+    const task = this.client.readArtifact(bound).then(artifact => {
+      this.pending.delete(key);
+      if (!this.closed) {
+        this.settled.set(key, artifact);
+        if (this.settled.size > QUERY_ARTIFACT_CACHE_SIZE) this.settled.delete(this.settled.keys().next().value!);
+      }
+      return artifact;
+    }, (error: unknown) => { this.pending.delete(key); throw error; });
+    this.pending.set(key, task);
+    return task;
+  }
+  close(): void { this.closed = true; this.settled.clear(); this.pending.clear(); }
+}
+
+/** Timing and counts only: never retain a query, identity, reference or error. */
+class NativeQueryDiagnostics {
+  private readonly started = performance.now();
+  private phase: NativeLrsQueryPhase = 'ready';
+  private phaseStarted = this.started;
+  private readonly timings: Record<NativeLrsQueryPhase, number> = { ready: 0, head: 0, index: 0, scan: 0 };
+  private indexedRows = 0;
+  private scannedRows = 0;
+  private returnedRows = 0;
+  private ongoing = false;
+  private readonly timer: ReturnType<typeof setTimeout>;
+  constructor(private readonly observer: NonNullable<NativeInteregoLrsOptions['onSlowQuery']>) {
+    this.timer = setTimeout(() => { this.ongoing = true; this.emit('ongoing', 'ongoing'); }, SLOW_QUERY_MS);
+    this.timer.unref?.();
+  }
+  enter(phase: NativeLrsQueryPhase): void {
+    const now = performance.now();
+    this.timings[this.phase] += Math.max(0, now - this.phaseStarted);
+    this.phase = phase; this.phaseStarted = now;
+  }
+  counts(indexed: number, scanned: number, returned: number): void {
+    this.indexedRows = indexed; this.scannedRows = scanned; this.returnedRows = returned;
+  }
+  private emit(event: NativeLrsQueryDiagnostic['event'], outcome: NativeLrsQueryDiagnostic['outcome']): void {
+    const now = performance.now(), timings = { ...this.timings };
+    timings[this.phase] += Math.max(0, now - this.phaseStarted);
+    const diagnostic: NativeLrsQueryDiagnostic = Object.freeze({ event, phase: this.phase, outcome,
+      elapsedMs: Math.max(0, Math.round(now - this.started)),
+      readyMs: Math.round(timings.ready), headMs: Math.round(timings.head),
+      indexMs: Math.round(timings.index), scanMs: Math.round(timings.scan),
+      indexedRows: this.indexedRows, scannedRows: this.scannedRows, returnedRows: this.returnedRows });
+    try { void Promise.resolve(this.observer(diagnostic)).catch(() => {}); } catch { /* An observer grants no query authority. */ }
+  }
+  finish(outcome: 'success' | 'error'): void {
+    clearTimeout(this.timer);
+    // A synchronous phase may block the timer. Its completion is still slow,
+    // without pretending an event-loop timer could have interrupted that work.
+    if (this.ongoing || performance.now() - this.started >= SLOW_QUERY_MS) this.emit('complete', outcome);
+  }
+}
+
 class NativeMutation {
   readonly changes = new Map<string, NativeChange>();
   private readonly values = new Map<string, unknown>();
@@ -140,6 +232,9 @@ export class NativeInteregoLrsDatabase {
   }
   get client(): NativeCommitClient { return this.options.client; }
   get owner(): IRI { return this.options.owner; }
+  observeQuery(): NativeQueryDiagnostics | undefined {
+    return this.options.onSlowQuery ? new NativeQueryDiagnostics(this.options.onSlowQuery) : undefined;
+  }
   now(): number { return this.options.now?.() ?? Date.now(); }
   digest(value: string): string { return createHmac('sha256', this.secret).update(JSON.stringify([this.options.scopeIdentity, value])).digest('hex'); }
   prefix(tenant: string): string { return PREFIX + this.digest(tenant) + '/'; }
@@ -157,13 +252,13 @@ export class NativeInteregoLrsDatabase {
     const envelope: RecordEnvelope = { format: 'foxxi-native-lrs/1', tenant, kind, id, value: encodeValue(value) };
     return createNativeByteArtifact({ owner: this.owner, contentType: RECORD_TYPE, bytes: Buffer.from(JSON.stringify(envelope), 'utf8') });
   }
-  async readReference<T>(snapshot: NativeSnapshot, key: string, tenant: string, kind: string, id?: string): Promise<T | null> {
+  async readReference<T>(snapshot: NativeSnapshot, key: string, tenant: string, kind: string, id?: string, cache?: NativeQueryArtifactCache): Promise<T | null> {
     // A selected snapshot proves absence only for its explicitly checked paths.
     // Never turn an omitted branch into an absent statement or overwrite it.
     if (snapshot.selectedRecordKeys && !snapshot.selectedRecordKeys.includes(key)) throw new Error('native LRS record path was not selected');
     const reference = snapshot.records.get(key);
     if (!reference) return null;
-    const payload = readNativeByteArtifact(await this.client.readArtifact(reference));
+    const payload = readNativeByteArtifact(await (cache ? cache.read(reference) : this.client.readArtifact(reference)));
     if (payload.owner !== this.owner || payload.contentType !== RECORD_TYPE) throw new Error('native LRS artifact owner/type binding failed');
     const envelope = JSON.parse(Buffer.from(payload.bytes).toString('utf8')) as RecordEnvelope;
     if (envelope.format !== 'foxxi-native-lrs/1' || envelope.tenant !== tenant || envelope.kind !== kind
@@ -177,8 +272,8 @@ export class NativeInteregoLrsDatabase {
     if (expectedKey !== key) throw new Error('native LRS artifact/index binding failed');
     return decoded as T;
   }
-  async read<T>(snapshot: NativeSnapshot, tenant: string, kind: string, id: string): Promise<T | null> {
-    return this.readReference<T>(snapshot, this.key(tenant, kind, id), tenant, kind, id);
+  async read<T>(snapshot: NativeSnapshot, tenant: string, kind: string, id: string, cache?: NativeQueryArtifactCache): Promise<T | null> {
+    return this.readReference<T>(snapshot, this.key(tenant, kind, id), tenant, kind, id, cache);
   }
   async readHead(keys?: readonly string[]): Promise<NativeSnapshot> {
     if (keys === undefined || !this.client.readHeadRecords) return this.client.readHead();
@@ -249,13 +344,13 @@ export interface AppliedNativeVoid { target: StoredStatement; voidingStatementId
 export interface NativeStatementCommit { records: StoredStatement[]; inserted: StoredStatement[]; appliedVoids: AppliedNativeVoid[]; }
 export class NativeInteregoLrsStore implements StatementStore {
   constructor(private readonly database: NativeInteregoLrsDatabase, private readonly tenant: string) {}
-  private async getAt(head: NativeSnapshot, id: string): Promise<StoredStatement | null> {
-    const record = await this.database.read<StoredStatement>(head, this.tenant, 'statement', id);
+  private async getAt(head: NativeSnapshot, id: string, cache?: NativeQueryArtifactCache): Promise<StoredStatement | null> {
+    const record = await this.database.read<StoredStatement>(head, this.tenant, 'statement', id, cache);
     if (!record) return null;
     checkedStatement(record, id);
-    const relation = await this.database.read<{ target: string; voidingStatementId: string }>(head, this.tenant, 'void', id);
+    const relation = await this.database.read<{ target: string; voidingStatementId: string }>(head, this.tenant, 'void', id, cache);
     if (!relation) return record;
-    const voider = await this.database.read<StoredStatement>(head, this.tenant, 'statement', relation.voidingStatementId);
+    const voider = await this.database.read<StoredStatement>(head, this.tenant, 'statement', relation.voidingStatementId, cache);
     if (relation.target !== id || !voider || voidTarget(checkedStatement(voider, relation.voidingStatementId).statement) !== id || voidTarget(record.statement)) throw new Error('native LRS void relationship binding failed');
     return { ...record, voided: true, voidingStatementId: relation.voidingStatementId };
   }
@@ -372,6 +467,14 @@ export class NativeInteregoLrsStore implements StatementStore {
     return value;
   }
   async query(filter: QueryFilter): Promise<QueryResult> {
+    const diagnostics = filter.statementId || filter.voidedStatementId ? undefined : this.database.observeQuery();
+    let outcome: 'success' | 'error' = 'error';
+    try {
+      const result = await this.queryWithDiagnostics(filter, diagnostics);
+      outcome = 'success'; return result;
+    } finally { diagnostics?.finish(outcome); }
+  }
+  private async queryWithDiagnostics(filter: QueryFilter, diagnostics?: NativeQueryDiagnostics): Promise<QueryResult> {
     await this.database.ready();
     const q = checkedQuery(cursorQueryOf(filter));
     const authorizationRegistration = filter.authorizedRegistration ?? null;
@@ -383,34 +486,66 @@ export class NativeInteregoLrsStore implements StatementStore {
         && (authorizationRegistration === null || (record.statement.context as { registration?: string } | undefined)?.registration === authorizationRegistration) ? [record] : [], more: null };
     }
     const cursor = filter.cursor === undefined ? null : this.cursor(filter.cursor, q, authorizationRegistration);
+    diagnostics?.enter('head');
     const head = cursor ? await this.database.client.readSnapshotAt(cursor.head) : await this.database.client.readHead();
+    diagnostics?.enter('index');
     const index = this.queryEntries(head).sort((a, b) => (q.ascending ? a.stored.localeCompare(b.stored) : b.stored.localeCompare(a.stored)) || a.opaque.localeCompare(b.opaque));
     let start = 0;
     if (cursor) { const found = index.findIndex(row => row.key === cursor.after); if (found < 0) throw new InvalidLrsQueryError(); start = found + 1; }
-    const statements: StoredStatement[] = [];
-    let next = start;
-    for (; next < index.length && next - start < MAX_SCAN && statements.length < q.limit!; next++) {
-      const row = index[next]!;
-      const base = await this.database.readReference<StoredStatement>(head, row.key, this.tenant, 'statement');
+    diagnostics?.counts(index.length, 0, 0);
+    diagnostics?.enter('scan');
+    const cache = new NativeQueryArtifactCache(this.database.client);
+    const readRow = async (row: typeof index[number]): Promise<StoredStatement | null> => {
+      const base = await this.database.readReference<StoredStatement>(head, row.key, this.tenant, 'statement', undefined, cache);
       if (!base || this.database.queryKey(this.tenant, checkedStatement(base, base.id)) !== row.key) throw new Error('native LRS query timestamp binding failed');
-      const record = await this.getAt(head, base.id);
+      const record = await this.getAt(head, base.id, cache);
       if (!record || record.voided || (authorizationRegistration !== null
-        && (record.statement.context as { registration?: string } | undefined)?.registration !== authorizationRegistration)) continue;
+        && (record.statement.context as { registration?: string } | undefined)?.registration !== authorizationRegistration)) return null;
       let matches = matchesFilter(record, q);
       const targetId = voidTarget(record.statement);
       // Expansion belongs to this same immutable snapshot and result cursor.
       // Registration authorization applies to the emitted voider as well as its target.
       if (!matches && targetId) {
-        const target = await this.getAt(head, targetId);
+        const target = await this.getAt(head, targetId, cache);
         matches = !!target?.voided && target.voidingStatementId === record.id && matchesFilter(target, q);
       }
-      if (matches) statements.push(record);
+      return matches ? record : null;
+    };
+    type Outcome = { ok: true; record: StoredStatement | null } | { ok: false; error: unknown };
+    const queued = new Map<number, Promise<Outcome>>();
+    const scanEnd = Math.min(index.length, start + MAX_SCAN);
+    let scheduled = start;
+    // Refill only after ordered consumption: one slow first row cannot let the
+    // other workers read thousands of speculative rows beyond this page.
+    const fill = () => {
+      while (scheduled < scanEnd && queued.size < QUERY_PREFETCH) {
+        const position = scheduled++;
+        queued.set(position, readRow(index[position]!).then(
+          (record): Outcome => ({ ok: true, record }), (error: unknown): Outcome => ({ ok: false, error })));
+      }
+    };
+    const statements: StoredStatement[] = [];
+    let next = start;
+    try {
+      fill();
+      for (; next < scanEnd && statements.length < q.limit!; next++) {
+        const outcome = await queued.get(next)!;
+        queued.delete(next);
+        if (!outcome.ok) throw outcome.error;
+        if (outcome.record) statements.push(outcome.record);
+        diagnostics?.counts(index.length, next - start + 1, statements.length);
+        if (statements.length < q.limit!) fill();
+      }
+      if (next >= index.length) return { statements, more: null };
+      if (!head.reference || next <= start) throw new Error('native LRS pagination requires a committed snapshot');
+      const body: NativeCursor = { offset: (cursor?.offset ?? 0) + statements.length, q, head: head.reference, after: index[next - 1]!.key, authorizationRegistration, expires: cursor?.expires ?? this.database.now() + CURSOR_LIFETIME };
+      const signed = { ...body, proof: this.database.signature(this.tenant, body) };
+      return { statements, more: encodeCursor(signed) };
+    } finally {
+      // Unconsumed outcomes already handle rejection. In-flight native reads can
+      // settle, but cannot schedule later artifact stages or affect this result.
+      cache.close();
     }
-    if (next >= index.length) return { statements, more: null };
-    if (!head.reference || next <= start) throw new Error('native LRS pagination requires a committed snapshot');
-    const body: NativeCursor = { offset: (cursor?.offset ?? 0) + statements.length, q, head: head.reference, after: index[next - 1]!.key, authorizationRegistration, expires: cursor?.expires ?? this.database.now() + CURSOR_LIFETIME };
-    const signed = { ...body, proof: this.database.signature(this.tenant, body) };
-    return { statements, more: encodeCursor(signed) };
   }
   async listAll(): Promise<StoredStatement[]> {
     await this.database.ready();

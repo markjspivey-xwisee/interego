@@ -28,6 +28,7 @@
 import { promises as fs } from 'node:fs';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
+import { Console } from 'node:console';
 import { getHeapStatistics } from 'node:v8';
 import {
   withTransientRetry,
@@ -604,9 +605,16 @@ export function createConfiguredNativeLrsDatabase(env: NodeJS.ProcessEnv = proce
   const client = new NativeCommitStore({ scope: config.scope, fetch: transport, senderKeyPair,
     cacheImmutableReads: true,
     ownerPublicKey: config.ownerPublicKey, recipientPublicKeys: [...new Set([config.ownerPublicKey, senderKeyPair.publicKey])] });
+  const queryDiagnostics = new Console({ stdout: process.stderr, stderr: process.stderr, ignoreErrors: true });
   return new NativeInteregoLrsDatabase({ client, owner: config.scope.owner,
     scopeIdentity: JSON.stringify(config.scope),
-    cursorSecret: createNativeCursorSecret(config.privateKey, config.scope.owner) });
+    cursorSecret: createNativeCursorSecret(config.privateKey, config.scope.owner),
+    onSlowQuery: event => {
+      // Explicit projection keeps future diagnostics from leaking query values.
+      queryDiagnostics.warn('[foxxi-lrs] slow-query ' + JSON.stringify({ event: event.event, phase: event.phase, outcome: event.outcome,
+        elapsedMs: event.elapsedMs, readyMs: event.readyMs, headMs: event.headMs, indexMs: event.indexMs, scanMs: event.scanMs,
+        indexedRows: event.indexedRows, scannedRows: event.scannedRows, returnedRows: event.returnedRows }));
+    } });
 }
 function createNativeCursorSecret(privateKey: string, owner: string): Uint8Array {
   // A domain-separated stable MAC key; no random restart key and no unsigned pod key lookup.
