@@ -20,7 +20,7 @@ const storageBearer=env('HEALTH_STORE_BEARER');
 const store=createEncryptedStore({keyHex:env('HEALTH_RECORD_KEY'),rootUrl:env('HEALTH_STORE_URL'),directory:env('HEALTH_DATA_DIRECTORY'),...(storageBearer?{authorization:'Bearer '+storageBearer}:{})});
 const security=createSecurity({relayUrl,identityHost:env('INTEREGO_IDENTITY_HOST','identity.interego.xwisee.com'),targetOrigin:new URL(publicUrl).origin,trustedRelayAddresses:env('INTEREGO_TRUSTED_RELAY_ADDRESSES','').split(',').filter(Boolean),store});
 const bridge=createHealthBridge({publicUrl,relayUrl,store,security,
-  duke:{clientId:env('DUKE_CLIENT_ID'),clientSecret:env('DUKE_CLIENT_SECRET'),privateKeyPem:env('DUKE_PRIVATE_KEY_PEM')?.replace(/\\n/g,'\n'),keyId:env('DUKE_KEY_ID')},
+  duke:{clientId:env('DUKE_CLIENT_ID'),clientSecret:env('DUKE_CLIENT_SECRET'),privateKeyPem:env('DUKE_PRIVATE_KEY_PEM')?.replace(/\\n/g,'\n'),keyId:env('DUKE_KEY_ID'),sandboxPrivateKeyPem:env('DUKE_SANDBOX_PRIVATE_KEY_PEM')?.replace(/\\n/g,'\n'),sandboxKeyId:env('DUKE_SANDBOX_KEY_ID')},
   oura:{clientId:env('OURA_CLIENT_ID'),clientSecret:env('OURA_CLIENT_SECRET')}});
 const server=createServer((req,res)=>{req.setTimeout(20000);void bridge.handler(req,res);});
 server.requestTimeout=30000;server.headersTimeout=15000;server.maxHeadersCount=50;

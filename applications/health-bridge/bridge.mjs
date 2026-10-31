@@ -66,7 +66,7 @@ export function createHealthBridge(config) {
     return s;
   };
   const setup=()=>({version:1,publicUrl:base,privacyUrl:base+'/privacy',status:config.duke?.clientId?'ready':'setup-required',
-    duke:{configured:!!config.duke?.clientId,registrationRequired:!config.duke?.clientId,redirectUri:base+'/oauth/duke/callback',jwksUri:base+'/.well-known/jwks.json',fhirBase:'https://health-apis.duke.edu/FHIR/api/FHIR/R4'},
+    duke:{configured:!!config.duke?.clientId,registrationRequired:!config.duke?.clientId,redirectUri:base+'/oauth/duke/callback',jwksUri:base+'/.well-known/jwks.json',sandboxJwksUri:base+'/.well-known/sandbox-jwks.json',fhirBase:'https://health-apis.duke.edu/FHIR/api/FHIR/R4'},
     oura:{configured:false,importEnabled:false,registrationRequired:false,authorizationRequired:true,status:'authorization_required',message:OURA_RESTRICTION,redirectUri:base+'/oauth/oura/callback'},
     apple:{supported:true,requiresIphone:true,endpoint:base+'/ingest/apple',mode:'selected-sample uploads',backgroundSyncVerified:false},
     publication:{automatic:false,rawSources:'private encrypted storage'}});
@@ -231,6 +231,10 @@ export function createHealthBridge(config) {
       if(req.method==='GET' && path==='/.well-known/jwks.json'){
         if(!config.duke?.privateKeyPem)return json(res,200,{keys:[]});
         const jwk=createPublicKey(config.duke.privateKeyPem).export({format:'jwk'});return json(res,200,{keys:[{...jwk,kid:config.duke.keyId,alg:'RS256',use:'sig'}]});
+      }
+      if(req.method==='GET' && path==='/.well-known/sandbox-jwks.json'){
+        if(!config.duke?.sandboxPrivateKeyPem)return json(res,200,{keys:[]});
+        const jwk=createPublicKey(config.duke.sandboxPrivateKeyPem).export({format:'jwk'});return json(res,200,{keys:[{...jwk,kid:config.duke.sandboxKeyId,alg:'RS256',use:'sig'}]});
       }
       if(req.method==='GET' && path==='/oauth/client.json')return json(res,200,{client_id:base+'/oauth/client.json',client_name:'Interego Health Connections',client_uri:base,redirect_uris:[base+'/oauth/interego/callback'],grant_types:['authorization_code'],response_types:['code'],token_endpoint_auth_method:'none'});
       if(req.method==='GET' && path==='/oauth/interego/start'){

@@ -282,7 +282,7 @@ function normalized(resource) {
 function coverageStatus(error) {
   if (error.status === 403 || error.status === 401) return 'denied';
   if (error.status === 404 || error.status === 405) return 'unsupported';
-  if (error.code === 'PATIENT_BINDING_FAILED') return 'binding-error';
+  if (error.code === 'PATIENT_BINDING_FAILED' || error.code === 'QUERY_BINDING_FAILED') return 'binding-error';
   if (['PAGE_LIMIT', 'RECORD_LIMIT', 'RESPONSE_TOO_LARGE', 'MISSING_PAGE', 'IMPORT_BYTE_LIMIT', 'DOCUMENT_BODY_LIMIT'].includes(error.code)) return 'truncated';
   return 'error';
 }
@@ -290,6 +290,16 @@ function supported(metadata, type) {
   const resources = metadata?.resources;
   if (!Array.isArray(resources)) return undefined;
   return resources.some(x => x.type === type && (x.interactions ?? []).includes(type === 'Patient' || type === 'Binary' ? 'read' : 'search-type'));
+}
+function searchPlans(type) {
+  // Match only the registered R4 API variants. Observation requires category
+  // or code; Condition and Procedure do not document category-omitted dispatch.
+  const categories = {
+    Observation: ['laboratory', 'vital-signs'],
+    Condition: ['problem-list-item', 'encounter-diagnosis'],
+    Procedure: ['103693007', '387713003'],
+  };
+  return categories[type]?.map(category => ({ category })) ?? [{}];
 }
 function decodeBodyData(data) {
   if (typeof data !== 'string' || data.length > MAX_RESPONSE_BYTES || !/^[A-Za-z0-9+/\s]*={0,2}$/.test(data)) fail('INVALID_DOCUMENT_BODY', 'The provider returned invalid document-body encoding.');
@@ -350,62 +360,83 @@ export async function syncDuke({ accessToken, patientId: selectedPatient, previo
       }
       if (supported(metadata, type) === false) fail('RESOURCE_NOT_DECLARED', 'The provider did not declare this requested resource capability.', { status: 404 });
       if (scopeList && !canRead(scopeList, type, type !== 'Patient')) fail('SCOPE_NOT_GRANTED', 'The provider did not grant this requested patient read/search scope.', { status: 403 });
-      let next = new URL(type === 'Patient' ? `${DUKE_BASE}/Patient/${selectedPatient}` : `${DUKE_BASE}/${type}`);
-      if (type !== 'Patient') { next.searchParams.set('patient', selectedPatient); next.searchParams.set('_count', '100'); }
-      const visited = new Set();
-      let rawCount = 0, expectedTotal;
-      while (next) {
-        pinnedUrl(next.href);
-        for (const name of ['patient', 'subject']) {
-          if (next.searchParams.getAll(name).some(value => value !== selectedPatient && value !== `Patient/${selectedPatient}`)) fail('PATIENT_BINDING_FAILED', 'A pagination link changed patient context.');
-        }
-        if (visited.has(next.href)) fail('PAGINATION_LOOP', 'The provider repeated a pagination link.');
-        if (report.pages >= MAX_PAGES_PER_RESOURCE || totalPages >= MAX_TOTAL_PAGES) fail('PAGE_LIMIT', 'The bounded provider page limit was reached.');
-        visited.add(next.href); report.pages++; totalPages++;
-        const sourceUrl = next.href;
-        const response = await requestJson(sourceUrl, { fetch: fetchImpl, headers: { Authorization: `Bearer ${accessToken}`, Accept: 'application/fhir+json, application/json' } });
-        importedBytes += Buffer.byteLength(JSON.stringify(response));
-        if (importedBytes > MAX_IMPORT_BYTES) fail('IMPORT_BYTE_LIMIT', 'The bounded total import size was reached.');
-        let entries;
-        if (type === 'Patient') {
-          if (response.resourceType !== 'Patient') fail('INVALID_FHIR_RESPONSE', 'The provider returned an unexpected patient resource.');
-          entries = [response]; next = null;
-        } else {
-          if (response.resourceType !== 'Bundle' || response.type !== 'searchset' || !Array.isArray(response.entry ?? [])) fail('INVALID_FHIR_RESPONSE', 'The provider returned an invalid search result bundle.');
-          entries = (response.entry ?? []).map(x => x.resource);
-          if (Number.isSafeInteger(response.total) && response.total >= 0) expectedTotal = response.total;
-          const links = (response.link ?? []).filter(x => x.relation === 'next');
-          if (links.length > 1) fail('INVALID_FHIR_RESPONSE', 'The provider returned multiple next-page links.');
-          if (links.length) {
-            try { next = new URL(links[0].url, sourceUrl); } catch { fail('UNTRUSTED_ENDPOINT', 'The provider returned an invalid pagination link.'); }
+      let firstFailure;
+      const plans = searchPlans(type);
+      if (plans.length > 1) report.searches = [];
+      for (const filters of plans) {
+        const search = { ...filters, status: 'pending', count: 0, pages: 0 };
+        if (report.searches) report.searches.push(search);
+        try {
+          let next = new URL(type === 'Patient' ? `${DUKE_BASE}/Patient/${selectedPatient}` : `${DUKE_BASE}/${type}`);
+          if (type !== 'Patient') { next.searchParams.set('patient', selectedPatient); next.searchParams.set('_count', '100'); }
+          for (const [name, value] of Object.entries(filters)) next.searchParams.set(name, value);
+          const visited = new Set();
+          let rawCount = 0, expectedTotal;
+          while (next) {
             pinnedUrl(next.href);
-          } else next = null;
-        }
-        for (const raw of entries) {
-          if (raw?.resourceType === 'OperationOutcome') {
-            if ((raw.issue ?? []).some(x => x.severity === 'error' || x.severity === 'fatal')) fail('FHIR_OPERATION_FAILED', 'The provider reported an unsuccessful FHIR operation.');
-            continue;
-          }
-          rawCount++;
-          if (!raw || raw.resourceType !== type || typeof raw.id !== 'string' || !ID.test(raw.id)) fail('INVALID_FHIR_RESOURCE', 'The provider returned an unexpected resource type or identifier.');
-          if (!belongsToPatient(raw, selectedPatient)) fail('PATIENT_BINDING_FAILED', 'A provider resource did not match the authorized patient chart.');
-          const versionId = typeof raw.meta?.versionId === 'string' ? raw.meta.versionId : null;
-          const key = `${type}/${raw.id}/${versionId ?? ''}/${createHash('sha256').update(JSON.stringify(raw)).digest('hex')}`;
-          if (seenRecords.has(key)) continue;
-          if (results.length >= MAX_RECORDS) fail('RECORD_LIMIT', 'The bounded resource import limit was reached.');
-          seenRecords.add(key);
-          const item = { resourceType: type, id: raw.id, versionId, sourceUrl, retrievedAt: new Date().toISOString(), ...normalized(raw), raw };
-          results.push(item); report.count++;
-          if (type === 'DocumentReference') {
-            for (const content of (Array.isArray(raw.content) && raw.content.length ? raw.content : [{}])) {
-              const a = content?.attachment;
-              attachments.push({ documentId: raw.id, url: a?.url ?? null, contentType: a?.contentType ?? null, status: 'not-fetched', ...(a?.data ? { inlineData: a.data } : {}), sourceUrl, clinicalDate: item.clinicalDate, dateMeaning: item.dateMeaning });
+            for (const name of ['patient', 'subject']) {
+              if (next.searchParams.getAll(name).some(value => value !== selectedPatient && value !== `Patient/${selectedPatient}`)) fail('PATIENT_BINDING_FAILED', 'A pagination link changed patient context.');
             }
+            for (const [name, value] of Object.entries(filters)) {
+              if (next.searchParams.getAll(name).some(actual => actual !== value)) fail('QUERY_BINDING_FAILED', 'A pagination link changed the requested clinical category.');
+            }
+            if (visited.has(next.href)) fail('PAGINATION_LOOP', 'The provider repeated a pagination link.');
+            if (report.pages >= MAX_PAGES_PER_RESOURCE || totalPages >= MAX_TOTAL_PAGES) fail('PAGE_LIMIT', 'The bounded provider page limit was reached.');
+            visited.add(next.href); report.pages++; search.pages++; totalPages++;
+            const sourceUrl = next.href;
+            const response = await requestJson(sourceUrl, { fetch: fetchImpl, headers: { Authorization: `Bearer ${accessToken}`, Accept: 'application/fhir+json, application/json' } });
+            importedBytes += Buffer.byteLength(JSON.stringify(response));
+            if (importedBytes > MAX_IMPORT_BYTES) fail('IMPORT_BYTE_LIMIT', 'The bounded total import size was reached.');
+            let entries;
+            if (type === 'Patient') {
+              if (response.resourceType !== 'Patient') fail('INVALID_FHIR_RESPONSE', 'The provider returned an unexpected patient resource.');
+              entries = [response]; next = null;
+            } else {
+              if (response.resourceType !== 'Bundle' || response.type !== 'searchset' || !Array.isArray(response.entry ?? [])) fail('INVALID_FHIR_RESPONSE', 'The provider returned an invalid search result bundle.');
+              entries = (response.entry ?? []).map(x => x.resource);
+              if (Number.isSafeInteger(response.total) && response.total >= 0) expectedTotal = response.total;
+              const links = (response.link ?? []).filter(x => x.relation === 'next');
+              if (links.length > 1) fail('INVALID_FHIR_RESPONSE', 'The provider returned multiple next-page links.');
+              if (links.length) {
+                try { next = new URL(links[0].url, sourceUrl); } catch { fail('UNTRUSTED_ENDPOINT', 'The provider returned an invalid pagination link.'); }
+                pinnedUrl(next.href);
+              } else next = null;
+            }
+            for (const raw of entries) {
+              if (raw?.resourceType === 'OperationOutcome') {
+                if ((raw.issue ?? []).some(x => x.severity === 'error' || x.severity === 'fatal')) fail('FHIR_OPERATION_FAILED', 'The provider reported an unsuccessful FHIR operation.');
+                continue;
+              }
+              rawCount++;
+              if (!raw || raw.resourceType !== type || typeof raw.id !== 'string' || !ID.test(raw.id)) fail('INVALID_FHIR_RESOURCE', 'The provider returned an unexpected resource type or identifier.');
+              if (!belongsToPatient(raw, selectedPatient)) fail('PATIENT_BINDING_FAILED', 'A provider resource did not match the authorized patient chart.');
+              const versionId = typeof raw.meta?.versionId === 'string' ? raw.meta.versionId : null;
+              const key = `${type}/${raw.id}/${versionId ?? ''}/${createHash('sha256').update(JSON.stringify(raw)).digest('hex')}`;
+              if (seenRecords.has(key)) continue;
+              if (results.length >= MAX_RECORDS) fail('RECORD_LIMIT', 'The bounded resource import limit was reached.');
+              seenRecords.add(key);
+              const item = { resourceType: type, id: raw.id, versionId, sourceUrl, retrievedAt: new Date().toISOString(), ...normalized(raw), raw };
+              results.push(item); report.count++; search.count++;
+              if (type === 'DocumentReference') {
+                for (const content of (Array.isArray(raw.content) && raw.content.length ? raw.content : [{}])) {
+                  const a = content?.attachment;
+                  attachments.push({ documentId: raw.id, url: a?.url ?? null, contentType: a?.contentType ?? null, status: 'not-fetched', ...(a?.data ? { inlineData: a.data } : {}), sourceUrl, clinicalDate: item.clinicalDate, dateMeaning: item.dateMeaning });
+                }
+              }
+            }
+            if (!next && expectedTotal !== undefined && rawCount < expectedTotal) fail('MISSING_PAGE', 'The provider result total indicates unreturned records without a next-page link.');
           }
+          search.status = rawCount ? 'ok' : 'empty';
+        } catch (error) {
+          const safe = error instanceof DukeConnectionError ? error : new DukeConnectionError('SYNC_FAILED', 'This resource could not be synchronized.');
+          firstFailure ??= safe;
+          search.status = coverageStatus(safe);
+          search.error = { code: safe.code, message: safe.message, ...(safe.status !== undefined ? { status: safe.status } : {}), reconnectRequired: safe.reconnectRequired };
+          report.error ??= search.error;
+          errors.push({ resourceType: type, ...filters, ...search.error });
         }
-        if (!next && expectedTotal !== undefined && rawCount < expectedTotal) fail('MISSING_PAGE', 'The provider result total indicates unreturned records without a next-page link.');
       }
-      report.status = report.count ? 'ok' : 'empty';
+      report.status = firstFailure ? coverageStatus(firstFailure) : report.count ? 'ok' : 'empty';
     } catch (error) {
       const safe = error instanceof DukeConnectionError ? error : new DukeConnectionError('SYNC_FAILED', 'This resource could not be synchronized.');
       report.status = coverageStatus(safe);

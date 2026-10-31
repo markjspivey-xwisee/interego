@@ -163,12 +163,98 @@ test('paginated reads bind each result, preserve source versions and finish only
   let n = 0;
   const result = await syncDuke({ accessToken: 'a', patientId: patient, resources: ['Observation'], fetch: async url => {
     n++;
+    if (new URL(url).searchParams.get('category') === 'vital-signs') return json(bundle());
     return json(n === 1 ? bundle([resource('Observation', 'o1', { meta: { versionId: 'v1' } })], `${DUKE_BASE}/Observation?patient=${patient}&page=2`, 2) : bundle([resource('Observation', 'o2', { meta: { versionId: 'v2' } })], undefined, 2));
   } });
   assert.equal(result.complete, true);
-  assert.equal(n, 2);
-  assert.equal(result.coverage[0].pages, 2);
+  assert.equal(n, 3);
+  assert.equal(result.coverage[0].pages, 3);
   assert.deepEqual(result.resources.map(x => x.versionId), ['v1', 'v2']);
+});
+
+test('Observation searches use both selected clinical categories and deduplicate overlapping records', async () => {
+  const calls = [];
+  const overlap = resource('Observation', 'shared-result', { meta: { versionId: '1' } });
+  const result = await syncDuke({ accessToken: 'a', patientId: patient, resources: ['Observation'], fetch: async url => {
+    const parsed = new URL(url);
+    calls.push(parsed);
+    assert.equal(parsed.pathname, new URL(`${DUKE_BASE}/Observation`).pathname);
+    assert.equal(parsed.searchParams.get('patient'), patient);
+    assert.equal(parsed.searchParams.get('_count'), '100');
+    return json(bundle([overlap, resource('Observation', parsed.searchParams.get('category'))]));
+  } });
+  assert.deepEqual(calls.map(url => url.searchParams.get('category')), ['laboratory', 'vital-signs']);
+  assert.equal(result.complete, true);
+  assert.equal(result.resources.length, 3);
+  assert.equal(result.resources.filter(item => item.id === 'shared-result').length, 1);
+  assert.deepEqual(result.coverage[0].searches.map(search => search.status), ['ok', 'ok']);
+  assert.equal(result.coverage[0].count, 3);
+});
+
+test('either Observation category can fail without advancing the watermark or dropping the successful category', async () => {
+  const previousWatermark = '2026-10-01T00:00:00Z';
+  for (const failedCategory of ['laboratory', 'vital-signs']) {
+    const calls = [];
+    const result = await syncDuke({ accessToken: 'a', patientId: patient, resources: ['Observation'], previousWatermark, fetch: async url => {
+      const category = new URL(url).searchParams.get('category');
+      calls.push(category);
+      return category === failedCategory ? json({ error: 'insufficient_scope' }, 403) : json(bundle([resource('Observation', category)]));
+    } });
+    assert.deepEqual(calls, ['laboratory', 'vital-signs']);
+    assert.equal(result.complete, false);
+    assert.equal(result.watermark, previousWatermark);
+    assert.equal(result.resources.length, 1);
+    assert.notEqual(result.resources[0].id, failedCategory);
+    assert.equal(result.errors[0].category, failedCategory);
+    assert.equal(result.coverage[0].searches.find(search => search.category === failedCategory).status, 'denied');
+  }
+});
+
+test('Observation category pagination cannot switch to an unrequested clinical category', async () => {
+  const calls = [];
+  const result = await syncDuke({ accessToken: 'a', patientId: patient, resources: ['Observation'], fetch: async url => {
+    const category = new URL(url).searchParams.get('category');
+    calls.push(category);
+    return json(category === 'laboratory' ? bundle([resource('Observation', 'lab-1')], `${DUKE_BASE}/Observation?patient=${patient}&category=genomics`, 2) : bundle());
+  } });
+  assert.deepEqual(calls, ['laboratory', 'vital-signs']);
+  assert.equal(result.complete, false);
+  assert.equal(result.errors[0].code, 'QUERY_BINDING_FAILED');
+  assert.equal(result.coverage[0].status, 'binding-error');
+});
+
+test('Condition and Procedure searches explicitly cover only both registered categories', async () => {
+  const expected = { Condition: ['problem-list-item', 'encounter-diagnosis'], Procedure: ['103693007', '387713003'] };
+  for (const [type, categories] of Object.entries(expected)) {
+    const calls = [];
+    const result = await syncDuke({ accessToken: 'a', patientId: patient, resources: [type], fetch: async url => {
+      const parsed = new URL(url);
+      assert.equal(parsed.searchParams.get('patient'), patient);
+      assert.equal(parsed.pathname, new URL(`${DUKE_BASE}/${type}`).pathname);
+      const category = parsed.searchParams.get('category');
+      calls.push(category);
+      return json(bundle([resource(type, category)]));
+    } });
+    assert.deepEqual(calls, categories);
+    assert.equal(result.complete, true);
+    assert.deepEqual(result.resources.map(item => item.id), categories);
+    assert.deepEqual(result.coverage[0].searches.map(search => search.category), categories);
+  }
+});
+
+test('a missing diagnosis or surgery category page leaves coverage incomplete while retaining the other category', async () => {
+  for (const [type, goodCategory] of [['Condition', 'problem-list-item'], ['Procedure', '103693007']]) {
+    const result = await syncDuke({ accessToken: 'a', patientId: patient, resources: [type], previousWatermark: 'previous', fetch: async url => {
+      const category = new URL(url).searchParams.get('category');
+      return json(category === goodCategory ? bundle([resource(type, category)]) : bundle([resource(type, category)], undefined, 2));
+    } });
+    assert.equal(result.complete, false);
+    assert.equal(result.watermark, 'previous');
+    assert.equal(result.errors[0].code, 'MISSING_PAGE');
+    assert.equal(result.coverage[0].searches[0].status, 'ok');
+    assert.equal(result.coverage[0].searches[1].status, 'truncated');
+    assert.equal(result.resources.some(item => item.id === goodCategory), true);
+  }
 });
 
 test('partial read keeps the previous watermark, reports denial and retains safe data', async () => {
@@ -185,14 +271,14 @@ test('cross-origin and authorization-path pagination never receives bearer crede
     const result = await syncDuke({ accessToken: 'private-token', patientId: patient, resources: ['Observation'], fetch: async () => { n++; return json(bundle([resource('Observation')], next, 2)); } });
     assert.equal(result.complete, false);
     assert.equal(result.errors[0].code, 'UNTRUSTED_ENDPOINT');
-    assert.equal(n, 1);
+    assert.equal(n, 2);
   }
 });
 
 test('a same-provider pagination link cannot change the selected patient', async () => {
   let n = 0;
   const result = await syncDuke({ accessToken: 'a', patientId: patient, resources: ['Observation'], fetch: async () => { n++; return json(bundle([resource('Observation')], `${DUKE_BASE}/Observation?patient=other-chart`, 2)); } });
-  assert.equal(n, 1);
+  assert.equal(n, 2);
   assert.equal(result.coverage[0].status, 'binding-error');
   assert.equal(result.complete, false);
 });

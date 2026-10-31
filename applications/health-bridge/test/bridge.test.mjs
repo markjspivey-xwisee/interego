@@ -4,7 +4,7 @@ import { createServer, request as httpRequest } from 'node:http';
 import { mkdtemp, readdir, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { createHash } from 'node:crypto';
+import { createHash, createPublicKey, generateKeyPairSync } from 'node:crypto';
 import { createHealthBridge,ACTION } from '../bridge.mjs';
 import { createEncryptedStore } from '../security.mjs';
 
@@ -33,6 +33,19 @@ test('public setup and assets expose connection requirements but no private acco
   const probe=path=>new Promise((resolve,reject)=>{const req=httpRequest(f.origin+path,{headers:{Host:'healthcheck.railway.app'}},res=>{res.resume();res.on('end',()=>resolve(res.statusCode));});req.on('error',reject);req.end();});
   assert.equal(await probe('/health'),200);
   assert.equal(await probe('/setup'),421);
+});
+test('sandbox JWKS publishes only its separate public key and never falls back to production',async t=>{
+  const key=()=>generateKeyPairSync('rsa',{modulusLength:2048,privateKeyEncoding:{type:'pkcs8',format:'pem'},publicKeyEncoding:{type:'spki',format:'pem'}});
+  const production=key(),sandbox=key();
+  const f=await fixture(t,{duke:{privateKeyPem:production.privateKey,keyId:'production-key',sandboxPrivateKeyPem:sandbox.privateKey,sandboxKeyId:'sandbox-key'}});
+  const setup=await(await fetch(f.origin+'/setup')).json();assert.equal(setup.duke.sandboxJwksUri,f.origin+'/.well-known/sandbox-jwks.json');assert.notEqual(setup.duke.sandboxJwksUri,setup.duke.jwksUri);
+  const productionJwks=await(await fetch(setup.duke.jwksUri)).json(),sandboxJwks=await(await fetch(setup.duke.sandboxJwksUri)).json();
+  assert.deepEqual(productionJwks,{keys:[{...createPublicKey(production.publicKey).export({format:'jwk'}),kid:'production-key',alg:'RS256',use:'sig'}]});
+  assert.deepEqual(sandboxJwks,{keys:[{...createPublicKey(sandbox.publicKey).export({format:'jwk'}),kid:'sandbox-key',alg:'RS256',use:'sig'}]});
+  assert.notEqual(sandboxJwks.keys[0].n,productionJwks.keys[0].n);
+  for(const jwks of [productionJwks,sandboxJwks]){assert.deepEqual(Object.keys(jwks.keys[0]).sort(),['alg','e','kid','kty','n','use']);assert.equal(JSON.stringify(jwks).includes('PRIVATE KEY'),false);}
+  const unconfigured=await fixture(t,{duke:{privateKeyPem:production.privateKey,keyId:'production-key'}});
+  assert.deepEqual(await(await fetch(unconfigured.origin+'/.well-known/sandbox-jwks.json')).json(),{keys:[]});
 });
 test('JSON and Turtle discovery profiles expose the same eight action declarations',async t=>{
   const f=await fixture(t),response=await fetch(f.origin+'/profile'),profile=await response.json();

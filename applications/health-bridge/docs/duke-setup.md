@@ -13,11 +13,14 @@ The connector is implemented, but actual Duke authorization is unavailable until
 * Application origin: `https://health-bridge-production-dc71.up.railway.app`
 * Redirect URI: `https://health-bridge-production-dc71.up.railway.app/oauth/duke/callback`
 * Public JWKS URI: `https://health-bridge-production-dc71.up.railway.app/.well-known/jwks.json`
+* Separate non-production JWKS URI: `https://health-bridge-production-dc71.up.railway.app/.well-known/sandbox-jwks.json`
 * Client authentication: **private_key_jwt**, configured for Duke; no private key is uploaded in chat or checked into source control
 
 The operator must register the application through Epic's developer portal, review and accept the relevant developer/production terms, select qualifying USCDI read APIs, enable automatic client distribution where eligible, and make it ready for production. Epic's current guidance describes customer download intervals of up to twelve hours. The app's actual availability at Duke must be checked afterward.
 
 Set the actual **production** client identifier as `DUKE_CLIENT_ID` in the bridge service's secret configuration. The server's persistent signing key and key ID have already been configured in the deployment; the public key document is used for registration. Never substitute a sandbox identifier or a fabricated client ID.
+
+Epic requires distinct production and non-production JWK Set URLs. The sandbox route uses a separate RSA key configured with `DUKE_SANDBOX_PRIVATE_KEY_PEM` and `DUKE_SANDBOX_KEY_ID`; it never exposes or falls back to the production key. Registering its public URL does not establish that an Epic sandbox authorization flow has been tested.
 
 ## Verified provider discovery
 
