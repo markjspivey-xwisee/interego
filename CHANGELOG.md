@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-10-31 — Strengthen the test-run floor for the expanded regression tree
+
+The test-run integrity minimum rises from 590 to the measured 620 tracked modules after Foxxi's LTI readiness, immutable-publication and authorization-rate regression modules consume the remaining headroom. The proportional growth allowance, include patterns, assertions and skip rules are unchanged; no tests are removed or excluded.
+
 ## 2026-10-31 — Bound own-LMS authorization requests before snapshot work
 
 Foxxi's GET and POST LTI authorization routes share a per-client limit and a fixed total budget before snapshot hydration, form parsing or token signing. Standard middleware returns 429 with a retry delay, groups IPv6 clients by subnet and uses the framework's existing trusted-proxy policy. The total budget bounds admission to the rotating client-bucket store. Discovery and key metadata remain independent; learner identity, one-use grants and gradebook checks remain required.
