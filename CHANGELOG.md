@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-10-31 — Keep browser sign-in working after Windows app updates
+
+The installed Windows app repairs browser companion registration removed by an older installer, using only the valid, nonempty extension allowance the owner already saved. It does not create a key, change hosted account ownership, enable a disabled or unreadable allowance, or replace another installation’s registration. A queued owner change or shutdown prevents late admission, and repair never rewrites the saved allowance.
+
+The new uninstaller retains registration during updates and removes only its own matching registration on a full uninstall. A setup failure is shown separately from valid saved IDs so the existing recovery action remains usable. Tests use temporary protected-policy files and an injected registry; the actual Windows packaging and offline lifecycle remain release gates. Public bridge access and federation stay off by default.
+
 ## 2026-10-31 — Make PC-key linking and sign-in approval easier to review
 
 Adding a PC key can succeed on the account service even when its reply times out on the computer. An uncertain link result now offers a deliberate dashboard refresh to check registered credentials before starting another link; it never retries the credential update or reports success without a verified receipt. The account, hosted pod and game progress remain with the existing owner.
