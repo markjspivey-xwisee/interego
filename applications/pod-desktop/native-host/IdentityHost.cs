@@ -62,6 +62,7 @@ internal static class IdentityHost
         Stream input = Console.OpenStandardInput();
         Stream output = Console.OpenStandardOutput();
         Context context = null;
+        bool linking = false;
         string channel = Guid.NewGuid().ToString("D");
         string browserOrigin;
         string dataDir;
@@ -85,8 +86,9 @@ internal static class IdentityHost
                     string operation;
                     Dictionary<string, object> arguments;
                     ValidateMessage(message, out operation, out arguments);
+                    if (operation == "start") linking = Regex.IsMatch((string)arguments["handoffCode"], @"\Ainterego-link:v1:[A-Za-z0-9_-]{43}\.[A-Za-z0-9_-]{43}\z", RegexOptions.CultureInvariant);
                     if (context == null) context = LoadContext(dataDir);
-                    Dictionary<string, object> result = Exchange(context, browserOrigin, channel, operation, arguments);
+                    Dictionary<string, object> result = Exchange(context, browserOrigin, channel, operation, arguments, linking);
                     Dictionary<string, object> reply = Record("version", 1, "id", browserId, "ok", result["ok"]);
                     if ((bool)result["ok"]) reply.Add("value", result["value"]);
                     else reply.Add("error", Failure);
@@ -103,7 +105,7 @@ internal static class IdentityHost
             // connectNative's port lifetime is also the approval/channel lifetime.
             if (context != null)
             {
-                try { Exchange(context, browserOrigin, channel, "close", new Dictionary<string, object>()); }
+                try { Exchange(context, browserOrigin, channel, "close", new Dictionary<string, object>(), linking); }
                 catch { /* Shutdown cannot write a second, unsolicited browser response. */ }
                 context.Dispose();
             }
@@ -191,7 +193,7 @@ internal static class IdentityHost
         else throw new InvalidDataException();
     }
 
-    private static Dictionary<string, object> Exchange(Context context, string origin, string channel, string operation, Dictionary<string, object> arguments)
+    private static Dictionary<string, object> Exchange(Context context, string origin, string channel, string operation, Dictionary<string, object> arguments, bool linking)
     {
         string requestId = Guid.NewGuid().ToString("D");
         long issuedAt = (DateTime.UtcNow.Ticks - 621355968000000000L) / TimeSpan.TicksPerMillisecond;
@@ -204,10 +206,13 @@ internal static class IdentityHost
         request.ContentLength = payload.Length;
         request.Proxy = null;
         request.AllowAutoRedirect = false;
-        request.Timeout = 15000;
-        request.ReadWriteTimeout = 15000;
+        request.Timeout = linking ? 60000 : 15000;
+        request.ReadWriteTimeout = linking ? 60000 : 15000;
         request.KeepAlive = false;
         request.ServicePoint.Expect100Continue = false;
+        // HttpWebRequest's header and stream timeouts are separate. Keep the
+        // link-only outer ceiling absolute even when both phases make progress.
+        System.Threading.Timer deadline = linking ? new System.Threading.Timer(_ => { try { request.Abort(); } catch { } }, null, 60000, System.Threading.Timeout.Infinite) : null;
         try
         {
             using (Stream stream = request.GetRequestStream()) stream.Write(payload, 0, payload.Length);
@@ -225,7 +230,7 @@ internal static class IdentityHost
                 return result;
             }
         }
-        finally { Array.Clear(payload, 0, payload.Length); request.Abort(); }
+        finally { if (deadline != null) deadline.Dispose(); Array.Clear(payload, 0, payload.Length); request.Abort(); }
     }
 
     private static Dictionary<string, object> Seal(Context context, string requestId, object value)

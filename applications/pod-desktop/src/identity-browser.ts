@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { AGENT_ID_PATTERN, AGENT_REQUEST_WINDOW_MS, openAgentMessage, sealAgentMessage } from './agent-protocol.js';
 import type { AgentEndpoint, AgentTicket } from './agent-types.js';
 import type { LocalIdentityService } from './local-identity.js';
+import { IDENTITY_LINK_HANDOFF } from './local-identity-link.js';
 
 export interface IdentityBrowserOptions {
   readonly dataDir: string;
@@ -16,7 +17,7 @@ export interface IdentityBrowserOptions {
   readonly onPending?: () => void;
 }
 const MAX_BYTES = 128 * 1024;
-interface Channel { readonly origin: string; readonly generation: number; touched: number }
+interface Channel { readonly origin: string; readonly generation: number; touched: number; linking?: boolean }
 function record(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Invalid native identity message.');
   return value as Record<string, unknown>;
@@ -113,7 +114,10 @@ export class IdentityBrowser {
     const disconnected = () => { if (!response.writableEnded) cancelOwned(); };
     const current = () => !this.closed && this.generation === generation && !request.aborted && !response.destroyed;
     response.once('close', disconnected); request.once('aborted', disconnected);
-    const timeout = setTimeout(() => { disconnected(); if (!request.complete) request.destroy(); if (!response.writableEnded) response.destroy(); }, 20_000);
+    const began = Date.now();
+    const expire = () => { disconnected(); if (!request.complete) request.destroy(); if (!response.writableEnded) response.destroy(); };
+    let timeout = setTimeout(expire, 20_000);
+    const linkBudget = () => { clearTimeout(timeout); timeout = setTimeout(expire, Math.max(1, 55_000 - (Date.now() - began))); };
     try {
       const chunks: Buffer[] = []; let size = 0;
       for await (const chunk of request) {
@@ -139,10 +143,13 @@ export class IdentityBrowser {
       channel = incomingChannel; ownedChannel = known ?? { origin, generation, touched: Date.now() }; ownedChannel.touched = Date.now();
       this.channels.set(channel, ownedChannel);
       const args = record(value['arguments']); let result: unknown;
+      if (ownedChannel.linking && value['operation'] !== 'start') linkBudget();
       try {
         if (value['operation'] === 'start') {
           keys(args, ['relayOrigin', 'handoffCode']);
           if (typeof args['relayOrigin'] !== 'string' || typeof args['handoffCode'] !== 'string') throw new Error('Invalid sign-in request.');
+          ownedChannel.linking = IDENTITY_LINK_HANDOFF.test(args['handoffCode']);
+          if (ownedChannel.linking) linkBudget();
           result = await this.options.service.request({ relayOrigin: args['relayOrigin'], handoffCode: args['handoffCode'] }, channel);
           if (!current() || !(await this.options.allowedOrigins()).includes(origin) || !current()) { cancelOwned(); throw new Error('This sign-in window has closed.'); }
           this.options.onPending?.();

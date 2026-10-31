@@ -4,6 +4,9 @@ import { request as httpRequest } from 'node:http';
 import { isIP } from 'node:net';
 
 export const MAX_IDENTITY_RESPONSE = 64 * 1024;
+// Fresh account-holder checks can outlast ordinary OAuth's idle limit. This is
+// only a transport ceiling; the verified handoff expiry still limits authority.
+export const LINK_IDENTITY_REQUEST_TIMEOUT_MS = 45_000;
 const unavailable = () => new Error('The sign-in service could not be reached safely. Start a new sign-in and try again.');
 export function identityPublicAddress(address: string): boolean {
   if (isIP(address) === 4) {
@@ -25,7 +28,8 @@ export function identityAbortable<T>(promise: Promise<T>, signal: AbortSignal): 
 }
 
 /** Only fixed authentication paths on a native-configured relay reach this transport. */
-export async function localIdentityNetwork(url: URL, body: string, signal: AbortSignal, allowLoopback = false): Promise<Response> {
+export async function localIdentityNetwork(url: URL, body: string, signal: AbortSignal, allowLoopback = false, socketTimeoutMs = 12_000): Promise<Response> {
+  if (!Number.isSafeInteger(socketTimeoutMs) || socketTimeoutMs < 1 || socketTimeoutMs > LINK_IDENTITY_REQUEST_TIMEOUT_MS) throw unavailable();
   if (signal.aborted) throw unavailable();
   const loopback = allowLoopback && url.protocol === 'http:' && (url.hostname === '127.0.0.1' || url.hostname === '[::1]');
   const records = loopback ? [{ address: url.hostname === '[::1]' ? '::1' : '127.0.0.1', family: url.hostname === '[::1]' ? 6 : 4 }]
@@ -52,7 +56,7 @@ export async function localIdentityNetwork(url: URL, body: string, signal: Abort
         resolve(new Response(Buffer.concat(chunks), { status: 200, headers: { 'content-type': 'application/json' } }));
       });
     });
-    request.setTimeout(12_000, () => request.destroy(unavailable())); request.once('error', reject); request.end(body);
+    request.setTimeout(socketTimeoutMs, () => request.destroy(unavailable())); request.once('error', reject); request.end(body);
   });
 }
 
