@@ -23,6 +23,8 @@ The central purpose of the earlier work was **spaces where humans and agents can
 
 These are feature candidates, not a committed delivery schedule or a claim of current support in the local app.
 
+The new app now includes a [local Workspace composition](../pod-desktop/WORKSPACES.md) for human and scoped-agent chat with optional Discord bridging. It selectively reuses these records and serializers while the older desktop shell remains archived. This first composition stores the conversation in the local owner's pod; distributed per-participant histories, hosted import and the other candidates above are not implied.
+
 ## What the retained Discord code actually does
 
 The adapter is more than account linking. Current source records Discord messages through the workspace client, watches workspace logs and posts new entries and agent answers back to Discord. Mentions, typed agent names and replies route through authorized agent requests. See [incoming messages and agent addressing](discord/src/main.ts), [workspace watching](discord/src/watch.ts) and [outgoing rendering](discord/src/render.ts).

@@ -26,6 +26,9 @@ import { IdentityBrowserPolicy } from './identity-browser-policy.js';
 import { FederationService, ProtectedFederationStore } from '@interego/pod-federation';
 import { presentSharedResource } from './federation-notes.js';
 import { shareSelectedNotes } from './federation-owner.js';
+import { WorkspaceService } from './workspace-service.js';
+import { WORKSPACE_ACTIONS, type WorkspaceActRequest, type WorkspacePermission } from './workspace-types.js';
+import { DiscordWorkspaceBridge, type DiscordWorkspaceConfiguration } from './discord-workspaces.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const entry = join(here, '..', 'index.html');
@@ -62,6 +65,7 @@ let agentService: AgentService | undefined;
 let webBridge: BridgeManager | undefined;
 let podFederation: FederationService | undefined;
 let localIdentity: LocalIdentityService | undefined;
+let discordWorkspaces: DiscordWorkspaceBridge | undefined;
 let identityBrowser: IdentityBrowser | undefined;
 let identityBrowserError: string | undefined;
 let federationGeneration = 0;
@@ -217,6 +221,32 @@ async function bootstrap(): Promise<void> {
   const options = { dataDir: join(userData, 'local-pod'), vault: keyVault(userData) };
   controller = new PodController(options);
   const pod = controller;
+  const workspaces = new WorkspaceService({
+    store: {
+      load: () => pod.readVerticalState('workspaces'),
+      save: (value, binding, authorize) => pod.writeVerticalState('workspaces', value, binding, authorize),
+    },
+    binding: () => pod.agentPodBinding(),
+  });
+  discordWorkspaces = new DiscordWorkspaceBridge({ dataDir: join(userData, 'workspace-discord'), protector: agentProtector, workspaces });
+  const discord = discordWorkspaces;
+  handle('workspaceStatus', async () => workspaces.status());
+  handle('workspaceAct', async value => {
+    if (!value || typeof value !== 'object' || typeof (value as WorkspaceActRequest).action !== 'string') throw new Error('Choose an available workspace action.');
+    const request = value as WorkspaceActRequest;
+    if (request.action === WORKSPACE_ACTIONS.DISABLE) {
+      // Invalidate both admissions before waiting for either service to drain.
+      const [result] = await Promise.all([workspaces.act(request), discord.stop()]);
+      return result;
+    }
+    return workspaces.act(request);
+  });
+  handle('discordWorkspaceStatus', async () => discord.status());
+  handle('configureDiscordWorkspace', async value => discord.configure(value as DiscordWorkspaceConfiguration));
+  handle('startDiscordWorkspace', async () => discord.start());
+  handle('stopDiscordWorkspace', async () => discord.stop());
+  handle('disconnectDiscordWorkspace', async () => discord.disconnect());
+  handle('openDiscordWorkspaceSetup', async () => shell.openExternal('https://discord.com/developers/applications'));
   const extensions = new BrowserExtensionStore(join(userData, 'browser-access'), agentProtector);
   const identityExtensions = new BrowserExtensionStore(join(userData, 'identity-browser', 'allowed-extensions'), agentProtector);
   const identitySmoke = smoke ? (await import('./identity-smoke.js')).createIdentitySmoke() : undefined;
@@ -309,6 +339,17 @@ async function bootstrap(): Promise<void> {
   });
   const access = new AgentService({ dataDir: join(userData, 'agent-access'), protector: agentProtector,
     getPodBinding: () => controller!.agentPodBinding(), execute: async (operation, args, authorize) => {
+      if (closing) throw new Error('Interego is closing. Reopen it before using this connection.');
+      if (operation === 'workspaces.discover' || operation === 'workspaces.act') {
+        const current = await authorize();
+        const principal = { kind: 'agent' as const, id: current.id, name: current.name,
+          permissions: current.permissions.filter((permission): permission is WorkspacePermission => permission === 'workspaces:read' || permission === 'workspaces:chat'),
+          workspaceIds: current.workspaceIds ?? [], authorize: async () => {
+            if (closing) throw new Error('Interego is closing.');
+            await authorize();
+          } };
+        return operation === 'workspaces.discover' ? workspaces.status(principal) : workspaces.act(args as WorkspaceActRequest, principal);
+      }
       const result = await controller!.executeAgent(operation, args ?? {}, authorize);
       return operation === 'status' ? { ...(result as Record<string, unknown>), ...await federationFlags() } : result;
     } });
@@ -342,7 +383,7 @@ async function bootstrap(): Promise<void> {
   handle('start', async () => pod.start());
   handle('stop', async () => {
     // The owner's Stop control closes remote access as well as local storage.
-    try { await pauseFederation(); await webBridge?.stop(); }
+    try { await discord.stop(); await pauseFederation(); await webBridge?.stop(); }
     finally { await pod.stop(); }
     return pod.getStatus();
   });
@@ -559,6 +600,10 @@ async function bootstrap(): Promise<void> {
         notes: () => window!.webContents.executeJavaScript('window.interego.notes()') });
       const { verifyWebBridge } = await import('./bridge-smoke.js');
       const smokeInvoke = <T>(method: string, argument?: unknown) => window!.webContents.executeJavaScript(`window.interego[${JSON.stringify(method)}](${argument === undefined ? '' : JSON.stringify(argument)})`) as Promise<T>;
+      const { verifyWorkspaces } = await import('./workspace-smoke.js');
+      await verifyWorkspaces({ invoke: smokeInvoke, command: process.execPath, args: app.isPackaged ? [] : [app.getAppPath()],
+        userData, packaged: app.isPackaged, expectPrevious: initial.configured, create: value => access.create(value),
+        revoke: async id => { await access.revoke(id); }, list: () => access.list(), notes: () => pod.listNotes() });
       await identitySmoke!.verify({ invoke: smokeInvoke, executable: join(app.getAppPath(), 'dist/native-host/Interego-Identity.exe'),
         approve: (id, code) => window!.webContents.executeJavaScript(`window.interego.approveLocalIdentity(${JSON.stringify(id)},${JSON.stringify(code)})`),
         dataDir: userData, allow: ids => identityExtensions.save(ids), expectPrevious: initial.configured });
@@ -626,6 +671,7 @@ else {
       try {
         // Stop admitting agent work before waiting for any owner dialog or action.
         localIdentity?.stop();
+        await discordWorkspaces?.stop();
         const identityClosing = identityBrowser?.close();
         trace('closing web connections');
         await pauseFederation();

@@ -285,7 +285,8 @@ const REPO_ROOT = fileURLToPath(new URL('..', import.meta.url));
 // round added four modules (the relay-delegated verifier and the web UI sign-in, two per
 // vertical); the rest are the rounds since the last pin. None was removed.
 // Native identity and Windows diagnostics crossed the measured drift allowance.
-export const MIN_TEST_MODULES = 590;
+// 622 modules require 592; the headroom test also requires room for the next module.
+export const MIN_TEST_MODULES = 593;
 
 /**
  * How far below the real module count MIN_TEST_MODULES may sit before that is itself a

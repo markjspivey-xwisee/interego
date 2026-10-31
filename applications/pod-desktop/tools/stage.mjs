@@ -5,8 +5,8 @@ import { appRoot, assertStagePath, repoRoot, stageRoot, within } from './paths.m
 import { bridgeBuildInfo, stageBridge } from './stage-bridge.mjs';
 
 const sourceManifest = JSON.parse(await readFile(join(appRoot, 'package.json'), 'utf8'));
-const workspaceNames = new Set(['@interego/local-node', '@interego/deployment-config', '@interego/core', '@interego/solid', '@interego/pod-federation']);
-const productionRoots = new Set([...workspaceNames, '@modelcontextprotocol/server']);
+const workspaceNames = new Set(['@interego/local-node', '@interego/deployment-config', '@interego/core', '@interego/solid', '@interego/pod-federation', '@interego/workspace-client', '@interego/privacy']);
+const productionRoots = new Set([...workspaceNames, '@modelcontextprotocol/server', 'ws']);
 const installedRoot = resolve(repoRoot, 'node_modules');
 const workspaceRoot = resolve(repoRoot, 'packages');
 const graph = [];
