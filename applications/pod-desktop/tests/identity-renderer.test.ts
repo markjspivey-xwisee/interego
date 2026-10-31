@@ -27,8 +27,9 @@ const link = (patch: Partial<LocalIdentityLinkApproval> = {}): LocalIdentityLink
 const pod: PodStatus = { state: 'stopped', configured: true, running: false, localOnly: true, federationEnabled: false, noteCount: 0 };
 function deferred<T>() { let resolve!: (value: T) => void; const promise = new Promise<T>(done => { resolve = done; }); return { promise, resolve }; }
 async function flush(): Promise<void> { for (let i = 0; i < 3; i++) await new Promise<void>(done => setImmediate(done)); }
-async function mount(initial = off(), overrides: Partial<DesktopApi> = {}) {
+async function mount(initial = off(), overrides: Partial<DesktopApi> = {}, attention: () => boolean = () => true) {
   let current = initial; let ids: readonly string[] = [];
+  const showIdentity = vi.fn(attention);
   const api = {
     localIdentityStatus: vi.fn(async () => current),
     setupLocalIdentity: vi.fn(async () => { current = ready(); return current; }),
@@ -43,13 +44,13 @@ async function mount(initial = off(), overrides: Partial<DesktopApi> = {}) {
     ...overrides,
   };
   const dom = new JSDOM(readFileSync(join(APP, 'index.html'), 'utf8'), { url: 'file:///interego/index.html', runScripts: 'outside-only' }); documents.push(dom);
-  Object.defineProperties(dom.window, { interego: { value: api }, identityTestPod: { value: pod, writable: true }, identityTestBusy: { value: false, writable: true } });
+  Object.defineProperties(dom.window, { interego: { value: api }, identityTestPod: { value: pod, writable: true }, identityTestBusy: { value: false, writable: true }, identityTestShow: { value: showIdentity } });
   dom.window.eval(bundle + `\nwindow.identityTestUi = IdentityUi.installIdentityUi(window.interego, { pod: () => window.identityTestPod, locallyBusy: () => window.identityTestBusy,
-    openDialog: dialog => dialog.setAttribute('open', ''), closeDialog: dialog => { dialog.removeAttribute('open'); dialog.dispatchEvent(new Event('close')); } });`);
+    openDialog: dialog => dialog.setAttribute('open', ''), closeDialog: dialog => { dialog.removeAttribute('open'); dialog.dispatchEvent(new Event('close')); }, showIdentity: () => window.identityTestShow() });`);
   const ui = (dom.window as unknown as { identityTestUi: { refresh(): Promise<void>; updateAvailability(): void } }).identityTestUi;
   await ui.refresh();
   const get = <T extends HTMLElement = HTMLElement>(id: string) => dom.window.document.getElementById(id) as T;
-  return { dom, api, ui, get, setState: (value: LocalIdentityStatus) => { current = value; },
+  return { dom, api, ui, get, showIdentity, setState: (value: LocalIdentityStatus) => { current = value; },
     click: (id: string) => get<HTMLButtonElement>(id).click(),
     fill: (id: string, value: string) => { get<HTMLInputElement>(id).value = value; get(id).dispatchEvent(new dom.window.Event('input')); },
     check: (id: string, checked = true) => { get<HTMLInputElement>(id).checked = checked; get(id).dispatchEvent(new dom.window.Event('change')); },
@@ -60,6 +61,29 @@ async function mount(initial = off(), overrides: Partial<DesktopApi> = {}) {
 }
 
 describe('native Identity page', () => {
+  it('batches waiting requests into one reveal and does not repeat while they remain pending', async () => {
+    const app = await mount(ready()); const pending = [link(), request()]; app.setState(ready(pending)); await app.ui.refresh();
+    expect(app.showIdentity).toHaveBeenCalledOnce(); await app.ui.refresh(); expect(app.showIdentity).toHaveBeenCalledOnce();
+    app.setState(ready()); await app.ui.refresh(); app.setState(ready(pending)); await app.ui.refresh(); expect(app.showIdentity).toHaveBeenCalledTimes(2);
+    await app.ui.refresh(); expect(app.showIdentity).toHaveBeenCalledTimes(2);
+    for (const item of pending) expect(app.get<HTMLInputElement>('identity-verify-' + item.id).checked).toBe(false);
+    expect(app.api.approveLocalIdentity).not.toHaveBeenCalled();
+  });
+  it('retries a deferred reveal once allowed and does not consume attention while another screen is occupied', async () => {
+    let allowed = false; const app = await mount(ready(), {}, () => allowed); app.setState(ready([link()])); await app.ui.refresh();
+    expect(app.showIdentity).toHaveBeenCalledOnce(); allowed = true; await app.ui.refresh(); expect(app.showIdentity).toHaveBeenCalledTimes(2);
+    await app.ui.refresh(); expect(app.showIdentity).toHaveBeenCalledTimes(2); expect(app.api.approveLocalIdentity).not.toHaveBeenCalled();
+  });
+  it('ignores an older waiting result that arrives after a newer empty status without revealing it', async () => {
+    const app = await mount(ready()); const stale = deferred<LocalIdentityStatus>();
+    (app.api.localIdentityStatus as ReturnType<typeof vi.fn>).mockImplementationOnce(() => stale.promise);
+    const first = app.ui.refresh(); await app.ui.refresh(); stale.resolve(ready([link()])); await first;
+    expect(app.showIdentity).not.toHaveBeenCalled(); expect(app.get('identity-pending').children.length).toBe(0); expect(app.api.approveLocalIdentity).not.toHaveBeenCalled();
+  });
+  it.each([false, true])('does not reveal waiting requests without a current configured public identity (configured=%s)', async configured => {
+    const app = await mount({ configured, pending: [request(), link()] });
+    expect(app.showIdentity).not.toHaveBeenCalled(); expect(app.pendingApprove().disabled).toBe(true); expect(app.api.approveLocalIdentity).not.toHaveBeenCalled();
+  });
   it('creates no credential automatically, makes linking existing accounts the first path, and works while notes are stopped', async () => {
     const app = await mount(); expect(app.api.setupLocalIdentity).not.toHaveBeenCalled();
     expect(app.get<HTMLButtonElement>('create-local-identity').disabled).toBe(true);
