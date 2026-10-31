@@ -61,6 +61,25 @@ async function mount(initial = off(), overrides: Partial<DesktopApi> = {}, atten
 }
 
 describe('native Identity page', () => {
+  it('reports a host repair failure while keeping the genuine saved-ID recovery action usable', async () => {
+    const id = 'a'.repeat(32); const failure = 'Saved browser sign-in could not be restored. Review and save the allowed extension IDs in Identity.';
+    const app = await mount({ ...ready(), browserError: failure }, { identityExtensionIds: vi.fn(async () => [id]) });
+    expect(app.get('identity-message').textContent).toBe(failure);
+    expect(app.get<HTMLTextAreaElement>('identity-extension-ids').value).toBe(id);
+    expect(app.get<HTMLButtonElement>('save-identity-extensions').disabled).toBe(true);
+    app.check('identity-extension-consent'); expect(app.get<HTMLButtonElement>('save-identity-extensions').disabled).toBe(false);
+    app.submit('identity-extensions-form'); await flush();
+    expect(app.api.setIdentityExtensionIds).toHaveBeenCalledWith([id]);
+    expect(app.api.setupLocalIdentity).not.toHaveBeenCalled(); expect(app.api.restoreLocalIdentity).not.toHaveBeenCalled();
+  });
+  it('does not treat an unreadable saved allowlist as an empty valid policy when showing a repair error', async () => {
+    const app = await mount({ ...ready(), browserError: 'Saved browser sign-in could not be restored.' },
+      { identityExtensionIds: vi.fn(async () => { throw new Error('Protected policy unavailable'); }) });
+    app.fill('identity-extension-ids', 'a'.repeat(32)); app.check('identity-extension-consent');
+    expect(app.get<HTMLButtonElement>('save-identity-extensions').disabled).toBe(true);
+    app.submit('identity-extensions-form'); await flush(); expect(app.api.setIdentityExtensionIds).not.toHaveBeenCalled();
+    expect(app.get('identity-message').textContent).toContain('could not be checked');
+  });
   it('batches waiting requests into one reveal and does not repeat while they remain pending', async () => {
     const app = await mount(ready()); const pending = [link(), request()]; app.setState(ready(pending)); await app.ui.refresh();
     expect(app.showIdentity).toHaveBeenCalledOnce(); await app.ui.refresh(); expect(app.showIdentity).toHaveBeenCalledOnce();

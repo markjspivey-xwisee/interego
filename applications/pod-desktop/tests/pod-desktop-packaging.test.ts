@@ -11,7 +11,56 @@ const config = appRequire(join(app, 'electron-builder.config.cjs'));
 const signaturePolicy = appRequire(join(app, 'tools/signature-policy.cjs'));
 const manifest = JSON.parse(readFileSync(join(app, 'package.json'), 'utf8'));
 
+// Evaluate only the shipped hook's small NSIS instruction set against a Map.
+// Windows packaging still compiles the real NSIS script; these fixtures never open HKCU.
+function uninstallRegistrationFixture(updated: boolean, registry: Map<string, string>) {
+  const data = 'C:\\Fixture\\Roaming'; const manifest = data + '\\Interego\\identity-browser\\com.interego.identity.json';
+  const active = [true]; const reads: string[] = []; const removed: string[] = []; let value = '';
+  for (const source of readFileSync(config.nsis.include, 'utf8').split(/\r?\n/)) {
+    const line = source.trim();
+    if (!line || line.startsWith(';') || line === '!macro customUnInstall' || line === '!macroend') continue;
+    const enabled = active.every(Boolean);
+    if (line === '${IfNot} ${isUpdated}') { active.push(enabled && !updated); continue; }
+    const condition = /^\$\{If\} \$0 == "([^"]+)"$/.exec(line);
+    if (condition) { active.push(enabled && value.toLowerCase() === condition[1]!.replace('$APPDATA', data).toLowerCase()); continue; }
+    if (line === '${EndIf}') {
+      if (active.length === 1) throw new Error('Unexpected end of uninstall condition');
+      active.pop(); continue;
+    }
+    const read = /^ReadRegStr \$0 HKCU "([^"]+)" ""$/.exec(line);
+    if (read) { if (enabled) { reads.push(read[1]!); value = registry.get(read[1]!) ?? ''; } continue; }
+    const remove = /^DeleteRegValue HKCU "([^"]+)" ""$/.exec(line);
+    if (remove) { if (enabled) { removed.push(remove[1]!); registry.delete(remove[1]!); } continue; }
+    throw new Error('Unsupported native uninstall hook instruction');
+  }
+  if (active.length !== 1) throw new Error('Unclosed uninstall condition');
+  return { registry, reads, removed, manifest };
+}
+
 describe('the local pod Windows installer boundary', () => {
+  it('the shipped upgrade hook leaves both browser registrations untouched', () => {
+    const google = 'Software\\Google\\Chrome\\NativeMessagingHosts\\com.interego.identity';
+    const edge = 'Software\\Microsoft\\Edge\\NativeMessagingHosts\\com.interego.identity';
+    const owned = 'C:\\Fixture\\Roaming\\Interego\\identity-browser\\com.interego.identity.json';
+    const registry = new Map([[google, owned], [edge, owned]]); const before = [...registry.entries()];
+    const result = uninstallRegistrationFixture(true, registry);
+    expect([...result.registry.entries()]).toEqual(before); expect(result.reads).toEqual([]); expect(result.removed).toEqual([]);
+  });
+
+  it('the shipped real-uninstall hook removes only matching default values, leaving foreign registrations and data alone', () => {
+    const google = 'Software\\Google\\Chrome\\NativeMessagingHosts\\com.interego.identity';
+    const edge = 'Software\\Microsoft\\Edge\\NativeMessagingHosts\\com.interego.identity';
+    const owned = 'C:\\Fixture\\Roaming\\Interego\\identity-browser\\com.interego.identity.json';
+    for (const ownedKey of [google, edge]) {
+      const foreignKey = ownedKey === google ? edge : google;
+      const registry = new Map([[ownedKey, owned], [foreignKey, 'C:\\OtherApp\\manifest.json'], ['unrelated', 'retained']]);
+      const result = uninstallRegistrationFixture(false, registry);
+      expect(result.removed).toEqual([ownedKey]);
+      expect([...registry.entries()]).toEqual([[foreignKey, 'C:\\OtherApp\\manifest.json'], ['unrelated', 'retained']]);
+      expect(config.nsis.deleteAppDataOnUninstall).toBe(false);
+    }
+  });
+
   it('installs for the current user without elevation and preserves pod data on uninstall', () => {
     expect(config.appId).toBe('dev.interego.pod');
     expect(config.productName).toBe('Interego');
