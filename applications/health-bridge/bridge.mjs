@@ -306,8 +306,8 @@ export function createHealthBridge(config) {
           return {accepted:true,...imported,deleted:(batch.deletions||[]).length,receivedAt:o.sources.apple.lastSync,completeHealthHistory:false,publicAtlasUpdated:false,warnings:batch.warnings};
         });return json(res,200,receipt);
       }
-      if(req.method==='GET' && ['/','/privacy','/app.js','/style.css','/ui/app.js','/ui/style.css','/docs/apple-shortcut.md','/docs/duke-setup.md','/docs/oura-setup.md'].includes(path)){
-        const file=path==='/'?'ui/index.html':path==='/privacy'?'ui/privacy.html':path.endsWith('/app.js')?'ui/app.js':path.endsWith('/style.css')?'ui/style.css':path.slice(1);const body=await readFile(new URL(file,import.meta.url));res.writeHead(200,{'Content-Type':path.endsWith('.js')?'text/javascript; charset=utf-8':path.endsWith('.css')?'text/css; charset=utf-8':path.endsWith('.md')?'text/markdown; charset=utf-8':'text/html; charset=utf-8'});return res.end(body);
+      if(req.method==='GET' && ['/','/privacy','/terms','/app.js','/style.css','/ui/app.js','/ui/style.css','/docs/apple-shortcut.md','/docs/duke-setup.md','/docs/oura-setup.md'].includes(path)){
+        const file=path==='/'?'ui/index.html':path==='/privacy'?'ui/privacy.html':path==='/terms'?'ui/terms.html':path.endsWith('/app.js')?'ui/app.js':path.endsWith('/style.css')?'ui/style.css':path.slice(1);const body=await readFile(new URL(file,import.meta.url));res.writeHead(200,{'Content-Type':path.endsWith('.js')?'text/javascript; charset=utf-8':path.endsWith('.css')?'text/css; charset=utf-8':path.endsWith('.md')?'text/markdown; charset=utf-8':'text/html; charset=utf-8'});return res.end(body);
       }
       fail(404,'not_found','This health connection route does not exist.');
     }catch(error){
