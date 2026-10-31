@@ -1,0 +1,107 @@
+name: Diagnostic dashboard inbox SSRF trace
+
+# Temporary branch-only investigation. Do not merge this workflow into master.
+# Runtime sources must remain identical to the repair being diagnosed.
+on:
+  push:
+    branches: [codex/dashboard-inbox-codeql-trace]
+    paths: [.github/workflows/dashboard-inbox-codeql-trace.yml]
+
+permissions:
+  contents: read
+
+jobs:
+  trace:
+    if: github.repository == 'markjspivey-xwisee/interego' && github.ref == 'refs/heads/codex/dashboard-inbox-codeql-trace'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+          persist-credentials: false
+      - name: Verify unchanged repair sources
+        shell: bash
+        run: git diff --exit-code 54e60eed2fbf7b46a7632cc0cd05998d2d42b63c HEAD -- . ':!.github/workflows/dashboard-inbox-codeql-trace.yml'
+      - name: Initialize the same CodeQL analyzer as the failing scan
+        uses: github/codeql-action/init@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4
+        with:
+          languages: javascript-typescript
+          build-mode: none
+          tools: https://github.com/github/codeql-action/releases/download/codeql-bundle-v2.27.3/codeql-bundle-linux64.tar.gz
+      - name: Analyze locally without publishing security results or databases
+        uses: github/codeql-action/analyze@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4
+        with:
+          output: ${{ runner.temp }}/inbox-codeql-sarif
+          upload: never
+          upload-database: false
+      - name: Print bounded request-forgery source and thread-flow locations
+        if: always()
+        shell: bash
+        env:
+          SARIF_DIRECTORY: ${{ runner.temp }}/inbox-codeql-sarif
+        run: |
+          node --input-type=module <<'NODE'
+          import { readdir, readFile, stat } from 'node:fs/promises';
+          import { join } from 'node:path';
+
+          const directory = process.env.SARIF_DIRECTORY;
+          const maxBytes = 256 * 1024;
+          let printedBytes = 0;
+          function print(value) {
+            const line = JSON.stringify(value);
+            if (printedBytes + Buffer.byteLength(line) > maxBytes) {
+              console.log(JSON.stringify({ truncated: true, reason: 'Diagnostic output reached its 256 KiB limit.' }));
+              return false;
+            }
+            console.log(line);
+            printedBytes += Buffer.byteLength(line);
+            return true;
+          }
+          function location(value, run) {
+            const physical = value?.physicalLocation;
+            const artifact = physical?.artifactLocation;
+            const uri = artifact?.uri ?? run.artifacts?.[artifact?.index]?.location?.uri;
+            return {
+              id: value?.id,
+              uri: typeof uri === 'string' ? uri.slice(0, 600) : undefined,
+              region: physical?.region && {
+                startLine: physical.region.startLine, startColumn: physical.region.startColumn,
+                endLine: physical.region.endLine, endColumn: physical.region.endColumn,
+              },
+              message: typeof value?.message?.text === 'string' ? value.message.text.slice(0, 300) : undefined,
+            };
+          }
+          const reports = [];
+          for (const name of (await readdir(directory)).filter(name => name.endsWith('.sarif')).sort()) {
+            const file = join(directory, name);
+            if ((await stat(file)).size > 64 * 1024 * 1024) throw new Error('SARIF exceeded the diagnostic input limit.');
+            const sarif = JSON.parse(await readFile(file, 'utf8'));
+            for (const run of sarif.runs ?? []) for (const result of run.results ?? []) {
+              const ruleId = result.ruleId ?? run.tool?.driver?.rules?.[result.ruleIndex]?.id;
+              if (ruleId !== 'js/request-forgery') continue;
+              reports.push({
+                ruleId,
+                locations: (result.locations ?? []).slice(0, 20).map(item => location(item, run)),
+                relatedLocations: (result.relatedLocations ?? []).slice(0, 100).map(item => location(item, run)),
+                codeFlows: (result.codeFlows ?? []).slice(0, 8).map(flow => ({
+                  threadFlows: (flow.threadFlows ?? []).slice(0, 4).map(thread => ({
+                    locations: (thread.locations ?? []).slice(0, 160).map(step => ({
+                      location: location(step.location, run),
+                      kinds: step.kinds, nestingLevel: step.nestingLevel, executionOrder: step.executionOrder,
+                    })),
+                    totalLocations: thread.locations?.length ?? 0,
+                  })),
+                  totalThreadFlows: flow.threadFlows?.length ?? 0,
+                })),
+                totalCodeFlows: result.codeFlows?.length ?? 0,
+              });
+            }
+          }
+          reports.sort((a, b) => Number(b.locations.some(item => item.uri?.endsWith('deploy/mcp-relay/egress.ts')))
+            - Number(a.locations.some(item => item.uri?.endsWith('deploy/mcp-relay/egress.ts'))));
+          print({ ruleId: 'js/request-forgery', totalResults: reports.length, maximumResultsPrinted: 50, maximumOutputBytes: maxBytes });
+          for (const report of reports.slice(0, 50)) if (!print(report)) break;
+          if (reports.length > 50) print({ truncated: true, remainingResults: reports.length - 50 });
+          if (!reports.length) throw new Error('No request-forgery result was reproduced; this diagnostic does not explain the PR alert.');
+          NODE
