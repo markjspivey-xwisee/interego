@@ -16,6 +16,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { spawn } from 'node:child_process';
 import {
   publish,
   discover,
@@ -26,6 +27,10 @@ import {
   rebuildManifestFromPod,
   fetchGraphContent,
   parseDistributionFromDescriptorTurtle,
+  graphIriFromDescriptorTurtle,
+  parseAuthorshipProofFromDescriptorTurtle,
+  subscribe,
+  type WebSocketConstructor,
 } from '@interego/solid';
 import {
   ContextDescriptor,
@@ -408,6 +413,158 @@ describe('bounded manifest — the write stays O(1) in the pod size', () => {
     // line would duplicate the whole list on every roll-over.
     expect(new Set(links).size).toBe(links.length);
     expect((hot.match(/iep:manifestArchive/g) ?? []).length).toBe(1);
+  });
+});
+
+// The stream deadline cannot interrupt a synchronous parser. Run the actual built
+// module in another process so the parent can stop a regressed regex even while
+// the child's event loop is blocked. Startup has its own budget; the CPU budget
+// starts only after the module has loaded and the child announces readiness.
+function iriParserChild(unsafeControl = false): Promise<{ timedOut: boolean; code: number | null; output: string }> {
+  const source = unsafeControl ? String.raw`
+    process.stdout.write('ready\n');
+    for await (const chunk of process.stdin) { void chunk; }
+    const body = 'iep:describes <='.repeat(500000);
+    body.match(/iep:describes\s+<([^>]+)>/);
+    process.stdout.write('done\n');
+  ` : String.raw`
+    import assert from 'node:assert/strict';
+    const api = await import(process.argv[1]);
+    process.stdout.write('ready\n');
+    for await (const chunk of process.stdin) { void chunk; }
+    const junk = predicate => (predicate + ' <=').repeat(200000);
+    for (const [predicate, field] of [
+      ['iep:describes', 'describes'], ['iep:issuer', 'issuer'],
+      ['dct:conformsTo', 'conformsTo'], ['iep:supersedes', 'supersedes'], ['iep:pgslUri', 'pgslUri'],
+    ]) {
+      const rows = api.parseManifest('<https://pod.example/u/d.ttl> a iep:ManifestEntry ;\n' + junk(predicate) + '\n.');
+      assert.equal(rows.length, 1);
+      assert.deepEqual(rows[0][field], field === 'describes' ? [] : undefined);
+    }
+    assert.deepEqual(api.parseManifestArchiveUrls(junk('iep:manifestArchive'), 'https://pod.example/u/.well-known/context-graphs'), []);
+    assert.deepEqual(api.parseManifestArchiveUrls(junk('hydra:previous'), 'https://pod.example/u/.well-known/context-graphs'), []);
+    assert.equal(api.graphIriFromDescriptorTurtle(junk('cg:describes')), null);
+    assert.equal(api.parseAuthorshipProofFromDescriptorTurtle('iep:authorshipProof [ ' + junk('iep:issuer') + ' ]'), null);
+    assert.equal(api.parseDistributionFromDescriptorTurtle('iep:affordance [ ' + junk('hydra:target') + ' dcat:mediaType "text/turtle" ]'), null);
+    const response = text => ({ ok: true, status: 200, statusText: 'OK', headers: { get: () => null },
+      text: async () => text, json: async () => ({ receiveFrom: 'wss://pod.example/channel' }) });
+    const subscription = await api.subscribe('https://pod.example/u/', () => {}, {
+      fetch: async (_url, init) => response(init?.method === 'GET' ? '<' + 'WebSocketChannel2023'.repeat(100000) : ''),
+      WebSocket: class { close() {} },
+    });
+    subscription.unsubscribe();
+    process.stdout.write('done\n');
+  `;
+  return new Promise((resolve, reject) => {
+    const child = spawn(process.execPath, ['--input-type=module', '-e', source,
+      new URL('../packages/solid/dist/client.js', import.meta.url).href], { windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] });
+    let ready = false, timedOut = false, output = '';
+    let timer = setTimeout(() => { timedOut = true; child.kill('SIGKILL'); }, 12_000);
+    child.stdout.on('data', chunk => {
+      output += String(chunk);
+      if (!ready && output.includes('ready\n')) {
+        ready = true; clearTimeout(timer);
+        timer = setTimeout(() => { timedOut = true; child.kill('SIGKILL'); }, 3000);
+        child.stdin.end();
+      }
+    });
+    child.stderr.on('data', chunk => { output += String(chunk); });
+    child.once('error', error => { clearTimeout(timer); reject(error); });
+    child.once('close', code => {
+      clearTimeout(timer);
+      if (!ready) { reject(new Error('IRI parser child did not become ready: ' + output)); return; }
+      resolve({ timedOut, code, output });
+    });
+  });
+}
+
+describe('IRIREF boundaries in manifest and descriptor readers', () => {
+  it('retains valid metadata and its relative, Unicode, percent and textual Unicode-escape spelling', () => {
+    const graph = 'https://example.org/图?x=%3C#one';
+    const previous = String.raw`urn:prior:\u03A3`;
+    const [row] = parseManifest(`<${POD}context-graphs/é%20one.ttl> a iep:ManifestEntry ;
+    iep:describes <${graph}> ;
+    iep:describes <urn:graph:second> ;
+    iep:issuer <../people/alice> ;
+    dct:conformsTo <urn:shape:Σ> ;
+    dct:conformsTo <https://example.org/shapes/%3C> ;
+    iep:supersedes <${previous}> ;
+    iep:pgslUri <urn:pgsl:sha256:abc%3C> ;
+    iep:trustLevel iep:SelfAsserted ;
+    iep:modalStatus iep:Hypothetical .`);
+    expect(row).toMatchObject({ descriptorUrl: `${POD}context-graphs/é%20one.ttl`, describes: [graph, 'urn:graph:second'],
+      issuer: '../people/alice', conformsTo: ['urn:shape:Σ', 'https://example.org/shapes/%3C'], supersedes: [previous],
+      pgslUri: 'urn:pgsl:sha256:abc%3C', trustLevel: 'SelfAsserted', modalStatus: 'Hypothetical' });
+    expect(row?.facets).toContainEqual({ type: 'Trust', issuer: '../people/alice', trustLevel: 'SelfAsserted' });
+    expect(row?.facets).toContainEqual({ type: 'Semiotic', modalStatus: 'Hypothetical' });
+  });
+
+  it('rejects nested raw openers in all five metadata fields without inventing a value', () => {
+    for (const predicate of ['iep:describes', 'iep:issuer', 'dct:conformsTo', 'iep:supersedes', 'iep:pgslUri']) {
+      const [row] = parseManifest(`<${POD}d.ttl> a iep:ManifestEntry ;\n${predicate} <urn:bad<forged> .`);
+      expect(row).toMatchObject({ descriptorUrl: `${POD}d.ttl`, describes: [] });
+      for (const field of ['issuer', 'conformsTo', 'supersedes', 'pgslUri']) expect(row).not.toHaveProperty(field);
+    }
+    expect(parseManifest('<urn:bad<forged> a iep:ManifestEntry ;\niep:describes <urn:graph:one> .')).toEqual([]);
+  });
+
+  it('retains empty and relative archive references, comma lists and Unicode/percent paths', () => {
+    const turtle = '<> iep:manifestArchive <context-graphs-archive-0001>, <>, <图%3C> .\n'
+      + '<> hydra:previous <../archive/context-graphs-archive-0000> .';
+    expect(parseManifestArchiveUrls(turtle, MANIFEST)).toEqual([
+      new URL('context-graphs-archive-0001', MANIFEST).href, MANIFEST,
+      new URL('图%3C', MANIFEST).href, new URL('../archive/context-graphs-archive-0000', MANIFEST).href,
+    ]);
+    expect(parseManifestArchiveUrls('<> iep:manifestArchive <bad<nested> .', MANIFEST)).toEqual([]);
+  });
+
+  it('preserves graph aliases and distribution payload references while refusing malformed IRIREF', () => {
+    for (const prefix of ['iep', 'cg']) {
+      expect(graphIriFromDescriptorTurtle(`${prefix}:describes <../graphs/图%3C>`)).toBe('../graphs/图%3C');
+      expect(graphIriFromDescriptorTurtle(`${prefix}:describes <bad<nested>`)).toBeNull();
+    }
+    for (const predicate of ['hydra:target', 'dcat:accessURL']) {
+      const distribution = (iri: string) => `iep:affordance [ ${predicate} <${iri}> ; dcat:mediaType "text/turtle" ; iep:encrypted false ]`;
+      expect(parseDistributionFromDescriptorTurtle(distribution('../graphs/图%3C'))).toMatchObject({ accessURL: '../graphs/图%3C', encrypted: false });
+      expect(parseDistributionFromDescriptorTurtle(distribution('bad<nested'))).toBeNull();
+    }
+  });
+
+  it('retains authorship metadata and refuses a nested opener in each required IRI field', () => {
+    const fields = { issuer: 'urn:agent:one', verificationMethod: 'did:key:zExample#key', ownerWebId: '../owner#me', descriptorId: 'urn:descriptor:图%3C' };
+    const proof = (values: typeof fields) => 'iep:authorshipProof [\n'
+      + Object.entries(values).map(([field, value]) => `iep:${field} <${value}> ;`).join('\n')
+      + '\niep:signerAddress "0x1234" ; iep:created "2026-01-01T00:00:00Z" ; iep:proofValue "sample" ]';
+    expect(parseAuthorshipProofFromDescriptorTurtle(proof(fields))).toMatchObject(fields);
+    for (const field of Object.keys(fields)) expect(parseAuthorshipProofFromDescriptorTurtle(proof({ ...fields, [field]: 'bad<nested' }))).toBeNull();
+  });
+
+  it('negotiates the first valid relative notification IRI without retaining a nested opener', async () => {
+    const requested: string[] = [];
+    const socket: WebSocketConstructor = class { onmessage: ((event: { data: unknown }) => void) | null = null; close() {} };
+    const sub = await subscribe(POD, () => {}, { WebSocket: socket,
+      fetch: async (url, init) => {
+        requested.push(url);
+        if (init?.method === 'HEAD') return respond(200, '', null);
+        if (init?.method === 'POST') return { ...respond(200, ''), json: async () => ({ receiveFrom: 'wss://pod.example/channel' }) };
+        return respond(200, '<bad<../.notifications/WebSocketChannel2023/图%3C> <../.notifications/WebSocketChannel2023/second>');
+      },
+    });
+    expect(requested.at(-1)).toBe(new URL('../.notifications/WebSocketChannel2023/图%3C', `${POD}.well-known/solid`).href);
+    sub.unsubscribe();
+  });
+
+  it('keeps malformed multi-megabyte metadata, archive and notification scans within a parent CPU deadline', async () => {
+    const result = await iriParserChild();
+    expect(result.timedOut, result.output).toBe(false);
+    expect(result.code, result.output).toBe(0);
+    expect(result.output).toContain('done\n');
+  });
+
+  it('the child boundary actually stops the former quadratic scan', async () => {
+    const result = await iriParserChild(true);
+    expect(result.timedOut, result.output).toBe(true);
+    expect(result.output).not.toContain('done\n');
   });
 });
 
