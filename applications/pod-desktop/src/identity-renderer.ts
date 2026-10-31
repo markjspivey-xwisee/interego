@@ -6,6 +6,8 @@ interface Context {
   locallyBusy(): boolean;
   openDialog(dialog: HTMLDialogElement): void;
   closeDialog(dialog: HTMLDialogElement): void;
+  /** Returns false when switching pages would interrupt an owner operation. */
+  showIdentity?(): boolean;
 }
 const METHODS = ['localIdentityStatus', 'setupLocalIdentity', 'approveLocalIdentity', 'denyLocalIdentity', 'forgetLocalIdentity', 'identityExtensionIds',
   'setIdentityExtensionIds', 'backupLocalIdentity', 'restoreLocalIdentity'] as const;
@@ -32,10 +34,30 @@ export function installIdentityUi(api: DesktopApi, context: Context): { refresh(
   let changing = false; let epoch = 0; let reading = 0; let extensionsLoaded = false; let extensionsDirty = false;
   let backupMode: 'backup' | 'restore' = 'backup'; let forgetFingerprint: string | undefined;
   const acknowledged = new Set<string>();
+  const revealedRequests = new Set<string>();
   const available = () => supported && !!context.pod()?.configured && !context.pod()?.restorePending;
   const occupied = () => changing || context.locallyBusy();
   const recovery = () => readFailure || !!state?.configured && !state.identity;
   const currentFingerprint = () => fingerprint(state) ?? (recovery() ? 'unavailable' : undefined);
+  function revealNewRequests(): void {
+    if (!state) return;
+    const pendingIds = new Set(state.pending.map(request => request.id));
+    for (const id of revealedRequests) if (!pendingIds.has(id)) revealedRequests.delete(id);
+    if (!available() || occupied() || !state?.configured || !state.identity || !context.showIdentity) return;
+    const identity = state.identity;
+    if (!identity.did || !identity.fingerprint) return;
+    const ids = state.pending.filter(request => request.state === 'waiting' && fresh(request) && !revealedRequests.has(request.id)
+      && (request.purpose !== 'link' || request.credentialDid === identity.did && request.credentialFingerprint === identity.fingerprint))
+      .map(request => request.id);
+    if (!ids.length) return;
+    // Selecting Identity can synchronously start another status read. Mark the
+    // whole accepted batch first, then roll it back if the owner is busy.
+    for (const id of ids) revealedRequests.add(id);
+    let revealed = false;
+    try { revealed = context.showIdentity() === true; } catch { /* Retry attention on a later accepted poll. */ }
+    if (!revealed) { for (const id of ids) revealedRequests.delete(id); return; }
+    message('');
+  }
   function message(value: string, error = false): void {
     const target = el('identity-message'); target.textContent = value; target.hidden = !value;
     target.classList.toggle('error', error); target.setAttribute('role', error ? 'alert' : 'status');
@@ -152,7 +174,7 @@ export function installIdentityUi(api: DesktopApi, context: Context): { refresh(
         } catch { if (requested === reading && began === epoch) message('Browser sign-in access could not be checked. Refresh before changing it.', true); }
       }
     } catch { if (requested === reading && began === epoch) { state = undefined; readFailure = true; acknowledged.clear(); message('Your sign-in identity could not be checked. Refresh to try again.', true); } }
-    if (requested === reading && began === epoch) render();
+    if (requested === reading && began === epoch) { render(); revealNewRequests(); }
   }
   function beginBackup(mode: 'backup' | 'restore'): void {
     if (occupied() || !available() || (mode === 'backup' ? !state?.configured && !readFailure : !state || state.configured)) return;

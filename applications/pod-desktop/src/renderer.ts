@@ -70,7 +70,14 @@ const bridgeUi = installBridgeUi(api, {
   onAccessChanged: () => { drawConnections(); void loadConnections(); },
 });
 const federationUi = installFederationUi(api, { pod: () => status, locallyBusy: () => busy !== null });
-const identityUi = installIdentityUi(api, { pod: () => status, locallyBusy: () => busy !== null, openDialog, closeDialog });
+const identityUi = installIdentityUi(api, {
+  pod: () => status, locallyBusy: () => busy !== null, openDialog, closeDialog,
+  showIdentity: () => {
+    if (busy !== null || document.querySelector('dialog[open]')) return false;
+    if (currentPage !== 'identity') selectPage('identity');
+    return true;
+  },
+});
 
 function connectionDate(value: string): string {
   return Number.isFinite(Date.parse(value)) ? new Intl.DateTimeFormat(undefined, {

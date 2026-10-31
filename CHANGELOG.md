@@ -1,5 +1,15 @@
 # Changelog
 
+## 2026-10-31 — Make PC-key linking and sign-in approval easier to review
+
+Adding a PC key can succeed on the account service even when its reply times out on the computer. An uncertain link result now offers a deliberate dashboard refresh to check registered credentials before starting another link; it never retries the credential update or reports success without a verified receipt. The account, hosted pod and game progress remain with the existing owner.
+
+A fresh waiting request opens the installed app's Identity page once, so its account, permissions and matching code are visible for review. Open dialogs and busy operations defer the page change. Expired, completing, previously shown or mismatched-key requests do not interrupt the user, and consent and approval remain explicit.
+
+Only account linking receives a 45-second total HTTPS budget across DNS, headers and body, clipped to the known request expiry. The native broker, Windows companion and Wallet use ordered 55-, 60- and 65-second outer ceilings. Ordinary sign-in keeps its existing limits. The two-minute handoff lifetime, fresh account-holder checks, one-use proofs and final native approval are unchanged.
+
+The change requires an updated Windows app and native companion plus updated Interego Wallet code. A hosted deployment alone does not update those installed components.
+
 ## 2026-10-31 — Correct account inbox sessions and confine relay requests
 
 The identity dashboard now reads inbox metadata through a dedicated identity-authenticated relay route. The server derives the pod from the verified account, refuses foreign origins, caller-selected pod addresses, redirects and oversized responses, and rechecks the session before releasing metadata. Existing OAuth inbox access and PC-key linking keep their separate authorization rules. Inbox text and errors render as text, so descriptor metadata cannot insert markup into the account page. No account, credential, game progress or federation settings are changed by an inbox read.

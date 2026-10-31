@@ -9,6 +9,7 @@ import type { DesktopApi, LocalNote, PodStatus } from '../src/types.js';
 import type { AgentConnection, AgentSetup } from '../src/agent-types.js';
 import type { BridgeStatus, StableBridgeView } from '../src/bridge-types.js';
 import type { FederationStatus } from '@interego/pod-federation';
+import type { LocalIdentityApproval, LocalIdentityLinkApproval, LocalIdentitySignInApproval, LocalIdentityStatus } from '../src/local-identity-types.js';
 
 const APP = join(dirname(fileURLToPath(import.meta.url)), '..');
 let bundle: string;
@@ -27,6 +28,15 @@ const state = (value: PodStatus['state'], noteCount = 0): PodStatus => ({
   state: value, configured: value !== 'unconfigured', running: value === 'running',
   localOnly: true, federationEnabled: false, noteCount,
 });
+const identityReady = (pending: readonly LocalIdentityApproval[] = []): LocalIdentityStatus => ({ configured: true,
+  identity: { did: 'did:key:z6MkPublicIdentity', fingerprint: 'FINGERPRINT-THIS-PC', createdAt: '2026-10-30T12:00:00Z' }, pending });
+const identityLink = (patch: Partial<LocalIdentityLinkApproval> = {}): LocalIdentityLinkApproval => ({ purpose: 'link', id: 'link-attention', state: 'waiting',
+  identityOrigin: 'https://identity.example', owner: { userId: 'u-pk-existing-owner', did: 'did:web:identity.example:users:u-pk-existing-owner',
+    webId: 'https://identity.example/users/u-pk-existing-owner/profile#me', podUrl: 'https://pod.example/u-pk-existing-owner/', displayName: 'Existing player' },
+  credentialDid: 'did:key:z6MkPublicIdentity', credentialFingerprint: 'FINGERPRINT-THIS-PC', verificationCode: 'ABCD 1234', expiresAt: new Date(Date.now() + 120_000).toISOString(), ...patch });
+const identitySignIn = (): LocalIdentitySignInApproval => ({ id: 'signin-attention', state: 'waiting', clientId: 'my-game', clientName: 'My game',
+  relayOrigin: 'https://relay.example', identityOrigin: 'https://identity.example', redirectOrigin: 'https://game.example', redirectUri: 'https://game.example/callback',
+  scopes: ['mcp:read'], resource: null, verificationCode: 'DCBA 4321', expiresAt: new Date(Date.now() + 120_000).toISOString() });
 const note = (title = 'A note to keep', body = 'The exact words I want to remember.'): LocalNote => ({
   id: 'note-1', title, body, createdAt: '2026-10-29T12:00:00Z', updatedAt: '2026-10-29T12:00:00Z',
 });
@@ -207,6 +217,64 @@ async function mount(initial = state('unconfigured'), overrides: Partial<Desktop
     },
   };
 }
+
+describe('new native identity request attention', () => {
+  it.each([identityLink, identitySignIn])('reveals a fresh waiting request once without granting consent or approving it', async makeRequest => {
+    let current = identityReady(); const app = await mount(state('stopped'), { localIdentityStatus: vi.fn(async () => current) });
+    expect(app.get('identity-page').hidden).toBe(true); const pending = makeRequest(); current = identityReady([pending]); await app.poll();
+    expect(app.get('identity-page').hidden).toBe(false); expect(app.get('nav-identity').getAttribute('aria-current')).toBe('page');
+    expect(app.get('identity-pending').textContent).toContain(pending.verificationCode);
+    expect(app.get<HTMLInputElement>('identity-verify-' + pending.id).checked).toBe(false);
+    expect(app.get('identity-pending').querySelector<HTMLButtonElement>('button[data-identity-approve]')!.disabled).toBe(true);
+    expect(app.api.approveLocalIdentity).not.toHaveBeenCalled(); expect(app.api.setupLocalIdentity).not.toHaveBeenCalled(); expect(app.api.enableFederation).not.toHaveBeenCalled();
+    app.click('nav-memory'); await app.poll(); await app.poll(); expect(app.get('memory-page').hidden).toBe(false);
+    current = identityReady([]); await app.poll(); current = identityReady([identityLink({ id: 'another-fresh-request' })]); await app.poll();
+    expect(app.get('identity-page').hidden).toBe(false); expect(app.api.approveLocalIdentity).not.toHaveBeenCalled();
+  });
+
+  it.each(['completing', 'expired', 'different-key'] as const)('does not interrupt for a %s request', async kind => {
+    let current = identityReady(); const app = await mount(state('stopped'), { localIdentityStatus: vi.fn(async () => current) });
+    const pending = kind === 'completing' ? identityLink({ state: 'completing' }) : kind === 'expired'
+      ? identityLink({ expiresAt: new Date(Date.now() - 1).toISOString() }) : identityLink({ credentialFingerprint: 'ANOTHER-PC-KEY' });
+    current = identityReady([pending]); await app.poll(); expect(app.get('memory-page').hidden).toBe(false);
+    expect(app.api.approveLocalIdentity).not.toHaveBeenCalled();
+  });
+
+  it('defers a fresh request during a local save and reveals it after the operation finishes', async () => {
+    const save = deferred<LocalNote>(); let current = identityReady();
+    const app = await mount(state('running'), { localIdentityStatus: vi.fn(async () => current), saveNote: vi.fn(() => save.promise) });
+    app.fill('note-title', 'Keep my draft'); app.fill('note-body', 'A local note.'); app.submit('note-form'); await flush();
+    expect(app.dom.window.document.body.getAttribute('aria-busy')).toBe('true'); current = identityReady([identityLink()]); await app.poll();
+    expect(app.get('memory-page').hidden).toBe(false); save.resolve(note('Keep my draft', 'A local note.')); await flush(); await app.poll();
+    expect(app.get('identity-page').hidden).toBe(false); expect(app.api.approveLocalIdentity).not.toHaveBeenCalled();
+  });
+
+  it('preserves an open backup dialog and reveals the still-fresh request after it closes', async () => {
+    let current = identityReady(); const app = await mount(state('running'), { localIdentityStatus: vi.fn(async () => current) });
+    app.click('nav-backup'); app.click('backup-notes'); const dialog = app.get<HTMLDialogElement>('backup-dialog');
+    expect(dialog.open).toBe(true); current = identityReady([identityLink()]); await app.poll();
+    expect(dialog.open).toBe(true); expect(app.get('identity-page').hidden).toBe(true); expect(app.dom.window.document.activeElement?.id).toBe('backup-passphrase');
+    app.click('cancel-backup'); await flush(); await app.poll(); expect(app.get('identity-page').hidden).toBe(false);
+    expect(app.api.backup).not.toHaveBeenCalled(); expect(app.api.approveLocalIdentity).not.toHaveBeenCalled();
+  });
+
+  it('does not reveal a deferred request that expired while the owner kept a dialog open', async () => {
+    let current = identityReady(); const app = await mount(state('running'), { localIdentityStatus: vi.fn(async () => current) });
+    app.click('nav-backup'); app.click('backup-notes'); current = identityReady([identityLink()]); await app.poll();
+    expect(app.get<HTMLDialogElement>('backup-dialog').open).toBe(true); current = identityReady([identityLink({ expiresAt: new Date(Date.now() - 1).toISOString() })]);
+    app.click('cancel-backup'); await flush(); await app.poll(); expect(app.get('identity-page').hidden).toBe(true);
+    expect(app.get('backup-page').hidden).toBe(false); expect(app.api.approveLocalIdentity).not.toHaveBeenCalled();
+  });
+
+  it('clears an old identity error when revealing a new request without clearing its owner consent requirement', async () => {
+    let current = identityReady(); const app = await mount(state('stopped'), { localIdentityStatus: vi.fn(async () => current),
+      openHosted: vi.fn(async () => { throw new Error('Earlier dashboard launch failed'); }) });
+    app.click('nav-identity'); app.click('open-identity-dashboard'); await flush(); expect(app.get('identity-message').getAttribute('role')).toBe('alert');
+    app.click('nav-memory'); current = identityReady([identityLink()]); await app.poll();
+    expect(app.get('identity-page').hidden).toBe(false); expect(app.get('identity-message').hidden).toBe(true); expect(app.get('identity-message').textContent).toBe('');
+    expect(app.get<HTMLInputElement>('identity-verify-link-attention').checked).toBe(false); expect(app.api.approveLocalIdentity).not.toHaveBeenCalled();
+  });
+});
 
 describe('the installed page starts in HTML parser order', () => {
   it('opens the first-use screen and completes explicit setup through the shipping script', async () => {
