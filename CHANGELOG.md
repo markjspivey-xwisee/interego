@@ -6,6 +6,12 @@ The installed Windows app repairs browser companion registration removed by an o
 
 The new uninstaller retains registration during updates and removes only its own matching registration on a full uninstall. A setup failure is shown separately from valid saved IDs so the existing recovery action remains usable. Tests use temporary protected-policy files and an injected registry; the actual Windows packaging and offline lifecycle remain release gates. Public bridge access and federation stay off by default.
 
+## 2026-10-31 — Wait for Foxxi's own LMS gradebook before state access
+
+The own-LMS gradebook waits for its tenant snapshot before serving stateful launch, gradebook and AGS routes. A bounded failed read returns unavailable and can be retried; only a definite absence permits empty initialization. Snapshot publication stays blocked during unresolved hydration. Safe diagnostics report load state, map counts and a content-digest witness without exposing learner records.
+
+Tests exercise delayed startup, failed-read recovery and restoration of an existing original row without another score post through isolated HTTP transports. This change does not reconstruct historical grades or change the existing asynchronous snapshot publication and AGS score acknowledgments.
+
 ## 2026-10-31 — Make PC-key linking and sign-in approval easier to review
 
 Adding a PC key can succeed on the account service even when its reply times out on the computer. An uncertain link result now offers a deliberate dashboard refresh to check registered credentials before starting another link; it never retries the credential update or reports success without a verified receipt. The account, hosted pod and game progress remain with the existing owner.

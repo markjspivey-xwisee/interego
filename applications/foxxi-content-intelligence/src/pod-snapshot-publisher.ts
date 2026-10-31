@@ -54,6 +54,7 @@ import type {
   PGSLInstance,
 } from '@interego/pgsl';
 import { createHash } from 'node:crypto';
+import { parseTrig, readIriValue, readStringValue } from '@interego/core';
 import { bridgeDid, signAsBridge, withPublishLock } from './bridge-signer.js';
 import { FOXXI_NS } from './foxxi-vocab.js';
 import { decodePodBundle } from './pod-kv-store.js';
@@ -89,11 +90,13 @@ interface SnapshotRegistration {
 
 const registry = new Map<string, SnapshotRegistration>();
 
-function podConfig(): {
+export interface SnapshotPodConfig {
   podUrl: string;
   authoritativeSource: IRI;
-  fetch: FetchFn;
-} | null {
+  fetch: typeof globalThis.fetch;
+}
+
+function podConfig(): SnapshotPodConfig | null {
   const podUrl = process.env.FOXXI_TENANT_POD_URL;
   const authoritativeSource = process.env.FOXXI_AUTHORITATIVE_SOURCE;
   if (!podUrl || !authoritativeSource) return null;
@@ -308,7 +311,9 @@ export async function flushAll(): Promise<void> {
  * The descriptor URL is deterministic for the latest version (the
  * publisher always uses the same slug), so a single GET suffices.
  */
-export async function loadLatestSnapshot<T>(surface: string, config = podConfig()): Promise<T | null> {
+export async function loadLatestSnapshot<T>(surface: string, config: {
+  podUrl: string; authoritativeSource: IRI; fetch: FetchFn;
+} | null = podConfig()): Promise<T | null> {
   if (!config) return null;
   const graphUrl = `${config.podUrl}foxxi/snapshots/${surface}-snapshot-graph.trig`;
   try {
@@ -327,6 +332,65 @@ export async function loadLatestSnapshot<T>(surface: string, config = podConfig(
   } catch (err) {
     console.error(`[pod-snapshot/${surface}] hydrate failed:`, (err as Error).message);
     return null;
+  }
+}
+
+export type StrictSnapshotResult<T> =
+  | { state: 'loaded'; snapshot: T; revision: { sha256: string; etag?: string; version?: number } }
+  | { state: 'absent' }
+  | { state: 'unavailable'; reason: 'not-configured' | 'transport' | 'http' | 'invalid-snapshot'; status?: number };
+
+/** Opt-in read for state that must never mistake a failed read for an empty store.
+ * A digest witnesses the exact bundle bytes, not a monotonic revision or signature verification.
+ * The existing nullable loader remains unchanged for its other callers.
+ */
+export async function loadLatestSnapshotStrict<T>(surface: string, options: {
+  config?: SnapshotPodConfig | null;
+  typeIri: IRI;
+  validate: (value: unknown) => value is T;
+  timeoutMs?: number;
+}): Promise<StrictSnapshotResult<T>> {
+  const config = options.config === undefined ? podConfig() : options.config;
+  if (!config) return { state: 'unavailable', reason: 'not-configured' };
+  const abort = new AbortController();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const read = async (): Promise<StrictSnapshotResult<T>> => {
+      const response = await config.fetch(`${config.podUrl.replace(/\/?$/, '/')}foxxi/snapshots/${surface}-snapshot-graph.trig`, {
+        headers: { Accept: 'application/trig, text/turtle', 'Cache-Control': 'no-cache' },
+        cache: 'no-store', redirect: 'manual', signal: abort.signal,
+      });
+      if (response.status === 404) return { state: 'absent' };
+      if (!response.ok) return { state: 'unavailable', reason: 'http', status: response.status };
+      const turtle = await response.text();
+      // Allow the published 4 MiB payload plus its descriptor/TriG wrapper, then bound RDF parsing.
+      if (Buffer.byteLength(turtle, 'utf8') > 8 * 1024 * 1024) return { state: 'unavailable', reason: 'invalid-snapshot' };
+      try {
+        const candidates = parseTrig(turtle).subjects.filter((subject) => readStringValue(subject, FOXXI_BUNDLE_JSON) !== undefined);
+        if (candidates.length !== 1) return { state: 'unavailable', reason: 'invalid-snapshot' };
+        const subject = candidates[0]!;
+        if (readIriValue(subject, 'http://www.w3.org/1999/02/22-rdf-syntax-ns#type' as IRI) !== options.typeIri) return { state: 'unavailable', reason: 'invalid-snapshot' };
+        const encoded = readStringValue(subject, FOXXI_BUNDLE_JSON)!;
+        const bytes = Buffer.from(encoded, 'base64');
+        if (bytes.toString('base64') !== encoded) return { state: 'unavailable', reason: 'invalid-snapshot' };
+        const sha256 = createHash('sha256').update(bytes).digest('hex');
+        if (readStringValue(subject, 'http://purl.org/dc/terms/identifier' as IRI) !== `sha256:${sha256}`) return { state: 'unavailable', reason: 'invalid-snapshot' };
+        const snapshot: unknown = JSON.parse(bytes.toString('utf8'));
+        if (!options.validate(snapshot)) return { state: 'unavailable', reason: 'invalid-snapshot' };
+        const versionText = readStringValue(subject, FOXXI_VERSION);
+        const version = versionText && /^[1-9]\d*$/.test(versionText) ? Number(versionText) : undefined;
+        const etag = response.headers.get('etag');
+        return { state: 'loaded', snapshot, revision: { sha256, ...(etag ? { etag } : {}), ...(Number.isSafeInteger(version) ? { version } : {}) } };
+      } catch { return { state: 'unavailable', reason: 'invalid-snapshot' }; }
+    };
+    return await Promise.race([read(), new Promise<StrictSnapshotResult<T>>((resolve) => {
+      timer = setTimeout(() => { abort.abort(); resolve({ state: 'unavailable', reason: 'transport' }); }, options.timeoutMs ?? 8000);
+    })]);
+  } catch {
+    return { state: 'unavailable', reason: 'transport' };
+  } finally {
+    if (timer) clearTimeout(timer);
+    abort.abort();
   }
 }
 

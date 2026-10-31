@@ -28,7 +28,7 @@
  * RFC 7523); OpenID Connect Core 1.0 (form_post response mode); JOSE (RFC 7515/7517/7519).
  */
 
-import express, { type Express, type Request, type Response } from 'express';
+import express, { type Express, type Request, type Response, type RequestHandler } from 'express';
 import { createHash, randomBytes } from 'node:crypto';
 import { AGS_SCOPE, LTI_CLAIMS, es256Keys, jwsSignEs256, jwsVerifyRs256OrEs256, type Es256Keys, type PlatformRegistration } from './lti13.js';
 import { sendServerError } from './http-errors.js';
@@ -87,6 +87,8 @@ export interface LtiPlatformConfig {
   readonly privateKeyPem?: string;
   /** Called after the gradebook changes, so the bridge can keep it. */
   readonly onChange?: () => void;
+  /** Production gradebooks await their initial pod snapshot before stateful routes run. */
+  readonly ensureReady?: () => Promise<boolean>;
   /** Verify a JWT against a JWKS URL. lti13's verifier when absent. */
   readonly verifyJwt?: (jwt: string, jwksUrl: string) => Promise<{ ok: boolean; payload?: Record<string, unknown>; error?: string }>;
   /** How many unexpired client assertions are remembered for replay protection (10,000 by default). */
@@ -188,6 +190,7 @@ export class LtiPlatform {
   };
   private readonly keys: Es256Keys;
   private readonly onChange: () => void;
+  private readonly readiness: () => Promise<boolean>;
   private readonly verifyJwt: NonNullable<LtiPlatformConfig['verifyJwt']>;
   private readonly maxLiveAssertions: number;
   private readonly grants = new Map<string, Grant>();
@@ -202,9 +205,12 @@ export class LtiPlatform {
     this.tool = config.tool ?? selfTool(config.selfBaseUrl);
     this.keys = es256Keys('foxxi-lms', this.issuer, config.privateKeyPem);
     this.onChange = config.onChange ?? (() => undefined);
+    this.readiness = config.ensureReady ?? (() => Promise.resolve(true));
     this.verifyJwt = config.verifyJwt ?? jwsVerifyRs256OrEs256;
     this.maxLiveAssertions = config.maxLiveAssertions ?? MAX_SEEN_JTI;
   }
+
+  ensureReady(): Promise<boolean> { return this.readiness(); }
 
   get authorizationUrl(): string { return `${this.issuer}/auth`; }
   get tokenUrl(): string { return `${this.issuer}/token`; }
@@ -566,6 +572,16 @@ export function attachLtiPlatformRoutes(app: Express, platform: LtiPlatform): vo
   app.get(`${base}/.well-known/openid-configuration`, (_req, res) => { res.json(platform.configuration()); });
   app.get(`${base}/jwks.json`, (_req, res) => { res.json(platform.jwks()); });
 
+  const ready: RequestHandler = (_req, res, next) => {
+    void platform.ensureReady().then((available) => {
+      if (!available) { res.set('Retry-After', '1').status(503).json({ error: 'lti_gradebook_unavailable' }); return; }
+      next();
+    }).catch(() => { res.set('Retry-After', '1').status(503).json({ error: 'lti_gradebook_unavailable' }); });
+  };
+  // These routes consume a persisted launch's membership/line item or read/write the gradebook.
+  // The stateless configuration, JWKS and client-credentials endpoint stay independent.
+  app.use(`${base}/contexts`, ready);
+
   const authorize = (req: Request, res: Response): void => {
     const params = (req.method === 'GET' ? req.query : req.body) as Record<string, unknown> | undefined;
     const r = platform.authorize(params ?? {});
@@ -575,8 +591,8 @@ export function attachLtiPlatformRoutes(app: Express, platform: LtiPlatform): vo
     if (req.accepts(['html', 'json']) === 'json') { res.json({ form_post: { action: r.action, method: 'POST', fields: r.fields } }); return; }
     res.set('Referrer-Policy', 'no-referrer').type('html').send(autoPostForm(r.action, r.fields));
   };
-  app.get(`${base}/auth`, authorize);
-  app.post(`${base}/auth`, formBody, authorize);
+  app.get(`${base}/auth`, ready, authorize);
+  app.post(`${base}/auth`, ready, formBody, authorize);
 
   app.post(`${base}/token`, formBody, (req, res) => { void (async () => {
     const r = await platform.token((req.body ?? {}) as Record<string, unknown>);
