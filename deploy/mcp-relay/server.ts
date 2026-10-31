@@ -157,6 +157,7 @@ import { createNsDereference } from './ns-dereference.js';
 // Pod authorization, extracted so the rule is importable: server.ts calls app.listen() at
 // module scope and cannot be imported, which is why this area only had source-text coverage.
 import { authorizePodUrl } from './pod-authorization.js';
+import { dashboardInboxCors, dashboardInboxHandler } from './dashboard-inbox.js';
 // A delegated cross-pod descriptor is on behalf of the pod it lands on, not the owner of
 // the calling agent's session.  Kept importable so that fail-closed attribution is exercised
 // without importing this self-starting server module.
@@ -13432,6 +13433,9 @@ app.use(corsMiddleware({
   allowHeaders: MCP_ALLOW_HEADERS,
   exposeHeaders: 'mcp-session-id, mcp-protocol-version',
 }));
+// This account-only route must set its exact configured identity origin before
+// the OAuth middleware freezes CORS. Other relay routes retain the normal list.
+app.use('/dashboard/inbox', dashboardInboxCors(IDENTITY_URL));
 
 // ── OAuth Routes ────────────────────────────────────────────
 // mcpAuthRouter (now from the FROZEN @modelcontextprotocol/server-legacy — v2 ships no
@@ -15334,6 +15338,12 @@ const bearerVerifyLimiter = rateLimit({
  * adoption. This endpoint closes the visibility gap without leaking
  * the recipient graph at the manifest level.
  */
+// The account page holds an identity bearer. Keep its narrow owner-derived read
+// separate from the OAuth-only /inbox endpoint used by existing relay clients.
+app.get('/dashboard/inbox', bearerVerifyLimiter, dashboardInboxHandler({
+  identityOrigin: IDENTITY_URL, cssUrl: CSS_URL, verifyIdentity: verifyBearerToken, fetch: solidFetch,
+}));
+
 app.get('/inbox', bearerVerifyLimiter, async (req, res) => {
   const suppliedPodUrl = req.query.pod as string | undefined;
   if (!suppliedPodUrl) {

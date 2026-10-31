@@ -94,6 +94,7 @@ import { mountLocalIdentityLink, LocalIdentityLinkError, localLinkPublicKey, typ
 import { localIdentityLinkDashboard } from './local-identity-link-dashboard.js';
 import { mountReturningPasskeyLogin, returningPasskeyRelay, ReturningPasskeyLoginError, type ReturningPasskeyProof } from './returning-passkey-login.js';
 import { returningPasskeyLoginDashboard } from './returning-passkey-dashboard.js';
+import { dashboardInboxScript } from './dashboard-inbox.js';
 
 // ── Lazy heavy imports ──────────────────────────────────────
 //
@@ -7106,6 +7107,8 @@ app.get('/dashboard', (_req, res) => {
     return resp.json();
   }
 
+${dashboardInboxScript()}
+
   function copyButton(text) {
     const btn = document.createElement('button');
     btn.className = 'copy';
@@ -7310,7 +7313,7 @@ ${returningPasskeyLoginDashboard(localLinkOrigin, returningRelay)}
       }
       idCard.innerHTML = '<h2>🆔 Your Identity</h2><div class="err">Could not load identity: ' + e.message + '</div>';
       credCard.innerHTML = '<h2>🔐 Registered Credentials</h2><div class="err">' + e.message + '</div>';
-      inboxCard.innerHTML = '<h2>📬 Inbox</h2><div class="err">' + e.message + '</div>';
+      renderDashboardInboxError(inboxCard, e);
       document.getElementById('greeting').textContent = 'Not signed in';
       // Even on non-auth errors, give the user a way out.
       var retry = document.createElement('button');
@@ -7391,30 +7394,8 @@ ${returningPasskeyLoginDashboard(localLinkOrigin, returningRelay)}
       credCard.innerHTML = '<h2>🔐 Registered Credentials</h2><div class="err">' + e.message + '</div>';
     }
 
-    // Fetch /inbox?pod=podUrl from relay
-    try {
-      const inbox = await api(RELAY_BASE, '/inbox?pod=' + encodeURIComponent(meData.podHint) + '&limit=20');
-      inboxCard.innerHTML = '<h2>📬 Inbox <span style="color:#888;font-weight:400;font-size:0.85rem">(' + inbox.count + ' / ' + inbox.totalOnPod + ' in last 7 days)</span></h2>';
-      if (inbox.count === 0) {
-        const empty = document.createElement('div');
-        empty.className = 'empty';
-        empty.textContent = inbox.hint || 'Nothing in the last 7 days.';
-        inboxCard.appendChild(empty);
-      } else {
-        for (const ev of inbox.events) {
-          const it = document.createElement('div');
-          it.className = 'inbox-item';
-          const pillClass = ev.modalStatus ? 'pill-' + ev.modalStatus.toLowerCase() : '';
-          it.innerHTML =
-            '<div>' + (pillClass ? '<span class="pill ' + pillClass + '">' + ev.modalStatus + '</span>' : '') +
-            '<span class="url">' + ev.descriptorUrl + '</span></div>' +
-            '<div class="meta">' + (ev.validFrom || 'no validFrom') + (ev.trustLevel ? ' · ' + ev.trustLevel : '') + '</div>';
-          inboxCard.appendChild(it);
-        }
-      }
-    } catch (e) {
-      inboxCard.innerHTML = '<h2>📬 Inbox</h2><div class="err">Could not load inbox: ' + e.message + '</div>';
-    }
+    // This page has an identity session, rather than a relay OAuth grant.
+    await renderDashboardInbox(inboxCard);
 
     // Footer
     const foot = document.createElement('div');

@@ -45,6 +45,7 @@ COPY deploy/identity/local-identity-link.ts ./
 COPY deploy/identity/local-identity-link-dashboard.ts ./
 COPY deploy/identity/returning-passkey-login.ts ./
 COPY deploy/identity/returning-passkey-dashboard.ts ./
+COPY deploy/identity/dashboard-inbox.ts ./
 RUN npx tsc
 
 # ────────────────────────────────────────────────────────────

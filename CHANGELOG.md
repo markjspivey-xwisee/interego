@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-10-31 — Read the account inbox with the correct session
+
+The identity dashboard now reads inbox metadata through a dedicated identity-authenticated relay route. The server derives the pod from the verified account, refuses foreign origins, caller-selected pod addresses, redirects and oversized responses, and rechecks the session before releasing metadata. Existing OAuth inbox access and PC-key linking keep their separate authorization rules. Inbox text and errors render as text, so descriptor metadata cannot insert markup into the account page. No account, credential, game progress or federation settings are changed by an inbox read.
+
 ## 2026-10-30 — Keep hosted container builds independent of the MCP application
 
 Hosted images that copy the package libraries now build those libraries explicitly, while the normal root build still builds the MCP application. Images with a separate dependency-install layer include the library manifests before installation, so newly added local-runtime and federation dependencies are available during cold builds. Existing prebuilt-artifact checks and deployment gates remain active.
