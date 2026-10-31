@@ -137,6 +137,12 @@ The identity dashboard holds an identity-server bearer, including after a return
 
 The read accepts only the hot manifest index and its sibling archive indexes. It reconstructs each storage address from the configured storage base and escaped owner/index path components, refuses redirects, and bounds streamed storage data, request duration and returned metadata. Responses are not cached. Inbox failure does not clear the identity session or change a PC-key linking request; adding a key still requires the separate existing-credential proof and native owner approval.
 
+### Relay resource addresses
+
+Signature audits retain the OAuth owner-pod check and reconstruct the descriptor and sibling signature addresses from that verified owner binding. Own-store public/internal aliases use the configured storage base; verified third-party owner pods retain their own base. Path components are validated and escaped, and guarded reads reject redirects. Plaintext note projections also screen their descriptor-advertised payload addresses through guarded egress, as encrypted projections already do.
+
+Administrative CID backfill keeps its separate timing-safe introspection-secret gate. It operates on one pod root on this deployment's configured store, including explicit public/internal aliases. Every manifest, archive and selected descriptor address is validated and reconstructed; only manifest indexes can be rewritten. Archive completeness checks, the descriptor whitelist and ETag/If-Match conflict handling remain in force. Maintenance of another store runs through that store's relay.
+
 ### Discovery endpoints — WebFinger (RFC 7033)
 
 The identity server mounts RFC 7033 WebFinger at `/.well-known/webfinger` (see `deploy/identity/webfinger.ts` and `server.ts:3182`). It is the discovery surface that lets an `acct:user@host` handle resolve to the user's WebID, did:web, and pod URL — and is used by `share_with`, the name service, and federation discovery.
