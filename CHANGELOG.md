@@ -14,6 +14,12 @@ This gradebook opts into immutable version graphs and descriptors with a conditi
 
 Tests exercise delayed startup, failed-read recovery, original-row restoration without another score post, two actual Solid publications, cold-registry hydration, immutable graph refusal, stale-head conflicts and publication deadlines through explicitly injected isolated HTTP transports, without configuring the live tenant environment. A mismatched legacy descriptor and graph remains unavailable; this change does not reconstruct historical grades. AGS score acknowledgments retain their existing asynchronous snapshot semantics.
 
+## 2026-10-31 — Bound native LRS index-node prefetch while preserving head verification
+
+Foxxi's native learning-record client can prefetch up to eight immediate index-node reads through one client-wide limiter, while consuming the complete index in its original depth-first order. Other native clients retain their serial default. Every current-head, backing-commit, ciphertext, plaintext, scope, prefix and cycle check remains active; no record filter, scan bound, cache budget or timeout changes. Failed traversals stop their queued reads, handle active results and never return a partial snapshot.
+
+Opt-in head observations separate fresh head/commit verification from full index materialization, reporting bounded numeric timing and node-count diagnostics without identities, URLs, query contents or error text. This is a cold-read performance change, not evidence of a particular learner's retained records or outcome.
+
 ## 2026-10-31 — Make PC-key linking and sign-in approval easier to review
 
 Adding a PC key can succeed on the account service even when its reply times out on the computer. An uncertain link result now offers a deliberate dashboard refresh to check registered credentials before starting another link; it never retries the credential update or reports success without a verified receipt. The account, hosted pod and game progress remain with the existing owner.
