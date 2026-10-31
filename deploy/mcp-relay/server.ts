@@ -157,6 +157,8 @@ import { createNsDereference } from './ns-dereference.js';
 // Pod authorization, extracted so the rule is importable: server.ts calls app.listen() at
 // module scope and cannot be imported, which is why this area only had source-text coverage.
 import { authorizePodUrl } from './pod-authorization.js';
+import { dashboardInboxCors, dashboardInboxHandler } from './dashboard-inbox.js';
+import { createOwnedTargets, fetchWithoutRedirect } from './owned-targets.js';
 // A delegated cross-pod descriptor is on behalf of the pod it lands on, not the owner of
 // the calling agent's session.  Kept importable so that fail-closed attribution is exercised
 // without importing this self-starting server module.
@@ -510,6 +512,7 @@ const STORE_ORIGINS: ReadonlySet<string> = new Set(
     .map((u) => { try { return new URL(u).origin; } catch { return ''; } })
     .filter((o) => o !== ''),
 );
+const ownedTargets = createOwnedTargets(CSS_URL, STORE_ORIGINS);
 /** A pod URL as an IDENTIFIER rather than a fetch target. Identity out, routing in. */
 const asPublicPodUrl = (url: string | undefined): string | undefined =>
   (url === undefined ? undefined : publicStoreSpelling(url, CSS_URL, CSS_PUBLIC_URL));
@@ -13432,6 +13435,9 @@ app.use(corsMiddleware({
   allowHeaders: MCP_ALLOW_HEADERS,
   exposeHeaders: 'mcp-session-id, mcp-protocol-version',
 }));
+// This account-only route must set its exact configured identity origin before
+// the OAuth middleware freezes CORS. Other relay routes retain the normal list.
+app.use('/dashboard/inbox', dashboardInboxCors(IDENTITY_URL));
 
 // ── OAuth Routes ────────────────────────────────────────────
 // mcpAuthRouter (now from the FROZEN @modelcontextprotocol/server-legacy — v2 ships no
@@ -15234,12 +15240,12 @@ const RELAY_POD_HOST_ALLOWLIST: readonly string[] = (() => {
  * pod-authorization.ts: screening a value the relay minted with the attacker-URL guard is what made
  * `/notifications/:podSlug` answer 400 to everyone.
  */
-async function requireAuthorizedPodUrl(
+async function requireAuthorizedPodLocation(
   req: express.Request,
   res: express.Response,
   suppliedUrl: string,
   relayMinted = false,
-): Promise<string | null> {
+): Promise<{ url: string; ownerPodUrl: string } | null> {
   const authHeader = req.headers.authorization;
   if (!authHeader?.startsWith('Bearer ')) {
     res.status(401).json({ error: 'Bearer token required' });
@@ -15270,7 +15276,16 @@ async function requireAuthorizedPodUrl(
     res.status(decision.status ?? 403).json({ error: decision.error, detail: decision.detail });
     return null;
   }
-  return decision.url ?? null;
+  return decision.url ? { url: decision.url, ownerPodUrl } : null;
+}
+
+async function requireAuthorizedPodUrl(
+  req: express.Request,
+  res: express.Response,
+  suppliedUrl: string,
+  relayMinted = false,
+): Promise<string | null> {
+  return (await requireAuthorizedPodLocation(req, res, suppliedUrl, relayMinted))?.url ?? null;
 }
 
 /**
@@ -15334,6 +15349,12 @@ const bearerVerifyLimiter = rateLimit({
  * adoption. This endpoint closes the visibility gap without leaking
  * the recipient graph at the manifest level.
  */
+// The account page holds an identity bearer. Keep its narrow owner-derived read
+// separate from the OAuth-only /inbox endpoint used by existing relay clients.
+app.get('/dashboard/inbox', bearerVerifyLimiter, dashboardInboxHandler({
+  identityOrigin: IDENTITY_URL, cssUrl: CSS_URL, verifyIdentity: verifyBearerToken, fetch: solidFetch,
+}));
+
 app.get('/inbox', bearerVerifyLimiter, async (req, res) => {
   const suppliedPodUrl = req.query.pod as string | undefined;
   if (!suppliedPodUrl) {
@@ -15482,22 +15503,32 @@ app.get('/audit/lineage', bearerVerifyLimiter, async (req, res) => {
  * verification. Returns:
  *   { valid, descriptorUrl, signerAddress, signedAt, contentHashOk, reason? }
  *
- * Public read; auditors can independently verify any compliance
- * descriptor's signature without trusting the relay.
+ * OAuth-owner read; verifies published canonical bytes in the token's
+ * home pod, including a third-party pod reached through guarded egress.
  */
 app.get('/audit/verify-signature', bearerVerifyLimiter, async (req, res) => {
   const descriptorUrl = req.query.descriptor as string | undefined;
-  if (!descriptorUrl) {
+  if (typeof descriptorUrl !== 'string' || !descriptorUrl) {
     res.status(400).json({ error: 'descriptor query param required' });
     return;
   }
-  const authorized = await requireAuthorizedPodUrl(req, res, descriptorUrl);
+  const authorized = await requireAuthorizedPodLocation(req, res, descriptorUrl);
   if (!authorized) return;
+  let descriptorTarget: string;
+  let signatureTarget: string;
+  try {
+    descriptorTarget = ownedTargets.ownedResource(authorized.url, authorized.ownerPodUrl);
+    signatureTarget = ownedTargets.ownedResource(`${authorized.url}.sig.json`, authorized.ownerPodUrl);
+  } catch {
+    res.status(400).json({ error: 'descriptor_url_rejected', detail: 'Choose a resource inside your verified owner pod without credentials, queries, fragments or ambiguous paths.' });
+    return;
+  }
   try {
     const sigUrl = `${descriptorUrl}.sig.json`;
+    const ownerRead = async (url: string, init?: Parameters<typeof solidFetch>[1]) => (await guardedInvokeFetchLanded(url, init)).response;
     const [ttlResp, sigResp] = await Promise.all([
-      solidFetch(descriptorUrl, { headers: { 'Accept': 'text/turtle' } }),
-      solidFetch(sigUrl, { headers: { 'Accept': 'application/json' } }),
+      fetchWithoutRedirect(ownerRead, descriptorTarget, { headers: { 'Accept': 'text/turtle' } }),
+      fetchWithoutRedirect(ownerRead, signatureTarget, { headers: { 'Accept': 'application/json' } }),
     ]);
     if (!ttlResp.ok) {
       res.status(404).json({ error: `descriptor not fetchable (${ttlResp.status})`, descriptorUrl });
@@ -15767,6 +15798,9 @@ app.post('/verify-token', verifyTokenLimiter, async (req, res) => {
  *   412 manifest changed mid-rewrite (caller can retry)
  *   503 RELAY_INTROSPECTION_SECRET unset
  *
+ * Maintenance is confined to one pod on this relay's configured storage,
+ * including its public alias. Maintain another store through that store's relay.
+ *
  * Semantics: identical CID derivation to `publish()` —
  * `computeCid(descriptorBody)` over the bytes returned by GET, same
  * function the substrate gate would invoke on the fallback path. The
@@ -15800,7 +15834,12 @@ app.post('/admin/backfill-manifest-cid', async (req, res) => {
     res.status(400).json({ ok: false, reason: 'request body must include { podUrl: string }' });
     return;
   }
-  const podUrl = podUrlRaw.endsWith('/') ? podUrlRaw : `${podUrlRaw}/`;
+  let podUrl: string;
+  try { podUrl = ownedTargets.maintenancePod(podUrlRaw); }
+  catch {
+    res.status(400).json({ ok: false, reason: 'Maintenance requires one pod root on this deployment storage, without credentials, queries, fragments or ambiguous paths.' });
+    return;
+  }
   const whitelist = Array.isArray(body!.descriptorUrls)
     ? new Set((body!.descriptorUrls as unknown[]).filter((x): x is string => typeof x === 'string'))
     : null;
@@ -15824,7 +15863,7 @@ app.post('/admin/backfill-manifest-cid', async (req, res) => {
   const fetchDoc = async (url: string): Promise<{ body: string; etag: string | null } | { error: string }> => {
     try {
       const r = await withTransientRetry(async () => {
-        const resp = await solidFetch(url, {
+        const resp = await fetchWithoutRedirect(solidFetch, ownedTargets.maintenanceTarget(url, podUrl, true), {
           method: 'GET',
           headers: { 'Accept': 'text/turtle', 'Cache-Control': 'no-cache' },
         });
@@ -15896,13 +15935,28 @@ app.post('/admin/backfill-manifest-cid', async (req, res) => {
   // ── 2. Parse + compute backfill targets across every document ──────────────────
   const perDoc = documents.map(d => ({ ...d, entries: parseManifest(d.body) }));
   const scanned = perDoc.reduce((n, d) => n + d.entries.length, 0);
-  const targets: { descriptorUrl: string }[] = [];
+  const targets: { descriptorUrl: string; fetchUrl: string }[] = [];
+  const unsafeTargets: Array<{ descriptorUrl: string; error: string }> = [];
   for (const d of perDoc) {
     for (const e of d.entries) {
       if (whitelist && !whitelist.has(e.descriptorUrl)) continue;
       if (e.cid) continue; // already mirrored
-      targets.push({ descriptorUrl: e.descriptorUrl });
+      try {
+        targets.push({ descriptorUrl: e.descriptorUrl, fetchUrl: ownedTargets.maintenanceTarget(e.descriptorUrl, podUrl) });
+      } catch {
+        unsafeTargets.push({ descriptorUrl: e.descriptorUrl, error: 'descriptor is outside the selected pod or has an unsafe URL' });
+      }
     }
+  }
+  if (unsafeTargets.length > 0) {
+    res.status(502).json({ ok: false, reason: 'manifest contains unsafe descriptor targets; manifest unchanged', failures: unsafeTargets });
+    return;
+  }
+  // Validate every selected write address before any descriptor read or manifest PUT.
+  try { for (const d of perDoc) ownedTargets.maintenanceTarget(d.url, podUrl, true); }
+  catch {
+    res.status(502).json({ ok: false, reason: 'manifest contains an unsafe index target; manifest unchanged' });
+    return;
   }
 
   if (targets.length === 0) {
@@ -15927,7 +15981,7 @@ app.post('/admin/backfill-manifest-cid', async (req, res) => {
   const failures: { descriptorUrl: string; error: string }[] = [];
   for (const t of targets) {
     try {
-      const dResp = await solidFetch(t.descriptorUrl, {
+      const dResp = await fetchWithoutRedirect(solidFetch, t.fetchUrl, {
         method: 'GET',
         headers: { 'Accept': 'text/turtle', 'Cache-Control': 'no-cache' },
       });
@@ -15979,9 +16033,15 @@ app.post('/admin/backfill-manifest-cid', async (req, res) => {
     // GET and this PUT. It matters most on the hot manifest — segments are write-once — but
     // a roll-over can rewrite the hot document while this loop runs, so both get the guard.
     if (d.etag) putHeaders['If-Match'] = d.etag;
-    const putResp = await solidFetch(d.url, { method: 'PUT', headers: putHeaders, body: out.join('\n') });
-    if (!putResp.ok) { putFailures.push({ url: d.url, status: putResp.status, statusText: putResp.statusText }); continue; }
-    written.push(d.url);
+    try {
+      const putResp = await fetchWithoutRedirect(solidFetch, ownedTargets.maintenanceTarget(d.url, podUrl, true), {
+        method: 'PUT', headers: putHeaders, body: out.join('\n'),
+      });
+      if (!putResp.ok) { putFailures.push({ url: d.url, status: putResp.status, statusText: putResp.statusText }); continue; }
+      written.push(d.url);
+    } catch {
+      putFailures.push({ url: d.url, status: 502, statusText: 'Manifest write refused or failed' });
+    }
   }
 
   if (written.length === 0) {
@@ -16131,7 +16191,7 @@ app.get('/render/:descriptorIri', renderOAuthGate({
       }
       let publicGraph = '';
       try {
-        const gResp = await solidFetch(dist.accessURL, { headers: { 'Accept': 'text/turtle, application/trig, */*' } });
+        const gResp = await guardedInvokeFetch(dist.accessURL, { headers: { 'Accept': 'text/turtle, application/trig, */*' } });
         if (gResp.ok) publicGraph = await gResp.text();
       } catch { /* projection falls back to an empty body below */ }
       try {
