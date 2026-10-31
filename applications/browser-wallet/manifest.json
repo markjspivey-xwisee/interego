@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Interego Wallet",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "description": "Use a local sign-in key, link an existing Interego account, and review private captures for your chosen pod.",
   "minimum_chrome_version": "120",
   "permissions": ["identity", "storage", "activeTab", "scripting", "nativeMessaging"],
