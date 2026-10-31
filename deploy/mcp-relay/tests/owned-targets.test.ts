@@ -2,7 +2,7 @@
 import { after, before, beforeEach, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync, spawn, type ChildProcess } from 'node:child_process';
-import { createHash, randomBytes } from 'node:crypto';
+import { randomBytes } from 'node:crypto';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { createServer as createHttpsServer } from 'node:https';
 import { tmpdir } from 'node:os';
@@ -12,6 +12,7 @@ import { createServer, type AddressInfo } from 'node:net';
 import express from 'express';
 import { createWallet, signDescriptor, computeCid, type IRI } from '@interego/core';
 import { createOwnedTargets, fetchWithoutRedirect } from '../owned-targets.js';
+import { persistAccessToken } from '../oauth-token-store.js';
 import { listenLoopback, type TestListener } from './listen-loopback.js';
 import { stopChild } from '../../identity/tests/teardown.js';
 
@@ -20,14 +21,13 @@ const publicStore = 'https://gate.fixture.example';
 const oauthToken = randomBytes(32).toString('hex');
 const peerOAuthToken = randomBytes(32).toString('hex');
 const adminToken = randomBytes(32).toString('hex');
-const tokenSha = createHash('sha256').update(oauthToken).digest('hex');
-const peerTokenSha = createHash('sha256').update(peerOAuthToken).digest('hex');
 const listeners: TestListener[] = [];
 const storageRequests: Array<{ method: string; path: string; authorization?: string; ifMatch?: string }> = [];
 const committedWrites: Array<{ path: string; body: string }> = [];
 const privateRequests: string[] = [];
 const peerRequests: string[] = [];
 const documents = new Map<string, string>();
+const oauthRows = new Map<string, string>();
 let child: ChildProcess | undefined;
 let storage = '', privateOrigin = '', peerOrigin = '', relay = '', temporary = '', output = '';
 let signature: unknown;
@@ -88,11 +88,11 @@ before(async () => {
   storeApp.use((req, res) => {
     storageRequests.push({ method: req.method, path: req.path, authorization: req.headers.authorization, ifMatch: req.headers['if-match'] });
     if (req.path === '/maintainer/amep/state/release42.json') { res.json({ exchange: 'release42', openHeads: [], order: [], acts: {} }); return; }
-    if ([`/svc-relay-dcr/tokens/${tokenSha}.jsonld`, `/svc-relay-dcr/tokens/${peerTokenSha}.jsonld`].includes(req.path)) {
-      const thirdParty = req.path.includes(peerTokenSha);
-      res.json({ token_sha256: thirdParty ? peerTokenSha : tokenSha, clientId: 'owned-target-fixture', scopes: ['mcp:tools'], expiresAt: Math.floor(Date.now() / 1000) + 3600,
-        extra: { userId: owner, agentId: 'mcp-owned-fixture', ownerWebId: `${publicStore}/${owner}/profile#me`,
-          podUrl: thirdParty ? `${peerOrigin}/people/${owner}/` : `${storage}/${owner}/`, identityToken: 'synthetic-identity-fixture' } }); return;
+    if (req.method === 'PUT' && req.path.startsWith('/svc-relay-dcr/tokens/')) {
+      oauthRows.set(req.path, String(req.body)); res.status(201).end(); return;
+    }
+    if (req.method === 'GET' && oauthRows.has(req.path)) {
+      res.type('application/ld+json').send(oauthRows.get(req.path)); return;
     }
     if (req.method === 'PUT' && [hotPath, archivePath].includes(req.path)) {
       if (mode === 'write-redirect') { res.redirect(307, redirectTarget()); return; }
@@ -123,6 +123,15 @@ before(async () => {
     res.status(404).end();
   });
   const store = await listenLoopback(storeApp); listeners.push(store); storage = store.base;
+  // Exercise the production persistence format and opaque bearer lookup instead
+  // of reimplementing its token indexing or hand-writing persisted credentials.
+  for (const [token, podUrl] of [[oauthToken, `${storage}/${owner}/`], [peerOAuthToken, `${peerOrigin}/people/${owner}/`]]) {
+    await persistAccessToken(token!, { token: token!, clientId: 'owned-target-fixture', scopes: ['mcp:tools'],
+      expiresAt: Math.floor(Date.now() / 1000) + 3600,
+      extra: { userId: owner, agentId: 'mcp-owned-fixture', ownerWebId: `${publicStore}/${owner}/profile#me`,
+        podUrl: podUrl!, identityToken: 'synthetic-identity-fixture' } },
+    { podUrl: storage + '/svc-relay-dcr/', fetch: (url, init) => fetch(url, init) });
+  }
   signature = await signDescriptor('urn:fixture:descriptor' as IRI, descriptorBody, await createWallet('agent', 'owned-target-fixture'));
   const probe = createServer(); await new Promise<void>(done => probe.listen(0, '127.0.0.1', done));
   const port = (probe.address() as AddressInfo).port; await new Promise<void>((done, reject) => probe.close(error => error ? reject(error) : done()));
