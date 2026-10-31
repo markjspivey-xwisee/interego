@@ -308,6 +308,7 @@ import {
   dirty as markBridgeDirty,
   loadLatestSnapshot as loadBridgeSnap,
   loadLatestSnapshotStrict as loadBridgeSnapStrict,
+  seedLatestSnapshotHead,
   FOXXI_SNAPSHOT_TYPES as BRIDGE_SNAP_TYPES,
 } from '../src/pod-snapshot-publisher.js';
 interface TrajectorySnap { byTenant: Record<string, Array<[string, AgentTrajectory]>>; }
@@ -5886,12 +5887,16 @@ const ltiPlatform: LtiPlatform = new LtiPlatform({
   ensureReady: () => ltiPlatformReadiness.ensureReady(),
 });
 const ltiPlatformReadiness: LtiPlatformReadiness = new LtiPlatformReadiness({
-  load: () => loadBridgeSnapStrict('lti-platform', { typeIri: BRIDGE_SNAP_TYPES.LtiPlatformGradebook, validate: isPlatformSnapshot }),
+  load: async () => {
+    const result = await loadBridgeSnapStrict('lti-platform', { typeIri: BRIDGE_SNAP_TYPES.LtiPlatformGradebook, validate: isPlatformSnapshot, followLatestDescriptor: true });
+    seedLatestSnapshotHead('lti-platform', result);
+    return result;
+  },
   restore: (snap) => ltiPlatform.restore(snap),
   collect: () => ltiPlatform.snapshot(),
   onState: (state) => console.info('[lti-platform/readiness]', JSON.stringify(state)),
 });
-registerBridgeSnap({ surface: 'lti-platform', typeIri: BRIDGE_SNAP_TYPES.LtiPlatformGradebook, collect: () => ltiPlatformReadiness.snapshotForPublish() });
+registerBridgeSnap({ surface: 'lti-platform', typeIri: BRIDGE_SNAP_TYPES.LtiPlatformGradebook, collect: () => ltiPlatformReadiness.snapshotForPublish(), immutableLatest: true });
 void ltiPlatformReadiness.ensureReady();
 /** The Tool's side, once mounted: how a grade gets back to the platform that launched the course. */
 let ltiTool: Lti13Tool | undefined;

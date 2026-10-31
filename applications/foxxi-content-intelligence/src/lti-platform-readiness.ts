@@ -1,12 +1,12 @@
 import type { PlatformSnapshot } from './lti-platform.js';
-import type { StrictSnapshotResult } from './pod-snapshot-publisher.js';
+import type { StrictSnapshotResult, SnapshotUnavailableReason } from './pod-snapshot-publisher.js';
 
 type LoadState = 'pending' | 'loaded' | 'absent' | 'unavailable';
 export interface PlatformLoadDiagnostics {
   state: LoadState;
   lastAttemptAt?: string;
   lastLoadedAt?: string;
-  reason?: 'not-configured' | 'transport' | 'http' | 'invalid-snapshot';
+  reason?: SnapshotUnavailableReason;
   serviceStatus?: number;
   revision?: { sha256: string; version?: number };
   counts: { lineItems: number; results: number; members: number };

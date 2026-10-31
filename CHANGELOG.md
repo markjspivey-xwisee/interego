@@ -6,11 +6,13 @@ The installed Windows app repairs browser companion registration removed by an o
 
 The new uninstaller retains registration during updates and removes only its own matching registration on a full uninstall. A setup failure is shown separately from valid saved IDs so the existing recovery action remains usable. Tests use temporary protected-policy files and an injected registry; the actual Windows packaging and offline lifecycle remain release gates. Public bridge access and federation stay off by default.
 
-## 2026-10-31 — Wait for Foxxi's own LMS gradebook before state access
+## 2026-10-31 — Load and version Foxxi's own LMS gradebook safely
 
 The own-LMS gradebook waits for its tenant snapshot before serving stateful launch, gradebook and AGS routes. A bounded failed read returns unavailable and can be retried; only a definite absence permits empty initialization. Snapshot publication stays blocked during unresolved hydration. Safe diagnostics report load state, map counts and a content-digest witness without exposing learner records.
 
-Tests exercise delayed startup, failed-read recovery and restoration of an existing original row without another score post through isolated HTTP transports. This change does not reconstruct historical grades or change the existing asynchronous snapshot publication and AGS score acknowledgments.
+This gradebook opts into immutable version graphs and descriptors with a conditionally updated latest head. Readers follow the advertised distribution and bind the graph identity, type and payload digest. Writers verify their artifacts before updating the exact head they observed, refuse conflicting writes and stop stale in-memory retries. Existing snapshot users keep their current publication path.
+
+Tests exercise delayed startup, failed-read recovery, original-row restoration without another score post, two actual Solid publications, cold-registry hydration, immutable graph refusal, stale-head conflicts and publication deadlines through isolated HTTP transports. A mismatched legacy descriptor and graph remains unavailable; this change does not reconstruct historical grades. AGS score acknowledgments retain their existing asynchronous snapshot semantics.
 
 ## 2026-10-31 — Make PC-key linking and sign-in approval easier to review
 
