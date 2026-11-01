@@ -61,6 +61,52 @@ async function responseJson(response, limit = MAX_BYTES) {
   try { return JSON.parse(Buffer.concat(chunks).toString('utf8')); } catch { reject('upstream_invalid_json', 502); }
 }
 
+// The relay's OAuth credentials are accepted by /mcp. Its REST shortcut accepts
+// identity-server credentials instead. Keep this challenge on the OAuth resource
+// the browser authorized, and correlate the MCP answer before checking its proof.
+async function signedToolResponse(response, id) {
+  const message = value => {
+    if (!isObject(value) || value.jsonrpc !== '2.0' || value.id !== id) return null;
+    if (value.error || !isObject(value.result) || value.result.isError) reject('authentication_response_invalid', 502);
+    const result = value.result;
+    let envelope = result.structuredContent;
+    if (!isObject(envelope)) {
+      const text = Array.isArray(result.content) ? result.content.find(part => part?.type === 'text' && typeof part.text === 'string')?.text : undefined;
+      try { envelope = JSON.parse(text); } catch { reject('authentication_response_invalid', 502); }
+    }
+    if (!isObject(envelope) || envelope.error) reject('authentication_response_invalid', 502);
+    return envelope;
+  };
+  const type = response.headers.get('content-type') || '';
+  if (/^application\/(?:json|[^;]+\+json)(?:;|$)/i.test(type)) {
+    const result = message(await responseJson(response, SIGNED_BYTES));
+    if (!result) reject('authentication_response_invalid', 502);
+    return result;
+  }
+  if (!/^text\/event-stream(?:;|$)/i.test(type) || !response.body?.getReader) reject('authentication_response_invalid', 502);
+  if (Number(response.headers.get('content-length')) > SIGNED_BYTES) reject('upstream_response_too_large', 502);
+  const reader = response.body.getReader(), decoder = new TextDecoder();
+  let bytes = 0, pending = '';
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      bytes += value.byteLength;
+      if (bytes > SIGNED_BYTES) reject('upstream_response_too_large', 502);
+      pending += decoder.decode(value, { stream: true });
+      const events = pending.split(/\r?\n\r?\n/); pending = events.pop();
+      for (const event of events) {
+        const data = event.split(/\r?\n/).filter(line => line.startsWith('data:')).map(line => line.slice(5).replace(/^ /, '')).join('\n');
+        if (!data) continue;
+        let parsed; try { parsed = JSON.parse(data); } catch { continue; }
+        const result = message(parsed);
+        if (result) return result;
+      }
+    }
+    reject('authentication_response_invalid', 502);
+  } finally { await reader.cancel().catch(() => {}); reader.releaseLock(); }
+}
+
 /**
  * A server-side encrypted key/value store. Logical keys and values are encrypted together;
  * filenames are SHA-256 identifiers. The authenticated AAD binds root, logical key and path.
@@ -191,12 +237,13 @@ export function createSecurity({ relayUrl, identityHost, trustedRelayAddresses, 
   const bridgeOrigin = targetOrigin ? serviceUrl(targetOrigin, 'target').origin : null;
   const didCache = new Map();
   let replayQueue = securityQueues.get(store); if (!replayQueue) { replayQueue = new Map(); securityQueues.set(store, replayQueue); }
-  const fetchJson = async (url, options = {}, max = SIGNED_BYTES) => {
+  const fetchResponse = async (url, options = {}) => {
     let response;
     try { response = await fetchImpl(url, { ...options, redirect: 'error', signal: AbortSignal.timeout(10_000) }); } catch { reject('authentication_upstream_unavailable', 503); }
     if (!response.ok) reject(response.status === 401 || response.status === 403 ? 'authentication_required' : 'authentication_upstream_unavailable', response.status === 401 || response.status === 403 ? 401 : 503);
-    return responseJson(response, max);
+    return response;
   };
+  const fetchJson = async (url, options = {}, max = SIGNED_BYTES) => responseJson(await fetchResponse(url, options), max);
   const claimReplay = async (agentId, nonce, timestamp) => {
     const replayKey = hash(`${agentId}\0${nonce}`), t = now();
     const transform = current => {
@@ -250,13 +297,12 @@ export function createSecurity({ relayUrl, identityHost, trustedRelayAddresses, 
     if (typeof authorization !== 'string' || authorization.length > 8192 || !/^Bearer [A-Za-z0-9._~+\/-]+=*$/.test(authorization)) reject('authentication_required');
     if (!bridgeOrigin) reject('target_origin_required_for_bearer', 503);
     const nonce = randomBytes(24).toString('base64url');
-    // Verified against deploy/mcp-relay/server.ts /tool/:name and handleSignRequest:
-    // the bearer is validated there, identity/timestamp are session-stamped, and the response
-    // is the direct decorated signed envelope. No identity-token exchange or privileged secret.
-    const result = await fetchJson(`${relay.href.replace(/\/$/, '')}/tool/sign_request`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json', Accept: 'application/ld+json, application/json', Authorization: authorization },
-      body: JSON.stringify({ payload: { action: AUTH_ACTION, target: bridgeOrigin, nonce } }),
+    const id = randomBytes(16).toString('hex');
+    const response = await fetchResponse(`${relay.href.replace(/\/$/, '')}/mcp`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json', Accept: 'application/json, text/event-stream', 'MCP-Protocol-Version': '2025-11-25', Authorization: authorization },
+      body: JSON.stringify({ jsonrpc: '2.0', id, method: 'tools/call', params: { name: 'sign_request', arguments: { payload: { action: AUTH_ACTION, target: bridgeOrigin, nonce } } } }),
     });
+    const result = await signedToolResponse(response, id);
     const actor = await authenticateSigned(result, AUTH_ACTION, bridgeOrigin);
     if (actor.payload.nonce !== nonce) reject('authentication_challenge_mismatch');
     return actor;

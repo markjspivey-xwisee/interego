@@ -73,29 +73,61 @@ test('a nonce cannot replay, including concurrent calls and a new security insta
   await assert.rejects(security({ store }).authenticateSigned(signed, 'health:read', target), { code: 'signed_request_replayed' });
 });
 
-test('bearer authentication challenges /tool/sign_request without privileged introspection or identity-token exchange', async () => {
+test('OAuth bearer authentication challenges the MCP resource without privileged introspection or identity-token exchange', async () => {
   const calls = [];
   const s = security({ fetch: async (url, options = {}) => {
     calls.push({ url, method: options.method });
     assert.equal(options.redirect, 'error');
-    if (url.endsWith('/tool/sign_request')) {
+    if (url.endsWith('/mcp')) {
       assert.equal(options.headers.Authorization, 'Bearer synthetic-test-token');
-      const data = JSON.parse(options.body).payload;
+      assert.equal(options.headers.Accept, 'application/json, text/event-stream');
+      assert.equal(options.headers['MCP-Protocol-Version'], '2025-11-25');
+      const call = JSON.parse(options.body);
+      assert.equal(call.method, 'tools/call'); assert.equal(call.params.name, 'sign_request');
+      const data = call.params.arguments.payload;
       assert.equal(data.action, 'urn:interego:health:authenticate'); assert.equal(data.target, target);
-      return Response.json(await envelope(payload(data)));
+      return Response.json({jsonrpc:'2.0',id:call.id,result:{content:[{type:'text',text:JSON.stringify(await envelope(payload(data)))}]}});
     }
     return Response.json({ id: agentId, controller: principal });
   } });
   const actor = await s.authenticateBearer('Bearer synthetic-test-token');
   assert.equal(actor.userId, userId); assert.deepEqual(actor.scopes, []);
-  assert.deepEqual(calls.map(x => x.url), ['https://relay.example.test/tool/sign_request', `https://${identityHost}/agents/health-test-${userId}/did.json`]);
+  assert.deepEqual(calls.map(x => x.url), ['https://relay.example.test/mcp', `https://${identityHost}/agents/health-test-${userId}/did.json`]);
   await assert.rejects(s.authenticateBearer('Bearer test\r\nInjected: value'), { code: 'authentication_required' });
 });
 
 test('a reused relay envelope cannot answer a different bearer challenge', async () => {
   const recorded = await envelope(payload({ action: 'urn:interego:health:authenticate' }));
-  const s = security({ fetch: async url => url.endsWith('/tool/sign_request') ? Response.json(recorded) : Response.json({ id: agentId, controller: principal }) });
+  const s = security({ fetch: async (url, options) => url.endsWith('/mcp') ? Response.json({jsonrpc:'2.0',id:JSON.parse(options.body).id,result:{structuredContent:recorded}}) : Response.json({ id: agentId, controller: principal }) });
   await assert.rejects(s.authenticateBearer('Bearer synthetic-test-token'), { code: 'authentication_challenge_mismatch' });
+});
+
+test('SSE authentication stops after its matching answer even when the relay leaves the stream open', async () => {
+  let cancelled = false;
+  const s = security({ fetch: async (url, options) => {
+    if (!url.endsWith('/mcp')) return Response.json({id:agentId,controller:principal});
+    const call=JSON.parse(options.body),signed=await envelope(payload(call.params.arguments.payload));
+    return new Response(new ReadableStream({start(controller){
+      controller.enqueue(new TextEncoder().encode(': keepalive\r\n\r\ndata: '+JSON.stringify({jsonrpc:'2.0',method:'notifications/progress'})+'\r\n\r\n'));
+      controller.enqueue(new TextEncoder().encode('event: message\r\ndata: '+JSON.stringify({jsonrpc:'2.0',id:call.id,result:{content:[{type:'text',text:JSON.stringify(signed)}]}})+'\r\n\r\n'));
+    },cancel(){cancelled=true;}}),{headers:{'Content-Type':'text/event-stream'}});
+  }});
+  assert.equal((await s.authenticateBearer('Bearer synthetic-test-token')).principal,principal);
+  assert.equal(cancelled,true);
+});
+
+test('MCP errors, mismatched response ids and oversized authentication responses never establish identity', async () => {
+  for (const result of [
+    call=>({jsonrpc:'2.0',id:'another-request',result:{structuredContent:{}}}),
+    call=>({jsonrpc:'2.0',id:call.id,error:{code:-32603,message:'withheld upstream detail'}}),
+    call=>({jsonrpc:'2.0',id:call.id,result:{isError:true,content:[{type:'text',text:'withheld upstream detail'}]}}),
+    call=>({jsonrpc:'2.0',id:call.id,result:{content:[{type:'text',text:JSON.stringify({error:'insufficient_scope'})}]}}),
+  ]) {
+    const s=security({fetch:async (url,options)=>{assert.ok(url.endsWith('/mcp'));return Response.json(result(JSON.parse(options.body)));}});
+    await assert.rejects(s.authenticateBearer('Bearer synthetic-test-token'),{code:'authentication_response_invalid'});
+  }
+  const s=security({fetch:async()=>new Response('x'.repeat(65537),{headers:{'Content-Type':'text/event-stream'}})});
+  await assert.rejects(s.authenticateBearer('Bearer synthetic-test-token'),{code:'upstream_response_too_large'});
 });
 
 test('filesystem storage encrypts logical keys and values, detects tampering and owner/path swapping', async t => {

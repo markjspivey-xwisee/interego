@@ -25,6 +25,8 @@ Oura retained imports need provider authorization; app registration and user OAu
 
 Apple Health uses a selected-sample Shortcut upload. Sign in, enable private imports, create an upload-only pairing token, then follow [the iPhone recipe](docs/apple-shortcut.md). The bridge cannot read HealthKit directly from a cloud server. XML export import and a native HealthKit companion are possible later transports, not implemented readers.
 
+Browser sign-in exchanges the Interego OAuth code on the server, then uses that credential for a stateless MCP `tools/call` of `sign_request` at the relay's `/mcp` resource. It accepts bounded JSON or SSE responses for the matching request ID and verifies the returned signature, account, destination and fresh challenge before issuing an HttpOnly bridge session. The relay's `/tool/sign_request` shortcut takes identity-server credentials and cannot verify the opaque OAuth credential this flow receives. The bridge discards the Interego credential after this proof; it does not exchange it for an identity token or require an introspection secret.
+
 ## Agent interface
 
 Read `/profile` for the JSON action targets and signing instructions. Its `turtle` property and HTTP alternate link point to `/profile.ttl`, the same declarations as native `iep:Affordance` / Hydra operations. Interego's `dereference` and generic affordance follower can discover all eight actions there, including the signed-envelope input shape.
@@ -37,4 +39,4 @@ Private import consent is explicit and revocable. Source refresh is user-trigger
 
 ## Validation boundaries
 
-Tests use synthetic fixtures only. Provider metadata discovery can be verified without patient data. Real Duke, Oura and iPhone receipt tests require their actual consent flows. A configured app or successful deployment is not proof that a patient's records have synced.
+Tests use synthetic fixtures only. The browser login regression exercises PKCE, the callback cookie, the MCP signed challenge and the resulting owner-bound session against an in-process relay with a generated signing key; it does not replace a live passkey sign-in. Provider metadata discovery can be verified without patient data. Real Duke, Oura and iPhone receipt tests require their actual consent flows. A configured app or successful deployment is not proof that a patient's records have synced.

@@ -233,6 +233,8 @@ $('load-records').addEventListener('click',() => perform(async()=>{const source=
 const query=new URLSearchParams(location.search);
 if (query.get('connected') === 'duke') notify('Duke MyChart authorization returned. Check the connection status below before syncing.');
 else if (query.get('connected') === 'oura') notify('Retained Oura imports are not enabled. Review the provider authorization status below.',true);
-else if (query.has('error')) notify('The connection did not finish. Sign in and try again, or review the source’s setup requirements.',true);
+else if (query.get('error') === 'oauth_state') notify('This sign-in attempt expired or belongs to another browser. Start sign-in again in this tab with your existing account.',true);
+else if (['interego_exchange_failed','authentication_required','authentication_upstream_unavailable','authentication_response_invalid','authentication_challenge_mismatch'].includes(query.get('error'))) notify('Interego sign-in could not be verified. Try signing in again with your existing account. Reference: '+query.get('error')+'.',true);
+else if (query.has('error')) notify('The source connection did not finish. Reconnect the source and check its status below.',true);
 if (query.has('connected') || query.has('error')) history.replaceState(null,'',location.pathname);
 refresh();
