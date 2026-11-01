@@ -174,6 +174,10 @@ export function createHealthBridge(config) {
   });
 
   const apiOperation=async(actor,operation,params={})=>{
+    if(operation==='atlas/review'){
+      if(!atlasPublisher)fail(503,'atlas_unavailable','Public Atlas publishing is not configured.');
+      return atlasPublisher.review(actor,params);
+    }
     if(operation==='atlas/link'){
       if(!atlasPublisher)fail(503,'atlas_unavailable','Public Atlas publishing is not configured.');
       return atlasPublisher.createLink(actor);
@@ -195,7 +199,7 @@ export function createHealthBridge(config) {
   const profile=()=>({
     '@context':{hydra:'http://www.w3.org/ns/hydra/core#',schema:'https://schema.org/'},'@id':base+'/profile','@type':'hydra:EntryPoint',name:'Interego Private Health Connections',version:'0.1.0',setup:base+'/setup',human:base+'/',turtle:base+'/profile.ttl',rawRecords:'encrypted private source records',publicAtlasPublishing:!!atlasPublisher,
     authentication:{kind:'Interego relay-delegated signature',signWith:'sign_request',signedFields:['action','target','params','nonce'],target:base,nonce:'fresh random string, at least 16 characters',timestamp:'stamped by the relay; checked for freshness',identity:'derived from verified agent controller; never caller-selected owner'},
-    affordances:['status','records','record','consent','apple/pair','duke/sync','oura/sync','revoke',...(atlasPublisher?['atlas/link']:[])].map(op=>({action:ACTION+op,target:base+'/actions',method:'POST',description:op==='atlas/link'?'Atlas administrator only: prepare a single-use browser account link; does not publish records.':op==='oura/sync'?OURA_RESTRICTION:op==='records'?'List private source record metadata, 30 per page; no public publication.':op==='record'?'Read one record from the verified owner index.':op==='consent'?'Enable or disable private imports; does not change provider permissions.':op,parameters:op==='records'?{source:'optional duke|oura|apple',limit:'1–100',offset:'0–20000'}:op==='record'?{id:'owned record id'}:op==='consent'?{enabled:'boolean'}:op==='apple/pair'?{metrics:'selected allowed Apple Health metrics'}:op==='revoke'?{source:'duke|oura|apple'}:{}}))
+    affordances:['status','records','record','consent','apple/pair','duke/sync','oura/sync','revoke',...(atlasPublisher?['atlas/link','atlas/review']:[])].map(op=>({action:ACTION+op,target:base+'/actions',method:'POST',description:op==='atlas/review'?'Atlas administrator only: read bounded approved public review context or submit a cited summary/FAQ overlay bound to its exact public source revision and digest. No private chart access or source publication.':op==='atlas/link'?'Atlas administrator only: prepare a single-use browser account link; does not publish records.':op==='oura/sync'?OURA_RESTRICTION:op==='records'?'List private source record metadata, 30 per page; no public publication.':op==='record'?'Read one record from the verified owner index.':op==='consent'?'Enable or disable private imports; does not change provider permissions.':op,parameters:op==='atlas/review'?{mode:'context | submit',sourceRevision:'submit: exact public sourceRevision from review context',sourceDigest:'submit: exact public sourceDigest from review context',summaryBullets:'submit: at most 12 {text,sourceIds} using approved public sources',questionAnswers:'submit: at most 12 {questionId,answer,sourceIds} using known baseline FAQ IDs'}:op==='records'?{source:'optional duke|oura|apple',limit:'1–100',offset:'0–20000'}:op==='record'?{id:'owned record id'}:op==='consent'?{enabled:'boolean'}:op==='apple/pair'?{metrics:'selected allowed Apple Health metrics'}:op==='revoke'?{source:'duke|oura|apple'}:{}}))
   });
   // The generic Interego follower parses Turtle, not arbitrary JSON. Derive its declarations
   // from the same action list as /profile so discovery cannot drift from the active routes.
@@ -220,7 +224,7 @@ export function createHealthBridge(config) {
       '  sh:property [ sh:path <urn:interego:health:field:_signature> ; sh:name "_signature" ; sh:datatype xsd:string ; sh:minCount 1 ; sh:maxCount 1 ; sh:description "Exact relay signature returned by sign_request." ] .',
     ];
     for(const a of p.affordances){
-      const template={signWith:'sign_request',payload:{action:a.action,target:p.authentication.target,params:{},nonce:'<fresh-random-string-at-least-16-characters>'},parameterDescriptions:a.parameters,submit:'Pass the returned signed envelope unchanged to the declared hydra:target.'};
+      const template={signWith:'sign_request',payload:{action:a.action,target:p.authentication.target,params:a.action===ACTION+'atlas/review'?{mode:'context'}:{},nonce:'<fresh-random-string-at-least-16-characters>'},parameterDescriptions:a.parameters,submit:'Pass the returned signed envelope unchanged to the declared hydra:target.'};
       lines.push(`${control(a)} a iep:Affordance, hydra:Operation ;`,
         `  iep:action ${iri(a.action)} ; hydra:target ${iri(a.target)} ; hydra:method ${literal(a.method)} ;`,
         `  dcat:mediaType "application/json" ; hydra:expects ${shape} ;`,
@@ -242,9 +246,10 @@ export function createHealthBridge(config) {
       if(req.method==='GET' && path==='/profile.ttl'){res.setHeader('Link',`<${base}/profile>; rel="alternate"; type="application/json"`);res.writeHead(200,{'Content-Type':'text/turtle; charset=utf-8'});return res.end(profileTurtle());}
       if(req.method==='GET' && path==='/setup')return json(res,200,setup());
       const publicAtlas=path.match(/^\/public\/atlas\/mayya\/record\.(json|jsonld|md|ttl)$/);
-      if(req.method==='GET'&&publicAtlas){
+      const publicReview=path.match(/^\/public\/atlas\/mayya\/(review|review-status)\.json$/);
+      if(req.method==='GET'&&(publicAtlas||publicReview)){
         if(!atlasPublisher)fail(404,'atlas_not_published','No public Atlas snapshot has been published.');
-        const snapshot=await atlasPublisher.getPublic(publicAtlas[1]);
+        const snapshot=await atlasPublisher.getPublic((publicAtlas||publicReview)[1]);
         res.writeHead(200,{'Content-Type':snapshot.contentType,'Access-Control-Allow-Origin':'*','Access-Control-Expose-Headers':'X-Atlas-Revision','X-Atlas-Revision':String(snapshot.revision)});return res.end(snapshot.body);
       }
       if(req.method==='GET' && path==='/.well-known/jwks.json'){
@@ -284,6 +289,7 @@ export function createHealthBridge(config) {
       if(req.method==='GET' && path==='/api/records'){const s=browserOwner(req);return json(res,200,await records(s.actor,Object.fromEntries(url.searchParams)));}
       if(req.method==='POST' && /^\/api\//.test(path)){
         consumeLimit(req,'manage',60);const s=browserOwner(req,true),body=await readJson(req);const op=path.slice(5);
+        if(op==='atlas/review')fail(403,'atlas_review_signed_action_required','Submit Atlas editorial reviews through the signed agent action.');
         if(['atlas/claim','atlas/preview','atlas/publish','atlas/automatic'].includes(op)){
           if(!atlasPublisher)fail(503,'atlas_unavailable','Public Atlas publishing is not configured.');
           const browserActor={...s.actor,transport:'browser',authenticatedAt:s.authenticatedAt};

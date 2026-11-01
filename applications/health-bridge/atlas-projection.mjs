@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { DUKE_BASE } from './fhir.mjs';
+import { reconcileAtlasRecord } from './atlas-reconciliation.mjs';
 
 // This is an allow-list projection, not a FHIR serializer or note deidentifier.
 // No private wrapper, raw resource, reference, attachment, or narrative is copied.
@@ -324,5 +325,6 @@ export function buildAtlasProjection({ baseRecord, records, patientId, published
   const exclusions = [...counts.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([reason, count]) => ({ reason, count }));
   const sections = Object.fromEntries(SECTIONS.map(section => [section, additions[section].length]));
   const stats = { inputRecords: records.length, dukeRecords, patientBoundRecords, identityChecked, projectedResources: Object.values(byResourceType).reduce((a, b) => a + b, 0), projectedEntries: Object.entries(sections).filter(([key]) => key !== 'sources').reduce((sum, [, count]) => sum + count, 0), byResourceType, receivedByResourceType, sections, excludedRecords: exclusions.reduce((sum, item) => sum + item.count, 0), exclusionCounts: Object.fromEntries(counts), baselinePreserved: true, appleIncluded: false };
+  record.reconciliation = reconcileAtlasRecord(record, { checkedAt: publishedAt, sourceSyncAt });
   return { record, stats, exclusions, latestClinicalDate, sourceSnapshotDigest: `sha256:${digest(additions)}` };
 }

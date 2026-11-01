@@ -9,6 +9,12 @@ import { createEncryptedStore } from '../security.mjs';
 
 const hash = value => createHash('sha256').update(JSON.stringify(value)).digest('hex');
 const copy = value => JSON.parse(JSON.stringify(value));
+function approvedPart(actual, expected) {
+  const record = copy(actual);
+  for (const key of ['reconciliation', 'agentReview']) if (!Object.hasOwn(expected, key)) delete record[key];
+  if (Array.isArray(record.faq)) record.faq = record.faq.map((item, index) => { if (!Object.hasOwn(expected.faq?.[index] ?? {}, 'questionId')) delete item.questionId; return item; });
+  return record;
+}
 const ownerPrincipal = 'did:web:identity.example:users:duke-browser-owner';
 const adminPrincipal = 'did:web:identity.example:users:old-mark-mcp';
 const patientId = 'PRIVATE-DUKE-PATIENT-1';
@@ -37,7 +43,7 @@ async function fixture(t) {
     return id;
   };
   insert(samplePatient); insert(observation());
-  const config = { store, now: () => time, adminPrincipal, publicBase: 'https://health.example', atlasUrl: 'https://atlas.example/', expectedSubject: { name: 'Mayya Grinberg', birthDate: '1986-04-02' }, baseRecord: { meta: { subject: 'Mayya Grinberg', scope: 'Curated family history and separately labeled structured provider records.' }, timeline: [{ id: 'curated-1', title: 'Previously shared history', sourceIds: ['curated-source'] }], sources: [{ id: 'curated-source', title: 'Family update' }] }, loadOwner: async actor => { counts.owner++; return copy(owners.get(actor.principal) ?? { principal: actor.principal, consent: { enabled: false }, sources: {}, records: [] }); }, loadRecord: async (actor, id) => { counts.record++; const result = copy(rawRecords.get(actor.principal + ':' + id)); if (onRecord) await onRecord(actor, id); return result; } };
+  const config = { store, now: () => time, adminPrincipal, publicBase: 'https://health.example', atlasUrl: 'https://atlas.example/', expectedSubject: { name: 'Mayya Grinberg', birthDate: '1986-04-02' }, baseRecord: { meta: { subject: 'Mayya Grinberg', scope: 'Curated family history and separately labeled structured provider records.' }, timeline: [{ id: 'curated-1', title: 'Previously shared history', sourceIds: ['curated-source'] }], sources: [{ id: 'curated-source', title: 'Family update' }], faq: [{ q: 'What did the family report previously?', a: 'Previously shared history.', sourceIds: ['curated-source'] }] }, loadOwner: async actor => { counts.owner++; return copy(owners.get(actor.principal) ?? { principal: actor.principal, consent: { enabled: false }, sources: {}, records: [] }); }, loadRecord: async (actor, id) => { counts.record++; const result = copy(rawRecords.get(actor.principal + ':' + id)); if (onRecord) await onRecord(actor, id); return result; } };
   const actor = () => ({ principal: ownerPrincipal, transport: 'browser', authenticatedAt: time });
   const publisher = createAtlasPublisher(config);
   const link = async () => {
@@ -112,7 +118,7 @@ test('preview excludes mixed-chart cache and notes, then publishes exactly the r
   draft.projection.meta.subject = 'CLIENT-FORGED-RECORD';
   const receipt = await f.publisher.publish(f.actor(), { draftId: draft.draftId, digest: draft.digest, baseRevision: draft.baseRevision, autoPublish: false });
   const publicResult = await f.publisher.getPublic('json');
-  assert.equal(publicResult.body, reviewBytes); assert.equal(receipt.revision, 1);
+  assert.deepEqual(approvedPart(JSON.parse(publicResult.body), JSON.parse(reviewBytes)), JSON.parse(reviewBytes)); assert.equal(receipt.revision, 1);
   assert.equal(JSON.parse(publicResult.body).meta.publication.publicRecordUrl, 'https://health.example/public/atlas/mayya/record.json');
   assert.equal(JSON.parse(publicResult.body).meta.publication.preparedAt, new Date(START).toISOString());
   assert.equal(JSON.parse(publicResult.body).meta.publication.managementUrl, 'https://health.example');
@@ -238,4 +244,64 @@ test('commit and unchanged automatic checks read only Patient while pinning ever
   f.setOnRecord(() => { f.owner.records.find(item => item.resourceType === 'Observation').digest = '1'.repeat(64); });
   await rejects(publisher.publish(f.actor(), { draftId: freshDraft.draftId, digest: freshDraft.digest, baseRevision: freshDraft.baseRevision }), 'atlas_source_changed');
   assert.equal(clinicalReads, 0); assert.equal((await publisher.getPublic()).body, before.body);
+});
+
+
+test('source-bound admin reviews add only cited editorial fields, are idempotent, and never read private callbacks', async t => {
+  const f = await fixture(t); await f.claim(); await f.publish(true);
+  const publicOnly = createAtlasPublisher({ ...f.config,
+    loadOwner: async () => { throw new Error('An editorial review must not access a private owner.'); },
+    loadRecord: async () => { throw new Error('An editorial review must not access private clinical records.'); },
+  });
+  const admin = { principal: adminPrincipal, agentId: 'did:web:identity.example:agents:editor' };
+  await rejects(publicOnly.review(f.actor(), { mode: 'context' }), 'atlas_admin_required');
+  const before = JSON.parse((await publicOnly.getPublic()).body);
+  const context = await publicOnly.review(admin, { mode: 'context' });
+  assert.equal(context.sourceRevision, 1);
+  assert.equal(context.sourceDigest, before.meta.publication.contentDigest);
+  assert.ok(Buffer.byteLength(JSON.stringify(context)) <= 96 * 1024);
+  assert.equal(JSON.parse((await publicOnly.getPublic('review-status')).body).reviewStatus, 'pending');
+  const publicContext = JSON.parse((await publicOnly.getPublic('review')).body);
+  assert.deepEqual(publicContext, context);
+  const submission = { mode: 'submit', sourceRevision: context.sourceRevision, sourceDigest: context.sourceDigest,
+    summaryBullets: [{ text: 'The structured laboratory record reports hemoglobin of 12 g/dL.', sourceIds: [before.labs[0].sourceIds[0]] }],
+    questionAnswers: [{ questionId: before.faq[0].questionId, answer: 'The earlier family account remains dated history.', sourceIds: ['curated-source'] }],
+  };
+  const receipt = await publicOnly.review(admin, submission);
+  assert.equal(receipt.reviewRevision, 1); assert.equal(receipt.reviewStatus, 'reviewed');
+  const duplicate = await publicOnly.review(admin, submission);
+  assert.equal(duplicate.duplicate, true); assert.equal(duplicate.reviewRevision, 1);
+  const after = JSON.parse((await publicOnly.getPublic()).body);
+  assert.deepEqual(after.agentReview.summaryBullets, submission.summaryBullets);
+  assert.deepEqual(after.agentReview.questionAnswers, submission.questionAnswers);
+  assert.equal(after.agentReview.sourceDigest, before.meta.publication.contentDigest);
+  assert.equal(after.agentReview.clinicianReviewed, false);
+  assert.equal(after.agentReview.scope, 'public-summary-review');
+  delete after.agentReview;
+  assert.deepEqual(after, before, 'clinical source fields and baseline FAQ text remain unchanged');
+  assert.doesNotMatch((await publicOnly.getPublic()).body, /old-mark-mcp|identity\.example:agents:editor/);
+  for (const format of ['json', 'jsonld', 'md', 'ttl']) {
+    const result = await publicOnly.getPublic(format);
+    assert.equal(result.revision, 1);
+    assert.ok(result.body.includes('public-summary-review'));
+    assert.ok(result.body.includes(receipt.reviewDigest));
+  }
+  f.advance(60_000);
+  f.owner.sources.duke.lastAttempt = new Date(START + 60_000).toISOString();
+  f.owner.sources.duke.lastSync = new Date(START + 60_000).toISOString();
+  const unchanged = await f.publisher.autoPublish({ principal: ownerPrincipal });
+  assert.equal(unchanged.reason, 'atlas_public_content_unchanged');
+  assert.equal(unchanged.revision, 1);
+  assert.equal(JSON.parse((await publicOnly.getPublic('review-status')).body).reviewStatus, 'reviewed');
+  const saved = await f.store.get(STATE);
+  assert.equal(saved.publication.record.agentReview, undefined);
+  assert.equal(saved.binding.principal, ownerPrincipal);
+  assert.equal(saved.autoPublish, true);
+  await assert.rejects(publicOnly.review(admin, { ...submission, sourceRevision: 0 }), error => error.status === 409 && error.code.startsWith('atlas_'));
+  await assert.rejects(publicOnly.review(admin, { ...submission, summaryBullets: [{ text: 'Unbound statement.', sourceIds: ['unknown-source'] }] }), error => error.status === 400 && error.code.startsWith('atlas_'));
+  await assert.rejects(publicOnly.review(admin, { ...submission, owner: ownerPrincipal }), error => error.status === 400 && error.code.startsWith('atlas_'));
+  f.insert(observation('PRIVATE-OBS-NEW', 14)); await f.publish(true);
+  assert.equal(JSON.parse((await publicOnly.getPublic('review-status')).body).reviewStatus, 'pending');
+  assert.equal(JSON.parse((await publicOnly.getPublic()).body).agentReview, undefined);
+  await assert.rejects(publicOnly.review(admin, submission), error => error.status === 409);
 });

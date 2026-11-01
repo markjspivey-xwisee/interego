@@ -1,5 +1,7 @@
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import { buildAtlasProjection } from './atlas-projection.mjs';
+import { reconcileAtlasRecord } from './atlas-reconciliation.mjs';
+import { AtlasReviewError, atlasQuestionId, buildAtlasReviewContext, validateAtlasReviewSubmission } from './atlas-review.mjs';
 
 const TARGET = 'mayya';
 const STATE_KEY = 'atlas:mayya:publication-state:v1';
@@ -42,7 +44,7 @@ export function createAtlasPublisher({ store, loadOwner, loadRecord, baseRecord,
   const recordUrl = `${base}/public/atlas/${TARGET}/record.json`;
   const curated = clone(baseRecord);
   const stamp = () => new Date(now()).toISOString();
-  const state = async () => (await store.get(STATE_KEY)) ?? { version: 1, target: TARGET, revision: 0, binding: null, grant: null, autoPublish: false, publication: null };
+  const state = async () => (await store.get(STATE_KEY)) ?? { version: 1, target: TARGET, revision: 0, binding: null, grant: null, autoPublish: false, publication: null, agentReview: null, reviewRevision: 0 };
   const principal = actor => { if (typeof actor?.principal !== 'string' || !actor.principal) fail(401, 'atlas_sign_in_required', 'Sign in to manage Atlas publication.'); return actor.principal; };
   const browser = actor => {
     principal(actor);
@@ -116,7 +118,11 @@ export function createAtlasPublisher({ store, loadOwner, loadRecord, baseRecord,
     const createdAt = stamp(), revision = saved.revision + 1;
     const result = buildAtlasProjection({ baseRecord: curated, records: loaded.records, patientId: loaded.source.patientId, publishedAt: createdAt, revision, sourceSyncAt: loaded.source.lastSync ?? null });
     const projection = clone(result.record);
-    const contentDigest = digest(projection);
+    // Presentation reconciliation and an editorial overlay are derived artifacts,
+    // not new source facts. Clock/sync metadata must not trigger a clinical
+    // release or invalidate an otherwise current editorial review.
+    const { reconciliation: ignoredReconciliation, agentReview: ignoredReview, ...sourceContent } = projection;
+    const contentDigest = digest(sourceContent);
     projection.meta = { ...projection.meta, publication: { target: TARGET, revision, contentDigest: `sha256:${contentDigest}`, publishedAt: createdAt, preparedAt: createdAt, managementUrl: base, publicRecordUrl: recordUrl, sourceSyncAt: loaded.source.lastSync ?? null, latestClinicalDate: result.latestClinicalDate ?? null } };
     if (Buffer.byteLength(JSON.stringify(projection)) > MAX_BYTES) fail(413, 'atlas_snapshot_too_large', 'This public snapshot is too large. Narrow the source import.');
     return { projection, contentDigest, stats: clone(result.stats), exclusions: clone(result.exclusions), latestClinicalDate: result.latestClinicalDate ?? null };
@@ -124,11 +130,33 @@ export function createAtlasPublisher({ store, loadOwner, loadRecord, baseRecord,
   const receipt = saved => ({ target: clone(target), revision: saved.revision, publishedAt: saved.publication.publishedAt, committedAt: saved.publication.committedAt, digest: saved.publication.digest, autoPublish: saved.autoPublish, publicRecordUrl: recordUrl });
   const commit = async (saved, draft, automatic, autoPublishPreference) => {
     const committedAt = stamp();
-    const next = { ...saved, revision: draft.baseRevision + 1, autoPublish: automatic ? saved.autoPublish : autoPublishPreference, publication: { record: clone(draft.projection), digest: draft.digest, contentDigest: draft.contentDigest, sourceRevision: draft.sourceRevision, sourceSyncAt: draft.projection.meta.publication.sourceSyncAt, latestClinicalDate: draft.latestClinicalDate, stats: draft.stats, publishedAt: draft.projection.meta.publication.publishedAt, committedAt, draftId: draft.draftId, automatic } };
+    const next = { ...saved, agentReview: null, reviewAuthority: null, revision: draft.baseRevision + 1, autoPublish: automatic ? saved.autoPublish : autoPublishPreference, publication: { record: clone(draft.projection), digest: draft.digest, contentDigest: draft.contentDigest, sourceRevision: draft.sourceRevision, sourceSyncAt: draft.projection.meta.publication.sourceSyncAt, latestClinicalDate: draft.latestClinicalDate, stats: draft.stats, publishedAt: draft.projection.meta.publication.publishedAt, committedAt, draftId: draft.draftId, automatic } };
     if (!automatic) next.lastReceipt = { draftId: draft.draftId, digest: draft.digest, baseRevision: draft.baseRevision, autoPublish: next.autoPublish, receipt: receipt(next) };
     await store.put(STATE_KEY, next);
     return receipt(next);
   };
+
+  const publicBinding = saved => ({ sourceRevision: saved.revision, sourceDigest: saved.publication.record.meta.publication.contentDigest });
+  const activeReview = saved => {
+    const binding = publicBinding(saved), review = saved.agentReview;
+    return review?.sourceRevision === binding.sourceRevision && review?.sourceDigest === binding.sourceDigest ? review : null;
+  };
+  const reviewStatus = saved => {
+    const review = activeReview(saved);
+    return { target: TARGET, ...publicBinding(saved), reviewRevision: saved.reviewRevision ?? 0, reviewStatus: review ? 'reviewed' : 'pending', reviewedAt: review?.reviewedAt ?? null, scope: 'public-summary-review', clinicianReviewed: false };
+  };
+  const publicRecord = saved => {
+    // Derived presentation fields are separate from the immutable approved
+    // clinical copy. Its original publication.contentDigest remains unchanged.
+    const record = { ...saved.publication.record };
+    delete record.agentReview;
+    if (Array.isArray(record.faq)) record.faq = record.faq.map(faq => ({ ...faq, questionId: atlasQuestionId(faq) }));
+    record.reconciliation = reconcileAtlasRecord(record);
+    const review = activeReview(saved);
+    if (review) record.agentReview = clone(review);
+    return record;
+  };
+  const reviewContext = saved => buildAtlasReviewContext({ record: publicRecord(saved), ...publicBinding(saved), reviewRevision: saved.reviewRevision ?? 0, agentReview: activeReview(saved) });
 
   const api = {
     async status(actor) {
@@ -241,11 +269,35 @@ export function createAtlasPublisher({ store, loadOwner, loadRecord, baseRecord,
         return { updated: true, ...await commit(saved, draft, true, true) };
       });
     },
+    async review(actor, params = {}) {
+      if (principal(actor) !== adminPrincipal) fail(403, 'atlas_admin_required', 'Only the configured administrator can submit an Atlas editorial review.');
+      if (!object(params) || !['context', 'submit'].includes(params.mode)) fail(400, 'atlas_review_request_invalid', 'Choose the review context or submit a source-bound editorial review.');
+      return queued(async () => {
+        const saved = await state();
+        if (!saved.publication) fail(404, 'atlas_not_published', 'Publish the first browser-reviewed snapshot before preparing an agent review.');
+        if (params.mode === 'context') {
+          if (Object.keys(params).some(key => key !== 'mode')) fail(400, 'atlas_review_request_invalid', 'Review context does not accept owner or destination fields.');
+          return reviewContext(saved);
+        }
+        const binding = publicBinding(saved);
+        const content = validateAtlasReviewSubmission({ record: publicRecord(saved), ...binding, params });
+        const reviewDigest = content.reviewDigest.startsWith('sha256:') ? content.reviewDigest : `sha256:${content.reviewDigest}`;
+        const prior = activeReview(saved);
+        if (prior?.reviewDigest === reviewDigest) return { ...reviewStatus(saved), reviewDigest, duplicate: true };
+        const reviewRevision = (saved.reviewRevision ?? 0) + 1;
+        const agentReview = { scope: 'public-summary-review', clinicianReviewed: false, ...binding, reviewRevision, reviewDigest, reviewedAt: stamp(), reviewer: 'Atlas editorial agent', summaryBullets: content.summaryBullets, questionAnswers: content.questionAnswers };
+        const next = { ...saved, reviewRevision, agentReview, reviewAuthority: { principal: actor.principal, agentId: typeof actor.agentId === 'string' ? actor.agentId : null } };
+        await store.put(STATE_KEY, next);
+        return { ...reviewStatus(next), reviewDigest, duplicate: false };
+      });
+    },
     async getPublic(format = 'json') {
-      if (!['json', 'md', 'jsonld', 'ttl'].includes(format)) fail(404, 'atlas_format_not_found', 'This public record format is not available.');
+      if (!['json', 'md', 'jsonld', 'ttl', 'review', 'review-status'].includes(format)) fail(404, 'atlas_format_not_found', 'This public record format is not available.');
       const saved = await state();
       if (!saved.publication) fail(404, 'atlas_not_published', 'No reviewed public snapshot has been published yet.');
-      const record = clone(saved.publication.record), publication = record.meta.publication, json = JSON.stringify(record);
+      if (format === 'review-status') return { body: JSON.stringify(reviewStatus(saved)), contentType: 'application/json; charset=utf-8', revision: saved.revision, reviewRevision: saved.reviewRevision ?? 0 };
+      if (format === 'review') return { body: JSON.stringify(reviewContext(saved)), contentType: 'application/json; charset=utf-8', revision: saved.revision, reviewRevision: saved.reviewRevision ?? 0 };
+      const record = publicRecord(saved), publication = record.meta.publication, json = JSON.stringify(record);
       if (format === 'json') return { body: json, contentType: 'application/json; charset=utf-8', revision: saved.revision };
       if (format === 'jsonld') return { body: JSON.stringify({ '@context': { schema: 'https://schema.org/', dct: 'http://purl.org/dc/terms/' }, '@id': recordUrl, '@type': 'schema:Dataset', 'schema:name': 'Mayya Health Atlas reviewed public snapshot', 'dct:hasVersion': saved.revision, 'schema:datePublished': publication.publishedAt, 'schema:encoding': { '@type': 'schema:MediaObject', 'schema:encodingFormat': 'application/json', 'schema:contentUrl': recordUrl, 'schema:text': json } }), contentType: 'application/ld+json; charset=utf-8', revision: saved.revision };
       if (format === 'ttl') return { body: `@prefix schema: <https://schema.org/> .\n@prefix dct: <http://purl.org/dc/terms/> .\n@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .\n<${recordUrl}> a schema:Dataset ; schema:name "Mayya Health Atlas reviewed public snapshot" ; dct:hasVersion ${saved.revision} ; schema:datePublished ${JSON.stringify(publication.publishedAt)} ; schema:text ${JSON.stringify(json)}^^rdf:JSON .\n`, contentType: 'text/turtle; charset=utf-8', revision: saved.revision };
@@ -254,5 +306,5 @@ export function createAtlasPublisher({ store, loadOwner, loadRecord, baseRecord,
     },
   };
   // Never expose provider/store exceptions or raw records through HTTP errors.
-  return Object.fromEntries(Object.entries(api).map(([key, method]) => [key, async (...args) => { try { return await method(...args); } catch (error) { if (error instanceof AtlasError) throw error; throw new AtlasError(503, 'atlas_operation_unavailable', 'Atlas publication could not finish. Check the source connection and retry.'); } }]));
+  return Object.fromEntries(Object.entries(api).map(([key, method]) => [key, async (...args) => { try { return await method(...args); } catch (error) { if (error instanceof AtlasError) throw error; if (error instanceof AtlasReviewError) throw new AtlasError(error.status, error.code, error.message); throw new AtlasError(503, 'atlas_operation_unavailable', 'Atlas publication could not finish. Check the source connection and retry.'); } }]));
 }

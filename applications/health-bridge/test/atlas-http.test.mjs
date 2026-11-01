@@ -70,6 +70,7 @@ async function fixture(t) {
         meta: { subject: SUBJECT.name, scope: 'Synthetic curated history and reviewed provider records.' },
         timeline: [{ id: 'curated-event', title: 'Curated family history', sourceIds: ['curated-source'] }],
         sources: [{ id: 'curated-source', title: 'Previously public family update' }],
+        faq: [{ q: 'What does the older family history say?', a: 'A dated family history.', sourceIds: ['curated-source'] }],
       } },
     fetch: async (url, options) => {
       upstream.push(url);
@@ -162,7 +163,7 @@ test('browser owner publishes the reviewed server draft; every public format rea
   assert.deepEqual(f.authenticated, [actors.owner.principal]);
   const preview = await f.browser(session, 'atlas/preview'); assert.equal(preview.status, 200);
   assert.deepEqual(preview.body.subject, SUBJECT);
-  const draft = preview.body, expected = JSON.stringify(draft.projection);
+  const draft = preview.body;
   assert.equal(draft.projection.labs[0].values[0].value, 12);
   const published = await f.browser(session, 'atlas/publish', { draftId: draft.draftId,
     digest: draft.digest, baseRevision: draft.baseRevision, autoPublish: false,
@@ -174,6 +175,12 @@ test('browser owner publishes the reviewed server draft; every public format rea
   assert.equal(draft.projection.meta.publication.managementUrl, f.origin);
   assert.equal(draft.projection.meta.publication.publicRecordUrl, published.body.publicRecordUrl);
 
+  const expected = await (await fetch(f.origin + publicPath('json'))).text();
+  const publicRecord = JSON.parse(expected);
+  const approved = JSON.parse(expected);
+  if (!Object.hasOwn(draft.projection, 'reconciliation')) delete approved.reconciliation;
+  for (const faq of approved.faq ?? []) delete faq.questionId;
+  assert.deepEqual(approved, draft.projection);
   const reads = f.privateReads.length, external = f.upstream.length;
   const formats = { json: 'application/json', jsonld: 'application/ld+json', md: 'text/markdown', ttl: 'text/turtle' };
   const approvedBodies = new Map();
@@ -200,7 +207,7 @@ test('browser owner publishes the reviewed server draft; every public format rea
     if (format === 'md') {
       assert.match(body, /Publication revision: 1/);
       const sections = Object.fromEntries([...body.matchAll(/## (\w+)\n\n```json\n([\s\S]*?)\n```/g)].map(match => [match[1], JSON.parse(match[2])]));
-      assert.deepEqual(sections, draft.projection);
+      assert.deepEqual(sections, publicRecord);
     }
   }
   assert.equal(f.privateReads.length, reads, 'public formats must never load a private owner or source record');
@@ -234,10 +241,10 @@ test('Atlas browser writes require a real session, exact Origin and CSRF despite
   assert.equal(claimed.status, 200, 'failed CSRF checks must not consume the one-time link');
 });
 
-test('signed agent routes advertise enrollment only and cannot forge browser publication transport', async t => {
+test('signed agent routes advertise enrollment and bounded editorial review only and cannot forge browser publication transport', async t => {
   const f = await fixture(t), profile = await (await fetch(f.origin + '/profile')).json();
   const atlasActions = profile.affordances.filter(item => item.action.startsWith(ACTION + 'atlas/'));
-  assert.deepEqual(atlasActions.map(item => item.action), [ACTION + 'atlas/link']);
+  assert.deepEqual(atlasActions.map(item => item.action), [ACTION + 'atlas/link', ACTION + 'atlas/review']);
   const turtle = await (await fetch(f.origin + '/profile.ttl')).text();
   assert.ok(turtle.includes('<' + ACTION + 'atlas/link>'));
   const checked = f.signedChecks();
@@ -279,4 +286,47 @@ test('browser claims validate the stored Duke Patient rather than caller-supplie
   assert.equal(rejected.status, 409); assert.equal(rejected.body.error, 'atlas_subject_mismatch');
   await f.insert(patient());
   assert.equal((await f.browser(session, 'atlas/claim', { token })).status, 200);
+});
+
+
+test('signed admin editorial action is bounded to approved public sources and cannot bypass source publication', async t => {
+  const f = await fixture(t), owner = await f.signIn();
+  assert.equal((await f.claim(owner)).status, 200);
+  const draft = (await f.browser(owner, 'atlas/preview')).body;
+  assert.equal((await f.browser(owner, 'atlas/publish', { draftId: draft.draftId, digest: draft.digest, baseRevision: draft.baseRevision })).status, 200);
+  const publicUrl = f.origin + '/public/atlas/mayya/review.json';
+  const response = await fetch(publicUrl); assert.equal(response.status, 200);
+  assert.equal(response.headers.get('access-control-allow-origin'), '*');
+  const context = await response.json();
+  assert.ok(Buffer.byteLength(JSON.stringify(context)) <= 96 * 1024);
+  const publicRecord = await (await fetch(f.origin + publicPath('json'))).json();
+  const sourceIds = publicRecord.labs[0].sourceIds;
+  const input = { mode: 'submit', sourceRevision: context.sourceRevision, sourceDigest: context.sourceDigest,
+    summaryBullets: [{ text: 'A structured laboratory record reports hemoglobin of 12 g/dL.', sourceIds }],
+    questionAnswers: [{ questionId: publicRecord.faq[0].questionId, answer: 'The older family account remains dated history.', sourceIds: ['curated-source'] }],
+  };
+  const reads = f.privateReads.length;
+  assert.equal((await f.call('atlas/review', { mode: 'context' })).status, 200);
+  assert.equal((await f.call('atlas/review', input, 'owner')).status, 403);
+  assert.equal((await f.call('atlas/review', { ...input, sourceDigest: 'sha256:' + '0'.repeat(64) })).status, 409);
+  assert.equal((await f.call('atlas/review', { ...input, summaryBullets: [{ text: 'An uncited claim.', sourceIds: ['unknown-source'] }] })).status, 400);
+  const published = await f.call('atlas/review', input); assert.equal(published.status, 200);
+  assert.equal(published.body.reviewRevision, 1); assert.equal(published.body.reviewStatus, 'reviewed');
+  const repeated = await f.call('atlas/review', input); assert.equal(repeated.body.duplicate, true);
+  const stateResponse = await fetch(f.origin + '/public/atlas/mayya/review-status.json'); assert.equal(stateResponse.status, 200);
+  const state = await stateResponse.json(); assert.equal(state.reviewStatus, 'reviewed'); assert.equal(state.sourceRevision, 1);
+  assert.ok(Buffer.byteLength(JSON.stringify(state)) < 4096);
+  assert.equal(f.privateReads.length, reads, 'review action/context/status must never access private owner records');
+  const updated = await (await fetch(f.origin + publicPath('json'))).json();
+  assert.deepEqual(updated.agentReview.summaryBullets, input.summaryBullets);
+  assert.equal(updated.meta.publication.contentDigest, context.sourceDigest);
+  const adminSession = await f.signIn('admin');
+  const browserAttempt = await f.browser(adminSession, 'atlas/review', input);
+  assert.equal(browserAttempt.status, 403); assert.equal(browserAttempt.body.error, 'atlas_review_signed_action_required');
+  const profile = await (await fetch(f.origin + '/profile')).json();
+  const action = profile.affordances.find(item => item.action === ACTION + 'atlas/review');
+  assert.equal(action.target, f.origin + '/actions'); assert.equal(action.parameters.mode, 'context | submit');
+  const turtle = await (await fetch(f.origin + '/profile.ttl')).text();
+  assert.ok(turtle.includes('<' + ACTION + 'atlas/review>'));
+  assert.ok(turtle.includes('sourceRevision')); assert.ok(turtle.includes('summaryBullets'));
 });
