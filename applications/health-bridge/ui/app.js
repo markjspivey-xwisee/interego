@@ -4,6 +4,119 @@ let setup = null;
 let status = null;
 let busy = false;
 let pairing = null;
+const ATLAS_URL = 'https://mayya-health-atlas.goldenfleece.chatgpt.site/';
+const ATLAS_LINK_KEY = 'interego.health.atlasLink';
+let atlasLink = null;
+let atlasDraft = null;
+let atlasDraftSourceStamp = null;
+let atlasAutoChoiceInitialized = false;
+
+function captureAtlasLink() {
+  const fragment = new URLSearchParams(location.hash.slice(1));
+  const token = fragment.get('atlas-link');
+  if (token !== null) {
+    // Remove the one-time link credential before network activity or OAuth navigation.
+    history.replaceState(null, '', location.pathname + location.search);
+    try { sessionStorage.removeItem(ATLAS_LINK_KEY); } catch { /* storage may be unavailable */ }
+    if (typeof token === 'string' && token.length >= 16 && token.length <= 2048 && !/[\s\u0000-\u001f\u007f]/u.test(token)) {
+      atlasLink = { token, expiresAt: Date.now() + 15 * 60 * 1000 };
+      try { sessionStorage.setItem(ATLAS_LINK_KEY, JSON.stringify(atlasLink)); } catch { /* held in memory only */ }
+    }
+  } else {
+    try {
+      const saved = JSON.parse(sessionStorage.getItem(ATLAS_LINK_KEY) || 'null');
+      if (typeof saved?.token === 'string' && saved.token.length >= 16 && saved.token.length <= 2048 && saved.expiresAt > Date.now() && saved.expiresAt <= Date.now() + 15 * 60 * 1000) atlasLink = saved;
+      else sessionStorage.removeItem(ATLAS_LINK_KEY);
+    } catch { try { sessionStorage.removeItem(ATLAS_LINK_KEY); } catch { /* no storage */ } }
+  }
+}
+captureAtlasLink();
+
+function clearAtlasLink() {
+  atlasLink = null;
+  try { sessionStorage.removeItem(ATLAS_LINK_KEY); } catch { /* no storage */ }
+}
+function atlasSourceStamp() {
+  return JSON.stringify({ owner: status?.owner?.principal, revision: status?.publication?.revision, count: status?.recordCount, sources: ['duke','apple'].map(name => sourceState(name).lastSync || null) });
+}
+function clearAtlasDraft() {
+  atlasDraft = null;
+  atlasDraftSourceStamp = null;
+  $('atlas-projection-json').textContent = '';
+  $('atlas-preview-panel').hidden = true;
+}
+function renderPublication() {
+  const p = status?.publication || {};
+  const signed = isSignedIn();
+  const allowed = signed && p.linked === true && p.ownerAllowed === true;
+  if (atlasLink?.expiresAt <= Date.now()) clearAtlasLink();
+  if (atlasDraft && (atlasDraftSourceStamp !== atlasSourceStamp() || (atlasDraft.expiresAt && Date.parse(atlasDraft.expiresAt) <= Date.now()))) clearAtlasDraft();
+  const badge = $('atlas-badge');
+  badge.className = 'status-badge';
+  if (!signed) badge.textContent = 'Sign in to check';
+  else if (!allowed) { badge.textContent = 'Account link required'; badge.classList.add('warning'); }
+  else if (p.autoPublish) { badge.textContent = 'Automatic public updates enabled'; badge.classList.add('connected'); }
+  else if (p.lastPublishedAt) badge.textContent = 'Public snapshot available';
+  else badge.textContent = 'No public source snapshot yet';
+  $('atlas-status').textContent = !signed
+    ? (atlasLink ? 'A one-time Atlas link is ready in this browser. Sign in, then link the account that holds Mayya’s intended Duke chart.' : 'Sign in to manage the private-source updates shown in Mayya’s public Atlas.')
+    : !allowed
+      ? (atlasLink ? 'Link this signed-in account to the fixed public destination below. The source chart must match the configured Atlas subject.' : 'This account is not linked to Mayya’s Atlas. Open the administrator’s one-time account link to continue.')
+      : p.pendingChanges ? 'Private Duke source changes are available. Prepare a preview to review the next public snapshot.'
+      : p.lastPublishedAt ? 'The latest published source revision is shown below. Private imports and public release dates are different.'
+      : 'This account is linked. A preview can be prepared after the intended Duke chart has been connected and imported.';
+  $('atlas-claim').hidden = !atlasLink || allowed;
+  $('atlas-claim').disabled = !signed || busy || !atlasLink;
+  fieldList($('atlas-facts'), [
+    ['Duke source last synced', signed ? dateText(status?.sources?.duke?.lastSync || p.sourceSyncAt) : 'Sign in to check'],
+    ['Latest published clinical date', p.latestClinicalDate ? dateText(p.latestClinicalDate) : 'Not supplied'],
+    ['Last public release', p.lastPublishedAt ? dateText(p.lastPublishedAt) : 'Not published'],
+    ['Public revision', p.revision ? String(p.revision) : 'No source revision published'],
+    ['Pending source changes', signed && allowed ? (p.pendingChanges ? 'Yes' : 'None reported') : 'Not checked']
+  ]);
+  $('atlas-preview').disabled = !allowed || busy;
+  $('atlas-automatic').disabled = !allowed || busy;
+  $('atlas-automatic').textContent = p.autoPublish ? 'Pause automatic public updates' : 'Enable automatic public updates';
+  if (!atlasAutoChoiceInitialized && p.lastPublishedAt && allowed) {
+    $('atlas-auto-choice').checked = p.autoPublish === true;
+    atlasAutoChoiceInitialized = true;
+  }
+  $('atlas-publish').disabled = !allowed || busy || !atlasDraft;
+}
+function renderAtlasDraft(draft) {
+  const projection = draft.projection;
+  if (typeof draft.draftId !== 'string' || typeof draft.digest !== 'string' || !Object.hasOwn(draft,'baseRevision') || !projection || typeof projection !== 'object' || Array.isArray(projection)) throw new Error('The public preview could not be verified. Prepare it again.');
+  atlasDraft = draft;
+  atlasDraftSourceStamp = atlasSourceStamp();
+  const stats = draft.stats || {};
+  $('atlas-draft-date').textContent = 'Prepared ' + dateText(draft.createdAt);
+  $('atlas-draft-summary').textContent = `${count(stats.projectedResources ?? stats.projectedEntries ?? 0)} structured source records contribute to this snapshot. The curated history is preserved; its narrative summaries are not rewritten by a sync.`;
+  fieldList($('atlas-preview-facts'), [
+    ['Current public revision', String(draft.baseRevision)],
+    ['Preview expires', draft.expiresAt ? dateText(draft.expiresAt) : 'Not supplied'],
+    ['Duke source sync', projection.meta?.publication?.sourceSyncAt ? dateText(projection.meta.publication.sourceSyncAt) : 'Not supplied'],
+    ['Latest source clinical date', projection.meta?.publication?.latestClinicalDate ? dateText(projection.meta.publication.latestClinicalDate) : 'Not supplied']
+  ]);
+  const additions = $('atlas-additions'); additions.replaceChildren();
+  const sections = stats.sections && typeof stats.sections === 'object' ? Object.entries(stats.sections) : Object.entries(projection).filter(([,value]) => Array.isArray(value)).map(([name,value]) => [name,value.length]);
+  sections.filter(([,value]) => Number(value) > 0).forEach(([name,value]) => additions.append(element('li',`${String(name).replace(/([a-z])([A-Z])/g,'$1 $2')}: ${count(value)}`)));
+  if (!additions.children.length) additions.append(element('li','No new structured entries were included. Review the complete snapshot below.'));
+  const exclusions = $('atlas-exclusions'); exclusions.replaceChildren();
+  const excluded = Array.isArray(draft.exclusions) ? draft.exclusions : Object.entries(draft.exclusions || {}).map(([reason,count]) => ({reason,count}));
+  excluded.forEach(item => exclusions.append(element('li',`${String(item.reason || item.field || 'Excluded field').replaceAll('-',' ')}${item.count !== undefined ? ': '+count(item.count) : ''}`)));
+  if (!excluded.length) exclusions.append(element('li','No additional source exclusions were reported. Raw narrative bodies and identifiers are outside the public field allow-list.'));
+  const diff = $('atlas-diff'); diff.replaceChildren();
+  const changes = Array.isArray(draft.diff) ? draft.diff : [];
+  diff.hidden = changes.length === 0;
+  if (changes.length) {
+    diff.append(element('h4','Changes from the current public revision'));
+    const list=element('ul');changes.forEach(change => list.append(element('li',`${change.operation || change.change || 'Change'} · ${change.section || 'Record'}${change.id ? ' · '+change.id : ''}`)));diff.append(list);
+  }
+  $('atlas-projection-json').textContent = JSON.stringify(projection,null,2);
+  $('atlas-preview-panel').hidden = false;
+  $('atlas-receipt').hidden = true;
+  $('atlas-preview-panel').scrollIntoView({behavior:'smooth',block:'start'});
+}
 
 function element(tag, text, className) {
   const node = document.createElement(tag);
@@ -121,6 +234,7 @@ function render() {
   $('apple-pair').disabled = !mayImport() || !appleReady;
   $('apple-revoke').disabled = !signed || busy || !(apple.connected || uploaded || pairing);
   if (!status?.consent?.enabled && pairing) clearPairing();
+  renderPublication();
 }
 
 async function request(path, body) {
@@ -135,6 +249,11 @@ async function request(path, body) {
   if (response.status === 401) { status = null; render(); throw new Error('Sign in with Interego to continue.'); }
   const data = await response.json().catch(() => ({}));
   if (!response.ok) {
+    const atlasCode = data.code || data.error;
+    if (path.startsWith('/api/atlas/') && typeof atlasCode === 'string' && /^atlas_[a-z_]+$/.test(atlasCode) && typeof data.message === 'string' && data.message.length <= 400 && !/[\u0000-\u001f\u007f]/.test(data.message)) {
+      if (response.status === 409) clearAtlasDraft();
+      throw new Error(data.message);
+    }
     if (data.code === 'authorization_required' || data.error === 'authorization_required' || data.status === 'authorization_required') {
       throw new Error('Retained Oura imports require provider authorization. An Oura account or OAuth approval alone does not enable this connection.');
     }
@@ -229,6 +348,25 @@ $('copy-token').addEventListener('click',async()=>{
   catch { $('pairing-token').focus();$('pairing-token').select();notify('Select and copy the token from the pairing field.',true); }
 });
 $('load-records').addEventListener('click',() => perform(async()=>{const source=$('record-source').value;renderRecords(await request('/api/records'+(source?'?source='+encodeURIComponent(source):'')));}));
+$('atlas-claim').addEventListener('click',() => perform(async()=>{
+  if (!atlasLink || atlasLink.expiresAt <= Date.now()) { clearAtlasLink(); throw new Error('The one-time Atlas account link has expired. Request a fresh administrator link.'); }
+  await request('/api/atlas/claim',{token:atlasLink.token});clearAtlasLink();clearAtlasDraft();await refresh();notify('This account is linked to Mayya’s Atlas. Connect and import the intended Duke chart before previewing a public update.');
+}));
+$('atlas-preview').addEventListener('click',() => perform(async()=>{
+  const draft=await request('/api/atlas/preview',{});renderAtlasDraft(draft);notify('Public preview prepared. Review the source dates, additions, exclusions, and complete sanitized snapshot before publishing.');
+}));
+$('atlas-auto-choice').addEventListener('change',()=>{atlasAutoChoiceInitialized=true;});
+$('atlas-automatic').addEventListener('click',() => perform(async()=>{
+  const enabled=status?.publication?.autoPublish !== true;await request('/api/atlas/automatic',{enabled});await refresh();$('atlas-auto-choice').checked=enabled;atlasAutoChoiceInitialized=true;notify(enabled?'Automatic public updates enabled for the allow-listed structured Duke fields after a successful Duke sync.':'Automatic public updates paused. Private imports can continue; the current public snapshot remains available.');
+}));
+$('atlas-publish').addEventListener('click',() => perform(async()=>{
+  if (!atlasDraft || (atlasDraft.expiresAt && Date.parse(atlasDraft.expiresAt)<=Date.now())) { clearAtlasDraft();throw new Error('Prepare a fresh public preview before publishing.'); }
+  const receipt=await request('/api/atlas/publish',{draftId:atlasDraft.draftId,digest:atlasDraft.digest,baseRevision:atlasDraft.baseRevision,autoPublish:$('atlas-auto-choice').checked});
+  clearAtlasDraft();await refresh();const host=$('atlas-receipt');host.replaceChildren();
+  host.append(element('strong',`Public snapshot released${receipt.revision ? ' · revision '+receipt.revision : ''}`),element('p','The reviewed snapshot is available at the fixed public Atlas. Source clinical dates remain separate from the release timestamp.'));
+  const link=element('a','Open Mayya’s public Atlas ↗');link.href=ATLAS_URL;link.target='_blank';link.rel='noopener noreferrer';host.append(link);host.hidden=false;
+  notify('The reviewed Atlas snapshot was published publicly.');
+}));
 
 const query=new URLSearchParams(location.search);
 if (query.get('connected') === 'duke') notify('Duke MyChart authorization returned. Check the connection status below before syncing.');

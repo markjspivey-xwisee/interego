@@ -3,6 +3,7 @@ import { readFile } from 'node:fs/promises';
 import { discoverDuke, authorizationRequest, exchangeDukeCode, refreshDukeToken, syncDuke } from './fhir.mjs';
 import { ouraAuthorizationRequest, exchangeOuraCode, refreshOuraToken, syncOura } from './oura.mjs';
 import { normalizeAppleBatch } from './apple.mjs';
+import { createAtlasPublisher, AtlasError } from './atlas-publisher.mjs';
 
 export const ACTION = 'urn:interego:health:';
 // Oura app registration and user OAuth do not authorize retained AI-facing imports.
@@ -16,7 +17,7 @@ const cookie = (req,name) => (req.headers.cookie||'').split(';').map(x=>x.trim()
 export class BridgeError extends Error { constructor(status,code,message) { super(message);this.status=status;this.code=code; } }
 const fail = (status,code,message) => {throw new BridgeError(status,code,message);};
 const plainObject = value => value && typeof value==='object' && !Array.isArray(value);
-const safeError = error => ({error:error.code||'operation_unavailable',message:error instanceof BridgeError?error.message:'This operation could not finish. Check the connection status and retry.'});
+const safeError = error => ({error:error.code||'operation_unavailable',message:error instanceof BridgeError||error instanceof AtlasError?error.message:'This operation could not finish. Check the connection status and retry.'});
 
 async function readJson(req,limit=2*1024*1024) {
   if (!String(req.headers['content-type']||'').startsWith('application/json')) fail(415,'json_required','Send a JSON request.');
@@ -31,6 +32,7 @@ export function createHealthBridge(config) {
   if (!base.startsWith('https:') && !/^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(base)) throw new Error('HEALTH_PUBLIC_URL must be HTTPS.');
   const store=config.store,security=config.security,fetcher=config.fetch||fetch,now=config.now||Date.now;
   const sessions=new Map(),pending=new Map(),locks=new Map(),limits=new Map();
+  let atlasPublisher;
   const sessionCookie=base.startsWith('https:')?'__Host-interego-health':'interego-health';
   const oauthCookie=base.startsWith('https:')?'__Host-interego-health-flow':'interego-health-flow';
   let relayMetadata;
@@ -69,7 +71,7 @@ export function createHealthBridge(config) {
     duke:{configured:!!config.duke?.clientId,registrationRequired:!config.duke?.clientId,redirectUri:base+'/oauth/duke/callback',jwksUri:base+'/.well-known/jwks.json',sandboxJwksUri:base+'/.well-known/sandbox-jwks.json',fhirBase:'https://health-apis.duke.edu/FHIR/api/FHIR/R4'},
     oura:{configured:false,importEnabled:false,registrationRequired:false,authorizationRequired:true,status:'authorization_required',message:OURA_RESTRICTION,redirectUri:base+'/oauth/oura/callback'},
     apple:{supported:true,requiresIphone:true,endpoint:base+'/ingest/apple',mode:'selected-sample uploads',backgroundSyncVerified:false},
-    publication:{automatic:false,rawSources:'private encrypted storage'}});
+    publication:{automatic:false,rawSources:'private encrypted storage',...(config.atlas?{atlas:{url:config.atlas.atlasUrl,mode:'reviewed-public-snapshots',automaticAfterSync:'owner-opt-in'}}:{})}});
   const status=async(actor)=>{
     const o=await loadOwner(actor),s=setup(),sources={};
     for(const name of ['duke','oura','apple']){
@@ -77,7 +79,8 @@ export function createHealthBridge(config) {
       if(name==='oura'&&!OURA_IMPORT_ENABLED){sources.oura={configured:false,importEnabled:false,connected:false,status:'authorization_required',authorizationRequired:true,message:OURA_RESTRICTION,lastSync:null,recordCount:0,coverage:[]};continue;}
       sources[name]={configured:name==='apple'||s[name].configured,connected:!!v.connected,status:v.status||(name==='apple'?'waiting_for_iphone':s[name].configured?'not_connected':'registration_required'),lastSync:v.lastSync||null,recordCount:o.records.filter(x=>x.source===name).length,coverage:v.coverage||[],...(name==='apple'?{pairingCount:(v.tokenHashes||[]).length}:{}),...(v.patientId?{patientId:v.patientId}:{})};
     }
-    return {owner:{userId:actor.userId,principal:actor.principal},consent:o.consent,sources,recordCount:o.records.filter(r=>r.source!=='oura'||OURA_IMPORT_ENABLED).length,automaticPolling:false,publicAtlasSync:false};
+    const publication=atlasPublisher?await atlasPublisher.status(actor):undefined;
+    return {owner:{userId:actor.userId,principal:actor.principal},consent:o.consent,sources,recordCount:o.records.filter(r=>r.source!=='oura'||OURA_IMPORT_ENABLED).length,automaticPolling:false,publicAtlasSync:publication?.autoPublish===true,...(publication?{publication}:{})};
   };
   const resourceKey=(actor,id)=>'record:'+hash(actor.principal+':'+id);
   const importRecords=async(actor,o,source,records)=>{
@@ -144,7 +147,12 @@ export function createHealthBridge(config) {
     const imported=await importRecords(actor,o,source,result.resources||result.records||[]);
     connection.coverage=result.coverage||[];connection.lastAttempt=new Date(now()).toISOString();connection.status=result.complete?'connected':'partial_sync';connection.connected=true;
     if(result.complete){connection.watermark=result.watermark;connection.lastSync=connection.lastAttempt;}
-    await saveOwner(actor,o);return {source,complete:result.complete,...imported,coverage:connection.coverage,errors:result.errors||[],lastSync:connection.lastSync||null,publicAtlasUpdated:false};
+    await saveOwner(actor,o);
+    let publication;
+    if(source==='duke'&&atlasPublisher){
+      try{publication=await atlasPublisher.autoPublish(actor);}catch(error){publication={updated:false,error:error.code||'atlas_publication_failed',message:'The private import was saved, but the public Atlas was not updated. Review its publishing status.'};}
+    }
+    return {source,complete:result.complete,...imported,coverage:connection.coverage,errors:result.errors||[],lastSync:connection.lastSync||null,publicAtlasUpdated:publication?.updated===true,...(publication?{publication}:{})};
   });
   const pairApple=async(actor,params={})=>serialized(ownerKey(actor),async()=>{
     const o=await loadOwner(actor);requireConsent(o);
@@ -166,6 +174,10 @@ export function createHealthBridge(config) {
   });
 
   const apiOperation=async(actor,operation,params={})=>{
+    if(operation==='atlas/link'){
+      if(!atlasPublisher)fail(503,'atlas_unavailable','Public Atlas publishing is not configured.');
+      return atlasPublisher.createLink(actor);
+    }
     if(operation==='status')return status(actor);
     if(operation==='records')return records(actor,params);
     if(operation==='record'){
@@ -179,10 +191,11 @@ export function createHealthBridge(config) {
     if(operation==='revoke')return revoke(actor,params.source);
     fail(404,'operation_not_found','This health operation is not supported.');
   };
+  if(config.atlas)atlasPublisher=createAtlasPublisher({store,loadOwner,loadRecord:(actor,id)=>store.get(resourceKey(actor,id)),now,publicBase:base,...config.atlas});
   const profile=()=>({
-    '@context':{hydra:'http://www.w3.org/ns/hydra/core#',schema:'https://schema.org/'},'@id':base+'/profile','@type':'hydra:EntryPoint',name:'Interego Private Health Connections',version:'0.1.0',setup:base+'/setup',human:base+'/',turtle:base+'/profile.ttl',rawRecords:'encrypted private source records',publicAtlasPublishing:false,
+    '@context':{hydra:'http://www.w3.org/ns/hydra/core#',schema:'https://schema.org/'},'@id':base+'/profile','@type':'hydra:EntryPoint',name:'Interego Private Health Connections',version:'0.1.0',setup:base+'/setup',human:base+'/',turtle:base+'/profile.ttl',rawRecords:'encrypted private source records',publicAtlasPublishing:!!atlasPublisher,
     authentication:{kind:'Interego relay-delegated signature',signWith:'sign_request',signedFields:['action','target','params','nonce'],target:base,nonce:'fresh random string, at least 16 characters',timestamp:'stamped by the relay; checked for freshness',identity:'derived from verified agent controller; never caller-selected owner'},
-    affordances:['status','records','record','consent','apple/pair','duke/sync','oura/sync','revoke'].map(op=>({action:ACTION+op,target:base+'/actions',method:'POST',description:op==='oura/sync'?OURA_RESTRICTION:op==='records'?'List private source record metadata, 30 per page; no public publication.':op==='record'?'Read one record from the verified owner index.':op==='consent'?'Enable or disable private imports; does not change provider permissions.':op,parameters:op==='records'?{source:'optional duke|oura|apple',limit:'1–100',offset:'0–20000'}:op==='record'?{id:'owned record id'}:op==='consent'?{enabled:'boolean'}:op==='apple/pair'?{metrics:'selected allowed Apple Health metrics'}:op==='revoke'?{source:'duke|oura|apple'}:{}}))
+    affordances:['status','records','record','consent','apple/pair','duke/sync','oura/sync','revoke',...(atlasPublisher?['atlas/link']:[])].map(op=>({action:ACTION+op,target:base+'/actions',method:'POST',description:op==='atlas/link'?'Atlas administrator only: prepare a single-use browser account link; does not publish records.':op==='oura/sync'?OURA_RESTRICTION:op==='records'?'List private source record metadata, 30 per page; no public publication.':op==='record'?'Read one record from the verified owner index.':op==='consent'?'Enable or disable private imports; does not change provider permissions.':op,parameters:op==='records'?{source:'optional duke|oura|apple',limit:'1–100',offset:'0–20000'}:op==='record'?{id:'owned record id'}:op==='consent'?{enabled:'boolean'}:op==='apple/pair'?{metrics:'selected allowed Apple Health metrics'}:op==='revoke'?{source:'duke|oura|apple'}:{}}))
   });
   // The generic Interego follower parses Turtle, not arbitrary JSON. Derive its declarations
   // from the same action list as /profile so discovery cannot drift from the active routes.
@@ -228,6 +241,12 @@ export function createHealthBridge(config) {
       if(req.method==='GET' && path==='/profile'){res.setHeader('Link',`<${base}/profile.ttl>; rel="alternate"; type="text/turtle"`);return json(res,200,profile());}
       if(req.method==='GET' && path==='/profile.ttl'){res.setHeader('Link',`<${base}/profile>; rel="alternate"; type="application/json"`);res.writeHead(200,{'Content-Type':'text/turtle; charset=utf-8'});return res.end(profileTurtle());}
       if(req.method==='GET' && path==='/setup')return json(res,200,setup());
+      const publicAtlas=path.match(/^\/public\/atlas\/mayya\/record\.(json|jsonld|md|ttl)$/);
+      if(req.method==='GET'&&publicAtlas){
+        if(!atlasPublisher)fail(404,'atlas_not_published','No public Atlas snapshot has been published.');
+        const snapshot=await atlasPublisher.getPublic(publicAtlas[1]);
+        res.writeHead(200,{'Content-Type':snapshot.contentType,'Access-Control-Allow-Origin':'*','Access-Control-Expose-Headers':'X-Atlas-Revision','X-Atlas-Revision':String(snapshot.revision)});return res.end(snapshot.body);
+      }
       if(req.method==='GET' && path==='/.well-known/jwks.json'){
         if(!config.duke?.privateKeyPem)return json(res,200,{keys:[]});
         const jwk=createPublicKey(config.duke.privateKeyPem).export({format:'jwk'});return json(res,200,{keys:[{...jwk,kid:config.duke.keyId,alg:'RS256',use:'sig'}]});
@@ -249,7 +268,7 @@ export function createHealthBridge(config) {
         const actor=await security.authenticateBearer('Bearer '+t.access_token);const id=random();
         for(const [key,value] of sessions)if(value.expiresAt<=now())sessions.delete(key);
         if(sessions.size>=1000)fail(503,'session_capacity','Sign-in capacity was reached. Try again later.');
-        sessions.set(id,{sessionId:id,actor,csrfToken:random(),expiresAt:now()+Math.min(3600,Number(t.expires_in)||3600)*1000});
+        sessions.set(id,{sessionId:id,actor,authenticatedAt:now(),csrfToken:random(),expiresAt:now()+Math.min(3600,Number(t.expires_in)||3600)*1000});
         setCookie(res,sessionCookie,id,Math.min(3600,Number(t.expires_in)||3600));return redirect(res,base+'/?connected=interego');
       }
       if(req.method==='GET' && /^\/oauth\/(duke|oura)\/callback$/.test(path)){
@@ -265,6 +284,11 @@ export function createHealthBridge(config) {
       if(req.method==='GET' && path==='/api/records'){const s=browserOwner(req);return json(res,200,await records(s.actor,Object.fromEntries(url.searchParams)));}
       if(req.method==='POST' && /^\/api\//.test(path)){
         consumeLimit(req,'manage',60);const s=browserOwner(req,true),body=await readJson(req);const op=path.slice(5);
+        if(['atlas/claim','atlas/preview','atlas/publish','atlas/automatic'].includes(op)){
+          if(!atlasPublisher)fail(503,'atlas_unavailable','Public Atlas publishing is not configured.');
+          const browserActor={...s.actor,transport:'browser',authenticatedAt:s.authenticatedAt};
+          const result=await atlasPublisher[op==='atlas/automatic'?'setAutomatic':op.slice(6)](browserActor,body);return json(res,200,result);
+        }
         if(op==='duke/start'||op==='oura/start'){
           const source=op.split('/')[0];requireSourceAllowed(source);const o=await loadOwner(s.actor);requireConsent(o);const settings=config[source];
           if(!settings?.clientId||(source==='oura'&&!settings.clientSecret))fail(409,'registration_required',`${source==='duke'?'Epic / Duke':'Oura'} app registration must be configured before source sign-in.`);

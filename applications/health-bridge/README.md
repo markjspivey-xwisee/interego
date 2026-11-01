@@ -1,6 +1,6 @@
 # Private health connections for Interego
 
-An isolated source bridge for Duke MyChart (SMART on FHIR R4) and selected Apple Health samples. An Oura adapter is present but retained Oura imports and reads are hard-disabled pending provider authorization and a separately reviewed design. Imported source records and refresh tokens stay encrypted in a private operational store. An Interego agent reads them through signed, owner-bound affordances. Nothing is automatically published to the public Health Atlas.
+An isolated source bridge for Duke MyChart (SMART on FHIR R4) and selected Apple Health samples. An Oura adapter is present but retained Oura imports and reads are hard-disabled pending provider authorization and a separately reviewed design. Imported source records and refresh tokens stay encrypted in a private operational store. An Interego agent reads them through signed, owner-bound affordances. Source authorization alone does not publish records; a separately linked browser publisher reviews the first public Atlas snapshot and can opt into later structured updates after Duke syncs.
 
 The bridge does not claim that a medication order proves a dose was administered. It preserves provider resources, sample origin, clinical date, retrieval date and source-specific coverage. Oura and mirrored Apple Health readings remain separate observations and are never added together.
 
@@ -36,6 +36,14 @@ Sign `{action,target,params,nonce}` with Interego `sign_request`: `action` is th
 Records are limited to the verified signer's own account. Read results preserve raw source evidence and do not establish clinical truth. No action publishes patient data to the public web. Native extractor/follower verification can run separately with the repository's root `tsx` development tool; the standalone bridge suite and production serving require no TypeScript runtime.
 
 Private import consent is explicit and revocable. Source refresh is user-triggered unless a deployment operator configures a separate, explicitly authorized schedule. This service creates no timer or always-running polling task by default.
+
+## Public Atlas publishing
+
+Set `ATLAS_ADMIN_PRINCIPAL`, `ATLAS_EXPECTED_NAME` and `ATLAS_EXPECTED_BIRTH_DATE` to enable the fixed Mayya Atlas integration. The curated public baseline is `atlas-base.json`. The configured administrator can use the signed `atlas/link` action to create a single-use, 30-minute browser enrollment link. It does not read another account's source records or publish anything. The signed-in browser claims that link only after its imported Duke Patient record matches the configured subject; the stored publisher is then pinned to that verified principal and chart. No MCP account switch is required. Subsequent chart changes or relinking attempts are refused.
+
+The browser's Atlas panel prepares an immutable preview, shows its structured clinical contents, source dates and exclusions, and submits the exact draft/digest/base revision with CSRF and Origin checks. Raw FHIR, identifiers, demographics, free-text notes, PDFs and attachments never enter the public projection. Patient-bound coded findings, numeric results, orders, procedures and coded document metadata can supplement the curated history without rewriting its dates or FAQ. Orders do not establish administered doses. This named record with clinical dates is a sanitized public snapshot, not an anonymous dataset or a complete chart.
+
+The publisher may opt into updates of those same supported fields after future Duke syncs, and pause that behavior separately from imports. Failed public updates do not erase successful private imports. No public GET reads live private records: `/public/atlas/mayya/record.json`, `.md`, `.jsonld` and `.ttl` serve only the approved copy at one revision, with `Cache-Control: no-store`. Before the first publication they return404. The public Atlas Worker reads these anonymous endpoints for both its human view and agent formats; unavailable publications have an explicitly labeled curated baseline fallback. Signing in, importing, or issuing an enrollment link does not create a public release.
 
 ## Validation boundaries
 

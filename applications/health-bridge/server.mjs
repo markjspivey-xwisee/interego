@@ -1,5 +1,5 @@
 import { createServer } from 'node:http';
-import { mkdir, chown } from 'node:fs/promises';
+import { mkdir, chown, readFile } from 'node:fs/promises';
 import { createEncryptedStore, createSecurity } from './security.mjs';
 import { createHealthBridge } from './bridge.mjs';
 
@@ -19,7 +19,9 @@ const relayUrl=env('INTEREGO_RELAY_URL','https://relay.interego.xwisee.com');
 const storageBearer=env('HEALTH_STORE_BEARER');
 const store=createEncryptedStore({keyHex:env('HEALTH_RECORD_KEY'),rootUrl:env('HEALTH_STORE_URL'),directory:env('HEALTH_DATA_DIRECTORY'),...(storageBearer?{authorization:'Bearer '+storageBearer}:{})});
 const security=createSecurity({relayUrl,identityHost:env('INTEREGO_IDENTITY_HOST','identity.interego.xwisee.com'),targetOrigin:new URL(publicUrl).origin,trustedRelayAddresses:env('INTEREGO_TRUSTED_RELAY_ADDRESSES','').split(',').filter(Boolean),store});
+const atlas=env('ATLAS_ADMIN_PRINCIPAL')?{adminPrincipal:env('ATLAS_ADMIN_PRINCIPAL'),atlasUrl:'https://mayya-health-atlas.goldenfleece.chatgpt.site/',expectedSubject:{name:env('ATLAS_EXPECTED_NAME'),birthDate:env('ATLAS_EXPECTED_BIRTH_DATE')},baseRecord:JSON.parse(await readFile(new URL('./atlas-base.json',import.meta.url),'utf8'))}:undefined;
 const bridge=createHealthBridge({publicUrl,relayUrl,store,security,
+  ...(atlas?{atlas}:{}),
   duke:{clientId:env('DUKE_CLIENT_ID'),clientSecret:env('DUKE_CLIENT_SECRET'),privateKeyPem:env('DUKE_PRIVATE_KEY_PEM')?.replace(/\\n/g,'\n'),keyId:env('DUKE_KEY_ID'),sandboxPrivateKeyPem:env('DUKE_SANDBOX_PRIVATE_KEY_PEM')?.replace(/\\n/g,'\n'),sandboxKeyId:env('DUKE_SANDBOX_KEY_ID')},
   oura:{clientId:env('OURA_CLIENT_ID'),clientSecret:env('OURA_CLIENT_SECRET')}});
 const server=createServer((req,res)=>{req.setTimeout(20000);void bridge.handler(req,res);});
