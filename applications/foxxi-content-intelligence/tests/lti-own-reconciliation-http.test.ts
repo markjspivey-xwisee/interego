@@ -2,14 +2,23 @@ import { createHmac } from 'node:crypto';
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import express from 'express';
-import { afterEach, describe, expect, it, vi } from 'vitest';
-import { createRecoveryAttestation, ownLtiReconciliationHandler, type RecoveryHttpPorts, type RecoveryOperation } from '../src/lti-own-reconciliation-http.js';
+import { MemoryStore, rateLimit } from 'express-rate-limit';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { createRecoveryAttestation, ownLtiReconciliationHandler, ownLtiReconciliationRateLimitOptions, type RecoveryHttpPorts, type RecoveryOperation } from '../src/lti-own-reconciliation-http.js';
 import { canonicalRecoveryJson, OwnLtiReconciliationError, type RecoveryApplyResult, type RecoveryPreview, type RecoveryReadResult } from '../src/lti-own-reconciliation.js';
 import { OwnSubjectXapiRequestBudget } from '../src/own-subject-xapi.js';
 import type { OwnSubjectXapiAuthority } from '../src/own-subject-xapi-auth.js';
 
-const servers: Server[] = [];
+const servers: Server[] = [], stores: MemoryStore[] = [];
+const originalInit = MemoryStore.prototype.init;
+beforeEach(() => {
+  vi.spyOn(MemoryStore.prototype, 'init').mockImplementation(function (this: MemoryStore, options) {
+    stores.push(this); originalInit.call(this, options);
+  });
+});
 afterEach(async () => {
+  for (const store of stores.splice(0)) store.shutdown();
+  vi.useRealTimers(); vi.restoreAllMocks();
   await Promise.all(servers.splice(0).map(server => new Promise<void>(resolve => {
     server.closeAllConnections(); server.close(() => resolve());
   })));
@@ -18,7 +27,7 @@ afterEach(async () => {
 /** Real HTTP + Express + the production handler and request budget.
  * Authority/workflow ports are explicit stubs: these are transport-boundary tests,
  * not signature/delegation, original-LRS, or durable-ledger verification claims. */
-async function fixture() {
+async function fixture(options: { trustedProxy?: boolean } = {}) {
   const authority: OwnSubjectXapiAuthority = { ok: true, callerDid: 'did:web:identity.test:agents:synthetic-session',
     subjectDid: 'did:web:identity.test:users:synthetic-person', podUrl: 'https://pod.test/synthetic-person/',
     ownerPublicKey: 'synthetic-test-key-not-used-by-transport', payload: {} };
@@ -35,16 +44,25 @@ async function fixture() {
   const budget = new OwnSubjectXapiRequestBudget();
   const allow = vi.fn((key: string, limit: number) => budget.allow(key, limit));
   const app = express();
+  // This fixture-only trust permits IP simulation. Production trust is unchanged.
+  if (options.trustedProxy) app.set('trust proxy', 'loopback');
   app.use(express.json({ limit: '300kb' }));
   const ports: RecoveryHttpPorts = { verify, compose, allow };
+  const limitOptions = ownLtiReconciliationRateLimitOptions();
+  const totalLimit = rateLimit(limitOptions.total), clientLimit = rateLimit(limitOptions.client);
   for (const operation of ['preview', 'apply', 'read'] as const)
-    app.post('/' + operation, ownLtiReconciliationHandler(operation, ports));
+    app.post('/' + operation, totalLimit, clientLimit, ownLtiReconciliationHandler(operation, ports));
   const server = createServer(app); servers.push(server);
   await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
   const origin = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
   const request = (operation: RecoveryOperation, body: unknown = { _signed_payload: 'synthetic-envelope' }, headers: Record<string, string> = {}) =>
     fetch(origin + '/' + operation, { method: 'POST', headers: { 'Content-Type': 'application/json', ...headers }, body: JSON.stringify(body) });
   return { app, authority, workflow, verify, compose, allow, request };
+}
+
+function bucketCount(store: MemoryStore): number {
+  const maps = store as unknown as { current: Map<string, unknown>; previous: Map<string, unknown> };
+  return maps.current.size + maps.previous.size;
 }
 
 describe('signed own-LTI reconciliation HTTP boundary', () => {
@@ -113,7 +131,7 @@ describe('signed own-LTI reconciliation HTTP boundary', () => {
   it('enforces actual 30-per-subject and 120-per-framework-IP minute budgets without trusting raw XFF', async () => {
     const f = await fixture(); expect(f.app.get('trust proxy')).toBe(false);
     for (let i = 0; i < 30; i++) {
-      const response = await f.request('preview', undefined, { 'X-Forwarded-For': `198.51.100.${i}` });
+      const response = await f.request('preview', undefined, i === 0 ? {} : { 'X-Forwarded-For': `198.51.100.${i}` });
       expect(response.status).toBe(200); await response.arrayBuffer();
     }
     const subject = await f.request('preview'); expect(subject.status).toBe(429); await subject.arrayBuffer();
@@ -122,11 +140,72 @@ describe('signed own-LTI reconciliation HTTP boundary', () => {
     expect(new Set(ipKeys).size).toBe(1); expect(ipKeys[0]).not.toContain('198.51.100.');
     const g = await fixture(); g.verify.mockResolvedValue({ ok: false, status: 401, error: 'not signed' });
     for (let i = 0; i < 120; i++) {
-      const response = await g.request('read', undefined, { 'X-Forwarded-For': `198.18.0.${i}` });
+      const response = await g.request('read', undefined, i === 0 ? {} : { 'X-Forwarded-For': `198.18.0.${i}` });
       expect(response.status).toBe(401); await response.arrayBuffer();
     }
     const blocked = await g.request('read'); expect(blocked.status).toBe(429); expect(blocked.headers.get('Retry-After')).toBe('60');
     await blocked.arrayBuffer(); expect(g.verify).toHaveBeenCalledTimes(120); expect(g.compose).not.toHaveBeenCalled();
+  });
+
+  it('shares the standard client limit across all three POSTs before signature work', async () => {
+    const f = await fixture(); f.verify.mockResolvedValue({ ok: false, status: 401, error: 'not signed' });
+    const operations = ['preview', 'apply', 'read'] as const;
+    for (let i = 0; i < 120; i++) {
+      const response = await f.request(operations[i % 3]!); expect(response.status).toBe(401); await response.arrayBuffer();
+    }
+    for (const operation of operations) {
+      const blocked = await f.request(operation); expect(blocked.status).toBe(429);
+      expect(Number(blocked.headers.get('Retry-After'))).toBeGreaterThan(0);
+      expect(Number(blocked.headers.get('Retry-After'))).toBeLessThanOrEqual(60);
+      expect(blocked.headers.get('RateLimit')).toContain('own-lti-reconciliation-client');
+      expect(blocked.headers.get('Cache-Control')).toBe('no-store');
+      expect(blocked.headers.get('X-Content-Type-Options')).toBe('nosniff');
+      expect(await blocked.json()).toEqual({ error: 'reconciliation_rate_limited' });
+    }
+    expect(f.verify).toHaveBeenCalledTimes(120); expect(f.compose).not.toHaveBeenCalled();
+  });
+
+  it('caps global admission before distinct client-key allocation and authority work', async () => {
+    const f = await fixture({ trustedProxy: true });
+    f.verify.mockResolvedValue({ ok: false, status: 401, error: 'not signed' });
+    const statuses: number[] = [];
+    for (let i = 0; i < 500; i++) {
+      const response = await f.request(i % 2 ? 'apply' : 'preview', undefined,
+        { 'X-Forwarded-For': `198.18.${Math.floor(i / 250)}.${i % 250 + 1}` });
+      statuses.push(response.status); await response.arrayBuffer();
+    }
+    expect(statuses.filter(status => status === 401)).toHaveLength(300);
+    expect(statuses.filter(status => status === 429)).toHaveLength(200);
+    expect(f.verify).toHaveBeenCalledTimes(300); expect(f.compose).not.toHaveBeenCalled();
+    expect(stores).toHaveLength(2); expect(bucketCount(stores[0]!)).toBe(1); expect(bucketCount(stores[1]!)).toBe(300);
+    const blocked = await f.request('read', undefined, { 'X-Forwarded-For': '198.19.0.1' });
+    expect(blocked.status).toBe(429); expect(blocked.headers.get('RateLimit')).toContain('own-lti-reconciliation-total');
+    await blocked.arrayBuffer(); expect(bucketCount(stores[1]!)).toBe(300);
+  });
+
+  it('groups rotating IPv6 clients by the standard /56 policy and keeps another subnet independent', async () => {
+    const f = await fixture({ trustedProxy: true });
+    f.verify.mockResolvedValue({ ok: false, status: 401, error: 'not signed' });
+    for (let i = 0; i < 120; i++) {
+      const response = await f.request('preview', undefined, { 'X-Forwarded-For': `2001:db8:1234:${i.toString(16)}::1` });
+      expect(response.status).toBe(401); await response.arrayBuffer();
+    }
+    const sameSubnet = await f.request('apply', undefined, { 'X-Forwarded-For': '2001:db8:1234:fe::2' });
+    expect(sameSubnet.status).toBe(429); await sameSubnet.arrayBuffer();
+    const independent = await f.request('read', undefined, { 'X-Forwarded-For': '2001:db8:1234:100::1' });
+    expect(independent.status).toBe(401); await independent.arrayBuffer();
+    expect(f.verify).toHaveBeenCalledTimes(121); expect(bucketCount(stores[1]!)).toBe(2);
+  });
+
+  it('expires standard store windows and lets blocked callers resume without changing subject guards', async () => {
+    vi.useFakeTimers({ toFake: ['Date', 'setInterval', 'clearInterval'] });
+    const f = await fixture(); f.verify.mockResolvedValue({ ok: false, status: 401, error: 'not signed' });
+    for (let i = 0; i < 120; i++) { const response = await f.request('preview'); expect(response.status).toBe(401); await response.arrayBuffer(); }
+    const blocked = await f.request('apply'); expect(blocked.status).toBe(429); await blocked.arrayBuffer();
+    vi.advanceTimersByTime(120001);
+    expect(stores.every(store => bucketCount(store) === 0)).toBe(true);
+    const resumed = await f.request('read'); expect(resumed.status).toBe(401); await resumed.arrayBuffer();
+    expect(f.verify).toHaveBeenCalledTimes(121);
   });
 
   it('admits at most eight concurrent authority checks and releases reservations after success or thrown failures', async () => {

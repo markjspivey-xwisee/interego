@@ -1,6 +1,7 @@
 /** Signed transport for an explicitly reviewed, new own-account recovery entry. */
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import type { RequestHandler } from 'express';
+import type { Options } from 'express-rate-limit';
 import type { OwnSubjectXapiAuthority } from './own-subject-xapi-auth.js';
 import { canonicalRecoveryJson, OwnLtiReconciliationError, type RecoveryPreview, type RecoveryReadResult, type RecoveryApplyResult } from './lti-own-reconciliation.js';
 
@@ -15,6 +16,26 @@ export interface RecoveryHttpPorts {
   verify(body: unknown, write: boolean): Promise<OwnSubjectXapiAuthority | Refusal>;
   compose(authority: OwnSubjectXapiAuthority, readOnly: boolean): RecoveryWorkflow;
   allow(key: string, limit: number): boolean;
+}
+
+/** Construct the two standard limiters ONCE and mount total, then client on all
+ * three recovery routes. Total admission bounds distinct client-store keys;
+ * MemoryStore expires its rotating windows. The library's default IP key uses
+ * Express's existing trust policy and IPv6 /56, never a raw forwarded header.
+ * These are additional pre-authentication limits; subject and active-work guards
+ * remain in the signed handler. This factory never changes Express proxy trust. */
+export function ownLtiReconciliationRateLimitOptions(): { total: Partial<Options>; client: Partial<Options> } {
+  const exceeded: RequestHandler = (_req, res) => {
+    res.setHeader('Cache-Control', 'no-store');
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.status(429).json({ error: 'reconciliation_rate_limited' });
+  };
+  return {
+    total: { windowMs: 60000, limit: 300, keyGenerator: () => 'own-lti-reconciliation',
+      identifier: 'own-lti-reconciliation-total', standardHeaders: 'draft-8', legacyHeaders: false, handler: exceeded },
+    client: { windowMs: 60000, limit: 120, ipv6Subnet: 56,
+      identifier: 'own-lti-reconciliation-client', standardHeaders: 'draft-8', legacyHeaders: false, handler: exceeded },
+  };
 }
 const TRANSPORT = new Set(['subject_did', 'purpose', 'subject_pod_url', 'timestamp', 'agent_id']);
 const unavailable = () => new OwnLtiReconciliationError('attestation-unavailable', 503);

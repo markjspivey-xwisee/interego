@@ -35,9 +35,10 @@ import { configuredSelfXapiTimeout, createSelfXapiRequest } from '../src/self-xa
 import { composeOwnSubjectXapiVerifier } from '../src/own-subject-xapi-auth.js';
 import { OwnSubjectXapiWriteBudget, OwnSubjectXapiRequestBudget } from '../src/own-subject-xapi.js';
 import { createOwnSubjectActivityStore } from '../src/own-subject-activity-store.js';
+import { rateLimit } from 'express-rate-limit';
 import { createOwnLtiReconciliation, validateRecoveryEntry, type RecoveryEntry } from '../src/lti-own-reconciliation.js';
 import { createOwnLtiReconciliationStore } from '../src/lti-own-reconciliation-store.js';
-import { createRecoveryAttestation, ownLtiReconciliationHandler } from '../src/lti-own-reconciliation-http.js';
+import { createRecoveryAttestation, ownLtiReconciliationHandler, ownLtiReconciliationRateLimitOptions } from '../src/lti-own-reconciliation-http.js';
 import { ingestTelemetry, normalizeQuery, telemetryReport, mergeTelemetrySnapshot, type TelemetryDependencies } from '../../llm-telemetry/service.js';
 import { telemetryProfile } from '../../llm-telemetry/profile.js';
 import { normalizeOtlpLogs } from '../../llm-telemetry/otlp.js';
@@ -10185,6 +10186,9 @@ const gradedKey = issuerKeySeed ? createHash('sha256').update(`foxxi-graded:${is
 const gradedHere = (statement: Record<string, unknown>): boolean => gradedKey !== '' && isGradedBy(statement, gradedKey);
 
 // A separately attested owner ledger, never an alternate global LMS baseline.
+const ownRecoveryRateOptions = ownLtiReconciliationRateLimitOptions();
+const ownRecoveryTotalRateLimit = rateLimit(ownRecoveryRateOptions.total);
+const ownRecoveryClientRateLimit = rateLimit(ownRecoveryRateOptions.client);
 const ownLtiReconciliationPorts = {
   verify: verifyOwnSubjectXapiCaller,
   allow: (key: string, limit: number) => ownSubjectRequestBudget.allow(key, limit),
@@ -10225,9 +10229,9 @@ const ownLtiReconciliationPorts = {
     } };
   },
 };
-app.post('/agent/lti/reconciliation/preview', ownLtiReconciliationHandler('preview', ownLtiReconciliationPorts));
-app.post('/agent/lti/reconciliation/apply', ownLtiReconciliationHandler('apply', ownLtiReconciliationPorts));
-app.post('/agent/lti/reconciliation/read', ownLtiReconciliationHandler('read', ownLtiReconciliationPorts));
+app.post('/agent/lti/reconciliation/preview', ownRecoveryTotalRateLimit, ownRecoveryClientRateLimit, ownLtiReconciliationHandler('preview', ownLtiReconciliationPorts));
+app.post('/agent/lti/reconciliation/apply', ownRecoveryTotalRateLimit, ownRecoveryClientRateLimit, ownLtiReconciliationHandler('apply', ownLtiReconciliationPorts));
+app.post('/agent/lti/reconciliation/read', ownRecoveryTotalRateLimit, ownRecoveryClientRateLimit, ownLtiReconciliationHandler('read', ownLtiReconciliationPorts));
 app.get('/agent/lti/reconciliation/affordance', (_req, res) => {
   res.type('text/turtle').send(affordancesManifestTurtle(`${bridgeBaseUrl}/agent/lti/reconciliation/affordance`, [
     canonicalAffordance('urn:iep:action:foxxi:lti-reconciliation-contract'),
