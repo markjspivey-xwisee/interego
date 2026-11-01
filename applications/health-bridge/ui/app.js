@@ -45,6 +45,9 @@ function clearAtlasDraft() {
   $('atlas-projection-json').textContent = '';
   $('atlas-preview-panel').hidden = true;
 }
+function atlasHasPublishedRevision() {
+  return Number.isInteger(status?.publication?.revision) && status.publication.revision > 0;
+}
 function renderPublication() {
   const p = status?.publication || {};
   const signed = isSignedIn();
@@ -75,9 +78,10 @@ function renderPublication() {
     ['Pending source changes', signed && allowed ? (p.pendingChanges ? 'Yes' : 'None reported') : 'Not checked']
   ]);
   $('atlas-preview').disabled = !allowed || busy;
-  $('atlas-automatic').disabled = !allowed || busy;
+  // The first release must use the reviewed draft and its local checkbox choice.
+  $('atlas-automatic').disabled = !allowed || busy || !atlasHasPublishedRevision();
   $('atlas-automatic').textContent = p.autoPublish ? 'Pause automatic public updates' : 'Enable automatic public updates';
-  if (!atlasAutoChoiceInitialized && p.lastPublishedAt && allowed) {
+  if (!atlasAutoChoiceInitialized && atlasHasPublishedRevision() && allowed) {
     $('atlas-auto-choice').checked = p.autoPublish === true;
     atlasAutoChoiceInitialized = true;
   }
@@ -249,6 +253,9 @@ async function request(path, body) {
   if (response.status === 401) { status = null; render(); throw new Error('Sign in with Interego to continue.'); }
   const data = await response.json().catch(() => ({}));
   if (!response.ok) {
+    if (path === '/api/atlas/preview' && [502,504].includes(response.status)) {
+      throw new Error('The public preview timed out or was interrupted. Retry the preview; your existing source records were kept. No public snapshot was released.');
+    }
     const atlasCode = data.code || data.error;
     if (path.startsWith('/api/atlas/') && typeof atlasCode === 'string' && /^atlas_[a-z_]+$/.test(atlasCode) && typeof data.message === 'string' && data.message.length <= 400 && !/[\u0000-\u001f\u007f]/.test(data.message)) {
       if (response.status === 409) clearAtlasDraft();
@@ -355,8 +362,10 @@ $('atlas-claim').addEventListener('click',() => perform(async()=>{
 $('atlas-preview').addEventListener('click',() => perform(async()=>{
   const draft=await request('/api/atlas/preview',{});renderAtlasDraft(draft);notify('Public preview prepared. Review the source dates, additions, exclusions, and complete sanitized snapshot before publishing.');
 }));
+// Keep this choice local through preview/status refreshes; publish sends it with the reviewed draft.
 $('atlas-auto-choice').addEventListener('change',()=>{atlasAutoChoiceInitialized=true;});
 $('atlas-automatic').addEventListener('click',() => perform(async()=>{
+  if (!atlasHasPublishedRevision()) throw new Error('Review a public preview and publish the first snapshot before changing automatic public updates.');
   const enabled=status?.publication?.autoPublish !== true;await request('/api/atlas/automatic',{enabled});await refresh();$('atlas-auto-choice').checked=enabled;atlasAutoChoiceInitialized=true;notify(enabled?'Automatic public updates enabled for the allow-listed structured Duke fields after a successful Duke sync.':'Automatic public updates paused. Private imports can continue; the current public snapshot remains available.');
 }));
 $('atlas-publish').addEventListener('click',() => perform(async()=>{

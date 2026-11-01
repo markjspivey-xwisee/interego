@@ -217,3 +217,25 @@ test('preview counts private document-body exclusions without reading or decrypt
   assert.equal(bodyReads, 0);
   assert.equal((await publisher.getPublic()).revision, 1);
 });
+
+
+test('commit and unchanged automatic checks read only Patient while pinning every source-index digest', async t => {
+  const f = await fixture(t); await f.claim();
+  const draft = await f.publisher.preview(f.actor());
+  let patientReads = 0, clinicalReads = 0;
+  const publisher = createAtlasPublisher({ ...f.config, loadRecord: async (actor, id) => {
+    if (!id.startsWith('duke:Patient:')) { clinicalReads++; throw new Error('Commit must use the reviewed projection, not clinical reloads.'); }
+    patientReads++; return f.config.loadRecord(actor, id);
+  } });
+  await publisher.publish(f.actor(), { draftId: draft.draftId, digest: draft.digest, baseRevision: draft.baseRevision, autoPublish: true });
+  assert.equal(clinicalReads, 0); assert.equal(patientReads, 1);
+  assert.equal((await publisher.autoPublish({ principal: ownerPrincipal })).reason, 'atlas_source_unchanged');
+  assert.equal(clinicalReads, 0); assert.equal(patientReads, 2);
+  const before = await publisher.getPublic();
+  // A drift in a non-Patient digest still invalidates review, even though the
+  // private clinical resource is deliberately not reloaded on commit.
+  const freshDraft = await f.publisher.preview(f.actor());
+  f.setOnRecord(() => { f.owner.records.find(item => item.resourceType === 'Observation').digest = '1'.repeat(64); });
+  await rejects(publisher.publish(f.actor(), { draftId: freshDraft.draftId, digest: freshDraft.digest, baseRevision: freshDraft.baseRevision }), 'atlas_source_changed');
+  assert.equal(clinicalReads, 0); assert.equal((await publisher.getPublic()).body, before.body);
+});

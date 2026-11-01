@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { performance } from 'node:perf_hooks';
 import { buildAtlasProjection } from '../atlas-projection.mjs';
 
 const patientId = 'chart-A';
@@ -235,4 +236,47 @@ test('unsupported private resource type labels cannot leak through diagnostic co
   assert.equal(publicJson(result).includes(rawType), false);
   assert.equal(result.stats.receivedByResourceType.Unsupported, 1);
   assert.equal(result.stats.exclusionCounts['unsupported-resource-type'], 1);
+});
+
+test('private tokens remain excluded as case-insensitive substrings in labels, codes and units', () => {
+  const privateToken = 'SeCrEt-X91';
+  const privateSource = observation('private-token-carrier', { identifier: [{ value: privateToken }] });
+  const exact = observation('private-exact-label', { code: code(privateToken) });
+  const embedded = observation('private-embedded-label', { code: code('Result-secret-x91-followup') });
+  const embeddedCode = observation('private-embedded-code', { code: code('Private coded value', 'prefix-SECRET-x91-suffix') });
+  const unit = observation('private-sensitive-unit', { code: code('Safe quantity', '1234-5'), valueQuantity: { value: 12, unit: 'mg-secret-X91' } });
+  const safe = observation('private-repeated-label', { code: code('Safe quantity', '1234-5'), valueQuantity: { value: 11, unit: 'mg' } });
+  const result = project([privateSource, exact, embedded, embeddedCode, unit, safe]);
+  assert.equal(publicJson(result).toLowerCase().includes(privateToken.toLowerCase()), false);
+  const quantities = result.record.labs.filter(row => row.name === 'Safe quantity');
+  assert.equal(quantities.length, 2);
+  assert.deepEqual(quantities.map(row => row.unit).sort(), ['', 'mg']);
+  assert.equal(result.stats.exclusionCounts['no-supported-coded-clinical-content'], 3);
+});
+
+test('oversized adversarial displays are rejected before regex inspection and never published', { timeout: 2000 }, () => {
+  const huge = 'a'.repeat(200_000) + '@' + 'b'.repeat(200_000);
+  const records = [observation('private-oversized-display', { code: code(huge) }), observation()];
+  const result = project(records);
+  assert.equal(result.record.labs.filter(row => row.projectionOrigin).length, 1);
+  assert.equal(byName(result.record.labs, 'Hemoglobin').values[0].value, 10.1);
+  assert.ok(publicJson(result).length < 10_000);
+});
+
+test('large clinical imports keep repeated labels and units without scanning every private token per entry', { timeout: 10_000 }, () => {
+  const rows = Array.from({ length: 5000 }, (_, index) => observation(`private-scale-observation-${index}`, {
+    identifier: [{ value: `private-scale-identifier-${index}` }],
+    encounter: { reference: `Encounter/private-scale-encounter-${index}` },
+    performer: [{ reference: `Practitioner/private-scale-performer-${index}` }],
+  }));
+  const started = performance.now();
+  const result = project(rows);
+  const elapsed = performance.now() - started;
+  assert.equal(result.stats.projectedResources, rows.length);
+  assert.equal(result.record.labs.filter(row => row.projectionOrigin).length, rows.length);
+  assert.equal(result.record.sources.filter(row => row.projectionOrigin).length, rows.length);
+  assert.ok(result.record.labs.filter(row => row.projectionOrigin).every(row => row.name === 'Hemoglobin' && row.unit === 'g/dL'));
+  assert.equal(publicJson(result).includes('private-scale-'), false);
+  // Wide budget for shared CI; the former all-token scan takes ~15 s locally.
+  assert.ok(elapsed < 10_000, `Projection exceeded bounded synthetic import budget: ${Math.round(elapsed)} ms`);
 });

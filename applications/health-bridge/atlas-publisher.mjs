@@ -195,7 +195,9 @@ export function createAtlasPublisher({ store, loadOwner, loadRecord, baseRecord,
         if (!draft || draft.principal !== actor.principal || draft.patientId !== saved.binding.patientId || draft.target !== TARGET || !equal(draft.digest, reviewedDigest) || !equal(digest(draft.projection), reviewedDigest) || draft.baseRevision !== baseRevision) fail(409, 'atlas_draft_invalid', 'The Atlas preview does not match this publication request.');
         if (Date.parse(draft.expiresAt) <= now()) fail(409, 'atlas_draft_expired', 'This Atlas preview expired. Prepare a fresh preview.');
         if (saved.revision !== baseRevision) fail(409, 'atlas_revision_conflict', 'A newer Atlas revision exists. Prepare a fresh preview.');
-        const loaded = await snapshot(actor, saved);
+        // The reviewed projection is immutable. Recheck Patient identity and the
+        // full index revision without rereading every clinical/body resource.
+        const loaded = await snapshot(actor, saved, true);
         if (loaded.sourceRevision !== draft.sourceRevision) fail(409, 'atlas_source_changed', 'Source records changed after review. Prepare a fresh preview.');
         // Last owner-index read immediately before the single atomic state write.
         const latest = await own(actor); connection(latest, saved);
@@ -223,8 +225,11 @@ export function createAtlasPublisher({ store, loadOwner, loadRecord, baseRecord,
         if (!saved.binding) return { updated: false, reason: 'atlas_not_linked' };
         bound(saved, actor);
         if (!saved.autoPublish || !saved.publication) return { updated: false, reason: 'atlas_auto_publish_not_enabled' };
+        // Most syncs leave the source index unchanged. Validate the bound
+        // Patient and index first; only a changed source needs full projection.
+        const checked = await snapshot(actor, saved, true);
+        if (checked.sourceRevision === saved.publication.sourceRevision) return { updated: false, reason: 'atlas_source_unchanged', revision: saved.revision };
         const loaded = await snapshot(actor, saved);
-        if (loaded.sourceRevision === saved.publication.sourceRevision) return { updated: false, reason: 'atlas_source_unchanged', revision: saved.revision };
         const prepared = prepare(loaded, saved);
         if (prepared.contentDigest === saved.publication.contentDigest) {
           await store.put(STATE_KEY, { ...saved, publication: { ...saved.publication, sourceRevision: loaded.sourceRevision } });

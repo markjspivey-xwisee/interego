@@ -96,19 +96,45 @@ function secretValues(records, selectedPatient) {
     }
     for (const ident of array(raw?.identifier)) add(ident?.value);
   }
-  return [...values].sort((a, b) => b.length - a.length);
+  return [...values];
 }
 function cleaner(secrets) {
+  // Index private tokens once. Scanning the bounded candidate substrings avoids
+  // a record-count-squared loop over every private identifier for every label.
+  // Case folding can expand Unicode, so use folded lengths, as includes() did.
+  const tokenLengths = new Map();
+  for (const secret of secrets) {
+    const folded = secret.toLowerCase();
+    if (!folded || folded.length > 320) continue; // Candidate labels are <=160 characters before case folding.
+    if (!tokenLengths.has(folded.length)) tokenLengths.set(folded.length, new Set());
+    tokenLengths.get(folded.length).add(folded);
+  }
+  const groups = [...tokenLengths].sort(([a], [b]) => a - b);
+  const memo = new Map();
   return (value, limit = 160, clinicalCode = false) => {
     if (typeof value !== 'string') return '';
     const text = value.normalize('NFKC').trim().replace(/\s+/g, ' ');
+    // Check the bound before any unanchored regex can inspect provider text.
+    if (!text || text.length > limit) return '';
+    const key = `${limit}:${clinicalCode ? 'code' : 'label'}:${text}`;
+    if (memo.has(key)) return memo.get(key);
+    const remember = result => {
+      if (memo.size >= 2048) memo.clear();
+      memo.set(key, result);
+      return result;
+    };
     // Numeric clinical codes are not phone numbers. Their syntax is constrained
     // separately; still reject reference-like or credential-like code payloads.
     const unsafe = clinicalCode ? /[<>\u0000-\u001f\u007f]|:\/\/|(?:Patient|Binary|DocumentReference|Practitioner|Encounter)\/|(?:MRN|DOB|SSN|access.token|refresh.token|bearer)/i.test(text) : UNSAFE_TEXT.test(text);
-    if (!text || text.length > limit || unsafe) return '';
+    if (unsafe) return remember('');
     const lower = text.toLowerCase();
-    if (secrets.some(s => lower.includes(s.toLowerCase()))) return '';
-    return text;
+    for (const [length, tokens] of groups) {
+      if (length > lower.length) break;
+      for (let start = 0; start <= lower.length - length; start++) {
+        if (tokens.has(lower.slice(start, start + length))) return remember('');
+      }
+    }
+    return remember(text);
   };
 }
 function concept(value, clean) {
