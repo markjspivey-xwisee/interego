@@ -8,6 +8,12 @@ The entry retains original event times, normalized outcomes, immutable source id
 
 Isolated tests exercise evidence rejection, explicit review expiry and owner binding, private native encryption and compare-and-swap, uncertain acknowledgements, fresh entry readback, and fixed-resource failure witnessing. These checks do not constitute a live learner-record repair.
 
+## 2026-10-31 — Restore browser sign-in when an update leaves an empty registration key
+
+Windows preview 10 recognizes a native-messaging key with no default value as unregistered, using the Windows helper's typed registry API rather than localized command output. This repairs the legacy uninstaller's actual state: the key remains after its default value is removed. A present empty string, another manifest path, an unsupported value type or an unreadable key remains refused. The helper reports only fixed per-browser states, never registry values.
+
+Previously saved, valid extension consent remains required; the repair does not rewrite the allowance, replace an identity or broaden account access. Known restoration failures retain safe fixed explanations instead of always asking the owner to re-save their IDs. Preview 10 is distinct from the earlier preview 9 installers; bridge access and federation remain off by default.
+
 ## 2026-10-31 — Strengthen the test-run floor for the expanded regression tree
 
 The test-run integrity minimum rises from 590 to the measured 620 tracked modules after Foxxi's LTI readiness, immutable-publication and authorization-rate regression modules consume the remaining headroom. The proportional growth allowance, include patterns, assertions and skip rules are unchanged; no tests are removed or excluded.
