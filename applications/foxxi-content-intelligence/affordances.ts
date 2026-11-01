@@ -514,6 +514,64 @@ export const foxxiAffordances: ReadonlyArray<Affordance> = [
     },
   },
   {
+    action: 'urn:iep:action:foxxi:lti-reconciliation-contract' as IRI,
+    toolName: 'foxxi.lti_reconciliation_contract',
+    title: 'Read the own-account LMS reconciliation contract',
+    description: 'Public version 1.0.0 contract for signed preview, explicit new-entry creation and fresh own-account readback. Describes the required evidence, verified human scope and separate reconciliation provenance. Reading this contract creates no record and reveals no learner data.',
+    method: 'GET', targetTemplate: '{base}/agent/lti/reconciliation/affordance', mediaType: 'text/turtle', externallyRouted: true,
+    annotations: { title: 'Read the LMS reconciliation contract', readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+    inputs: [],
+    outputs: { description: 'Public Turtle affordance manifest for contract version 1.0.0, including its signed action inputs and original-persistence limitation.' },
+  },
+  {
+    action: 'urn:iep:action:foxxi:lti-reconciliation-preview-signed' as IRI,
+    toolName: 'foxxi.lti_reconciliation_preview_signed',
+    title: 'Preview a new own-account LMS reconciliation',
+    description: 'Read the two original engine-authenticated records and current failure witness without writing. The returned private ten-minute plan is bound to this human, caller, source facts and native head. Original LMS persistence remains unverified. Contract version 1.0.0; discover /agent/lti/reconciliation/affordance. Signed personal-performance requests bind subject_did to the native controlling human and subject_pod_url to the verified own pod; neither field selects another person.',
+    method: 'POST', targetTemplate: '{base}/agent/lti/reconciliation/preview', mediaType: 'application/json', externallyRouted: true,
+    annotations: { title: 'Preview a new own-account LMS reconciliation', readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+    inputs: [
+      { name: '_signed_payload', type: 'string', required: true, description: 'Use the exact sign_request payload containing agent_id, timestamp, subject_did, purpose personal-performance and originalStatementIds: exactly two original UUIDs. No additional logical fields are accepted.' },
+      { name: '_signature', type: 'string', required: true, description: 'The real signature returned by sign_request for this exact payload.' },
+    ],
+    appliesTo: { collections: ['profiles'] },
+    outputs: { description: 'Versioned own-account reconciliation preview. Source-scoped association is not a cryptographic attempt binding. 400 invalid input; 403 different owner; 409 stale preview or conflict; 503 unconfirmed evidence or storage.', properties: {
+      kind: { type: 'string' }, previewDigest: { type: 'string' }, planToken: { type: 'string' }, expiresAt: { type: 'string' }
+    } },
+  },
+  {
+    action: 'urn:iep:action:foxxi:lti-reconciliation-apply-signed' as IRI,
+    toolName: 'foxxi.lti_reconciliation_apply_signed',
+    title: 'Create my reviewed reconciled LMS entry',
+    description: 'Explicitly create the previously previewed private owner entry. Fresh original-record, engine HMAC, witness and native revision checks precede append. This never posts a grade, rewrites source statements or changes the global LMS snapshot. Read back the same entry before accepting it. Contract version 1.0.0; discover /agent/lti/reconciliation/affordance. Signed personal-performance requests bind subject_did to the native controlling human and subject_pod_url to the verified own pod; neither field selects another person.',
+    method: 'POST', targetTemplate: '{base}/agent/lti/reconciliation/apply', mediaType: 'application/json', externallyRouted: true,
+    annotations: { title: 'Create my reviewed reconciled LMS entry', readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+    inputs: [
+      { name: '_signed_payload', type: 'string', required: true, description: 'Use the exact sign_request payload containing agent_id, timestamp, subject_did, purpose personal-performance and planToken: the exact private preview token; intent: create-reconciled-lms-entry. No additional logical fields are accepted.' },
+      { name: '_signature', type: 'string', required: true, description: 'The real signature returned by sign_request for this exact payload.' },
+    ],
+    appliesTo: { collections: ['profiles'] },
+    outputs: { description: 'Versioned own-account reconciliation apply. Source-scoped association is not a cryptographic attempt binding. 400 invalid input; 403 different owner; 409 stale preview or conflict; 503 unconfirmed evidence or storage.', properties: {
+      kind: { type: 'string' }, found: { type: 'boolean' }, entry: { type: 'object', additionalProperties: true }, verification: { type: 'object', additionalProperties: true }
+    } },
+  },
+  {
+    action: 'urn:iep:action:foxxi:lti-reconciliation-read-signed' as IRI,
+    toolName: 'foxxi.lti_reconciliation_read_signed',
+    title: 'Read my reconciled LMS entry',
+    description: 'Freshly read the private native owner ledger and verify the complete entry attestation. This separate record does not establish that the original LMS grade persisted. Contract version 1.0.0; discover /agent/lti/reconciliation/affordance. Signed personal-performance requests bind subject_did to the native controlling human and subject_pod_url to the verified own pod; neither field selects another person.',
+    method: 'POST', targetTemplate: '{base}/agent/lti/reconciliation/read', mediaType: 'application/json', externallyRouted: true,
+    annotations: { title: 'Read my reconciled LMS entry', readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+    inputs: [
+      { name: '_signed_payload', type: 'string', required: true, description: 'Use the exact sign_request payload containing agent_id, timestamp, subject_did, purpose personal-performance and entryId: the exact 64-character lowercase SHA-256 identifier. No additional logical fields are accepted.' },
+      { name: '_signature', type: 'string', required: true, description: 'The real signature returned by sign_request for this exact payload.' },
+    ],
+    appliesTo: { collections: ['profiles'] },
+    outputs: { description: 'Versioned own-account reconciliation read. Source-scoped association is not a cryptographic attempt binding. 400 invalid input; 403 different owner; 409 stale preview or conflict; 503 unconfirmed evidence or storage.', properties: {
+      kind: { type: 'string' }, found: { type: 'boolean' }, entry: { type: 'object', additionalProperties: true }, verification: { type: 'object', additionalProperties: true }
+    } },
+  },
+  {
     action: 'urn:iep:action:foxxi:consume-lesson' as IRI,
     toolName: 'foxxi.consume_lesson',
     title: 'Load a published lesson or record your signed progress report',

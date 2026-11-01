@@ -1,6 +1,6 @@
 # Foxxi content intelligence, learner surface: every affordance
 
-Derived from `applications/foxxi-content-intelligence/affordances.ts` by `tools/build-skills.ts`; the skill is [SKILL.md](SKILL.md). 77 affordances.
+Derived from `applications/foxxi-content-intelligence/affordances.ts` by `tools/build-skills.ts`; the skill is [SKILL.md](SKILL.md). 81 affordances.
 
 ## `foxxi.i2idlx_classify`
 
@@ -385,6 +385,62 @@ Your row of the gradebook in Foxxi's own LMS, signed by your wallet or by an age
 | --- | --- | --- | --- |
 | `_signed_payload` | string | yes | JSON.stringify({ agent_id, timestamp }). |
 | `_signature` | string | yes | sign_request signature (secp256k1 over sha256 of _signed_payload). |
+
+## `foxxi.lti_reconciliation_contract`
+
+**Read the own-account LMS reconciliation contract**
+
+Public version 1.0.0 contract for signed preview, explicit new-entry creation and fresh own-account readback. Describes the required evidence, verified human scope and separate reconciliation provenance. Reading this contract creates no record and reveals no learner data.
+
+- Action: `urn:iep:action:foxxi:lti-reconciliation-contract`
+- HTTP: `GET https://foxxi-bridge.interego.xwisee.com/agent/lti/reconciliation/affordance` (served by a bespoke route; not through the bridge's MCP endpoint)
+- Media type: `text/turtle`
+- Inputs: none
+
+## `foxxi.lti_reconciliation_preview_signed`
+
+**Preview a new own-account LMS reconciliation**
+
+Read the two original engine-authenticated records and current failure witness without writing. The returned private ten-minute plan is bound to this human, caller, source facts and native head. Original LMS persistence remains unverified. Contract version 1.0.0; discover /agent/lti/reconciliation/affordance. Signed personal-performance requests bind subject_did to the native controlling human and subject_pod_url to the verified own pod; neither field selects another person.
+
+- Action: `urn:iep:action:foxxi:lti-reconciliation-preview-signed`
+- HTTP: `POST https://foxxi-bridge.interego.xwisee.com/agent/lti/reconciliation/preview` (served by a bespoke route; not through the bridge's MCP endpoint)
+- Media type: `application/json`
+
+| Input | Type | Required | Description |
+| --- | --- | --- | --- |
+| `_signed_payload` | string | yes | Use the exact sign_request payload containing agent_id, timestamp, subject_did, purpose personal-performance and originalStatementIds: exactly two original UUIDs. No additional logical fields are accepted. |
+| `_signature` | string | yes | The real signature returned by sign_request for this exact payload. |
+
+## `foxxi.lti_reconciliation_apply_signed`
+
+**Create my reviewed reconciled LMS entry**
+
+Explicitly create the previously previewed private owner entry. Fresh original-record, engine HMAC, witness and native revision checks precede append. This never posts a grade, rewrites source statements or changes the global LMS snapshot. Read back the same entry before accepting it. Contract version 1.0.0; discover /agent/lti/reconciliation/affordance. Signed personal-performance requests bind subject_did to the native controlling human and subject_pod_url to the verified own pod; neither field selects another person.
+
+- Action: `urn:iep:action:foxxi:lti-reconciliation-apply-signed`
+- HTTP: `POST https://foxxi-bridge.interego.xwisee.com/agent/lti/reconciliation/apply` (served by a bespoke route; not through the bridge's MCP endpoint)
+- Media type: `application/json`
+
+| Input | Type | Required | Description |
+| --- | --- | --- | --- |
+| `_signed_payload` | string | yes | Use the exact sign_request payload containing agent_id, timestamp, subject_did, purpose personal-performance and planToken: the exact private preview token; intent: create-reconciled-lms-entry. No additional logical fields are accepted. |
+| `_signature` | string | yes | The real signature returned by sign_request for this exact payload. |
+
+## `foxxi.lti_reconciliation_read_signed`
+
+**Read my reconciled LMS entry**
+
+Freshly read the private native owner ledger and verify the complete entry attestation. This separate record does not establish that the original LMS grade persisted. Contract version 1.0.0; discover /agent/lti/reconciliation/affordance. Signed personal-performance requests bind subject_did to the native controlling human and subject_pod_url to the verified own pod; neither field selects another person.
+
+- Action: `urn:iep:action:foxxi:lti-reconciliation-read-signed`
+- HTTP: `POST https://foxxi-bridge.interego.xwisee.com/agent/lti/reconciliation/read` (served by a bespoke route; not through the bridge's MCP endpoint)
+- Media type: `application/json`
+
+| Input | Type | Required | Description |
+| --- | --- | --- | --- |
+| `_signed_payload` | string | yes | Use the exact sign_request payload containing agent_id, timestamp, subject_did, purpose personal-performance and entryId: the exact 64-character lowercase SHA-256 identifier. No additional logical fields are accepted. |
+| `_signature` | string | yes | The real signature returned by sign_request for this exact payload. |
 
 ## `foxxi.consume_lesson`
 

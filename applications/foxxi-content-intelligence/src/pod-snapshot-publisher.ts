@@ -54,7 +54,7 @@ import type {
   PGSLInstance,
 } from '@interego/pgsl';
 import { createHash, randomUUID } from 'node:crypto';
-import { parseTrig, readIriValue, readStringValue } from '@interego/core';
+import { parseTrig, readIriValue, readStringValue, canonicalJson } from '@interego/core';
 import { bridgeDid, signAsBridge, withPublishLock } from './bridge-signer.js';
 import { FOXXI_NS } from './foxxi-vocab.js';
 import { decodePodBundle } from './pod-kv-store.js';
@@ -595,6 +595,83 @@ export async function loadLatestSnapshotStrict<T>(surface: string, options: {
     if (timer) clearTimeout(timer);
     abort.abort();
   }
+}
+
+/** A bounded, read-only observation of the legacy mismatch. This witnesses bytes,
+ * not an atomic lock across the two resources or recovery of the missing payload. */
+export interface LegacySnapshotFailureWitness {
+  schemaVersion: '1.0.0';
+  reason: 'legacy-head-mismatch';
+  descriptorSha256: string;
+  graphSha256: string;
+  payloadSha256: string;
+  expectedGraphIri: string;
+  actualGraphIri: string;
+  headRevision: string;
+  graphRevision: string;
+  witnessDigest: string;
+  observedAt: string;
+}
+
+export async function readLegacySnapshotFailureWitness<T>(surface: string, options: {
+  config: SnapshotPodConfig;
+  typeIri: IRI;
+  validate: (value: unknown) => value is T;
+  now?: () => number;
+  timeoutMs?: number;
+}): Promise<LegacySnapshotFailureWitness> {
+  if (surface !== 'lti-platform') throw new Error('Legacy recovery witness is restricted to LTI.');
+  const { config } = options;
+  const abort = new AbortController();
+  const timer = setTimeout(() => abort.abort(), options.timeoutMs ?? 8000);
+  try {
+    const container = snapshotContainer(config), headUrl = `${container}${surface}-snapshot.ttl`;
+    const legacyGraphUrl = `${container}${surface}-snapshot-graph.trig`;
+    const get = async (url: string, maximum: number) => {
+      const response = await config.fetch(url, { redirect: 'manual', cache: 'no-store', signal: abort.signal,
+        headers: { Accept: 'application/trig, text/turtle', 'Cache-Control': 'no-cache' } });
+      if (!response.ok || !strongEtag(response.headers.get('etag'))) throw new Error('Legacy witness unavailable.');
+      const reader = response.body?.getReader();
+      if (!reader) throw new Error('Legacy witness unavailable.');
+      const chunks: Uint8Array[] = []; let bytes = 0;
+      for (;;) {
+        const next = await reader.read(); if (next.done) break;
+        bytes += next.value.byteLength;
+        if (bytes > maximum) { await reader.cancel(); throw new Error('Legacy witness exceeds capacity.'); }
+        chunks.push(next.value);
+      }
+      return { body: Buffer.concat(chunks).toString('utf8'), revision: response.headers.get('etag')! };
+    };
+    const head = await get(headUrl, 1024 * 1024);
+    const links = snapshotHeadLinks(head.body, surface, config, options.typeIri);
+    if (!links || links.graphUrl !== legacyGraphUrl) throw new Error('No matching legacy failure is available.');
+    const graph = await get(legacyGraphUrl, 8 * 1024 * 1024);
+    // Validate the actual legacy payload independently; a corrupt or foreign graph
+    // is not converted into a supposedly valid recovery witness.
+    const decoded = decodeStrictSnapshot(graph.body, { typeIri: options.typeIri,
+      validate: options.validate, authoritativeSource: config.authoritativeSource });
+    const candidates = parseTrig(graph.body).subjects.filter(s => readStringValue(s, FOXXI_BUNDLE_JSON) !== undefined);
+    const actual = candidates.length === 1 ? candidates[0]!.subject : null;
+    const prefix = `urn:foxxi:${surface}-snapshot:v`;
+    if (decoded.state !== 'loaded' || typeof actual !== 'string' || actual === links.graphIri
+      || !actual.startsWith(prefix) || !/^[1-9]\d*$/.test(actual.slice(prefix.length))
+      || actual !== `${prefix}${decoded.revision.version}`
+      || !links.graphIri.startsWith(prefix) || !/^[1-9]\d*$/.test(links.graphIri.slice(prefix.length))) {
+      throw new Error('No valid mismatched legacy payload is available.');
+    }
+    // Refuse movement during this observation. These are successive reads, not a
+    // claim of cross-resource atomicity; callers recheck around their own write.
+    const [headAgain, graphAgain] = await Promise.all([get(headUrl, 1024 * 1024), get(legacyGraphUrl, 8 * 1024 * 1024)]);
+    if (head.body !== headAgain.body || head.revision !== headAgain.revision
+      || graph.body !== graphAgain.body || graph.revision !== graphAgain.revision) throw new Error('Legacy witness changed.');
+    const facts = { schemaVersion: '1.0.0' as const, reason: 'legacy-head-mismatch' as const,
+      descriptorSha256: sha256Hex(head.body), graphSha256: sha256Hex(graph.body), payloadSha256: decoded.revision.sha256,
+      expectedGraphIri: links.graphIri, actualGraphIri: actual, headRevision: head.revision, graphRevision: graph.revision };
+    const at = options.now?.() ?? Date.now();
+    if (!Number.isSafeInteger(at) || at < 0) throw new Error('Legacy witness clock unavailable.');
+    return { ...facts, witnessDigest: sha256Hex(canonicalJson(facts)), observedAt: new Date(at).toISOString() };
+  } catch { throw new Error('The existing LTI failure could not be independently witnessed.'); }
+  finally { clearTimeout(timer); abort.abort(); }
 }
 
 /** Foxxi-vocab IRIs for the snapshot types. */
