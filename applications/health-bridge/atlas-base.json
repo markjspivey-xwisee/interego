@@ -1,0 +1,3230 @@
+{
+  "meta": {
+    "title": "Mayya · Health Atlas",
+    "subject": "Mayya Grinberg",
+    "version": "1.0.1",
+    "updated": "2026-10-31",
+    "lastMedicationUpdate": "2026-10-30",
+    "scope": "A public, dated compilation of the medical information available for this record. It is not a complete hospital EHR and has not been reviewed by a clinician.",
+    "summary": "A clear view of the diagnosis, treatments, results and lived symptoms, with the evidence behind each entry.",
+    "latestStatus": "The latest CT reports available in this compilation describe progression in September 2026. Pelvis/lumbar MRI screenshots available by September 23–24 describe sacral metastatic lesions. October 30 family update confirms ongoing lorlatinib, pemetrexed and bevacizumab. Response after the reviewed scans is not established.",
+    "publicUrl": "https://mayya-health-atlas.goldenfleece.chatgpt.site",
+    "interego": {
+      "graphIri": "urn:graph:mayya-health-history",
+      "descriptorUrl": "https://gate.interego.xwisee.com/u-pk-731e988c2c5b/context-graphs/1793463968348.ttl",
+      "viewUrl": ""
+    },
+    "privacy": "Public by link. Administrative identifiers, exact birth date, addresses, insurance details and raw scans are omitted.",
+    "limitations": [
+      "Available-source compilation, not an exhaustive medical record.",
+      "Older history from conversation summaries is clearly marked family-reported.",
+      "Report findings are source-attributed; signature verification does not verify medical correctness.",
+      "This is a fixed snapshot, not live clinical monitoring."
+    ],
+    "revisionNote": "Added carboplatin as a separate historical treatment; previously mentioned only within the combination-regimen summary."
+  },
+  "overview": [
+    {
+      "label": "Diagnosis",
+      "value": "Stage IV ALK+ NSCLC",
+      "detail": "Lung adenocarcinoma; diagnosis reported in 2025."
+    },
+    {
+      "label": "Driver",
+      "value": "EML4–ALK · variant 3a/b",
+      "detail": "Confirmed in July breast tissue; reported Aug 10, 2026."
+    },
+    {
+      "label": "Current regimen",
+      "value": "Lorlatinib + pemetrexed + bevacizumab",
+      "detail": "Family update Oct 30, 2026. Lorlatinib 50 mg; pemetrexed every 3 weeks."
+    },
+    {
+      "label": "Last compiled",
+      "value": "October 31, 2026",
+      "detail": "Report dates, event dates and family updates are distinguished."
+    }
+  ],
+  "conditions": [
+    {
+      "id": "lung-cancer",
+      "name": "Metastatic ALK-positive lung adenocarcinoma",
+      "status": "Active, under treatment",
+      "description": "Stage IV non-small-cell lung cancer. Never-smoking history and initial ECOG 0 were family-reported. The initial performance score is historical.",
+      "sourceIds": [
+        "S-HISTORY-SUMMARY",
+        "foundation-2026-08"
+      ]
+    },
+    {
+      "id": "pleural",
+      "name": "Recurrent left pleural effusion",
+      "status": "Previously drained; loculated fluid persisted on September CT",
+      "description": "Earlier malignant pleural fluid, later negative sampling, thoracenteses and PleurX are part of the reported history.",
+      "sourceIds": [
+        "S-HISTORY-SUMMARY"
+      ]
+    },
+    {
+      "id": "sacral-disease",
+      "name": "Sacral osseous metastatic disease",
+      "status": "MRI report finding; response after MRI not available",
+      "description": "S2 lesion with soft tissue/foraminal involvement and right S2 nerve-root contact or mass effect; an additional S4 lesion. Possible thecal-sac extension remains a radiology possibility. Clinical MRI dates are cropped out.",
+      "sourceIds": [
+        "mri-pelvis-20260923upload",
+        "mri-lumbar-20260924upload"
+      ]
+    },
+    {
+      "id": "anemia",
+      "name": "Low hemoglobin on latest CBC",
+      "status": "October 20, 2026 result",
+      "description": "Hemoglobin 10.1 g/dL, below the laboratory reference interval 11.7–15.5. Cause is not assigned by this record.",
+      "sourceIds": [
+        "cbc-20261020"
+      ]
+    }
+  ],
+  "timeline": [
+    {
+      "id": "H32",
+      "date": "2026-10-30",
+      "dateLabel": "2026-10-30",
+      "category": "medication",
+      "title": "Current medications updated",
+      "summary": "Lorlatinib 50 mg; pemetrexed every three weeks; bevacizumab continuing. Duloxetine replaced escitalopram for nerve pain. Buprenorphine is now sublingual; occasional oxycodone. Two previous carboplatin rounds reported.",
+      "details": "",
+      "evidence": "family-reported",
+      "sourceIds": [
+        "S-MED-2026-10-30"
+      ]
+    },
+    {
+      "id": "H33",
+      "date": "2026-10-30",
+      "dateLabel": "2026-10-30",
+      "category": "symptom",
+      "title": "Food aversion and nausea",
+      "summary": "Food aversion/nausea triggered by thoughts, smells or offers of food, sometimes while hungry. Onset followed either starting duloxetine or switching to sublingual buprenorphine; the user was unsure which. Bowel symptoms described as mild, with occasional cramps after eating. This is a temporal association, not an established medication adverse reaction.",
+      "details": "",
+      "evidence": "family-reported",
+      "sourceIds": [
+        "S-MED-2026-10-30"
+      ]
+    },
+    {
+      "id": "H34",
+      "date": "2026-10-30",
+      "dateLabel": "2026-10-30",
+      "category": "symptom",
+      "title": "Incomplete symptom relief reported",
+      "summary": "User reported that ondansetron helped only a little and dose reductions helped only a little, and asked about reducing food aversion/anticipatory nausea. The drug reduced, dose, timing, hydration/nutrition status and subsequent management are not specified.",
+      "details": "",
+      "evidence": "family-reported",
+      "sourceIds": [
+        "S-MED-2026-10-30"
+      ]
+    },
+    {
+      "id": "latest-labs",
+      "date": "2026-10-20",
+      "dateLabel": "October 20, 2026",
+      "category": "laboratory",
+      "title": "Latest available CBC and metabolic panel",
+      "summary": "Hemoglobin 10.1 g/dL (low), albumin 3.3 g/dL (low), creatinine 0.4 mg/dL. WBC 9.3, absolute neutrophils 7.3 and platelets 345 ×10⁹/L.",
+      "details": "October 20 CBC documents anemia (hemoglobin 10.1 g/dL) with WBC, absolute neutrophils, and platelets within the reporting laboratory ranges. October 20 CMP documents low albumin (3.3 g/dL), high total protein (8.9 g/dL), low chloride (96 mmol/L), mildly high anion gap (13 mmol/L); creatinine 0.4 mg/dL and liver enzymes within supplied ranges.",
+      "evidence": "report-confirmed",
+      "sourceIds": [
+        "cbc-20261020",
+        "cmp-20261020"
+      ]
+    },
+    {
+      "id": "imaging-mri-lumbar-sept2026",
+      "date": "2026-09-24",
+      "dateLabel": "Clinical date not visible · available by 2026-09-24",
+      "dateKind": "availability date only",
+      "category": "imaging",
+      "title": "S2 metastasis abutting the right S2 nerve root",
+      "summary": "Enhancing right S2 sacral lesion approximately 1.5 x 1.4 x 1.5 cm, expanding sacrum and contacting/abutting right S2 nerve root.",
+      "details": "Adjacent non-masslike presacral enhancement could be metastatic or inflammatory.\nRight piriformis enhancement/edema could reflect denervation edema.\nMultiple additional sclerotic lumbar/pelvic lesions consistent with metastases as seen on prior CT.\nVisualized spinal cord and cauda equina described as normal. Conus ends at approximately L1.\nNo substantial degenerative abnormalities described from T12-L1 through L5-S1; incidental left perineural cyst.\nNormal visualized cauda equina does not erase the separate sacral root involvement.",
+      "evidence": "report-confirmed",
+      "sourceIds": [
+        "mri-lumbar-20260924upload"
+      ]
+    },
+    {
+      "id": "imaging-mri-pelvis-sept2026",
+      "date": "2026-09-23",
+      "dateLabel": "Clinical date not visible · available by 2026-09-23",
+      "dateKind": "availability date only",
+      "category": "imaging",
+      "title": "Sacral metastases with involvement of nerve exit openings",
+      "summary": "Osseous metastatic lesion centered at right sacrum S2, with enhancing soft tissue involving multiple right greater than left neural foramina.",
+      "details": "Most pronounced at right S2 with partial effacement/mass effect on associated nerve root; possible projection into ventral thecal sac.\nSignal abnormality involves bilateral S2 and possibly S3 foramina, with milder right S1 extension.\nSmaller right S4 sacral metastatic lesion, approximately 1.2 x 0.7 cm in axial plane, with signal extending into the right S4 foramen.\nAdditional small pelvic/sacral lesions correlate with sclerotic foci on prior CT and are suspicious for additional osseous metastases.\nRight-predominant presacral edema/enhancement near sacral nerve roots and mild right piriformis edema/enhancement, suspected neurogenic.\nNo definitive new osseous metastatic lesions stated in report body.\nNo hip joint effusion/high-grade cartilage defect or tendon tear; sacroiliac joints intact.\nExtent into the thecal sac is possible, not definite. These findings should not be described merely as nonspecific hip pain.",
+      "evidence": "report-confirmed",
+      "sourceIds": [
+        "mri-pelvis-20260923upload"
+      ]
+    },
+    {
+      "id": "trial-message-sept",
+      "date": "2026-09-12",
+      "dateLabel": "Message date not visible · available by Sep 12, 2026",
+      "dateKind": "availability date only",
+      "category": "trial",
+      "title": "BNT326 + BNT327 waitlist and bridge plan",
+      "summary": "Historical oncology correspondence described limited/unpredictable trial slots, a requested waitlist place and at least eight weeks after radiation before potential eligibility.",
+      "details": "Restart chemotherapy after break, give two cycles, then repeat scans to assess response while exploring trial availability. The record does not confirm enrollment, present recruitment or receipt of this proposed plan.",
+      "evidence": "report-confirmed",
+      "sourceIds": [
+        "oncology-message-september2026"
+      ]
+    },
+    {
+      "id": "imaging-ct-chest-sept2026",
+      "date": "2026-09-04",
+      "dateLabel": "2026-09-04 · report signed date; acquisition date unavailable",
+      "dateKind": "clinical/report date",
+      "category": "imaging",
+      "title": "Progression across lung, breast, and nodal sites",
+      "summary": "Increasing left lower lobe and left hilar masslike consolidation, likely worsening tumor burden.",
+      "details": "Numerous new and enlarging pulmonary nodules in both lungs; nodular septal thickening suggestive of worsening lymphangitic carcinomatosis.\nLeft upper lobe nodule 0.7 x 0.6 cm, previously 0.6 x 0.5 cm; new right upper lobe nodule 0.4 cm.\nIncreased bilateral breast nodular enhancing soft tissue, skin thickening, discrete breast masses, and bilateral axillary/left subpectoral lymphadenopathy. Example medial right breast mass 1.4 x 1.0 cm, previously 0.7 x 0.8 cm.\nUnchanged loculated left pleural effusion and pleural thickening, considered likely malignant on the report.\nPericardial thickening and enhancement with unchanged small effusion, concerning for pericardial metastatic disease.\nUnchanged scattered sclerotic osseous lesions.\nNo lower cervical or supraclavicular lymphadenopathy. Mediastinal soft tissue stranding without discrete measurable lymphadenopathy.\nLymphangitic carcinomatosis and pericardial metastatic disease are radiology impressions/suspicions, not tissue-confirmed diagnoses in this source.",
+      "evidence": "report-confirmed",
+      "sourceIds": [
+        "ct-chest-20260904"
+      ]
+    },
+    {
+      "id": "imaging-ct-abdomen-sept2026",
+      "date": "2026-09-04",
+      "dateLabel": "Clinical date not visible · available by 2026-09-04",
+      "dateKind": "availability date only",
+      "category": "imaging",
+      "title": "Enlarging left adrenal and upper abdominal nodal disease",
+      "summary": "Enlarging left adrenal lesion interpreted as worsening adrenal metastasis.",
+      "details": "Enlarging upper abdominal lymph nodes suspicious for nodal metastases, including gastrohepatic and porta hepatis nodes; porta hepatis node 1.0 cm, previously 0.6 cm.\nUnchanged sclerotic osseous lesions, without new aggressive osseous lesion.\nNo suspicious liver or renal masses; no hydronephrosis; no abnormal bowel dilation/wall thickening or free intraperitoneal air.\nGastrohepatic node's current size is clipped in the screenshot and has not been guessed.",
+      "evidence": "report-confirmed",
+      "sourceIds": [
+        "ct-abdomen-20260904upload"
+      ]
+    },
+    {
+      "id": "H28",
+      "date": "2026-08-11",
+      "dateLabel": "2026-08-11 to 2026-08-18",
+      "category": "laboratory",
+      "title": "Transient creatinine elevation reported",
+      "summary": "Serum creatinine was 1.2 mg/dL and eGFR 59 on August 11, 2026. Family history reports normalization by August 18 (~0.6), but that specific dated chemistry result is not in the extracted series. Later verified values: 0.8 on Sep 8, 0.6 on Sep 14 and 0.4 on Oct 20.",
+      "details": "",
+      "evidence": "mixed",
+      "sourceIds": [
+        "S-HISTORY-SUMMARY",
+        "cmp-20261020"
+      ]
+    },
+    {
+      "id": "H25",
+      "date": "2026-08",
+      "dateLabel": "2026-08",
+      "category": "radiation",
+      "title": "Breast/axillary radiation planned",
+      "summary": "A ten-fraction course was planned to the breast and axilla. Swelling and pain were reported after three sessions. The exact start date, total delivered fractions and completion date require the radiation treatment summary.",
+      "details": "",
+      "evidence": "family-reported",
+      "sourceIds": [
+        "S-HISTORY-SUMMARY"
+      ]
+    },
+    {
+      "id": "H26",
+      "date": "2026-08",
+      "dateLabel": "2026-08",
+      "category": "treatment",
+      "title": "Lorlatinib hold for radiation",
+      "summary": "A two-week lorlatinib hold during radiation was reported. Exact interval and restart date were not retained.",
+      "details": "",
+      "evidence": "family-reported",
+      "sourceIds": [
+        "S-HISTORY-SUMMARY"
+      ]
+    },
+    {
+      "id": "H27",
+      "date": "2026-08",
+      "dateLabel": "2026-08",
+      "category": "imaging",
+      "title": "Brain MRI reported normal",
+      "summary": "Family reported a normal August brain MRI. Do not infer brain status after the date of that scan. Original report not retrieved by this agent.",
+      "details": "",
+      "evidence": "family-reported",
+      "sourceIds": [
+        "S-HISTORY-SUMMARY"
+      ]
+    },
+    {
+      "id": "H29",
+      "date": "2026-08",
+      "dateLabel": "2026-08",
+      "category": "symptom",
+      "title": "Symptoms during breast radiation",
+      "summary": "Breast swelling, sternal tenderness, collarbone burning and left arm numbness were reported. These are symptoms, without a confirmed cause in the retained summary.",
+      "details": "",
+      "evidence": "family-reported",
+      "sourceIds": [
+        "S-HISTORY-SUMMARY"
+      ]
+    },
+    {
+      "id": "H23",
+      "date": "2026-07-21",
+      "dateLabel": "2026-07-21",
+      "category": "treatment",
+      "title": "Pemetrexed alone during bevacizumab hold",
+      "summary": "Pemetrexed alone was reported on July 21, with bevacizumab held. A maintenance plan of pemetrexed plus bevacizumab was discussed. Reason and exact duration of the bevacizumab hold are not confirmed.",
+      "details": "",
+      "evidence": "family-reported",
+      "sourceIds": [
+        "S-HISTORY-SUMMARY"
+      ]
+    },
+    {
+      "id": "imaging-breast-us-july2026",
+      "date": "2026-07-10",
+      "dateLabel": "2026-07-10 · interpretation date; outside ultrasound performed July 2",
+      "dateKind": "clinical/report date",
+      "category": "imaging",
+      "title": "Suspicious painful right breast mass",
+      "summary": "Irregular hypoechoic mass at right breast 11 o'clock, 8 cm from nipple, measured at least 2.7 x 2.6 x 2.5 cm on submitted static images.",
+      "details": "Corresponds to hypermetabolic mass on PET/CT dated June 4, 2026.\nCine images suggested abnormality may be larger than static measurements; possible additional 1.5 cm and 1.1 cm superficial masses.\nBI-RADS 4, suspicious; ultrasound-guided biopsy recommended if clinically indicated, with diagnostic mammography and second-look ultrasound to define extent.",
+      "evidence": "report-confirmed",
+      "sourceIds": [
+        "breast-us-20260710"
+      ]
+    },
+    {
+      "id": "H24",
+      "date": "2026-07",
+      "dateLabel": "July 2026 history; addendum clinical date not visible; available by July 24",
+      "category": "pathology",
+      "title": "Breast/axillary biopsy",
+      "summary": "Right breast core biopsy: poorly differentiated adenocarcinoma with mucinous features. CK7 positive, CK20 weak positive; Napsin A, TTF-1, GATA3, ER and PAX8 negative. The addendum favors pulmonary origin and considers a breast primary unlikely, but does not definitively establish origin; other origins cannot be entirely excluded. ALK is established by the separate FoundationOne report, not by this addendum.",
+      "details": "",
+      "evidence": "report-confirmed",
+      "sourceIds": [
+        "breast-biopsy-addendum-july2026",
+        "foundation-2026-08"
+      ]
+    },
+    {
+      "id": "H22",
+      "date": "2026-06-30",
+      "dateLabel": "2026-06-30",
+      "category": "treatment",
+      "title": "Bevacizumab dose reported",
+      "summary": "Bevacizumab administration on June 30 was listed as the last dose before a subsequent hold. It was later reported continuing by October 30.",
+      "details": "",
+      "evidence": "family-reported",
+      "sourceIds": [
+        "S-HISTORY-SUMMARY"
+      ]
+    },
+    {
+      "id": "H21",
+      "date": "2026-05-25",
+      "dateLabel": "2026-05-25",
+      "category": "trial",
+      "title": "Trial discussions",
+      "summary": "Family reported that Dr. Jeffrey Clarke at Duke and Dr. Alice Shaw at Mass General favored BNT326 + BNT327 as a trial option. This is a historical discussion, not evidence of enrollment, current eligibility or current trial ranking.",
+      "details": "",
+      "evidence": "family-reported",
+      "sourceIds": [
+        "S-HISTORY-SUMMARY"
+      ]
+    },
+    {
+      "id": "H20",
+      "date": "2026-05",
+      "dateLabel": "2026-05 to 2026-06-30",
+      "category": "disease course",
+      "title": "Breast/axillary progression described",
+      "summary": "Right breast lesion and axillary lymph nodes were described in May–June, with a small right lung lesion later. Original timing should be reconciled against the March 27 positive axillary biopsy. Do not label May–June the first metastatic progression. Some worsening was reported during treatment holds; causation is not established.",
+      "details": "",
+      "evidence": "family-reported",
+      "sourceIds": [
+        "S-HISTORY-SUMMARY"
+      ]
+    },
+    {
+      "id": "H19",
+      "date": "2026-04-21",
+      "dateLabel": "2026-04-21",
+      "category": "treatment",
+      "title": "Chemotherapy began",
+      "summary": "Retained history gives cycle 1 of carboplatin, pemetrexed and bevacizumab on April 21, 2026, every 21 days. The October 30 update reports two carboplatin rounds in total. Exact administration records were not retrieved.",
+      "details": "",
+      "evidence": "family-reported",
+      "sourceIds": [
+        "S-HISTORY-SUMMARY"
+      ]
+    },
+    {
+      "id": "H18",
+      "date": "2026-03-27",
+      "dateLabel": "2026-03-27",
+      "category": "pathology",
+      "title": "Right axillary metastasis documented",
+      "summary": "Right axillary lymph node biopsy showed metastatic adenocarcinoma with mucinous/clear-cell features. The associated PD-L1 report dated April 2, 2026 was <1%. This provides an earlier documented metastatic site than the May–June progression shorthand.",
+      "details": "",
+      "evidence": "report-confirmed",
+      "sourceIds": [
+        "pdl1-2026-04"
+      ]
+    },
+    {
+      "id": "H16",
+      "date": "2026-01",
+      "dateLabel": "2026-01",
+      "category": "imaging",
+      "title": "Follow-up after SBRT",
+      "summary": "January CT was summarized as left lower lobe lesion unchanged with complete response elsewhere. Original scan wording and exact date need confirmation; avoid presenting this as a current complete remission.",
+      "details": "",
+      "evidence": "family-reported",
+      "sourceIds": [
+        "S-HISTORY-SUMMARY"
+      ]
+    },
+    {
+      "id": "H17",
+      "date": "2026",
+      "dateLabel": "2026",
+      "category": "treatment",
+      "title": "Lorlatinib 75 mg maintenance",
+      "summary": "75 mg daily was reported during early 2026, later reduced to 50 mg during chemotherapy. Exact date of increase to 75 mg and subsequent reduction is not retained.",
+      "details": "",
+      "evidence": "family-reported",
+      "sourceIds": [
+        "S-HISTORY-SUMMARY"
+      ]
+    },
+    {
+      "id": "H30",
+      "date": "2026",
+      "dateLabel": "2026",
+      "category": "symptom",
+      "title": "Chest wall pain after SBRT",
+      "summary": "Post-SBRT chest wall pain, oxygen readings approximately 92–98%, and a mild pericardial effusion were reported. Timing and clinical interpretation require source confirmation.",
+      "details": "",
+      "evidence": "family-reported",
+      "sourceIds": [
+        "S-HISTORY-SUMMARY"
+      ]
+    },
+    {
+      "id": "H31",
+      "date": "2026",
+      "dateLabel": "2026",
+      "category": "symptom",
+      "title": "Hip/buttock pain",
+      "summary": "Severe pain with rising or coughing was reported, with walking/running painless and some seated/straight-leg maneuvers provoking pain. Oxycodone and acetaminophen reportedly helped. No diagnosis is established by these descriptions.",
+      "details": "",
+      "evidence": "family-reported",
+      "sourceIds": [
+        "S-HISTORY-SUMMARY"
+      ]
+    },
+    {
+      "id": "H15",
+      "date": "2025-12-29",
+      "dateLabel": "2025-12-29 to 2025-12-31",
+      "category": "radiation",
+      "title": "Radiation to left lower lobe",
+      "summary": "SBRT to the left lower lobe over three fractions, reported December 29–31, 2025.",
+      "details": "",
+      "evidence": "family-reported",
+      "sourceIds": [
+        "S-HISTORY-SUMMARY"
+      ]
+    },
+    {
+      "id": "H13",
+      "date": "2025-11-03",
+      "dateLabel": "2025-11-03",
+      "category": "imaging",
+      "title": "Pleural fluid improved",
+      "summary": "CT chest reportedly showed trace left pleural effusion, no mediastinal/hilar adenopathy, stable nodules and sclerotic bone lesions, and unchanged small pericardial effusion. An 18 mm subpleural left lower lobe nodule was described as new or better seen after re-expansion.",
+      "details": "",
+      "evidence": "family-reported",
+      "sourceIds": [
+        "S-HISTORY-SUMMARY"
+      ]
+    },
+    {
+      "id": "H14",
+      "date": "2025-11",
+      "dateLabel": "2025-11",
+      "category": "procedure",
+      "title": "PleurX removed",
+      "summary": "Catheter removed following reported autopleurodesis. Exact removal date is not retained.",
+      "details": "",
+      "evidence": "family-reported",
+      "sourceIds": [
+        "S-HISTORY-SUMMARY"
+      ]
+    },
+    {
+      "id": "H12",
+      "date": "2025-10-23",
+      "dateLabel": "2025-10-23",
+      "category": "pathology",
+      "title": "Pleural sampling negative for malignancy",
+      "summary": "Pleural fluid cytology and pleural biopsy were reported negative for malignancy; biopsy showed reactive changes with rare atypical cells favored reactive, BAP1 retained and Claudin-4 negative. This later negative sampling does not erase the earlier positive pleural cytology.",
+      "details": "",
+      "evidence": "family-reported",
+      "sourceIds": [
+        "S-HISTORY-SUMMARY"
+      ]
+    },
+    {
+      "id": "H11",
+      "date": "2025-10",
+      "dateLabel": "2025-10",
+      "category": "procedure",
+      "title": "PleurX placed",
+      "summary": "Indwelling pleural catheter placed for recurrent left pleural effusion. Exact placement date is not retained.",
+      "details": "",
+      "evidence": "family-reported",
+      "sourceIds": [
+        "S-HISTORY-SUMMARY"
+      ]
+    },
+    {
+      "id": "H10",
+      "date": "2025-08-07",
+      "dateLabel": "2025-08-07",
+      "category": "treatment",
+      "title": "Lorlatinib reduced",
+      "summary": "Dose reduced to 50 mg daily in retained history.",
+      "details": "",
+      "evidence": "family-reported",
+      "sourceIds": [
+        "S-HISTORY-SUMMARY"
+      ]
+    },
+    {
+      "id": "H09",
+      "date": "2025-08-04",
+      "dateLabel": "2025-08-04",
+      "category": "treatment",
+      "title": "Lorlatinib restarted",
+      "summary": "Restarted at 100 mg with a steroid, according to retained history. Steroid identity, dose and indication are not confirmed.",
+      "details": "",
+      "evidence": "family-reported",
+      "sourceIds": [
+        "S-HISTORY-SUMMARY"
+      ]
+    },
+    {
+      "id": "H07",
+      "date": "2025-07-30",
+      "dateLabel": "2025-07-30",
+      "category": "pathology",
+      "title": "Malignant pleural fluid",
+      "summary": "Pleural cytology was reported to contain malignant cells; TTF-1 positive and weak BerEP4. Original report should establish exact sampling/result dates.",
+      "details": "",
+      "evidence": "family-reported",
+      "sourceIds": [
+        "S-HISTORY-SUMMARY"
+      ]
+    },
+    {
+      "id": "H05",
+      "date": "2025-07-29",
+      "dateLabel": "2025-07-29",
+      "category": "imaging",
+      "title": "Early partial response",
+      "summary": "CT was reported to show a partial response to lorlatinib.",
+      "details": "",
+      "evidence": "family-reported",
+      "sourceIds": [
+        "S-HISTORY-SUMMARY"
+      ]
+    },
+    {
+      "id": "H06",
+      "date": "2025-07-29",
+      "dateLabel": "2025-07-29 to 2025-08-03",
+      "category": "treatment",
+      "title": "Lorlatinib temporarily held",
+      "summary": "Reported hold July 29 through August 3, followed by restart August 4. Reason for this particular hold is not reliably retained in the available summary.",
+      "details": "",
+      "evidence": "family-reported",
+      "sourceIds": [
+        "S-HISTORY-SUMMARY"
+      ]
+    },
+    {
+      "id": "H08",
+      "date": "2025-07",
+      "dateLabel": "2025-07 to 2025-08-31",
+      "category": "procedure",
+      "title": "Repeated pleural drainage",
+      "summary": "Three thoracenteses were reported during July–August 2025, including drainage amounts of 1.5 L and 500 mL. Exact dates and all volumes are not available in the retained summary.",
+      "details": "",
+      "evidence": "family-reported",
+      "sourceIds": [
+        "S-HISTORY-SUMMARY"
+      ]
+    },
+    {
+      "id": "H04",
+      "date": "2025-06-17",
+      "dateLabel": "2025-06-17",
+      "category": "treatment",
+      "title": "Lorlatinib started",
+      "summary": "Started first-line lorlatinib 100 mg daily.",
+      "details": "",
+      "evidence": "family-reported",
+      "sourceIds": [
+        "S-HISTORY-SUMMARY"
+      ]
+    },
+    {
+      "id": "H03",
+      "date": "2025-05-21",
+      "dateLabel": "2025-05-21",
+      "category": "imaging",
+      "title": "Baseline PET/CT",
+      "summary": "Bulky mediastinal/left hilar disease with extensive neck, chest and upper abdominal lymph nodes, pleural lesions and small pleural effusion. No brain metastases reported at baseline.",
+      "details": "",
+      "evidence": "family-reported",
+      "sourceIds": [
+        "S-HISTORY-SUMMARY"
+      ]
+    },
+    {
+      "id": "H01",
+      "date": "2025-05-11",
+      "dateLabel": "2025-05-11",
+      "category": "imaging",
+      "title": "Initial chest imaging",
+      "summary": "CTA described a left perihilar/mediastinal mass and small left pleural effusion.",
+      "details": "",
+      "evidence": "family-reported",
+      "sourceIds": [
+        "S-HISTORY-SUMMARY"
+      ]
+    },
+    {
+      "id": "H02",
+      "date": "2025-05",
+      "dateLabel": "2025-05",
+      "category": "diagnosis",
+      "title": "Stage IV ALK-positive lung adenocarcinoma",
+      "summary": "Reported initial diagnosis: stage IV ALK-positive non-small-cell lung adenocarcinoma, in a never-smoker. Exact diagnostic biopsy date requires the original report.",
+      "details": "",
+      "evidence": "family-reported",
+      "sourceIds": [
+        "S-HISTORY-SUMMARY"
+      ]
+    }
+  ],
+  "treatments": [
+    {
+      "id": "lorlatinib",
+      "name": "Lorlatinib",
+      "kind": "Targeted therapy",
+      "status": "Current per Oct 30 update",
+      "start": "2025-06-17",
+      "dose": "50 mg reported Oct 30; current frequency not restated",
+      "summary": "ALK-targeted treatment started at 100 mg daily in June 2025; later holds and reductions were reported.",
+      "events": [
+        "Jul 29–Aug 3, 2025: held.",
+        "Aug 4, 2025: restarted at 100 mg with a steroid.",
+        "Aug 7, 2025: reduced to 50 mg.",
+        "Early 2026: 75 mg was reported, later 50 mg during chemotherapy.",
+        "A two-week hold during breast/axillary radiation was reported; exact dates unknown."
+      ],
+      "sourceIds": [
+        "S-HISTORY-SUMMARY",
+        "S-MED-2026-10-30"
+      ]
+    },
+    {
+      "id": "carboplatin",
+      "name": "Carboplatin",
+      "kind": "Chemotherapy",
+      "status": "Historical · two rounds reported; not confirmed ongoing",
+      "start": "April 21, 2026 (reported regimen start; exact carboplatin dates unverified)",
+      "dose": "Dose and individual administration dates not available",
+      "summary": "Carboplatin was reported as part of the initial carboplatin, pemetrexed and bevacizumab regimen. The October 30 family update reported two prior rounds of carboplatin.",
+      "events": [
+        "Reported regimen start: April 21, 2026, from earlier family-shared history.",
+        "October 30, 2026 update: two prior rounds reported.",
+        "Exact administration dates, dose and last treatment date are unavailable. Current use is not confirmed."
+      ],
+      "sourceIds": [
+        "S-HISTORY-SUMMARY",
+        "S-MED-2026-10-30"
+      ]
+    },
+    {
+      "id": "chemotherapy",
+      "name": "Pemetrexed + bevacizumab",
+      "kind": "Systemic therapy",
+      "status": "Continuing per Oct 30 update",
+      "start": "2026-04-21 (reported chemotherapy start)",
+      "dose": "Pemetrexed every three weeks; doses not supplied",
+      "summary": "Carboplatin, pemetrexed and bevacizumab were reported at chemotherapy start. Two carboplatin rounds were reported in total; carboplatin is not confirmed ongoing.",
+      "events": [
+        "Apr 21, 2026: reported cycle 1.",
+        "Jun 30: bevacizumab dose before a later hold.",
+        "Jul 21: pemetrexed alone, bevacizumab held.",
+        "Oct 30: pemetrexed every three weeks and bevacizumab continuing."
+      ],
+      "sourceIds": [
+        "S-HISTORY-SUMMARY",
+        "S-MED-2026-10-30"
+      ]
+    },
+    {
+      "id": "sbrt",
+      "name": "Left lower lobe SBRT",
+      "kind": "Radiation",
+      "status": "Completed per family history",
+      "start": "2025-12-29",
+      "end": "2025-12-31",
+      "dose": "Three fractions; total dose not available",
+      "summary": "Focused radiation to the residual left lower lobe lesion.",
+      "events": [
+        "Chest wall pain was reported afterward; a confirmed cause is not established in this record."
+      ],
+      "sourceIds": [
+        "S-HISTORY-SUMMARY"
+      ]
+    },
+    {
+      "id": "breast-rt",
+      "name": "Breast / axillary radiation",
+      "kind": "Radiation",
+      "status": "Course started; completion not verified",
+      "start": "2026-08 (reported)",
+      "dose": "Ten fractions planned; delivered dose/fractions unknown",
+      "summary": "Family reported swelling and pain after three sessions. A treatment completion report was not found.",
+      "events": [
+        "Do not equate the planned ten fractions with ten delivered fractions."
+      ],
+      "sourceIds": [
+        "S-HISTORY-SUMMARY"
+      ]
+    },
+    {
+      "id": "pleural-care",
+      "name": "Pleural drainage + PleurX",
+      "kind": "Procedure",
+      "status": "Historical",
+      "start": "2025-07",
+      "end": "2025-11",
+      "dose": "Three thoracenteses reported; catheter Oct–Nov 2025",
+      "summary": "Repeated drainage for left pleural fluid, followed by an indwelling catheter. Removal after autopleurodesis was reported.",
+      "events": [
+        "Jul–Aug 2025: three thoracenteses.",
+        "Oct 2025: PleurX placed.",
+        "Oct 23: pleural biopsy/fluid later negative after earlier malignant fluid.",
+        "Nov 2025: PleurX removed."
+      ],
+      "sourceIds": [
+        "S-HISTORY-SUMMARY"
+      ]
+    },
+    {
+      "id": "support-3",
+      "name": "Duloxetine (Cymbalta)",
+      "kind": "Supportive medication",
+      "status": "current; replaced escitalopram for nerve pain",
+      "dose": "Dose / schedule not supplied",
+      "summary": "",
+      "events": [],
+      "sourceIds": [
+        "S-MED-2026-10-30"
+      ]
+    },
+    {
+      "id": "support-4",
+      "name": "Buprenorphine",
+      "kind": "Supportive medication",
+      "status": "current; previously transdermal patch",
+      "dose": "Sublingual",
+      "summary": "",
+      "events": [],
+      "sourceIds": [
+        "S-MED-2026-10-30"
+      ]
+    },
+    {
+      "id": "support-5",
+      "name": "Oxycodone",
+      "kind": "Supportive medication",
+      "status": "current per October 30 user update",
+      "dose": "Occasional / as reported",
+      "summary": "",
+      "events": [],
+      "sourceIds": [
+        "S-MED-2026-10-30"
+      ]
+    },
+    {
+      "id": "support-7",
+      "name": "Rosuvastatin",
+      "kind": "Supportive medication",
+      "status": "historical/current status not reconfirmed in October 30 update",
+      "dose": "Dose / schedule not supplied",
+      "summary": "",
+      "events": [],
+      "sourceIds": [
+        "S-HISTORY-SUMMARY"
+      ]
+    },
+    {
+      "id": "support-8",
+      "name": "Ondansetron",
+      "kind": "Supportive medication",
+      "status": "reported use for nausea with limited relief",
+      "dose": "Dose / schedule not supplied",
+      "summary": "",
+      "events": [],
+      "sourceIds": [
+        "S-MED-2026-10-30"
+      ]
+    },
+    {
+      "id": "support-9",
+      "name": "Dexamethasone",
+      "kind": "Supportive medication",
+      "status": "reported supportive therapy; present schedule not confirmed",
+      "dose": "Dose / schedule not supplied",
+      "summary": "",
+      "events": [],
+      "sourceIds": [
+        "S-HISTORY-SUMMARY"
+      ]
+    },
+    {
+      "id": "support-10",
+      "name": "Vitamin B12",
+      "kind": "Supportive medication",
+      "status": "supportive therapy; last administration not confirmed",
+      "dose": "Every three cycles, as retained in history",
+      "summary": "",
+      "events": [],
+      "sourceIds": [
+        "S-HISTORY-SUMMARY"
+      ]
+    }
+  ],
+  "molecular": [
+    {
+      "id": "march-axillary-pathology",
+      "name": "Right axillary lymph-node metastatic adenocarcinoma",
+      "category": "Pathology",
+      "value": "Metastatic adenocarcinoma with mucinous and clear cell features",
+      "specimen": "Right axillary node",
+      "date": "2026-03-27",
+      "reportDate": "2026-04-02",
+      "pages": [
+        1
+      ],
+      "evidence": "report-confirmed",
+      "meaning": "This tissue description in the PD-L1 report proves documented axillary metastatic disease by March 2026. The complete surgical pathology report was not available for this compilation.",
+      "sourceIds": [
+        "pdl1-2026-04"
+      ]
+    },
+    {
+      "id": "pdl1-axillary-2026",
+      "name": "PD-L1 22C3 TPS",
+      "category": "Biomarker",
+      "value": "<1%",
+      "specimen": "Right axillary lymph node",
+      "date": "2026-03-27",
+      "reportDate": "2026-04-02",
+      "pages": [
+        1
+      ],
+      "evidence": "report-confirmed",
+      "meaning": "Negative expression by the report's NSCLC criteria",
+      "sourceIds": [
+        "pdl1-2026-04"
+      ]
+    },
+    {
+      "id": "alk-blood-2026-03",
+      "name": "EML4-ALK fusion",
+      "category": "Driver",
+      "value": "0.4 % cfDNA",
+      "specimen": "Blood",
+      "date": "2026-03-23",
+      "reportDate": "2026-03-28",
+      "pages": [
+        1,
+        2
+      ],
+      "evidence": "report-confirmed",
+      "meaning": "",
+      "sourceIds": [
+        "guardant-2026-03"
+      ]
+    },
+    {
+      "id": "msi-blood-2026-03",
+      "name": "MSI-High",
+      "category": "Biomarker",
+      "value": "Not detected",
+      "specimen": "Blood",
+      "date": "2026-03-23",
+      "reportDate": "",
+      "pages": [
+        1
+      ],
+      "evidence": "report-confirmed",
+      "meaning": "",
+      "sourceIds": [
+        "guardant-2026-03"
+      ]
+    },
+    {
+      "id": "ccnd1-blood-2026-03",
+      "name": "CCND1 R260C",
+      "category": "Variant of uncertain significance",
+      "value": "0.5 % cfDNA",
+      "specimen": "Blood",
+      "date": "2026-03-23",
+      "reportDate": "",
+      "pages": [
+        1,
+        2
+      ],
+      "evidence": "report-confirmed",
+      "meaning": "Clinical meaning is uncertain; actionability is not established.",
+      "sourceIds": [
+        "guardant-2026-03"
+      ]
+    },
+    {
+      "id": "kit-blood-2026-03",
+      "name": "KIT Q427Q",
+      "category": "Synonymous alteration",
+      "value": "0.2 % cfDNA",
+      "specimen": "Blood",
+      "date": "2026-03-23",
+      "reportDate": "",
+      "pages": [
+        1,
+        2
+      ],
+      "evidence": "report-confirmed",
+      "meaning": "Report says unlikely to be a therapeutic target.",
+      "sourceIds": [
+        "guardant-2026-03"
+      ]
+    },
+    {
+      "id": "alk-blood-2026-07",
+      "name": "EML4-ALK fusion",
+      "category": "Driver",
+      "value": "0.2 % cfDNA",
+      "specimen": "Blood",
+      "date": "2026-07-21",
+      "reportDate": "2026-07-29",
+      "pages": [
+        1,
+        2
+      ],
+      "evidence": "report-confirmed",
+      "meaning": "",
+      "sourceIds": [
+        "guardant-2026-07"
+      ]
+    },
+    {
+      "id": "tumor-fraction-blood-2026-07",
+      "name": "Tumor fraction",
+      "category": "Assay context",
+      "value": "0.3 %",
+      "specimen": "Blood",
+      "date": "2026-07-21",
+      "reportDate": "",
+      "pages": [
+        1
+      ],
+      "evidence": "report-confirmed",
+      "meaning": "",
+      "sourceIds": [
+        "guardant-2026-07"
+      ]
+    },
+    {
+      "id": "tmb-blood-2026-07",
+      "name": "Tumor mutational burden",
+      "category": "Biomarker",
+      "value": "3.8 mut/Mb",
+      "specimen": "Blood",
+      "date": "2026-07-21",
+      "reportDate": "",
+      "pages": [
+        3
+      ],
+      "evidence": "report-confirmed",
+      "meaning": "",
+      "sourceIds": [
+        "guardant-2026-07"
+      ]
+    },
+    {
+      "id": "msi-blood-2026-07",
+      "name": "MSI-High",
+      "category": "Biomarker",
+      "value": "Not detected",
+      "specimen": "Blood",
+      "date": "2026-07-21",
+      "reportDate": "",
+      "pages": [
+        3
+      ],
+      "evidence": "report-confirmed",
+      "meaning": "",
+      "sourceIds": [
+        "guardant-2026-07"
+      ]
+    },
+    {
+      "id": "hla-2026-07",
+      "name": "HLA class I",
+      "category": "HLA class I genotype",
+      "value": "HLA-A: A*26:01, A*31:01; HLA-B: B*35:01, B*35:02; HLA-C: C*04:01, C*04:01",
+      "specimen": "Blood cfDNA",
+      "date": "2026-07-21",
+      "reportDate": "2026-07-29",
+      "pages": [
+        3
+      ],
+      "evidence": "report-confirmed",
+      "meaning": "Report positions these results for oncology therapy selection and clinical-trial matching. Not validated for transplant allele typing. HLA class II is not reported here.",
+      "sourceIds": [
+        "guardant-2026-07"
+      ]
+    },
+    {
+      "id": "ugt1a1-2026-07",
+      "name": "UGT1A1",
+      "category": "Pharmacogenomics",
+      "value": "*1/*28",
+      "specimen": "Blood",
+      "date": "2026-07-21",
+      "reportDate": "",
+      "pages": [
+        3
+      ],
+      "evidence": "report-confirmed",
+      "meaning": "Intermediate metabolizer The report flags increased toxicity susceptibility to irinotecan compared with normal metabolizers. This is a reported pharmacogenomic finding, not a treatment recommendation.",
+      "sourceIds": [
+        "guardant-2026-07"
+      ]
+    },
+    {
+      "id": "guardant-pgx-negative-2026-07",
+      "name": "Reportable DPYD, HLA-B*57:01 and TPMT alleles",
+      "category": "Pharmacogenomics",
+      "value": "No abnormal variant detected in the reportable alleles",
+      "specimen": "Blood",
+      "date": "2026-07-21",
+      "reportDate": "",
+      "pages": [
+        3
+      ],
+      "evidence": "report-confirmed",
+      "meaning": "Do not label all alleles normal or all possible variants excluded.",
+      "sourceIds": [
+        "guardant-2026-07"
+      ]
+    },
+    {
+      "id": "guardant-vus-2026-07",
+      "name": "Guardant blood variants",
+      "category": "Variants of uncertain significance",
+      "value": "CCND1 R260C (0.5%); POLE E978Nfs*4 (0.1%); PREX1 R920H (1.8%)",
+      "specimen": "Blood",
+      "date": "2026-07-21",
+      "reportDate": "",
+      "pages": [
+        2
+      ],
+      "evidence": "report-confirmed",
+      "meaning": "No clinical actionability inferred.",
+      "sourceIds": [
+        "guardant-2026-07"
+      ]
+    },
+    {
+      "id": "guardant-potential-ch-2026-07",
+      "name": "Variants classified as potentially from blood-forming cells",
+      "category": "Potential clonal hematopoiesis",
+      "value": "CBL L380P (0.3%); CHEK2 Y327C (0.1%); PTEN S59L (0.1%)",
+      "specimen": "Blood",
+      "date": "2026-07-21",
+      "reportDate": "",
+      "pages": [
+        2
+      ],
+      "evidence": "report-confirmed",
+      "meaning": "Do not present as confirmed tumor resistance mutations or inherited cancer risk.",
+      "sourceIds": [
+        "guardant-2026-07"
+      ]
+    },
+    {
+      "id": "kit-blood-2026-07",
+      "name": "KIT Q427Q",
+      "category": "Synonymous alteration",
+      "value": "Not detected",
+      "specimen": "Blood",
+      "date": "2026-07-21",
+      "reportDate": "",
+      "pages": [
+        2
+      ],
+      "evidence": "report-confirmed",
+      "meaning": "",
+      "sourceIds": [
+        "guardant-2026-07"
+      ]
+    },
+    {
+      "id": "alk-tissue-2026-07",
+      "name": "EML4-ALK fusion",
+      "category": "Driver",
+      "value": "Variant 3a/b",
+      "specimen": "Breast tissue",
+      "date": "2026-07-21",
+      "reportDate": "2026-08-10",
+      "pages": [
+        1,
+        2,
+        3
+      ],
+      "evidence": "report-confirmed",
+      "meaning": "Low tumor purity / sample qualification.",
+      "sourceIds": [
+        "foundation-2026-08"
+      ]
+    },
+    {
+      "id": "fmi-undetermined-2026",
+      "name": "FoundationOne tissue biomarkers",
+      "category": "Biomarkers",
+      "value": "HRD signature: Cannot be determined; Microsatellite status: Cannot be determined; Tumor mutational burden: Cannot be determined",
+      "specimen": "Breast tissue",
+      "date": "2026-07-21",
+      "reportDate": "2026-08-10",
+      "pages": [
+        1,
+        3
+      ],
+      "evidence": "report-confirmed",
+      "meaning": "These indeterminate tissue results must not be replaced by the July blood results. Different assays and specimens.",
+      "sourceIds": [
+        "foundation-2026-08"
+      ]
+    },
+    {
+      "id": "fmi-no-reportable-2026",
+      "name": "Genes without reportable alterations on this tissue test",
+      "category": "Assay findings",
+      "value": "BRAF; EGFR; ERBB2; KRAS; MET; RET; ROS1",
+      "specimen": "Breast tissue",
+      "date": "2026-07-21",
+      "reportDate": "",
+      "pages": [
+        1
+      ],
+      "evidence": "report-confirmed",
+      "meaning": "Qualified low-purity sample limits sensitivity. No reportable MET genomic alteration does not establish MET IHC expression.",
+      "sourceIds": [
+        "foundation-2026-08"
+      ]
+    },
+    {
+      "id": "fmi-vus-2026",
+      "name": "FoundationOne tissue VUS",
+      "category": "Variants of unknown significance",
+      "value": "CIC G525S (49%); EP300 N2379H (52%); GNAS A368P (8.6%); INPP4B V594A (45.4%); KDM6A R1054I (5.5%); MAP3K1 D1170Y (45.9%)",
+      "specimen": "Breast tissue",
+      "date": "2026-07-21",
+      "reportDate": "",
+      "pages": [
+        13
+      ],
+      "evidence": "report-confirmed",
+      "meaning": "Do not infer inherited origin from VAF alone or clinical actionability.",
+      "sourceIds": [
+        "foundation-2026-08"
+      ]
+    },
+    {
+      "id": "source-pending-0",
+      "name": "Earlier reported finding",
+      "value": "Baseline Tempus node sample TMB 1.6 mut/Mb and PD-L1 approximately 1%",
+      "specimen": "Original specimen/report not verified",
+      "date": "Historical",
+      "evidence": "unverified",
+      "meaning": "Original Tempus report not available in the reviewed records.",
+      "sourceIds": [
+        "S-HISTORY-SUMMARY"
+      ]
+    },
+    {
+      "id": "source-pending-1",
+      "name": "Earlier reported finding",
+      "value": "Baseline subclonal MET IHC 3+ in approximately 20% of cells; later MET IHC 0%",
+      "specimen": "Original specimen/report not verified",
+      "date": "Historical",
+      "evidence": "unverified",
+      "meaning": "Original IHC reports not available in the reviewed records. Do not confuse IHC with genomic MET status.",
+      "sourceIds": [
+        "S-HISTORY-SUMMARY"
+      ]
+    },
+    {
+      "id": "source-pending-2",
+      "name": "Earlier reported finding",
+      "value": "STK11 alteration, CDKN2A loss and MTAP loss",
+      "specimen": "Original specimen/report not verified",
+      "date": "Historical",
+      "evidence": "unverified",
+      "meaning": "Exact variants, specimen, assay and report dates not verified. These are not headline findings in the reviewed August FoundationOne breast report or July Guardant blood report.",
+      "sourceIds": [
+        "S-HISTORY-SUMMARY"
+      ]
+    },
+    {
+      "id": "source-pending-4",
+      "name": "Earlier reported finding",
+      "value": "Pretreatment Guardant EML4-ALK fusion approximately 0.5–0.6%",
+      "specimen": "Original specimen/report not verified",
+      "date": "Historical",
+      "evidence": "unverified",
+      "meaning": "Pretreatment report not located by the reviewed records.",
+      "sourceIds": [
+        "S-HISTORY-SUMMARY"
+      ]
+    },
+    {
+      "id": "breast-pathology",
+      "name": "Breast core morphology / IHC",
+      "value": "Poorly differentiated adenocarcinoma with mucinous features; pulmonary origin favored",
+      "specimen": "Right breast 11:00 core biopsy",
+      "date": "Clinical date not visible; available by July 24, 2026",
+      "evidence": "report-confirmed",
+      "meaning": "Right breast core biopsy: poorly differentiated adenocarcinoma with mucinous features. CK7 positive, CK20 weak positive; Napsin A, TTF-1, GATA3, ER and PAX8 negative. The addendum favors pulmonary origin and considers a breast primary unlikely, but does not definitively establish origin; other origins cannot be entirely excluded. ALK is established by the separate FoundationOne report, not by this addendum.",
+      "sourceIds": [
+        "breast-biopsy-addendum-july2026"
+      ]
+    }
+  ],
+  "labs": [
+    {
+      "id": "lab-WBC",
+      "name": "White blood cells",
+      "unit": "10^9/L",
+      "reference": [
+        3.2,
+        9.8
+      ],
+      "values": [
+        {
+          "date": "2025-05-11",
+          "value": 8.2,
+          "flag": ""
+        },
+        {
+          "date": "2025-07-01",
+          "value": 14.0,
+          "flag": "high"
+        },
+        {
+          "date": "2025-07-29",
+          "value": 11.1,
+          "flag": "high"
+        },
+        {
+          "date": "2025-09-15",
+          "value": 9.5,
+          "flag": ""
+        },
+        {
+          "date": "2025-10-22",
+          "value": 8.7,
+          "flag": ""
+        },
+        {
+          "date": "2025-11-03",
+          "value": 7.3,
+          "flag": ""
+        },
+        {
+          "date": "2025-12-08",
+          "value": 5.5,
+          "flag": ""
+        },
+        {
+          "date": "2026-02-17",
+          "value": 7.0,
+          "flag": ""
+        },
+        {
+          "date": "2026-03-17",
+          "value": 9.8,
+          "flag": ""
+        },
+        {
+          "date": "2026-04-21",
+          "value": 8.4,
+          "flag": ""
+        },
+        {
+          "date": "2026-04-23",
+          "value": 9.2,
+          "flag": ""
+        },
+        {
+          "date": "2026-05-12",
+          "value": 4.1,
+          "flag": ""
+        },
+        {
+          "date": "2026-06-02",
+          "value": 4.0,
+          "flag": ""
+        },
+        {
+          "date": "2026-06-23",
+          "value": 2.8,
+          "flag": "low"
+        },
+        {
+          "date": "2026-06-30",
+          "value": 4.2,
+          "flag": ""
+        },
+        {
+          "date": "2026-07-21",
+          "value": 8.2,
+          "flag": ""
+        },
+        {
+          "date": "2026-08-11",
+          "value": 5.4,
+          "flag": ""
+        },
+        {
+          "date": "2026-08-17",
+          "value": 5.4,
+          "flag": ""
+        },
+        {
+          "date": "2026-09-08",
+          "value": 9.4,
+          "flag": ""
+        },
+        {
+          "date": "2026-09-14",
+          "value": 8.9,
+          "flag": ""
+        },
+        {
+          "date": "2026-10-20",
+          "value": 9.3,
+          "flag": ""
+        }
+      ],
+      "summary": "Source-reported trend. Flags use the latest report reference interval; intervals may vary over time.",
+      "sourceIds": [
+        "cbc-20261020"
+      ]
+    },
+    {
+      "id": "lab-neutrophils",
+      "name": "Absolute neutrophils",
+      "unit": "10^9/L",
+      "reference": [
+        2.0,
+        8.6
+      ],
+      "values": [
+        {
+          "date": "2025-05-11",
+          "value": 6.0,
+          "flag": ""
+        },
+        {
+          "date": "2025-07-01",
+          "value": 10.9,
+          "flag": "high"
+        },
+        {
+          "date": "2025-07-29",
+          "value": 7.4,
+          "flag": ""
+        },
+        {
+          "date": "2025-09-15",
+          "value": 7.0,
+          "flag": ""
+        },
+        {
+          "date": "2025-10-22",
+          "value": null,
+          "flag": ""
+        },
+        {
+          "date": "2025-11-03",
+          "value": 4.9,
+          "flag": ""
+        },
+        {
+          "date": "2025-12-08",
+          "value": 3.6,
+          "flag": ""
+        },
+        {
+          "date": "2026-02-17",
+          "value": 5.2,
+          "flag": ""
+        },
+        {
+          "date": "2026-03-17",
+          "value": 7.3,
+          "flag": ""
+        },
+        {
+          "date": "2026-04-21",
+          "value": 6.3,
+          "flag": ""
+        },
+        {
+          "date": "2026-04-23",
+          "value": 8.1,
+          "flag": ""
+        },
+        {
+          "date": "2026-05-12",
+          "value": 2.4,
+          "flag": ""
+        },
+        {
+          "date": "2026-06-02",
+          "value": 1.9,
+          "flag": "low"
+        },
+        {
+          "date": "2026-06-23",
+          "value": 1.2,
+          "flag": "low"
+        },
+        {
+          "date": "2026-06-30",
+          "value": 2.3,
+          "flag": ""
+        },
+        {
+          "date": "2026-07-21",
+          "value": 6.0,
+          "flag": ""
+        },
+        {
+          "date": "2026-08-11",
+          "value": 3.8,
+          "flag": ""
+        },
+        {
+          "date": "2026-08-17",
+          "value": 3.7,
+          "flag": ""
+        },
+        {
+          "date": "2026-09-08",
+          "value": 7.2,
+          "flag": ""
+        },
+        {
+          "date": "2026-09-14",
+          "value": 6.7,
+          "flag": ""
+        },
+        {
+          "date": "2026-10-20",
+          "value": 7.3,
+          "flag": ""
+        }
+      ],
+      "summary": "Source-reported trend. Flags use the latest report reference interval; intervals may vary over time.",
+      "sourceIds": [
+        "cbc-20261020"
+      ]
+    },
+    {
+      "id": "lab-hemoglobin",
+      "name": "Hemoglobin",
+      "unit": "g/dL",
+      "reference": [
+        11.7,
+        15.5
+      ],
+      "values": [
+        {
+          "date": "2025-05-11",
+          "value": 12.8,
+          "flag": ""
+        },
+        {
+          "date": "2025-07-01",
+          "value": 13.4,
+          "flag": ""
+        },
+        {
+          "date": "2025-07-29",
+          "value": 13.0,
+          "flag": ""
+        },
+        {
+          "date": "2025-09-15",
+          "value": 13.0,
+          "flag": ""
+        },
+        {
+          "date": "2025-10-22",
+          "value": 12.4,
+          "flag": ""
+        },
+        {
+          "date": "2025-11-03",
+          "value": 10.6,
+          "flag": "low"
+        },
+        {
+          "date": "2025-12-08",
+          "value": 12.5,
+          "flag": ""
+        },
+        {
+          "date": "2026-02-17",
+          "value": 12.5,
+          "flag": ""
+        },
+        {
+          "date": "2026-03-17",
+          "value": 11.8,
+          "flag": ""
+        },
+        {
+          "date": "2026-04-21",
+          "value": 11.1,
+          "flag": "low"
+        },
+        {
+          "date": "2026-04-23",
+          "value": 10.3,
+          "flag": "low"
+        },
+        {
+          "date": "2026-05-12",
+          "value": 11.3,
+          "flag": "low"
+        },
+        {
+          "date": "2026-06-02",
+          "value": 12.2,
+          "flag": ""
+        },
+        {
+          "date": "2026-06-23",
+          "value": 10.6,
+          "flag": "low"
+        },
+        {
+          "date": "2026-06-30",
+          "value": 11.2,
+          "flag": "low"
+        },
+        {
+          "date": "2026-07-21",
+          "value": 11.0,
+          "flag": "low"
+        },
+        {
+          "date": "2026-08-11",
+          "value": 10.4,
+          "flag": "low"
+        },
+        {
+          "date": "2026-08-17",
+          "value": 10.6,
+          "flag": "low"
+        },
+        {
+          "date": "2026-09-08",
+          "value": 9.6,
+          "flag": "low"
+        },
+        {
+          "date": "2026-09-14",
+          "value": 10.2,
+          "flag": "low"
+        },
+        {
+          "date": "2026-10-20",
+          "value": 10.1,
+          "flag": "low"
+        }
+      ],
+      "summary": "Source-reported trend. Flags use the latest report reference interval; intervals may vary over time.",
+      "sourceIds": [
+        "cbc-20261020"
+      ]
+    },
+    {
+      "id": "lab-platelets",
+      "name": "Platelets",
+      "unit": "10^9/L",
+      "reference": [
+        150,
+        450
+      ],
+      "values": [
+        {
+          "date": "2025-05-11",
+          "value": 367,
+          "flag": ""
+        },
+        {
+          "date": "2025-07-01",
+          "value": 420,
+          "flag": ""
+        },
+        {
+          "date": "2025-07-29",
+          "value": 312,
+          "flag": ""
+        },
+        {
+          "date": "2025-09-15",
+          "value": 332,
+          "flag": ""
+        },
+        {
+          "date": "2025-10-22",
+          "value": 318,
+          "flag": ""
+        },
+        {
+          "date": "2025-11-03",
+          "value": 273,
+          "flag": ""
+        },
+        {
+          "date": "2025-12-08",
+          "value": 290,
+          "flag": ""
+        },
+        {
+          "date": "2026-02-17",
+          "value": 267,
+          "flag": ""
+        },
+        {
+          "date": "2026-03-17",
+          "value": 362,
+          "flag": ""
+        },
+        {
+          "date": "2026-04-21",
+          "value": 368,
+          "flag": ""
+        },
+        {
+          "date": "2026-04-23",
+          "value": 371,
+          "flag": ""
+        },
+        {
+          "date": "2026-05-12",
+          "value": 424,
+          "flag": ""
+        },
+        {
+          "date": "2026-06-02",
+          "value": 340,
+          "flag": ""
+        },
+        {
+          "date": "2026-06-23",
+          "value": 279,
+          "flag": ""
+        },
+        {
+          "date": "2026-06-30",
+          "value": 253,
+          "flag": ""
+        },
+        {
+          "date": "2026-07-21",
+          "value": 321,
+          "flag": ""
+        },
+        {
+          "date": "2026-08-11",
+          "value": 283,
+          "flag": ""
+        },
+        {
+          "date": "2026-08-17",
+          "value": 289,
+          "flag": ""
+        },
+        {
+          "date": "2026-09-08",
+          "value": 353,
+          "flag": ""
+        },
+        {
+          "date": "2026-09-14",
+          "value": 445,
+          "flag": ""
+        },
+        {
+          "date": "2026-10-20",
+          "value": 345,
+          "flag": ""
+        }
+      ],
+      "summary": "Source-reported trend. Flags use the latest report reference interval; intervals may vary over time.",
+      "sourceIds": [
+        "cbc-20261020"
+      ]
+    },
+    {
+      "id": "lab-creatinine",
+      "name": "Serum creatinine",
+      "unit": "mg/dL",
+      "reference": [
+        0.4,
+        1.0
+      ],
+      "values": [
+        {
+          "date": "2025-07-01",
+          "value": 0.7,
+          "flag": ""
+        },
+        {
+          "date": "2026-02-17",
+          "value": 0.9,
+          "flag": ""
+        },
+        {
+          "date": "2026-03-17",
+          "value": 0.7,
+          "flag": ""
+        },
+        {
+          "date": "2026-04-21",
+          "value": 0.6,
+          "flag": ""
+        },
+        {
+          "date": "2026-06-02",
+          "value": 0.7,
+          "flag": ""
+        },
+        {
+          "date": "2026-06-23",
+          "value": 0.5,
+          "flag": ""
+        },
+        {
+          "date": "2026-06-30",
+          "value": 0.5,
+          "flag": ""
+        },
+        {
+          "date": "2026-07-21",
+          "value": 0.7,
+          "flag": ""
+        },
+        {
+          "date": "2026-08-11",
+          "value": 1.2,
+          "flag": "high"
+        },
+        {
+          "date": "2026-09-08",
+          "value": 0.8,
+          "flag": ""
+        },
+        {
+          "date": "2026-09-14",
+          "value": 0.6,
+          "flag": ""
+        },
+        {
+          "date": "2026-10-20",
+          "value": 0.4,
+          "flag": ""
+        }
+      ],
+      "summary": "Source-reported trend. Flags use the latest report reference interval; intervals may vary over time.",
+      "sourceIds": [
+        "cmp-20261020"
+      ]
+    },
+    {
+      "id": "lab-eGFR",
+      "name": "Estimated GFR",
+      "unit": "mL/min/1.73m2",
+      "reference": null,
+      "values": [
+        {
+          "date": "2025-07-01",
+          "value": 113,
+          "flag": ""
+        },
+        {
+          "date": "2026-02-17",
+          "value": 83,
+          "flag": ""
+        },
+        {
+          "date": "2026-03-17",
+          "value": 113,
+          "flag": ""
+        },
+        {
+          "date": "2026-04-21",
+          "value": 116,
+          "flag": ""
+        },
+        {
+          "date": "2026-06-02",
+          "value": 112,
+          "flag": ""
+        },
+        {
+          "date": "2026-06-23",
+          "value": 122,
+          "flag": ""
+        },
+        {
+          "date": "2026-06-30",
+          "value": 122,
+          "flag": ""
+        },
+        {
+          "date": "2026-07-21",
+          "value": 112,
+          "flag": ""
+        },
+        {
+          "date": "2026-08-11",
+          "value": 59,
+          "flag": ""
+        },
+        {
+          "date": "2026-09-08",
+          "value": 95,
+          "flag": ""
+        },
+        {
+          "date": "2026-09-14",
+          "value": 116,
+          "flag": ""
+        },
+        {
+          "date": "2026-10-20",
+          "value": 128,
+          "flag": ""
+        }
+      ],
+      "summary": "Source-reported trend. Flags use the latest report reference interval; intervals may vary over time.",
+      "sourceIds": [
+        "cmp-20261020"
+      ]
+    },
+    {
+      "id": "lab-albumin",
+      "name": "Albumin",
+      "unit": "g/dL",
+      "reference": [
+        3.5,
+        4.8
+      ],
+      "values": [
+        {
+          "date": "2025-07-01",
+          "value": 3.7,
+          "flag": ""
+        },
+        {
+          "date": "2026-02-17",
+          "value": 3.8,
+          "flag": ""
+        },
+        {
+          "date": "2026-03-17",
+          "value": 3.7,
+          "flag": ""
+        },
+        {
+          "date": "2026-04-21",
+          "value": 3.2,
+          "flag": "low"
+        },
+        {
+          "date": "2026-06-02",
+          "value": 3.5,
+          "flag": ""
+        },
+        {
+          "date": "2026-06-23",
+          "value": 3.4,
+          "flag": "low"
+        },
+        {
+          "date": "2026-06-30",
+          "value": 3.6,
+          "flag": ""
+        },
+        {
+          "date": "2026-07-21",
+          "value": 3.5,
+          "flag": ""
+        },
+        {
+          "date": "2026-08-11",
+          "value": 3.5,
+          "flag": ""
+        },
+        {
+          "date": "2026-09-08",
+          "value": 3.1,
+          "flag": "low"
+        },
+        {
+          "date": "2026-09-14",
+          "value": 3.0,
+          "flag": "low"
+        },
+        {
+          "date": "2026-10-20",
+          "value": 3.3,
+          "flag": "low"
+        }
+      ],
+      "summary": "Source-reported trend. Flags use the latest report reference interval; intervals may vary over time.",
+      "sourceIds": [
+        "cmp-20261020"
+      ]
+    },
+    {
+      "id": "lab-total_protein",
+      "name": "Total protein",
+      "unit": "g/dL",
+      "reference": [
+        6.2,
+        8.1
+      ],
+      "values": [
+        {
+          "date": "2025-07-01",
+          "value": 7.6,
+          "flag": ""
+        },
+        {
+          "date": "2026-02-17",
+          "value": 8.3,
+          "flag": "high"
+        },
+        {
+          "date": "2026-03-17",
+          "value": 8.4,
+          "flag": "high"
+        },
+        {
+          "date": "2026-04-21",
+          "value": 8.1,
+          "flag": ""
+        },
+        {
+          "date": "2026-06-02",
+          "value": 8.8,
+          "flag": "high"
+        },
+        {
+          "date": "2026-06-23",
+          "value": 7.9,
+          "flag": ""
+        },
+        {
+          "date": "2026-06-30",
+          "value": 8.2,
+          "flag": "high"
+        },
+        {
+          "date": "2026-07-21",
+          "value": 8.5,
+          "flag": "high"
+        },
+        {
+          "date": "2026-08-11",
+          "value": 8.6,
+          "flag": "high"
+        },
+        {
+          "date": "2026-09-08",
+          "value": 8.5,
+          "flag": "high"
+        },
+        {
+          "date": "2026-09-14",
+          "value": 9.1,
+          "flag": "high"
+        },
+        {
+          "date": "2026-10-20",
+          "value": 8.9,
+          "flag": "high"
+        }
+      ],
+      "summary": "Source-reported trend. Flags use the latest report reference interval; intervals may vary over time.",
+      "sourceIds": [
+        "cmp-20261020"
+      ]
+    },
+    {
+      "id": "lab-AST",
+      "name": "AST",
+      "unit": "U/L",
+      "reference": [
+        15,
+        41
+      ],
+      "values": [
+        {
+          "date": "2025-07-01",
+          "value": 22,
+          "flag": ""
+        },
+        {
+          "date": "2026-02-17",
+          "value": 20,
+          "flag": ""
+        },
+        {
+          "date": "2026-03-17",
+          "value": 23,
+          "flag": ""
+        },
+        {
+          "date": "2026-04-21",
+          "value": 23,
+          "flag": ""
+        },
+        {
+          "date": "2026-06-02",
+          "value": 31,
+          "flag": ""
+        },
+        {
+          "date": "2026-06-23",
+          "value": 36,
+          "flag": ""
+        },
+        {
+          "date": "2026-06-30",
+          "value": 32,
+          "flag": ""
+        },
+        {
+          "date": "2026-07-21",
+          "value": 25,
+          "flag": ""
+        },
+        {
+          "date": "2026-08-11",
+          "value": 22,
+          "flag": ""
+        },
+        {
+          "date": "2026-09-08",
+          "value": 21,
+          "flag": ""
+        },
+        {
+          "date": "2026-09-14",
+          "value": 22,
+          "flag": ""
+        },
+        {
+          "date": "2026-10-20",
+          "value": 17,
+          "flag": ""
+        }
+      ],
+      "summary": "Source-reported trend. Flags use the latest report reference interval; intervals may vary over time.",
+      "sourceIds": [
+        "cmp-20261020"
+      ]
+    },
+    {
+      "id": "lab-ALT",
+      "name": "ALT",
+      "unit": "U/L",
+      "reference": [
+        10,
+        39
+      ],
+      "values": [
+        {
+          "date": "2025-07-01",
+          "value": 21,
+          "flag": ""
+        },
+        {
+          "date": "2026-02-17",
+          "value": 17,
+          "flag": ""
+        },
+        {
+          "date": "2026-03-17",
+          "value": 18,
+          "flag": ""
+        },
+        {
+          "date": "2026-04-21",
+          "value": 17,
+          "flag": ""
+        },
+        {
+          "date": "2026-06-02",
+          "value": 28,
+          "flag": ""
+        },
+        {
+          "date": "2026-06-23",
+          "value": 33,
+          "flag": ""
+        },
+        {
+          "date": "2026-06-30",
+          "value": 27,
+          "flag": ""
+        },
+        {
+          "date": "2026-07-21",
+          "value": 21,
+          "flag": ""
+        },
+        {
+          "date": "2026-08-11",
+          "value": 14,
+          "flag": ""
+        },
+        {
+          "date": "2026-09-08",
+          "value": 11,
+          "flag": ""
+        },
+        {
+          "date": "2026-09-14",
+          "value": 12,
+          "flag": ""
+        },
+        {
+          "date": "2026-10-20",
+          "value": 10,
+          "flag": ""
+        }
+      ],
+      "summary": "Source-reported trend. Flags use the latest report reference interval; intervals may vary over time.",
+      "sourceIds": [
+        "cmp-20261020"
+      ]
+    },
+    {
+      "id": "lab-CEA",
+      "name": "CEA",
+      "unit": "ng/mL",
+      "reference": "<=2.5",
+      "values": [
+        {
+          "date": "2025-09-16",
+          "value": 1.6,
+          "flag": ""
+        },
+        {
+          "date": "2025-11-03",
+          "value": 0.8,
+          "flag": ""
+        },
+        {
+          "date": "2026-02-17",
+          "value": 6.3,
+          "flag": "high"
+        },
+        {
+          "date": "2026-03-17",
+          "value": 11.9,
+          "flag": "high"
+        },
+        {
+          "date": "2026-05-12",
+          "value": 19.8,
+          "flag": "high"
+        },
+        {
+          "date": "2026-06-02",
+          "value": 12.4,
+          "flag": "high"
+        },
+        {
+          "date": "2026-06-23",
+          "value": 9.5,
+          "flag": "high"
+        },
+        {
+          "date": "2026-06-30",
+          "value": 14.3,
+          "flag": "high"
+        },
+        {
+          "date": "2026-07-21",
+          "value": 15.9,
+          "flag": "high"
+        },
+        {
+          "date": "2026-08-11",
+          "value": 24.3,
+          "flag": "high"
+        }
+      ],
+      "summary": "Laboratory trend, not a standalone measure of progression or treatment efficacy. No later CEA source was available in this reviewed folder.",
+      "sourceIds": [
+        "cea-20260811"
+      ]
+    },
+    {
+      "id": "lab-urine_protein_creatinine_ratio",
+      "name": "Urine protein / creatinine ratio",
+      "unit": "mg/g",
+      "reference": "<200",
+      "values": [
+        {
+          "date": "2026-04-21",
+          "value": 78,
+          "flag": ""
+        },
+        {
+          "date": "2026-05-12",
+          "value": 70,
+          "flag": ""
+        },
+        {
+          "date": "2026-06-02",
+          "value": null,
+          "flag": ""
+        },
+        {
+          "date": "2026-06-23",
+          "value": 74,
+          "flag": ""
+        },
+        {
+          "date": "2026-06-30",
+          "value": 74,
+          "flag": ""
+        },
+        {
+          "date": "2026-07-21",
+          "value": 107,
+          "flag": ""
+        },
+        {
+          "date": "2026-08-11",
+          "value": 63,
+          "flag": ""
+        }
+      ],
+      "summary": "ratio not reported; random urine protein was <4 mg/dL on June 2",
+      "sourceIds": [
+        "urine-protein-20260811"
+      ]
+    },
+    {
+      "id": "lab-neutrophil_percent",
+      "name": "Neutrophil percent",
+      "unit": "%",
+      "reference": [
+        37,
+        80
+      ],
+      "values": [
+        {
+          "date": "2026-10-20",
+          "value": 78.7,
+          "flag": ""
+        }
+      ],
+      "summary": "Latest available result; longitudinal values not extracted for this component.",
+      "sourceIds": [
+        "cbc-20261020"
+      ]
+    },
+    {
+      "id": "lab-lymphocytes",
+      "name": "Lymphocytes",
+      "unit": "10^9/L",
+      "reference": [
+        0.6,
+        4.2
+      ],
+      "values": [
+        {
+          "date": "2026-10-20",
+          "value": 0.7,
+          "flag": ""
+        }
+      ],
+      "summary": "Latest available result; longitudinal values not extracted for this component.",
+      "sourceIds": [
+        "cbc-20261020"
+      ]
+    },
+    {
+      "id": "lab-lymphocyte_percent",
+      "name": "Lymphocyte percent",
+      "unit": "%",
+      "reference": [
+        10,
+        50
+      ],
+      "values": [
+        {
+          "date": "2026-10-20",
+          "value": 7.0,
+          "flag": "low"
+        }
+      ],
+      "summary": "Latest available result; longitudinal values not extracted for this component.",
+      "sourceIds": [
+        "cbc-20261020"
+      ]
+    },
+    {
+      "id": "lab-monocytes",
+      "name": "Monocytes",
+      "unit": "10^9/L",
+      "reference": [
+        0,
+        0.9
+      ],
+      "values": [
+        {
+          "date": "2026-10-20",
+          "value": 1.2,
+          "flag": "high"
+        }
+      ],
+      "summary": "Latest available result; longitudinal values not extracted for this component.",
+      "sourceIds": [
+        "cbc-20261020"
+      ]
+    },
+    {
+      "id": "lab-monocyte_percent",
+      "name": "Monocyte percent",
+      "unit": "%",
+      "reference": [
+        0,
+        12
+      ],
+      "values": [
+        {
+          "date": "2026-10-20",
+          "value": 13.2,
+          "flag": "high"
+        }
+      ],
+      "summary": "Latest available result; longitudinal values not extracted for this component.",
+      "sourceIds": [
+        "cbc-20261020"
+      ]
+    },
+    {
+      "id": "lab-eosinophils",
+      "name": "Eosinophils",
+      "unit": "10^9/L",
+      "reference": null,
+      "values": [
+        {
+          "date": "2026-10-20",
+          "value": 0.06,
+          "flag": ""
+        }
+      ],
+      "summary": "Latest available result; longitudinal values not extracted for this component.",
+      "sourceIds": [
+        "cbc-20261020"
+      ]
+    },
+    {
+      "id": "lab-eosinophil_percent",
+      "name": "Eosinophil percent",
+      "unit": "%",
+      "reference": null,
+      "values": [
+        {
+          "date": "2026-10-20",
+          "value": 0.6,
+          "flag": ""
+        }
+      ],
+      "summary": "Latest available result; longitudinal values not extracted for this component.",
+      "sourceIds": [
+        "cbc-20261020"
+      ]
+    },
+    {
+      "id": "lab-basophils",
+      "name": "Basophils",
+      "unit": "10^9/L",
+      "reference": null,
+      "values": [
+        {
+          "date": "2026-10-20",
+          "value": 0.02,
+          "flag": ""
+        }
+      ],
+      "summary": "Latest available result; longitudinal values not extracted for this component.",
+      "sourceIds": [
+        "cbc-20261020"
+      ]
+    },
+    {
+      "id": "lab-basophil_percent",
+      "name": "Basophil percent",
+      "unit": "%",
+      "reference": null,
+      "values": [
+        {
+          "date": "2026-10-20",
+          "value": 0.2,
+          "flag": ""
+        }
+      ],
+      "summary": "Latest available result; longitudinal values not extracted for this component.",
+      "sourceIds": [
+        "cbc-20261020"
+      ]
+    },
+    {
+      "id": "lab-hematocrit",
+      "name": "Hematocrit",
+      "unit": "%",
+      "reference": [
+        35,
+        45
+      ],
+      "values": [
+        {
+          "date": "2026-10-20",
+          "value": 32.6,
+          "flag": "low"
+        }
+      ],
+      "summary": "Latest available result; longitudinal values not extracted for this component.",
+      "sourceIds": [
+        "cbc-20261020"
+      ]
+    },
+    {
+      "id": "lab-MCV",
+      "name": "Mcv",
+      "unit": "fL",
+      "reference": [
+        80,
+        98
+      ],
+      "values": [
+        {
+          "date": "2026-10-20",
+          "value": 97,
+          "flag": ""
+        }
+      ],
+      "summary": "Latest available result; longitudinal values not extracted for this component.",
+      "sourceIds": [
+        "cbc-20261020"
+      ]
+    },
+    {
+      "id": "lab-MCH",
+      "name": "Mch",
+      "unit": "pg",
+      "reference": null,
+      "values": [
+        {
+          "date": "2026-10-20",
+          "value": 30.0,
+          "flag": ""
+        }
+      ],
+      "summary": "Latest available result; longitudinal values not extracted for this component.",
+      "sourceIds": [
+        "cbc-20261020"
+      ]
+    },
+    {
+      "id": "lab-MCHC",
+      "name": "Mchc",
+      "unit": "%",
+      "reference": null,
+      "values": [
+        {
+          "date": "2026-10-20",
+          "value": 31.0,
+          "flag": ""
+        }
+      ],
+      "summary": "Latest available result; longitudinal values not extracted for this component.",
+      "sourceIds": [
+        "cbc-20261020"
+      ]
+    },
+    {
+      "id": "lab-RBC",
+      "name": "Rbc",
+      "unit": "10^12/L",
+      "reference": [
+        3.77,
+        5.16
+      ],
+      "values": [
+        {
+          "date": "2026-10-20",
+          "value": 3.37,
+          "flag": "low"
+        }
+      ],
+      "summary": "Latest available result; longitudinal values not extracted for this component.",
+      "sourceIds": [
+        "cbc-20261020"
+      ]
+    },
+    {
+      "id": "lab-RDW_CV",
+      "name": "Rdw cv",
+      "unit": "%",
+      "reference": [
+        11.5,
+        14.5
+      ],
+      "values": [
+        {
+          "date": "2026-10-20",
+          "value": 15.9,
+          "flag": "high"
+        }
+      ],
+      "summary": "Latest available result; longitudinal values not extracted for this component.",
+      "sourceIds": [
+        "cbc-20261020"
+      ]
+    },
+    {
+      "id": "lab-MPV",
+      "name": "Mpv",
+      "unit": "fL",
+      "reference": null,
+      "values": [
+        {
+          "date": "2026-10-20",
+          "value": 8.8,
+          "flag": ""
+        }
+      ],
+      "summary": "Latest available result; longitudinal values not extracted for this component.",
+      "sourceIds": [
+        "cbc-20261020"
+      ]
+    },
+    {
+      "id": "lab-immature_granulocytes",
+      "name": "Immature granulocytes",
+      "unit": "10^9/L",
+      "reference": null,
+      "values": [
+        {
+          "date": "2026-10-20",
+          "value": 0.03,
+          "flag": ""
+        }
+      ],
+      "summary": "Latest available result; longitudinal values not extracted for this component.",
+      "sourceIds": [
+        "cbc-20261020"
+      ]
+    },
+    {
+      "id": "lab-immature_granulocyte_percent",
+      "name": "Immature granulocyte percent",
+      "unit": "%",
+      "reference": null,
+      "values": [
+        {
+          "date": "2026-10-20",
+          "value": 0.3,
+          "flag": ""
+        }
+      ],
+      "summary": "Latest available result; longitudinal values not extracted for this component.",
+      "sourceIds": [
+        "cbc-20261020"
+      ]
+    },
+    {
+      "id": "lab-sodium",
+      "name": "Sodium",
+      "unit": "mmol/L",
+      "reference": [
+        135,
+        145
+      ],
+      "values": [
+        {
+          "date": "2026-10-20",
+          "value": 135,
+          "flag": ""
+        }
+      ],
+      "summary": "Latest available result; longitudinal values not extracted for this component.",
+      "sourceIds": [
+        "cmp-20261020"
+      ]
+    },
+    {
+      "id": "lab-potassium",
+      "name": "Potassium",
+      "unit": "mmol/L",
+      "reference": [
+        3.5,
+        5.0
+      ],
+      "values": [
+        {
+          "date": "2026-10-20",
+          "value": 4.0,
+          "flag": ""
+        }
+      ],
+      "summary": "Latest available result; longitudinal values not extracted for this component.",
+      "sourceIds": [
+        "cmp-20261020"
+      ]
+    },
+    {
+      "id": "lab-chloride",
+      "name": "Chloride",
+      "unit": "mmol/L",
+      "reference": [
+        98,
+        108
+      ],
+      "values": [
+        {
+          "date": "2026-10-20",
+          "value": 96,
+          "flag": "low"
+        }
+      ],
+      "summary": "Latest available result; longitudinal values not extracted for this component.",
+      "sourceIds": [
+        "cmp-20261020"
+      ]
+    },
+    {
+      "id": "lab-CO2",
+      "name": "Co2",
+      "unit": "mmol/L",
+      "reference": [
+        21,
+        30
+      ],
+      "values": [
+        {
+          "date": "2026-10-20",
+          "value": 26,
+          "flag": ""
+        }
+      ],
+      "summary": "Latest available result; longitudinal values not extracted for this component.",
+      "sourceIds": [
+        "cmp-20261020"
+      ]
+    },
+    {
+      "id": "lab-BUN",
+      "name": "Bun",
+      "unit": "mg/dL",
+      "reference": [
+        7,
+        20
+      ],
+      "values": [
+        {
+          "date": "2026-10-20",
+          "value": 8,
+          "flag": ""
+        }
+      ],
+      "summary": "Latest available result; longitudinal values not extracted for this component.",
+      "sourceIds": [
+        "cmp-20261020"
+      ]
+    },
+    {
+      "id": "lab-calcium",
+      "name": "Calcium",
+      "unit": "mg/dL",
+      "reference": [
+        8.7,
+        10.2
+      ],
+      "values": [
+        {
+          "date": "2026-10-20",
+          "value": 9.9,
+          "flag": ""
+        }
+      ],
+      "summary": "Latest available result; longitudinal values not extracted for this component.",
+      "sourceIds": [
+        "cmp-20261020"
+      ]
+    },
+    {
+      "id": "lab-glucose",
+      "name": "Glucose",
+      "unit": "mg/dL",
+      "reference": [
+        70,
+        140
+      ],
+      "values": [
+        {
+          "date": "2026-10-20",
+          "value": 121,
+          "flag": ""
+        }
+      ],
+      "summary": "Latest available result; longitudinal values not extracted for this component.",
+      "sourceIds": [
+        "cmp-20261020"
+      ]
+    },
+    {
+      "id": "lab-bilirubin",
+      "name": "Bilirubin",
+      "unit": "mg/dL",
+      "reference": [
+        0.4,
+        1.5
+      ],
+      "values": [
+        {
+          "date": "2026-10-20",
+          "value": 0.5,
+          "flag": ""
+        }
+      ],
+      "summary": "Latest available result; longitudinal values not extracted for this component.",
+      "sourceIds": [
+        "cmp-20261020"
+      ]
+    },
+    {
+      "id": "lab-alkaline_phosphatase",
+      "name": "Alkaline phosphatase",
+      "unit": "U/L",
+      "reference": [
+        24,
+        110
+      ],
+      "values": [
+        {
+          "date": "2026-10-20",
+          "value": 75,
+          "flag": ""
+        }
+      ],
+      "summary": "Latest available result; longitudinal values not extracted for this component.",
+      "sourceIds": [
+        "cmp-20261020"
+      ]
+    },
+    {
+      "id": "lab-anion_gap",
+      "name": "Anion gap",
+      "unit": "mmol/L",
+      "reference": [
+        3,
+        12
+      ],
+      "values": [
+        {
+          "date": "2026-10-20",
+          "value": 13,
+          "flag": "high"
+        }
+      ],
+      "summary": "Latest available result; longitudinal values not extracted for this component.",
+      "sourceIds": [
+        "cmp-20261020"
+      ]
+    },
+    {
+      "id": "lab-BUN_creatinine_ratio",
+      "name": "Bun creatinine ratio",
+      "unit": "",
+      "reference": [
+        6,
+        27
+      ],
+      "values": [
+        {
+          "date": "2026-10-20",
+          "value": 20,
+          "flag": ""
+        }
+      ],
+      "summary": "Latest available result; longitudinal values not extracted for this component.",
+      "sourceIds": [
+        "cmp-20261020"
+      ]
+    }
+  ],
+  "symptoms": [
+    {
+      "id": "H29",
+      "name": "Symptoms during breast radiation",
+      "status": "Reported; current severity not independently assessed",
+      "date": "2026-08",
+      "description": "Breast swelling, sternal tenderness, collarbone burning and left arm numbness were reported. These are symptoms, without a confirmed cause in the retained summary.",
+      "evidence": "family-reported",
+      "sourceIds": [
+        "S-HISTORY-SUMMARY"
+      ]
+    },
+    {
+      "id": "H30",
+      "name": "Chest wall pain after SBRT",
+      "status": "Reported; current severity not independently assessed",
+      "date": "2026",
+      "description": "Post-SBRT chest wall pain, oxygen readings approximately 92–98%, and a mild pericardial effusion were reported. Timing and clinical interpretation require source confirmation.",
+      "evidence": "family-reported",
+      "sourceIds": [
+        "S-HISTORY-SUMMARY"
+      ]
+    },
+    {
+      "id": "H31",
+      "name": "Hip/buttock pain",
+      "status": "Reported; current severity not independently assessed",
+      "date": "2026",
+      "description": "Severe pain with rising or coughing was reported, with walking/running painless and some seated/straight-leg maneuvers provoking pain. Oxycodone and acetaminophen reportedly helped. No diagnosis is established by these descriptions.",
+      "evidence": "family-reported",
+      "sourceIds": [
+        "S-HISTORY-SUMMARY"
+      ]
+    },
+    {
+      "id": "H33",
+      "name": "Food aversion and nausea",
+      "status": "Reported; current severity not independently assessed",
+      "date": "2026-10-30",
+      "description": "Food aversion/nausea triggered by thoughts, smells or offers of food, sometimes while hungry. Onset followed either starting duloxetine or switching to sublingual buprenorphine; the user was unsure which. Bowel symptoms described as mild, with occasional cramps after eating. This is a temporal association, not an established medication adverse reaction.",
+      "evidence": "family-reported",
+      "sourceIds": [
+        "S-MED-2026-10-30"
+      ]
+    },
+    {
+      "id": "H34",
+      "name": "Incomplete symptom relief reported",
+      "status": "Reported; current severity not independently assessed",
+      "date": "2026-10-30",
+      "description": "User reported that ondansetron helped only a little and dose reductions helped only a little, and asked about reducing food aversion/anticipatory nausea. The drug reduced, dose, timing, hydration/nutrition status and subsequent management are not specified.",
+      "evidence": "family-reported",
+      "sourceIds": [
+        "S-MED-2026-10-30"
+      ]
+    }
+  ],
+  "sources": [
+    {
+      "id": "S-HISTORY-SUMMARY",
+      "title": "Earlier family-shared oncology history",
+      "date": "2025–2026",
+      "type": "family-reported",
+      "note": "Retained conversation summary. Original messages and full original reports were not recovered for every event.",
+      "excerpt": "Initial diagnosis, early imaging, treatment dates and pleural procedures were shared in prior conversations. These entries are labeled family-reported."
+    },
+    {
+      "id": "S-MED-2026-10-30",
+      "title": "Family medication and symptom update",
+      "date": "2026-10-30",
+      "type": "family-reported",
+      "note": "Latest directly visible medication update; doses and schedules are included only where supplied.",
+      "excerpt": "Lorlatinib 50 mg; pemetrexed every three weeks; bevacizumab continuing; duloxetine instead of escitalopram; sublingual buprenorphine; occasional oxycodone. Two previous carboplatin rounds. Food aversion and nausea with food thoughts/smells; onset uncertain between medication changes."
+    },
+    {
+      "id": "guardant-2026-03",
+      "title": "Guardant360 CDx",
+      "date": "2026-03-28",
+      "type": "report-confirmed",
+      "note": "Specimen: Blood. Collected 2026-03-23. Pages reviewed: 1, 2, 3, 4. Original retained privately.",
+      "excerpt": "",
+      "reportDate": "2026-03-28",
+      "collectionDate": "2026-03-23",
+      "pagesReviewed": [
+        1,
+        2,
+        3,
+        4
+      ]
+    },
+    {
+      "id": "pdl1-2026-04",
+      "title": "PD-L1 22C3 immunohistochemistry",
+      "date": "2026-04-02",
+      "type": "report-confirmed",
+      "note": "Specimen: Right axillary lymph node. Collected 2026-03-27. Pages reviewed: 1, 2. Original retained privately.",
+      "excerpt": "",
+      "reportDate": "2026-04-02",
+      "collectionDate": "2026-03-27",
+      "pagesReviewed": [
+        1,
+        2
+      ]
+    },
+    {
+      "id": "guardant-2026-07",
+      "title": "Guardant360 Liquid / Guardant360 CDx scan",
+      "date": "2026-07-29",
+      "type": "report-confirmed",
+      "note": "Specimen: Blood. Collected 2026-07-21. Pages reviewed: 1, 2, 3. Original retained privately.",
+      "excerpt": "",
+      "reportDate": "2026-07-29",
+      "collectionDate": "2026-07-21",
+      "pagesReviewed": [
+        1,
+        2,
+        3
+      ]
+    },
+    {
+      "id": "foundation-2026-08",
+      "title": "FoundationOne CDx",
+      "date": "2026-08-10",
+      "type": "report-confirmed",
+      "note": "Specimen: Breast tissue, slide deck. Collected 2026-07-21. Pages reviewed: 1, 2, 3, 12, 13, 14, 20, 21, 22. Original retained privately.",
+      "excerpt": "Qualified for low tumor purity. Report qualified due to sample insufficiency or sample quality. Sensitivity for copy-number alterations and other genomic alterations may be reduced.",
+      "reportDate": "2026-08-10",
+      "collectionDate": "2026-07-21",
+      "pagesReviewed": [
+        1,
+        2,
+        3,
+        12,
+        13,
+        14,
+        20,
+        21,
+        22
+      ]
+    },
+    {
+      "id": "cbc-20261020",
+      "title": "CBC with differential trend report through October 20, 2026",
+      "date": "2026-10-20",
+      "type": "report-confirmed",
+      "note": " Original retained privately.",
+      "excerpt": ""
+    },
+    {
+      "id": "cmp-20261020",
+      "title": "Comprehensive metabolic panel trend report through October 20, 2026",
+      "date": "2026-10-20",
+      "type": "report-confirmed",
+      "note": " Original retained privately.",
+      "excerpt": ""
+    },
+    {
+      "id": "cea-20260811",
+      "title": "CEA trend report through August 11, 2026",
+      "date": "2026-08-11",
+      "type": "report-confirmed",
+      "note": " Original retained privately.",
+      "excerpt": ""
+    },
+    {
+      "id": "urine-protein-20260811",
+      "title": "Random urine protein/creatinine ratio trend report through August 11, 2026",
+      "date": "2026-08-11",
+      "type": "report-confirmed",
+      "note": " Original retained privately.",
+      "excerpt": ""
+    },
+    {
+      "id": "ct-chest-20260904",
+      "title": "CT chest with contrast report screenshots",
+      "date": "2026-09-04",
+      "type": "report-confirmed",
+      "note": "Report reviewed and signed September 4, 2026; scan acquisition date is not visible in the available screenshots. Original retained privately.",
+      "excerpt": "Increasing left lower lobe and left hilar masslike consolidation, likely worsening tumor burden. Numerous new and enlarging pulmonary nodules in both lungs; nodular septal thickening suggestive of worsening lymphangitic carcinomatosis. Left upper lobe nodule 0.7 x 0.6 cm, previously 0.6 x 0.5 cm; new right upper lobe nodule 0.4 cm. Increased bilateral breast nodular enhancing soft tissue, skin thickening, discrete breast masses, and bilateral axillary/left subpectoral lymphadenopathy. Example medial right breast mass 1.4 x 1.0 cm, previously 0.7 x 0.8 cm. Unchanged loculated left pleural effusion and pleural thickening, considered likely malignant on the report. Pericardial thickening and enhancement with unchanged small effusion, concerning for pericardial metastatic disease. Unchanged scattered sclerotic osseous lesions. No lower cervical or supraclavicular lymphadenopathy. Mediastinal soft tissue stranding without discrete measurable lymphadenopathy."
+    },
+    {
+      "id": "ct-abdomen-20260904upload",
+      "title": "CT abdomen/pelvis with IV contrast report screenshots",
+      "date": "",
+      "type": "report-confirmed",
+      "note": "Clinical/report date is not visible; screenshots were uploaded September 4, 2026. Report refers to a separately dictated same-day chest CT. Available in supplied files by 2026-09-04. Original retained privately.",
+      "excerpt": "Enlarging left adrenal lesion interpreted as worsening adrenal metastasis. Enlarging upper abdominal lymph nodes suspicious for nodal metastases, including gastrohepatic and porta hepatis nodes; porta hepatis node 1.0 cm, previously 0.6 cm. Unchanged sclerotic osseous lesions, without new aggressive osseous lesion. No suspicious liver or renal masses; no hydronephrosis; no abnormal bowel dilation/wall thickening or free intraperitoneal air."
+    },
+    {
+      "id": "mri-pelvis-20260923upload",
+      "title": "Pelvis MRI report screenshots",
+      "date": "",
+      "type": "report-confirmed",
+      "note": "MRI acquisition and report date are not visible. Upload date is not the clinical date. Available in supplied files by 2026-09-23. Original retained privately.",
+      "excerpt": "Osseous metastatic lesion centered at right sacrum S2, with enhancing soft tissue involving multiple right greater than left neural foramina. Most pronounced at right S2 with partial effacement/mass effect on associated nerve root; possible projection into ventral thecal sac. Signal abnormality involves bilateral S2 and possibly S3 foramina, with milder right S1 extension. Smaller right S4 sacral metastatic lesion, approximately 1.2 x 0.7 cm in axial plane, with signal extending into the right S4 foramen. Additional small pelvic/sacral lesions correlate with sclerotic foci on prior CT and are suspicious for additional osseous metastases. Right-predominant presacral edema/enhancement near sacral nerve roots and mild right piriformis edema/enhancement, suspected neurogenic. No definitive new osseous metastatic lesions stated in report body. No hip joint effusion/high-grade cartilage defect or tendon tear; sacroiliac joints intact."
+    },
+    {
+      "id": "mri-lumbar-20260924upload",
+      "title": "Lumbar spine MRI report screenshots",
+      "date": "",
+      "type": "report-confirmed",
+      "note": "MRI acquisition and report date are not visible. Report refers to a separately dictated pelvis MRI. Available in supplied files by 2026-09-24. Original retained privately.",
+      "excerpt": "Enhancing right S2 sacral lesion approximately 1.5 x 1.4 x 1.5 cm, expanding sacrum and contacting/abutting right S2 nerve root. Adjacent non-masslike presacral enhancement could be metastatic or inflammatory. Right piriformis enhancement/edema could reflect denervation edema. Multiple additional sclerotic lumbar/pelvic lesions consistent with metastases as seen on prior CT. Visualized spinal cord and cauda equina described as normal. Conus ends at approximately L1. No substantial degenerative abnormalities described from T12-L1 through L5-S1; incidental left perineural cyst."
+    },
+    {
+      "id": "oncology-message-september2026",
+      "title": "Oncology message discussing BNT326 plus BNT327 and restarting chemotherapy",
+      "date": "",
+      "type": "report-confirmed",
+      "note": "Message date is not visible; September 11 is in the screenshot filename and September 12 is the upload date. Recommendations and trial availability are historical, not live enrollment status. Available in supplied files by 2026-09-12. Original retained privately.",
+      "excerpt": "Historical correspondence: BNT326 plus BNT327 discussed, waitlist requested, limited slots, radiation washout and proposed two-cycle chemotherapy bridge before reassessment. Not current trial status."
+    },
+    {
+      "id": "breast-us-20260710",
+      "title": "Outside right breast ultrasound second-opinion interpretation",
+      "date": "2026-07-10",
+      "type": "report-confirmed",
+      "note": " Original retained privately.",
+      "excerpt": "Irregular hypoechoic mass at right breast 11 o'clock, 8 cm from nipple, measured at least 2.7 x 2.6 x 2.5 cm on submitted static images. Corresponds to hypermetabolic mass on PET/CT dated June 4, 2026. Cine images suggested abnormality may be larger than static measurements; possible additional 1.5 cm and 1.1 cm superficial masses. BI-RADS 4, suspicious; ultrasound-guided biopsy recommended if clinically indicated, with diagnostic mammography and second-look ultrasound to define extent."
+    },
+    {
+      "id": "breast-biopsy-addendum-july2026",
+      "title": "Right breast biopsy addendum screenshot",
+      "date": "",
+      "type": "report-confirmed",
+      "note": " Available in supplied files by 2026-07-24. Original retained privately.",
+      "excerpt": "Right breast core biopsy: poorly differentiated adenocarcinoma with mucinous features. CK7 positive, CK20 weak positive; Napsin A, TTF-1, GATA3, ER and PAX8 negative. The addendum favors pulmonary origin and considers a breast primary unlikely, but does not definitively establish origin; other origins cannot be entirely excluded. ALK is established by the separate FoundationOne report, not by this addendum."
+    }
+  ],
+  "faq": [
+    {
+      "q": "What kind of cancer does Mayya have?",
+      "a": "The record describes stage IV ALK-positive non-small-cell lung adenocarcinoma. July 2026 breast tissue genomic testing confirmed an EML4–ALK fusion, variant 3a/b. The breast pathology addendum favors pulmonary origin and calls a breast primary unlikely, but the addendum alone is not definitive. The family has described the breast disease as lung cancer metastasis.",
+      "sourceIds": [
+        "S-HISTORY-SUMMARY",
+        "foundation-2026-08",
+        "breast-biopsy-addendum-july2026"
+      ]
+    },
+    {
+      "q": "What treatment is she taking now?",
+      "a": "The October 30 family update lists lorlatinib 50 mg, pemetrexed every three weeks and continuing bevacizumab (Avastin). Two previous carboplatin rounds were reported. The exact most recent infusion dates and most medication doses are not available.",
+      "sourceIds": [
+        "S-MED-2026-10-30"
+      ]
+    },
+    {
+      "q": "What is her HLA type?",
+      "a": "HLA-A: A*26:01 and A*31:01. HLA-B: B*35:01 and B*35:02. HLA-C: C*04:01 and C*04:01. These class I results are from blood collected July 21, 2026 and reported July 29, page 3. HLA class II is not included.",
+      "sourceIds": [
+        "guardant-2026-07"
+      ]
+    },
+    {
+      "q": "When was spread to the axilla documented?",
+      "a": "A right axillary lymph node collected March 27, 2026 is described as metastatic adenocarcinoma in the April 2 PD-L1 report. Earlier summaries focused on May–June, but that is not the earliest documented axillary disease.",
+      "sourceIds": [
+        "pdl1-2026-04"
+      ]
+    },
+    {
+      "q": "What do the mutation tests say?",
+      "a": "Keep each specimen separate. July blood testing reported EML4–ALK at 0.2%, tumor fraction 0.3%, TMB 3.8 mut/Mb and MSI-high not detected. July breast tissue confirmed variant 3a/b, but low tumor purity left tissue TMB, MSI and HRD indeterminate. Variants of uncertain significance and possible blood-cell-derived variants are listed separately.",
+      "sourceIds": [
+        "guardant-2026-07",
+        "foundation-2026-08"
+      ]
+    },
+    {
+      "q": "Why are some findings labeled unverified?",
+      "a": "Earlier conversations mention STK11, CDKN2A, MTAP and MET staining findings, but the original reports establishing those details were not retrieved for this compilation. They remain visible as reported history, with source confirmation pending.",
+      "sourceIds": [
+        "S-HISTORY-SUMMARY"
+      ]
+    },
+    {
+      "q": "Does she have brain metastases?",
+      "a": "No brain metastases were reported at baseline, and an August 2026 brain MRI was described by the family as normal. The original August report and a later brain MRI are not available here. This does not establish brain status after that scan.",
+      "sourceIds": [
+        "S-HISTORY-SUMMARY"
+      ]
+    },
+    {
+      "q": "What is causing the food aversion?",
+      "a": "The cause has not been established. On October 30, nausea was reported from food thoughts, smells or offers, sometimes despite hunger. Onset followed starting duloxetine or changing to sublingual buprenorphine; the family was unsure which came first. A timing link alone does not prove a medication cause.",
+      "sourceIds": [
+        "S-MED-2026-10-30"
+      ]
+    },
+    {
+      "q": "Is she in a clinical trial?",
+      "a": "No enrollment is established in the available record. BNT326 + BNT327 was a family-reported preferred option discussed with Duke and Mass General in May 2026. Other trials and drugs were researched. Historical discussions and trial lists do not show current enrollment, recruitment or eligibility.",
+      "sourceIds": [
+        "S-HISTORY-SUMMARY"
+      ]
+    },
+    {
+      "q": "Is this her complete medical chart?",
+      "a": "It compiles the available cancer history, treatment and medication history, symptoms, molecular results, imaging excerpts and lab trends. Full hospital records, allergies, all medication doses, radiation completion summaries and parts of her earlier medical history are missing. The evidence labels and open questions show those gaps.",
+      "sourceIds": []
+    },
+    {
+      "q": "What do the latest available scans show?",
+      "a": "The chest CT report signed September 4 describes increasing left lower lobe/hilar disease, new or growing nodules in both lungs and worsening bilateral breast and nodal disease. It raises concern for lymphangitic and pericardial spread; those are radiology impressions, not tissue confirmation here. The abdomen CT screenshots describe an enlarging left adrenal metastasis and upper abdominal nodes. Sacral MRI screenshots available by September 23–24 describe S2 and S4 lesions and sacral nerve-root involvement. The MRI clinical dates are not visible. No later response scan is available in this compilation.",
+      "sourceIds": [
+        "ct-chest-20260904",
+        "ct-abdomen-20260904upload",
+        "mri-pelvis-20260923upload",
+        "mri-lumbar-20260924upload"
+      ]
+    },
+    {
+      "q": "What do the latest blood tests show?",
+      "a": "October 20: hemoglobin 10.1 g/dL and albumin 3.3 g/dL were low; WBC 9.3, absolute neutrophils 7.3 and platelets 345 ×10⁹/L were within the supplied reporting ranges. Creatinine was 0.4 mg/dL, eGFR 128. The full available latest components and selected trends are in Labs. These numbers do not by themselves establish treatment response.",
+      "sourceIds": [
+        "cbc-20261020",
+        "cmp-20261020"
+      ]
+    }
+  ],
+  "uncertainties": [
+    {
+      "title": "Complete medical record not available",
+      "detail": "Allergies, full medical and surgical history, weight trajectory, all medication doses and exact cycle administrations are not established by the available sources."
+    },
+    {
+      "title": "Radiation completion",
+      "detail": "Breast/axillary radiation was planned for ten fractions and had started. The final delivered fractions, dose and completion date are not verified. No sacral radiation completion record is available."
+    },
+    {
+      "title": "Brain imaging after August",
+      "detail": "August MRI was family-reported normal. No later brain imaging result is established."
+    },
+    {
+      "title": "Reported molecular findings need originals",
+      "detail": "Exact reports for STK11, CDKN2A, MTAP and MET IHC findings were not retrieved. Do not treat these as confirmed by the July Guardant or August FoundationOne reports."
+    },
+    {
+      "title": "Disease response after reviewed scans",
+      "detail": "Ongoing treatment in October does not establish response after the September CT and subsequent MRI screenshots."
+    },
+    {
+      "title": "Dates cropped out of some scans",
+      "detail": "For the abdomen CT and sacral MRI screenshots, the record labels file-availability dates. They are not asserted as examination dates."
+    }
+  ],
+  "careTeam": [
+    {
+      "name": "Dr. Jeffrey Melson Clarke",
+      "role": "Primary oncology",
+      "center": "Duke"
+    },
+    {
+      "name": "Dr. Alice Shaw",
+      "role": "Second opinion / trial discussion (reported)",
+      "center": "Mass General"
+    },
+    {
+      "name": "Dr. Coral Giovacchini",
+      "role": "Interventional pulmonology (reported)",
+      "center": "Duke"
+    }
+  ],
+  "glossary": [
+    {
+      "term": "ALK / EML4–ALK",
+      "meaning": "A gene change that can help drive this lung cancer. It is different from the HLA immune type."
+    },
+    {
+      "term": "NSCLC",
+      "meaning": "Non-small-cell lung cancer, a broad lung cancer group. Adenocarcinoma is one type."
+    },
+    {
+      "term": "Metastasis",
+      "meaning": "Cancer that has spread from its original site to another part of the body."
+    },
+    {
+      "term": "Pleural effusion",
+      "meaning": "Fluid in the space around a lung."
+    },
+    {
+      "term": "SBRT",
+      "meaning": "Focused radiation delivered in a small number of treatment sessions."
+    },
+    {
+      "term": "HLA",
+      "meaning": "Inherited immune-system markers. Some treatments or trials depend on a specific HLA type."
+    },
+    {
+      "term": "VUS",
+      "meaning": "A genetic variant whose meaning is uncertain. Its presence alone does not establish a treatment target."
+    },
+    {
+      "term": "TMB",
+      "meaning": "Tumor mutational burden, a test-specific measure of mutation count. Blood and tissue results should stay separate."
+    },
+    {
+      "term": "IHC",
+      "meaning": "A laboratory stain that looks for proteins in tissue. It is different from DNA sequencing."
+    },
+    {
+      "term": "Lymphangitic spread",
+      "meaning": "Cancer spread involving lymph channels in the lung. The September CT wording says suspected."
+    }
+  ]
+}

@@ -1,0 +1,19 @@
+name: Private health bridge
+on:
+  pull_request:
+    paths: ['applications/health-bridge/**', '.github/workflows/health-bridge-tests.yml']
+  push:
+    paths: ['applications/health-bridge/**', '.github/workflows/health-bridge-tests.yml']
+permissions:
+  contents: read
+jobs:
+  source-connection-checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: npm ci --prefix applications/health-bridge --ignore-scripts --no-audit --no-fund
+      - run: npm test --prefix applications/health-bridge
+      - run: node --check applications/health-bridge/server.mjs && node --check applications/health-bridge/ui/app.js

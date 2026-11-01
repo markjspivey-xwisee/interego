@@ -1,0 +1,10 @@
+{
+  "name": "@interego/health-bridge",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Private, owner-authorized Duke SMART FHIR, Apple Health and Oura source connections for Interego.",
+  "engines": { "node": ">=22" },
+  "scripts": { "start": "node server.mjs", "test": "node --test test/*.test.mjs" },
+  "dependencies": { "ethers": "6.16.0" }
+}
