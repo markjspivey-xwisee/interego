@@ -10,6 +10,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.RegularExpressions;
 using System.Web.Script.Serialization;
+using Microsoft.Win32;
 
 internal static class IdentityHost
 {
@@ -32,6 +33,35 @@ internal static class IdentityHost
 
     private static int Main(string[] args)
     {
+        // Fixed-key, read-only registration inspection. Neither registry values
+        // nor request-selected registry locations enter the response.
+        if (args.Length > 0 && args[0] == "--registration-status")
+        {
+            if (args.Length != 1) return 1;
+            try
+            {
+                byte[] request = ReadBounded(Console.OpenStandardInput(), 4096);
+                try
+                {
+                    Dictionary<string, object> registrationInput = Parse(request);
+                    ExactKeys(registrationInput, "manifestPath");
+                    string expected = BoundedString(registrationInput["manifestPath"], 4096);
+                    if (!Regex.IsMatch(expected, @"\A[A-Za-z]:\\", RegexOptions.CultureInvariant)
+                        || expected.StartsWith(@"\\", StringComparison.Ordinal)
+                        || !String.Equals(Path.GetFileName(expected), "com.interego.identity.json", StringComparison.Ordinal)
+                        || !String.Equals(Path.GetFullPath(expected), expected, StringComparison.OrdinalIgnoreCase)) return 1;
+                    Dictionary<string, object> result = Record("version", 1,
+                        "chrome", ReadBrowserRegistration(@"Software\Google\Chrome\NativeMessagingHosts\com.interego.identity", expected),
+                        "edge", ReadBrowserRegistration(@"Software\Microsoft\Edge\NativeMessagingHosts\com.interego.identity", expected));
+                    Console.Out.Write(Json.Serialize(result));
+                    Console.Out.Flush();
+                    return 0;
+                }
+                finally { Array.Clear(request, 0, request.Length); }
+            }
+            catch { return 1; }
+        }
+
         // Protection mode has no Native Messaging framing and never accepts a secret in argv.
         if (args.Length == 1 && args[0] == "--protect-ticket")
         {
@@ -110,6 +140,41 @@ internal static class IdentityHost
                 context.Dispose();
             }
         }
+    }
+
+    private static string ReadBrowserRegistration(string subkey, string expected)
+    {
+        try
+        {
+            using (RegistryKey root = RegistryKey.OpenBaseKey(RegistryHive.CurrentUser, RegistryView.Registry64))
+            using (RegistryKey key = root.OpenSubKey(subkey, false))
+                return RegistrationState(key, expected);
+        }
+        catch { return "unavailable"; }
+    }
+
+    // The test assembly supplies only its own isolated RegistryKey. Release
+    // command dispatch above always selects the two fixed browser keys.
+    internal static string RegistrationState(RegistryKey key, string expected)
+    {
+        try
+        {
+            if (key == null) return "absent";
+            bool hasDefault = false;
+            foreach (string name in key.GetValueNames()) if (name.Length == 0) hasDefault = true;
+            if (!hasDefault) return "absent";
+            // GetValue can return its default for unsupported native kinds too.
+            // Establish presence and type before asking for the string payload.
+            if (key.GetValueKind(String.Empty) != RegistryValueKind.String) return "wrong-type";
+            object missing = new object();
+            object value = key.GetValue(String.Empty, missing, RegistryValueOptions.DoNotExpandEnvironmentNames);
+            if (Object.ReferenceEquals(value, missing)) return "unavailable";
+            string path = value as string;
+            if (path == null) return "unavailable";
+            if (path.Length == 0) return "foreign";
+            return String.Equals(path, expected, StringComparison.OrdinalIgnoreCase) ? "matching" : "foreign";
+        }
+        catch { return "unavailable"; }
     }
 
     private static void ParseArguments(string[] args, out string browserOrigin, out string dataDir)

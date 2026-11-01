@@ -10,6 +10,29 @@ const REGISTRY = [
   `HKCU\\Software\\Google\\Chrome\\NativeMessagingHosts\\${IDENTITY_HOST_NAME}`,
   `HKCU\\Software\\Microsoft\\Edge\\NativeMessagingHosts\\${IDENTITY_HOST_NAME}`,
 ] as const;
+export type NativeIdentityRegistrationFailure = 'foreign-registration' | 'invalid-registration-type' | 'registration-unavailable';
+const REGISTRATION_ERRORS = Object.freeze({
+  'foreign-registration': 'Another Interego installation owns this browser connection. It has not been replaced. Review that installation before reconnecting here.',
+  'invalid-registration-type': 'Windows browser connection settings have an unexpected format. Interego has not replaced those settings. Browser access remains paused.',
+  'registration-unavailable': 'Windows browser sign-in settings could not be checked or updated. Browser access is paused. Reopen Interego to try again.',
+});
+const RESTORE_FAILURE = 'Saved browser sign-in could not be restored. Your identity and saved extension permissions have not changed. Browser sign-in is paused. Reopen Interego to try again.';
+export class NativeIdentityRegistrationError extends Error {
+  constructor(readonly code: NativeIdentityRegistrationFailure) {
+    super(REGISTRATION_ERRORS[code]);
+    this.name = 'NativeIdentityRegistrationError';
+  }
+}
+/** Owner-facing restoration copy never includes arbitrary exception or registry text. */
+export function identityBrowserRestoreError(error: unknown): string {
+  if (error instanceof NativeIdentityRegistrationError && Object.hasOwn(REGISTRATION_ERRORS, error.code)) {
+    return REGISTRATION_ERRORS[error.code] + ' Your identity and saved extension permissions have not changed.';
+  }
+  return RESTORE_FAILURE;
+}
+const REGISTRATION_STATES = ['absent', 'matching', 'foreign', 'wrong-type', 'unavailable'] as const;
+type RegistrationState = typeof REGISTRATION_STATES[number];
+const registrationState = (value: unknown): value is RegistrationState => REGISTRATION_STATES.some(state => state === value);
 type Command = (file: string, args: readonly string[], input?: string) => Promise<{ code: number; stdout: string }>;
 const run: Command = (file, args, input) => new Promise((done, fail) => {
   const child = spawn(file, [...args], { windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] });
@@ -50,24 +73,34 @@ export class NativeIdentityHost {
     }
     return value;
   }
-  private async current(key: string): Promise<string | null> {
-    const value = await this.command('reg.exe', ['query', key, '/ve']);
-    if (value.code === 1) return null;
-    const match = /REG_SZ\s+([^\r\n]+)\s*(?:\r?\n|$)/.exec(value.stdout);
-    if (value.code !== 0 || !match) throw new Error('Windows browser connection settings could not be checked.');
-    return match[1]!.trim();
+  private async current(): Promise<readonly RegistrationState[]> {
+    try {
+      const reply = await this.command(this.options.executable, ['--registration-status'], JSON.stringify({ manifestPath: this.manifestPath }));
+      // Bound original output, not trimmed output; whitespace is part of the transport budget.
+      if (reply.code !== 0 || Buffer.byteLength(reply.stdout, 'utf8') > 4096) throw new Error('Invalid registration status.');
+      const value: unknown = JSON.parse(reply.stdout);
+      if (!value || typeof value !== 'object' || Array.isArray(value)
+        || Object.keys(value).sort().join(',') !== 'chrome,edge,version') throw new Error('Invalid registration status.');
+      const fields = value as Record<string, unknown>;
+      if (fields['version'] !== 1 || !registrationState(fields['chrome']) || !registrationState(fields['edge'])) {
+        throw new Error('Invalid registration status.');
+      }
+      return [fields['chrome'], fields['edge']];
+    } catch {
+      throw new NativeIdentityRegistrationError('registration-unavailable');
+    }
   }
   configure(value: unknown): Promise<readonly string[]> {
     const ids = extensionIds(value);
     const task = this.queue.then(async () => {
       if (process.platform !== 'win32' && !this.options.command) throw new Error('Local browser sign-in is available in the Windows preview.');
       await access(this.options.executable);
-      const existing = await Promise.all(REGISTRY.map(key => this.current(key)));
-      if (existing.some(path => path !== null && path.toLowerCase() !== this.manifestPath.toLowerCase())) {
-        throw new Error('Another Interego installation owns this browser connection. Open that installation to disconnect it first.');
-      }
+      const existing = await this.current();
+      if (existing.includes('foreign')) throw new NativeIdentityRegistrationError('foreign-registration');
+      if (existing.includes('wrong-type')) throw new NativeIdentityRegistrationError('invalid-registration-type');
+      if (existing.includes('unavailable')) throw new NativeIdentityRegistrationError('registration-unavailable');
       if (!ids.length) {
-        for (let i = 0; i < REGISTRY.length; ++i) if (existing[i] !== null) {
+        for (let i = 0; i < REGISTRY.length; ++i) if (existing[i] === 'matching') {
           const reply = await this.command('reg.exe', ['delete', REGISTRY[i]!, '/ve', '/f']);
           if (reply.code !== 0) throw new Error('Windows could not disconnect the browser companion. Try again.');
         }

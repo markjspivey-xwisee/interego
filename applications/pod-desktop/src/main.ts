@@ -21,7 +21,7 @@ import type { BridgeClient, BridgeStartInput, StableBridgeInput } from './bridge
 import { BrowserExtensionStore, extensionIds } from './browser-extensions.js';
 import { LocalIdentityService, ProtectedLocalIdentityStore } from './local-identity.js';
 import { IdentityBrowser } from './identity-browser.js';
-import { NativeIdentityHost } from './native-identity-host.js';
+import { NativeIdentityHost, identityBrowserRestoreError } from './native-identity-host.js';
 import { IdentityBrowserPolicy } from './identity-browser-policy.js';
 import { FederationService, ProtectedFederationStore } from '@interego/pod-federation';
 import { presentSharedResource } from './federation-notes.js';
@@ -246,7 +246,7 @@ async function bootstrap(): Promise<void> {
     if (identityBrowser && app.isPackaged && !smoke
       && userData.toLowerCase() === join(app.getPath('appData'), 'Interego').toLowerCase()) {
       try { await identityPolicy.reconcile(); }
-      catch { identityBrowserError = 'Saved browser sign-in could not be restored. Review and save the allowed extension IDs in Identity.'; }
+      catch (error) { identityBrowserError = identityBrowserRestoreError(error); }
     }
   }
   handle('localIdentityStatus', async () => ({ ...await identity.status(), ...(identityBrowserError ? { browserError: identityBrowserError } : {}) }));
