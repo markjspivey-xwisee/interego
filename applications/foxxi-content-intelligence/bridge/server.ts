@@ -10225,11 +10225,12 @@ const ownLtiReconciliationPorts = {
     } };
   },
 };
-for (const operation of ['preview', 'apply', 'read'] as const) {
-  app.post(`/agent/lti/reconciliation/${operation}`, ownLtiReconciliationHandler(operation, ownLtiReconciliationPorts));
-}
+app.post('/agent/lti/reconciliation/preview', ownLtiReconciliationHandler('preview', ownLtiReconciliationPorts));
+app.post('/agent/lti/reconciliation/apply', ownLtiReconciliationHandler('apply', ownLtiReconciliationPorts));
+app.post('/agent/lti/reconciliation/read', ownLtiReconciliationHandler('read', ownLtiReconciliationPorts));
 app.get('/agent/lti/reconciliation/affordance', (_req, res) => {
   res.type('text/turtle').send(affordancesManifestTurtle(`${bridgeBaseUrl}/agent/lti/reconciliation/affordance`, [
+    canonicalAffordance('urn:iep:action:foxxi:lti-reconciliation-contract'),
     canonicalAffordance('urn:iep:action:foxxi:lti-reconciliation-preview-signed'),
     canonicalAffordance('urn:iep:action:foxxi:lti-reconciliation-apply-signed'),
     canonicalAffordance('urn:iep:action:foxxi:lti-reconciliation-read-signed'),

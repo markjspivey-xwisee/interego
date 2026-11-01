@@ -514,6 +514,16 @@ export const foxxiAffordances: ReadonlyArray<Affordance> = [
     },
   },
   {
+    action: 'urn:iep:action:foxxi:lti-reconciliation-contract' as IRI,
+    toolName: 'foxxi.lti_reconciliation_contract',
+    title: 'Read the own-account LMS reconciliation contract',
+    description: 'Public version 1.0.0 contract for signed preview, explicit new-entry creation and fresh own-account readback. Describes the required evidence, verified human scope and separate reconciliation provenance. Reading this contract creates no record and reveals no learner data.',
+    method: 'GET', targetTemplate: '{base}/agent/lti/reconciliation/affordance', mediaType: 'text/turtle', externallyRouted: true,
+    annotations: { title: 'Read the LMS reconciliation contract', readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+    inputs: [],
+    outputs: { description: 'Public Turtle affordance manifest for contract version 1.0.0, including its signed action inputs and original-persistence limitation.' },
+  },
+  {
     action: 'urn:iep:action:foxxi:lti-reconciliation-preview-signed' as IRI,
     toolName: 'foxxi.lti_reconciliation_preview_signed',
     title: 'Preview a new own-account LMS reconciliation',
