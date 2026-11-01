@@ -71,6 +71,26 @@ export interface NativeCommitClient {
   readArtifact(reference: NativeArtifactReference): Promise<NativeArtifact>;
   commit(request: NativeCommitRequest): Promise<NativeCommitReceipt>;
 }
+/** Value-free observations: never expose a head, scope, reference, record or error. */
+export interface NativeHeadReadDiagnostic {
+  readonly readNumber: number;
+  /** 0=current head, 1=historical snapshot. */
+  readonly operation: 0 | 1;
+  /** 0=progress, 1=complete. */
+  readonly event: 0 | 1;
+  /** 0=fresh head/backing-commit verification, 1=index materialization. */
+  readonly phase: 0 | 1;
+  /** 0=ongoing, 1=success, 2=error. */
+  readonly outcome: 0 | 1 | 2;
+  readonly elapsedMs: number;
+  readonly currentMs: number;
+  readonly materializationMs: number;
+  readonly indexNodes: number;
+  readonly indexBranches: number;
+  readonly indexLeaves: number;
+  readonly peakIndexReads: number;
+  readonly indexReadConcurrency: number;
+}
 export interface NativeCommitStoreOptions {
   /** Explicit opt-in for an application's bounded rolling checkpoint format.
    * Existing immutable clients refuse this format after a CAS migration. */
@@ -78,6 +98,9 @@ export interface NativeCommitStoreOptions {
   /** Reuse verified immutable artifacts within this client. Heads and staging
    * readbacks remain fresh. Disabled by default for integrity-audit callers. */
   readonly cacheImmutableReads?: boolean;
+  /** Opt-in immediate-child prefetch. One limiter is shared by this client's full-index materializations. */
+  readonly indexReadConcurrency?: number;
+  readonly onHeadRead?: (event: NativeHeadReadDiagnostic) => void;
   /** Already resolved and authorized through the adapter's capability/Type Index contract. */
   readonly scope: NativeCommitScope;
   readonly fetch: typeof globalThis.fetch;
@@ -101,6 +124,16 @@ interface DecodedHead extends NativeSnapshot {
 interface IndexLeaf { kind: 'leaf'; entries: Map<string, NativeArtifactReference>; }
 interface IndexBranch { kind: 'branch'; children: Map<string, NativeArtifactReference>; }
 type IndexNode = IndexLeaf | IndexBranch;
+type IndexReadOutcome = { ok: true; node: IndexNode } | { ok: false; error: unknown };
+interface IndexReadContext {
+  stopped: boolean; failed: boolean; error?: unknown;
+  pending: Set<Promise<IndexReadOutcome>>;
+  nodes: number; branches: number; leaves: number; active: number; peak: number;
+}
+interface IndexReadJob {
+  context: IndexReadContext; reference: NativeArtifactReference; prefix: string;
+  resolve: (outcome: IndexReadOutcome) => void;
+}
 
 function digest(bytes: Uint8Array | string): string { return 'sha256:' + createHash('sha256').update(bytes).digest('hex'); }
 function compareStrings(a: string, b: string): number { return a < b ? -1 : a > b ? 1 : 0; }
@@ -216,7 +249,13 @@ export class NativeCommitStore implements NativeCommitClient {
   private readonly recipients: readonly string[];
   private readonly limit: number;
   private readonly artifactCacheNamespace = {};
+  private readonly indexReadConcurrency: number;
+  private indexReadsActive = 0;
+  private readonly indexReadQueue: IndexReadJob[] = [];
+  private headReadSequence = 0;
   constructor(private readonly options: NativeCommitStoreOptions) {
+    this.indexReadConcurrency = options.indexReadConcurrency ?? 1;
+    if (!Number.isSafeInteger(this.indexReadConcurrency) || this.indexReadConcurrency < 1 || this.indexReadConcurrency > 8) fail('Invalid native index read concurrency.', 400);
     const pod = uri(options.scope.pod), head = uri(options.scope.headUrl), container = uri(options.scope.artifactContainer);
     if (!pod.pathname.endsWith('/') || !container.pathname.endsWith('/') || head.origin !== pod.origin || container.origin !== pod.origin
       || !head.pathname.startsWith(pod.pathname) || !container.pathname.startsWith(pod.pathname)) fail('Native resources must remain in the authorized pod scope.', 400);
@@ -440,17 +479,74 @@ export class NativeCommitStore implements NativeCommitClient {
     }
     return null;
   }
-  private async records(root: NativeArtifactReference | null): Promise<Map<string, NativeArtifactReference>> {
+  private stopIndexReads(context: IndexReadContext, error?: unknown): void {
+    context.stopped = true;
+    if (!context.failed) { context.failed = true; context.error = error; }
+    for (let i = this.indexReadQueue.length - 1; i >= 0; i--) {
+      const job = this.indexReadQueue[i]!;
+      if (job.context === context) { this.indexReadQueue.splice(i, 1); job.resolve({ ok: false, error: context.error }); }
+    }
+  }
+  private pumpIndexReads(): void {
+    while (this.indexReadsActive < this.indexReadConcurrency && this.indexReadQueue.length) {
+      const job = this.indexReadQueue.shift()!, context = job.context;
+      if (context.stopped) { job.resolve({ ok: false, error: context.error }); continue; }
+      this.indexReadsActive++; context.active++; context.peak = Math.max(context.peak, context.active);
+      const finish = (outcome: IndexReadOutcome): void => {
+        if (!outcome.ok) this.stopIndexReads(context, outcome.error);
+        this.indexReadsActive--; context.active--; job.resolve(outcome); this.pumpIndexReads();
+      };
+      void Promise.resolve().then(() => {
+        if (context.stopped) throw context.error;
+        return this.indexNode(job.reference, job.prefix);
+      }).then(node => {
+        context.nodes++; if (node.kind === 'branch') context.branches++; else context.leaves++;
+        finish({ ok: true, node });
+      }, error => finish({ ok: false, error }));
+    }
+  }
+  private prefetchIndexNode(reference: NativeArtifactReference, prefix: string, context: IndexReadContext): Promise<IndexReadOutcome> {
+    const pending = new Promise<IndexReadOutcome>(resolve => {
+      this.indexReadQueue.push({ context, reference, prefix, resolve }); this.pumpIndexReads();
+    });
+    context.pending.add(pending);
+    void pending.then(() => { context.pending.delete(pending); });
+    return pending;
+  }
+  private async records(root: NativeArtifactReference | null, context: IndexReadContext): Promise<Map<string, NativeArtifactReference>> {
     const result = new Map<string, NativeArtifactReference>(), seen = new Set<string>();
-    const walk = async (reference: NativeArtifactReference, prefix: string): Promise<void> => {
+    const walk = async (reference: NativeArtifactReference, prefix: string, prefetched?: Promise<IndexReadOutcome>): Promise<void> => {
+      if (context.failed) throw context.error;
       if (seen.has(reference.resourceUrl)) fail('Native index contains a cycle or duplicate branch.');
       seen.add(reference.resourceUrl);
-      const node = await this.indexNode(reference, prefix);
+      let node: IndexNode;
+      if (this.indexReadConcurrency === 1) {
+        node = await this.indexNode(reference, prefix);
+        context.nodes++; if (node.kind === 'branch') context.branches++; else context.leaves++;
+        context.peak = Math.max(context.peak, 1);
+      } else {
+        const outcome = await (prefetched ?? this.prefetchIndexNode(reference, prefix, context));
+        if (!outcome.ok) throw outcome.error;
+        if (context.failed) throw context.error;
+        node = outcome.node;
+      }
       if (node.kind === 'leaf') { for (const [key, ref] of node.entries) if (key.startsWith('record:')) result.set(key.slice(7), ref); return; }
-      for (const [nibble, child] of node.children) await walk(child, prefix + nibble);
+      // Only this consumed branch's immediate children are prefetched. A prefetched
+      // branch cannot schedule grandchildren until DFS reaches it.
+      const children = [...node.children];
+      const prepared = this.indexReadConcurrency === 1 ? [] : children.map(([nibble, child]) => this.prefetchIndexNode(child, prefix + nibble, context));
+      for (let i = 0; i < children.length; i++) {
+        const [nibble, child] = children[i]!; await walk(child, prefix + nibble, prepared[i]);
+      }
     };
-    if (root) await walk(root, '');
-    return result;
+    try { if (root) await walk(root, ''); return result; }
+    catch (error) { this.stopIndexReads(context, error); throw error; }
+    finally {
+      // All speculative results are handled, including failures in siblings DFS
+      // never reaches. Cancelled queued jobs settle without waiting for a permit.
+      context.stopped = true;
+      await Promise.all([...context.pending]);
+    }
   }
   private empty(): DecodedHead {
     return { scope: this.scope, revision: null, reference: null, operationId: null, records: new Map(), logicalDigest: '', createdAt: '', previous: null, index: null };
@@ -489,8 +585,32 @@ export class NativeCommitStore implements NativeCommitClient {
     if (archived.logicalDigest !== head.logicalDigest || archived.operationId !== head.operationId) fail('Native head is not backed by its immutable commit.');
     return head;
   }
-  private async complete(head: DecodedHead): Promise<DecodedHead> { return { ...head, records: await this.records(head.index) }; }
-  async readHead(): Promise<NativeSnapshot> { return this.complete(await this.current()); }
+  private indexReadContext(): IndexReadContext { return { stopped: false, failed: false, pending: new Set(), nodes: 0, branches: 0, leaves: 0, active: 0, peak: 0 }; }
+  private async complete(head: DecodedHead, context = this.indexReadContext()): Promise<DecodedHead> { return { ...head, records: await this.records(head.index, context) }; }
+  private async observedHead(operation: 0 | 1, load: () => Promise<DecodedHead>): Promise<NativeSnapshot> {
+    if (!this.options.onHeadRead) return this.complete(await load());
+    const context = this.indexReadContext(), readNumber = ++this.headReadSequence, started = performance.now();
+    let currentDone: number | undefined, reports = 0, outcome: NativeHeadReadDiagnostic['outcome'] = 2;
+    const report = (event: NativeHeadReadDiagnostic['event']): void => {
+      const now = performance.now();
+      const diagnostic: NativeHeadReadDiagnostic = Object.freeze({ readNumber, operation, event,
+        phase: currentDone === undefined ? 0 : 1, outcome: event === 0 ? 0 : outcome,
+        elapsedMs: Math.round(now - started), currentMs: Math.round((currentDone ?? now) - started),
+        materializationMs: currentDone === undefined ? 0 : Math.round(now - currentDone),
+        indexNodes: context.nodes, indexBranches: context.branches, indexLeaves: context.leaves,
+        peakIndexReads: context.peak, indexReadConcurrency: this.indexReadConcurrency });
+      try { void Promise.resolve(this.options.onHeadRead!(diagnostic)).catch(() => {}); } catch { /* Observation is never read authority. */ }
+    };
+    // At most 24 progress records (six minutes), plus completion. No values or
+    // references are retained, and a slow observer cannot block the head read.
+    const timer = setInterval(() => { if (++reports <= 24) report(0); else clearInterval(timer); }, 15000);
+    timer.unref?.();
+    try {
+      const head = await load(); currentDone = performance.now();
+      const complete = await this.complete(head, context); outcome = 1; return complete;
+    } finally { clearInterval(timer); report(1); }
+  }
+  async readHead(): Promise<NativeSnapshot> { return this.observedHead(0, () => this.current()); }
   /** An explicitly composed bounded checkpoint uses the same encrypted native CAS
    * protocol without creating independently rooted immutable history files.
    * Applications put their explicitly bounded rollback window inside the holon.
@@ -582,12 +702,14 @@ export class NativeCommitStore implements NativeCommitClient {
     return prior;
   }
   async readSnapshotAt(reference: NativeSnapshotReference): Promise<NativeSnapshot> {
-    const current = await this.current();
-    if (canonical(current.reference) === canonical(reference)) return this.complete(current);
-    const archived = await this.archived(reference);
-    const retained = await this.operation(archived.operationId!, current);
-    if (!retained || canonical(retained.reference) !== canonical(reference)) return fail('Historical snapshot is not in the committed native index.');
-    return this.complete(retained);
+    return this.observedHead(1, async () => {
+      const current = await this.current();
+      if (canonical(current.reference) === canonical(reference)) return current;
+      const archived = await this.archived(reference);
+      const retained = await this.operation(archived.operationId!, current);
+      if (!retained || canonical(retained.reference) !== canonical(reference)) return fail('Historical snapshot is not in the committed native index.');
+      return retained;
+    });
   }
   private async result(head: DecodedHead, replayed: boolean, receipt: NativeResourceReceipt | null,
     selectedRecordKeys?: readonly string[]): Promise<NativeCommitReceipt> {

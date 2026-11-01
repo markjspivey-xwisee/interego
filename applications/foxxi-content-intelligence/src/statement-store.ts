@@ -602,10 +602,20 @@ export function createConfiguredNativeLrsDatabase(env: NodeJS.ProcessEnv = proce
     return originalFetch(input, { ...init, headers, method: init?.method ?? request?.method ?? 'GET',
       redirect: 'manual', signal: init?.signal ?? AbortSignal.timeout(15000) });
   };
-  const client = new NativeCommitStore({ scope: config.scope, fetch: transport, senderKeyPair,
-    cacheImmutableReads: true,
-    ownerPublicKey: config.ownerPublicKey, recipientPublicKeys: [...new Set([config.ownerPublicKey, senderKeyPair.publicKey])] });
   const queryDiagnostics = new Console({ stdout: process.stderr, stderr: process.stderr, ignoreErrors: true });
+  const client = new NativeCommitStore({ scope: config.scope, fetch: transport, senderKeyPair,
+    cacheImmutableReads: true, indexReadConcurrency: 8,
+    onHeadRead: event => {
+      // Numeric projection only; operation/event/phase/outcome codes are documented
+      // by NativeHeadReadDiagnostic. No scope, URL, record, query or error text.
+      queryDiagnostics.warn('[foxxi-lrs] native-head ' + JSON.stringify({
+        readNumber: event.readNumber, operation: event.operation, event: event.event, phase: event.phase, outcome: event.outcome,
+        elapsedMs: event.elapsedMs, currentMs: event.currentMs, materializationMs: event.materializationMs,
+        indexNodes: event.indexNodes, indexBranches: event.indexBranches, indexLeaves: event.indexLeaves,
+        peakIndexReads: event.peakIndexReads, indexReadConcurrency: event.indexReadConcurrency,
+      }));
+    },
+    ownerPublicKey: config.ownerPublicKey, recipientPublicKeys: [...new Set([config.ownerPublicKey, senderKeyPair.publicKey])] });
   return new NativeInteregoLrsDatabase({ client, owner: config.scope.owner,
     scopeIdentity: JSON.stringify(config.scope),
     cursorSecret: createNativeCursorSecret(config.privateKey, config.scope.owner),

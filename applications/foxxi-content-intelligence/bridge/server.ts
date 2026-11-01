@@ -307,6 +307,8 @@ import {
   registerSnapshot as registerBridgeSnap,
   dirty as markBridgeDirty,
   loadLatestSnapshot as loadBridgeSnap,
+  loadLatestSnapshotStrict as loadBridgeSnapStrict,
+  seedLatestSnapshotHead,
   FOXXI_SNAPSHOT_TYPES as BRIDGE_SNAP_TYPES,
 } from '../src/pod-snapshot-publisher.js';
 interface TrajectorySnap { byTenant: Record<string, Array<[string, AgentTrajectory]>>; }
@@ -461,7 +463,8 @@ import { attachCmi5LmsRoutes, buildCmi5Launch, chooseAu, cmi5BearerRegistration,
 import { HostedPackages, PACKAGE_SHA, attachHostedPackageRoutes, hostedPackageCourse, hostedPackageOf, isPackagePath, type PackageAbout } from '../src/scorm-hosting.js';
 import { unwrapScormPackage } from '../../_shared/scorm/index.js';
 import { AGS_SCOPE, attachLti13Routes, type Lti13Tool, type VerifiedResourceLaunch } from '../src/lti13.js';
-import { LtiPlatform, attachLtiPlatformRoutes, type PlatformSnapshot } from '../src/lti-platform.js';
+import { LtiPlatform, attachLtiPlatformRoutes } from '../src/lti-platform.js';
+import { LtiPlatformReadiness, isPlatformSnapshot } from '../src/lti-platform-readiness.js';
 import { agsScore, answersFrom, renderGonePage, renderOutcomePage, renderScoPage, type GradePassback, type GradedView, type ScoView } from '../src/lti-player.js';
 import { attachScormDispatchRoutes, DispatchRegistry, perAddressLimiter, registryWriter, type DispatchEngine } from '../src/scorm-dispatch.js';
 import { glossaryLoader } from '../src/i2idl-glossary.js';
@@ -5877,13 +5880,24 @@ const instrumentedHandlers = Object.fromEntries(
 // Foxxi as its own LMS: the LTI 1.3 Platform that launches this bridge's own Tool over HTTP, the
 // way any LMS would, and keeps the gradebook the Tool posts grades to. The gradebook is kept on
 // the tenant pod like the Tool's line items. Its key is fresh per process unless one is set.
-const ltiPlatform = new LtiPlatform({
+const ltiPlatform: LtiPlatform = new LtiPlatform({
   selfBaseUrl: bridgeBaseUrl,
   ...(process.env.FOXXI_LTI_PLATFORM_PRIVATE_KEY_PEM ? { privateKeyPem: process.env.FOXXI_LTI_PLATFORM_PRIVATE_KEY_PEM.replace(/\\n/g, '\n') } : {}),
   onChange: () => markBridgeDirty('lti-platform'),
+  ensureReady: () => ltiPlatformReadiness.ensureReady(),
 });
-registerBridgeSnap({ surface: 'lti-platform', typeIri: BRIDGE_SNAP_TYPES.LtiPlatformGradebook, collect: () => ltiPlatform.snapshot() });
-void loadBridgeSnap<PlatformSnapshot>('lti-platform').then((snap) => ltiPlatform.restore(snap)).catch(() => undefined);
+const ltiPlatformReadiness: LtiPlatformReadiness = new LtiPlatformReadiness({
+  load: async () => {
+    const result = await loadBridgeSnapStrict('lti-platform', { typeIri: BRIDGE_SNAP_TYPES.LtiPlatformGradebook, validate: isPlatformSnapshot, followLatestDescriptor: true });
+    seedLatestSnapshotHead('lti-platform', result);
+    return result;
+  },
+  restore: (snap) => ltiPlatform.restore(snap),
+  collect: () => ltiPlatform.snapshot(),
+  onState: (state) => console.info('[lti-platform/readiness]', JSON.stringify(state)),
+});
+registerBridgeSnap({ surface: 'lti-platform', typeIri: BRIDGE_SNAP_TYPES.LtiPlatformGradebook, collect: () => ltiPlatformReadiness.snapshotForPublish(), immutableLatest: true });
+void ltiPlatformReadiness.ensureReady();
 /** The Tool's side, once mounted: how a grade gets back to the platform that launched the course. */
 let ltiTool: Lti13Tool | undefined;
 
@@ -12444,6 +12458,7 @@ app.post('/agent/lti/launch', async (req, res) => {
     const course = await resolveCourseForRead(courseId);
     if (!course) { res.status(404).json({ error: `no course ${courseId} is played on this bridge's SCORM engine` }); return; }
     const learner = await signedLearner(auth);
+    if (!await ltiPlatform.ensureReady()) { res.set('Retry-After', '1').status(503).json({ error: 'lti_gradebook_unavailable', readiness: ltiPlatformReadiness.diagnostics() }); return; }
     const start = ltiPlatform.beginLaunch({ sub: learner.did, podUrl: learner.podUrl }, { id: course.courseId, title: course.title });
     if (!start.ok) { res.status(start.status).json({ error: start.error }); return; }
     res.json({
@@ -12463,8 +12478,10 @@ app.post('/agent/lti/gradebook', async (req, res) => {
     const auth = await verifyDelegatedCaller(req.body);
     if (!auth.ok) { res.status(auth.status).json({ error: auth.error }); return; }
     const learner = await signedLearner(auth);
+    if (!await ltiPlatform.ensureReady()) { res.set('Retry-After', '1').status(503).json({ error: 'lti_gradebook_unavailable', readiness: ltiPlatformReadiness.diagnostics() }); return; }
     res.json({
       kind: 'lti-gradebook', platform: ltiPlatform.issuer, context: ltiPlatform.context,
+      readiness: ltiPlatformReadiness.diagnostics(),
       learner: learner.did, ...(learner.via ? { via: learner.via } : {}),
       rows: ltiPlatform.gradebookFor(learner.did),
     });

@@ -1,10 +1,32 @@
 # Changelog
 
+## 2026-10-31 — Strengthen the test-run floor for the expanded regression tree
+
+The test-run integrity minimum rises from 590 to the measured 620 tracked modules after Foxxi's LTI readiness, immutable-publication and authorization-rate regression modules consume the remaining headroom. The proportional growth allowance, include patterns, assertions and skip rules are unchanged; no tests are removed or excluded.
+
+## 2026-10-31 — Bound own-LMS authorization requests before snapshot work
+
+Foxxi's GET and POST LTI authorization routes share a per-client limit and a fixed total budget before snapshot hydration, form parsing or token signing. Standard middleware returns 429 with a retry delay, groups IPv6 clients by subnet and uses the framework's existing trusted-proxy policy. The total budget bounds admission to the rotating client-bucket store. Discovery and key metadata remain independent; learner identity, one-use grants and gradebook checks remain required.
+
 ## 2026-10-31 — Keep browser sign-in working after Windows app updates
 
 The installed Windows app repairs browser companion registration removed by an older installer, using only the valid, nonempty extension allowance the owner already saved. It does not create a key, change hosted account ownership, enable a disabled or unreadable allowance, or replace another installation’s registration. A queued owner change or shutdown prevents late admission, and repair never rewrites the saved allowance.
 
 The new uninstaller retains registration during updates and removes only its own matching registration on a full uninstall. A setup failure is shown separately from valid saved IDs so the existing recovery action remains usable. Tests use temporary protected-policy files and an injected registry; the actual Windows packaging and offline lifecycle remain release gates. Public bridge access and federation stay off by default.
+
+## 2026-10-31 — Load and version Foxxi's own LMS gradebook safely
+
+The own-LMS gradebook waits for its tenant snapshot before serving stateful launch, gradebook and AGS routes. A bounded failed read returns unavailable and can be retried; only a definite absence permits empty initialization. Snapshot publication stays blocked during unresolved hydration. Safe diagnostics report load state, map counts and a content-digest witness without exposing learner records.
+
+This gradebook opts into immutable version graphs and descriptors with a conditionally updated latest head. Readers follow the advertised distribution and bind the graph identity, type and payload digest. Writers verify their artifacts before updating the exact head they observed, refuse conflicting writes and stop stale in-memory retries. Existing snapshot users keep their current publication path.
+
+Tests exercise delayed startup, failed-read recovery, original-row restoration without another score post, two actual Solid publications, cold-registry hydration, immutable graph refusal, stale-head conflicts and publication deadlines through explicitly injected isolated HTTP transports, without configuring the live tenant environment. A mismatched legacy descriptor and graph remains unavailable; this change does not reconstruct historical grades. AGS score acknowledgments retain their existing asynchronous snapshot semantics.
+
+## 2026-10-31 — Bound native LRS index-node prefetch while preserving head verification
+
+Foxxi's native learning-record client can prefetch up to eight immediate index-node reads through one client-wide limiter, while consuming the complete index in its original depth-first order. Other native clients retain their serial default. Every current-head, backing-commit, ciphertext, plaintext, scope, prefix and cycle check remains active; no record filter, scan bound, cache budget or timeout changes. Failed traversals stop their queued reads, handle active results and never return a partial snapshot.
+
+Opt-in head observations separate fresh head/commit verification from full index materialization, reporting bounded numeric timing and node-count diagnostics without identities, URLs, query contents or error text. This is a cold-read performance change, not evidence of a particular learner's retained records or outcome.
 
 ## 2026-10-31 — Make PC-key linking and sign-in approval easier to review
 
