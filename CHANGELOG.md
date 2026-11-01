@@ -1,5 +1,13 @@
 # Changelog
 
+## 2026-11-01 — Keep audited own-account LMS reconciliations separate from original grades
+
+Three signed Foxxi actions preview, explicitly apply and freshly read a new private owner entry from two original engine-authenticated LRS statements. Preview is read-only and binds a short-lived review to the human controller, caller, exact source facts, legacy failure witness and native revision. Apply checks those facts again and conditionally appends to a separate encrypted native ledger; identical source entries reconcile without another grade or source write. A stable service-key integrity receipt, fresh logical readback and an unchanged observed failure witness are required for confirmation.
+
+The entry retains original event times, normalized outcomes, immutable source identifiers and full-body digests alongside its new creation time and approved preview digest. Engine HMAC coverage and the lack of original attempt registration are stated explicitly. No global LMS snapshot is activated or rewritten, no AGS score is replayed, and original LMS persistence remains unverified. Storage is bounded and does not prune retained entries; it does not claim protection from owner or host deletion or rollback.
+
+Isolated tests exercise evidence rejection, explicit review expiry and owner binding, private native encryption and compare-and-swap, uncertain acknowledgements, fresh entry readback, and fixed-resource failure witnessing. These checks do not constitute a live learner-record repair.
+
 ## 2026-10-31 — Strengthen the test-run floor for the expanded regression tree
 
 The test-run integrity minimum rises from 590 to the measured 620 tracked modules after Foxxi's LTI readiness, immutable-publication and authorization-rate regression modules consume the remaining headroom. The proportional growth allowance, include patterns, assertions and skip rules are unchanged; no tests are removed or excluded.
