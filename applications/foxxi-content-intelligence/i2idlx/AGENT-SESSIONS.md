@@ -23,6 +23,9 @@ After the connection is verified, **Ask** runs inside the standalone workbench.
 each question, attaches citation IDs and the pinned glossary, and uses the same executor.
 Changing the selected material clears that intervention's conversation. Changing the
 question or perspective retains recent turns.
+The existing live Orchestrate sandbox uses the same connection and retains its staged
+human-approval flow. The transport accepts its plain prompts and no-argument page tools,
+and preserves cumulative text across tool rounds so its final handoffs remain intact.
 
 The external agent processes queued requests through the returned, bounded driver
 protocol. It can emit cumulative answer text, finish a response, or request one of the
@@ -81,7 +84,11 @@ successfully completing a real model turn are separate evidence.
 `tests/i2idlx-agent-sessions.test.ts` exercises identity and capability separation,
 one-use invitations, leases/revisions, cancellation, expiry and resource bounds.
 `app/tools/agent-session-check.mjs` exercises the actual browser transport with a
-deterministic exchange double, including streaming, local tool results and aborts.
+deterministic exchange double, including streaming, local tool results, original
+Orchestrate input forms, cumulative handoff offsets and aborts.
+`app/tools/agent-session-http-check.mjs` repeats the browser exchange over real loopback
+HTTP with the actual Express router and middleware; its verifier and model remain explicit
+deterministic fixtures.
 `app/tools/ask-engine-check.mjs` exercises the actual hook body for stale asynchronous
 requests, adapters that ignore cancellation, and intervention source attachment.
 

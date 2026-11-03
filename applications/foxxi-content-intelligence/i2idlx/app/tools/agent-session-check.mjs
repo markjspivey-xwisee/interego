@@ -80,6 +80,33 @@ await test('exact advertised local tool runs and its actual result is returned t
   assert(calls.every(call => !call.init.body.includes('executions++')));
 });
 
+await test('original Orchestrate prompts and no-argument tools preserve cumulative handoff offsets', async () => {
+  let requests = 0, executions = 0, consumed = 0;
+  const shown = [], before = 'Inspecting the catalog.', handoff = 'The catalog is available for the next sandbox step.';
+  const { client } = fixture(body => {
+    if (body.operation !== 'request') throw new Error('Unexpected operation');
+    if (++requests === 1) {
+      assert.deepEqual(body.messages, [{ role: 'user', content: 'Run the next sandbox step.' }]);
+      assert.deepEqual(body.tools[0].inputSchema, { type: 'object', properties: {}, additionalProperties: false });
+      return response(turn('completed', 1, before, { tool_calls: [{ id: 'catalog-1', name: 'read_catalog', arguments: {} }] }));
+    }
+    assert(body.messages.at(-1).content.includes('Actual sandbox catalog'));
+    return response(turn('completed', 1, handoff));
+  });
+  await ready(client);
+  const result = await client.getSample()('Run the next sandbox step.', {
+    tools: [{ name: 'read_catalog', description: 'Read the sandbox catalog.', execute: args => {
+      executions++; assert.deepEqual(args, {}); consumed = shown.at(-1).length;
+      return { catalog: 'Actual sandbox catalog' };
+    } }],
+    onText: ({ text }) => shown.push(text),
+  });
+  assert.equal(executions, 1); assert.equal(requests, 2);
+  assert.deepEqual(shown, [before, before + '\n\n' + handoff]);
+  assert.equal(result.text, before + '\n\n' + handoff);
+  assert.equal(result.text.slice(consumed).trim(), handoff, 'The original Orchestrate consumer must receive the complete final handoff.');
+});
+
 await test('unadvertised and duplicate tool requests cannot execute page functions', async () => {
   let executions = 0;
   const { client } = fixture(body => response(turn('completed', 1, '', { tool_calls: [{ id: 'bad', name: 'navigate_arbitrary_url', arguments: {} }] })));

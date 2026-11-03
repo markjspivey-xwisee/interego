@@ -128,10 +128,37 @@ try {
   await driver('finish', update(afterTool, { text: grounded }));
   assert.deepEqual(await second, { text: grounded, truncated: false });
 
+  // The original Orchestrate consumer supplies a plain prompt and zero-argument
+  // tools without schemas. Its streaming and final text share one cumulative offset.
+  let consumed = 0;
+  const orchestration = samplePromise(sample('Inspect the next sandbox control.', {
+    tools: [{ name: 'read_catalog', description: 'Read this sandbox catalog.', execute: args => {
+      toolExecutions++; assert.deepEqual(args, {}); consumed = streams.at(-1).length;
+      return { catalog: 'Actual local sandbox catalog fixture' };
+    } }],
+    onText: ({ text }) => streams.push(text),
+  }));
+  const catalog = await nextTurn(afterTool.turn_id);
+  assert.deepEqual(catalog.task.messages, [{ role: 'user', content: 'Inspect the next sandbox control.' }]);
+  assert.deepEqual(catalog.task.tools[0].inputSchema, { type: 'object', properties: {}, additionalProperties: false });
+  const preamble = 'Inspecting the sandbox catalog.';
+  const catalogStream = await driver('emit', update(catalog, { text: preamble }));
+  await observedText(preamble);
+  await driver('finish', update(catalog, { revision: catalogStream.revision, text: preamble, tool_calls: [{ id: 'catalog-1', name: 'read_catalog', arguments: {} }] }));
+  const afterCatalog = await nextTurn(catalog.turn_id);
+  assert.equal(toolExecutions, 2);
+  assert.ok(afterCatalog.task.messages.at(-1).content.includes('Actual local sandbox catalog fixture'));
+  const handoff = 'The next sandbox step can use the inspected catalog.';
+  await driver('finish', update(afterCatalog, { text: handoff }));
+  const completed = await orchestration;
+  assert.deepEqual(completed, { text: preamble + '\n\n' + handoff, truncated: false });
+  assert.equal(completed.text.slice(consumed).trim(), handoff);
+  assert.ok(streams.includes(completed.text));
+
   // Cancellation goes through the actual browser HTTP path and becomes terminal.
   const controller = new AbortController();
   const aborted = samplePromise(sample([{ role: 'user', content: 'A request that I will stop.' }], { signal: controller.signal }));
-  const cancelled = await nextTurn(afterTool.turn_id);
+  const cancelled = await nextTurn(afterCatalog.turn_id);
   controller.abort();
   await assert.rejects(aborted, error => error.code === 'cancelled');
   await driver('finish', update(cancelled, { text: 'A stale answer after cancellation.' }), 409);
@@ -144,7 +171,7 @@ try {
   console.log(JSON.stringify({
     status: 'passed', transport: 'real loopback HTTP', browserClient: 'actual agent-session.js', router: 'actual attachAgentSessionRoutes',
     verifier: 'deterministic fixture; not cryptographic authentication', model: 'deterministic driver fixture; no subscription or provider called',
-    checks: ['explicit pairing', 'unsigned and wrong driver capability refusal', 'streamed onText snapshots', 'final answer', 'advertised tool execution', 'actual tool-result round trip', 'cancellation', 'late finish refusal', 'disconnect revocation'],
+    checks: ['explicit pairing', 'unsigned and wrong driver capability refusal', 'streamed onText snapshots', 'final answer', 'advertised tool execution', 'actual tool-result round trip', 'plain orchestration prompts', 'zero-argument page tools', 'cumulative tool-round handoff offsets', 'cancellation', 'late finish refusal', 'disconnect revocation'],
     httpRequests: requestCount, streamedSnapshots: streams.length, executedPageTools: toolExecutions,
   }));
 } finally {
