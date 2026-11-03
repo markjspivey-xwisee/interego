@@ -3,9 +3,16 @@
 // No host identity claim is trusted: /session verifies the signature and returns the account.
 import { backendUrl, workbenchHosted } from "./backend-url.js";
 import { isChatGPTApp, connectHost, getHostState, subscribeHost, downloadWorkbenchFile } from "./chatgpt-host.js";
+import { createAgentSessionClient } from "./agent-session.js";
 const hosted = workbenchHosted;
 let connected = null, personalSample = null;
 const announce = () => window.dispatchEvent(new Event("interego-workbench:changed"));
+const agentSessions = createAgentSessionClient({ url: backendUrl, onState: announce });
+export const connectAgentSession = () => agentSessions.connect();
+export const renewAgentInvitation = () => agentSessions.renewInvitation();
+export const disconnectAgentSession = () => agentSessions.disconnect();
+export const refreshAgentSession = () => agentSessions.refresh();
+export const subscribeAgentSession = listener => agentSessions.subscribe(listener);
 const failure = (message, code = "unavailable") => Object.assign(new Error(message), { code });
 const json = async (r) => {
   const data = await r.json().catch(() => ({}));
@@ -148,11 +155,11 @@ export async function resolveWorkbenchCap(name) {
   }
   if (!hosted()) return undefined; // preserve the original Claude artifact's own capability environment
   if (name === "downloads") return downloads;
-  if (name === "sample") return (connected && connected.sample) || personalSample;
+  if (name === "sample") return (connected && connected.sample) || agentSessions.getSample() || personalSample;
   return connected ? connected[name] || null : null;
 }
 export function workbenchConnectionStatus() {
-  return { hosted: hosted(), me: connected && connected.identity, subscription: !!(connected && connected.sample), apiKey: !!personalSample };
+  return { hosted: hosted(), me: connected && connected.identity, subscription: !!(connected && connected.sample), apiKey: !!personalSample, agent: agentSessions.status() };
 }
 /** Optional API fallback. The key is held ONLY in this tab's closure and sent to the model provider. */
 export function usePersonalApiKey(key, model) {
@@ -193,3 +200,4 @@ export function usePersonalApiKey(key, model) {
   personalSample = sample; announce();
 }
 export function clearPersonalApiKey() { personalSample = null; announce(); }
+

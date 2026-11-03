@@ -75,8 +75,33 @@ try {
   // a 400 caused by middleware metadata or a fabricated successful comparison.
   const source = await callCheck('sourceVersion', {}, 503);
   assert.equal(source.status, 'unavailable'); assert.equal(source.result, undefined);
+  // Pairing must survive this entrypoint's real HTTP context decoration. These
+  // checks create only a temporary local chat; no signer, provider or pod is used.
+  const agentRoot = base + '/i2idlx/api/agent-sessions';
+  const agentCall = async (suffix, payload, token, expectedStatus = 200) => {
+    const response = await fetch(agentRoot + '/' + suffix, { method: 'POST',
+      headers: { 'Content-Type': 'application/json', Origin: base, ...(token ? { Authorization: 'Bearer ' + token } : {}) },
+      body: JSON.stringify(payload), signal: AbortSignal.timeout(3000) });
+    assert.equal(response.status, expectedStatus, 'agent-session ' + suffix + ' must pass the actual HTTP middleware');
+    assert.equal(response.headers.get('Cache-Control'), 'no-store');
+    return response.json();
+  };
+  const agentSession = await agentCall('create', {});
+  assert.match(agentSession.session_id, /^[a-f0-9]{32}$/);
+  assert.match(agentSession.browser_token, /^[a-f0-9]{64}$/);
+  assert.match(agentSession.invite_token, /^[a-f0-9]{64}$/);
+  assert.equal(agentSession.ephemeral, true); assert.equal(agentSession.persisted, false);
+  const agentStatus = await agentCall('browser', { session_id: agentSession.session_id, operation: 'status' }, agentSession.browser_token);
+  assert.equal(agentStatus.state, 'waiting_for_agent');
+  assert.equal(agentStatus.driver, null);
+  await agentCall('browser', { session_id: agentSession.session_id, operation: 'status', __caller_token: agentSession.browser_token }, undefined, 404);
+  await agentCall('create', { unexpected: true }, undefined, 400);
+  const disconnected = await agentCall('browser', { session_id: agentSession.session_id, operation: 'disconnect' }, agentSession.browser_token);
+  assert.equal(disconnected.state, 'disconnected');
+  await agentCall('browser', { session_id: agentSession.session_id, operation: 'status' }, agentSession.browser_token, 410);
   console.log(JSON.stringify({ containerStartupSmoke: 'passed', health: true, affordances: true,
     semanticHttp: { classifier: true, shacl: true, peerTerm: true, sourceVersionUnavailable: true },
+    agentSessionHttp: { create: true, browserCapability: true, bodyTokenRefused: true, strictInputs: true, disconnect: true },
     actualEntrypoint: true, backend: 'memory', productionDurabilityTest: false }));
 } finally {
   child.kill('SIGTERM');

@@ -107,7 +107,7 @@ export function useOrchestra(trace) {
   // Can this view run a live team? Needs the sample capability with page tools.
   useEffect(() => {
     if (!caps.resolved) return;
-    if (!caps.sample) { setLive({ available: false, reason: "Run Orchestrate in your connected AI conversation using the prompt in Connect. Running it inside this page requires an explicit host sampling adapter or your own API key. The recorded sandbox example remains available." }); return; }
+    if (!caps.sample) { setLive({ available: false, reason: "Connect an AI agent using Connect to run Orchestrate inside this page. An explicit host model adapter or your own API connection can also supply the model. The recorded sandbox example remains available." }); return; }
     let on = true;
     caps.sample.limits().then((l) => {
       if (!on) return;

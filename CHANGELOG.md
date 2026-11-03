@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-11-03 - Keep Foxxi HTTP context outside agent-session inputs
+
+The deployed Foxxi middleware adds internal client-address and caller-token context to parsed JSON. Browser agent-session creation and polling now discard only those two transport fields before checking their exact input contract. Browser authority still comes only from the Authorization header, creation budgets still use the actual request address, and signed driver identity and payload checks are unchanged.
+
+HTTP tests now include that context decoration and check that body tokens cannot authorize a browser or override creation budgets. The packaged-server startup proof exercises creation, capability-protected status, invalid body-token refusal and disconnect through the actual entrypoint middleware before an image can ship.
+
 ## 2026-11-02 — Prepare selected health context for the encrypted local-note host
 
 A separate Layer 3 health component prepares explicit, case-bound evidence selections as the existing Windows app's append-note arguments. It preserves exact dependent citations, qualified dates, record statuses, specimen identities, source interpretation limits and omission metadata. Draft questions require explicit inclusion; retrieval queries and unknown fields are excluded. Cross-case references, unresolved citations, inconsistent omission declarations and oversized output are rejected before returning a note.
@@ -7,6 +13,14 @@ A separate Layer 3 health component prepares explicit, case-bound evidence selec
 The adapter performs no host, network, storage, provider, consent or publication action. Its output is plaintext until an independently authorized host saves it. The native read grant still covers all notes; a selected context is not case-scoped authorization. Fictional fixtures and standalone Linux/Windows CI exercise the preparation contract, including native character bounds. Installed-app pairing, encrypted persistence, revocation and broader health-file ingestion remain separate checks.
 
 An offline Windows verification kit now emits the fixed fictional note arguments and compares a supplied native save/read response for exact content, native metadata and the independently observed author connection. Its bounded CLI never pairs, saves, reads the pod or echoes supplied content on failure. Reports explicitly leave native response authenticity, storage encryption, restart persistence and grant enforcement unverified until independently observed.
+
+## 2026-11-02 — Pair a standalone Interpretant conversation with an external agent
+
+Interpretant retains its embedded glossary chat and adds in-page intervention discussion with per-question source retrieval, citation context, recent history and cancellation. An explicitly paired external agent can supply reasoning through its existing model session, including the original live Orchestrate sandbox's plain prompts, no-argument tools and cumulative handoffs; ChatGPT conversation handoffs, existing host adapters, Interego pod saves and the prior API fallback remain separate optional paths.
+
+A bounded ephemeral broker uses independent browser and driver capabilities, a one-use invitation, an authenticated Interego actor, turn revisions and leases. Cancellation, expiry, revocation and stale results are checked. Executable glossary tools remain in the browser and paired-agent lookups exclude team annotations. This transport calls no provider API, shares no model credentials and writes no learner or pod record. It does not turn a subscription into an unattended service or claim durable transcript storage.
+
+Contract tests and actual browser-transport/Ask-hook checks cover isolation, streaming snapshots, tool results, original Orchestrate input forms, cumulative handoff offsets, cancellation races and resource bounds. Real loopback HTTP checks use the actual Express router and middleware with explicit verifier/model fixtures. These are deterministic software checks; real deployed browser/agent acceptance is recorded separately.
 
 ## 2026-11-01 — Keep audited own-account LMS reconciliations separate from original grades
 
@@ -9016,3 +9030,4 @@ Pre-session capability baseline (inherited):
 - PGSL content-addressed sequence lattice
 - Persistent Solid pod backed by Azure Files
 - Validator module (programmatic SHACL-equivalent) + SHACL shapes export
+
