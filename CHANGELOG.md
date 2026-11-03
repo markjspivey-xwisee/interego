@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-11-03 — Respect paired-agent concurrency in live Orchestrate
+
+Live Orchestrate respects the connected executor's advertised request capacity. The paired-agent transport advertises one active request, so independent role steps run in sequence instead of failing at the first parallel handoff. Host executors keep the existing two-step parallel limit.
+
+The actual Orchestrate hook and twelve-step dependency graph run through the browser transport with deterministic completion fixtures in agent-session-check.mjs. The regression fails before the change and passes afterward; host parallelism, invalid/wider limits and overlapping-consumer isolation are checked. These checks make no provider or production calls and do not establish Claude or complete production acceptance.
+
 ## 2026-11-03 — Show private and shared note audiences accurately in HMD
 
 Shared publications now retain an explicit audience marker alongside private and public publications. Inline and later note projections use that declared audience, rather than labelling every encrypted record private. Older records with missing or conflicting audience metadata show an unknown audience without changing their access.
