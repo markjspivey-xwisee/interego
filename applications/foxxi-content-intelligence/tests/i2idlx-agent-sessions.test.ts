@@ -199,6 +199,16 @@ describe('HTTP driver authentication boundary', () => {
   function httpFixture(verifyCaller?: Parameters<typeof attachAgentSessionRoutes>[1]['verifyCaller']) {
     const app = express();
     app.use(express.json({ limit: '600kb' }));
+    // Reproduce the context added by Foxxi's upstream HTTP middleware. The
+    // packaged-entrypoint smoke separately checks the real production middleware.
+    app.use((req, _res, next) => {
+      if (req.body && typeof req.body === 'object') {
+        req.body.__client_ip = req.get('X-Forwarded-For') ?? req.ip;
+        const match = /^Bearer\s+(.+)$/i.exec(req.get('Authorization') ?? '');
+        if (match) req.body.__caller_token = match[1];
+      }
+      next();
+    });
     const store = attachAgentSessionRoutes(app, { baseUrl: BASE, verifyCaller });
     const server = app.listen(0, '127.0.0.1');
     const listening = new Promise<string>((resolve, reject) => {
@@ -239,6 +249,19 @@ describe('HTTP driver authentication boundary', () => {
     const made = await h.invoke('create', {}); assert.equal(made.status, 200);
     const bad = await h.invoke('browser', { session_id: made.body.session_id, operation: 'status' }, { Authorization: 'Bearer wrong' }); assert.equal(bad.status, 404);
     const good = await h.invoke('browser', { session_id: made.body.session_id, operation: 'status' }, { Authorization: 'Bearer ' + String(made.body.browser_token), Origin: BASE }); assert.equal(good.status, 200);
+  });
+  it('ignores only HTTP transport context and never treats it as browser authority or a creation-budget key', async () => {
+    const h = httpFixture();
+    const made = await h.invoke('create', { __client_ip: 'body-ip', __caller_token: 'body-token' });
+    assert.equal(made.status, 200);
+    assert.ok(!JSON.stringify(made.body).includes('body-token'));
+    const missingHeader = await h.invoke('browser', { session_id: made.body.session_id, operation: 'status', __caller_token: made.body.browser_token });
+    assert.equal(missingHeader.status, 404);
+    const valid = await h.invoke('browser', { session_id: made.body.session_id, operation: 'status' }, { Authorization: 'Bearer ' + String(made.body.browser_token) });
+    assert.equal(valid.status, 200);
+    assert.equal((await h.invoke('create', { __unexpected_transport_field: true })).status, 400);
+    for (let n = 1; n < 5; n++) assert.equal((await h.invoke('create', { __client_ip: 'body-ip-' + n }, { 'X-Forwarded-For': '198.51.100.' + n })).status, 200);
+    assert.equal((await h.invoke('create', {}, { 'X-Forwarded-For': '198.51.100.99' })).status, 429);
   });
   it('rate-limits driver requests before invoking signature and delegation verification', async () => {
     let verifications = 0;
