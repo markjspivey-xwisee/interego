@@ -46,8 +46,11 @@ their independent in-memory capability. Tokens do not travel in URLs or browser 
 
 Sessions are limited to 30 minutes, invitations to 5 minutes, active turn leases to
 60 seconds and individual requests to 10 minutes. The deployment bounds sessions,
-creation rate, message/tool/result sizes and total retained exchange bytes. A restart
-ends these ephemeral connections. Transcript state belongs to the open browser; this
+creation rate, message/tool/result sizes and total retained exchange bytes. Signed driver
+traffic also has a process-wide 600-request-per-minute admission budget before signature
+and delegation verification. This bounds authorization work and admission-store size
+without trusting proxy IPs. A restart ends these ephemeral connections.
+Transcript state belongs to the open browser; this
 change does not claim durable chat history or automatically write a pod, xAPI statement,
 assessment, completion or learner record. Explicit encrypted persistence is a separate
 capability, not a side effect of asking a question.

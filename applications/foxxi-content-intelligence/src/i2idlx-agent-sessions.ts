@@ -4,6 +4,7 @@
  */
 import type { Express, Request, Response } from 'express';
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
+import { rateLimit } from 'express-rate-limit';
 import type { VerifyPrivateCaller } from './private-performance-auth.js';
 
 type Row = Record<string, unknown>;
@@ -38,6 +39,7 @@ export class AgentSessionError extends Error {
 }
 export const AGENT_SESSION_ACTION = 'urn:foxxi:i2idlx:agent-session';
 export const AGENT_SESSION_PATH = '/i2idlx/api/agent-sessions';
+export const AGENT_DRIVER_REQUESTS_PER_MINUTE = 600;
 const KiB = 1024;
 const TASK_BYTES = 512 * KiB, OUTPUT_BYTES = 128 * KiB, BODY_BYTES = 576 * KiB;
 const MEMORY_BYTES = 16 * 1024 * KiB;
@@ -321,6 +323,14 @@ function fail(res: Response, e: unknown): void {
 export function attachAgentSessionRoutes(app: Express, config: AgentSessionConfig): AgentSessionStore {
   const store = new AgentSessionStore(config), base = new URL(config.baseUrl).origin;
   store.startAutomaticSweep();
+  // Bound signature/delegation verification before performing authorization. One process-wide
+  // bucket also bounds limiter storage and needs no proxy-IP or user-supplied identity trust.
+  const driverAdmission = rateLimit({
+    windowMs: 60_000, limit: AGENT_DRIVER_REQUESTS_PER_MINUTE,
+    keyGenerator: () => 'interpretant-agent-driver',
+    standardHeaders: false, legacyHeaders: false,
+    handler: (_req, res) => { res.status(429).set('Retry-After', '60').json({ error: 'The agent driver is busy. Try again in a minute.' }); },
+  });
   function browserOrigin(req: Request): void {
     if (Object.keys(req.query).length) reject('Agent-session credentials and inputs belong in headers or JSON, never URLs.');
     const origin = req.get('Origin');
@@ -334,7 +344,7 @@ export function attachAgentSessionRoutes(app: Express, config: AgentSessionConfi
     try { browserOrigin(req); const auth = req.get('Authorization'); respond(res, store.browser(req.body, auth?.startsWith('Bearer ') ? auth.slice(7) : null)); }
     catch (e) { fail(res, e); }
   });
-  app.post(AGENT_SESSION_PATH + '/driver', async (req, res) => {
+  app.post(AGENT_SESSION_PATH + '/driver', driverAdmission, async (req, res) => {
     try {
       if (Object.keys(req.query).length) reject('Agent-session input belongs in signed JSON, never URLs.');
       record(req.body);

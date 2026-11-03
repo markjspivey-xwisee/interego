@@ -1,8 +1,8 @@
-import { describe, it } from 'vitest';
+import { afterEach, describe, it } from 'vitest';
 import assert from 'node:assert/strict';
-import type { Express, Request, Response } from 'express';
+import express from 'express';
 import {
-  AgentSessionError, AgentSessionStore, attachAgentSessionRoutes, AGENT_SESSION_PATH,
+  AgentSessionError, AgentSessionStore, attachAgentSessionRoutes, AGENT_SESSION_PATH, AGENT_DRIVER_REQUESTS_PER_MINUTE,
 } from '../src/i2idlx-agent-sessions.js';
 
 const BASE = 'https://workbench.example';
@@ -194,16 +194,24 @@ describe('explicit, ephemeral external-agent workbench sessions', () => {
 });
 
 describe('HTTP driver authentication boundary', () => {
+  const cleanup: (() => Promise<void>)[] = [];
+  afterEach(async () => { await Promise.all(cleanup.splice(0).map(close => close())); });
   function httpFixture(verifyCaller?: Parameters<typeof attachAgentSessionRoutes>[1]['verifyCaller']) {
-    const routes = new Map<string, (req: Request, res: Response) => unknown>();
-    const app = { post: (path: string, handler: (req: Request, res: Response) => unknown) => { routes.set(path, handler); } } as unknown as Express;
+    const app = express();
+    app.use(express.json({ limit: '600kb' }));
     const store = attachAgentSessionRoutes(app, { baseUrl: BASE, verifyCaller });
+    const server = app.listen(0, '127.0.0.1');
+    const listening = new Promise<string>((resolve, reject) => {
+      server.once('error', reject);
+      server.once('listening', () => { const address = server.address(); assert.ok(address && typeof address !== 'string'); resolve('http://127.0.0.1:' + address.port); });
+    });
+    cleanup.push(async () => { store.dispose(); await new Promise<void>((resolve, reject) => { server.close(error => error ? reject(error) : resolve()); server.closeAllConnections(); }); });
     const invoke = async (suffix: string, body: unknown, headers: Record<string, string> = {}, query = {}) => {
-      let status = 200, result: unknown;
-      const req = { body, query, ip: '127.0.0.1', socket: {}, get: (name: string) => headers[name] } as unknown as Request;
-      const res = { set: () => res, status: (n: number) => { status = n; return res; }, json: (value: unknown) => { result = value; return res; } } as unknown as Response;
-      const handler = routes.get(AGENT_SESSION_PATH + '/' + suffix); assert.ok(handler);
-      await handler(req, res); return { status, body: row(result) };
+      const params = new URLSearchParams(query);
+      const result = await fetch(await listening + AGENT_SESSION_PATH + '/' + suffix + (params.size ? '?' + params : ''), {
+        method: 'POST', headers: { 'Content-Type': 'application/json', ...headers }, body: JSON.stringify(body),
+      });
+      return { status: result.status, body: row(await result.json()), retryAfter: result.headers.get('Retry-After') };
     };
     return { store, invoke };
   }
@@ -232,4 +240,12 @@ describe('HTTP driver authentication boundary', () => {
     const bad = await h.invoke('browser', { session_id: made.body.session_id, operation: 'status' }, { Authorization: 'Bearer wrong' }); assert.equal(bad.status, 404);
     const good = await h.invoke('browser', { session_id: made.body.session_id, operation: 'status' }, { Authorization: 'Bearer ' + String(made.body.browser_token), Origin: BASE }); assert.equal(good.status, 200);
   });
+  it('rate-limits driver requests before invoking signature and delegation verification', async () => {
+    let verifications = 0;
+    const h = httpFixture(async () => { verifications++; return { ok: false, status: 401, error: 'Fixture refusal.' }; });
+    for (let n = 0; n < AGENT_DRIVER_REQUESTS_PER_MINUTE; n++) assert.equal((await h.invoke('driver', {})).status, 401);
+    const limited = await h.invoke('driver', {});
+    assert.equal(limited.status, 429); assert.equal(limited.retryAfter, '60');
+    assert.equal(verifications, AGENT_DRIVER_REQUESTS_PER_MINUTE);
+  }, 15_000);
 });

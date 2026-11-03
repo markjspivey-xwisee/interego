@@ -185,8 +185,9 @@ export function Ask({ engine }) {
   if (!available) {
     return (
       <div className="page" style={{ maxWidth: 720 }}>
-        <div className="empty"><Icon name="sparkle" /><div><b>Use Ask in your AI client</b></div>
-          <div className="small">Your connected AI conversation can answer with the workbench's glossary context. Running Ask inside this page requires an explicit host sampling adapter or your own API key through Connect. Browsing, exports and local packs work without a model.</div></div>
+        <div className="empty"><Icon name="sparkle" /><div><b>Connect an AI agent to ask here</b></div>
+          <div className="small">Use Connect in the toolbar to pair an active agent with this workbench. Your questions, glossary lookups and answers then stay together here, using that agent's own available model. Existing host adapters remain supported. Browsing, exports and local packs work before you connect.</div></div>
+        <p className="small muted">You can also use your AI client's own conversation through these optional links.</p>
         <AIClientTaskLinks />
       </div>
     );
