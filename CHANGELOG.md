@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-11-03 — Show private and shared note audiences accurately in HMD
+
+Shared publications now retain an explicit audience marker alongside private and public publications. Inline and later note projections use that declared audience, rather than labelling every encrypted record private. Older records with missing or conflicting audience metadata show an unknown audience without changing their access.
+
+Namespace-aware projection tests and actual SDK publication tests cover audience metadata, legacy records and private/shared/public agreement. Encryption, recipients, authorization and generic HMD workflow states are unchanged. Hosted remains available; federation remains off by default.
+
 ## 2026-11-03 - Keep Foxxi HTTP context outside agent-session inputs
 
 The deployed Foxxi middleware adds internal client-address and caller-token context to parsed JSON. Browser agent-session creation and polling now discard only those two transport fields before checking their exact input contract. Browser authority still comes only from the Authorization header, creation budgets still use the actual request address, and signed driver identity and payload checks are unchanged.
