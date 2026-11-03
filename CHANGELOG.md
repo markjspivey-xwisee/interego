@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-11-03 — Compose catalogued evidence reviews above core
+
+An optional Layer 3 client composition discovers signed HyprCat procedure products, uses the existing DifferentialKernel to explain exact whole-procedure reuse, renders canonical HMD for review, and executes the reviewed signed request through the existing read-only procedure runner. Ambiguous or partial matches require a decision; changed invocation inputs or catalogue/procedure pins require fresh review. Core, existing runner and DifferentialKernel code remain unchanged.
+
+The original 28-step performance/learning procedure and a separate 16-step organizational-memory procedure complete through separate offline CLI processes. The organizational procedure also completed against real signed owner-agent shared records; advancing its cited source caused the unchanged request to block without a success output. Refreshing only its signed domain data restored completion. This verifies functional reuse and source freshness, not a new learning assessment, business approval, cross-owner federation or competitive performance result. The integration retains private durable journals and commits only aggregate proof. Focused Node tests, existing HMD tests and the repository typecheck gate pass. See [the composition and its evidence limits](integrations/procedure-composition/README.md).
+
 ## 2026-11-03 - Keep Foxxi HTTP context outside agent-session inputs
 
 The deployed Foxxi middleware adds internal client-address and caller-token context to parsed JSON. Browser agent-session creation and polling now discard only those two transport fields before checking their exact input contract. Browser authority still comes only from the Authorization header, creation budgets still use the actual request address, and signed driver identity and payload checks are unchanged.

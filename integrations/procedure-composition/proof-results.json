@@ -3,6 +3,7 @@
   "date": "2026-11-03",
   "layer": "optional L3 client composition",
   "baselineCommit": "f9ef49cb28ad3f28ac14506dbf102409fbedf348",
+  "implementationCommit": "fb5eed9953be684d29e7feae8754b2e637e8afd3",
   "offline": {
     "host": "explicit offline fixture, separate preparation/execution CLI processes",
     "runs": [
@@ -50,6 +51,17 @@
         "failedRoutineCalls": 0,
         "successOutputProduced": false,
         "journalTail": "2b7e85dd352b5ed87ac8e08fbd531093f9eb3876dc4dea92868c7c44a9ff0f89"
+      },
+      {
+        "id": "refreshed-organizational-review-stable-checkpoint",
+        "status": "completed",
+        "preparationCalls": 7,
+        "executionCalls": 19,
+        "procedureStepsCompleted": 16,
+        "routineCalls": 7,
+        "failedRoutineCalls": 0,
+        "change": "Only signed domain publications were refreshed: a stable evidence checkpoint, decision citation, packet, request and catalogue link. Integration, runner and procedure code were unchanged.",
+        "journalTail": "068db63b8f3dd549654d9ce4bfbee6fdee0e5a910a89b7e7202b8cbda0945a14"
       }
     ],
     "interruptedSetupAttempts": [
@@ -69,6 +81,7 @@
       "platform": "Windows, Node 22"
     },
     "broaderHmdSuite": { "passed": 28, "failed": 0, "typecheckGate": "clean after building workspace dependencies" },
+    "initialGitHubCompositionWorkflow": { "commit": "fb5eed9953be684d29e7feae8754b2e637e8afd3", "windows": "success", "linux": "success" },
     "boundaryChecks": [
       "emergence-boundary",
       "base-neutrality",
