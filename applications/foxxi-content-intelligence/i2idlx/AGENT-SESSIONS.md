@@ -43,6 +43,8 @@ disconnect, invitation replacement, expiry and stale revisions reject later resu
 
 The separate `/i2idlx/api/agent-sessions` routes maintain bounded, ephemeral exchanges.
 They do not change the existing public, stateless, read-only `/i2idlx/mcp` tool contract.
+Foxxi's internal HTTP client-address and caller-token fields are discarded at the browser
+route boundary. They are never session arguments, browser authority or creation-budget keys.
 Driver operations require the existing signed caller verifier, an explicit invitation
 claim, and the resulting session-scoped driver capability. Browser operations require
 their independent in-memory capability. Tokens do not travel in URLs or browser storage.

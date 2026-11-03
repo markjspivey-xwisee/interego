@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-11-03 - Keep Foxxi HTTP context outside agent-session inputs
+
+The deployed Foxxi middleware adds internal client-address and caller-token context to parsed JSON. Browser agent-session creation and polling now discard only those two transport fields before checking their exact input contract. Browser authority still comes only from the Authorization header, creation budgets still use the actual request address, and signed driver identity and payload checks are unchanged.
+
+HTTP tests now include that context decoration and check that body tokens cannot authorize a browser or override creation budgets. The packaged-server startup proof exercises creation, capability-protected status, invalid body-token refusal and disconnect through the actual entrypoint middleware before an image can ship.
+
 ## 2026-11-02 — Pair a standalone Interpretant conversation with an external agent
 
 Interpretant retains its embedded glossary chat and adds in-page intervention discussion with per-question source retrieval, citation context, recent history and cancellation. An explicitly paired external agent can supply reasoning through its existing model session, including the original live Orchestrate sandbox's plain prompts, no-argument tools and cumulative handoffs; ChatGPT conversation handoffs, existing host adapters, Interego pod saves and the prior API fallback remain separate optional paths.

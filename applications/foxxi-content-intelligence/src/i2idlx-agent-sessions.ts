@@ -320,6 +320,15 @@ function fail(res: Response, e: unknown): void {
   const status = e instanceof AgentSessionError ? e.status : 500;
   res.set('Cache-Control', 'no-store').status(status).json({ error: e instanceof AgentSessionError ? e.message : 'Agent-session operation failed.' });
 }
+/** Foxxi adds these two transport fields before routing. They carry no session
+ * authority: browser credentials come only from the Authorization header and
+ * creation limits use req.ip, never a body-supplied client address. */
+function browserArguments(value: unknown): Row {
+  const body = { ...record(value) };
+  delete body.__client_ip;
+  delete body.__caller_token;
+  return body;
+}
 export function attachAgentSessionRoutes(app: Express, config: AgentSessionConfig): AgentSessionStore {
   const store = new AgentSessionStore(config), base = new URL(config.baseUrl).origin;
   store.startAutomaticSweep();
@@ -337,11 +346,11 @@ export function attachAgentSessionRoutes(app: Express, config: AgentSessionConfi
     if (origin && origin !== base) reject('Cross-origin browser agent-session request refused.', 403);
   }
   app.post(AGENT_SESSION_PATH + '/create', (req, res) => {
-    try { browserOrigin(req); exact(record(req.body), []); respond(res, store.create(req.ip ?? req.socket.remoteAddress ?? 'unknown')); }
+    try { browserOrigin(req); exact(browserArguments(req.body), []); respond(res, store.create(req.ip ?? req.socket.remoteAddress ?? 'unknown')); }
     catch (e) { fail(res, e); }
   });
   app.post(AGENT_SESSION_PATH + '/browser', (req, res) => {
-    try { browserOrigin(req); const auth = req.get('Authorization'); respond(res, store.browser(req.body, auth?.startsWith('Bearer ') ? auth.slice(7) : null)); }
+    try { browserOrigin(req); const auth = req.get('Authorization'); respond(res, store.browser(browserArguments(req.body), auth?.startsWith('Bearer ') ? auth.slice(7) : null)); }
     catch (e) { fail(res, e); }
   });
   app.post(AGENT_SESSION_PATH + '/driver', driverAdmission, async (req, res) => {

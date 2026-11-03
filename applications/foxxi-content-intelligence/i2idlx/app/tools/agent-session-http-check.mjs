@@ -14,6 +14,17 @@ import { createAgentSessionClient } from '../src/agent-session.js';
 const FIXTURE_ACTOR = 'did:web:fixture.invalid:agents:http-integration';
 const app = express();
 app.use(express.json({ limit: '600kb' }));
+// Context decoration performed upstream by the real Foxxi entrypoint. Its
+// packaged startup smoke also exercises the real middleware and these routes.
+app.use((req, _res, next) => {
+  if (req.body && typeof req.body === 'object') {
+    req.body.__client_ip = req.ip;
+    const header = req.get('Authorization') || '';
+    const token = header.slice(0, 7).toLowerCase() === 'bearer ' ? header.slice(7).trim() : '';
+    if (token) req.body.__caller_token = token;
+  }
+  next();
+});
 const server = createServer(app);
 await new Promise((resolve, reject) => { server.once('error', reject); server.listen(0, '127.0.0.1', resolve); });
 const address = server.address();
