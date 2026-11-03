@@ -368,8 +368,8 @@ def run(stubbed: bool, width=1440, height=900, shots=False):
             check(ask_nav.count() == 1, "[bare] Ask remains visible in navigation without a browser model")
             ask_nav.click()
             page.wait_for_selector("#main .empty b")
-            check(page.locator("#main .empty b").inner_text() == "Use Ask in your AI client",
-                  "[bare] the visible Ask entry opens the connected-client workflow")
+            check(page.locator("#main .empty b").inner_text() == "Connect an AI agent to ask here",
+                  "[bare] the visible Ask entry offers the optional agent connection for in-page chat")
             controls_url = "https://foxxi-bridge.interego.xwisee.com/i2idlx/capabilities.ttl"
             check(page.locator("#main a", has_text="Discoverable controls").get_attribute("href") == controls_url,
                   "[bare] Ask links to the canonical discoverable controls")
