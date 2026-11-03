@@ -14,6 +14,7 @@ import {
 import { readDelegationCredential, verifyAgentDelegation } from '@interego/solid';
 import type { VerifyPrivateCaller } from './private-performance-auth.js';
 import { attachClientTaskRoutes } from './i2idlx-client-tasks.js';
+import { attachAgentSessionRoutes } from './i2idlx-agent-sessions.js';
 import { attachSemanticTaskRoutes } from './i2idlx-semantic-tasks.js';
 import { semanticCheckOperations } from './i2idlx-semantic-affordances.js';
 import { foxxiAffordances } from '../affordances.js';
@@ -323,6 +324,8 @@ export function attachWorkbenchRoutes(app: Express, config: WorkbenchConfig): vo
   attachSemanticTaskRoutes(app, config);
   const checkOperations = semanticCheckOperations(base);
   attachClientTaskRoutes(app, { baseUrl: base, appDataFile: config.appDataFile, checkOperations });
+  // Independent, explicitly paired agent execution; the public MCP packet surface stays read-only.
+  attachAgentSessionRoutes(app, { baseUrl: base, verifyCaller: config.verifyCaller });
   // Derive both discovery representations from the actual vertical declarations.
   // The generic Interego follower parses Turtle and resolves the action subject;
   // the existing JSON clients retain their original shape and receive its link.
@@ -403,3 +406,4 @@ export function attachWorkbenchRoutes(app: Express, config: WorkbenchConfig): vo
     res.set('X-Content-Type-Options', 'nosniff'); next();
   }, express.static(dist, { dotfiles: 'deny', index: false, redirect: false, fallthrough: true }));
 }
+
