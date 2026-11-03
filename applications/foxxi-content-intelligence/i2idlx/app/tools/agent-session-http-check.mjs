@@ -19,8 +19,9 @@ app.use(express.json({ limit: '600kb' }));
 app.use((req, _res, next) => {
   if (req.body && typeof req.body === 'object') {
     req.body.__client_ip = req.ip;
-    const match = /^Bearer\s+(.+)$/i.exec(req.get('Authorization') || '');
-    if (match) req.body.__caller_token = match[1];
+    const header = req.get('Authorization') || '';
+    const token = header.slice(0, 7).toLowerCase() === 'bearer ' ? header.slice(7).trim() : '';
+    if (token) req.body.__caller_token = token;
   }
   next();
 });
