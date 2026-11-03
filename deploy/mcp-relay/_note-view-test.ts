@@ -18,6 +18,7 @@ const descriptorTurtle = `@prefix iep: <${IEP}> .
 @prefix hydra: <http://www.w3.org/ns/hydra/core#> .
 @prefix dcat: <http://www.w3.org/ns/dcat#> .
 <https://relay.interego.xwisee.com/u-pk-abc/desc-1.ttl> a iep:ContextDescriptor ;
+  iep:visibility "private" ; iep:encrypted true ;
   iep:describes <urn:graph:note:inline-markdown-presentation:20260713T163954024Z> ;
   iep:affordance <#canDecrypt>, <#renderView> .
 <#canDecrypt> a iep:Affordance, hydra:Operation ;
@@ -48,6 +49,11 @@ check('media type constant is the RFC-honest string', HYPERMEDIA_MARKDOWN_MEDIA_
 check('renders as a HyperMarkdown document', md.startsWith('---\n"@context":'));
 check('the note prose is present (rung 1)', md.includes('# Inline Markdown presentation preference') && md.includes('render the Markdown inline'));
 check('private state (rung 2)', /^state: "private"$/m.test(md));
+const legacyMd = noteToHyperMarkdown({ viewUrl, authority,
+  descriptorTurtle: descriptorTurtle.replace('iep:visibility "private" ; iep:encrypted true ;', ''),
+  plaintextTurtle });
+check('an older note with no audience marker is unknown, not a private guarantee',
+  parseHypermediaMarkdown(legacyMd).state === 'unknown' && !legacyMd.includes('Private note'));
 check('describedby + alternate LINKS present (the missing links)', md.includes('{rel="describedby"') && md.includes('{rel="alternate"'));
 check('CONTROLS present from the descriptor affordances (the missing controls)', md.includes(':::control ') && md.includes(`rel: "${IEP}canDecrypt"`) && md.includes(`rel: "${IEP}renderView"`));
 check('the hostile ::: line did NOT crash + is neutralized (not a live fence)', md.includes(' :::not-a-real-fence'));
@@ -163,6 +169,7 @@ const persistedDescriptor = `@prefix iep: <${IEP}> .
 @prefix hydra: <http://www.w3.org/ns/hydra/core#> .
 @prefix dcat: <http://www.w3.org/ns/dcat#> .
 <> a iep:ContextDescriptor ; iep:describes <${DESC_ID}> ;
+  iep:visibility "private" ; iep:encrypted true ;
   iep:affordance [ a iep:Affordance, hydra:Operation ; iep:action iep:canDecrypt ; hydra:target <https://interego-css.internal.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/context-graphs/geo.envelope.jose.json> ; hydra:method "GET" ] ,
     [ a iep:Affordance, hydra:Operation ; iep:action iep:renderView ; hydra:method "GET" ; hydra:target <${RENDER_TARGET}> ; dcat:mediaType "text/markdown; charset=UTF-8; variant=CommonMark" ] .`;
 const georgioPayload = `@prefix ieh: <https://markjspivey-xwisee.github.io/interego/ns/harness#> .
