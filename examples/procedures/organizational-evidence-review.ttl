@@ -1,0 +1,105 @@
+@prefix pr: <https://markjspivey-xwisee.github.io/interego/ns/procedure#> .
+@prefix dct: <http://purl.org/dc/terms/> .
+@prefix hydra: <http://www.w3.org/ns/hydra/core#> .
+@prefix s: <urn:interego:procedure:organizational-evidence-review:v1#> .
+
+# Optional L3 domain composition. No learning/SCORM/FOXXI dependency.
+<urn:interego:procedure:organizational-evidence-review:v1> a pr:Procedure ;
+  dct:title "Review an organizational decision against its current cited source" ;
+  dct:conformsTo pr:ReadProcedureProfile ; pr:input s:input ; pr:iterationItem s:item ;
+  pr:entry s:packet-read ;
+  pr:step s:packet-read, s:packet, s:packet-binding,
+    s:decision-head, s:decision-current, s:expected-decision, s:decision-read, s:decision-binding,
+    s:evidence-head, s:evidence-current, s:evidence-read, s:evidence-binding,
+    s:decision-fence, s:evidence-fence, s:consistent-observation, s:result .
+
+s:packet-read a pr:Step, hydra:Operation ; pr:key "packet-read" ; pr:kind pr:Read ;
+  hydra:method "GET" ; pr:capability "get_descriptor" ;
+  pr:arguments [ a pr:Object ; pr:field [ pr:key "url" ; pr:value [ a pr:Binding ; pr:source s:input ; pr:pointer "/packetDescriptor" ] ] ] ;
+  pr:next s:packet .
+s:packet pr:key "packet" ; pr:kind pr:Project ; pr:format "signed-json" ;
+  pr:from [ a pr:Binding ; pr:source s:packet-read ; pr:pointer "" ] ; pr:next s:packet-binding .
+s:packet-binding pr:key "packet-binding" ; pr:kind pr:Check ; pr:onFailure pr:Blocked ;
+  dct:description "Packet profile, signer, decision or project binding failed." ;
+  pr:condition [ a pr:And ;
+    pr:condition [ a pr:Equal ; pr:left [ a pr:Binding ; pr:source s:packet ; pr:pointer "/signedBy" ] ; pr:right [ a pr:Binding ; pr:source s:input ; pr:pointer "/trustedSigner" ] ],
+      [ a pr:Equal ; pr:left [ a pr:Binding ; pr:source s:packet ; pr:pointer "/document/trustedSigner" ] ; pr:right [ a pr:Binding ; pr:source s:input ; pr:pointer "/trustedSigner" ] ],
+      [ a pr:Equal ; pr:left [ a pr:Binding ; pr:source s:packet ; pr:pointer "/document/profile" ] ; pr:right "interego.organizational-decision-review/v1" ],
+      [ a pr:Equal ; pr:left [ a pr:Binding ; pr:source s:packet ; pr:pointer "/document/decision/projectIri" ] ; pr:right [ a pr:Binding ; pr:source s:input ; pr:pointer "/expectedProjectIri" ] ],
+      [ a pr:Equal ; pr:left [ a pr:Binding ; pr:source s:packet ; pr:pointer "/document/decision/id" ] ; pr:right [ a pr:Binding ; pr:source s:input ; pr:pointer "/expectedDecisionIri" ] ] ] ;
+  pr:next s:decision-head .
+
+s:decision-head a hydra:Operation ; pr:key "decision-head" ; pr:kind pr:Read ; hydra:method "GET" ; pr:capability "get_current_head" ;
+  pr:arguments [ a pr:Object ; pr:field
+    [ pr:key "pod_url" ; pr:value [ a pr:Binding ; pr:source s:packet ; pr:pointer "/document/sources/decision/podUrl" ] ],
+    [ pr:key "urn" ; pr:value [ a pr:Binding ; pr:source s:packet ; pr:pointer "/document/sources/decision/graphIri" ] ] ] ; pr:next s:decision-current .
+s:decision-current pr:key "decision-current" ; pr:kind pr:Check ; pr:onFailure pr:Blocked ;
+  dct:description "The packet no longer cites the current unambiguous decision." ;
+  pr:condition [ a pr:And ; pr:condition
+    [ a pr:Equal ; pr:left [ a pr:Binding ; pr:source s:decision-head ; pr:pointer "/forked" ] ; pr:right false ],
+    [ a pr:Equal ; pr:left [ a pr:Binding ; pr:source s:decision-head ; pr:pointer "/head/cid" ] ; pr:right [ a pr:Binding ; pr:source s:packet ; pr:pointer "/document/sources/decision/cid" ] ],
+    [ a pr:Equal ; pr:left [ a pr:Binding ; pr:source s:decision-head ; pr:pointer "/head/descriptorUrl" ] ; pr:right [ a pr:Binding ; pr:source s:packet ; pr:pointer "/document/sources/decision/descriptorUrl" ] ] ] ;
+  pr:next s:expected-decision .
+s:expected-decision pr:key "expected-decision" ; pr:kind pr:Expect ; pr:onFailure pr:NeedsDecision ;
+  dct:description "The decision differs from the caller's expectation; review the observation and start a fresh run." ;
+  pr:condition [ a pr:Equal ; pr:left [ a pr:Binding ; pr:source s:decision-head ; pr:pointer "/head/cid" ] ; pr:right [ a pr:Binding ; pr:source s:input ; pr:pointer "/expectedDecisionCid" ] ] ;
+  pr:observation [ a pr:Object ; pr:field [ pr:key "currentCid" ; pr:value [ a pr:Binding ; pr:source s:decision-head ; pr:pointer "/head/cid" ] ] ] ;
+  pr:next s:decision-read .
+s:decision-read a hydra:Operation ; pr:key "decision-read" ; pr:kind pr:Read ; hydra:method "GET" ; pr:capability "get_descriptor" ;
+  pr:arguments [ a pr:Object ; pr:field [ pr:key "url" ; pr:value [ a pr:Binding ; pr:source s:decision-head ; pr:pointer "/head/descriptorUrl" ] ] ] ; pr:next s:decision-binding .
+s:decision-binding pr:key "decision-binding" ; pr:kind pr:Check ; pr:onFailure pr:Blocked ;
+  dct:description "The signed decision does not match the packet's exact source projection." ;
+  pr:condition [ a pr:And ; pr:condition
+    [ a pr:Equal ; pr:left [ a pr:Binding ; pr:source s:decision-read ; pr:pointer "/authorship/authorshipVerified" ] ; pr:right true ],
+    [ a pr:Equal ; pr:left [ a pr:Binding ; pr:source s:decision-read ; pr:pointer "/authorship/signedBy" ] ; pr:right [ a pr:Binding ; pr:source s:input ; pr:pointer "/trustedSigner" ] ],
+    [ a pr:Equal ; pr:left [ a pr:Binding ; pr:source s:decision-read ; pr:pointer "/authorship/contentBinding" ] ; pr:right "bound" ],
+    [ a pr:Equal ; pr:left [ a pr:Binding ; pr:source s:decision-read ; pr:pointer "/authorship/descriptorBinding/bound" ] ; pr:right true ],
+    [ a pr:Equal ; pr:left [ a pr:Binding ; pr:source s:decision-read ; pr:pointer "/url" ] ; pr:right [ a pr:Binding ; pr:source s:decision-head ; pr:pointer "/head/descriptorUrl" ] ],
+    [ a pr:Equal ; pr:left [ a pr:Binding ; pr:source s:decision-read ; pr:pointer "/graph/content" ] ; pr:right [ a pr:Binding ; pr:source s:packet ; pr:pointer "/document/sources/decision/content" ] ] ] ;
+  pr:next s:evidence-head .
+
+s:evidence-head a hydra:Operation ; pr:key "evidence-head" ; pr:kind pr:Read ; hydra:method "GET" ; pr:capability "get_current_head" ;
+  pr:arguments [ a pr:Object ; pr:field
+    [ pr:key "pod_url" ; pr:value [ a pr:Binding ; pr:source s:packet ; pr:pointer "/document/sources/evidence/podUrl" ] ],
+    [ pr:key "urn" ; pr:value [ a pr:Binding ; pr:source s:packet ; pr:pointer "/document/sources/evidence/graphIri" ] ] ] ; pr:next s:evidence-current .
+s:evidence-current pr:key "evidence-current" ; pr:kind pr:Check ; pr:onFailure pr:Blocked ;
+  dct:description "The cited evidence was superseded or forked; prepare a fresh packet." ;
+  pr:condition [ a pr:And ; pr:condition
+    [ a pr:Equal ; pr:left [ a pr:Binding ; pr:source s:evidence-head ; pr:pointer "/forked" ] ; pr:right false ],
+    [ a pr:Equal ; pr:left [ a pr:Binding ; pr:source s:evidence-head ; pr:pointer "/head/cid" ] ; pr:right [ a pr:Binding ; pr:source s:packet ; pr:pointer "/document/sources/evidence/cid" ] ],
+    [ a pr:Equal ; pr:left [ a pr:Binding ; pr:source s:evidence-head ; pr:pointer "/head/descriptorUrl" ] ; pr:right [ a pr:Binding ; pr:source s:packet ; pr:pointer "/document/sources/evidence/descriptorUrl" ] ] ] ;
+  pr:next s:evidence-read .
+s:evidence-read a hydra:Operation ; pr:key "evidence-read" ; pr:kind pr:Read ; hydra:method "GET" ; pr:capability "get_descriptor" ;
+  pr:arguments [ a pr:Object ; pr:field [ pr:key "url" ; pr:value [ a pr:Binding ; pr:source s:evidence-head ; pr:pointer "/head/descriptorUrl" ] ] ] ; pr:next s:evidence-binding .
+s:evidence-binding pr:key "evidence-binding" ; pr:kind pr:Check ; pr:onFailure pr:Blocked ;
+  dct:description "The cited source is not signed, bound and identical to the packet's selected source." ;
+  pr:condition [ a pr:And ; pr:condition
+    [ a pr:Equal ; pr:left [ a pr:Binding ; pr:source s:evidence-read ; pr:pointer "/authorship/authorshipVerified" ] ; pr:right true ],
+    [ a pr:Equal ; pr:left [ a pr:Binding ; pr:source s:evidence-read ; pr:pointer "/authorship/signedBy" ] ; pr:right [ a pr:Binding ; pr:source s:input ; pr:pointer "/trustedSigner" ] ],
+    [ a pr:Equal ; pr:left [ a pr:Binding ; pr:source s:evidence-read ; pr:pointer "/authorship/contentBinding" ] ; pr:right "bound" ],
+    [ a pr:Equal ; pr:left [ a pr:Binding ; pr:source s:evidence-read ; pr:pointer "/authorship/descriptorBinding/bound" ] ; pr:right true ],
+    [ a pr:Equal ; pr:left [ a pr:Binding ; pr:source s:evidence-read ; pr:pointer "/url" ] ; pr:right [ a pr:Binding ; pr:source s:evidence-head ; pr:pointer "/head/descriptorUrl" ] ],
+    [ a pr:Equal ; pr:left [ a pr:Binding ; pr:source s:evidence-read ; pr:pointer "/graph/content" ] ; pr:right [ a pr:Binding ; pr:source s:packet ; pr:pointer "/document/sources/evidence/content" ] ] ] ;
+  pr:next s:decision-fence .
+s:decision-fence a hydra:Operation ; pr:key "decision-fence" ; pr:kind pr:Read ; hydra:method "GET" ; pr:capability "get_current_head" ;
+  pr:arguments [ a pr:Object ; pr:field
+    [ pr:key "pod_url" ; pr:value [ a pr:Binding ; pr:source s:packet ; pr:pointer "/document/sources/decision/podUrl" ] ],
+    [ pr:key "urn" ; pr:value [ a pr:Binding ; pr:source s:packet ; pr:pointer "/document/sources/decision/graphIri" ] ] ] ; pr:next s:evidence-fence .
+s:evidence-fence a hydra:Operation ; pr:key "evidence-fence" ; pr:kind pr:Read ; hydra:method "GET" ; pr:capability "get_current_head" ;
+  pr:arguments [ a pr:Object ; pr:field
+    [ pr:key "pod_url" ; pr:value [ a pr:Binding ; pr:source s:packet ; pr:pointer "/document/sources/evidence/podUrl" ] ],
+    [ pr:key "urn" ; pr:value [ a pr:Binding ; pr:source s:packet ; pr:pointer "/document/sources/evidence/graphIri" ] ] ] ; pr:next s:consistent-observation .
+s:consistent-observation pr:key "consistent-observation" ; pr:kind pr:Check ; pr:onFailure pr:Blocked ;
+  dct:description "A decision or cited source changed during review." ;
+  pr:condition [ a pr:And ; pr:condition
+    [ a pr:Equal ; pr:left [ a pr:Binding ; pr:source s:decision-fence ; pr:pointer "/forked" ] ; pr:right false ],
+    [ a pr:Equal ; pr:left [ a pr:Binding ; pr:source s:evidence-fence ; pr:pointer "/forked" ] ; pr:right false ],
+    [ a pr:Equal ; pr:left [ a pr:Binding ; pr:source s:decision-fence ; pr:pointer "/head" ] ; pr:right [ a pr:Binding ; pr:source s:decision-head ; pr:pointer "/head" ] ],
+    [ a pr:Equal ; pr:left [ a pr:Binding ; pr:source s:evidence-fence ; pr:pointer "/head" ] ; pr:right [ a pr:Binding ; pr:source s:evidence-head ; pr:pointer "/head" ] ] ] ;
+  pr:next s:result .
+s:result pr:key "result" ; pr:kind pr:Output ;
+  pr:value [ a pr:Object ; pr:field
+    [ pr:key "decision" ; pr:value [ a pr:Binding ; pr:source s:packet ; pr:pointer "/document/decision" ] ],
+    [ pr:key "decisionHead" ; pr:value [ a pr:Binding ; pr:source s:decision-fence ; pr:pointer "/head" ] ],
+    [ pr:key "citedSourceHead" ; pr:value [ a pr:Binding ; pr:source s:evidence-fence ; pr:pointer "/head" ] ],
+    [ pr:key "limit" ; pr:value [ a pr:Binding ; pr:source s:packet ; pr:pointer "/document/limit" ] ] ] .

@@ -1,0 +1,41 @@
+name: Optional evidence-review composition
+on:
+  pull_request:
+    paths:
+      - 'integrations/procedure-composition/**'
+      - 'integrations/procedure-runner/**'
+      - 'integrations/affordance-surface/differential-kernel.ts'
+      - 'examples/procedures/**'
+      - 'packages/core/**'
+      - 'package.json'
+      - 'package-lock.json'
+      - '.github/workflows/procedure-composition.yml'
+  push:
+    branches: [master]
+    paths:
+      - 'integrations/procedure-composition/**'
+      - 'integrations/procedure-runner/**'
+      - 'integrations/affordance-surface/differential-kernel.ts'
+      - 'examples/procedures/**'
+      - 'packages/core/**'
+      - 'package.json'
+      - 'package-lock.json'
+      - '.github/workflows/procedure-composition.yml'
+permissions:
+  contents: read
+jobs:
+  two-domains:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - run: npm run build:core
+      - run: node --import tsx --test integrations/procedure-composition/*.test.mjs integrations/procedure-runner/*.test.mjs
+      - run: node --import tsx integrations/procedure-composition/demo.mjs composition-proof

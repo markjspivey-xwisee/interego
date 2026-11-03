@@ -275,6 +275,7 @@ these layers.
 | `integrations/openclaw-memory` | L3 | composition | A memory engine for another agent runtime. |
 | `integrations/pgsl-css-accessor` | L3 | composition | The lattice behind the pod server. |
 | `integrations/procedure-runner` | L3 | composition | Runs published procedures. |
+| `integrations/procedure-composition` | L3 | composition | Optional HyprCat discovery, Differential Reuse selection and HMD review over the existing read-procedure runner. |
 | `integrations/python-verifier` | L3 | composition | A second-language verifier. |
 | `integrations/tests` | — | composition | Tests that compose verticals and examples on purpose. |
 | `applications/*` | vertical | vertical | Each vertical, in its own namespace outside the protocol's. |
