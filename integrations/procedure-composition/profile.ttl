@@ -2,19 +2,21 @@
 @prefix owl: <http://www.w3.org/2002/07/owl#> .
 @prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
 @prefix dct: <http://purl.org/dc/terms/> .
+@prefix dcat: <http://www.w3.org/ns/dcat#> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
 @prefix hyprcat: <https://markjspivey-xwisee.github.io/interego/ns/hyprcat#> .
 
 # Optional L3 client profile. Local terms extend no core ontology or MCP surface.
 <urn:interego:procedure-composition:profile:v1> a owl:Ontology ;
   dct:title "Catalogue profile for whole read-procedure reuse" ;
   dct:description "Opt-in catalogue interpretation, exact reuse selection, HMD review and signed request execution. Catalogue metadata supplies no new execution authority." .
-pc:Catalog a owl:Class ; rdfs:subClassOf hyprcat:FederatedCatalog .
-pc:ProcedureProduct a owl:Class ; rdfs:subClassOf hyprcat:FederatedDataProduct .
+pc:Catalog a owl:Class ; rdfs:subClassOf hyprcat:FederatedCatalog, dcat:Catalog .
+pc:ProcedureProduct a owl:Class ; rdfs:subClassOf hyprcat:FederatedDataProduct, dcat:Dataset .
 pc:domain a owl:ObjectProperty ; rdfs:comment "Exact application domain IRI matched against the task." .
 pc:goal a owl:ObjectProperty ; rdfs:comment "Exact requested outcome IRI, not a fuzzy natural-language embedding." .
 pc:profile a owl:ObjectProperty ; rdfs:comment "Installed read-procedure profile required by the task." .
 pc:procedure a owl:ObjectProperty ; rdfs:comment "Named root of the procedure loaded from the signed request." .
 pc:request a owl:ObjectProperty ; rdfs:comment "Navigation to the signed invocation request; not a server-side Run action." .
-pc:Review a owl:Class .
-pc:Result a owl:Class .
+pc:Review a owl:Class ; rdfs:subClassOf prov:Entity .
+pc:Result a owl:Class ; rdfs:subClassOf prov:Entity .
 pc:reviewDigest a owl:DatatypeProperty ; rdfs:comment "SHA-256 of the canonical review object, including trust bindings, catalogue heads, invocation inputs and compiled procedure. Not a signature or credential." .

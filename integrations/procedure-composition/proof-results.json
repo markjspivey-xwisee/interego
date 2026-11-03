@@ -76,11 +76,13 @@
   },
   "validation": {
     "focusedNodeTests": {
-      "passed": 53,
+      "passed": 54,
       "failed": 0,
       "platform": "Windows, Node 22"
     },
     "broaderHmdSuite": { "passed": 28, "failed": 0, "typecheckGate": "clean after building workspace dependencies" },
+    "ownershipTableSuite": { "passed": 4, "failed": 0 },
+    "profileGrounding": "All optional profile classes specialize existing W3C types; the profile introduces no new primitive.",
     "initialGitHubCompositionWorkflow": { "commit": "fb5eed9953be684d29e7feae8754b2e637e8afd3", "windows": "success", "linux": "success" },
     "boundaryChecks": [
       "emergence-boundary",

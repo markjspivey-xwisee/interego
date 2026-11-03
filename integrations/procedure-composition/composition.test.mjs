@@ -1,10 +1,19 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { parseHypermediaMarkdown } from '../../packages/core/dist/kernel/hypermedia-markdown.js';
 import { prepareComposition, executeComposition } from './composition.mjs';
-import { parseProcedureCatalog, renderCatalog, PC, HC } from './profile.mjs';
+import { parseProcedureCatalog, renderCatalog, graphIndex, PC, HC } from './profile.mjs';
 import { prepareDecisionPacket } from './organizational-packet.mjs';
 import { fixture, learning, organizational, SIGNER, ISSUER } from './fixtures.mjs';
+
+test('the optional profile introduces no ungrounded class or new primitive', () => {
+  const graph = graphIndex(readFileSync(new URL('./profile.ttl', import.meta.url), 'utf8'));
+  const classes = [...graph.nodes.keys()].filter(id => graph.typed(id, 'http://www.w3.org/2002/07/owl#Class'));
+  assert.ok(classes.length > 0);
+  for (const id of classes) assert.ok(graph.links(id, 'http://www.w3.org/2000/01/rdf-schema#subClassOf')
+    .some(parent => parent.startsWith('http://www.w3.org/')), `${id} must specialize an existing W3C type`);
+});
 
 for (const [name, task, steps] of [['learning', learning, 28], ['organizational', organizational, 16]]) {
   test(`unchanged composition discovers, selects, reviews and executes the ${name} domain`, async () => {
