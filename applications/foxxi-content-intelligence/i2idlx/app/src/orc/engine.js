@@ -111,7 +111,10 @@ export function useOrchestra(trace) {
     let on = true;
     caps.sample.limits().then((l) => {
       if (!on) return;
-      setLive(l && l.tools ? { available: true, maxTools: l.tools.maxCount || 5 } : { available: false, reason: "This view can't give your connected model page tools, so only the recorded run is available here." });
+      setLive(l && l.tools ? {
+        available: true, maxTools: l.tools.maxCount || 5,
+        maxConcurrentRequests: Number.isSafeInteger(l.maxConcurrentRequests) && l.maxConcurrentRequests > 0 ? Math.min(MAX_PARALLEL, l.maxConcurrentRequests) : MAX_PARALLEL,
+      } : { available: false, reason: "This view can't give your connected model page tools, so only the recorded run is available here." });
     }).catch(() => on && setLive({ available: false, reason: "your connected model isn't available in this view." }));
     return () => { on = false; };
   }, [caps.resolved, caps.sample]);
@@ -279,7 +282,7 @@ export function useOrchestra(trace) {
     setStep(step.id, "done");
   };
 
-  const runLiveTeam = async (r, tier, maxTools) => {
+  const runLiveTeam = async (r, tier, maxTools, maxConcurrentRequests) => {
     const handoffs = [];
     const status = new Map(STEPS.map((s) => [s.id, "pending"]));
     const settled = (id) => ["done", "skipped"].includes(status.get(id));
@@ -292,7 +295,7 @@ export function useOrchestra(trace) {
         if (!need) { status.set(s.id, "skipped"); setStep(s.id, "skipped"); }
       }
       const ready = STEPS.filter((s) => status.get(s.id) === "pending" && s.after.every(settled));
-      for (const s of ready.slice(0, Math.max(0, MAX_PARALLEL - active.size))) {
+      for (const s of ready.slice(0, Math.max(0, maxConcurrentRequests - active.size))) {
         status.set(s.id, "running");
         const p = liveStep(r, s, handoffs, tier, maxTools).then(() => { status.set(s.id, "done"); active.delete(s.id); });
         p.catch(() => {}); // the race below reports the first failure; later ones are the abort it causes
@@ -331,7 +334,7 @@ export function useOrchestra(trace) {
         await replay(r);
       } else {
         add({ id: nid(), type: "note", tone: "muted", text: `Live run on your connected model account (${opts.tier === "quick" ? "fast" : "thorough"}): one your connected model call per step, each with only that step's tools. Nothing leaves the sandbox without your approval.` });
-        await runLiveTeam(r, opts.tier || "quick", live.maxTools || 5);
+        await runLiveTeam(r, opts.tier || "quick", live.maxTools || 5, live.maxConcurrentRequests || MAX_PARALLEL);
       }
       if (run.current === r) { setProgress(1); setState("done"); run.current = null; }
     } catch (e) {

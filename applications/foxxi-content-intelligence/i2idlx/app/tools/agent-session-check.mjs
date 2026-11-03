@@ -1,6 +1,9 @@
 // Deterministic browser-transport checks; no model, credentials, server or host simulation is claimed.
 import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
+import { runInNewContext } from 'node:vm';
 import { createAgentSessionClient, validateAgentToolArguments } from '../src/agent-session.js';
+import { ORG, RECORDS, AGENTS, STEPS, stepById, agentById } from '../src/orc/scenario.js';
 
 const SESSION = '1'.repeat(32), BROWSER = '2'.repeat(64), INVITE = '3'.repeat(64);
 const expires = '2099-01-01T00:00:00.000Z';
@@ -160,4 +163,97 @@ await test('expired server session disables sampling and disconnect erases local
   assert(calls.some(call => call.body.operation === 'disconnect'));
 });
 
-process.stdout.write(count + ' agent session transport checks passed. No model or production request was made.\n');
+// Run the real hook and dependency scheduler with deterministic completions. Semantic
+// tools are fixtures here; the existing orchestration checks cover their behavior.
+await test('overlapping consumers fail without cancelling or replacing the active turn', async () => {
+  let release;
+  const held = new Promise(resolve => { release = resolve; });
+  const { client, calls } = fixture(async body => {
+    assert.equal(body.operation, 'request');
+    await held;
+    return response(turn('completed', 1, 'The first answer.'));
+  });
+  await ready(client);
+  const sample = client.getSample(), firstController = new AbortController(), secondController = new AbortController();
+  const first = sample('First consumer.', { signal: firstController.signal });
+  await assert.rejects(sample('Second consumer.', { signal: secondController.signal }), error => error.code === 'rate_limited');
+  secondController.abort();
+  assert.equal(firstController.signal.aborted, false);
+  assert.equal(calls.filter(call => call.body.operation === 'request').length, 1);
+  release();
+  assert.equal((await first).text, 'The first answer.');
+  assert.equal(calls.filter(call => call.body.operation === 'cancel').length, 0);
+});
+
+const orchestraSource = await readFile(new URL('../src/orc/engine.js', import.meta.url), 'utf8');
+function orchestraHarness(sample) {
+  const hooks = [];
+  let cursor = 0;
+  const memo = (fn, deps) => {
+    const n = cursor++, old = hooks[n];
+    if (!old || deps.some((value, i) => value !== old.deps[i])) hooks[n] = { value: fn(), deps };
+    return hooks[n].value;
+  };
+  const useState = initial => {
+    const n = cursor++;
+    if (!hooks[n]) hooks[n] = { value: typeof initial === 'function' ? initial() : initial };
+    return [hooks[n].value, next => { hooks[n].value = typeof next === 'function' ? next(hooks[n].value) : next; }];
+  };
+  const useRef = initial => memo(() => ({ current: initial }), []);
+  const useEffect = (fn, deps) => memo(() => { fn(); }, deps);
+  const React = { useState, useRef, useEffect, useMemo: memo, useCallback: (fn, deps) => memo(() => fn, deps) };
+  const TOOLS = Object.fromEntries(STEPS.flatMap(step => step.tools).map(name => [name, { description: 'Deterministic scheduling fixture.' }]));
+  const context = {
+    React, META: { scheme: { title: 'Test glossary' }, release: 'test' }, C: [],
+    useCaps: () => ({ resolved: true, sample }), useStored: (_key, value) => useState(value),
+    createWorld: () => ({ fixes: [{ status: 'open' }], items: [] }),
+    callTool: () => ({ ok: true, result: {}, summary: 'fixture', ui: [] }), decideGate: () => {}, TOOLS,
+    ORG, RECORDS, AGENTS, STEPS, stepById, agentById, recordedReleaseOf: () => 'test',
+    AbortController, setTimeout, clearTimeout,
+  };
+  const useOrchestra = runInNewContext(orchestraSource.replace(/^import .*\n/gm, '').replaceAll('export function ', 'function ') + '\nuseOrchestra;', context);
+  const render = () => { cursor = 0; return useOrchestra({}); };
+  return { render };
+}
+const flushEffects = async () => { await Promise.resolve(); await Promise.resolve(); };
+const stepIn = prompt => STEPS.find(step => prompt.includes('Your step: ' + step.title + '.'));
+
+await test('all twelve orchestration steps complete through the single-turn paired transport', async () => {
+  const requested = new Set();
+  const { client } = fixture(body => {
+    assert.equal(body.operation, 'request');
+    const step = stepIn(body.messages[0].content);
+    assert.ok(step, 'The actual engine supplies each step prompt.');
+    requested.add(step.id);
+    return response(turn('completed', 1, 'Completed ' + step.id + ' fixture handoff.'));
+  });
+  await ready(client);
+  const sample = client.getSample(), h = orchestraHarness(sample);
+  h.render(); await flushEffects();
+  await h.render().start('live');
+  const final = h.render();
+  assert.equal(final.state, 'done', 'The paired executor must reach the full dependency graph without a concurrent request failure: ' + final.message);
+  assert.equal(requested.size, STEPS.length);
+  assert.equal(Object.values(final.steps).filter(value => value === 'done').length, STEPS.length);
+  assert.equal((await sample.limits()).maxConcurrentRequests, 1);
+});
+
+for (const limit of [undefined, 2, 10, 0]) {
+  await test('host executor retains two concurrent steps with limit ' + String(limit), async () => {
+    let running = 0, peak = 0;
+    const sample = async (prompt, options) => {
+      assert.ok(stepIn(prompt)); assert.equal(options.signal.aborted, false);
+      peak = Math.max(peak, ++running);
+      await new Promise(resolve => setTimeout(resolve, 1));
+      running--;
+      return { text: 'Deterministic fixture handoff.' };
+    };
+    sample.limits = async () => ({ tools: { maxCount: 30 }, ...(limit === undefined ? {} : { maxConcurrentRequests: limit }) });
+    const h = orchestraHarness(sample); h.render(); await flushEffects();
+    await h.render().start('live');
+    assert.equal(h.render().state, 'done');
+    assert.equal(peak, 2, 'Unspecified/invalid limits keep the host default, and wider limits stay capped at two.');
+  });
+}
+
+process.stdout.write(count + ' agent session transport and orchestration checks passed. No model or production request was made.\n');

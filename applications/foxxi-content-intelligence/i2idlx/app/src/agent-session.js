@@ -235,7 +235,7 @@ export function createAgentSessionClient(config = {}) {
   };
   sample.modelTiers = false;
   sample.allowTeamNotes = false;
-  sample.limits = async () => ({ tools: { maxCount: 30 } });
+  sample.limits = async () => ({ tools: { maxCount: 30 }, maxConcurrentRequests: 1 });
   return {
     connect, renewInvitation, disconnect, refresh,
     status: () => ({ ...state }),
