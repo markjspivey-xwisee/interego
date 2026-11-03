@@ -1,5 +1,13 @@
 # Changelog
 
+## 2026-11-02 — Pair a standalone Interpretant conversation with an external agent
+
+Interpretant retains its embedded glossary chat and adds in-page intervention discussion with per-question source retrieval, citation context, recent history and cancellation. An explicitly paired external agent can supply reasoning through its existing model session; ChatGPT conversation handoffs, existing host adapters, Interego pod saves and the prior API fallback remain separate optional paths.
+
+A bounded ephemeral broker uses independent browser and driver capabilities, a one-use invitation, an authenticated Interego actor, turn revisions and leases. Cancellation, expiry, revocation and stale results are checked. Executable glossary tools remain in the browser and paired-agent lookups exclude team annotations. This transport calls no provider API, shares no model credentials and writes no learner or pod record. It does not turn a subscription into an unattended service or claim durable transcript storage.
+
+Contract tests and actual browser-transport/Ask-hook checks cover isolation, streaming snapshots, tool results, cancellation races and resource bounds. These are deterministic software checks; real deployed browser/agent acceptance is recorded separately.
+
 ## 2026-11-01 — Keep audited own-account LMS reconciliations separate from original grades
 
 Three signed Foxxi actions preview, explicitly apply and freshly read a new private owner entry from two original engine-authenticated LRS statements. Preview is read-only and binds a short-lived review to the human controller, caller, exact source facts, legacy failure witness and native revision. Apply checks those facts again and conditionally appends to a separate encrypted native ledger; identical source entries reconcile without another grade or source write. A stable service-key integrity receipt, fresh logical readback and an unchanged observed failure witness are required for confirmation. Shared standard admission limits run before authorization, with bounded client-key growth and the existing owner and concurrency guards retained.
@@ -9008,3 +9016,4 @@ Pre-session capability baseline (inherited):
 - PGSL content-addressed sequence lattice
 - Persistent Solid pod backed by Azure Files
 - Validator module (programmatic SHACL-equivalent) + SHACL shapes export
+
