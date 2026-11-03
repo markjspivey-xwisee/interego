@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-11-02 — Prepare selected health context for the encrypted local-note host
+
+A separate Layer 3 health component prepares explicit, case-bound evidence selections as the existing Windows app's append-note arguments. It preserves exact dependent citations, qualified dates, record statuses, specimen identities, source interpretation limits and omission metadata. Draft questions require explicit inclusion; retrieval queries and unknown fields are excluded. Cross-case references, unresolved citations, inconsistent omission declarations and oversized output are rejected before returning a note.
+
+The adapter performs no host, network, storage, provider, consent or publication action. Its output is plaintext until an independently authorized host saves it. The native read grant still covers all notes; a selected context is not case-scoped authorization. Fictional fixtures and standalone Linux/Windows CI exercise the preparation contract, including native character bounds. Installed-app pairing, encrypted persistence, revocation and broader health-file ingestion remain separate checks.
+
 ## 2026-11-01 — Keep audited own-account LMS reconciliations separate from original grades
 
 Three signed Foxxi actions preview, explicitly apply and freshly read a new private owner entry from two original engine-authenticated LRS statements. Preview is read-only and binds a short-lived review to the human controller, caller, exact source facts, legacy failure witness and native revision. Apply checks those facts again and conditionally appends to a separate encrypted native ledger; identical source entries reconcile without another grade or source write. A stable service-key integrity receipt, fresh logical readback and an unchanged observed failure witness are required for confirmation. Shared standard admission limits run before authorization, with bounded client-key growth and the existing owner and concurrency guards retained.

@@ -1,0 +1,31 @@
+{
+  "schemaVersion": 1,
+  "id": "urn:health-workbench:local-context-adapter:1",
+  "name": "Selected health context to private-note format",
+  "normativeLayer": "L3",
+  "roles": ["health-domain-component", "format-adapter"],
+  "scope": "case-bound",
+  "activation": "explicit-selected-input",
+  "implementation": "./local-context.mjs",
+  "tests": "./test/local-context.test.mjs",
+  "hostReference": "../pod-desktop/AGENT-CONNECTIONS.md",
+  "output": {
+    "kind": "prepared-plaintext-note-arguments",
+    "optionalHostOperation": "interego_save_note",
+    "permissionIfInvoked": "notes:create",
+    "maximumTitleCharacters": 160,
+    "maximumBodyCharacters": 50000
+  },
+  "readPermissionsRequired": [],
+  "networkOperations": [],
+  "storageOperations": [],
+  "providerOperations": [],
+  "publicPublicationOperations": [],
+  "authority": "Caller must separately establish source access and authorize any host operation. Scope declarations and packet validation are not authorization.",
+  "limits": [
+    "This metadata is not an executable desktop extension catalog or a live HTTP affordance.",
+    "No user installation, pairing, encrypted persistence or live source synchronization is established by these tests.",
+    "The current native notes:read grant is not case-scoped; this adapter does not narrow it.",
+    "Health semantics remain outside generic Interego protocol and runtime packages."
+  ]
+}

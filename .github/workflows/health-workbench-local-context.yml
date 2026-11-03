@@ -1,0 +1,31 @@
+name: Local health context adapter
+
+on:
+  pull_request:
+    paths:
+      - 'applications/health-workbench/**'
+      - '.github/workflows/health-workbench-local-context.yml'
+  push:
+    branches: [master]
+    paths:
+      - 'applications/health-workbench/**'
+      - '.github/workflows/health-workbench-local-context.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  selected-context-contract:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+      - name: Test the bounded note-format adapter without a live pod
+        run: node --test applications/health-workbench/test/local-context.test.mjs
