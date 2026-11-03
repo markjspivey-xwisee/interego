@@ -27,5 +27,5 @@ jobs:
       - uses: actions/setup-node@v6
         with:
           node-version: '22'
-      - name: Test the bounded note-format adapter without a live pod
-        run: node --test applications/health-workbench/test/local-context.test.mjs
+      - name: Test context preparation and fictional response verification without a live pod
+        run: node --test applications/health-workbench/test/local-context.test.mjs applications/health-workbench/test/fictional-local-check.test.mjs

@@ -19,7 +19,7 @@ const note = prepareLocalHealthNote(packet, {
 Run the standalone contract suite:
 
 ```sh
-node --test applications/health-workbench/test/local-context.test.mjs
+node --test applications/health-workbench/test/local-context.test.mjs applications/health-workbench/test/fictional-local-check.test.mjs
 ```
 
 ## The local app's existing contract
@@ -51,5 +51,7 @@ The accompanying fixture is fictional and contains no real patient. The workflow
 Its synthetic source checkpoint is SHA-256 of the UTF-8 string `Fictional local health context fixture version 1`; it is not a claim about a clinical publisher. The fixture's `responseBytes` describes its compact UTF-8 JSON representation, including that field.
 
 Before claiming a live local integration: verify the installed app/version on the actual Windows computer; inspect the current native permission contract; use selected fictional context for an authorized append; verify encrypted persistence and readback through the intended route; test expiry/revocation; and independently decide any broader data access. Do not create a hosted identity, change the existing MCP connection, expose a tunnel or turn on sharing as an implicit setup step.
+
+[Windows verification instructions](VERIFY-WINDOWS.md) include an executable fictional-note generator and exact response comparator. A create-only save returns the complete created note, so that first comparison needs no read grant. The comparator explicitly leaves response authenticity, installed-app behavior, encryption, restart persistence, expiry and revocation unverified; those require separate native observations.
 
 Further health-file ingestion, attachments, resource-scoped read grants, assertion review and public-release staging belong to separate domain/host contracts. Automatic provider synchronization and private-data publication are not implemented here.
