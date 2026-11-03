@@ -1,0 +1,93 @@
+{
+  "schema": "interego.procedure-composition.functional-proof/v1",
+  "date": "2026-11-03",
+  "layer": "optional L3 client composition",
+  "baselineCommit": "f9ef49cb28ad3f28ac14506dbf102409fbedf348",
+  "offline": {
+    "host": "explicit offline fixture, separate preparation/execution CLI processes",
+    "runs": [
+      {
+        "domain": "performance-learning",
+        "status": "completed",
+        "procedureSteps": 28,
+        "routineCalls": 10,
+        "preparationCalls": 7,
+        "executionCalls": 22
+      },
+      {
+        "domain": "organizational-memory",
+        "status": "completed",
+        "procedureSteps": 16,
+        "routineCalls": 7,
+        "preparationCalls": 7,
+        "executionCalls": 19
+      }
+    ],
+    "signatures": "fixtures",
+    "domainOutcomes": "fixtures"
+  },
+  "live": {
+    "host": "Existing authenticated Interego MCP connection; responses forwarded unchanged to the CLI",
+    "scope": "Owner's actual project-scope decision and signed cited records; two catalogues on one owner pod",
+    "runs": [
+      {
+        "id": "initial-organizational-review",
+        "status": "completed",
+        "preparationCalls": 7,
+        "executionCalls": 19,
+        "procedureStepsCompleted": 16,
+        "routineCalls": 7,
+        "failedRoutineCalls": 0,
+        "journalTail": "f343b13eaafc76044e8cec7459ecd824d8956ee63c5d8dab8e006a6cd640a14c"
+      },
+      {
+        "id": "superseded-cited-project-record",
+        "status": "blocked",
+        "step": "evidence-current",
+        "executionCalls": 14,
+        "procedureStepsCompleted": 9,
+        "routineCalls": 4,
+        "failedRoutineCalls": 0,
+        "successOutputProduced": false,
+        "journalTail": "2b7e85dd352b5ed87ac8e08fbd531093f9eb3876dc4dea92868c7c44a9ff0f89"
+      }
+    ],
+    "interruptedSetupAttempts": [
+      {
+        "description": "First local host bridge startup was interrupted after a durable intent but before forwarding any Interego call; its local callback state was corrected.",
+        "interegoCallsDispatched": 0,
+        "journalRetainedPrivately": true
+      }
+    ],
+    "authorship": "Relay-signed attribution verified by the authenticated host, with bound content and descriptor location; not caller-key signatures",
+    "rawOperationalEvidence": "Owner-agent shared encrypted Interego resources and owner-private local journals. Internal locators and source payloads omitted here."
+  },
+  "validation": {
+    "focusedNodeTests": {
+      "passed": 53,
+      "failed": 0,
+      "platform": "Windows, Node 22"
+    },
+    "broaderHmdSuite": { "passed": 28, "failed": 0, "typecheckGate": "clean after building workspace dependencies" },
+    "boundaryChecks": [
+      "emergence-boundary",
+      "base-neutrality",
+      "turtle-iri-ratchet",
+      "docs-claim-lint",
+      "ontology-lint",
+      "git diff --check"
+    ]
+  },
+  "measurementLimits": {
+    "comparativeStudy": false,
+    "newLearningAssessment": false,
+    "businessApproval": false,
+    "independentCrossOwnerFederation": false,
+    "modelInvocationsInsideExecutor": 0,
+    "providerInferenceCalls": null,
+    "tokens": null,
+    "monetaryCost": null,
+    "journalHashesAreSignatures": false,
+    "scope": "Functional demonstrations and boundary tests, not independent trials or a competitive latency/cost/success claim."
+  }
+}
