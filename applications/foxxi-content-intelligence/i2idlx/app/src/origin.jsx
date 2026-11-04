@@ -1,3 +1,4 @@
+import { safeNavigationHref } from "./navigation-links.js";
 // Where each thing on screen comes from. I2IDL's published record is one layer; everything else is
 // labelled as I2IDL-X (derived, added or proposed), Interego, Foxxi or this page's team. The labels and
 // their wording come from src/origins.json, the same source as the ontology's i2x:Origins scheme.
@@ -88,7 +89,7 @@ export function LayersModal({ focus, onClose }) {
             </div>
           ))}
         </div>
-        <p className="tiny muted">Switch the lens in the top bar to <b>I2IDL only</b> to see the published record with every layer hidden. Agents get the same labels: they are published in the I2IDL-X ontology as <a href={META.ns + "Origins"} target="_blank" rel="noopener">i2x:Origins</a>, each naming the graphs that hold it.</p>
+        <p className="tiny muted">Switch the lens in the top bar to <b>I2IDL only</b> to see the published record with every layer hidden. Agents get the same labels: they are published in the I2IDL-X ontology as <a href={safeNavigationHref(META.ns + "Origins")} target="_blank" rel="noopener">i2x:Origins</a>, each naming the graphs that hold it.</p>
       </div>
     </Modal>
   );

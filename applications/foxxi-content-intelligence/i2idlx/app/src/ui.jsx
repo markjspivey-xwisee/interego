@@ -1,3 +1,4 @@
+import { safeNavigationHref } from "./navigation-links.js";
 // Shared components: concept chips with hover previews, buttons, popovers, modals, toasts, code blocks.
 import { Icon } from "./icons.jsx";
 import { byId, kindById, fieldById, typeById, RIGHTS, iriOf } from "./data.js";
@@ -92,7 +93,7 @@ export function ConceptChip({ id, shared, onClick, title, children, className })
   const ref = useRef(null);
   if (!c) return <span className="chip soft">{id}</span>;
   return (
-    <a ref={ref} className={cx("cchip", shared && "shared", className)} href={"#c-" + c.id}
+    <a ref={ref} className={cx("cchip", shared && "shared", className)} href={safeNavigationHref("#c-" + c.id)}
       onMouseEnter={() => hover.show(c.id, ref.current)} onMouseLeave={hover.hide} onFocus={() => hover.show(c.id, ref.current)} onBlur={hover.hide}
       onClick={(e) => { hover.now(); if (onClick) { e.preventDefault(); onClick(c.id); } }} title={title}>
       <span className={"dot kd-" + c.k} aria-hidden="true" />
@@ -109,7 +110,7 @@ export function ConceptRef({ id, children, className }) {
   const ref = useRef(null);
   if (!c) return <>{children}</>;
   return (
-    <a ref={ref} className={className || "hx"} href={"#c-" + c.id} onMouseEnter={() => hover.show(c.id, ref.current)} onMouseLeave={hover.hide}
+    <a ref={ref} className={className || "hx"} href={safeNavigationHref("#c-" + c.id)} onMouseEnter={() => hover.show(c.id, ref.current)} onMouseLeave={hover.hide}
       onFocus={() => hover.show(c.id, ref.current)} onBlur={hover.hide} onClick={() => hover.now()}>{children || c.l}</a>
   );
 }

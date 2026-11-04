@@ -3,10 +3,18 @@
 import argparse
 import hashlib
 import json
+import pathlib
 import re
 import sys
 from urllib.parse import urlsplit, urlunsplit
 from urllib.request import Request, urlopen
+
+
+# Explicit loading also works under Python -I, which omits the script directory.
+import importlib.util
+_oracle_spec = importlib.util.spec_from_file_location("corpus_oracle", pathlib.Path(__file__).resolve().parents[1] / "applications/foxxi-content-intelligence/i2idlx/tools/corpus_oracle.py")
+_oracle = importlib.util.module_from_spec(_oracle_spec)
+_oracle_spec.loader.exec_module(_oracle)
 
 
 LAST_GRAPH_COMMIT = "b75261de5ad7851c1f61607091cc00e486bbbb5f"
@@ -72,6 +80,12 @@ def main():
                         data = json.loads(page.locator("#i2-data").text_content())
                         check(label + ":pinned_source", data["meta"]["release"] == "v0.0.93"
                               and data["meta"]["commit"] == LAST_GRAPH_COMMIT and len(data["concepts"]) == 420)
+                        corpus = _oracle.validate_corpus(data)
+                        def visit(name, selector):
+                            page.evaluate("location.hash = " + json.dumps(name))
+                            page.wait_for_selector(selector)
+                        _oracle.assert_browser_corpus(page, corpus, visit)
+                        check(label + ":exact_combined_and_source_only_corpus", True)
                         check(label + ":fresh_visitor", page.evaluate("""() =>
                             typeof window.ethereum === 'undefined' && typeof window.claude === 'undefined'
                             && typeof window.InteregoHost === 'undefined'"""))
@@ -79,7 +93,7 @@ def main():
                         page.locator(".bigsearch").click()
                         palette = page.get_by_role("dialog", name="Search", exact=True)
                         palette.wait_for()
-                        check(label + ":palette_420", bool(re.match(r"^Search 420 terms\b", palette.get_by_role("combobox").get_attribute("placeholder") or "")))
+                        check(label + ":palette_combined", bool(re.match(r"^Search " + str(corpus["combined_count"]) + r" terms\b", palette.get_by_role("combobox").get_attribute("placeholder") or "")))
                         palette.get_by_role("combobox").press("Escape")
 
                         lms = next(c for c in data["concepts"] if c["id"] == "learning-management-systems")

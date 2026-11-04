@@ -1,3 +1,4 @@
+import { safeNavigationHref } from "../navigation-links.js";
 // Compare two or three terms side by side, with how they relate.
 import { byId, kindById, typeById, fieldById, curatedById, SOURCES, ACTIONS, roleById, enactByConcept, mapsByConcept, shortestPaths, relationBetween, directSources } from "../data.js";
 import { Icon } from "../icons.jsx";
@@ -58,7 +59,7 @@ export function Compare({ route }) {
           <Row label="" cs={cs} render={(c) => (
             <div className="cmp-head stack" style={{ gap: 4 }}>
               <div className="row small muted"><span className={"dot kd-" + c.k} />{kindById.get(c.k).label} · {typeById.get(c.t).label}</div>
-              <h3><a href={"#c-" + c.id} style={{ color: "inherit", textDecoration: "none" }}>{c.l}</a></h3>
+              <h3><a href={safeNavigationHref("#c-" + c.id)} style={{ color: "inherit", textDecoration: "none" }}>{c.l}</a></h3>
               {c.origin?.kind === "authored" ? <div className="small"><b>Authored I2IDL-X proposal · Hypothetical</b><div className="tiny muted">By {c.origin.publisher} · catalog {c.origin.catalogVersion} · not adopted by I2IDL</div></div> : <div className="tiny muted">Canonical I2IDL record</div>}
               {c.a.length ? <div className="small muted">also {c.a.join(", ")}</div> : null}
             </div>
@@ -108,14 +109,14 @@ function RelationBanner({ cs, sharedRel, sharedFields, lens }) {
   if (rel === "related") what = <><b>{a.l}</b> and <b>{b.l}</b> are {authored ? "related by a Hypothetical authored I2IDL-X proposal" : "related in I2IDL"}.</>;
   else if (rel === "narrower") what = <><b>{a.l}</b> is narrower than <b>{b.l}</b>{authored ? " in a Hypothetical authored I2IDL-X proposal" : ""}.</>;
   else if (rel === "broader") what = <><b>{a.l}</b> is broader than <b>{b.l}</b>{authored ? " in a Hypothetical authored I2IDL-X proposal" : ""}.</>;
-  else if (paths.length) what = <>No direct link; <b>{a.l}</b> reaches <b>{b.l}</b> in {paths[0].length - 1} steps via {paths[0].slice(1, -1).map((id, i) => <span key={id}>{i ? ", " : ""}<a href={"#c-" + id}>{byId.get(id).l}</a></span>)}{authoredPath ? " (includes Hypothetical authored I2IDL-X links)" : ""}.</>;
+  else if (paths.length) what = <>No direct link; <b>{a.l}</b> reaches <b>{b.l}</b> in {paths[0].length - 1} steps via {paths[0].slice(1, -1).map((id, i) => <span key={id}>{i ? ", " : ""}<a href={safeNavigationHref("#c-" + id)}>{byId.get(id).l}</a></span>)}{authoredPath ? " (includes Hypothetical authored I2IDL-X links)" : ""}.</>;
   else what = <>No route links them in this release.</>;
   return (
     <div className="relation-banner">
       <Icon name="route" /><span className="grow">{what}{cs.length === 2 ? "" : " (first two terms)"}</span>
       {sharedRel.size ? <span>{sharedRel.size} shared related term{sharedRel.size > 1 ? "s" : ""}</span> : null}
       {sharedFields.size ? <span>shared field{sharedFields.size > 1 ? "s" : ""}: {[...sharedFields].map((f) => fieldById.get(f).label).join(", ")}</span> : null}
-      <a className="btn sm" href={`#path-${a.id}~${b.id}`}>Show path</a>
+      <a className="btn sm" href={safeNavigationHref(`#path-${a.id}~${b.id}`)}>Show path</a>
     </div>
   );
 }

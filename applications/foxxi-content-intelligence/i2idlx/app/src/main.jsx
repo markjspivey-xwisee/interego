@@ -1,3 +1,4 @@
+import { safeNavigationHref } from "./navigation-links.js";
 // Interpretant — the app shell: top bar, routing, keyboard, theme, overlays and shared context.
 import { META, conceptsForLens, ITEMS, byId } from "./data.js";
 import { CapsProvider, useCaps, consensus } from "./caps.js";
@@ -95,7 +96,7 @@ function Shell() {
   const nav = (
     <nav className="nav" aria-label="Views">
       {NAV.map((n) => (
-        <a key={n.v} href={"#" + n.h} aria-current={route.view === n.v ? "page" : undefined}>
+        <a key={n.v} href={safeNavigationHref("#" + n.h)} aria-current={route.view === n.v ? "page" : undefined}>
           <Icon name={n.icon} />{n.l}{n.v === "review" && needVotes ? <span className="count" title={`${needVotes} items have no votes yet`}>{needVotes}</span> : null}
           {n.v === "packs" && caps.ws.packs.length ? <span className="count">{caps.ws.packs.length}</span> : null}
         </a>
@@ -152,7 +153,7 @@ function Help({ onClose }) {
         <table className="tbl"><tbody>{keys.map(([k, d]) => <tr key={k}><td className="nowrap"><kbd>{k}</kbd></td><td>{d}</td></tr>)}</tbody></table>
         <div className="stack small" style={{ gap: 6 }}>
           <b>Rights</b>
-          <p className="muted">{META.scheme.rights} I2IDL-original definitions, explanations and modeling: {META.license.holder}, <a href={META.license.url} target="_blank" rel="noopener">{META.license.name}</a> (<a href={META.license.file} target="_blank" rel="noopener">DATA-LICENSE</a>). Every evidence record shows its source's own rights; exports carry the attribution for each source they use.</p>
+          <p className="muted">{META.scheme.rights} I2IDL-original definitions, explanations and modeling: {META.license.holder}, <a href={safeNavigationHref(META.license.url)} target="_blank" rel="noopener">{META.license.name}</a> (<a href={safeNavigationHref(META.license.file)} target="_blank" rel="noopener">DATA-LICENSE</a>). Every evidence record shows its source's own rights; exports carry the attribution for each source they use.</p>
           <b>What is shared here</b>
           <p className="muted">{isChatGPTApp() ? "Ask and Orchestrate send requests to your ChatGPT conversation. Answers and actual check results appear there. Packs, stars, recent terms and form drafts use this browser's storage when available; they are not saved to an Interego pod by this App. Shared review still requires a separately verified Interego identity." : 'Votes, notes and "I use this" marks are encrypted and visible to admitted, verified team members; packs, stars and recent terms are private to you. Ask and Orchestrate use your connected client\'s model subscription, with your own API key as an optional fallback.'}</p>
           <b>What's whose</b>

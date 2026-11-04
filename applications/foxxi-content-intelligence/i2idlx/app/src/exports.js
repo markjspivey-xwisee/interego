@@ -2,6 +2,7 @@
 import { META, byId, iriOf, kindById, typeById, fieldById, directSources, reuseClass, RIGHTS } from "./data.js";
 import { attributionLines, CONCEPT_IDS_EXT, usageStatement } from "./lib.js";
 import { escHtml, csvCell, slugify, ttlStr } from "./util.js";
+import { safeHttpHref } from "./navigation-links.js";
 
 export const FORMATS = [
   { id: "html", label: "Handout", ext: "html", desc: "A printable, styled glossary page with attribution." },
@@ -109,7 +110,7 @@ function handout(pack, ts, att, opts, date, sourceDescription) {
     <p class="d">${escHtml(t.c.d)}</p>
     ${opts.notes && t.c.x ? `<p class="x">${escHtml(t.c.x)}</p>` : ""}
     ${t.note ? `<p class="cn"><b>In this course:</b> ${escHtml(t.note)}</p>` : ""}
-    <p class="m"><a href="${iriOf(t.c.id)}">${iriOf(t.c.id)}</a>${opts.sources ? ` · ${escHtml(directOrAll(t.c))}` : ""}</p>
+    <p class="m">${safeHttpHref(iriOf(t.c.id)) ? `<a href="${escHtml(safeHttpHref(iriOf(t.c.id)))}">${escHtml(iriOf(t.c.id))}</a>` : `<span>${escHtml(iriOf(t.c.id))}</span>`}${opts.sources ? ` · ${escHtml(directOrAll(t.c))}` : ""}</p>
   </article>`).join("");
   return `<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">

@@ -1,3 +1,4 @@
+import { safeNavigationHref } from "../navigation-links.js";
 import { identityCopy } from "../identity-copy.js";
 import { isChatGPTApp } from "../chatgpt-host.js";
 // Packs: build a course glossary from any terms — order, notes, smart suggestions, rights check, exports.
@@ -131,7 +132,7 @@ function PackEditor({ pack, setPack }) {
               <div className="pkterm" key={it.id}>
                 <span className="n">{i + 1}</span>
                 <div style={{ minWidth: 0 }}>
-                  <div className="row"><span className={"dot kd-" + c.k} /><a className="t" href={"#c-" + c.id} style={{ color: "inherit" }}>{c.l}</a>
+                  <div className="row"><span className={"dot kd-" + c.k} /><a className="t" href={safeNavigationHref("#c-" + c.id)} style={{ color: "inherit" }}>{c.l}</a>
                     {reuseClass(c) === "nc" || reuseClass(c) === "permission" ? <RightsBadge rc={reuseClass(c)} /> : null}</div>
                   <div className="d">{c.d}</div>
                   <textarea className="textarea" rows={1} value={it.note} placeholder="Course note (optional): how you use it, an example…" onChange={(e) => setNote(it.id, e.target.value)} />
@@ -231,7 +232,7 @@ function SharedPack({ s }) {
       <div className="pkterms">
         {s.ids.map((id, i) => {
           const c = byId.get(id);
-          return <div className="pkterm" key={id}><span className="n">{i + 1}</span><div><a className="t" href={"#c-" + id} style={{ color: "inherit" }}>{c.l}</a><div className="d">{c.d}</div></div><span /></div>;
+          return <div className="pkterm" key={id}><span className="n">{i + 1}</span><div><a className="t" href={safeNavigationHref("#c-" + id)} style={{ color: "inherit" }}>{c.l}</a><div className="d">{c.d}</div></div><span /></div>;
         })}
       </div>
     </div>

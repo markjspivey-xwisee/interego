@@ -1,3 +1,4 @@
+import { safeNavigationHref } from "../navigation-links.js";
 import { identityCopy } from "../identity-copy.js";
 // One dictionary entry, in two zones that never mix: the I2IDL record exactly as I2IDL publishes it,
 // and what I2IDL-X layers on top (derived reading aids, history, proposals, live capabilities, team use).
@@ -61,7 +62,7 @@ export function Entry({ id, onBack, query }) {
       <div className={cx("entry-body", !x && "solo")}>
         <div className="ed zone z-i2idl">
           <ZoneHead o={authored ? "proposed" : "i2idl"} title={authored ? "Authored I2IDL-X proposal" : "I2IDL record"}
-            sub={authored ? <>By {c.origin.publisher}, catalog {c.origin.catalogVersion}. Hypothetical; not adopted into I2IDL {META.release}. The canonical {META.counts.canonicalConcepts} definitions remain unchanged.</> : <>As published at <a href={iriOf(c.id)} target="_blank" rel="noopener">id.i2idl.org/concepts/{c.id}</a> in {META.release}. Nothing here is changed.</>} />
+            sub={authored ? <>By {c.origin.publisher}, catalog {c.origin.catalogVersion}. Hypothetical; not adopted into I2IDL {META.release}. The canonical {META.counts.canonicalConcepts} definitions remain unchanged.</> : <>As published at <a href={safeNavigationHref(iriOf(c.id))} target="_blank" rel="noopener">id.i2idl.org/concepts/{c.id}</a> in {META.release}. Nothing here is changed.</>} />
           <section className="definition" aria-label="Definition">
             <p className="def">{x ? <Hypertext text={c.d} spans={c.md} linked={linked} query={query} /> : <Hypertext text={c.d} query={query} />}</p>
             <DefMeta c={c} x={x} />
@@ -73,7 +74,7 @@ export function Entry({ id, onBack, query }) {
           <Relations c={c} />
           <Evidence c={c} />
           <I2IDLCrosswalks c={c} />
-          {authored ? <section aria-label="Candidate class annotations"><h3>Candidate class annotation</h3>{c.candidateAssociations.map((a) => <p key={a.iri}><a href={a.iri} target="_blank" rel="noopener">{a.label}</a> — {a.note}</p>)}</section> : null}
+          {authored ? <section aria-label="Candidate class annotations"><h3>Candidate class annotation</h3>{c.candidateAssociations.map((a) => <p key={a.iri}><a href={safeNavigationHref(a.iri)} target="_blank" rel="noopener">{a.label}</a> — {a.note}</p>)}</section> : null}
           {x && ((c.md || []).length || (c.mx || []).length) ? <p className="tiny muted hxnote"><Origin o="derived" quiet>links in the text</Origin> Underlined terms are links I2IDL-X found in I2IDL's wording; dashed ones name a concept I2IDL doesn't relate to this one. Switch to <b>I2IDL only</b> for the plain text.</p> : null}
         </div>
         {x ? (
@@ -114,25 +115,25 @@ function EntryHead({ c, onBack }) {
     <header className="entry-head">
       <div className="crumbs">
         {onBack ? <button className="btn ghost sm backlink" onClick={onBack}><Icon name="left" />All terms</button> : null}
-        <a href={"#browse-f." + field.id}>{field.label}</a><span>·</span><a href={"#browse-t." + type.id}>{type.label}</a>
+        <a href={safeNavigationHref("#browse-f." + field.id)}>{field.label}</a><span>·</span><a href={safeNavigationHref("#browse-t." + type.id)}>{type.label}</a>
       </div>
       <h1 className="headword" id="hw">{c.l}</h1>
       {c.a.length ? <div className="alts">also {c.a.map((a, i) => <span key={a}>{i ? ", " : ""}<i>{a}</i></span>)}</div> : null}
       <div className="badges">
-        <a className="chip" href={"#browse-t." + type.id} title="I2IDL type collection">{type.label}</a>
-        {c.f.map((f) => <a key={f} className={cx("chip", f === c.pf ? "" : "soft")} href={"#browse-f." + f} title={f === c.pf ? "Primary field (I2IDL)" : "Also in this field (I2IDL)"}>{fieldById.get(f).label}</a>)}
-        {c.cu.map((cu) => <a key={cu} className="chip accent" href={"#browse-cu." + cu} title={curatedById.get(cu).desc}><Icon name="book" size={12} />{curatedById.get(cu).label}</a>)}
+        <a className="chip" href={safeNavigationHref("#browse-t." + type.id)} title="I2IDL type collection">{type.label}</a>
+        {c.f.map((f) => <a key={f} className={cx("chip", f === c.pf ? "" : "soft")} href={safeNavigationHref("#browse-f." + f)} title={f === c.pf ? "Primary field (I2IDL)" : "Also in this field (I2IDL)"}>{fieldById.get(f).label}</a>)}
+        {c.cu.map((cu) => <a key={cu} className="chip accent" href={safeNavigationHref("#browse-cu." + cu)} title={curatedById.get(cu).desc}><Icon name="book" size={12} />{curatedById.get(cu).label}</a>)}
         {lens !== "i2idl" ? <span className="badge-x" title="Agentic kind, derived by I2IDL-X from I2IDL's type"><span className="tiny muted">kind</span><KindBadge k={c.k} /></span> : null}
       </div>
       <div className="entry-actions">
         <button className={cx("btn sm", starred && "on")} onClick={toggleStar} aria-pressed={starred}><Icon name="star" filled={starred} />{starred ? "Starred" : "Star"}</button>
         <AddToPack ids={[c.id]} />
-        <a className="btn sm" href={"#cmp-" + c.id}><Icon name="compare" />Compare</a>
-        <a className="btn sm" href={"#map-" + c.id}><Icon name="graph" />Neighborhood</a>
+        <a className="btn sm" href={safeNavigationHref("#cmp-" + c.id)}><Icon name="compare" />Compare</a>
+        <a className="btn sm" href={safeNavigationHref("#map-" + c.id)}><Icon name="graph" />Neighborhood</a>
         <CiteButton c={c} />
         {ask ? <button className="btn sm" onClick={() => ask.open(`Explain “${c.l}” for someone new to the field, then say how it differs from its closest related terms.`, [c.id])}><Icon name="sparkle" />Ask about this term</button> : null}
         <ShareButton c={c} />
-        {c.origin?.kind !== "authored" ? <a className="btn sm ghost" href={META.human + "#" + c.id} target="_blank" rel="noopener"><Icon name="external" />Open on i2idl.org</a> : <span className="chip proposed">Authored proposal · I2IDL-X</span>}
+        {c.origin?.kind !== "authored" ? <a className="btn sm ghost" href={safeNavigationHref(META.human + "#" + c.id)} target="_blank" rel="noopener"><Icon name="external" />Open on i2idl.org</a> : <span className="chip proposed">Authored proposal · I2IDL-X</span>}
       </div>
     </header>
   );
@@ -235,7 +236,7 @@ function Relations({ c }) {
   return (
     <section aria-label="Relations">
       <div className="subh"><h3>Relations</h3><span className="meta">{c.origin?.kind === "authored" ? "Authored Hypothetical links" : "I2IDL's editorial links"} · {plural(c.r.length + c.b.length + c.n.length, "link")}</span>
-        <span className="spacer" /><a className="btn ghost sm" href={"#map-" + c.id}><Icon name="graph" />See them mapped</a></div>
+        <span className="spacer" /><a className="btn ghost sm" href={safeNavigationHref("#map-" + c.id)}><Icon name="graph" />See them mapped</a></div>
       <div className="rels">
         {rows.length ? rows.map(([lab, list]) => (
           <div className="relrow" key={lab}><div className="lab">{lab}</div><div className="chips">{list.map((x) => <ConceptChip key={x} id={x} />)}</div></div>
@@ -255,7 +256,7 @@ function I2IDLCrosswalks({ c }) {
       <div className="rels">
         {xm.map(([p, o, ol, a, ap]) => (
           <div className="relrow xw" key={p + o}><div className="lab"><code>skos:{p}</code></div>
-            <div><a href={o} target="_blank" rel="noopener" title={o}>{ol || o.split(/[#/]/).pop()}</a>
+            <div><a href={safeNavigationHref(o)} target="_blank" rel="noopener" title={o}>{ol || o.split(/[#/]/).pop()}</a>
               {a ? <div className="tiny muted">I2IDL-X proposed the same ({a}); it is adopted.</div>
                 : ap ? <div className="tiny muted">I2IDL-X proposes <code>skos:{ap[1]}</code> ({ap[0]}), open for review.</div> : null}</div></div>
         ))}
@@ -283,7 +284,7 @@ function Evidence({ c }) {
                   {page ? <span>{page}</span> : null}
                   {e.h ? <span>via {e.h}</span> : null}
                   <RightsBadge rc={s.rc} text={s.rights} />
-                  {e.u ? <a href={e.u} target="_blank" rel="noopener"><Icon name="external" size={12} /> Open source</a> : null}
+                  {e.u ? <a href={safeNavigationHref(e.u)} target="_blank" rel="noopener"><Icon name="external" size={12} /> Open source</a> : null}
                 </div>
               </div>
               {e.an || e.ad ? <div className="notice">{[e.an, e.ad].filter(Boolean).join(" ")}</div> : null}
@@ -353,7 +354,7 @@ function Classifies({ c }) {
       <div className="lb">
         <div className="kv2">
           <span className="k">Category</span>
-          <span><a href={"#semantic-cat." + cat.id}><b>{cat.label}</b></a>{ancestors(cat.id).length ? <span className="tiny muted"> · a kind of {ancestors(cat.id).map((a) => catById.get(a).label.toLowerCase()).join(", ")}</span> : null}<div className="tiny muted">{c.rb === "t" ? `From I2IDL's type “${typeById.get(c.t).label}”` : "From the definition"}</div></span>
+          <span><a href={safeNavigationHref("#semantic-cat." + cat.id)}><b>{cat.label}</b></a>{ancestors(cat.id).length ? <span className="tiny muted"> · a kind of {ancestors(cat.id).map((a) => catById.get(a).label.toLowerCase()).join(", ")}</span> : null}<div className="tiny muted">{c.rb === "t" ? `From I2IDL's type “${typeById.get(c.t).label}”` : "From the definition"}</div></span>
         </div>
         <p className="small serif">{c.rw}</p>
         {cat.mode === "subject" ? <p className="small muted">A field: work is <i>about</i> it (<code>dct:subject</code>), never an instance of it, so nothing is typed from it.</p>
@@ -365,9 +366,9 @@ function Classifies({ c }) {
           )}
         {cat.cc.length ? <p className="small">The concept itself is {cat.cc.map((t, i) => <span key={t}>{i ? " and " : ""}<Term t={t} tag /></span>)}.</p> : null}
         {br.length ? <p className="small">{br.map((b) => <span key={b.t} className="block">{b.k === "broad" ? <>Anything it classifies is also <Term t={b.t} /></> : b.k === "exact" ? <>Same class as <Term t={b.t} />: either one classifies the other's instances</> : <>Anything typed <Term t={b.t} /> is classified by it</>} <span className="tiny muted">{b.origin === "authored" ? "(Hypothetical authored directional restriction; no ratified SKOS mapping)" : `(crosswalk ${b.m}, ${b.k}Match)`}</span>{b.origin === "authored" ? <span className="tiny muted block">{b.rationale}</span> : null}</span>)}</p> : null}
-        <div className="row wrap"><a className="btn sm" href={"#semantic-try." + c.id}><Icon name="bolt" />Try it on your data</a><a className="btn ghost sm" href={"#semantic-cat." + cat.id}>All {cat.label.toLowerCase()} concepts</a></div>
+        <div className="row wrap"><a className="btn sm" href={safeNavigationHref("#semantic-try." + c.id)}><Icon name="bolt" />Try it on your data</a><a className="btn ghost sm" href={safeNavigationHref("#semantic-cat." + cat.id)}>All {cat.label.toLowerCase()} concepts</a></div>
       </div>
-      <div className="lfoot">{c.origin?.kind === "authored" ? <>Authored proposal and peer restrictions in the <a href={AUTHORED_PORTS[1].href} target="_blank" rel="noopener">authored RDF catalog</a>; the category's upper-ontology classes are declared in <a href={META.iri.alignments} target="_blank" rel="noopener">I2IDL-X alignments</a>.</> : <>Proposed in <a href={META.iri.referents} target="_blank" rel="noopener"><code>i2idlx-referents</code></a> and <a href={META.iri.alignments} target="_blank" rel="noopener"><code>i2idlx-alignments</code></a> (Hypothetical).</>} Link a thing to this concept with <code>i2x:isClassifiedBy</code> and an OWL reasoner can derive these classes.</div>
+      <div className="lfoot">{c.origin?.kind === "authored" ? <>Authored proposal and peer restrictions in the <a href={safeNavigationHref(AUTHORED_PORTS[1].href)} target="_blank" rel="noopener">authored RDF catalog</a>; the category's upper-ontology classes are declared in <a href={safeNavigationHref(META.iri.alignments)} target="_blank" rel="noopener">I2IDL-X alignments</a>.</> : <>Proposed in <a href={safeNavigationHref(META.iri.referents)} target="_blank" rel="noopener"><code>i2idlx-referents</code></a> and <a href={safeNavigationHref(META.iri.alignments)} target="_blank" rel="noopener"><code>i2idlx-alignments</code></a> (Hypothetical).</>} Link a thing to this concept with <code>i2x:isClassifiedBy</code> and an OWL reasoner can derive these classes.</div>
     </section>
   );
 }
@@ -420,7 +421,7 @@ function HistoryRow({ ri, rec }) {
   for (const [k, lab] of [["r-", "related"], ["b-", "broader"], ["n-", "narrower"]]) {
     if (rec[k]) items.push(<div key={k}>−{rec[k].length} {lab}<Partners ids={rec[k]} /></div>);
   }
-  if (rec["m+"]) items.push(<span key="m+">joined {rec["m+"].map((p, i) => <span key={p}>{i ? ", " : ""}<a href={"#browse-" + ({ field: "f", type: "t", curated: "cu" }[p.split("/")[0]]) + "." + p.split("/")[1]}>{collectionLabel(p)}</a></span>)}</span>);
+  if (rec["m+"]) items.push(<span key="m+">joined {rec["m+"].map((p, i) => <span key={p}>{i ? ", " : ""}<a href={safeNavigationHref("#browse-" + ({ field: "f", type: "t", curated: "cu" }[p.split("/")[0]]) + "." + p.split("/")[1])}>{collectionLabel(p)}</a></span>)}</span>);
   if (rec["m-"]) items.push(<span key="m-">left {rec["m-"].map((p) => collectionLabel(p)).join(", ")}</span>);
   if (rec.ec) items.push(<span key="ec">evidence classified: {Object.entries(rec.ec).map(([v, n]) => `${n} ${v}`).join(", ")}</span>);
   if (rec.er) items.push(<span key="er">evidence reclassified: {rec.er.map(([a, b, s], i) => <span key={i}>{i ? "; " : ""}{a} → <b>{b}</b>{s != null ? ` (${SOURCES[s].label})` : ""}</span>)}</span>);
@@ -429,7 +430,7 @@ function HistoryRow({ ri, rec }) {
   if (rec["al+"]) items.push(<span key="al+">alternate label {rec["al+"].map((a) => `“${a}”`).join(", ")} added</span>);
   if (rec["al-"]) items.push(<span key="al-">alternate label {rec["al-"].map((a) => `“${a}”`).join(", ")} removed</span>);
   for (const [k, t, a, b] of rec.x || []) {
-    const term = <a href={t} target="_blank" rel="noopener" title={t}>{t.split(/[#/]/).filter(Boolean).pop()}</a>;
+    const term = <a href={safeNavigationHref(t)} target="_blank" rel="noopener" title={t}>{t.split(/[#/]/).filter(Boolean).pop()}</a>;
     items.push(<span key={k + t}>{k === "external-mapping-added" ? <>crosswalk <code>skos:{(b || "").replace("skos:", "")}</code> to {term} asserted</>
       : k === "external-mapping-revised" ? (b ? <>crosswalk to {term}: <code>{a}</code> → <code>{b}</code></> : <>crosswalk <code>{a}</code> to {term} withdrawn</>)
       : k === "association-added" ? <>{b} association to {term} proposed</>
@@ -457,7 +458,7 @@ function History({ c }) {
           {c.h0 ? <li className="hrow base"><div className="hv"><b>{first.v}</b><span className="tiny muted">{fmtDate(first.at)}</span></div><div className="hi"><div>In the first public release</div></div></li> : null}
         </ol>
       </div>
-      <div className="lfoot">From I2IDL's public git history, as PROV events in <a href={META.iri.changes} target="_blank" rel="noopener"><code>i2idlx-changes</code></a> (I2IDL's roadmap, priority 4). Releases with no change to this term are omitted.</div>
+      <div className="lfoot">From I2IDL's public git history, as PROV events in <a href={safeNavigationHref(META.iri.changes)} target="_blank" rel="noopener"><code>i2idlx-changes</code></a> (I2IDL's roadmap, priority 4). Releases with no change to this term are omitted.</div>
     </section>
   );
 }
@@ -469,8 +470,8 @@ function Reference({ c }) {
       <LayerHead icon="book" title="Reference" o="added" />
       <div className="lb">
         <div className="chips">
-          {(c.spec || []).map((u) => <a key={u} className="chip" href={u} target="_blank" rel="noopener" title={u}><Icon name="book" size={12} />Specification</a>)}
-          {(c.exm || []).map((u) => <a key={u} className="chip" href={u} target="_blank" rel="noopener" title={"Exemplified by " + u}><Icon name="external" size={12} />Live example</a>)}
+          {(c.spec || []).map((u) => <a key={u} className="chip" href={safeNavigationHref(u)} target="_blank" rel="noopener" title={u}><Icon name="book" size={12} />Specification</a>)}
+          {(c.exm || []).map((u) => <a key={u} className="chip" href={safeNavigationHref(u)} target="_blank" rel="noopener" title={"Exemplified by " + u}><Icon name="external" size={12} />Live example</a>)}
         </div>
       </div>
       <div className="lfoot">Asserted in the I2IDL-X catalog; I2IDL's record doesn't carry these links.</div>
@@ -483,7 +484,7 @@ const SysOrigin = ({ sys }) => (sys === "relay" ? <Origin o="interego" quiet>Int
 function ActionTitle({ iri }) {
   const a = ACTIONS[iri];
   if (!a) return <code className="iri">{iri}</code>;
-  return <a href={"#agents-act." + a.sys + "." + a.n} title={a.d || a.t}>{a.t || a.n}</a>;
+  return <a href={safeNavigationHref("#agents-act." + a.sys + "." + a.n)} title={a.d || a.t}>{a.t || a.n}</a>;
 }
 
 function Pragmatic({ c }) {
@@ -511,7 +512,7 @@ function Pragmatic({ c }) {
         {caps.length ? (
           <div className="stack" style={{ gap: 6 }}>
             <div className="eyebrow">As an agent role · {caps.length} capabilities</div>
-            <div className="chips">{caps.map((x) => <a key={x.a} className="chip" href={"#agents-act." + ACTIONS[x.a].sys + "." + ACTIONS[x.a].n} title={x.note}><Icon name="agent" size={12} />{ACTIONS[x.a].lb || ACTIONS[x.a].n}</a>)}</div>
+            <div className="chips">{caps.map((x) => <a key={x.a} className="chip" href={safeNavigationHref("#agents-act." + ACTIONS[x.a].sys + "." + ACTIONS[x.a].n)} title={x.note}><Icon name="agent" size={12} />{ACTIONS[x.a].lb || ACTIONS[x.a].n}</a>)}</div>
             {caps.every((x) => x.note.startsWith("derived")) ? <div className="tiny muted">Derived from the role tags in Foxxi's own manifest.</div> : null}
           </div>
         ) : null}
@@ -565,16 +566,16 @@ function Crosswalks({ c }) {
           return (
             <div key={m.id} className={cx("cap", s === "ratified" && "ratified", s === "rejected" && "rejected")}>
               <div className="verb"><code>skos:{m.p}</code> · {m.v}{m.ci ? <span className="cited" title={"I2IDL's own definition cites this term as direct evidence (" + m.ci.replace("https://id.i2idl.org/definitions/", "") + ")."}><Icon name="check" size={11} />cited by I2IDL</span> : null}</div>
-              <div className="act"><a href={m.pg || m.o} target="_blank" rel="noopener" title={m.o}>{m.ol || m.o.split(/[#/]/).pop()}</a></div>
+              <div className="act"><a href={safeNavigationHref(m.pg || m.o)} target="_blank" rel="noopener" title={m.o}>{m.ol || m.o.split(/[#/]/).pop()}</a></div>
               {m.od ? <div className="why" style={{ fontFamily: "var(--font-serif)", fontSize: 14 }}>{m.on ? <span className="tiny muted" style={{ fontFamily: "var(--font-ui)" }}>{m.v} {m.on}: </span> : null}“{m.od.length > 180 ? m.od.slice(0, 180) + "…" : m.od}”</div> : null}
               {m.oa && m.oa.length ? <div className="tiny muted">Also: {m.oa.slice(0, 5).join(", ")}</div> : null}
               <div className="why">{m.w}</div>
               {m.ip ? <div className="tiny muted">I2IDL's own record maps this term with <code>{m.ip.map((p) => "skos:" + p).join(", ")}</code>.</div> : null}
-              {m.rp ? <div className="tiny muted">Replaces <a href={META.iri.mappings + "#" + m.rp.id} target="_blank" rel="noopener" title={m.rp.o}>{m.rp.id}</a>, the proposal to <code>{m.rp.o.startsWith("https://w3id.org/xapi/ontology#") ? "xapi:" + m.rp.o.split("#").pop() + " (ADL)" : m.rp.o}</code>; votes cast on it stay with it.</div> : null}
+              {m.rp ? <div className="tiny muted">Replaces <a href={safeNavigationHref(META.iri.mappings + "#" + m.rp.id)} target="_blank" rel="noopener" title={m.rp.o}>{m.rp.id}</a>, the proposal to <code>{m.rp.o.startsWith("https://w3id.org/xapi/ontology#") ? "xapi:" + m.rp.o.split("#").pop() + " (ADL)" : m.rp.o}</code>; votes cast on it stay with it.</div> : null}
               <div className="capm"><span className="row" style={{ gap: 6 }}><Meter v={m.cf} />{m.cf.toFixed(2)}</span><span>{methodById.get(m.m).label}</span></div>
               <VoteBar itemKey={key} compact />
               <Voters itemKey={key} />
-              {s === "ratified" ? <a className="btn sm" href={upstreamIssue({ key, type: "mapping", rec: m, c: m.c, iri: META.iri.mappings + "#" + m.id }, tallies.get(key))} target="_blank" rel="noopener"><Icon name="flag" />Suggest to I2IDL editors</a> : null}
+              {s === "ratified" ? <a className="btn sm" href={safeNavigationHref(upstreamIssue({ key, type: "mapping", rec: m, c: m.c, iri: META.iri.mappings + "#" + m.id }, tallies.get(key)))} target="_blank" rel="noopener"><Icon name="flag" />Suggest to I2IDL editors</a> : null}
             </div>
           );
         })}
@@ -684,7 +685,7 @@ function ForAgents({ c }) {
   const ctl = controlsFor(c);
   const [align, setAlign] = useState(false);
   const neighborhood = ctl.find((x) => x.id === "neighborhood");
-  if (c.origin?.kind === "authored") return <section className="layer" aria-label="For agents"><LayerHead icon="agent" title="Authored concept identity" o="proposed" /><div className="lb"><code className="iri">{iriOf(c.id)}</code><CopyBtn text={iriOf(c.id)} small /><p className="small muted">Available to this workbench's Ask and classification checks. Read its definition, evidence, source binding and reference profile here:</p>{ctl.map((p) => <p key={p.id}><a href={p.u} target="_blank" rel="noopener">{p.title}</a></p>)}</div></section>;
+  if (c.origin?.kind === "authored") return <section className="layer" aria-label="For agents"><LayerHead icon="agent" title="Authored concept identity" o="proposed" /><div className="lb"><code className="iri">{iriOf(c.id)}</code><CopyBtn text={iriOf(c.id)} small /><p className="small muted">Available to this workbench's Ask and classification checks. Read its definition, evidence, source binding and reference profile here:</p>{ctl.map((p) => <p key={p.id}><a href={safeNavigationHref(p.u)} target="_blank" rel="noopener">{p.title}</a></p>)}</div></section>;
   return (
     <section className="layer" aria-label="For agents">
       <LayerHead icon="agent" title="For agents" o="interego" extra={<span className="by">HyprCat controls</span>} />
@@ -696,7 +697,7 @@ function ForAgents({ c }) {
               <div className="row" style={{ minWidth: 0 }}><MethodTag m={x.m} /><span className="ct ellipsis">{x.title}</span></div>
               <div className="row" style={{ gap: 4 }}>
                 <CopyBtn text={x.u} small title="Copy target" />
-                <a className="btn sm icon" href={x.u} target="_blank" rel="noopener" title="Open"><Icon name="external" /></a>
+                <a className="btn sm icon" href={safeNavigationHref(x.u)} target="_blank" rel="noopener" title="Open"><Icon name="external" /></a>
               </div>
               <div className="cu" title={x.u}>{x.mt} · {x.u}</div>
             </div>

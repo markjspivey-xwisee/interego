@@ -1,3 +1,4 @@
+import { safeNavigationHref } from "../navigation-links.js";
 // Semantic layer: what I2IDL's concepts classify, lined up with BFO 2020 (IAO, CCO), gist, DOLCE-UltraLite, gUFO,
 // PROV-O, schema.org and the learning-industry vocabularies — with an inference playground that types pasted data
 // the way the catalog's q-classify does, and the build's reasoning record. The concepts are I2IDL's; what they
@@ -35,7 +36,7 @@ export function Term({ t, dim, why, tag }) {
   const title = `${t}${v ? " · " + v.title : ""}${why ? "\n" + why : ""}`;
   const href = t.startsWith("i2x:") ? META.iri.ontology : expand(t);
   return (
-    <a className={cx("term", dim && "dim", "tc-" + columnOf(t))} href={href} target="_blank" rel="noopener" title={title}>
+    <a className={cx("term", dim && "dim", "tc-" + columnOf(t))} href={safeNavigationHref(href)} target="_blank" rel="noopener" title={title}>
       {tag ? <span className="tv">{vocabTag(t)}</span> : null}{labelOf(t)}
     </a>
   );
@@ -125,7 +126,7 @@ function MatrixRow({ c, on }) {
   return (
     <tr className={cx(on && "on")}>
       <td className="cat" style={{ paddingLeft: 10 + depth * 14 }}>
-        <a href={"#semantic-cat." + c.id}>{c.label}</a> <ModeBadge mode={c.mode} />
+        <a href={safeNavigationHref("#semantic-cat." + c.id)}>{c.label}</a> <ModeBadge mode={c.mode} />
       </td>
       <td className="n">{n}</td>
       {UPPER_COLS.map((col) => {
@@ -155,7 +156,7 @@ function CategoryDetail({ id }) {
   return (
     <section className="card pad stack catd" aria-label={c.label}>
       <div className="row wrap" style={{ gap: 8 }}>
-        <div className="crumbs small muted">{[...ancestors(id)].reverse().map((a) => <span key={a}><a href={"#semantic-cat." + a}>{catById.get(a).label}</a> › </span>)}</div>
+        <div className="crumbs small muted">{[...ancestors(id)].reverse().map((a) => <span key={a}><a href={safeNavigationHref("#semantic-cat." + a)}>{catById.get(a).label}</a> › </span>)}</div>
         <span className="spacer" />
         <Origin o="proposed" quiet />
         <a className="btn ghost sm icon" href="#semantic" title="Close" aria-label="Close"><Icon name="x" /></a>
@@ -164,7 +165,7 @@ function CategoryDetail({ id }) {
       <p className="serif" style={{ fontSize: 16 }}>{c.def}</p>
       <dl className="kv">
         <dt>OWL class</dt><dd><code>{c.cls}</code>{c.abstract ? <span className="tiny muted"> · used through its sub-categories</span> : null}</dd>
-        {kids.length ? <><dt>Narrower</dt><dd className="chips">{kids.map((k) => <a key={k} className="chip" href={"#semantic-cat." + k}>{catById.get(k).label}</a>)}</dd></> : null}
+        {kids.length ? <><dt>Narrower</dt><dd className="chips">{kids.map((k) => <a key={k} className="chip" href={safeNavigationHref("#semantic-cat." + k)}>{catById.get(k).label}</a>)}</dd></> : null}
         <dt>Why these alignments</dt><dd className="small">{c.why}</dd>
       </dl>
       <div className="tablewrap">
@@ -189,7 +190,7 @@ function CategoryDetail({ id }) {
         <div className="row wrap"><b className="small grow">Can never also be ({dis.length} categories)</b>
           {dis.length ? <button className="btn ghost sm" onClick={() => setShowDis(!showDis)} aria-expanded={showDis}><Icon name={showDis ? "up" : "down"} />{showDis ? "Hide" : "Show"}</button> : null}</div>
         {!dis.length ? <p className="small muted">No upper ontology makes this category disjoint from another.</p> : showDis ? (
-          <div className="chips">{dis.map((d) => <a key={d.id} className="chip" href={"#semantic-cat." + d.id} title={Object.entries(d.why).map(([o, [a, b]]) => `${o}: ${labelOf(a)} ⟂ ${labelOf(b)}`).join("\n")}>{catById.get(d.id).label}<span className="tiny muted">{Object.keys(d.why).join(" · ")}</span></a>)}</div>
+          <div className="chips">{dis.map((d) => <a key={d.id} className="chip" href={safeNavigationHref("#semantic-cat." + d.id)} title={Object.entries(d.why).map(([o, [a, b]]) => `${o}: ${labelOf(a)} ⟂ ${labelOf(b)}`).join("\n")}>{catById.get(d.id).label}<span className="tiny muted">{Object.keys(d.why).join(" · ")}</span></a>)}</div>
         ) : <p className="small muted">A thing classified by a concept here and by one in {dis.slice(0, 3).map((d) => catById.get(d.id).label.toLowerCase()).join(", ")}{dis.length > 3 ? "…" : ""} is a contradiction in at least one upper ontology. The playground flags it.</p>}
       </div>
       <div className="stack" style={{ gap: 6 }}>
@@ -197,7 +198,7 @@ function CategoryDetail({ id }) {
         <div className="chips">{concepts.map((x) => <ConceptChip key={x.id} id={x.id} title={(x.rb === "t" ? "From I2IDL's type. " : "From the definition. ") + (x.rw || "")} className={x.rb === "d" ? "bydef" : ""} />)}</div>
         <p className="tiny muted">Authored proposals carry their own badge. Dashed: placed here by the definition rather than a source type (hover for the reason).</p>
       </div>
-      {concepts.length ? <div className="row wrap"><a className="btn sm primary" href={"#semantic-try." + concepts[0].id}><Icon name="bolt" />Try {concepts[0].l} in the playground</a></div> : null}
+      {concepts.length ? <div className="row wrap"><a className="btn sm primary" href={safeNavigationHref("#semantic-try." + concepts[0].id)}><Icon name="bolt" />Try {concepts[0].l} in the playground</a></div> : null}
     </section>
   );
 }
@@ -263,7 +264,7 @@ function ResourceCard({ r }) {
           <span key={b.c} className="row" style={{ gap: 4 }}>
             <ConceptChip id={b.c} />
             {b.how === "bridge" ? <span className="tiny muted" title={`Crosswalk proposal ${b.m} (${b.k}Match), made an OWL bridge in i2idlx-alignments`}>via <code>{b.t}</code></span> : null}
-            <a className="tag" href={"#semantic-cat." + byId.get(b.c).rc} title="Referent category">{catById.get(byId.get(b.c).rc).label}</a>
+            <a className="tag" href={safeNavigationHref("#semantic-cat." + byId.get(b.c).rc)} title="Referent category">{catById.get(byId.get(b.c).rc).label}</a>
           </span>
         ))}
       </div>
@@ -394,7 +395,7 @@ function Reasoning() {
       <section className="stack" style={{ gap: 8 }}>
         <div className="sec-h"><h2>Pinned snapshots</h2><span className="meta">Referenced, not copied: each term is checked against these files; large ontologies are cut to the upward module the alignments use</span></div>
         <div className="tablewrap"><table className="tbl"><thead><tr><th>Vocabulary</th><th>Version</th><th>Licence</th><th>Kept</th><th>SHA-256</th></tr></thead>
-          <tbody>{SEM.snapshots.map((s) => <tr key={s.key}><td><a href={s.url} target="_blank" rel="noopener">{s.key}</a></td><td className="small">{s.version || "—"}</td><td className="small">{s.license || "—"}</td><td className="small nowrap">{s.mode ? `${s.mode}${s.kept ? ` · ${s.kept.toLocaleString()}${s.triples ? "/" + s.triples.toLocaleString() : ""} triples` : ""}` : "—"}</td><td><code className="tiny">{(s.sha256 || "").slice(0, 12)}</code></td></tr>)}</tbody></table></div>
+          <tbody>{SEM.snapshots.map((s) => <tr key={s.key}><td><a href={safeNavigationHref(s.url)} target="_blank" rel="noopener">{s.key}</a></td><td className="small">{s.version || "—"}</td><td className="small">{s.license || "—"}</td><td className="small nowrap">{s.mode ? `${s.mode}${s.kept ? ` · ${s.kept.toLocaleString()}${s.triples ? "/" + s.triples.toLocaleString() : ""} triples` : ""}` : "—"}</td><td><code className="tiny">{(s.sha256 || "").slice(0, 12)}</code></td></tr>)}</tbody></table></div>
       </section>
     </div>
   );
@@ -424,7 +425,7 @@ print(typed.serialize(format="turtle"))
       <ol className="steps">
         <li><div className="stack" style={{ gap: 8 }}>
           <p><b>Follow the catalog.</b> Three read ports carry the whole layer; each is a GET on Interego.</p>
-          <div className="chips">{reads.map((p) => <a key={p.id} className="chip" href={"#agents-" + p.id}><span className="tag get">GET</span>{p.label}</a>)}</div>
+          <div className="chips">{reads.map((p) => <a key={p.id} className="chip" href={safeNavigationHref("#agents-" + p.id)}><span className="tag get">GET</span>{p.label}</a>)}</div>
           <CodeBlock title="act (any Interego client)" code={reads.map((p) => "act " + pretty({ descriptor_url: META.iri.catalog, action_iri: p.action, payload: {} })).join("\n\n")} />
         </div></li>
         <li><div className="stack" style={{ gap: 8 }}>

@@ -1,3 +1,4 @@
+import { safeNavigationHref } from "../navigation-links.js";
 // The map: the whole glossary as a territory (fields are regions, laid out once at build time),
 // a focused neighborhood, and the path between any two terms.
 import { C, KINDS, LAYOUT, COLLECTIONS, byId, kindById, fieldById, degree, ADJ, shortestPaths, relationBetween } from "../data.js";
@@ -215,9 +216,9 @@ function MapSide({ c, onClose }) {
       <p>{c.d}</p>
       {c.r.length || c.b.length || c.n.length ? <div className="chips">{[...c.b, ...c.n, ...c.r].slice(0, 12).map((x) => <ConceptChip key={x} id={x} />)}</div> : null}
       <div className="row wrap">
-        <a className="btn sm primary" href={"#c-" + c.id}>Open entry</a>
-        <a className="btn sm" href={"#map-" + c.id}><Icon name="graph" />Neighborhood</a>
-        <a className="btn sm" href={"#path-" + c.id + "~"}><Icon name="route" />Path from here</a>
+        <a className="btn sm primary" href={safeNavigationHref("#c-" + c.id)}>Open entry</a>
+        <a className="btn sm" href={safeNavigationHref("#map-" + c.id)}><Icon name="graph" />Neighborhood</a>
+        <a className="btn sm" href={safeNavigationHref("#path-" + c.id + "~")}><Icon name="route" />Path from here</a>
       </div>
     </div>
   );
@@ -275,14 +276,14 @@ function Neighborhood({ id }) {
         <h3>{c.l}</h3>
         <p>{c.d}</p>
         <div className="row wrap">
-          <a className="btn sm primary" href={"#c-" + c.id}>Open entry</a>
-          <a className="btn sm" href={"#whole-" + c.id}><Icon name="globe" />On the map</a>
-          <a className="btn sm" href={"#path-" + c.id + "~"}><Icon name="route" />Path from here</a>
+          <a className="btn sm primary" href={safeNavigationHref("#c-" + c.id)}>Open entry</a>
+          <a className="btn sm" href={safeNavigationHref("#whole-" + c.id)}><Icon name="globe" />On the map</a>
+          <a className="btn sm" href={safeNavigationHref("#path-" + c.id + "~")}><Icon name="route" />Path from here</a>
         </div>
         {groups.map(([lab, list]) => (
           <div key={lab} className="stack" style={{ gap: 6 }}>
             <div className="eyebrow">{lab} · {list.length}</div>
-            <div className="chips">{list.map((x) => <a key={x} className="cchip" href={"#map-" + x}><span className={"dot kd-" + byId.get(x).k} /><span className="lbl">{byId.get(x).l}</span></a>)}</div>
+            <div className="chips">{list.map((x) => <a key={x} className="cchip" href={safeNavigationHref("#map-" + x)}><span className={"dot kd-" + byId.get(x).k} /><span className="lbl">{byId.get(x).l}</span></a>)}</div>
           </div>
         ))}
         <p className="tiny muted">Click any term to move the neighborhood there; click the center to open its entry.</p>
@@ -368,7 +369,7 @@ function PathView({ a, b }) {
                     const rel = j < p.length - 1 ? relationBetween(id, p[j + 1]) : null;
                     return (
                       <React.Fragment key={id}>
-                        <a className="pstep" href={"#c-" + id} style={{ textDecoration: "none", color: "inherit" }}>
+                        <a className="pstep" href={safeNavigationHref("#c-" + id)} style={{ textDecoration: "none", color: "inherit" }}>
                           <div className="row small muted"><span className={"dot kd-" + c.k} />{kindById.get(c.k).label}</div>
                           <h4>{c.l}</h4><p>{c.d}</p>
                         </a>
@@ -379,7 +380,7 @@ function PathView({ a, b }) {
                 </div>
                 </div>
               ))}
-              <div className="row wrap"><a className="btn sm" href={`#cmp-${A.id}~${B.id}`}><Icon name="compare" />Compare side by side</a></div>
+              <div className="row wrap"><a className="btn sm" href={safeNavigationHref(`#cmp-${A.id}~${B.id}`)}><Icon name="compare" />Compare side by side</a></div>
             </div>
           ) : <div className="note"><Icon name="info" />No route links these two terms in this release.</div>
         ) : <div className="muted small">Pick two terms.</div>}

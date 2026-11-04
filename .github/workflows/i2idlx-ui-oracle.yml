@@ -222,8 +222,10 @@ jobs:
           JS
       - name: Cache only the scripts and fonts named by the generated page
         run: npx tsx applications/foxxi-content-intelligence/i2idlx/typescript/cache-ui-assets.ts "$I2IDLX_ROOT/site/app.html" "$I2IDLX_ROOT/.cache/ui-oracle-assets"
-      - name: Unchanged desktop, mobile, export and workspace smoke oracle
-        run: python3 -I "$I2IDLX_ROOT/tools/smoke_app.py" "$I2IDLX_ROOT" "$I2IDLX_ROOT/.cache/ui-oracle-assets" --shots "$I2IDLX_ROOT/.cache/ui-oracle-shots"
+      - name: Exact canonical/authored contract and desktop, mobile, export and workspace smoke oracle
+        run: |
+          python3 -I "$I2IDLX_ROOT/tools/test_corpus_oracle.py" "$I2IDLX_ROOT"
+          python3 -I "$I2IDLX_ROOT/tools/smoke_app.py" "$I2IDLX_ROOT" "$I2IDLX_ROOT/.cache/ui-oracle-assets" --shots "$I2IDLX_ROOT/.cache/ui-oracle-shots"
       - name: Original control, SPARQL, classification and exported-record cross-check
         run: python3 -I "$I2IDLX_ROOT/tools/check_app_logic.py" "$I2IDLX_ROOT" "$I2IDLX_ROOT/.cache/ui-oracle-shots"
       - name: Require all current replay outputs to match the reviewed v93 migration fixture
