@@ -78,7 +78,7 @@ const LIVE_ERRORS = {
   not_declared: "This page can no longer ask your connected model.", capability_disabled: "your connected model isn't available in this view.",
   tools_unavailable: "This view can't give your connected model page tools, so a live run isn't possible here. The recorded run works everywhere.",
   rate_limited: "Too many your connected model requests right now. Wait a little, then resume.",
-  request_timeout: "A request timed out. Your agent is still connected; try the run again.",
+  request_timeout: "A request timed out. The agent connection is still open; try the run again.",
   session_expired: "Your session expired. Sign in again, then resume.",
   prompt_too_large: "A step grew too large for one request.",
   refused: "your connected model declined a step.", empty_completion: "A step came back empty.",

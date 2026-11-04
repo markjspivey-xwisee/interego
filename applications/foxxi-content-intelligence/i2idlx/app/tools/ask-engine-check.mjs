@@ -58,7 +58,7 @@ function harness(sample) {
   sample.limits = async () => ({ tools: false });
   const h = harness(sample);
   await h.engine.send('An expired request.');
-  assert.equal(h.turns().at(-1).error, 'That request timed out. Your agent is still connected. Try asking again.');
+  assert.equal(h.turns().at(-1).error, 'That request timed out. Your agent connection is still open. Try asking again.');
   await h.engine.send('A fresh request.');
   assert.equal(h.turns().at(-1).content, 'A fresh answer on the same connection.');
   assert.equal(h.turns().at(-1).error, undefined);

@@ -224,7 +224,7 @@ await test('Orchestrate distinguishes request timeout from sign-in expiry', asyn
   const h = orchestraHarness(sample); h.render(); await flushEffects();
   await h.render().start('live');
   assert.equal(h.render().state, 'error');
-  assert.equal(h.render().message, 'A request timed out. Your agent is still connected; try the run again.');
+  assert.equal(h.render().message, 'A request timed out. The agent connection is still open; try the run again.');
 });
 
 await test('all twelve orchestration steps complete through the single-turn paired transport', async () => {
