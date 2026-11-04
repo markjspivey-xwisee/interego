@@ -154,6 +154,7 @@ export function useAskEngine() {
       const msg = code === "cancelled" ? null
         : code === "not_granted" || code === "sampling_disabled" || code === "not_declared" || code === "capability_disabled" ? "A model isn't connected on this page for your account."
         : code === "rate_limited" ? "Too many requests right now. Try again in a little while."
+        : code === "request_timeout" ? "That request timed out. Your agent connection is still open. Try asking again."
         : code === "session_expired" ? "Your session expired. Sign in again to keep asking."
         : code === "prompt_too_large" ? "That conversation got too long. Start a new one."
         : "Something went wrong reaching your connected model. Try again.";

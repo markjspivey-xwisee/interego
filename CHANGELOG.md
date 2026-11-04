@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-11-03 — Distinguish paired-agent request timeout from session expiry
+
+A timed-out question now directs the user to ask again on the active agent connection, instead of advising sign-in. The broker marks only its request deadline as request_timeout; agent failures and genuine session expiry retain their separate errors. Ask and live Orchestrate explain the retry without discarding the paired session.
+
+Actual client/router HTTP checks use injected clocks with the production ten-minute request and thirty-minute session bounds. They cover both deadline races, successful fresh questions on the same connection, agent failures with matching error prose, and real session expiry. These deterministic checks make no model or production calls.
+
 ## 2026-11-03 — Respect paired-agent concurrency in live Orchestrate
 
 Live Orchestrate respects the connected executor's advertised request capacity. The paired-agent transport advertises one active request, so independent role steps run in sequence instead of failing at the first parallel handoff. Host executors keep the existing two-step parallel limit.

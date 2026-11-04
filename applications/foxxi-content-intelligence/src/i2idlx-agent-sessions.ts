@@ -16,7 +16,7 @@ type TurnState = 'queued' | 'running' | 'completed' | 'failed' | 'cancelled';
 type Turn = {
   id: string; revision: number; state: TurnState; text: string; created: number;
   task: Task | null; lease: string | null; leaseExpires: number;
-  tool_calls?: ToolCall[]; truncated?: boolean; error?: string;
+  tool_calls?: ToolCall[]; truncated?: boolean; error?: string; error_code?: 'request_timeout';
 };
 type Session = {
   id: string; browserHash: string; inviteHash: string | null; inviteExpires: number;
@@ -129,7 +129,7 @@ export class AgentSessionStore {
     for (const s of this.sessions.values()) {
       if (s.expires <= now) { s.turn = null; s.driver = null; s.driverHash = null; s.inviteHash = null; continue; }
       if (s.turn && active(s.turn) && s.turn.created + this.requestTtl <= now) {
-        s.turn.state = 'failed'; s.turn.error = 'The agent request expired.'; s.turn.revision++;
+        s.turn.state = 'failed'; s.turn.error = 'The agent request expired.'; s.turn.error_code = 'request_timeout'; s.turn.revision++;
         s.turn.task = null; s.turn.lease = null;
       }
     }
@@ -163,6 +163,7 @@ export class AgentSessionStore {
       ...(t.tool_calls ? { tool_calls: jsonCopy(t.tool_calls) } : {}),
       ...(t.truncated !== undefined ? { truncated: t.truncated } : {}),
       ...(t.error ? { error: t.error } : {}),
+      ...(t.error_code ? { error_code: t.error_code } : {}),
       ...(t.lease ? { lease_expires_at: iso(t.leaseExpires) } : {}),
     };
   }
