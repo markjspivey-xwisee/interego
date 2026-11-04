@@ -1,6 +1,7 @@
+import { safeNavigationHref } from "../navigation-links.js";
 // Agent console: the HyprCat catalog on Interego, the published graphs, stored queries you can try here
 // and run live, and the Foxxi / Interego capability directory with what each action enacts.
-import { META, PORTS, byId } from "../data.js";
+import { META, PORTS, AUTHORED_PORTS, byId } from "../data.js";
 import { Icon } from "../icons.jsx";
 import { ConceptChip, CodeBlock, CopyBtn, MethodTag, ModalChip, Seg, useUI } from "../ui.jsx";
 import { ConceptPicker } from "../picker.jsx";
@@ -35,8 +36,8 @@ export function Agents({ route }) {
         <p className="lede">The glossary is a <code>hyprcat:FederatedDataProduct</code>: an agent reads one catalog and finds every port, template, stored query, limit and governed write — then follows them with Interego's <code>act</code>, or over plain HTTP.</p>
         <div className="row wrap" style={{ gap: 8 }}>
           <code className="iri" style={{ fontSize: 13 }}>{META.iri.catalog}</code><CopyBtn text={META.iri.catalog} small label="Copy" />
-          <a className="btn sm" href={META.iri.catalog + "?format=markdown"} target="_blank" rel="noopener"><Icon name="external" />HyperMarkdown</a>
-          <a className="btn sm" href={META.iri.catalog + "?format=turtle"} target="_blank" rel="noopener">Turtle</a>
+          <a className="btn sm" href={safeNavigationHref(META.iri.catalog + "?format=markdown")} target="_blank" rel="noopener"><Icon name="external" />HyperMarkdown</a>
+          <a className="btn sm" href={safeNavigationHref(META.iri.catalog + "?format=turtle")} target="_blank" rel="noopener">Turtle</a>
         </div>
         <OriginStrip items={[["interego", "catalog, graphs, act"], ["i2idl", "your endpoint and dumps"], ["foxxi", "capabilities"], ["proposed", "enactments"]]} />
         <QuickStart />
@@ -80,8 +81,8 @@ function Graphs() {
                 <td><b>{g.title}</b><div className="iri">{g.iri}</div></td>
                 <td><ModalChip status={g.status} /></td>
                 <td className="n">{g.triples.toLocaleString()}</td>
-                <td className="nowrap"><a href={g.iri + "?format=turtle"} target="_blank" rel="noopener">Turtle</a> · <a href={g.iri + "?format=jsonld"} target="_blank" rel="noopener">JSON-LD</a> · <a href={g.iri + "?format=markdown"} target="_blank" rel="noopener">MD</a></td>
-                <td><a href={g.descriptor} target="_blank" rel="noopener">Signed</a> <CopyBtn small text={g.hash} title={"Copy content hash " + g.hash} /></td>
+                <td className="nowrap"><a href={safeNavigationHref(g.iri + "?format=turtle")} target="_blank" rel="noopener">Turtle</a> · <a href={safeNavigationHref(g.iri + "?format=jsonld")} target="_blank" rel="noopener">JSON-LD</a> · <a href={safeNavigationHref(g.iri + "?format=markdown")} target="_blank" rel="noopener">MD</a></td>
+                <td><a href={safeNavigationHref(g.descriptor)} target="_blank" rel="noopener">Signed</a> <CopyBtn small text={g.hash} title={"Copy content hash " + g.hash} /></td>
               </tr>
             ))}
           </tbody>
@@ -178,13 +179,13 @@ function QueryCard({ q }) {
         <div className="row wrap">
           <button className="btn sm primary" onClick={() => setRes(runLocal(q.name, v))}><Icon name="bolt" />Try here</button>
           <span className="tag" title="i2x:runsOver: follow these ports, add your own data, run the query in any SPARQL 1.1 engine">client-side</span>
-          <span className="small muted">over {q.over.map((p, i) => <span key={p}>{i ? ", " : ""}<a href={"#agents-" + p}>{p}</a></span>)} + your data</span>
+          <span className="small muted">over {q.over.map((p, i) => <span key={p}>{i ? ", " : ""}<a href={safeNavigationHref("#agents-" + p)}>{p}</a></span>)} + your data</span>
           {q.name === "classify" ? <a className="btn sm" href="#semantic-play"><Icon name="tree" />Playground</a> : null}
         </div>
       ) : (
         <div className="row wrap">
           <button className="btn sm primary" onClick={() => setRes(runLocal(q.name, v))}><Icon name="bolt" />Try here</button>
-          <a className="btn sm" href={liveGet(sparql)} target="_blank" rel="noopener"><Icon name="external" />Run live</a>
+          <a className="btn sm" href={safeNavigationHref(liveGet(sparql))} target="_blank" rel="noopener"><Icon name="external" />Run live</a>
           <CopyBtn small label="act call" text={pretty(actQuery(sparql))} />
           <CopyBtn small label="curl" text={curlQuery(sparql)} />
         </div>
@@ -230,7 +231,7 @@ ${META.iri.catalog}
 - Read the catalog first (resolve_linked_data with format "markdown" shows its controls). Every port carries its action IRI, target, method, media type and input shape.
 - Query with act: descriptor_url = the catalog IRI, action_iri = ${PORTS.find((p) => p.id === "port-sparql-post").action}, payload = the SPARQL text as a plain string. Use the ${QUERIES.filter((q) => !q.over).length} stored queries that run against the endpoint; stay within ${META.limits.rateLimitPerMinute} requests a minute and ${META.limits.maxQueryLength} characters.
 - To type data classified by I2IDL concepts in BFO 2020 (IAO, CCO), gist, DOLCE-UltraLite, gUFO, PROV-O, schema.org and peer vocabularies: follow port-vocabulary, port-alignments and port-referents, add the data, and run q-classify locally (no reasoner needed) — or load the upper ontologies' own files and use an OWL 2 RL or DL reasoner. Link with i2x:isClassifiedBy only for instance-of; use dct:subject for aboutness.
-- Concept IRIs are https://id.i2idl.org/concepts/{id}; append .ttl or .jsonld to dereference one.
+- Canonical I2IDL concept IRIs are https://id.i2idl.org/concepts/{id}; append .ttl or .jsonld to dereference one. Separately authored Hypothetical concepts keep their exact owned IRIs and are not adopted into I2IDL. Read their catalog/RDF/profile: ${AUTHORED_PORTS.map((p) => p.href).join(", ")}.
 - I2IDL definitions are asserted; I2IDL-X enactments and crosswalks are Hypothetical until ratified. Say which is which when you cite them.
 - Before relying on decorations, run q-release-check with "${META.release}".
 - Writes (propose-mapping, ratify, align-course-concept, publish-classified) go through publish_context with conforms_to_shapes = ${META.shapes}; ask the person before publishing anything public.`;

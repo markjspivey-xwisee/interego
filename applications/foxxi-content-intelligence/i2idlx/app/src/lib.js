@@ -6,10 +6,12 @@ const year = () => (META.commitDate || "").slice(0, 4) || "2026";
 const publisher = () => META.license.holder.replace(/^©\s*\d{4}\s*/, "");
 
 export function citeText(c) {
+  if (c.origin?.kind === "authored") return `${c.origin.publisher}. ${c.l}. Authored I2IDL-X proposal (${c.origin.catalogVersion}, Hypothetical). ${iriOf(c.id)}`;
   return `${publisher()}. (${year()}). ${c.l}. In ${META.scheme.title} (release ${META.release}). ${iriOf(c.id)}`;
 }
-export const citeMarkdown = (c) => `[${c.l}](${iriOf(c.id)}) — ${META.scheme.title}, ${META.release}`;
+export const citeMarkdown = (c) => `[${c.l}](${iriOf(c.id)}) — ${c.origin?.kind === "authored" ? `${c.origin.publisher}, authored Hypothetical proposal ${c.origin.catalogVersion}` : `${META.scheme.title}, ${META.release}`}`;
 export function citeBibtex(c) {
+  if (c.origin?.kind === "authored") return `@misc{i2idlx_${c.id.replace(/-/g, "_")},\n  title = {${c.l}},\n  author = {{${c.origin.publisher}}},\n  url = {${iriOf(c.id)}},\n  note = {Authored Hypothetical proposal ${c.origin.catalogVersion}; not adopted by I2IDL}\n}`;
   return `@misc{i2idl_${c.id.replace(/-/g, "_")},
   title        = {${c.l}},
   author       = {{${publisher()}}},
@@ -20,6 +22,7 @@ export function citeBibtex(c) {
 }`;
 }
 export function quoteWithAttribution(c) {
+  if (c.origin?.kind === "authored") return `“${c.d}”\n— ${citeText(c)} No upstream adoption or additional license grant is asserted.`;
   const src = directSources(c);
   const grounded = src.length ? ` Grounded in: ${src.map((s) => `${s.label} (${s.rights})`).join("; ")}.` : "";
   return `“${c.d}”\n— ${c.l}, ${META.scheme.title} (${META.release}), ${iriOf(c.id)}. ${META.license.holder}, ${META.license.name}.${grounded}`;
@@ -27,7 +30,8 @@ export function quoteWithAttribution(c) {
 export function attributionLines(concepts) {
   const used = new Map();
   for (const c of concepts) for (const s of allSources(c)) used.set(s.id, s);
-  const lines = [`Definitions from the ${META.scheme.title} (release ${META.release}), ${META.license.holder}, licensed ${META.license.name} (${META.license.url}) for I2IDL-original content.`];
+  const lines = concepts.some((c) => c.origin?.kind !== "authored") ? [`Canonical definitions from the ${META.scheme.title} (release ${META.release}), ${META.license.holder}, licensed ${META.license.name} (${META.license.url}) for I2IDL-original content.`] : [];
+  for (const c of concepts.filter((c) => c.origin?.kind === "authored")) lines.push(citeText(c) + " Not adopted upstream; source-specific rights remain attached.");
   for (const s of [...used.values()].sort((a, b) => a.label.localeCompare(b.label))) {
     let line = `${s.cite || s.title}${s.url && !(s.cite || "").includes(s.url) ? ` ${s.url}` : ""} — ${s.rights}${s.rightsUrl ? ` (${s.rightsUrl})` : ""}.`;
     if (s.adapt) line += ` ${s.adapt}`;
@@ -100,7 +104,7 @@ export function alignmentTurtle({ courseConcept, id, predicate = "closeMatch", a
 
 <urn:interpretant:alignment:${id}:${Date.now().toString(36)}> a i2x:CourseConceptAlignment ;
     i2x:courseConcept <${courseConcept || "urn:example:your-course/concept/x"}> ;
-    i2x:alignedTo i2idl:${id} ;
+    i2x:alignedTo <${iriOf(id)}> ;
     i2x:alignmentPredicate skos:${predicate} ;
     i2x:reviewStatus i2x:status-proposed ;
     prov:wasAttributedTo <${agent || "urn:interpretant:reviewer:me"}> ;

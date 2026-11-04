@@ -1,3 +1,4 @@
+import { safeNavigationHref } from "../navigation-links.js";
 // Live service inventory and explicit, bounded capability trials.
 import { META, ACTIONS, conceptsByAction, roleById, systemLabel } from "../data.js";
 import { Icon } from "../icons.jsx";
@@ -49,7 +50,7 @@ export function Directory() {
           {inventory.build ? <span className="tiny muted">Bridge build <code>{String(inventory.build).slice(0, 12)}</code></span> : null}
         </div>
       </div>
-      {inventory.sources && inventory.sources.length ? <details className="small"><summary>Inventory sources and freshness</summary><div className="tablewrap"><table className="tbl"><thead><tr><th>Service</th><th>Observed</th><th>Operations</th><th>Source</th></tr></thead><tbody>{inventory.sources.map((source, i) => <tr key={source.system + ":" + i}><td>{source.system}<div>{source.status}</div>{source.error ? <div className="danger">{source.error}</div> : null}</td><td>{timeLabel(source.checked_at)}</td><td>{source.count == null ? "—" : source.count}</td><td>{safeLink(source.url) ? <a href={source.url} target="_blank" rel="noopener">{source.url}</a> : source.url}</td></tr>)}</tbody></table></div></details> : null}
+      {inventory.sources && inventory.sources.length ? <details className="small"><summary>Inventory sources and freshness</summary><div className="tablewrap"><table className="tbl"><thead><tr><th>Service</th><th>Observed</th><th>Operations</th><th>Source</th></tr></thead><tbody>{inventory.sources.map((source, i) => <tr key={source.system + ":" + i}><td>{source.system}<div>{source.status}</div>{source.error ? <div className="danger">{source.error}</div> : null}</td><td>{timeLabel(source.checked_at)}</td><td>{source.count == null ? "—" : source.count}</td><td>{safeLink(source.url) ? <a href={safeNavigationHref(source.url)} target="_blank" rel="noopener">{source.url}</a> : source.url}</td></tr>)}</tbody></table></div></details> : null}
       <p className="small muted">Run a live example to see its actual response. Protected operations let you validate inputs and prepare the real Interego call; they need the listed identity, permissions and service setup. Client tasks return instructions for your AI client. Raw API keys, passwords and private keys stay with that client; this runner does not accept them. Requests can create service telemetry.</p>
       <div className="row wrap">
         <Seg label="Which actions" value={sys} onChange={setSys} options={[{ v: "linked", l: "Enact a term · " + counts.linked }, { v: "foxxi", l: "Foxxi · " + counts.foxxi }, { v: "relay", l: "Interego relay · " + counts.relay }, { v: "telemetry", l: "Telemetry · " + counts.telemetry }, { v: "all", l: "All · " + counts.all }]} />

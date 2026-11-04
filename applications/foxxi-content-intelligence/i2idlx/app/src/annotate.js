@@ -1,6 +1,6 @@
 // Find I2IDL terms in any text: the build's surface forms (labels, alternate labels, acronyms), longest first,
 // so a longer label wins over a shorter one inside it. Plain JS so the logic check can run it under node.
-import { FORMS } from "./data.js";
+import { C, FORMS } from "./data.js";
 
 const esc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 let compiled = null;
@@ -10,10 +10,12 @@ function patterns() {
   return compiled;
 }
 
-export function annotate(text, weak) {
+export function annotate(text, weak, lens = "x") {
   const taken = new Uint8Array(text.length);
   const spans = [];
   for (const p of patterns()) {
+    // Hidden forms must not reserve text that could match a visible shorter label.
+    if (lens === "i2idl" && C[p.ci].origin?.kind === "authored") continue;
     if (!p.strong && !weak) continue;
     p.re.lastIndex = 0;
     let m;

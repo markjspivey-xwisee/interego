@@ -5,7 +5,7 @@
 //              is one call whose tools are this page's functions (world.js).
 // Both feed one transcript, one step map and one presentation queue the workbench pane plays.
 /* global React */
-import { META, C } from "../data.js";
+import { META, CANONICAL_C, AUTHORED_C } from "../data.js";
 import { useCaps } from "../caps.js";
 import { useStored } from "../util.js";
 import { createWorld, callTool, decideGate, TOOLS } from "./world.js";
@@ -54,7 +54,7 @@ function promptFor(step, handoffs, w) {
   const ending = step.id === "plan" ? "End with the plan: one short line per step, naming who does it. No preamble."
     : step.id === "close" ? "End with your report to the human: four to six plain sentences. No preamble, no sign-off."
       : "End with your handoff for the Conductor: two to four plain sentences — what you did, what you found, what the next agent must know. No preamble, no sign-off.";
-  return `You are the ${a.name} on a team of eight AI agents (${TEAM}) working inside Interpretant, a workbench for the ${META.scheme.title} (release ${META.release}, ${C.length} concepts) decorated with I2IDL-X, a semantic layer published on Interego. A human is watching the workbench beside this conversation; your tools act on it.
+  return `You are the ${a.name} on a team of eight AI agents (${TEAM}) working inside Interpretant, a workbench for the ${META.scheme.title} (release ${META.release}, ${CANONICAL_C.length} canonical concepts) with ${AUTHORED_C.length} separately authored Hypothetical I2IDL-X proposals. Preserve each concept's exact source IRI and origin; authored proposals are not adopted into I2IDL. A human is watching the workbench beside this conversation; your tools act on it.
 
 ${a.charter}
 

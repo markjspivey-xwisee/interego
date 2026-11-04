@@ -1,6 +1,6 @@
 // Ask, grounded in the glossary: a connected executor reads the release through page tools (search, look up,
 // paths, capabilities, team notes) and cites every term as [[concept-id]]. Runs on the viewer's own account.
-import { C, META, byId, kindById, typeById, fieldById, SOURCES, ACTIONS, roleById, enactByConcept, mapsByConcept, inhByConcept, shortestPaths, relationBetween, conceptsByAction, systemLabel, COLLECTIONS } from "../data.js";
+import { C, META, byId, iriOf, kindById, typeById, fieldById, SOURCES, ACTIONS, roleById, enactByConcept, mapsByConcept, inhByConcept, shortestPaths, relationBetween, conceptsByAction, systemLabel, COLLECTIONS } from "../data.js";
 import { search } from "../search.js";
 import { askInstructions } from "../ask-rules.js";
 import { useCaps } from "../caps.js";
@@ -16,11 +16,11 @@ const INDEX = C.map((c) => `${c.id}: ${c.l}`).join("\n");
 const short = (s, n) => (s && s.length > n ? s.slice(0, n).replace(/\s+\S*$/, "") + "…" : s);
 
 function brief(c) {
-  return { id: c.id, label: c.l, kind: kindById.get(c.k).label, field: fieldById.get(c.pf).label, definition: short(c.d, 320) };
+  return { id: c.id, iri: iriOf(c.id), origin: c.origin, label: c.l, kind: kindById.get(c.k).label, field: fieldById.get(c.pf).label, definition: short(c.d, 320) };
 }
 function full(c, notes) {
   return {
-    id: c.id, label: c.l, alsoKnownAs: c.a, definition: c.d, editorialNote: c.x, type: typeById.get(c.t).label, agenticKind: kindById.get(c.k).label,
+    id: c.id, iri: iriOf(c.id), origin: c.origin, candidateAssociations: c.candidateAssociations || [], label: c.l, alsoKnownAs: c.a, definition: c.d, editorialNote: c.x, type: typeById.get(c.t).label, agenticKind: kindById.get(c.k).label,
     fields: c.f.map((f) => fieldById.get(f).label), provenance: c.pv === "g" ? "source-grounded" : "synthesized",
     broader: c.b.map((x) => ({ id: x, label: byId.get(x).l })), narrower: c.n.map((x) => ({ id: x, label: byId.get(x).l })),
     related: c.r.map((x) => ({ id: x, label: byId.get(x).l })),
@@ -32,7 +32,7 @@ function full(c, notes) {
   };
 }
 
-const RULES = (ctx) => askInstructions({ schemeTitle: META.scheme.title, release: META.release, conceptCount: C.length, context: ctx, index: INDEX });
+const RULES = (ctx) => askInstructions({ schemeTitle: META.scheme.title, release: META.release, conceptCount: C.length, canonicalCount: META.counts.canonicalConcepts, authoredCount: META.counts.authoredConcepts, context: ctx, index: INDEX });
 
 function retrieval(question, ctxIds) {
   // used when this viewer can't run page tools: put the likely-relevant entries in the prompt

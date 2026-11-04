@@ -1,5 +1,5 @@
 // Editorial health checks over the embedded I2IDL release (shared by Insights and the editorial packet).
-import { C, byId } from "./data.js";
+import { CANONICAL_C as C, byId } from "./data.js";
 
 let cached = null;
 export function health() {

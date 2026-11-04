@@ -1,3 +1,4 @@
+import { safeNavigationHref } from "./navigation-links.js";
 import { useCaps } from "./caps.js";
 import { Icon } from "./icons.jsx";
 import { CopyBtn, Modal, useUI } from "./ui.jsx";
@@ -18,7 +19,7 @@ export function AIClientTaskLinks() {
     <div className="row wrap">
       <CopyBtn text={ASK_PROMPT} label="Copy Ask prompt" />
       <CopyBtn text={ORCHESTRATE_PROMPT} label="Copy Orchestrate prompt" />
-      <a href={CONTROLS_URL} target="_blank" rel="noreferrer">Discoverable controls</a>
+      <a href={safeNavigationHref(CONTROLS_URL)} target="_blank" rel="noreferrer">Discoverable controls</a>
     </div>
     <details className="small"><summary>Read or select the prompts</summary><p>{ASK_PROMPT}</p><p>{ORCHESTRATE_PROMPT}</p></details>
   </div>;

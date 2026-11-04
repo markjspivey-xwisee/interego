@@ -66,11 +66,22 @@ describe('current workbench capability directory and bounded examples', () => {
         expect(row.input_schema?.required).toEqual(a.inputs.filter(i => i.required).map(i => i.name));
       }
       expect(data.actions.filter(a => a.n.startsWith('foxxi.i2idlx_')).map(a => a.n).sort()).toEqual([
-        'foxxi.i2idlx_ask', 'foxxi.i2idlx_capabilities', 'foxxi.i2idlx_challenge', 'foxxi.i2idlx_classify',
+        'foxxi.i2idlx_ask', 'foxxi.i2idlx_authored_catalog', 'foxxi.i2idlx_authored_rdf', 'foxxi.i2idlx_authored_shapes',
+        'foxxi.i2idlx_capabilities', 'foxxi.i2idlx_challenge', 'foxxi.i2idlx_classify',
         'foxxi.i2idlx_intervention_ask', 'foxxi.i2idlx_interventions', 'foxxi.i2idlx_orchestrate',
         'foxxi.i2idlx_peer_term', 'foxxi.i2idlx_read', 'foxxi.i2idlx_session', 'foxxi.i2idlx_source_version',
         'foxxi.i2idlx_validate', 'foxxi.i2idlx_write',
       ]);
+      for (const [name, path] of [
+        ['foxxi.i2idlx_authored_catalog', '/i2idlx/authored-catalog'],
+        ['foxxi.i2idlx_authored_rdf', '/i2idlx/authored.ttl'],
+        ['foxxi.i2idlx_authored_shapes', '/i2idlx/authored-shapes.ttl'],
+      ]) {
+        expect(data.actions.find(a => a.n === name)).toMatchObject({
+          m: 'GET', u: BASE + path, ro: true, de: false, ix: true, xr: true,
+          in: [], input_schema: { required: [] }, execution: { mode: 'prepare-only' },
+        });
+      }
       expect(data.actions.find(a => a.n === 'foxxi.i2idlx_interventions')).toMatchObject({
         m: 'GET', u: BASE + '/i2idlx/api/interventions', ro: true, xr: true,
         input_schema: { required: [] }, execution: { mode: 'prepare-only' },
@@ -143,7 +154,7 @@ describe('current workbench capability directory and bounded examples', () => {
       const protectedRead = data.actions.find(a => a.n === 'foxxi.le_analyze_learning_curve')!;
       expect(protectedRead.ro).toBe(true); expect(protectedRead.execution.mode).toBe('prepare-only');
       expect((await run(base, protectedRead.iri, { concept_id: 'example', attempts: [] })).status).toBe(403);
-      for (const name of ['foxxi.i2idlx_interventions', 'foxxi.i2idlx_intervention_ask']) {
+      for (const name of ['foxxi.i2idlx_interventions', 'foxxi.i2idlx_intervention_ask', 'foxxi.i2idlx_authored_catalog', 'foxxi.i2idlx_authored_rdf', 'foxxi.i2idlx_authored_shapes']) {
         const intervention = data.actions.find(a => a.n === name)!;
         expect(intervention.ro).toBe(true); expect(intervention.execution.mode).toBe('prepare-only');
         const payload = name === 'foxxi.i2idlx_intervention_ask'

@@ -112,7 +112,7 @@ await test('original Orchestrate prompts and no-argument tools preserve cumulati
 
 await test('unadvertised and duplicate tool requests cannot execute page functions', async () => {
   let executions = 0;
-  const { client } = fixture(body => response(turn('completed', 1, '', { tool_calls: [{ id: 'bad', name: 'navigate_arbitrary_url', arguments: {} }] })));
+  const { client } = fixture(() => response(turn('completed', 1, '', { tool_calls: [{ id: 'bad', name: 'navigate_arbitrary_url', arguments: {} }] })));
   await ready(client);
   await assert.rejects(client.getSample()([{ role: 'user', content: 'Question' }], { tools: [{ name: 'safe_lookup', inputSchema: { type: 'object' }, execute: () => { executions++; } }] }), /unadvertised/);
   assert.equal(executions, 0);
@@ -204,7 +204,7 @@ function orchestraHarness(sample) {
   const React = { useState, useRef, useEffect, useMemo: memo, useCallback: (fn, deps) => memo(() => fn, deps) };
   const TOOLS = Object.fromEntries(STEPS.flatMap(step => step.tools).map(name => [name, { description: 'Deterministic scheduling fixture.' }]));
   const context = {
-    React, META: { scheme: { title: 'Test glossary' }, release: 'test' }, C: [],
+    React, META: { scheme: { title: 'Test glossary' }, release: 'test' }, CANONICAL_C: Array(8).fill({}), AUTHORED_C: [{}],
     useCaps: () => ({ resolved: true, sample }), useStored: (_key, value) => useState(value),
     createWorld: () => ({ fixes: [{ status: 'open' }], items: [] }),
     callTool: () => ({ ok: true, result: {}, summary: 'fixture', ui: [] }), decideGate: () => {}, TOOLS,
@@ -231,6 +231,8 @@ await test('all twelve orchestration steps complete through the single-turn pair
   const requested = new Set();
   const { client } = fixture(body => {
     assert.equal(body.operation, 'request');
+    assert(body.messages[0].content.includes('8 canonical concepts'));
+    assert(body.messages[0].content.includes('1 separately authored Hypothetical'));
     const step = stepIn(body.messages[0].content);
     assert.ok(step, 'The actual engine supplies each step prompt.');
     requested.add(step.id);

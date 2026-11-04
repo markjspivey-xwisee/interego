@@ -1,10 +1,10 @@
 // The editorial packet: everything I2IDL-X found or proposes, as one Markdown file an I2IDL editor can
 // read, forward or turn into issues. Nothing in it changes I2IDL's record.
-import { META, C, MAPPINGS, SUGGESTIONS, RELEASES, byId, kindPhrase } from "./data.js";
+import { META, CANONICAL_C as C, AUTHORED_C, iriOf, MAPPINGS, SUGGESTIONS, RELEASES, byId, kindPhrase } from "./data.js";
 import { health } from "./health.js";
 
 const md = (s) => String(s ?? "").replace(/\|/g, "\\|").replace(/\n/g, " ");
-const link = (c) => `[${c.l}](https://id.i2idl.org/concepts/${c.id})`;
+const link = (c) => `[${c.l}](${iriOf(c.id)})`;
 const ago = (iso) => { try { return new Date(iso).toISOString().slice(0, 10); } catch { return iso; } };
 
 /** status(key) → this page's consensus label for a review item (default: "proposed"). */
@@ -17,7 +17,7 @@ export function editorialPacket({ status = () => "proposed" } = {}) {
   const p = (...xs) => L.push(...xs);
   p(`# Editorial packet — ${META.scheme.title} ${META.release}`, "",
     `Prepared with Interpretant / I2IDL-X from commit \`${META.commit.slice(0, 7)}\` of ${META.repo} (${ago(META.commitDate)}).`,
-    `Everything below is a candidate for I2IDL's editors to accept, change or ignore. Nothing here alters I2IDL's record: the I2IDL-X layer lives on Interego (${META.base}) and points at I2IDL's IRIs.`,
+    `Everything below is a candidate for I2IDL's editors to accept, change or ignore. Nothing here alters I2IDL's record: the I2IDL-X layer lives on Interego (${META.base}) and preserves separate canonical and authored identities.`,
     `Independent work by Mark Spivey (Foxxi Mediums Inc.); not affiliated with or endorsed by I2IDL.`, "",
     `## At a glance`, "",
     `| Item | Count | Mirrors I2IDL's roadmap |`, `|---|---:|---|`,
@@ -85,6 +85,10 @@ export function editorialPacket({ status = () => "proposed" } = {}) {
     `- Definitions resting on a single evidence record: ${H.single.length}`,
     `- Labels shared by more than one concept: ${H.altClash.length}${H.altClash.length ? " — " + H.altClash.map((x) => `“${x.form}” (${x.ids.map((id) => byId.get(id).l).join(" / ")})`).join("; ") : ""}`,
     `- Definitions carrying an adaptation notice: ${H.adapted.length}`, "");
+  if (AUTHORED_C.length) {
+    p(`## 7. Separately authored I2IDL-X proposals`, "", `${AUTHORED_C.length} authored proposal is excluded from the canonical provenance and health counts above; no upstream adoption is asserted.`, "");
+    for (const c of AUTHORED_C) p(`- **${link(c)}** — ${c.d}`, `  - Authored by ${c.origin.publisher}; catalog ${c.origin.catalogVersion}; status ${c.origin.status}.`, `  - Proposed relations: ${c.r.map((id) => link(byId.get(id))).join(", ")}.`, "");
+  }
   p(`## How to act on this`, "",
     `- Review the candidates together: ${window.__APP_URL__ ? window.__APP_URL__ + "#review-method.evidence-cited" : "the Review view in Interpretant"} (votes compose under Interego's ratification algebra; a ratified crosswalk opens a prefilled issue on ${META.repo}).`,
     `- Or take any line straight into the JSON-LD: I2IDL-X never needs to be in the loop.`,

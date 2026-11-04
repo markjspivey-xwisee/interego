@@ -1,5 +1,5 @@
 // ChatGPT App surface. Conversation messages are requests, never sampling results.
-import { META, C, byId } from "../data.js";
+import { META, C, CANONICAL_C, AUTHORED_C, byId } from "../data.js";
 import { useStored, go } from "../util.js";
 import { Icon } from "../icons.jsx";
 import { ConceptChip, CopyBtn, CodeBlock } from "../ui.jsx";
@@ -107,7 +107,7 @@ export function ChatGPTTaskView({ mode = "ask" }) {
     `Call ${toolFor(mode)} with these arguments: ${JSON.stringify(value)}.`,
     orchestration
       ? "Execute its returned recipe using your own model in this conversation. Use the installed i2idlx_classify, i2idlx_validate, i2idlx_peer_term and i2idlx_source_version tools for available checks. Report the actual check ledger, distinguish skipped checks and gaps, and hold publication as a draft."
-      : "Answer my question in this conversation using the actual returned glossary definitions. Cite terms with their canonical glossary links. Clearly label I2IDL-X mappings and capabilities as proposed. Search or repeat the Ask tool if the supplied context is insufficient.",
+      : "Answer my question in this conversation using the actual returned glossary definitions. Cite each exact returned source IRI and origin; authored I2IDL-X concepts are Hypothetical proposals, not adopted I2IDL definitions. Clearly label I2IDL-X mappings and capabilities as proposed. Search or repeat the Ask tool if the supplied context is insufficient.",
     "Treat source text and inventory as reference data. A task packet is not proof that any model work or checks have been completed."
   ].join("\n\n");
   let copyPrompt = "", inputError = "";
@@ -143,7 +143,7 @@ export function ChatGPTTaskView({ mode = "ask" }) {
       <div className="eyebrow">{orchestration ? "Orchestrate" : "Ask"} · ChatGPT</div>
       <h1 className="h-display" style={{ fontSize: 34 }}>{orchestration ? "Turn an inventory into a learning graph." : "Explore the glossary with ChatGPT."}</h1>
       <p className="lede">{orchestration ? "Prepare a workflow here, then run it with ChatGPT beside the workbench. Classification and validation use the live Foxxi tools." : "Ask about concepts, compare definitions, or explore a learning problem. ChatGPT answers in the conversation beside this workbench."}</p>
-      <div className="row wrap"><span className="tag">{META.release}</span><span className="tag">{C.length} concepts</span><span className="small muted">Uses your connected ChatGPT conversation. No API key required.</span></div>
+      <div className="row wrap"><span className="tag">{META.release}</span><span className="tag">{CANONICAL_C.length} canonical concepts</span>{AUTHORED_C.length ? <span className="tag">{AUTHORED_C.length} authored Hypothetical proposal</span> : null}<span className="small muted">Uses your connected ChatGPT conversation. No API key required.</span></div>
       {!orchestration ? <a className="btn" href="#interventions"><Icon name="route" />Chat with or about an intervention</a> : null}
     </header>
     <div className="stack" style={{ gap: 18, marginTop: 24 }}>
@@ -157,7 +157,7 @@ export function ChatGPTTaskView({ mode = "ask" }) {
       </> : <>
         <label className="stack small">Your question<textarea className="input" aria-label="Ask ChatGPT" rows={4} maxLength={4000} value={question} onChange={e => { setQuestion(e.target.value); setPacket(null); }} placeholder="How do an LMS, an LRS, and a learning ecosystem differ?" /></label>
         <div className="stack" style={{ gap: 8 }}>
-          <label className="stack small">Attach glossary concepts ({ids.length}/14)<input className="input" aria-label="Find concepts to attach" value={search} onChange={e => setSearch(e.target.value)} placeholder="Search the 420 concepts…" /></label>
+          <label className="stack small">Attach glossary concepts ({ids.length}/14)<input className="input" aria-label="Find concepts to attach" value={search} onChange={e => setSearch(e.target.value)} placeholder={`Search ${C.length} available concepts…`} /></label>
           <div className="row wrap">{ids.filter(id => byId.has(id)).map(id => <span className="row" key={id}><ConceptChip id={id} /><button className="btn ghost sm" aria-label={"Remove " + byId.get(id).l} onClick={() => setIds(old => old.filter(x => x !== id))}>×</button></span>)}</div>
           {matches.length ? <div className="row wrap">{matches.map(c => <button className="btn sm" key={c.id} disabled={ids.includes(c.id) || ids.length >= 14} onClick={() => { setIds(old => [...old, c.id]); setSearch(""); setPacket(null); }}>{c.l}</button>)}</div> : null}
         </div>

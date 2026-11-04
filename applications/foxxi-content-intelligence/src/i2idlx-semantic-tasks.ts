@@ -1,5 +1,6 @@
 /** Deterministic, read-only checks. The connected client retains all AI reasoning. */
 import type { Express, Response } from 'express';
+import { rateLimit } from 'express-rate-limit';
 import { readFile, stat } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
@@ -7,6 +8,9 @@ import { resolve } from 'node:path';
 import { loadPublicTaskData } from './i2idlx-client-tasks.js';
 import { parseTurtle, union, construct, serializeTurtle, nn, RDF, GS, type Store } from '../i2idlx/typescript/rdf.js';
 import { shaclValidate } from '../i2idlx/typescript/validation.js';
+import { authoredCatalogView, authoredReferentTurtle, conceptIri, resolveConceptIndex } from '../i2idlx/typescript/authored-concepts.js';
+import { authoredReferenceShapes } from '../i2idlx/typescript/authored-shapes.js';
+export { authoredReferenceShapes } from '../i2idlx/typescript/authored-shapes.js';
 
 type Row = Record<string, unknown>;
 export interface SemanticTaskConfig { baseUrl: string; appDataFile?: string; distDirectory?: string; fetch?: typeof fetch }
@@ -66,14 +70,14 @@ function iriBase(data: Row): string {
   return base + '#';
 }
 function membership(data: Row, graph: Store, ns: string) {
-  const known = new Set(rows(data.concepts).map(c => CONCEPT + text(c.id)));
+  const known = resolveConceptIndex(data);
   return graph.getQuads(null, nn(ns + 'isClassifiedBy'), null, null).map(q => ({
     subject: q.subject.value, concept: q.object.value,
-    exists_in_snapshot: q.object.termType === 'NamedNode' && known.has(q.object.value),
+    exists_in_snapshot: q.object.termType === 'NamedNode' && known.has(q.object.value), ...(known.has(q.object.value) ? { origin: known.get(q.object.value)!.origin } : {}),
   }));
 }
 function clashes(data: Row, graph: Store, ns: string) {
-  const byConcept = new Map(rows(data.concepts).map(c => [CONCEPT + text(c.id), text(c.rc)]));
+  const byConcept = new Map(rows(data.concepts).map(c => [conceptIri(c), text(c.rc)]));
   const semantic = object(data.semantic) ? data.semantic : {}, matrix = object(semantic.disjoint) ? semantic.disjoint : {};
   const subjects = new Map<string, Set<string>>();
   for (const q of graph.getQuads(null, nn(ns + 'isClassifiedBy'), null, null)) {
@@ -116,7 +120,8 @@ export function createSemanticTaskExecutor(config: SemanticTaskConfig): Semantic
     if (refs.some(r => !r.exists_in_snapshot)) throw new CheckError('A classified concept is not present in the pinned glossary.');
     const query = text(rows(data.queries).find(q => q.id === 'q-classify')?.sparql);
     if (!query || query.length > 12000 || !/^\s*(?:PREFIX\s+[^\n]+\s*)*CONSTRUCT\b/i.test(query) || /\b(?:SERVICE|FROM|LOAD|INSERT|DELETE)\b/i.test(query)) throw new CheckError('Fixed classifier query unavailable.', 503);
-    const built = await graphs(), datasetResult = await construct(query, union(built.ontology.graph, built.alignments.graph, built.referents.graph, input));
+    const built = await graphs(), authored = authoredReferentTurtle(data, config.baseUrl), authoredGraph = parseTurtle(authored);
+    const datasetResult = await construct(query, union(built.ontology.graph, built.alignments.graph, built.referents.graph, authoredGraph, input));
     if (datasetResult.size > 10000) throw new CheckError('Classifier result exceeds capacity.', 413);
     const draftSubjects = new Set([...input].map(q => q.subject.termType + ':' + q.subject.value)), inferred = union();
     inferred.addQuads([...datasetResult].filter(q => draftSubjects.has(q.subject.termType + ':' + q.subject.value)));
@@ -128,11 +133,13 @@ export function createSemanticTaskExecutor(config: SemanticTaskConfig): Semantic
       evidence: { engine: 'existing I2IDL-X Comunica q-classify', query: 'q-classify', input_triples: input.size,
         input_sha256: createHash('sha256').update(text(args.graph_content)).digest('hex'),
         output_triples: inferred.size, dataset_output_triples: datasetResult.size, output_scope: 'submitted draft subjects',
-        concept_existence: allRefs, graph_sha256: Object.fromEntries(Object.entries(built).map(([k, v]) => [k, v.sha256])) } };
+        concept_existence: allRefs, authored_graph_sha256: createHash('sha256').update(authored).digest('hex'),
+        graph_sha256: Object.fromEntries(Object.entries(built).map(([k, v]) => [k, v.sha256])) } };
   });
   route('validate', ['graph_content'], async (args, data) => {
     const ns = iriBase(data), input = graphInput(args, ns), built = await graphs();
-    const report = await shaclValidate(input, built.shapes.graph, { ontology: built.ontology.graph, inference: 'rdfs' });
+    const effectiveShapes = authoredReferenceShapes(data, built.shapes.graph);
+    const report = await shaclValidate(input, effectiveShapes, { ontology: built.ontology.graph, inference: 'rdfs' });
     const refs = membership(data, report.dataGraph, ns), unknown = refs.filter(r => !r.exists_in_snapshot);
     const draftNodes = new Set([...input].map(q => q.subject.termType + ':' + q.subject.value));
     const draftTargets = report.targets.filter(t => draftNodes.has(t.focusNode.termType + ':' + t.focusNode.value));
@@ -148,7 +155,9 @@ export function createSemanticTaskExecutor(config: SemanticTaskConfig): Semantic
         applied_targets: draftTargets.map(t => ({ focus: t.focusNode.value, shape: t.sourceShape.value })),
         total_evaluated_shape_node_pairs: report.targets.length,
         constraints: 'unsupported features fail closed; SHACL-SPARQL/JS not supported', shape_sha256: built.shapes.sha256,
-        ontology_sha256: built.ontology.sha256, concept_existence: refs } };
+        ontology_sha256: built.ontology.sha256, concept_existence: refs,
+        reference_profile: data.authoredCatalog ? 'canonical-or-exact-authored-v1' : 'canonical',
+        effective_shape_sha256: createHash('sha256').update(await serializeTurtle(effectiveShapes)).digest('hex') } };
   });
   route('peer-term', ['iri'], async (args, data) => {
     const iri = text(args.iri);
@@ -200,6 +209,32 @@ export function createSemanticTaskExecutor(config: SemanticTaskConfig): Semantic
   };
 }
 export function attachSemanticTaskRoutes(app: Express, config: SemanticTaskConfig): void {
+  // All three representations spend the same budgets before file loading or
+  // parsing. The fixed outer budget also bounds admitted IP buckets; the
+  // default IP key follows Express's existing trust policy and groups IPv6 /56.
+  const authoredGlobalLimit = rateLimit({ windowMs: 60_000, limit: 300,
+    keyGenerator: () => 'i2idlx-authored-reads', identifier: 'i2idlx-authored-total',
+    standardHeaders: 'draft-8', legacyHeaders: false,
+    message: { error: 'too_many_requests' } });
+  const authoredClientLimit = rateLimit({ windowMs: 60_000, limit: 60, ipv6Subnet: 56,
+    identifier: 'i2idlx-authored-client', standardHeaders: 'draft-8', legacyHeaders: false,
+    message: { error: 'too_many_requests' } });
+  for (const format of ['authored.ttl', 'authored-catalog', 'authored-shapes.ttl']) app.get('/i2idlx/' + format, authoredGlobalLimit, authoredClientLimit, async (_req, res: Response) => {
+    try {
+      const data = await loadPublicTaskData(config);
+      if (!data.authoredCatalog) { res.status(404).json({ error: 'No authored catalog in this build.' }); return; }
+      const rdf = authoredReferentTurtle(data, config.baseUrl), sha256 = createHash('sha256').update(rdf).digest('hex');
+      if (format === 'authored-shapes.ttl') {
+        const directory = config.distDirectory ?? fileURLToPath(new URL('../i2idlx/dist-ts/', import.meta.url));
+        const base = await readFile(resolve(directory, 'i2idlx-shapes.ttl'), 'utf8');
+        const shapes = await serializeTurtle(authoredReferenceShapes(data, parseTurtle(base)));
+        res.set('ETag', '"' + createHash('sha256').update(shapes).digest('hex') + '"').set('Cache-Control', 'no-cache').type('text/turtle').send(shapes); return;
+      }
+      const body = format === 'authored.ttl' ? rdf : JSON.stringify(authoredCatalogView(data, config.baseUrl, sha256));
+      res.set('ETag', '"' + createHash('sha256').update(body).digest('hex') + '"').set('Cache-Control', 'no-cache')
+        .type(format === 'authored.ttl' ? 'text/turtle' : 'application/json').send(body);
+    } catch { res.status(503).json({ error: 'Verified authored catalog unavailable.' }); }
+  });
   const execute = createSemanticTaskExecutor(config);
   for (const operation of ['classify', 'validate', 'peer-term', 'source-version'] as const) app.post('/i2idlx/api/' + operation, async (req, res: Response) => {
     const output = await execute(operation, req.body);

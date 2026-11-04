@@ -1,11 +1,14 @@
 """Check the recorded orchestrated run that Orchestrate replays (examples/orchestra/kestrel-point-run.json).
 
 python3 -I tools/check_orchestra.py <i2idlx-root> [--migration <reviewed-expectations.json>]
+    [--canonical | --authored-overlay <reviewed-combined-overlay.json>]
 
 Every tool call is re-run, in order, against a fresh sandbox with the page's own tools (app/src/orc/world.js)
 and by default must return exactly what the recording holds. --migration instead requires every exact reviewed
 v93 result digest and reports historical drift separately. Every call must belong to its step's agent and tools;
 every step must have finished; and the run must end with the staged writes approved. Needs app/build/data.json.
+--canonical keeps the original 420-term oracle. --authored-overlay separately checks the combined corpus,
+binding exactly two reviewed search-result changes to that unchanged fixture and the actual authored catalog.
 """
 import argparse
 import json
@@ -13,11 +16,17 @@ import pathlib
 import re
 import subprocess
 import sys
+import tempfile
 
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument("root")
 parser.add_argument("--migration", type=pathlib.Path, help="exact reviewed v93 replay expectations; the original trace remains unchanged")
+corpus = parser.add_mutually_exclusive_group()
+corpus.add_argument("--canonical", action="store_true", help="check the original 420-term source corpus, excluding its separate authored catalog")
+corpus.add_argument("--authored-overlay", type=pathlib.Path, help="two reviewed combined-corpus result overrides bound to the canonical fixture and authored catalog")
 args = parser.parse_args()
+if (args.canonical or args.authored_overlay) and not args.migration:
+    parser.error("--canonical and --authored-overlay require --migration")
 ROOT = pathlib.Path(args.root).resolve()
 APP = ROOT / "app"
 RUN = ROOT / "examples" / "orchestra" / "kestrel-point-run.json"
@@ -26,10 +35,29 @@ BANNER = ("globalThis.document={getElementById:()=>({textContent:require('fs').r
           "useMemo:(f)=>f(),useContext:()=>null,createElement:()=>null};")
 subprocess.run([str(APP / "node_modules/.bin/esbuild"), "tools/orc_check.js", "--bundle", "--platform=node", "--format=cjs",
                 "--outfile=build/orc-check.cjs", "--log-level=warning", "--banner:js=" + BANNER], cwd=APP, check=True)
-command = ["node", "build/orc-check.cjs", "build/data.json", str(RUN)]
-if args.migration:
-    command.append(str(args.migration.resolve()))
-r = json.loads(subprocess.run(command, cwd=APP, check=True, capture_output=True, text=True).stdout)
+with tempfile.TemporaryDirectory(prefix="i2idlx-replay-") as temporary:
+    command = ["node", "build/orc-check.cjs", "build/data.json", str(RUN)]
+    expected = args.migration.resolve() if args.migration else None
+    data = json.loads((APP / "build" / "data.json").read_text(encoding="utf-8"))
+    if args.canonical:
+        if len(data["concepts"]) != 420 or data["meta"]["counts"]["concepts"] != 420:
+            raise ValueError("Canonical replay requires the raw 420-term source corpus")
+        canonical = {k: v for k, v in data.items() if k != "authoredCatalog"}
+        source = pathlib.Path(temporary) / "canonical-data.json"
+        source.write_text(json.dumps(canonical, ensure_ascii=False), encoding="utf-8")
+        command[2] = str(source)
+    if args.authored_overlay:
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("replay_overlay", pathlib.Path(__file__).with_name("replay_overlay.py"))
+        overlay_module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(overlay_module)
+        overlay = json.loads(args.authored_overlay.read_text(encoding="utf-8"))
+        combined = overlay_module.apply_authored_overlay(overlay, expected.read_bytes(), data)
+        expected = pathlib.Path(temporary) / "combined-expectations.json"
+        expected.write_text(json.dumps(combined, ensure_ascii=False), encoding="utf-8")
+    if expected:
+        command.append(str(expected))
+    r = json.loads(subprocess.run(command, cwd=APP, check=True, capture_output=True, text=True).stdout)
 
 failures = []
 
@@ -41,6 +69,10 @@ def check(ok, what):
 
 
 if args.migration:
+    if args.authored_overlay:
+        print("INFO combined corpus: 420 canonical + 1 authored Hypothetical concept; only c9/c11 use the reviewed overlay, all other 46 expectations unchanged")
+    elif args.canonical:
+        print("INFO canonical corpus: the original 420-term source and unchanged v93 migration expectations")
     print(f"INFO historical recording: {r['matched']} of {r['calls']} tool results reproduced exactly; differ: {r['mismatches']}")
     migration = r["migration"]
     check(migration["boundCalls"] == 48 and migration["reviewedChanges"] == 11 and migration["unchanged"] == 37,
