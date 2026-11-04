@@ -17,7 +17,7 @@ import type { LocalNote } from '../src/types.js';
 const here = dirname(fileURLToPath(import.meta.url));
 const require_ = createRequire(import.meta.url);
 // Node's import hook runs the same TS companion without the CLI's extra IPC socket.
-const tsxLoader = require_.resolve('tsx');
+const tsxLoader = pathToFileURL(require_.resolve('tsx')).href;
 const directories: string[] = [];
 const services: AgentService[] = [];
 const clients: Client[] = [];
