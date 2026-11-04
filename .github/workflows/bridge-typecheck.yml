@@ -415,6 +415,10 @@ jobs:
           set -euo pipefail
           npm ci
           npm run build
+          node --test test/offline-context.test.mjs
+          # Retain the exact generator context before its v6 runtime is pruned;
+          # CSS v5 otherwise tries to retrieve it from the public context service.
+          node test/prepare-offline-context.mjs
           # Generator is build-time only; matches the production runtime.
           rm -rf node_modules/componentsjs-generator
       - name: Install and check existing gateway policy

@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-11-04 - Keep the native LRS CI context local
+
+The isolated native CSS test fixture retains the generator's exact Components.js context definitions before pruning its build dependencies. This removes a remote JSON-LD context lookup that repeatedly failed with HTTP 500. A regression test blocks remote context requests and checks the parsed RDF definitions; production configuration and review gates are unchanged.
+
 ## 2026-11-03 — Distinguish paired-agent request timeout from session expiry
 
 A timed-out question now directs the user to ask again on the active agent connection, instead of advising sign-in. The broker marks only its request deadline as request_timeout; agent failures and genuine session expiry retain their separate errors. Ask and live Orchestrate explain the retry without discarding the paired session.
