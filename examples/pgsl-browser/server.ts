@@ -14,6 +14,7 @@
  */
 
 import express from 'express';
+import { demoExperienceRdf } from '../xapi-record-rdf.js';
 import { resolve, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import {
@@ -2068,18 +2069,9 @@ const LEARNER_INFO: Record<string, { name: string; rank: string; did: string }> 
 
 function xapiToRdf(learner: string, stmts: typeof XAPI_DATA['chen']): string {
   const info = LEARNER_INFO[learner]!;
-  const lines = ['@prefix xapi: <https://w3id.org/xapi/ontology#>.', '@prefix verb: <https://w3id.org/xapi/adl/verbs/>.', '@prefix xsd: <http://www.w3.org/2001/XMLSchema#>.', ''];
-  stmts.forEach((s, i) => {
-    lines.push(`<urn:xapi:${learner}:${String(i + 1).padStart(3, '0')}> a xapi:Statement ;`);
-    lines.push(`    xapi:actor <${info.did}> ;`);
-    lines.push(`    xapi:verb verb:${s.verb} ;`);
-    lines.push(`    xapi:object <urn:activity:${s.activity}> ;`);
-    lines.push(`    xapi:timestamp "${s.timestamp}"^^xsd:dateTime ;`);
-    lines.push(`    <https://w3id.org/xapi/ontology#result/score> "${s.score}"^^xsd:integer ;`);
-    lines.push(`    <https://w3id.org/xapi/ontology#result/success> "${s.success}"^^xsd:boolean.`);
-    lines.push('');
-  });
-  return lines.join('\n');
+  return stmts.map((s, i) => demoExperienceRdf(
+    'urn:xapi:' + learner + ':' + String(i + 1).padStart(3, '0'), info.did, s,
+  )).join('\n');
 }
 
 interface DemoState {

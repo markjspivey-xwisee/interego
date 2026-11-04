@@ -121,8 +121,23 @@ export function createSemanticTaskExecutor(config: SemanticTaskConfig): Semantic
     const query = text(rows(data.queries).find(q => q.id === 'q-classify')?.sparql);
     if (!query || query.length > 12000 || !/^\s*(?:PREFIX\s+[^\n]+\s*)*CONSTRUCT\b/i.test(query) || /\b(?:SERVICE|FROM|LOAD|INSERT|DELETE)\b/i.test(query)) throw new CheckError('Fixed classifier query unavailable.', 503);
     const built = await graphs(), authored = authoredReferentTurtle(data, config.baseUrl), authoredGraph = parseTurtle(authored);
-    const datasetResult = await construct(query, union(built.ontology.graph, built.alignments.graph, built.referents.graph, authoredGraph, input));
-    if (datasetResult.size > 10000) throw new CheckError('Classifier result exceeds capacity.', 413);
+    // q-classify can introduce a type that enables another bridge on the next
+    // pass. Retain the monotone closure, including trusted intermediate facts,
+    // while returning only the original draft subjects below.
+    const dataset = union(built.ontology.graph, built.alignments.graph, built.referents.graph, authoredGraph, input);
+    const datasetResult = union();
+    const maxPasses = 32;
+    let passes = 0, converged = false;
+    for (; passes < maxPasses;) {
+      passes++;
+      const next = await construct(query, dataset);
+      datasetResult.addQuads([...next]);
+      if (datasetResult.size > 10000) throw new CheckError('Classifier result exceeds capacity.', 413);
+      const before = dataset.size;
+      dataset.addQuads([...next]);
+      if (dataset.size === before) { converged = true; break; }
+    }
+    if (!converged) throw new CheckError('Classifier closure did not converge within its bounded capacity.', 503);
     const draftSubjects = new Set([...input].map(q => q.subject.termType + ':' + q.subject.value)), inferred = union();
     inferred.addQuads([...datasetResult].filter(q => draftSubjects.has(q.subject.termType + ':' + q.subject.value)));
     const allRefs = membership(data, union(input, inferred), ns);
@@ -133,6 +148,7 @@ export function createSemanticTaskExecutor(config: SemanticTaskConfig): Semantic
       evidence: { engine: 'existing I2IDL-X Comunica q-classify', query: 'q-classify', input_triples: input.size,
         input_sha256: createHash('sha256').update(text(args.graph_content)).digest('hex'),
         output_triples: inferred.size, dataset_output_triples: datasetResult.size, output_scope: 'submitted draft subjects',
+        closure: { converged, passes, max_passes: maxPasses, mode: 'monotone fixed point of pinned q-classify' },
         concept_existence: allRefs, authored_graph_sha256: createHash('sha256').update(authored).digest('hex'),
         graph_sha256: Object.fromEntries(Object.entries(built).map(([k, v]) => [k, v.sha256])) } };
   });

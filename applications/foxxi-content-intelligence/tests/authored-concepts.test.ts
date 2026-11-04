@@ -8,7 +8,8 @@ import { readFileSync } from 'node:fs';
 import { mkdtemp, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
-import { AUTHORED_CATALOG, AUTHORED_NS, FRAMEWORK_IRI, projectWorkbenchData, resolveConceptIndex, authoredReferentTurtle } from '../i2idlx/typescript/authored-concepts.js';
+import { Parser, Store } from 'n3';
+import { AUTHORED_CATALOG, AUTHORED_NS, FRAMEWORK_IRI, AUTHOR_ROOT, CLAUDE_REVIEWER, REVIEW_SHA256, CLAUDE_REVIEW_SHA256, projectWorkbenchData, resolveConceptIndex, authoredReferentTurtle } from '../i2idlx/typescript/authored-concepts.js';
 import { executeClientTask, loadPublicTaskData } from '../src/i2idlx-client-tasks.js';
 import { attachSemanticTaskRoutes, createSemanticTaskExecutor } from '../src/i2idlx-semantic-tasks.js';
 import { authoredGlossaryAffordances } from '../src/i2idlx-authored-affordances.js';
@@ -56,6 +57,40 @@ async function harness(run: (data: ReturnType<typeof fixture>, config: { baseUrl
   } finally { await rm(dir, { recursive: true, force: true }); }
 }
 describe('authored glossary corpus and cross-boundary framework classification', () => {
+  it('scopes dataset/bridge authorship, English definition creators, review documents and source evidence', () => {
+    const data = fixture(), combined = projectWorkbenchData(data), definition = AUTHORED_CATALOG.concepts[0]!;
+    const graph = new Store(new Parser().parse(authoredReferentTurtle(data)));
+    const objects = (s: string, p: string) => graph.getQuads(s, p, null, null).map(q => q.object.value).sort();
+    const DCT = 'http://purl.org/dc/terms/', PROV = 'http://www.w3.org/ns/prov#', SCHEMA = 'https://schema.org/', SKOS = 'http://www.w3.org/2004/02/skos/core#';
+    const catalogIri = 'https://foxxi-bridge.interego.xwisee.com/i2idlx/authored.ttl';
+    expect(AUTHORED_CATALOG.version).toBe('0.1.1');
+    for (const subject of [catalogIri, FRAMEWORK_IRI, ...AUTHORED_CATALOG.peerRestrictions.map(p => AUTHORED_NS + p.id)]) {
+      expect(objects(subject, PROV + 'wasAttributedTo')).toEqual([AUTHOR_ROOT]);
+    }
+    expect(objects(definition.definitionIri, DCT + 'creator')).toEqual([AUTHOR_ROOT, CLAUDE_REVIEWER].sort());
+    for (const [subject, predicate] of [[FRAMEWORK_IRI, SKOS + 'definition'], [definition.definitionIri, RDF + 'value']] as const) {
+      expect(graph.getQuads(subject, predicate, null, null)[0]!.object).toMatchObject({ value: definition.definition, language: 'en' });
+    }
+    expect(objects(definition.definitionIri, DCT + 'language')).toEqual(['en']);
+    expect(objects(catalogIri, DCT + 'identifier')).toEqual([]);
+    expect(objects(definition.definitionIri, DCT + 'identifier')).toEqual([]);
+    expect(objects(definition.definitionIri, PROV + 'wasDerivedFrom')).toEqual(['urn:sha256:' + REVIEW_SHA256]);
+    const review = AUTHORED_CATALOG.reviews[0]!;
+    expect(objects(review.iri, SCHEMA + 'author')).toEqual([CLAUDE_REVIEWER]);
+    expect(objects(review.iri, SCHEMA + 'itemReviewed')).toEqual([definition.definitionIri, ...review.reviewedBridges].sort());
+    expect(objects(review.iri, SCHEMA + 'itemReviewed')).not.toContain(catalogIri);
+    expect(objects(review.iri, PROV + 'wasDerivedFrom')).toEqual(['urn:sha256:' + CLAUDE_REVIEW_SHA256]);
+    expect(graph.getQuads(null, 'http://spdx.org/rdf/terms#checksumValue', null, null).map(q => q.object.value).sort()).toEqual([REVIEW_SHA256, CLAUDE_REVIEW_SHA256].sort());
+    expect(objects(FRAMEWORK_IRI, RDFS + 'comment')).toEqual([]);
+    const association = graph.getQuads(null, RDF + 'subject', FRAMEWORK_IRI, null)[0]!.subject;
+    expect(objects(association.value, RDF + 'object')).toEqual(['https://purl.org/ctdlasn/terms/CompetencyFramework']);
+    const authored = combined.concepts.find((c: Record<string, any>) => c.iri === FRAMEWORK_IRI);
+    expect(authored.ev.map((ev: Record<string, any>) => ev.r)).toEqual(['d', 's', 's']);
+    expect(authored.ev.map((ev: Record<string, any>) => combined.sources[ev.s].rc)).toEqual(['open', 'permission', 'permission']);
+    expect(authored.ev.map((ev: Record<string, any>) => combined.sources[ev.s].rights)).toEqual(['Creative Commons Attribution 4.0 International (CC BY 4.0)', 'IEEE terms apply', 'IEEE terms apply']);
+    expect(definition.evidence[1]!.url).toBe('https://standards.ieee.org/ieee/1484.20.2/10743/');
+    expect(definition.evidence[2]!.url).toBe('https://standards.ieee.org/ieee/1484.20.3/10749/');
+  });
   it('keeps every canonical definition/record intact, separates counts and exact identities, and rejects shadowing', () => {
     const data = fixture(), before = structuredClone(data), combined = projectWorkbenchData(data);
     expect(data).toEqual(before);

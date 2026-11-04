@@ -28,7 +28,7 @@ def validate_corpus(data):
     catalog = data["authoredCatalog"]
     assert catalog["canonicalSource"] == SOURCE_PIN, "authored catalog source pin changed"
     assert catalog["namespace"] == AUTHORED_NS and catalog["status"] == "Hypothetical", "authored authority/status changed"
-    assert catalog["publisher"] == "Foxxi / I2IDL-X" and catalog["version"] == "0.1.0", "authored origin changed"
+    assert catalog["publisher"] == "Foxxi / I2IDL-X" and catalog["version"] == "0.1.1", "authored origin changed"
     assert catalog["reviewedProposalSha256"] == "f711272b203a8fe74dd26d71b895eca9ee39d05d5a0f8326f70a2852ebc3109b", "authored review identity changed"
     authored = catalog["concepts"]
     assert isinstance(authored, list) and authored, "missing declared authored concepts"
