@@ -12,7 +12,7 @@ import { authoredGlossaryAffordances } from '../src/i2idlx-authored-affordances.
 import { attachSemanticTaskRoutes } from '../src/i2idlx-semantic-tasks.js';
 
 describe('authored read declarations match the actual HTTP follower contract', () => {
-  it('follows all three advertised reads, retaining raw bodies and meaningful declared result fields', async () => {
+  it('follows all three advertised reads and shares their client budget before reading files', async () => {
     const temporaryRoot = await realpath(tmpdir()), directory = await mkdtemp(join(temporaryRoot, 'authored-read-contract-'));
     const target = resolve(directory), contained = relative(temporaryRoot, target);
     if (isAbsolute(contained) || contained === '..' || contained.startsWith('..') || !basename(target).startsWith('authored-read-contract-')) throw new Error('Refusing cleanup outside the created fixture directory.');
@@ -51,6 +51,26 @@ describe('authored read declarations match the actual HTTP follower contract', (
       expect(catalog.rdf.href).toBe(rdf.affordance.target);
       expect(createHash('sha256').update(rdf.body).digest('hex')).toBe(catalog.rdf.sha256);
       for (const text of [rdf.body, shapes.body]) { expect(text).toContain(FRAMEWORK_IRI); expect(() => JSON.parse(text)).toThrow(); }
+      // The three follower reads above and these 57 reads spend one shared
+      // client budget, rather than granting 60 reads per representation.
+      const targets = [...results.values()].map(result => result.affordance.target);
+      for (let request = results.size; request < 60; request++) {
+        const response = await fetch(targets[request % targets.length]!);
+        expect(response.status).toBe(200);
+        await response.text();
+      }
+      // An invoked handler would now fail its first file read with 503. Every
+      // representation must instead refuse before loading or parsing anything.
+      await rm(appDataFile);
+      for (const target of targets) {
+        const response = await fetch(target);
+        expect(response.status).toBe(429);
+        expect(response.headers.get('content-type')).toContain('application/json');
+        expect(Number(response.headers.get('retry-after'))).toBeGreaterThan(0);
+        expect(Number(response.headers.get('retry-after'))).toBeLessThanOrEqual(60);
+        expect(response.headers.get('ratelimit')).toContain('i2idlx-authored-client');
+        expect(await response.json()).toEqual({ error: 'too_many_requests' });
+      }
     } finally {
       if (listener?.listening) await new Promise<void>((done, reject) => listener!.close(error => error ? reject(error) : done()));
       await rm(target, { recursive: true, force: true });

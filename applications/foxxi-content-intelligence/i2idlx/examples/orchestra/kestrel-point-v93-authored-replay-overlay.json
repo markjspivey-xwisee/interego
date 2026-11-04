@@ -1,0 +1,156 @@
+{
+  "v": 1,
+  "scope": "canonical-v93-plus-authored",
+  "purpose": "Exact reviewed changes from adding the separate owned authored proposal to the unchanged v0.0.93 canonical search corpus. No model recording or upstream adoption is claimed.",
+  "canonicalFixtureSha256": "5fd5e712d68359facfe054280525c258be8be04d580e48325e24842d95453f67",
+  "catalogSha256": "31733747fddfaa03d0c96869eba3762b4292ca045912556e15478e8c40448ed1",
+  "catalogDigestEncoding": "SHA-256 of compact UTF-8 JSON with recursively sorted keys, no ASCII escaping.",
+  "counts": {
+    "canonical": 420,
+    "authored": 1,
+    "combined": 421
+  },
+  "authoredConcept": {
+    "iri": "https://relay.interego.xwisee.com/ns/u-pk-33d42e6b33dc/i2idlx#concept-competency-framework",
+    "origin": {
+      "kind": "authored",
+      "publisher": "Foxxi / I2IDL-X",
+      "catalogVersion": "0.1.0",
+      "scheme": "https://relay.interego.xwisee.com/ns/u-pk-33d42e6b33dc/i2idlx#AuthoredConcepts",
+      "status": "Hypothetical",
+      "authors": [
+        "did:web:identity.interego.xwisee.com:agents:chatgpt-u-pk-731e988c2c5b",
+        "did:web:identity.interego.xwisee.com:agents:claude-u-pk-33d42e6b33dc"
+      ],
+      "reviewedProposalSha256": "f711272b203a8fe74dd26d71b895eca9ee39d05d5a0f8326f70a2852ebc3109b",
+      "proposedCanonicalIri": "https://id.i2idl.org/concepts/competency-framework",
+      "upstreamAdopted": false
+    }
+  },
+  "capture": {
+    "sourceHead": "a1ef1e5b285678cc35fd71dc8e0fcbaee598828e",
+    "run": 41836829089,
+    "job": 126597796067,
+    "review": "Fresh canonical replay is 48/48 exact. Combined replay preserves 46/48 exact; six query lists in c9/c11 add the owned Hypothetical framework. Surviving canonical match objects/order are unchanged; only the existing six-result cutoff removes a last-ranked canonical match in two lists."
+  },
+  "results": [
+    {
+      "id": "c9",
+      "tool": "search_glossary",
+      "ok": true,
+      "inputSha256": "2e8a10ac35d77dd4cbfd35ac0202f083f864a0e6a1909396ec32d848ddfc7057",
+      "canonicalExpectedSha256": "5ef885d2739eb6b3d7d53f352336a6cc033314a2cae1df5b8ed6b874d3287161",
+      "combinedExpectedSha256": "930d3190fdccc3cc851b4dbc11d94c3a0bb8a9e1718655627f5b4369e11ee8cf",
+      "changeReason": "The declared authored Competency framework becomes a ranked search hit with its exact owned IRI, authored Hypothetical provenance and upstreamAdopted=false. All surviving canonical search results retain their values/order; the original six-match bound still applies.",
+      "changedQueries": [
+        {
+          "query": "competency framework",
+          "canonicalIds": [
+            "ai-competency-framework-for-teachers-ai-cft",
+            "ieee-1484-20-3-2022-shareable-competency-definitions",
+            "ieee-1484-20-2-2022-defining-competencies"
+          ],
+          "combinedIds": [
+            "competency-framework",
+            "ai-competency-framework-for-teachers-ai-cft",
+            "ieee-1484-20-3-2022-shareable-competency-definitions",
+            "ieee-1484-20-2-2022-defining-competencies"
+          ]
+        },
+        {
+          "query": "proficiency level",
+          "canonicalIds": [
+            "minimum-proficiency-level",
+            "mastery-learning",
+            "create-ai-competency-level"
+          ],
+          "combinedIds": [
+            "minimum-proficiency-level",
+            "competency-framework",
+            "mastery-learning",
+            "create-ai-competency-level"
+          ]
+        },
+        {
+          "query": "competency",
+          "canonicalIds": [
+            "competency",
+            "competency-based-learning",
+            "ai-competency-progression",
+            "ai-competency-framework-for-teachers-ai-cft",
+            "shareable-competency-definition-scd",
+            "deepen-ai-competency-level"
+          ],
+          "combinedIds": [
+            "competency",
+            "competency-framework",
+            "competency-based-learning",
+            "ai-competency-progression",
+            "ai-competency-framework-for-teachers-ai-cft",
+            "shareable-competency-definition-scd"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "c11",
+      "tool": "search_glossary",
+      "ok": true,
+      "inputSha256": "e998464eb37e3f359ecfc3d65111d00704431633a3c9de023bba47524dfde16e",
+      "canonicalExpectedSha256": "53a30e2b54dfd5425601287581c8532ca9b27bfbfca37ebc808712d7c0b60601",
+      "combinedExpectedSha256": "c026cbd731c771aebd3465d951b17caea60a325b27598241315d86582a9ac32c",
+      "changeReason": "The declared authored Competency framework becomes a ranked search hit with its exact owned IRI, authored Hypothetical provenance and upstreamAdopted=false. All surviving canonical search results retain their values/order; the original six-match bound still applies.",
+      "changedQueries": [
+        {
+          "query": "framework",
+          "canonicalIds": [
+            "ai-competency-framework-for-teachers-ai-cft",
+            "resource-description-framework-rdf",
+            "ieee-3527-1-2020-digital-intelligence-framework",
+            "scrum",
+            "ieee-1484-20-3-2022-shareable-competency-definitions",
+            "ieee-1484-20-2-2022-defining-competencies"
+          ],
+          "combinedIds": [
+            "competency-framework",
+            "ai-competency-framework-for-teachers-ai-cft",
+            "resource-description-framework-rdf",
+            "ieee-3527-1-2020-digital-intelligence-framework",
+            "scrum",
+            "ieee-1484-20-3-2022-shareable-competency-definitions"
+          ]
+        },
+        {
+          "query": "competency definition",
+          "canonicalIds": [
+            "shareable-competency-definition-scd",
+            "ieee-1484-20-3-2022-shareable-competency-definitions",
+            "competency",
+            "digital-credential",
+            "micro-credential"
+          ],
+          "combinedIds": [
+            "shareable-competency-definition-scd",
+            "ieee-1484-20-3-2022-shareable-competency-definitions",
+            "competency-framework",
+            "competency",
+            "digital-credential",
+            "micro-credential"
+          ]
+        },
+        {
+          "query": "readiness",
+          "canonicalIds": [
+            "ieee-3527-1-2020-digital-intelligence-framework",
+            "whole-person-development"
+          ],
+          "combinedIds": [
+            "competency-framework",
+            "ieee-3527-1-2020-digital-intelligence-framework",
+            "whole-person-development"
+          ]
+        }
+      ]
+    }
+  ]
+}

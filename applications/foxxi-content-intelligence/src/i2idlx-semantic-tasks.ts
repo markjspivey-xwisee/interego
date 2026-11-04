@@ -1,5 +1,6 @@
 /** Deterministic, read-only checks. The connected client retains all AI reasoning. */
 import type { Express, Response } from 'express';
+import { rateLimit } from 'express-rate-limit';
 import { readFile, stat } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
@@ -208,7 +209,17 @@ export function createSemanticTaskExecutor(config: SemanticTaskConfig): Semantic
   };
 }
 export function attachSemanticTaskRoutes(app: Express, config: SemanticTaskConfig): void {
-  for (const format of ['authored.ttl', 'authored-catalog', 'authored-shapes.ttl']) app.get('/i2idlx/' + format, async (_req, res: Response) => {
+  // All three representations spend the same budgets before file loading or
+  // parsing. The fixed outer budget also bounds admitted IP buckets; the
+  // default IP key follows Express's existing trust policy and groups IPv6 /56.
+  const authoredGlobalLimit = rateLimit({ windowMs: 60_000, limit: 300,
+    keyGenerator: () => 'i2idlx-authored-reads', identifier: 'i2idlx-authored-total',
+    standardHeaders: 'draft-8', legacyHeaders: false,
+    message: { error: 'too_many_requests' } });
+  const authoredClientLimit = rateLimit({ windowMs: 60_000, limit: 60, ipv6Subnet: 56,
+    identifier: 'i2idlx-authored-client', standardHeaders: 'draft-8', legacyHeaders: false,
+    message: { error: 'too_many_requests' } });
+  for (const format of ['authored.ttl', 'authored-catalog', 'authored-shapes.ttl']) app.get('/i2idlx/' + format, authoredGlobalLimit, authoredClientLimit, async (_req, res: Response) => {
     try {
       const data = await loadPublicTaskData(config);
       if (!data.authoredCatalog) { res.status(404).json({ error: 'No authored catalog in this build.' }); return; }
