@@ -2,7 +2,7 @@
 // PROV-O, schema.org and the learning-industry vocabularies — with an inference playground that types pasted data
 // the way the catalog's q-classify does, and the build's reasoning record. The concepts are I2IDL's; what they
 // classify and every alignment is I2IDL-X · proposed (published Hypothetical); the reasoning record is derived.
-import { META, C, byId, PORTS, QUERIES, CONCEPT_NS, typeById } from "../data.js";
+import { META, CANONICAL_C, AUTHORED_C, byId, PORTS, QUERIES, CONCEPT_NS, typeById } from "../data.js";
 import {
   SEM, CATS, catById, COLUMNS, chain, ancestors, childrenOf, conceptsIn, classesOf, labelOf, columnOf, vocabOf, expand,
   disjointWith, disjointness, bridgesOf, classify, snippetFor,
@@ -65,19 +65,19 @@ export function Semantic({ route }) {
   const catId = sec.startsWith("cat.") ? sec.slice(4) : null;
   const tryId = sec.startsWith("try.") ? sec.slice(4) : null;
   const tab = catId ? "" : tryId ? "play" : TABS.some((t) => t.v === sec) ? sec : "";
-  const nDef = C.filter((c) => c.rb === "d").length;
+  const nDef = CANONICAL_C.filter((c) => c.rb === "d").length;
   return (
     <div className="page sem">
       <header className="stack" style={{ gap: 10 }}>
         <div className="eyebrow row" style={{ gap: 8 }}>Semantic layer <Origin o="proposed" quiet /></div>
         <h1 className="h-display" style={{ fontSize: 30 }}>A term names a kind of thing. <em>Here is which kind, in every ontology.</em></h1>
-        <p className="lede">An I2IDL concept is a term. The things it classifies — your LRS deployment, a quiz session, a teacher, a badge — are typed in BFO 2020 (with IAO and CCO), gist, DOLCE-UltraLite, gUFO, PROV-O, schema.org and the learning-industry vocabularies, from one link: <code>i2x:isClassifiedBy</code>. Every concept has one of {CATS.length} referent categories; {C.length - nDef} follow I2IDL's own type, {nDef} are decided by the definition, each with its reason.</p>
+        <p className="lede">A glossary concept is a term. The things it classifies — your LRS deployment, a quiz session, a teacher, a badge — are typed in BFO 2020 (with IAO and CCO), gist, DOLCE-UltraLite, gUFO, PROV-O, schema.org and the learning-industry vocabularies, from one link: <code>i2x:isClassifiedBy</code>. Among {CANONICAL_C.length} canonical I2IDL concepts, {CANONICAL_C.length - nDef} assignments follow I2IDL's own type and {nDef} are decided by the definition. {AUTHORED_C.length ? <>{AUTHORED_C.length} separately authored Hypothetical proposal has its own assignment and origin; it is not adopted into I2IDL. </> : null}The category explorer and classifier include both sources.</p>
         <div className="stats">
           {[["Referent categories", CATS.length], ["Aligned terms", R.terms], ["Vocabularies", Object.keys(R.byVocabulary).length],
-            ["Crosswalk bridges", SEM.bridges.length], ["Disjoint category pairs", `${N_DISJOINT}/${N_PAIRS}`], ["OWL 2 RL inferences", (R.owlrl.closed - R.owlrl.input).toLocaleString()]]
+            ["Classification bridges", SEM.bridges.length], ["Disjoint category pairs", `${N_DISJOINT}/${N_PAIRS}`], ["OWL 2 RL inferences", (R.owlrl.closed - R.owlrl.input).toLocaleString()]]
             .map(([l, v]) => <div className="stat" key={l}><span className="l">{l}</span><span className="v">{typeof v === "number" ? v.toLocaleString() : v}</span></div>)}
         </div>
-        <OriginStrip items={[["i2idl", "the concepts"], ["proposed", "what they classify, the alignments"], ["derived", "the reasoning record"]]} />
+        <OriginStrip items={[["i2idl", `${CANONICAL_C.length} canonical concepts`], ["proposed", `${AUTHORED_C.length} authored proposal; classification and alignments`], ["derived", "the canonical reasoning record"]]} />
         <div><Seg label="Section" value={tab} onChange={(v) => go("semantic" + (v ? "-" + v : ""))} options={TABS} /></div>
       </header>
       <div className="sem-body">
@@ -193,9 +193,9 @@ function CategoryDetail({ id }) {
         ) : <p className="small muted">A thing classified by a concept here and by one in {dis.slice(0, 3).map((d) => catById.get(d.id).label.toLowerCase()).join(", ")}{dis.length > 3 ? "…" : ""} is a contradiction in at least one upper ontology. The playground flags it.</p>}
       </div>
       <div className="stack" style={{ gap: 6 }}>
-        <b className="small">{plural(concepts.length, "I2IDL concept")} classify {c.label.toLowerCase()}</b>
+        <b className="small">{plural(concepts.length, "glossary concept")} classify {c.label.toLowerCase()}</b>
         <div className="chips">{concepts.map((x) => <ConceptChip key={x.id} id={x.id} title={(x.rb === "t" ? "From I2IDL's type. " : "From the definition. ") + (x.rw || "")} className={x.rb === "d" ? "bydef" : ""} />)}</div>
-        <p className="tiny muted">Dashed: placed here by the definition rather than I2IDL's type (hover for the reason).</p>
+        <p className="tiny muted">Authored proposals carry their own badge. Dashed: placed here by the definition rather than a source type (hover for the reason).</p>
       </div>
       {concepts.length ? <div className="row wrap"><a className="btn sm primary" href={"#semantic-try." + concepts[0].id}><Icon name="bolt" />Try {concepts[0].l} in the playground</a></div> : null}
     </section>
@@ -227,7 +227,7 @@ function Playground({ tryId }) {
           {tryId && byId.has(tryId) ? <button className="btn sm" onClick={() => setText(snippetFor(tryId))}>{byId.get(tryId).l}</button> : null}
         </div>
         <textarea className="textarea mono play-in" spellCheck={false} value={text} onChange={(e) => setText(e.target.value)} aria-label="Turtle to classify" />
-        <p className="tiny muted">Link each thing to the I2IDL concept it is an instance of with <code>i2x:isClassifiedBy</code>, or type it with a class a crosswalk bridges (<code>foxxi-xapi:Statement</code>, <code>tla:TransactionalLRS</code>…). For aboutness use <code>dct:subject</code>.</p>
+        <p className="tiny muted">Link each thing to the exact canonical or authored concept it is an instance of with <code>i2x:isClassifiedBy</code>, or type it with a class a bridge supports (<code>foxxi-xapi:Statement</code>, <code>tla:TransactionalLRS</code>…). Authored judgments remain Hypothetical. For aboutness use <code>dct:subject</code>.</p>
       </section>
       <section className="stack" style={{ gap: 10 }} aria-live="polite">
         {out.error ? <div className="note warn"><Icon name="warn" /><span><b>Not Turtle yet.</b> {out.error}</span></div> : (
@@ -236,7 +236,7 @@ function Playground({ tryId }) {
               <b className="grow">{plural(out.resources.length, "resource")} · {plural(out.typings, "typing")} · {out.clashes ? <span className="bad">{plural(out.clashes, "clash", "clashes")}</span> : "no clashes"}</b>
               {out.turtle ? <><CopyBtn small text={out.turtle} label="Copy inferred Turtle" /><button className="btn sm" onClick={download}><Icon name="download" />.ttl</button></> : null}
             </div>
-            {!out.resources.length ? <p className="small muted">Nothing here is classified by an I2IDL concept yet.</p> : null}
+            {!out.resources.length ? <p className="small muted">Nothing here is classified by an available glossary concept yet.</p> : null}
             {out.resources.map((r) => <ResourceCard key={r.iri} r={r} />)}
             {out.resources.length ? <p className="tiny muted">The same conclusions as the catalog's <a href="#semantic-agents">q-classify</a>, which the build checks against an OWL 2 RL reasoner; clashes come from the category disjointness table, confirmed pair by pair the same way. All of it rests on proposals: Hypothetical.</p> : null}
           </>
@@ -291,7 +291,7 @@ function ResourceCard({ r }) {
             const cat = catById.get(c.rc);
             return (
               <li key={b.c}>
-                {b.how === "bridge" ? <>Typed <code>{b.t}</code>, which crosswalk proposal <code>{b.m}</code> ({b.k}Match) ties to <b>{c.l}</b>; so it is classified by it. </> : <>Classified by <b>{c.l}</b>. </>}
+                {b.how === "bridge" ? <>Typed <code>{b.t}</code>, which {c.origin?.kind === "authored" ? "a Hypothetical authored directional restriction" : `crosswalk proposal ${b.m} (${b.k}Match)`} ties to <b>{c.l}</b>; so it is classified by it. </> : <>Classified by <b>{c.l}</b>{c.origin?.kind === "authored" ? " (authored Hypothetical proposal)" : ""}. </>}
                 Its referent category is <b>{cat.label}</b> ({c.rb === "t" ? `from I2IDL's type “${typeById.get(c.t).label}”` : "from its definition"}: {c.rw}) — {chain(cat.id).length > 1 ? <>a kind of {ancestors(cat.id).map((a) => catById.get(a).label.toLowerCase()).join(", then ")}, </> : null}
                 class <code>{cat.cls}</code>, aligned to {classesOf(cat.id).filter((x) => columnOf(x.t) !== "i2x").length} classes in i2idlx-alignments.
                 {bridgesOf(b.c).filter((x) => x.k === "broad" || x.k === "exact").map((x) => <span key={x.t}> Crosswalk {x.m} ({x.k}Match) adds <code>{x.t}</code>.</span>)}
@@ -308,9 +308,9 @@ function ResourceCard({ r }) {
 function whyText(x) {
   return x.why.map((w) => {
     const c = byId.get(w.c);
-    if (w.how === "bridge") return `${c.l}: crosswalk ${w.m} (${w.k}Match)`;
+    if (w.how === "bridge") return c.origin?.kind === "authored" ? `${c.l}: Hypothetical authored directional restriction` : `${c.l}: crosswalk ${w.m} (${w.k}Match)`;
     if (w.k) return `${c.l} → ${catById.get(w.k).label}${w.how === "aligned" ? " (aligned)" : ""}`;
-    return `${c.l} → ${w.how === "referent" ? "classified by an I2IDL concept" : "inherited in the published graphs"}`;
+    return `${c.l} → ${w.how === "referent" ? "classified by a glossary concept" : "inherited in the published graphs"}`;
   }).join("\n");
 }
 

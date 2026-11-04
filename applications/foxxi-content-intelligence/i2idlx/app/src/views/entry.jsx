@@ -2,7 +2,7 @@ import { identityCopy } from "../identity-copy.js";
 // One dictionary entry, in two zones that never mix: the I2IDL record exactly as I2IDL publishes it,
 // and what I2IDL-X layers on top (derived reading aids, history, proposals, live capabilities, team use).
 import {
-  META, byId, kindById, typeById, fieldById, curatedById, SOURCES, ACTIONS, roleById, methodById, RELEASES, C,
+  META, AUTHORED_PORTS, byId, kindById, typeById, fieldById, curatedById, SOURCES, ACTIONS, roleById, methodById, RELEASES, C,
   enactByConcept, mapsByConcept, inhByConcept, capsByConcept, suggByConcept, iriOf, controlsFor,
   directSources, reuseClass, RIGHTS, systemLabel, INTERROGATIVES, provenanceLine, collectionLabel,
 } from "../data.js";
@@ -51,6 +51,8 @@ export function Entry({ id, onBack, query }) {
     store.set("recents", [id, ...r].slice(0, 24));
   }, [id, drive]);
   if (!c) return <div className="entry"><div className="note"><Icon name="warn" />No concept “{id}” in release {META.release}.</div></div>;
+  const authored = c.origin?.kind === "authored";
+  if (authored && lens === "i2idl") return <div className="page"><div className="note">This term is an authored I2IDL-X proposal. The I2IDL-only view contains the {META.counts.canonicalConcepts} canonical terms.</div><button className="btn" onClick={() => setLens("x")}>Show + I2IDL-X</button></div>;
   const linked = new Set([...c.r, ...c.b, ...c.n]);
   const x = lens !== "i2idl";
   return (
@@ -58,19 +60,20 @@ export function Entry({ id, onBack, query }) {
       <EntryHead c={c} onBack={onBack} />
       <div className={cx("entry-body", !x && "solo")}>
         <div className="ed zone z-i2idl">
-          <ZoneHead o="i2idl" title="I2IDL record"
-            sub={<>As published at <a href={iriOf(c.id)} target="_blank" rel="noopener">id.i2idl.org/concepts/{c.id}</a> in {META.release}. Nothing here is changed.</>} />
+          <ZoneHead o={authored ? "proposed" : "i2idl"} title={authored ? "Authored I2IDL-X proposal" : "I2IDL record"}
+            sub={authored ? <>By {c.origin.publisher}, catalog {c.origin.catalogVersion}. Hypothetical; not adopted into I2IDL {META.release}. The canonical {META.counts.canonicalConcepts} definitions remain unchanged.</> : <>As published at <a href={iriOf(c.id)} target="_blank" rel="noopener">id.i2idl.org/concepts/{c.id}</a> in {META.release}. Nothing here is changed.</>} />
           <section className="definition" aria-label="Definition">
             <p className="def">{x ? <Hypertext text={c.d} spans={c.md} linked={linked} query={query} /> : <Hypertext text={c.d} query={query} />}</p>
             <DefMeta c={c} x={x} />
           </section>
           <section className="explain" aria-label="Editorial explanation">
-            <div className="subh"><h3>Editorial note</h3><span className="meta">I2IDL's explanation</span></div>
+            <div className="subh"><h3>Editorial note</h3><span className="meta">{authored ? "I2IDL-X authors' explanation" : "I2IDL's explanation"}</span></div>
             <p>{x ? <Hypertext text={c.x} spans={c.mx} linked={linked} query={query} /> : <Hypertext text={c.x} query={query} />}</p>
           </section>
           <Relations c={c} />
           <Evidence c={c} />
           <I2IDLCrosswalks c={c} />
+          {authored ? <section aria-label="Candidate class annotations"><h3>Candidate class annotation</h3>{c.candidateAssociations.map((a) => <p key={a.iri}><a href={a.iri} target="_blank" rel="noopener">{a.label}</a> — {a.note}</p>)}</section> : null}
           {x && ((c.md || []).length || (c.mx || []).length) ? <p className="tiny muted hxnote"><Origin o="derived" quiet>links in the text</Origin> Underlined terms are links I2IDL-X found in I2IDL's wording; dashed ones name a concept I2IDL doesn't relate to this one. Switch to <b>I2IDL only</b> for the plain text.</p> : null}
         </div>
         {x ? (
@@ -129,7 +132,7 @@ function EntryHead({ c, onBack }) {
         <CiteButton c={c} />
         {ask ? <button className="btn sm" onClick={() => ask.open(`Explain “${c.l}” for someone new to the field, then say how it differs from its closest related terms.`, [c.id])}><Icon name="sparkle" />Ask about this term</button> : null}
         <ShareButton c={c} />
-        <a className="btn sm ghost" href={META.human + "#" + c.id} target="_blank" rel="noopener"><Icon name="external" />Open on i2idl.org</a>
+        {c.origin?.kind !== "authored" ? <a className="btn sm ghost" href={META.human + "#" + c.id} target="_blank" rel="noopener"><Icon name="external" />Open on i2idl.org</a> : <span className="chip proposed">Authored proposal · I2IDL-X</span>}
       </div>
     </header>
   );
@@ -204,6 +207,7 @@ export function AddToPack({ ids, label = "Add to pack", small = true }) {
 }
 
 function DefMeta({ c, x }) {
+  if (c.origin?.kind === "authored") return <div className="def-meta"><ModalChip status="Hypothetical">I2IDL-X · authored proposal</ModalChip><span>Reviewed proposal {c.origin.reviewedProposalSha256.slice(0, 12)} · no upstream adoption</span></div>;
   const nd = c.ev.filter((e) => e.r === "d").length, ns = c.ev.length - nd;
   const definitionMeta = [c.dq != null ? `Definition ${c.dq}` : null, c.dl || null].filter(Boolean).join(" · ");
   const editorialTitle = c.ds === "approved" ? "I2IDL's published definition, marked approved in its editorial metadata."
@@ -230,7 +234,7 @@ function Relations({ c }) {
   const rows = [["Broader", c.b], ["Narrower", c.n], ["Related", c.r]].filter(([, l]) => l.length);
   return (
     <section aria-label="Relations">
-      <div className="subh"><h3>Relations</h3><span className="meta">I2IDL's editorial links · {plural(c.r.length + c.b.length + c.n.length, "link")}</span>
+      <div className="subh"><h3>Relations</h3><span className="meta">{c.origin?.kind === "authored" ? "Authored Hypothetical links" : "I2IDL's editorial links"} · {plural(c.r.length + c.b.length + c.n.length, "link")}</span>
         <span className="spacer" /><a className="btn ghost sm" href={"#map-" + c.id}><Icon name="graph" />See them mapped</a></div>
       <div className="rels">
         {rows.length ? rows.map(([lab, list]) => (
@@ -319,7 +323,7 @@ function ReadingAids({ c }) {
       <div className="lb">
         <div className="kv2">
           <span className="k">Kind</span>
-          <span><KindBadge k={c.k} /> <span className="tiny muted">from I2IDL's type “{typeById.get(c.t).label}”</span></span>
+          <span><KindBadge k={c.k} /> <span className="tiny muted">from {c.origin?.kind === "authored" ? "the proposed" : "I2IDL's"} type “{typeById.get(c.t).label}”</span></span>
           <span className="k">Reuse</span>
           <span><RightsBadge rc={rc} text={RIGHTS[rc].label} /> <span className="tiny muted">{direct.length ? "strictest rights among " + direct.map((s) => s.label).join(", ") : "no direct source"}</span></span>
         </div>
@@ -360,10 +364,10 @@ function Classifies({ c }) {
             </div>
           )}
         {cat.cc.length ? <p className="small">The concept itself is {cat.cc.map((t, i) => <span key={t}>{i ? " and " : ""}<Term t={t} tag /></span>)}.</p> : null}
-        {br.length ? <p className="small">{br.map((b) => <span key={b.t} className="block">{b.k === "broad" ? <>Anything it classifies is also <Term t={b.t} /></> : b.k === "exact" ? <>Same class as <Term t={b.t} />: either one classifies the other's instances</> : <>Anything typed <Term t={b.t} /> is classified by it</>} <span className="tiny muted">(crosswalk {b.m}, {b.k}Match)</span></span>)}</p> : null}
+        {br.length ? <p className="small">{br.map((b) => <span key={b.t} className="block">{b.k === "broad" ? <>Anything it classifies is also <Term t={b.t} /></> : b.k === "exact" ? <>Same class as <Term t={b.t} />: either one classifies the other's instances</> : <>Anything typed <Term t={b.t} /> is classified by it</>} <span className="tiny muted">{b.origin === "authored" ? "(Hypothetical authored directional restriction; no ratified SKOS mapping)" : `(crosswalk ${b.m}, ${b.k}Match)`}</span>{b.origin === "authored" ? <span className="tiny muted block">{b.rationale}</span> : null}</span>)}</p> : null}
         <div className="row wrap"><a className="btn sm" href={"#semantic-try." + c.id}><Icon name="bolt" />Try it on your data</a><a className="btn ghost sm" href={"#semantic-cat." + cat.id}>All {cat.label.toLowerCase()} concepts</a></div>
       </div>
-      <div className="lfoot">Proposed in <a href={META.iri.referents} target="_blank" rel="noopener"><code>i2idlx-referents</code></a> and <a href={META.iri.alignments} target="_blank" rel="noopener"><code>i2idlx-alignments</code></a> (Hypothetical). Link a thing to this concept with <code>i2x:isClassifiedBy</code> and any OWL reasoner types it this way.</div>
+      <div className="lfoot">{c.origin?.kind === "authored" ? <>Authored proposal and peer restrictions in the <a href={AUTHORED_PORTS[1].href} target="_blank" rel="noopener">authored RDF catalog</a>; the category's upper-ontology classes are declared in <a href={META.iri.alignments} target="_blank" rel="noopener">I2IDL-X alignments</a>.</> : <>Proposed in <a href={META.iri.referents} target="_blank" rel="noopener"><code>i2idlx-referents</code></a> and <a href={META.iri.alignments} target="_blank" rel="noopener"><code>i2idlx-alignments</code></a> (Hypothetical).</>} Link a thing to this concept with <code>i2x:isClassifiedBy</code> and an OWL reasoner can derive these classes.</div>
     </section>
   );
 }
@@ -680,6 +684,7 @@ function ForAgents({ c }) {
   const ctl = controlsFor(c);
   const [align, setAlign] = useState(false);
   const neighborhood = ctl.find((x) => x.id === "neighborhood");
+  if (c.origin?.kind === "authored") return <section className="layer" aria-label="For agents"><LayerHead icon="agent" title="Authored concept identity" o="proposed" /><div className="lb"><code className="iri">{iriOf(c.id)}</code><CopyBtn text={iriOf(c.id)} small /><p className="small muted">Available to this workbench's Ask and classification checks. Read its definition, evidence, source binding and reference profile here:</p>{ctl.map((p) => <p key={p.id}><a href={p.u} target="_blank" rel="noopener">{p.title}</a></p>)}</div></section>;
   return (
     <section className="layer" aria-label="For agents">
       <LayerHead icon="agent" title="For agents" o="interego" extra={<span className="by">HyprCat controls</span>} />

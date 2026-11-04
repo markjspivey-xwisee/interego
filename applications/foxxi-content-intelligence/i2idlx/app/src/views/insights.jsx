@@ -1,6 +1,6 @@
 import { identityCopy } from "../identity-copy.js";
 // Insights: the glossary's shape and health, its release history, I2IDL-X coverage and team activity.
-import { C, META, KINDS, COLLECTIONS, SOURCES, RELEASES, SUGGESTIONS, ITEMS, itemByKey, byId, kindById, fieldById, enactByConcept, mapsByConcept, reuseClass, RIGHTS, degree, kindPhrase } from "../data.js";
+import { CANONICAL_C as C, META, KINDS, COLLECTIONS, SOURCES, RELEASES, SUGGESTIONS, ITEMS, itemByKey, byId, kindById, fieldById, enactByConcept, mapsByConcept, reuseClass, RIGHTS, degree, kindPhrase } from "../data.js";
 import { OriginStrip } from "../origin.jsx";
 import { useCaps, consensus } from "../caps.js";
 import { Icon } from "../icons.jsx";
@@ -22,7 +22,7 @@ export function Insights({ route }) {
   const byKind = KINDS.map((k) => ({ label: k.label, value: C.filter((c) => c.k === k.id).length, color: `var(--k-${k.id})`, k: k.id }));
   const byField = COLLECTIONS.field.map((f) => ({ label: f.label, value: f.n, f: f.id })).sort((a, b) => b.value - a.value);
   const evBySource = SOURCES.map((s, i) => ({ label: s.label, value: C.reduce((a, c) => a + c.ev.filter((e) => e.s === i).length, 0), s, tip: <span><b>{s.title}</b><br />{s.rights}</span> }))
-    .sort((a, b) => b.value - a.value);
+    .filter((r) => r.s.origin !== "authored").sort((a, b) => b.value - a.value);
   const reuse = ["open", "sharealike", "nc", "permission"].map((k, i) => ({
     label: RIGHTS[k].label, value: C.filter((c) => reuseClass(c) === k).length,
     color: ["var(--k-notion)", "var(--k-enactable)", "var(--k-system)", "var(--k-standard)"][i], ink: i >= 2 ? "#142029" : "#fff",

@@ -1,5 +1,5 @@
 // Interpretant — the app shell: top bar, routing, keyboard, theme, overlays and shared context.
-import { META, C, ITEMS, byId } from "./data.js";
+import { META, conceptsForLens, ITEMS, byId } from "./data.js";
 import { CapsProvider, useCaps, consensus } from "./caps.js";
 import { WorkbenchConnection } from "./connection.jsx";
 import { Icon, Mark } from "./icons.jsx";
@@ -112,7 +112,7 @@ function Shell() {
             <Mark className="mark" />
             <span><span className="name">Interpretant</span><span className="sub">I2IDL glossary · Interego · Foxxi</span></span>
           </a>
-          <button className="searchbtn" onClick={() => setPal(true)} aria-label="Search terms"><Icon name="search" /><span className="ph">Search {C.length} terms…</span><kbd>/</kbd></button>
+          <button className="searchbtn" onClick={() => setPal(true)} aria-label="Search terms"><Icon name="search" /><span className="ph">Search {conceptsForLens(lens).length} terms…</span><kbd>/</kbd></button>
           {nav}
           <div className="tools">
             {isChatGPTApp() ? <ChatGPTConnection /> : <WorkbenchConnection />}

@@ -12,12 +12,13 @@ const { useMemo } = React;
 export function Compare({ route }) {
   const ids = (route.ids || []).filter((id) => byId.has(id)).slice(0, 3);
   const cs = ids.map((id) => byId.get(id));
-  const { ask } = useUI();
+  const { ask, lens, setLens } = useUI();
   const set = (next) => go("cmp-" + next.filter(Boolean).join("~"));
   const suggestions = useMemo(() => {
     if (cs.length !== 1) return [];
-    return cs[0].r.slice(0, 6);
-  }, [ids.join("~")]);
+    return cs[0].r.filter((id) => lens !== "i2idl" || byId.get(id)?.origin?.kind !== "authored").slice(0, 6);
+  }, [ids.join("~"), lens]);
+  if (lens === "i2idl" && cs.some((c) => c.origin?.kind === "authored")) return <div className="page"><div className="note">This comparison includes an authored I2IDL-X proposal.</div><button className="btn" onClick={() => setLens("x")}>Show + I2IDL-X</button></div>;
   const n = Math.max(cs.length, 1);
   const shared = (key) => {
     if (cs.length < 2) return new Set();
@@ -31,7 +32,7 @@ export function Compare({ route }) {
       <div className="stack" style={{ gap: 6 }}>
         <h1 className="h-display" style={{ fontSize: 26 }}>Compare</h1>
         <p className="muted">Up to three terms side by side: definitions, evidence, links and what enacts each.</p>
-        <OriginStrip items={[["i2idl", "definitions, evidence, relations"], ["derived", "kind, provenance"], ["proposed", "enactments"]]} />
+        <OriginStrip items={[["i2idl", "canonical definitions, evidence, relations"], ["derived", "kind, provenance"], ["proposed", "authored definitions, evidence, links; enactments"]]} />
       </div>
       <div className="qparams" style={{ maxWidth: 900 }}>
         {[0, 1, 2].map((i) => (
@@ -46,7 +47,7 @@ export function Compare({ route }) {
       {suggestions.length ? (
         <div className="row wrap"><span className="small muted">Compare with a related term:</span>{suggestions.map((x) => <button key={x} className="chip" onClick={() => set([ids[0], x])}><span className={"dot kd-" + byId.get(x).k} />{byId.get(x).l}</button>)}</div>
       ) : null}
-      {cs.length >= 2 ? <RelationBanner cs={cs} sharedRel={sharedRel} sharedFields={sharedFields} /> : null}
+      {cs.length >= 2 ? <RelationBanner cs={cs} sharedRel={sharedRel} sharedFields={sharedFields} lens={lens} /> : null}
       {cs.length >= 2 && ask ? (
         <div className="row wrap">
           <button className="btn sm" onClick={() => ask.open(`Contrast ${cs.map((c) => `“${c.l}”`).join(" and ")}: where do they overlap, where do they differ, and when should a course designer use each? Cite the glossary.`, cs.map((c) => c.id))}><Icon name="sparkle" />Ask to contrast them</button>
@@ -58,6 +59,7 @@ export function Compare({ route }) {
             <div className="cmp-head stack" style={{ gap: 4 }}>
               <div className="row small muted"><span className={"dot kd-" + c.k} />{kindById.get(c.k).label} · {typeById.get(c.t).label}</div>
               <h3><a href={"#c-" + c.id} style={{ color: "inherit", textDecoration: "none" }}>{c.l}</a></h3>
+              {c.origin?.kind === "authored" ? <div className="small"><b>Authored I2IDL-X proposal · Hypothetical</b><div className="tiny muted">By {c.origin.publisher} · catalog {c.origin.catalogVersion} · not adopted by I2IDL</div></div> : <div className="tiny muted">Canonical I2IDL record</div>}
               {c.a.length ? <div className="small muted">also {c.a.join(", ")}</div> : null}
             </div>
           )} />
@@ -96,15 +98,17 @@ function Row({ label, cs, render }) {
   );
 }
 
-function RelationBanner({ cs, sharedRel, sharedFields }) {
+function RelationBanner({ cs, sharedRel, sharedFields, lens }) {
   const [a, b] = cs;
   const rel = relationBetween(a.id, b.id);
-  const paths = rel ? [] : shortestPaths(a.id, b.id, 1);
+  const paths = rel ? [] : shortestPaths(a.id, b.id, 1, lens);
+  const authored = [a, b].some((c) => c.origin?.kind === "authored");
+  const authoredPath = paths.length && paths[0].some((id) => byId.get(id)?.origin?.kind === "authored");
   let what;
-  if (rel === "related") what = <><b>{a.l}</b> and <b>{b.l}</b> are related in I2IDL.</>;
-  else if (rel === "narrower") what = <><b>{a.l}</b> is narrower than <b>{b.l}</b>.</>;
-  else if (rel === "broader") what = <><b>{a.l}</b> is broader than <b>{b.l}</b>.</>;
-  else if (paths.length) what = <>No direct link; <b>{a.l}</b> reaches <b>{b.l}</b> in {paths[0].length - 1} steps via {paths[0].slice(1, -1).map((id, i) => <span key={id}>{i ? ", " : ""}<a href={"#c-" + id}>{byId.get(id).l}</a></span>)}.</>;
+  if (rel === "related") what = <><b>{a.l}</b> and <b>{b.l}</b> are {authored ? "related by a Hypothetical authored I2IDL-X proposal" : "related in I2IDL"}.</>;
+  else if (rel === "narrower") what = <><b>{a.l}</b> is narrower than <b>{b.l}</b>{authored ? " in a Hypothetical authored I2IDL-X proposal" : ""}.</>;
+  else if (rel === "broader") what = <><b>{a.l}</b> is broader than <b>{b.l}</b>{authored ? " in a Hypothetical authored I2IDL-X proposal" : ""}.</>;
+  else if (paths.length) what = <>No direct link; <b>{a.l}</b> reaches <b>{b.l}</b> in {paths[0].length - 1} steps via {paths[0].slice(1, -1).map((id, i) => <span key={id}>{i ? ", " : ""}<a href={"#c-" + id}>{byId.get(id).l}</a></span>)}{authoredPath ? " (includes Hypothetical authored I2IDL-X links)" : ""}.</>;
   else what = <>No route links them in this release.</>;
   return (
     <div className="relation-banner">

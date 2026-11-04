@@ -97,6 +97,7 @@ export function ConceptChip({ id, shared, onClick, title, children, className })
       onClick={(e) => { hover.now(); if (onClick) { e.preventDefault(); onClick(c.id); } }} title={title}>
       <span className={"dot kd-" + c.k} aria-hidden="true" />
       <span className="lbl">{children || c.l}</span>
+      {c.origin?.kind === "authored" ? <span className="tiny muted">I2IDL-X proposal</span> : null}
     </a>
   );
 }

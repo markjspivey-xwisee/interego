@@ -1,5 +1,13 @@
 # Changelog
 
+## 2026-11-04 — Keep authored competency terminology distinct from the canonical glossary
+
+Interpretant adds the reviewed Competency framework definition as a Hypothetical authored I2IDL-X concept with its own IRI, provenance and read ports. The canonical 420-concept v0.0.93 source, byte pin and definitions remain unchanged. Browser and server search, Ask and classification share the same explicit corpus projection; source-only views retain canonical terms only. Authored RDF and an exact-reference SHACL profile are discoverable and hash-bound to the executed checks, and Orchestrate preserves authored IRIs when staging drafts.
+
+The two specialized Foxxi LER/TLA framework classes classify into the authored generic concept in one direction. The CTDL-ASN candidate annotation creates no typing or ratified mapping. Focused browser/server, HTTP, classifier, SHACL, export and Orchestrate regressions exercise these boundaries. The PR template now requests concrete upstream/downstream semantic integration impact.
+
+- Signed xAPI writes retain a private usage artifact with same-owner readback and distinct event, LRS storage and projection timestamps.
+
 ## 2026-11-03 — Distinguish paired-agent request timeout from session expiry
 
 A timed-out question now directs the user to ask again on the active agent connection, instead of advising sign-in. The broker marks only its request deadline as request_timeout; agent failures and genuine session expiry retain their separate errors. Ask and live Orchestrate explain the retry without discarding the paired session.

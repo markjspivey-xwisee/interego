@@ -1,6 +1,6 @@
 // For the I2IDL team: what their linked data makes possible, laid against their own roadmap.
 // Credits what I2IDL built first, then shows each of its next priorities running on its data today.
-import { C, META, MAPPINGS, ENACTMENTS, SUGGESTIONS, RELEASES, PORTS, QUERIES, SOURCES, byId, kindPhrase, provenanceLine, controlsFor, iriOf } from "../data.js";
+import { CANONICAL_C as C, META, MAPPINGS, ENACTMENTS, SUGGESTIONS, RELEASES, PORTS, QUERIES, SOURCES, byId, kindPhrase, provenanceLine, controlsFor, iriOf } from "../data.js";
 import { useCaps, consensus, CONSENSUS_LABEL } from "../caps.js";
 import { Icon } from "../icons.jsx";
 import { ConceptChip, CopyBtn, Modal, useUI } from "../ui.jsx";

@@ -14,7 +14,9 @@ function canonical(value: Value, path = ''): Value {
     if (path === 'statuses' || path === 'methods') rows.sort((a, b) => String(a.id).localeCompare(String(b.id), 'en'));
     return rows;
   }
-  if (value && typeof value === 'object') return Object.fromEntries(Object.keys(value).sort().map(k => [k, canonical(value[k], path ? path + '.' + k : k)]));
+  // The migration oracle covers the canonical projection. The separately authored catalog is
+  // validated by authored-concepts.test.ts; excluding that one new field preserves exact source parity.
+  if (value && typeof value === 'object') return Object.fromEntries(Object.keys(value).filter(k => path || k !== 'authoredCatalog').sort().map(k => [k, canonical(value[k], path ? path + '.' + k : k)]));
   return value;
 }
 function difference(a: Value, b: Value, path = '$'): string | null {

@@ -1,7 +1,7 @@
 // Where each thing on screen comes from. I2IDL's published record is one layer; everything else is
 // labelled as I2IDL-X (derived, added or proposed), Interego, Foxxi or this page's team. The labels and
 // their wording come from src/origins.json, the same source as the ontology's i2x:Origins scheme.
-import { META, C, MAPPINGS, ENACTMENTS, SUGGESTIONS, ACTIONS, PORTS, QUERIES } from "./data.js";
+import { META, CANONICAL_C as C, AUTHORED_C, MAPPINGS, ENACTMENTS, SUGGESTIONS, ACTIONS, PORTS, QUERIES } from "./data.js";
 import { Icon } from "./icons.jsx";
 import { Modal, useUI } from "./ui.jsx";
 import { plural } from "./util.js";
@@ -63,7 +63,7 @@ const COUNTS = () => {
     ["i2idl", `${C.length} concepts · ${META.counts.evidence} evidence records · ${META.counts.related} related and ${META.counts.broader} broader pairs · ${META.counts.sources} sources`],
     ["derived", `${C.length} provenance lines · ${META.counts.links} in-text links · ${SUGGESTIONS.length} unlinked mentions · ${META.changes.facts.toLocaleString()} changes since ${META.changes.baseline}`],
     ["added", `${C.filter((c) => c.spec).length} specification links · ${C.filter((c) => c.exm).length} exemplars`],
-    ["proposed", `${ENACTMENTS.length} enactments · ${MAPPINGS.length} crosswalks (${META.counts.unesco} to UNESCO terms I2IDL itself cites) · ${META.counts.roleCaps} role capabilities`],
+    ["proposed", `${AUTHORED_C.length} authored glossary proposals · ${ENACTMENTS.length} enactments · ${MAPPINGS.length} crosswalks (${META.counts.unesco} to UNESCO terms I2IDL itself cites) · ${META.counts.roleCaps} role capabilities`],
     ["interego", `${META.graphs.length} signed graphs · ${PORTS.length} catalog controls · ${QUERIES.length} stored queries · ${Object.values(ACTIONS).filter((a) => a.sys === "relay").length} relay operations`],
     ["foxxi", `${fox} live bridge affordances · xAPI tagging · course alignment`],
     ["team", "Votes · notes · usage marks · your packs"],
