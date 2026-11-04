@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-11-03 - Bind selected attachment manifests to health context
+
+The health workbench can prepare a detached import manifest from explicitly selected, caller-supplied attachment bytes. It checks case and source/review identity, selected entry/citation mappings, exact byte-view sizes and SHA-256 declarations, with per-file and total limits. The manifest binds the prepared note's title and body without copying attachment bytes, file paths or unknown fields. Fictional tests cover tampering, isolation, duplicate IDs and byte limits. Native storage, resource-scoped authorization, file safety and source authenticity remain independent checks; no host or provider operation is added.
+
 ## 2026-11-03 - Keep Foxxi HTTP context outside agent-session inputs
 
 The deployed Foxxi middleware adds internal client-address and caller-token context to parsed JSON. Browser agent-session creation and polling now discard only those two transport fields before checking their exact input contract. Browser authority still comes only from the Authorization header, creation budgets still use the actual request address, and signed driver identity and payload checks are unchanged.
