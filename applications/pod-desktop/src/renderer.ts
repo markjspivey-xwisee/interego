@@ -46,6 +46,8 @@ let setup: AgentSetup | null = null;
 let setupLoading = false;
 let notePollInFlight = false;
 let previousClient: AgentClient = 'chatgpt-desktop';
+let scopeLoading = false;
+let scopeRequest = 0;
 
 const CLIENT_NAMES: Record<AgentClient, string> = {
   'chatgpt-desktop': 'ChatGPT desktop', codex: 'Codex', 'claude-code': 'Claude Code',
@@ -128,7 +130,9 @@ function drawConnections(): void {
       const badge = document.createElement('span'); badge.className = `connection-badge${usable(connection) ? '' : ' inactive'}`;
       badge.textContent = CONNECTION_LABELS[connection.state]; top.append(identity, badge);
       const permissions = document.createElement('p'); permissions.className = 'connection-permissions';
-      permissions.textContent = connection.permissions.map(value => value === 'notes:read' ? 'Read notes' : 'Save new notes').join(' · ');
+      permissions.textContent = connection.permissions.map(value => value === 'notes:read'
+        ? connection.selectedNoteIds === undefined ? 'Read all current and future notes' : `Read ${connection.selectedNoteIds.length} selected note${connection.selectedNoteIds.length === 1 ? '' : 's'}`
+        : 'Save new notes').join(' · ');
       const meta = document.createElement('p'); meta.className = 'connection-meta';
       meta.textContent = `Expires ${connectionDate(connection.expiresAt)}${connection.lastUsedAt ? ` · Last used ${connectionDate(connection.lastUsedAt)}` : ''}`;
       card.append(top, permissions, meta);
@@ -230,6 +234,7 @@ function clientHelp(previous?: AgentClient): void {
 function beginConnection(existing?: AgentConnection): void {
   if (busy || !status?.configured || (!existing && status.restorePending) || (existing && !usable(existing))) return;
   setupRequest++; setup = null; setupLoading = false;
+  scopeRequest++; scopeLoading = false;
   selectedConnection = existing ?? null; selectedConnectionId = existing?.id ?? null;
   element('connection-message').hidden = true;
   element('connection-setup-steps').replaceChildren();
@@ -244,6 +249,7 @@ function beginConnection(existing?: AgentConnection): void {
     : 'Choose an app on this computer, then decide what it can do.';
   if (!existing) {
     connectionForm.reset(); input('connection-name').value = '';
+    element('connection-read-notes').replaceChildren();
     previousClient = element<HTMLSelectElement>('connection-client').value as AgentClient;
     clientHelp();
   }
@@ -251,6 +257,24 @@ function beginConnection(existing?: AgentConnection): void {
   openDialog(connectionDialog);
   if (existing) { setupState(); button('close-connection').focus(); void loadSetup(existing.id); }
   else element<HTMLSelectElement>('connection-client').focus();
+}
+
+async function loadReadSelection(): Promise<void> {
+  const requested = ++scopeRequest;
+  scopeLoading = true;
+  element('connection-read-notes').replaceChildren();
+  controls();
+  const loaded = status?.running ? await loadNotes() : false;
+  if (requested !== scopeRequest) return;
+  scopeLoading = false;
+  const select = element<HTMLSelectElement>('connection-read-notes');
+  if (loaded) for (const note of notes) {
+    const option = document.createElement('option'); option.value = note.id; option.textContent = note.title; select.append(option);
+  }
+  element('connection-read-help').textContent = !loaded ? 'Start your pod and try selecting notes again.'
+    : notes.length ? 'Only these note IDs will be readable. Future notes, including notes saved by this app, are not added.'
+      : 'There are no notes to select yet. Save a note first.';
+  controls();
 }
 
 function notice(message: string, detail?: unknown, error = false, source: NoticeSource = 'action'): void {
@@ -405,7 +429,13 @@ function controls(): void {
   for (const control of Array.from(element('connections-list').querySelectorAll<HTMLButtonElement>('button'))) control.disabled = occupied;
   for (const id of ['connection-client', 'connection-expiry']) element<HTMLSelectElement>(id).disabled = occupied;
   for (const id of ['connection-name', 'permission-read', 'permission-create']) input(id).disabled = occupied;
+  const scopedRead = input('permission-read').checked && element<HTMLSelectElement>('connection-read-scope').value === 'selected';
+  element('connection-read-options').hidden = !input('permission-read').checked;
+  element('connection-note-selection').hidden = !scopedRead;
+  element<HTMLSelectElement>('connection-read-scope').disabled = occupied;
+  element<HTMLSelectElement>('connection-read-notes').disabled = occupied || scopeLoading;
   button('create-connection').disabled = occupied || !mayCreate || (!input('permission-read').checked && !input('permission-create').checked);
+  if (scopedRead && (scopeLoading || !element<HTMLSelectElement>('connection-read-notes').selectedOptions.length)) button('create-connection').disabled = true;
   button('create-connection').textContent = busy === 'connection-create' ? 'Creating…' : 'Create connection';
   for (const id of ['cancel-connection', 'close-connection']) button(id).disabled = occupied;
   button('copy-connection-config').disabled = occupied || setupLoading || !setup || !usable(selectedConnection);
@@ -643,6 +673,11 @@ element<HTMLSelectElement>('connection-client').addEventListener('change', () =>
   previousClient = element<HTMLSelectElement>('connection-client').value as AgentClient;
 });
 for (const id of ['permission-read', 'permission-create']) input(id).addEventListener('change', controls);
+element('connection-read-scope').addEventListener('change', () => {
+  if (element<HTMLSelectElement>('connection-read-scope').value === 'selected') void loadReadSelection();
+  else { scopeRequest++; scopeLoading = false; controls(); }
+});
+element('connection-read-notes').addEventListener('change', controls);
 button('retry-connection-setup').addEventListener('click', () => { if (selectedConnectionId) void loadSetup(selectedConnectionId); });
 for (const [id, format] of [['copy-connection-config', 'configuration'], ['copy-connection-command', 'command']] as const) {
   button(id).addEventListener('click', () => {
@@ -663,12 +698,18 @@ connectionForm.addEventListener('submit', event => {
   const permissions: AgentPermission[] = [];
   if (input('permission-read').checked) permissions.push('notes:read');
   if (input('permission-create').checked) permissions.push('notes:create');
+  const scoped = input('permission-read').checked && element<HTMLSelectElement>('connection-read-scope').value === 'selected';
+  const noteIds = Array.from(element<HTMLSelectElement>('connection-read-notes').selectedOptions, option => option.value);
+  if (scoped && (scopeLoading || !noteIds.length || noteIds.length > 100)) {
+    connectionMessage('Select between 1 and 100 notes for this connection.', true); return;
+  }
   if (!name || name.length > 80 || !(client in CLIENT_NAMES) || ![7, 30, 90].includes(days) || !permissions.length) {
     connectionMessage('Choose an app, a connection name, and at least one permission.', true); return;
   }
   void action('connection-create', async () => {
     connectionRequest++;
-    const created = await api.createConnection({ name, client, permissions, expiresInDays: days as 7 | 30 | 90 });
+    const created = await api.createConnection({ name, client, permissions, expiresInDays: days as 7 | 30 | 90,
+      ...(scoped ? { selectedNoteIds: noteIds } : {}) });
     selectedConnection = created; selectedConnectionId = created.id;
     element('connection-form').hidden = true; element('connection-setup').hidden = false;
     element('connection-dialog-intro').textContent = 'This connection has only the permissions you allowed.';

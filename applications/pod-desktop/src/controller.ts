@@ -1,4 +1,5 @@
 import { createCipheriv, createDecipheriv, createHash, createPrivateKey, createPublicKey, pbkdf2, randomBytes, randomUUID } from 'node:crypto';
+import { selectedNoteIds } from './agent-note-scope.js';
 import { lstat, mkdir, mkdtemp, open, readFile, rename, rmdir, unlink } from 'node:fs/promises';
 import { isAbsolute, join, resolve } from 'node:path';
 import { promisify } from 'node:util';
@@ -318,7 +319,7 @@ export class PodController {
     return this.node;
   }
 
-  private async readNotes(node: LocalNode, key: EncryptionKeyPair): Promise<LocalNote[]> {
+  private async readNotes(node: LocalNode, key: EncryptionKeyPair, selected?: readonly string[]): Promise<LocalNote[]> {
     const entries = await discover(node.podUrl, undefined, { fetch: node.fetch as FetchFn });
     const result: LocalNote[] = [];
     const seen = new Set<string>();
@@ -326,6 +327,8 @@ export class PodController {
       const graph = entry.describes.find(iri => iri.startsWith(GRAPH_PREFIX));
       if (!graph) continue;
       const id = graph.slice(GRAPH_PREFIX.length);
+      // Scope is applied before fetching descriptors or decrypting note payloads.
+      if (selected !== undefined && !selected.includes(id.toLowerCase())) continue;
       if (!UUID.test(id) || seen.has(id)) throw new PodError('The pod contains an unfamiliar note record. Your data was kept unchanged.');
       const response = await node.fetch(entry.descriptorUrl, { headers: { accept: 'text/turtle' } });
       if (!response.ok) throw new PodError('A saved note could not be opened.');
@@ -427,6 +430,7 @@ export class PodController {
       if (!principal.permissions.includes(operation === 'notes.create' ? 'notes:create' : 'notes:read')) {
         throw new PodError('This connection does not have permission for that action.');
       }
+      const selected = selectedNoteIds(principal);
       if (!args || typeof args !== 'object' || Array.isArray(args)) throw new PodError('The agent request has invalid arguments.');
       const values = args as Record<string, unknown>;
       const allowed = operation === 'notes.search' ? ['query', 'limit'] : operation === 'notes.read' ? ['id'] : ['title', 'body'];
@@ -443,8 +447,10 @@ export class PodController {
         }
         if (operation === 'notes.read') {
           if (typeof values['id'] !== 'string' || !UUID.test(values['id'])) throw new PodError('Choose a valid note identifier.');
-          const notes = await this.readNotes(this.runningNode(), keyPair(await this.vault.load()));
-          const note = notes.find(value => value.id === values['id']);
+          const id = values['id'].toLowerCase();
+          if (selected !== undefined && !selected.includes(id)) throw new PodError('This note could not be found in your local pod.');
+          const notes = await this.readNotes(this.runningNode(), keyPair(await this.vault.load()), [id]);
+          const note = notes.find(value => value.id.toLowerCase() === id);
           if (!note) throw new PodError('This note could not be found in your local pod.');
           return { note };
         }
@@ -454,7 +460,7 @@ export class PodController {
         if (typeof query !== 'string' || query.length > 200 || !Number.isSafeInteger(limit) || Number(limit) < 1 || Number(limit) > 50) {
           throw new PodError('Use a search of up to 200 characters and a limit between 1 and 50.');
         }
-        const notes = await this.readNotes(this.runningNode(), keyPair(await this.vault.load()));
+        const notes = await this.readNotes(this.runningNode(), keyPair(await this.vault.load()), selected);
         const needle = query.trim().toLocaleLowerCase();
         return { notes: notes.filter(note => `${note.title}\n${note.body}`.toLocaleLowerCase().includes(needle)).slice(0, Number(limit))
           .map(note => ({ id: note.id, title: note.title, excerpt: note.body.slice(0, 240), createdAt: note.createdAt,
