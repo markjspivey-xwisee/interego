@@ -87,6 +87,7 @@ jobs:
           # componentsjs-generator is BUILD-TIME ONLY: its newer @comunica/componentsjs
           # collide with CSS's at runtime. Remove it (the Docker runtime stage does the same).
           rm -rf node_modules/componentsjs-generator
+          npm run test:contexts:offline
 
       - name: Full CSS server over PGSL — in-memory backend (proves the WIRING)
         working-directory: ${{ runner.temp }}/app/integrations/pgsl-css-accessor

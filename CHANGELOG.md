@@ -1,5 +1,13 @@
 # Changelog
 
+## 2026-11-04 — Record the verified private usage catalog publication
+
+The isolated CSS package retains the generator's exact lockfile-pinned ComponentsJS 6.4 context before pruning build dependencies and registers its emitted version-6 IRI through the supported local context map. Docker and both isolated CI assembly paths test the real ComponentsJS 5 manager with network access denied after generator removal; no version-5 alias or dependency change is introduced. Existing storage/recovery assertions are unchanged.
+
+The concept-usage port now describes the deployed writer's exact concept references, immutable LRS-enriched original and separate encrypted private usage artifact. Unknown tags are reported and excluded; usage about a concept does not assert learner achievement or publish globally queryable RDF. The tracked catalog receipt records the genuine current publication and retains its predecessor under superseded, with all other graph receipts preserved.
+
+Existing signed-chain authority and a matching version precondition governed the publication. Public readback verifies relay-attested authorship and content binding; negotiated RDF matches the reviewed catalog. Native and Python publication records and app projections agree, while both canonical and combined workflow replay expectations remain unchanged. The production visitor oracle also matches the current disconnected-agent labels and checks connection guidance and the absent model conversation. These catalog and visitor changes add no app behavior, canonical adoption or permission; the context packaging correction preserves storage and recovery semantics.
+
 ## 2026-11-04 — Keep authored competency terminology distinct from the canonical glossary
 
 Interpretant adds the reviewed Competency framework definition as a Hypothetical authored I2IDL-X concept with its own IRI, provenance and read ports. The canonical 420-concept v0.0.93 source, byte pin and definitions remain unchanged. Browser and server search, Ask and classification share the same explicit corpus projection; source-only views retain canonical terms only. Authored RDF and an exact-reference SHACL profile are discoverable and hash-bound to the executed checks, and Orchestrate preserves authored IRIs when staging drafts.

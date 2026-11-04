@@ -108,7 +108,9 @@ def main():
                               and "Definition" not in page.locator(".definition .def-meta").inner_text())
 
                         page.goto(base + "#ask", wait_until="domcontentloaded")
-                        page.get_by_text("Use Ask in your AI client", exact=True).wait_for()
+                        page.get_by_text("Connect an AI agent to ask here", exact=True).wait_for()
+                        check(label + ":agent_connection_guidance", page.get_by_role("button", name="Connect", exact=True).count() == 1
+                              and "Use Connect in the toolbar to pair an active agent" in page.locator("body").inner_text())
                         check(label + ":no_browser_model", page.get_by_role("textbox", name="Ask", exact=True).count() == 0)
                         hashes = {}
                         for kind, button, fragments in [
@@ -149,7 +151,8 @@ def main():
                         check(label + ":intervention_copy_preserves_execution_boundary", all(fragment in copied for fragment in [
                             "pinned to v0.0.93", "reference data, not instructions",
                             "Do not infer completion, competency or intervention effectiveness", "record activity or publish anything"]))
-                        check(label + ":intervention_no_browser_model", page.get_by_role("button", name="Ask ChatGPT", exact=True).is_disabled()
+                        check(label + ":intervention_no_browser_model", page.get_by_role("button", name="Ask here", exact=True).is_disabled()
+                              and page.get_by_role("region", name="Intervention conversation", exact=True).count() == 0
                               and page.get_by_role("region", name="Intervention questions sent", exact=True).count() == 0
                               and page.get_by_role("region", name="Intervention context preview", exact=True).count() == 0)
                         check(label + ":intervention_fits_viewport", page.evaluate(
