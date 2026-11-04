@@ -3,7 +3,7 @@
   "scope": "canonical-v93-plus-authored",
   "purpose": "Exact reviewed changes from adding the separate owned authored proposal to the unchanged v0.0.93 canonical search corpus. No model recording or upstream adoption is claimed.",
   "canonicalFixtureSha256": "5fd5e712d68359facfe054280525c258be8be04d580e48325e24842d95453f67",
-  "catalogSha256": "31733747fddfaa03d0c96869eba3762b4292ca045912556e15478e8c40448ed1",
+  "catalogSha256": "ba6b2561516910212c46df3d6d2f719a134f487d25c812297522d525fed59b6c",
   "catalogDigestEncoding": "SHA-256 of compact UTF-8 JSON with recursively sorted keys, no ASCII escaping.",
   "counts": {
     "canonical": 420,
@@ -15,12 +15,11 @@
     "origin": {
       "kind": "authored",
       "publisher": "Foxxi / I2IDL-X",
-      "catalogVersion": "0.1.0",
+      "catalogVersion": "0.1.1",
       "scheme": "https://relay.interego.xwisee.com/ns/u-pk-33d42e6b33dc/i2idlx#AuthoredConcepts",
       "status": "Hypothetical",
       "authors": [
-        "did:web:identity.interego.xwisee.com:agents:chatgpt-u-pk-731e988c2c5b",
-        "did:web:identity.interego.xwisee.com:agents:claude-u-pk-33d42e6b33dc"
+        "did:web:identity.interego.xwisee.com:agents:chatgpt-u-pk-731e988c2c5b"
       ],
       "reviewedProposalSha256": "f711272b203a8fe74dd26d71b895eca9ee39d05d5a0f8326f70a2852ebc3109b",
       "proposedCanonicalIri": "https://id.i2idl.org/concepts/competency-framework",
@@ -40,7 +39,7 @@
       "ok": true,
       "inputSha256": "2e8a10ac35d77dd4cbfd35ac0202f083f864a0e6a1909396ec32d848ddfc7057",
       "canonicalExpectedSha256": "5ef885d2739eb6b3d7d53f352336a6cc033314a2cae1df5b8ed6b874d3287161",
-      "combinedExpectedSha256": "930d3190fdccc3cc851b4dbc11d94c3a0bb8a9e1718655627f5b4369e11ee8cf",
+      "combinedExpectedSha256": "274ea3e15cd154c0996d1edb8ebcc2735368aba2da8c4d7ae2d16edcf96e7eff",
       "changeReason": "The declared authored Competency framework becomes a ranked search hit with its exact owned IRI, authored Hypothetical provenance and upstreamAdopted=false. All surviving canonical search results retain their values/order; the original six-match bound still applies.",
       "changedQueries": [
         {
@@ -98,7 +97,7 @@
       "ok": true,
       "inputSha256": "e998464eb37e3f359ecfc3d65111d00704431633a3c9de023bba47524dfde16e",
       "canonicalExpectedSha256": "53a30e2b54dfd5425601287581c8532ca9b27bfbfca37ebc808712d7c0b60601",
-      "combinedExpectedSha256": "c026cbd731c771aebd3465d951b17caea60a325b27598241315d86582a9ac32c",
+      "combinedExpectedSha256": "2af7f19f8a0126be1bf80cdbb9b04a6923d7729f24094b311c7aa78bf6614afa",
       "changeReason": "The declared authored Competency framework becomes a ranked search hit with its exact owned IRI, authored Hypothetical provenance and upstreamAdopted=false. All surviving canonical search results retain their values/order; the original six-match bound still applies.",
       "changedQueries": [
         {
@@ -152,5 +151,9 @@
         }
       ]
     }
-  ]
+  ],
+  "revisionReview": {
+    "catalogVersion": "0.1.1",
+    "reason": "Definition, ranks and canonical results unchanged; scoped catalog authorship/evidence review changes the authored search-hit origin only. All 46 other result values remain exactly bound to the canonical v93 expectations."
+  }
 }

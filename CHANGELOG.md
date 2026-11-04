@@ -1,5 +1,15 @@
 # Changelog
 
+## 2026-11-04 — Close chained classifications and align legacy xAPI producers
+
+The public classifier now iterates the pinned query to a bounded monotone fixed point. Chained bridges complete in one request; nonconvergence fails without a partial result. Only submitted subjects are returned. The existing proposed AI-CFT-to-LER mapping can therefore reach the authored generic Competency framework concept; this is a Hypothetical entailment of that mapping, not editorial ratification of a new canonical relation.
+
+Authored catalog 0.1.1 scopes catalog and bridge authorship to their author, retains both English definition creators, and records Claude's actual review separately with content-bound review documents. CTDL-ASN direct evidence and two IEEE supporting references now agree with the upstream draft, and peer bridge headings identify their vocabulary.
+
+Both actual TLA demo producers emit a distinct current informational record, a separate lossless JSON source entity and nested Result/Score predicates. The legacy activity identity is not aliased to a record. The demo fixtures remain synthetic. Real encrypted-lattice tests verify that a failed usage projection followed by the same signed statement retry preserves exactly one original through warm and cold recovery.
+
+The companion Learning Fabric and legacy adapters are documented in `applications/foxxi-content-intelligence/i2idlx/xapi-alignment.md`. The canonical v0.0.93 source, historical records and access controls are unchanged.
+
 ## 2026-11-04 — Record the verified private usage catalog publication
 
 The isolated CSS package retains the generator's exact lockfile-pinned ComponentsJS 6.4 context before pruning build dependencies and registers its emitted version-6 IRI through the supported local context map. Docker and both isolated CI assembly paths test the real ComponentsJS 5 manager with network access denied after generator removal; no version-5 alias or dependency change is introduced. Existing storage/recovery assertions are unchanged.
