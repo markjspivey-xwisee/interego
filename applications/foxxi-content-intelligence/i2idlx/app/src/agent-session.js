@@ -180,11 +180,11 @@ export function createAgentSessionClient(config = {}) {
         let revision = -1, text = '', cutoff = now() + 10 * 60 * 1000;
         while (true) {
           check(captured, signal);
-          if (now() >= cutoff) throw failure('The agent did not finish before this request expired. Keep the agent session active and try again.', 'session_expired');
+          if (now() >= cutoff) throw failure('The agent did not finish before this request expired. Keep the agent session active and try again.', 'request_timeout');
           if (snapshot.turn_id !== currentTurn || !Number.isSafeInteger(snapshot.revision) || snapshot.revision < revision || typeof snapshot.text !== 'string' || bytes(snapshot.text) > MAX_TEXT || !snapshot.text.startsWith(text) || snapshot.revision === revision && snapshot.text !== text) throw failure('The agent returned a stale or invalid response.');
           if (bytes(previousText + snapshot.text) > MAX_TEXT) throw failure('The agent response exceeds this connection limit. Ask a smaller question.', 'prompt_too_large');
           if (snapshot.revision > revision) { revision = snapshot.revision; if (snapshot.text !== text) { text = snapshot.text; options.onText?.({ text: previousText + text }); } }
-          if (snapshot.state === 'failed') throw failure(snapshot.error || 'The connected agent could not finish this question.');
+          if (snapshot.state === 'failed') throw failure(snapshot.error || 'The connected agent could not finish this question.', snapshot.error_code === 'request_timeout' ? 'request_timeout' : 'unavailable');
           if (snapshot.state === 'cancelled') throw failure('Cancelled.', 'cancelled');
           if (snapshot.state === 'completed') {
             currentTurn = null;

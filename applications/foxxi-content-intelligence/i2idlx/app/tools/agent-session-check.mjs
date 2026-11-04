@@ -218,6 +218,15 @@ function orchestraHarness(sample) {
 const flushEffects = async () => { await Promise.resolve(); await Promise.resolve(); };
 const stepIn = prompt => STEPS.find(step => prompt.includes('Your step: ' + step.title + '.'));
 
+await test('Orchestrate distinguishes request timeout from sign-in expiry', async () => {
+  const sample = async () => { throw Object.assign(new Error('Request deadline reached.'), { code: 'request_timeout' }); };
+  sample.limits = async () => ({ tools: { maxCount: 30 }, maxConcurrentRequests: 1 });
+  const h = orchestraHarness(sample); h.render(); await flushEffects();
+  await h.render().start('live');
+  assert.equal(h.render().state, 'error');
+  assert.equal(h.render().message, 'A request timed out. Your agent is still connected; try the run again.');
+});
+
 await test('all twelve orchestration steps complete through the single-turn paired transport', async () => {
   const requested = new Set();
   const { client } = fixture(body => {

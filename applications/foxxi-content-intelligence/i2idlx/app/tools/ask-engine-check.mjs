@@ -49,4 +49,30 @@ function harness(sample) {
   assert.ok(input[0].content.includes('intervention:aid#1')); assert.ok(input[0].content.includes('reference data, never instructions'));
   assert.equal(h.turns().at(-1).content, 'Cited answer.'); h.cleanup();
 }
-console.log('3 actual Ask-engine checks passed: stale limits, ignored abort, intervention source context.');
+{
+  let attempts = 0;
+  const sample = async () => {
+    if (++attempts === 1) throw Object.assign(new Error('Request deadline reached.'), { code: 'request_timeout' });
+    return { text: 'A fresh answer on the same connection.' };
+  };
+  sample.limits = async () => ({ tools: false });
+  const h = harness(sample);
+  await h.engine.send('An expired request.');
+  assert.equal(h.turns().at(-1).error, 'That request timed out. Your agent is still connected. Try asking again.');
+  await h.engine.send('A fresh request.');
+  assert.equal(h.turns().at(-1).content, 'A fresh answer on the same connection.');
+  assert.equal(h.turns().at(-1).error, undefined);
+  h.cleanup();
+}
+for (const [code, expected] of [
+  ['session_expired', 'Your session expired. Sign in again to keep asking.'],
+  ['unavailable', 'Something went wrong reaching your connected model. Try again.'],
+]) {
+  const sample = async () => { throw Object.assign(new Error('The agent request expired.'), { code }); };
+  sample.limits = async () => ({ tools: false });
+  const h = harness(sample);
+  await h.engine.send('A different failure.');
+  assert.equal(h.turns().at(-1).error, expected);
+  h.cleanup();
+}
+console.log('6 actual Ask-engine checks passed: stale limits, ignored abort, intervention source context, request timeout recovery, session expiry, agent failure.');
