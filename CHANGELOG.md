@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-11-03 - Enforce selected note access for local agent grants
+
+New local connections can select an explicit set of existing note IDs. The protected registry and status preserve that scope, and the controller applies it before fetching or decrypting note payloads. Search excludes other notes; direct reads outside the grant are refused, and saving a new note does not expand read access. Existing all-note grants and web approval policy keep their prior scope. Source tests cover selection validation and persistence, controller isolation, and the native page's note picker; installed Windows behavior still requires separate verification.
+
 ## 2026-11-03 — Respect paired-agent concurrency in live Orchestrate
 
 Live Orchestrate respects the connected executor's advertised request capacity. The paired-agent transport advertises one active request, so independent role steps run in sequence instead of failing at the first parallel handoff. Host executors keep the existing two-step parallel limit.
