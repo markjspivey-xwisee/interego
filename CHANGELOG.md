@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-11-04 — Package the PGSL browser's local RDF helper
+
+The browser build now bundles its local demo projection helper while keeping npm packages external. Its Docker build preserves the helper's relative source path. This repairs the missing-module startup crash observed during the normal rollout of the legacy xAPI alignment; the original demo projection and health identity contract are unchanged.
+
+The actual standalone emitted server is tested after removing its TypeScript sources, with outbound HTTP denied. The existing cold image workflow also starts the built browser image without network access and checks its baked build identity at `/health` before accepting the image.
+
 ## 2026-11-04 — Close chained classifications and align legacy xAPI producers
 
 The public classifier now iterates the pinned query to a bounded monotone fixed point. Chained bridges complete in one request; nonconvergence fails without a partial result. Only submitted subjects are returned. The existing proposed AI-CFT-to-LER mapping can therefore reach the authored generic Competency framework concept; this is a Hypothetical entailment of that mapping, not editorial ratification of a new canonical relation.
