@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import { runInNewContext } from 'node:vm';
 import ts from 'typescript';
 import { Parser, Store, DataFactory } from 'n3';
-import { demoExperienceRdf } from '../examples/xapi-record-rdf.js';
+import { demoExperienceRdf } from '../../examples/xapi-record-rdf.js';
 
 const { namedNode: nn } = DataFactory;
 const XAPI = 'https://foxxi-bridge.interego.xwisee.com/ns/xapi#';
@@ -36,7 +36,7 @@ function verify(graph: string, count: number) {
 }
 describe('actual legacy demo producers', () => {
   it('runs the actual browser producer function with its original fixture shape', () => {
-    const source = readFileSync(new URL('../examples/pgsl-browser/server.ts', import.meta.url), 'utf8');
+    const source = readFileSync(new URL('../../examples/pgsl-browser/server.ts', import.meta.url), 'utf8');
     const body = source.slice(source.indexOf('function xapiToRdf('), source.indexOf('\ninterface DemoState'));
     const fixture = { verb: 'completed', activity: 'test-activity', activityName: 'Synthetic test', score: 92, success: true, duration: 'PT45M', timestamp: '2026-03-15T14:30:00Z' };
     const values = { demoExperienceRdf, LEARNER_INFO: { fixture: { did: 'urn:fixture:actor' } }, fixture };
@@ -45,7 +45,7 @@ describe('actual legacy demo producers', () => {
     expect(execute(body + '\nxapiToRdf("fixture", [fixture]);', values)).toBe(graph);
   });
   it('runs the actual TLA producer expression and preserves the legacy registration as source data', () => {
-    const source = readFileSync(new URL('../examples/multi-agent/tla-demo.ts', import.meta.url), 'utf8');
+    const source = readFileSync(new URL('../../examples/multi-agent/tla-demo.ts', import.meta.url), 'utf8');
     const start = source.indexOf('  const experiences = '), end = source.indexOf("\n  log('LRS', '5 xAPI statements received:", start);
     expect(start).toBeGreaterThan(0); expect(end).toBeGreaterThan(start);
     const graph = execute(source.slice(start, end) + '\nxapiGraph;', { demoExperienceRdf }) as string;
@@ -57,5 +57,8 @@ describe('actual legacy demo producers', () => {
     const fixture = { verb: 'completed', activity: 'test', activityName: 'Synthetic', score: NaN, success: true, duration: 'PT1M', timestamp: '2026-03-15T14:30:00Z' };
     expect(() => demoExperienceRdf('urn:test', 'urn:actor', fixture)).toThrow();
     expect(() => demoExperienceRdf('urn:test> . <urn:inject', 'urn:actor', { ...fixture, score: 1 })).toThrow();
+    for (const unsafe of ['|', '^', '`', '\\', '\u0000']) {
+      expect(() => demoExperienceRdf('urn:test', 'urn:actor' + unsafe, { ...fixture, score: 1 })).toThrow();
+    }
   });
 });

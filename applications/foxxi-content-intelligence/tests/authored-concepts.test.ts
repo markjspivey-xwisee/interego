@@ -67,6 +67,13 @@ describe('authored glossary corpus and cross-boundary framework classification',
     for (const subject of [catalogIri, FRAMEWORK_IRI, ...AUTHORED_CATALOG.peerRestrictions.map(p => AUTHORED_NS + p.id)]) {
       expect(objects(subject, PROV + 'wasAttributedTo')).toEqual([AUTHOR_ROOT]);
     }
+    for (const peer of AUTHORED_CATALOG.peerRestrictions) {
+      const expression = graph.getQuads(peer.iri, RDFS + 'subClassOf', null, null)[0]!.object;
+      expect(expression.termType).toBe('BlankNode');
+      expect(graph.getQuads(expression, RDF + 'type', OWL + 'Restriction', null)).toHaveLength(1);
+      expect(graph.getQuads(AUTHORED_NS + peer.id, OWL + 'annotatedTarget', null, null)[0]!.object.equals(expression)).toBe(true);
+    }
+    expect(graph.getQuads(null, RDF + 'type', OWL + 'Restriction', null).every(q => q.subject.termType === 'BlankNode')).toBe(true);
     expect(objects(definition.definitionIri, DCT + 'creator')).toEqual([AUTHOR_ROOT, CLAUDE_REVIEWER].sort());
     for (const [subject, predicate] of [[FRAMEWORK_IRI, SKOS + 'definition'], [definition.definitionIri, RDF + 'value']] as const) {
       expect(graph.getQuads(subject, predicate, null, null)[0]!.object).toMatchObject({ value: definition.definition, language: 'en' });

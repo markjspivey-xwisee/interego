@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { turtleIriRef } from '@interego/core/rdf';
 
 export interface DemoExperience {
   verb: string; activity: string; activityName: string; score: number;
@@ -7,8 +8,9 @@ export interface DemoExperience {
 }
 const NS = 'https://foxxi-bridge.interego.xwisee.com/ns/xapi#';
 const iri = (value: string) => {
-  if (!/^[a-z][a-z0-9+.-]*:[^\s<>"{}\\]+$/i.test(value)) throw new Error('An absolute RDF IRI is required.');
-  return `<${value}>`;
+  const reference = turtleIriRef(value);
+  if (!reference) throw new Error('An absolute RDF IRI is required.');
+  return reference;
 };
 const literal = (value: string) => JSON.stringify(value);
 

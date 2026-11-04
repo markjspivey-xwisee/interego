@@ -166,10 +166,13 @@ export function authoredReferentTurtle(data: Row, baseUrl = 'https://foxxi-bridg
   for (const p of catalog.peerRestrictions || []) {
     const c = concepts.find(c => c.id === p.concept);
     if (!c) throw new Error('Unknown authored peer concept.');
-    const bridge = AUTHORED_NS + p.id, restriction = bridge + '-restriction';
-    lines.push(iri(p.iri) + ' rdfs:subClassOf ' + iri(restriction) + ' .');
-    lines.push(iri(restriction) + ' a owl:Restriction ; owl:onProperty ' + iri(ns + 'isClassifiedBy') + ' ; owl:hasValue ' + iri(c.iri) + ' ; rdfs:comment ' + en('Hypothetical authored directional bridge. ' + p.rationale) + ' .');
-    lines.push(iri(bridge) + ' a owl:Axiom ; owl:annotatedSource ' + iri(p.iri) + ' ; owl:annotatedProperty rdfs:subClassOf ; owl:annotatedTarget ' + iri(restriction) + ' ; prov:wasAttributedTo ' + authors + ' .');
+    if (!/^[a-z][a-z0-9-]*$/.test(p.id)) throw new Error('Invalid authored bridge id.');
+    const bridge = AUTHORED_NS + p.id, restriction = '_:restriction_' + p.id.replaceAll('-', '_');
+    // OWLAPI reads the anonymous restriction expression; a named class with
+    // restriction predicates does not preserve this entailment. Name the axiom.
+    lines.push(iri(p.iri) + ' rdfs:subClassOf ' + restriction + ' .');
+    lines.push(restriction + ' a owl:Restriction ; owl:onProperty ' + iri(ns + 'isClassifiedBy') + ' ; owl:hasValue ' + iri(c.iri) + ' ; rdfs:comment ' + en('Hypothetical authored directional bridge. ' + p.rationale) + ' .');
+    lines.push(iri(bridge) + ' a owl:Axiom ; owl:annotatedSource ' + iri(p.iri) + ' ; owl:annotatedProperty rdfs:subClassOf ; owl:annotatedTarget ' + restriction + ' ; prov:wasAttributedTo ' + authors + ' .');
   }
   for (const review of catalog.reviews || []) {
     document(review.document);
