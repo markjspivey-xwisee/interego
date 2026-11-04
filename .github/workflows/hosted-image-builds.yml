@@ -21,6 +21,7 @@ on:
       - 'deploy/mcp-relay/**'
       - 'examples/dashboard/**'
       - 'examples/pgsl-browser/**'
+      - 'examples/xapi-record-rdf.ts'
       - 'examples/multi-agent/css-config.json'
       - 'demos/**'
       - 'applications/shared-workspace/**'
@@ -177,6 +178,56 @@ jobs:
               if not re.fullmatch(r'sha256:[0-9a-f]{64}', image_id):
                   raise RuntimeError('Docker did not produce a completed image ID')
               metadata['imageId'] = image_id
+              if os.environ['IMAGE'] == 'interego-pgsl-browser':
+                  # A green esbuild/Docker build did not detect a local helper left
+                  # outside dist/. Boot THIS image, with its baked build marker.
+                  # CLEAN prevents pod discovery; no network namespace can reach CSS.
+                  runtime_script = r'''
+          const { spawn } = require('node:child_process');
+          const expected = process.argv[1];
+          const child = spawn(process.execPath, ['dist/server.js'], { stdio: 'inherit' });
+          let exited = false;
+          child.once('exit', () => { exited = true; });
+          (async () => {
+            try {
+              const deadline = Date.now() + 30000;
+              while (Date.now() < deadline) {
+                if (exited) throw Error('The actual browser image exited before serving health');
+                let health;
+                try {
+                  const response = await fetch('http://127.0.0.1:5000/health', { signal: AbortSignal.timeout(500) });
+                  if (response.status === 200) health = await response.json();
+                } catch { /* Wait for the real packaged server to listen. */ }
+                if (health) {
+                  if (health.status !== 'ok' || health.build !== expected) throw Error('Actual image health/build identity mismatch: ' + JSON.stringify(health));
+                  console.log('Actual offline browser image health PASS: ' + JSON.stringify(health));
+                  return;
+                }
+                await new Promise(resolve => setTimeout(resolve, 100));
+              }
+              throw Error('The actual browser image did not serve health within 30 seconds');
+            } finally {
+              child.kill();
+            }
+          })().catch(error => { console.error(error); process.exitCode = 1; });
+          '''
+                  runtime_command = [
+                      'docker', 'run', '--rm', '--network', 'none',
+                      '--env', 'CLEAN=1', '--entrypoint', '/nodejs/bin/node',
+                      image_id, '-e', runtime_script, source_sha,
+                  ]
+                  metadata['runtimeSmoke'] = {
+                      'status': 'running', 'network': 'none', 'podDiscovery': False,
+                      'expectedBuild': source_sha, 'buildEnvironmentOverride': False,
+                  }
+                  runtime = subprocess.run(runtime_command, text=True, stdout=subprocess.PIPE,
+                                           stderr=subprocess.STDOUT, timeout=45)
+                  (evidence / 'runtime.log').write_text(runtime.stdout)
+                  print(runtime.stdout)
+                  metadata['runtimeSmoke']['exitCode'] = runtime.returncode
+                  metadata['runtimeSmoke']['status'] = 'passed' if runtime.returncode == 0 else 'failed'
+                  if runtime.returncode != 0:
+                      raise RuntimeError('Actual browser image startup/health failed with exit code ' + str(runtime.returncode))
               metadata['status'] = 'passed'
               success = True
           except Exception as error:
