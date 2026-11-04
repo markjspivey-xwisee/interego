@@ -65,7 +65,11 @@ describe('actual legacy demo producers', () => {
       link(dirname(expressManifest), join(browser, 'node_modules/express'));
       const script = (JSON.parse(readFileSync(join(browser, 'package.json'), 'utf8')) as { scripts: { build: string } }).scripts.build.split(/\s+/);
       expect(script.shift()).toBe('esbuild');
-      execFileSync(process.execPath, [join(ROOT, 'node_modules/esbuild/bin/esbuild'), ...script], { cwd: browser });
+      // POSIX installs replace this launcher with a native binary; Windows keeps JavaScript.
+      const esbuildCli = join(ROOT, 'node_modules/esbuild/bin/esbuild');
+      const buildCommand = process.platform === 'win32' ? process.execPath : esbuildCli;
+      const buildArguments = process.platform === 'win32' ? [esbuildCli, ...script] : script;
+      execFileSync(buildCommand, buildArguments, { cwd: browser });
       // The image ships dist and external npm packages, never the original TypeScript.
       rmSync(join(browser, 'server.ts'));
       rmSync(join(temporary, 'examples/xapi-record-rdf.ts'));
