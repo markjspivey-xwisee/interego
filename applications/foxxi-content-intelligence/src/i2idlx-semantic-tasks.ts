@@ -6,7 +6,8 @@ import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { resolve } from 'node:path';
 import { loadPublicTaskData } from './i2idlx-client-tasks.js';
-import { parseTurtle, union, construct, serializeTurtle, nn, RDF, GS, type Store } from '../i2idlx/typescript/rdf.js';
+import { parseTurtle, union, serializeTurtle, nn, RDF, GS, type Store } from '../i2idlx/typescript/rdf.js';
+import { createClassifierConstruct } from './i2idlx-classifier-construct.js';
 import { shaclValidate } from '../i2idlx/typescript/validation.js';
 import { authoredCatalogView, authoredReferentTurtle, conceptIri, resolveConceptIndex } from '../i2idlx/typescript/authored-concepts.js';
 import { authoredReferenceShapes } from '../i2idlx/typescript/authored-shapes.js';
@@ -125,12 +126,13 @@ export function createSemanticTaskExecutor(config: SemanticTaskConfig): Semantic
     // pass. Retain the monotone closure, including trusted intermediate facts,
     // while returning only the original draft subjects below.
     const dataset = union(built.ontology.graph, built.alignments.graph, built.referents.graph, authoredGraph, input);
+    const constructPass = createClassifierConstruct(dataset);
     const datasetResult = union();
     const maxPasses = 32;
     let passes = 0, converged = false;
     for (; passes < maxPasses;) {
       passes++;
-      const next = await construct(query, dataset);
+      const next = await constructPass(query);
       datasetResult.addQuads([...next]);
       if (datasetResult.size > 10000) throw new CheckError('Classifier result exceeds capacity.', 413);
       const before = dataset.size;

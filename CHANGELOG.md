@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-11-04 — Preserve bound blank nodes during classifier closure
+
+The classifier restores Comunica's source-scoped blank terms before feeding each pass back into its request dataset. Full producer records with anonymous Context, Result and Score components now reach a fixed point without cloning those components. The public library inverse mapping leaves named IRIs and genuinely fresh constructed nodes unchanged; the existing nonconvergence and capacity guards still refuse partial results. The stored query, ontology, canonical source and authored artifact pins are unchanged.
+
+Regression checks use the complete synthetic PGSL and TLA producer graphs, independent blank identities and reserved-prefix IRIs. The public inverse-mapping package is declared directly at its existing lockfile version so the production image retains it.
+
 ## 2026-11-04 — Package the PGSL browser's local RDF helper
 
 The browser build now bundles its local demo projection helper while keeping npm packages external. Its Docker build preserves the helper's relative source path. This repairs the missing-module startup crash observed during the normal rollout of the legacy xAPI alignment; the original demo projection and health identity contract are unchanged.
