@@ -2,7 +2,7 @@
 import json
 import pathlib
 import sys
-from playwright.sync_api import sync_playwright
+from playwright.sync_api import expect, sync_playwright
 
 root = pathlib.Path(sys.argv[1]).resolve()
 cache = pathlib.Path(sys.argv[2]).resolve()
@@ -53,10 +53,17 @@ inventory = {
 }
 
 def routing(fail_inventory=False):
+    inventory_reads = 0
+
     def handler(route):
+        nonlocal inventory_reads
         request, url = route.request, route.request.url
         if url == "http://app.test/i2idlx/directory":
-            return route.fulfill(status=503 if fail_inventory else 200, content_type="application/json", body=json.dumps({"error": "fixture offline"} if fail_inventory else inventory))
+            inventory_reads += 1
+            count = 0 if inventory_reads == 1 else inventory_reads + 5
+            refreshed_read = {**read_action, "example": {**read_action["example"], "payload": {**read_action["example"]["payload"], "count": count}}}
+            fresh = {**inventory, "actions": [refreshed_read, protected_action, client_action]}
+            return route.fulfill(status=503 if fail_inventory else 200, content_type="application/json", body=json.dumps({"error": "fixture offline"} if fail_inventory else fresh))
         if url == "http://app.test/i2idlx/directory/run":
             payload = json.loads(request.post_data)
             assert "DO-NOT-SEND-CREDENTIAL" not in request.post_data, "credential reached the network"
@@ -69,6 +76,11 @@ def routing(fail_inventory=False):
                 "request": {"method": "POST", "url": "https://example.invalid/fixture", "payload": payload["payload"]},
                 "validation": {"valid": True, "errors": []}, "evidence": {"source": "browser-fixture", "http_status": 200, "duration_ms": 1},
             }
+            if executed and payload["payload"].get("count") == 429:
+                result.update(status="failed", executed=False, error="Service is busy. Retry shortly.", evidence={
+                    "source": "browser-fixture", "http_status": 429, "duration_ms": 1, "invocation_attempted": True,
+                })
+                return route.fulfill(status=429, content_type="application/json", body=json.dumps(result))
             result["result"] = {"execution": "client-required", "status": "instructions-only", "sampling_performed": False} if payload["action_iri"] == client_action["iri"] else {"echo": payload["payload"]}
             return route.fulfill(status=200, content_type="application/json", body=json.dumps(result))
         if url.startswith("http://app.test/i2idlx/"):
@@ -95,8 +107,30 @@ with sync_playwright() as playwright:
         page.goto("http://app.test/i2idlx/#agents-directory")
         page.wait_for_function("document.querySelector('#directory').textContent.includes('Live inventory loaded')")
         assert page.locator("#directory [data-action-iri]").count() == 3, "fresh operations must replace the embedded snapshot"
+        rows = page.locator("#directory [data-action-iri]")
+        page.get_by_role("link", name="Try live examples", exact=True).click()
+        expect(rows).to_have_count(1)
+        expect(rows.first).to_have_attribute("data-action-iri", read_action["iri"])
+        page.get_by_role("button", name="Client tasks · 1", exact=True).click()
+        expect(rows.first).to_have_attribute("data-action-iri", client_action["iri"])
+        page.get_by_role("link", name="All capabilities", exact=True).click()
+        expect(rows).to_have_count(3)
         card = page.locator('[data-action-iri="' + read_action["iri"] + '"]')
         card.locator("summary").first.click()
+        count = card.get_by_label("count (required)", exact=True)
+        expect(count).to_have_value("0")
+        page.get_by_role("button", name="Refresh live inventory", exact=True).click()
+        expect(count).to_have_value("7")
+        count.fill("429")
+        page.get_by_role("button", name="Refresh live inventory", exact=True).click()
+        expect(page.get_by_role("button", name="Refresh live inventory", exact=True)).to_be_enabled()
+        expect(count).to_have_value("429")
+        card.get_by_role("button", name="Run live example directory-fixture-read", exact=True).click()
+        expect(card.locator('[data-testid="capability-result"]')).to_contain_text("A request reached the advertised service.")
+        expect(card.locator('[data-testid="capability-result"]')).to_contain_text("Service is busy. Retry shortly.")
+        card.get_by_role("button", name="Reset to example", exact=True).click()
+        expect(count).to_have_value("8")
+        count.fill("0")
         field = card.get_by_label("meta (optional)", exact=True)
         field.fill("{")
         assert field.input_value() == "{", "intermediate structured input must remain editable"
