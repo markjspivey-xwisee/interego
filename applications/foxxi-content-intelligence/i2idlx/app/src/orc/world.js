@@ -678,9 +678,10 @@ export function callTool(w, name, input, agent, allowed) {
 
 /** The human's decision at the gate. Approving marks the staged calls approved; nothing is sent from the page. */
 export function decideGate(w, decision) {
-  if (!w.gate) return;
+  if (!w.gate || w.gate.status !== "pending" || !["approved", "declined"].includes(decision)) return false;
   w.gate.status = decision;
   for (const s of w.staged) if (w.gate.calls.includes(s.id)) s.status = decision;
+  return true;
 }
 
 /** Schemas for the sample capability's tools option. */

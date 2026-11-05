@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-11-04 — Complete Orchestrate reports after the human decision
+
+Live Orchestrate now uses the actual sandbox summary to generate and show its report after either approval or decline. An idle or expired connected agent no longer leaves that report waiting for another chat message. The human decision remains required, repeated clicks cannot change it, and the page sends no staged calls. The report's provenance identifies it as workflow generated; recorded runs retain their original behavior.
+
 ## 2026-11-04 — Preserve bound blank nodes during classifier closure
 
 The classifier restores Comunica's source-scoped blank terms before feeding each pass back into its request dataset. Full producer records with anonymous Context, Result and Score components now reach a fixed point without cloning those components. The public library inverse mapping leaves named IRIs and genuinely fresh constructed nodes unchanged; the existing nonconvergence and capacity guards still refuse partial results. The stored query, ontology, canonical source and authored artifact pins are unchanged.

@@ -11,6 +11,7 @@ import { useStored } from "../util.js";
 import { createWorld, callTool, decideGate, TOOLS } from "./world.js";
 import { ORG, RECORDS, AGENTS, STEPS, stepById, agentById } from "./scenario.js";
 import { recordedReleaseOf } from "./prov.js";
+import { workflowReport } from "./report.js";
 
 const { useState, useRef, useCallback, useMemo, useEffect } = React;
 const CANCEL = { cancelled: true };
@@ -123,11 +124,11 @@ export function useOrchestra(trace) {
   const nid = () => "e" + ++seq.current;
   const add = useCallback((item) => setLog((l) => [...l, item]), []);
   const patch = useCallback((id, fn) => setLog((l) => l.map((x) => (x.id === id ? { ...x, ...fn(x) } : x))), []);
-  const setStep = useCallback((id, status) => {
+  const setStep = useCallback((id, status, execution) => {
     setSteps((s) => ({ ...s, [id]: status }));
     setLog((l) => (l.some((x) => x.type === "step" && x.step === id)
-      ? l.map((x) => (x.type === "step" && x.step === id ? { ...x, status } : x))
-      : [...l, { id: "s-" + id, type: "step", step: id, status }]));
+      ? l.map((x) => (x.type === "step" && x.step === id ? { ...x, status, ...(execution ? { execution } : {}) } : x))
+      : [...l, { id: "s-" + id, type: "step", step: id, status, ...(execution ? { execution } : {}) }]));
   }, []);
 
   const sleep = (r, ms) => new Promise((f, bad) => {
@@ -283,6 +284,20 @@ export function useOrchestra(trace) {
     setStep(step.id, "done");
   };
 
+  const closeLiveRun = (r, step) => {
+    if (r.cancelled) throw CANCEL;
+    if (!["approved", "declined"].includes(world.current.gate?.status)) throw new Error("Choose Approve or Decline before the workflow can complete.");
+    setStep(step.id, "running", "workflow");
+    const id = nid();
+    add({ id, type: "call", agent: step.agent, step: step.id, execution: "workflow", tool: "run_summary", input: {}, status: "running" });
+    const out = callTool(world.current, "run_summary", {}, step.agent, step.tools);
+    patch(id, () => ({ status: out.ok ? "ok" : "error", summary: out.summary, result: out.result, error: out.error }));
+    if (!out.ok) throw new Error(out.error);
+    const text = workflowReport(out.result);
+    add({ id: nid(), type: "say", agent: step.agent, step: step.id, execution: "workflow", text, summary: out.result, handoff: true, streaming: false });
+    setStep(step.id, "done", "workflow");
+  };
+
   const runLiveTeam = async (r, tier, maxTools, maxConcurrentRequests) => {
     const handoffs = [];
     const status = new Map(STEPS.map((s) => [s.id, "pending"]));
@@ -298,7 +313,8 @@ export function useOrchestra(trace) {
       const ready = STEPS.filter((s) => status.get(s.id) === "pending" && s.after.every(settled));
       for (const s of ready.slice(0, Math.max(0, maxConcurrentRequests - active.size))) {
         status.set(s.id, "running");
-        const p = liveStep(r, s, handoffs, tier, maxTools).then(() => { status.set(s.id, "done"); active.delete(s.id); });
+        const work = s.id === "close" ? Promise.resolve().then(() => closeLiveRun(r, s)) : liveStep(r, s, handoffs, tier, maxTools);
+        const p = work.then(() => { status.set(s.id, "done"); active.delete(s.id); });
         p.catch(() => {}); // the race below reports the first failure; later ones are the abort it causes
         active.set(s.id, p);
       }
@@ -308,14 +324,10 @@ export function useOrchestra(trace) {
       if (world.current.gate && !active.size && !r.gateDone) {
         r.gateDone = true;
         await presenter.drained();
+        await checkpoint(r);
         const d = await waitGate(r);
-        if (d === "cancelled") throw CANCEL;
+        if (d === "cancelled" || r.cancelled) throw CANCEL;
         setState("running");
-        if (d === "declined") {
-          status.set("close", "skipped");
-          setStep("close", "skipped");
-          add({ id: nid(), type: "note", tone: "muted", text: "You declined, so nothing staged leaves the sandbox." });
-        }
       }
     }
   };
@@ -334,7 +346,7 @@ export function useOrchestra(trace) {
         add({ id: nid(), type: "note", tone: "muted", text: `Original Claude transcript, ${new Date(trace.recordedAt).toLocaleDateString(undefined, { year: "numeric", month: "long", day: "numeric" })}, recorded against I2IDL ${recordedRelease || "(release not supplied)"}. Each role was a separate Claude agent in that recording. This page deterministically re-executes its tool calls against the current embedded I2IDL ${META.release}; it makes no new model calls in recorded mode. Messages and tool inputs remain historical, while the tool results shown here are current and any differences from the recording stay marked. You decide the sandbox approval gate for this replay.` });
         await replay(r);
       } else {
-        add({ id: nid(), type: "note", tone: "muted", text: `Live run on your connected model account (${opts.tier === "quick" ? "fast" : "thorough"}): one your connected model call per step, each with only that step's tools. Nothing leaves the sandbox without your approval.` });
+        add({ id: nid(), type: "note", tone: "muted", text: `Live run on your connected model account (${opts.tier === "quick" ? "fast" : "thorough"}): reasoning steps use your connected model with only that step's tools. After your decision, the workflow reports the actual sandbox results automatically. Staged calls are not sent from this page.` });
         await runLiveTeam(r, opts.tier || "quick", live.maxTools || 5, live.maxConcurrentRequests || MAX_PARALLEL);
       }
       if (run.current === r) { setProgress(1); setState("done"); run.current = null; }
@@ -370,7 +382,7 @@ export function useOrchestra(trace) {
   const stop = useCallback(() => { cancel(); setState("stopped"); }, [cancel]);
   const decide = useCallback((decision) => {
     const r = run.current;
-    decideGate(world.current, decision);
+    if (!decideGate(world.current, decision)) return;
     bump();
     add({ id: nid(), type: "decision", decision });
     if (r && r.gate) { const f = r.gate; r.gate = null; f(decision); }

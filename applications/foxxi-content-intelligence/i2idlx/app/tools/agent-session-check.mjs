@@ -4,6 +4,7 @@ import { readFile } from 'node:fs/promises';
 import { runInNewContext } from 'node:vm';
 import { createAgentSessionClient, validateAgentToolArguments } from '../src/agent-session.js';
 import { ORG, RECORDS, AGENTS, STEPS, stepById, agentById } from '../src/orc/scenario.js';
+import { workflowReport } from '../src/orc/report.js';
 
 const SESSION = '1'.repeat(32), BROWSER = '2'.repeat(64), INVITE = '3'.repeat(64);
 const expires = '2099-01-01T00:00:00.000Z';
@@ -186,9 +187,19 @@ await test('overlapping consumers fail without cancelling or replacing the activ
 });
 
 const orchestraSource = await readFile(new URL('../src/orc/engine.js', import.meta.url), 'utf8');
-function orchestraHarness(sample) {
+const worldSource = await readFile(new URL('../src/orc/world.js', import.meta.url), 'utf8');
+// Run the actual sandbox summary and decision tools. Only semantic inference is
+// bounded here; this suite tests lifecycle/transport, not ontology correctness.
+const worldRuntime = runInNewContext(worldSource.replace(/^import .*\n/gm, '').replaceAll('export ', '') + '\n({ createWorld, callTool, decideGate, TOOLS });', {
+  META: { base: 'https://workbench.example/ns/test/i2idlx' }, PORTS: [], QUERIES: [], MAPPINGS: [],
+  SEM: { labels: {}, prefixes: {} }, COLUMNS: [], byId: new Map(), byIri: new Map(),
+  classify: () => ({ resources: [], typings: 17, clashes: 0 }),
+  ORG, RECORDS, agentById,
+});
+function orchestraHarness(sample, trace = {}, seedWorld = () => {}) {
   const hooks = [];
   let cursor = 0;
+  let worldRef;
   const memo = (fn, deps) => {
     const n = cursor++, old = hooks[n];
     if (!old || deps.some((value, i) => value !== old.deps[i])) hooks[n] = { value: fn(), deps };
@@ -199,24 +210,43 @@ function orchestraHarness(sample) {
     if (!hooks[n]) hooks[n] = { value: typeof initial === 'function' ? initial() : initial };
     return [hooks[n].value, next => { hooks[n].value = typeof next === 'function' ? next(hooks[n].value) : next; }];
   };
-  const useRef = initial => memo(() => ({ current: initial }), []);
+  const useRef = initial => { const ref = memo(() => ({ current: initial }), []); worldRef ||= ref; return ref; };
   const useEffect = (fn, deps) => memo(() => { fn(); }, deps);
   const React = { useState, useRef, useEffect, useMemo: memo, useCallback: (fn, deps) => memo(() => fn, deps) };
-  const TOOLS = Object.fromEntries(STEPS.flatMap(step => step.tools).map(name => [name, { description: 'Deterministic scheduling fixture.' }]));
+  const summaryCalls = [];
   const context = {
     React, META: { scheme: { title: 'Test glossary' }, release: 'test' }, CANONICAL_C: Array(8).fill({}), AUTHORED_C: [{}],
     useCaps: () => ({ resolved: true, sample }), useStored: (_key, value) => useState(value),
-    createWorld: () => ({ fixes: [{ status: 'open' }], items: [] }),
-    callTool: () => ({ ok: true, result: {}, summary: 'fixture', ui: [] }), decideGate: () => {}, TOOLS,
+    createWorld: () => { const world = worldRuntime.createWorld(); world.fixes.push({ status: 'open' }); seedWorld(world); return world; },
+    callTool: (...args) => {
+      const out = worldRuntime.callTool(...args);
+      if (args[1] === 'run_summary') summaryCalls.push(out);
+      return out;
+    },
+    decideGate: worldRuntime.decideGate, TOOLS: worldRuntime.TOOLS, workflowReport,
     ORG, RECORDS, AGENTS, STEPS, stepById, agentById, recordedReleaseOf: () => 'test',
     AbortController, setTimeout, clearTimeout,
   };
   const useOrchestra = runInNewContext(orchestraSource.replace(/^import .*\n/gm, '').replaceAll('export function ', 'function ') + '\nuseOrchestra;', context);
-  const render = () => { cursor = 0; return useOrchestra({}); };
-  return { render };
+  const render = () => { cursor = 0; return useOrchestra(trace); };
+  const stageCall = () => worldRef.current.staged.push({ id: 'call-fixture', port: 'port-publish-classified', title: 'Fixture sandbox graph', status: 'staged' });
+  const openGate = () => {
+    stageCall();
+    const out = worldRuntime.callTool(worldRef.current, 'request_approval', { summary: 'Decide on the actual staged fixture.' }, 'conductor', ['request_approval']);
+    assert.equal(out.ok, true);
+  };
+  return { render, world: () => worldRef.current, summaryCalls, stageCall, openGate };
 }
 const flushEffects = async () => { await Promise.resolve(); await Promise.resolve(); };
 const stepIn = prompt => STEPS.find(step => prompt.includes('Your step: ' + step.title + '.'));
+const until = async predicate => {
+  const deadline = performance.now() + 2000;
+  for (;;) {
+    if (predicate()) return;
+    if (performance.now() >= deadline) throw new Error('The orchestration lifecycle did not reach its expected checkpoint.');
+    await new Promise(resolve => setTimeout(resolve, 5));
+  }
+};
 
 await test('Orchestrate distinguishes request timeout from sign-in expiry', async () => {
   const sample = async () => { throw Object.assign(new Error('Request deadline reached.'), { code: 'request_timeout' }); };
@@ -229,6 +259,7 @@ await test('Orchestrate distinguishes request timeout from sign-in expiry', asyn
 
 await test('all twelve orchestration steps complete through the single-turn paired transport', async () => {
   const requested = new Set();
+  let h;
   const { client } = fixture(body => {
     assert.equal(body.operation, 'request');
     assert(body.messages[0].content.includes('8 canonical concepts'));
@@ -236,15 +267,18 @@ await test('all twelve orchestration steps complete through the single-turn pair
     const step = stepIn(body.messages[0].content);
     assert.ok(step, 'The actual engine supplies each step prompt.');
     requested.add(step.id);
+    if (step.id === 'stage') { h.openGate(); h.render().decide('approved'); }
     return response(turn('completed', 1, 'Completed ' + step.id + ' fixture handoff.'));
   });
   await ready(client);
-  const sample = client.getSample(), h = orchestraHarness(sample);
+  const sample = client.getSample(); h = orchestraHarness(sample);
   h.render(); await flushEffects();
   await h.render().start('live');
   const final = h.render();
   assert.equal(final.state, 'done', 'The paired executor must reach the full dependency graph without a concurrent request failure: ' + final.message);
-  assert.equal(requested.size, STEPS.length);
+  assert.equal(requested.size, STEPS.length - 1, 'The final step reads the page summary without another paired request.');
+  assert.equal(requested.has('close'), false);
+  assert.equal(h.summaryCalls.length, 1);
   assert.equal(Object.values(final.steps).filter(value => value === 'done').length, STEPS.length);
   assert.equal((await sample.limits()).maxConcurrentRequests, 1);
 });
@@ -252,19 +286,129 @@ await test('all twelve orchestration steps complete through the single-turn pair
 for (const limit of [undefined, 2, 10, 0]) {
   await test('host executor retains two concurrent steps with limit ' + String(limit), async () => {
     let running = 0, peak = 0;
+    let h;
     const sample = async (prompt, options) => {
       assert.ok(stepIn(prompt)); assert.equal(options.signal.aborted, false);
       peak = Math.max(peak, ++running);
       await new Promise(resolve => setTimeout(resolve, 1));
       running--;
+      if (stepIn(prompt).id === 'stage') { h.openGate(); h.render().decide('approved'); }
       return { text: 'Deterministic fixture handoff.' };
     };
     sample.limits = async () => ({ tools: { maxCount: 30 }, ...(limit === undefined ? {} : { maxConcurrentRequests: limit }) });
-    const h = orchestraHarness(sample); h.render(); await flushEffects();
+    h = orchestraHarness(sample); h.render(); await flushEffects();
     await h.render().start('live');
     assert.equal(h.render().state, 'done');
     assert.equal(peak, 2, 'Unspecified/invalid limits keep the host default, and wider limits stay capped at two.');
   });
 }
+
+for (const [decision, unavailableCode] of [['approved', 'session_expired'], ['declined', 'unavailable']]) {
+  await test('the actual pending gate closes once after ' + decision + ' with an unavailable post-gate model', async () => {
+    let h, unavailable = false, postGateSamples = 0;
+    const sampled = [];
+    const sample = async (prompt, options) => {
+      if (unavailable) { postGateSamples++; throw Object.assign(new Error('The connected driver is no longer serving.'), { code: unavailableCode }); }
+      const step = stepIn(prompt); sampled.push(step.id);
+      if (step.id === 'stage') {
+        h.stageCall();
+        await options.tools.find(tool => tool.name === 'request_approval').execute({ summary: 'Review this staged sandbox graph.' });
+      }
+      return { text: 'Actual engine scheduling fixture handoff.' };
+    };
+    sample.limits = async () => ({ tools: { maxCount: 30 }, maxConcurrentRequests: 1 });
+    h = orchestraHarness(sample); h.render(); await flushEffects();
+    const running = h.render().start('live');
+    await until(() => h.render().state === 'gate');
+    assert.equal(h.world().gate.status, 'pending');
+    assert.equal(h.summaryCalls.length, 0);
+    assert.equal(h.render().steps.close, undefined);
+    h.render().decide('not-a-decision');
+    assert.equal(h.world().gate.status, 'pending');
+    h.world().records.get('lrs-prod').status = 'classified';
+    h.world().records.get('sepsis-sim').status = 'classified';
+    h.world().gaps.set('med-safety-check', { nearest: [], peers: [] });
+    h.world().clashesSeen = 1; h.world().fixedClashes = 1;
+    h.world().packs.push({ name: 'Fixture onboarding', items: ['one', 'two'] });
+    unavailable = true;
+    h.render().decide(decision);
+    h.render().decide(decision === 'approved' ? 'declined' : 'approved');
+    await running;
+    const final = h.render();
+    assert.equal(final.state, 'done');
+    assert.equal(final.steps.close, 'done');
+    assert.equal(postGateSamples, 0);
+    assert.equal(sampled.length, STEPS.length - 1);
+    assert.equal(h.summaryCalls.length, 1);
+    const call = final.log.find(row => row.tool === 'run_summary');
+    const report = final.log.find(row => row.type === 'say' && row.step === 'close');
+    assert.equal(call.execution, 'workflow'); assert.equal(call.status, 'ok');
+    assert.equal(call.result.humanDecision, decision);
+    assert.equal(call.result.staged[0].status, decision);
+    assert.equal(call.result.records.length, RECORDS.length);
+    assert.equal(call.result.records.filter(row => row.status === 'classified').length, 2);
+    assert.equal(report.execution, 'workflow');
+    assert.equal(report.summary, call.result, 'The report retains the actual page-tool result.');
+    assert.match(report.text, new RegExp('You ' + decision));
+    assert.match(report.text, /2 of 10 records/);
+    assert.match(report.text, /1 glossary gap flagged locally/);
+    assert.match(report.text, /17 inferred type assignments recorded/);
+    assert.match(report.text, /No staged call was sent or published/);
+    assert.equal(final.log.filter(row => row.type === 'decision').length, 1);
+    assert.equal(final.log.find(row => row.type === 'step' && row.step === 'close').execution, 'workflow');
+    h.render().decide(decision);
+    assert.equal(h.summaryCalls.length, 1);
+    assert.equal(h.render().log.filter(row => row.type === 'say' && row.step === 'close').length, 1);
+  });
+}
+
+await test('stopping at the pending gate produces neither a report nor an approval', async () => {
+  let h;
+  const sample = async (prompt, options) => {
+    if (stepIn(prompt).id === 'stage') {
+      h.stageCall();
+      await options.tools.find(tool => tool.name === 'request_approval').execute({ summary: 'Waiting for the human.' });
+    }
+    return { text: 'Fixture handoff.' };
+  };
+  sample.limits = async () => ({ tools: { maxCount: 30 }, maxConcurrentRequests: 1 });
+  h = orchestraHarness(sample); h.render(); await flushEffects();
+  const running = h.render().start('live');
+  await until(() => h.render().state === 'gate');
+  h.render().stop(); await running;
+  assert.equal(h.render().state, 'stopped');
+  assert.equal(h.world().gate.status, 'pending');
+  assert.equal(h.summaryCalls.length, 0);
+  assert.equal(h.render().log.some(row => row.step === 'close'), false);
+  const raced = h.render().start('live');
+  await until(() => h.render().state === 'gate');
+  h.render().decide('approved'); h.render().stop(); await raced;
+  assert.equal(h.render().state, 'stopped');
+  assert.equal(h.summaryCalls.length, 0, 'Stopping immediately after a decision must still prevent completion.');
+  assert.equal(h.render().log.some(row => row.step === 'close'), false);
+});
+
+await test('recorded decline preserves the historical close skip and generates no replacement report', async () => {
+  let samples = 0;
+  const sample = async () => { samples++; throw new Error('Recorded history cannot sample a model.'); };
+  sample.limits = async () => ({ tools: { maxCount: 30 }, maxConcurrentRequests: 1 });
+  const trace = { recordedAt: '2026-10-01T00:00:00.000Z', events: [
+    { k: 'call', id: 'recorded-approval', agent: 'conductor', step: 'stage', tool: 'request_approval', input: { summary: 'Historical approval request.' } },
+    { k: 'decision' },
+    { k: 'say', agent: 'conductor', step: 'close', text: 'Historical report that assumed approval.', handoff: true },
+  ] };
+  const before = JSON.stringify(trace);
+  const h = orchestraHarness(sample, trace, world => world.staged.push({ id: 'historical-call', status: 'staged' }));
+  h.render(); await flushEffects(); h.render().setSpeed(4);
+  const running = h.render().start('recorded');
+  await until(() => h.render().state === 'gate');
+  h.render().decide('declined'); await running;
+  assert.equal(h.render().state, 'done');
+  assert.equal(h.render().steps.close, 'skipped');
+  assert.equal(samples, 0); assert.equal(h.summaryCalls.length, 0);
+  assert.equal(h.render().log.some(row => row.execution === 'workflow'), false);
+  assert.equal(h.render().log.some(row => row.type === 'say' && row.step === 'close'), false);
+  assert.equal(JSON.stringify(trace), before);
+});
 
 process.stdout.write(count + ' agent session transport and orchestration checks passed. No model or production request was made.\n');
