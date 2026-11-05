@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { runInNewContext } from 'node:vm';
-import { createAgentSessionClient, validateAgentToolArguments } from '../src/agent-session.js';
+import { createAgentSessionClient, grokRoutineInstructions, validateAgentToolArguments } from '../src/agent-session.js';
 import { ORG, RECORDS, AGENTS, STEPS, stepById, agentById } from '../src/orc/scenario.js';
 import { workflowReport } from '../src/orc/report.js';
 
@@ -10,6 +10,12 @@ const SESSION = '1'.repeat(32), BROWSER = '2'.repeat(64), INVITE = '3'.repeat(64
 const expires = '2099-01-01T00:00:00.000Z';
 const response = (value, status = 200) => ({ ok: status < 400, status, json: async () => value });
 const create = () => ({ session_id: SESSION, browser_token: BROWSER, invite_token: INVITE, expires_at: expires, invite_expires_at: expires, audience: 'https://workbench.example', action_iri: 'urn:foxxi:i2idlx:agent-session', protocol: { driver: { action: 'urn:foxxi:i2idlx:agent-session', signed_fields: { i2idlx_operation: 'agent-session', bridge_audience: 'https://workbench.example', session_id: SESSION } } } });
+const routine = { provider: 'grok-bot', url: 'https://api2.cursor.sh/automations/webhook/test-routine', key: 'crsr_Test_routine_key_for_local_fixture_only' };
+const configured = (invite_token = '4'.repeat(64)) => {
+  const { browser_token, ...reply } = create();
+  reply.protocol.driver.routine_start = true;
+  return { ...reply, state: 'waiting_for_agent', driver: null, invite_token };
+};
 const connected = extra => ({ session_id: SESSION, state: 'connected', driver: { actor: 'did:example:verified-test-agent' }, expires_at: expires, ...extra });
 const turn = (state, revision, text = '', extra = {}) => ({ turn_id: 'turn-1', state, revision, text, ...extra });
 function fixture(handler, options = {}) {
@@ -44,29 +50,42 @@ await test('explicit connection keeps browser capability out of invitation and U
   assert.doesNotMatch(invitation, /start_monitoring/);
   assert.match(invitation, /Call signed next now and continue polling across idle responses/);
   assert.equal(client.status().state, 'waiting_for_agent');
+  assert.equal(client.status().routineConfigured, false);
   assert.equal(client.getSample(), null);
   assert(calls.every(call => !call.url.includes(BROWSER) && !call.url.includes(INVITE)));
+  assert.equal(calls.length, 1);
   assert.equal(calls[0].init.credentials, 'omit');
 });
 
-await test('advertised automatic monitoring gates sampling until ready and offers a fresh pairing after failure', async () => {
+await test('Routine setup instructions use the current workbench endpoint and signed wake protocol', () => {
+  const instructions = grokRoutineInstructions(path => path, 'https://tenant.example');
+  assert.match(instructions, /"target":"https:\/\/tenant\.example\/i2idlx\/api\/agent-sessions\/driver"/);
+  assert.match(instructions, /bridge_audience="https:\/\/tenant\.example"/);
+  assert.match(instructions, /sign_request.*act.*exact returned signed envelope/);
+  assert.match(instructions, /new revision after each emit.*actual results.*new wake_id/);
+  assert(!instructions.includes(routine.url) && !instructions.includes(routine.key));
+});
+
+await test('the selected Routine rotates the initial invitation and gates sampling until ready', async () => {
   let monitoring = 'starting';
-  const advertised = () => {
-    const created = create();
-    created.protocol.driver.routine_start = true;
-    return created;
-  };
   const { client, calls } = fixture(body => {
-    if (body.operation === 'invite') return response({ ...advertised(), state: 'waiting_for_agent', driver: null, invite_token: '4'.repeat(64) });
+    if (body.operation === 'configure_monitoring') return response(configured());
+    if (body.operation === 'invite') return response(configured('5'.repeat(64)));
     assert.equal(body.operation, 'request');
     return response(turn('completed', 1, 'The active monitor answered.'));
-  }, { createResponse: () => response(advertised()), statusResponse: () => response(connected({ monitoring })) });
-  const invitation = await client.connect();
+  }, { statusResponse: () => response(connected({ monitoring })) });
+  const invitation = await client.connect(routine);
+  assert.deepEqual(calls.map(call => call.body.operation), [undefined, 'configure_monitoring']);
+  assert.deepEqual(calls[1].body, { session_id: SESSION, operation: 'configure_monitoring', routine });
+  assert.equal(calls[1].init.headers.Authorization, 'Bearer ' + BROWSER);
+  assert(!invitation.includes(INVITE));
   const claim = JSON.parse(invitation.match(/Claim call template: (.+)/)[1]);
   assert.equal(claim.payload.start_monitoring, true);
+  assert.equal(claim.payload.invite_token, '4'.repeat(64));
   assert.match(invitation, /monitoring=starting.*automatically/);
-  assert.match(invitation, /Automatic monitoring is not configured for this agent.*remove start_monitoring.*same invitation.*signed next in this same turn/);
-  assert(!invitation.includes(BROWSER));
+  assert(!invitation.includes(BROWSER) && !invitation.includes(routine.url) && !invitation.includes(routine.key));
+  assert(!JSON.stringify(client.status()).includes(routine.key));
+  assert.equal(client.status().routineConfigured, true);
   await client.refresh();
   assert.equal(client.status().state, 'connected');
   assert.equal(client.status().monitoring, 'starting');
@@ -82,10 +101,44 @@ await test('advertised automatic monitoring gates sampling until ready and offer
   await assert.rejects(sample('Another question'), /Create a new connection request/);
   assert.equal(calls.filter(call => call.body.operation === 'request').length, 1);
   const renewed = await client.renewInvitation();
-  assert(renewed.includes('4'.repeat(64)));
+  assert(renewed.includes('5'.repeat(64)));
+  assert.match(renewed, /"start_monitoring":true/);
+  assert.equal(calls.filter(call => JSON.stringify(call.body).includes(routine.key)).length, 1);
   assert.equal(client.status().state, 'waiting_for_agent');
   assert.equal(client.status().monitoring, null);
   assert.equal(client.status().driverActor, null);
+  assert.equal(client.getSample(), null);
+});
+
+await test('failed Routine setup revokes its new session and does not surface provider credentials', async () => {
+  const { client, calls } = fixture(body => {
+    assert.equal(body.operation, 'configure_monitoring');
+    return response({ error: 'Unsafe reflected input ' + routine.url + ' ' + routine.key }, 400);
+  });
+  await assert.rejects(client.connect(routine), /Check the Routine URL and key/);
+  assert.deepEqual(calls.map(call => call.body.operation), [undefined, 'configure_monitoring', 'disconnect']);
+  assert.deepEqual(calls[2].body, { session_id: SESSION, operation: 'disconnect' });
+  assert.equal(calls[2].init.headers.Authorization, 'Bearer ' + BROWSER);
+  assert.equal(client.status().state, 'disconnected');
+  assert(!JSON.stringify(client.status()).includes(routine.key));
+  assert(!JSON.stringify(client.status()).includes(routine.url));
+});
+
+await test('closing a pending Routine setup revokes a late reply without exposing an invitation', async () => {
+  let release, started;
+  const startedSetup = new Promise(resolve => { started = resolve; });
+  const { client, calls } = fixture(body => {
+    assert.equal(body.operation, 'configure_monitoring');
+    return new Promise(resolve => { release = resolve; started(); });
+  });
+  const connection = client.connect(routine);
+  await startedSetup;
+  await client.disconnect();
+  release(response(configured()));
+  await assert.rejects(connection, error => error.code === 'cancelled');
+  assert.deepEqual(calls.map(call => call.body.operation), [undefined, 'configure_monitoring', 'disconnect']);
+  assert.equal(client.status().state, 'disconnected');
+  assert.equal(client.status().routineConfigured, false);
   assert.equal(client.getSample(), null);
 });
 

@@ -38,14 +38,20 @@ function row(value: unknown): Record<string, unknown> {
 }
 
 type WakeEvent = { session_id: string; wake_id: string };
+const routineSetup = {
+  provider: 'grok-bot',
+  url: 'https://api2.cursor.sh/automations/webhook/fixture_hook',
+  key: 'crsr_fixture_wake_key_0123456789',
+};
 const flushWake = () => new Promise<void>(resolve => setImmediate(resolve));
 function routineFixture(deliver?: (event: WakeEvent) => Promise<void>) {
   const events: WakeEvent[] = [];
-  const f = fixture({ routine: { actor: ALICE, async wake(event) {
-    events.push(event);
-    await deliver?.(event);
-  } } });
-  const optIn = (actor = ALICE, invite = f.made.invite_token) => f.driver('claim', { invite_token: invite, start_monitoring: true }, actor);
+  const f = fixture({ routine: setup => {
+    assert.deepEqual(setup, routineSetup);
+    return { async wake(event) { events.push(event); await deliver?.(event); } };
+  } });
+  const configured = f.browser('configure_monitoring', { routine: routineSetup });
+  const optIn = (actor = ALICE, invite = configured.invite_token) => f.driver('claim', { invite_token: invite, start_monitoring: true }, actor);
   const wakeAt = (index: number) => {
     const event = events[index];
     assert.ok(event);
@@ -57,7 +63,7 @@ function routineFixture(deliver?: (event: WakeEvent) => Promise<void>) {
   const useWake = (operation: string, event: WakeEvent, extra = {}, actor = ALICE) => f.store.driver({
     i2idlx_operation: 'agent-session', bridge_audience: BASE, operation, ...event, ...extra,
   }, actor);
-  return { ...f, events, optIn, wakeAt, useWake };
+  return { ...f, configured, events, optIn, wakeAt, useWake };
 }
 
 describe('explicit, ephemeral external-agent workbench sessions', () => {
@@ -218,9 +224,7 @@ describe('explicit, ephemeral external-agent workbench sessions', () => {
 });
 
 describe('opt-in background agent monitoring', () => {
-  it('posts only the two wake references to the configured HTTPS routine', async () => {
-    const endpoint = 'https://routine.example/webhook';
-    const secret = 'fixture-bearer';
+  it('accepts only the exact Grok webhook shape and posts only the two wake references', async () => {
     let status = 200;
     const requests: { url: string; init: RequestInit }[] = [];
     const fetcher: typeof fetch = async (input, init) => {
@@ -228,30 +232,41 @@ describe('opt-in background agent monitoring', () => {
       requests.push({ url: String(input), init });
       return new Response('Fixture transport response.', { status });
     };
-    assert.throws(() => agentSessionRoutine(ALICE, 'http://routine.example/webhook', secret, fetcher));
+    for (const url of [
+      routineSetup.url.replace('https:', 'http:'),
+      routineSetup.url.replace('api2.cursor.sh', 'api2.cursor.sh.attacker.example'),
+      routineSetup.url.replace('api2.cursor.sh', 'api2.cursor.sh:443'),
+      routineSetup.url.replace('api2.cursor.sh', 'user@api2.cursor.sh'),
+      routineSetup.url.replace('fixture_hook', '%66ixture_hook'),
+      routineSetup.url + '?x=1', routineSetup.url + '#fragment', routineSetup.url + '/',
+      ' ' + routineSetup.url, 'https://127.0.0.1/automations/webhook/fixture_hook',
+    ]) assert.throws(() => agentSessionRoutine({ ...routineSetup, url }, fetcher));
+    assert.throws(() => agentSessionRoutine({ ...routineSetup, provider: 'other' }, fetcher));
+    assert.throws(() => agentSessionRoutine({ ...routineSetup, key: 'crsr_short' }, fetcher));
+    assert.throws(() => agentSessionRoutine({ ...routineSetup, key: routineSetup.key + '\n' }, fetcher));
+    assert.throws(() => agentSessionRoutine({ ...routineSetup, headers: { Accept: '*/*' } }, fetcher));
     assert.equal(requests.length, 0);
-    const routine = agentSessionRoutine(ALICE, endpoint, secret, fetcher);
-    assert.ok(routine);
-    assert.equal(routine.actor, ALICE);
+    const routine = agentSessionRoutine(routineSetup, fetcher);
     const wake = { session_id: '1'.repeat(32), wake_id: '2'.repeat(64) };
     await routine.wake(wake);
     const request = requests[0];
     assert.ok(request);
-    assert.equal(request.url, endpoint);
+    assert.equal(request.url, routineSetup.url);
     assert.equal(request.init.method, 'POST');
     assert.equal(request.init.redirect, 'error');
     const headers = new Headers(request.init.headers);
-    assert.equal(headers.get('Authorization'), 'Bearer ' + secret);
+    assert.equal(headers.get('Authorization'), 'Bearer ' + routineSetup.key);
     assert.equal(headers.get('Content-Type'), 'application/json');
     assert.deepEqual(JSON.parse(String(request.init.body)), wake);
     status = 202;
     await assert.rejects(routine.wake(wake), /rejected the wake event/);
   });
 
-  it('requires the configured actor to confirm startup and wakes each queued turn once', async () => {
+  it('requires the paired actor to confirm startup and wakes each queued turn once', async () => {
     const f = routineFixture();
     const claimed = f.optIn();
     assert.equal(claimed.monitoring, 'starting');
+    assert.equal(claimed.driver_token, undefined);
     assert.equal(f.browser('status').monitoring, 'starting');
     fails(() => f.queue(), 409);
     await flushWake();
@@ -261,7 +276,7 @@ describe('opt-in background agent monitoring', () => {
     assert.ok(!JSON.stringify(f.browser('status')).includes(startup.wake_id));
     fails(() => f.useWake('next', startup, {}, BOB), 403);
     fails(() => f.useWake('next', { ...startup, wake_id: '0'.repeat(64) }), 403);
-    fails(() => f.useWake('next', startup, { driver_token: claimed.driver_token }), 403);
+    fails(() => f.useWake('next', startup, { driver_token: '3'.repeat(64) }), 403);
     assert.equal(f.useWake('next', startup).state, 'idle');
     assert.equal(f.browser('status').monitoring, 'ready');
     fails(() => f.useWake('next', startup), 403);
@@ -304,34 +319,33 @@ describe('opt-in background agent monitoring', () => {
     assert.equal(f.events.length, 3);
   });
 
-  it('preserves invitations when an unsupported opt-in is retried as manual pairing', async () => {
-    const manual = routineFixture();
-    assert.equal(manual.connect().monitoring, undefined);
-    manual.queue();
-    assert.equal(manual.next().state, 'running');
-
-    const other = routineFixture();
-    fails(() => other.optIn(BOB), 409);
-    assert.equal(other.browser('status').state, 'waiting_for_agent');
-    const claimed = other.driver('claim', { invite_token: other.made.invite_token }, BOB);
+  it('rotates the invitation and requires an explicit signed mode match without consuming it', async () => {
+    const configured = routineFixture();
+    assert.equal(row(row(configured.made.protocol).driver).routine_start, undefined);
+    assert.equal(row(row(configured.configured.protocol).driver).routine_start, true);
+    assert.notEqual(configured.configured.invite_token, configured.made.invite_token);
+    fails(() => configured.optIn(BOB, configured.made.invite_token), 403);
+    fails(() => configured.driver('claim', { invite_token: configured.configured.invite_token }, BOB), 409);
+    assert.equal(configured.browser('status').state, 'waiting_for_agent');
+    await flushWake();
+    assert.deepEqual(configured.events, []);
+    const claimed = configured.optIn(BOB);
     assert.equal(row(claimed.driver).actor, BOB);
-    assert.equal(claimed.monitoring, undefined);
-    other.queue();
-    assert.equal(other.driver('next', {}, BOB).state, 'running');
+    assert.equal(claimed.monitoring, 'starting');
+    await flushWake();
+    fails(() => configured.useWake('next', configured.wakeAt(0)), 403);
+    assert.equal(configured.useWake('next', configured.wakeAt(0), {}, BOB).state, 'idle');
 
     const unconfigured = fixture();
     fails(() => unconfigured.driver('claim', { invite_token: unconfigured.made.invite_token, start_monitoring: true }), 409);
     assert.equal(unconfigured.connect().monitoring, undefined);
     unconfigured.queue();
     assert.equal(unconfigured.next().state, 'running');
-    await flushWake();
-    assert.deepEqual(manual.events, []);
-    assert.deepEqual(other.events, []);
   });
 
   it('revokes wake references on cancellation and re-pairing', async () => {
     const f = routineFixture();
-    const original = f.optIn();
+    f.optIn();
     await flushWake();
     f.useWake('next', f.wakeAt(0));
     const queued = f.queue();
@@ -346,15 +360,18 @@ describe('opt-in background agent monitoring', () => {
     const lease = f.useWake('next', replaced);
     const newInvite = f.browser('invite');
     assert.equal(newInvite.state, 'waiting_for_agent');
+    assert.equal(row(row(newInvite.protocol).driver).routine_start, true);
     fails(() => f.useWake('finish', replaced, { turn_id: lease.turn_id, lease_id: lease.lease_id, revision: lease.revision, text: 'Stale result.' }), 403);
 
-    assert.equal(f.driver('claim', { invite_token: newInvite.invite_token }).monitoring, undefined);
-    fails(() => f.driver('next', { driver_token: original.driver_token }), 403);
+    assert.equal(f.optIn(ALICE, newInvite.invite_token).monitoring, 'starting');
+    fails(() => f.driver('next', { driver_token: '3'.repeat(64) }), 403);
     fails(() => f.useWake('next', replaced), 403);
-    f.queue();
-    assert.equal(f.next().state, 'running');
     await flushWake();
-    assert.equal(f.events.length, 3);
+    f.useWake('next', f.wakeAt(3));
+    f.queue();
+    await flushWake();
+    assert.equal(f.events.length, 5);
+    assert.equal(f.useWake('next', f.wakeAt(4)).state, 'running');
   });
 
   it('makes an undelivered turn terminal and allows a fresh wake for the retry', async () => {
@@ -460,13 +477,100 @@ describe('HTTP driver authentication boundary', () => {
     // Use the route's own store so the verified payload references its actual session.
     let verifiedPayload = signed;
     const wakes: WakeEvent[] = [];
-    const h = httpFixture(async (_body, write) => { assert.equal(write, true); return { ok: true, callerDid: ALICE, payload: verifiedPayload }; }, { actor: ALICE, async wake(event) { wakes.push(event); } });
+    const h = httpFixture(async (_body, write) => { assert.equal(write, true); return { ok: true, callerDid: ALICE, payload: verifiedPayload }; }, () => ({ async wake(event) { wakes.push(event); } }));
     const created = await h.invoke('create', {}); verifiedPayload = { ...signed, session_id: created.body.session_id, invite_token: created.body.invite_token };
     const connected = await h.invoke('driver', { operation: 'claim', agent_id: BOB, invite_token: 'attacker', session_id: 'other', start_monitoring: true });
     assert.equal(connected.status, 200); assert.equal(row(connected.body.driver).actor, ALICE);
     assert.equal(connected.body.monitoring, undefined);
     await flushWake();
     assert.deepEqual(wakes, []);
+  });
+  it('requires the correct browser capability and exact Origin to configure monitoring', async () => {
+    let configurations = 0;
+    const h = httpFixture(undefined, raw => {
+      configurations++;
+      assert.deepEqual(raw, routineSetup);
+      return { async wake() {} };
+    });
+    const made = (await h.invoke('create', {})).body;
+    const payload = { operation: 'configure_monitoring', session_id: made.session_id, routine: routineSetup };
+    const auth = { Authorization: 'Bearer ' + String(made.browser_token) };
+    assert.equal((await h.invoke('browser', payload, auth)).status, 403);
+    assert.equal((await h.invoke('browser', payload, { ...auth, Origin: 'https://other.example' })).status, 403);
+    assert.equal((await h.invoke('browser', payload, { Origin: BASE })).status, 404);
+    assert.equal((await h.invoke('browser', { ...payload, __caller_token: made.browser_token }, { Origin: BASE })).status, 404);
+    assert.equal(configurations, 0);
+    const configured = await h.invoke('browser', payload, { ...auth, Origin: BASE });
+    assert.equal(configured.status, 200);
+    assert.equal(configurations, 1);
+    assert.notEqual(configured.body.invite_token, made.invite_token);
+    assert.equal(row(row(configured.body.protocol).driver).routine_start, true);
+    const response = JSON.stringify(configured.body);
+    assert.ok(!response.includes(routineSetup.url) && !response.includes(routineSetup.key));
+  });
+  it('isolates real HTTP sessions and webhook credentials even for the same verified actor', async () => {
+    const setupB = { ...routineSetup, url: routineSetup.url.replace('fixture_hook', 'other_hook'), key: 'crsr_other_fixture_key_0123456789' };
+    const deliveries: { url: string; auth: string | null; event: WakeEvent }[] = [];
+    let failA = false;
+    const fetcher: typeof fetch = async (input, init) => {
+      const url = String(input);
+      const event = JSON.parse(String(init?.body)) as WakeEvent;
+      deliveries.push({ url, auth: new Headers(init?.headers).get('Authorization'), event });
+      return new Response(null, { status: failA && url === routineSetup.url ? 503 : 200 });
+    };
+    const h = httpFixture(async body => ({ ok: true, callerDid: ALICE, payload: row(row(body).signedFixture) }), raw => agentSessionRoutine(raw, fetcher));
+    const open = async (routine: typeof routineSetup) => {
+      const made = (await h.invoke('create', {})).body;
+      const browser = (operation: string, extra = {}) => h.invoke('browser', { session_id: made.session_id, operation, ...extra }, { Origin: BASE, Authorization: 'Bearer ' + String(made.browser_token) });
+      const driver = (operation: string, extra = {}, unsigned = {}) => h.invoke('driver', { signedFixture: { i2idlx_operation: 'agent-session', bridge_audience: BASE, session_id: made.session_id, operation, ...extra }, ...unsigned });
+      const configured = await browser('configure_monitoring', { routine });
+      assert.equal(configured.status, 200);
+      const fields = { invite_token: configured.body.invite_token };
+      assert.equal((await driver('claim', fields, { start_monitoring: true })).status, 409);
+      const claim = await driver('claim', { ...fields, start_monitoring: true });
+      assert.equal(claim.status, 200);
+      assert.equal(row(claim.body.driver).actor, ALICE);
+      assert.equal(claim.body.monitoring, 'starting');
+      assert.equal(claim.body.driver_token, undefined);
+      return { made, browser, driver, routine };
+    };
+    const [a, b] = await Promise.all([open(routineSetup), open(setupB)]);
+    const wakeFor = (connection: typeof a, index: number) => {
+      const delivery = deliveries.filter(row => row.event.session_id === connection.made.session_id)[index];
+      assert.ok(delivery);
+      assert.equal(delivery.url, connection.routine.url);
+      assert.equal(delivery.auth, 'Bearer ' + connection.routine.key);
+      assert.deepEqual(Object.keys(delivery.event).sort(), ['session_id', 'wake_id']);
+      return delivery.event.wake_id;
+    };
+    await flushWake();
+    const startupA = wakeFor(a, 0), startupB = wakeFor(b, 0);
+    assert.notEqual(startupA, startupB);
+    assert.equal((await a.driver('next', { wake_id: startupB })).status, 403);
+    assert.equal((await b.driver('next', { wake_id: startupA })).status, 403);
+    const startup = await Promise.all([a.driver('next', { wake_id: startupA }), b.driver('next', { wake_id: startupB })]);
+    assert.deepEqual(startup.map(result => [result.status, result.body.state]), [[200, 'idle'], [200, 'idle']]);
+
+    failA = true;
+    const [queuedA, queuedB] = await Promise.all([
+      a.browser('request', task),
+      b.browser('request', { ...task, messages: [{ role: 'user', content: 'A different browser request.' }] }),
+    ]);
+    assert.deepEqual([queuedA.status, queuedB.status], [200, 200]);
+    await flushWake();
+    const turnA = wakeFor(a, 1), turnB = wakeFor(b, 1);
+    assert.notEqual(turnA, turnB);
+    assert.equal((await a.browser('poll', { turn_id: queuedA.body.turn_id })).body.state, 'failed');
+    assert.equal((await a.driver('next', { wake_id: turnB })).status, 403);
+    assert.equal((await b.driver('next', { wake_id: turnA })).status, 403);
+    const lease = await b.driver('next', { wake_id: turnB });
+    assert.equal(lease.status, 200);
+    assert.equal(lease.body.turn_id, queuedB.body.turn_id);
+    assert.deepEqual(row(lease.body.task).messages, [{ role: 'user', content: 'A different browser request.' }]);
+    const done = await b.driver('finish', { wake_id: turnB, turn_id: lease.body.turn_id, lease_id: lease.body.lease_id, revision: lease.body.revision, text: 'Session B completed.' });
+    assert.equal(done.status, 200);
+    assert.equal((await b.browser('poll', { turn_id: lease.body.turn_id })).body.text, 'Session B completed.');
+    assert.equal(deliveries.length, 4);
   });
   it('refuses unavailable or failed signature verification and never echoes an internal exception', async () => {
     const absent = httpFixture(); assert.equal((await absent.invoke('driver', {})).status, 503);

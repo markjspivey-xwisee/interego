@@ -479,7 +479,6 @@ import { glossaryLoader } from '../src/i2idl-glossary.js';
 import { askCourse } from '../src/course-ask.js';
 import { attachDecorationRoutes } from '../src/decorations/routes.js';
 import { attachWorkbenchRoutes, workbenchEncryptionKeypair, workbenchOwnerAnchors } from '../src/i2idlx-workbench.js';
-import { agentSessionRoutine } from '../src/i2idlx-agent-sessions.js';
 import { attachI2idlxMcpApp } from '../src/i2idlx-mcp-app.js';
 import { InterventionTaskError } from '../src/i2idlx-intervention-tasks.js';
 import { publicAuthoredIntervention, publicPackageIntervention } from '../src/i2idlx-intervention-sources.js';
@@ -12684,12 +12683,6 @@ attachWorkbenchRoutes(app, {
   participantIds: (process.env.FOXXI_I2IDLX_PARTICIPANTS || '').split(',').map(s => s.trim()).filter(Boolean),
   editorDids: (process.env.FOXXI_I2IDLX_EDITORS || '').split(',').map(s => s.trim()).filter(Boolean),
   ownerAnchors: workbenchOwnerAnchors(process.env.FOXXI_I2IDLX_OWNER_ANCHORS),
-  agentRoutine: agentSessionRoutine(
-    process.env.FOXXI_I2IDLX_ROUTINE_ACTOR,
-    process.env.FOXXI_I2IDLX_ROUTINE_URL,
-    process.env.FOXXI_I2IDLX_ROUTINE_SECRET,
-    guardedFetchFn(globalThis.fetch) as typeof fetch,
-  ),
   verifyCaller: verifyPrivatePerformanceCaller,
   ownPod: privatePerformancePod,
   canonicalPod: canonicalPublicPodUrl,
