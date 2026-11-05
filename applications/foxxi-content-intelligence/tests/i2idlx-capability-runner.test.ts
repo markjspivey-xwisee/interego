@@ -43,7 +43,8 @@ async function withServer(run: (base: string) => Promise<void>, config: Partial<
     // Mirror the bridge's shared JSON request decoration before mounting the runner.
     if (req.body && typeof req.body === 'object') {
       req.body.__client_ip = req.ip;
-      const token = /^Bearer\s+(.+)$/i.exec(req.get('Authorization') ?? '')?.[1]?.trim();
+      const authorization = req.get('Authorization') ?? '';
+      const token = authorization.slice(0, 7).toLowerCase() === 'bearer ' ? authorization.slice(7).trim() : '';
       if (token) req.body.__caller_token = token;
     }
     next();
