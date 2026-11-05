@@ -39,7 +39,9 @@ export function WorkbenchConnection() {
   const status = workbenchConnectionStatus();
   if (!status.hosted) return null;
   const labels = { disconnected: "No agent connected", connecting: "Connecting…", waiting_for_agent: "Waiting for your agent", connected: "Agent connected", expired: "Agent session expired" };
-  const agentLabel = labels[agent?.state] || "No agent connected";
+  const monitoringLabels = { starting: "Starting automatic monitoring", ready: "Monitoring", unavailable: "Could not start monitoring" };
+  const monitoring = agent?.state === "connected" ? agent.monitoring : null;
+  const agentLabel = monitoringLabels[monitoring] || labels[agent?.state] || "No agent connected";
   const connect = async () => {
     setBusy(true);
     try { await connectWorkbench(); toast("Interego identity verified.", { icon: "check" }); }
@@ -66,17 +68,19 @@ export function WorkbenchConnection() {
   };
   const activeAgent = agent && !["disconnected", "expired"].includes(agent.state);
   return <>
-    <button className="btn sm" onClick={() => setOpen(true)}><Icon name="agent" />{agent?.state === "connected" ? "Agent connected" : activeAgent ? "Connect agent" : caps.me ? "Connected" : "Connect"}</button>
+    <button className="btn sm" onClick={() => setOpen(true)}><Icon name="agent" />{agent?.state === "connected" ? agentLabel : activeAgent ? "Connect agent" : caps.me ? "Connected" : "Connect"}</button>
     {open ? <Modal title="Connect your workbench" onClose={() => { setOpen(false); setKey(""); }}>
       <div className="stack" style={{ gap: 18 }}>
         <section className="stack" style={{ gap: 12 }} aria-label="Connect an AI agent">
           <h3 style={{ margin: 0 }}>Chat inside the workbench</h3>
           <p className="small">Connect an active agent from your preferred AI client or local companion. The workbench keeps the conversation and source context together; the connected agent supplies the reasoning through its own available model.</p>
           <p className="note small" role="status">{agentLabel}{agent?.pending ? " · Question pending" : ""}{agent?.driverActor ? <><br /><span className="tiny">Verified agent: <code style={{ overflowWrap: "anywhere" }}>{agent.driverActor}</code></span></> : null}</p>
+          {monitoring === "starting" ? <p className="small">You can send requests to this agent once monitoring starts.</p> : null}
+          {monitoring === "unavailable" ? <p className="small">Create a new connection request to try again.</p> : null}
           <p className="tiny muted">Questions you submit and their selected content are shared with the agent you explicitly connect. No provider API key is requested. This temporary connection does not publish learner records or save the conversation to a pod. The agent must remain active; a subscription alone does not create an unattended service.</p>
           <div className="row wrap">
             {!activeAgent ? <button className="btn primary" disabled={busy} onClick={() => pairAgent()}>{busy ? "Preparing…" : "Connect an AI agent"}</button>
-              : <button className="btn" disabled={busy || agent.pending} onClick={() => pairAgent(true)}>{agent.state === "connected" ? "Replace connected agent" : "New connection request"}</button>}
+              : <button className="btn" disabled={busy || (agent.pending && monitoring !== "unavailable")} onClick={() => pairAgent(true)}>{agent.state === "connected" && monitoring !== "unavailable" ? "Replace connected agent" : "New connection request"}</button>}
             {activeAgent ? <button className="btn" disabled={busy} onClick={closeAgent}>Disconnect agent</button> : null}
           </div>
           {invitation && agent?.state === "waiting_for_agent" ? <div className="stack" style={{ gap: 10 }}>

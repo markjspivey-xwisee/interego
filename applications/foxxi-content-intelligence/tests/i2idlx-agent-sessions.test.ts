@@ -2,7 +2,8 @@ import { afterEach, describe, it } from 'vitest';
 import assert from 'node:assert/strict';
 import express from 'express';
 import {
-  AgentSessionError, AgentSessionStore, attachAgentSessionRoutes, AGENT_SESSION_PATH, AGENT_DRIVER_REQUESTS_PER_MINUTE,
+  AgentSessionError, AgentSessionStore, agentSessionRoutine, attachAgentSessionRoutes, AGENT_SESSION_PATH, AGENT_DRIVER_REQUESTS_PER_MINUTE,
+  type AgentSessionConfig,
 } from '../src/i2idlx-agent-sessions.js';
 
 const BASE = 'https://workbench.example';
@@ -10,7 +11,7 @@ const ALICE = 'did:web:identity.example:agents:alice';
 const BOB = 'did:web:identity.example:agents:bob';
 const tool = { name: 'get_concept', description: 'Read a public concept.', inputSchema: { type: 'object', properties: { id: { type: 'string' } }, required: ['id'] } };
 const task = { messages: [{ role: 'user', content: 'Explain formative assessment with a source citation.' }], tools: [tool] };
-function fixture(config: { sessionTtlMs?: number; inviteTtlMs?: number; leaseTtlMs?: number; requestTtlMs?: number; maxSessions?: number } = {}) {
+function fixture(config: Omit<AgentSessionConfig, 'baseUrl' | 'now'> = {}) {
   let now = 1_000_000;
   const store = new AgentSessionStore({ baseUrl: BASE, now: () => now, ...config });
   const made = store.create('ip-1');
@@ -34,6 +35,29 @@ function fails(fn: () => unknown, status: number): void {
 function row(value: unknown): Record<string, unknown> {
   assert.ok(value && typeof value === 'object' && !Array.isArray(value));
   return value as Record<string, unknown>;
+}
+
+type WakeEvent = { session_id: string; wake_id: string };
+const flushWake = () => new Promise<void>(resolve => setImmediate(resolve));
+function routineFixture(deliver?: (event: WakeEvent) => Promise<void>) {
+  const events: WakeEvent[] = [];
+  const f = fixture({ routine: { actor: ALICE, async wake(event) {
+    events.push(event);
+    await deliver?.(event);
+  } } });
+  const optIn = (actor = ALICE, invite = f.made.invite_token) => f.driver('claim', { invite_token: invite, start_monitoring: true }, actor);
+  const wakeAt = (index: number) => {
+    const event = events[index];
+    assert.ok(event);
+    assert.deepEqual(Object.keys(event).sort(), ['session_id', 'wake_id']);
+    assert.equal(event.session_id, f.sid);
+    assert.match(event.wake_id, /^[a-f0-9]{64}$/);
+    return event;
+  };
+  const useWake = (operation: string, event: WakeEvent, extra = {}, actor = ALICE) => f.store.driver({
+    i2idlx_operation: 'agent-session', bridge_audience: BASE, operation, ...event, ...extra,
+  }, actor);
+  return { ...f, events, optIn, wakeAt, useWake };
 }
 
 describe('explicit, ephemeral external-agent workbench sessions', () => {
@@ -193,10 +217,214 @@ describe('explicit, ephemeral external-agent workbench sessions', () => {
   });
 });
 
+describe('opt-in background agent monitoring', () => {
+  it('posts only the two wake references to the configured HTTPS routine', async () => {
+    const endpoint = 'https://routine.example/webhook';
+    const secret = 'fixture-bearer';
+    let status = 200;
+    const requests: { url: string; init: RequestInit }[] = [];
+    const fetcher: typeof fetch = async (input, init) => {
+      assert.ok(init);
+      requests.push({ url: String(input), init });
+      return new Response('Fixture transport response.', { status });
+    };
+    assert.throws(() => agentSessionRoutine(ALICE, 'http://routine.example/webhook', secret, fetcher));
+    assert.equal(requests.length, 0);
+    const routine = agentSessionRoutine(ALICE, endpoint, secret, fetcher);
+    assert.ok(routine);
+    assert.equal(routine.actor, ALICE);
+    const wake = { session_id: '1'.repeat(32), wake_id: '2'.repeat(64) };
+    await routine.wake(wake);
+    const request = requests[0];
+    assert.ok(request);
+    assert.equal(request.url, endpoint);
+    assert.equal(request.init.method, 'POST');
+    assert.equal(request.init.redirect, 'error');
+    const headers = new Headers(request.init.headers);
+    assert.equal(headers.get('Authorization'), 'Bearer ' + secret);
+    assert.equal(headers.get('Content-Type'), 'application/json');
+    assert.deepEqual(JSON.parse(String(request.init.body)), wake);
+    status = 202;
+    await assert.rejects(routine.wake(wake), /rejected the wake event/);
+  });
+
+  it('requires the configured actor to confirm startup and wakes each queued turn once', async () => {
+    const f = routineFixture();
+    const claimed = f.optIn();
+    assert.equal(claimed.monitoring, 'starting');
+    assert.equal(f.browser('status').monitoring, 'starting');
+    fails(() => f.queue(), 409);
+    await flushWake();
+    assert.equal(f.events.length, 1);
+    const startup = f.wakeAt(0);
+    assert.ok(!JSON.stringify(claimed).includes(startup.wake_id));
+    assert.ok(!JSON.stringify(f.browser('status')).includes(startup.wake_id));
+    fails(() => f.useWake('next', startup, {}, BOB), 403);
+    fails(() => f.useWake('next', { ...startup, wake_id: '0'.repeat(64) }), 403);
+    fails(() => f.useWake('next', startup, { driver_token: claimed.driver_token }), 403);
+    assert.equal(f.useWake('next', startup).state, 'idle');
+    assert.equal(f.browser('status').monitoring, 'ready');
+    fails(() => f.useWake('next', startup), 403);
+
+    const queued = f.queue();
+    await flushWake();
+    assert.equal(f.events.length, 2);
+    const wake = f.wakeAt(1);
+    assert.notEqual(wake.wake_id, startup.wake_id);
+    assert.ok(!JSON.stringify(queued).includes(wake.wake_id));
+    fails(() => f.useWake('next', wake, {}, BOB), 403);
+    const lease = f.useWake('next', wake);
+    assert.equal(lease.state, 'running');
+    assert.equal(lease.turn_id, queued.turn_id);
+    assert.deepEqual(row(lease.task).messages, task.messages);
+    fails(() => f.useWake('next', wake), 409);
+    const update = { turn_id: lease.turn_id, lease_id: lease.lease_id, revision: lease.revision, text: 'I will check.' };
+    fails(() => f.useWake('emit', wake, { ...update, lease_id: '0'.repeat(64) }), 409);
+    const emitted = f.useWake('emit', wake, update);
+    fails(() => f.useWake('emit', wake, update), 409);
+    const calls = [{ id: 'call-1', name: 'get_concept', arguments: { id: 'formative-assessment' } }];
+    const done = f.useWake('finish', wake, { ...update, revision: emitted.revision, tool_calls: calls });
+    assert.equal(done.state, 'completed');
+    assert.deepEqual(f.browser('poll', { turn_id: lease.turn_id }).tool_calls, calls);
+    fails(() => f.useWake('finish', wake, { ...update, revision: emitted.revision }), 403);
+
+    const messages = [...task.messages, { role: 'user', content: 'Actual page-tool result: formative assessment guides ongoing learning.' }];
+    const followup = f.browser('request', { messages, tools: [tool] });
+    await flushWake();
+    assert.equal(f.events.length, 3);
+    const nextWake = f.wakeAt(2);
+    assert.notEqual(nextWake.wake_id, wake.wake_id);
+    fails(() => f.useWake('next', wake), 403);
+    const next = f.useWake('next', nextWake);
+    assert.equal(next.turn_id, followup.turn_id);
+    assert.notEqual(next.turn_id, lease.turn_id);
+    assert.deepEqual(row(next.task).messages, messages);
+    assert.equal(f.useWake('finish', nextWake, { turn_id: next.turn_id, lease_id: next.lease_id, revision: next.revision, text: 'A grounded answer.' }).state, 'completed');
+    await flushWake();
+    assert.equal(f.events.length, 3);
+  });
+
+  it('preserves invitations when an unsupported opt-in is retried as manual pairing', async () => {
+    const manual = routineFixture();
+    assert.equal(manual.connect().monitoring, undefined);
+    manual.queue();
+    assert.equal(manual.next().state, 'running');
+
+    const other = routineFixture();
+    fails(() => other.optIn(BOB), 409);
+    assert.equal(other.browser('status').state, 'waiting_for_agent');
+    const claimed = other.driver('claim', { invite_token: other.made.invite_token }, BOB);
+    assert.equal(row(claimed.driver).actor, BOB);
+    assert.equal(claimed.monitoring, undefined);
+    other.queue();
+    assert.equal(other.driver('next', {}, BOB).state, 'running');
+
+    const unconfigured = fixture();
+    fails(() => unconfigured.driver('claim', { invite_token: unconfigured.made.invite_token, start_monitoring: true }), 409);
+    assert.equal(unconfigured.connect().monitoring, undefined);
+    unconfigured.queue();
+    assert.equal(unconfigured.next().state, 'running');
+    await flushWake();
+    assert.deepEqual(manual.events, []);
+    assert.deepEqual(other.events, []);
+  });
+
+  it('revokes wake references on cancellation and re-pairing', async () => {
+    const f = routineFixture();
+    const original = f.optIn();
+    await flushWake();
+    f.useWake('next', f.wakeAt(0));
+    const queued = f.queue();
+    await flushWake();
+    const cancelled = f.wakeAt(1);
+    assert.equal(f.browser('cancel', { turn_id: queued.turn_id }).state, 'cancelled');
+    fails(() => f.useWake('next', cancelled), 403);
+
+    f.queue();
+    await flushWake();
+    const replaced = f.wakeAt(2);
+    const lease = f.useWake('next', replaced);
+    const newInvite = f.browser('invite');
+    assert.equal(newInvite.state, 'waiting_for_agent');
+    fails(() => f.useWake('finish', replaced, { turn_id: lease.turn_id, lease_id: lease.lease_id, revision: lease.revision, text: 'Stale result.' }), 403);
+
+    assert.equal(f.driver('claim', { invite_token: newInvite.invite_token }).monitoring, undefined);
+    fails(() => f.driver('next', { driver_token: original.driver_token }), 403);
+    fails(() => f.useWake('next', replaced), 403);
+    f.queue();
+    assert.equal(f.next().state, 'running');
+    await flushWake();
+    assert.equal(f.events.length, 3);
+  });
+
+  it('makes an undelivered turn terminal and allows a fresh wake for the retry', async () => {
+    let rejectDelivery: ((reason: Error) => void) | undefined;
+    const f = routineFixture(async () => {
+      if (f.events.length === 2) await new Promise<void>((_resolve, reject) => { rejectDelivery = reject; });
+    });
+    f.optIn();
+    await flushWake();
+    f.useWake('next', f.wakeAt(0));
+    const queued = f.queue();
+    await flushWake();
+    const failedWake = f.wakeAt(1);
+    assert.equal(f.browser('poll', { turn_id: queued.turn_id }).state, 'queued');
+    assert.ok(rejectDelivery);
+    rejectDelivery(new Error('Private transport diagnostic'));
+    await flushWake();
+    const failed = f.browser('poll', { turn_id: queued.turn_id });
+    assert.equal(failed.state, 'failed');
+    assert.ok(!JSON.stringify(failed).includes('Private transport diagnostic'));
+    fails(() => f.useWake('next', failedWake), 403);
+
+    const retry = f.queue();
+    await flushWake();
+    assert.equal(f.events.length, 3);
+    const freshWake = f.wakeAt(2);
+    assert.notEqual(freshWake.wake_id, failedWake.wake_id);
+    fails(() => f.useWake('next', failedWake), 403);
+    const lease = f.useWake('next', freshWake);
+    assert.equal(lease.turn_id, retry.turn_id);
+    assert.equal(f.useWake('finish', freshWake, { turn_id: lease.turn_id, lease_id: lease.lease_id, revision: lease.revision, text: 'The retry completed.' }).state, 'completed');
+  });
+
+  it('expires acknowledged deliveries that the routine never picks up', async () => {
+    const f = routineFixture();
+    f.optIn();
+    await flushWake();
+    const expiredStartup = f.wakeAt(0);
+    f.advance(60_001);
+    assert.equal(f.browser('status').monitoring, 'unavailable');
+    fails(() => f.useWake('next', expiredStartup), 403);
+    fails(() => f.queue(), 409);
+
+    const replacement = f.browser('invite');
+    assert.equal(f.optIn(ALICE, replacement.invite_token).monitoring, 'starting');
+    await flushWake();
+    f.useWake('next', f.wakeAt(1));
+    const queued = f.queue();
+    await flushWake();
+    const expiredTurn = f.wakeAt(2);
+    f.advance(60_001);
+    assert.equal(f.browser('poll', { turn_id: queued.turn_id }).state, 'failed');
+    fails(() => f.useWake('next', expiredTurn), 403);
+    const retry = f.queue();
+    assert.equal(retry.state, 'queued');
+    await flushWake();
+    assert.equal(f.events.length, 4);
+    const freshWake = f.wakeAt(3);
+    assert.notEqual(freshWake.wake_id, expiredTurn.wake_id);
+    const lease = f.useWake('next', freshWake);
+    f.advance(60_001);
+    assert.equal(f.browser('poll', { turn_id: retry.turn_id }).state, 'failed');
+    fails(() => f.useWake('finish', freshWake, { turn_id: lease.turn_id, lease_id: lease.lease_id, revision: lease.revision, text: 'Late result.' }), 403);
+  });
+});
+
 describe('HTTP driver authentication boundary', () => {
   const cleanup: (() => Promise<void>)[] = [];
   afterEach(async () => { await Promise.all(cleanup.splice(0).map(close => close())); });
-  function httpFixture(verifyCaller?: Parameters<typeof attachAgentSessionRoutes>[1]['verifyCaller']) {
+  function httpFixture(verifyCaller?: AgentSessionConfig['verifyCaller'], routine?: AgentSessionConfig['routine']) {
     const app = express();
     app.use(express.json({ limit: '600kb' }));
     // Reproduce the context added by Foxxi's upstream HTTP middleware. The
@@ -210,7 +438,7 @@ describe('HTTP driver authentication boundary', () => {
       }
       next();
     });
-    const store = attachAgentSessionRoutes(app, { baseUrl: BASE, verifyCaller });
+    const store = attachAgentSessionRoutes(app, { baseUrl: BASE, verifyCaller, routine });
     const server = app.listen(0, '127.0.0.1');
     const listening = new Promise<string>((resolve, reject) => {
       server.once('error', reject);
@@ -231,10 +459,14 @@ describe('HTTP driver authentication boundary', () => {
     const signed = { i2idlx_operation: 'agent-session', bridge_audience: BASE, session_id: f.sid, operation: 'claim', invite_token: f.made.invite_token };
     // Use the route's own store so the verified payload references its actual session.
     let verifiedPayload = signed;
-    const h = httpFixture(async (_body, write) => { assert.equal(write, true); return { ok: true, callerDid: ALICE, payload: verifiedPayload }; });
+    const wakes: WakeEvent[] = [];
+    const h = httpFixture(async (_body, write) => { assert.equal(write, true); return { ok: true, callerDid: ALICE, payload: verifiedPayload }; }, { actor: ALICE, async wake(event) { wakes.push(event); } });
     const created = await h.invoke('create', {}); verifiedPayload = { ...signed, session_id: created.body.session_id, invite_token: created.body.invite_token };
-    const connected = await h.invoke('driver', { operation: 'claim', agent_id: BOB, invite_token: 'attacker', session_id: 'other' });
+    const connected = await h.invoke('driver', { operation: 'claim', agent_id: BOB, invite_token: 'attacker', session_id: 'other', start_monitoring: true });
     assert.equal(connected.status, 200); assert.equal(row(connected.body.driver).actor, ALICE);
+    assert.equal(connected.body.monitoring, undefined);
+    await flushWake();
+    assert.deepEqual(wakes, []);
   });
   it('refuses unavailable or failed signature verification and never echoes an internal exception', async () => {
     const absent = httpFixture(); assert.equal((await absent.invoke('driver', {})).status, 503);

@@ -14,7 +14,7 @@ import {
 import { readDelegationCredential, verifyAgentDelegation } from '@interego/solid';
 import type { VerifyPrivateCaller } from './private-performance-auth.js';
 import { attachClientTaskRoutes } from './i2idlx-client-tasks.js';
-import { attachAgentSessionRoutes } from './i2idlx-agent-sessions.js';
+import { attachAgentSessionRoutes, type AgentSessionRoutine } from './i2idlx-agent-sessions.js';
 import { attachSemanticTaskRoutes } from './i2idlx-semantic-tasks.js';
 import { semanticCheckOperations } from './i2idlx-semantic-affordances.js';
 import { foxxiAffordances } from '../affordances.js';
@@ -38,6 +38,7 @@ export interface WorkbenchConfig {
   /** Independently authenticated owner key bindings; never populated from unsigned pod bytes. */
   ownerAnchors?: Readonly<Record<string, string>>;
   verifyCaller: VerifyPrivateCaller;
+  agentRoutine?: AgentSessionRoutine;
   ownPod: (actor: string) => string;
   /** Deployment-owned exact store aliases only; request data never supplies this mapping. */
   canonicalPod?: (pod: string) => string;
@@ -325,7 +326,7 @@ export function attachWorkbenchRoutes(app: Express, config: WorkbenchConfig): vo
   const checkOperations = semanticCheckOperations(base);
   attachClientTaskRoutes(app, { baseUrl: base, appDataFile: config.appDataFile, checkOperations });
   // Independent, explicitly paired agent execution; the public MCP packet surface stays read-only.
-  attachAgentSessionRoutes(app, { baseUrl: base, verifyCaller: config.verifyCaller });
+  attachAgentSessionRoutes(app, { baseUrl: base, verifyCaller: config.verifyCaller, routine: config.agentRoutine });
   // Derive both discovery representations from the actual vertical declarations.
   // The generic Interego follower parses Turtle and resolves the action subject;
   // the existing JSON clients retain their original shape and receive its link.
