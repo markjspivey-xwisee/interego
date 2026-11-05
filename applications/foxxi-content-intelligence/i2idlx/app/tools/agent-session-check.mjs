@@ -351,7 +351,7 @@ for (const [decision, unavailableCode] of [['approved', 'session_expired'], ['de
     assert.match(report.text, new RegExp('You ' + decision));
     assert.match(report.text, /2 of 10 records/);
     assert.match(report.text, /1 glossary gap flagged locally/);
-    assert.match(report.text, /17 typings recorded/);
+    assert.match(report.text, /17 inferred type assignments recorded/);
     assert.match(report.text, /No staged call was sent or published/);
     assert.equal(final.log.filter(row => row.type === 'decision').length, 1);
     assert.equal(final.log.find(row => row.type === 'step' && row.step === 'close').execution, 'workflow');
