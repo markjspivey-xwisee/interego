@@ -153,7 +153,7 @@ const LogItem = React.memo(function LogItem({ x, settled }) {
     return (
       <div className={cx("orc-stephead", x.status)} style={{ "--ac": a.color }} id={"orc-step-" + x.step}>
         <Avatar p={{ name: a.name, color: a.color }} size={22} />
-        <span className="who">{a.name}</span>
+        <span className="who">{x.execution === "workflow" ? "Workflow" : a.name}</span>
         <span className="t">{s.title}</span>
         <span className="st">{STATUS_LABEL[x.status] || x.status}</span>
       </div>
@@ -164,7 +164,7 @@ const LogItem = React.memo(function LogItem({ x, settled }) {
     const long = settled && !x.streaming && x.text.length > 420 && !(x.agent === "conductor" && x.step === "close");
     return (
       <div className={cx("orc-say", x.handoff && "handoff", x.agent === "conductor" && "lead", long && !open && "folded")} style={{ "--ac": a.color }}>
-        {x.handoff ? <div className="hk tiny">{x.agent === "conductor" ? (x.step === "plan" ? "The plan" : x.step === "close" ? "Report to you" : "Conductor") : "Handoff to the Conductor"}</div> : null}
+        {x.handoff ? <div className="hk tiny">{x.execution === "workflow" ? "Run report" : x.agent === "conductor" ? (x.step === "plan" ? "The plan" : x.step === "close" ? "Report to you" : "Conductor") : "Handoff to the Conductor"}</div> : null}
         <div className="txt">{x.text ? <MiniMarkdown text={x.text} /> : null}{x.streaming ? <span className="caret" aria-hidden="true" /> : null}</div>
         {long ? <button type="button" className="btn ghost sm more" onClick={() => setOpen(!open)} aria-expanded={open}>{open ? "Less" : "Read all"}</button> : null}
       </div>
@@ -177,6 +177,7 @@ const LogItem = React.memo(function LogItem({ x, settled }) {
         <button type="button" className="oc-row" onClick={() => setOpen(!open)} aria-expanded={open}>
           <span className="oc-dot" aria-hidden="true" />
           <code className="oc-tool">{x.tool}</code>
+          {x.execution === "workflow" ? <span className="tag" title="Generated automatically from this run's actual results">Workflow</span> : null}
           {x.via ? <span className="oc-via" title="Follows this control of the I2IDL-X catalog">{x.via}</span> : null}
           <span className="oc-sum ellipsis">{x.status === "running" ? "…" : x.status === "error" ? x.error : x.summary}</span>
           {x.drift ? <span className="tag warn" title="Re-run here, this call's result differs from the recording">differs</span> : null}
@@ -237,7 +238,7 @@ function GateCard({ orc, onTab }) {
         <button className="btn sm" onClick={() => orc.decide("declined")}>Decline</button>
         <button className="btn sm primary" onClick={() => orc.decide("approved")}><Icon name="check" />Approve</button>
       </div>
-      <p className="tiny muted">Approving marks the calls ready for your own Interego agent to send; this page sends nothing.</p>
+      <p className="tiny muted">Your decision finishes the run and generates its report automatically. Approval marks the staged calls ready; this page does not send them.</p>
     </div>
   );
 }
@@ -278,7 +279,7 @@ function Staged({ orc }) {
         <CopyBtn small text={() => pretty(all)} label="Copy all" />
         {downloads ? <button className="btn sm" onClick={dl}><Icon name="download" />JSON</button> : null}
       </div>
-      {gate ? <div className="row"><span className="grow small"><b>Awaiting your decision.</b></span><button className="btn sm" onClick={() => orc.decide("declined")}>Decline</button><button className="btn sm primary" onClick={() => orc.decide("approved")}><Icon name="check" />Approve</button></div> : null}
+      {gate ? <><div className="row"><span className="grow small"><b>Awaiting your decision.</b></span><button className="btn sm" onClick={() => orc.decide("declined")}>Decline</button><button className="btn sm primary" onClick={() => orc.decide("approved")}><Icon name="check" />Approve</button></div><p className="tiny muted">Either decision generates the run report automatically; the staged calls are not sent from this page.</p></> : null}
       {w.staged.map((s) => {
         const a = agentById.get(s.by);
         return (
@@ -320,7 +321,7 @@ function LiveModal({ orc, onClose }) {
   return (
     <Modal title="Run the team live with your model" onClose={onClose}>
       <div className="stack">
-        <p className="small">Each step becomes one model call on <b>your</b> account — about a dozen calls for the whole run — and each agent gets only its step's tools: these workbench functions, acting on a sandbox in this page. Nothing is published; the writes are staged for your approval.</p>
+        <p className="small">The team's reasoning uses <b>your</b> connected model account. Each agent gets only its step's workbench tools, acting on a sandbox in this page. After your decision, the workflow generates its report automatically. Nothing is published; the writes are staged for your approval.</p>
         {modelTiers ? <Seg label="Speed" value={tier} onChange={setTier} options={[{ v: "quick", l: "Fast" }, { v: "default", l: "Thorough" }]} /> : null}
         <p className="tiny muted">Response times depend on your connected model. Agents can make mistakes; review their evidence and staged changes.</p>
         {!ok ? <div className="note"><Icon name="info" /><span className="small">{orc.live.reason}</span></div> : null}

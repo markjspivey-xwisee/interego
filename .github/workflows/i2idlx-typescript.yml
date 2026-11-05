@@ -130,6 +130,7 @@ jobs:
       - name: Provider-neutral agent transport and actual Ask engine checks
         run: |
           node applications/foxxi-content-intelligence/i2idlx/app/tools/agent-session-check.mjs
+          node applications/foxxi-content-intelligence/i2idlx/app/tools/orc-report-provenance-check.mjs
           node applications/foxxi-content-intelligence/i2idlx/app/tools/ask-engine-check.mjs
           node --experimental-strip-types applications/foxxi-content-intelligence/i2idlx/app/tools/agent-session-http-check.mjs
           npx vitest run applications/foxxi-content-intelligence/tests/i2idlx-agent-sessions.test.ts
