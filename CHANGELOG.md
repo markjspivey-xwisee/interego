@@ -2,7 +2,7 @@
 
 ## 2026-11-05 — Repair and organize the I2IDL-X Agents examples
 
-The live directory runner separates bridge transport metadata from visitor inputs before checking the public example contract. It preserves target throttling and shows whether a request reached the target. The competency and consulting examples now demonstrate an alignment hop and mixed evidence coverage using fictional data.
+The live directory runner separates bridge transport metadata from visitor inputs before checking the public example contract. It preserves target throttling and shows whether a request reached the target. The competency example now demonstrates an alignment hop between two fictional frameworks, and the consulting example identifies required work products.
 
 The Agents page links directly to live examples, separates them from client tasks and prepared calls, and puts request controls and results ahead of contract details. Fresh inventory supplies current defaults while edited drafts survive a refresh.
 
