@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-11-05 — Start workbench monitoring through an opted-in agent routine
+
+An I2IDL-X deployment can bind one background Routine to an exact verified agent DID. An opted-in claim triggers a startup check and the workbench waits for a signed acknowledgment. Each queued turn, including browser tool results, triggers the Routine with only opaque references. A signed, turn-scoped capability is required to take that work. Manual drivers and staged approval retain their existing behavior.
+
 ## 2026-11-04 — Complete Orchestrate reports after the human decision
 
 Live Orchestrate now uses the actual sandbox summary to generate and show its report after either approval or decline. An idle or expired connected agent no longer leaves that report waiting for another chat message. The human decision remains required, repeated clicks cannot change it, and the page sends no staged calls. The report's provenance identifies it as workflow generated; recorded runs retain their original behavior.

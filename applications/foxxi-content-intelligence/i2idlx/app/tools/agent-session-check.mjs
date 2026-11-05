@@ -10,20 +10,22 @@ const SESSION = '1'.repeat(32), BROWSER = '2'.repeat(64), INVITE = '3'.repeat(64
 const expires = '2099-01-01T00:00:00.000Z';
 const response = (value, status = 200) => ({ ok: status < 400, status, json: async () => value });
 const create = () => ({ session_id: SESSION, browser_token: BROWSER, invite_token: INVITE, expires_at: expires, invite_expires_at: expires, audience: 'https://workbench.example', action_iri: 'urn:foxxi:i2idlx:agent-session', protocol: { driver: { action: 'urn:foxxi:i2idlx:agent-session', signed_fields: { i2idlx_operation: 'agent-session', bridge_audience: 'https://workbench.example', session_id: SESSION } } } });
+const connected = extra => ({ session_id: SESSION, state: 'connected', driver: { actor: 'did:example:verified-test-agent' }, expires_at: expires, ...extra });
 const turn = (state, revision, text = '', extra = {}) => ({ turn_id: 'turn-1', state, revision, text, ...extra });
 function fixture(handler, options = {}) {
   const calls = [];
+  const { createResponse = () => response(create()), statusResponse = () => response(connected()), ...clientOptions } = options;
   const client = createAgentSessionClient({
     origin: () => 'https://workbench.example/i2idlx/', pollMs: 0, wait: async () => {},
     fetch: async (url, init) => {
       const body = JSON.parse(init.body);
       calls.push({ url, init, body });
-      if (url.endsWith('/create')) return response(create());
-      if (body.operation === 'status') return response({ session_id: SESSION, state: 'connected', driver: { actor: 'did:example:verified-test-agent' }, expires_at: expires });
+      if (url.endsWith('/create')) return createResponse();
+      if (body.operation === 'status') return statusResponse();
       if (body.operation === 'disconnect') return response({ disconnected: true });
       if (body.operation === 'cancel') return response(turn('cancelled', 99));
       return handler(body, calls);
-    }, ...options,
+    }, ...clientOptions,
   });
   return { client, calls };
 }
@@ -39,10 +41,71 @@ await test('explicit connection keeps browser capability out of invitation and U
   assert(invitation.includes(INVITE));
   assert(!invitation.includes(BROWSER));
   assert(invitation.includes('urn:foxxi:i2idlx:agent-session'));
+  assert.doesNotMatch(invitation, /start_monitoring/);
+  assert.match(invitation, /Call signed next now and continue polling across idle responses/);
   assert.equal(client.status().state, 'waiting_for_agent');
   assert.equal(client.getSample(), null);
   assert(calls.every(call => !call.url.includes(BROWSER) && !call.url.includes(INVITE)));
   assert.equal(calls[0].init.credentials, 'omit');
+});
+
+await test('advertised automatic monitoring gates sampling until ready and offers a fresh pairing after failure', async () => {
+  let monitoring = 'starting';
+  const advertised = () => {
+    const created = create();
+    created.protocol.driver.routine_start = true;
+    return created;
+  };
+  const { client, calls } = fixture(body => {
+    if (body.operation === 'invite') return response({ ...advertised(), state: 'waiting_for_agent', driver: null, invite_token: '4'.repeat(64) });
+    assert.equal(body.operation, 'request');
+    return response(turn('completed', 1, 'The active monitor answered.'));
+  }, { createResponse: () => response(advertised()), statusResponse: () => response(connected({ monitoring })) });
+  const invitation = await client.connect();
+  const claim = JSON.parse(invitation.match(/Claim call template: (.+)/)[1]);
+  assert.equal(claim.payload.start_monitoring, true);
+  assert.match(invitation, /monitoring=starting.*automatically/);
+  assert.match(invitation, /Automatic monitoring is not configured for this agent.*remove start_monitoring.*same invitation.*signed next in this same turn/);
+  assert(!invitation.includes(BROWSER));
+  await client.refresh();
+  assert.equal(client.status().state, 'connected');
+  assert.equal(client.status().monitoring, 'starting');
+  assert.equal(client.getSample(), null);
+  assert.equal(calls.filter(call => call.body.operation === 'request').length, 0);
+  monitoring = 'ready'; await client.refresh();
+  const sample = client.getSample();
+  assert.equal(typeof sample, 'function');
+  assert.equal((await sample('Question')).text, 'The active monitor answered.');
+  monitoring = 'unavailable'; await client.refresh();
+  assert.equal(client.status().monitoring, 'unavailable');
+  assert.equal(client.getSample(), null);
+  await assert.rejects(sample('Another question'), /Create a new connection request/);
+  assert.equal(calls.filter(call => call.body.operation === 'request').length, 1);
+  const renewed = await client.renewInvitation();
+  assert(renewed.includes('4'.repeat(64)));
+  assert.equal(client.status().state, 'waiting_for_agent');
+  assert.equal(client.status().monitoring, null);
+  assert.equal(client.status().driverActor, null);
+  assert.equal(client.getSample(), null);
+});
+
+await test('old readiness and expiry responses cannot change a replacement pairing', async () => {
+  for (const staleReply of [response(connected({ monitoring: 'ready' })), response({ error: 'Expired old request' }, 410)]) {
+    let holdStatus = false, release;
+    const { client } = fixture(body => {
+      assert.equal(body.operation, 'invite');
+      return response({ ...create(), state: 'waiting_for_agent', driver: null, invite_token: '4'.repeat(64) });
+    }, { statusResponse: () => holdStatus ? new Promise(resolve => { release = resolve; }) : response(connected({ monitoring: 'ready' })) });
+    await ready(client);
+    assert.equal(typeof client.getSample(), 'function');
+    holdStatus = true;
+    const oldRefresh = client.refresh();
+    await client.renewInvitation();
+    release(staleReply); await oldRefresh;
+    assert.equal(client.status().state, 'waiting_for_agent');
+    assert.equal(client.status().monitoring, null);
+    assert.equal(client.getSample(), null);
+  }
 });
 
 await test('queued and running tasks stream actual cumulative text through completion', async () => {
