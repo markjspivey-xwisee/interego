@@ -8,7 +8,7 @@ const hosted = workbenchHosted;
 let connected = null, personalSample = null;
 const announce = () => window.dispatchEvent(new Event("interego-workbench:changed"));
 const agentSessions = createAgentSessionClient({ url: backendUrl, onState: announce });
-export const connectAgentSession = () => agentSessions.connect();
+export const connectAgentSession = routine => agentSessions.connect(routine);
 export const renewAgentInvitation = () => agentSessions.renewInvitation();
 export const disconnectAgentSession = () => agentSessions.disconnect();
 export const refreshAgentSession = () => agentSessions.refresh();

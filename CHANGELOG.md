@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-11-05 — Select automatic monitoring per workbench connection
+
+The standalone HTTPS workbench accepts an optional Grok Bot Routine setup for the current pairing. Each temporary session keeps its own trigger configuration and binds the actor from the verified Interego claim. A Routine-backed session grants work only through signed, turn-scoped wake references. Routine setup no longer requires a service variable or redeploy for each client. Manual pairing uses its existing driver credential.
+
 ## 2026-11-05 — Start workbench monitoring through an opted-in agent routine
 
 An I2IDL-X deployment can bind one background Routine to an exact verified agent DID. An opted-in claim triggers a startup check and the workbench waits for a signed acknowledgment. Each queued turn, including browser tool results, triggers the Routine with only opaque references. A signed, turn-scoped capability is required to take that work. Manual drivers and staged approval retain their existing behavior.
