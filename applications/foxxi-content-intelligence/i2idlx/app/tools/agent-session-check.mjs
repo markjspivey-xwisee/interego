@@ -240,11 +240,12 @@ function orchestraHarness(sample, trace = {}, seedWorld = () => {}) {
 const flushEffects = async () => { await Promise.resolve(); await Promise.resolve(); };
 const stepIn = prompt => STEPS.find(step => prompt.includes('Your step: ' + step.title + '.'));
 const until = async predicate => {
-  for (let n = 0; n < 100; n++) {
+  const deadline = performance.now() + 2000;
+  for (;;) {
     if (predicate()) return;
-    await new Promise(resolve => setTimeout(resolve, 0));
+    if (performance.now() >= deadline) throw new Error('The orchestration lifecycle did not reach its expected checkpoint.');
+    await new Promise(resolve => setTimeout(resolve, 5));
   }
-  throw new Error('The orchestration lifecycle did not reach its expected checkpoint.');
 };
 
 await test('Orchestrate distinguishes request timeout from sign-in expiry', async () => {

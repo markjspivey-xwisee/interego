@@ -26,11 +26,17 @@ export function Orchestrate() {
   const [liveOpen, setLiveOpen] = useState(false);
   const gate = orc.world.gate && orc.world.gate.status === "pending";
   useEffect(() => { if (gate && narrow) setHalf("agents"); }, [gate, narrow]);
+  useEffect(() => {
+    if (orc.mode === "live" && orc.state === "done" && orc.steps.close === "done") {
+      setTab("log");
+      setHalf("agents");
+    }
+  }, [orc.mode, orc.state, orc.steps.close, setTab]);
   const announce = useMemo(() => {
     const s = [...orc.log].reverse().find((x) => x.type === "step");
     if (!s) return "";
     const st = stepById.get(s.step);
-    return `${agentById.get(st.agent).name}: ${st.title} — ${STATUS_LABEL[s.status] || s.status}`;
+    return `${s.execution === "workflow" ? "Workflow" : agentById.get(st.agent).name}: ${st.title} — ${STATUS_LABEL[s.status] || s.status}`;
   }, [orc.log]);
   return (
     <div className="orc">
