@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-11-05 — Repair and organize the I2IDL-X Agents examples
+
+The live directory runner separates bridge transport metadata from visitor inputs before checking the public example contract. It preserves target throttling and shows whether a request reached the target. The competency and consulting examples now demonstrate an alignment hop and mixed evidence coverage using fictional data.
+
+The Agents page links directly to live examples, separates them from client tasks and prepared calls, and puts request controls and results ahead of contract details. Fresh inventory supplies current defaults while edited drafts survive a refresh.
+
 ## 2026-11-05 — Select automatic monitoring per workbench connection
 
 The standalone HTTPS workbench accepts an optional Grok Bot Routine setup for the current pairing. Each temporary session keeps its own trigger configuration and binds the actor from the verified Interego claim. A Routine-backed session grants work only through signed, turn-scoped wake references. Routine setup no longer requires a service variable or redeploy for each client. Manual pairing uses its existing driver credential.

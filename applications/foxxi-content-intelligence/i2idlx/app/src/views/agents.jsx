@@ -21,12 +21,13 @@ const GROUPS = ["Reads on the live glossary", "Semantic layer (graphs on Intereg
 export function Agents({ route }) {
   const section = route.section || "";
   useEffect(() => {
-    if (!section) return;
-    const id = section.startsWith("act.") ? "act-" + section.slice(4) : section;
-    setTimeout(() => {
+    if (!section || section.startsWith("act.")) return;
+    const id = section === "examples" ? "directory" : section;
+    const timer = setTimeout(() => {
       const el = document.getElementById(id);
       if (el) { if (el.tagName === "DETAILS") el.open = true; el.scrollIntoView({ block: "start", behavior: "smooth" }); }
     }, 60);
+    return () => clearTimeout(timer);
   }, [section]);
   return (
     <div className="page ag">
@@ -40,6 +41,12 @@ export function Agents({ route }) {
           <a className="btn sm" href={safeNavigationHref(META.iri.catalog + "?format=turtle")} target="_blank" rel="noopener">Turtle</a>
         </div>
         <OriginStrip items={[["interego", "catalog, graphs, act"], ["i2idl", "your endpoint and dumps"], ["foxxi", "capabilities"], ["proposed", "enactments"]]} />
+        <nav className="row wrap" aria-label="On this page" style={{ gap: 8 }}>
+          <a className="btn sm primary" href="#agents-examples"><Icon name="bolt" />Try live examples</a>
+          <a className="btn sm" href="#agents-directory">All capabilities</a>
+          <a className="btn sm" href="#agents-queries">Stored queries</a>
+          <a className="btn sm" href="#agents-ports">Catalog controls</a>
+        </nav>
         <QuickStart />
       </header>
       <Graphs />

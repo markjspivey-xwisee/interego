@@ -38,7 +38,7 @@ export interface CapabilityDirectory {
   sources: { system: string; url: string; status: string; checked_at: string; count: number; error?: string }[];
   actions: DirectoryAction[];
 }
-interface Profile { path: string; method: 'GET' | 'POST'; payload: Row; label: string; task?: boolean; check: (payload: Row) => boolean }
+interface Profile { path: string; method: 'GET' | 'POST'; payload: Row; label: string; task?: boolean; timeoutMs?: number; check: (payload: Row) => boolean }
 const RELAY = 'https://relay.interego.xwisee.com';
 const CATALOG = RELAY + '/.well-known/operations';
 const MAX_INPUT = 64_000, MAX_OUTPUT = 2_000_000, CACHE_MS = 60_000;
@@ -78,11 +78,19 @@ const SAMPLE_DESCRIPTOR = {
   id: 'urn:example:descriptor:source', describes: ['urn:example:graph:glossary'],
   facets: [{ type: 'Semiotic', modalStatus: 'Asserted', confidence: 0.9 }],
 };
+const SAMPLE_HELD = 'urn:example:competency:workplace-record-store';
+const SAMPLE_REQUIRED = 'urn:example:competency:training-record-store';
 const descriptor = (v: unknown): boolean => object(v) && typeof v.id === 'string' &&
   v.id.length <= 4096 && Array.isArray(v.describes) && v.describes.length <= 64 &&
   v.describes.every(s => typeof s === 'string' && s.length <= 4096) &&
   Array.isArray(v.facets) && v.facets.length <= 64 && v.facets.every(object);
 const short = (v: unknown, max: number) => typeof v === 'string' && v.trim().length > 0 && v.length <= max;
+function alignmentEdge(v: unknown): boolean {
+  if (!object(v)) return false;
+  if (v.associationType !== 'isAlignedTo' && v.associationType !== 'isEquivalentTo') return true;
+  return object(v.originNode) && short(v.originNode.uri, 4096) &&
+    object(v.destinationNode) && short(v.destinationNode.uri, 4096);
+}
 const profiles: Readonly<Record<string, Profile>> = {
   'foxxi.i2idlx_classify': { path: '/i2idlx/api/classify', method: 'POST',
     payload: { graph_content: '<urn:example:inventory:lrs> <https://relay.interego.xwisee.com/ns/u-pk-33d42e6b33dc/i2idlx#isClassifiedBy> <https://id.i2idl.org/concepts/learning-record-store-lrs> .' },
@@ -105,7 +113,13 @@ const profiles: Readonly<Record<string, Profile>> = {
     check: p => allowedKeys(p, ['example']) && p.example === true },
   'foxxi.read_intervention_methods': { path: '/performance/methods', method: 'GET', payload: {}, label: 'Read the real versioned intervention-method catalogue',
     check: p => allowedKeys(p, ['method', 'format']) && (p.method === undefined || short(p.method, 512)) && (p.format === undefined || ['jsonld', 'markdown', 'turtle'].includes(String(p.format))) },
-  'foxxi.review_method_evidence': { path: '/performance/methods/review', method: 'POST', payload: { method: 'consulting', evidence: [] }, label: 'Show missing evidence against the real consulting criteria; no quality certification',
+  'foxxi.review_method_evidence': { path: '/performance/methods/review', method: 'POST',
+    payload: { method: 'consulting', evidence: [{
+      criterion: 'https://markjspivey-xwisee.github.io/interego/applications/agentic-performance-practice/agp#ContextEvidence',
+      artifact: 'urn:example:i2idlx:consulting:interview-notes',
+      note: 'Fictional interview notes for the consulting context criterion.',
+    }] },
+    label: 'Compare one fictional evidence reference with the remaining consulting criteria',
     check: p => allowedKeys(p, ['method', 'evidence']) && short(p.method, 512) && (p.evidence === undefined || (Array.isArray(p.evidence) && p.evidence.length <= 200 && p.evidence.every(e => object(e) && allowedKeys(e, ['criterion', 'artifact', 'note']) && short(e.criterion, 1024) && short(e.artifact, 2048) && short(e.note, 2000)))) },
   'foxxi.bind_decoration': { path: '/agent/decorations/bind', method: 'POST', payload: { decoration: 'lrs-x', values: { endpoint: 'https://example.org/lrs' } },
     label: 'Bind an LRS-X template to an illustrative HTTPS endpoint; no endpoint request or conformance claim',
@@ -116,14 +130,21 @@ const profiles: Readonly<Record<string, Profile>> = {
         try { const url = new URL(value); return url.protocol === 'https:' && !url.username && !url.password && !url.hash && !url.search; } catch { return false; }
       });
     } },
-  'foxxi.resolve_aligned_competency': { path: '/foxxi/resolve_aligned_competency', method: 'POST',
-    payload: { held_competency_iri: 'urn:example:competency:record-store', required_competency_iri: 'urn:example:competency:record-store', alignments: [] },
-    label: 'Compute an alignment result for illustrative inline competency identifiers',
-    check: p => allowedKeys(p, ['held_competency_iri', 'required_competency_iri', 'alignments']) && short(p.held_competency_iri, 4096) && short(p.required_competency_iri, 4096) && Array.isArray(p.alignments) && p.alignments.length <= 64 && p.alignments.every(object) },
+  'foxxi.resolve_aligned_competency': { path: '/foxxi/resolve_aligned_competency', method: 'POST', timeoutMs: 15_000,
+    payload: { held_competency_iri: SAMPLE_HELD, required_competency_iri: SAMPLE_REQUIRED, alignments: [{
+      '@type': 'CFAssociation', identifier: 'example-record-store-alignment', associationType: 'isEquivalentTo',
+      originNode: { uri: SAMPLE_HELD, label: 'Workplace record store' },
+      destinationNode: { uri: SAMPLE_REQUIRED, frameworkUri: 'urn:example:framework:training' },
+      rationale: 'Fictional equivalence between two competency frameworks.', declaredAt: '2026-01-01T00:00:00Z',
+    }] },
+    label: 'Follow an illustrative equivalence between competencies in two fictional frameworks',
+    check: p => allowedKeys(p, ['held_competency_iri', 'required_competency_iri', 'alignments']) && short(p.held_competency_iri, 4096) && short(p.required_competency_iri, 4096) && Array.isArray(p.alignments) && p.alignments.length <= 64 && p.alignments.every(alignmentEdge) },
   'relay.compose': { path: '/tool/compose', method: 'POST',
     payload: { descriptors: [SAMPLE_DESCRIPTOR, { id: 'urn:example:descriptor:mapping', describes: ['urn:example:graph:mapping'], facets: [{ type: 'Semiotic', modalStatus: 'Hypothetical', confidence: 0.7 }] }], operator: 'union' },
     label: 'Compose illustrative inline descriptors; no pod or lattice write',
-    check: p => allowedKeys(p, ['descriptors', 'operator', 'types']) && Array.isArray(p.descriptors) && p.descriptors.length > 0 && p.descriptors.length <= 16 && p.descriptors.every(descriptor) && ['union', 'intersection', 'restriction', 'override'].includes(String(p.operator)) && (p.types === undefined || (Array.isArray(p.types) && p.types.length <= 16 && p.types.every(x => short(x, 128)))) },
+    check: p => allowedKeys(p, ['descriptors', 'operator', 'types']) && Array.isArray(p.descriptors) && p.descriptors.length > 0 && p.descriptors.length <= 16 && p.descriptors.every(descriptor) && ['union', 'intersection', 'restriction', 'override'].includes(String(p.operator)) &&
+      (p.types === undefined ? p.operator !== 'restriction' : Array.isArray(p.types) && p.types.length <= 16 &&
+        (p.operator !== 'restriction' || p.types.length > 0) && p.types.every(x => short(x, 128))) },
   'relay.restrict': { path: '/tool/restrict', method: 'POST', payload: { descriptor: SAMPLE_DESCRIPTOR, selector: { kind: 'facet-types', types: ['Semiotic'] } },
     label: 'Project an illustrative inline descriptor onto selected facets',
     check: p => allowedKeys(p, ['descriptor', 'selector']) && descriptor(p.descriptor) && object(p.selector) && allowedKeys(p.selector, ['kind', 'types']) && p.selector.kind === 'facet-types' && Array.isArray(p.selector.types) && p.selector.types.length <= 16 && p.selector.types.every(x => short(x, 128)) },
@@ -365,10 +386,14 @@ export function attachCapabilityDirectoryRoutes(app: Express, config: Capability
   app.post('/i2idlx/directory/run', async (req, res) => {
     const checked_at = new Date().toISOString();
     let boundAction: string | undefined;
+    let attempt: { target: string; started: number; scope: string; http_status?: number } | undefined;
     const respond = (value: Row, status = 200) => reply(res, { ...(boundAction ? { action_iri: boundAction } : {}), ...value }, status);
     if (object(req.body) && typeof req.body.action_iri === 'string' && /^https:\/\/relay\.interego\.xwisee\.com\/ns\/iep\/action\/[a-z0-9_/-]{1,300}$/.test(req.body.action_iri)) boundAction = req.body.action_iri;
     try {
-      const body: unknown = req.body;
+      // The shared bridge middleware attaches transport context to JSON requests.
+      // This public runner uses neither field as authority or as operation input.
+      const body: unknown = object(req.body) ? Object.fromEntries(Object.entries(req.body)
+        .filter(([key]) => key !== '__client_ip' && key !== '__caller_token')) : req.body;
       if (!object(body) || !allowedKeys(body, ['action_iri', 'payload', 'mode']) || !short(body.action_iri, 512) || !['example', 'validate'].includes(String(body.mode)) || !object(body.payload) || !safeJson(body.payload) || Buffer.byteLength(JSON.stringify(body), 'utf8') > MAX_INPUT) {
         respond({ status: 'invalid', executed: false, error: 'Provide only action_iri, mode (example or validate), and a safe JSON payload within 64 KB.' }, 400); return;
       }
@@ -390,23 +415,45 @@ export function attachCapabilityDirectoryRoutes(app: Express, config: Capability
         respond({ ...common, status: 'refused', executed: false, evidence: { source: 'schema-only' }, error: 'This request is outside the bounded public example profile. Validate and prepare it for your connected client instead.' }, 403); return;
       }
       credits = Math.min(30, credits + (Date.now() - creditAt) / 1000); creditAt = Date.now();
-      if (active >= 6 || credits < 1) { respond({ ...common, status: 'refused', executed: false, error: 'Example runner is busy; retry shortly.' }, 429); return; }
+      if (active >= 6 || credits < 1) {
+        res.set('Retry-After', '1');
+        respond({ ...common, status: 'refused', executed: false, error: 'The example runner is busy. Try again in a moment.' }, 429); return;
+      }
       credits--; active++;
       try {
         const url = new URL(action.u);
         if (url.origin !== (action.sys === 'relay' ? RELAY : baseUrl.origin)) throw new Error('Target origin changed');
         if (action.m === 'GET') for (const [key, value] of Object.entries(body.payload)) url.searchParams.set(key, String(value));
-        const started = Date.now();
+        attempt = { target: url.href, started: Date.now(), scope: profile.task ? 'task-packet-generation-only' : 'target-operation-response' };
         const response = await config.fetch(url.href, { method: profile.method, headers: { Accept: 'application/json', ...(profile.method === 'POST' ? { 'Content-Type': 'application/json' } : {}) },
-          ...(profile.method === 'POST' ? { body: JSON.stringify(body.payload) } : {}), redirect: 'manual', signal: AbortSignal.timeout(10000) });
+          ...(profile.method === 'POST' ? { body: JSON.stringify(body.payload) } : {}), redirect: 'manual', signal: AbortSignal.timeout(profile.timeoutMs ?? 10_000) });
+        attempt.http_status = response.status;
         const text = await readText(response);
+        const contentType = (response.headers.get('content-type') || '').split(';')[0]!.trim().toLowerCase();
+        if (response.ok && (!text.trim() || ['text/html', 'application/xhtml+xml'].includes(contentType))) {
+          throw new Error('Live response did not contain an operation result');
+        }
         let result: unknown = text;
-        if (text && /json/i.test(response.headers.get('content-type') || '')) { try { result = JSON.parse(text); } catch { throw new Error('Live response was invalid JSON'); } }
+        if (text && contentType.includes('json')) { try { result = JSON.parse(text); } catch { throw new Error('Live response was invalid JSON'); } }
         const refusal = !response.ok || (object(result) && (result.kind === 'refusal' || result.ok === false || result.skipped === true || (result.error !== undefined && result.error !== null) || (typeof result.code === 'number' && result.code >= 400)));
+        const busy = response.status === 429;
+        if (busy) {
+          const advertised = response.headers.get('Retry-After');
+          const seconds = advertised && /^\d{1,2}$/.test(advertised) ? Math.min(60, Math.max(1, Number(advertised))) : 1;
+          res.set('Retry-After', String(seconds));
+        }
         respond({ ...common, status: refusal ? 'refused' : 'executed', executed: !refusal, result,
-          evidence: { source: 'live-http', http_status: response.status, duration_ms: Date.now() - started, target: url.href, invocation_attempted: true, scope: profile.task ? 'task-packet-generation-only' : 'target-operation-response' },
-          ...(profile.task ? { next_step: 'Execute the returned instructions in your connected AI client. No model sampling, answer, workflow completion or domain write occurred here.' } : {}) }, refusal ? 502 : 200);
+          ...(busy ? { error: 'The target is busy. Wait briefly and retry this example.' } : {}),
+          evidence: { source: 'live-http', http_status: response.status, duration_ms: Date.now() - attempt.started, target: attempt.target, invocation_attempted: true, scope: attempt.scope },
+          ...(profile.task && !refusal ? { next_step: 'Execute the returned instructions in your connected AI client. This response contains task context only.' } : {}) }, busy ? 429 : refusal ? 502 : 200);
       } finally { active--; }
-    } catch { respond({ status: 'unavailable', executed: false, checked_at, error: 'Live capability request could not be confirmed; no successful result was fabricated.' }, 503); }
+    } catch (error) {
+      const timedOut = error instanceof Error && error.name === 'TimeoutError';
+      respond({ status: 'unavailable', executed: false, checked_at,
+        error: timedOut ? 'The advertised service took too long to respond. Try again shortly.' : 'The live capability response could not be confirmed.',
+        ...(attempt ? { evidence: { source: 'live-http', target: attempt.target, http_status: attempt.http_status,
+          duration_ms: Date.now() - attempt.started, invocation_attempted: true, scope: attempt.scope } } : {}),
+      }, 503);
+    }
   });
 }
