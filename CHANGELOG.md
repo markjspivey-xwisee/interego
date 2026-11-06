@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-11-06 — Clarify the shared xAPI performance verb
+
+The Foxxi and AGP xAPI Profiles explain how the object activity type identifies the work described by `performed` and how a projected descriptor supplies that type. The verb IRI and template rules stay the same.
+
 ## 2026-11-06 — Disclose the hosted Interego beta risks
 
 The site and enrollment screens identify hosted Interego as a beta prototype for testing. The revised Terms spell out the risks a user assumes when they accept them. Same-day revisions have distinct version identifiers so prior receipts remain tied to the text users accepted.
