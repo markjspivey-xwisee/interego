@@ -13,12 +13,29 @@ const embedded = () => Object.entries(ACTIONS).map(([iri, action]) => ({ iri, ..
 const hosted = workbenchHosted;
 const safeLink = (value) => /^https?:\/\//.test(value || "") ? value : null;
 const timeLabel = (value) => value ? new Date(value).toLocaleString() : "No timestamp supplied";
+const modeOptions = [
+  { v: "examples", l: "Live examples" }, { v: "client", l: "Client tasks" },
+  { v: "prepare", l: "Prepare only" }, { v: "all", l: "All capabilities" },
+];
+const serviceOptions = [
+  { v: "all", l: "All services" }, { v: "foxxi", l: "Foxxi" }, { v: "relay", l: "Interego relay" },
+  { v: "telemetry", l: "Telemetry" }, { v: "linked", l: "Linked to a term" },
+];
+const normalizeService = (service) => ["llmtelemetry", "llm-telemetry"].includes(service) ? "telemetry" : service;
 const executionGroup = (action) => {
   const mode = action.execution?.mode;
   if (mode === "public-example") return "examples";
   if (mode === "client-required") return "client";
   return mode === "unavailable" || mode === "blocked" ? "unavailable" : "prepare";
 };
+const matchesMode = (action, mode) => mode === "all" || mode === executionGroup(action);
+const matchesService = (action, service) => {
+  if (service === "linked") return action.enacts.length > 0;
+  return service === "all" || service === normalizeService(action.sys);
+};
+const withCounts = (options, actions, matches) => options.map(({ v, l }) => ({
+  v, l: l + " · " + actions.filter((action) => matches(action, v)).length,
+}));
 
 export function Directory({ route }) {
   const section = route?.section || "";
@@ -27,7 +44,7 @@ export function Directory({ route }) {
   const [loading, setLoading] = useState(false), [error, setError] = useState("");
   const [mode, setMode] = useState(section === "examples" ? "examples" : "all");
   const [q, setQ] = useState(""), [storedSys, setSys] = useStored("ag.sys", "all");
-  const sys = storedSys === "llmtelemetry" || storedSys === "llm-telemetry" ? "telemetry" : storedSys;
+  const sys = normalizeService(storedSys);
   const refresh = async () => {
     if (!hosted()) { setError("The live runner is available in the hosted workbench."); return; }
     setLoading(true); setError("");
@@ -53,19 +70,15 @@ export function Directory({ route }) {
     const row = document.getElementById(selectedId);
     if (row) { row.open = true; row.scrollIntoView({ block: "start", behavior: "smooth" }); }
   }, [selectedId, all]);
-  const counts = { linked: all.filter((a) => a.enacts.length).length, foxxi: all.filter((a) => a.sys === "foxxi").length, relay: all.filter((a) => a.sys === "relay").length, telemetry: all.filter((a) => a.sys === "telemetry" || a.sys === "llmtelemetry" || a.sys === "llm-telemetry").length, all: all.length };
-  const modeCounts = { examples: 0, client: 0, prepare: 0 };
-  for (const action of all) {
-    const group = executionGroup(action);
-    if (group in modeCounts) modeCounts[group]++;
-  }
   const query = q.trim().toLowerCase();
-  const list = all.filter((a) => {
-    if (selectedId && actionId(a) === selectedId) return true;
-    const matchesSystem = sys === "all" || (sys === "linked" ? a.enacts.length > 0 : sys === "telemetry" ? ["telemetry", "llmtelemetry", "llm-telemetry"].includes(a.sys) : a.sys === sys);
-    return matchesSystem && (mode === "all" || mode === executionGroup(a)) &&
-      (!query || [a.t, a.n, a.d, a.iri].join(" ").toLowerCase().includes(query));
-  }).sort((a, b) => b.enacts.length - a.enacts.length || (a.t || a.n).localeCompare(b.t || b.n));
+  const searched = all.filter((a) => !query || [a.t, a.n, a.d, a.iri].join(" ").toLowerCase().includes(query));
+  const byService = searched.filter((a) => matchesService(a, sys));
+  const byMode = searched.filter((a) => matchesMode(a, mode));
+  const matches = byService.filter((a) => matchesMode(a, mode));
+  const linked = selectedId ? all.find((a) => actionId(a) === selectedId) : null;
+  const extraLinked = linked && !matches.includes(linked);
+  const list = (extraLinked ? [...matches, linked] : matches).sort((a, b) =>
+    b.enacts.length - a.enacts.length || (a.t || a.n).localeCompare(b.t || b.n));
   return (
     <section id="directory" className="stack" data-testid="capability-directory">
       <div className="sec-h"><h2>Capability directory</h2><span className="meta">{all.length} advertised operations · {inventory.live ? "current service inventory" : "embedded build snapshot"}</span></div>
@@ -82,12 +95,14 @@ export function Directory({ route }) {
       {inventory.sources && inventory.sources.length ? <details className="small"><summary>Inventory sources and freshness</summary><div className="tablewrap"><table className="tbl"><thead><tr><th>Service</th><th>Observed</th><th>Operations</th><th>Source</th></tr></thead><tbody>{inventory.sources.map((source, i) => <tr key={source.system + ":" + i}><td>{source.system}<div>{source.status}</div>{source.error ? <div className="danger">{source.error}</div> : null}</td><td>{timeLabel(source.checked_at)}</td><td>{source.count == null ? "—" : source.count}</td><td>{safeLink(source.url) ? <a href={safeNavigationHref(source.url)} target="_blank" rel="noopener">{source.url}</a> : source.url}</td></tr>)}</tbody></table></div></details> : null}
       <p className="small muted">Live examples run here and show the service response. Client tasks return instructions for your AI client. For protected operations, validate inputs here, then use the prepared call in your connected Interego client. Keep keys and passwords with that client. Requests can create service telemetry.</p>
       <div className="row wrap">
-        <Seg label="Execution mode" value={mode} onChange={setMode} options={[{ v: "examples", l: "Live examples · " + modeCounts.examples }, { v: "client", l: "Client tasks · " + modeCounts.client }, { v: "prepare", l: "Prepare only · " + modeCounts.prepare }, { v: "all", l: "All capabilities · " + counts.all }]} />
+        <Seg label="Execution mode" value={mode} onChange={setMode} options={withCounts(modeOptions, byService, matchesMode)} />
         <span className="spacer" />
         <input className="input" style={{ width: 240, maxWidth: "100%" }} value={q} onChange={(e) => setQ(e.target.value)} placeholder="Filter actions…" aria-label="Filter capabilities" />
       </div>
-      <Seg label="Which actions" value={sys} onChange={setSys} options={[{ v: "all", l: "All services" }, { v: "foxxi", l: "Foxxi · " + counts.foxxi }, { v: "relay", l: "Interego relay · " + counts.relay }, { v: "telemetry", l: "Telemetry · " + counts.telemetry }, { v: "linked", l: "Linked to a term · " + counts.linked }]} />
-      <div className="tiny muted">{list.length} of {all.length} operations shown</div>
+      <Seg label="Service or glossary link" value={sys} onChange={setSys} options={withCounts(serviceOptions, byMode, matchesService)} />
+      <div className="tiny muted" role="status">
+        Showing {matches.length} matching {matches.length === 1 ? "operation" : "operations"}.{extraLinked ? " The directly linked operation is also shown." : ""}
+      </div>
       <div className="actions-dir">{list.map((a) => <ActionRow key={a.iri} a={a} live={inventory.live} />)}</div>
       {!list.length ? <p className="empty">{loading ? "Loading the live inventory…" : "No operations match these filters."}</p> : null}
     </section>
