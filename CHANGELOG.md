@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-11-05 — Explain the counts on Agents filters
+
+The Agents directory explains that each button shows how many operations it would display with the other filters and search applied.
+
 ## 2026-11-05 — Isolate Agents page deployments to Foxxi
 
 AGP packages the Foxxi runtime source and its proficiency graph. The hosted JEV evaluator refreshes a separate checkout of the public Interego repository and reports the exact commit it evaluated. Agents page and browser test changes now select only Foxxi for deployment, while JEV can read the updated files without a new image.
