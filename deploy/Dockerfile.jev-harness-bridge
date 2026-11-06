@@ -5,27 +5,21 @@
 #  `../src/...`, `../../_shared/affordance-mcp/...`) work unchanged, @interego/core is
 #  resolved by name to its built dist/, and the bridge runs its TypeScript through tsx.
 #
-#  The bridge judges a repository, so the image carries the whole source tree it was
-#  built from (COPY . below) and binds to it: JEV_HARNESS_REPO=/app. There is no git in
-#  the runtime image, so the inventory walks the tree and the judgment's commit is null;
-#  CI and local followers, which have git, compute diffs and changed files themselves
-#  and pass them in. Set TYPESAFE_API_KEY on the service; set INTEREGO_BEARER to have
-#  every judgment published to the pod; BRIDGE_DEPLOYMENT_URL must be the public origin
-#  so the controls the bridge publishes are followable from the relay.
+#  The image contains the bridge runtime. It reads the repository from a separate
+#  checkout so a change to the source being judged does not rebuild the judge.
+#  CI and local operators can bind their own checkout with JEV_HARNESS_REPO.
+#  Set TYPESAFE_API_KEY on the service. BRIDGE_DEPLOYMENT_URL is the public origin
+#  used for controls that the relay can follow.
 # ────────────────────────────────────────────────────────────
 
-# ★ ONE STAGE (2026-09-22). Until then a runtime stage copied /app out of a build stage: first as
-# one 700 MB layer (74 s of every rollout), then with node_modules moved aside and copied back
-# as its own layer — 15 s to move it, 8 s to copy /app again, and 40 s to prepare the build
-# cache for export, because a second stage needs cache-to mode=max and every 700 MB
-# intermediate layer is re-hashed for it. A single stage already has the layers the runtime
-# stage was assembling by hand — the base, the manifests, the install, the sources, the build —
-# each cached and pushed on its own, and an unchanged install layer is a cache hit rather than
-# a re-hash. The image carries the same files it did.
 ARG NODE_BASE=node:22-slim
 FROM ${NODE_BASE}
 
 ENV ONNXRUNTIME_NODE_INSTALL_CUDA=skip
+
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends ca-certificates git \
+  && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
@@ -75,32 +69,18 @@ RUN npm ci
 # layer below the cached install changes node_modules: the separate install that sat here re-ran
 # on every build (24 s) and made the node_modules layer differ each time.
 
-# The tree the bridge judges, and the sources it runs from: every tracked top-level entry, named
-# one by one. tools/deploy-bundle-scope.ts reads these COPY lines to decide when a merge changes
-# what this image ships, and a `COPY . ./` would leave it unable to answer, so the list is explicit
-# and a new top-level directory has to be added here to be judged. .dockerignore keeps
-# node_modules, dist/ and the benchmark corpora out of the context.
-COPY .gitattributes .gitignore .dockerignore eslint.config.js tsconfig.check.json vitest.config.ts ./
-COPY CHANGELOG.md CLAUDE.md LICENSE README.md STATUS.md RELEASING.md SECURITY.md SECURITY-ACKNOWLEDGMENTS.md REFLEXIVE-DOGFOOD.md ENGAGEMENT-REPORT.md ./
-COPY .github/ ./.github/
-COPY applications/ ./applications/
-COPY benchmarks/ ./benchmarks/
-COPY demos/ ./demos/
-COPY deploy/ ./deploy/
-COPY docs/ ./docs/
-# Named on its own as well: tests/the-images-carry-the-lexicon.test.ts checks that every image
-# bundling packages/pgsl copies the lexicon to the path the loader reads.
-COPY docs/ns/pgsl-lexicon.ttl ./docs/ns/pgsl-lexicon.ttl
-COPY examples/ ./examples/
-COPY integrations/ ./integrations/
-COPY interego-main/ ./interego-main/
-COPY mcp-server/ ./mcp-server/
-COPY packages/ ./packages/
-COPY quickstart/ ./quickstart/
-COPY scripts/ ./scripts/
-COPY spec/ ./spec/
-COPY tests/ ./tests/
-COPY tools/ ./tools/
+# Keep the runtime paths explicit for the deploy-scope calculation. The bridge
+# reads its ontology locally and uses the shared judgment and relay modules.
+COPY packages/core/ ./packages/core/
+COPY packages/registry/ ./packages/registry/
+COPY applications/_shared/affordance-mcp/ ./applications/_shared/affordance-mcp/
+COPY applications/_shared/judgment-kit/ ./applications/_shared/judgment-kit/
+COPY applications/_shared/relay-agent/ ./applications/_shared/relay-agent/
+COPY applications/_shared/vertical-bridge/route-errors.ts ./applications/_shared/vertical-bridge/route-errors.ts
+COPY applications/jev-harness/affordances.ts ./applications/jev-harness/affordances.ts
+COPY applications/jev-harness/bridge/ ./applications/jev-harness/bridge/
+COPY applications/jev-harness/ontology/ ./applications/jev-harness/ontology/
+COPY applications/jev-harness/src/ ./applications/jev-harness/src/
 
 # Compile @interego/* → dist/, which the vertical's turtle guard imports by name.
 # The pull request built these packages already; build-ghcr.yml restores them into the context
@@ -118,7 +98,8 @@ ARG GIT_SHA=unset
 ENV INTEREGO_BUILD_SHA=$GIT_SHA
 ENV NODE_ENV=production
 ENV PORT=8080
-ENV JEV_HARNESS_REPO=/app
+ENV JEV_HARNESS_REPO_REMOTE=https://github.com/markjspivey-xwisee/interego.git
+ENV JEV_HARNESS_REPO_NAME=interego
 EXPOSE 8080
 
 CMD ["npx", "tsx", "applications/jev-harness/bridge/server.ts"]
