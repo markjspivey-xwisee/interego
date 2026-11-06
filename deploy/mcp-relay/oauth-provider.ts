@@ -807,6 +807,7 @@ export class InteregoOAuthProvider implements OAuthServerProvider {
 
   <h2>Choose a sign-in method</h2>
 
+  <p id="hosted-beta" hidden style="font-weight:700"></p>
   <p id="hosted-terms" hidden style="margin:.75em 0;line-height:1.5">
     <label><input id="terms-agree" type="checkbox" style="width:auto;margin-right:.3em"> I am at least 18 and I agree to the <a id="terms-link" target="_blank" rel="noopener noreferrer">Hosted Interego Terms of Service</a>.</label>
     <br><small>Required when creating a new account.</small>
@@ -878,12 +879,17 @@ const TERMS_TIMEOUT = setTimeout(() => TERMS_CONTROLLER.abort(), 5000);
 const TERMS_READY = fetch(IDENTITY + '/.well-known/hosted-interego-terms', { cache: 'no-store', signal: TERMS_CONTROLLER.signal })
   .then(async response => {
     if (!response.ok) return;
-    const { terms, privacyUrl } = await response.json();
+    const { terms, privacyUrl, betaNotice } = await response.json();
     if (privacyUrl && new URL(privacyUrl).protocol === 'https:') {
       document.getElementById('privacy-link').href = privacyUrl;
       document.getElementById('hosted-privacy').hidden = false;
     }
     if (terms?.version && new URL(terms.url).protocol === 'https:') {
+      if (typeof betaNotice === 'string' && betaNotice) {
+        const beta = document.getElementById('hosted-beta');
+        beta.textContent = betaNotice;
+        beta.hidden = false;
+      }
       document.getElementById('terms-link').href = terms.url;
       document.getElementById('hosted-terms').hidden = false;
       return terms.version;

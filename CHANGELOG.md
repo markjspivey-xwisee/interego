@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-11-06 — Disclose the hosted Interego beta risks
+
+The site and enrollment screens identify hosted Interego as a beta prototype for testing. The revised Terms spell out the risks a user assumes when they accept them. Same-day revisions have distinct version identifiers so prior receipts remain tied to the text users accepted.
+
 ## 2026-11-06 — Add agreement to hosted Interego enrollment
 
 The hosted site publishes versioned Terms of Service. When the deployment enables a version, the web, guest and connected-app signup flows require an explicit agreement. Identity records the version and acceptance time in the private account record as part of enrollment. Returning sign-ins and existing Play sessions can continue.

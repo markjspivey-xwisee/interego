@@ -31,7 +31,7 @@ import { closeServer, stopChild } from './teardown.js';
 import { publicJwk } from './public-jwk.js';
 
 const now = new Date().toISOString();
-const termsVersion = '2026-11-06';
+const termsVersion = '2026-11-06-r2';
 const passkey = (id: string) => ({ id, publicKey: 'AA', counter: 0, createdAt: now });
 
 // ── Passkeys and the accounts their ids derive to ──
@@ -276,7 +276,7 @@ let freshToken = '';
 test('hosted passkey options and Try enrollment refuse a missing or stale agreement before writing', async () => {
   const count = writes.length;
   for (const path of ['/auth/webauthn/register-options', '/try']) {
-    for (const version of [undefined, '2026-11-05']) {
+    for (const version of [undefined, '2026-11-06']) {
       const r = await post(path, { name: 'New', termsVersion: version });
       assert.equal(r.status, 428, JSON.stringify(r.json));
       assert.equal(r.json['termsVersion'], termsVersion);

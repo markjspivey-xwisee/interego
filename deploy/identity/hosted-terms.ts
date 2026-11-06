@@ -1,6 +1,7 @@
 const hostedSite = 'https://interego.xwisee.com';
 export const hostedPrivacyUrl = `${hostedSite}/privacy/`;
-const versionPattern = /^\d{4}-\d{2}-\d{2}$/;
+export const hostedBetaNotice = 'Hosted Interego is a beta prototype for testing. Bugs, outages, and data loss are possible.';
+const versionPattern = /^\d{4}-\d{2}-\d{2}(?:-r[1-9]\d*)?$/;
 
 export interface TermsAcceptance {
   version: string;
@@ -15,7 +16,7 @@ export interface HostedTermsPolicy {
 
 export function hostedTermsPolicy(version: string | undefined): HostedTermsPolicy | null {
   if (!version) return null;
-  if (!versionPattern.test(version)) throw new Error('HOSTED_TERMS_VERSION must be a YYYY-MM-DD release version');
+  if (!versionPattern.test(version)) throw new Error('HOSTED_TERMS_VERSION must be a YYYY-MM-DD or YYYY-MM-DD-rN release version');
   const termsUrl = `${hostedSite}/terms/${version}/`;
   return {
     version,

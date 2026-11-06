@@ -26,6 +26,7 @@ const ok = (cond: boolean, name: string, detail = ''): void => {
 };
 
 const IDENTITY_ORIGIN = 'https://identity.example.invalid';
+const betaNotice = 'Hosted Interego is a beta prototype for testing. Bugs, outages, and data loss are possible.';
 const provider = new InteregoOAuthProvider({ identityUrl: IDENTITY_ORIGIN, tokenTtlSec: 3600 });
 
 /** The /authorize page exactly as the provider renders it. */
@@ -56,7 +57,7 @@ function loadPage(html: string, challenge: Challenge, terms?: { version: string;
   const posts: Array<{ url: string; body: Record<string, unknown> }> = [];
   const fakeFetch = async (url: string, init?: { body?: string }) => {
     if (url === `${IDENTITY_ORIGIN}/.well-known/hosted-interego-terms`) {
-      return { ok: true, status: 200, json: async () => ({ terms: terms ?? null }) };
+      return { ok: true, status: 200, json: async () => ({ terms: terms ?? null, ...(terms ? { betaNotice } : {}) }) };
     }
     const body = init?.body ? JSON.parse(init.body) as Record<string, unknown> : {};
     posts.push({ url, body });
@@ -149,8 +150,9 @@ try {
   }
 
   {
-    const terms = { version: '2026-11-06', url: 'https://interego.xwisee.com/terms/2026-11-06/' };
+    const terms = { version: '2026-11-06-r2', url: 'https://interego.xwisee.com/terms/2026-11-06-r2/' };
     const returning = await signIn(html, { body: { nonce: NONCE, message: V1 } }, terms);
+    ok(returning.page.elements.get('hosted-beta')?.textContent === betaNotice, 'the beta risks are disclosed beside the agreement');
     ok(returning.challengeRequest?.['termsVersion'] === undefined, 'the page does not claim agreement on an unchecked sign-in');
     const message = `${V1}\nI am at least 18 and agree to the Hosted Interego Terms of Service at ${terms.url}`;
     const enrolling = await signIn(html, { body: { nonce: NONCE, message } }, terms, true);
