@@ -79,7 +79,7 @@ import { createProvisionalPlayProvider } from './provisional-play-provider.js';
 import { parsePlayClients } from './provisional-play.js';
 import { mountProvisionalPlay } from './provisional-play-routes.js';
 import { purgeProvisionalPlayPod } from './provisional-play-cleanup.js';
-import { hostedPrivacyUrl, hostedTermsPolicy, readTermsAcceptance, type TermsAcceptance } from './hosted-terms.js';
+import { hostedBetaNotice, hostedPrivacyUrl, hostedTermsPolicy, readTermsAcceptance, type TermsAcceptance } from './hosted-terms.js';
 import {
   SurfaceAgentRestores,
   checkAgentIdForRegistration,
@@ -3058,12 +3058,14 @@ app.use(corsMiddleware({
 app.get('/.well-known/hosted-interego-terms', (_req, res) => {
   res.setHeader('Cache-Control', 'no-store');
   res.json({ terms: hostedTerms && { version: hostedTerms.version, url: hostedTerms.termsUrl },
-    privacyUrl: showHostedPrivacy ? hostedPrivacyUrl : null });
+    privacyUrl: showHostedPrivacy ? hostedPrivacyUrl : null,
+    ...(showHostedPrivacy ? { betaNotice: hostedBetaNotice } : {}) });
 });
 
 function hostedTermsCheckbox(): string {
   if (!hostedTerms) return '';
-  return `<p class="terms-agreement"><label><input id="termsAgree" type="checkbox" data-version="${hostedTerms.version}"> I am at least 18 and I agree to the <a href="${hostedTerms.termsUrl}" target="_blank" rel="noopener noreferrer">Hosted Interego Terms of Service</a>.</label></p>`;
+  return `<p class="terms-agreement"><strong>${hostedBetaNotice}</strong></p>
+<p class="terms-agreement"><label><input id="termsAgree" type="checkbox" data-version="${hostedTerms.version}"> I am at least 18 and I agree to the <a href="${hostedTerms.termsUrl}" target="_blank" rel="noopener noreferrer">Hosted Interego Terms of Service</a>.</label></p>`;
 }
 
 const hostedPrivacyLink = showHostedPrivacy ? `<a href="${hostedPrivacyUrl}">Privacy Notice</a>` : '';

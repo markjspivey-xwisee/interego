@@ -88,9 +88,10 @@ function adapterFixture(overrides: { verified?: boolean; subject?: string; canSi
 
 test('new hosted Play owners require a key-bound terms acceptance and record it in the anchor write', async () => {
   const f = adapterFixture();
-  const hostedTerms = hostedTermsPolicy('2026-11-06')!;
+  const hostedTerms = hostedTermsPolicy('2026-11-06-r2')!;
   const play = createProvisionalPlayProvider({ ...f.options, hostedTerms });
   await assert.rejects(play.bootstrap(f.body), { status: 428, code: 'hosted_terms_required' });
+  await assert.rejects(play.bootstrap(f.freshBody(false, '2026-11-06')), { status: 428, code: 'hosted_terms_required' });
   await assert.rejects(play.bootstrap({ ...f.body, termsVersion: hostedTerms.version }), { status: 401, code: 'invalid_browser_proof' });
   assert.equal(f.issued, 0);
   assert.equal(f.documents.size, 0);
