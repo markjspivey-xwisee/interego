@@ -40,7 +40,7 @@ async function renderPage(): Promise<string> {
   return html;
 }
 
-interface Element { id: string; value: string; textContent: string; className: string; style: { display: string } }
+interface Element { id: string; value: string; textContent: string; className: string; style: { display: string }; checked?: boolean }
 
 interface Challenge { status?: number; body: Record<string, unknown> }
 
@@ -48,13 +48,16 @@ interface Challenge { status?: number; body: Record<string, unknown> }
  * Load the page's script in a fresh VM. `challenge` is what the stand-in /challenges answers;
  * the returned `posts` records every JSON body the page sends, by URL.
  */
-function loadPage(html: string, challenge: Challenge) {
+function loadPage(html: string, challenge: Challenge, terms?: { version: string; url: string }) {
   const elements = new Map<string, Element>();
   for (const m of html.matchAll(/<[a-z]+\b[^>]*\bid="([^"]+)"[^>]*>/g)) {
     elements.set(m[1]!, { id: m[1]!, value: '', textContent: '', className: '', style: { display: /display:\s*none/.test(m[0]) ? 'none' : '' } });
   }
   const posts: Array<{ url: string; body: Record<string, unknown> }> = [];
   const fakeFetch = async (url: string, init?: { body?: string }) => {
+    if (url === `${IDENTITY_ORIGIN}/.well-known/hosted-interego-terms`) {
+      return { ok: true, status: 200, json: async () => ({ terms: terms ?? null }) };
+    }
     const body = init?.body ? JSON.parse(init.body) as Record<string, unknown> : {};
     posts.push({ url, body });
     if (url === `${IDENTITY_ORIGIN}/challenges`) {
@@ -70,6 +73,7 @@ function loadPage(html: string, challenge: Challenge) {
   const context = vm.createContext({
     document: { getElementById: (id: string) => elements.get(id) ?? null },
     fetch: fakeFetch, window, TextEncoder, btoa, atob, Uint8Array, JSON, Error, String, Array,
+    URL, AbortController, setTimeout, clearTimeout,
   });
   const script = /<script>([\s\S]*?)<\/script>/.exec(html)?.[1];
   if (!script) throw new Error('the /authorize page carries no inline script');
@@ -94,10 +98,11 @@ function didKey() {
 }
 
 /** Request a challenge, sign what the page shows as a person would, submit; return what was sent. */
-async function signIn(html: string, challenge: Challenge) {
-  const page = loadPage(html, challenge);
+async function signIn(html: string, challenge: Challenge, terms?: { version: string; url: string }, agreed = false) {
+  const page = loadPage(html, challenge, terms);
   const key = didKey();
   page.elements.get('did-did')!.value = key.did;
+  page.elements.get('terms-agree')!.checked = agreed;
   await page.call('didChallenge');
   const shownText = page.elements.get('did-text')?.value;
   const shownB64 = page.elements.get('did-text-b64')?.value;
@@ -141,6 +146,16 @@ try {
     ok(r.signed !== undefined && r.signed.equals(Buffer.from(odd, 'utf8')),
       'an unusual message is encoded byte for byte: no trimming, no line-end or Unicode rewriting', JSON.stringify(r.shownB64));
     ok(r.key.verifies(Buffer.from(odd, 'utf8'), String(r.proof?.['signature'] ?? '')), '…and the signature over those bytes is what is submitted');
+  }
+
+  {
+    const terms = { version: '2026-11-06', url: 'https://interego.xwisee.com/terms/2026-11-06/' };
+    const returning = await signIn(html, { body: { nonce: NONCE, message: V1 } }, terms);
+    ok(returning.challengeRequest?.['termsVersion'] === undefined, 'the page does not claim agreement on an unchecked sign-in');
+    const message = `${V1}\nI am at least 18 and agree to the Hosted Interego Terms of Service at ${terms.url}`;
+    const enrolling = await signIn(html, { body: { nonce: NONCE, message } }, terms, true);
+    ok(enrolling.challengeRequest?.['termsVersion'] === terms.version, 'the DID challenge requests the version shown to a user who agreed');
+    ok(enrolling.key.verifies(Buffer.from(message), String(enrolling.proof?.['signature'])), 'the submitted signature binds the agreement text');
   }
 
   // ── A server that returns no message: the nonce is the text, as before ──────────────────────
