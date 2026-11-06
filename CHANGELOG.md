@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-11-05 — Show matching counts in the I2IDL-X Agents filters
+
+Each filter option shows how many operations it would display with the other row and text search applied. The result summary shows the matching count, and the directory heading shows the full inventory size.
+
 ## 2026-11-05 — Repair and organize the I2IDL-X Agents examples
 
 The live directory runner separates bridge transport metadata from visitor inputs before checking the public example contract. It preserves target throttling and shows whether a request reached the target. The competency example now demonstrates an alignment hop between two fictional frameworks, and the consulting example identifies required work products.

@@ -12,7 +12,8 @@ html = (root / "site" / "app.html").read_text()
 errors, requests = [], []
 prefix = "urn:interpretant:directory-browser-fixture:"
 read_action = {
-    "iri": prefix + "read", "sys": "foxxi", "n": "directory-fixture-read",
+    "iri": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/discover-lrs",
+    "sys": "foxxi", "n": "directory-fixture-read",
     "t": "Browser fixture read", "d": "Explicit test fixture, not a production service.",
     "m": "GET", "u": "https://example.invalid/browser-fixture", "ro": True,
     "input_schema": {"type": "object", "required": ["count", "enabled"], "properties": {
@@ -111,8 +112,22 @@ with sync_playwright() as playwright:
         page.get_by_role("link", name="Try live examples", exact=True).click()
         expect(rows).to_have_count(1)
         expect(rows.first).to_have_attribute("data-action-iri", read_action["iri"])
+        page.get_by_role("button", name="Linked to a term · 1", exact=True).click()
+        expect(page.get_by_role("button", name="Live examples · 1", exact=True)).to_have_attribute("aria-pressed", "true")
+        expect(page.get_by_role("button", name="All capabilities · 1", exact=True)).to_be_visible()
+        expect(page.get_by_role("button", name="Client tasks · 0", exact=True)).to_be_visible()
+        expect(page.get_by_text("Showing 1 matching operation.", exact=True)).to_be_visible()
+        search = page.get_by_role("textbox", name="Filter capabilities", exact=True)
+        search.fill("client task")
+        expect(rows).to_have_count(0)
+        expect(page.get_by_role("button", name="Linked to a term · 0", exact=True)).to_be_visible()
+        expect(page.get_by_text("Showing 0 matching operations.", exact=True)).to_be_visible()
+        search.fill("")
+        page.get_by_role("button", name="All services · 1", exact=True).click()
         page.get_by_role("button", name="Client tasks · 1", exact=True).click()
         expect(rows.first).to_have_attribute("data-action-iri", client_action["iri"])
+        expect(page.get_by_role("button", name="Foxxi · 1", exact=True)).to_be_visible()
+        expect(page.get_by_role("button", name="Interego relay · 0", exact=True)).to_be_visible()
         page.get_by_role("link", name="All capabilities", exact=True).click()
         expect(rows).to_have_count(3)
         card = page.locator('[data-action-iri="' + read_action["iri"] + '"]')
