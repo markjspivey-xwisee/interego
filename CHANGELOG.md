@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-11-06 — Add agreement to hosted Interego enrollment
+
+The hosted site publishes versioned Terms of Service. When the deployment enables a version, the web, guest and connected-app signup flows require an explicit agreement. Identity records the version and acceptance time in the private account record as part of enrollment. Returning sign-ins and existing Play sessions can continue.
+
 ## 2026-11-05 — Add a privacy notice for hosted Interego
 
 The Interego homepage now links to the hosted service's Privacy Notice. The notice describes sign-in and guest records, Railway hosting, publishing through Pinata and IPFS, and how to request removal of records separately from closing an account.
