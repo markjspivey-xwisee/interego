@@ -40,7 +40,8 @@ concurrency:
 jobs:
   browser:
     name: Original client oracles and hosted visitor render
-    runs-on: ubuntu-latest
+    # The locked Playwright release supports Ubuntu 24.04.
+    runs-on: ubuntu-24.04
     timeout-minutes: 25
     env:
       I2IDLX_ROOT: applications/foxxi-content-intelligence/i2idlx
