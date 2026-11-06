@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-11-05 — Add a privacy notice for hosted Interego
+
+The Interego homepage now links to the hosted service's Privacy Notice. The notice describes sign-in and guest records, Railway hosting, publishing through Pinata and IPFS, and how to request removal of records separately from closing an account.
+
 ## 2026-11-05 — Isolate Agents page deployments to Foxxi
 
 AGP packages the Foxxi runtime source and its proficiency graph. The hosted JEV evaluator refreshes a separate checkout of the public Interego repository and reports the exact commit it evaluated. Agents page and browser test changes now select only Foxxi for deployment, while JEV can read the updated files without a new image.
