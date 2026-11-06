@@ -94,6 +94,7 @@ export function Directory({ route }) {
       </div>
       {inventory.sources && inventory.sources.length ? <details className="small"><summary>Inventory sources and freshness</summary><div className="tablewrap"><table className="tbl"><thead><tr><th>Service</th><th>Observed</th><th>Operations</th><th>Source</th></tr></thead><tbody>{inventory.sources.map((source, i) => <tr key={source.system + ":" + i}><td>{source.system}<div>{source.status}</div>{source.error ? <div className="danger">{source.error}</div> : null}</td><td>{timeLabel(source.checked_at)}</td><td>{source.count == null ? "—" : source.count}</td><td>{safeLink(source.url) ? <a href={safeNavigationHref(source.url)} target="_blank" rel="noopener">{source.url}</a> : source.url}</td></tr>)}</tbody></table></div></details> : null}
       <p className="small muted">Live examples run here and show the service response. Client tasks return instructions for your AI client. For protected operations, validate inputs here, then use the prepared call in your connected Interego client. Keep keys and passwords with that client. Requests can create service telemetry.</p>
+      <p className="tiny muted">Each filter button shows how many operations it would display with your other filters and search applied.</p>
       <div className="row wrap">
         <Seg label="Execution mode" value={mode} onChange={setMode} options={withCounts(modeOptions, byService, matchesMode)} />
         <span className="spacer" />
