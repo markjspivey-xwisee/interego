@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-11-05 — Isolate Agents page deployments to Foxxi
+
+AGP packages the Foxxi runtime source and its proficiency graph. The hosted JEV evaluator refreshes a separate checkout of the public Interego repository and reports the exact commit it evaluated. Agents page and browser test changes now select only Foxxi for deployment, while JEV can read the updated files without a new image.
+
 ## 2026-11-05 — Show matching counts in the I2IDL-X Agents filters
 
 Each filter option shows how many operations it would display with the other row and text search applied. The result summary shows the matching count, and the directory heading shows the full inventory size.

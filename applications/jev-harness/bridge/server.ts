@@ -26,6 +26,7 @@ import { affordancesManifestTurtle } from '../src/affordance-turtle.js';
 import { DEFAULT_NS, controlsFor, type Published } from '../src/descriptor.js';
 import { jevFromEnv, type JevClient } from '../src/jev-client.js';
 import { relayFromEnv, type RelayClient } from '../src/publish.js';
+import { GitRepositorySource, RepositoryUnavailableError, type RepositorySource } from '../src/repository-source.js';
 import { Harness, HarnessError } from '../src/service.js';
 import { parseShapes, shapeViolationEnvelope, validate, type NodeShape } from '../src/shacl-lite.js';
 import type { HarnessStore } from '../src/store.js';
@@ -36,6 +37,7 @@ export const ONTOLOGY_PATH = join(HERE, '..', 'ontology', 'jev-harness.ttl');
 export interface AppOptions {
   readonly jev: JevClient;
   readonly repoRoot: string;
+  readonly repositorySource?: RepositorySource;
   readonly base: string;
   readonly relay?: RelayClient | null;
   readonly store?: HarnessStore;
@@ -60,6 +62,7 @@ export function createApp(opts: AppOptions): { app: Express; harness: Harness } 
   const harness = new Harness({
     jev: opts.jev,
     repoRoot: opts.repoRoot,
+    ...(opts.repositorySource ? { repositorySource: opts.repositorySource } : {}),
     base,
     ...(opts.store ? { store: opts.store } : {}),
     relay: opts.relay ?? null,
@@ -96,8 +99,10 @@ export function createApp(opts: AppOptions): { app: Express; harness: Harness } 
     }, null, 2));
   });
 
-  app.get('/health', (_req, res) => {
-    const inv = harness.inventory();
+  app.get('/health', async (_req, res, next) => {
+    let inv;
+    try { inv = await harness.currentInventory(); }
+    catch (error) { next(error); return; }
     // `build` is the sha the image was built from (INTEREGO_BUILD_SHA, baked by the Dockerfile),
     // which is how a deploy verifies the rollout it just made; `commit` is the tree being judged.
     res.json({
@@ -219,9 +224,14 @@ export function createApp(opts: AppOptions): { app: Express; harness: Harness } 
   });
 
   app.use((err: unknown, _req: Request, res: Response, _next: NextFunction) => {
+    if (err instanceof RepositoryUnavailableError) {
+      res.setHeader('Retry-After', '10');
+      res.status(503).json({ error: 'repository_unavailable', message: err.message });
+      return;
+    }
     const status = err instanceof HarnessError ? err.status : 500;
     const message = err instanceof Error ? err.message : String(err);
-    if (status >= 500) console.error('[jev-harness]', message);
+    if (status >= 500) process.stderr.write(`[jev-harness] ${message}\n`);
     res.status(status).json({ error: status >= 500 ? 'internal_error' : 'bad_request', message });
   });
 
@@ -232,17 +242,27 @@ export function main(): void {
   // Here, not at module level: tests import createApp from this module. See route-errors.ts.
   installProcessSafetyNet((msg) => { process.stderr.write(`[jev-harness] ${msg}\n`); });
   const port = Number(process.env['PORT'] ?? 6090);
-  const repoRoot = resolve(process.env['JEV_HARNESS_REPO'] ?? process.cwd());
+  const localRepo = process.env['JEV_HARNESS_REPO'];
+  const repoRoot = resolve(localRepo ?? process.cwd());
+  const remote = localRepo ? undefined : process.env['JEV_HARNESS_REPO_REMOTE'];
+  let repositorySource: GitRepositorySource | undefined;
+  if (remote) {
+    const url = URL.canParse(remote) ? new URL(remote) : null;
+    if (url?.protocol !== 'https:' || url.username || url.password || url.search || url.hash) {
+      throw new Error('JEV_HARNESS_REPO_REMOTE must be an HTTPS Git URL without credentials or query parameters.');
+    }
+    repositorySource = new GitRepositorySource(url.href);
+  }
   const base = (process.env['BRIDGE_DEPLOYMENT_URL'] ?? `http://localhost:${port}`).replace(/\/$/, '');
   const relay = relayFromEnv();
-  const { app, harness } = createApp({ jev: jevFromEnv(), repoRoot, base, relay });
+  const { app, harness } = createApp({ jev: jevFromEnv(), repoRoot, base, relay, ...(repositorySource ? { repositorySource } : {}) });
   app.listen(port, () => {
-    console.log(`[jev-harness] bridge on ${base}  repo=${repoRoot}  manifest=${base}/affordances  relay=${relay ? 'configured' : 'off'}`);
+    process.stdout.write(`[jev-harness] bridge on ${base}  repo=${remote ?? repoRoot}  manifest=${base}/affordances  relay=${relay ? 'configured' : 'off'}\n`);
     // Calibration from the pod: once at boot, then hourly, so a fresh container starts from
     // everything the delegate has published and picks up outcomes other bridges add.
     const backfill = async (): Promise<void> => {
       const s = await harness.backfillFromPod();
-      if (s.status !== 'off') console.log(`[jev-harness] pod calibration: ${s.status}${s.status === 'ok' ? ` (${s.added} new of ${s.total} outcomes; ${s.errors?.length ?? 0} unreadable)` : s.error ? ` ${s.error}` : ''}`);
+      if (s.status !== 'off') process.stdout.write(`[jev-harness] pod calibration: ${s.status}${s.status === 'ok' ? ` (${s.added} new of ${s.total} outcomes; ${s.errors?.length ?? 0} unreadable)` : s.error ? ` ${s.error}` : ''}\n`);
     };
     void backfill();
     setInterval(() => { void backfill(); }, 60 * 60 * 1000).unref();

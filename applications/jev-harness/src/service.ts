@@ -16,7 +16,8 @@ import { publishGraph, publishJudgment, recordTrajectoryStep, type RelayClient }
 import { attestationGraphIri, attestationPayload, calibrationFingerprint, calibrationGraphIri, calibrationPayload, peerAttestationPayload, type AttestationDraft, type PeerAttestationInput } from './calibration-publish.js';
 import { fetchPodAttestations, reputationOf, REPUTATION_POLICY, type PodAttestation } from './reputation.js';
 import type { AggregationPolicy, ReputationSnapshot } from '@interego/registry';
-import { changedFiles, inventory, unifiedDiff, type RepoInventory } from './repo.js';
+import { changedFiles, inventory, repositoryName, unifiedDiff, type RepoInventory } from './repo.js';
+import type { RepositorySource } from './repository-source.js';
 import { fetchPodOutcomes } from './pod-calibration.js';
 import { judgmentFromContent, type PodJudgment } from './pod-judgment.js';
 import { HarnessStore, calibratedAdvice, computeAdviceBuckets, type CalibrationView, type PodBackfillState } from './store.js';
@@ -25,6 +26,7 @@ import { isIri } from './turtle.js';
 export interface HarnessOptions {
   readonly jev: JevClient;
   readonly repoRoot: string;
+  readonly repositorySource?: RepositorySource;
   readonly base: string;
   readonly context?: PublishContext;
   readonly store?: HarnessStore;
@@ -69,13 +71,15 @@ export interface JudgmentResponse<J extends Published> {
 export class Harness {
   readonly jev: JevClient;
   readonly repoRoot: string;
+  private readonly repositorySource: RepositorySource | undefined;
+  private readonly repoName: string;
   private readonly baseCtx: PublishContext;
   /** The newest attestation about the agent on the pod; see PublishContext.attestationUrl. */
   private attestationUrl?: string;
   readonly store: HarnessStore;
   readonly relay: RelayClient | null;
   private readonly visibility: 'public' | 'shared' | 'private';
-  private inventoryCache: { readonly key: string; readonly inv: RepoInventory } | undefined;
+  private inventoryCache: { readonly root: string; readonly scope: string; readonly inv: RepoInventory } | undefined;
   /** The last calibration publish, for /health; in memory, so a restart reads as never. */
   calibrationPublish: CalibrationPublishState = { status: 'never' };
   private lastCalibrationFingerprint: string | undefined;
@@ -83,23 +87,33 @@ export class Harness {
   constructor(opts: HarnessOptions) {
     this.jev = opts.jev;
     this.repoRoot = opts.repoRoot;
+    this.repositorySource = opts.repositorySource;
+    this.repoName = repositoryName(opts.repositorySource ? 'interego' : opts.repoRoot);
     this.baseCtx = opts.context ?? contextFromEnv(opts.base);
     this.store = opts.store ?? new HarnessStore(opts.repoRoot);
     this.relay = opts.relay ?? null;
     this.visibility = opts.visibility ?? 'shared';
   }
 
-  inventory(scope?: string): RepoInventory {
-    const key = scope ?? '';
-    if (this.inventoryCache && this.inventoryCache.key === key) return this.inventoryCache.inv;
-    const inv = inventory(this.repoRoot, scope ? { scope } : {});
-    this.inventoryCache = { key, inv };
+  inventory(scope = '', root = this.repoRoot): RepoInventory {
+    if (this.inventoryCache?.root === root && this.inventoryCache.scope === scope) return this.inventoryCache.inv;
+    const inv = inventory(root, scope ? { scope } : {});
+    this.inventoryCache = { root, scope, inv };
     return inv;
+  }
+
+  private async readRepository<T>(evaluate: (root: string) => T | Promise<T>): Promise<T> {
+    return this.repositorySource ? this.repositorySource.read(evaluate) : evaluate(this.repoRoot);
+  }
+
+  async currentInventory(): Promise<RepoInventory> {
+    return this.readRepository((root) => this.inventory(undefined, root));
   }
 
   async navigate(input: NavigateInput): Promise<JudgmentResponse<NavigationJudgment>> {
     // Memory first: every navigation consults what earlier tasks changed, here and on the pod.
-    const raw = await navigate(this.jev, this.inventory(input.scope), { ...input, precedents: this.store.precedents() });
+    const raw = await this.readRepository((root) =>
+      navigate(this.jev, this.inventory(input.scope, root), { ...input, precedents: this.store.precedents() }));
     // The advice, and therefore the controls the judgment affords, come from measured
     // calibration once a confidence bucket has enough recorded outcomes.
     const calibrated = calibratedAdvice(raw.confidence, raw.advice, computeAdviceBuckets(this.store.outcomes()));
@@ -108,27 +122,34 @@ export class Harness {
   }
 
   async selectTests(input: SelectTestsInput & { readonly baseRef?: string; readonly headRef?: string }): Promise<JudgmentResponse<TestSelectionJudgment>> {
-    const changed = input.changedFiles.length > 0
-      ? input.changedFiles
-      : input.baseRef ? changedFiles(this.repoRoot, input.baseRef, input.headRef) : [];
-    const j = await selectTests(this.jev, this.inventory(), { changedFiles: changed, ...(input.task ? { task: input.task } : {}) });
+    if (this.repositorySource && !input.changedFiles.length && input.baseRef) {
+      throw new HarnessError(400, 'Supply changed_files when using the hosted repository snapshot.');
+    }
+    const { changed, j } = await this.readRepository(async (root) => {
+      const changed = input.changedFiles.length > 0
+        ? input.changedFiles
+        : input.baseRef ? changedFiles(root, input.baseRef, input.headRef) : [];
+      const j = await selectTests(this.jev, this.inventory(undefined, root), { changedFiles: changed, ...(input.task ? { task: input.task } : {}) });
+      return { changed, j };
+    });
     return this.finish(j, { verb: 'selected-tests', objectName: `${changed.length} changed files -> ${j.mode}` });
   }
 
   async triage(input: TriageInput): Promise<JudgmentResponse<FailureTriageJudgment>> {
-    const inv = this.inventory();
-    const j = await triage(this.jev, inv, input);
+    const j = await this.readRepository((root) => triage(this.jev, this.inventory(undefined, root), input));
     return this.finish(j, { verb: 'triaged', objectName: `${j.failures.length} failures` });
   }
 
   async reviewGate(input: Omit<ReviewGateInput, 'diff'> & { readonly diff?: string; readonly baseRef?: string; readonly headRef?: string }): Promise<JudgmentResponse<ReviewVerdictJudgment>> {
-    const diff = input.diff && input.diff.length > 0
-      ? input.diff
-      : input.baseRef ? unifiedDiff(this.repoRoot, input.baseRef, input.headRef) : '';
-    if (!diff) throw new HarnessError(400, 'review-gate needs a diff or a base_ref that yields one');
-    const inv = this.inventory();
-    const { baseRef: _b, headRef: _h, ...rest } = input;
-    const j = await reviewGate(this.jev, inv, { ...rest, diff });
+    if (this.repositorySource && !input.diff) {
+      throw new HarnessError(400, 'Supply diff when using the hosted repository snapshot.');
+    }
+    const j = await this.readRepository((root) => {
+      const { baseRef, headRef, ...rest } = input;
+      const diff = rest.diff || (baseRef ? unifiedDiff(root, baseRef, headRef) : '');
+      if (!diff) throw new HarnessError(400, 'review-gate needs a diff or a base_ref that yields one');
+      return reviewGate(this.jev, this.inventory(undefined, root), { ...rest, diff });
+    });
     return this.finish(j, { verb: 'gated', objectName: `${j.verdict}${input.title ? ` for ${input.title.slice(0, 80)}` : ''}` });
   }
 
@@ -178,7 +199,7 @@ export class Harness {
    * and the reputation weighs it as PeerAttested the moment it lands on the pod.
    */
   draftAttestation(input: PeerAttestationInput): AttestationDraft & { readonly modalStatus: 'Asserted'; readonly publish: { readonly tool: 'publish_context'; readonly arguments: Record<string, unknown> }; readonly reputationUrl: string } {
-    const repoName = this.inventory().name;
+    const repoName = this.repoName;
     const calibrationUrl = this.calibrationPublish.calibrationUrl;
     const draft = peerAttestationPayload(this.calibration(), this.ctx, repoName, input, calibrationUrl ? { calibrationDescriptorUrl: calibrationUrl } : {});
     return {
@@ -222,7 +243,7 @@ export class Harness {
       this.calibrationPublish = { ...this.calibrationPublish, status: 'unchanged' };
       return this.calibrationPublish;
     }
-    const repoName = this.inventory().name;
+    const repoName = this.repoName;
     try {
       const calibration = await publishGraph(this.relay, { graphIri: calibrationGraphIri(repoName), content: calibrationPayload(view, this.ctx, repoName), modalStatus: 'Asserted', confidence: 1, visibility: this.visibility });
       const attestation = attestationPayload(view, this.ctx, repoName, calibration.descriptorUrl ? { calibrationDescriptorUrl: calibration.descriptorUrl } : {});
