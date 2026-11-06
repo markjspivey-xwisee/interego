@@ -807,6 +807,12 @@ export class InteregoOAuthProvider implements OAuthServerProvider {
 
   <h2>Choose a sign-in method</h2>
 
+  <p id="hosted-terms" hidden style="margin:.75em 0;line-height:1.5">
+    <label><input id="terms-agree" type="checkbox" style="width:auto;margin-right:.3em"> I am at least 18 and I agree to the <a id="terms-link" target="_blank" rel="noopener noreferrer">Hosted Interego Terms of Service</a>.</label>
+    <br><small>Required when creating a new account.</small>
+  </p>
+  <p id="hosted-privacy" hidden><a id="privacy-link">Privacy Notice</a></p>
+
   ${nativeLogin}
 
   <div class="method">
@@ -866,6 +872,25 @@ export class InteregoOAuthProvider implements OAuthServerProvider {
 <script>
 const PENDING_ID = ${JSON.stringify(pendingId)};
 const IDENTITY = ${JSON.stringify(identityOrigin)};
+const TERMS_AGREE = document.getElementById('terms-agree');
+const TERMS_CONTROLLER = new AbortController();
+const TERMS_TIMEOUT = setTimeout(() => TERMS_CONTROLLER.abort(), 5000);
+const TERMS_READY = fetch(IDENTITY + '/.well-known/hosted-interego-terms', { cache: 'no-store', signal: TERMS_CONTROLLER.signal })
+  .then(async response => {
+    if (!response.ok) return;
+    const { terms, privacyUrl } = await response.json();
+    if (privacyUrl && new URL(privacyUrl).protocol === 'https:') {
+      document.getElementById('privacy-link').href = privacyUrl;
+      document.getElementById('hosted-privacy').hidden = false;
+    }
+    if (terms?.version && new URL(terms.url).protocol === 'https:') {
+      document.getElementById('terms-link').href = terms.url;
+      document.getElementById('hosted-terms').hidden = false;
+      return terms.version;
+    }
+  })
+  .catch(() => undefined)
+  .finally(() => clearTimeout(TERMS_TIMEOUT));
 
 function setStatus(id, msg, cls) {
   const el = document.getElementById(id);
@@ -907,8 +932,14 @@ async function passkeyRegister() {
     setStatus('pk-status', 'Bootstrap userId and invite must both be supplied.', 'err'); return;
   }
   try {
+    const version = await TERMS_READY;
+    if (version && !TERMS_AGREE.checked) {
+      setStatus('pk-status', 'Select I agree before creating an account.', 'err');
+      TERMS_AGREE.focus();
+      return;
+    }
     setStatus('pk-status', 'Creating passkey...', 'info');
-    const body = { name };
+    const body = { name, termsVersion: version };
     if (bootstrapUserId) { body.bootstrapUserId = bootstrapUserId; body.bootstrapInvite = bootstrapInvite; }
     const optRes = await fetch(IDENTITY + '/auth/webauthn/register-options', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -1036,13 +1067,15 @@ async function passkeyLoginScoped() {
 async function siweLogin() {
   if (!window.ethereum) { setStatus('siwe-status', 'No wallet detected. Install a wallet extension, or use the DID method.', 'err'); return; }
   try {
+    const version = await TERMS_READY;
+    const termsVersion = TERMS_AGREE.checked ? version : undefined;
     setStatus('siwe-status', 'Requesting wallet connection...', 'info');
     const [account] = await window.ethereum.request({ method: 'eth_requestAccounts' });
     // The identity server returns the address in EIP-55 form: a wallet reads the message as a
     // sign-in (and checks its domain line) only with a checksummed address.
     const chRes = await fetch(IDENTITY + '/challenges', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ purpose: 'siwe', address: account }),
+      body: JSON.stringify({ purpose: 'siwe', address: account, termsVersion }),
     });
     const ch = await chRes.json();
     if (!chRes.ok || !ch.nonce) throw new Error(ch.error || ('Could not get a challenge (HTTP ' + chRes.status + ')'));
@@ -1053,7 +1086,7 @@ async function siweLogin() {
     const message =
       domain + ' wants you to sign in with your Ethereum account:\\n' +
       address + '\\n\\n' +
-      'Sign in to Interego\\n\\n' +
+      (ch.termsStatement || 'Sign in to Interego') + '\\n\\n' +
       'URI: ' + window.location.origin + '\\n' +
       'Version: 1\\n' +
       'Chain ID: 1\\n' +
@@ -1075,9 +1108,11 @@ async function didChallenge() {
   const did = document.getElementById('did-did').value.trim();
   if (!did.startsWith('did:')) { setStatus('did-status', 'Enter a DID (did:key:... or did:web:...).', 'err'); return; }
   try {
+    const version = await TERMS_READY;
+    const termsVersion = TERMS_AGREE.checked ? version : undefined;
     const chRes = await fetch(IDENTITY + '/challenges', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ purpose: 'did-sig' }),
+      body: JSON.stringify({ purpose: 'did-sig', termsVersion }),
     });
     const ch = await chRes.json();
     if (!chRes.ok || typeof ch.nonce !== 'string') throw new Error(ch.error || ('Could not get a challenge (HTTP ' + chRes.status + ')'));

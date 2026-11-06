@@ -25,10 +25,13 @@ import * as crypto from 'node:crypto';
 import * as http from 'node:http';
 import * as net from 'node:net';
 import { fileURLToPath } from 'node:url';
+import { Wallet } from 'ethers';
 import { assertion, attest, softPasskey, type SoftPasskey } from './soft-authenticator.js';
 import { closeServer, stopChild } from './teardown.js';
+import { publicJwk } from './public-jwk.js';
 
 const now = new Date().toISOString();
+const termsVersion = '2026-11-06';
 const passkey = (id: string) => ({ id, publicKey: 'AA', counter: 0, createdAt: now });
 
 // ── Passkeys and the accounts their ids derive to ──
@@ -118,11 +121,13 @@ let podServer: http.Server;
 let identity: ChildProcess;
 let base = '';
 let output = '';
+let requestIp = 1;
 
 async function post(path: string, body: unknown, bearer?: string): Promise<{ status: number; json: Record<string, unknown> }> {
   const r = await fetch(`${base}${path}`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', ...(bearer ? { Authorization: `Bearer ${bearer}` } : {}) },
+    headers: { 'Content-Type': 'application/json', 'X-Forwarded-For': `192.0.2.${requestIp++}`,
+      ...(bearer ? { Authorization: `Bearer ${bearer}` } : {}) },
     body: JSON.stringify(body),
   });
   return { status: r.status, json: await r.json() as Record<string, unknown> };
@@ -130,7 +135,7 @@ async function post(path: string, body: unknown, bearer?: string): Promise<{ sta
 
 async function register(key: SoftPasskey, opts: { bearer?: string; bootstrap?: typeof invite } = {}) {
   const extra = opts.bootstrap ? { bootstrapUserId: opts.bootstrap.userId, bootstrapInvite: opts.bootstrap.token } : {};
-  const options = await post('/auth/webauthn/register-options', { name: 'New', ...extra }, opts.bearer);
+  const options = await post('/auth/webauthn/register-options', { name: 'New', termsVersion: opts.bearer ? undefined : termsVersion, ...extra }, opts.bearer);
   assert.equal(options.status, 200, JSON.stringify(options.json));
   const rpId = (options.json['rp'] as { id: string }).id;
   return post('/auth/webauthn/register', { response: attest(key, String(options.json['challenge']), base, rpId) });
@@ -170,6 +175,7 @@ before(async () => {
     PORT: String(port), BASE_URL: base, CSS_URL: `http://127.0.0.1:${podPort}/`, RELAY_URL: 'http://relay.invalid',
     TOKEN_SIGNING_KEY: crypto.randomBytes(32).toString('base64'), JANITOR_INTERVAL_MS: '0',
     BOOTSTRAP_INVITES: `${invite.userId}:${invite.token}`,
+    HOSTED_TERMS_VERSION: termsVersion,
   });
   identity = spawn(process.execPath, ['--import', 'tsx', 'server.ts'], {
     cwd: fileURLToPath(new URL('..', import.meta.url)), env, stdio: ['ignore', 'pipe', 'pipe'],
@@ -267,6 +273,66 @@ test('a refused registration loads the account it found, so the owner\'s passkey
 });
 
 let freshToken = '';
+test('hosted passkey options and Try enrollment refuse a missing or stale agreement before writing', async () => {
+  const count = writes.length;
+  for (const path of ['/auth/webauthn/register-options', '/try']) {
+    for (const version of [undefined, '2026-11-05']) {
+      const r = await post(path, { name: 'New', termsVersion: version });
+      assert.equal(r.status, 428, JSON.stringify(r.json));
+      assert.equal(r.json['termsVersion'], termsVersion);
+      assert.equal(r.json['token'], undefined);
+      assert.equal(r.json['challenge'], undefined);
+    }
+  }
+  assert.equal(writes.length, count);
+  const guest = await post('/try', { termsVersion });
+  assert.equal(guest.status, 200, JSON.stringify(guest.json));
+  assert.ok(guest.json['token']);
+  assertTermsReceipt(String(guest.json['userId']));
+});
+
+function assertTermsReceipt(userId: string) {
+  const receipt = pods.get(userId)?.['termsAcceptance'] as { version: string; acceptedAt: string } | undefined;
+  assert.ok(receipt);
+  assert.equal(receipt.version, termsVersion);
+  assert.ok(Number.isFinite(Date.parse(receipt.acceptedAt)));
+  return receipt;
+}
+
+test('a wallet must sign the exact agreement to enroll and can return with a normal sign-in', async () => {
+  const wallet = Wallet.createRandom();
+  async function enroll(version: string | undefined, signAgreement: boolean) {
+    const ch = (await post('/challenges', { purpose: 'siwe', address: wallet.address, termsVersion: version })).json;
+    const statement = signAgreement ? ch['termsStatement'] : 'Sign in to Interego';
+    const message = `${new URL(base).host} wants you to sign in with your Ethereum account:\n${ch['address']}\n\n${statement}\n\nURI: ${base}\nVersion: 1\nChain ID: 1\nNonce: ${ch['nonce']}\nIssued At: ${new Date().toISOString()}`;
+    return post('/auth/siwe', { message, signature: await wallet.signMessage(message), nonce: ch['nonce'], termsVersion });
+  }
+  assert.equal((await enroll(undefined, false)).status, 428);
+  assert.equal((await enroll(termsVersion, false)).status, 428);
+  const created = await enroll(termsVersion, true);
+  assert.equal(created.status, 200, JSON.stringify(created.json));
+  const userId = String(created.json['userId']);
+  const receipt = assertTermsReceipt(userId);
+  const returning = await enroll(undefined, false);
+  assert.equal(returning.status, 200, JSON.stringify(returning.json));
+  assert.equal(returning.json['userId'], userId);
+  assert.deepEqual(assertTermsReceipt(userId), receipt);
+});
+
+test('DID enrollment requires signing the challenge text containing the agreement', async () => {
+  const { publicKey, privateKey } = crypto.generateKeyPairSync('ed25519');
+  const did = `did:key:z${publicJwk(publicKey).x}`;
+  async function enroll(version?: string) {
+    const ch = (await post('/challenges', { purpose: 'did-sig', termsVersion: version })).json;
+    const signature = crypto.sign(null, Buffer.from(String(ch['message'])), privateKey).toString('base64url');
+    return post('/auth/did', { did, signature, nonce: ch['nonce'], termsVersion });
+  }
+  assert.equal((await enroll()).status, 428);
+  const created = await enroll(termsVersion);
+  assert.equal(created.status, 200, JSON.stringify(created.json));
+  assertTermsReceipt(String(created.json['userId']));
+});
+
 test('a new passkey creates its account once, with a write that requires absence', async () => {
   const { userId } = keys.fresh;
   const r = await register(keys.fresh);
@@ -276,6 +342,7 @@ test('a new passkey creates its account once, with a write that requires absence
   assert.ok(freshToken);
   assert.deepEqual(writesTo(userId), [{ userId, ifNoneMatch: '*' }]);
   assert.deepEqual(credentialIds(userId), [keys.fresh.id]);
+  assertTermsReceipt(userId);
   // The same passkey again is a duplicate, not a second account.
   const again = await register(keys.fresh);
   assert.equal(again.status, 409, JSON.stringify(again.json));
@@ -297,7 +364,7 @@ test('registration options for a bootstrap invite write nothing to the seeded po
   // The options read the seeded pod to check it holds no credential. That read used to write an
   // empty document when the pod had none, before any credential was verified, and left it there
   // when the ceremony was abandoned; a pod that could not be read was taken as an empty account.
-  const body = { name: 'New', bootstrapUserId: invite.userId, bootstrapInvite: invite.token };
+  const body = { name: 'New', termsVersion, bootstrapUserId: invite.userId, bootstrapInvite: invite.token };
   blipping.add(invite.userId);
   const down = await post('/auth/webauthn/register-options', body);
   blipping.delete(invite.userId);

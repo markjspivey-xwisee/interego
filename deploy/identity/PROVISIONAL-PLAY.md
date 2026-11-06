@@ -30,6 +30,8 @@ interego-play-provisional-v1
 
 The base64url proof encodes the raw 64-byte `r || s` signature. The public JWK has only public P-256 material; a JWK containing `d` is refused. The RFC7638 thumbprint hashes `JSON.stringify({crv:'P-256',kty:'EC',x,y})` with SHA-256.
 
+If hosted enrollment terms are active, the metadata includes `terms` with the version, Terms URL and Privacy Notice URL. Creation without agreement returns `428 hosted_terms_required` with those links before an admission is reserved. After the player agrees, include `termsVersion` in the bootstrap request and append `\nHosted-Interego-Terms: <version>` to the signed proof bytes. A fresh grant after the agreement allows time to read the Terms. Existing guests can use the original proof to resume.
+
 Success returns the existing identity credential fields (`token`, ISO `expiresAt`, `userId`, `did`, `webId`, `agentId`, `agentDid`, public `podUrl`) plus `attestation`, `provisional:true`, fixed ISO `guestExpiresAt` and `proofKeyThumbprint`. The native identity token stays between browser and identity/relay. The relay's separate provisional exchange creates the normal durable OAuth credential required by `/mcp`; a `cg2_` identity token alone is not an MCP OAuth credential.
 
 The native guest owner ID is derived from application audience and public-key thumbprint. A fresh grant for that same key resumes the same owner, pod and original deadline. A grant hash is consumed in the canonical pod anchor before issuing any credential; replay returns `play_grant_already_used`. A lost response can be recovered with a fresh application grant and new key proof. At most 16 live 120-second receipts are retained.
