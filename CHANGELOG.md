@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-11-05 — Add a privacy notice for hosted Interego
+
+The Interego homepage now links to the hosted service's Privacy Notice. The notice describes sign-in and guest records, Railway hosting, publishing through Pinata and IPFS, and how to request removal of records separately from closing an account.
+
 ## 2026-11-05 — Explain the counts on Agents filters
 
 The Agents directory explains that each button shows how many operations it would display with the other filters and search applied.
