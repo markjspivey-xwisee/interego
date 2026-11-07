@@ -53,6 +53,8 @@ interface Fleet {
   readonly issued: string[];
   /** Bearers presented to `/mcp`, in order. */
   readonly presented: string[];
+  /** The nonce of every request that reached `/oauth/verify`, in order. */
+  readonly verifyNonces: string[];
 }
 
 const json = (status: number, payload: unknown): Response =>
@@ -61,9 +63,13 @@ const json = (status: number, payload: unknown): Response =>
 /**
  * The relay and identity server as far as `openAgentSession` reaches them, installed on
  * `globalThis.fetch`. `known` seeds wallets that already hold an account; `expireFirstBearer`
- * answers the first `/mcp` call 401, as a lapsed relay token is answered.
+ * answers the first `/mcp` call 401, as a lapsed relay token is answered. `volunteer` makes
+ * `/challenges` return that statement whatever was asked; `nonce` replaces the issued nonce —
+ * both stand for a server that misbehaves.
  */
-function installFleet(opts: { known?: readonly string[]; expireFirstBearer?: boolean } = {}): Fleet {
+function installFleet(opts: {
+  known?: readonly string[]; expireFirstBearer?: boolean; volunteer?: string; nonce?: string;
+} = {}): Fleet {
   const fleet: Fleet = {
     challengeBodies: [],
     offered: [],
@@ -71,6 +77,7 @@ function installFleet(opts: { known?: readonly string[]; expireFirstBearer?: boo
     accounts: new Set((opts.known ?? []).map(a => a.toLowerCase())),
     issued: [],
     presented: [],
+    verifyNonces: [],
   };
   const challenges = new Map<string, Challenge>();
   /** Authorization code → the account it was issued to. */
@@ -96,14 +103,15 @@ function installFleet(opts: { known?: readonly string[]; expireFirstBearer?: boo
     if (url === `${IDENTITY}/challenges`) {
       fleet.challengeBodies.push(body);
       expect(body['purpose']).toBe('siwe');
-      const nonce = `nonce${++serial}`;
+      const nonce = opts.nonce ?? `nonce${String(++serial).padStart(8, '0')}`;
       const accepted = body['termsVersion'] === CURRENT;
       challenges.set(nonce, accepted ? { termsVersion: CURRENT } : {});
-      fleet.offered.push(accepted ? TERMS_STATEMENT : undefined);
+      const offered = opts.volunteer ?? (accepted ? TERMS_STATEMENT : undefined);
+      fleet.offered.push(offered);
       return json(200, {
         nonce,
         expiresAt: new Date(Date.now() + 300_000).toISOString(),
-        ...(accepted ? { termsStatement: TERMS_STATEMENT } : {}),
+        ...(offered !== undefined ? { termsStatement: offered } : {}),
       });
     }
 
@@ -112,6 +120,7 @@ function installFleet(opts: { known?: readonly string[]; expireFirstBearer?: boo
       expect(body['method']).toBe('siwe');
       const message = String(body['message']);
       const nonce = String(body['nonce']);
+      fleet.verifyNonces.push(nonce);
       const challenge = challenges.get(nonce);
       if (!challenge) return json(401, { error: 'Unknown or expired nonce' });
       challenges.delete(nonce);
@@ -236,5 +245,31 @@ describe('openAgentSession and the Hosted Terms offer', () => {
     expect(fleet.signedStatements).toEqual(['Sign in to Interego']);
     expect(fleet.issued).toHaveLength(1);
     expect(session.identity.webId).toBe(`https://pods.example/u-eth-${wallet.address.toLowerCase().slice(2, 14)}/profile/card#me`);
+  });
+
+  it('(v) a statement the server volunteers without being asked is never signed', async () => {
+    const wallet = Wallet.createRandom();
+    const fleet = installFleet({ known: [wallet.address], volunteer: TERMS_STATEMENT });
+
+    await open(wallet.privateKey);
+
+    expect(fleet.offered).toEqual([TERMS_STATEMENT]);
+    expect(fleet.signedStatements).toEqual(['Sign in to Interego']);
+  });
+
+  it('(vi) an offered statement with a line break is refused before anything is signed or sent', async () => {
+    const wallet = Wallet.createRandom();
+    const fleet = installFleet({ volunteer: `${TERMS_STATEMENT}\nURI: https://elsewhere.example` });
+
+    await expect(open(wallet.privateKey, CURRENT)).rejects.toThrow(/line break/);
+    expect(fleet.verifyNonces).toEqual([]);
+  });
+
+  it('(vii) a nonce outside the identity server\'s own form is refused before anything is signed or sent', async () => {
+    const wallet = Wallet.createRandom();
+    const fleet = installFleet({ known: [wallet.address], nonce: 'abc12345\nURI: https://elsewhere.example' });
+
+    await expect(open(wallet.privateKey)).rejects.toThrow(/nonce/);
+    expect(fleet.verifyNonces).toEqual([]);
   });
 });

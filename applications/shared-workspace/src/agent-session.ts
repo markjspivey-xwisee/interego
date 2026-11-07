@@ -146,6 +146,9 @@ async function mintBearer(
   });
   const { nonce, termsStatement } = await ch.json() as { nonce?: string; termsStatement?: unknown };
   if (!nonce) throw new Error('identity server issued no nonce');
+  // The nonce is a line of the signed message too, so it gets the identity server's own rule
+  // (deploy/identity/siwe-message.ts NONCE): letters and digits only, at least eight.
+  if (!/^[A-Za-z0-9]{8,}$/.test(nonce)) throw new Error('identity server issued a nonce that is not 8+ letters or digits');
   // The server returns `termsStatement` only when it offers exactly the version asked for. No
   // statement back is NOT an error: a stale version must still let an existing account sign in
   // again (on refresh too), and the server then decides whether this wallet needs the agreement.
