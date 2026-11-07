@@ -76,7 +76,7 @@ describe('private SCORM Cloud course connections', () => {
     const result = await f.request('source', { connection_id: connected.connection_id,
       course_id: course.id, version: 2, question: 'What code is recorded\nin the simulation log?' });
     expect(result.source).toEqual({ provider: 'scorm-cloud', course_id: course.id, title: course.title, version: 2,
-      package_sha256: createHash('sha256').update(f.bytes).digest('hex') });
+      package_sha256: createHash('sha256').update(f.bytes).digest('hex'), content_sha256: expect.stringMatching(/^[a-f0-9]{64}$/) });
     expect(result.citations).toEqual([expect.objectContaining({ body: expect.stringContaining('BLUE-27'),
       source_uri: 'urn:scorm-cloud:course:' + encodeURIComponent(course.id) + ':version:2:file:index.html', locator: 'index.html' })]);
     const packet = result.interventionContext as Row;
@@ -88,7 +88,56 @@ describe('private SCORM Cloud course connections', () => {
       expect(String(url)).not.toContain(basic.secret);
       expect(options).toMatchObject({ method: 'GET', redirect: 'error' });
       expect(new Headers(options?.headers).get('Authorization')).toBe('Basic ' + Buffer.from(basic.app_id + ':' + basic.secret).toString('base64'));
+      expect(new Headers(options?.headers).get('Accept')).toBe(String(url).endsWith('/zip') ? '*/*' : 'application/json');
     }
+  });
+
+  it('preserves source identity across ZIP repacking while binding all file content, paths, course and version', async () => {
+    let bytes = packageZip();
+    const courses = [course, { ...course, version: 3 }, { ...course, id: 'another-course' }];
+    const f = await setup((async (url, options) => {
+      if (String(url).endsWith('/courses')) return Response.json({ courses });
+      if (new Headers(options?.headers).get('Accept') !== '*/*') return new Response('Not acceptable', { status: 406 });
+      return new Response(Uint8Array.from(bytes));
+    }) as typeof fetch);
+    const connected = await f.connect();
+    const source = (id = course.id, version = 2) => f.request('source', { connection_id: connected.connection_id,
+      course_id: id, version, question: 'What code is recorded?' });
+    const context = (value: Row) => (value.interventionContext as Row).source_context as Row;
+    const first = await source();
+    const repacked = new AdmZip();
+    for (const entry of new AdmZip(bytes).getEntries().reverse()) {
+      repacked.addFile(entry.entryName, entry.getData());
+      repacked.getEntry(entry.entryName)!.header.time = new Date('2000-01-01T00:00:00Z');
+    }
+    bytes = repacked.toBuffer();
+    const same = await source();
+    expect((same.source as Row).package_sha256).not.toBe((first.source as Row).package_sha256);
+    expect((same.source as Row).content_sha256).toBe((first.source as Row).content_sha256);
+    expect(context(same)).toEqual(context(first));
+    expect(same.citations).toEqual(first.citations);
+
+    // An excluded question-bank asset still participates in exact package identity.
+    const changed = new AdmZip(bytes);
+    changed.updateFile('question-bank.json', Buffer.from('{"questions":[{"answer":"CHANGED-PRIVATE-KEY"}]}'));
+    bytes = changed.toBuffer();
+    const contentChanged = await source();
+    expect((contentChanged.source as Row).content_sha256).not.toBe((first.source as Row).content_sha256);
+    expect(context(contentChanged).id).not.toBe(context(first).id);
+    expect(contentChanged.citations).not.toEqual(first.citations);
+    expect(JSON.stringify(contentChanged)).not.toContain('CHANGED-PRIVATE-KEY');
+
+    const versionChanged = await source(course.id, 3);
+    const courseChanged = await source('another-course');
+    for (const changedIdentity of [versionChanged, courseChanged]) {
+      expect((changedIdentity.source as Row).content_sha256).toBe((contentChanged.source as Row).content_sha256);
+      expect(context(changedIdentity).id).not.toBe(context(contentChanged).id);
+      expect(changedIdentity.citations).not.toEqual(contentChanged.citations);
+    }
+    const renamed = new AdmZip();
+    for (const entry of changed.getEntries()) renamed.addFile(entry.entryName === 'question-bank.json' ? 'renamed-bank.json' : entry.entryName, entry.getData());
+    bytes = renamed.toBuffer();
+    expect(((await source()).source as Row).content_sha256).not.toBe((contentChanged.source as Row).content_sha256);
   });
 
   it('bounds large multibyte instructional text without corrupting the UTF-8 excerpt', async () => {

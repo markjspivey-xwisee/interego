@@ -31,7 +31,11 @@ and connect your own SCORM Cloud application. Select a course from that
 application, then ask a question. The read-only connector retrieves the selected
 version's package and projects its instructional passages for that question.
 Each follow-up retrieves source context again. The source details retain course
-identity, version, package digest, passage identifiers and missing material.
+identity, version, archive digest, package-contents digest, passage identifiers
+and missing material. Source and citation identity binds the provider, course,
+version and exact file contents. ZIP timestamp, compression or ordering changes
+alone preserve the conversation; a file-content change clears it. The raw archive
+digest remains separate evidence of the actual downloaded bytes.
 
 Clicking Ask shares those retrieved passages with the explicitly paired AI.
 The application ID and provider secret are cleared from the input fields after

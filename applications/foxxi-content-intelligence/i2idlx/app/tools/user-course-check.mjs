@@ -1,5 +1,7 @@
 // Deterministic checks of the browser capability adapter; no live credentials or provider calls.
 import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
+import { runInNewContext } from 'node:vm';
 import { createAgentSessionClient } from '../src/agent-session.js';
 
 const SESSION = '1'.repeat(32), BROWSER = '2'.repeat(64), INVITE = '3'.repeat(64);
@@ -94,6 +96,26 @@ await test('private source sampler is pinned to the original invitation and refu
   await client.disconnect();
   await ready(client);
   await assert.rejects(renewed('Passages approved before replacement.'), { code: 'cancelled' });
+});
+
+await test('selected course packets require exact source identity and both digest strings', async () => {
+  const source = await readFile(new URL('../src/course-context.jsx', import.meta.url), 'utf8');
+  const validation = source.slice(source.indexOf('const object ='), source.indexOf('export function useCourseContext'))
+    .replace('export function selectedCoursePacket', 'function selectedCoursePacket');
+  const validate = runInNewContext(validation + '\nselectedCoursePacket;', {});
+  const course = { id: 'course-a', version: 3 };
+  const packet = { connection_id: 'my-connection', source: { provider: 'scorm-cloud', course_id: course.id, version: course.version,
+    package_sha256: 'a'.repeat(64), content_sha256: 'b'.repeat(64) }, citations: [], interventionContext: {} };
+  assert.equal(validate(packet, 'my-connection', course), packet);
+  for (const field of ['content_sha256', 'package_sha256']) {
+    for (const invalid of [undefined, null, '', 'bad', ['a'.repeat(64)], 123]) {
+      assert.throws(() => validate({ ...packet, source: { ...packet.source, [field]: invalid } }, 'my-connection', course), /does not match/);
+    }
+  }
+  for (const change of [{ course_id: 'another-course' }, { version: 4 }, { provider: 'another-provider' }]) {
+    assert.throws(() => validate({ ...packet, source: { ...packet.source, ...change } }, 'my-connection', course), /does not match/);
+  }
+  assert.throws(() => validate(packet, 'another-connection', course), /does not match/);
 });
 
 console.log('PASS ' + count + ' user course adapter checks');

@@ -117,19 +117,38 @@ function packageFiles(bytes: Buffer) {
   }
   const files = new Map<string, Buffer>();
   let total = 0, reads = 0;
+  const load = (name: string): Buffer | null => {
+    const entry = zip.getEntry(name);
+    if (!entry || entry.isDirectory) return null;
+    let content = files.get(name);
+    if (!content) {
+      const compressed = entry.getCompressedData();
+      content = entry.header.method === 0 ? compressed : inflateRawSync(compressed, { maxOutputLength: MAX_FILE });
+      total += content.length;
+      if (content.length !== entry.header.size || total > MAX_INFLATED) refuse('The course ZIP exceeds safe reader capacity.', 413, 'course_source_too_large');
+      files.set(name, content);
+    }
+    return content;
+  };
+  // Every exact file participates, including non-instructional assets. ZIP timestamps,
+  // compression and entry ordering do not change the instructional source identity.
+  const digest = createHash('sha256').update('i2idlx:package-content:v1\0');
+  const count = Buffer.alloc(4); count.writeUInt32BE(names.size); digest.update(count);
+  const paths = [...names].map(name => ({ name, bytes: Buffer.from(name, 'utf8') }))
+    .sort((a, b) => Buffer.compare(a.bytes, b.bytes));
+  for (const path of paths) {
+    const content = load(path.name)!;
+    const lengths = Buffer.alloc(8);
+    lengths.writeUInt32BE(path.bytes.length); lengths.writeUInt32BE(content.length, 4);
+    digest.update(lengths).update(path.bytes).update(createHash('sha256').update(content).digest());
+  }
+  const contentSha256 = digest.digest('hex');
   return {
     names: [...names],
+    contentSha256,
     read(name: string): Buffer | null {
-      const entry = zip.getEntry(name);
-      if (!entry || entry.isDirectory) return null;
-      let content = files.get(name);
-      if (!content) {
-        const compressed = entry.getCompressedData();
-        content = entry.header.method === 0 ? compressed : inflateRawSync(compressed, { maxOutputLength: MAX_FILE });
-        total += content.length;
-        if (content.length !== entry.header.size || total > MAX_INFLATED) refuse('The course ZIP exceeds safe reader capacity.', 413, 'course_source_too_large');
-        files.set(name, content);
-      }
+      const content = load(name);
+      if (!content) return null;
       reads += content.length;
       if (reads > 64 * 1024 * 1024) refuse('Course text exceeds reader capacity.', 413, 'course_source_too_large');
       return content;
@@ -202,7 +221,7 @@ export class UserCourseStore {
   private async read(connection: Connection, path: string, signal: AbortSignal, limit: number): Promise<Buffer> {
     this.requireCurrent(connection);
     const response = await this.fetcher(CLOUD + path, { method: 'GET', redirect: 'error', signal,
-      headers: { Authorization: connection.authorization, Accept: path.endsWith('/zip') ? 'application/zip' : 'application/json' } });
+      headers: { Authorization: connection.authorization, Accept: path.endsWith('/zip') ? '*/*' : 'application/json' } });
     if (signal.aborted) {
       await response.body?.cancel();
       this.requireCurrent(connection);
@@ -255,10 +274,14 @@ export class UserCourseStore {
     if (!course) refuse('Choose a course version from this connection\'s catalog.', 404, 'course_source_unavailable');
     const question = text(args.question, 4000, 'Question', true);
     const bytes = await this.read(connection, '/courses/' + encodeURIComponent(course.id) + '/versions/' + course.version + '/zip', signal, MAX_ZIP);
-    const digest = createHash('sha256').update(bytes).digest('hex');
+    const archiveDigest = createHash('sha256').update(bytes).digest('hex');
     const urn = 'urn:scorm-cloud:course:' + encodeURIComponent(course.id) + ':version:' + course.version;
-    let imported;
-    try { imported = readAnyPackage(packageFiles(bytes), { title: course.title, fileUrl: path => urn + ':file:' + encodeURIComponent(path) }); }
+    let imported, contentDigest: string;
+    try {
+      const files = packageFiles(bytes);
+      contentDigest = files.contentSha256;
+      imported = readAnyPackage(files, { title: course.title, fileUrl: path => urn + ':file:' + encodeURIComponent(path) });
+    }
     catch (error) {
       if (error instanceof UserCourseError) throw error;
       refuse('This course package could not be projected into instructional text.', 422, 'course_source_unsupported');
@@ -268,15 +291,16 @@ export class UserCourseStore {
       id: utf8Prefix(page.path, 200), title: utf8Prefix(page.title || course.title, 400), body: utf8Prefix(page.body, 96_000),
       source_uri: urn + ':file:' + encodeURIComponent(page.path), locator: utf8Prefix(page.path, 400),
     }));
-    const material = { id: digest, title: course.title, kind: 'SCORM Cloud course', source_uri: urn,
-      version: 'course-version:' + course.version + ';sha256:' + digest, sections,
+    const identity = createHash('sha256').update(JSON.stringify(['i2idlx:scorm-cloud:source:v1', course.id, course.version, contentDigest])).digest('hex');
+    const material = { id: identity, title: course.title, kind: 'SCORM Cloud course', source_uri: urn,
+      version: 'course-version:' + course.version + ';content-sha256:' + contentDigest, sections,
       missing_context: [...(imported.unread.length ? ['Some package resources could not be converted into instructional text.'] : []),
         ...(pages.length > sections.length ? ['Only the first 5000 instructional sections were available to this retrieval.'] : []),
         'Package retrieval does not establish course delivery, assessment results or learning completion.'],
     };
     let packet: Row;
     try { packet = await executeInterventionTask({ ...this.config.taskConfig, readIntervention: async () => material }, {
-      source: 'package', intervention_id: digest, question, lens: 'analyze',
+      source: 'package', intervention_id: identity, question, lens: 'analyze',
     }); } catch (error) {
       const failure = interventionTaskFailure(error);
       refuse(typeof failure.body.error === 'string' ? failure.body.error : 'Instructional source context is unavailable.', failure.status, 'course_source_unavailable');
@@ -284,7 +308,8 @@ export class UserCourseStore {
     const context = packet.source_context as Row;
     const citations = (context.sections as Row[]).map(section => ({ id: section.citation_id, title: section.title,
       body: section.body, locator: section.locator, source_uri: section.source_uri }));
-    return { connection_id: connection.id, source: { provider: 'scorm-cloud', course_id: course.id, title: course.title, version: course.version, package_sha256: digest },
+    return { connection_id: connection.id, source: { provider: 'scorm-cloud', course_id: course.id, title: course.title, version: course.version,
+      package_sha256: archiveDigest, content_sha256: contentDigest },
       citations, missing_context: context.missing_context, retrieved_at: new Date(this.clock()).toISOString(),
       truncated: (context.retrieval as Row).excerpt_truncated, interventionContext: packet };
   }

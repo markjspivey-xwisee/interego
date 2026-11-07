@@ -2,13 +2,15 @@ import { userCourseRequest, userCourseSample, subscribeAgentSession, workbenchCo
 
 const { useState, useEffect, useRef } = React;
 const object = value => value !== null && typeof value === 'object' && !Array.isArray(value);
+const sha256 = value => typeof value === 'string' && /^[a-f0-9]{64}$/.test(value);
 const keyOf = course => JSON.stringify([course.id, course.version]);
 const ready = session => session?.state === 'connected' && (!session.monitoring || session.monitoring === 'ready');
 
 export function selectedCoursePacket(value, connectionId, course) {
   if (!object(value) || value.connection_id !== connectionId || !object(value.source) ||
       value.source.provider !== 'scorm-cloud' || value.source.course_id !== course.id || value.source.version !== course.version ||
-      !/^[a-f0-9]{64}$/.test(value.source.package_sha256 || '') || !object(value.interventionContext) || !Array.isArray(value.citations)) {
+      !sha256(value.source.package_sha256) || !sha256(value.source.content_sha256) ||
+      !object(value.interventionContext) || !Array.isArray(value.citations)) {
     throw new Error('The returned course context does not match your selected source. Select the course again.');
   }
   return value;
@@ -116,8 +118,8 @@ export function useCourseContext(engine) {
     try {
       const value = selectedCoursePacket(await userCourseRequest({ operation: 'source', connection_id: connection.connection_id, course_id: selected.id, version: selected.version, question }, controller.signal), connection.connection_id, selected);
       if (!current(run)) return;
-      if (packet && packet.source.package_sha256 !== value.source.package_sha256) {
-        engine.reset(); setPacket(value); setError('The course source changed, so the conversation was cleared. Ask again to use the refreshed content.'); return;
+      if (packet && packet.source.content_sha256 !== value.source.content_sha256) {
+        engine.reset(); setPacket(value); setError('The course content changed, so the conversation was cleared. Ask again to use the refreshed source.'); return;
       }
       setPacket(value);
       await engine.send(question, ids, value.interventionContext, pairedSample);
@@ -148,7 +150,8 @@ export function useCourseContext(engine) {
       {packet ? <details><summary>Course sources for the latest question</summary><div className="stack small" style={{ gap: 10, marginTop: 10 }}>
         <b>{packet.source.title} · Version {packet.source.version}</b>
         <span>Retrieved {new Date(packet.retrieved_at).toLocaleString()}</span>
-        <span>Package SHA-256 <code style={{ overflowWrap: 'anywhere' }}>{packet.source.package_sha256}</code></span>
+        <span>Package contents SHA-256 <code style={{ overflowWrap: 'anywhere' }}>{packet.source.content_sha256}</code></span>
+        <span>Export archive SHA-256 <code style={{ overflowWrap: 'anywhere' }}>{packet.source.package_sha256}</code></span>
         {packet.citations.map(citation => <article className="note stack" key={citation.id} style={{ gap: 5, flexDirection: 'column', alignItems: 'stretch' }}><b>{citation.id} · {citation.title}</b><span>{citation.body}</span><code style={{ overflowWrap: 'anywhere' }}>{citation.source_uri}</code><span>{citation.locator}</span></article>)}
         {(packet.missing_context || []).map((message, index) => <p key={index}>{message}</p>)}
         {packet.truncated ? <p>These passages are excerpts. Ask a narrower question for more focused context.</p> : null}

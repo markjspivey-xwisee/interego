@@ -62,7 +62,8 @@ APP_ID, SECRET = "local-app-fixture", "local-secret-never-send-to-agent"
 courses = [{"id": "course-a", "title": "Safety fundamentals", "version": 3, "standard": "SCORM 2004"},
            {"id": "course-b", "title": "Equipment checks", "version": 5, "standard": "SCORM 1.2"}]
 errors, calls, source_calls, agent_calls = [], [], [], []
-state = {"session": 0, "connection": None, "expire": False, "wrong_source": False, "digest": "a" * 64}
+state = {"session": 0, "connection": None, "expire": False, "wrong_source": False, "omit_content_digest": False,
+         "digest": "a" * 64, "content_digest": "c" * 64, "content_body": "Inspect the equipment before use."}
 
 def reply(route, value, status=200):
     return route.fulfill(status=status, content_type="application/json", body=json.dumps(value))
@@ -120,11 +121,13 @@ def route_handler(route):
         selected = next(item for item in courses if item["id"] == body["course_id"])
         assert selected["version"] == body["version"]
         source = {"provider": "scorm-cloud", "course_id": selected["id"], "title": selected["title"],
-                  "version": selected["version"], "package_sha256": state["digest"]}
+                  "version": selected["version"], "package_sha256": state["digest"], "content_sha256": state["content_digest"]}
         if state["wrong_source"]:
             source["course_id"] = "wrong-course"
-        citation = {"id": "SC1", "title": "Safety objective", "body": "Inspect the equipment before use.",
-                    "locator": "lesson.html section 2", "source_uri": "urn:scorm-cloud:course:" + selected["id"] + ":version:" + str(selected["version"])}
+        if state["omit_content_digest"]:
+            del source["content_sha256"]
+        citation = {"id": "SC1", "title": "Safety objective", "body": state["content_body"],
+                    "locator": "lesson.html section 2", "source_uri": "urn:scorm-cloud:course:" + selected["id"] + ":version:" + str(selected["version"]) + ":content:" + state["content_digest"]}
         return reply(route, {"connection_id": state["connection"], "source": source, "citations": [citation], "missing_context": [],
             "retrieved_at": "2026-11-07T12:00:00.000Z", "truncated": False,
             "interventionContext": {"kind": "instructional-source-reference", "source": source, "passages": [citation]}})
@@ -191,7 +194,8 @@ with sync_playwright() as p:
     assert "instructional-source-reference" in json.dumps(agent_calls[-1])
     assert "SC1" in json.dumps(agent_calls[-1]) and "Inspect the equipment before use." in json.dumps(agent_calls[-1])
     panel.get_by_text("Course sources for the latest question", exact=True).click()
-    assert "Version 3" in panel.inner_text() and state["digest"] in panel.inner_text()
+    assert "Version 3" in panel.inner_text() and state["digest"] in panel.inner_text() and state["content_digest"] in panel.inner_text()
+    assert "Package contents SHA-256" in panel.inner_text() and "Export archive SHA-256" in panel.inner_text()
     assert "urn:scorm-cloud:course:course-a:version:3" in panel.inner_text()
     page.screenshot(path=str(shots / "ask-course-source-desktop.png"), full_page=True)
     page.set_viewport_size({"width": 420, "height": 860})
@@ -205,6 +209,15 @@ with sync_playwright() as p:
     assert any(message["content"] == "What should I inspect?" for message in agent_calls[-1]["messages"])
     print("PASS each followup retrieves fresh context and retains only its current-source conversation")
 
+    state["digest"] = "b" * 64
+    ask("Same course files in a repacked archive")
+    assert source_calls[-1]["course_id"] == "course-a" and source_calls[-1]["version"] == 3
+    assert page.locator(".msg").count() == 6, "repacking identical package files must preserve conversation"
+    assert any(message["content"] == "What should I inspect?" for message in agent_calls[-1]["messages"])
+    assert "conversation was cleared" not in panel.inner_text()
+    assert state["digest"] in panel.inner_text() and state["content_digest"] in panel.inner_text()
+    print("PASS repacked identical course files retain conversation while archive evidence updates")
+
     select_course(1)
     assert page.locator(".msg").count() == 0
     ask("What is in this course?")
@@ -217,13 +230,27 @@ with sync_playwright() as p:
     state["wrong_source"] = False
     print("PASS switching source clears history and a mismatched source never reaches AI")
 
-    state["digest"] = "b" * 64
-    ask("Use updated package", answer=False)
+    original_content_digest = state["content_digest"]
+    state["content_digest"] = "invalid-content-digest"
+    ask("Reject an invalid content fingerprint", answer=False)
+    assert len(agent_calls) == before and "does not match" in panel.inner_text()
+    state["content_digest"] = original_content_digest
+    state["omit_content_digest"] = True
+    ask("Reject a missing content fingerprint", answer=False)
+    assert len(agent_calls) == before and "does not match" in panel.inner_text()
+    state["omit_content_digest"] = False
+    print("PASS missing or invalid content identity cannot reach the paired AI")
+
+    state["content_digest"] = "d" * 64
+    state["content_body"] = "Check the power supply before use."
+    ask("Use updated course content", answer=False)
     assert len(agent_calls) == before and page.locator(".msg").count() == 0
-    assert "source changed" in panel.inner_text()
-    ask("Use updated package")
+    assert "course content changed" in panel.inner_text()
+    ask("Use updated course content")
     assert len(agent_calls) == before + 1
-    print("PASS changed package digest clears history and requires a fresh explicit Ask")
+    assert "Check the power supply before use." in json.dumps(agent_calls[-1])
+    assert not any(message["content"] == "What is in this course?" for message in agent_calls[-1]["messages"])
+    print("PASS changed course file content clears history and requires a fresh explicit Ask")
 
     state["expire"] = True
     before = len(agent_calls)
