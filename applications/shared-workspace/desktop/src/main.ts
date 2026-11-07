@@ -44,7 +44,7 @@ import { encryptionKeyFor, openerFor, sealedBindingCheck } from '@interego/works
 // The sealer is node-only for the same reason the opener is; see its header.
 import { sealForRoster } from '@interego/workspace-client/sealer';
 import {
-  beginAuthorization, exchangeCode, refreshBearer, signInWithWallet, startLoopbackReceiver,
+  beginAuthorization, exchangeCode, readHostedTerms, refreshBearer, signInWithWallet, startLoopbackReceiver,
   type AuthMethod,
 } from './auth.js';
 import {
@@ -207,7 +207,7 @@ const hosted = new Map<string, HostedDelegate>();
 const opening = new Map<string, Promise<HostedDelegate>>();
 
 /** Open (or reuse) a delegate's own relay session. Its key never leaves this process. */
-async function delegateSession(address: string): Promise<HostedDelegate> {
+async function delegateSession(address: string, acceptHostedTermsVersion?: string): Promise<HostedDelegate> {
   const key = address.toLowerCase();
   const live = hosted.get(key);
   // A bearer inside its last five minutes is re-minted rather than refreshed: this process holds
@@ -226,7 +226,7 @@ async function delegateSession(address: string): Promise<HostedDelegate> {
   }
   const already = opening.get(key);
   if (already) return already;
-  const run = openDelegateSession(key, address).finally(() => {
+  const run = openDelegateSession(key, address, acceptHostedTermsVersion).finally(() => {
     // Cleared however it ended, so a ceremony that failed is not remembered as one in flight.
     if (opening.get(key) === run) opening.delete(key);
   });
@@ -248,7 +248,7 @@ async function delegateSession(address: string): Promise<HostedDelegate> {
  * ★ AND THE FAILURE PATH IS REAL HERE TOO: a re-mint that throws puts the session the address
  * already had back, rather than leaving the caller with neither the old one nor a new one.
  */
-async function openDelegateSession(key: string, address: string): Promise<HostedDelegate> {
+async function openDelegateSession(key: string, address: string, acceptHostedTermsVersion?: string): Promise<HostedDelegate> {
   const pk = getSecret(DELEGATE_KEY(key));
   if (!pk) throw new Error('This app does not hold a key for delegate ' + address + '. It may be authorised on your pod and hosted somewhere else — a delegate is its key, not this application.');
   const wallet = new Wallet(pk);
@@ -259,7 +259,11 @@ async function openDelegateSession(key: string, address: string): Promise<Hosted
       const recv = await startLoopbackReceiver();
       let issued: RelayOAuthBearer;
       try {
-        issued = await signInWithWallet(RELAY, IDENTITY, wallet.address, (m) => wallet.signMessage(m), recv.redirectUri, DELEGATE_SURFACE);
+        // ★ THE AGREEMENT, WHEN THERE IS ONE, IS FOR THIS FIRST SIGN-IN ONLY. It is what lets a NEW
+        // delegate key open its own hosted account; the re-authorizer below signs in to an account
+        // that exists by then, and never carries one.
+        issued = await signInWithWallet(RELAY, IDENTITY, wallet.address, (m) => wallet.signMessage(m), recv.redirectUri, DELEGATE_SURFACE,
+          { acceptHostedTermsVersion });
       } finally { recv.close(); }
       const delegateTransport = new RelayMcpTransport(RELAY, issued);
       /**
@@ -398,18 +402,39 @@ function accountSlots(): readonly AccountSlot[] {
 }
 
 /**
+ * The Hosted Terms version the person ticked "I agree" next to, as it crossed the IPC bridge.
+ *
+ * ★ ONLY A TICK MAKES ONE. The renderer sends a version only when its "I agree" box is ticked,
+ * and it sends the version that box was drawn for. Nothing in this process supplies one, reads one
+ * from disk or remembers one between sign-ins: an agreement is given per sign-in that may open an
+ * account, by the person in front of the window. Anything that is not a dated release version is
+ * refused rather than read as "no agreement", because a malformed agreement is not a decision
+ * somebody made.
+ */
+function agreedTermsVersion(v: unknown): string | undefined {
+  if (v === undefined || v === null) return undefined;
+  if (typeof v !== 'string' || !/^\d{4}-\d{2}-\d{2}(?:-r[1-9]\d*)?$/.test(v)) {
+    throw new Error('The Hosted Terms agreement this window sent is not a terms version, so nothing was signed.');
+  }
+  return v;
+}
+
+/**
  * Sign in as one account key: the whole ceremony, from the key to a live session.
  *
  * ★ ONE PATH, USED BY ALL THREE ENTRY POINTS — the wallet button, an import, and switching to a
  * stored key. They differ only in WHICH key, and a second copy of the ceremony is how "import"
  * ends up subtly unlike "sign in" in a way nobody notices until somebody's pod is wrong.
  */
-async function signInWithAccountKey(privateKey: string): Promise<{ pod: string; displayName: string | null; method: AuthMethod; address: string }> {
+async function signInWithAccountKey(
+  privateKey: string, acceptHostedTermsVersion?: string,
+): Promise<{ pod: string; displayName: string | null; method: AuthMethod; address: string }> {
   const wallet = new Wallet(privateKey);
   const recv = await startLoopbackReceiver();
   let who;
   try {
-    const got = await signInWithWallet(RELAY, IDENTITY, wallet.address, (m) => wallet.signMessage(m), recv.redirectUri);
+    const got = await signInWithWallet(RELAY, IDENTITY, wallet.address, (m) => wallet.signMessage(m), recv.redirectUri,
+      undefined, { acceptHostedTermsVersion });
     who = await adopt(got, 'wallet', privateKey);
   } finally {
     // The wallet path never uses the listener — it posts the proof itself — but the relay requires
@@ -1176,6 +1201,15 @@ app.whenReady().then(() => {
     }).watchDescription,
   }));
 
+  /**
+   * THE HOSTED TERMS THE IDENTITY SERVER CURRENTLY OFFERS, FOR THE SIGN-IN SCREEN TO SHOW.
+   *
+   * ★ READ, NOT AGREED TO. The renderer draws the link and an UNTICKED "I agree" box from this;
+   * only the person ticking it turns the version into an agreement, and it comes back here as the
+   * argument of the one sign-in it was given for. See {@link agreedTermsVersion}.
+   */
+  ipcMain.handle('terms:hosted', () => readHostedTerms(IDENTITY));
+
   ipcMain.handle('session:status', () => session);
   /**
    * Renew on demand, so the session panel's control is the same path the timer takes.
@@ -1195,8 +1229,13 @@ app.whenReady().then(() => {
   /**
    * PATH 1 — a wallet this app holds. First run mints one; later runs reuse the ACTIVE one,
    * because the key IS the identity and a new key is a new pod with none of your words on it.
+   *
+   * `termsVersion` is the Hosted Terms version the person ticked "I agree" for on the sign-in
+   * screen, or nothing. It matters only when this key opens a NEW hosted account (always, for a
+   * key minted here); a returning account signs in without it. See {@link agreedTermsVersion}.
    */
-  ipcMain.handle('auth:wallet', async () => {
+  ipcMain.handle('auth:wallet', async (_e, termsVersion?: unknown) => {
+    const agreed = agreedTermsVersion(termsVersion);
     const slots = accountSlots();
     const chosen = slots.find((a) => a.active) ?? null;
     let pk = chosen ? readableSecret(ACCOUNT_KEY(chosen.address)).value : null;
@@ -1223,7 +1262,7 @@ app.whenReady().then(() => {
       putSecret(ACCOUNT_KEY(new Wallet(pk).address), pk);
       minted = true;
     }
-    const who = await signInWithAccountKey(pk);
+    const who = await signInWithAccountKey(pk, agreed);
     return { ...who, mintedNewKey: minted };
   });
 
@@ -1254,7 +1293,8 @@ app.whenReady().then(() => {
    * measured between 2 and 31 seconds on this fleet. Importing a key for a pod nobody has used is
    * a legitimate, ordinary act and it simply takes that long.
    */
-  ipcMain.handle('account:import', async (_e, privateKey: string) => {
+  ipcMain.handle('account:import', async (_e, privateKey: string, termsVersion?: unknown) => {
+    const agreed = agreedTermsVersion(termsVersion);
     // Checked here even though the renderer checks too: the renderer is the half that renders
     // bytes other people wrote, and a guard that only exists there is a guard.
     const parsed = checkPrivateKey(String(privateKey ?? ''));
@@ -1271,7 +1311,7 @@ app.whenReady().then(() => {
     const before = accountSlots();
     const alreadyHeld = before.some((a) => a.address === address.toLowerCase());
     putSecret(ACCOUNT_KEY(address), parsed.key);
-    const who = await signInWithAccountKey(parsed.key);
+    const who = await signInWithAccountKey(parsed.key, agreed);
     return {
       ...who,
       alreadyHeld,
@@ -1282,13 +1322,14 @@ app.whenReady().then(() => {
   });
 
   /** Sign in as a stored account key that is not the active one. This is what "switch" means. */
-  ipcMain.handle('account:signInAs', async (_e, address: string) => {
+  ipcMain.handle('account:signInAs', async (_e, address: string, termsVersion?: unknown) => {
+    const agreed = agreedTermsVersion(termsVersion);
     const want = String(address ?? '').toLowerCase();
     const slot = accountSlots().find((a) => a.address === want);
     if (!slot) throw new Error('This machine holds no account key for ' + (want || '(no address given)') + ', so there is nothing to sign in as.');
     const pk = getSecret(ACCOUNT_KEY(want));
     if (!pk) throw new Error('The account key for ' + want + ' is listed on this machine and could not be read back, so it was not used.');
-    return signInWithAccountKey(pk);
+    return signInWithAccountKey(pk, agreed);
   });
 
   /**
@@ -1621,11 +1662,20 @@ app.whenReady().then(() => {
    * same person's "same" delegate becomes a different identity with none of its record. Handing
    * the key back at the moment of creation is the only way this app can host an identity without
    * owning it. The renderer shows it with a warning and never stores it.
+   *
+   * ★★ A FRESH DELEGATE KEY OPENS A HOSTED ACCOUNT OF ITS OWN, AND THAT ACCOUNT NEEDS ITS OWN
+   * AGREEMENT. The delegate signs in under its own key, so the relay provisions it its own
+   * `u-eth-…` pod — a new account, which the hosted identity server refuses (428) without the Hosted
+   * Terms. The person minting it is the one who can agree, so the delegate panel carries its OWN
+   * "I agree" box, ticked in the same action as pressing Mint, and `termsVersion` is that tick. The
+   * agreement the person gave for their OWN account at sign-in is never reused for this one: that
+   * was one account, this is another, and carrying it over would be agreeing for them.
    */
-  ipcMain.handle('delegate:mint', async () => {
+  ipcMain.handle('delegate:mint', async (_e, termsVersion?: unknown) => {
+    const agreed = agreedTermsVersion(termsVersion);
     const wallet = Wallet.createRandom();
     putSecret(DELEGATE_KEY(wallet.address), wallet.privateKey);
-    const d = await delegateSession(wallet.address);
+    const d = await delegateSession(wallet.address, agreed);
     return { address: d.address, agentId: d.agentId, pod: d.pod, privateKey: wallet.privateKey };
   });
 
@@ -1637,12 +1687,13 @@ app.whenReady().then(() => {
    * `privatekey.ts` — a pasted ADDRESS, a copy that wrapped, and 64 hex digits that are not a valid
    * scalar are three different mistakes with three different fixes.
    */
-  ipcMain.handle('delegate:import', async (_e, privateKey: string) => {
+  ipcMain.handle('delegate:import', async (_e, privateKey: string, termsVersion?: unknown) => {
+    const agreed = agreedTermsVersion(termsVersion);
     const parsed = checkPrivateKey(String(privateKey ?? ''));
     if (!parsed.ok) throw new Error(parsed.why + ' Nothing was stored.');
     const wallet = new Wallet(parsed.key);
     putSecret(DELEGATE_KEY(wallet.address), wallet.privateKey);
-    const d = await delegateSession(wallet.address);
+    const d = await delegateSession(wallet.address, agreed);
     return { address: d.address, agentId: d.agentId, pod: d.pod };
   });
 

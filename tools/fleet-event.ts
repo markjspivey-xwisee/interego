@@ -18,6 +18,9 @@
  * pod (--pod overrides it); INTEREGO_FLEET_CLIENT_NAME is the OAuth client name the relay turns
  * into the agent's surface slug (default interego-fleet). --relay names another relay MCP URL;
  * --dry-run prints the publish_context arguments and publishes nothing.
+ * INTEREGO_FLEET_ACCEPT_HOSTED_TERMS_VERSION is the operator's explicit agreement to that exact
+ * Hosted Interego Terms version, needed only on the first login of a key that has no hosted
+ * account yet (the identity server answers 428 otherwise); it is never defaulted.
  *
  * ── WHY ────────────────────────────────────────────────────────────────────────────────────
  *
@@ -268,7 +271,11 @@ async function main(argv: readonly string[]): Promise<void> {
   if (!keyJson) { console.error('INTEREGO_FLEET_AGENT_KEY_JSON is not set; nothing was published'); process.exit(2); }
   if (!podName) { console.error('INTEREGO_FLEET_POD_NAME (or --pod) names the pod the agent is registered on; nothing was published'); process.exit(2); }
 
-  const relay = relayForAgent({ keyJson, relayUrl, clientName: process.env['INTEREGO_FLEET_CLIENT_NAME'] ?? 'interego-fleet', podName });
+  const acceptHostedTermsVersion = process.env['INTEREGO_FLEET_ACCEPT_HOSTED_TERMS_VERSION'];
+  const relay = relayForAgent({
+    keyJson, relayUrl, clientName: process.env['INTEREGO_FLEET_CLIENT_NAME'] ?? 'interego-fleet', podName,
+    ...(acceptHostedTermsVersion ? { acceptHostedTermsVersion } : {}),
+  });
   const agentDid = relay.agentDid;
   if (!agentDid) throw new Error('the relay client carries no agent did');
   const events = eventsFromArgs(p, { agentDid, now: new Date(), readFile });

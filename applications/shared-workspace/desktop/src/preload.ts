@@ -131,7 +131,19 @@ export interface AccountKeyInfo {
   readonly unreadable: string | null;
 }
 
+/**
+ * The Hosted Interego Terms the identity server currently offers, as `auth.ts` `readHostedTerms`
+ * reads them. `none`: this deployment asks for no agreement. `unknown`: they could not be read, and
+ * `why` says so — which is not the same as there being none.
+ */
+export type HostedTermsOffer =
+  | { readonly state: 'offered'; readonly version: string; readonly url: string; readonly privacyUrl: string | null; readonly betaNotice: string | null }
+  | { readonly state: 'none' }
+  | { readonly state: 'unknown'; readonly why: string };
+
 export interface WorkspaceBridge {
+  /** What the identity server offers. Read to SHOW it; nothing here agrees to anything. */
+  hostedTerms(): Promise<HostedTermsOffer>;
   describe(): Promise<{
     relay: string;
     identityServer: string;
@@ -143,7 +155,11 @@ export interface WorkspaceBridge {
     /** How this shell's transport watches, in the transport's own words. Never a literal here. */
     watchDescription: string;
   }>;
-  signInWithWallet(): Promise<{ pod: string; displayName: string | null; method: string; address: string; mintedNewKey: boolean }>;
+  /**
+   * `termsVersion` is the Hosted Terms version the person ticked "I agree" next to on the sign-in
+   * screen, and only that. It is needed only when this key opens a NEW hosted account.
+   */
+  signInWithWallet(termsVersion?: string): Promise<{ pod: string; displayName: string | null; method: string; address: string; mintedNewKey: boolean }>;
   signInWithBrowser(): Promise<{ pod: string; displayName: string | null; method: string }>;
 
   /** Which account keys this machine holds. See {@link AccountKeyInfo}. */
@@ -155,14 +171,14 @@ export interface WorkspaceBridge {
    * `kept` names the others, which stay exactly where they were. A private key is the whole of an
    * identity and its loss is permanent, so there is no path here that discards one.
    */
-  accountImport(privateKey: string): Promise<{
+  accountImport(privateKey: string, termsVersion?: string): Promise<{
     pod: string; displayName: string | null; method: string; address: string;
     /** True when this machine already held this exact key — a re-paste, not a new identity. */
     alreadyHeld: boolean;
     kept: readonly string[];
   }>;
   /** Sign in as a stored key that is not the active one. This is what switching identity means. */
-  accountSignInAs(address: string): Promise<{ pod: string; displayName: string | null; method: string; address: string }>;
+  accountSignInAs(address: string, termsVersion?: string): Promise<{ pod: string; displayName: string | null; method: string; address: string }>;
   /**
    * Delete an account key from this machine.
    *
@@ -278,9 +294,9 @@ export interface WorkspaceBridge {
    * identity the installation owns, and a delegate is not owned by the app hosting it. The
    * renderer shows it with a warning, offers no second chance to see it, and stores nothing.
    */
-  delegateMint(): Promise<{ address: string; agentId: string; pod: string; privateKey: string }>;
+  delegateMint(termsVersion?: string): Promise<{ address: string; agentId: string; pod: string; privateKey: string }>;
   /** Adopt a delegate minted elsewhere — the other half of "the identity is not the host". */
-  delegateImport(privateKey: string): Promise<{ address: string; agentId: string; pod: string }>;
+  delegateImport(privateKey: string, termsVersion?: string): Promise<{ address: string; agentId: string; pod: string }>;
   /** Forget a key. NOT a revocation: the delegation is on the pod and is untouched. */
   delegateForget(address: string): Promise<{ forgotten: string }>;
   /**
@@ -358,12 +374,13 @@ export interface StandingGrant {
 }
 
 const bridge: WorkspaceBridge = {
+  hostedTerms: () => ipcRenderer.invoke('terms:hosted'),
   describe: () => ipcRenderer.invoke('identity:describe'),
-  signInWithWallet: () => ipcRenderer.invoke('auth:wallet'),
+  signInWithWallet: (termsVersion) => ipcRenderer.invoke('auth:wallet', termsVersion),
   signInWithBrowser: () => ipcRenderer.invoke('auth:browser'),
   accountList: () => ipcRenderer.invoke('account:list'),
-  accountImport: (privateKey) => ipcRenderer.invoke('account:import', privateKey),
-  accountSignInAs: (address) => ipcRenderer.invoke('account:signInAs', address),
+  accountImport: (privateKey, termsVersion) => ipcRenderer.invoke('account:import', privateKey, termsVersion),
+  accountSignInAs: (address, termsVersion) => ipcRenderer.invoke('account:signInAs', address, termsVersion),
   accountForget: (address) => ipcRenderer.invoke('account:forget', address),
   signOut: () => ipcRenderer.invoke('auth:signout'),
   call: (name, input) => ipcRenderer.invoke('substrate:call', name, input),
@@ -379,8 +396,8 @@ const bridge: WorkspaceBridge = {
   agentThink: (prompt, systemPrompt, asDelegate, context) => ipcRenderer.invoke('agent:think', prompt, systemPrompt, asDelegate, context),
   agentCancel: () => ipcRenderer.invoke('agent:cancel'),
   delegateList: () => ipcRenderer.invoke('delegate:list'),
-  delegateMint: () => ipcRenderer.invoke('delegate:mint'),
-  delegateImport: (privateKey) => ipcRenderer.invoke('delegate:import', privateKey),
+  delegateMint: (termsVersion) => ipcRenderer.invoke('delegate:mint', termsVersion),
+  delegateImport: (privateKey, termsVersion) => ipcRenderer.invoke('delegate:import', privateKey, termsVersion),
   delegateForget: (address) => ipcRenderer.invoke('delegate:forget', address),
   delegateCall: (address, name, input) => ipcRenderer.invoke('delegate:call', address, name, input),
   permissionList: () => ipcRenderer.invoke('permission:list'),

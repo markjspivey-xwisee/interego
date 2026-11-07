@@ -712,6 +712,36 @@ export const SHARED_ONLY_THROUGH_IMPORTED_CODE: readonly {
       + 'from it through the OAuth flow, so nothing dials the relay unless a deployment sets it.',
   },
   {
+    name: 'INTEREGO_AGENT_ACCEPT_HOSTED_TERMS_VERSION',
+    readIn: 'applications/jev-harness/src/publish.ts',
+    why: 'the operator\'s explicit Hosted Terms agreement relayFromEnv() hands the agent-key minter, '
+      + 'sent only with the did-sig challenge of a first login. It is an agreement, not an address '
+      + 'or a credential, and no collected module reaches that read: as for INTEREGO_AGENT_KEY_JSON, '
+      + 'only main() in the bridge calls relayFromEnv().',
+  },
+  {
+    name: 'INTEREGO_RELAY',
+    readIn: 'applications/shared-workspace/desktop/src/main.ts',
+    why: 'the relay the archived workspace desktop app signs in to, read at module scope in main.ts. '
+      + 'Two collected suites boot main.ts (tests/workspace-desktop-delegate-key.test.ts and '
+      + 'applications/shared-workspace/tests/desktop-main-terms.test.ts), and both replace '
+      + 'globalThis.fetch with a scripted relay before importing it, passing only loopback requests '
+      + 'through, so the live relay this names is never dialled from the test tree.',
+  },
+  {
+    name: 'INTEREGO_IDENTITY',
+    readIn: 'applications/shared-workspace/desktop/src/main.ts',
+    why: 'the identity server read beside INTEREGO_RELAY in the desktop main.ts, and shared by the '
+      + 'same two suites for the same reason: each scripts the network before booting main.ts.',
+  },
+  {
+    name: 'INTEREGO_DESKTOP_SMOKE',
+    readIn: 'applications/shared-workspace/desktop/src/main.ts',
+    why: 'the desktop app\'s launch-smoke switch (disables hardware acceleration and runs the boot '
+      + 'marker check), read in main.ts. It selects no destination and no credential; shared only '
+      + 'because two suites boot main.ts, and neither sets it.',
+  },
+  {
     name: 'INTEREGO_POD_NAME',
     readIn: 'applications/jev-harness/src/publish.ts',
     why: 'the pod a delegate bridge publishes to when it is not its own; read beside the key and '

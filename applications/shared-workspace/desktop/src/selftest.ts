@@ -13,6 +13,11 @@
  *   INTEREGO_SELFTEST_KEY=0x…            a secp256k1 key to put in the OS store and sign with
  *   INTEREGO_SELFTEST_WORKSPACE=https://… the workspace to open
  *   INTEREGO_SELFTEST_POST=1              also append an entry (a real, public write)
+ *   INTEREGO_ACCEPT_HOSTED_TERMS_VERSION=… the Hosted Terms version the OPERATOR agreed to, for the
+ *                                         account a NEW key opens (the live drivers' variable).
+ *                                         With no key stored this run mints one, and hosted identity
+ *                                         refuses a new account without the agreement (HTTP 428).
+ *                                         Never defaulted; a key with an account ignores it.
  *
  * Run:  npx electron dist/selftest.js
  */
@@ -130,7 +135,9 @@ async function run(): Promise<number> {
   log('loopback receiver      :', recv.redirectUri);
   let bearer;
   try {
-    bearer = await signInWithWallet(RELAY, IDENTITY, wallet.address, (m) => wallet.signMessage(m), recv.redirectUri);
+    const accept = (process.env['INTEREGO_ACCEPT_HOSTED_TERMS_VERSION'] ?? '').trim();
+    bearer = await signInWithWallet(RELAY, IDENTITY, wallet.address, (m) => wallet.signMessage(m), recv.redirectUri,
+      undefined, accept ? { acceptHostedTermsVersion: accept } : {});
   } finally { recv.close(); }
   log('bearer                 :', bearer.kind, '· method', bearer.method, '· length', bearer.accessToken.length,
     '· expiresAt', bearer.expiresAt === null ? 'not reported by the grant' : new Date(bearer.expiresAt).toISOString());

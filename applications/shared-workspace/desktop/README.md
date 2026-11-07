@@ -67,7 +67,8 @@ ceiling, and `readEntryAuthorship`, a Turtle adapter over the substrate's `judge
    from about 2 s to about 31 s** while the relay provisions a pod — measured at both ends, so
    half a minute is normal and is not a hang; the boot checklist counts up and names the step
    rather than spinning. Wallet sign-in stays on the same card for people who already have a
-   `u-eth-…` pod.
+   `u-eth-…` pod. A new account in either case needs your agreement to the Hosted Interego Terms
+   (see *The Hosted Interego Terms, for a NEW account* below).
 2. **Read *Getting set up*.** Four steps with their real state — account, model, workspace,
    Discord — each marked as established for, established against, or **not established**. Step 2
    is a finding against when the CLI was asked and said no; step 4 is an *unknown*, because
@@ -476,6 +477,34 @@ and that is permanent:
 | Wallet key on this machine | OS secret store (`safeStorage`) | `u-eth-...` | no |
 | **A wallet key you already have** | OS secret store, after you paste it | whatever pod that key owns | no |
 | Sign in in my browser (passkey / Windows Hello) | the platform authenticator | `u-pk-...` | yes |
+
+### The Hosted Interego Terms, for a NEW account
+
+The hosted identity server opens a **new** account only with your agreement to the current Hosted
+Interego Terms of Service; any other first sign-in is refused with HTTP 428 `hosted_terms_required`.
+A returning account is never asked again.
+
+* **Browser (passkey) sign-in** shows the terms and an *I agree* box on the relay's own page.
+* **Wallet sign-in** shows them on the sign-in card: the app reads the current version from
+  `GET <identity>/.well-known/hosted-interego-terms` and draws the link next to an *I agree* box
+  that **starts unticked every time it is drawn**. The version crosses to the main process only
+  from a box you ticked (`auth:wallet`, `account:import`, `account:signInAs` take it as an
+  argument); the challenge is then requested with that `termsVersion`, and the wallet signs exactly
+  the `termsStatement` the identity server returns for it — never a statement it did not ask for,
+  and never one with a line break in it. With the box unticked the sign-in is exactly what it
+  always was, so a key that already has an account signs in as before.
+* Pressing *Use a wallet key on this machine* with **no** key held mints one, and a new key is a
+  new account, so that press is refused on screen until the box is ticked — before anything is
+  minted.
+* A refusal is shown in the server's own words with its status
+  (`the relay did not accept this wallet proof (HTTP 428): …`). After any failed sign-in the app
+  reads the terms again; if the version moved, the box is redrawn for the new version, unticked.
+* **A minted delegate needs its own agreement.** A delegate key signs in as itself, so minting one
+  opens a new hosted account for it. The delegate panel has its **own** *I agree* box, ticked in the
+  same action as pressing *Mint*; your agreement for your own account does not carry over, and
+  minting is refused on screen until that box is ticked. Adopting a delegate key that already has
+  an account does not need it. The agreement is used for that delegate's first sign-in only — its
+  later re-authorizations sign in to an account that exists.
 
 ### Signing in as an identity you already have, and why the app was broken without it
 

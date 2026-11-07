@@ -4,7 +4,7 @@ This Windows preview adds a separate local sign-in credential. The Windows app h
 
 ## Set up
 
-1. Install Interego, set up your local space and open **Identity**. Choose **Create local identity**. To keep an existing account and Hallowmarch progress, link this key to that account before using it to sign in. Signing in with an unlinked key can create a separate hosted account.
+1. Install Interego, set up your local space and open **Identity**. Choose **Create local identity**. To keep an existing account and Hallowmarch progress, link this key to that account before using it to sign in. An unlinked key has no hosted account, and installed-app sign-in cannot create one: Hosted Interego opens a new account only with your agreement to its Terms of Service, which this sign-in cannot give, so the request is refused (HTTP 428) and Interego says so. Link the key first, or create the account on the hosted sign-in page, where the terms are shown.
 2. Back up the identity using its separate encrypted identity backup. Keep the file and its passphrase safely. The notes backup does not include this credential. Restore an identity backup before creating a replacement key on another computer.
 3. Install the matching Interego Wallet preview in Chrome or Edge. In its local sign-in settings, copy its extension ID. In the Windows app's Identity page, explicitly allow that exact extension ID. This registers a per-user browser companion without an administrator prompt.
 4. In the wallet, explicitly enable local sign-in for the supported hosted relay. For an existing account, separately enable account linking for the identity provider and follow the linking steps below first. The updated hosted services must be deployed before the new options are available.

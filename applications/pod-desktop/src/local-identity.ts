@@ -4,7 +4,7 @@ import { promisify } from 'node:util';
 import type { LocalIdentityApproval, LocalIdentityContext, LocalIdentityLinkContext, LocalIdentityLinkedReceipt, LocalIdentityResult, LocalIdentityServiceOptions, LocalIdentityStart, LocalIdentityStatus, LocalIdentityTicket } from './local-identity-types.js';
 import { IDENTITY_ERROR, IDENTITY_HANDOFF, IDENTITY_NONCE, identityHash, identityObject, identityOrigin, identitySame, identityText,
   localIdentityContext, localIdentityPublic, localIdentityRedirect, newLocalIdentity, savedLocalIdentity, signLocalIdentity, type LocalIdentitySaved } from './local-identity-protocol.js';
-import { identityAbortable, LINK_IDENTITY_REQUEST_TIMEOUT_MS, localIdentityJson, localIdentityNetwork } from './local-identity-network.js';
+import { HostedTermsRefusal, identityAbortable, LINK_IDENTITY_REQUEST_TIMEOUT_MS, localIdentityJson, localIdentityNetwork } from './local-identity-network.js';
 import { IDENTITY_LINK_HANDOFF, localIdentityLinkContext, localIdentityLinkedReceipt } from './local-identity-link.js';
 export type { LocalIdentityApproval, LocalIdentityResult, LocalIdentityServiceOptions, LocalIdentityStart, LocalIdentityStatus, LocalIdentityTicket } from './local-identity-types.js';
 export { ProtectedLocalIdentityStore } from './local-identity-store.js';
@@ -24,10 +24,22 @@ interface Pending {
   linkContext?: LocalIdentityLinkContext;
   linked?: LocalIdentityLinkedReceipt;
   redirect?: string;
+  /** Why it failed, when that is something the person can act on. Otherwise the generic copy. */
+  failure?: string;
 }
 const MAX_REQUESTS = 8;
 const CANCELLED = 'This sign-in was stopped. Start a new sign-in when you are ready.';
 const FAILED = 'Sign-in could not be confirmed. Start a new sign-in rather than retrying this request.';
+/**
+ * ★ A KEY WITH NO HOSTED ACCOUNT, AND WHY THIS APP DOES NOT OPEN ONE. Hosted identity opens a new
+ * account only with the Hosted Interego Terms agreement (HTTP 428 otherwise). Installed-app
+ * sign-in signs the relay's fixed challenge and nothing else, so it cannot carry that agreement and
+ * never agrees on anybody's behalf. Retrying cannot help; linking the key, or creating the account
+ * where the terms are shown, can.
+ */
+const NEEDS_ACCOUNT = 'Hosted Interego has no account for this key, and creating one needs your agreement to the Hosted '
+  + 'Interego Terms, which signing in from this app cannot give. Link this key to your existing account first, or create '
+  + 'the account on the hosted sign-in page, where the terms are shown. Nothing was created.';
 const LINK_FAILED = 'The account link could not be confirmed. Check your registered credentials in the hosted dashboard before starting again. Your progress has not been moved.';
 const NOT_CONFIGURED = 'Create a local sign-in identity in Interego before connecting a website.';
 const BACKUP_ERROR = 'This identity backup could not be unlocked. Check the passphrase and file.';
@@ -194,9 +206,10 @@ export class LocalIdentityService {
       const result = await this.post(context.issuer, '/oauth/verify', { pending_id: context.pendingId, method: 'did', did: localIdentityPublic(identity).did,
         nonce: context.nonce, signature, native_handoff: context.completionCode }, entry.cancel.signal);
       await this.bound(entry); entry.redirect = localIdentityRedirect(result, context, this.options.allowLoopbackForTests); entry.context = undefined; entry.state = 'complete';
-    } catch {
-      if (this.pending.get(id) === entry && entry.state === 'completing') { entry.state = 'failed'; entry.context = undefined; entry.linkContext = undefined; entry.linked = undefined; entry.redirect = undefined; }
-      throw new Error(entry.purpose === 'link' ? LINK_FAILED : FAILED);
+    } catch (error) {
+      const failure = entry.purpose === 'signin' && error instanceof HostedTermsRefusal ? NEEDS_ACCOUNT : undefined;
+      if (this.pending.get(id) === entry && entry.state === 'completing') { entry.state = 'failed'; entry.context = undefined; entry.linkContext = undefined; entry.linked = undefined; entry.redirect = undefined; entry.failure = failure; }
+      throw new Error(failure ?? (entry.purpose === 'link' ? LINK_FAILED : FAILED));
     }
   }
   deny(id: string): void {
@@ -217,7 +230,7 @@ export class LocalIdentityService {
     this.pending.delete(id); // Consume terminal OAuth authority before returning it to its native channel.
     if (entry.state === 'complete' && entry.linked) return { state: 'linked', identityOrigin: entry.linked.identityOrigin, owner: { ...entry.linked.owner }, credentialDid: entry.linked.credentialDid };
     return entry.state === 'complete' && entry.redirect ? { state: 'complete', redirect: entry.redirect }
-      : { state: entry.state === 'denied' ? 'denied' : 'failed', message: entry.state === 'denied' ? 'You declined this request.' : entry.purpose === 'link' ? LINK_FAILED : FAILED };
+      : { state: entry.state === 'denied' ? 'denied' : 'failed', message: entry.state === 'denied' ? 'You declined this request.' : entry.failure ?? (entry.purpose === 'link' ? LINK_FAILED : FAILED) };
   }
   cancel(id: string, receipt: string, channel: string): void {
     const entry = this.receipt(id, receipt, channel); if (!entry) return;
