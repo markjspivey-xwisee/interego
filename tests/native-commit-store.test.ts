@@ -1,10 +1,11 @@
 import { createHash } from 'node:crypto';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeAll, describe, expect, it, vi } from 'vitest';
 import { deriveEncryptionKeyPair, mintNodeId, type IRI } from '@interego/core';
 import {
   NativeCommitStore, NativeCommitConflictError, NATIVE_COMMIT_MEDIA_TYPE,
   createNativeByteArtifact, readNativeByteArtifact, validateNativeArtifact,
-  type NativeArtifactInput, type NativeCommitScope, type NativeSnapshotReference,
+  type NativeArtifactInput, type NativeArtifactReference, type NativeCommitScope, type NativeSnapshotReference,
+  type NativeHeadReadDiagnostic,
 } from '@interego/pgsl';
 
 const owner = deriveEncryptionKeyPair('a'.repeat(64));
@@ -103,6 +104,258 @@ async function textAt(transport: NativeTransport, snapshot: Awaited<ReturnType<N
   const ref = snapshot.records.get(key); expect(ref).toBeDefined();
   return Buffer.from(readNativeByteArtifact(await transport.client().readArtifact(ref!)).bytes).toString();
 }
+
+/** Artificial network turns: nothing completes until the test releases one wave.
+ * Head/backing-commit requests remain fresh and outside the index-node limiter. */
+class IndexNetwork {
+  active = 0;
+  peak = 0;
+  starts = 0;
+  waves = 0;
+  held: Array<() => void> = [];
+  readonly fetch: typeof globalThis.fetch;
+  constructor(readonly transport: NativeTransport,
+    transform?: (response: Response, ordinal: number) => Promise<Response> | Response) {
+    this.fetch = async (input, init) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+      if ((init?.method ?? 'GET') !== 'GET' || !/\/artifact-[a-f0-9]{64}\.json$/.test(url)) return transport.fetch(input, init);
+      const ordinal = ++this.starts; this.active++; this.peak = Math.max(this.peak, this.active);
+      try {
+        await new Promise<void>(resolve => { this.held.push(resolve); });
+        const response = await transport.fetch(input, init);
+        return transform ? await transform(response, ordinal) : response;
+      } finally { this.active--; }
+    };
+  }
+  async drive<T>(promise: Promise<T>): Promise<T> {
+    // Attach the rejection handler immediately, before releasing any sibling.
+    let done = false;
+    const handled = promise.then(value => { done = true; return { ok: true as const, value }; },
+      error => { done = true; return { ok: false as const, error }; });
+    for (let turn = 0; !done && turn < 1000; turn++) {
+      await new Promise<void>(resolve => { setImmediate(resolve); });
+      const wave = this.held.splice(0);
+      if (wave.length) { this.waves++; for (const release of wave) release(); }
+    }
+    expect(done, 'the bounded traversal must settle').toBe(true);
+    const result = await handled;
+    if (!result.ok) throw result.error;
+    return result.value;
+  }
+}
+
+describe('opt-in bounded full-index prefetch', () => {
+  let seeded: NativeTransport;
+  let expected: Awaited<ReturnType<NativeCommitStore['readHead']>>;
+  beforeAll(async () => {
+    seeded = new NativeTransport();
+    const keys: string[] = [], shared = artifact('one shared encrypted payload');
+    // Force both root fanout and another HAMT level, rather than relying on luck.
+    let deep = 0, broad = 0;
+    for (let i = 0; deep < 64 || broad < 64; i++) {
+      const key = 'cold-index-' + i, first = sha('record:' + key).slice(7, 8);
+      if (first === '0' && deep < 64) { keys.push(key); deep++; }
+      else if (first !== '0' && broad < 64) { keys.push(key); broad++; }
+    }
+    const client = seeded.client();
+    expected = (await client.commit({ operationId: 'cold-multilevel-index', expected: await client.readHead(),
+      changes: keys.map(key => ({ key, artifact: shared })) })).snapshot;
+    expect(expected.records.size).toBe(128);
+  });
+  function copy(): NativeTransport {
+    const transport = new NativeTransport();
+    for (const [url, row] of seeded.rows) transport.rows.set(url, { bytes: row.bytes.slice(), revision: row.revision });
+    return transport;
+  }
+
+  it('uses fewer cold network turns with identical DFS order, snapshot and reference digests', async () => {
+    const serial = new IndexNetwork(copy()), parallel = new IndexNetwork(copy());
+    const serialEvents: NativeHeadReadDiagnostic[] = [], parallelEvents: NativeHeadReadDiagnostic[] = [];
+    const one = await serial.drive(serial.transport.client({ fetch: serial.fetch, onHeadRead: event => serialEvents.push(event) }).readHead());
+    const eight = await parallel.drive(parallel.transport.client({ fetch: parallel.fetch, indexReadConcurrency: 8,
+      onHeadRead: event => parallelEvents.push(event) }).readHead());
+    expect(one).toEqual(expected); expect(eight).toEqual(expected);
+    expect([...eight.records]).toEqual([...one.records]);
+    expect(serial.starts).toBe(parallel.starts); expect(serial.starts).toBeGreaterThan(20);
+    expect(serial.peak).toBe(1); expect(parallel.peak).toBe(8);
+    expect(parallel.waves).toBeLessThan(serial.waves / 2);
+    expect(parallelEvents.at(-1)).toMatchObject({ operation: 0, event: 1, phase: 1, outcome: 1,
+      indexNodes: parallel.starts, indexReadConcurrency: 8, peakIndexReads: 8 });
+    const diagnostic = parallelEvents.at(-1)!;
+    expect(diagnostic.indexBranches).toBeGreaterThan(1);
+    expect(diagnostic.indexBranches + diagnostic.indexLeaves).toBe(diagnostic.indexNodes);
+    expect(serialEvents.at(-1)?.indexNodes).toBe(diagnostic.indexNodes);
+    for (const event of [...serialEvents, ...parallelEvents]) {
+      expect(Object.isFrozen(event)).toBe(true);
+      for (const value of Object.values(event)) expect(typeof value === 'number' && Number.isFinite(value) && value >= 0).toBe(true);
+    }
+    for (const transport of [serial.transport, parallel.transport]) {
+      expect(transport.methods.filter(method => method === 'GET ' + scope.headUrl)).toHaveLength(1);
+      expect(transport.methods.filter(method => method === 'GET ' + expected.reference!.commitUrl)).toHaveLength(1);
+      expect(transport.writes).toEqual([]);
+    }
+  });
+
+  it('shares eight permits across concurrent full heads without changing either result', async () => {
+    const network = new IndexNetwork(copy()), client = network.transport.client({ fetch: network.fetch, indexReadConcurrency: 8 });
+    const snapshots = await network.drive(Promise.all([client.readHead(), client.readHead()]));
+    expect(snapshots).toEqual([expected, expected]);
+    expect([...snapshots[0]!.records]).toEqual([...snapshots[1]!.records]);
+    expect(network.peak).toBe(8); expect(network.active).toBe(0); expect(network.held).toEqual([]);
+    expect(network.transport.methods.filter(method => method === 'GET ' + scope.headUrl)).toHaveLength(2);
+    expect(network.transport.methods.filter(method => method === 'GET ' + expected.reference!.commitUrl)).toHaveLength(2);
+  });
+
+  it.each(['metadata', 'ciphertext'])('rejects speculative %s corruption, stops queued work and settles active siblings', async corruption => {
+    const transport = copy();
+    const network = new IndexNetwork(transport, (response, ordinal) => {
+      if (ordinal === 3) {
+        const headers = new Headers(response.headers);
+        if (corruption === 'ciphertext') headers.set('Interego-Body-Digest', sha('{}'));
+        return new Response('{}', { headers });
+      }
+      return response;
+    });
+    const events: NativeHeadReadDiagnostic[] = [];
+    const client = transport.client({ fetch: network.fetch, indexReadConcurrency: 8, onHeadRead: event => events.push(event) });
+    await expect(network.drive(client.readHead())).rejects.toThrow(corruption === 'metadata'
+      ? 'Native read metadata is not bound to its representation.' : 'Committed native artifact is unavailable or changed.');
+    const stoppedAt = network.starts;
+    await new Promise<void>(resolve => { setImmediate(resolve); });
+    expect(network.starts).toBe(stoppedAt);
+    expect(stoppedAt).toBeLessThan(17); // queued root siblings and descendants never all start
+    expect(network.active).toBe(0); expect(network.held).toEqual([]);
+    expect(events.at(-1)).toMatchObject({ event: 1, outcome: 2 });
+    expect(transport.writes).toEqual([]);
+  });
+
+  it('handles an active sibling rejection after the first failure has stopped its queue', async () => {
+    let releaseLate!: () => void, lateRejected = false;
+    const stopped = new Promise<void>(resolve => { releaseLate = resolve; });
+    const network = new IndexNetwork(copy(), async (response, ordinal) => {
+      if (ordinal === 3) throw new Error('first transport failure');
+      if (ordinal === 5) { await stopped; lateRejected = true; throw new Error('late active sibling failure'); }
+      return response;
+    });
+    const client = network.transport.client({ fetch: network.fetch, indexReadConcurrency: 8 });
+    const internal = client as unknown as { stopIndexReads(context: unknown, error?: unknown): void };
+    const stop = internal.stopIndexReads.bind(client);
+    vi.spyOn(internal, 'stopIndexReads').mockImplementation((context, error) => {
+      stop(context, error); releaseLate(); // force the later rejection AFTER cancellation
+    });
+    await expect(network.drive(client.readHead())).rejects.toThrow('Native resource read is unavailable.');
+    expect(lateRejected).toBe(true); expect(network.active).toBe(0); expect(network.held).toEqual([]);
+    const stoppedAt = network.starts;
+    await new Promise<void>(resolve => { setImmediate(resolve); });
+    expect(network.starts).toBe(stoppedAt); expect(stoppedAt).toBeLessThan(17);
+  });
+
+  it('does not cancel an unrelated concurrent head or leak permits after one head fails', async () => {
+    const network = new IndexNetwork(copy(), (response, ordinal) => ordinal === 1
+      ? new Response('{}', { headers: response.headers }) : response);
+    const client = network.transport.client({ fetch: network.fetch, indexReadConcurrency: 8 });
+    const results = await network.drive(Promise.allSettled([client.readHead(), client.readHead()]));
+    expect(results[0]?.status).toBe('rejected');
+    expect(results[1]).toEqual({ status: 'fulfilled', value: expected });
+    expect(network.peak).toBeLessThanOrEqual(8); expect(network.active).toBe(0);
+    expect(await network.drive(client.readHead())).toEqual(expected);
+  });
+
+  it.each(['duplicate', 'cycle', 'prefix'])('retains the %s guard during prefetched DFS consumption', async mode => {
+    const transport = copy(), client = transport.client({ indexReadConcurrency: 8 });
+    // Inject a decoded topology fault after each real cryptographic node read.
+    // This targets the logical traversal guard, not a forged ciphertext fixture.
+    type Node = { kind: 'branch'; children: Map<string, NativeArtifactReference> }
+      | { kind: 'leaf'; entries: Map<string, NativeArtifactReference> };
+    const internal = client as unknown as { indexNode(reference: NativeArtifactReference, prefix: string): Promise<Node> };
+    const original = internal.indexNode.bind(client);
+    vi.spyOn(internal, 'indexNode').mockImplementation(async (reference, prefix) => {
+      const node = await original(reference, prefix);
+      if (node.kind !== 'branch' || prefix !== '') return node;
+      const children = new Map(node.children), entries = [...children];
+      if (mode === 'cycle') children.set(entries[0]![0], reference);
+      if (mode === 'duplicate') children.set(entries[1]![0], entries[0]![1]);
+      if (mode === 'prefix') { children.set(entries[0]![0], entries[1]![1]); children.set(entries[1]![0], entries[0]![1]); }
+      return { kind: 'branch', children };
+    });
+    await expect(client.readHead()).rejects.toThrow(mode === 'prefix'
+      ? 'Native index leaf binding changed.' : 'Native index contains a cycle or duplicate branch.');
+  });
+
+  it('still refuses a corrupted immutable backing commit before any index fetch', async () => {
+    const transport = copy(), row = transport.rows.get(expected.reference!.commitUrl)!;
+    transport.rows.set(expected.reference!.commitUrl, { ...row, bytes: Buffer.from('{}') });
+    const network = new IndexNetwork(transport);
+    await expect(network.drive(transport.client({ fetch: network.fetch, indexReadConcurrency: 8 }).readHead())).rejects.toThrow();
+    expect(network.starts).toBe(0);
+  });
+
+  it('keeps warm ciphertext reuse independent of plaintext validation and fresh head authority', async () => {
+    const transport = copy(), client = transport.client({ indexReadConcurrency: 8, cacheImmutableReads: true });
+    const internal = client as unknown as { decrypt(bytes: Uint8Array, expectedTop?: IRI): unknown };
+    const decrypt = vi.spyOn(internal, 'decrypt');
+    const first = await client.readHead(), coldDecryptions = decrypt.mock.calls.length;
+    transport.methods.length = 0;
+    (first.records as Map<string, NativeArtifactReference>).clear();
+    const warm = await client.readHead();
+    expect(warm).toEqual(expected); expect([...warm.records]).toEqual([...expected.records]);
+    expect(decrypt.mock.calls.length - coldDecryptions).toBe(coldDecryptions);
+    expect(transport.methods.filter(method => method.includes('/artifact-'))).toEqual([]);
+    expect(transport.methods).toContain('GET ' + scope.headUrl);
+    expect(transport.methods).toContain('GET ' + expected.reference!.commitUrl);
+    const row = transport.rows.get(expected.reference!.commitUrl)!;
+    transport.rows.set(expected.reference!.commitUrl, { ...row, bytes: Buffer.from('{}') });
+    await expect(client.readHead()).rejects.toThrow();
+  });
+
+  it('uses the same bounded DFS for an authenticated historical snapshot', async () => {
+    const transport = copy(), writer = transport.client();
+    await writer.commit({ operationId: 'later-index-version', expected: await writer.readHead(),
+      changes: [{ key: 'later-record', artifact: artifact('later') }], resultRecordKeys: [] });
+    const events: NativeHeadReadDiagnostic[] = [], network = new IndexNetwork(transport);
+    const client = transport.client({ indexReadConcurrency: 8, fetch: network.fetch, onHeadRead: event => events.push(event) });
+    const historical = await network.drive(client.readSnapshotAt(expected.reference!));
+    expect(historical).toEqual(expected); expect([...historical.records]).toEqual([...expected.records]);
+    expect(events.at(-1)).toMatchObject({ operation: 1, event: 1, outcome: 1 });
+    // The initial operation-receipt lookup remains serial; full materialization
+    // shares eight permits and still validates every historical index node.
+    expect(network.peak).toBe(8);
+    expect(transport.methods).toContain('GET ' + expected.reference!.commitUrl);
+  });
+
+  it('keeps diagnostic observer failures outside the read authority, including rejected promises', async () => {
+    for (const onHeadRead of [() => { throw new Error('observer sync'); }, () => Promise.reject(new Error('observer async'))]) {
+      const transport = copy(), client = transport.client({ indexReadConcurrency: 8, onHeadRead });
+      expect(await client.readHead()).toEqual(expected);
+      await new Promise<void>(resolve => { setImmediate(resolve); });
+    }
+  });
+
+  it('reports bounded numeric progress and completion without retaining an interval after failure', async () => {
+    const events: NativeHeadReadDiagnostic[] = [], transport = copy();
+    let release!: () => void;
+    const held = new Promise<void>(resolve => { release = resolve; });
+    vi.useFakeTimers();
+    try {
+      const read = transport.client({ indexReadConcurrency: 8, onHeadRead: event => events.push(event),
+        fetch: async () => { await held; throw new Error('unavailable head'); } }).readHead();
+      const failure = expect(read).rejects.toThrow('Native resource read is unavailable.');
+      await vi.advanceTimersByTimeAsync(30 * 15000);
+      expect(events).toHaveLength(24);
+      expect(events.every(event => event.event === 0 && event.phase === 0 && event.outcome === 0 && event.indexNodes === 0)).toBe(true);
+      release(); await failure;
+      expect(events.at(-1)).toMatchObject({ event: 1, outcome: 2, phase: 0 });
+      expect(vi.getTimerCount()).toBe(0);
+      for (const event of events) expect(Object.values(event).every(value => typeof value === 'number' && Number.isFinite(value))).toBe(true);
+    } finally { release(); vi.useRealTimers(); }
+  });
+
+  it.each([0, -1, 1.5, 9, NaN, Infinity])('rejects invalid index-read concurrency %s before I/O', concurrency => {
+    const transport = copy();
+    expect(() => transport.client({ indexReadConcurrency: concurrency })).toThrow();
+    expect(transport.methods).toEqual([]);
+  });
+});
 
 describe('strict native encrypted PGSL commits', () => {
   it.each([false, true])('stages identical aliases once and verifies them after restart (lost acknowledgement: %s)', async loseAck => {

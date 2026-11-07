@@ -1,5 +1,6 @@
 // Command palette: terms first, then places, filters and actions. Opens with / or ⌘K.
-import { C, KINDS, COLLECTIONS, byId, kindById, fieldById } from "./data.js";
+import { C, conceptsForLens, KINDS, COLLECTIONS, byId, kindById, fieldById } from "./data.js";
+import { useUI } from "./ui.jsx";
 import { search, snippet } from "./search.js";
 import { Icon } from "./icons.jsx";
 import { HL } from "./text.jsx";
@@ -16,6 +17,8 @@ const VIEWS = [
 ];
 
 export function Palette({ onClose, ask, current, setTheme }) {
+  const { lens } = useUI();
+  const visible = new Set(conceptsForLens(lens).map((c) => c.id));
   const [q, setQ] = useState("");
   const [i, setI] = useState(0);
   const inp = useRef(null);
@@ -25,12 +28,12 @@ export function Palette({ onClose, ask, current, setTheme }) {
     const out = [];
     const t = q.trim().toLowerCase();
     if (!t) {
-      const rec = (store.get("recents", []) || []).filter((id) => byId.has(id)).slice(0, 6);
+      const rec = (store.get("recents", []) || []).filter((id) => visible.has(id)).slice(0, 6);
       for (const id of rec) out.push({ g: "Recent", t: byId.get(id).l, d: byId.get(id).d, dot: byId.get(id).k, run: () => go("c-" + id) });
       for (const v of VIEWS) out.push({ g: "Go to", t: v.l, icon: v.icon, run: () => go(v.h) });
       return out;
     }
-    for (const r of search(q, 8)) out.push({ g: "Terms", t: r.c.l, d: snippet(r.why === "note" ? r.c.x : r.c.d, q, 110), dot: r.c.k, k: kindById.get(r.c.k).label, run: () => go("c-" + r.c.id) });
+    for (const r of search(q, 8, lens)) out.push({ g: "Terms", t: r.c.l, d: snippet(r.why === "note" ? r.c.x : r.c.d, q, 110), dot: r.c.k, k: r.c.origin?.kind === "authored" ? "I2IDL-X proposal" : kindById.get(r.c.k).label, run: () => go("c-" + r.c.id) });
     if (ask) out.push({ g: "Ask", t: `Ask the glossary: “${q.trim()}”`, icon: "sparkle", run: () => ask.open(q.trim(), current ? [current] : []) });
     for (const f of COLLECTIONS.field) if (f.label.toLowerCase().includes(t)) out.push({ g: "Filter", t: "Field: " + f.label, icon: "filter", k: String(f.n), run: () => go("browse-f." + f.id) });
     for (const f of COLLECTIONS.type) if (f.label.toLowerCase().includes(t)) out.push({ g: "Filter", t: "Type: " + f.label, icon: "filter", k: String(f.n), run: () => go("browse-t." + f.id) });
@@ -43,7 +46,7 @@ export function Palette({ onClose, ask, current, setTheme }) {
       out.push({ g: "Settings", t: "Theme: match system", icon: "monitor", run: () => setTheme("system") });
     }
     return out;
-  }, [q]);
+  }, [q, lens]);
   useEffect(() => setI(0), [q]);
   useEffect(() => {
     const el = list.current && list.current.querySelector('[aria-selected="true"]');
@@ -56,7 +59,7 @@ export function Palette({ onClose, ask, current, setTheme }) {
       <div className="modal palette" role="dialog" aria-modal="true" aria-label="Search">
         <div className="pin">
           <Icon name="search" size={18} />
-          <input ref={inp} value={q} onChange={(e) => setQ(e.target.value)} placeholder={`Search ${C.length} terms, fields, places…`} aria-label="Search"
+          <input ref={inp} value={q} onChange={(e) => setQ(e.target.value)} placeholder={`Search ${visible.size} terms, fields, places…`} aria-label="Search"
             role="combobox" aria-expanded="true" aria-controls="pal-list"
             onKeyDown={(e) => {
               if (e.key === "ArrowDown") { e.preventDefault(); setI((x) => Math.min(items.length - 1, x + 1)); }

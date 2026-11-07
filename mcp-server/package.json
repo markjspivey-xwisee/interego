@@ -1,7 +1,7 @@
 {
   "name": "@interego/mcp",
   "version": "0.5.0",
-  "description": "MCP server for Interego — gives AI coding agents the ability to publish, discover, and compose context-annotated knowledge graphs through Solid pods",
+  "description": "MCP server for Interego \u2014 gives AI coding agents the ability to publish, discover, and compose context-annotated knowledge graphs through Solid pods",
   "author": "Mark Spivey",
   "license": "MIT",
   "type": "module",
@@ -19,7 +19,7 @@
     "access": "public"
   },
   "scripts": {
-    "build": "tsc",
+    "build": "npm run build --workspace @interego/deployment-config && tsc && node stage-shared-config.mjs",
     "start": "node dist/server.js",
     "dev": "tsx server.ts",
     "test": "vitest run",
@@ -41,7 +41,8 @@
     "@types/node": "^22.0.0",
     "@types/ws": "^8.18.1",
     "tsx": "^4.0.0",
-    "typescript": "^5.7.0"
+    "typescript": "^5.7.0",
+    "@interego/deployment-config": "*"
   },
   "keywords": [
     "mcp",

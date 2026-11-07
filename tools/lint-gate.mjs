@@ -206,7 +206,7 @@ const UNLINTED_FRONTIER = {
   // gate measured 246 files on the merged tree (each side had counted inside its slack), and 373
   // errors, inside the slack; the files that change adds or edits carry no new error, so the error
   // pin stays.
-  deploy: { errors: 356, files: 246 },
+  deploy: { errors: 356, files: 262 },
   // The bulk of these are `no-console` in vertical bridges and CLI entry points — one config
   // decision, not a thousand defects. See the note above.
   // ★ 320 -> 337, and the ratchet caught it in CI rather than locally, which is the interesting
@@ -289,7 +289,7 @@ const UNLINTED_FRONTIER = {
   //    verticals (src, bridge, ui, demo and tests of each) took the root past the slack. All of
   //    it lints clean (`npx eslint applications/practice-evidence applications/work-redesign`:
   //    0 problems).
-  applications: { errors: 1452, files: 909 },
+  applications: { errors: 1452, files: 1026 },
   // The controller comparison adds two lint-clean audit modules; the census is 46.
   // Re-pin the file floor to that measured count without raising the error ceiling.
   benchmarks: { errors: 193, files: 46 },
@@ -705,7 +705,7 @@ const BASELINE = {};
 // and the exact-version guard (tests/canonicalizer-versions-are-exact.test.ts) bring it to 683;
 // the gate named 650.
 // 2026-10-27: both, merged, bring the linted scope to 686; the gate named 653.
-export const MIN_FILES = 653;
+export const MIN_FILES = 667;
 
 /**
  * How far below the real linted-file count MIN_FILES may sit before that is itself a failure.

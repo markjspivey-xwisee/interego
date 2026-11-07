@@ -1,6 +1,6 @@
 # Changelog
 
-## 2026-10-29 — Identity: a test pins the X25519 keys the server publishes, and no other generated key is JWK-exported under deploy/ or packages/
+## 2026-11-07 — Identity: a test pins the X25519 keys the server publishes, and no other generated key is JWK-exported under deploy/ or packages/
 
 The "Node 20 crypto deadlock" entry further down changed how `generateEd25519` in `deploy/identity/server.ts` reads the raw X25519 public key. It had read the `x` of a JWK export, and now reads the last 32 bytes of the SPKI DER. That entry checked on 20,000 keys that both give the same bytes, but no test checked it. The derivation is now `x25519PublicKeyEncodings` in `deploy/identity/key-encoding.ts`. The base58btc codec and the Ed25519 and X25519 multibase encoders it uses moved there from `server.ts` unchanged. `server.ts` imports them, and `deploy/Dockerfile.identity` copies the new file.
 
@@ -10,11 +10,322 @@ The "Node 20 crypto deadlock" entry further down changed how `generateEd25519` i
 - 200 generated keys get the encodings of their JWK `x`. The test reads that JWK from a copy parsed out of DER (`tests/public-jwk.ts`).
 - A P-256 key is refused, because its SPKI is 91 bytes.
 
-Reading the raw key one byte off fails the first two. The identity suite passes on Node 20.20 and 22.22: 387 tests, master's 384 and these 3, then the 85 of `live-record-writes-routes.test.ts`. On Node 20.20 with frequent garbage collection (`--max-semi-space-size=1`), the server's key generation ran 200,000 times through the new function in each of 3 runs. The same loop with the old JWK export hung before 5,000 in every run.
+Reading the raw key one byte off fails the first two. The identity suite passes on Node 22.22: 436 tests, master's 433 and these 3, then the 86 of `live-record-writes-routes.test.ts`. Before master's latest changes were merged in, it also passed on Node 20.20. On Node 20.20 with frequent garbage collection (`--max-semi-space-size=1`), the server's key generation ran 200,000 times through the new function in each of 3 runs. The same loop with the old JWK export hung before 5,000 in every run.
 
 No other code under `deploy/` or `packages/` JWK-exports a key that `generateKeyPairSync` made. `deploy/mcp-relay/client-authorization.ts` exports the JWKs of keys it parsed from a JWK, and no generator job shares a lock with those. `deploy/mcp-relay/tests/dpop.test.ts` exports the JWK of a key from WebCrypto's `generateKey`, and is unchanged. WebCrypto generates keys in an asynchronous job, and Node frees that job as soon as it has handed over the key, so no garbage collection can free it later, in the middle of an export. On Node 20.20 with frequent garbage collection, a loop of `generateKey` and then `exportKey('jwk')` ran 60,000 times in each of 3 runs. So the WebCrypto test that the earlier entry changed in `provisional-play.test.ts` was not at risk either. That change does no harm and stays.
 
 The earlier entry names EC and OKP keys. RSA keys hang the same way on Node 20.20, and so does the JWK of a public key that `createPublicKey` derives from a generated private key: both loops hung, at 0% CPU, before 1,000 iterations. Outside `deploy/` and `packages/`, these JWK exports of generated keys remain, and this change does not touch them. `tests/client-authorization.test.ts` exports P-256, P-384, P-521 and RSA keys, and `tests/browser-signing-handoff.test.ts` exports a P-256 key. CI runs both in the whole root suite on Node 20 (`bridge-typecheck.yml`). `tests/browser-signing-handoff.chromium.test.ts` makes the same P-256 export but runs only on Node 22, in `identity-tests.yml`. `es256Keys` in `applications/foxxi-content-intelligence/src/lti13.ts` derives one when no PEM is configured, but the Foxxi bridge image runs Node 22.
+
+## 2026-11-06 — Clarify the shared xAPI performance verb
+
+The Foxxi and AGP xAPI Profiles explain how the object activity type identifies the work described by `performed` and how a projected descriptor supplies that type. The verb IRI and template rules stay the same.
+
+## 2026-11-06 — Disclose the hosted Interego beta risks
+
+The site and enrollment screens identify hosted Interego as a beta prototype for testing. The revised Terms spell out the risks a user assumes when they accept them. Same-day revisions have distinct version identifiers so prior receipts remain tied to the text users accepted.
+
+## 2026-11-06 — Add agreement to hosted Interego enrollment
+
+The hosted site publishes versioned Terms of Service. When the deployment enables a version, the web, guest and connected-app signup flows require an explicit agreement. Identity records the version and acceptance time in the private account record as part of enrollment. Returning sign-ins and existing Play sessions can continue.
+
+## 2026-11-05 — Add a privacy notice for hosted Interego
+
+The Interego homepage now links to the hosted service's Privacy Notice. The notice describes sign-in and guest records, Railway hosting, publishing through Pinata and IPFS, and how to request removal of records separately from closing an account.
+
+## 2026-11-05 — Explain the counts on Agents filters
+
+The Agents directory explains that each button shows how many operations it would display with the other filters and search applied.
+
+## 2026-11-05 — Isolate Agents page deployments to Foxxi
+
+AGP packages the Foxxi runtime source and its proficiency graph. The hosted JEV evaluator refreshes a separate checkout of the public Interego repository and reports the exact commit it evaluated. Agents page and browser test changes now select only Foxxi for deployment, while JEV can read the updated files without a new image.
+
+## 2026-11-05 — Show matching counts in the I2IDL-X Agents filters
+
+Each filter option shows how many operations it would display with the other row and text search applied. The result summary shows the matching count, and the directory heading shows the full inventory size.
+
+## 2026-11-05 — Repair and organize the I2IDL-X Agents examples
+
+The live directory runner separates bridge transport metadata from visitor inputs before checking the public example contract. It preserves target throttling and shows whether a request reached the target. The competency example now demonstrates an alignment hop between two fictional frameworks, and the consulting example identifies required work products.
+
+The Agents page links directly to live examples, separates them from client tasks and prepared calls, and puts request controls and results ahead of contract details. Fresh inventory supplies current defaults while edited drafts survive a refresh.
+
+The runner tests reproduce the bridge's transport fields and check that the example target and result receive no authorization token.
+
+## 2026-11-05 — Select automatic monitoring per workbench connection
+
+The standalone HTTPS workbench accepts an optional Grok Bot Routine setup for the current pairing. Each temporary session keeps its own trigger configuration and binds the actor from the verified Interego claim. A Routine-backed session grants work only through signed, turn-scoped wake references. Routine setup no longer requires a service variable or redeploy for each client. Manual pairing uses its existing driver credential.
+
+## 2026-11-05 — Start workbench monitoring through an opted-in agent routine
+
+An I2IDL-X deployment can bind one background Routine to an exact verified agent DID. An opted-in claim triggers a startup check and the workbench waits for a signed acknowledgment. Each queued turn, including browser tool results, triggers the Routine with only opaque references. A signed, turn-scoped capability is required to take that work. Manual drivers and staged approval retain their existing behavior.
+
+## 2026-11-04 — Complete Orchestrate reports after the human decision
+
+Live Orchestrate now uses the actual sandbox summary to generate and show its report after either approval or decline. An idle or expired connected agent no longer leaves that report waiting for another chat message. The human decision remains required, repeated clicks cannot change it, and the page sends no staged calls. The report's provenance identifies it as workflow generated; recorded runs retain their original behavior.
+
+## 2026-11-04 — Preserve bound blank nodes during classifier closure
+
+The classifier restores Comunica's source-scoped blank terms before feeding each pass back into its request dataset. Full producer records with anonymous Context, Result and Score components now reach a fixed point without cloning those components. The public library inverse mapping leaves named IRIs and genuinely fresh constructed nodes unchanged; the existing nonconvergence and capacity guards still refuse partial results. The stored query, ontology, canonical source and authored artifact pins are unchanged.
+
+Regression checks use the complete synthetic PGSL and TLA producer graphs, independent blank identities and reserved-prefix IRIs. The public inverse-mapping package is declared directly at its existing lockfile version so the production image retains it.
+
+## 2026-11-04 — Package the PGSL browser's local RDF helper
+
+The browser build now bundles its local demo projection helper while keeping npm packages external. Its Docker build preserves the helper's relative source path. This repairs the missing-module startup crash observed during the normal rollout of the legacy xAPI alignment; the original demo projection and health identity contract are unchanged.
+
+The actual standalone emitted server is tested after removing its TypeScript sources, with outbound HTTP denied. The existing cold image workflow also starts the built browser image without network access and checks its baked build identity at `/health` before accepting the image.
+
+## 2026-11-04 — Close chained classifications and align legacy xAPI producers
+
+The public classifier now iterates the pinned query to a bounded monotone fixed point. Chained bridges complete in one request; nonconvergence fails without a partial result. Only submitted subjects are returned. The existing proposed AI-CFT-to-LER mapping can therefore reach the authored generic Competency framework concept; this is a Hypothetical entailment of that mapping, not editorial ratification of a new canonical relation.
+
+Authored catalog 0.1.1 scopes catalog and bridge authorship to their author, retains both English definition creators, and records Claude's actual review separately with content-bound review documents. CTDL-ASN direct evidence and two IEEE supporting references now agree with the upstream draft, and peer bridge headings identify their vocabulary.
+
+Both actual TLA demo producers emit a distinct current informational record, a separate lossless JSON source entity and nested Result/Score predicates. The legacy activity identity is not aliased to a record. The demo fixtures remain synthetic. Real encrypted-lattice tests verify that a failed usage projection followed by the same signed statement retry preserves exactly one original through warm and cold recovery.
+
+The companion Learning Fabric and legacy adapters are documented in `applications/foxxi-content-intelligence/i2idlx/xapi-alignment.md`. The canonical v0.0.93 source, historical records and access controls are unchanged.
+
+## 2026-11-04 — Record the verified private usage catalog publication
+
+The isolated CSS package retains the generator's exact lockfile-pinned ComponentsJS 6.4 context before pruning build dependencies and registers its emitted version-6 IRI through the supported local context map. Docker and both isolated CI assembly paths test the real ComponentsJS 5 manager with network access denied after generator removal; no version-5 alias or dependency change is introduced. Existing storage/recovery assertions are unchanged.
+
+The concept-usage port now describes the deployed writer's exact concept references, immutable LRS-enriched original and separate encrypted private usage artifact. Unknown tags are reported and excluded; usage about a concept does not assert learner achievement or publish globally queryable RDF. The tracked catalog receipt records the genuine current publication and retains its predecessor under superseded, with all other graph receipts preserved.
+
+Existing signed-chain authority and a matching version precondition governed the publication. Public readback verifies relay-attested authorship and content binding; negotiated RDF matches the reviewed catalog. Native and Python publication records and app projections agree, while both canonical and combined workflow replay expectations remain unchanged. The production visitor oracle also matches the current disconnected-agent labels and checks connection guidance and the absent model conversation. These catalog and visitor changes add no app behavior, canonical adoption or permission; the context packaging correction preserves storage and recovery semantics.
+
+## 2026-11-04 — Keep authored competency terminology distinct from the canonical glossary
+
+Interpretant adds the reviewed Competency framework definition as a Hypothetical authored I2IDL-X concept with its own IRI, provenance and read ports. The canonical 420-concept v0.0.93 source, byte pin and definitions remain unchanged. Browser and server search, Ask and classification share the same explicit corpus projection; source-only views retain canonical terms only. Authored RDF and an exact-reference SHACL profile are discoverable and hash-bound to the executed checks, and Orchestrate preserves authored IRIs when staging drafts.
+
+The two specialized Foxxi LER/TLA framework classes classify into the authored generic concept in one direction. The CTDL-ASN candidate annotation creates no typing or ratified mapping. Focused browser/server, HTTP, classifier, SHACL, export and Orchestrate regressions exercise these boundaries. The PR template now requests concrete upstream/downstream semantic integration impact.
+
+- Signed xAPI writes retain a private usage artifact with same-owner readback and distinct event, LRS storage and projection timestamps.
+
+## 2026-11-03 — Distinguish paired-agent request timeout from session expiry
+
+A timed-out question now directs the user to ask again on the active agent connection, instead of advising sign-in. The broker marks only its request deadline as request_timeout; agent failures and genuine session expiry retain their separate errors. Ask and live Orchestrate explain the retry without discarding the paired session.
+
+Actual client/router HTTP checks use injected clocks with the production ten-minute request and thirty-minute session bounds. They cover both deadline races, successful fresh questions on the same connection, agent failures with matching error prose, and real session expiry. These deterministic checks make no model or production calls.
+
+## 2026-11-03 — Respect paired-agent concurrency in live Orchestrate
+
+Live Orchestrate respects the connected executor's advertised request capacity. The paired-agent transport advertises one active request, so independent role steps run in sequence instead of failing at the first parallel handoff. Host executors keep the existing two-step parallel limit.
+
+The actual Orchestrate hook and twelve-step dependency graph run through the browser transport with deterministic completion fixtures in agent-session-check.mjs. The regression fails before the change and passes afterward; host parallelism, invalid/wider limits and overlapping-consumer isolation are checked. These checks make no provider or production calls and do not establish Claude or complete production acceptance.
+
+## 2026-11-03 — Show private and shared note audiences accurately in HMD
+
+Shared publications now retain an explicit audience marker alongside private and public publications. Inline and later note projections use that declared audience, rather than labelling every encrypted record private. Older records with missing or conflicting audience metadata show an unknown audience without changing their access.
+
+Namespace-aware projection tests and actual SDK publication tests cover audience metadata, legacy records and private/shared/public agreement. Encryption, recipients, authorization and generic HMD workflow states are unchanged. Hosted remains available; federation remains off by default.
+
+## 2026-11-03 - Keep Foxxi HTTP context outside agent-session inputs
+
+The deployed Foxxi middleware adds internal client-address and caller-token context to parsed JSON. Browser agent-session creation and polling now discard only those two transport fields before checking their exact input contract. Browser authority still comes only from the Authorization header, creation budgets still use the actual request address, and signed driver identity and payload checks are unchanged.
+
+HTTP tests now include that context decoration and check that body tokens cannot authorize a browser or override creation budgets. The packaged-server startup proof exercises creation, capability-protected status, invalid body-token refusal and disconnect through the actual entrypoint middleware before an image can ship.
+
+## 2026-11-02 — Pair a standalone Interpretant conversation with an external agent
+
+Interpretant retains its embedded glossary chat and adds in-page intervention discussion with per-question source retrieval, citation context, recent history and cancellation. An explicitly paired external agent can supply reasoning through its existing model session, including the original live Orchestrate sandbox's plain prompts, no-argument tools and cumulative handoffs; ChatGPT conversation handoffs, existing host adapters, Interego pod saves and the prior API fallback remain separate optional paths.
+
+A bounded ephemeral broker uses independent browser and driver capabilities, a one-use invitation, an authenticated Interego actor, turn revisions and leases. Cancellation, expiry, revocation and stale results are checked. Executable glossary tools remain in the browser and paired-agent lookups exclude team annotations. This transport calls no provider API, shares no model credentials and writes no learner or pod record. It does not turn a subscription into an unattended service or claim durable transcript storage.
+
+Contract tests and actual browser-transport/Ask-hook checks cover isolation, streaming snapshots, tool results, original Orchestrate input forms, cumulative handoff offsets, cancellation races and resource bounds. Real loopback HTTP checks use the actual Express router and middleware with explicit verifier/model fixtures. These are deterministic software checks; real deployed browser/agent acceptance is recorded separately.
+
+## 2026-11-01 — Keep audited own-account LMS reconciliations separate from original grades
+
+Three signed Foxxi actions preview, explicitly apply and freshly read a new private owner entry from two original engine-authenticated LRS statements. Preview is read-only and binds a short-lived review to the human controller, caller, exact source facts, legacy failure witness and native revision. Apply checks those facts again and conditionally appends to a separate encrypted native ledger; identical source entries reconcile without another grade or source write. A stable service-key integrity receipt, fresh logical readback and an unchanged observed failure witness are required for confirmation. Shared standard admission limits run before authorization, with bounded client-key growth and the existing owner and concurrency guards retained.
+
+The entry retains original event times, normalized outcomes, immutable source identifiers and full-body digests alongside its new creation time and approved preview digest. Engine HMAC coverage and the lack of original attempt registration are stated explicitly. No global LMS snapshot is activated or rewritten, no AGS score is replayed, and original LMS persistence remains unverified. Storage is bounded and does not prune retained entries; it does not claim protection from owner or host deletion or rollback.
+
+Isolated tests exercise evidence rejection, explicit review expiry and owner binding, private native encryption and compare-and-swap, uncertain acknowledgements, fresh entry readback, and fixed-resource failure witnessing. These checks do not constitute a live learner-record repair.
+
+## 2026-10-31 — Restore browser sign-in when an update leaves an empty registration key
+
+Windows preview 10 recognizes a native-messaging key with no default value as unregistered, using the Windows helper's typed registry API rather than localized command output. This repairs the legacy uninstaller's actual state: the key remains after its default value is removed. A present empty string, another manifest path, an unsupported value type or an unreadable key remains refused. The helper reports only fixed per-browser states, never registry values.
+
+Previously saved, valid extension consent remains required; the repair does not rewrite the allowance, replace an identity or broaden account access. Known restoration failures retain safe fixed explanations instead of always asking the owner to re-save their IDs. Preview 10 is distinct from the earlier preview 9 installers; bridge access and federation remain off by default.
+
+## 2026-10-31 — Strengthen the test-run floor for the expanded regression tree
+
+The test-run integrity minimum rises from 590 to the measured 620 tracked modules after Foxxi's LTI readiness, immutable-publication and authorization-rate regression modules consume the remaining headroom. The proportional growth allowance, include patterns, assertions and skip rules are unchanged; no tests are removed or excluded.
+
+## 2026-10-31 — Bound own-LMS authorization requests before snapshot work
+
+Foxxi's GET and POST LTI authorization routes share a per-client limit and a fixed total budget before snapshot hydration, form parsing or token signing. Standard middleware returns 429 with a retry delay, groups IPv6 clients by subnet and uses the framework's existing trusted-proxy policy. The total budget bounds admission to the rotating client-bucket store. Discovery and key metadata remain independent; learner identity, one-use grants and gradebook checks remain required.
+
+## 2026-10-31 — Keep browser sign-in working after Windows app updates
+
+The installed Windows app repairs browser companion registration removed by an older installer, using only the valid, nonempty extension allowance the owner already saved. It does not create a key, change hosted account ownership, enable a disabled or unreadable allowance, or replace another installation’s registration. A queued owner change or shutdown prevents late admission, and repair never rewrites the saved allowance.
+
+The new uninstaller retains registration during updates and removes only its own matching registration on a full uninstall. A setup failure is shown separately from valid saved IDs so the existing recovery action remains usable. Tests use temporary protected-policy files and an injected registry; the actual Windows packaging and offline lifecycle remain release gates. Public bridge access and federation stay off by default.
+
+## 2026-10-31 — Load and version Foxxi's own LMS gradebook safely
+
+The own-LMS gradebook waits for its tenant snapshot before serving stateful launch, gradebook and AGS routes. A bounded failed read returns unavailable and can be retried; only a definite absence permits empty initialization. Snapshot publication stays blocked during unresolved hydration. Safe diagnostics report load state, map counts and a content-digest witness without exposing learner records.
+
+This gradebook opts into immutable version graphs and descriptors with a conditionally updated latest head. Readers follow the advertised distribution and bind the graph identity, type and payload digest. Writers verify their artifacts before updating the exact head they observed, refuse conflicting writes and stop stale in-memory retries. Existing snapshot users keep their current publication path.
+
+Tests exercise delayed startup, failed-read recovery, original-row restoration without another score post, two actual Solid publications, cold-registry hydration, immutable graph refusal, stale-head conflicts and publication deadlines through explicitly injected isolated HTTP transports, without configuring the live tenant environment. A mismatched legacy descriptor and graph remains unavailable; this change does not reconstruct historical grades. AGS score acknowledgments retain their existing asynchronous snapshot semantics.
+
+## 2026-10-31 — Bound native LRS index-node prefetch while preserving head verification
+
+Foxxi's native learning-record client can prefetch up to eight immediate index-node reads through one client-wide limiter, while consuming the complete index in its original depth-first order. Other native clients retain their serial default. Every current-head, backing-commit, ciphertext, plaintext, scope, prefix and cycle check remains active; no record filter, scan bound, cache budget or timeout changes. Failed traversals stop their queued reads, handle active results and never return a partial snapshot.
+
+Opt-in head observations separate fresh head/commit verification from full index materialization, reporting bounded numeric timing and node-count diagnostics without identities, URLs, query contents or error text. This is a cold-read performance change, not evidence of a particular learner's retained records or outcome.
+
+## 2026-10-31 — Make PC-key linking and sign-in approval easier to review
+
+Adding a PC key can succeed on the account service even when its reply times out on the computer. An uncertain link result now offers a deliberate dashboard refresh to check registered credentials before starting another link; it never retries the credential update or reports success without a verified receipt. The account, hosted pod and game progress remain with the existing owner.
+
+A fresh waiting request opens the installed app's Identity page once, so its account, permissions and matching code are visible for review. Open dialogs and busy operations defer the page change. Expired, completing, previously shown or mismatched-key requests do not interrupt the user, and consent and approval remain explicit.
+
+Only account linking receives a 45-second total HTTPS budget across DNS, headers and body, clipped to the known request expiry. The native broker, Windows companion and Wallet use ordered 55-, 60- and 65-second outer ceilings. Ordinary sign-in keeps its existing limits. The two-minute handoff lifetime, fresh account-holder checks, one-use proofs and final native approval are unchanged.
+
+The change requires an updated Windows app and native companion plus updated Interego Wallet code. A hosted deployment alone does not update those installed components.
+
+## 2026-10-31 — Correct account inbox sessions and confine relay requests
+
+The identity dashboard now reads inbox metadata through a dedicated identity-authenticated relay route. The server derives the pod from the verified account, refuses foreign origins, caller-selected pod addresses, redirects and oversized responses, and rechecks the session before releasing metadata. Existing OAuth inbox access and PC-key linking keep their separate authorization rules. Inbox text and errors render as text, so descriptor metadata cannot insert markup into the account page. No account, credential, game progress or federation settings are changed by an inbox read.
+
+Plaintext note projections now use the same guarded outbound transport as descriptor lookup and encrypted payload reads, so direct or redirected payload links cannot reach an untrusted private service.
+
+Signature audits rebuild resource addresses from verified OAuth ownership, including third-party pods, and refuse redirects. Administrative CID backfill is confined to one pod on the configured store, validating descriptor reads and manifest writes before changes while retaining archive traversal, selective backfill and ETag/CAS behavior. Other stores are maintained through their own relay.
+
+Solid metadata readers stop an IRI match at either angle bracket, avoiding repeated suffix scans on malformed nested openers. Archive links, graph references, authorship and distribution metadata retain valid relative, Unicode and escaped IRI spelling. Notification discovery scans each complete IRI once. These changes bound the affected scans; they do not replace the existing Turtle readers with a complete grammar parser.
+
+## 2026-10-30 — Keep hosted container builds independent of the MCP application
+
+Hosted images that copy the package libraries now build those libraries explicitly, while the normal root build still builds the MCP application. Images with a separate dependency-install layer include the library manifests before installation, so newly added local-runtime and federation dependencies are available during cold builds. Existing prebuilt-artifact checks and deployment gates remain active.
+
+## 2026-10-30 — Open existing accounts with their usual Interego passkey
+
+The account page can sign returning users in with the Windows Hello or device passkey they already use on the relay's sign-in site. A dedicated popup verifies that existing credential at its original site; a short-lived, single-use exchange returns the session only to the initiating account page. The provider's protected browser cookie binds both sides of the exchange. Fresh credential and session-epoch checks refuse cancelled, expired, revoked or replayed requests. Adding a local PC key still requires its separate fresh verification and native approval. No replacement account, enrollment, game-data migration, federation or public bridge is needed.
+
+## 2026-10-30 — Show the local app's first screen before exercising its backend
+
+Windows preview.8 loads the renderer after every identity dialog has been parsed, fixing a first-start exception that left the installed app at “Opening your space…”. Parser-driven renderer tests now use the shipping HTML's script position. The packaged check requires a usable welcome screen on its first launch and a configured space on its second launch before it exercises the preload, storage, native signing and optional connection lifecycle.
+
+## 2026-10-30 — Complete local-pod release validation
+
+Root-suite CI builds the MCP server after restoring cached package artifacts, so a fresh checkout includes the staged shared deployment configuration. The deployment-config, local-node and pod-federation packages are recorded as Layer 3 base adapters. A runtime-lock fixture uses a naturally terminating child process, the local diagnostic switch is documented in the environment census, and the wallet status test checks the complete expected message. The offline browser smoke uses an explicit dummy OAuth token with its authentication and redaction assertions preserved. Existing ownership, test-execution, security and test-budget gates remain active.
+
+## 2026-10-30 — Link a Windows-held key to an existing account
+
+The hosted dashboard can add a local Windows signing key to the same account using a fresh action-bound proof by an existing passkey or wallet, followed by native approval of the exact owner, pod, key and comparison code. Passkeys registered on the relay verify at that original site through a short-lived popup capability; no account bearer is sent to the popup, extension or native app. Hosted sign-in remains available, while federation and public bridge access stay off by default and are unnecessary for linking.
+
+The identity adapter binds challenges to the original owner session and epoch, consumes proof and completion capabilities once, checks that the existing credential remains registered, and uses conditional writes to add only the new DID credential. It refuses a key already bound to another owner, missing write validators, unconfirmed writes and unreadable holder records. Original credentials, canonical identity and game data are preserved. Polling has its own bounded rate bucket and client backoff so it cannot exhaust the unchanged authentication mutation budget; concurrent result readers cannot both receive a one-use handoff.
+
+Tests cover real server routes and signatures, native approval and recovery regressions, dashboard and extension behavior, a real Chromium original-RP assertion, and the unchanged Hallowmarch adapter retaining the same owner, character, pod and exact progress bytes. The packaged Windows check exercises link approval, denial and one-use receipts across two launches. These checks use disposable accounts and isolated transports; hosted deployment and a live account link remain separate actions.
+
+## 2026-10-30 — Native-held identity sign-in for Windows pods
+
+The Windows preview offers a separate local sign-in key, protected storage, encrypted recovery and approval for every login. An exact-ID Chrome/Edge native companion carries encrypted local requests; the extension never receives the private key or raw proof. Browser policy changes are serialized and block admission on failure. The native UI displays server-derived provider, client, callback, permissions and comparison code before approval.
+
+The hosted relay adds a one-use handoff bound to the existing OAuth client, PKCE, state, callback, resource and fresh DID challenge. Existing hosted login choices remain available. This needs a later hosted deployment; a fresh key creates a separate hosted owner, and existing-account linking and local game saves remain separate work. Federation and public web access remain off by default and are not needed for native signing.
+
+Tests cover the real Windows companion, DPAPI/CNG interoperability, consent, proof and callback replay refusal, cancellation, policy failure ordering, recovery and the unchanged Hallowmarch login adapter with isolated accounts. Cross-machine federation also passed between the laptop and VPS through pinned SSH forwarding; public DNS/TLS and named tunnels were not exercised. A reproduced Electron first-profile timing issue now waits for the protected profile key to appear on disk before issuing companion access.
+
+## 2026-10-30 — Invited local and hosted pod sharing, and local browser wallet access
+
+The Windows app and hosted relay compose a new Layer 3 pod federation adapter. Owners enable it explicitly, exchange short-lived one-use invitations, compare codes, approve a peer, and send selected encrypted representations. Separate sharing keys, signed audience-bound requests and replies, durable replay history, protected state, cancellation and queued permission checks preserve the storage boundary. Canonical graph identities, media types and original representation bytes remain unchanged. Pausing retains approved peers and received snapshots; disconnect blocks new transfers. Local copy removal, sent-history cleanup and confirmed reset remain owner actions. Sharing starts off after restart; live synchronization and reliable offline delivery are not included.
+
+Hosted peer management requires a separate `federation:manage` OAuth consent and derives the account and pod from the authenticated session. State is encrypted in the owner's pod and uses conditional writes; refreshed authority and a conditional send intent prevent transmission using already revoked shared-store authority. The new hosted page and routes require a later deployment. Existing hosted identity, notes and assistant permissions remain available. The owner page keeps its browser fields distinct from vocabulary IRIs so the repository's ontology check remains accurate.
+
+The browser wallet also supports local pods through the saved HTTPS MCP bridge, with exact native-approved extension origins, explicit notes scopes, reviewed captures, session refresh and disconnect. This is local context access, not a website identity signer. Hallowmarch's existing hosted owner and pod checks remain intact; local-held website identity and game storage require a separate adapter. Tests cover real local runtimes, cross-adapter local/hosted sharing, privacy boundaries, lifecycle races, storage conflicts, and browser/native connection behavior.
+
+## 2026-10-29 — Saved user-owned bridge addresses and pairings
+
+The Windows preview defaults web setup to a permanent hostname in the user's own Cloudflare account, with an existing HTTPS gateway and temporary link as alternatives. Setup masks the connector token, saves it under Windows protection, displays a fixed local target, and checks that the public route reaches this exact app before enabling access. A dedicated named tunnel uses the pinned helper with a private token file; its provider configuration remains under the user's control.
+
+Stable OAuth registrations, grant references and token hashes persist under protected storage bound to the origin, local port, pod and permission policy. Pausing and quitting close transport while retaining approved pairings. Disconnect and Forget remove authorization; pending approvals and unused codes do not survive restart. Web access still starts off, hosted remains available separately, and federation stays disabled. The deployment guide documents the existing hypermedia boundary and a scoped adapter/cache path without adding a general proxy or changing the protocol.
+
+## 2026-10-29 — Windows bridge helper artifact verification
+
+Windows packaging tests avoid importing platform-builder internals into a lightweight configuration test. The real packaging path verifies the pinned helper bytes, and delivered artifact checks inspect its original publisher signature. This documents the standalone installer-test maintenance commit without claiming a historical changelog backfill.
+
+## 2026-10-29 — Optional temporary web connections for local Windows pods
+
+The Windows preview adds an explicit temporary web connection for ChatGPT web, Grok Bot and other remote MCP clients. Owners choose read and append permissions, create a temporary URL, compare the browser verification code with a request in Interego, and approve or deny access. A bundled, pinned Cloudflare helper forwards only the dedicated MCP and OAuth listener. The setup explains provider processing, changing URLs, client account requirements, and the need to keep the computer running.
+
+Authorization uses PKCE, resource-bound tokens and existing local grants with queued authorization checks. Turning off the bridge invalidates web access; app launches always start with the bridge disabled. Hosted Interego remains available separately, and federation defaults remain off. This L3 application change does not alter the protocol, generic stdio server or hosted relay.
+
+## 2026-10-29 — Scoped local agent connections
+
+The Windows application now includes a consumer Connections flow for local ChatGPT desktop, Codex, Claude Code, Claude Desktop, Grok Build, OpenClaw and other stdio MCP clients. Owners choose read and append permissions plus expiry, copy client-specific setup, see authenticated usage, and disconnect access. Setup does not export the pod's key or storage credential; online AI provider processing and separate cloud-only connection requirements are explained in the app and guide.
+
+Each connection uses a Windows-protected credential and an encrypted, session-bound loopback channel to the app. The bundled MCP companion never opens a second pod or reads the content key. The app checks authorization when queued note work executes and before returning results; revocation, expiry, pod binding, replay limits, closed callers and request bounds fail closed. Agent-authored notes retain their local connection attribution inside encrypted content and portable notes backups. Backups exclude agent grants. Shutdown closes agent access before draining owner work.
+
+The L3 application composes the existing encrypted Solid publisher and MCP SDK without changing hosted services, the generic stdio server or federation defaults. Tests cover scoped stdio tooling, encrypted broker boundaries, permission and revocation races, recovery and consumer UI behavior. The Windows smoke launches real companion executable processes and checks their access limits plus persisted encrypted notes.
+
+## 2026-10-29 — Windows local pod installer and consumer application
+
+Added the separate `@interego/pod-desktop` application, composing the local-node runtime into a per-user Windows installer. First launch offers a local space without a cloud account, encrypted notes, start/stop and automatic reopen, and an explicit hosted dashboard action. Federation stays disabled. Keys remain in the main process and use Windows-protected storage; the renderer is isolated, cannot load network content, and accesses a narrow authenticated IPC surface. Quitting drains admitted work and stops the pod.
+
+The app includes portable encrypted notes backups and a validated, resumable restore into a new space. Setup records its known endpoint before startup so a failed initial start remains retryable; stale runtime locks are recovered only when the former process is demonstrably gone while the desktop host holds its single-instance lock. Existing data is preserved during uninstall.
+
+Packaging uses a reviewed production dependency graph with physical CSS assets, produces an NSIS executable, checksums and an actual signature report, and never auto-publishes. The no-certificate build is an unsigned preview. A Windows workflow builds the installer and drives an offline lifecycle against the packaged application. Controller and renderer behavior tests cover persistence, encryption, backup failures and recovery, safe UI states, and explicit hosted selection. Agent pairing and local federation remain later milestones.
+
+## 2026-10-29 — Explicit deployment configuration and a durable local runtime
+
+Added `@interego/deployment-config` with validated local and hosted profiles, separate federation settings, instance-scoped cache identifiers, and a machine-readable capability matrix. The stdio MCP entry point consumes a pure compatibility resolver that preserves existing settings, environment precedence, and mode selection.
+
+Added `@interego/local-node`, an opt-in file-backed Community Solid Server runtime behind an authenticated loopback gateway. CSS uses a private Unix socket or Windows named pipe, with an explicit durable data directory, persistent local service credential, exclusive writer lock, and asynchronous shutdown. It bundles its configuration and does not install dependencies at startup. This first slice does not include consumer installation, owner-key recovery, notification transport, or federation transport; enabling local federation is refused. Hosted deployment and existing bridge behavior remain separate.
+
+The offline integration test publishes an encrypted graph through the existing Solid binding, restarts the real runtime, and verifies discovery and decryption while refusing non-loopback TCP connections. Configuration and boundary tests cover legacy settings, optional federation, unauthorized requests, profile scope, and local lifecycle failures. See `docs/LOCAL-DEPLOYMENT.md` for the capability matrix and current limits.
+
+## 2026-10-29 — Browser wallet: identity selection, context inspection, and reviewed private captures
+
+`applications/browser-wallet` adds a dependency-free Manifest V3 extension for Chrome and Chromium-based Edge. It follows the relay's public-client OAuth metadata with PKCE and state, keeps access tokens in browser session storage, discovers its four admitted tool affordances, and displays the current session agent and recent pod descriptors. A toolbar click captures selected text for an editable review; saving requires an explicit write connection and approval of the exact private `remember` payload. Reviews expire and are consumed before dispatch, so duplicate approvals and uncertain writes cannot automatically replay a save. Receipts distinguish accepted writes, readable returned descriptors, refusals, and uncertain outcomes. Private notes use the relay's current encryption path for the session agent; the extension does not take custody of identity keys or claim client-side end-to-end encryption.
+
+Validation covers OAuth binding, live-catalog boundaries, read-only enforcement, changed identities, expired and replayed approvals, uncertain writes, storage isolation, and extension-package checks. Browser testing uses an isolated Chromium profile and offline OAuth/network fixtures; live public catalog and OAuth discovery were checked separately. Live account sign-in and save remain manual checks. A scoped CI workflow runs the dependency-free checks.
+## 2026-10-29 — Identity: a Play purge deletes the guest's game saves and write budget with the store's native conditional delete
+
+This is the identity half of #728 (`deploy/identity` only). Until now the janitor's purge of a Play owner kept the guest's game saves (`hallowmarch/checkpoints/<64 lowercase hex>.json`) and its write budget (`play-budget.json`). The css-gate writes both only as native commits, the production store (CSS 7.2 with the PGSL accessor) refuses every plain `DELETE` of a native head with `409`, and the purge finished with them listed as retained, so every guest's game data stayed on the pod after its purge. The store now has a native conditional delete (the entry below), and the purge uses it (`provisional-play-cleanup.ts`):
+
+- **Only the game data, and only after the close.** A native delete is sent only once close() has answered `purge` (the owner's tombstone is written, marked as a purge not yet finished), and only to those two paths relative to the pod root. The function that sends it (`deleteGameData`) refuses the pod root and `auth-methods.jsonld` a second time, percent-encoded spellings included, before it sends anything, and refuses every other path too.
+- **Only where the store offers it.** It asks the store's capability once per purge, at the first game document (`OPTIONS`, which must be a `2xx` carrying `Interego-Native-Delete: 1`). Identity sends all of this to the store at `CSS_URL`, not through the css-gate.
+- **One exact revision.** For each document it reads the strong ETag with a `HEAD` and sends `DELETE` with `Interego-Native-Delete: 1` and `If-Match` on that ETag; `205` deletes that revision. A `HEAD` answered `404` is a document already gone. A store that does not advertise the delete, a `412` (the document changed or went since its `HEAD`), a `409` (a document at that path that is not a native head), a weak or missing ETag, or any other answer stops the pass and leaves the purge unfinished, its tombstone still marked; the next pass lists the pod and reads the document again. After a `412` that pass deletes the new revision. A document at one of those paths that is not a native head is answered `409` at every pass, and holds the purge open until someone removes it (it is never sent a plain `DELETE`); the css-gate writes those paths only as native commits, so it never leaves one there. These documents are never finished as retained any more.
+- **Containers after their children.** The containers the game data emptied (`hallowmarch/checkpoints/`, then `hallowmarch/`) are deleted afterwards with an ordinary `DELETE`, as every other emptied container is.
+- **Closure fence.** A write the css-gate authorized before the tombstone can still reach the store after it. Once a pass has made every deletion, the purge lists the pod again, and game data found there leaves the purge unfinished for the next pass to delete. The record, and the documents and containers the purge keeps, do not hold it open.
+- **Decision: a native head outside the game data is still kept.** A document outside those two paths whose plain `DELETE` the store refuses with `409` (a native head nothing here expects) is kept with the containers that hold it, and the purge finishes and logs it once (`finished the purge of <id>, keeping <n> resource(s) outside its game data ...`). No plain request deletes such a head and the purge sends it no native delete, so a purge kept open for it would be sent again at every pass and after every restart, and never finish. `AUTH-ARCHITECTURE.md` and `PROVISIONAL-PLAY.md` say so.
+- **A finished purge is logged** (`Janitor: finished the purge of <id>`). It was logged only with what it kept, which every guest who had saved had.
+- Every tombstone behaviour of the entry of 2026-10-28 is unchanged: `auth-methods.jsonld` is never deleted, a `closed` or `kept` answer from close() deletes nothing and sends no `OPTIONS`, `HEAD` or native delete, and a deletion's unmarked tombstone is left as it is, with its pod.
+
+What the fence cannot see: a write the gate authorized before the guest deadline that reaches the store only after the purge's last listing (so later than that whole purge) is left on the pod, and the purge, finished, does not come back to it.
+
+Tests:
+- **`tests/provisional-play-cleanup.test.ts`** runs the purge against a fake Play pod that answers as the store did when probed. It checks the order of every request after the close (capability, `HEAD`, native delete, then the emptied containers, then the last listing), that nothing but listings precedes the close, and that the record and the pod root get nothing but listings. A native head outside the game data (a save's name with an upper-case, short or long digest, with something after its `.json` or in place of its dot, or under another container; another name; the budget's name in another container, with another extension, in place of its dot, or in upper case) gets one plain `DELETE` and is retained with its containers, and the purge finishes. `deleteGameData` refuses the root, the record and anything else before any request, among them the budget's path on another origin, and in a URL that carries a user name, a password or both. A store without the capability (no header, another value, `405`, `500`) gets no `HEAD` or `DELETE`. A `412` from a budget written between its `HEAD` and its delete, a `409` from a non-native document at an allowlisted path, a `500` or `404` on the delete, a `500` on the `HEAD` (with no ETag, or with a strong one) and a weak ETag each throw, and after the `HEAD` with a strong ETag answered `500`, or a weak ETag, no native delete is sent; the next pass after the `412` deletes the budget, and the one after the `409` is answered `409` again. A `HEAD` answered `404` counts as gone. A save landing after the last native delete makes the purge throw, and the next pass finishes it; a non-game resource landing then does not hold it open. `closed`, `kept` and a failed close send nothing but the listing.
+- **`tests/live-record-writes-routes.test.ts`.** The stand-in pod answers the native delete and `OPTIONS` as the store does, and S0 checks those answers against the probe: `OPTIONS` `204` with the native headers on a save, an absent document and a pod container; the `HEAD` ETag equal to the `GET` one; `412` for a stale validator; `400` for no `If-Match`, `*`, a weak validator, two validators, `If-None-Match` beside it, and a container target; `409` for `Interego-Native-Delete: 2` and for a record; `205` for the exact revision, then `404` on `HEAD`, `412` on a second native delete and `404` on a plain one; the emptied containers deleted with `205`; and a later native commit putting its containers back in the listing. P9 now expects the saves and budgets deleted by native delete only, the emptied containers deleted, and a native head outside the game data kept with its container and logged. New P16 drives one purge through a store without the capability, a `412`, and a save landing after the deletions, each leaving it unfinished, before a pass finishes it with only the record left. P10 also checks that a deletion's tombstone gets no `OPTIONS` or `HEAD`.
+- **`tests/provisional-play-enrollment.test.ts`.** A finished purge lists the pod twice (the closure fence), and the listing count expects it.
+
+Measured: the probe ran against CSS 7.2.0 with the PGSL accessor built as CI's css-server job builds it, on the in-memory backend and on PostgreSQL 16, with the same statuses, headers and messages on both.
+
+Each guard was reverted alone in a scratch copy, and a test failed for each one: the allowlist (either pattern made case-insensitive, either anchor of either pattern removed, a digest of another length or case accepted, either pattern's dot unescaped, every document routed to the native delete, the helper's own check removed), the helper's refusal of another origin, of a user name and of a password (each removed alone), the refusal of the root and the record (and of their percent-encoded spelling), the capability check (removed, or a non-`2xx` answer accepted), a `412` or `409` taken as gone, a `HEAD` `404` taken as a failure, a `HEAD` that is not a `2xx` accepted when it carries a strong ETag, a weak ETag accepted, a non-game `409` not retained, the closure fence, containers skipped or deleted before their children, `closed` or `kept` going on to delete, the record among the targets, and an `OPTIONS` before the close. P16 fails with the fence, the capability check or the `412` check reverted, and P9 and P16 both fail with every document routed to the native delete, with the cleanup module as it was on master, and with the finished purge left unlogged.
+
+## 2026-10-29 — PGSL native heads can be deleted with an explicit exact-revision protocol
+
+The PGSL store now has an atomic compare-and-delete operation for native-managed documents. It requires a strong expected revision, restates the resource-head predicate with the transaction adapter's compare-and-set operation, and clears the head and both overlay directions in that transaction while leaving content-addressed nodes for garbage collection. An absent or changed head is a conflict; legacy heads and containers are not accepted.
+
+The CSS accessor exposes this only through its ordinary authorized delete path when a request supplies both `Interego-Native-Delete: 1` and exactly one strong native `If-Match`. Plain `DELETE`, `DELETE` with only `If-Match`, and any other `Interego-Native-Delete` value retain the existing `409` response for a native head. With the opt-in, a missing `If-Match`, `If-Match: *`, a weak or non-native validator, more than one validator, or an `If-None-Match` beside the `If-Match` is `400`. A stale or disappeared exact target is `412`, a legacy head is `409`, and `OPTIONS` advertises the capability. Both live accessor configurations install the condition parser and native delete handler. Store tests cover exact deletion, stale and absent heads, retained canonical content, refused legacy/container targets, and the native commit/delete race under PostgreSQL `READ COMMITTED`.
+
+Fixes to the first version of this change, which CI or review caught before any deploy:
+- **Server start-up.** CSS could not start with either accessor configuration (`Missing type for override target urn:solid-server:default:ConditionsParser`), so CI's `css-server` and native-commit jobs failed. CSS 7.2.0 declares its conditions parser inline, with no `@id`, inside `urn:solid-server:default:RequestParser`. Both configurations now replace it through a same-type `BasicRequestParser` override that changes only `conditionsParser`.
+- **Missing target.** CSS answers `404` for a missing document before the accessor runs, so a native delete of an absent document was answered `404` where `412` was intended. `NativeDeleteOperationHandler` now answers `412` for it, on opted-in requests only.
+- **Auxiliary resources.** CSS 7.2's `DataAccessorBasedStore.deleteResource` checks the request's conditions, deletes the document's auxiliary resources (`<doc>.acl`, `<doc>.meta`) one accessor call each, updates the parent container's modified date, and only then deletes the document. Its `safelyDeleteAuxiliaryResources` logs and ignores an error from an auxiliary delete, so the accessor cannot refuse one. A native delete that the engine then refused (legacy head, `409`) or that lost the engine compare-and-delete (`412`) had already deleted the document's `.acl`. While a native delete is in progress, the accessor now holds back each existing auxiliary of its target and deletes them only after the target's compare-and-delete succeeds. `NativeDeleteOperationHandler` takes the server's `urn:solid-server:default:AuxiliaryStrategy` (wired in both configurations) and names exactly those auxiliaries. The accessor holds back only those paths, and only until the target's own delete is decided. A review found that the first version held back any path that merely started with the target's, for the rest of the request, so a native delete of a document named `/.i` swallowed CSS's own deletes of `/.internal/notifications/` records; the accessor test now covers a prefix path and a delete made after the target settled, and each fails with its guard reverted. Trade-offs kept as they are: CSS reports a held auxiliary as deleted before it is, and if its delete after the target then fails it is logged and left. The target is deleted first, so a crash between the two steps leaves the auxiliary rather than the document. An auxiliary that is already gone is skipped, and any other error is logged and skipped, as CSS does. A refused or conflicting native delete deletes none, and CSS does not report an auxiliary that was not there as deleted. The parent container's modified-date update still happens before the target is attempted, so a refused native delete still changes the container's validator, though not its contents. Not changed here: an ordinary `DELETE` of a native head, with no opt-in, still has its `.acl` deleted by CSS before the accessor answers `409` (observed over HTTP on this configuration).
+
+Tests added with these fixes:
+- **`test/native-commit.it.ts`, accessor phase.** This phase needs no CSS server. It runs CSS's own `DataAccessorBasedStore` and auxiliary strategies with the native delete handler over the in-memory engine. A writer that commits after CSS's `If-Match` check makes the delete `412`, and the `.acl` stays. The exact delete then removes the document and its `.acl`. A legacy head is `409` with its `.acl` kept. An absent auxiliary is answered `NotFound` and is not held back. Over a stub engine, both conflict answers (`revision: 'x'` and `revision: null`) reject with `PreconditionFailedHttpError`. Over HTTP this mapping is never reached, because CSS's own condition check answers a stale ETag first.
+- **`test/native-commit.it.ts`, HTTP phases.** A native document is checked against each refused opt-in, and a read after each one shows the document is still there: two `If-Match` validators (`400`), `If-Match` with `If-None-Match` (`400`), `Interego-Native-Delete: 2` (`409`), no `If-Match` (`400`), `If-Match: *` (`400`) and a weak validator (`400`). A document with a per-document `.acl`, which this allow-all configuration accepts, keeps the `.acl` through a stale native delete (`412`) and loses it with the exact one (`205`). A legacy head with an `.acl` keeps both through a native delete (`409`).
+- **`tests/pgsl-store-native-commit.test.ts`.** A null, omitted, empty, `*`, weak, quoted, malformed, upper-case, short or non-string expected revision rejects with no transaction started. The exact-delete test also checks that the forward overlay row and the old top's reverse overlay row are gone. A deterministic PostgreSQL test makes the deleter read the head and then wait until a native commit has landed. The deleter's compare-and-set must then refuse, and the committed head survives. With that compare-and-set removed, this test failed 20 runs of 20, against 9 of 20 for the free-running race test, which is kept.
+
+Run locally against a deploy-shaped tree (CSS 7.2.0, PostgreSQL 16):
+- `PGSL_INMEM=1 npm run test:server`, `test:contract` (23 of 23) and `test:expiry`: all pass; `test:server` and `test:contract` also pass on PostgreSQL.
+- `test/native-commit.it.ts` on PostgreSQL, accessor and native-delete phases included: all pass.
+- `tests/pgsl-store-native-commit.test.ts` with `TEST_NATIVE_PG_URL`: 30 of 30, including the five PostgreSQL race and recovery tests, 20 consecutive runs.
+- Each guard named above was reverted alone in a scratch copy, and a test failed for each one. `expectedNativeDeleteRevision` states the one-validator rule twice, so removing either statement alone changes nothing; that guard was reverted by removing both.
 
 ## 2026-10-28 — Identity tests: C11 holds the primary's reads alone, so U4's server cannot take them
 
@@ -4222,7 +4533,7 @@ you rely on it. Both are now checked by `node tools/changelog-lint.mjs`, which r
   A branch tip is not a durable anchor. Either point it at the merge-base (a commit already
   on `master`, which always resolves) or move it to the squash commit afterwards.
 
-<!-- documented-through: 919e47344169eaf0a097da0051544c8b28e84a8f -->
+<!-- documented-through: 08ff734230db0569e888c652dd6bb9d71736a3bc -->
 
 ### 2026-09-16 — General LLM telemetry and private HyperMarkdown reports
 
@@ -4595,6 +4906,20 @@ PR #303 (`2ecd0031`) replaces the final fleet-wide check in a single-service rol
 `tools/railway-singleton-settings.ts` adds a plan-by-default command; explicit apply updates declared replica and overlap settings, then verifies readback. It refuses automatic draining changes and does not trigger a deployment. The lint and test-module floors account for the new tools and suite. These entries describe the historical source changes, not independently verified production redeployments.
 
 This backfill covers only PRs #303 and #304 immediately after the already documented PR #302. The continuous marker advances only through PR #304's existing default-branch commit; later gaps remain measured backlog.
+
+## 2026-08-09 — Historical backfill: CSS deployment checks and Discord recovery (#305–#310)
+
+PR #305 (`615543d9`) added log-verified CSS deployment using its `Listening to server at` boot message. The deploy tool checks live singleton settings before mutation, queries deployment-scoped filtered logs, counts matching boot messages, and distinguishes missing proof, crash loops and a deployment that stopped after booting. A read-only current-image tool lets the workflow verify the outgoing image remains pullable before replacement. The CSS integration test captures the boot message and checks a read immediately afterwards.
+
+PR #306 (`17a0e7f7`) corrected the operational claims: an unfiltered CSS log tail can contain the boot line when polling starts early enough, so filtered lookup removes a timing race. Recorded rollout observations did not establish that explicitly setting zero overlap eliminated container overlap; the comments distinguish the observed startup gap from the setting's intended constraint.
+
+PR #307 (`673b24e3`) taught deployment-scope checks to resolve a matrix leg's prebuild artifacts to tracked workspace inputs, transitive workspace dependencies, compiler configuration chains and installation inputs. Recipe resolution applies even to committed generated output and reads repository inputs as of HEAD. Unknown recipes, unexplained artifacts, unsupported ONBUILD instructions and build scripts escaping their workspace remain refusals. Tests cover recipe parsing, malformed inputs, generated artifacts and real repository history.
+
+PR #308 (`f560873d`) kept Discord reconnect timers alive until retry or explicit stop, bounded consecutive attempts, added a HELLO deadline and guarded abandoned socket generations. Fatal gateway failure and an unexpectedly empty event loop exit nonzero. Deployment boot proof moved to the gateway READY event, and command registration compares definitions before publishing again. Child-process tests cover liveness and acknowledgments before unfinished substrate work.
+
+PR #309 (`23533dcb`) added a workflow that builds workspace dependencies and runs the Discord bot's tests and deployment boot-proof checks. PR #310 (`08ff7342`) quoted boot-proof phrases before Railway log queries so `discord:` is not treated as a field selector, added quoting regressions, and included redeploy-tool changes in the workflow triggers.
+
+This backfill covers only the six existing first-parent steps immediately after PR #304. The continuous marker advances through PR #310; later undocumented steps remain measured backlog. The backlog ceiling is unchanged.
 
 ## 2026-08-09 — an entry naming an agent it was not signed by, and a request nobody could read
 
@@ -8817,3 +9142,4 @@ Pre-session capability baseline (inherited):
 - PGSL content-addressed sequence lattice
 - Persistent Solid pod backed by Azure Files
 - Validator module (programmatic SHACL-equivalent) + SHACL shapes export
+

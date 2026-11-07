@@ -79,6 +79,7 @@ import { createProvisionalPlayProvider } from './provisional-play-provider.js';
 import { parsePlayClients } from './provisional-play.js';
 import { mountProvisionalPlay } from './provisional-play-routes.js';
 import { purgeProvisionalPlayPod } from './provisional-play-cleanup.js';
+import { hostedBetaNotice, hostedPrivacyUrl, hostedTermsPolicy, readTermsAcceptance, type TermsAcceptance } from './hosted-terms.js';
 import {
   SurfaceAgentRestores,
   checkAgentIdForRegistration,
@@ -91,6 +92,11 @@ import { clientIp, createLimiter, limitByIp, rateLimit, sendRateLimited } from '
 import { forwardAsyncRouteErrors, installProcessSafetyNet, routeErrorHandler } from './route-errors.js';
 import { parseSiweMessage, SIWE_DOMAIN_SUFFIX } from './siwe-message.js';
 import { ED25519_MULTICODEC, base58btcDecode, encodeEd25519Multibase, x25519PublicKeyEncodings } from './key-encoding.js';
+import { mountLocalIdentityLink, LocalIdentityLinkError, localLinkPublicKey, type LinkSession, type LinkOwner, type LinkHumanCredential, type LinkAccount, type LinkStepUp } from './local-identity-link.js';
+import { localIdentityLinkDashboard } from './local-identity-link-dashboard.js';
+import { mountReturningPasskeyLogin, returningPasskeyRelay, ReturningPasskeyLoginError, type ReturningPasskeyProof } from './returning-passkey-login.js';
+import { returningPasskeyLoginDashboard } from './returning-passkey-dashboard.js';
+import { dashboardInboxScript } from './dashboard-inbox.js';
 
 // ── Lazy heavy imports ──────────────────────────────────────
 //
@@ -135,6 +141,8 @@ const CSS_URL = process.env['CSS_URL'] ?? 'http://css.railway.internal:3456/';
 const BASE_URL_HOST = new URL(BASE_URL).host;
 const BASE_URL_HOST_NO_PORT = BASE_URL_HOST.replace(/:.*$/, '');
 const BASE_URL_HOSTNAME = new URL(BASE_URL).hostname;
+const hostedTerms = hostedTermsPolicy(process.env['HOSTED_TERMS_VERSION']);
+const showHostedPrivacy = BASE_URL_HOSTNAME === 'identity.interego.xwisee.com' || hostedTerms !== null;
 // The sibling MCP relay — surfaced on the landing page so agent
 // operators can copy it into their MCP client without hunting.
 // No literal-URL fallback: IaC is the source of truth (see the
@@ -493,6 +501,8 @@ interface AuthMethods {
   /** Provider-signed immutable Play owner anchor; not an enrolled human credential. */
   provisionalPlayAnchor?: string;
   provisionalPlayReceipts?: Array<{ hash: string; expiresAt: number }>;
+  /** The server's receipt from the hosted enrollment ceremony. */
+  termsAcceptance?: TermsAcceptance;
   /**
    * Set (to the day, YYYY-MM-DD) on the tombstone a deleted account leaves at this URL. Its
    * derived id may never be opened again; see deletionTombstone.
@@ -500,9 +510,10 @@ interface AuthMethods {
   deletedAt?: string;
   /**
    * Set (true) on the tombstone the janitor writes when it purges a Play owner, until every other
-   * resource of the pod is deleted (purgePlayOwner), but those the pod refuses to delete with 409
-   * (native-committed heads, which stay): a purge that fails part-way is retried from it, at the
-   * next pass and after a restart (loadAccountFromPod). A deletion's tombstone has none.
+   * resource of the pod is deleted (purgePlayOwner), the guest's game data included (by the store's
+   * native delete), but the documents outside it that the pod refuses to delete with 409 (native
+   * heads nothing expects, which stay): a purge that fails part-way is retried from it, at the next
+   * pass and after a restart (loadAccountFromPod). A deletion's tombstone has none.
    */
   provisionalPlayPurgePending?: true;
 }
@@ -524,6 +535,29 @@ function emptyAuthMethods(userId: string, name = userId, agentId?: string): Auth
   };
   if (agentId) m.agentId = agentId;
   return m;
+}
+
+function acceptedTermsVersion(input: unknown): string | undefined {
+  return hostedTerms && input === hostedTerms.version ? hostedTerms.version : undefined;
+}
+
+function refuseMissingTerms(res: express.Response): void {
+  res.setHeader('Cache-Control', 'no-store');
+  res.status(428).json({
+    error: 'Review the Hosted Interego Terms of Service and select I agree before creating an account.',
+    code: 'hosted_terms_required',
+    termsVersion: hostedTerms?.version,
+    termsUrl: hostedTerms?.termsUrl,
+    privacyUrl: hostedPrivacyUrl,
+  });
+}
+
+/** Only the first credential on an account needs a new receipt, if the guest did not already agree. */
+function recordEnrollmentTerms(methods: AuthMethods, version: string | undefined): boolean {
+  if (!hostedTerms || methods.termsAcceptance?.version === hostedTerms.version || hasAnyCredential(methods)) return true;
+  if (version !== hostedTerms.version) return false;
+  methods.termsAcceptance = { version, acceptedAt: new Date().toISOString() };
+  return true;
 }
 
 interface TokenRecord {
@@ -609,9 +643,11 @@ const deletedUserIds = new Set<string>();
 
 // Play owners whose purge by the janitor closed the account (its tombstone written, marked
 // provisionalPlayPurgePending) but did not delete every other resource of the pod: a DELETE failed
-// (a 5xx, a timeout; a 409 on a native-committed head is no failure, as no pass can delete one, and
-// the purge finishes without it), or the process stopped. The janitor tries each again at its next
-// pass (purgePlayOwner), and the startup scan finds the marked tombstone again after a restart
+// (a 5xx, a timeout; a native delete of the guest's game data that the store refused or does not
+// offer; game data on the pod again at the purge's last listing; a 409 on a native head outside the
+// game data is no failure, as no pass deletes one, and the purge finishes without it), or the
+// process stopped. The janitor tries each again at its next pass (purgePlayOwner), and the
+// startup scan finds the marked tombstone again after a restart
 // (loadAccountFromPod), so a purge that fails part-way is retried, never dropped: the account,
 // closed, is no longer in `identities`, which is all the janitor's sweep walks. Also a Play owner
 // whose deletion this process answered 503, which the janitor took up after its guest deadline, but
@@ -1175,6 +1211,7 @@ async function deletedBeforeTombstones(userId: string, existing: AuthMethods | n
  */
 type FirstSignInOnPod =
   | Exclude<FirstSignInOutcome<AuthMethods>, { kind: 'unconfirmed' }>
+  | { readonly kind: 'terms-required' }
   | { readonly kind: 'unconfirmed'; readonly reason: string; readonly undetermined: boolean;
       readonly onPod?: AuthMethods | null; readonly pending?: WritePrecondition; readonly fenced?: boolean };
 
@@ -1219,8 +1256,10 @@ async function claimFirstSignInOnPod(
   add: (methods: AuthMethods) => void,
   mayCreate = true,
   derived = false,
+  termsVersion?: string,
 ): Promise<FirstSignInOnPod> {
   const probe = derived && DERIVED_USER_ID.test(userId);
+  const needsTerms = mayCreate && hostedTerms !== null && termsVersion !== hostedTerms.version;
   let evidence: string | null = null;
   // Set when this claim's write failed in a way that may have landed (a 5xx, a timeout): what the
   // pod held once settled (undefined: unsettled), and, for a write the pod never answered that
@@ -1239,7 +1278,7 @@ async function claimFirstSignInOnPod(
     // Set once `retire` has run: what it wrote (or read after a refused write) is installed, not `live`.
     let retired = false;
     const outcome = await claimFirstSignIn<AuthMethods>({
-      mayCreate,
+      mayCreate: mayCreate && !needsTerms,
       closed: isTombstone,
       conflicted: attempts => logWriteConflict(userId, 'first-sign-in', attempts),
       ...(probe ? {
@@ -1286,6 +1325,7 @@ async function claimFirstSignInOnPod(
         // as a passkey registration's does: it used to keep the id.
         const methods = existing ? { ...structuredClone(existing), agentId } : emptyAuthMethods(userId, displayName, agentId);
         if (!methods.name || methods.name === userId) methods.name = displayName;
+        recordEnrollmentTerms(methods, termsVersion);
         add(methods);
         return methods;
       },
@@ -1324,6 +1364,9 @@ async function claimFirstSignInOnPod(
       installAuthMethods(userId, outcome.methods);
     } else if ((outcome.kind === 'refused' || outcome.kind === 'deleted') && live.methods && !retired) {
       installAuthMethods(userId, live.methods);
+    }
+    if (outcome.kind === 'refused' && needsTerms && (!live.methods || !hasAnyCredential(live.methods))) {
+      return { kind: 'terms-required' } as const;
     }
     return outcome;
   });
@@ -1656,6 +1699,7 @@ function normaliseAuthMethods(raw: unknown, userId: string): AuthMethods {
   const base = emptyAuthMethods(userId);
   if (!raw || typeof raw !== 'object') return base;
   const src = raw as Partial<AuthMethods>;
+  const termsAcceptance = readTermsAcceptance(src.termsAcceptance);
   return {
     ...base,
     name: typeof src.name === 'string' ? src.name : userId,
@@ -1668,6 +1712,7 @@ function normaliseAuthMethods(raw: unknown, userId: string): AuthMethods {
     ...(Number.isInteger(src.sessionEpoch) ? { sessionEpoch: src.sessionEpoch } : {}),
     ...(typeof src.provisionalPlayAnchor === 'string' ? { provisionalPlayAnchor: src.provisionalPlayAnchor } : {}),
     ...(Array.isArray(src.provisionalPlayReceipts) ? { provisionalPlayReceipts: src.provisionalPlayReceipts } : {}),
+    ...(termsAcceptance ? { termsAcceptance } : {}),
     ...(typeof src.deletedAt === 'string' ? { deletedAt: src.deletedAt } : {}),
     ...(src.provisionalPlayPurgePending === true ? { provisionalPlayPurgePending: true as const } : {}),
   };
@@ -2231,6 +2276,7 @@ interface Challenge {
   // did-sig: the text the DID's key signs (didSignInMessage), kept so /auth/did verifies the
   // bytes it handed out.
   message?: string;
+  termsVersion?: string;
   // For WebAuthn flows: the transient session-user handle emitted in
   // the registration options (so the `/register` step can match the
   // ceremony back to this challenge). NOT the final userId.
@@ -2895,6 +2941,21 @@ app.use(corsMiddleware({
   allowHeaders: 'Accept, Content-Type, Authorization',
 }));
 
+app.get('/.well-known/hosted-interego-terms', (_req, res) => {
+  res.setHeader('Cache-Control', 'no-store');
+  res.json({ terms: hostedTerms && { version: hostedTerms.version, url: hostedTerms.termsUrl },
+    privacyUrl: showHostedPrivacy ? hostedPrivacyUrl : null,
+    ...(showHostedPrivacy ? { betaNotice: hostedBetaNotice } : {}) });
+});
+
+function hostedTermsCheckbox(): string {
+  if (!hostedTerms) return '';
+  return `<p class="terms-agreement"><strong>${hostedBetaNotice}</strong></p>
+<p class="terms-agreement"><label><input id="termsAgree" type="checkbox" data-version="${hostedTerms.version}"> I am at least 18 and I agree to the <a href="${hostedTerms.termsUrl}" target="_blank" rel="noopener noreferrer">Hosted Interego Terms of Service</a>.</label></p>`;
+}
+
+const hostedPrivacyLink = showHostedPrivacy ? `<a href="${hostedPrivacyUrl}">Privacy Notice</a>` : '';
+
 // ── Per-IP rate limiting (auth endpoints) ──────────────────────────
 //
 // Sliding-window counters per IP × endpoint family. Without these, an
@@ -2991,8 +3052,9 @@ const LANDING_HTML = `<!doctype html>
 <p class="muted" style="margin-top:-0.8em;margin-bottom:1.6em;font-size:0.88rem">Reference implementation on the maintainer's own hosting. Fine for evaluation; self-host before you depend on it.</p>
 
 <h2 style="margin-top:1.2em">60-second setup</h2>
-<p>Click the button to mint an anonymous, ephemeral pod + bearer token (no signup, reaped after 7 days). Paste the personalized config into your MCP client and the agent has working pod-rooted memory immediately. Want to keep it? Enroll a passkey or wallet at <code>/connect</code> using the same token as <code>addDeviceToken</code> and the pod becomes permanently yours.</p>
-<button id="tryBtn" class="btn" type="button" style="margin:0.4em 0 0.8em">Try it now — no signup &rarr;</button>
+<p>Create an anonymous, ephemeral pod and bearer token, normally cleaned up after 7 days. Paste the personalized config into your MCP client to use the pod. To keep it, enroll a passkey or wallet at <code>/connect</code> using the same token as <code>addDeviceToken</code>.</p>
+${hostedTermsCheckbox()}
+<button id="tryBtn" class="btn" type="button" style="margin:0.4em 0 0.8em">Start guest access &rarr;</button>
 <span id="tryStatus" class="muted" style="margin-left:0.6em;font-size:0.88rem"></span>
 <div id="trySnippetWrap" style="display:none;margin-top:0.6em">
   <p style="margin-bottom:0.3em" class="muted">Paste into <code>~/.claude.json</code>, <code>.cursor/mcp.json</code>, or the Codex equivalent:</p>
@@ -3020,18 +3082,30 @@ const LANDING_HTML = `<!doctype html>
   var pre = document.getElementById('trySnippet');
   var ttl = document.getElementById('tryTtl');
   var copy = document.getElementById('tryCopyBtn');
+  var agree = document.getElementById('termsAgree');
   if (!btn) return;
   btn.addEventListener('click', function(){
+    if (agree && !agree.checked) {
+      status.textContent = 'Select I agree to start guest access.';
+      agree.focus();
+      return;
+    }
     btn.disabled = true;
     status.textContent = 'Provisioning…';
-    fetch('/try', { method: 'POST', headers: { 'Content-Type': 'application/json' } })
-      .then(function(r){ if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+    fetch('/try', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ termsVersion: agree ? agree.dataset.version : undefined }) })
+      .then(async function(r){
+        var result = await r.json();
+        if (!r.ok) throw new Error(result.error || ('HTTP ' + r.status));
+        return result;
+      })
       .then(function(j){
         pre.textContent = j.mcpConfigSnippet;
         wrap.style.display = 'block';
         ttl.textContent = j.ttlNote || '';
         status.textContent = 'Ready — userId ' + j.userId;
         btn.textContent = 'Generate another →';
+        if (agree) agree.checked = false;
         btn.disabled = false;
       })
       .catch(function(e){
@@ -3081,12 +3155,14 @@ Open source · <a href="${REPO_URL}">github.com/markjspivey-xwisee/interego</a> 
 <a href="/dashboard">dashboard</a> ·
 <a href="/health">status</a> ·
 <a href="/.well-known/did.json">did.json</a> ·
+${hostedPrivacyLink ? `${hostedPrivacyLink} ·` : ''}
 this deployment is the maintainer's free reference instance
 </footer>
 </body>
 </html>`;
 
 app.get(['/', '/try'], (_req, res) => {
+  if (showHostedPrivacy) res.setHeader('Cache-Control', 'no-store');
   res.type('text/html').send(LANDING_HTML);
 });
 
@@ -3244,6 +3320,10 @@ app.post('/challenges', challengeLimiter, async (req, res) => {
     }
   }
   const ch = issueChallenge(purpose, userId);
+  if (hostedTerms && (purpose === 'siwe' || purpose === 'did-sig') && acceptedTermsVersion(req.body?.termsVersion)) {
+    ch.termsVersion = hostedTerms.version;
+    if (purpose === 'did-sig') ch.message += `\n${hostedTerms.statement}`;
+  }
   // Pin the relying party for WebAuthn-authenticate ceremonies to the
   // origin this challenge was requested from — so /authenticate later
   // verifies against the same origin the browser ran the ceremony on.
@@ -3255,6 +3335,7 @@ app.post('/challenges', challengeLimiter, async (req, res) => {
     ch.rpOrigin = rp.origin;
   }
   const resp: Record<string, unknown> = { nonce: ch.nonce, expiresAt: new Date(ch.expiresAt).toISOString() };
+  if (purpose === 'siwe' && ch.termsVersion) resp.termsStatement = hostedTerms?.statement;
   if (ch.message) resp.message = ch.message;
   if (ch.rpId) resp.rpId = ch.rpId;
   if (checksummedAddress) resp.address = checksummedAddress;
@@ -3321,7 +3402,7 @@ const SIWE_CLOCK_SKEW_MS = 5 * 60 * 1000;
 const SIWE_ISSUED_AT_WINDOW_MS = 24 * 60 * 60 * 1000;
 
 type SiweMessageCheck =
-  | { ok: true; address: string }
+  | { ok: true; address: string; termsVersion?: string }
   | { ok: false; status: 400; body: Record<string, string> };
 
 /**
@@ -3394,7 +3475,8 @@ async function checkSiweMessage(message: string, ch: Challenge): Promise<SiweMes
   if (f.notBefore !== undefined && Date.parse(f.notBefore) > now + SIWE_CLOCK_SKEW_MS) {
     return refuse({ error: 'SIWE message is not valid yet (Not Before is in the future)' });
   }
-  return { ok: true, address: f.address.toLowerCase() };
+  const termsVersion = hostedTerms && f.statement === hostedTerms.statement ? acceptedTermsVersion(ch.termsVersion) : undefined;
+  return { ok: true, address: f.address.toLowerCase(), termsVersion };
 }
 
 /**
@@ -3739,7 +3821,12 @@ app.post('/auth/siwe', authEnrollLimiter, async (req, res) => {
       const outcome = await claimFirstSignInOnPod(targetUserId, agentId, displayName,
         m => m.walletAddresses.some(a => a.toLowerCase() === recoveredAddress),
         m => { m.walletAddresses.push(recoveredAddress); }, /* mayCreate */ !loading && !existingOnly,
-        /* derived */ resolved.mode === 'derive');
+        /* derived */ resolved.mode === 'derive', checked.termsVersion);
+      if (outcome.kind === 'terms-required') {
+        if (resolved.mode === 'bootstrap') CONSUMED_INVITES.delete(targetUserId);
+        refuseMissingTerms(res);
+        return;
+      }
       if (outcome.kind === 'unreadable' || outcome.kind === 'unconfirmed') {
         log(`WARN: first-time SIWE sign-in to ${targetUserId} not completed (${outcome.kind}): ${outcome.reason}`);
         // Nothing settled what the pod holds after the failed write: the wallet may be on that
@@ -3781,11 +3868,14 @@ app.post('/auth/siwe', authEnrollLimiter, async (req, res) => {
       // only once the pod has it, unless that record signed out everywhere since the bearer's
       // token was issued (signedOutSince).
       let signedOut = false;
+      let missingTerms = false;
       try {
         await commitCredentialEnrollment(user.id, 'siwe-add-wallet', methods => {
           signedOut = signedOutSince(methods, bearerEpoch);
           if (signedOut) return false;
           if (methods.walletAddresses.some(a => a.toLowerCase() === recoveredAddress)) return false;
+          missingTerms = !recordEnrollmentTerms(methods, checked.termsVersion);
+          if (missingTerms) return false;
           methods.walletAddresses.push(recoveredAddress);
         });
       } catch (err) {
@@ -3805,6 +3895,7 @@ app.post('/auth/siwe', authEnrollLimiter, async (req, res) => {
         res.status(401).json({ error: SIGNED_OUT_DURING_ADD });
         return;
       }
+      if (missingTerms) { refuseMissingTerms(res); return; }
       if (timingEnabled()) logTiming('siwe-pod-write-completed', requestStart, { branch: 'add-wallet' });
       log(`Wallet ${recoveredAddress} linked to existing user ${user.id}`);
     }
@@ -3846,6 +3937,7 @@ app.post('/auth/siwe', authEnrollLimiter, async (req, res) => {
  */
 app.post('/auth/webauthn/register-options', authEnrollLimiter, async (req, res) => {
   const { name, bootstrapUserId, bootstrapInvite } = req.body ?? {};
+  const termsVersion = acceptedTermsVersion(req.body?.termsVersion);
   if (!name) {
     res.status(400).json({ error: 'name is required' });
     return;
@@ -3864,6 +3956,7 @@ app.post('/auth/webauthn/register-options', authEnrollLimiter, async (req, res) 
     addDeviceUserId = tr.record!.userId;
     addDeviceEpoch = tokenEpoch(authHeader.slice(7));
   }
+  if (hostedTerms && !addDeviceUserId && !termsVersion) { refuseMissingTerms(res); return; }
 
   // Mode (B): validate bootstrap invite (do NOT consume yet — consumption
   // happens at /register after the ceremony actually verifies).
@@ -3947,6 +4040,10 @@ app.post('/auth/webauthn/register-options', authEnrollLimiter, async (req, res) 
   let excludeCredentials: Array<{ id: string; transports?: import('@simplewebauthn/server').AuthenticatorTransportFuture[] }> = [];
   if (addDeviceUserId) {
     const m = await readAuthMethods(addDeviceUserId);
+    if (hostedTerms && !hasAnyCredential(m) && m.termsAcceptance?.version !== hostedTerms.version && !termsVersion) {
+      refuseMissingTerms(res);
+      return;
+    }
     excludeCredentials = m.webAuthnCredentials.map(c => ({
       id: c.id,
       transports: (c.transports ?? []) as unknown as import('@simplewebauthn/server').AuthenticatorTransportFuture[],
@@ -3977,6 +4074,7 @@ app.post('/auth/webauthn/register-options', authEnrollLimiter, async (req, res) 
     expiresAt: Date.now() + CHALLENGE_TTL_MS,
     purpose: 'webauthn-register',
     userId: sessionUserId,
+    termsVersion,
   };
   if (addDeviceUserId) {
     ch.addDeviceUserId = addDeviceUserId;
@@ -4125,7 +4223,8 @@ app.post('/auth/webauthn/register', authEnrollLimiter, async (req, res) => {
       m => {
         if (!m.name || m.name === targetUserId) m.name = displayName;
         m.webAuthnCredentials.push(record);
-      }, /* mayCreate */ true, /* derived */ true);
+      }, /* mayCreate */ true, /* derived */ true, ch.termsVersion);
+    if (outcome.kind === 'terms-required') { refuseMissingTerms(res); return; }
     if (outcome.kind === 'unreadable') {
       log(`WARN: passkey registration of ${targetUserId} not completed (unreadable): ${outcome.reason}`);
       res.status(503).json({
@@ -4192,7 +4291,7 @@ app.post('/auth/webauthn/register', authEnrollLimiter, async (req, res) => {
   // binds a passkey to one that holds no credential yet; an added device needs the document.
   if (!created) {
     const bootstrap = !ch.addDeviceUserId && !!ch.bootstrapUserId;
-    let refusal: 'claimed' | 'signed-out' | undefined;
+    let refusal: 'claimed' | 'signed-out' | 'terms-required' | undefined;
     // Nothing was enrolled, so the shell seeded above for it goes again: left in memory it
     // would make the account look loaded (its profile and did:web document resolvable).
     const rollBack = () => { for (const id of seeded.splice(0)) { identities.delete(id); keys.delete(id); } };
@@ -4204,6 +4303,7 @@ app.post('/auth/webauthn/register', authEnrollLimiter, async (req, res) => {
         // An added device: not onto an account that signed out everywhere since the options.
         if (ch.addDeviceUserId && signedOutSince(methods, ch.addDeviceEpoch ?? 0)) { refusal = 'signed-out'; return false; }
         if (methods.webAuthnCredentials.some(c => c.id === record.id)) return false;
+        if (!recordEnrollmentTerms(methods, ch.termsVersion)) { refusal = 'terms-required'; return false; }
         if (!methods.name || methods.name === targetUserId) methods.name = user.name;
         if (!methods.agentId) {
           const a = [...identities.values()].find(i => i.type === 'agent' && i.owner === targetUserId);
@@ -4264,6 +4364,12 @@ app.post('/auth/webauthn/register', authEnrollLimiter, async (req, res) => {
       res.status(401).json({ error: SIGNED_OUT_DURING_ADD });
       return;
     }
+    if (refusal === 'terms-required') {
+      rollBack();
+      if (bootstrap) CONSUMED_INVITES.delete(targetUserId);
+      refuseMissingTerms(res);
+      return;
+    }
   }
   // FIX A: identity-server no longer mirrors /profile/card or /<id>/agents.
   // Single authoritative pod-side writer is the relay's /oauth/verify
@@ -4312,6 +4418,7 @@ async function signInWithPasskey(
   challenge: string,
   rpId: string,
   origin: string,
+  onVerified?: (proof: ReturningPasskeyProof) => void,
 ): Promise<PasskeySignIn> {
   // Taken before any lock: a deletion clears this server's copy of the account it deletes.
   const snapshot = new Map(holders.map(id => [id, authMethodsCache.get(id)?.value] as const));
@@ -4336,6 +4443,8 @@ async function signInWithPasskey(
         if (triedKeys.has(key)) return NoWrite('same-key');
         const verified = await verifyPasskeyAssertion({ credential: cred, response, challenge, rpId, origin });
         if (verified.ok === false) return NoWrite('not-verified', verified.error);
+        onVerified?.({ userId, epoch: live?.sessionEpoch ?? 0,
+          credential: { method: 'passkey', id: cred.id, publicKey: cred.publicKey, rpId, rpOrigin: origin } });
         const stored = Number.isFinite(cred.counter) ? cred.counter : 0;
         if (verified.newCounter <= stored && cred.rpId === rpId && cred.rpOrigin) return NoWrite('verified-unchanged');
         cred.counter = Math.max(stored, verified.newCounter);
@@ -4661,6 +4770,7 @@ app.post('/auth/did', authEnrollLimiter, async (req, res) => {
     // Appended: a legacy-form did:key has set a Warning of its own above.
     res.append('Warning', '299 - "a DID signature over the bare nonce is deprecated; sign the message POST /challenges returns"');
   }
+  const termsVersion = proof === 'message' ? acceptedTermsVersion(ch.termsVersion) : undefined;
 
   // If the initial pod-index rebuild hasn't settled yet, give it a small
   // budget before we look up `did` in didIndex. Without this race the
@@ -4888,7 +4998,12 @@ app.post('/auth/did', authEnrollLimiter, async (req, res) => {
             keyType: 'Ed25519VerificationKey2020',
             createdAt: new Date().toISOString(),
           });
-        }, mayCreate, /* derived */ resolved.mode === 'derive');
+        }, mayCreate, /* derived */ resolved.mode === 'derive', termsVersion);
+      if (outcome.kind === 'terms-required') {
+        if (resolved.mode === 'bootstrap') CONSUMED_INVITES.delete(targetUserId);
+        refuseMissingTerms(res);
+        return;
+      }
       if (outcome.kind === 'unreadable' || outcome.kind === 'unconfirmed') {
         log(`WARN: first-time DID sign-in to ${targetUserId} not completed (${outcome.kind}): ${outcome.reason}`);
         if (outcome.kind === 'unconfirmed' && outcome.undetermined) recordUnconfirmed(didKey, targetUserId, outcome.pending, resolved.mode === 'derive');
@@ -4924,11 +5039,14 @@ app.post('/auth/did', authEnrollLimiter, async (req, res) => {
       // once the pod has it, unless that record signed out everywhere since the bearer's token was
       // issued (signedOutSince: the request may have waited for the DID's turn meanwhile).
       let signedOut = false;
+      let missingTerms = false;
       try {
         await commitCredentialEnrollment(user.id, 'did-add-did', methods => {
           signedOut = signedOutSince(methods, bearerEpoch);
           if (signedOut) return false;
           if (methods.didKeys.some(k => k.did === did)) return false;
+          missingTerms = !recordEnrollmentTerms(methods, termsVersion);
+          if (missingTerms) return false;
           methods.didKeys.push({
             did,
             publicKeyMultibase: canonicalPublicKeyMultibase,
@@ -4951,6 +5069,7 @@ app.post('/auth/did', authEnrollLimiter, async (req, res) => {
         res.status(401).json({ error: SIGNED_OUT_DURING_ADD });
         return;
       }
+      if (missingTerms) { refuseMissingTerms(res); return; }
       if (timingEnabled()) logTiming('did-pod-write-completed', requestStart, { branch: 'add-did' });
       log(`DID ${logValue(did, 200)} linked to existing user ${user.id}`);
     }
@@ -4992,7 +5111,9 @@ app.post('/auth/did', authEnrollLimiter, async (req, res) => {
 // the underlying user).
 const tryProvisionLimiter = rateLimit('try-provision', { windowMs: 60 * 60 * 1000, max: 5 });
 
-app.post('/try', tryProvisionLimiter, async (_req, res) => {
+app.post('/try', tryProvisionLimiter, async (req, res) => {
+  const termsVersion = acceptedTermsVersion(req.body?.termsVersion);
+  if (hostedTerms && !termsVersion) { refuseMissingTerms(res); return; }
   // userId derivation is global per the CLAUDE.md invariant — for `/try`
   // there's no credential to derive from, so we use a fresh random suffix
   // and prefix `u-try-` so the janitor knows to reap it. Same shape as
@@ -5012,6 +5133,7 @@ app.post('/try', tryProvisionLimiter, async (_req, res) => {
   try {
     await withIdentityPodMutex(userId, async () => {
       const doc = emptyAuthMethods(userId, name, agentId);
+      recordEnrollmentTerms(doc, termsVersion);
       let result: WriteResult;
       try {
         result = await writeLive(userId, doc, { kind: 'absent' }, 'try');
@@ -5020,7 +5142,8 @@ app.post('/try', tryProvisionLimiter, async (_req, res) => {
         // abandoned below. The id is random, so a record there now with this request's agent is
         // the one it wrote (a slow pod that stored it after the timeout): it was provisioned.
         const now = await reconcileAfterWriteFailure(userId, undefined, { kind: 'absent' }, 'try');
-        if (now && !isTombstone(now) && now.agentId === agentId && !hasAnyCredential(now)) {
+        if (now && !isTombstone(now) && now.agentId === agentId && !hasAnyCredential(now)
+          && (!hostedTerms || now.termsAcceptance?.version === hostedTerms.version)) {
           log(`WARN: try-it identity ${userId}: the pod took the write without confirming it (${(err as Error).message})`);
           return;
         }
@@ -5086,6 +5209,7 @@ const provisionalPlay = createProvisionalPlayProvider({
   clientsJson: process.env['PROVISIONAL_PLAY_CLIENTS'],
   ttlSeconds: Number(process.env['PROVISIONAL_PLAY_TTL_SECONDS'] ?? 86400),
   maxPods: Number(process.env['PROVISIONAL_PLAY_MAX_PODS'] ?? 100),
+  hostedTerms: hostedTerms ?? undefined,
   withOwnerLock: withIdentityPodMutex,
   empty: claims => emptyAuthMethods(claims.userId, 'Play guest', claims.authenticatedAgentId) as unknown as import('./provisional-play-store.js').PlayAnchorDocument,
   // Runs inside the owner's lock, once the anchor's conditional write has landed.
@@ -5736,11 +5860,14 @@ app.post('/wallet/link', authEnrollLimiter, async (req, res) => {
     // Written only while the record has not signed out everywhere since the bearer's token was
     // issued (signedOutSince): the request may have waited for the wallet's turn meanwhile.
     let signedOut = false;
+    let missingTerms = false;
     try {
       await commitCredentialEnrollment(userId, 'wallet-link', methods => {
         signedOut = signedOutSince(methods, linkEpoch);
         if (signedOut) return false;
         if (methods.walletAddresses.some(a => a.toLowerCase() === addr)) return false;
+        missingTerms = !recordEnrollmentTerms(methods, checked.termsVersion);
+        if (missingTerms) return false;
         methods.walletAddresses.push(addr);
       });
     } catch (err) {
@@ -5765,6 +5892,7 @@ app.post('/wallet/link', authEnrollLimiter, async (req, res) => {
       res.status(401).json({ error: SIGNED_OUT_DURING_ADD });
       return;
     }
+    if (missingTerms) { refuseMissingTerms(res); return; }
     log(`Linked wallet ${addr} to user ${userId}`);
     return true;
   });
@@ -5957,6 +6085,180 @@ async function requireUserFromBearer(
   }
   return user;
 }
+
+// Account linking is deliberately separate from generic bearer enrollment and token renewal.
+// Each link requires a fresh action-bound assertion by an existing passkey/wallet, followed by
+// a separately approved proof by the new native key. Neither step issues a login token.
+const localLinkOrigin = new URL(BASE_URL).origin;
+const localLinkPasskeyOrigins = new Set([localLinkOrigin]);
+try {
+  const relayOrigin = new URL(resolveRelayBase()).origin;
+  if (RP_ALLOWLIST.has(relayOrigin)) localLinkPasskeyOrigins.add(relayOrigin);
+} catch { /* No original-RP relay popup is available on this deployment. */ }
+const linkRefused = (code = 'link_session_ended') => new LocalIdentityLinkError(401, code, 'This account-link approval is no longer valid. Sign in to your existing account and start again.');
+function linkRecordMatches(methods: Readonly<AuthMethods> | null, session: LinkSession): methods is Readonly<AuthMethods> {
+  return !!methods && methods.userId === session.userId && !isTombstone(methods) && !deletedUserIds.has(session.userId)
+    && (methods.sessionEpoch ?? 0) === session.epoch && hasAnyCredential(methods);
+}
+function linkHumanPresent(methods: Readonly<AuthMethods>, credential: LinkHumanCredential): boolean {
+  return credential.method === 'wallet' ? methods.walletAddresses.some(address => address.toLowerCase() === credential.address.toLowerCase())
+    : methods.webAuthnCredentials.some(key => key.id === credential.id && key.publicKey === credential.publicKey
+      && (key.rpId ?? RP_ID) === credential.rpId && (key.rpOrigin ?? RP_ORIGIN) === credential.rpOrigin);
+}
+function linkOwner(userId: string, methods: Readonly<AuthMethods>): LinkOwner {
+  const displayName = String(methods.name || identities.get(userId)?.name || userId).replace(/[\u0000-\u001f\u007f]/g, ' ').trim().slice(0, 160) || userId;
+  return { userId, did: `did:web:${BASE_URL_HOST}:users:${userId}`, webId: `${BASE_URL}/users/${userId}/profile#me`,
+    podUrl: `${process.env['CSS_PUBLIC_URL'] ?? CSS_URL}${userId}/`, displayName };
+}
+async function linkAccount(session: LinkSession): Promise<LinkAccount> {
+  return withIdentityPodMutex(session.userId, async () => {
+    const live = await readLive(session.userId); if (!linkRecordMatches(live.methods, session)) throw linkRefused();
+    const methods = live.methods; installAuthMethods(session.userId, methods);
+    return { owner: linkOwner(session.userId, methods), walletAddresses: [...methods.walletAddresses],
+      passkeys: methods.webAuthnCredentials.map(key => ({ id: key.id, publicKey: key.publicKey, rpId: key.rpId ?? RP_ID,
+        rpOrigin: key.rpOrigin ?? RP_ORIGIN, ...(key.transports ? { transports: key.transports } : {}) })) };
+  });
+}
+const localLinkWriter: WriterDeps<AuthMethods> = {
+  ...authMethodsWriter,
+  writeLive: (userId, doc, condition, context) => {
+    if (condition.kind !== 'match') throw new LocalIdentityLinkError(503, 'link_conditional_write_required', 'This pod did not provide a condition for a safe credential update. No account-link success was issued.');
+    return writeLive(userId, doc, condition, context);
+  },
+};
+async function verifyLinkStepUp(step: LinkStepUp, body: Record<string, unknown>): Promise<LinkHumanCredential> {
+  if (step.method === 'wallet') {
+    if (typeof body.signature !== 'string' || !/^0x[0-9a-fA-F]{130}$/.test(body.signature) || !step.message || !step.address) throw linkRefused('link_proof_required');
+    return withIdentityPodMutex(step.session.userId, async () => {
+      const live = await readLive(step.session.userId); const credential: LinkHumanCredential = { method: 'wallet', address: step.address!.toLowerCase() };
+      if (!linkRecordMatches(live.methods, step.session) || !linkHumanPresent(live.methods, credential) || step.expiresAt <= Date.now()) throw linkRefused();
+      const signer = (await loadEthers()).verifyMessage(step.message!, body.signature as string);
+      if (signer.toLowerCase() !== credential.address) throw linkRefused('link_proof_required');
+      return credential;
+    });
+  }
+  const response = body.response as import('@simplewebauthn/server').AuthenticationResponseJSON | undefined;
+  if (!response || typeof response.id !== 'string' || !step.rpId || !step.rpOrigin) throw linkRefused('link_proof_required');
+  const snapshot = step.passkeys?.find(key => key.id === response.id); if (!snapshot) throw linkRefused('link_proof_required');
+  let approved: LinkHumanCredential | undefined;
+  const result = await updateAuthMethodsWith(localLinkWriter, step.session.userId, 'local-identity-link-step-up', async (draft, live) => {
+    approved = undefined;
+    if (!linkRecordMatches(live, step.session) || step.expiresAt <= Date.now()) return NoWrite('link-session-ended');
+    const key = draft.webAuthnCredentials.find(entry => entry.id === response.id);
+    if (!key || key.publicKey !== snapshot.publicKey || (key.rpId ?? RP_ID) !== step.rpId || (key.rpOrigin ?? RP_ORIGIN) !== step.rpOrigin) return NoWrite('link-credential-gone');
+    const proof = await verifyPasskeyAssertion({ credential: key, response, challenge: step.nonce, rpId: step.rpId!, origin: step.rpOrigin! });
+    if (!proof.ok) return NoWrite('link-proof-invalid');
+    approved = { method: 'passkey', id: key.id, publicKey: key.publicKey, rpId: step.rpId!, rpOrigin: step.rpOrigin! };
+    const previous = Number.isFinite(key.counter) ? key.counter : 0;
+    if (proof.newCounter <= previous && key.rpId === step.rpId && key.rpOrigin === step.rpOrigin) return NoWrite('link-verified');
+    key.counter = Math.max(previous, proof.newCounter); key.rpId = step.rpId; key.rpOrigin ??= step.rpOrigin; return Write;
+  });
+  if (!approved || result.written === false && result.reason !== 'link-verified') throw linkRefused('link_proof_required');
+  return approved;
+}
+async function checkLinkHuman(session: LinkSession, credential: LinkHumanCredential): Promise<void> {
+  await withIdentityPodMutex(session.userId, async () => {
+    const live = await readLive(session.userId);
+    if (!linkRecordMatches(live.methods, session) || !linkHumanPresent(live.methods, credential)) throw linkRefused();
+  });
+}
+async function availableLocalLinkDid(did: string, ownerId: string): Promise<void> {
+  // A complete fresh listing, plus the derived account even when unlisted. Reads remain
+  // read-only; a missing/unreadable account never becomes a claim that no other owner exists.
+  const publicKey = localLinkPublicKey(did); let users: string[];
+  try { users = [...new Set([...(await listPods(podFetch, CSS_URL)), ...[...identities.values()].filter(value => value.type === 'user').map(value => value.id), deriveUserIdFromDid(did)])]; }
+  catch { throw new LocalIdentityLinkError(503, 'link_owners_unavailable', 'The local key account binding could not be confirmed. Review your account credentials before retrying.'); }
+  if (users.length > 4096) throw new LocalIdentityLinkError(503, 'link_owners_unavailable', 'Credential-holder checking is busy. Review your account credentials before retrying.');
+  let next = 0;
+  await Promise.all(Array.from({ length: Math.min(16, users.length) }, async () => {
+    while (next < users.length) {
+      const userId = users[next++]!; if (userId === ownerId) continue;
+      const live = await withIdentityPodMutex(userId, () => readLive(userId)); const methods = live.methods;
+      if (!methods || isTombstone(methods)) continue;
+      if (methods.didKeys.some(key => key.did === did || decodeEd25519PublicKeyMultibase(key.publicKeyMultibase)?.publicKey.equals(publicKey))) {
+        throw new LocalIdentityLinkError(409, 'local_key_has_another_account', 'This local key already belongs to another account. Keep that identity backup and use a fresh local key for this account; accounts and progress cannot be merged here.');
+      }
+    }
+  }));
+}
+mountLocalIdentityLink(app, {
+  identityOrigin: localLinkOrigin, trustedPasskeyOrigins: localLinkPasskeyOrigins, limiter: authEnrollLimiter,
+  pollLimiter: rateLimit('local-identity-link-poll', { windowMs: 60_000, max: 180 }),
+  authenticate: async token => {
+    const verified = await verifyToken(token); const signed = parseAndVerifySignature(token);
+    if (!verified.valid || !verified.record || verified.record.provisionalPlay || signed.valid !== true
+      || !Number.isSafeInteger(signed.payload.epoch) || signed.payload.epoch < 0) throw linkRefused();
+    return { userId: verified.record.userId, epoch: signed.payload.epoch, sessionHash: crypto.createHash('sha256').update(token).digest('base64url') };
+  },
+  account: linkAccount,
+  walletAddress: async value => (await loadEthers()).getAddress(value),
+  verifyStepUp: verifyLinkStepUp,
+  check: checkLinkHuman,
+  available: availableLocalLinkDid,
+  commit: async (session, credential, did, active) => {
+    const turn = await credentialDecisions.decide(didCredential(did), async () => {
+      await availableLocalLinkDid(did, session.userId);
+      try {
+        const result = await updateAuthMethodsWith(localLinkWriter, session.userId, 'local-identity-link', (draft, live) => {
+          if (!active() || !linkRecordMatches(live, session) || !linkHumanPresent(live, credential)) return NoWrite('link-session-ended');
+          if (draft.didKeys.some(key => key.did === did)) return NoWrite('link-already-present');
+          draft.didKeys.push({ did, publicKeyMultibase: encodeEd25519Multibase(localLinkPublicKey(did)), keyType: 'Ed25519VerificationKey2020', createdAt: new Date().toISOString() });
+          return Write;
+        });
+        if (result.written === false && result.reason !== 'link-already-present') throw linkRefused();
+      } catch (error) {
+        // Even a write that appears to have landed receives no success on uncertainty. Preserve
+        // the existing credential-turn settlement protection, so a later sign-in cannot create
+        // a competing derived account while this account's write remains unanswered.
+        await credentialAfterFailedAdd(didCredential(did), session.userId, error, methods => methods.didKeys.some(key => key.did === did));
+        throw error;
+      }
+      await checkLinkHuman(session, credential); await availableLocalLinkDid(did, session.userId);
+    });
+    if (turn.kind !== 'decided') throw new LocalIdentityLinkError(503, 'link_credential_busy', 'Another request for this local key has not settled. Review your account credentials before trying again.');
+  },
+});
+
+// This dedicated nonce never enters /challenges: the original RP cannot exchange its
+// assertion for an owner bearer. Only the initiating provider page can finish login.
+const returningRelay = returningPasskeyRelay(localLinkOrigin,
+  [...localLinkPasskeyOrigins].find(origin => origin !== localLinkOrigin));
+mountReturningPasskeyLogin(app, {
+  identityOrigin: localLinkOrigin, relayOrigin: returningRelay, limiter: authEnrollLimiter,
+  pollLimiter: rateLimit('returning-passkey-login-poll', { windowMs: 60_000, max: 180 }),
+  verify: async (response, challenge, rpOrigin) => {
+    if (!response || typeof response.id !== 'string' || !response.id || response.id.length > 2048) throw new ReturningPasskeyLoginError();
+    if (!credentialIndex.has(response.id)) await awaitInitialIndexWithBudget(50);
+    const derived = deriveUserIdFromCredentialId(response.id);
+    if (!credentialIndex.candidates(response.id).includes(derived) && await ensureAccountLoaded(derived) === 'unreadable') throw new ReturningPasskeyLoginError(503);
+    if (!credentialIndex.has(response.id)) throw new ReturningPasskeyLoginError(accountIndexState.complete ? 401 : 503);
+    const candidates = credentialIndex.candidates(response.id, derived);
+    if (!await loadIndexedHolders(candidates)) throw new ReturningPasskeyLoginError(503);
+    const holders = candidates.filter(id => identities.get(id)?.type === 'user' && !deletedUserIds.has(id));
+    let proof: ReturningPasskeyProof | undefined;
+    const outcome = await signInWithPasskey(holders.slice(0, MAX_HOLDERS), response, challenge, new URL(rpOrigin).hostname, rpOrigin, value => { proof = value; });
+    if (outcome.kind !== 'signed-in' || !proof || proof.userId !== outcome.userId) {
+      throw new ReturningPasskeyLoginError(['unreadable', 'unpersisted', 'undetermined'].includes(outcome.kind) || !accountIndexState.complete ? 503 : 401);
+    }
+    return proof;
+  },
+  issue: async (proof, active) => withIdentityPodMutex(proof.userId, async () => {
+    const live = await readLive(proof.userId);
+    const session = { userId: proof.userId, epoch: proof.epoch, sessionHash: '' };
+    if (!active() || !linkRecordMatches(live.methods, session) || !linkHumanPresent(live.methods, proof.credential)
+      || live.methods.provisionalPlayAnchor) throw new ReturningPasskeyLoginError();
+    installAuthMethods(proof.userId, live.methods);
+    const user = identities.get(proof.userId); if (!user) throw new ReturningPasskeyLoginError();
+    const agent = ensureSurfaceAgent(user, undefined);
+    // Pin the freshly read epoch: never renew this proof across sign-out or use
+    // issueToken's cached-epoch/read-failure fallback for this login handoff.
+    if (!active()) throw new ReturningPasskeyLoginError();
+    const token = await issueToken(proof.userId, agent.id, agent.scope ?? 'ReadWrite', undefined, proof.epoch);
+    if (!active()) throw new ReturningPasskeyLoginError();
+    const owner = linkOwner(proof.userId, live.methods);
+    return { token: token.token, expiresAt: token.expiresAt, userId: owner.userId, did: owner.did, webId: owner.webId, podUrl: owner.podUrl };
+  }),
+});
 
 /**
  * The account a genuine, unexpired token names when this server's copy of its record is a
@@ -6449,11 +6751,17 @@ async function deleteUserCompletely(
  * close() finds the marked tombstone, writes nothing, and the remaining deletions are sent again.
  * It used to close the account and forget it before deleting anything, and a DELETE that failed
  * once (a 5xx, a timeout) left the pod's data for good: the janitor walks only `identities`, and a
- * tombstone loads no account. The record and its container stay, as the tombstone. So do the
- * documents the pod refuses to delete with 409 (native-committed heads: a guest's game saves and its
- * write budget, which no plain request deletes) and the containers that hold them: the purge is
- * finished without them, and logs them once. It used to stay unfinished for them, and send them
- * again at every pass and after every restart.
+ * tombstone loads no account. The record and its container stay, as the tombstone. The guest's
+ * game data (its saves and its write budget, which the css-gate writes only as native commits and
+ * no plain request deletes) is deleted by the store's native conditional delete, on the ETag read
+ * just before it, and the containers that held it after it (provisional-play-cleanup.ts): a store
+ * that does not offer that delete, or refuses it (a 412: the document changed since its ETag was
+ * read), leaves the purge unfinished, and so does game data a write authorized before the tombstone
+ * put back on the pod before the purge's last listing. The purge used to finish without that data,
+ * and every guest's saves stayed on the pod. A document outside the game data that the pod refuses
+ * to delete with 409 (a native head nothing here expects) stays, with the containers that hold it:
+ * the purge is finished without it, and logs it once, so such a document never holds a purge open
+ * at every pass and after every restart.
  *
  * A tombstone the purge did not mark (a deletion's, the other instance's, or a purge finished
  * elsewhere) is not purged: its owner is only forgotten here. A deleted Play owner may be
@@ -6499,11 +6807,13 @@ async function purgePlayOwner(userId: string): Promise<void> {
       // The owner, forgotten when its account closed, is walked only from here at the next pass.
       if (registryLeft === undefined) unfinishedPlayPurges.delete(userId);
       else unfinishedPlayPurges.add(userId);
-      // Logged once: the mark is cleared, so neither a later pass nor a restart comes back to them.
-      if (purge.outcome === 'purged' && purge.retained.length > 0) {
+      // Logged once: the mark is cleared, so neither a later pass nor a restart comes back to it. A
+      // finished purge was logged only with what it kept, which every guest who had saved had.
+      if (purge.outcome === 'purged') {
         const pod = `${CSS_URL}${userId}/`;
-        log(`Janitor: finished the purge of ${userId}, keeping ${purge.retained.length} resource(s) its pod's store deletes only by a native conditional commit (409 to a DELETE): `
-          + purge.retained.map(url => (url.startsWith(pod) ? url.slice(pod.length) : url)).join(', '));
+        log(purge.retained.length === 0 ? `Janitor: finished the purge of ${userId}`
+          : `Janitor: finished the purge of ${userId}, keeping ${purge.retained.length} resource(s) outside its game data that its pod's store refused to delete (409: a native head): `
+            + purge.retained.map(url => (url.startsWith(pod) ? url.slice(pod.length) : url)).join(', '));
       }
       if (purge.outcome === 'kept') log(awaitsGuestRetry(userId)
         ? `Janitor: left ${userId} to its guest's retry: its deletion was answered 503 (not confirmed), and its guest deadline has not passed`
@@ -6525,7 +6835,8 @@ async function purgePlayOwner(userId: string): Promise<void> {
 
 /**
  * The end of a Play owner's purge, under its lock, once every other resource of the pod is
- * deleted (but those the pod refuses to delete with 409, which no pass could delete):
+ * deleted, its game data included (but the documents outside it that the pod refuses to delete
+ * with 409, which no pass deletes):
  * its tombstone is written again without the mark (on its ETag), so neither the janitor
  * nor a restart comes back to it. The account was forgotten when it closed, so the record the
  * writer installs is dropped again.
@@ -6799,6 +7110,8 @@ app.get('/dashboard', (_req, res) => {
     return resp.json();
   }
 
+${dashboardInboxScript()}
+
   function copyButton(text) {
     const btn = document.createElement('button');
     btn.className = 'copy';
@@ -6905,6 +7218,7 @@ app.get('/dashboard', (_req, res) => {
     }
   }
 
+${returningPasskeyLoginDashboard(localLinkOrigin, returningRelay)}
   function renderAuthRequired(opts) {
     const reason = opts && opts.reason;
     const app = document.getElementById('app');
@@ -6924,13 +7238,14 @@ app.get('/dashboard', (_req, res) => {
     } else {
       html += '<p style="margin-bottom:16px;font-size:0.9rem;color:#9aa0ac">Your session ended. Use the credential you originally enrolled with — no new identity needed.</p>';
     }
-    html += '<button id="signInPasskeyBtn" style="width:100%;padding:13px;border:none;border-radius:9px;font-size:0.97rem;font-weight:600;cursor:pointer;background:#6366f1;color:white;margin-bottom:10px">Sign in with your passkey</button>';
+    html += '<button id="signInPasskeyBtn" style="width:100%;padding:13px;border:none;border-radius:9px;font-size:0.97rem;font-weight:600;cursor:pointer;background:#252540;color:white;margin-bottom:10px">Use a passkey created on this account site</button>';
     html += '<a href="/connect" style="display:block;text-align:center;padding:13px;border-radius:9px;font-size:0.92rem;background:#1a1a2e;color:#e0e0e8;border:1px solid #2a2a3a;text-decoration:none;margin-bottom:10px">Sign in with your wallet / enroll a new credential</a>';
     html += '<p style="margin-top:14px;font-size:0.8rem;color:#7a818d"><a href="/" style="color:#8a8af0">← Back to the overview</a></p>';
     div.innerHTML = html;
     app.appendChild(div);
     var btn = document.getElementById('signInPasskeyBtn');
     if (btn) btn.onclick = signInWithPasskey;
+    installReturningPasskeyLogin(div);
   }
 
   // Auth-class error messages from the identity server — when the
@@ -6946,6 +7261,7 @@ app.get('/dashboard', (_req, res) => {
   }
 
   async function renderDashboard() {
+    cancelReturningPasskeyLogin();
     const app = document.getElementById('app');
     app.innerHTML = '';
 
@@ -7000,7 +7316,7 @@ app.get('/dashboard', (_req, res) => {
       }
       idCard.innerHTML = '<h2>🆔 Your Identity</h2><div class="err">Could not load identity: ' + e.message + '</div>';
       credCard.innerHTML = '<h2>🔐 Registered Credentials</h2><div class="err">' + e.message + '</div>';
-      inboxCard.innerHTML = '<h2>📬 Inbox</h2><div class="err">' + e.message + '</div>';
+      renderDashboardInboxError(inboxCard, e);
       document.getElementById('greeting').textContent = 'Not signed in';
       // Even on non-auth errors, give the user a way out.
       var retry = document.createElement('button');
@@ -7081,30 +7397,8 @@ app.get('/dashboard', (_req, res) => {
       credCard.innerHTML = '<h2>🔐 Registered Credentials</h2><div class="err">' + e.message + '</div>';
     }
 
-    // Fetch /inbox?pod=podUrl from relay
-    try {
-      const inbox = await api(RELAY_BASE, '/inbox?pod=' + encodeURIComponent(meData.podHint) + '&limit=20');
-      inboxCard.innerHTML = '<h2>📬 Inbox <span style="color:#888;font-weight:400;font-size:0.85rem">(' + inbox.count + ' / ' + inbox.totalOnPod + ' in last 7 days)</span></h2>';
-      if (inbox.count === 0) {
-        const empty = document.createElement('div');
-        empty.className = 'empty';
-        empty.textContent = inbox.hint || 'Nothing in the last 7 days.';
-        inboxCard.appendChild(empty);
-      } else {
-        for (const ev of inbox.events) {
-          const it = document.createElement('div');
-          it.className = 'inbox-item';
-          const pillClass = ev.modalStatus ? 'pill-' + ev.modalStatus.toLowerCase() : '';
-          it.innerHTML =
-            '<div>' + (pillClass ? '<span class="pill ' + pillClass + '">' + ev.modalStatus + '</span>' : '') +
-            '<span class="url">' + ev.descriptorUrl + '</span></div>' +
-            '<div class="meta">' + (ev.validFrom || 'no validFrom') + (ev.trustLevel ? ' · ' + ev.trustLevel : '') + '</div>';
-          inboxCard.appendChild(it);
-        }
-      }
-    } catch (e) {
-      inboxCard.innerHTML = '<h2>📬 Inbox</h2><div class="err">Could not load inbox: ' + e.message + '</div>';
-    }
+    // This page has an identity session, rather than a relay OAuth grant.
+    await renderDashboardInbox(inboxCard);
 
     // Footer
     const foot = document.createElement('div');
@@ -7141,6 +7435,7 @@ app.get('/dashboard', (_req, res) => {
     });
   }
 </script>
+${localIdentityLinkDashboard()}
 </body>
 </html>`);
 });
@@ -7151,6 +7446,7 @@ app.get('/dashboard', (_req, res) => {
  */
 app.get('/connect', (_req, res) => {
   res.setHeader('Content-Type', 'text/html');
+  if (showHostedPrivacy) res.setHeader('Cache-Control', 'no-store');
   res.send(`<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -7164,6 +7460,9 @@ app.get('/connect', (_req, res) => {
   h1 { font-size:1.45rem; margin-bottom:8px; letter-spacing:-0.02em; }
   .lede { color:#9aa0ac; margin-bottom:22px; font-size:0.92rem; line-height:1.55; }
   input { width:100%; padding:10px 14px; border:1px solid #2a2a3a; border-radius:8px; background:#0a0a0f; color:#e0e0e8; font-size:0.9rem; margin-bottom:10px; }
+  .terms-agreement { margin-bottom:16px; font-size:0.9rem; line-height:1.5; }
+  .terms-agreement input { width:auto; margin:0 4px 0 0; }
+  .terms-agreement a { color:#a5a9ff; }
   button { width:100%; padding:13px; border:none; border-radius:9px; font-size:0.97rem; font-weight:600; cursor:pointer; }
   .primary { background:#6366f1; color:white; }
   .primary:hover { background:#818cf8; }
@@ -7192,6 +7491,8 @@ app.get('/connect', (_req, res) => {
     <input id="displayName" placeholder="Display name (optional) — e.g. Mark J" />
   </div>
 
+  ${hostedTermsCheckbox()}
+
   <div class="step">
     <button class="primary" onclick="passkeyCreate()">Create with a passkey</button>
     <p class="hint">Touch ID, Windows Hello, a security key, or your password manager. Recommended — works on most modern devices, nothing to install.</p>
@@ -7212,11 +7513,12 @@ app.get('/connect', (_req, res) => {
   </details>
 
   <div id="status" class="status"></div>
-  <p class="foot">Already enrolled? <a href="/dashboard">Open your dashboard</a>. New here? <a href="/">Start at the overview</a>.</p>
+  <p class="foot">Already enrolled? <a href="/dashboard">Open your dashboard</a>. New here? <a href="/">Start at the overview</a>.${hostedPrivacyLink ? ` ${hostedPrivacyLink}` : ''}</p>
 </div>
 
 <script>
 const BASE = window.location.origin;
+const TERMS_AGREE = document.getElementById('termsAgree');
 
 function setStatus(msg, type) {
   const el = document.getElementById('status');
@@ -7302,10 +7604,16 @@ async function passkeyCreate() {
   }
   let adv;
   try { adv = readAdvanced(); } catch (e) { setStatus(e.message, 'error'); return; }
+  const termsVersion = TERMS_AGREE?.checked ? TERMS_AGREE.dataset.version : undefined;
+  if (TERMS_AGREE && !termsVersion && !adv.addDeviceToken) {
+    setStatus('Select I agree before creating an account.', 'error');
+    TERMS_AGREE.focus();
+    return;
+  }
   const name = document.getElementById('displayName').value.trim() || 'Interego user';
   try {
     setStatus('Creating your passkey...', 'info');
-    const body = { name };
+    const body = { name, termsVersion };
     if (adv.bootstrapUserId) { body.bootstrapUserId = adv.bootstrapUserId; body.bootstrapInvite = adv.bootstrapInvite; }
     const headers = { 'Content-Type': 'application/json' };
     if (adv.addDeviceToken) headers['Authorization'] = 'Bearer ' + adv.addDeviceToken;
@@ -7358,6 +7666,7 @@ async function connectMetaMask() {
   let adv;
   try { adv = readAdvanced(); } catch (e) { setStatus(e.message, 'error'); return; }
   const displayName = document.getElementById('displayName').value.trim();
+  const termsVersion = TERMS_AGREE?.checked ? TERMS_AGREE.dataset.version : undefined;
 
   try {
     setStatus('Requesting wallet connection...', 'info');
@@ -7367,7 +7676,7 @@ async function connectMetaMask() {
     // (and checks its domain line) only with a checksummed address.
     const chResp = await fetch(BASE + '/challenges', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ purpose: 'siwe', address: accounts[0] }),
+      body: JSON.stringify({ purpose: 'siwe', address: accounts[0], termsVersion }),
     });
     const ch = await chResp.json();
     if (!chResp.ok || !ch.nonce) throw new Error(ch.error || ('Could not get a challenge (HTTP ' + chResp.status + ')'));
@@ -7378,7 +7687,7 @@ async function connectMetaMask() {
     const issuedAt = new Date().toISOString();
     const siweMessage = domain + ' wants you to sign in with your Ethereum account:\\n'
       + address + '\\n\\n'
-      + 'Sign in to Interego\\n\\n'
+      + (ch.termsStatement || 'Sign in to Interego') + '\\n\\n'
       + 'URI: ' + window.location.origin + '\\n'
       + 'Version: 1\\n'
       + 'Chain ID: 1\\n'

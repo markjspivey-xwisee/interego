@@ -60,6 +60,10 @@ import { Server } from '@modelcontextprotocol/server';
 import { createRelayMcpHandler } from './mcp-serving.js';
 import { clientInteractionMcpResult, clientInteractionToolResult } from './client-interaction-mcp.js';
 import { clientInteractionHttpHandler } from './client-interaction-http.js';
+import { FederationService } from '@interego/pod-federation';
+import { FEDERATION_MANAGE_SCOPE, FederationHttpError, federationOwnerFromOAuth, hostedFederationHttp, type HostedFederationOwner } from './pod-federation-http.js';
+import { encryptedFederationStore } from './pod-federation-store.js';
+import { hostedFederationResources } from './pod-federation-resources.js';
 import { mcpOutputSchema, toStructuredContent,
   // Turtle term serialisers. IRIs and prefixed names are REFUSED when unusable
   // (Turtle defines no escape for their terminators); literals are escaped.
@@ -74,6 +78,10 @@ import { fileURLToPath } from 'node:url';
 import { interegoOAuthRouter } from './oauth-router.js';
 import { requireBearerAuth } from '@modelcontextprotocol/express';
 import { InteregoOAuthProvider, renewIdentityToken } from './oauth-provider.js';
+import { LocalIdentityHandoffs } from './local-identity-handoff.js';
+import { fetchLocalIdentityChallenge, localIdentityContextHandler } from './local-identity-http.js';
+import { localIdentityLinkStepUpPage } from './local-identity-link-step-up.js';
+import { localIdentitySignInPage } from './local-identity-sign-in.js';
 import { assertLivePlay, bootstrapProvisionalPod, chargeProvisionalExchange, claimProvisionalExchange, createProvisionalToolGuard, parseProvisionalPlay,
   ProvisionalPlayError, validateProvisionalTool, verifyProvisionalExchange,
   type ProvisionalPlay, type ProvisionalPrincipal } from './provisional-play.js';
@@ -149,6 +157,8 @@ import { createNsDereference } from './ns-dereference.js';
 // Pod authorization, extracted so the rule is importable: server.ts calls app.listen() at
 // module scope and cannot be imported, which is why this area only had source-text coverage.
 import { authorizePodUrl } from './pod-authorization.js';
+import { dashboardInboxCors, dashboardInboxHandler } from './dashboard-inbox.js';
+import { createOwnedTargets, fetchWithoutRedirect } from './owned-targets.js';
 // A delegated cross-pod descriptor is on behalf of the pod it lands on, not the owner of
 // the calling agent's session.  Kept importable so that fail-closed attribution is exercised
 // without importing this self-starting server module.
@@ -502,6 +512,7 @@ const STORE_ORIGINS: ReadonlySet<string> = new Set(
     .map((u) => { try { return new URL(u).origin; } catch { return ''; } })
     .filter((o) => o !== ''),
 );
+const ownedTargets = createOwnedTargets(CSS_URL, STORE_ORIGINS);
 /** A pod URL as an IDENTIFIER rather than a fetch target. Identity out, routing in. */
 const asPublicPodUrl = (url: string | undefined): string | undefined =>
   (url === undefined ? undefined : publicStoreSpelling(url, CSS_URL, CSS_PUBLIC_URL));
@@ -674,6 +685,7 @@ function surfaceAgentFromClient(clientName: string | undefined): string {
 //   here is intentionally `let` so the async init can assign it before
 //   any top-level consumer (mcpAuthRouter, requireBearerAuth) runs.
 let oauthProvider!: InteregoOAuthProvider;
+let localIdentityHandoffs: LocalIdentityHandoffs | undefined;
 
 // Org-level IPFS/CDP keys — used as defaults when users don't provide their own.
 //
@@ -1593,6 +1605,7 @@ log(`OAuth token store: pod=${oauthStorePodUrl} access=${_oauthInitialAccessToke
 
 oauthProvider = new InteregoOAuthProvider({
   identityUrl: IDENTITY_URL,
+  nativeLoginHandoff: pendingId => localIdentityHandoffs?.issue(pendingId),
   renewIdentityToken: identity => renewIdentityToken(IDENTITY_URL, identity),
   tokenTtlSec: 3600,
   // RFC 8707 canonical resource identifier of this resource server. The AS is
@@ -1624,6 +1637,19 @@ oauthProvider = new InteregoOAuthProvider({
   lookupRefreshTokenByRaw: (token) => loadOAuthRefreshTokenByRaw(token, oauthTokenStoreCfg),
   log: (msg: string) => log(msg),
 });
+
+try {
+  if (PUBLIC_BASE_URL) localIdentityHandoffs = new LocalIdentityHandoffs({
+    issuer: PUBLIC_BASE_URL, identityOrigin: IDENTITY_URL,
+    pending: pendingId => {
+      const pending = oauthProvider.getPendingAuthorization(pendingId);
+      return pending ? { pendingId, clientId: pending.client.client_id, clientName: pending.client.client_name || '(unnamed client)',
+        redirectUri: pending.params.redirectUri, scopes: pending.params.scopes?.length ? pending.params.scopes : ['mcp'], resource: pending.params.resource?.href ?? null,
+        codeChallenge: pending.params.codeChallenge, state: pending.params.state || '', expiresAt: pending.expiresAt } : undefined;
+    },
+    challenge: signal => fetchLocalIdentityChallenge(IDENTITY_URL, signal),
+  });
+} catch { log('Installed-app sign-in requires configured canonical HTTPS relay and identity origins; other sign-in methods remain available.'); }
 
 const provisionalStoreAliases = { internalStoreUrl: CSS_URL, publicStoreUrl: CSS_PUBLIC_URL };
 const provisionalTools = createProvisionalToolGuard({ podUrl: oauthStorePodUrl, fetch: solidFetch, withMutex: withPodMutex,
@@ -3916,16 +3942,9 @@ async function handlePublishContext(args: ToolArgs): Promise<string> {
       // Minimal descriptor turtle carrying the note's real affordances (the same
       // ones the persisted descriptor advertises) so its controls render inline.
       //
-      // ★ IT MUST ALSO CARRY THE NOTE'S POLICY, because the function it is handed to reads
-      // policy OFF A DESCRIPTOR. `noteToHyperMarkdown` decides public-vs-private from
-      // `iep:visibility` / `iep:encrypted`, exactly as `packages/solid/src/client.ts` writes
-      // them into the persisted descriptor. This block emitted neither, so both probes failed
-      // unconditionally and EVERY note handed back here — a world-readable `visibility:
-      // "public"` one included — took the private branch: `state: "private"`, the footer "the
-      // note stays private", and the title "Private note" for a note carrying none of its own.
-      // A reader told their public note is private is being actively misled, so the two triples
-      // are not decoration. `isPublic` below says the same thing from the argument we already
-      // hold; these make the synthesized descriptor honest to anyone who reads it as one.
+      // Carry all three audience classes, matching the persisted distribution metadata.
+      // The inline projection also receives the computed value directly; encryption
+      // alone cannot distinguish private from shared notes on a later read.
       //
       // ★ `visibility` is the NARROWED union from computePublishRecipients ('public' |
       // 'private' | 'shared'), not `args.visibility` — no caller bytes reach the Turtle, which
@@ -3987,7 +4006,7 @@ async function handlePublishContext(args: ToolArgs): Promise<string> {
         `@prefix hydra: <http://www.w3.org/ns/hydra/core#> .`,
         `@prefix dcat: <http://www.w3.org/ns/dcat#> .`,
         `${descIdRef} a iep:ContextDescriptor ; iep:encrypted ${enc ? 'true' : 'false'}`
-          + `${visibility === 'public' || visibility === 'private' ? ` ; iep:visibility "${visibility}"` : ''}`
+          + ` ; iep:visibility "${visibility}"`
           + `${affordanceRefs.length > 0 ? ` ; iep:affordance ${affordanceRefs.join(', ')}` : ''} .`,
         ...(fetchTargetRef
           ? [`<#${fetchAction}> a iep:Affordance ; iep:action <${IEP_NS}${fetchAction}> ; hydra:target ${fetchTargetRef} ; hydra:method "GET" .`]
@@ -4006,7 +4025,7 @@ async function handlePublishContext(args: ToolArgs): Promise<string> {
         // audience class as a value. Passing it means the publish path no longer depends on a
         // regex over a serialization this same block writes — the shape that let the policy
         // triples go missing with a green suite over the projection the whole time.
-        isPublic: visibility === 'public',
+        visibility,
         // The SAME screen invoke_affordance applies, so a control this document leaves
         // unmarked is one invoke would accept a target for. See `isFollowable` in note-view.
         isFollowable: isFollowableTarget,
@@ -4352,7 +4371,7 @@ async function handleRemember(args: ToolArgs): Promise<string> {
     // The complete HyperMarkdown note, ready to display INLINE (prose + fields +
     // links + controls). No HTTP GET, no bearer — it is right here.
     rendered: published['rendered'] ?? '',
-    hint: 'Display `rendered` inline as Markdown — it IS the artifact (no fetch needed). Signed, private memory; NOT an AMEP exchange. To re-read later, get_descriptor on descriptorUrl decrypts through your session.',
+    hint: 'Display `rendered` inline as Markdown — it IS the artifact (no fetch needed). Signed memory; NOT an AMEP exchange. To re-read later, get_descriptor on descriptorUrl decrypts through your session.',
   });
 }
 
@@ -13409,6 +13428,9 @@ app.use(corsMiddleware({
   allowHeaders: MCP_ALLOW_HEADERS,
   exposeHeaders: 'mcp-session-id, mcp-protocol-version',
 }));
+// This account-only route must set its exact configured identity origin before
+// the OAuth middleware freezes CORS. Other relay routes retain the normal list.
+app.use('/dashboard/inbox', dashboardInboxCors(IDENTITY_URL));
 
 // ── OAuth Routes ────────────────────────────────────────────
 // mcpAuthRouter (now from the FROZEN @modelcontextprotocol/server-legacy — v2 ships no
@@ -13515,7 +13537,7 @@ app.get('/.well-known/oauth-authorization-server', (req, res) => {
     // such a bearer via the standard OAuth authorize flow:
     //   GET /authorize?...&scope=mcp:read
     // and then observe the 403 insufficient_scope from any write tool.
-    scopes_supported: ['mcp', 'mcp:read', 'mcp:write'],
+    scopes_supported: ['mcp', 'mcp:read', 'mcp:write', FEDERATION_MANAGE_SCOPE],
     // RFC 9449 §5.1 — advertise DPoP support to clients.
     dpop_signing_alg_values_supported: DPOP_SIGNING_ALGS,
     // Hydra affordances — every OAuth endpoint as a hydra:Operation so
@@ -13561,7 +13583,7 @@ app.get('/.well-known/oauth-protected-resource', (req, res) => {
     authorization_servers: [DEFAULT_ISSUER.href],
     // Mirror the authorization-server metadata's scope vocabulary. See
     // the long comment above for the read/write split rationale.
-    scopes_supported: ['mcp', 'mcp:read', 'mcp:write'],
+    scopes_supported: ['mcp', 'mcp:read', 'mcp:write', FEDERATION_MANAGE_SCOPE],
     resource_name: 'Interego MCP',
     // RFC 9449 §5.1 — advertise DPoP support at the resource as well so
     // clients that only fetch the protected-resource metadata document
@@ -14306,7 +14328,7 @@ app.use(interegoOAuthRouter({
   // the access token's `scopes` claim, which is what the /mcp middleware
   // and the per-tool write-side gate (see WRITE_SIDE_OAUTH_SCOPES below
   // and handlePublishContext) inspect to decide read vs. write.
-  scopesSupported: ['mcp', 'mcp:read', 'mcp:write'],
+  scopesSupported: ['mcp', 'mcp:read', 'mcp:write', FEDERATION_MANAGE_SCOPE],
 }));
 
 /**
@@ -14359,6 +14381,29 @@ app.post('/play/provisional/exchange', provisionalExchangeLimiter, async (req, r
     res.status(503).json({ error: 'provisional_exchange_unavailable' });
   }
 });
+app.get('/local-identity/link-step-up', (_req, res) => {
+  try {
+    const provider = new URL(IDENTITY_URL).origin; const nonce = randomBytes(18).toString('base64url');
+    const html = localIdentityLinkStepUpPage(provider, nonce);
+    res.setHeader('Cache-Control', 'no-store'); res.setHeader('Referrer-Policy', 'no-referrer');
+    res.setHeader('X-Content-Type-Options', 'nosniff'); res.setHeader('Cross-Origin-Opener-Policy', 'same-origin');
+    res.setHeader('Content-Security-Policy', `default-src 'none'; script-src 'nonce-${nonce}'; connect-src ${provider}; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'`);
+    res.type('html').send(html);
+  } catch { res.status(404).type('text').send('Account linking is unavailable here. Use your existing hosted sign-in.'); }
+});
+app.get('/local-identity/sign-in', (_req, res) => {
+  try {
+    const provider = new URL(IDENTITY_URL).origin, nonce = randomBytes(18).toString('base64url');
+    res.setHeader('Cache-Control', 'no-store'); res.setHeader('Referrer-Policy', 'no-referrer'); res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('Cross-Origin-Opener-Policy', 'same-origin');
+    res.setHeader('Content-Security-Policy', `default-src 'none'; script-src 'nonce-${nonce}'; connect-src ${provider}; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'`);
+    res.type('html').send(localIdentitySignInPage(provider, nonce));
+  } catch { res.status(404).type('text').send('Returning sign-in is unavailable here. Use your existing account sign-in.'); }
+});
+app.post('/oauth/local-identity/context', oauthVerifyLimiter, (req, res, next) => {
+  if (!localIdentityHandoffs) { res.status(404).json({ error: 'Installed-app sign-in is not available on this relay.' }); return; }
+  void localIdentityContextHandler(localIdentityHandoffs)(req, res, next);
+});
 app.post('/oauth/verify', oauthVerifyLimiter, async (req, res) => {
   const { pending_id, method, ...proofBody } = req.body as {
     pending_id?: string;
@@ -14368,6 +14413,15 @@ app.post('/oauth/verify', oauthVerifyLimiter, async (req, res) => {
   if (!pending_id || !method) {
     res.status(400).json({ error: 'pending_id and method are required' });
     return;
+  }
+
+  if (Object.hasOwn(proofBody, 'native_handoff')) {
+    res.setHeader('Cache-Control', 'no-store');
+    try {
+      if (method !== 'did' || !localIdentityHandoffs || typeof proofBody.native_handoff !== 'string') throw new Error('Invalid handoff');
+      localIdentityHandoffs.consume(proofBody.native_handoff, pending_id, proofBody.nonce);
+      delete proofBody.native_handoff;
+    } catch { res.status(400).json({ error: 'This local sign-in request expired or could not be verified. Start sign-in again.' }); return; }
   }
 
   const endpointByMethod: Record<typeof method, string> = {
@@ -14788,7 +14842,7 @@ First call triggers an OAuth flow in your browser. You'll be asked to enroll a <
 </script>
 
 <footer>
-Open-source substrate · <a href="https://github.com/markjspivey-xwisee/interego">github</a> · this deployment is the maintainer's reference instance
+Open-source substrate · <a href="https://github.com/markjspivey-xwisee/interego">github</a> · <a href="/pod-federation">Connect your pod</a> · this deployment is the maintainer's reference instance
 </footer>
 </body>
 </html>`;
@@ -14824,6 +14878,7 @@ app.get('/', (req, res) => {
       { name: 'audit-lineage',    target: '/audit/lineage?descriptor=<url>', method: 'GET',  description: 'Walk prov:wasDerivedFrom + iep:supersedes for one descriptor.' },
       { name: 'audit-compliance', target: '/audit/compliance/{framework}',   method: 'GET',  description: 'Generate a regulatory framework report.' },
       { name: 'inbox',            target: '/inbox?pod=<url>',                method: 'GET',  description: 'What\'s new on a pod (consumer-friendly framing of /audit/events).' },
+      { name: 'pod-connections', target: '/pod-federation/profile',         method: 'GET', description: 'Opt-in invitations and encrypted snapshot sharing. Owner management requires separate federation:manage consent; existing MCP grants confer none.' },
       { name: 'oauth-as-meta',    target: '/.well-known/oauth-authorization-server', method: 'GET', description: 'OAuth 2.0 Authorization Server Metadata (RFC 8414) + Hydra.' },
       { name: 'oauth-pr-meta',    target: '/.well-known/oauth-protected-resource',    method: 'GET', description: 'OAuth Protected Resource Metadata (RFC 9728) + Hydra.' },
       { name: 'operations',       target: '/.well-known/operations',         method: 'GET',  description: 'Typed substrate-operation catalog — 8 kernel verbs + every thin-facade shim as iep:Affordance entries (FIX 4).' },
@@ -15178,12 +15233,12 @@ const RELAY_POD_HOST_ALLOWLIST: readonly string[] = (() => {
  * pod-authorization.ts: screening a value the relay minted with the attacker-URL guard is what made
  * `/notifications/:podSlug` answer 400 to everyone.
  */
-async function requireAuthorizedPodUrl(
+async function requireAuthorizedPodLocation(
   req: express.Request,
   res: express.Response,
   suppliedUrl: string,
   relayMinted = false,
-): Promise<string | null> {
+): Promise<{ url: string; ownerPodUrl: string } | null> {
   const authHeader = req.headers.authorization;
   if (!authHeader?.startsWith('Bearer ')) {
     res.status(401).json({ error: 'Bearer token required' });
@@ -15214,7 +15269,16 @@ async function requireAuthorizedPodUrl(
     res.status(decision.status ?? 403).json({ error: decision.error, detail: decision.detail });
     return null;
   }
-  return decision.url ?? null;
+  return decision.url ? { url: decision.url, ownerPodUrl } : null;
+}
+
+async function requireAuthorizedPodUrl(
+  req: express.Request,
+  res: express.Response,
+  suppliedUrl: string,
+  relayMinted = false,
+): Promise<string | null> {
+  return (await requireAuthorizedPodLocation(req, res, suppliedUrl, relayMinted))?.url ?? null;
 }
 
 /**
@@ -15278,6 +15342,12 @@ const bearerVerifyLimiter = rateLimit({
  * adoption. This endpoint closes the visibility gap without leaking
  * the recipient graph at the manifest level.
  */
+// The account page holds an identity bearer. Keep its narrow owner-derived read
+// separate from the OAuth-only /inbox endpoint used by existing relay clients.
+app.get('/dashboard/inbox', bearerVerifyLimiter, dashboardInboxHandler({
+  identityOrigin: IDENTITY_URL, cssUrl: CSS_URL, verifyIdentity: verifyBearerToken, fetch: solidFetch,
+}));
+
 app.get('/inbox', bearerVerifyLimiter, async (req, res) => {
   const suppliedPodUrl = req.query.pod as string | undefined;
   if (!suppliedPodUrl) {
@@ -15426,22 +15496,32 @@ app.get('/audit/lineage', bearerVerifyLimiter, async (req, res) => {
  * verification. Returns:
  *   { valid, descriptorUrl, signerAddress, signedAt, contentHashOk, reason? }
  *
- * Public read; auditors can independently verify any compliance
- * descriptor's signature without trusting the relay.
+ * OAuth-owner read; verifies published canonical bytes in the token's
+ * home pod, including a third-party pod reached through guarded egress.
  */
 app.get('/audit/verify-signature', bearerVerifyLimiter, async (req, res) => {
   const descriptorUrl = req.query.descriptor as string | undefined;
-  if (!descriptorUrl) {
+  if (typeof descriptorUrl !== 'string' || !descriptorUrl) {
     res.status(400).json({ error: 'descriptor query param required' });
     return;
   }
-  const authorized = await requireAuthorizedPodUrl(req, res, descriptorUrl);
+  const authorized = await requireAuthorizedPodLocation(req, res, descriptorUrl);
   if (!authorized) return;
+  let descriptorTarget: string;
+  let signatureTarget: string;
+  try {
+    descriptorTarget = ownedTargets.ownedResource(authorized.url, authorized.ownerPodUrl);
+    signatureTarget = ownedTargets.ownedResource(`${authorized.url}.sig.json`, authorized.ownerPodUrl);
+  } catch {
+    res.status(400).json({ error: 'descriptor_url_rejected', detail: 'Choose a resource inside your verified owner pod without credentials, queries, fragments or ambiguous paths.' });
+    return;
+  }
   try {
     const sigUrl = `${descriptorUrl}.sig.json`;
+    const ownerRead = async (url: string, init?: Parameters<typeof solidFetch>[1]) => (await guardedInvokeFetchLanded(url, init)).response;
     const [ttlResp, sigResp] = await Promise.all([
-      solidFetch(descriptorUrl, { headers: { 'Accept': 'text/turtle' } }),
-      solidFetch(sigUrl, { headers: { 'Accept': 'application/json' } }),
+      fetchWithoutRedirect(ownerRead, descriptorTarget, { headers: { 'Accept': 'text/turtle' } }),
+      fetchWithoutRedirect(ownerRead, signatureTarget, { headers: { 'Accept': 'application/json' } }),
     ]);
     if (!ttlResp.ok) {
       res.status(404).json({ error: `descriptor not fetchable (${ttlResp.status})`, descriptorUrl });
@@ -15711,6 +15791,9 @@ app.post('/verify-token', verifyTokenLimiter, async (req, res) => {
  *   412 manifest changed mid-rewrite (caller can retry)
  *   503 RELAY_INTROSPECTION_SECRET unset
  *
+ * Maintenance is confined to one pod on this relay's configured storage,
+ * including its public alias. Maintain another store through that store's relay.
+ *
  * Semantics: identical CID derivation to `publish()` —
  * `computeCid(descriptorBody)` over the bytes returned by GET, same
  * function the substrate gate would invoke on the fallback path. The
@@ -15744,7 +15827,12 @@ app.post('/admin/backfill-manifest-cid', async (req, res) => {
     res.status(400).json({ ok: false, reason: 'request body must include { podUrl: string }' });
     return;
   }
-  const podUrl = podUrlRaw.endsWith('/') ? podUrlRaw : `${podUrlRaw}/`;
+  let podUrl: string;
+  try { podUrl = ownedTargets.maintenancePod(podUrlRaw); }
+  catch {
+    res.status(400).json({ ok: false, reason: 'Maintenance requires one pod root on this deployment storage, without credentials, queries, fragments or ambiguous paths.' });
+    return;
+  }
   const whitelist = Array.isArray(body!.descriptorUrls)
     ? new Set((body!.descriptorUrls as unknown[]).filter((x): x is string => typeof x === 'string'))
     : null;
@@ -15768,7 +15856,7 @@ app.post('/admin/backfill-manifest-cid', async (req, res) => {
   const fetchDoc = async (url: string): Promise<{ body: string; etag: string | null } | { error: string }> => {
     try {
       const r = await withTransientRetry(async () => {
-        const resp = await solidFetch(url, {
+        const resp = await fetchWithoutRedirect(solidFetch, ownedTargets.maintenanceTarget(url, podUrl, true), {
           method: 'GET',
           headers: { 'Accept': 'text/turtle', 'Cache-Control': 'no-cache' },
         });
@@ -15840,13 +15928,28 @@ app.post('/admin/backfill-manifest-cid', async (req, res) => {
   // ── 2. Parse + compute backfill targets across every document ──────────────────
   const perDoc = documents.map(d => ({ ...d, entries: parseManifest(d.body) }));
   const scanned = perDoc.reduce((n, d) => n + d.entries.length, 0);
-  const targets: { descriptorUrl: string }[] = [];
+  const targets: { descriptorUrl: string; fetchUrl: string }[] = [];
+  const unsafeTargets: Array<{ descriptorUrl: string; error: string }> = [];
   for (const d of perDoc) {
     for (const e of d.entries) {
       if (whitelist && !whitelist.has(e.descriptorUrl)) continue;
       if (e.cid) continue; // already mirrored
-      targets.push({ descriptorUrl: e.descriptorUrl });
+      try {
+        targets.push({ descriptorUrl: e.descriptorUrl, fetchUrl: ownedTargets.maintenanceTarget(e.descriptorUrl, podUrl) });
+      } catch {
+        unsafeTargets.push({ descriptorUrl: e.descriptorUrl, error: 'descriptor is outside the selected pod or has an unsafe URL' });
+      }
     }
+  }
+  if (unsafeTargets.length > 0) {
+    res.status(502).json({ ok: false, reason: 'manifest contains unsafe descriptor targets; manifest unchanged', failures: unsafeTargets });
+    return;
+  }
+  // Validate every selected write address before any descriptor read or manifest PUT.
+  try { for (const d of perDoc) ownedTargets.maintenanceTarget(d.url, podUrl, true); }
+  catch {
+    res.status(502).json({ ok: false, reason: 'manifest contains an unsafe index target; manifest unchanged' });
+    return;
   }
 
   if (targets.length === 0) {
@@ -15871,7 +15974,7 @@ app.post('/admin/backfill-manifest-cid', async (req, res) => {
   const failures: { descriptorUrl: string; error: string }[] = [];
   for (const t of targets) {
     try {
-      const dResp = await solidFetch(t.descriptorUrl, {
+      const dResp = await fetchWithoutRedirect(solidFetch, t.fetchUrl, {
         method: 'GET',
         headers: { 'Accept': 'text/turtle', 'Cache-Control': 'no-cache' },
       });
@@ -15923,9 +16026,15 @@ app.post('/admin/backfill-manifest-cid', async (req, res) => {
     // GET and this PUT. It matters most on the hot manifest — segments are write-once — but
     // a roll-over can rewrite the hot document while this loop runs, so both get the guard.
     if (d.etag) putHeaders['If-Match'] = d.etag;
-    const putResp = await solidFetch(d.url, { method: 'PUT', headers: putHeaders, body: out.join('\n') });
-    if (!putResp.ok) { putFailures.push({ url: d.url, status: putResp.status, statusText: putResp.statusText }); continue; }
-    written.push(d.url);
+    try {
+      const putResp = await fetchWithoutRedirect(solidFetch, ownedTargets.maintenanceTarget(d.url, podUrl, true), {
+        method: 'PUT', headers: putHeaders, body: out.join('\n'),
+      });
+      if (!putResp.ok) { putFailures.push({ url: d.url, status: putResp.status, statusText: putResp.statusText }); continue; }
+      written.push(d.url);
+    } catch {
+      putFailures.push({ url: d.url, status: 502, statusText: 'Manifest write refused or failed' });
+    }
   }
 
   if (written.length === 0) {
@@ -16075,7 +16184,7 @@ app.get('/render/:descriptorIri', renderOAuthGate({
       }
       let publicGraph = '';
       try {
-        const gResp = await solidFetch(dist.accessURL, { headers: { 'Accept': 'text/turtle, application/trig, */*' } });
+        const gResp = await guardedInvokeFetch(dist.accessURL, { headers: { 'Accept': 'text/turtle, application/trig, */*' } });
         if (gResp.ok) publicGraph = await gResp.text();
       } catch { /* projection falls back to an empty body below */ }
       try {
@@ -16326,6 +16435,46 @@ app.get('/client-check', (_req, res) => {
   res.setHeader('Cache-Control', 'no-store');
   res.type('text/html').send(CLIENT_CHECK_HTML);
 });
+
+// Opt-in L3 federation. The page obtains its OWN explicit grant; existing assistant
+// MCP tokens, static API keys, signed tool envelopes and provisional play confer none.
+// Every new process starts with an empty service map and hence no active peers.
+const hostedPodFederation = new Map<string, FederationService>();
+const readHostedSharingDescriptor = async (owner: HostedFederationOwner, id: string) => JSON.parse(await handleGetDescriptor({ url: id, bypass_cache: true,
+  _session_user_id: owner.userId, _session_agent_did: owner.agentId,
+  _session_agent_id: owner.agentId, _session_principal: owner.principal, _identity_token: owner.identityToken }, false)) as Record<string, unknown>;
+const federationSelection = hostedFederationResources({
+  entries: owner => discover(owner.podUrl, undefined, { fetch: solidFetch }),
+  ownResource: (owner, url) => mayUseRelayKey({ targetUrl: normalizeCssUrl(url), ownPodUrl: owner.podUrl, storeOrigins: STORE_ORIGINS }),
+  descriptor: readHostedSharingDescriptor,
+  title: async (owner, id) => {
+    const result = await readHostedSharingDescriptor(owner, id);
+    return typeof result.rendered === 'string' ? /^# (.+)$/m.exec(result.rendered)?.[1] : undefined;
+  },
+});
+app.use('/pod-federation', bearerVerifyLimiter, hostedFederationHttp({
+  publicUrl: PUBLIC_BASE_URL || `http://localhost:${PORT}`,
+  authorize: async authorization => {
+    if (!authorization?.startsWith('Bearer ')) throw new FederationHttpError(401, 'Sign in to manage your pod connections.');
+    let auth: Awaited<ReturnType<typeof oauthProvider.verifyAccessToken>>;
+    try { auth = await oauthProvider.verifyAccessToken(authorization.slice(7)); }
+    catch { throw new FederationHttpError(401, 'Your sign-in expired. Sign in again to manage this pod.'); }
+    return federationOwnerFromOAuth(auth, CSS_URL, normalizeCssUrl);
+  },
+  service: async (userId, ownerOperation) => {
+    const existing = hostedPodFederation.get(userId);
+    if (existing || !ownerOperation) return existing;
+    // Public routes never allocate instances. Authenticated owners are bounded too.
+    if (hostedPodFederation.size >= 64) return undefined;
+    const podUrl = CSS_URL + userId + '/';
+    const service = new FederationService({ binding: async () => podUrl, refreshState: true,
+      store: encryptedFederationStore({ podUrl, fetch: solidFetch, encryptionKey: relayAgentKey }) });
+    hostedPodFederation.set(userId, service);
+    return service;
+  },
+  listResources: owner => federationSelection.list(owner),
+  resources: (owner, ids) => federationSelection.selected(owner, ids),
+}));
 
 app.get('/tools', (req, res) => {
   // Mirror the MCP /mcp tools/list response so HTTP-browseable

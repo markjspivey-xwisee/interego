@@ -2,6 +2,7 @@ import * as crypto from 'node:crypto';
 import { ProvisionalPlay, PlayError, parsePlayClients, type PlayClaims } from './provisional-play.js';
 import { provisionPlayAnchor, type PlayAnchorDocument } from './provisional-play-store.js';
 import { reservePlayAdmission, type PlayAdmissionLedger } from './provisional-play-admission.js';
+import type { HostedTermsPolicy } from './hosted-terms.js';
 
 export interface PlayProviderOptions {
   issuer: string;
@@ -14,6 +15,7 @@ export interface PlayProviderOptions {
   clientsJson?: string;
   ttlSeconds?: number;
   maxPods?: number;
+  hostedTerms?: HostedTermsPolicy;
   fetcher?: typeof fetch;
   /** Share the identity host's owner lock with credential mutations and cleanup. */
   withOwnerLock<T>(userId: string, work: () => Promise<T>): Promise<T>;
@@ -48,6 +50,7 @@ export function createProvisionalPlayProvider(options: PlayProviderOptions): Pro
   const play: ProvisionalPlay = new ProvisionalPlay({
     issuer: options.issuer, publicPodBase: options.publicPodBase, signingKey: options.signingKey,
     clients, ttlSeconds: options.ttlSeconds ?? 86400, maxPods: options.maxPods ?? 100,
+    hostedTerms: options.hostedTerms,
     verifyGrantSignature: async (grant, client) => {
       const response = await request(new URL('/tool/verify_agent', options.relayUrl).href, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -65,7 +68,7 @@ export function createProvisionalPlayProvider(options: PlayProviderOptions): Pro
       catch { return false; }
     },
     readAnchor: async userId => (await read(userId))?.document.provisionalPlayAnchor ?? null,
-    provision: async (claims, attestation, maxPods, receipt) => {
+    provision: async (claims, attestation, maxPods, receipt, acceptance) => {
       const before = admission;
       let release!: () => void;
       admission = new Promise(resolve => { release = resolve; });
@@ -109,7 +112,8 @@ export function createProvisionalPlayProvider(options: PlayProviderOptions): Pro
             validate: value => play.open(value),
           }, owner, anchor, limit),
           empty: options.empty, validate: anchor => play.open(anchor), committed: options.committed,
-        }, claims, attestation, maxPods, receipt));
+        }, claims, attestation, maxPods, receipt,
+        options.hostedTerms && { requiredVersion: options.hostedTerms.version, acceptance }));
       } finally { release(); }
     },
     issueCredential: options.issueCredential,

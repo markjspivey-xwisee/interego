@@ -18,5 +18,7 @@ export { PgslDataAccessorFactory } from './PgslDataAccessorFactory.js';
 export { NativeETagHandler } from './NativeETagHandler.js';
 export { NativePutOperationHandler } from './NativePutOperationHandler.js';
 export { NativeGetOperationHandler } from './NativeGetOperationHandler.js';
+export { NativeDeleteOperationHandler } from './NativeDeleteOperationHandler.js';
+export { NativeConditionsParser } from './NativeConditionsParser.js';
 export { NativeCapabilityHeaders } from './NativeCapabilityHeaders.js';
 export { KeyedEntriesStorage } from './KeyedEntriesStorage.js';

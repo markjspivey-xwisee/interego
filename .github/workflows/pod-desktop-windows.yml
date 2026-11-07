@@ -1,0 +1,62 @@
+name: Local Pod Windows Installer
+
+on:
+  pull_request:
+    paths:
+      - 'applications/pod-desktop/**'
+      - 'packages/local-node/**'
+      - 'packages/deployment-config/**'
+      - 'packages/pod-federation/**'
+      - 'packages/core/**'
+      - 'packages/solid/**'
+      - 'package.json'
+      - 'package-lock.json'
+      - 'tsconfig.base.json'
+      - 'tsconfig.check.json'
+      - 'vitest.config.ts'
+      - 'tools/typecheck-gate.mjs'
+      - 'tools/vitest-typecheck-setup.mjs'
+      - '.github/workflows/pod-desktop-windows.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  windows-installer:
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+          cache: npm
+      - name: Install the build toolchain and bundled Electron runtime
+        run: npm ci --no-audit --no-fund
+      - name: Build the shared runtime packages
+        run: npm run build
+      - name: Verify the consumer controller and renderer behavior
+        run: npx vitest run applications/pod-desktop/tests
+      - name: Build and package the per-user Windows installer
+        run: npm run package:win --workspace @interego/pod-desktop
+        env:
+          # Preview PRs stay unsigned; an explicitly dispatched build may use supplied credentials.
+          WIN_CSC_LINK: ${{ github.event_name == 'workflow_dispatch' && secrets.INTEREGO_WINDOWS_CSC_LINK || '' }}
+          WIN_CSC_KEY_PASSWORD: ${{ github.event_name == 'workflow_dispatch' && secrets.INTEREGO_WINDOWS_CSC_KEY_PASSWORD || '' }}
+      - name: Launch the packaged app and verify its offline local lifecycle
+        run: npm run smoke:packaged --workspace @interego/pod-desktop
+      - name: Inspect installer checksum and signing disclosure
+        shell: pwsh
+        run: |
+          Get-Content applications/pod-desktop/release/SHA256SUMS.txt
+          Get-Content applications/pod-desktop/release/BUILD-INFO.json
+      - uses: actions/upload-artifact@v7
+        with:
+          name: Interego-Windows-preview
+          path: |
+            applications/pod-desktop/release/Interego-*-windows-x64-setup.exe
+            applications/pod-desktop/release/SHA256SUMS.txt
+            applications/pod-desktop/release/BUILD-INFO.json
+          if-no-files-found: error
+          retention-days: 14

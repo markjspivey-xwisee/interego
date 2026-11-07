@@ -1,0 +1,22 @@
+{
+  "name": "@interego/local-node",
+  "version": "0.1.0",
+  "description": "Opt-in local Interego runtime: durable file-backed Solid storage behind an authenticated loopback gateway.",
+  "author": "Mark Spivey",
+  "license": "MIT",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": { "import": "./dist/index.js", "types": "./dist/index.d.ts" }
+  },
+  "files": ["dist/", "config/", "README.md"],
+  "scripts": { "build": "tsc" },
+  "engines": { "node": ">=20.0.0" },
+  "dependencies": {
+    "@interego/deployment-config": "*",
+    "@solid/community-server": "^7.1.9"
+  },
+  "devDependencies": { "@types/node": "^22.0.0", "typescript": "^5.7.0" }
+}

@@ -73,6 +73,11 @@ export interface InventoryOptions {
   readonly maxFiles?: number;
 }
 
+export function repositoryName(root: string): string {
+  // Keep the calibration identity independent of the checkout's location when configured.
+  return process.env['JEV_HARNESS_REPO_NAME'] ?? root.split(/[\\/]/).filter(Boolean).pop() ?? root;
+}
+
 export function inventory(rootPath: string, opts: InventoryOptions = {}): RepoInventory {
   const root = resolve(rootPath);
   if (!existsSync(root)) throw new Error(`repository root does not exist: ${root}`);
@@ -90,11 +95,7 @@ export function inventory(rootPath: string, opts: InventoryOptions = {}): RepoIn
     return base;
   });
   const commit = git(root, ['rev-parse', 'HEAD'])?.trim() ?? null;
-  // The directory names the repository, unless the deployment says otherwise: the Railway image
-  // runs at /app, and "app" would give the deployed bridge a calibration chain of its own
-  // (urn:graph:jev-harness:calibration:app) beside CI's (...:interego) for the same code.
-  const name = process.env['JEV_HARNESS_REPO_NAME'] ?? root.split(/[\\/]/).filter(Boolean).pop() ?? root;
-  return { root, name, commit, files };
+  return { root, name: repositoryName(root), commit, files };
 }
 
 function listPaths(root: string): string[] {

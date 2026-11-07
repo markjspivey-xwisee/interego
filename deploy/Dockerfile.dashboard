@@ -22,7 +22,8 @@ COPY packages/ ./packages/
 COPY docs/ns/pgsl-lexicon.ttl ./docs/ns/pgsl-lexicon.ttl
 
 RUN npm install --workspaces --include-workspace-root --no-audit --no-fund
-RUN npm run build
+# Compile the library workspaces; this stage does not ship the MCP application.
+RUN npm run build:core && npm run build:leaves
 
 RUN mkdir -p /tarballs && \
     cd packages/core && npm pack --pack-destination /tarballs && cd /workspace && \

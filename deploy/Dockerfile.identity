@@ -40,8 +40,14 @@ COPY deploy/identity/surface-agent-restore.ts ./
 COPY deploy/identity/rate-limit.ts ./
 COPY deploy/identity/first-sign-in.ts ./
 COPY deploy/identity/auth-methods-writer.ts ./
+COPY deploy/identity/hosted-terms.ts ./
 COPY deploy/identity/route-errors.ts ./
 COPY deploy/identity/siwe-message.ts ./
+COPY deploy/identity/local-identity-link.ts ./
+COPY deploy/identity/local-identity-link-dashboard.ts ./
+COPY deploy/identity/returning-passkey-login.ts ./
+COPY deploy/identity/returning-passkey-dashboard.ts ./
+COPY deploy/identity/dashboard-inbox.ts ./
 RUN npx tsc
 
 # ────────────────────────────────────────────────────────────

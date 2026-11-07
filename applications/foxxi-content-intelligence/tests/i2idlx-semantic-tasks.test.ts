@@ -136,6 +136,48 @@ describe('I2IDL-X deterministic semantic task operations', () => {
       expect(packet.evidence).toMatchObject({ output_triples: 1, dataset_output_triples: 2, output_scope: 'submitted draft subjects' });
     });
   });
+  it('closes chained bridges and cycles in one request without leaking trusted subjects', async () => {
+    const data = fixture();
+    data.queries[0]!.sparql = `PREFIX i2x: <${NS}>
+PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+CONSTRUCT { ?record a ?class }
+WHERE { { ?record i2x:isClassifiedBy ?concept . ?concept i2x:fixtureClass ?class }
+UNION { ?record a ?previous . ?previous rdfs:subClassOf ?class } }`;
+    await withServer(async (base, dir) => {
+      await writeFile(join(dir, 'i2idlx-alignments.ttl'), PREFIXES + `
+i2idl:resource i2x:fixtureClass ex:Resource .
+ex:Resource rdfs:subClassOf ex:Framework .
+ex:Framework rdfs:subClassOf ex:GenericFramework .
+ex:GenericFramework rdfs:subClassOf ex:Framework .
+ex:published-service i2x:isClassifiedBy i2idl:resource .`);
+      const response = await call(base, 'classify', { graph_content: VALID });
+      expect(response.status).toBe(200);
+      const packet = await response.json();
+      expect(packet.result.types).toHaveLength(3);
+      expect(packet.result.types).toContainEqual({ subject: EX + 'scenario', type: EX + 'GenericFramework' });
+      expect(packet.result.graph_content).not.toContain('published-service');
+      expect(packet.evidence.closure).toMatchObject({ converged: true, passes: 4, max_passes: 32 });
+      const repeat = await call(base, 'classify', { graph_content: VALID });
+      const repeated = await repeat.json();
+      expect(repeated.result).toEqual(packet.result);
+      expect(repeated.evidence.closure).toEqual(packet.evidence.closure);
+    }, { data });
+  });
+  it('refuses a nonconvergent trusted query without returning a partial classification', async () => {
+    const data = fixture();
+    data.queries[0]!.sparql = `PREFIX i2x: <${NS}>
+CONSTRUCT { ?record i2x:unbounded ?fresh }
+WHERE { ?record i2x:isClassifiedBy ?concept . BIND(BNODE() AS ?fresh) }`;
+    await withServer(async base => {
+      const response = await call(base, 'classify', { graph_content: VALID });
+      expect(response.status).toBe(503);
+      const packet = await response.json();
+      expect(packet.error).toContain('did not converge');
+      expect(packet.result).toBeUndefined();
+      const recovery = await call(base, 'validate', { graph_content: VALID });
+      expect(recovery.status).toBe(200);
+    }, { data });
+  });
   it('discloses vacuous conformance when the draft targets no publication shapes', async () => {
     await withServer(async base => {
       const response = await call(base, 'validate', { graph_content: PREFIXES + 'ex:unrelated rdfs:label "Unrelated record" .' });

@@ -64,6 +64,7 @@ on:
       - 'demos/**'
       - 'integrations/**'
       - 'tsconfig.base.json'
+      - 'tsconfig.json'
       - 'tsconfig.check.json'
       # ★ NOT just `tools/typecheck-gate.mjs`. This job is the ONLY workflow that runs
       # `npx vitest run`, and vitest.config.ts holds the `include` globs, the `globalSetup`
@@ -340,6 +341,10 @@ jobs:
         # Not for the artifacts — for the .d.ts each bridge tsconfig resolves.
         if: steps.dist.outputs.cache-hit != 'true'
         run: npm run build
+      - name: Build the published stdio server and configuration adapter
+        # The shared cache contains only packages/*/dist. Build the public MCP
+        # artifact on a hit as well, so packaging tests inspect this checkout.
+        run: npm run build --workspace @interego/mcp
       - name: This part of the suite
         run: npx vitest run ${{ matrix.part.files }}
 
@@ -412,6 +417,7 @@ jobs:
           npm run build
           # Generator is build-time only; matches the production runtime.
           rm -rf node_modules/componentsjs-generator
+          npm run test:contexts:offline
       - name: Install and check existing gateway policy
         run: |
           npm ci --prefix deploy/css-gate

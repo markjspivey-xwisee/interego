@@ -358,9 +358,11 @@ test('a pass that starts while an owner\'s purge hangs queues no purge of its ow
   assert.equal(log.match(/not queuing another purge of u-try-play-1+/g)?.length, 2, log);
   assert.match(log, /purge of u-try-play-1+ unfinished/);
   assert.doesNotMatch(log, /forgot/);
-  // The purge that failed let go of the owner: the first pass after it takes the owner up again, and finishes it.
+  // The purge that failed let go of the owner: the first pass after it takes the owner up again, and
+  // finishes it: it lists the pod before the close and once more after its deletions (the closure
+  // fence, which finds no game data here).
   await f.cleanup();
-  assert.equal(f.listings, 2);
+  assert.equal(f.listings, 3);
   assert.deepEqual(f.deletions, [`https://css.test/${userId}/checkpoint`]);
   assert.equal(f.document!.provisionalPlayPurgePending, undefined);
   assert.equal(f.unfinishedPlayPurges.size, 0);

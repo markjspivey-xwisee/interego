@@ -616,6 +616,14 @@ export const SHARED_ONLY_THROUGH_IMPORTED_CODE: readonly {
   readonly why: string;
 }[] = [
   {
+    name: 'INTEREGO_POD_DIAGNOSTICS',
+    readIn: 'applications/pod-desktop/src/agent-client.ts',
+    why: 'an opt-in local diagnostic switch read by the installed pod companion client. '
+      + 'Collected desktop suites share this read through imports; the diagnostics fixture '
+      + 'sets it explicitly and verifies fixed failure labels without credentials or private '
+      + 'content. It selects no network destination, credential or shared external service.',
+  },
+  {
     name: 'PGSL_PG_MAX_DATABASE_BYTES',
     readIn: 'packages/pgsl-store/src/pg-store.ts',
     why: 'an optional physical database byte ceiling read when openPgStore() builds its adapter. '

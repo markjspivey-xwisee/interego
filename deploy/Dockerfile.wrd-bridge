@@ -5,7 +5,7 @@
 # WRD_DEFAULT_POD_URL (or by the call), so the process itself keeps nothing that matters.
 #
 # Built from Dockerfile.wsp-bridge (one stage; see the note there on why one): every workspace
-# package.json before `npm ci` so that layer caches, then sources, then one `npm run build`.
+# package.json before `npm ci` so that layer caches, then sources, then the core and leaf package builds.
 # The vertical imports only @interego/core, @interego/solid and applications/_shared, and reads
 # its own ui/*.js and ontology/*.ttl at runtime, so the whole vertical directory is copied.
 ARG NODE_BASE=node:22-slim
@@ -26,13 +26,16 @@ COPY packages/compliance/package.json ./packages/compliance/
 COPY packages/connectors/package.json ./packages/connectors/
 COPY packages/constitutional/package.json ./packages/constitutional/
 COPY packages/core/package.json ./packages/core/
+COPY packages/deployment-config/package.json ./packages/deployment-config/
 COPY packages/extractors/package.json ./packages/extractors/
+COPY packages/local-node/package.json ./packages/local-node/
 COPY packages/mdvault/package.json ./packages/mdvault/
 COPY packages/ops/package.json ./packages/ops/
 COPY packages/p2p/package.json ./packages/p2p/
 COPY packages/passport/package.json ./packages/passport/
 COPY packages/pgsl/package.json ./packages/pgsl/
 COPY packages/pgsl-store/package.json ./packages/pgsl-store/
+COPY packages/pod-federation/package.json ./packages/pod-federation/
 COPY packages/privacy/package.json ./packages/privacy/
 COPY packages/registry/package.json ./packages/registry/
 COPY packages/security-txt/package.json ./packages/security-txt/
@@ -69,7 +72,7 @@ COPY applications/work-redesign/ ./applications/work-redesign/
 # build-ghcr.yml restores the packages' dist/ into the context and passes PREBUILT=1; a local
 # build without them still builds.
 ARG PREBUILT=0
-RUN if [ "$PREBUILT" = "1" ] && [ -f packages/registry/dist/index.js ]; then echo "prebuilt packages present; skipping the build"; else npm run build; fi
+RUN if [ "$PREBUILT" = "1" ] && [ -f packages/registry/dist/index.js ]; then echo "prebuilt packages present; skipping the build"; else (npm run build:core && npm run build:leaves); fi
 
 RUN mkdir -p node_modules/@interego \
   && ln -sfn /app/packages/core node_modules/@interego/core \

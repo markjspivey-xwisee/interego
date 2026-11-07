@@ -1,7 +1,7 @@
 // The catalog's stored queries: parameter binding (exactly as an agent substitutes $-variables) and a local
 // evaluation over the embedded release, so a query can be tried here before it runs live. Two run client-side
 // by design (i2x:runsOver): over the semantic-layer graphs plus the agent's own data.
-import { C, META, QUERIES, SOURCES, COLLECTIONS, byId, iriOf } from "./data.js";
+import { CANONICAL_C as C, META, QUERIES, SOURCES, COLLECTIONS, byId, iriOf, AUTHORED_PORTS } from "./data.js";
 import { classify, conceptReferents, SEM } from "./semantic.js";
 
 const COL_IRI = (facetId) => "https://id.i2idl.org/collections/" + facetId;
@@ -40,6 +40,7 @@ export function runLocal(name, v) {
   switch (name) {
     case "concept-neighborhood": {
       const c = byId.get(v.concept);
+      if (c?.origin?.kind === "authored") return { head: ["predicate", "object", "label"], rows: [], note: `This is an authored I2IDL-X proposal, outside the canonical endpoint preview. Read its own catalog: ${AUTHORED_PORTS[0]?.href || "the authored catalog port"}.` };
       if (!c) return { head: ["predicate", "object", "label"], rows: [] };
       const rows = [["skos:prefLabel", "", c.l]];
       for (const [p, l] of [["skos:broader", c.b], ["skos:narrower", c.n], ["skos:related", c.r]]) for (const x of l) rows.push([p, x, byId.get(x).l]);
@@ -54,6 +55,7 @@ export function runLocal(name, v) {
     }
     case "definition-evidence": {
       const c = byId.get(v.concept);
+      if (c?.origin?.kind === "authored") return { head: ["relation", "source", "citation"], rows: [], note: `This is an authored I2IDL-X proposal, outside the canonical endpoint preview. Read its own evidence: ${AUTHORED_PORTS[1]?.href || "the authored RDF port"}.` };
       if (!c) return { head: ["relation", "source", "citation"], rows: [] };
       return { head: ["relation", "source", "citation"], rows: c.ev.map((e) => [e.r === "d" ? "direct" : "supporting", SOURCES[e.s].title, e.c || ""]), note: c.d };
     }

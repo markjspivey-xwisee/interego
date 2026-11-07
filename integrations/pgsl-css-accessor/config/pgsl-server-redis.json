@@ -58,6 +58,18 @@
   ],
   "@graph": [
     {
+      "comment": "CSS 7.2 declares the conditions parser inline, with no @id, inside the RequestParser (config/ldp/handler/components/request-parser.json), so it is replaced through a same-type BasicRequestParser override that changes only conditionsParser. NativeConditionsParser records the Interego-Native-Delete opt-in; every other condition is parsed as CSS parses it.",
+      "@type": "Override",
+      "overrideInstance": { "@id": "urn:solid-server:default:RequestParser" },
+      "overrideParameters": {
+        "@type": "BasicRequestParser",
+        "conditionsParser": {
+          "@type": "NativeConditionsParser",
+          "eTagHandler": { "@id": "urn:solid-server:default:ETagHandler" }
+        }
+      }
+    },
+    {
       "comment": "The internal value storage walks every document under /.internal/, including keyless reader counts left in /.internal/locks/ from when LockStorage was pod-backed. Skipping keyless entries keeps them from crashing the hourly expired-entry sweep.",
       "@type": "Override",
       "overrideInstance": {
@@ -156,6 +168,15 @@
             },
             "metadataStrategy": {
               "@id": "urn:solid-server:default:MetadataStrategy"
+            }
+          },
+          {
+            "@type": "NativeDeleteOperationHandler",
+            "store": {
+              "@id": "urn:solid-server:default:ResourceStore"
+            },
+            "auxiliaryStrategy": {
+              "@id": "urn:solid-server:default:AuxiliaryStrategy"
             }
           },
           {

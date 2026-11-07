@@ -1,5 +1,7 @@
 # Interego under any MCP-speaking agent runtime
 
+**Windows local pod:** use the app's [Connections setup](../../applications/pod-desktop/AGENT-CONNECTIONS.md). Its scoped companion supplies the app's encrypted notes without exposing the owner key or storage credential. The generic server recipes below describe a separate developer deployment; they do not pair with the desktop app. Current client formats differ (including TOML for Codex and Grok Build), so use the generated setup and linked official client documentation rather than assuming one JSON file works for every runtime.
+
 > Path 1 of the five integration paths laid out in
 > [agent-runtime-integration.md](agent-runtime-integration.md). This page
 > shows how to plug Interego into an existing agent runtime via MCP — no
@@ -12,11 +14,9 @@ as a stdio MCP server. **Any agent runtime that can speak MCP can mount
 Interego as a memory + identity + federation layer** by editing one
 config file.
 
-This document covers the two most-asked-about runtimes — OpenClaw and
-Hermes Agent — but the recipe is the same for every other MCP client
-(VS Code Copilot, OpenAI Codex, Cursor, Claude Code itself). When a new
-one arrives, this page does not need to change; the substrate primitives
-already compose into whatever loop the runtime exposes.
+This document covers developer deployments. MCP clients use different
+configuration formats and execution hosts; consult each client's current
+documentation. The substrate operations are independent of that setup.
 
 ---
 
@@ -82,8 +82,8 @@ OpenClaw discovers MCP servers through its standard
 openclaw mcp add interego \
   --command "node" \
   --args "/abs/path/to/interego/mcp-server/dist/server.js" \
-  --env CG_DEFAULT_POD_URL=https://your-pod.example/agent-name/ \
-  --env CG_DEFAULT_AGENT_DID=did:web:your-pod.example
+  --env CG_HOME_POD=https://your-pod.example/agent-name/ \
+  --env CG_AGENT_ID=did:web:your-pod.example
 ```
 
 OpenClaw will surface every Interego tool to the agent automatically.
@@ -107,7 +107,7 @@ Hermes' MCP integration uses the same shape. Edit
 name = "interego"
 command = "node"
 args = ["/abs/path/to/interego/mcp-server/dist/server.js"]
-env = { CG_DEFAULT_POD_URL = "https://your-pod.example/agent-name/", CG_DEFAULT_AGENT_DID = "did:web:your-pod.example" }
+env = { CG_HOME_POD = "https://your-pod.example/agent-name/", CG_AGENT_ID = "did:web:your-pod.example" }
 ```
 
 Restart Hermes; the substrate's tools will appear in the agent's tool
@@ -115,8 +115,7 @@ table next to its built-in 40-odd tools.
 
 #### Any other MCP client
 
-Most MCP clients (Claude Code, VS Code Copilot in chat mode, Cursor,
-Codex, …) read a JSON config of the form:
+Clients that accept an `mcpServers` JSON configuration can use this shape:
 
 ```json
 {
@@ -125,16 +124,19 @@ Codex, …) read a JSON config of the form:
       "command": "node",
       "args": ["/abs/path/to/interego/mcp-server/dist/server.js"],
       "env": {
-        "CG_DEFAULT_POD_URL": "https://your-pod.example/agent-name/",
-        "CG_DEFAULT_AGENT_DID": "did:web:your-pod.example"
+        "CG_HOME_POD": "https://your-pod.example/agent-name/",
+        "CG_AGENT_ID": "did:web:your-pod.example"
       }
     }
   }
 }
 ```
 
-The exact filename varies by client (e.g. `~/.claude/mcp.json`,
-`.cursor/mcp.json`, etc.). The block is identical.
+The filename and surrounding structure vary by client. Codex uses TOML,
+and Claude Code has separate user and project scopes. Use the current
+[Codex/ChatGPT MCP documentation](https://learn.chatgpt.com/docs/extend/mcp?surface=cli)
+and [Claude Code MCP documentation](https://code.claude.com/docs/en/mcp)
+for their configuration locations and registration commands.
 
 ---
 

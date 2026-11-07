@@ -14,11 +14,18 @@ import time
 
 from playwright.sync_api import sync_playwright
 
+# Explicit loading also works under Python -I, which omits the script directory.
+import importlib.util
+_oracle_spec = importlib.util.spec_from_file_location("corpus_oracle", pathlib.Path(__file__).with_name("corpus_oracle.py"))
+_oracle = importlib.util.module_from_spec(_oracle_spec)
+_oracle_spec.loader.exec_module(_oracle)
+
 ROOT = pathlib.Path(sys.argv[1]).resolve()
 CACHE = pathlib.Path(sys.argv[2]).resolve()
 SHOTS = pathlib.Path(sys.argv[sys.argv.index("--shots") + 1]).resolve() if "--shots" in sys.argv else None
 PAGE = (ROOT / "site" / "app.html").read_text()
 DATA = json.loads((ROOT / "app" / "build" / "data.json").read_text())
+CORPUS = _oracle.validate_corpus(DATA)
 # open UNESCO Thesaurus proposals (those I2IDL has since asserted itself are adopted and leave the queue)
 N_UNESCO = sum(1 for m in DATA["mappings"] if m["v"] == "UNESCO Thesaurus")
 HTML = "<!doctype html><html><head><meta charset=utf8><meta name=viewport content=\"width=device-width,initial-scale=1\"></head><body>" + PAGE + "</body></html>"
@@ -140,6 +147,9 @@ def run(stubbed: bool, width=1440, height=900, shots=False):
                 page.wait_for_timeout(400)
                 page.screenshot(path=str(SHOTS / f"{name}-{tag}-{width}.png"), full_page=False)
 
+        _oracle.assert_embedded_source(page, DATA)
+        _oracle.assert_browser_corpus(page, CORPUS, visit)
+        check(True, f"[{tag}] exact combined/source-only counts, owned IRI and authored origin")
         visit("home", ".hero h1", "home")
         visit("browse", ".lex-list .li", "lexicon")
         visit("c-learning-record-store-lrs", "#hw", "entry")
@@ -151,10 +161,10 @@ def run(stubbed: bool, width=1440, height=900, shots=False):
         check(True, f"[{tag}] {len(DATA['concepts'][::23])} sampled entries render their labels")
         visit("browse-f.learning-sciences", ".lex-count")
         n = page.locator(".lex-list .li").count()
-        want = sum(1 for c in DATA["concepts"] if "learning-sciences" in c["f"])
+        want = sum(1 for c in DATA["concepts"] if "learning-sciences" in c["f"]) + sum(1 for c in CORPUS["authored"] if c["field"] == "learning-sciences")
         check(n == want, f"[{tag}] field filter shows {n} of the {want} members")
         visit("whole", ".mapwrap svg circle", "map")
-        check(page.locator(".mapwrap svg circle").count() == len(DATA["concepts"]), f"[{tag}] map draws every concept")
+        check(page.locator(".mapwrap svg circle").count() == CORPUS["combined_count"], f"[{tag}] map draws every canonical and declared authored concept")
         visit("map-learning-engineering", ".mapwrap svg g circle", "neighborhood")
         visit("path-learning-record-store-lrs~competency-based-learning", ".path .pstep", "path")
         visit("cmp-formative-evaluation~formative-assessment", ".cmp-grid .cmp-row", "compare")
@@ -368,8 +378,8 @@ def run(stubbed: bool, width=1440, height=900, shots=False):
             check(ask_nav.count() == 1, "[bare] Ask remains visible in navigation without a browser model")
             ask_nav.click()
             page.wait_for_selector("#main .empty b")
-            check(page.locator("#main .empty b").inner_text() == "Use Ask in your AI client",
-                  "[bare] the visible Ask entry opens the connected-client workflow")
+            check(page.locator("#main .empty b").inner_text() == "Connect an AI agent to ask here",
+                  "[bare] the visible Ask entry offers the optional agent connection for in-page chat")
             controls_url = "https://foxxi-bridge.interego.xwisee.com/i2idlx/capabilities.ttl"
             check(page.locator("#main a", has_text="Discoverable controls").get_attribute("href") == controls_url,
                   "[bare] Ask links to the canonical discoverable controls")

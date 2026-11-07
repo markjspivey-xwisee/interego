@@ -166,53 +166,29 @@ import {
 import type { PersistedComplianceWallet } from '@interego/compliance';
 
 import { PodRegistry, type KnownPod } from './pod-registry.js';
+import { resolveStdioConfig } from './deployment-config.js';
 
 // ── Config ──────────────────────────────────────────────────
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const CSS_PORT = parseInt(process.env['CG_PORT'] ?? '3456');
-const POD_NAME = process.env['CG_POD_NAME'] ?? 'agent';
-
-// Home pod: explicit CG_HOME_POD, or computed from CG_BASE_URL + CG_POD_NAME
-const BASE_URL = process.env['CG_BASE_URL'] ?? `http://localhost:${CSS_PORT}/`;
-const HOME_POD = process.env['CG_HOME_POD'] ?? `${BASE_URL}${POD_NAME}/`;
-
-const MY_AGENT_ID = (process.env['CG_AGENT_ID'] ?? 'urn:agent:claude-code:local') as IRI;
-const MY_OWNER_WEBID = (process.env['CG_OWNER_WEBID'] ?? `https://id.example.com/${POD_NAME}/profile#me`) as IRI;
-const MY_OWNER_NAME = process.env['CG_OWNER_NAME'] ?? undefined;
-const MY_DID = (process.env['CG_DID'] ?? `did:web:${POD_NAME}.local`) as IRI;
-
-const KNOWN_PODS_RAW = process.env['CG_KNOWN_PODS'] ?? '';
-const DIRECTORY_URL = process.env['CG_DIRECTORY_URL'] ?? undefined;
-const IDENTITY_SERVER_URL = process.env['CG_IDENTITY_URL']
-  ?? 'https://identity.interego.xwisee.com';
-
-// IPFS config.
-//
-// Auto-detect PINATA_API_KEY / WEB3STORAGE_TOKEN so the stdio server
-// actually pins by default when the operator has credentials in env.
-// CG_IPFS_PROVIDER + CG_IPFS_API_KEY remain explicit overrides. With no
-// credentials we report `local-unpinned` (NOT the old misleading `local`)
-// so consumers can tell that the CID is content-addressed but the bytes
-// are not on any public gateway.
-const _CG_PINATA = process.env['PINATA_API_KEY'] ?? '';
-const _CG_WEB3 = process.env['WEB3STORAGE_TOKEN'] ?? '';
-const IPFS_PROVIDER: 'pinata' | 'web3storage' | 'local-unpinned' = (() => {
-  const explicit = process.env['CG_IPFS_PROVIDER'];
-  if (explicit === 'pinata' || explicit === 'web3storage') return explicit;
-  if (explicit === 'local' || explicit === 'local-unpinned') return 'local-unpinned';
-  if (_CG_PINATA) return 'pinata';
-  if (_CG_WEB3) return 'web3storage';
-  return 'local-unpinned';
-})();
-const IPFS_API_KEY = process.env['CG_IPFS_API_KEY']
-  ?? (IPFS_PROVIDER === 'pinata' ? _CG_PINATA
-    : IPFS_PROVIDER === 'web3storage' ? _CG_WEB3
-    : '');
+const config = resolveStdioConfig(process.env);
+const CSS_PORT = config.cssPort;
+const POD_NAME = config.podName;
+const BASE_URL = config.baseUrl;
+const HOME_POD = config.homePod;
+const MY_AGENT_ID = config.agentId as IRI;
+const MY_OWNER_WEBID = config.ownerWebId as IRI;
+const MY_OWNER_NAME = config.ownerName;
+const MY_DID = config.did as IRI;
+const KNOWN_PODS_RAW = config.knownPodsRaw;
+const DIRECTORY_URL = config.directoryUrl;
+const IDENTITY_SERVER_URL = config.identityUrl;
+const IPFS_PROVIDER = config.ipfsProvider;
+const IPFS_API_KEY = config.ipfsApiKey;
 const IPFS_CONFIG = { provider: IPFS_PROVIDER, apiKey: IPFS_API_KEY } as const;
 
 // Local mode: detect when running without cloud services
-const IS_LOCAL = BASE_URL.includes('localhost') || BASE_URL.includes('127.0.0.1');
+const IS_LOCAL = config.isLocal;
 const IS_CLOUD = !IS_LOCAL;
 
 // Progressive tool tiers

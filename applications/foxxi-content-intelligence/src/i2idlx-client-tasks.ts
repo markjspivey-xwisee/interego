@@ -5,6 +5,7 @@
 import type { Express, Response as ExpressResponse } from 'express';
 import { readFile, stat } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
+import { projectWorkbenchData, conceptIri, authoredCatalogPorts } from '../i2idlx/typescript/authored-concepts.js';
 
 type Row = Record<string, unknown>;
 export interface ClientCheckOperation { action: string; href: string; method: 'GET' | 'POST' }
@@ -63,7 +64,7 @@ export async function loadPublicTaskData(config: ClientTaskConfig): Promise<Row>
     if (!object(data) || !object(data.meta) || !Array.isArray(data.concepts) || !data.concepts.length ||
       !text(data.meta.release) || !/^[0-9a-f]{40}$/i.test(text(data.meta.commit)) ||
       data.concepts.length > 2000 || data.concepts.some(c => !object(c) || !text(c.id) || !text(c.l) || !text(c.d))) throw new Error('invalid public build');
-    return data;
+    return projectWorkbenchData(data);
   } catch { throw new TaskError('Verified public workbench build data is unavailable; no task context was fabricated.', 503); }
 }
 function selectConcepts(data: Row, query: string, ids: unknown): { selected: Row[]; unmatched: string[]; total: number } {
@@ -82,15 +83,16 @@ function selectConcepts(data: Row, query: string, ids: unknown): { selected: Row
   for (const match of scored) if (selected.length < MAX_CONCEPTS && !selected.includes(match.concept)) selected.push(match.concept);
   return { selected, unmatched, total: concepts.length };
 }
-function contextFor(data: Row, query: string, ids: unknown) {
+function contextFor(data: Row, query: string, ids: unknown, baseUrl: string) {
   const selected = selectConcepts(data, query, ids), selectedIds = new Set(selected.selected.map(c => text(c.id)));
   const all = rows(data.concepts), byId = new Map(all.map(c => [text(c.id), c]));
   const sources = rows(data.sources), roles = rows(data.roles), actions = object(data.actions) ? data.actions : {};
   const label = (id: string) => ({ id, label: text(byId.get(id)?.l) });
   const concepts = selected.selected.map(c => ({
-    id: text(c.id), label: text(c.l), alsoKnownAs: strings(c.a),
+    id: text(c.id), iri: conceptIri(c), origin: c.origin ?? { kind: 'canonical', publisher: 'I2IDL' }, label: text(c.l), alsoKnownAs: strings(c.a),
     definition: excerpt(c.d), definitionTruncated: excerpt(c.d) !== c.d, editorialNote: excerpt(c.x),
-    glossaryStatus: 'I2IDL source', type: text(c.t), kind: text(c.k), fields: strings(c.f),
+    glossaryStatus: object(c.origin) && c.origin.kind === 'authored' ? 'Authored I2IDL-X proposal; not adopted upstream' : 'I2IDL source', type: text(c.t), kind: text(c.k), fields: strings(c.f),
+    candidateAssociations: rows(c.candidateAssociations),
     broader: strings(c.b).map(label), narrower: strings(c.n).map(label), related: strings(c.r).map(label),
     evidence: rows(c.ev).slice(0, 12).map(e => {
       const s = typeof e.s === 'number' ? sources[e.s] : undefined;
@@ -117,11 +119,13 @@ function contextFor(data: Row, query: string, ids: unknown) {
       freshnessNote: 'This packet reads the deployed snapshot only. Its release/commit do not establish the current upstream release; invoke an actually advertised source-version check before claiming freshness.',
       scheme: object(meta.scheme) ? pick(meta.scheme, ['title', 'iri', 'rights', 'publisher']) : {},
       license: object(meta.license) ? pick(meta.license, ['holder', 'name', 'url', 'file']) : {} },
+    corpus: { canonicalConcepts: object(meta.counts) ? meta.counts.canonicalConcepts ?? rows(data.concepts).length : rows(data.concepts).length,
+      authoredConcepts: object(meta.counts) ? meta.counts.authoredConcepts ?? 0 : 0, combinedConcepts: rows(data.concepts).length },
     concepts, semantic: { categories, disjoint,
       prefixes: object(semantic.prefixes) ? Object.fromEntries(Object.entries(semantic.prefixes).slice(0, 40).map(([p, iri]) => [p, excerpt(iri, 300)])) : {},
-      bridges: rows(semantic.bridges).filter(b => selectedIds.has(text(b.c))).slice(0, 60).map(b => pick(b, ['c', 't', 'k', 'm'])),
+      bridges: rows(semantic.bridges).filter(b => selectedIds.has(text(b.c))).slice(0, 60).map(b => pick(b, ['c', 't', 'k', 'm', 'conceptIri', 'origin', 'status', 'rationale'])),
       snapshots: rows(semantic.snapshots).slice(0, 20).map(s => pick(s, ['key', 'version', 'license', 'url', 'sha256', 'mode'])) },
-    catalog: { source: text(object(meta.iri) ? meta.iri.catalog : ''), controls: rows(data.ports).slice(0, 32).map(p => ({
+    catalog: { source: text(object(meta.iri) ? meta.iri.catalog : ''), authored: data.authoredCatalog ? authoredCatalogPorts(baseUrl) : [], controls: rows(data.ports).slice(0, 32).map(p => ({
         ...pick(p, ['id', 'label', 'title', 'desc', 'action', 'm', 'u', 'tpl', 'ro', 'mt', 'via', 'cap']),
         variables: rows(p.vars).slice(0, 12).map(v => pick(v, ['v', 'p'])),
         expects: object(p.expects) ? { ...pick(p.expects, ['id', 'label', 'note']),
@@ -186,12 +190,13 @@ function boundedTask(value: Record<string, unknown>): Record<string, unknown> {
 export async function executeClientTask(config: ClientTaskConfig, operation: 'ask' | 'orchestrate', body: unknown): Promise<Record<string, unknown>> {
   if (operation === 'ask') {
     const args = argumentsOf(body), question = inputText(args.question, 'question', 4000), data = await loadPublicTaskData(config);
-    const context = contextFor(data, question, args.concept_ids);
+    const context = contextFor(data, question, args.concept_ids, config.baseUrl);
     const module = await import(new URL('../i2idlx/app/src/ask-rules.js', import.meta.url).href);
     if (typeof module.askInstructions !== 'function') throw new TaskError('Shared Ask instructions unavailable.', 503);
     const meta = object(data.meta) ? data.meta : {}, scheme = object(meta.scheme) ? meta.scheme : {};
     const instructions: string = module.askInstructions({ schemeTitle: text(scheme.title), release: text(meta.release),
-      conceptCount: rows(data.concepts).length, context: strings(args.concept_ids, 14).join(', '),
+      conceptCount: rows(data.concepts).length, canonicalCount: object(meta.counts) ? meta.counts.canonicalConcepts : undefined,
+      authoredCount: object(meta.counts) ? meta.counts.authoredConcepts : undefined, context: strings(args.concept_ids, 14).join(', '),
       indexComplete: false, index: context.concepts.map(c => c.id + ': ' + c.label).join('\n') });
     return boundedTask(result(config, 'ask', { question }, instructions + '\n\nAnswer the supplied question in this client using the returned exact entries. The index in this bounded packet lists selected entries only. A truncated definition is a source excerpt, not the complete definition; follow current catalog controls to read the original before relying on missing text.', context));
   }
@@ -214,7 +219,7 @@ export async function executeClientTask(config: ClientTaskConfig, operation: 'as
       if (new Set(records.map(r => r.id)).size !== records.length) throw new TaskError('Record identifiers must be unique.');
     }
     const data = await loadPublicTaskData(config), query = records.map(r => r.title).join('\n') + '\n' + brief + '\n' + records.map(r => r.description).join('\n');
-    const context = contextFor(data, query, args.concept_ids);
+    const context = contextFor(data, query, args.concept_ids, config.baseUrl);
     const roles = rows(scenario.AGENTS).map(a => ({ ...pick(a, ['id', 'name', 'charter'], 6000), execution: 'client-model-role', status: 'pending' }));
     const steps = rows(scenario.STEPS).map(s => ({ ...pick(s, ['id', 'agent', 'title', 'task'], 6000),
       after: strings(s.after), conditional: s.conditional === true, browser_tool_names: strings(s.tools), status: 'pending',

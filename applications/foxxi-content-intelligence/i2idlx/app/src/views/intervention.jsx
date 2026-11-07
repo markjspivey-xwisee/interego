@@ -1,9 +1,12 @@
+import { safeNavigationHref } from "../navigation-links.js";
 // Intervention context belongs to the viewer until an explicit preview or conversation handoff.
 import { META, C, byId } from '../data.js';
 import { backendUrl } from '../backend-url.js';
 import { isChatGPTApp, connectHost, subscribeHost, getHostState, callWorkbenchTool, sendConversation } from '../chatgpt-host.js';
 import { ConceptChip, CopyBtn, CodeBlock } from '../ui.jsx';
 import { Icon } from '../icons.jsx';
+import { useAskEngine } from './ask.jsx';
+import { MiniMarkdown } from '../text.jsx';
 
 const { useState, useEffect, useRef } = React;
 const TOOL = 'i2idlx_intervention_ask';
@@ -74,6 +77,13 @@ function packetOf(reply) {
   for (const part of reply?.content || []) if (part.type === 'text') { try { const value = JSON.parse(part.text); if (object(value)) return value; } catch { /* plain errors are not packets */ } }
   throw new Error('The intervention tool returned no context.');
 }
+async function retrieveContext(args) {
+  if (isChatGPTApp()) return packetOf(await callWorkbenchTool(TOOL, args));
+  const response = await fetch(backendUrl('/i2idlx/api/intervention-ask'), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(args) });
+  const result = await response.json();
+  if (!response.ok) throw new Error(result.error || 'The intervention could not be read.');
+  return result;
+}
 function requestFor(input) {
   return [
     'I am exploring an intervention in the I2IDL-X Workbench, pinned to ' + META.release + '.',
@@ -83,7 +93,7 @@ function requestFor(input) {
   ].join('\n\n');
 }
 function safeHref(value) { try { const url = new URL(value); return ['https:', 'http:'].includes(url.protocol) && !url.username && !url.password ? url.href : null; } catch { return null; } }
-function ContextPreview({ packet }) {
+function ContextPreview({ packet, previewOnly = true }) {
   const source = object(packet.source_context) ? packet.source_context : {};
   const passages = Array.isArray(source.passages) ? source.passages : Array.isArray(source.sections) ? source.sections : [];
   const glossary = packet.pinned_glossary?.context;
@@ -91,12 +101,12 @@ function ContextPreview({ packet }) {
   const uri = source.source_uri || source.source?.uri;
   const href = safeHref(uri);
   return <section className="stack" style={{ gap: 14 }} aria-label="Intervention context preview">
-    <div className="row wrap"><h2 style={{ margin: 0 }}>Context ready</h2><span className="tag">Preview only</span></div>
-    <p className="small muted">These are the retrieved passages. ChatGPT answers in the conversation after you send your question.</p>
+    <div className="row wrap"><h2 style={{ margin: 0 }}>{previewOnly ? 'Context ready' : 'Conversation sources'}</h2>{previewOnly ? <span className="tag">Preview only</span> : null}</div>
+    <p className="small muted">{previewOnly ? 'These are the retrieved passages. Previewing does not ask a model or start a learning attempt.' : 'The conversation uses these retrieved passages and the pinned glossary. Check the cited source IDs against these excerpts.'}</p>
     <div className="note stack" style={{ gap: 8 }}>
       <b>{source.title || source.id || 'Selected intervention'}</b>
       <div className="row wrap"><span className="tag">{source.kind || packet.request?.source || 'Intervention'}</span>{source.version ? <span className="tag">{source.version}</span> : null}</div>
-      {uri ? <div className="small">Source: {href ? <a href={href} target="_blank" rel="noopener">{uri}</a> : <span>{uri}</span>}</div> : null}
+      {uri ? <div className="small">Source: {href ? <a href={safeNavigationHref(href)} target="_blank" rel="noopener">{uri}</a> : <span>{uri}</span>}</div> : null}
       {source.rights ? <p className="small muted">{source.rights}</p> : null}
       {source.provenance ? <p className="small muted">{typeof source.provenance === 'string' ? source.provenance : source.provenance.attribution || source.provenance.note || source.provenance.origin || ''}</p> : null}
     </div>
@@ -112,11 +122,17 @@ function ContextPreview({ packet }) {
   </section>;
 }
 export function InterventionChat() {
+  const engine = useAskEngine(), embedded = !isChatGPTApp();
   const [draft, setDraft] = useState(initialDraft), [host, setHost] = useState(getHostState);
   const [search, setSearch] = useState(''), [packet, setPacket] = useState(null), [error, setError] = useState('');
   const [busy, setBusy] = useState(false), [sent, setSent] = useState([]), [fileNotice, setFileNotice] = useState('');
   const [catalog, setCatalog] = useState(null);
   const running = useRef(false), signature = JSON.stringify(draft), latest = useRef(signature);
+  const mounted = useRef(true);
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
+  const sourceSignature = JSON.stringify([draft.source, draft.interventionId, draft.authorDid, draft.title, draft.kind, draft.sourceUri, draft.version, draft.content, draft.sections]);
+  // A different resource starts a different discussion; question and lens changes retain history.
+  useEffect(() => { engine.reset(); }, [sourceSignature, engine.reset]);
   latest.current = signature;
   useEffect(() => { const off = subscribeHost(setHost); if (isChatGPTApp()) connectHost().catch(() => {}); return off; }, []);
   useEffect(() => { setPacket(null); }, [signature]);
@@ -131,13 +147,8 @@ export function InterventionChat() {
     running.current = true; setBusy(true); setError('');
     try {
       const args = interventionArguments(draft);
-      let result;
-      if (isChatGPTApp()) result = packetOf(await callWorkbenchTool(TOOL, args));
-      else {
-        const response = await fetch(backendUrl('/i2idlx/api/intervention-ask'), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(args) });
-        result = await response.json(); if (!response.ok) throw new Error(result.error || 'The intervention could not be read.');
-      }
-      if (captured === latest.current) setPacket(result);
+      const result = await retrieveContext(args);
+      if (mounted.current && captured === latest.current) setPacket(result);
     } catch (e) { if (captured === latest.current) setError(e.message || 'Could not retrieve the intervention.'); }
     finally { running.current = false; setBusy(false); }
   }
@@ -168,8 +179,16 @@ export function InterventionChat() {
     running.current = true; setBusy(true); setError('');
     try {
       const args = interventionArguments(draft);
-      await sendConversation(requestFor(args));
-      setSent(old => [{ at: new Date().toISOString(), question: args.question }, ...old].slice(0, 8));
+      if (embedded) {
+        if (!engine.available) throw new Error('Connect an AI agent or model using Connect to ask inside the workbench.');
+        const captured = latest.current, context = await retrieveContext(args);
+        if (!mounted.current || captured !== latest.current) return;
+        setPacket(context);
+        await engine.send(args.question, args.concept_ids || [], context);
+      } else {
+        await sendConversation(requestFor(args));
+        setSent(old => [{ at: new Date().toISOString(), question: args.question }, ...old].slice(0, 8));
+      }
     } catch (e) { setError(e.message || 'Could not send your question.'); }
     finally { running.current = false; setBusy(false); }
   }
@@ -202,7 +221,7 @@ export function InterventionChat() {
       <div className="eyebrow">Interventions · I2IDL-X</div>
       <h1 className="h-display" style={{ fontSize: 34 }}>Work with an intervention.</h1>
       <p className="lede">Explore a course, job aid, simulation, coaching plan, or any other intervention. Bring its content into the conversation and ask questions in the context of the glossary.</p>
-      <div className="row wrap"><span className="tag">{META.release}</span><span className="small muted">{isChatGPTApp() ? 'Uses your ChatGPT conversation. No API key required.' : 'Preview here, then copy your request into your connected AI conversation.'}</span></div>
+      <div className="row wrap"><span className="tag">{META.release}</span><span className="small muted">{isChatGPTApp() ? 'Uses your ChatGPT conversation. No API key required.' : 'Ask inside the workbench using your connected AI agent or model.'}</span></div>
     </header>
     <div className="stack" style={{ gap: 24, marginTop: 24 }}>
       <fieldset disabled={busy} className="stack" style={{ border: 0, padding: 0, margin: 0, gap: 16, minWidth: 0 }}>
@@ -231,13 +250,16 @@ export function InterventionChat() {
           <details><summary>Attach glossary concepts ({draft.ids.length}/14)</summary><div className="stack" style={{ gap: 10, marginTop: 12 }}><input className="input" aria-label="Find intervention glossary concepts" value={search} onChange={event => setSearch(event.target.value)} placeholder="Find a glossary concept" /><div className="row wrap">{draft.ids.filter(id => byId.has(id)).map(id => <span className="row" key={id}><ConceptChip id={id} /><button className="btn ghost sm" aria-label={'Remove intervention concept ' + byId.get(id).l} onClick={() => edit('ids', draft.ids.filter(x => x !== id))}>×</button></span>)}</div><div className="row wrap">{matches.map(c => <button className="btn sm" key={c.id} disabled={draft.ids.includes(c.id) || draft.ids.length >= 14} onClick={() => { edit('ids', [...draft.ids, c.id]); setSearch(''); }}>{c.l}</button>)}</div></div></details>
         </section>
         {inputError && touched ? <p className="note warn small" role="status">{inputError}</p> : null}
-        <div className="row wrap"><button className="btn primary" disabled={!input || !host.canMessage} onClick={send}><Icon name="sparkle" />{busy ? 'Working…' : 'Ask ChatGPT'}</button><button className="btn" disabled={!input || (isChatGPTApp() && !host.canCallTools)} onClick={preview}>Preview context</button>{request ? <CopyBtn text={request} label="Copy conversation request" /> : null}<button className="btn ghost" onClick={() => { setDraft(initialDraft()); setPacket(null); setSent([]); setFileNotice(''); setError(''); }}>Clear intervention</button></div>
+        <div className="row wrap"><button className="btn primary" disabled={!input || (embedded ? !engine.available : !host.canMessage)} onClick={send}><Icon name="sparkle" />{busy ? 'Working…' : embedded ? 'Ask here' : 'Ask ChatGPT'}</button><button className="btn" disabled={!input || (isChatGPTApp() && !host.canCallTools)} onClick={preview}>Preview context</button>{request ? <CopyBtn text={request} label="Copy conversation request" /> : null}<button className="btn ghost" onClick={() => { engine.reset(); setDraft(initialDraft()); setPacket(null); setSent([]); setFileNotice(''); setError(''); }}>Clear intervention</button></div>
       </fieldset>
-      <p className="tiny muted">Preview sends the selected text to the workbench for retrieval. Ask ChatGPT shares it with this conversation. Your selection stays attached for follow-up questions while this workbench is open; it is not automatically saved as a learning record or to browser storage.</p>
+      <p className="tiny muted">Preview sends the selected text to the workbench for retrieval. {embedded ? 'Ask here shares the retrieved content and recent conversation with your connected executor and displays its answer below.' : 'Ask ChatGPT shares it with this conversation.'} Your selection stays attached for follow-up questions while this workbench is open; it is not automatically saved as a learning record or to browser storage.</p>
+      {embedded && !engine.available ? <p className="note" role="status">Use Connect to pair an AI agent. You can browse and preview content before connecting.</p> : null}
       {isChatGPTApp() && host.status === 'unavailable' ? <p className="note warn" role="status">{host.error || 'The ChatGPT connection is unavailable.'} Reconnect the App, or use Copy conversation request.</p> : null}
       {error ? <p className="note warn" role="alert">{error}</p> : null}
+      {embedded && engine.turns.length ? <section className="stack" style={{ gap: 14 }} aria-label="Intervention conversation"><h2>Conversation</h2>{engine.turns.map((turn, index) => <article key={index} className={'msg ' + (turn.role === 'user' ? 'user' : 'bot')}><b className="small">{turn.role === 'user' ? 'You' : 'Assistant'}</b>{turn.trace?.length ? <div className="trace">{turn.trace.map((item, n) => <span key={n}>{item}</span>)}</div> : null}<div className="bubble">{turn.role === 'user' ? turn.content : turn.pending && !turn.content ? <span role="status">Waiting for your connected executor…</span> : <MiniMarkdown text={turn.content || ''} />}</div>{turn.error ? <p className="note warn" role="alert">{turn.error}</p> : null}{turn.stopped ? <span className="tiny muted">Stopped.</span> : null}{turn.truncated ? <span className="tiny muted">The answer was cut short. Ask a narrower question.</span> : null}</article>)}{engine.busy ? <button className="btn" onClick={engine.stop}>Stop response</button> : <button className="btn ghost" disabled={busy} onClick={engine.reset}>New conversation about this intervention</button>}</section> : null}
       {sent.length ? <section className="note stack" style={{ gap: 8 }} aria-label="Intervention questions sent"><b>Sent to ChatGPT</b><p className="small">The answer appears in the conversation. Enter a follow-up question above; the same intervention remains selected.</p>{sent.map((item, index) => <div className="small" key={item.at + index}><span>{item.question}</span><time className="tiny muted" dateTime={item.at} style={{ display: 'block' }}>{new Date(item.at).toLocaleString()}</time></div>)}</section> : null}
-      {packet ? <ContextPreview packet={packet} /> : null}
+      {packet ? <ContextPreview packet={packet} previewOnly={!embedded || !engine.turns.length} /> : null}
     </div>
   </div>;
 }
+

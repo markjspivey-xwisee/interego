@@ -466,7 +466,7 @@ cat:port-record-usage
     hydra:target <https://foxxi-bridge.interego.xwisee.com/agent/xapi-statements/write> ;
     hydra:method "POST" ;
     dcat:mediaType "application/json" ;
-    i2x:usageBinding "Put I2IDL concept IRIs in statement.context.extensions[\"https://foxxi-bridge.interego.xwisee.com/ns/foxxi#conceptIds\"] (an array). Each such statement projects to an i2x:UsageRecord — a usage interpretant of every concept it names."@en ;
+    i2x:usageBinding "Put exact concept IRIs from the deployed canonical or authored corpus in statement.context.extensions[\"https://foxxi-bridge.interego.xwisee.com/ns/foxxi#conceptIds\"] (an array). After LRS readback, the signed writer retains the immutable statement and an encrypted derived i2x:UsageRecord artifact in the same own-pod audience. Its graph_content is the RDF projection; its receipt identifies the private artifact for authorized readers. Unknown tags are reported and excluded. This records usage about concepts, never learner achievement; it does not publish or globally materialize queryable RDF."@en ;
     iep:readOnlyHint false ; iep:idempotentHint false ; iep:destructiveHint false ; iep:openWorldHint true ;
     iep:appliesToCollection "profiles" ;
     i2x:requiresCapability i2x:canRecordConceptUsage ;

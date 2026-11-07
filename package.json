@@ -21,12 +21,13 @@
     "applications/lrs-adapter/bridge",
     "applications/jev-harness/bridge",
     "applications/shared-workspace/desktop",
-    "applications/shared-workspace/discord"
+    "applications/shared-workspace/discord",
+    "applications/pod-desktop"
   ],
   "scripts": {
-    "build": "npm run build:core && npm run build:leaves",
+    "build": "npm run build:core && npm run build:leaves && npm run build --workspace @interego/mcp",
     "build:core": "npm run build --workspace @interego/core",
-    "build:leaves": "npm run build --workspace @interego/pgsl && npm run build --workspace @interego/solid && npm run build --workspace @interego/abac && npm run build --workspace @interego/pgsl-store && npm run build --workspace @interego/compliance && npm run build --workspace @interego/constitutional && npm run build --workspace @interego/extractors && npm run build --workspace @interego/connectors && npm run build --workspace @interego/ops && npm run build --workspace @interego/p2p && npm run build --workspace @interego/passport && npm run build --workspace @interego/privacy && npm run build --workspace @interego/registry && npm run build --workspace @interego/security-txt && npm run build --workspace @interego/skills && npm run build --workspace @interego/transactions && npm run build --workspace @interego/mdvault && npm run build --workspace @interego/agent-interop && npm run build --workspace @interego/workspace-client",
+    "build:leaves": "npm run build --workspace @interego/deployment-config && npm run build --workspace @interego/pgsl && npm run build --workspace @interego/solid && npm run build --workspace @interego/abac && npm run build --workspace @interego/pgsl-store && npm run build --workspace @interego/compliance && npm run build --workspace @interego/constitutional && npm run build --workspace @interego/extractors && npm run build --workspace @interego/connectors && npm run build --workspace @interego/ops && npm run build --workspace @interego/p2p && npm run build --workspace @interego/passport && npm run build --workspace @interego/privacy && npm run build --workspace @interego/registry && npm run build --workspace @interego/security-txt && npm run build --workspace @interego/skills && npm run build --workspace @interego/transactions && npm run build --workspace @interego/mdvault && npm run build --workspace @interego/agent-interop && npm run build --workspace @interego/workspace-client && npm run build --workspace @interego/local-node && npm run build --workspace @interego/pod-federation",
     "test": "vitest run && npm run test:deploy",
     "test:deploy": "npm test --workspace @interego/identity && npm test --workspace @interego/mcp-relay",
     "test:watch": "vitest",
@@ -114,6 +115,7 @@
     "vitest": "^4.1.12"
   },
   "dependencies": {
+    "@comunica/actor-optimize-query-operation-query-source-skolemize": "5.2.3",
     "@comunica/query-sparql": "^5.1.3",
     "@digitalbazaar/bbs-signatures": "^1.2.0",
     "@modelcontextprotocol/server": "^2.0.0",
@@ -121,6 +123,7 @@
     "@noble/hashes": "^2.0.1",
     "@types/ws": "^8.18.1",
     "ethers": "^6.16.0",
+    "express-rate-limit": "8.6.1",
     "jsonld": "9.0.0",
     "multiformats": "^13.4.2",
     "pdf-parse": "^2.4.5",

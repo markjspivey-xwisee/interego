@@ -4,7 +4,7 @@
 // governed writes are staged as the exact publish_context calls the catalog's ports declare, and leave only
 // when a human approves. Tool results are deterministic (no clock, no randomness), so a recorded run
 // replays to the same results; tools/check_orchestra.py proves it.
-import { META, PORTS, QUERIES, MAPPINGS, byId, typeById, mapsByConcept } from "../data.js";
+import { META, PORTS, QUERIES, MAPPINGS, byId, byIri, iriOf, typeById, mapsByConcept } from "../data.js";
 import { classify, catById, classesOf, columnOf, labelOf, expand, curieOf, bridgesOf, disjointWith, conceptsIn, vocabOf, SEM, COLUMNS } from "../semantic.js";
 import { search } from "../search.js";
 import { suggestForPack } from "../lib.js";
@@ -27,6 +27,7 @@ const list = (v) => (v == null ? [] : Array.isArray(v) ? v : [v]);
 const slugOk = (s) => /^[a-z0-9][a-z0-9-]{1,48}$/.test(s);
 const conceptLabel = (id) => (byId.get(id) ? byId.get(id).l : id);
 const catLabel = (id) => (catById.get(id) ? catById.get(id).label : id);
+const conceptTerm = (id) => byId.get(id)?.origin?.kind === "authored" ? `<${iriOf(id)}>` : "i2idl:" + id;
 
 /** Peer terms the build verified against pinned snapshots and term indexes, plus I2IDL-X's mapping targets. */
 const VERIFIED = (() => {
@@ -71,8 +72,8 @@ export function worldTurtle(w) {
     const po = [];
     if (r.sourceTypes.length) { po.push("a " + r.sourceTypes.join(", ")); r.sourceTypes.forEach((t) => used.add(t.split(":")[0])); }
     po.push(`rdfs:label ${lit(r.title)}@en`);
-    if (r.concepts.length) po.push("i2x:isClassifiedBy " + r.concepts.map((c) => "i2idl:" + c).join(", "));
-    if (r.about.length) po.push("dct:subject " + r.about.map((c) => "i2idl:" + c).join(", "));
+    if (r.concepts.length) po.push("i2x:isClassifiedBy " + r.concepts.map(conceptTerm).join(", "));
+    if (r.about.length) po.push("dct:subject " + r.about.map(conceptTerm).join(", "));
     if (r.from) po.push(`dct:source ex:${r.from}`);
     const gap = w.gaps.get(r.id);
     if (gap) po.push(`rdfs:comment ${lit("No fitting I2IDL concept (gap flagged for I2IDL's editors). Nearest: " + gap.nearest.map(conceptLabel).join(", ") + ".")}@en`);
@@ -151,7 +152,7 @@ const requireControl = (w, via) => {
   if (!w.discovered.has(via)) throw new Error(`The team has not followed the catalog to control ${via} yet. The Scout inspects it first; nothing acts through a control the catalog has not advertised.`);
 };
 const conceptsOrThrow = (ids) => {
-  const out = [...new Set(list(ids).map(String))];
+  const out = [...new Set(list(ids).map((id) => byIri.get(String(id))?.id || String(id)))];
   const bad = out.filter((id) => !byId.has(id));
   if (bad.length) throw new Error(`Not I2IDL concept ids: ${bad.join(", ")}. Use ids from search_glossary or read_concepts.`);
   return out;
@@ -237,7 +238,7 @@ export const TOOLS = {
       const qs = list(input.queries || input.query).map(String).map((s) => s.trim()).filter(Boolean).slice(0, 14);
       if (!qs.length) throw new Error("Give queries: an array of search strings.");
       const n = Math.max(1, Math.min(8, Number(input.limit) || 5));
-      const result = qs.map((q) => ({ query: q, matches: search(q, n).map(({ c }) => ({ id: c.id, label: c.l, category: catLabel(c.rc), definition: short(c.d, 160) })) }));
+      const result = qs.map((q) => ({ query: q, matches: search(q, n).map(({ c }) => ({ id: c.id, label: c.l, category: catLabel(c.rc), definition: short(c.d, 160), ...(c.origin?.kind === "authored" ? { iri: iriOf(c.id), origin: c.origin } : {}) })) }));
       const ui = [{ route: "browse" }];
       for (const q of qs.slice(0, 3)) ui.push({ type: "lex.q", text: q }, { focus: ".lex-list .li" });
       if (qs.length > 3) ui.push({ set: "lex.q", value: qs[qs.length - 1] });
@@ -249,13 +250,14 @@ export const TOOLS = {
     description: "Read I2IDL concepts by id (at most 14 per call): definition, I2IDL type, referent category with the reason it was assigned, and broader / narrower / related concepts. Read a concept before you classify with it, propose a mapping for it, or vote on one.",
     inputSchema: { type: "object", properties: { ids: { type: "array", items: { type: "string" } } }, required: ["ids"] },
     run(w, input) {
-      const ids = [...new Set(list(input.ids || input.id).map(String))].slice(0, 14);
+      const ids = [...new Set(list(input.ids || input.id).map((id) => byIri.get(String(id))?.id || String(id)))].slice(0, 14);
       if (!ids.length) throw new Error("Give ids: an array of concept ids.");
       const result = ids.map((id) => {
         const c = byId.get(id);
         if (!c) return { id, error: "No such concept in this release. Search first." };
         return {
           id, label: c.l, definition: short(c.d, 440), i2idlType: typeById.get(c.t).label, category: catLabel(c.rc),
+          ...(c.origin?.kind === "authored" ? { iri: iriOf(c.id), origin: c.origin, typeStatus: "Authored proposal, not an I2IDL type assignment" } : {}),
           categoryFrom: c.rb === "t" ? "I2IDL's type" : "its definition", categoryReason: short(c.rw, 240),
           broader: c.b.map(conceptLabel), narrower: c.n.slice(0, 6).map(conceptLabel), related: c.r.slice(0, 6).map(conceptLabel),
         };
@@ -486,7 +488,7 @@ export const TOOLS = {
       const rec = { id, c: cid, p, o: iri, v: (v && v.short) || hit.vocabulary || curieOf(iri).split(":")[0], ol: hit.label, od: hit.definition || null, cf, w: short(why, 400), s: "proposed", m: "ai-drafted" };
       w.items.push({ key, type: "mapping", rec, c: cid, iri: subject, sandbox: true, by: agent });
       const ttl = `@prefix i2x: <${META.ns}> .\n@prefix i2idl: <https://id.i2idl.org/concepts/> .\n@prefix skos: <${SKOS}> .\n@prefix prov: <http://www.w3.org/ns/prov#> .\n@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .\n\n<${subject}> a i2x:MappingProposal ;\n    i2x:proposedSubject i2idl:${cid} ; i2x:proposedPredicate skos:${p} ; i2x:proposedObject <${iri}> ;\n    i2x:rationale ${lit(rec.w)}@en ;\n    i2x:confidence "${cf}"^^xsd:decimal ; i2x:reviewStatus i2x:status-proposed ;\n    i2x:mappingMethod i2x:method-ai-drafted ;\n    prov:wasAttributedTo <urn:interpretant:agent:${agent}> .\n`;
-      const call = stage(w, agent, "port-propose-mapping", `Crosswalk proposal ${id}`, { graph_iri: graph, graph_content: ttl, modal_status: "Hypothetical", conforms_to_shapes: [META.shapes], visibility: "shared" });
+      const call = stage(w, agent, "port-propose-mapping", `Crosswalk proposal ${id}`, { graph_iri: graph, graph_content: ttl.replace(`i2x:proposedSubject i2idl:${cid}`, `i2x:proposedSubject ${conceptTerm(cid)}`), modal_status: "Hypothetical", conforms_to_shapes: [byId.get(cid).origin?.kind === "authored" ? META.authoredShapes : META.shapes], visibility: "shared" });
       return { result: { item: key, proposal: `${conceptLabel(cid)} skos:${p} ${curieOf(iri)} (${hit.label})`, modalStatus: "Hypothetical", review: `needs ${QUORUM} votes for, and more for than against`, stagedCall: call },
         summary: `${key}: skos:${p} ${curieOf(iri)}`, ui: [{ route: "review-" + key }, { focus: `[data-key="${key}"]` }] };
     },
@@ -614,7 +616,7 @@ export const TOOLS = {
 
   stage_publication: {
     via: "port-publish-classified",
-    description: "Stage the context graph as the publish_context call the catalog's port-publish-classified declares: the academy's classified inventory as Turtle, graph IRI on the academy's own pod, modal status Asserted, the I2IDL-X shapes to validate against, and visibility (default private). Staged only; it is sent when the human approves.",
+    description: "Stage the context graph as the publish_context call the catalog's port-publish-classified declares: the academy's classified inventory as Turtle, graph IRI on the academy's own pod, modal status Asserted for canonical-only classifications or Hypothetical when authored proposals are used, the corresponding I2IDL-X reference shapes, and visibility (default private). Staged only; it is sent when the human approves.",
     inputSchema: { type: "object", properties: { visibility: { type: "string", enum: ["private", "shared", "public"] } } },
     run(w, input, agent) {
       requireControl(w, "port-publish-classified");
@@ -622,9 +624,11 @@ export const TOOLS = {
       if (out.clashes || liveRecords(w).some((r) => r.status === "unclassified")) throw new Error("Not ready: validate_publication reports problems. Resolve them first.");
       const visibility = ["private", "shared", "public"].includes(String(input.visibility)) ? String(input.visibility) : "private";
       const ttl = worldTurtle(w);
-      const call = stage(w, agent, "port-publish-classified", `${ORG.short} context graph`, { graph_iri: OWNER_GRAPH(ORG.slug), graph_content: ttl, modal_status: "Asserted", visibility, conforms_to_shapes: [META.shapes] });
+      const authored = liveRecords(w).some((r) => r.concepts.some((id) => byId.get(id)?.origin?.kind === "authored"));
+      const profile = authored ? META.authoredShapes : META.shapes, modal = authored ? "Hypothetical" : "Asserted";
+      const call = stage(w, agent, "port-publish-classified", `${ORG.short} context graph`, { graph_iri: OWNER_GRAPH(ORG.slug), graph_content: ttl, modal_status: modal, visibility, conforms_to_shapes: [profile] });
       const triples = classify(ttl).triples;
-      return { result: { stagedCall: call, port: "port-publish-classified", graph: OWNER_GRAPH(ORG.slug), modalStatus: "Asserted", visibility, conformsTo: META.shapes, statements: triples },
+      return { result: { stagedCall: call, port: "port-publish-classified", graph: OWNER_GRAPH(ORG.slug), modalStatus: modal, visibility, conformsTo: profile, statements: triples },
         summary: `${call} · ${visibility}`, ui: [{ route: "agents-port-publish-classified" }, { focus: "#port-publish-classified", click: true }] };
     },
   },
@@ -674,9 +678,10 @@ export function callTool(w, name, input, agent, allowed) {
 
 /** The human's decision at the gate. Approving marks the staged calls approved; nothing is sent from the page. */
 export function decideGate(w, decision) {
-  if (!w.gate) return;
+  if (!w.gate || w.gate.status !== "pending" || !["approved", "declined"].includes(decision)) return false;
   w.gate.status = decision;
   for (const s of w.staged) if (w.gate.calls.includes(s.id)) s.status = decision;
+  return true;
 }
 
 /** Schemas for the sample capability's tools option. */

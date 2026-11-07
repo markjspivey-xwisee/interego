@@ -1,8 +1,11 @@
 /** Production wiring remains separate from the importable repair's runtime tests. */
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
+import { runInNewContext } from 'node:vm';
+import ts from 'typescript';
 import { stripComments } from './strip-comments.js';
 import { isDelegationRepairRequest } from '../delegation-repair-only.js';
+import { POD_NAME_INJECTED, POD_URL_INJECTED } from '../pod-selector.js';
 
 const server = stripComments(readFileSync(new URL('../server.ts', import.meta.url), 'utf8'), 'server.ts');
 const helper = stripComments(readFileSync(new URL('../delegation-repair-only.ts', import.meta.url), 'utf8'), 'delegation-repair-only.ts');
@@ -31,6 +34,36 @@ assert.match(helper, /args\._session_owner_webid !== profile\.webId/,
   'the owner comes from stripped authenticated context, independently of caller owner_webid');
 assert.match(server, /'_session_owner_webid'/);
 assert.match(server, /args\._session_owner_webid = authContext\.ownerWebId/);
+// This is a bounded production-source witness, not a stand-in MCP server. Execute
+// the actual sanitizer, then pin its position before authenticated reinjection.
+// The HTTP/CAS/ECDSA tests exercise both values that this ingress always supplies.
+const parsedServer = ts.createSourceFile('server.ts', server, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+const sanitizerNodes = parsedServer.statements.filter(node =>
+  (ts.isFunctionDeclaration(node) && node.name?.text === 'stripReservedWireFields')
+  || (ts.isVariableStatement(node) && node.declarationList.declarations.some(declaration =>
+    ts.isIdentifier(declaration.name) && declaration.name.text === 'RESERVED_WIRE_FIELDS')));
+assert.equal(sanitizerNodes.length, 2, 'locate the actual production reserved-field list and sanitizer');
+const sanitizerSource = ts.transpileModule(sanitizerNodes.map(node => node.getText(parsedServer)).join('\n'),
+  { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS } }).outputText;
+const sanitize = runInNewContext(sanitizerSource + '\nstripReservedWireFields;',
+  { POD_NAME_INJECTED, POD_URL_INJECTED }) as (value: unknown) => void;
+for (const nativeLifecycle of [true, false]) {
+  const wire: Record<string, unknown> = { agent_id: 'legitimate-target', repair_only: true,
+    _session_native_lifecycle: nativeLifecycle, _session_agent_did: 'forged-agent',
+    _session_agent_id: 'forged-agent-id', _session_principal: 'forged-principal',
+    _identity_token: 'forged-identity-token', _session_provisional_play: { podUrl: 'forged-pod' },
+    _session_owner_webid: 'forged-owner', _session_user_id: 'forged-user',
+    _session_bearer: 'forged-token', _pod_url_injected: true, _pod_name_injected: true };
+  sanitize(wire);
+  assert.deepEqual(wire, { agent_id: 'legitimate-target', repair_only: true },
+    'caller-supplied lifecycle, identity, bearer and pod-provenance fields are stripped');
+}
+const callWithSession = server.slice(server.indexOf('async function callWithSession('), server.indexOf('function checkMcpApiKey('));
+assert.match(callWithSession, /stripReservedWireFields\(args\);[\s\S]*if \(authContext\) \{\s*args\._session_native_lifecycle = !!authContext\.oauthScopes;/,
+  'MCP strips caller metadata before injecting the verified transport lifecycle value');
+const allowedFields = helper.slice(helper.indexOf('const ALLOWED_FIELDS'), helper.indexOf('export interface DelegationRepairOptions'));
+assert.match(allowedFields, /'_session_native_lifecycle'/,
+  'the repair allowlist accepts the metadata supplied by the real MCP ingress');
 assert.match(server, /target\._session_owner_webid = auth\.recoveredDid/);
 assert.match(server, /target\._session_owner_webid = `\$\{IDENTITY_URL\}\/users\/\$\{auth\.userId\}\/profile#me`/);
 assert.equal((server.match(/!isDelegationRepairRequest\(name, args\)/g) ?? []).length, 2,

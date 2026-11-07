@@ -1,0 +1,114 @@
+@prefix xapi: <https://foxxi-bridge.interego.xwisee.com/ns/xapi#> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix dct: <http://purl.org/dc/terms/> .
+<urn:xapi:stmt:001:record> a xapi:Statement, prov:Entity ;
+  <https://schema.org/about> <urn:xapi:stmt:001> ;
+  prov:wasDerivedFrom <urn:interego:demo:source-json:sha256:098a4da5a13aff8755b1b3d1521e66e059f6c32925084305d38a36813fea910c> ;
+  dct:references <https://foxxi-bridge.interego.xwisee.com/ns/xapi/2026.10.1> ;
+  xapi:actor <did:web:learner.airforce.mil:chen.sarah> ;
+  xapi:verb <https://w3id.org/xapi/adl/verbs/completed> ;
+  xapi:object <urn:activity:ils-approach-rwy-28L> ;
+  xapi:timestamp "2026-03-15T14:30:00Z"^^xsd:dateTime ;
+  xapi:context [ a xapi:Context ; xapi:platform "T-38C Flight Simulator v4.2" ; xapi:instructor <did:web:instructor.airforce.mil:jones.michael> ] ;
+  xapi:result [ a xapi:Result ;
+    xapi:score [ a xapi:Score ; xapi:raw "92"^^xsd:double ; xapi:max "100"^^xsd:double ] ;
+    xapi:success "true"^^xsd:boolean ; xapi:duration "PT45M" ] .
+<did:web:learner.airforce.mil:chen.sarah> a xapi:Agent .
+<https://w3id.org/xapi/adl/verbs/completed> a xapi:Verb .
+<urn:activity:ils-approach-rwy-28L> a xapi:Activity .
+<urn:interego:demo:source-json:sha256:098a4da5a13aff8755b1b3d1521e66e059f6c32925084305d38a36813fea910c> a prov:Entity ; rdf:value "{\"legacyIri\":\"urn:xapi:stmt:001\",\"actorIri\":\"did:web:learner.airforce.mil:chen.sarah\",\"experience\":{\"verb\":\"completed\",\"activity\":\"ils-approach-rwy-28L\",\"activityName\":\"ILS Approach Rwy 28L\",\"score\":92,\"success\":true,\"duration\":\"PT45M\",\"timestamp\":\"2026-03-15T14:30:00Z\",\"context\":{\"platform\":\"T-38C Flight Simulator v4.2\",\"instructor\":\"did:web:instructor.airforce.mil:jones.michael\",\"registration\":\"urn:reg:chen-ils-2026-03\"}}}"^^rdf:JSON ;
+  dct:description "Synthetic demo source; no observed learner event or full xAPI SHACL conformance is claimed." .
+
+@prefix xapi: <https://foxxi-bridge.interego.xwisee.com/ns/xapi#> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix dct: <http://purl.org/dc/terms/> .
+<urn:xapi:stmt:002:record> a xapi:Statement, prov:Entity ;
+  <https://schema.org/about> <urn:xapi:stmt:002> ;
+  prov:wasDerivedFrom <urn:interego:demo:source-json:sha256:501e98a0aafe75f32163b891163c230f5d1d0602a6f96e41b79ec450788c1b04> ;
+  dct:references <https://foxxi-bridge.interego.xwisee.com/ns/xapi/2026.10.1> ;
+  xapi:actor <did:web:learner.airforce.mil:chen.sarah> ;
+  xapi:verb <https://w3id.org/xapi/adl/verbs/completed> ;
+  xapi:object <urn:activity:vor-approach-rwy-10R> ;
+  xapi:timestamp "2026-03-15T15:45:00Z"^^xsd:dateTime ;
+  xapi:context [ a xapi:Context ; xapi:platform "T-38C Flight Simulator v4.2" ; xapi:instructor <did:web:instructor.airforce.mil:jones.michael> ] ;
+  xapi:result [ a xapi:Result ;
+    xapi:score [ a xapi:Score ; xapi:raw "88"^^xsd:double ; xapi:max "100"^^xsd:double ] ;
+    xapi:success "true"^^xsd:boolean ; xapi:duration "PT35M" ] .
+<did:web:learner.airforce.mil:chen.sarah> a xapi:Agent .
+<https://w3id.org/xapi/adl/verbs/completed> a xapi:Verb .
+<urn:activity:vor-approach-rwy-10R> a xapi:Activity .
+<urn:interego:demo:source-json:sha256:501e98a0aafe75f32163b891163c230f5d1d0602a6f96e41b79ec450788c1b04> a prov:Entity ; rdf:value "{\"legacyIri\":\"urn:xapi:stmt:002\",\"actorIri\":\"did:web:learner.airforce.mil:chen.sarah\",\"experience\":{\"verb\":\"completed\",\"activity\":\"vor-approach-rwy-10R\",\"activityName\":\"VOR Approach Rwy 10R\",\"score\":88,\"success\":true,\"duration\":\"PT35M\",\"timestamp\":\"2026-03-15T15:45:00Z\",\"context\":{\"platform\":\"T-38C Flight Simulator v4.2\",\"instructor\":\"did:web:instructor.airforce.mil:jones.michael\"}}}"^^rdf:JSON ;
+  dct:description "Synthetic demo source; no observed learner event or full xAPI SHACL conformance is claimed." .
+
+@prefix xapi: <https://foxxi-bridge.interego.xwisee.com/ns/xapi#> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix dct: <http://purl.org/dc/terms/> .
+<urn:xapi:stmt:003:record> a xapi:Statement, prov:Entity ;
+  <https://schema.org/about> <urn:xapi:stmt:003> ;
+  prov:wasDerivedFrom <urn:interego:demo:source-json:sha256:bd3e215afef226b7a0f2745ccda9fd5f39c9e7bdab09b70a9dfaf3c7043b752f> ;
+  dct:references <https://foxxi-bridge.interego.xwisee.com/ns/xapi/2026.10.1> ;
+  xapi:actor <did:web:learner.airforce.mil:chen.sarah> ;
+  xapi:verb <https://w3id.org/xapi/adl/verbs/completed> ;
+  xapi:object <urn:activity:gps-approach-rwy-04> ;
+  xapi:timestamp "2026-03-16T09:15:00Z"^^xsd:dateTime ;
+  xapi:context [ a xapi:Context ; xapi:platform "T-38C Flight Simulator v4.2" ; xapi:instructor <did:web:instructor.airforce.mil:jones.michael> ] ;
+  xapi:result [ a xapi:Result ;
+    xapi:score [ a xapi:Score ; xapi:raw "95"^^xsd:double ; xapi:max "100"^^xsd:double ] ;
+    xapi:success "true"^^xsd:boolean ; xapi:duration "PT40M" ] .
+<did:web:learner.airforce.mil:chen.sarah> a xapi:Agent .
+<https://w3id.org/xapi/adl/verbs/completed> a xapi:Verb .
+<urn:activity:gps-approach-rwy-04> a xapi:Activity .
+<urn:interego:demo:source-json:sha256:bd3e215afef226b7a0f2745ccda9fd5f39c9e7bdab09b70a9dfaf3c7043b752f> a prov:Entity ; rdf:value "{\"legacyIri\":\"urn:xapi:stmt:003\",\"actorIri\":\"did:web:learner.airforce.mil:chen.sarah\",\"experience\":{\"verb\":\"completed\",\"activity\":\"gps-approach-rwy-04\",\"activityName\":\"GPS Approach Rwy 04\",\"score\":95,\"success\":true,\"duration\":\"PT40M\",\"timestamp\":\"2026-03-16T09:15:00Z\",\"context\":{\"platform\":\"T-38C Flight Simulator v4.2\",\"instructor\":\"did:web:instructor.airforce.mil:jones.michael\"}}}"^^rdf:JSON ;
+  dct:description "Synthetic demo source; no observed learner event or full xAPI SHACL conformance is claimed." .
+
+@prefix xapi: <https://foxxi-bridge.interego.xwisee.com/ns/xapi#> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix dct: <http://purl.org/dc/terms/> .
+<urn:xapi:stmt:004:record> a xapi:Statement, prov:Entity ;
+  <https://schema.org/about> <urn:xapi:stmt:004> ;
+  prov:wasDerivedFrom <urn:interego:demo:source-json:sha256:d039f72c2c3cad76c01d75e7c9520789c8dbe659bef81aaf6832bd578b2cd591> ;
+  dct:references <https://foxxi-bridge.interego.xwisee.com/ns/xapi/2026.10.1> ;
+  xapi:actor <did:web:learner.airforce.mil:chen.sarah> ;
+  xapi:verb <https://w3id.org/xapi/adl/verbs/attempted> ;
+  xapi:object <urn:activity:emergency-missed-approach> ;
+  xapi:timestamp "2026-03-16T10:30:00Z"^^xsd:dateTime ;
+  xapi:context [ a xapi:Context ; xapi:platform "T-38C Flight Simulator v4.2" ; xapi:instructor <did:web:instructor.airforce.mil:jones.michael> ] ;
+  xapi:result [ a xapi:Result ;
+    xapi:score [ a xapi:Score ; xapi:raw "78"^^xsd:double ; xapi:max "100"^^xsd:double ] ;
+    xapi:success "false"^^xsd:boolean ; xapi:duration "PT25M" ] .
+<did:web:learner.airforce.mil:chen.sarah> a xapi:Agent .
+<https://w3id.org/xapi/adl/verbs/attempted> a xapi:Verb .
+<urn:activity:emergency-missed-approach> a xapi:Activity .
+<urn:interego:demo:source-json:sha256:d039f72c2c3cad76c01d75e7c9520789c8dbe659bef81aaf6832bd578b2cd591> a prov:Entity ; rdf:value "{\"legacyIri\":\"urn:xapi:stmt:004\",\"actorIri\":\"did:web:learner.airforce.mil:chen.sarah\",\"experience\":{\"verb\":\"attempted\",\"activity\":\"emergency-missed-approach\",\"activityName\":\"Emergency Missed Approach\",\"score\":78,\"success\":false,\"duration\":\"PT25M\",\"timestamp\":\"2026-03-16T10:30:00Z\",\"context\":{\"platform\":\"T-38C Flight Simulator v4.2\",\"instructor\":\"did:web:instructor.airforce.mil:jones.michael\"}}}"^^rdf:JSON ;
+  dct:description "Synthetic demo source; no observed learner event or full xAPI SHACL conformance is claimed." .
+
+@prefix xapi: <https://foxxi-bridge.interego.xwisee.com/ns/xapi#> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix dct: <http://purl.org/dc/terms/> .
+<urn:xapi:stmt:005:record> a xapi:Statement, prov:Entity ;
+  <https://schema.org/about> <urn:xapi:stmt:005> ;
+  prov:wasDerivedFrom <urn:interego:demo:source-json:sha256:9716a66cd111e8853d4290f7a0153142aeea59d9563a6934246a9a338fa2084f> ;
+  dct:references <https://foxxi-bridge.interego.xwisee.com/ns/xapi/2026.10.1> ;
+  xapi:actor <did:web:learner.airforce.mil:chen.sarah> ;
+  xapi:verb <https://w3id.org/xapi/adl/verbs/completed> ;
+  xapi:object <urn:activity:emergency-missed-approach> ;
+  xapi:timestamp "2026-03-17T08:00:00Z"^^xsd:dateTime ;
+  xapi:context [ a xapi:Context ; xapi:platform "T-38C Flight Simulator v4.2" ; xapi:instructor <did:web:instructor.airforce.mil:jones.michael> ] ;
+  xapi:result [ a xapi:Result ;
+    xapi:score [ a xapi:Score ; xapi:raw "91"^^xsd:double ; xapi:max "100"^^xsd:double ] ;
+    xapi:success "true"^^xsd:boolean ; xapi:duration "PT30M" ] .
+<did:web:learner.airforce.mil:chen.sarah> a xapi:Agent .
+<https://w3id.org/xapi/adl/verbs/completed> a xapi:Verb .
+<urn:activity:emergency-missed-approach> a xapi:Activity .
+<urn:interego:demo:source-json:sha256:9716a66cd111e8853d4290f7a0153142aeea59d9563a6934246a9a338fa2084f> a prov:Entity ; rdf:value "{\"legacyIri\":\"urn:xapi:stmt:005\",\"actorIri\":\"did:web:learner.airforce.mil:chen.sarah\",\"experience\":{\"verb\":\"completed\",\"activity\":\"emergency-missed-approach\",\"activityName\":\"Emergency Missed Approach\",\"score\":91,\"success\":true,\"duration\":\"PT30M\",\"timestamp\":\"2026-03-17T08:00:00Z\",\"context\":{\"platform\":\"T-38C Flight Simulator v4.2\",\"instructor\":\"did:web:instructor.airforce.mil:jones.michael\"}}}"^^rdf:JSON ;
+  dct:description "Synthetic demo source; no observed learner event or full xAPI SHACL conformance is claimed." .

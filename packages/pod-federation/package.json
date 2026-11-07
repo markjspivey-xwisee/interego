@@ -1,0 +1,17 @@
+{
+  "name": "@interego/pod-federation",
+  "version": "0.1.0",
+  "description": "Opt-in invitation and encrypted snapshot sharing adapter for local and hosted Interego pods.",
+  "author": "Mark Spivey",
+  "license": "MIT",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": { ".": { "import": "./dist/index.js", "types": "./dist/index.d.ts" } },
+  "files": ["dist/", "README.md"],
+  "scripts": { "build": "tsc" },
+  "engines": { "node": ">=20.0.0" },
+  "dependencies": { "@interego/core": "*" },
+  "devDependencies": { "@types/node": "^22.0.0", "typescript": "^5.7.0" }
+}
