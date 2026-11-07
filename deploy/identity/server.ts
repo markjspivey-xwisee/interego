@@ -6945,10 +6945,14 @@ async function purgePlayOwner(userId: string, reopen?: PlayReopen): Promise<Play
       });
       if (purge.outcome === 'purged') await finishPlayPurge(userId);
       // The owner, forgotten when its account closed, is walked only from here at the next pass; so
-      // is a purge the backfill re-opened that its pod's other resources keep unfinished.
+      // is a purge the backfill re-opened that its pod's other resources keep unfinished. A backfill
+      // turn that left the owner as it is leaves the queue as it was (reopenFinishedPlayPurge takes
+      // out an owner it queued itself): an on-demand load may have queued it since the run began.
       const held = purge.outcome === 'kept' && !reopen && leftBecause !== undefined;
-      if (registryLeft === undefined && !held) unfinishedPlayPurges.delete(userId);
-      else unfinishedPlayPurges.add(userId);
+      if (!reopen || leftBecause === undefined) {
+        if (registryLeft === undefined && !held) unfinishedPlayPurges.delete(userId);
+        else unfinishedPlayPurges.add(userId);
+      }
       // Logged once: the mark is cleared, so neither a later pass nor a restart comes back to it. A
       // finished purge was logged only with what it kept, which every guest who had saved had.
       if (purge.outcome === 'purged') {
@@ -7155,8 +7159,9 @@ async function playAdmissionDeadlines(): Promise<{ total: number; unreadable: nu
 /**
  * The Play game-data backfill (see above), after the startup scan: each owner in the admission ledger
  * whose guest deadline passed over PLAY_BACKFILL_MARGIN_MS ago and that this process does not hold
- * (its account, an unfinished purge, a purge in flight, a deletion answered 503) goes through
- * purgePlayOwner with `reopen`, awaited one at a time. The run stops re-opening at the first purge it
+ * when the run starts (its account, an unfinished purge, a purge in flight, a deletion answered 503)
+ * goes through purgePlayOwner with `reopen`, awaited one at a time; one queued since, whose turn
+ * leaves it as it is, stays queued for the janitor. The run stops re-opening at the first purge it
  * took up that does not finish, and at a store that does not advertise its native delete. Before it
  * re-opens anything it finishes, one at a time, the purge of each due owner that is unfinished (one an
  * earlier start re-opened, whose mark the startup scan found), and re-opens nothing if one does not

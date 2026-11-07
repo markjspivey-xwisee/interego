@@ -1120,3 +1120,27 @@ test('backfill: a capability check answered 5xx is no answer: the owner is not c
   assert.equal(run.nativeDelete, true);
   assert.equal(f.pod.has(save) || f.pod.has(budget), false);
 });
+
+test('backfill: an owner queued after the run chose its owners (an on-demand load found its mark) stays queued when its turn leaves it as it is, and the janitor\'s next pass finishes its purge', async () => {
+  // Its purge deleted the game data and failed on the rest; the startup scan could not read its record.
+  // The turn, finding no game data, used to take it out of the queue, and nothing came back to it.
+  const f = fixture({ pod: { 'profile/card': 'plain' } });
+  f.document = { ...finishedPurge(), provisionalPlayPurgePending: true };
+  f.unfinishedPlayPurges.add(userId);
+  assert.equal((await f.backfill(2 * HOUR)).outcome, 'kept:none');
+  assert.deepEqual([...f.unfinishedPlayPurges], [userId], 'it stays in the janitor\'s queue');
+  assert.deepEqual(f.pod.changes(), []);
+  assert.equal(await f.cleanup(), 'purged', 'the janitor\'s next pass');
+  assert.equal(f.pod.has('profile/card'), false);
+  assert.equal(f.document!.provisionalPlayPurgePending, undefined);
+  assert.equal(f.unfinishedPlayPurges.size, 0);
+  // A deletion answered 503 whose registry DELETE the janitor could not send, queued meanwhile: left as not due, and still queued.
+  const g = leftover();
+  g.unconfirmedPlayDeletions.set(userId, Date.now() - 1);
+  g.unfinishedPlayPurges.add(userId);
+  assert.equal((await g.backfill(2 * HOUR)).outcome, 'kept:not-due');
+  assert.deepEqual([...g.unfinishedPlayPurges], [userId]);
+  assert.equal(await g.cleanup(), 'closed');
+  assert.deepEqual(g.deletions, [`https://css.test/${userId}/agents`], 'its agent registry is deleted, and nothing else');
+  assert.equal(g.unfinishedPlayPurges.size + g.unconfirmedPlayDeletions.size, 0);
+});
