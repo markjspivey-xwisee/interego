@@ -62,8 +62,10 @@ async function fixture() {
   const calls: Call[] = [];
   const controls = { loseCreateResponse: false, hideConnectors: false, connectorDeleteFailures: 0, importRunning: false,
     holdConnectorList: null as null | ReturnType<typeof deferred<void>>, connectorListStarted: null as null | ReturnType<typeof deferred<void>> };
-  const platform = { issuer: 'https://cloud.scorm.com', toolClientId: 'client-' + suffix, jwksEndpoint: 'https://cloud.scorm.com/jwks',
-    oidcAuthorizationUrl: 'https://cloud.scorm.com/auth', deploymentId: 'deployment-' + suffix, accessTokenUrl: 'https://cloud.scorm.com/token' };
+  const platform = { issuer: 'https://cloud.scorm.com', toolClientId: 'client-' + suffix,
+    jwksEndpoint: 'https://cloud.scorm.com/api/v2/plugin/lti13/connector-' + suffix + '/jwks?externalConfig=fixture-' + suffix,
+    oidcAuthorizationUrl: 'https://cloud.scorm.com/ScormEngineInterface/defaultui/player/authorizations.html', deploymentId: 'deployment-' + suffix,
+    accessTokenUrl: 'https://cloud.scorm.com/api/v2/plugin/lti13/connector-' + suffix + '/token?externalConfig=fixture-' + suffix };
   const cloud = vi.fn((async (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
     const raw = String(input), url = new URL(raw), method = init?.method ?? 'GET';
     expect(raw.startsWith(CLOUD + '/')).toBe(true);
