@@ -29,8 +29,18 @@ const wallet = Wallet.createRandom();
 const keyId = 'did:ethr:' + wallet.address.toLowerCase();
 const keyPath = join(secretDir, 'actor.key');
 writeFileSync(keyPath, wallet.privateKey, { mode: 0o600, flag: 'wx' });
+const identityHost = 'https://identity.interego.xwisee.com';
+// Every run creates a NEW wallet, so its first sign-in creates an account, and hosted identity
+// refuses that (HTTP 428 hosted_terms_required) without the Hosted Terms agreement. These are
+// synthetic accounts the operator's own CI creates under INTEREGO_LIVE_CANARY=1, and this is the
+// operator agreeing for them. Because the version is read from the live server, each terms
+// revision is accepted for these synthetic accounts by the operator's CI as soon as it is
+// published. No gate configured (`terms: null`) means no version and an ordinary sign-in.
+const termsResponse = await fetch(identityHost + '/.well-known/hosted-interego-terms');
+assert.ok(termsResponse.ok, 'Read the deployed Hosted Terms offer');
+const { terms } = await termsResponse.json();
 const session = await openAgentSession({ privateKey: wallet.privateKey,
-  relay: 'https://relay.interego.xwisee.com', identityHost: 'https://identity.interego.xwisee.com' });
+  relay: 'https://relay.interego.xwisee.com', identityHost, acceptHostedTermsVersion: terms?.version });
 let scenario, participants, refs, sequence = 0;
 const controls = new Map();
 const handoffs = new Map();

@@ -99,6 +99,18 @@ test('passkey OAuth dance issues a usable MCP token', async ({ page, browser }) 
 
   await page.goto(authUrl);
 
+  // A new account needs the Hosted Terms agreement when the identity server offers terms
+  // (identity answers 428 hosted_terms_required without it). The authorize page shows the
+  // checkbox only then, so read the same offer the page reads and tick it for this synthetic
+  // account the operator's own CI creates.
+  const termsOffer = await api.get(`${IDENTITY_URL}/.well-known/hosted-interego-terms`);
+  expect(termsOffer.ok(), 'read the deployed Hosted Terms offer').toBeTruthy();
+  const { terms } = await termsOffer.json() as { terms?: { version?: string } | null };
+  if (terms?.version) {
+    await expect(page.locator('#hosted-terms')).toBeVisible();
+    await page.check('#terms-agree');
+  }
+
   // 3. Fill the display name, click "Register new".
   // The authorize page no longer exposes a `#pk-user` field because
   // the server-side userId is derived from the credential, not claimed.

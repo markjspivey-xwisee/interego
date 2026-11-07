@@ -95,8 +95,19 @@ function parseWire(raw: string): Record<string, unknown> {
  * The flow is the ordinary public-client one — dynamic registration, PKCE, SIWE at the
  * verify step — i.e. exactly what a browser does, with the signature produced here instead
  * of by a wallet extension. Nothing about it is privileged.
+ *
+ * `acceptHostedTermsVersion` is the operator's agreement, passed through unchanged from
+ * {@link OpenSessionOptions}. It is only ever an ANSWER to the identity server's offer: the
+ * agreement text that gets signed is the `termsStatement` the server returns for that exact
+ * version, and when the server returns none (no gate, or a version it no longer offers) the
+ * ordinary sign-in statement is signed instead, so an existing account still signs in.
  */
-async function mintBearer(wallet: Wallet, relay: string, identityHost: string): Promise<string> {
+async function mintBearer(
+  wallet: Wallet,
+  relay: string,
+  identityHost: string,
+  acceptHostedTermsVersion: string | undefined,
+): Promise<string> {
   const redirect = 'http://localhost:9999/callback';
   const verifier = b64u(randomBytes(32));
   const challenge = b64u(createHash('sha256').update(verifier).digest());
@@ -128,24 +139,41 @@ async function mintBearer(wallet: Wallet, relay: string, identityHost: string): 
   const ch = await fetch(`${identityHost}/challenges`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ purpose: 'siwe' }),
+    body: JSON.stringify({
+      purpose: 'siwe',
+      ...(acceptHostedTermsVersion ? { termsVersion: acceptHostedTermsVersion } : {}),
+    }),
   });
-  const { nonce } = await ch.json() as { nonce?: string };
+  const { nonce, termsStatement } = await ch.json() as { nonce?: string; termsStatement?: unknown };
   if (!nonce) throw new Error('identity server issued no nonce');
+  // The server returns `termsStatement` only when it offers exactly the version asked for. No
+  // statement back is NOT an error: a stale version must still let an existing account sign in
+  // again (on refresh too), and the server then decides whether this wallet needs the agreement.
+  // A statement nobody asked for is never signed: without the operator's version this is the
+  // ordinary sign-in, whatever the reply carries.
+  const statement = acceptHostedTermsVersion && typeof termsStatement === 'string' && termsStatement !== ''
+    ? termsStatement
+    : 'Sign in to Interego';
+  // The statement is one line of an ERC-4361 message; a line break in it would let the server's
+  // text write the fields that follow it (URI, Nonce, …) into what this wallet signs.
+  if (/[\r\n]/.test(statement)) throw new Error('identity server offered a terms statement containing a line break');
 
   const host = new URL(relay).host;
   const message = `${host} wants you to sign in with your Ethereum account:\n`
-    + `${wallet.address}\n\nSign in to Interego\n\nURI: ${relay}\nVersion: 1\nChain ID: 1\n`
+    + `${wallet.address}\n\n${statement}\n\nURI: ${relay}\nVersion: 1\nChain ID: 1\n`
     + `Nonce: ${nonce}\nIssued At: ${new Date().toISOString()}`;
   const signature = await wallet.signMessage(message);
 
-  const vj = await (await fetch(`${relay}/oauth/verify`, {
+  const vr = await fetch(`${relay}/oauth/verify`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ pending_id: pendingId, method: 'siwe', message, signature, nonce }),
-  })).json() as { redirect?: string };
+  });
+  const vj = await vr.json().catch(() => ({})) as { redirect?: string; error?: string };
   const code = /[?&]code=([^&]+)/.exec(vj.redirect ?? '')?.[1];
-  if (!code) throw new Error('SIWE verify returned no authorization code');
+  // Carry the status and the server's own words: a 428 `hosted_terms_required` read as "no
+  // authorization code" hid the one fact that said what to do.
+  if (!code) throw new Error(`SIWE verify answered HTTP ${vr.status}: ${vj.error ?? 'no error given'}`);
 
   const tj = await (await fetch(`${relay}/token`, {
     method: 'POST',
@@ -212,6 +240,20 @@ export interface OpenSessionOptions {
   readonly privateKey: string;
   readonly relay: string;
   readonly identityHost: string;
+  /**
+   * The Hosted Terms version the OPERATOR of this process explicitly agreed to, on behalf of
+   * the account this wallet signs in as.
+   *
+   * It is used only when the identity server offers that exact version: the server then
+   * returns the agreement statement, and that statement is what the wallet signs. It is only
+   * needed to create a NEW account — an existing one signs in without it, and a version the
+   * server no longer offers falls back to the ordinary sign-in. Absent, nothing about the
+   * sign-in changes.
+   *
+   * ★ THE LIBRARY NEVER AGREES ON ITS OWN. It does not fetch the terms, pick a version or
+   * default this; agreeing is the operator's decision and has to arrive here from them.
+   */
+  readonly acceptHostedTermsVersion?: string;
   /** Injected for tests. Defaults to the real network fetch. */
   readonly fetchDocument?: StreamDeps['fetchDocument'];
 }
@@ -230,11 +272,11 @@ export async function openAgentSession(opts: OpenSessionOptions): Promise<AgentS
   let token: string | null = null;
 
   const getToken = async (): Promise<string> => {
-    token ??= await mintBearer(wallet, opts.relay, opts.identityHost);
+    token ??= await mintBearer(wallet, opts.relay, opts.identityHost, opts.acceptHostedTermsVersion);
     return token;
   };
   const refresh = async (): Promise<string> => {
-    token = await mintBearer(wallet, opts.relay, opts.identityHost);
+    token = await mintBearer(wallet, opts.relay, opts.identityHost, opts.acceptHostedTermsVersion);
     return token;
   };
 
