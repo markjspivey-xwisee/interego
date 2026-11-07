@@ -83,8 +83,11 @@ export function parseProcedureCatalog(turtle, policy) {
         || g.text(port, DCAT + 'mediaType') !== 'text/turtle') throw new Error('Only a Turtle request read port is supported');
     const requestUrl = httpUrl(g.link(port, DCAT + 'accessURL'));
     if (g.link(port, HYDRA + 'target') !== requestUrl) throw new Error('Request port target differs from its access URL');
-    return { id: productId, title: g.text(productId, DCT + 'title'), domain: g.link(productId, PC + 'domain'),
-      goal: g.link(productId, PC + 'goal'), procedureId: g.link(productId, PC + 'procedure'), requestUrl };
+    // parseTrig keeps a relative IRI such as <?d> as the bare string '?d', which
+    // DifferentialKernel would read as a variable matching any task term.
+    const [domain, goal, procedureId] = ['domain', 'goal', 'procedure'].map(p => g.link(productId, PC + p));
+    for (const value of [domain, goal, procedureId]) iri(value);
+    return { id: productId, title: g.text(productId, DCT + 'title'), domain, goal, procedureId, requestUrl };
   });
   const peers = g.links(id, HC + 'federatedWith');
   if (peers.length > 8) throw new Error('Catalogue peer budget exceeded');

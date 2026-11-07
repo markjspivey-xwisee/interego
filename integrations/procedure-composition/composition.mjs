@@ -22,7 +22,9 @@ function taskGraph(task) {
   iri(task.domain); iri(task.goal);
   return [[PC + 'task', PC + 'domain', task.domain], [PC + 'task', PC + 'goal', task.goal], [PC + 'task', PC + 'profile', PR + 'ReadProcedureProfile']];
 }
-function transport(call, onEvent, phase) {
+/** Exported for its focused budget test: bounded discovery and the runner's own
+ *  16-call limit keep honest flows far below this phase budget. */
+export function transport(call, onEvent, phase) {
   if (typeof call !== 'function' || typeof onEvent !== 'function') throw new Error('An authenticated host and durable event recorder are required');
   let n = 0;
   return async (tool, args) => {
@@ -42,19 +44,38 @@ function current(raw) {
   return { cid: data.head.cid, descriptorUrl: data.head.descriptorUrl };
 }
 const sameHead = (a, b) => a.cid === b.cid && a.descriptorUrl === b.descriptorUrl;
-const cell = x => String(x).replaceAll('|', '\\|').replaceAll('\r', ' ').replaceAll('\n', ' ');
+/** Untrusted text as one inert GFM table cell or paragraph: line breaks become
+ *  spaces, a backslash and every character that could open a cell boundary,
+ *  link, image, HTML tag, entity or emphasis is backslash-escaped, and a
+ *  backtick becomes a character reference (HMD's table lift reads any backtick
+ *  as a code-span toggle). The rendered text is the value, character for character. */
+const cell = x => String(x).replace(/[\\|*_~[\]<>&]/gu, c => '\\' + c).replaceAll('`', '&#96;').replace(/\r\n?|\n/gu, ' ');
+const table = (head, rows) => `| ${head.join(' | ')} |\n|${head.map(() => ' --- |').join('')}\n`
+  + rows.map(row => `| ${row.map(cell).join(' | ')} |`).join('\n') + '\n';
 
-function view({ status, reason, candidates, selected, reviewDigest, catalogs }) {
+function view({ status, reason, task, candidates, selected, reviewDigest, catalogs, untrustedPeers }) {
   const links = catalogs.map(c => ({ label: 'Catalogue authority', href: c.head.descriptorUrl, rel: 'describedby', type: 'text/turtle' }));
   if (selected) links.push({ label: 'Signed invocation request', href: selected.requestUrl, rel: PC + 'request', type: 'text/turtle' },
     { label: 'Authoritative procedure', href: selected.request.procedureDescriptor, rel: PC + 'procedure', type: 'text/turtle' });
+  const request = selected?.request;
   return renderHypermediaMarkdown({ id: 'urn:interego:procedure-composition:review:' + (reviewDigest ?? digest(candidates)),
     type: 'pc:Review', descriptorUrl: catalogs[0].head.descriptorUrl, title: 'Evidence-review composition', controls: [], links,
     extraContext: { pc: PC, reviewDigest: PC + 'reviewDigest' }, fields: { state: status, ...(reviewDigest ? { reviewDigest } : {}) },
     body: '# Evidence-review composition\n\n' + cell(reason) + '\n\n'
-      + 'The installed client loads the signed request and directed RDF steps. Review covers the exact inputs and observed catalogue and procedure pins. Re-run preparation after a change.\n\n'
+      + (request ? 'The installed client loads the signed request and directed RDF steps. Review covers the exact inputs and observed catalogue and procedure pins shown below; the separate procedure HMD shows the compiled steps. Re-run preparation after a change.\n\n'
+        : 'No invocation is selected, so nothing here is ready to approve. Re-run preparation after a change.\n\n')
       + '| Candidate | Exact reuse | Additions | Unexplained task triples |\n| --- | --- | --- | --- |\n'
       + candidates.map(c => `| ${cell(c.title)} | ${c.exact} | ${c.differential.proposedAdditions.length} | ${c.differential.unexplainedCurrent.length} |`).join('\n') + '\n'
+      + '\n## Task\n\n' + table(['Term', 'IRI'], [['Domain', task.domain], ['Goal', task.goal]])
+      + '\n## Observed catalogue pins\n\n' + table(['Catalogue', 'Issuer', 'Trusted signer', 'Pod', 'Head descriptor', 'Head CID'],
+        catalogs.map(c => [c.policy.graphIri, c.policy.issuer, c.policy.trustedSigner, c.policy.podUrl, c.head.descriptorUrl, c.head.cid]))
+      + '\n## Untrusted peers\n\n' + (untrustedPeers.length
+        ? 'Advertised by an observed catalogue without a trust binding; never read and granted no trust.\n\n' + table(['Peer catalogue'], untrustedPeers.map(peer => [peer]))
+        : 'No observed catalogue advertises a peer outside the trust bindings.\n')
+      + (request ? '\n## Procedure pin\n\n' + table(['Pin', 'Value'], [['Product', selected.id], ['Signed request', selected.requestUrl],
+          ['Procedure root', selected.procedureId], ['Procedure descriptor', request.procedureDescriptor], ['Procedure graph', request.procedureGraph],
+          ['Procedure pod', request.procedurePod], ['Procedure CID', request.procedureCid]])
+        + '\n## Invocation inputs\n\n' + table(['Input', 'Value'], Object.keys(request.input).sort().map(key => [key, request.input[key]])) : '')
       + '\nCatalogue signatures establish attribution and publication binding. A successful review establishes the procedure’s declared checks, within its evidence limits.\n'
   });
 }

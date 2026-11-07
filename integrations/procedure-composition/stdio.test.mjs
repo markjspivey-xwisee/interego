@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, writeFileSync, readFileSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, readFileSync, existsSync, mkdirSync, readdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createHash } from 'node:crypto';
@@ -29,6 +29,25 @@ test('CLI result binds an exclusive durable journal and canonical HMD to the hos
   assert.equal(events.filter(e => e.event.type === 'intent').length, p.interegoCalls);
   assert.equal(events.filter(e => e.event.type === 'outcome').length, p.interegoCalls);
   await assert.rejects(runCli(['prepare', config, output], f.call), /EEXIST/u);
+});
+
+test('a configuration key outside the allowlist is refused before the journal or any host call', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'interego-composition-config-')), f = fixture(), config = join(root, 'config.json');
+  writeFileSync(config, JSON.stringify({ task: organizational, catalogs: f.catalogs, seeds: f.seeds, unexpected: true }));
+  const output = join(root, 'out');
+  await assert.rejects(runCli(['prepare', config, output], f.call), /Invalid composition configuration/u);
+  assert.equal(existsSync(output), false); assert.equal(f.calls.length, 0);
+});
+
+test('a pre-existing events.jsonl alone in the output directory is refused, not appended to', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'interego-composition-journal-exists-')), f = fixture(), config = join(root, 'config.json');
+  writeFileSync(config, JSON.stringify({ task: organizational, catalogs: f.catalogs, seeds: f.seeds }));
+  const output = join(root, 'out'), prior = '{"prior":true}\n';
+  mkdirSync(output); writeFileSync(join(output, 'events.jsonl'), prior);
+  // No result.json exists, so only the journal's own exclusive creation can refuse this run.
+  await assert.rejects(runCli(['prepare', config, output], f.call), /EEXIST[^\n]*events\.jsonl/u);
+  assert.deepEqual(readdirSync(output), ['events.jsonl']);
+  assert.equal(readFileSync(join(output, 'events.jsonl'), 'utf8'), prior); assert.equal(f.calls.length, 0);
 });
 
 test('closing the host stream rejects an outstanding request without hanging or retrying', { timeout: 10000 }, async () => {
