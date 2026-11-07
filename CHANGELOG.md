@@ -1,13 +1,5 @@
 # Changelog
 
-## 2026-11-02 — Prepare selected health context for the encrypted local-note host
-
-A separate Layer 3 health component prepares explicit, case-bound evidence selections as the existing Windows app's append-note arguments. It preserves exact dependent citations, qualified dates, record statuses, specimen identities, source interpretation limits and omission metadata. Draft questions require explicit inclusion; retrieval queries and unknown fields are excluded. Cross-case references, unresolved citations, inconsistent omission declarations and oversized output are rejected before returning a note.
-
-The adapter performs no host, network, storage, provider, consent or publication action. Its output is plaintext until an independently authorized host saves it. The native read grant still covers all notes; a selected context is not case-scoped authorization. Fictional fixtures and standalone Linux/Windows CI exercise the preparation contract, including native character bounds. Installed-app pairing, encrypted persistence, revocation and broader health-file ingestion remain separate checks.
-
-An offline Windows verification kit now emits the fixed fictional note arguments and compares a supplied native save/read response for exact content, native metadata and the independently observed author connection. Its bounded CLI never pairs, saves, reads the pod or echoes supplied content on failure. Reports explicitly leave native response authenticity, storage encryption, restart persistence and grant enforcement unverified until independently observed.
-
 ## 2026-11-07 — Identity: a Play game-data backfill deletes the game saves and budgets that finished purges left on guests' pods
 
 Play purges that finished before the store's native conditional delete (from 2026-10-28 to 2026-10-30) deleted everything of a guest's pod except its game data: the saves (`hallowmarch/checkpoints/<64 hex>.json`), the write budget (`play-budget.json`) and the two containers that hold them. They then cleared the tombstone's mark, so neither the janitor nor a restart comes back to such a pod. A save the css-gate let through that lands after a purge's last listing stays the same way. Each identity process now runs a **Play game-data backfill** once, one janitor interval (`JANITOR_INTERVAL_MS`, 5 min by default) after it starts, and after its startup scan. With the janitor off (`JANITOR_INTERVAL_MS=0`) it does nothing. There is no flag, route or extra service: it runs again at every deploy, and once it has converged it writes and deletes nothing.
@@ -76,6 +68,16 @@ Each guard was reverted alone in a scratch copy, and a test failed for each one:
 - the sets left alone where the mark meets a changed record (enrollment): this went unnoticed while purgePlayOwner emptied them for any `kept` of a backfill turn.
 
 The new tests fail on the code before this change. `npm run build --workspace @interego/identity` and the identity tests pass: 449 tests, then 95 in `live-record-writes-routes.test.ts`.
+
+## 2026-11-02 — Prepare selected health context for the encrypted local-note host
+
+A separate Layer 3 health component prepares explicit, case-bound evidence selections as the existing Windows app's append-note arguments. It preserves exact dependent citations, qualified dates, record statuses, specimen identities, source interpretation limits and omission metadata. Draft questions require explicit inclusion; retrieval queries and unknown fields are excluded. Cross-case references, unresolved citations, inconsistent omission declarations and oversized output are rejected before returning a note.
+
+The adapter performs no host, network, storage, provider, consent or publication action. Its output is plaintext until an independently authorized host saves it. A native read grant covers all notes unless the owner limited it to notes they selected; a selected context is not case-scoped authorization. Fictional fixtures and standalone Linux/Windows CI exercise the preparation contract, including native character bounds. Installed-app pairing, encrypted persistence, revocation and broader health-file ingestion remain separate checks.
+
+An offline Windows verification kit now emits the fixed fictional note arguments and compares a supplied native save/read response for exact content, native metadata and the independently observed author connection. Its bounded CLI never pairs, saves, reads the pod or echoes supplied content on failure. Reports explicitly leave native response authenticity, storage encryption, restart persistence and grant enforcement unverified until independently observed.
+
+The component's documentation describes publication in generic terms, and the Windows kit keeps the saved response outside the checkout so it cannot be committed by mistake.
 
 ## 2026-11-07 — Identity: a test pins the X25519 keys the server publishes, and no other generated key is JWK-exported under deploy/ or packages/
 

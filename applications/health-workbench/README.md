@@ -30,7 +30,7 @@ Preparation is not encryption. The returned object is ordinary plaintext in the 
 
 If an agent is separately connected for saving output, `notes:create` is sufficient. The adapter needs no `notes:read` grant. Saving is append-only and creates a new host note identity. Keep the source case/checkpoint inside the note; do not replace source identities with the note identity.
 
-The current desktop app's `notes:read` permission covers all notes available to that connection, including future notes. Searching for a health label or selecting one case in this adapter does not narrow that permission. Genuine per-case/per-resource read authorization is a separate host capability to implement and validate before broad chart-assistant access. Read the live connection's permissions and expiry; never infer a grant from this file or an earlier pairing.
+A desktop-app `notes:read` grant covers all notes available to that connection, including future notes, unless the owner limited that grant to notes they selected. Searching for a health label or selecting one case in this adapter does not narrow either form of the permission. Genuine per-case/per-resource read authorization is a separate host capability to implement and validate before broad chart-assistant access. Read the live connection's permissions and expiry; never infer a grant from this file or an earlier pairing.
 
 ## Evidence and privacy boundaries
 
@@ -39,12 +39,12 @@ The current desktop app's `notes:read` permission covers all notes available to 
 - Preserve the source packet's omission/truncation information. A selected context is not an exhaustive chart review.
 - Working questions and retrieval queries are excluded by default. Optional inclusion of a reader question is separately labelled as a reader draft, not a clinical fact.
 - Unknown input fields are not reflected into the prepared note. No credentials, accounts, provider APIs, source URLs or private records are discovered by the adapter.
-- The note is a private-workspace output. Preparation does not approve any public publication or invoke the Health Connections publisher.
+- The note is a private-workspace output. Preparation does not approve or invoke any public publication.
 - A local pod stores data locally; an AI client that reads a note may send it to its model provider. Native storage and model inference are different boundaries.
 
 ## Composition and next gates
 
-The useful composition is: an authorized source adapter supplies evidence; the health workbench selects context; this adapter prepares a bounded note; an explicitly authorized local host appends it. The public Atlas continues to receive only its separately approved publisher snapshot. Copying a local note to that snapshot is not part of this operation.
+The useful composition is: an authorized source adapter supplies evidence; the health workbench selects context; this adapter prepares a bounded note; an explicitly authorized local host appends it. Any separately approved public snapshot is outside this operation, and copying a local note into one is not part of it.
 
 The accompanying fixture is fictional and contains no real patient. The workflow tests the adapter on Linux and Windows without installing dependencies, starting a pod, enabling a bridge, pairing a client or contacting a provider. This is not a packaged native-app or end-to-end clinical workflow test.
 
