@@ -15,6 +15,7 @@ import { readDelegationCredential, verifyAgentDelegation } from '@interego/solid
 import type { VerifyPrivateCaller } from './private-performance-auth.js';
 import { attachClientTaskRoutes } from './i2idlx-client-tasks.js';
 import { agentSessionRoutine, attachAgentSessionRoutes } from './i2idlx-agent-sessions.js';
+import { attachUserCourseRoutes } from './i2idlx-user-courses.js';
 import { attachSemanticTaskRoutes } from './i2idlx-semantic-tasks.js';
 import { semanticCheckOperations } from './i2idlx-semantic-affordances.js';
 import { foxxiAffordances } from '../affordances.js';
@@ -325,10 +326,16 @@ export function attachWorkbenchRoutes(app: Express, config: WorkbenchConfig): vo
   const checkOperations = semanticCheckOperations(base);
   attachClientTaskRoutes(app, { baseUrl: base, appDataFile: config.appDataFile, checkOperations });
   // Independent, explicitly paired agent execution; the public MCP packet surface stays read-only.
-  attachAgentSessionRoutes(app, {
+  const agentSessions = attachAgentSessionRoutes(app, {
     baseUrl: base,
     verifyCaller: config.verifyCaller,
     routine: input => agentSessionRoutine(input, config.fetch),
+  });
+  attachUserCourseRoutes(app, {
+    baseUrl: base,
+    sessions: agentSessions,
+    taskConfig: { baseUrl: base, appDataFile: config.appDataFile, checkOperations },
+    fetch: config.fetch,
   });
   // Derive both discovery representations from the actual vertical declarations.
   // The generic Interego follower parses Turtle and resolves the action subject;
@@ -361,6 +368,13 @@ export function attachWorkbenchRoutes(app: Express, config: WorkbenchConfig): vo
       connection: 'Connect Interego in your AI client, discover I2IDL-X Ask/Orchestrate, then follow their advertised actions and execute returned instructions with your own model. Browser pod identity is a separate optional connection.',
       descriptor_url: descriptorUrl,
       checkOperations,
+      personalCourses: {
+        href: base + '/i2idlx/api/user-courses', method: 'POST', providers: ['scorm-cloud'],
+        authentication: 'Verified paired browser session; unavailable to the agent driver.',
+        operations: ['connect', 'status', 'courses', 'source', 'disconnect'],
+        lifetime: 'This connection only; credentials are cleared on disconnect or expiry.',
+        persisted: false,
+      },
       _affordances: actions.map(a => ({ action: a.action, href: a.targetTemplate.replace('{base}', base), method: a.method })),
     });
   });

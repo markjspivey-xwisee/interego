@@ -73,7 +73,7 @@ export function createAgentSessionClient(config = {}) {
   const listeners = new Set();
   let session = null, generation = 0, polling = null, active = null;
   let state = { state: 'disconnected', driverActor: null, expiresAt: null, monitoring: null, pending: false, error: '' };
-  const status = () => ({ ...state, routineConfigured: state.state !== 'expired' && session?.protocol?.driver?.routine_start === true });
+  const status = () => ({ ...state, connectionId: session?.session_id || null, routineConfigured: state.state !== 'expired' && session?.protocol?.driver?.routine_start === true });
   const publish = next => { state = { ...state, ...next }; for (const listener of listeners) listener(status()); config.onState?.(status()); };
   const expire = () => publish({ state: 'expired', driverActor: null, monitoring: null, pending: false, error: EXPIRED });
   const canSample = () => session && state.state === 'connected' && (state.monitoring === null || state.monitoring === 'ready');
@@ -88,12 +88,12 @@ export function createAgentSessionClient(config = {}) {
     if (signal?.aborted || captured !== generation || !session) throw failure('Cancelled.', 'cancelled');
     if (now() >= Date.parse(session.expires_at)) { expire(); throw failure(EXPIRED, 'session_expired'); }
   };
-  async function post(path, data, token, signal) {
+  async function post(path, data, token, signal, root = ROOT) {
     const captured = generation;
-    const response = await fetcher(url(ROOT + path), { method: 'POST', cache: 'no-store', credentials: 'omit', headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: 'Bearer ' + token } : {}) }, body: boundedJSON(data), signal });
+    const response = await fetcher(url(root + path), { method: 'POST', cache: 'no-store', credentials: 'omit', headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: 'Bearer ' + token } : {}) }, body: boundedJSON(data), signal });
     let reply; try { reply = await response.json(); } catch { throw failure('The agent connection returned no readable response.'); }
     if (!response.ok) {
-      const expired = response.status === 410;
+      const expired = response.status === 410 && (root === ROOT || reply?.code === 'session_expired');
       if (expired && token && token === session?.browser_token && captured === generation) expire();
       throw failure(expired ? EXPIRED : reply?.error || 'The agent connection is unavailable.', expired ? 'session_expired' : reply?.code || 'unavailable');
     }
@@ -103,6 +103,14 @@ export function createAgentSessionClient(config = {}) {
   async function browser(operation, args = {}, signal) {
     if (!session) throw failure('Connect an AI agent first.', 'not_granted');
     return post('/browser', { session_id: session.session_id, operation, ...args }, session.browser_token, signal);
+  }
+  async function requestUserCourses(args, signal) {
+    requireSample();
+    const captured = generation;
+    check(captured, signal);
+    const result = await post('', { ...args, session_id: session.session_id }, session.browser_token, signal, '/i2idlx/api/user-courses');
+    check(captured, signal);
+    return result;
   }
   function absorbStatus(reply) {
     if (!['waiting_for_agent', 'connected', 'expired'].includes(reply.state)) throw failure('The agent connection returned an invalid status.');
@@ -291,8 +299,23 @@ export function createAgentSessionClient(config = {}) {
   sample.modelTiers = false;
   sample.allowTeamNotes = false;
   sample.limits = async () => ({ tools: { maxCount: 30 }, maxConcurrentRequests: 1 });
+  function getUserCourseSample() {
+    if (!canSample()) return null;
+    // Private course consent applies to this pairing, including its invitation generation.
+    // A later pairing must never receive passages fetched for the previous recipient.
+    const captured = generation;
+    const bound = async (input, options = {}) => {
+      check(captured, options.signal); requireSample();
+      return sample(input, options);
+    };
+    bound.modelTiers = false;
+    bound.allowTeamNotes = false;
+    bound.contextKey = JSON.stringify([session.session_id, captured]);
+    bound.limits = async () => { check(captured); requireSample(); return sample.limits(); };
+    return bound;
+  }
   return {
-    connect, renewInvitation, disconnect, refresh,
+    connect, renewInvitation, disconnect, refresh, requestUserCourses, getUserCourseSample,
     status,
     getSample: () => canSample() ? sample : null,
     subscribe(listener) { listeners.add(listener); listener(status()); return () => listeners.delete(listener); },
