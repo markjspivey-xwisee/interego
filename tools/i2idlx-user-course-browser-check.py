@@ -7,6 +7,7 @@ No provider, model, wallet or other external API is contacted.
 import json
 import pathlib
 import sys
+from datetime import datetime, timedelta, timezone
 from html.parser import HTMLParser
 from playwright.sync_api import sync_playwright
 
@@ -60,11 +61,14 @@ if len(sys.argv) > 4:
 EXPIRES = "2099-01-01T00:00:00.000Z"
 # Obvious synthetic placeholders; these have no SCORM Cloud provider access.
 APP_ID, SECRET = "fixture-app", "test-secret"
-courses = [{"id": "course-a", "title": "Safety fundamentals", "version": 3, "standard": "SCORM 2004"},
-           {"id": "course-b", "title": "Equipment checks", "version": 5, "standard": "SCORM 1.2"}]
+SOURCE_URL, SOURCE_TOKEN = "https://source.example/course-access", "fixture-source-token"
+courses = [{"id": "course-a", "title": "Safety fundamentals", "version": 3, "standard": "SCORM 2004", "access_modes": ["transient", "cached"]},
+           {"id": "course-b", "title": "Equipment checks", "version": 5, "standard": "SCORM 1.2", "access_modes": ["transient", "cached"]}]
+external_courses = [{"id": "external-course", "title": "Publisher hosted exercise", "version": "revision-23", "standard": "External", "access_modes": ["virtual"]}]
 errors, calls, source_calls, agent_calls, host_calls, pending_sources = [], [], [], [], [], []
 state = {"session": 0, "connection": None, "expire": False, "wrong_source": False, "omit_content_digest": False, "defer_source": False,
-         "digest": "a" * 64, "content_digest": "c" * 64, "content_body": "Inspect the equipment before use."}
+         "digest": "a" * 64, "content_digest": "c" * 64, "content_body": "Inspect the equipment before use.",
+         "provider": "scorm-cloud", "grants": {}, "cached": set(), "grant_serial": 0, "remote_status": "pending", "grant_expires": EXPIRES, "fail_local_delete": False, "deletions": {}}
 
 def reply(route, value, status=200):
     return route.fulfill(status=status, content_type="application/json", body=json.dumps(value))
@@ -112,46 +116,101 @@ def route_handler(route):
                 return reply(route, {"session_id": session, "state": "connected", "driver": {"actor": "did:example:fixture-agent"}, "expires_at": EXPIRES})
             if operation == "disconnect":
                 state["connection"] = None
+                state["grants"].clear()
+                state["cached"].clear()
+                state["deletions"].clear()
                 return reply(route, {"disconnected": True})
             if operation == "invite":
                 state["connection"] = None
+                state["grants"].clear()
+                state["cached"].clear()
+                state["deletions"].clear()
                 return reply(route, {"invite_token": "4" * 64, "invite_expires_at": EXPIRES})
             if operation == "request":
                 agent_calls.append(body)
-                assert SECRET not in json.dumps(body) and APP_ID not in json.dumps(body), "provider credentials cannot reach the agent"
+                assert all(secret not in json.dumps(body) for secret in (SECRET, APP_ID, SOURCE_TOKEN)), "provider credentials cannot reach the agent"
                 return reply(route, {"turn_id": "turn-" + str(len(agent_calls)), "state": "completed", "revision": 1,
                     "text": "Fixture answer " + str(len(agent_calls)) + " cites SC1 and [[learning-objectives]]."})
             raise AssertionError("unexpected agent operation " + operation)
         assert url.endswith("/user-courses"), "unknown endpoint"
         if operation == "status":
-            return reply(route, {"connected": bool(state["connection"]), "connection_id": state["connection"], "expires_at": EXPIRES})
+            return reply(route, {"connected": bool(state["connection"]), "provider": state["provider"], "connection_id": state["connection"], "expires_at": EXPIRES})
         if operation == "connect":
-            assert body["credentials"] == {"type": "basic", "app_id": APP_ID, "secret": SECRET}
+            state["provider"] = body["provider"]
+            if body["provider"] == "scorm-cloud":
+                assert body["credentials"] == {"type": "basic", "app_id": APP_ID, "secret": SECRET}
+            else:
+                assert body["provider"] == "source-service"
+                assert body["credentials"] == {"service_url": SOURCE_URL, "token": SOURCE_TOKEN}
             state["connection"] = "connection-" + str(state["session"])
-            return reply(route, {"connected": True, "provider": "scorm-cloud", "connection_id": state["connection"], "expires_at": EXPIRES})
+            state["grants"].clear()
+            state["cached"].clear()
+            state["deletions"].clear()
+            return reply(route, {"connected": True, "provider": state["provider"], "connection_id": state["connection"], "expires_at": EXPIRES})
         if operation == "disconnect":
             state["connection"] = None
+            state["grants"].clear()
+            state["cached"].clear()
+            state["deletions"].clear()
             return reply(route, {"connected": False})
         assert body["connection_id"] == state["connection"]
         if operation == "courses":
-            return reply(route, {"connection_id": state["connection"], "courses": courses})
+            return reply(route, {"connection_id": state["connection"], "courses": courses if state["provider"] == "scorm-cloud" else external_courses})
+        source_key = json.dumps([body["course_id"], body["version"]])
+        if operation == "access-status":
+            return reply(route, {"connection_id": state["connection"], "course_id": body["course_id"], "version": body["version"],
+                "grant": state["grants"].get(source_key), "deletion": state["deletions"].get(source_key),
+                "cache": {"present": source_key in state["cached"], "bytes": 1200 if source_key in state["cached"] else 0}})
+        if operation == "grant":
+            permission = body["permission"]
+            assert permission["authorized"] is True and permission["authority"] in ("owner", "authorized-by-owner")
+            assert permission["retention_minutes"] in (5, 10, 30)
+            assert body["mode"] in (["transient", "cached"] if state["provider"] == "scorm-cloud" else ["virtual"])
+            state["grant_serial"] += 1
+            grant = {"id": format(state["grant_serial"], "048x"), "mode": body["mode"], "expires_at": state["grant_expires"],
+                     "authority": permission["authority"], "verification": "user-attested" if state["provider"] == "scorm-cloud" else "source-service-attested"}
+            state["grants"][source_key] = grant
+            return reply(route, {"grant": grant, "cache": {"present": False, "bytes": 0}})
+        if operation in ("delete", "request-deletion", "deletion-status"):
+            state["grants"].pop(source_key, None)
+            state["cached"].discard(source_key)
+            if operation == "delete" and state["fail_local_delete"]:
+                return reply(route, {"error": "Local deletion response was interrupted.", "code": "course_provider_unavailable"}, 502)
+            status = "not_requested" if operation == "delete" else "completed" if operation == "deletion-status" else state["remote_status"] if state["provider"] == "source-service" else "unsupported"
+            remote = {"status": status}
+            if status in ("pending", "completed"):
+                remote.update(request_id="fixture-deletion-request", scope="derived-content")
+            result = {"deleted": True, "scope": "this-session", "permission_revoked": True, "remote_deletion": remote}
+            state["deletions"][source_key] = {"grant_id": body["grant_id"], **result}
+            return reply(route, result)
         assert operation == "source"
         source_calls.append(body)
         if state["expire"]:
             state["connection"] = None
             return reply(route, {"code": "course_connection_expired", "error": "Your course connection expired. Reconnect your source."}, 410)
-        selected = next(item for item in courses if item["id"] == body["course_id"])
+        selected = next(item for item in (courses if state["provider"] == "scorm-cloud" else external_courses) if item["id"] == body["course_id"])
         assert selected["version"] == body["version"]
-        source = {"provider": "scorm-cloud", "course_id": selected["id"], "title": selected["title"],
-                  "version": selected["version"], "package_sha256": state["digest"], "content_sha256": state["content_digest"]}
+        grant = state["grants"][source_key]
+        assert body["grant_id"] == grant["id"], "only an explicit current permission may retrieve content"
+        source = {"provider": state["provider"], "course_id": selected["id"], "title": selected["title"],
+                  "version": selected["version"], "content_sha256": state["content_digest"]}
+        if state["provider"] == "scorm-cloud":
+            source["package_sha256"] = state["digest"]
+        else:
+            source["lti"] = {"context_id": "provider-context", "resource_link_id": "provider-resource"}
         if state["wrong_source"]:
             source["course_id"] = "wrong-course"
         if state["omit_content_digest"]:
             del source["content_sha256"]
         citation = {"id": "SC1", "title": "Safety objective", "body": state["content_body"],
-                    "locator": "lesson.html section 2", "source_uri": "urn:scorm-cloud:course:" + selected["id"] + ":version:" + str(selected["version"]) + ":content:" + state["content_digest"]}
+                    "locator": "lesson.html section 2", "source_uri": "urn:" + state["provider"] + ":course:" + selected["id"] + ":version:" + str(selected["version"]) + ":content:" + state["content_digest"]}
+        cache_hit = source_key in state["cached"] and not body.get("refresh")
+        if grant["mode"] == "cached":
+            state["cached"].add(source_key)
+        graph = {"representation": "published-structure", "nodes": 3, "edges": 2, "semantic_prerequisites_inferred": False} if grant["mode"] == "cached" else {"representation": "source-service" if grant["mode"] == "virtual" else "none"}
         packet = {"connection_id": state["connection"], "source": source, "citations": [citation], "missing_context": [],
             "retrieved_at": "2026-11-07T12:00:00.000Z", "truncated": False,
+            "access": {"mode": grant["mode"], "permission": grant, "cache": {"present": grant["mode"] == "cached", "hit": cache_hit, "bytes": 1200 if grant["mode"] == "cached" else 0, "stored_at": "2026-11-07T11:59:00.000Z" if grant["mode"] == "cached" else None, "expires_at": EXPIRES}, "graph": graph},
             "interventionContext": {"kind": "instructional-source-reference", "source": source, "passages": [citation]}}
         if state["defer_source"]:
             pending_sources.append((route, packet))
@@ -177,7 +236,7 @@ with sync_playwright() as p:
     def host_sample(payload):
         host_calls.append(payload)
         encoded = json.dumps(payload["messages"])
-        for private_marker in (SECRET, APP_ID, "Selected intervention reference context", "urn:scorm-cloud:course:",
+        for private_marker in (SECRET, APP_ID, SOURCE_TOKEN, "Selected intervention reference context", "urn:scorm-cloud:course:",
                 "Private course question before shortcut", "Private course followup before shortcut", "Private pending source question", "Fixture answer"):
             assert private_marker not in encoded, "a glossary shortcut must not share private course history with another executor"
         assert payload["scope"] == "Glossary only", "the visible source consent must change before the host receives the question"
@@ -220,8 +279,25 @@ with sync_playwright() as p:
         page.get_by_role("button", name="Connect my SCORM Cloud", exact=True).click()
         page.get_by_label("SCORM Cloud course", exact=True).wait_for()
 
-    def select_course(index):
+    def approve_course(selected_mode="transient"):
+        page.get_by_text("Reading your course source…", exact=True).wait_for(state="hidden")
+        mode = page.get_by_label("Course access mode", exact=True)
+        if page.get_by_role("button", name="Delete local content and revoke permission", exact=True).count() and mode.input_value() == selected_mode:
+            return
+        mode.select_option(selected_mode)
+        page.get_by_label("Confirm course owner permission", exact=True).wait_for()
+        assert not page.get_by_label("Confirm course owner permission", exact=True).is_checked()
+        assert page.get_by_label("Course permission authority", exact=True).input_value() == ""
+        assert page.get_by_role("button", name="Apply course permission", exact=True).is_disabled()
+        page.get_by_label("Course permission authority", exact=True).select_option("authorized-by-owner")
+        page.get_by_label("Confirm course owner permission", exact=True).check()
+        page.get_by_role("button", name="Apply course permission", exact=True).click()
+        page.get_by_role("button", name="Delete local content and revoke permission", exact=True).wait_for()
+
+    def select_course(index, selected_mode="transient", approve=True):
         page.get_by_label("SCORM Cloud course", exact=True).select_option(json.dumps([courses[index]["id"], courses[index]["version"]], separators=(",", ":")))
+        if approve:
+            approve_course(selected_mode)
 
     def ask(question, answer=True):
         page.get_by_role("textbox", name="Ask", exact=True).fill(question)
@@ -235,15 +311,21 @@ with sync_playwright() as p:
     connect_course()
     assert not source_calls and not agent_calls, "listing courses must not share content with AI"
     assert not page.get_by_label("SCORM Cloud secret", exact=True).count(), "credential fields removed on successful connect"
-    select_course(0)
+    select_course(0, approve=False)
+    page.get_by_label("Course access mode", exact=True).wait_for()
+    assert page.get_by_label("Course access mode", exact=True).input_value() == ""
+    assert page.get_by_role("button", name="Ask", exact=True).is_disabled()
+    assert page.get_by_label("Course access mode", exact=True).locator('option[value="virtual"]').count() == 0
+    approve_course()
     assert not source_calls and not agent_calls, "selecting a source does not share it"
+    print("PASS course selection requires explicit mode, unchecked permission and authority; Cloud never offers virtual fallback")
     ask("What should I inspect?")
     assert source_calls[-1]["question"] == "What should I inspect?"
     assert "instructional-source-reference" in json.dumps(agent_calls[-1])
     assert "SC1" in json.dumps(agent_calls[-1]) and "Inspect the equipment before use." in json.dumps(agent_calls[-1])
     panel.get_by_text("Course sources for the latest question", exact=True).click()
     assert "Version 3" in panel.inner_text() and state["digest"] in panel.inner_text() and state["content_digest"] in panel.inner_text()
-    assert "Package contents SHA-256" in panel.inner_text() and "Export archive SHA-256" in panel.inner_text()
+    assert "Content fingerprint" in panel.inner_text() and "Export archive SHA-256" in panel.inner_text()
     assert "urn:scorm-cloud:course:course-a:version:3" in panel.inner_text()
     page.screenshot(path=str(shots / "ask-course-source-desktop.png"), full_page=True)
     page.set_viewport_size({"width": 420, "height": 860})
@@ -396,6 +478,135 @@ with sync_playwright() as p:
     assert page.get_by_test_id("ask-context-scope").inner_text() == "Glossary only"
     assert "Private pending source question" not in page.locator(".ask-log").inner_text()
     print("PASS real Ctrl+K glossary shortcut aborts/ignores pending private retrieval and never forwards it to either executor")
+
+    select_course(0, selected_mode="cached")
+    ask("Use the local course graph")
+    panel.get_by_text("Course sources for the latest question", exact=True).click()
+    assert "Local content graph: 3 sections, 2 published structure links" in panel.inner_text()
+    assert "Semantic prerequisites have not been inferred" in panel.inner_text()
+    ask("Follow up using the local graph")
+    assert "Local text and graph used for the latest question" in panel.inner_text()
+    assert "Context prepared" in panel.inner_text() and "This question reused the local content" in panel.inner_text()
+    assert "Local content stored" in panel.inner_text()
+    page.get_by_label("Refresh course content for next question", exact=True).check()
+    ask("Refresh the published content")
+    assert source_calls[-1].get("refresh") is True
+    assert not page.get_by_label("Refresh course content for next question", exact=True).is_checked()
+    page.screenshot(path=str(shots / "ask-course-cached-graph-desktop.png"), full_page=True)
+    print("PASS cached mode identifies the actual published-structure graph and exposes explicit source refresh")
+
+    state["defer_source"] = True
+    with page.expect_request(lambda request: request.url.endswith("/user-courses") and request.post_data_json.get("operation") == "source"):
+        page.get_by_role("textbox", name="Ask", exact=True).fill("Pending cached course question before deletion")
+        page.get_by_role("button", name="Ask", exact=True).click()
+    page.get_by_text("Reading your course source…", exact=True).wait_for()
+    before = len(agent_calls)
+    assert page.get_by_role("button", name="Delete local content and revoke permission", exact=True).is_enabled()
+    page.get_by_role("button", name="Delete local content and revoke permission", exact=True).click()
+    page.get_by_text("The local text, graph and permission were removed from this session.", exact=False).wait_for()
+    state["defer_source"] = False
+    for pending_route, packet in pending_sources:
+        reply(pending_route, packet)
+    pending_sources.clear()
+    page.evaluate("new Promise(resolve => setTimeout(resolve, 0))")
+    assert len(agent_calls) == before and page.locator(".msg").count() == 0
+    assert page.get_by_role("button", name="Ask", exact=True).is_disabled()
+    assert not state["cached"] and not state["grants"]
+    assert not panel.get_by_text("Course sources for the latest question", exact=True).count()
+    assert not page.get_by_label("Confirm course owner permission", exact=True).is_checked()
+    print("PASS deleting local content aborts an in-flight retrieval, clears private history and requires fresh permission")
+
+    approve_course("cached")
+    page.get_by_label("Course access mode", exact=True).select_option("transient")
+    page.get_by_text("The local text, graph and permission were removed from this session.", exact=False).wait_for()
+    assert not state["grants"] and not state["cached"]
+    assert page.get_by_role("button", name="Ask", exact=True).is_disabled()
+    assert not page.get_by_label("Confirm course owner permission", exact=True).is_checked()
+    print("PASS changing access mode revokes the prior grant without silently granting the replacement")
+
+    approve_course("transient")
+    state["fail_local_delete"] = True
+    prior_remote_requests = sum(body.get("operation") == "request-deletion" for _, body in calls)
+    page.get_by_role("button", name="Delete local content and revoke permission", exact=True).click()
+    page.get_by_role("button", name="Retry local deletion", exact=True).wait_for()
+    assert page.get_by_role("button", name="Ask", exact=True).is_disabled()
+    state["fail_local_delete"] = False
+    page.get_by_role("button", name="Retry local deletion", exact=True).click()
+    page.get_by_text("The local text, graph and permission were removed from this session.", exact=False).wait_for()
+    assert sum(body.get("operation") == "request-deletion" for _, body in calls) == prior_remote_requests
+    print("PASS retrying an uncertain local deletion does not escalate into an unrequested remote deletion")
+
+    page.get_by_role("button", name="Disconnect course source", exact=True).click()
+    page.get_by_label("Course source provider", exact=True).select_option("source-service")
+    page.get_by_label("Source service URL", exact=True).fill(SOURCE_URL)
+    page.get_by_label("Source service access token", exact=True).fill(SOURCE_TOKEN)
+    page.get_by_role("button", name="Connect course source", exact=True).click()
+    page.get_by_label("Source service course", exact=True).wait_for()
+    page.get_by_label("Source service course", exact=True).select_option(json.dumps([external_courses[0]["id"], external_courses[0]["version"]], separators=(",", ":")))
+    approve_course("virtual")
+    assert page.get_by_label("Course access mode", exact=True).locator('option[value="transient"]').count() == 0
+    assert page.get_by_label("Course access mode", exact=True).locator('option[value="cached"]').count() == 0
+    ask("Use the source service course")
+    assert source_calls[-1]["version"] == "revision-23"
+    panel.get_by_text("Course sources for the latest question", exact=True).click()
+    assert "Foxxi did not download the course package to verify this source-supplied fingerprint" in panel.inner_text()
+    assert "Content fingerprint supplied by the source service" in panel.inner_text()
+    assert "Export archive SHA-256" not in panel.inner_text()
+    assert "This workbench has not independently verified an LTI login" in panel.inner_text()
+    assert not state["cached"]
+    page.screenshot(path=str(shots / "ask-course-virtual-desktop.png"), full_page=True)
+    print("PASS virtual-only source service accepts a string version without an archive digest or invented LTI verification")
+
+    page.get_by_role("button", name="Request deletion at source", exact=True).click()
+    page.get_by_role("button", name="Check deletion request", exact=True).wait_for()
+    assert "completion is pending" in panel.inner_text() and page.locator(".msg").count() == 0
+    assert "Deletion request reference: fixture-deletion-request" in panel.inner_text()
+    previous_source_count, previous_agent_count = len(source_calls), len(agent_calls)
+    page.get_by_role("link", name="Lexicon", exact=True).click()
+    page.locator(".lex-list .li").first.wait_for()
+    page.get_by_role("link", name="Ask", exact=True).click()
+    page.get_by_role("textbox", name="Ask", exact=True).wait_for()
+    if not panel.evaluate("element => element.open"):
+        panel.locator("summary").first.click()
+    page.get_by_role("button", name="Refresh courses", exact=True).wait_for()
+    assert not page.get_by_role("button", name="Check deletion request", exact=True).count(), "receipt starts outside the remounted React state"
+    page.get_by_role("button", name="Refresh courses", exact=True).click()
+    page.get_by_label("Source service course", exact=True).select_option(json.dumps([external_courses[0]["id"], external_courses[0]["version"]], separators=(",", ":")))
+    page.get_by_role("button", name="Check deletion request", exact=True).wait_for()
+    assert "Deletion request reference: fixture-deletion-request" in panel.inner_text()
+    assert "completion is pending" in panel.inner_text()
+    assert len(source_calls) == previous_source_count and len(agent_calls) == previous_agent_count
+    assert page.get_by_role("button", name="Ask", exact=True).is_disabled()
+    print("PASS pending deletion receipt and exact provider reference recover from the session after Ask remount and course reselection")
+    page.get_by_role("button", name="Check deletion request", exact=True).click()
+    page.get_by_text("The source service reports that its derived content was deleted.", exact=False).wait_for()
+    assert "original hosted course is unchanged" in panel.inner_text()
+    assert not page.get_by_role("button", name="Check deletion request", exact=True).count()
+    print("PASS source deletion distinguishes accepted request from provider-reported completion and preserves the original course")
+
+    approve_course("virtual")
+    state["remote_status"] = "failed"
+    page.get_by_role("button", name="Request deletion at source", exact=True).click()
+    page.get_by_role("button", name="Retry deletion request", exact=True).wait_for()
+    assert "did not confirm the remote deletion request" in panel.inner_text()
+    state["remote_status"] = "pending"
+    page.get_by_role("button", name="Retry deletion request", exact=True).click()
+    page.get_by_role("button", name="Check deletion request", exact=True).wait_for()
+    page.get_by_role("button", name="Check deletion request", exact=True).click()
+    page.get_by_text("The source service reports that its derived content was deleted.", exact=False).wait_for()
+    print("PASS a failed remote deletion is retryable and is never presented as completed")
+
+    state["grant_expires"] = (datetime.now(timezone.utc) + timedelta(seconds=2)).isoformat()
+    approve_course("virtual")
+    ask("A question before course permission expires")
+    page.get_by_text("Your course permission expired. Confirm fresh permission before asking again.", exact=True).wait_for(timeout=5000)
+    assert page.locator(".msg").count() == 0
+    assert page.get_by_role("button", name="Ask", exact=True).is_disabled()
+    assert not page.get_by_role("button", name="Delete local content and revoke permission", exact=True).count()
+    assert not panel.get_by_text("Course sources for the latest question", exact=True).count()
+    state["grant_expires"] = EXPIRES
+    print("PASS permission expiry clears private context and blocks further questions without a new explicit grant")
+
     page.set_viewport_size({"width": 420, "height": 860})
     page.screenshot(path=str(shots / "ask-course-reconnect-mobile.png"), full_page=True)
     assert page.evaluate("document.documentElement.scrollWidth <= innerWidth + 1"), "course UI must fit mobile viewport"
