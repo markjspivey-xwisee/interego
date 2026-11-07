@@ -37,9 +37,20 @@ function count(value, path) {
   requireCondition(Number.isSafeInteger(value) && value >= 0 && value <= 1_000_000_000, path, 'expected a nonnegative bounded integer');
   return value;
 }
+// A list is copied once from its own data elements. A hole, a getter or a length that is not an
+// exact integer within the bound is refused rather than skipped, so every later check and the
+// note itself see the same dense values.
 function list(value, maximum, path) {
-  requireCondition(Array.isArray(value) && value.length <= maximum, path, 'expected a bounded array');
-  return value;
+  requireCondition(Array.isArray(value), path, 'expected a bounded array');
+  const length = value.length;
+  requireCondition(Number.isSafeInteger(length) && length >= 0 && length <= maximum, path, 'expected a bounded array');
+  const copy = [];
+  for (let index = 0; index < length; index += 1) {
+    const descriptor = Object.getOwnPropertyDescriptor(value, index);
+    requireCondition(descriptor !== undefined && 'value' in descriptor, `${path}[${index}]`, 'expected a dense array of data values');
+    copy.push(descriptor.value);
+  }
+  return copy;
 }
 function absoluteId(value, path) {
   string(value, 1024, path);
@@ -64,9 +75,9 @@ function scopedIdentifier(value, caseId, path) {
   return value;
 }
 function uniqueIds(value, caseId, maximum, path, minimum = 0) {
-  list(value, maximum, path);
-  requireCondition(value.length >= minimum, path, `at least ${minimum} identifier is required`);
-  const result = value.map((id, index) => scopedIdentifier(id, caseId, `${path}[${index}]`));
+  const values = list(value, maximum, path);
+  requireCondition(values.length >= minimum, path, `at least ${minimum} identifier is required`);
+  const result = values.map((id, index) => scopedIdentifier(id, caseId, `${path}[${index}]`));
   requireCondition(new Set(result).size === result.length, path, 'duplicate identifiers are not allowed');
   return result;
 }

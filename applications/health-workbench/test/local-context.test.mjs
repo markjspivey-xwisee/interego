@@ -265,3 +265,30 @@ test('source-specific interpretation limits and definition omissions survive wit
   value.truncation.complete = true;
   assert.throws(() => prepare(value), /definition omission counts/);
 });
+
+test('arrays are copied densely once: holes, getters and inexact lengths fail instead of reaching the note', () => {
+  const reads = { count: 0 };
+  const getter = value => ({ enumerable: true, get() { reads.count += 1; return value; } });
+  const lengthOf = (values, length) => new Proxy(values, { get: (target, key, receiver) => key === 'length' ? length : Reflect.get(target, key, receiver) });
+  const cases = [
+    () => prepare(packet(), Array(1)),
+    () => prepare(packet(), [id('entry-0'), , ]), // eslint-disable-line no-sparse-arrays
+    () => { const value = packet(); value.entries[0].sourceIds.length = 2; return prepare(value); },
+    () => { const value = packet(); value.entries[0].conceptIds = [...value.entries[0].conceptIds, , ]; return prepare(value); }, // eslint-disable-line no-sparse-arrays
+    () => { const value = packet(); value.citations.length += 1; return prepare(value); },
+    () => { const value = packet(); value.entries[0].sourceIds = Array(1); return prepare(value); },
+    () => { const value = packet(); value.entries[0].dates.length += 1; return prepare(value); },
+    () => { const value = packet(); value.concepts[0].aliases = ['Fictional alias', , ]; return prepare(value); }, // eslint-disable-line no-sparse-arrays
+    () => { const value = packet(); value.limits = [, value.limits[0]]; return prepare(value); }, // eslint-disable-line no-sparse-arrays
+    () => { const value = packet(); Object.defineProperty(value.entries[0].sourceIds, 0, getter(id('source-0'))); return prepare(value); },
+    () => { const selected = [id('entry-0')]; Object.defineProperty(selected, 0, getter(id('entry-0'))); return prepare(packet(), selected); },
+    () => { const value = packet(); value.entries = lengthOf(value.entries, 1.5); return prepare(value); },
+    () => prepare(packet(), lengthOf([id('entry-0')], { valueOf: () => 1 })),
+    () => prepare(packet(), lengthOf([id('entry-0')], -1)),
+  ];
+  for (const attempt of cases) {
+    reads.count = 0;
+    assert.throws(attempt, /Invalid local health context at .*(?:expected a dense array|expected a bounded array)/);
+    assert.equal(reads.count, 0);
+  }
+});
