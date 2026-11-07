@@ -1,0 +1,70 @@
+{
+  "schemaVersion": 1,
+  "engineVersion": "1.0.0",
+  "case": {
+    "id": "urn:health-workbench:example:local-case",
+    "label": "Fictional local context demonstration",
+    "scope": "synthetic"
+  },
+  "snapshot": {
+    "sourceRevision": 1,
+    "sourceDigest": "sha256:f5d5bf83b5ae7d63a3aa24b0415fa7ece9bd546a9531c30427da59f1bcf7b140",
+    "reviewRevision": 0
+  },
+  "status": "ready",
+  "query": "private reader search that must not be reflected",
+  "entries": [
+    {
+      "id": "urn:health-workbench:example:local-case#entry-order",
+      "caseId": "urn:health-workbench:example:local-case",
+      "type": "MedicationOrder",
+      "title": "Fictional Intervention A order",
+      "text": "Invented order for a test fixture. No real treatment is described.",
+      "status": "completed",
+      "sourceIds": ["urn:health-workbench:example:local-case#source-order"],
+      "conceptIds": [],
+      "dates": [{"kind": "recorded", "value": "2026-01-01", "meaning": "order-authored"}],
+      "omissions": {"textCharacters": 0, "sourceIds": 0, "dates": 0}
+    },
+    {
+      "id": "urn:health-workbench:example:local-case#entry-administration",
+      "caseId": "urn:health-workbench:example:local-case",
+      "type": "AdministrationRecord",
+      "title": "Fictional Intervention A administration record",
+      "text": "Invented administration resource with its own status. The completed order does not change this status.",
+      "status": "not-done",
+      "sourceIds": ["urn:health-workbench:example:local-case#source-administration"],
+      "conceptIds": [],
+      "dates": [{"kind": "recorded", "value": "2026-01-02", "meaning": "resource-recorded"}],
+      "omissions": {"textCharacters": 0, "sourceIds": 0, "dates": 0}
+    }
+  ],
+  "citations": [
+    {
+      "id": "urn:health-workbench:example:local-case#source-order",
+      "caseId": "urn:health-workbench:example:local-case",
+      "title": "Fictional order source",
+      "classification": "synthetic-fixture"
+    },
+    {
+      "id": "urn:health-workbench:example:local-case#source-administration",
+      "caseId": "urn:health-workbench:example:local-case",
+      "title": "Fictional administration source",
+      "classification": "synthetic-fixture"
+    }
+  ],
+  "concepts": [],
+  "truncation": {
+    "matchingTotal": 3,
+    "laneMatchingTotal": 3,
+    "returned": 2,
+    "omitted": 1,
+    "textCharactersOmitted": 0,
+    "conceptsOmitted": 0,
+    "definitionCharactersOmitted": 0,
+    "responseBytes": 2182,
+    "byteLimitApplied": false,
+    "complete": false
+  },
+  "limits": ["Fictional fixture only. No real person, treatment or clinical conclusion."]
+}

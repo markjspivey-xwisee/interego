@@ -83,6 +83,16 @@ Each guard was reverted alone in a scratch copy, and a test failed for each one:
 
 The new tests fail on the code before this change. `npm run build --workspace @interego/identity` and the identity tests pass: 449 tests, then 95 in `live-record-writes-routes.test.ts`.
 
+## 2026-11-02 — Prepare selected health context for the encrypted local-note host
+
+A separate Layer 3 health component prepares explicit, case-bound evidence selections as the existing Windows app's append-note arguments. It preserves exact dependent citations, qualified dates, record statuses, specimen identities, source interpretation limits and omission metadata. Draft questions require explicit inclusion; retrieval queries and unknown fields are excluded. Cross-case references, unresolved citations, inconsistent omission declarations and oversized output are rejected before returning a note.
+
+The adapter performs no host, network, storage, provider, consent or publication action. Its output is plaintext until an independently authorized host saves it. A native read grant covers all notes unless the owner limited it to notes they selected; a selected context is not case-scoped authorization. Fictional fixtures and standalone Linux/Windows CI exercise the preparation contract, including native character bounds. Installed-app pairing, encrypted persistence, revocation and broader health-file ingestion remain separate checks.
+
+An offline Windows verification kit now emits the fixed fictional note arguments and compares a supplied native save/read response for exact content, native metadata and the independently observed author connection. Its bounded CLI never pairs, saves, reads the pod or echoes supplied content on failure. Reports explicitly leave native response authenticity, storage encryption, restart persistence and grant enforcement unverified until independently observed.
+
+The component's documentation describes publication in generic terms, and the Windows kit keeps the saved response outside the checkout so it cannot be committed by mistake.
+
 ## 2026-11-07 — Identity: a test pins the X25519 keys the server publishes, and no other generated key is JWK-exported under deploy/ or packages/
 
 The "Node 20 crypto deadlock" entry further down changed how `generateEd25519` in `deploy/identity/server.ts` reads the raw X25519 public key. It had read the `x` of a JWK export, and now reads the last 32 bytes of the SPKI DER. That entry checked on 20,000 keys that both give the same bytes, but no test checked it. The derivation is now `x25519PublicKeyEncodings` in `deploy/identity/key-encoding.ts`. The base58btc codec and the Ed25519 and X25519 multibase encoders it uses moved there from `server.ts` unchanged. `server.ts` imports them, and `deploy/Dockerfile.identity` copies the new file. The two new files take the lint gate's file count for `deploy/` to 278, past the slack on its pin of 262, so `tools/lint-gate.mjs` now pins 278. Both lint clean, and the error pin is unchanged.
