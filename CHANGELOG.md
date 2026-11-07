@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-11-07 — I2IDL-X release: run the live visitor check on a runner its pinned Playwright supports
+
+`i2idlx-v93-release.yml`'s `live-visitor` job installs `playwright==1.56.0` and its Chromium on `ubuntu-latest`, which now resolves to Ubuntu 26.04. That Playwright refuses to install there, so the next release's post-deploy visitor check would fail before visiting the site. It now runs on `ubuntu-24.04`, like the I2IDL-X UI oracle job that pins the same Playwright, and like the live client-signature check (#789). With this change, every workflow job that installs a browser runs on `ubuntu-24.04`.
+
 ## 2026-11-07 — Live client-signature check: run its Chromium step on a runner the locked Playwright supports
 
 With #788 the live check's client step passes against the deployed relay and identity (run 42398216683: `CLIENT_SIGNATURE_LIVE_RESULT {"passed":true}`). The next step, `npx playwright install --with-deps chromium`, then failed: `ubuntu-latest` now resolves to Ubuntu 26.04, and the locked Playwright release refuses it ("Playwright does not support chromium on ubuntu26.04-x64"). `client-signature-live.yml` and `e2e-passkey.yml` now run on `ubuntu-24.04`, as `identity-tests.yml`'s passkey browser job already does (26d2fd3b).
