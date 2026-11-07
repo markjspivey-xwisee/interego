@@ -7,7 +7,8 @@
  * the Discord bot). The second is a copy for a stated reason (its header), and a copy is only
  * worth having while it is the same ceremony: a driver whose message drifted from the shell's
  * would be measuring a sign-in no user performs, and the Discord bot would sign in, or fail to,
- * for a reason nobody could see. Both headers point here, so this is the check they name.
+ * for a reason nobody could see. `live-identity.ts`'s header and the Discord bot's `src/identity.ts`
+ * both name this file as the check that holds the two together.
  *
  * ★ HOW IT COMPARES THEM. Both ceremonies run against one stand-in relay and identity server that
  * issues the same nonce every time, with the clock frozen, for the same wallet. What each one
@@ -27,9 +28,9 @@ import { Wallet, verifyMessage, type HDNodeWallet } from 'ethers';
 import { signInWithWallet } from '../desktop/src/auth.js';
 import { mintBearer, siweMessage } from '../tools/live-identity.js';
 
-// The deployed hosts, because both builders write the relay's host into the message's first line
-// and the comparison should be of the message the deployed relay is sent. Nothing here reaches
-// them: every request is answered by the stand-in below, and an unscripted one throws.
+// The deployed hosts, because the relay URL is a line of the signed message (`URI:`) and the
+// comparison should be of the message the deployed relay is sent. Nothing here reaches them: every
+// request is answered by the stand-in below, and an unscripted one throws.
 const RELAY = 'https://relay.interego.xwisee.com';
 const IDENTITY = 'https://identity.interego.xwisee.com';
 const NONCE = 'parityNonce00000001';
