@@ -28,6 +28,11 @@ export function useCourseContext(engine) {
   const invalidate = () => { generation.current++; request.current?.abort(); request.current = null; setLoading(false); };
   const clearSource = () => { setConnection(null); setCourses([]); setPage(null); setSelected(null); setPacket(null); clearCredentials(); };
   const current = run => mounted.current && generation.current === run;
+  const clearCourseIntent = () => {
+    invalidate(); setPacket(null); setSelected(null); setError('');
+    mode.current = false; setCourseMode(false);
+  };
+  useEffect(() => engine.registerCourseContext({ active: () => mode.current, clear: clearCourseIntent }), [engine.registerCourseContext]);
   useEffect(() => subscribeAgentSession(setAgent), []);
   useEffect(() => { mounted.current = true; return () => {
     mounted.current = false; generation.current++; request.current?.abort(); clearCredentials();
@@ -98,8 +103,7 @@ export function useCourseContext(engine) {
     mode.current = !!course; setCourseMode(!!course); setSelected(course);
   }
   function glossaryOnly() {
-    invalidate(); engine.reset(); setPacket(null); setSelected(null); setError('');
-    mode.current = false; setCourseMode(false);
+    clearCourseIntent(); engine.reset();
   }
   async function disconnect() {
     const { run, controller } = begin(); clearSource(); engine.reset(); mode.current = false; setCourseMode(false);
@@ -114,15 +118,16 @@ export function useCourseContext(engine) {
     if (!eligible || !connection || !selected) { setError('Reconnect your course source and select a course before asking about it.'); return; }
     const pairedSample = userCourseSample();
     if (!pairedSample) { setError('Reconnect your paired AI agent before sharing course passages.'); return; }
-    const { run, controller } = begin();
+    const { run, controller } = begin(), conversation = engine.captureGeneration();
     try {
       const value = selectedCoursePacket(await userCourseRequest({ operation: 'source', connection_id: connection.connection_id, course_id: selected.id, version: selected.version, question }, controller.signal), connection.connection_id, selected);
-      if (!current(run)) return;
+      if (!current(run) || engine.captureGeneration() !== conversation) return;
       if (packet && packet.source.content_sha256 !== value.source.content_sha256) {
         engine.reset(); setPacket(value); setError('The course content changed, so the conversation was cleared. Ask again to use the refreshed source.'); return;
       }
       setPacket(value);
-      await engine.send(question, ids, value.interventionContext, pairedSample);
+      const identity = JSON.stringify([value.source.provider, value.source.course_id, value.source.version, value.source.content_sha256]);
+      await engine.send(question, ids, value.interventionContext, pairedSample, identity);
     } catch (e) { failed(e, run, controller); }
     finally { if (current(run)) setLoading(false); }
   }

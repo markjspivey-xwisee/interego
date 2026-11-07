@@ -23,7 +23,7 @@ function fixture(course) {
   return { client, calls };
 }
 let count = 0;
-async function test(name, run) { await run(); count++; console.log('PASS ' + name); }
+async function test(name, run) { await run(); count++; process.stdout.write('PASS ' + name + '\n'); }
 async function ready(client) { await client.connect(); await client.refresh(); }
 
 await test('course connection requires an already paired agent and exposes no bearer', async () => {
@@ -82,6 +82,9 @@ await test('private source sampler is pinned to the original invitation and refu
   assert.equal(client.getUserCourseSample(), null);
   await ready(client);
   const original = client.getUserCourseSample();
+  const samePair = client.getUserCourseSample();
+  assert.notEqual(original, samePair);
+  assert.equal(original.contextKey, samePair.contextKey);
   assert.equal(original.allowTeamNotes, false);
   assert.equal(original.modelTiers, false);
   assert.equal((await original('Private instructional reference.')).text, 'Paired source answer.');
@@ -93,6 +96,7 @@ await test('private source sampler is pinned to the original invitation and refu
   await assert.rejects(original('Passages approved for the prior pairing.'), { code: 'cancelled' });
   assert.equal(calls.slice(before).filter(call => call.body.operation === 'request').length, 0);
   const renewed = client.getUserCourseSample();
+  assert.notEqual(original.contextKey, renewed.contextKey);
   await client.disconnect();
   await ready(client);
   await assert.rejects(renewed('Passages approved before replacement.'), { code: 'cancelled' });
@@ -118,4 +122,4 @@ await test('selected course packets require exact source identity and both diges
   assert.throws(() => validate(packet, 'another-connection', course), /does not match/);
 });
 
-console.log('PASS ' + count + ' user course adapter checks');
+process.stdout.write('PASS ' + count + ' user course adapter checks\n');

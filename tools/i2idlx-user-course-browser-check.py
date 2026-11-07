@@ -58,11 +58,12 @@ if len(sys.argv) > 4:
     html = replace_final_script(html, pathlib.Path(sys.argv[4]).read_text(encoding="utf-8"))
 
 EXPIRES = "2099-01-01T00:00:00.000Z"
-APP_ID, SECRET = "local-app-fixture", "local-secret-never-send-to-agent"
+# Obvious synthetic placeholders; these have no SCORM Cloud provider access.
+APP_ID, SECRET = "fixture-app", "test-secret"
 courses = [{"id": "course-a", "title": "Safety fundamentals", "version": 3, "standard": "SCORM 2004"},
            {"id": "course-b", "title": "Equipment checks", "version": 5, "standard": "SCORM 1.2"}]
-errors, calls, source_calls, agent_calls = [], [], [], []
-state = {"session": 0, "connection": None, "expire": False, "wrong_source": False, "omit_content_digest": False,
+errors, calls, source_calls, agent_calls, host_calls, pending_sources = [], [], [], [], [], []
+state = {"session": 0, "connection": None, "expire": False, "wrong_source": False, "omit_content_digest": False, "defer_source": False,
          "digest": "a" * 64, "content_digest": "c" * 64, "content_body": "Inspect the equipment before use."}
 
 def reply(route, value, status=200):
@@ -70,6 +71,27 @@ def reply(route, value, status=200):
 
 def route_handler(route):
     request, url = route.request, route.request.url
+    if url == "http://app.test/i2idlx/capabilities":
+        return reply(route, {"audience": "http://app.test", "_affordances": [
+            {"action": "urn:iep:action:foxxi:i2idlx-" + operation, "href": "http://app.test/i2idlx/api/fixture-" + operation}
+            for operation in ("session", "challenge", "read", "write")]})
+    if url.startswith("http://app.test/i2idlx/api/fixture-"):
+        if url.endswith("fixture-challenge"):
+            assert request.method == "GET"
+            return reply(route, {"nonce": "fixture-challenge"})
+        assert request.method == "POST"
+        signed = request.post_data_json
+        body = json.loads(signed["_signed_payload"])
+        calls.append((url, body))
+        assert signed["_signature"] == "fixture-host-signature", "this local fixture never authenticates a real identity"
+        if url.endswith("fixture-session"):
+            return reply(route, {"me": {"id": "fixture-owner", "did": "did:example:fixture-host", "name": "Fixture host owner"},
+                "sharedRead": False, "sharedWrite": False, "canWrite": False, "privateEncryption": False})
+        assert url.endswith("fixture-read"), "the fixture grants no writes"
+        if "doc_path" in body:
+            return reply(route, {"exists": False, "etag": "fixture-empty"})
+        return reply(route, {"ballots": {"docs": []}, "notes": {"docs": []}, "usage": {"docs": []},
+            "policy": {"exists": True, "data": {"quorum": 2}, "etag": "fixture-policy"}})
     if url.startswith("http://app.test/i2idlx/api/"):
         assert request.method == "POST", "fixtures accept explicit API actions only"
         body = request.post_data_json
@@ -128,9 +150,13 @@ def route_handler(route):
             del source["content_sha256"]
         citation = {"id": "SC1", "title": "Safety objective", "body": state["content_body"],
                     "locator": "lesson.html section 2", "source_uri": "urn:scorm-cloud:course:" + selected["id"] + ":version:" + str(selected["version"]) + ":content:" + state["content_digest"]}
-        return reply(route, {"connection_id": state["connection"], "source": source, "citations": [citation], "missing_context": [],
+        packet = {"connection_id": state["connection"], "source": source, "citations": [citation], "missing_context": [],
             "retrieved_at": "2026-11-07T12:00:00.000Z", "truncated": False,
-            "interventionContext": {"kind": "instructional-source-reference", "source": source, "passages": [citation]}})
+            "interventionContext": {"kind": "instructional-source-reference", "source": source, "passages": [citation]}}
+        if state["defer_source"]:
+            pending_sources.append((route, packet))
+            return
+        return reply(route, packet)
     if request.method not in ("GET", "HEAD"):
         raise AssertionError("unexpected external write " + url)
     if url.startswith("http://app.test/i2idlx/"):
@@ -148,6 +174,28 @@ def route_handler(route):
 with sync_playwright() as p:
     browser = p.chromium.launch()
     page = browser.new_page(viewport={"width": 1440, "height": 1050})
+    def host_sample(payload):
+        host_calls.append(payload)
+        encoded = json.dumps(payload["messages"])
+        for private_marker in (SECRET, APP_ID, "Selected intervention reference context", "urn:scorm-cloud:course:",
+                "Private course question before shortcut", "Private course followup before shortcut", "Private pending source question", "Fixture answer"):
+            assert private_marker not in encoded, "a glossary shortcut must not share private course history with another executor"
+        assert payload["scope"] == "Glossary only", "the visible source consent must change before the host receives the question"
+        assert payload["course"] == "" and not payload["sourceDetails"], "course selection and sources clear before host execution"
+        assert len(payload["messages"]) == 2, "an explicit glossary shortcut begins a fresh public discussion"
+        return {"text": "Host glossary answer " + str(len(host_calls)) + "."}
+
+    page.expose_function("__fixtureHostSample", host_sample)
+    page.add_init_script("""(() => {
+        const sample = async messages => window.__fixtureHostSample({messages,
+            scope: document.querySelector('[data-testid="ask-context-scope"]')?.textContent,
+            course: document.querySelector('select[aria-label="SCORM Cloud course"]')?.value || '',
+            sourceDetails: [...document.querySelectorAll('summary')].some(el => el.textContent === 'Course sources for the latest question')});
+        sample.modelTiers = false; sample.limits = async () => ({tools: false});
+        window.interegoWorkbench = {sample, signRequest: async payload => ({
+            _signed_payload: JSON.stringify({...payload, agent_id: 'did:example:fixture-host'}),
+            _signature: 'fixture-host-signature'})};
+    })();""")
     page.route("**/*", route_handler)
     page.on("pageerror", lambda error: errors.append(str(error)))
     page.goto("http://app.test/i2idlx/#ask")
@@ -299,6 +347,55 @@ with sync_playwright() as p:
     assert SECRET not in json.dumps(storage) and APP_ID not in json.dumps(storage)
     assert "Inspect the equipment" not in json.dumps(storage)
     print("PASS replacing AI session clears source, history and credentials without persisting private content")
+
+    # Exercise the real global command palette while both executor paths are present.
+    connect_course()
+    select_course(0)
+    ask("Private course question before shortcut")
+    page.get_by_role("button", name="Agent connected", exact=True).click()
+    page.get_by_text("Keep work with Interego", exact=True).click()
+    page.get_by_role("button", name="Connect Interego or browser wallet", exact=True).click()
+    page.get_by_text("Fixture host owner", exact=True).first.wait_for()
+    page.get_by_role("button", name="Close", exact=True).click()
+    before = len(agent_calls)
+    prior_sources = len(source_calls)
+    ask("Private course followup before shortcut")
+    assert len(agent_calls) == before + 1 and not host_calls, "course followups stay with the paired executor even when a host is available"
+    assert len(source_calls) == prior_sources + 1, "each private followup retrieves fresh source context"
+    assert any(message["content"] == "Private course question before shortcut" for message in agent_calls[-1]["messages"])
+
+    def glossary_shortcut(question, answer_number):
+        page.keyboard.press("Control+k")
+        page.get_by_role("combobox", name="Search", exact=True).fill(question)
+        page.get_by_role("option").filter(has_text="Ask the glossary:").click()
+        page.get_by_text("Host glossary answer " + str(answer_number) + ".", exact=True).wait_for()
+        assert page.get_by_test_id("ask-context-scope").inner_text() == "Glossary only"
+        assert page.get_by_label("SCORM Cloud course", exact=True).input_value() == ""
+        assert page.locator(".msg").count() == 2
+
+    before = len(agent_calls)
+    glossary_shortcut("Explain a public glossary concept", 1)
+    assert len(agent_calls) == before and len(host_calls) == 1
+    print("PASS real Ctrl+K glossary shortcut clears completed private history and visible course consent before host execution")
+
+    select_course(0)
+    state["defer_source"] = True
+    with page.expect_request(lambda request: request.url.endswith("/user-courses") and request.post_data_json.get("operation") == "source"):
+        page.get_by_role("textbox", name="Ask", exact=True).fill("Private pending source question")
+        page.get_by_role("button", name="Ask", exact=True).click()
+    page.get_by_text("Reading your course source…", exact=True).wait_for()
+    assert pending_sources, "the private source request must be in flight before the shortcut"
+    before = len(agent_calls)
+    glossary_shortcut("Explain another public glossary concept", 2)
+    state["defer_source"] = False
+    for pending_route, packet in pending_sources:
+        reply(pending_route, packet)
+    pending_sources.clear()
+    page.evaluate("new Promise(resolve => setTimeout(resolve, 0))")
+    assert len(agent_calls) == before and len(host_calls) == 2
+    assert page.get_by_test_id("ask-context-scope").inner_text() == "Glossary only"
+    assert "Private pending source question" not in page.locator(".ask-log").inner_text()
+    print("PASS real Ctrl+K glossary shortcut aborts/ignores pending private retrieval and never forwards it to either executor")
     page.set_viewport_size({"width": 420, "height": 860})
     page.screenshot(path=str(shots / "ask-course-reconnect-mobile.png"), full_page=True)
     assert page.evaluate("document.documentElement.scrollWidth <= innerWidth + 1"), "course UI must fit mobile viewport"

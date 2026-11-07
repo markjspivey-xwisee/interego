@@ -61,11 +61,10 @@ function Shell() {
 
   const ask = useMemo(() => (isChatGPTApp() ? { open: openChatGPTAsk } : engine.available ? {
     open: (prompt, ids = []) => {
-      engine.setCtx(ids);
       go("ask");
-      if (prompt) setTimeout(() => engine.send(prompt, ids), 30);
+      void engine.sendGlossary(prompt, ids);
     },
-  } : null), [engine.available, engine.send]);
+  } : null), [engine.available, engine.sendGlossary]);
   const ui = useMemo(() => ({ toast, hover, palette: { open: () => setPal(true) }, ask, lens, setLens, layers: { open: (focus) => setLayers({ focus: focus || null }) } }), [toast, hover, ask, lens]);
 
   useEffect(() => {

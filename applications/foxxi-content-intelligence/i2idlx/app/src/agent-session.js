@@ -310,6 +310,7 @@ export function createAgentSessionClient(config = {}) {
     };
     bound.modelTiers = false;
     bound.allowTeamNotes = false;
+    bound.contextKey = JSON.stringify([session.session_id, captured]);
     bound.limits = async () => { check(captured); requireSample(); return sample.limits(); };
     return bound;
   }

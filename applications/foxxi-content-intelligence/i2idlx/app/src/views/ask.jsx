@@ -53,6 +53,18 @@ export function useAskEngine() {
   const [tier, setTier] = useStored("ask.tier", "default");
   const ctl = useRef(null);
   const generation = useRef(0);
+  const transcript = useRef([]), scope = useRef(null), running = useRef(false), courseControl = useRef(null);
+  // Callers can retain an older hook closure. Conversation authority lives in these
+  // synchronous refs, so reset/source transitions cannot resurrect its captured turns.
+  const writeTurns = useCallback(update => {
+    const next = typeof update === 'function' ? update(transcript.current) : update;
+    transcript.current = next; setTurns(next);
+  }, []);
+  const captureGeneration = useCallback(() => generation.current, []);
+  const registerCourseContext = useCallback(control => {
+    courseControl.current = control;
+    return () => { if (courseControl.current === control) courseControl.current = null; };
+  }, []);
   useEffect(() => () => { generation.current++; if (ctl.current) ctl.current.abort(); }, []);
   const sample = caps.sample;
 
@@ -116,21 +128,31 @@ export function useAskEngine() {
     },
   ], [caps.allNotes, sample]);
 
-  const send = useCallback(async (text, ids = ctx, interventionContext = null, executor = sample) => {
+  const send = useCallback(async (text, ids = ctx, interventionContext = null, executor = sample, sourceIdentity = null) => {
     const q = (text || "").trim();
-    if (!q || !executor || busy) return;
+    if (!q || !executor) return;
+    if (!interventionContext && (scope.current?.kind === 'reference' || courseControl.current?.active())) {
+      throw Object.assign(new Error('This conversation needs fresh source context. Choose Use glossary only to start a glossary question.'), { code: 'source_context_required' });
+    }
+    if (running.current) return;
+    const reference = interventionContext?.source_context;
+    const nextScope = { kind: interventionContext ? 'reference' : 'glossary',
+      source: interventionContext ? sourceIdentity || JSON.stringify([reference?.source, reference?.id, reference?.version]) : null,
+      recipient: executor.contextKey || executor };
+    if (scope.current && (scope.current.kind !== nextScope.kind || scope.current.source !== nextScope.source || scope.current.recipient !== nextScope.recipient)) writeTurns([]);
+    scope.current = nextScope;
     const run = ++generation.current;
     const current = () => generation.current === run;
     const ctxLabel = ids.map((id) => byId.get(id)).filter(Boolean).map((c) => `${c.l} [[${c.id}]]`).join(", ");
-    const history = turns.filter((t) => !t.error && t.content).slice(-8).map((t) => ({ role: t.role, content: t.content }));
+    const history = transcript.current.filter((t) => !t.error && t.content).slice(-8).map((t) => ({ role: t.role, content: t.content }));
     const userTurn = { role: "user", content: q };
     const bot = { role: "assistant", content: "", trace: [], pending: true };
-    setTurns((t) => [...t, userTurn, bot]);
+    writeTurns((t) => [...t, userTurn, bot]);
     setDraft("");
-    setBusy(true);
+    running.current = true; setBusy(true);
     const controller = new AbortController();
     ctl.current = controller;
-    const trace = (s) => { if (current()) setTurns((t) => t.map((x, i) => (i === t.length - 1 ? { ...x, trace: [...(x.trace || []), s] } : x))); };
+    const trace = (s) => { if (current()) writeTurns((t) => t.map((x, i) => (i === t.length - 1 ? { ...x, trace: [...(x.trace || []), s] } : x))); };
     try {
       let useTools = caps.tools;
       let maxTools = 5;
@@ -146,12 +168,12 @@ export function useAskEngine() {
       : "");
       const input = [{ role: "user", content: lead }, ...history, userTurn];
       const signal = controller.signal;
-      const opts = { signal, modelTier: tier, onText: ({ text: t }) => { if (current() && !signal.aborted) setTurns((all) => all.map((x, i) => (i === all.length - 1 ? { ...x, content: t, pending: false } : x))); } };
+      const opts = { signal, modelTier: tier, onText: ({ text: t }) => { if (current() && !signal.aborted) writeTurns((all) => all.map((x, i) => (i === all.length - 1 ? { ...x, content: t, pending: false } : x))); } };
       if (useTools) opts.tools = tools(trace, executor).slice(0, maxTools); else opts.cache = false;
       const res = await executor(input, opts);
       if (!current()) return;
       if (signal.aborted) throw Object.assign(new Error('Cancelled.'), { code: 'cancelled' });
-      setTurns((all) => all.map((x, i) => (i === all.length - 1 ? { ...x, content: res.text, pending: false, truncated: res.truncated } : x)));
+      writeTurns((all) => all.map((x, i) => (i === all.length - 1 ? { ...x, content: res.text, pending: false, truncated: res.truncated } : x)));
     } catch (e) {
       if (!current()) return;
       const code = e && e.code;
@@ -162,15 +184,27 @@ export function useAskEngine() {
         : code === "session_expired" ? "Your session expired. Sign in again to keep asking."
         : code === "prompt_too_large" ? "That conversation got too long. Start a new one."
         : "Something went wrong reaching your connected model. Try again.";
-      setTurns((all) => all.map((x, i) => (i === all.length - 1 ? { ...x, content: (e && e.text) || x.content, pending: false, error: msg, stopped: code === "cancelled" } : x)));
+      writeTurns((all) => all.map((x, i) => (i === all.length - 1 ? { ...x, content: (e && e.text) || x.content, pending: false, error: msg, stopped: code === "cancelled" } : x)));
     } finally {
-      if (current()) setBusy(false);
+      if (current()) { running.current = false; setBusy(false); }
     }
-  }, [sample, busy, turns, ctx, tier, tools, caps.tools]);
+  }, [sample, ctx, tier, tools, caps.tools, writeTurns]);
 
   const stop = useCallback(() => { if (ctl.current) ctl.current.abort(); }, []);
-  const reset = useCallback(() => { stop(); generation.current++; setBusy(false); setTurns([]); setCtx([]); }, [stop]);
-  return { available: !!sample, modelTiers: !!sample && sample.modelTiers !== false, turns, busy, draft, setDraft, ctx, setCtx, send, stop, reset, tier, setTier };
+  const reset = useCallback(() => { stop(); generation.current++; running.current = false; scope.current = null; setBusy(false); writeTurns([]); setCtx([]); }, [stop, writeTurns]);
+  const sendGlossary = useCallback((text, ids = []) => {
+    const transition = () => {
+      const leavingSource = scope.current?.kind === 'reference' || courseControl.current?.active();
+      if (leavingSource) { courseControl.current?.clear(); reset(); }
+      setCtx(ids);
+    };
+    // An explicit glossary shortcut changes the visible source consent before a
+    // host request, including when a private course retrieval is still pending.
+    if (typeof ReactDOM !== 'undefined' && typeof ReactDOM.flushSync === 'function') ReactDOM.flushSync(transition);
+    else transition();
+    return text?.trim() ? send(text, ids) : undefined;
+  }, [reset, send]);
+  return { available: !!sample, modelTiers: !!sample && sample.modelTiers !== false, turns, busy, draft, setDraft, ctx, setCtx, send, sendGlossary, stop, reset, captureGeneration, registerCourseContext, tier, setTier };
 }
 
 const STARTERS = [
@@ -225,7 +259,7 @@ export function Ask({ engine }) {
         ))}
       </div>
       <div className="ask-in">
-        {course.selected ? <p className="tiny muted">Course context · {course.selected.title} · Version {course.selected.version}</p> : null}
+        <p className="tiny muted" data-testid="ask-context-scope">{course.selected ? <>Course context · {course.selected.title} · Version {course.selected.version}</> : 'Glossary only'}</p>
         {course.blocked ? <p className="tiny" role="status">Reconnect your course source above, or choose Use glossary only.</p> : null}
         {ctx.length ? <div className="row wrap small"><span className="muted">About:</span>{ctx.map((id) => byId.get(id) ? <span key={id} className="chip"><span className={"dot kd-" + byId.get(id).k} />{byId.get(id).l}</span> : null)}<button className="btn ghost sm" onClick={() => setCtx([])}>Clear</button></div> : null}
         <div className="box">
