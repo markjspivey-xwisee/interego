@@ -1,5 +1,59 @@
 # Changelog
 
+## 2026-11-07 — Identity: a Play game-data backfill deletes the game saves and budgets that finished purges left on guests' pods
+
+Play purges that finished before the store's native conditional delete (from 2026-10-28 to 2026-10-30) deleted everything of a guest's pod except its game data: the saves (`hallowmarch/checkpoints/<64 hex>.json`), the write budget (`play-budget.json`) and the two containers that hold them. They then cleared the tombstone's mark, so neither the janitor nor a restart comes back to such a pod. A save the css-gate let through that lands after a purge's last listing stays the same way. Each identity process now runs a **Play game-data backfill** once, one janitor interval (`JANITOR_INTERVAL_MS`, 5 min by default) after it starts, and after its startup scan. With the janitor off (`JANITOR_INTERVAL_MS=0`) it does nothing. There is no flag, route or extra service: it runs again at every deploy, and once it has converged it writes and deletes nothing.
+
+What it does (`deploy/identity/server.ts` backfillPlayGameData and reopenFinishedPlayPurge):
+- It reads `<CSS_URL>provisional-play-admission.json` (retried after 2, 5 and 15 s). For each entry it opens the owner's original anchor with this server's `TOKEN_SIGNING_KEY` and issuer (`BASE_URL`) and requires it to name the id it is filed under. That gives the guest deadline that provisioning checks too.
+- It takes each owner whose guest deadline passed over an hour ago (clock skew with the css-gate) and that this process does not hold (an account in memory, an unfinished purge, a purge in flight, a deletion answered `503`) through the existing purge, one owner at a time.
+- Under the owner's lock, from the purge's own listing, it marks the owner's tombstone again (`provisionalPlayPurgePending`, a conditional write on the ETag it read). It does so only when all of these hold: the pod holds game data and nothing besides the pod root, `auth-methods.jsonld`, `hallowmarch/` and `hallowmarch/checkpoints/`; the record is an unmarked tombstone dated no earlier than the UTC day of the guest deadline; and the store advertises its native delete (`OPTIONS`, asked once a run). The purge then deletes the game data with the existing native conditional delete, deletes the two emptied containers, lists the pod again (the closure fence) and clears the mark. It adds no delete code of its own.
+- A tombstone marked already (an unfinished purge the startup scan missed) is finished as the janitor would finish it.
+
+Pods it touches: Play pods (`u-try-play-<32 hex>`) in the admission ledger, past their guest deadline by over an hour, whose record is a finished purge's tombstone and whose pod holds nothing but game data. On those it deletes the saves, the budget and their two containers, and it writes only the tombstone's mark, set and then cleared, each time on its ETag. It never touches `auth-methods.jsonld` beyond that mark, the pod root, or the ledger. It never touches a pod outside the ledger, an entry that does not open with this server's key and issuer, a claimed or live owner, an owner before its deadline plus an hour, or an owner whose deletion is waiting for its guest's retry. It also leaves a pod with no record (it never creates one: `orphan`), a pod holding anything else, such as the relay's `profile/card` or `context-graphs/` (`outside`), and a tombstone dated before the deadline's day, which is a guest's own deletion (`deletion`). Two kinds of pod are still included when they hold nothing but game data, because their tombstones look exactly like a purge's: a guest's own deletion made on the day of its deadline, and an owner that claimed the pod with a credential and later deleted its account. `PROVISIONAL-PLAY.md` and `AUTH-ARCHITECTURE.md` say so.
+
+Safeguards:
+- **It stops early.** The run stops at the first purge it took up that does not finish (`ERROR: identity_play_backfill_halted <id> <message>; <k> owner(s) not re-opened`), and where the store does not advertise the native delete (`ERROR: identity_play_backfill_no_native_delete`). A failure that repeats therefore leaves one owner marked for the janitor's retries, not every owner. The next start goes on with the rest.
+- **A re-opened purge stays limited to game data.** While a purge the backfill re-opened is unfinished, every later pass (the janitor's retries included) deletes nothing if the pod holds anything outside the game data. The purge stays marked and queued, and this is logged once per process (`kept the purge of <id> unfinished, deleting nothing`). The set of such owners is held in memory, so after a restart the startup scan finds the mark and the purge is an ordinary one.
+- **A mark that the pod applied but answered with an error** (the writer settles the record) counts as written, and the purge goes on. Any other failure is logged as `Play game-data backfill could not check <id>: <message>`, and the next start tries again.
+
+To verify from the identity logs:
+- At each start: `Janitor: Play game-data backfill: <n> owner(s) in the admission ledger (<u> that do not open, with this server's key and issuer, to the owner they are filed under), <d> past their guest deadline by over 1 h; checking <c>`.
+- For each pod it re-opens: `Janitor: re-opened the finished purge of <id> (its tombstone of <day>, guest deadline <ISO>): its pod still holds <k> game document(s): <paths>`, then the existing `Janitor: finished the purge of <id>`.
+- For each pod left holding game data: `Janitor: Play game-data backfill left <id> as it is (<reason>): its pod holds <k> game document(s)`. The reason is `orphan`, `outside: <paths>`, `deletion: ...`, `no-native-delete`, `changed` (the record changed under the mark) or `not-due`.
+- At the end: `Janitor: Play game-data backfill done in <ms> ms: <c> checked: <r> re-opened (<f> finished, <x> unfinished, left to the janitor), <l> left holding game data, <z> holding none, <v> live, <s> closed elsewhere, <i> in flight, <e> could not be checked`. The categories add up to the number checked; a stopped run adds `; <k> not checked (stopped)`.
+- What to expect: every re-opened id has a later `finished the purge of <id>` line, no backfill `ERROR` line appears, and the next deploy's summary says `0 re-opened`. Before deploying, check that the logs since 2026-10-30 hold at least one `finished the purge of` line for a guest who had saved and no `unfinished` line naming a native delete.
+- The cost after convergence: one ledger read, one listing of each due owner's pod that the process does not hold, and one record read for each pod left with game data and a record.
+
+Also changed: the ledger read is shared by provisioning and the backfill (`readAdmissionLedger`, `isAdmissionLedger` in `provisional-play-admission.ts`). The cleanup's `close()` receives the listing it checked (`provisional-play-cleanup.ts`, which also exports `playGameDataResidue` and `advertisesNativeDelete`). `purgePlayOwner` returns what the purge came to; the janitor ignores it.
+
+Tests:
+- **`tests/provisional-play-cleanup.test.ts`.** `close()` receives the checked listing, children before their containers, which is exactly what the purge then deletes; a `kept` or `closed` answer sends nothing but listings. `playGameDataResidue` classifies a leftover pod, the relay's files, look-alike paths (upper-case or short digests, other containers, an encoded record) and another pod's URL.
+- **`tests/provisional-play-enrollment.test.ts`** runs the production `purgePlayOwner`, `reopenFinishedPlayPurge` and the writer, sliced from `server.ts`, over a pod that answers as the store does. It covers: the re-open and purge, with the mark on the ETag read; the deadline and its one-hour margin, before which the record is not even read; an operator re-opening the id during the mark (nothing written or deleted) and a tombstone edit read again; an orphan with no record (nothing written, `If-None-Match: *` included); a re-opened purge whose native delete fails, finished at the janitor's next pass; a mark applied but answered `500`; the deletion date check; a tombstone marked already; the outside check at later passes, logged once; a pod holding more, a live owner, and a store without the native delete (asked once a run).
+- **`tests/live-record-writes-routes.test.ts`**, last in the file, each test putting the stand-in's ledger back:
+  - P17: nine ledger owners. Only the leftover pod is re-opened and purged. Every other owner gets no `PUT`, `DELETE`, `HEAD` or `OPTIONS`. A restart lists only the due owners it does not hold, reads only two records, re-opens nothing and writes nothing. The primary instance, whose janitor is off, never reads the ledger.
+  - P18: a store without the native delete.
+  - P19: the closure fence on a re-opened purge.
+  - P20: a deploy overlap, where the replaced instance takes the re-marked purge up through an on-demand load.
+  - P21: the circuit breaker (a native delete answered `400`: only the first owner is marked, the others are not even listed).
+  - The stand-in records which instance sent each request for a pod's other documents, and can answer one with a fixed status.
+
+Each guard was reverted alone in a scratch copy, and a test failed for each one:
+- the deadline check in the purge (the enrollment margin test) and in the backfill's choice of owners (P17);
+- the one-hour margin set to 0 (both);
+- the tombstone check, and the pass-through for a tombstone marked already;
+- the outside check (P17 too), and the same check at later passes;
+- the orphan refusal on the listing (P17 too) and on the record read;
+- the deletion date check (P17 too);
+- the mark sent unconditionally instead of on its ETag (enrollment, P17, P20);
+- the native delete check (enrollment, P17, P18);
+- the backfill started outside the `JANITOR_INTERVAL_MS > 0` block (P17: the primary read the ledger);
+- the check that a ledger entry names the owner it is filed under (P17);
+- the circuit breaker (P19, P21);
+- a mark the pod applied but answered `500` taken as a failure.
+
+The new tests fail on the code before this change. `npm run build --workspace @interego/identity` and the identity tests pass: 445 tests, then 91 in `live-record-writes-routes.test.ts`.
+
 ## 2026-11-06 — Clarify the shared xAPI performance verb
 
 The Foxxi and AGP xAPI Profiles explain how the object activity type identifies the work described by `performed` and how a projected descriptor supplies that type. The verb IRI and template rules stay the same.

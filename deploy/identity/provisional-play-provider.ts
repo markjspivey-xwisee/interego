@@ -1,7 +1,7 @@
 import * as crypto from 'node:crypto';
 import { ProvisionalPlay, PlayError, parsePlayClients, type PlayClaims } from './provisional-play.js';
 import { provisionPlayAnchor, type PlayAnchorDocument } from './provisional-play-store.js';
-import { reservePlayAdmission, type PlayAdmissionLedger } from './provisional-play-admission.js';
+import { readAdmissionLedger, reservePlayAdmission } from './provisional-play-admission.js';
 import type { HostedTermsPolicy } from './hosted-terms.js';
 
 export interface PlayProviderOptions {
@@ -94,12 +94,7 @@ export function createProvisionalPlayProvider(options: PlayProviderOptions): Pro
             return true;
           },
           reserveAdmission: (owner, anchor, limit) => reservePlayAdmission({
-            read: async () => {
-              const response = await request(new URL('provisional-play-admission.json', options.cssUrl).href);
-              if (response.status === 404) return null;
-              if (!response.ok || !response.headers.get('etag')) throw new Error('Provisional admission unavailable');
-              return { ledger: await response.json() as PlayAdmissionLedger, etag: response.headers.get('etag')! };
-            },
+            read: () => readAdmissionLedger(request, options.cssUrl),
             write: async (ledger, etag) => {
               const response = await request(new URL('provisional-play-admission.json', options.cssUrl).href, {
                 method: 'PUT', headers: { 'Content-Type': 'application/json',

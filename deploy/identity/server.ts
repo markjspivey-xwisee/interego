@@ -78,7 +78,8 @@ import { createRecordWatchers } from './record-watch.js';
 import { createProvisionalPlayProvider } from './provisional-play-provider.js';
 import { parsePlayClients } from './provisional-play.js';
 import { mountProvisionalPlay } from './provisional-play-routes.js';
-import { purgeProvisionalPlayPod } from './provisional-play-cleanup.js';
+import { advertisesNativeDelete, playGameDataResidue, purgeProvisionalPlayPod, type PlayGameDataResidue } from './provisional-play-cleanup.js';
+import { isAdmissionLedger, readAdmissionLedger } from './provisional-play-admission.js';
 import { hostedBetaNotice, hostedPrivacyUrl, hostedTermsPolicy, readTermsAcceptance, type TermsAcceptance } from './hosted-terms.js';
 import {
   SurfaceAgentRestores,
@@ -627,7 +628,8 @@ interface AuthMethods {
    * resource of the pod is deleted (purgePlayOwner), the guest's game data included (by the store's
    * native delete), but the documents outside it that the pod refuses to delete with 409 (native
    * heads nothing expects, which stay): a purge that fails part-way is retried from it, at the next
-   * pass and after a restart (loadAccountFromPod). A deletion's tombstone has none.
+   * pass and after a restart (loadAccountFromPod). A deletion's tombstone has none. The game-data
+   * backfill sets it again on a finished purge's tombstone (reopenFinishedPlayPurge).
    */
   provisionalPlayPurgePending?: true;
 }
@@ -767,6 +769,14 @@ const deletedUserIds = new Set<string>();
 // whose deletion this process answered 503, which the janitor took up after its guest deadline, but
 // whose agent registry DELETE failed then (unconfirmedPlayDeletions): its next pass sends it again.
 const unfinishedPlayPurges = new Set<string>();
+
+// Play owners whose finished purge the game-data backfill marked again (reopenFinishedPlayPurge), while
+// that purge is unfinished. Every pass of such a purge, the janitor's retries included, deletes nothing
+// while the pod holds anything but the game data, the record, the root and the game data's two
+// containers (the backfill re-opened it for its game data alone), and leaves it marked and queued,
+// logging that once (`residueLogged`). Process-local: after a restart the startup scan finds the mark,
+// and the purge is an ordinary one.
+const reopenedByBackfill = new Map<string, { residueLogged: boolean }>();
 
 // Play owners whose purge (purgePlayOwner) is waiting for the owner's lock or running. A purge
 // puts its owner in unfinishedPlayPurges before it sends its DELETEs, so every pass that started
@@ -6883,6 +6893,9 @@ async function deleteUserCompletely(
  * the other instance's provisioning does not wait for this server's lock, so deleting the pod's
  * resources then could delete those of an owner provisioned again meanwhile. A purge marks only a
  * tombstone it writes over an anchor whose deadline has passed, which provisioning refuses to restore.
+ * The game-data backfill (`reopen`, backfillPlayGameData) also marks a tombstone: a finished purge's,
+ * again, only where the admission ledger, which provisioning checks too, proves the guest deadline
+ * passed, and only to delete the game data (reopenFinishedPlayPurge).
  * One exception: a deletion this process answered 503 (unconfirmedPlayDeletions), which the sweep
  * passes over before its guest deadline (the guest's retry finishes it), and which close() keeps if
  * a purge decided before the 503 reaches it all the same. After that deadline, close() finishes
@@ -6894,21 +6907,34 @@ async function deleteUserCompletely(
  * At most one purge of an owner is queued on its lock or running (playPurgesInFlight): one asked
  * for while another is returns at once, and the janitor's first pass after that other has returned
  * takes the owner up again if its purge is still unfinished.
+ *
+ * Returns what the purge came to, which only the game-data backfill reads.
  */
-async function purgePlayOwner(userId: string): Promise<void> {
+async function purgePlayOwner(userId: string, reopen?: PlayReopen): Promise<PlayPurgeOutcome> {
   if (playPurgesInFlight.has(userId)) {
     log(`Janitor: not queuing another purge of ${userId}: the one an earlier pass started is still waiting for its lock or running`);
-    return;
+    return 'in-flight';
   }
   playPurgesInFlight.add(userId);
   let closed = false;
   let finished = false;
   // Why the agent registry DELETE failed, of a deletion answered 503 that close() took up (deleteUserCompletely).
   let registryLeft: string | undefined;
+  // Why close() left the owner as it is: the backfill's reason (reopenFinishedPlayPurge), or, for a
+  // purge it re-opened, what its pod holds besides the game data (reopenedByBackfill).
+  let leftBecause: string | undefined;
+  let gameData = 0;
+  let outcome: PlayPurgeOutcome;
   try {
-    await withIdentityPodMutex(userId, async () => {
+    outcome = await withIdentityPodMutex(userId, async () => {
       const purge = await purgeProvisionalPlayPod({ userId, cssUrl: CSS_URL,
-        close: async () => {
+        close: async listed => {
+          if (reopen || reopenedByBackfill.has(userId)) {
+            const residue = playGameDataResidue(new URL(`${userId}/`, CSS_URL), listed);
+            gameData = residue.gameData.length;
+            leftBecause = reopen ? await reopenFinishedPlayPurge(userId, residue, reopen) : playResidueOutside(residue);
+            if (leftBecause !== undefined) return 'kept';
+          }
           const r = await deleteUserCompletely(userId, { lockHeld: true, stillDeletable: playOwnerPurgeable, playPurge: true });
           if (r.kept) return 'kept';
           closed = true;
@@ -6918,8 +6944,10 @@ async function purgePlayOwner(userId: string): Promise<void> {
         },
       });
       if (purge.outcome === 'purged') await finishPlayPurge(userId);
-      // The owner, forgotten when its account closed, is walked only from here at the next pass.
-      if (registryLeft === undefined) unfinishedPlayPurges.delete(userId);
+      // The owner, forgotten when its account closed, is walked only from here at the next pass; so
+      // is a purge the backfill re-opened that its pod's other resources keep unfinished.
+      const held = purge.outcome === 'kept' && !reopen && leftBecause !== undefined;
+      if (registryLeft === undefined && !held) unfinishedPlayPurges.delete(userId);
       else unfinishedPlayPurges.add(userId);
       // Logged once: the mark is cleared, so neither a later pass nor a restart comes back to it. A
       // finished purge was logged only with what it kept, which every guest who had saved had.
@@ -6929,22 +6957,34 @@ async function purgePlayOwner(userId: string): Promise<void> {
           : `Janitor: finished the purge of ${userId}, keeping ${purge.retained.length} resource(s) outside its game data that its pod's store refused to delete (409: a native head): `
             + purge.retained.map(url => (url.startsWith(pod) ? url.slice(pod.length) : url)).join(', '));
       }
-      if (purge.outcome === 'kept') log(awaitsGuestRetry(userId)
+      if (purge.outcome === 'kept' && leftBecause === undefined) log(awaitsGuestRetry(userId)
         ? `Janitor: left ${userId} to its guest's retry: its deletion was answered 503 (not confirmed), and its guest deadline has not passed`
         : `Janitor: kept ${userId}: it holds a credential now, or its anchor has not expired`);
+      else if (held) {
+        const entry = reopenedByBackfill.get(userId)!;
+        if (!entry.residueLogged) log(`Janitor: kept the purge of ${userId} unfinished, deleting nothing: the Play game-data backfill re-opened it for its game data alone, and its pod holds more now (${leftBecause}); it stays marked for an operator`);
+        entry.residueLogged = true;
+      } else if (purge.outcome === 'kept' && leftBecause !== 'none' && leftBecause !== 'live') {
+        log(`Janitor: Play game-data backfill left ${userId} as it is (${leftBecause}): its pod holds ${gameData} game document(s)`);
+      }
       if (purge.outcome === 'closed') log(!finished
         ? `Janitor: forgot ${userId}: its record is a tombstone no purge left unfinished (a deletion's); its pod is left as it is`
         : registryLeft === undefined
           ? `Janitor: finished the deletion of ${userId} answered 503 (not confirmed) and not retried before its guest deadline: its agent registry deleted`
           : `Janitor: the deletion of ${userId} answered 503 (not confirmed) and not retried before its guest deadline is unfinished: its agent registry's DELETE failed (${registryLeft}); tried again at the next pass`);
+      return purge.outcome === 'kept' ? `kept:${leftBecause ?? (awaitsGuestRetry(userId) ? 'guest-retry' : 'account')}` as const : purge.outcome;
     });
   } catch (err) {
     log(closed || unfinishedPlayPurges.has(userId)
       ? `Janitor: purge of ${userId} unfinished, its account closed; tried again at the next pass: ${(err as Error).message}`
+      : reopen ? `Janitor: Play game-data backfill could not check ${userId}: ${(err as Error).message}`
       : `Janitor: provisional cleanup kept ${userId}: ${(err as Error).message}`);
+    outcome = `error:${(err as Error).message}`;
   } finally {
     playPurgesInFlight.delete(userId);
+    if (!unfinishedPlayPurges.has(userId)) reopenedByBackfill.delete(userId);
   }
+  return outcome;
 }
 
 /**
@@ -6963,6 +7003,191 @@ async function finishPlayPurge(userId: string): Promise<void> {
   }, { tombstone: 'replace', absent: 'pass' });
   authMethodsCache.delete(userId);
   removeFromIndexes(userId);
+}
+
+// ── Play game-data backfill ─────────────────────────────────
+//
+// A Play purge that finished before it used the store's native delete deleted everything of the pod
+// but the guest's game data (its saves and write budget, native heads no plain DELETE removes) and
+// the containers that held them, and cleared its tombstone's mark: neither the janitor nor a restart
+// comes back to such a tombstone, so the game data stayed. So does a save the
+// css-gate let through that lands after a purge's last listing (provisional-play-cleanup.ts). Once a
+// process, one janitor interval after it starts, backfillPlayGameData takes each owner the admission
+// ledger proves past its guest deadline through the purge again, one at a time: the purge's own
+// listing, under the owner's lock, decides whether its tombstone is marked again
+// (reopenFinishedPlayPurge), and the purge's own deletion, closure fence and finishPlayPurge then
+// delete the game data and its two containers and clear the mark. Nothing new deletes anything.
+
+/** What a purge of a Play owner came to (purgePlayOwner), which the game-data backfill tallies. */
+type PlayPurgeOutcome = 'purged' | 'closed' | 'in-flight' | `kept:${string}` | `error:${string}`;
+/**
+ * One owner's turn in the game-data backfill: its guest deadline (ms) from the admission ledger, and
+ * the run's answer from the store on its native delete (asked once a run). `purging`: the purge went
+ * on to delete (a mark written, found, or perhaps on the pod after a write nothing settled), so the
+ * run stops unless it finishes.
+ */
+type PlayReopen = { deadline: number; run: { nativeDelete?: boolean }; purging?: boolean };
+
+// How long after an owner's guest deadline the backfill waits before it marks its tombstone again:
+// clock skew with the css-gate, which refuses a guest's writes from that deadline on.
+const PLAY_BACKFILL_MARGIN_MS = 3_600_000;
+const PLAY_OWNER_ID = /^u-try-play-[a-f0-9]{32}$/;
+
+/** A request of a Play pod made under its owner's lock, bounded as provisional-play-cleanup.ts bounds its own. */
+const playPodRequest = (url: string, init: RequestInit = {}) =>
+  fetch(url, { ...init, redirect: 'error', signal: AbortSignal.timeout(POD_RECORD_TIMEOUT_MS) });
+
+/**
+ * Why the backfill does not mark the record `m` again, the UTC day of its guest deadline given:
+ * 'orphan' (no record: none is ever created), 'live' (no tombstone: a claimed or provisioned owner
+ * keeps its game data), 'marked' (an unfinished purge already), or a deletion's tombstone, dated
+ * before that day: a guest's own deletion needs a guest token, which its deadline ends, while a
+ * purge writes its tombstone only once that deadline has passed.
+ */
+function playReopenRefusal(m: Readonly<AuthMethods> | null, deadlineDay: string): string | undefined {
+  if (!m) return 'orphan';
+  if (!isTombstone(m)) return 'live';
+  if (m.provisionalPlayPurgePending === true) return 'marked';
+  if (m.deletedAt! < deadlineDay) return `deletion: its tombstone of ${m.deletedAt} is older than its guest deadline of ${deadlineDay}`;
+  return undefined;
+}
+
+/** What a Play pod holds besides its game data, as a reason to leave it (its first five paths), or undefined for nothing. */
+function playResidueOutside(residue: PlayGameDataResidue): string | undefined {
+  if (residue.outside.length === 0) return undefined;
+  return `outside: ${residue.outside.slice(0, 5).join(', ')}${residue.outside.length > 5 ? `, and ${residue.outside.length - 5} more` : ''}`;
+}
+
+/**
+ * The backfill's decision on one owner, under its lock, from the pod as its purge listed it
+ * (`residue`, purgePlayOwner): undefined to let the purge close it (deleteUserCompletely, which finds
+ * the marked tombstone: 'purge'), or why it is left as it is. It marks a tombstone again only where
+ * the pod holds game data and nothing else but its root, its record and the game data's two
+ * containers; the guest deadline passed over PLAY_BACKFILL_MARGIN_MS ago and no deletion answered 503
+ * here waits for its guest; the record is a finished purge's tombstone; and the store advertises its
+ * native delete. The mark goes through the writer, on the ETag of the record it reads and decides on.
+ * A tombstone marked already (an unfinished purge the startup scan did not see) goes on as the
+ * janitor's next pass would.
+ */
+async function reopenFinishedPlayPurge(userId: string, residue: PlayGameDataResidue, reopen: PlayReopen): Promise<string | undefined> {
+  assertLockHeld(userId);
+  if (residue.gameData.length === 0) return 'none';
+  if (!residue.record) return 'orphan';
+  if (reopen.deadline > Date.now() - PLAY_BACKFILL_MARGIN_MS || awaitsGuestRetry(userId) || unconfirmedPlayDeletions.has(userId)) return 'not-due';
+  const deadlineDay = new Date(reopen.deadline).toISOString().slice(0, 10);
+  const live = (await readLive(userId)).methods;
+  const refusal = playReopenRefusal(live, deadlineDay);
+  if (refusal === 'marked') { reopen.purging = true; return undefined; }
+  if (refusal !== undefined) return refusal;
+  const outside = playResidueOutside(residue);
+  if (outside !== undefined) return outside;
+  reopen.run.nativeDelete ??= await advertisesNativeDelete(playPodRequest, `${CSS_URL}${userId}/${residue.gameData[0]}`);
+  if (!reopen.run.nativeDelete) return 'no-native-delete';
+  reopen.purging = true;
+  let keptLive = false;
+  let marked: boolean;
+  try {
+    const r = await applyUpdate(userId, 'play-purge-reopened', (draft, now) => {
+      const changed = playReopenRefusal(now, deadlineDay);
+      keptLive = changed === 'live';
+      if (changed !== undefined) return NoWrite(changed === 'marked' ? 'marked' : 'changed');
+      draft.provisionalPlayPurgePending = true;
+      return Write;
+    }, { tombstone: 'replace', absent: 'pass' });
+    if (r.written === false && r.reason === 'changed') { reopen.purging = false; return 'changed'; }
+    marked = r.written;
+  } catch (err) {
+    // A mark the pod applied but did not confirm (a 5xx), which the writer settled: the purge goes on.
+    // Anything else is thrown; one nothing could settle may be on the pod, and keeps `purging`.
+    const after = err instanceof AuthMethodsWriteError ? err.podRecord as AuthMethods | null | undefined : null;
+    if (!after || !isTombstone(after) || after.provisionalPlayPurgePending !== true) {
+      if (after !== undefined) reopen.purging = false;
+      keptLive = !!after && !isTombstone(after);
+      throw err;
+    }
+    marked = true;
+  } finally {
+    // The writer installed what it read or wrote: a closed account's is dropped, as finishPlayPurge drops it.
+    if (!keptLive) { authMethodsCache.delete(userId); removeFromIndexes(userId); }
+  }
+  if (marked) {
+    reopenedByBackfill.set(userId, { residueLogged: false });
+    log(`Janitor: re-opened the finished purge of ${userId} (its tombstone of ${live!.deletedAt}, guest deadline ${new Date(reopen.deadline).toISOString()}): its pod still holds ${residue.gameData.length} game document(s): ${residue.gameData.join(', ')}`);
+  }
+  return undefined;
+}
+
+/**
+ * Each Play owner's guest deadline (ms) in the admission ledger, which holds the original anchor of
+ * every owner ever provisioned and is never pruned: the anchor provisioning checks again before it
+ * provisions an owner (provisional-play-admission.ts), opened with this server's key and issuer, its
+ * expiry allowed. An entry that does not open, or opens to another owner than the one it is filed
+ * under, is `unreadable`, never guessed at. No ledger (404) is an empty one; a ledger that cannot be
+ * read, or is not a version 1 ledger, throws.
+ */
+async function playAdmissionDeadlines(): Promise<{ total: number; unreadable: number; deadlines: Map<string, number> }> {
+  const read = await readAdmissionLedger(url => fetch(url, { redirect: 'error', signal: AbortSignal.timeout(POD_READ_TIMEOUT_MS) }), CSS_URL);
+  const deadlines = new Map<string, number>();
+  if (read === null) return { total: 0, unreadable: 0, deadlines };
+  if (!isAdmissionLedger(read.ledger)) throw new Error('not a version 1 admission ledger');
+  const entries = Object.entries(read.ledger.owners);
+  // No more than the most admissions a deployment allows (provisional-play.ts maxPods).
+  for (const [id, attestation] of entries.slice(0, 1000)) {
+    try {
+      const claims = provisionalPlay.open(attestation, true);
+      if (claims.userId === id && PLAY_OWNER_ID.test(id)) deadlines.set(id, claims.expiresAt * 1000);
+    } catch { /* unreadable */ }
+  }
+  return { total: entries.length, unreadable: entries.length - deadlines.size, deadlines };
+}
+
+/**
+ * The Play game-data backfill (see above), after the startup scan: each owner in the admission ledger
+ * whose guest deadline passed over PLAY_BACKFILL_MARGIN_MS ago and that this process does not hold
+ * (its account, an unfinished purge, a purge in flight, a deletion answered 503) goes through
+ * purgePlayOwner with `reopen`, awaited one at a time. The run stops re-opening at the first purge it
+ * took up that does not finish, and at a store that does not advertise its native delete, so a
+ * failure that repeats leaves one owner marked for the janitor's retries, not every one. A start after
+ * it has converged lists the pod of each such owner once, and writes and deletes nothing.
+ */
+async function backfillPlayGameData(): Promise<void> {
+  const started = Date.now();
+  let ledger: Awaited<ReturnType<typeof playAdmissionDeadlines>>;
+  for (const wait of [2_000, 5_000, 15_000, 0]) {
+    try { ledger = await playAdmissionDeadlines(); break; } catch (err) {
+      if (wait === 0) { log(`ERROR: identity_play_backfill_ledger_unreadable: ${(err as Error).message}; nothing re-opened until the next start`); return; }
+      await new Promise(resolve => setTimeout(resolve, wait));
+    }
+  }
+  const now = Date.now();
+  const due = [...ledger!.deadlines].filter(([, deadline]) => deadline <= now - PLAY_BACKFILL_MARGIN_MS);
+  const candidates = due.filter(([id]) => !identities.has(id) && !unfinishedPlayPurges.has(id) && !playPurgesInFlight.has(id) && !unconfirmedPlayDeletions.has(id));
+  log(`Janitor: Play game-data backfill: ${ledger!.total} owner(s) in the admission ledger (${ledger!.unreadable} that do not open, with this server's key and issuer, to the owner they are filed under), ${due.length} past their guest deadline by over 1 h; checking ${candidates.length}`);
+  const run: PlayReopen['run'] = {};
+  const tally = { finished: 0, unfinished: 0, left: 0, none: 0, live: 0, closed: 0, inFlight: 0, unchecked: 0 };
+  let checked = 0;
+  for (const [id, deadline] of candidates) {
+    const reopen: PlayReopen = { deadline, run };
+    const outcome = await purgePlayOwner(id, reopen);
+    checked++;
+    const kept = outcome.startsWith('kept:') ? outcome.slice('kept:'.length) : undefined;
+    if (reopen.purging) tally[outcome === 'purged' ? 'finished' : 'unfinished']++;
+    else if (kept === 'none') tally.none++;
+    else if (kept === 'live' || kept === 'account' || kept === 'guest-retry') tally.live++;
+    else if (kept !== undefined) tally.left++;
+    else if (outcome === 'closed') tally.closed++;
+    else if (outcome === 'in-flight') tally.inFlight++;
+    else tally.unchecked++;
+    if (reopen.purging && outcome !== 'purged') {
+      log(`ERROR: identity_play_backfill_halted ${id} ${outcome.startsWith('error:') ? outcome.slice('error:'.length) : `its purge came to ${outcome}`}; ${candidates.length - checked} owner(s) not re-opened`);
+      break;
+    }
+    if (run.nativeDelete === false) {
+      log(`ERROR: identity_play_backfill_no_native_delete: the store at ${CSS_URL} does not advertise its native delete (Interego-Native-Delete: 1 on OPTIONS); nothing re-opened, ${candidates.length - checked} owner(s) not checked`);
+      break;
+    }
+  }
+  log(`Janitor: Play game-data backfill done in ${Date.now() - started} ms: ${checked} checked: ${tally.finished + tally.unfinished} re-opened (${tally.finished} finished, ${tally.unfinished} unfinished, left to the janitor), ${tally.left} left holding game data, ${tally.none} holding none, ${tally.live} live, ${tally.closed} closed elsewhere, ${tally.inFlight} in flight, ${tally.unchecked} could not be checked${checked < candidates.length ? `; ${candidates.length - checked} not checked (stopped)` : ''}`);
 }
 
 app.post('/users/me/delete', tokenLimiter, async (req, res) => {
@@ -8032,6 +8257,12 @@ app.listen(PORT, () => {
       }
     }, JANITOR_INTERVAL_MS).unref();
     log(`Janitor: scanning every ${JANITOR_INTERVAL_MS}ms; test grace ${TEST_USER_GRACE_MS}ms (pattern ${TEST_AGENT_PATTERN}); try-it TTL ${TRY_USER_TTL_MS}ms`);
+    // The Play game-data backfill, once a process, after the startup scan: one interval after the
+    // start, so that the instance a deploy replaces has usually stopped.
+    setTimeout(() => {
+      void startInitialIndexRebuild().then(backfillPlayGameData)
+        .catch(err => log(`ERROR: identity_play_backfill_failed: ${(err as Error).message}`));
+    }, JANITOR_INTERVAL_MS).unref();
   }
 });
 

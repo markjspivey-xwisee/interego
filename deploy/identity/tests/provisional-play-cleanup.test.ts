@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import * as assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { deleteGameData, isPlayGameData, purgeProvisionalPlayPod } from '../provisional-play-cleanup.js';
+import { deleteGameData, isPlayGameData, playGameDataResidue, purgeProvisionalPlayPod } from '../provisional-play-cleanup.js';
 const userId = `u-try-play-${'a'.repeat(32)}`;
 const cssUrl = 'https://css.example/';
 const root = `${cssUrl}${userId}/`;
@@ -81,7 +81,7 @@ function fakePod(documents: Record<string, 'native' | 'plain'>, options: { adver
     /** The requests that are not listings (GETs), in order. */
     changes: () => events.filter(e => !e.startsWith('GET ')) };
 }
-const purge = (pod: ReturnType<typeof fakePod>, close: () => Promise<'purge' | 'closed' | 'kept'> = async () => 'purge') =>
+const purge = (pod: ReturnType<typeof fakePod>, close: (listed: readonly string[]) => Promise<'purge' | 'closed' | 'kept'> = async () => 'purge') =>
   purgeProvisionalPlayPod({ userId, cssUrl, close, fetcher: pod.fetcher });
 
 test('cleanup closes the account once the tree is checked, then deletes the other resources, the game data by native delete and the containers after their children; the record and its container stay', async () => {
@@ -242,6 +242,48 @@ test('closure fence: game data a write authorized before the tombstone puts back
   const relay = fakePod({ 'auth-methods.jsonld': 'plain', agents: 'plain', [budget]: 'native' });
   relay.hooks.after = (label, status) => { if (label === `NATIVE-DELETE ${budget}` && status === 205) relay.write('agents', 'plain'); };
   assert.equal((await purge(relay)).outcome, 'purged');
+});
+
+test('close() is given the pod\'s tree as checked, children before their containers: the URLs the purge then deletes, but the root and the record; a close that keeps the account deletes nothing', async () => {
+  const documents = { 'auth-methods.jsonld': 'plain', agents: 'plain', [save]: 'native', [budget]: 'native' } as const;
+  const pod = fakePod(documents);
+  let given: readonly string[] = [];
+  assert.equal((await purge(pod, async listed => { given = listed; return 'purge'; })).outcome, 'purged');
+  const paths = given.map(url => url.slice(root.length));
+  assert.deepEqual(paths, ['agents', 'auth-methods.jsonld', save, 'hallowmarch/checkpoints/', 'hallowmarch/', budget, '']);
+  assert.ok(given.every(url => url.startsWith(root)));
+  assert.deepEqual(pod.changes().filter(e => /^(NATIVE-)?DELETE /.test(e)).map(e => e.split(' ')[1]),
+    paths.filter(path => path !== '' && path !== 'auth-methods.jsonld'), 'the deletions are those URLs, in that order');
+  for (const answer of ['kept', 'closed'] as const) {
+    const other = fakePod(documents);
+    let seen: readonly string[] = [];
+    assert.equal((await purge(other, async listed => { seen = listed; return answer; })).outcome, answer);
+    assert.deepEqual(seen.map(url => url.slice(root.length)), paths, answer);
+    assert.deepEqual(other.changes(), [], `${answer}: nothing but the listing`);
+  }
+});
+
+test('playGameDataResidue: what a listing holds besides the root, the record and the game data\'s two containers', () => {
+  const at = (...paths: string[]) => paths.map(path => `${root}${path}`);
+  const second = `hallowmarch/checkpoints/${sha('second')}.json`;
+  // What a purge finished before the native delete left: the root, the record (its tombstone), the
+  // budget, two saves and the containers that hold them.
+  const leftover = at('', 'auth-methods.jsonld', budget, 'hallowmarch/', 'hallowmarch/checkpoints/', save, second);
+  assert.deepEqual(playGameDataResidue(new URL(root), leftover), { gameData: [budget, save, second], outside: [], record: true });
+  // A guest's deletion keeps the relay's bootstrap writes beside them.
+  assert.deepEqual(playGameDataResidue(new URL(root), [...leftover, ...at('profile/card', 'profile/', 'context-graphs/')]),
+    { gameData: [budget, save, second], outside: ['profile/card', 'profile/', 'context-graphs/'], record: true });
+  // A save's name in upper case, with a short digest or under another container, a budget in another
+  // container, another container of the game, and another spelling of the record are no game data,
+  // nor the record.
+  const digest = sha('save');
+  for (const path of [`hallowmarch/checkpoints/${digest.toUpperCase()}.json`, `hallowmarch/checkpoints/${digest.slice(1)}.json`,
+    `saves/hallowmarch/checkpoints/${digest}.json`, 'saves/play-budget.json', 'hallowmarch/notes/', 'auth%2Dmethods.jsonld']) {
+    assert.deepEqual(playGameDataResidue(new URL(root), at(path)), { gameData: [], outside: [path], record: false }, path);
+  }
+  assert.equal(playGameDataResidue(new URL(root), leftover.filter(url => url !== anchor)).record, false, 'a listing without the record');
+  const elsewhere = `${cssUrl}u-try-play-${'b'.repeat(32)}/${budget}`;
+  assert.deepEqual(playGameDataResidue(new URL(root), [elsewhere]), { gameData: [], outside: [elsewhere], record: false }, 'another pod\'s, whole');
 });
 
 test('cleanup discovers foreign references and refuses all deletes', async () => {
