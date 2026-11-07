@@ -28,4 +28,4 @@ jobs:
         with:
           node-version: '22'
       - name: Test context preparation and fictional response verification without a live pod
-        run: node --test applications/health-workbench/test/local-context.test.mjs applications/health-workbench/test/fictional-local-check.test.mjs
+        run: node --test applications/health-workbench/test/local-context.test.mjs applications/health-workbench/test/fictional-local-check.test.mjs applications/health-workbench/test/import-manifest.test.mjs
