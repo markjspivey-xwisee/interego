@@ -276,6 +276,9 @@ test('arrays are copied densely once: holes, getters and inexact lengths fail in
     () => { const value = packet(); value.entries[0].sourceIds.length = 2; return prepare(value); },
     () => { const value = packet(); value.entries[0].conceptIds = [...value.entries[0].conceptIds, , ]; return prepare(value); }, // eslint-disable-line no-sparse-arrays
     () => { const value = packet(); value.citations.length += 1; return prepare(value); },
+    () => { const value = packet(); value.entries[0].sourceIds = Array(1); return prepare(value); },
+    () => { const value = packet(); value.entries[0].dates.length += 1; return prepare(value); },
+    () => { const value = packet(); value.concepts[0].aliases = ['Fictional alias', , ]; return prepare(value); }, // eslint-disable-line no-sparse-arrays
     () => { const value = packet(); value.limits = [, value.limits[0]]; return prepare(value); }, // eslint-disable-line no-sparse-arrays
     () => { const value = packet(); Object.defineProperty(value.entries[0].sourceIds, 0, getter(id('source-0'))); return prepare(value); },
     () => { const selected = [id('entry-0')]; Object.defineProperty(selected, 0, getter(id('entry-0'))); return prepare(packet(), selected); },
