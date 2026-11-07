@@ -197,7 +197,7 @@ describe('private SCORM Cloud course connections', () => {
     }) as typeof fetch);
     const charlie = f.makeSession('charlie');
     const sessions = [f.alice, f.bob, charlie];
-    const connected = [];
+    const connected: Row[] = [];
     for (const session of sessions) connected.push(await f.connect(basic, session));
     const source = (i: number) => f.request('source', { connection_id: connected[i]!.connection_id,
       course_id: course.id, version: 2, question: 'What code?' }, sessions[i]);
@@ -276,7 +276,7 @@ describe('private SCORM Cloud course connections', () => {
   });
 
   it('refuses provider redirects and response bytes beyond the actual stream budget', async () => {
-    const redirect = await setup((async () => Response.redirect('http://127.0.0.1/private')) as typeof fetch);
+    const redirect = await setup((async () => Response.redirect('http://127.0.0.1/private', 302)) as typeof fetch);
     await expect(redirect.connect()).rejects.toMatchObject({ status: 502 });
     expect(redirect.cloudFetch).toHaveBeenCalledTimes(1);
     const huge = await setup((async url => String(url).endsWith('/courses') ? Response.json({ courses: [course] })
