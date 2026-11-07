@@ -2,6 +2,7 @@
 import { Server, type Tool } from '@modelcontextprotocol/server';
 import { serveStdio, StdioServerTransport } from '@modelcontextprotocol/server/stdio';
 import type { Readable, Writable } from 'node:stream';
+import { selectedNoteIds } from './agent-note-scope.js';
 import { AgentClient, agentArguments, NOTE_ID_PATTERN, type AgentClientOptions } from './agent-client.js';
 import { AGENT_ID_PATTERN } from './agent-protocol.js';
 import type { AgentConnection, AgentOperation, AgentPermission, AgentStatus } from './agent-types.js';
@@ -79,6 +80,8 @@ function statusResult(value: unknown, connectionId: string): AgentStatus {
     state: grant['state'] as AgentConnection['state'], ...(grant['lastUsedAt'] !== undefined ? { lastUsedAt: date(grant['lastUsedAt']) } : {}),
     ...(Array.isArray(workspaceIds) ? { workspaceIds: [...workspaceIds] as string[] } : {}),
   };
+  const selected = selectedNoteIds(grant as unknown as AgentConnection);
+  if (selected !== undefined) Object.assign(connection, { selectedNoteIds: selected });
   return { connection, running: result['running'], localOnly: result['localOnly'], federationEnabled: result['federationEnabled'] };
 }
 function noteSummary(value: unknown) {

@@ -3,6 +3,7 @@ import { randomBytes, randomUUID } from 'node:crypto';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { lstat, mkdir, open, rename, unlink } from 'node:fs/promises';
 import { isAbsolute, join, resolve } from 'node:path';
+import { selectedNoteIds } from './agent-note-scope.js';
 import {
   AGENT_ID_PATTERN, AGENT_REQUEST_WINDOW_MS, MAX_AGENT_REQUEST_BYTES,
   openAgentMessage, sealAgentMessage, type AgentEnvelope,
@@ -39,7 +40,7 @@ function object(value: unknown): Record<string, unknown> {
 }
 function validateInput(value: AgentConnectionInput): AgentConnectionInput {
   const input = object(value);
-  if (Object.keys(input).some(key => !['client', 'expiresInDays', 'name', 'permissions', 'workspaceIds'].includes(key))
+  if (Object.keys(input).filter(key => key !== 'selectedNoteIds' && key !== 'workspaceIds').sort().join(',') !== 'client,expiresInDays,name,permissions'
     || typeof value.name !== 'string' || !value.name.trim() || value.name.trim().length > 80 || /[\u0000-\u001f\u007f]/.test(value.name)
     || !CLIENTS.includes(value.client) || ![7, 30, 90].includes(value.expiresInDays)
     || !Array.isArray(value.permissions) || !value.permissions.length || value.permissions.length > PERMISSIONS.length
@@ -50,12 +51,14 @@ function validateInput(value: AgentConnectionInput): AgentConnectionInput {
   if (workspaces ? !Array.isArray(value.workspaceIds) || !value.workspaceIds.length || value.workspaceIds.length > 32
     || new Set(value.workspaceIds).size !== value.workspaceIds.length || value.workspaceIds.some(id => typeof id !== 'string' || !WORKSPACE_ID_PATTERN.test(id))
     : value.workspaceIds !== undefined) throw new Error('Select the workspaces this connection may use.');
+  const selected = selectedNoteIds(value);
   return { name: value.name.trim(), client: value.client, permissions: [...value.permissions], expiresInDays: value.expiresInDays,
+    ...(selected === undefined ? {} : { selectedNoteIds: selected }),
     ...(workspaces ? { workspaceIds: [...value.workspaceIds!] } : {}) };
 }
 function validateRecord(raw: unknown): ConnectionRecord {
   const value = object(raw);
-  const allowed = ['id', 'name', 'client', 'permissions', 'workspaceIds', 'createdAt', 'expiresAt', 'lastUsedAt', 'revokedAt', 'secret', 'podBinding'];
+  const allowed = ['id', 'name', 'client', 'permissions', 'selectedNoteIds', 'workspaceIds', 'createdAt', 'expiresAt', 'lastUsedAt', 'revokedAt', 'secret', 'podBinding'];
   if (Object.keys(value).some(k => !allowed.includes(k)) || typeof value['id'] !== 'string' || !AGENT_ID_PATTERN.test(value['id'])
     || typeof value['createdAt'] !== 'string' || !Number.isFinite(Date.parse(value['createdAt']))
     || typeof value['expiresAt'] !== 'string' || !Number.isFinite(Date.parse(value['expiresAt']))
@@ -68,7 +71,8 @@ function validateRecord(raw: unknown): ConnectionRecord {
   }
   validateInput({ name: value['name'], client: value['client'], permissions: value['permissions'], expiresInDays: 7,
     ...(value['workspaceIds'] !== undefined ? { workspaceIds: value['workspaceIds'] } : {}) } as AgentConnectionInput);
-  return value as unknown as ConnectionRecord;
+  const selected = selectedNoteIds(value as unknown as ConnectionRecord);
+  return { ...value, ...(selected === undefined ? {} : { selectedNoteIds: selected }) } as unknown as ConnectionRecord;
 }
 
 async function regularFile(path: string, limit: number): Promise<string | null> {
@@ -163,6 +167,7 @@ export class AgentService {
     const state = record.revokedAt ? 'revoked' : Date.parse(record.expiresAt) <= Date.now() ? 'expired'
       : record.podBinding !== binding ? 'pod-changed' : record.lastUsedAt ? 'active' : 'waiting';
     return Object.freeze({ id: record.id, name: record.name, client: record.client, permissions: Object.freeze([...record.permissions]),
+      ...(record.selectedNoteIds === undefined ? {} : { selectedNoteIds: Object.freeze([...record.selectedNoteIds]) }),
       createdAt: record.createdAt, expiresAt: record.expiresAt, state,
       ...(record.workspaceIds ? { workspaceIds: Object.freeze([...record.workspaceIds]) } : {}),
       ...(record.lastUsedAt ? { lastUsedAt: record.lastUsedAt } : {}), ...(record.revokedAt ? { revokedAt: record.revokedAt } : {}) });
@@ -198,6 +203,7 @@ export class AgentService {
         retained = retained.filter(r => r.id !== inactive.id);
       }
       const record: ConnectionRecord = { id: randomUUID(), name: value.name, client: value.client, permissions: value.permissions,
+        ...(value.selectedNoteIds === undefined ? {} : { selectedNoteIds: value.selectedNoteIds }),
         ...(value.workspaceIds ? { workspaceIds: [...value.workspaceIds] } : {}),
         createdAt: new Date(now).toISOString(), expiresAt: new Date(now + value.expiresInDays * 86_400_000).toISOString(),
         secret: randomBytes(32).toString('base64'), podBinding: binding };
@@ -232,6 +238,7 @@ export class AgentService {
       || (operation.startsWith('notes.') && !record.permissions.includes(operation === 'notes.create' ? 'notes:create' : 'notes:read'))
       || (operation.startsWith('workspaces.') && !record.permissions.some(permission => permission.startsWith('workspaces:')))) throw new Error(AUTH_ERROR);
     return Object.freeze({ id: record.id, name: record.name, permissions: Object.freeze([...record.permissions]),
+      ...(record.selectedNoteIds === undefined ? {} : { selectedNoteIds: Object.freeze([...record.selectedNoteIds]) }),
       ...(record.workspaceIds ? { workspaceIds: Object.freeze([...record.workspaceIds]) } : {}) });
   }
 

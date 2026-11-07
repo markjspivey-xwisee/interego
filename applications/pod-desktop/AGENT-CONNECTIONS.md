@@ -14,7 +14,9 @@ Keep Interego open. **Stop Interego** pauses note access; quitting stops both th
 
 ## Choose permissions
 
-**Read notes** allows the connection to search and open any of this pod's current and future notes until the grant expires or is disconnected. Search returns titles and short excerpts; reading a note retrieves its full text.
+**Read notes** offers two scopes for a new local connection: **All my current and future notes**, or **Only notes I select**. For a selected scope, start the pod, choose up to 100 existing notes in the picker, and create the connection. Search returns titles and short excerpts only from those note IDs; direct reads of other IDs are refused before opening their content. Future notes are excluded, including notes the same connection later saves. The scope is kept with the protected grant and shown on the connection card and in `interego_status`.
+
+Existing grants retain their original all-note access. To replace one with a selected grant, disconnect it and create a new connection with the desired selection. A case label or search query does not narrow an all-note grant. The web bridge's existing approval policy still grants all-note read access; selected-note creation is currently offered through the local connection flow. This source change must be built and verified in the actual installed Windows app before relying on the new picker there.
 
 **Save new notes** allows appending new notes. It does not allow editing or deleting existing notes and does not imply read permission. Notes saved through a connection retain its identifier and chosen label in encrypted content. That label is not proof of a vendor's identity or a vendor signature.
 

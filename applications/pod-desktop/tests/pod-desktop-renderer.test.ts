@@ -700,6 +700,47 @@ describe('Interego consumer desktop', () => {
     expect(app.api.openHosted).not.toHaveBeenCalled();
   });
 
+  it('submits only owner-selected notes and displays their scope without including future notes', async () => {
+    const chosen = note('Chosen fiction');
+    const other = { ...note('Other fiction'), id: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb' };
+    const app = await mount(state('running', 2), {}, [chosen, other]);
+    app.click('nav-connections'); await flush(); app.click('add-connection');
+    app.fill('connection-read-scope', 'selected');
+    app.get('connection-read-scope').dispatchEvent(new app.dom.window.Event('change')); await flush();
+    expect(app.get<HTMLButtonElement>('create-connection').disabled).toBe(true);
+    const options = app.get<HTMLSelectElement>('connection-read-notes');
+    expect(Array.from(options.options).map(option => option.textContent)).toEqual(['Chosen fiction', 'Other fiction']);
+    options.options[0]!.selected = true;
+    options.dispatchEvent(new app.dom.window.Event('change'));
+    expect(app.get<HTMLButtonElement>('create-connection').disabled).toBe(false);
+    app.submit('connection-form'); await flush();
+    expect(app.api.createConnection).toHaveBeenCalledWith(expect.objectContaining({ permissions: ['notes:read'], selectedNoteIds: [chosen.id] }));
+    expect(app.get('connections-list').textContent).toContain('Read 1 selected note');
+  });
+
+  it('submits selected notes and selected workspaces together without widening either scope', async () => {
+    const chosen = note('Chosen fiction');
+    const other = { ...note('Other fiction'), id: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb' };
+    const room = { id: `urn:interego:local-workspaces:${'a'.repeat(32)}:workspace:cccccccc-cccc-4ccc-8ccc-cccccccccccc`,
+      title: 'Fictional planning room', createdAt: '2026-10-29T12:00:00Z', updatedAt: '2026-10-29T12:00:00Z', entryCount: 0, memberCount: 1 };
+    const app = await mount(state('running', 2), { workspaceStatus: vi.fn(async () => ({ ...workspacesOff(), enabled: true, workspaces: [room] })) }, [chosen, other]);
+    app.click('nav-connections'); await flush(); app.click('add-connection'); await flush();
+    app.fill('connection-read-scope', 'selected');
+    app.get('connection-read-scope').dispatchEvent(new app.dom.window.Event('change')); await flush();
+    app.get<HTMLSelectElement>('connection-read-notes').options[0]!.selected = true;
+    app.get('connection-read-notes').dispatchEvent(new app.dom.window.Event('change'));
+    app.get<HTMLInputElement>('permission-workspaces-read').checked = true;
+    app.get('permission-workspaces-read').dispatchEvent(new app.dom.window.Event('change'));
+    const rooms = app.get<HTMLSelectElement>('connection-workspaces');
+    expect(Array.from(rooms.options).map(option => option.textContent)).toEqual(['Fictional planning room']);
+    rooms.options[0]!.selected = true;
+    expect(app.get<HTMLButtonElement>('create-connection').disabled).toBe(false);
+    app.submit('connection-form'); await flush();
+    expect(app.api.createConnection).toHaveBeenCalledWith(expect.objectContaining({
+      permissions: ['notes:read', 'workspaces:read'], selectedNoteIds: [chosen.id], workspaceIds: [room.id] }));
+    expect(app.get('connections-list').textContent).toContain('Read 1 selected note · Read selected workspaces');
+  });
+
   it('preserves connection choices across polls and validates permissions before creating', async () => {
     const app = await mount(state('running'));
     app.click('nav-connections'); await flush(); app.click('add-connection');

@@ -10,6 +10,8 @@ export interface AgentConnection {
   readonly permissions: readonly AgentPermission[];
   /** An explicit selection, never a wildcard or an implied grant to future workspaces. */
   readonly workspaceIds?: readonly string[];
+  /** Absent means all current/future notes; an array limits reads to these IDs. */
+  readonly selectedNoteIds?: readonly string[];
   readonly createdAt: string;
   readonly expiresAt: string;
   readonly state: AgentConnectionState;
@@ -22,6 +24,7 @@ export interface AgentConnectionInput {
   readonly client: AgentClient;
   readonly permissions: readonly AgentPermission[];
   readonly workspaceIds?: readonly string[];
+  readonly selectedNoteIds?: readonly string[];
   readonly expiresInDays: 7 | 30 | 90;
 }
 
@@ -39,6 +42,7 @@ export interface AgentPrincipal {
   readonly name: string;
   readonly permissions: readonly AgentPermission[];
   readonly workspaceIds?: readonly string[];
+  readonly selectedNoteIds?: readonly string[];
 }
 
 export type AgentOperation = 'status' | 'notes.search' | 'notes.read' | 'notes.create' | 'workspaces.discover' | 'workspaces.act';
