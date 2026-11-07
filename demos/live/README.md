@@ -70,7 +70,7 @@ Two more pieces of the ADL Total Learning Architecture, for both learners. cmi5 
 | `DEMO_AGENT_MODEL` | `sonnet` | The Claude model the Author and the Verifier run on. |
 | `DEMO_CLAUDE_BIN` | the first `claude` on PATH outside `node_modules` | The Claude Code CLI to run. |
 | `FOXXI_BRIDGE`, `INTEREGO_RELAY`, `INTEREGO_GATE` | the deployed services | Where the calls go. |
-| `DEMO_YOU_WALLET` | unset | Testing only: sign "you" in with a wallet instead of a passkey, with no browser. |
+| `DEMO_YOU_WALLET` | unset | Testing only: sign "you" in with a wallet instead of a passkey, with no browser. A wallet with no hosted account needs its operator's agreement to the Hosted Interego Terms: set `INTEREGO_ACCEPT_HOSTED_TERMS_VERSION` to the version at `https://identity.interego.xwisee.com/.well-known/hosted-interego-terms` you agreed to (unset, the first sign-in is refused with HTTP 428). The browser sign-in asks on the relay's page instead. |
 | `DEMO_DEBUG` | unset | Testing only: print the course answers to this process's console. They never reach the page. |
 
 ## What it leaves behind

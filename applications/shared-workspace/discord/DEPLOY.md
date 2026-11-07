@@ -38,6 +38,14 @@ Neither is ever committed. The Dockerfile leaves both unset on purpose (baking a
 publishes it to everyone who can pull the image), and `src/main.ts` throws with a named message if
 either is missing — a bot that ran as a placeholder would attribute records to the wrong identity.
 
+**A new key's first start also needs the Hosted Terms agreement.** That first sign-in opens the
+bot's hosted account, which hosted identity opens only with the operator's agreement to the current
+Hosted Interego Terms (HTTP 428 `hosted_terms_required` otherwise; the container exits with that
+refusal and names the variable). Read the version and terms at
+`https://identity.interego.xwisee.com/.well-known/hosted-interego-terms` and, only if you agree to
+them for the bot's account, set `INTEREGO_BOT_ACCEPT_HOSTED_TERMS_VERSION` to that version. It is
+not a secret and nothing defaults it; a key that already has its account does not need it.
+
 ---
 
 ## Part A — create the Discord application
@@ -120,6 +128,8 @@ This produces `ghcr.io/markjspivey-xwisee/interego-discord:<sha>` and `:latest`.
 - **Variables** — set the two secrets:
   - `DISCORD_BOT_TOKEN` = the token from Part A
   - `INTEREGO_BOT_KEY` = the key from Part B
+  - for a NEW key only: `INTEREGO_BOT_ACCEPT_HOSTED_TERMS_VERSION` = the Hosted Terms version you
+    read and agreed to for the bot's account (see above)
 - **No public networking.** Do not generate a domain — it has no port to expose. Leave it as a
   private worker.
 - **Optional but recommended — a volume for link state.** The bot records which Discord account is

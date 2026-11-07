@@ -55,6 +55,27 @@ export const REMINT_MARGIN_MS = 5 * 60 * 1000;
  */
 export const DISCORD_CLIENT_NAME = 'interego-discord';
 
+/**
+ * THE ONE VARIABLE THROUGH WHICH THE BOT'S OPERATOR AGREES TO THE HOSTED TERMS FOR ITS ACCOUNT.
+ *
+ * ★ ONLY A NEW KEY NEEDS IT. Hosted identity opens a new account only for a wallet that signed the
+ * Hosted Interego Terms agreement for the current version, and answers any other first sign-in
+ * HTTP 428 `hosted_terms_required`. A deployment with a NEW `INTEREGO_BOT_KEY` is exactly that first
+ * sign-in; an existing deployment's key already has its account and never needs this.
+ *
+ * ★ ITS OWN NAME, NOT THE LIVE DRIVERS'. The drivers read `INTEREGO_ACCEPT_HOSTED_TERMS_VERSION`;
+ * a bot running where that happens to be set must not start agreeing for its own account because
+ * of it. Setting THIS variable is the operator saying, for this bot's account, "I read the terms at
+ * `<identity>/.well-known/hosted-interego-terms` and agree to that version". Nothing defaults it.
+ */
+export const BOT_ACCEPT_HOSTED_TERMS_ENV = 'INTEREGO_BOT_ACCEPT_HOSTED_TERMS_VERSION';
+
+/** The operator's agreement for the bot's account, as the environment states it, or undefined. */
+export function botHostedTerms(env: Readonly<Record<string, string | undefined>>): string | undefined {
+  const v = (env[BOT_ACCEPT_HOSTED_TERMS_ENV] ?? '').trim();
+  return v === '' ? undefined : v;
+}
+
 export interface BotIdentity {
   readonly client: WorkspaceClient;
   /** The agent DID the relay authenticates this process as — what participants delegate. */
@@ -105,9 +126,17 @@ export class BotSession {
    */
   out: ((m: string) => void) | null = null;
 
-  constructor(relay: string, identityServer: string, privateKey: string, fetchImpl?: typeof fetch) {
+  /**
+   * The Hosted Terms version the bot's OPERATOR explicitly agreed to for its account, or undefined.
+   * See {@link BOT_ACCEPT_HOSTED_TERMS_ENV}. Passed to every ceremony, as `openAgentSession` does:
+   * the server uses it only to open a NEW account, and an existing one signs in either way.
+   */
+  private readonly acceptHostedTermsVersion: string | undefined;
+
+  constructor(relay: string, identityServer: string, privateKey: string, fetchImpl?: typeof fetch, acceptHostedTermsVersion?: string) {
     this.relay = relay.replace(/\/$/, '');
     this.identityServer = identityServer.replace(/\/$/, '');
+    this.acceptHostedTermsVersion = acceptHostedTermsVersion;
     this.wallet = new Wallet(privateKey);
     this.encryption = deriveEncryptionKeyPair(privateKey);
     this.opener = openerFor(privateKey);
@@ -142,11 +171,37 @@ export class BotSession {
     return this.opening;
   }
 
+  /**
+   * One SIWE ceremony under this bot's own client name, carrying the operator's agreement when
+   * there is one.
+   *
+   * ★ A 428 SAYS WHAT TO DO, IN THE SERVER'S WORDS FIRST. It is a NEW key with no account and no
+   * agreement, and the person who can answer it is the operator, so the error names this bot's
+   * variable and where the current terms are published. It never retries with a version of its
+   * own choosing: that would be agreeing.
+   */
+  private async mint(): Promise<RelayOAuthBearer> {
+    const options = this.acceptHostedTermsVersion ? { acceptHostedTermsVersion: this.acceptHostedTermsVersion } : {};
+    try {
+      return await mintBearer(this.relay, this.identityServer, this.wallet, DISCORD_CLIENT_NAME, this.fetchImpl, options);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      if (!/HTTP 428\b/.test(msg)) throw e;
+      const where = this.identityServer + '/.well-known/hosted-interego-terms';
+      throw new Error(msg + (this.acceptHostedTermsVersion === undefined
+        ? ' — this bot\'s key (INTEREGO_BOT_KEY) has no hosted account yet, and opening one needs its operator\'s agreement '
+          + 'to the Hosted Interego Terms. Read the version and terms at ' + where + ' and, only if you agree to them for '
+          + 'this bot\'s account, set ' + BOT_ACCEPT_HOSTED_TERMS_ENV + '=<that version>. Nothing was created.'
+        : ' — ' + BOT_ACCEPT_HOSTED_TERMS_ENV + ' is ' + this.acceptHostedTermsVersion + ', and the identity server did not '
+          + 'take it as agreement for a new account; the version it offers now is at ' + where + '. Nothing was created.'), { cause: e });
+    }
+  }
+
   private async openOnce(): Promise<BotIdentity> {
     // ★ THE CLIENT NAME IS PASSED, NOT DEFAULTED. See `DISCORD_CLIENT_NAME`: the relay bakes it
     // into the agent DID, so omitting it here is what made this bot's permanent identity read
     // `interego-workspace-live-driver-…`.
-    const bearer = await mintBearer(this.relay, this.identityServer, this.wallet, DISCORD_CLIENT_NAME, this.fetchImpl);
+    const bearer = await this.mint();
     this.bearer = bearer;
     this.transport = new RelayMcpTransport(this.relay, bearer, this.fetchImpl);
     /**
@@ -159,7 +214,7 @@ export class BotSession {
      * can mint another in about two seconds; there was never a reason for a person to be involved.
      */
     this.transport.setReauthorizer(async () => {
-      const fresh = await mintBearer(this.relay, this.identityServer, this.wallet, DISCORD_CLIENT_NAME, this.fetchImpl);
+      const fresh = await this.mint();
       this.bearer = fresh;
       this.out?.('relay: session token was rejected; re-authenticated with a fresh one');
       return fresh;

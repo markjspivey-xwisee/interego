@@ -1,5 +1,17 @@
 # Changelog
 
+## 2026-11-07 — Discord bot: a new key's account opens only on its operator's own Hosted Terms agreement, and the headless demo sign-in can carry one
+
+The Discord README tells a maintainer to generate `INTEREGO_BOT_KEY` with `openssl rand -hex 32`. Since #778 the first sign-in of such a key opens a NEW hosted account, which identity opens only with the Hosted Terms agreement for the current version (HTTP 428 `hosted_terms_required` otherwise), so a fresh deployment could not start, and its error named nothing that would let it.
+
+What changed:
+- `BotSession` takes the operator's agreement as an explicit constructor argument and passes it to every ceremony through `mintBearer`'s `acceptHostedTermsVersion`. `main()` reads it only from the bot's own variable, `INTEREGO_BOT_ACCEPT_HOSTED_TERMS_VERSION` (`botHostedTerms`): never defaulted, and the live drivers' `INTEREGO_ACCEPT_HOSTED_TERMS_VERSION` is not an agreement for the bot (the existing pin in `identity.test.ts` still holds). A key that already has its account signs in as before.
+- A 428 now ends with what to do: the bot's key has no account, read the terms at `<identity>/.well-known/hosted-interego-terms`, and set that variable only if you agree. It never retries with a version of its own.
+- The live demo's headless `DEMO_YOU_WALLET` sign-in mints through `mintBearerWithOperatorTerms`, so it sends the operator's `INTEREGO_ACCEPT_HOSTED_TERMS_VERSION` when set and names it in a refusal; the demo's browser sign-in already asks on the relay's page.
+- Documented in the Discord README and DEPLOY.md, and the live demo README.
+
+Tests: `applications/shared-workspace/discord/tests/identity-terms.test.ts` drives the real `BotSession` and `mintBearer` against identity's SIWE terms contract with the signer recovered from the signature: no agreement asks for none and surfaces the 428 with the variable; the operator's version signs identity's statement and opens the account; an existing key signs in either way; only the bot's variable is read. All four fail on the previous bot.
+
 ## 2026-11-07 — Live drivers: a new wallet's sign-in can carry the operator's Hosted Terms agreement, and a refusal says why
 
 `mintBearer` in `applications/shared-workspace/tools/live-identity.ts` is the sign-in of the shared-workspace live drivers, the Discord bot and its drivers, several root `tools/*-live.ts` probes and the `demos/live` headless sign-in. Since #778 hosted identity creates an account only for a wallet that signed the Hosted Terms agreement. Most of those drivers sign a freshly generated wallet in, so their first sign-in was refused with HTTP 428 `hosted_terms_required`, reported as "the relay did not accept this wallet proof" without the status, and nothing let an operator give the agreement. The entry for #788 below listed this as not fixed.

@@ -39,7 +39,7 @@ import { pathToFileURL } from 'node:url';
 import { resolve as resolvePath } from 'node:path';
 import { presenceLine } from '@interego/workspace-client';
 import { LinkStore } from './links.js';
-import { BotSession, type BotIdentity } from './identity.js';
+import { BotSession, botHostedTerms, type BotIdentity } from './identity.js';
 import {
   COMMANDS, DiscordGateway, DiscordRest, commandFingerprint,
   type GatewayAutocomplete, type GatewayInteraction, type GatewayMessage, type GatewayModalSubmit,
@@ -177,7 +177,8 @@ export async function main(boot: Boot = {}): Promise<Started | null> {
     return null;
   }
 
-  const session: SessionLike = boot.session ?? new BotSession(RELAY, IDENTITY, key as string);
+  // ★ THE AGREEMENT IS THE OPERATOR'S, FROM THE BOT'S OWN VARIABLE ONLY. See `BOT_ACCEPT_HOSTED_TERMS_ENV`.
+  const session: SessionLike = boot.session ?? new BotSession(RELAY, IDENTITY, key as string, undefined, botHostedTerms(env));
   // Set BEFORE `open()`, so a re-mint during the very first call is still reported.
   if ('out' in session) (session as { out: ((m: string) => void) | null }).out = out;
   const identity = await session.open();
