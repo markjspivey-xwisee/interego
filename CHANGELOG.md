@@ -18,6 +18,10 @@ Tests: `applications/shared-workspace/tests/live-identity-terms.test.ts` drives 
 
 Not changed: neither the Discord bot nor the `demos/live` headless sign-in agrees to the terms, so a NEW `INTEREGO_BOT_KEY` or `DEMO_YOU_WALLET` key, which has no account, is still refused at its first sign-in; the refusal now carries the status and identity's text, and Discord `DEPLOY.md` Part B says to create a new bot key's account with an explicit agreement first. `probe-refresh-live.ts` keeps its own copy of the ceremony for a fixed key. The desktop app's sign-in is separate.
 
+## 2026-11-07 — Accept SCORM Cloud's registered LTI endpoint queries
+
+The first live Cloud-to-Foxxi setup created its temporary connector but could not configure it because Cloud's documented key and token URLs include an `externalConfig` query. Registered platform service endpoints now preserve those routing queries while issuer/tool validation, public-socket checks, TLS, redirects and launch verification retain their existing restrictions. Current OIDC arguments replace any conflicting registered authorization parameters. The combined Cloud fixture uses the documented endpoint shapes, and the expanded LTI panel keeps its heading above the controls. The first temporary Cloud setup was confirmed removed; live launch verification remains pending the corrected rollout.
+
 ## 2026-11-07 — I2IDL-X release: run the live visitor check on a runner its pinned Playwright supports
 
 `i2idlx-v93-release.yml`'s `live-visitor` job installs `playwright==1.56.0` and its Chromium on `ubuntu-latest`, which now resolves to Ubuntu 26.04. That Playwright refuses to install there, so the next release's post-deploy visitor check would fail before visiting the site. It now runs on `ubuntu-24.04`, like the I2IDL-X UI oracle job that pins the same Playwright, and like the live client-signature check (#789). With this change, every workflow job that installs a browser runs on `ubuntu-24.04`.

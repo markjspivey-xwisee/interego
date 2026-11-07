@@ -436,7 +436,7 @@ export function useCourseContext(engine) {
             <button className="btn sm" disabled={loading || engine.busy || !acknowledged || !authority} onClick={permit}>Apply course permission</button>
           </> : null}
         </div> : null}
-        {selected && connection.provider === 'scorm-cloud' && (grant || lti) ? <details className="note" data-testid="course-lti-connection">
+        {selected && connection.provider === 'scorm-cloud' && (grant || lti) ? <details className="note" style={{ display: 'block' }} data-testid="course-lti-connection">
           <summary>Connect this course through LTI</summary>
           <div className="stack small" style={{ gap: 10, marginTop: 10 }}>
             <p>LTI verifies a launch from your Cloud platform and can bind it to this paired agent and selected course. Course reading still needs the separate owner permission above.</p>
