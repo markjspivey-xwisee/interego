@@ -696,11 +696,11 @@ export const SHARED_ONLY_THROUGH_IMPORTED_CODE: readonly {
     readIn: 'applications/jev-harness/src/publish.ts',
     why: 'the relay session token relayFromEnv() turns into a RelayClient. It addresses the '
       + 'live relay, and no collected module dials it: main() in the bridge calls relayFromEnv() '
-      + 'for real; the one suite that calls it, jev-harness/tests/relay-from-env-terms.test.ts, '
-      + 'stubs every variable it reads (this one empty, the relay URL at an example host) and '
-      + 'replaces globalThis.fetch with a scripted relay first; other tests build the app with '
-      + 'relay null and publish.test.ts dials a fake relay it starts itself. Shared because '
-      + 'bridge.test.ts imports the server.',
+      + 'for real; the one suite that calls it, jev-harness/tests/publish.test.ts, stubs every '
+      + 'variable it reads (this one empty, the relay URL at an example host) and replaces '
+      + 'globalThis.fetch with a scripted relay first, and otherwise dials a fake relay it starts '
+      + 'itself; other tests build the app with relay null. Shared because bridge.test.ts imports '
+      + 'the server.',
   },
   {
     name: 'INTEREGO_RELAY_URL',
@@ -721,8 +721,8 @@ export const SHARED_ONLY_THROUGH_IMPORTED_CODE: readonly {
     readIn: 'applications/jev-harness/src/publish.ts',
     why: 'the operator\'s explicit Hosted Terms agreement relayFromEnv() hands the agent-key minter, '
       + 'sent only with the did-sig challenge of a first login. It is an agreement, not an address '
-      + 'or a credential. jev-harness/tests/relay-from-env-terms.test.ts stubs it to check that it '
-      + 'reaches the challenge, against a scripted globalThis.fetch, as for INTEREGO_AGENT_KEY_JSON.',
+      + 'or a credential. jev-harness/tests/publish.test.ts stubs it to check that it reaches the '
+      + 'challenge, against a scripted globalThis.fetch, as for INTEREGO_AGENT_KEY_JSON.',
   },
   {
     name: 'INTEREGO_RELAY',
