@@ -7,6 +7,7 @@ import { build } from 'esbuild';
 import { JSDOM } from 'jsdom';
 import type { DesktopApi, PodStatus } from '../src/types.js';
 import type { LocalIdentityApproval, LocalIdentityLinkApproval, LocalIdentitySignInApproval, LocalIdentityStatus } from '../src/local-identity-types.js';
+import { LOCAL_IDENTITY_NEEDS_ACCOUNT } from '../src/local-identity-types.js';
 
 const APP = join(dirname(fileURLToPath(import.meta.url)), '..'); let bundle = '';
 const documents: JSDOM[] = [];
@@ -150,6 +151,28 @@ describe('native Identity page', () => {
     await app.ui.refresh(); expect(app.get<HTMLInputElement>('identity-verify-request-one').checked).toBe(true);
     app.pendingApprove().click(); await flush(); expect(app.api.approveLocalIdentity).toHaveBeenCalledWith(pending.id, pending.verificationCode);
     expect(app.get('identity-pending').children.length).toBe(0);
+  });
+  it('★ names a sign-in refused because the key has no hosted account (the browser shows only that it ended), and nothing else', async () => {
+    // The Hosted Terms refusal is this app's own fixed copy, so it is shown as itself; it is the
+    // only place the person reads why, since the browser companion ends every failed poll with its
+    // own generic line. Any other failure text stays the generic sentence, whatever it says.
+    for (const [thrown, shown] of [
+      [LOCAL_IDENTITY_NEEDS_ACCOUNT, LOCAL_IDENTITY_NEEDS_ACCOUNT],
+      ['secret server detail', 'This identity change could not be confirmed. Check the status before trying again.'],
+    ] as const) {
+      const pending = request();
+      const app = await mount(ready([pending]), { approveLocalIdentity: vi.fn(async () => { throw new Error(thrown); }) });
+      app.check('identity-verify-request-one'); app.pendingApprove().click(); await flush();
+      expect(app.api.approveLocalIdentity).toHaveBeenCalledWith(pending.id, pending.verificationCode);
+      expect(app.get('identity-message').textContent).toBe(shown);
+      expect(app.get('identity-message').getAttribute('role')).toBe('alert');
+    }
+  });
+  it('does not name the no-account refusal for an account LINK, which is a different request', async () => {
+    const pending = link();
+    const app = await mount(ready([pending]), { approveLocalIdentity: vi.fn(async () => { throw new Error(LOCAL_IDENTITY_NEEDS_ACCOUNT); }) });
+    app.check('identity-verify-link-one'); app.pendingApprove().click(); await flush();
+    expect(app.get('identity-message').textContent).toBe('This identity change could not be confirmed. Check the status before trying again.');
   });
   it('changed request metadata invalidates earlier consent and an expired or completing request cannot be approved', async () => {
     const pending = request(); const app = await mount(ready([pending])); app.check('identity-verify-request-one');

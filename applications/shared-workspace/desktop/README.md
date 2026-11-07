@@ -450,7 +450,9 @@ replaces is the human pressing buttons.
 cd applications/shared-workspace/desktop
 npx install-electron --no   # once (Electron 42+): fetches the binary into the root node_modules/electron/dist
 
-# wallet path: sign in, read a workspace, and append a real, public entry
+# wallet path: sign in, read a workspace, and append a real, public entry. A key with no
+# hosted account yet (or none at all: the run then mints one) also needs
+# INTEREGO_SELFTEST_ACCEPT_HOSTED_TERMS_VERSION=<the version you read and agreed to>.
 env -u ELECTRON_RUN_AS_NODE \
   INTEREGO_SELFTEST_KEY=0x... \
   INTEREGO_SELFTEST_WORKSPACE=https://relay.interego.xwisee.com/ns/POD/NAME \
@@ -494,17 +496,32 @@ A returning account is never asked again.
   and never one with a line break in it. With the box unticked the sign-in is exactly what it
   always was, so a key that already has an account signs in as before.
 * Pressing *Use a wallet key on this machine* with **no** key held mints one, and a new key is a
-  new account, so that press is refused on screen until the box is ticked — before anything is
-  minted.
+  new account. That press goes on only when the identity server offers **no** terms, or when the
+  box is ticked for the version it offers. Pressed while the terms are still being read, it waits
+  for them; pressed when they could not be read, it is refused (and they are read again). Either
+  refusal is on screen, before anything is minted or sent.
+* **The main process checks the same before it creates a key.** `auth:wallet` with nothing stored
+  and `delegate:mint` read the offer from the identity server themselves and mint only when it
+  offers no terms or the version that came across is the one it offers; otherwise they refuse with
+  nothing minted and nothing stored, so no key is left behind for an account that cannot be
+  opened. A key you paste (`account:import`, `delegate:import`) is not minted and may already have
+  an account, so it is not gated: its sign-in goes to the server, which decides.
+* **A tick is used once.** After a completed sign-in, and on sign-out, the sign-in card's box (and
+  the delegate panel's) is redrawn unticked; after every mint or delegate adoption, whatever its
+  outcome, the delegate panel's box is. A sign-in that fails keeps the box as it was, so a retry is
+  still the agreement you just gave — unless the version moved (below).
 * A refusal is shown in the server's own words with its status
   (`the relay did not accept this wallet proof (HTTP 428): …`). After any failed sign-in the app
   reads the terms again; if the version moved, the box is redrawn for the new version, unticked.
 * **A minted delegate needs its own agreement.** A delegate key signs in as itself, so minting one
   opens a new hosted account for it. The delegate panel has its **own** *I agree* box, ticked in the
   same action as pressing *Mint*; your agreement for your own account does not carry over, and
-  minting is refused on screen until that box is ticked. Adopting a delegate key that already has
-  an account does not need it. The agreement is used for that delegate's first sign-in only — its
-  later re-authorizations sign in to an account that exists.
+  minting goes on under the same rule as the wallet button above. Adopting a delegate key that
+  already has an account does not need it. The agreement is used for that delegate's first sign-in
+  only — its later re-authorizations sign in to an account that exists.
+* The headless `selftest` (`npm run selftest`) mints a key when none is stored; it sends a version
+  only from its own `INTEREGO_SELFTEST_ACCEPT_HOSTED_TERMS_VERSION`, the operator's agreement for
+  that run's account, never defaulted.
 
 ### Signing in as an identity you already have, and why the app was broken without it
 
@@ -589,6 +606,7 @@ src/preload.ts    the whole surface the renderer gets: describe, sign in, call a
                   read the session and be told when it changes
 src/renderer.ts   draws; every substrate decision comes from @interego/workspace-client
 src/selftest.ts   the headless live run above
+src/selftest-terms.ts  the selftest's own Hosted Terms variable, apart so it is testable
 ```
 
 **The bearer never crosses the IPC boundary.** The renderer asks for a tool call by name and

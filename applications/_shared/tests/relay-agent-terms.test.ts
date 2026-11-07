@@ -20,7 +20,8 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { createPublicKey, verify as edVerify } from 'node:crypto';
 import {
-  DidTokenMinter, agentKeyFromJwk, checkDidChallenge, generateAgentKeyJwk, relayForAgent, type AgentKey,
+  DidChallengeRefusedError, DidTokenMinter, HostedTermsRequiredError, agentKeyFromJwk, checkDidChallenge, generateAgentKeyJwk,
+  relayForAgent, type AgentKey,
 } from '../relay-agent/index.js';
 
 const RELAY = 'https://relay.example';
@@ -37,6 +38,8 @@ interface Fleet {
   /** DIDs that hold an account. */
   readonly accounts: Set<string>;
   verifyCalls: number;
+  /** Client registrations: a refusal no registration can answer must not cause a second one. */
+  registerCalls: number;
 }
 
 const json = (status: number, payload: unknown): Response =>
@@ -57,14 +60,14 @@ function fleet(opts: {
   /** Replace the issued nonce — a server that misbehaves. */
   nonce?: string;
 }): { f: typeof fetch; state: Fleet } {
-  const state: Fleet = { challengeBodies: [], signedTexts: [], accounts: new Set(opts.known ?? []), verifyCalls: 0 };
+  const state: Fleet = { challengeBodies: [], signedTexts: [], accounts: new Set(opts.known ?? []), verifyCalls: 0, registerCalls: 0 };
   const challenges = new Map<string, { message: string; termsVersion?: string }>();
   let serial = 0;
   const f = (async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
     const url = String(input);
     const raw = typeof init?.body === 'string' ? init.body : init?.body instanceof URLSearchParams ? String(init.body) : '';
     const body = raw.startsWith('{') ? JSON.parse(raw) as Record<string, unknown> : {};
-    if (url === `${RELAY}/register`) return json(201, { client_id: 'client-1' });
+    if (url === `${RELAY}/register`) { state.registerCalls += 1; return json(201, { client_id: 'client-1' }); }
     if (url.startsWith(`${RELAY}/authorize?`)) {
       return new Response(`<script>const PENDING_ID = "p1";\nconst IDENTITY = "${IDENTITY}";</script>`, { status: 200 });
     }
@@ -111,9 +114,13 @@ describe('a service agent\'s first login and the Hosted Terms', () => {
     const { f, state } = fleet({ publicKeys: new Map([[a.key.did, a.x]]) });
     const minter = new DidTokenMinter({ relayOrigin: RELAY, key: a.key, fetchImpl: f });
     const err = await minter.token().then(() => null, (e: Error) => e);
+    expect(err).toBeInstanceOf(HostedTermsRequiredError);
     expect(err?.message).toContain('relay /oauth/verify answered HTTP 428: ' + REFUSAL);
-    expect(err?.message).toContain('acceptHostedTermsVersion');
+    expect(err?.message).toContain('acceptHostedTermsVersion is not set, so none was sent');
+    expect((err as HostedTermsRequiredError).sentVersion).toBeUndefined();
     expect(state.challengeBodies).toEqual([{ purpose: 'did-sig' }]);
+    // Not retried with a fresh registration: no registration answers a 428.
+    expect(state.registerCalls).toBe(1);
     // Nothing was agreed: the text the key signed carries no statement, and no account was made.
     expect(state.signedTexts[0]).not.toContain('Hosted Interego Terms');
     expect(state.accounts.size).toBe(0);
@@ -143,8 +150,12 @@ describe('a service agent\'s first login and the Hosted Terms', () => {
     const { f, state } = fleet({ known: [known.key.did], publicKeys: new Map([[known.key.did, known.x], [fresh.key.did, fresh.x]]) });
     await expect(new DidTokenMinter({ relayOrigin: RELAY, key: known.key, fetchImpl: f, acceptHostedTermsVersion: STALE }).token())
       .resolves.toBe('minted-token');
-    await expect(new DidTokenMinter({ relayOrigin: RELAY, key: fresh.key, fetchImpl: f, acceptHostedTermsVersion: STALE }).token())
-      .rejects.toThrow(/answered HTTP 428/);
+    const err = await new DidTokenMinter({ relayOrigin: RELAY, key: fresh.key, fetchImpl: f, acceptHostedTermsVersion: STALE }).token()
+      .then(() => null, (e: Error) => e);
+    expect(err?.message).toMatch(/answered HTTP 428/);
+    // ★ SAYS THE CONFIGURED VERSION WENT AND WAS NOT ACCEPTED — a different fix from setting one.
+    expect(err?.message).toContain(`version ${STALE} (acceptHostedTermsVersion) was sent and NOT accepted`);
+    expect((err as HostedTermsRequiredError).sentVersion).toBe(STALE);
     expect(state.challengeBodies.map((b) => b['termsVersion'])).toEqual([STALE, STALE]);
     expect(state.signedTexts.every((t) => !t.includes('Hosted Interego Terms'))).toBe(true);
   });
@@ -152,24 +163,52 @@ describe('a service agent\'s first login and the Hosted Terms', () => {
   it('★ a challenge carrying an agreement nobody asked for is not signed at all', async () => {
     const a = agent();
     const { f, state } = fleet({ known: [a.key.did], publicKeys: new Map([[a.key.did, a.x]]), volunteer: statementFor(CURRENT) });
-    await expect(new DidTokenMinter({ relayOrigin: RELAY, key: a.key, fetchImpl: f }).token())
-      .rejects.toThrow(/did not give .*nothing was signed/);
+    const err = await new DidTokenMinter({ relayOrigin: RELAY, key: a.key, fetchImpl: f }).token().then(() => null, (e: Error) => e);
+    expect(err).toBeInstanceOf(DidChallengeRefusedError);
+    expect(err?.message).toMatch(/did not give .*nothing was signed/);
     expect(state.verifyCalls).toBe(0);
+    // ★ ONE challenge, ONE registration: a refused challenge is not "the relay forgot this client".
+    expect(state.challengeBodies).toHaveLength(1);
+    expect(state.registerCalls).toBe(1);
   });
 
   it('★ an agreement to a version other than the operator\'s is not signed', async () => {
     const a = agent();
     const { f, state } = fleet({ publicKeys: new Map([[a.key.did, a.x]]), volunteer: statementFor('2027-01-01') });
-    await expect(new DidTokenMinter({ relayOrigin: RELAY, key: a.key, fetchImpl: f, acceptHostedTermsVersion: CURRENT }).token())
-      .rejects.toThrow(new RegExp(`does not name version ${CURRENT}`));
+    const err = await new DidTokenMinter({
+      relayOrigin: RELAY, key: a.key, fetchImpl: f, acceptHostedTermsVersion: CURRENT, acceptHostedTermsSetting: 'INTEREGO_FLEET_ACCEPT_HOSTED_TERMS_VERSION',
+    }).token().then(() => null, (e: Error) => e);
+    expect(err).toBeInstanceOf(DidChallengeRefusedError);
+    expect(err?.message).toContain(`does not name version ${CURRENT}, the one this agent's operator agreed to (INTEREGO_FLEET_ACCEPT_HOSTED_TERMS_VERSION)`);
     expect(state.verifyCalls).toBe(0);
+    expect(state.registerCalls).toBe(1);
   });
 
   it('a nonce that could carry a line break into the signed text is refused', async () => {
     const a = agent();
     const { f, state } = fleet({ known: [a.key.did], publicKeys: new Map([[a.key.did, a.x]]), nonce: 'abcdefgh\nURI: elsewhere' });
-    await expect(new DidTokenMinter({ relayOrigin: RELAY, key: a.key, fetchImpl: f }).token()).rejects.toThrow(/nonce .*nothing was signed/);
+    const err = await new DidTokenMinter({ relayOrigin: RELAY, key: a.key, fetchImpl: f }).token().then(() => null, (e: Error) => e);
+    expect(err).toBeInstanceOf(DidChallengeRefusedError);
+    expect(err?.message).toMatch(/nonce .*nothing was signed/);
     expect(state.verifyCalls).toBe(0);
+    expect(state.registerCalls).toBe(1);
+  });
+
+  it('★ a refusal names WHERE the operator sets the version, when the caller says — not the option name', async () => {
+    const a = agent();
+    const { f } = fleet({ publicKeys: new Map([[a.key.did, a.x]]) });
+    const err = await new DidTokenMinter({ relayOrigin: RELAY, key: a.key, fetchImpl: f, acceptHostedTermsSetting: 'INTEREGO_AGENT_ACCEPT_HOSTED_TERMS_VERSION' })
+      .token().then(() => null, (e: Error) => e);
+    expect(err).toBeInstanceOf(HostedTermsRequiredError);
+    expect(err?.message).toContain('INTEREGO_AGENT_ACCEPT_HOSTED_TERMS_VERSION is not set, so none was sent');
+    expect(err?.message).toContain('set INTEREGO_AGENT_ACCEPT_HOSTED_TERMS_VERSION to that exact version');
+    expect(err?.message).not.toContain('acceptHostedTermsVersion');
+  });
+
+  it('a challenge carrying an agreement the operator did not give names the unset variable', () => {
+    const message = `Interego DID sign-in v1\nHost: x\nNonce: abcdefgh\n${statementFor(CURRENT)}`;
+    expect(() => checkDidChallenge({ nonce: 'abcdefgh', message }, undefined, 'INTEREGO_FLEET_ACCEPT_HOSTED_TERMS_VERSION'))
+      .toThrow(/did not give \(INTEREGO_FLEET_ACCEPT_HOSTED_TERMS_VERSION is not set\)/);
   });
 
   it('checkDidChallenge leaves a message with no agreement exactly as sent, and the bare nonce when there is no message', () => {
@@ -183,6 +222,8 @@ describe('a service agent\'s first login and the Hosted Terms', () => {
 describe('relayForAgent carries the operator\'s agreement to the minter', () => {
   const realFetch = globalThis.fetch;
   afterEach(() => { globalThis.fetch = realFetch; });
+  // The MCP endpoint is not part of this question; minting the bearer is.
+  const mint = (c: unknown): Promise<string> => (c as { cfg: { bearer: { token(): Promise<string> } } }).cfg.bearer.token();
 
   it('sends the configured version, and nothing when none is configured', async () => {
     const a = agent();
@@ -190,12 +231,23 @@ describe('relayForAgent carries the operator\'s agreement to the minter', () => 
     const other = agentKeyFromJwk(jwk);
     const { f, state } = fleet({ known: [other.did], publicKeys: new Map([[a.key.did, a.x], [other.did, String(JSON.parse(jwk).x)]]) });
     globalThis.fetch = f;
-    // The MCP endpoint is not part of this question; minting the bearer is.
     const withAgreement = relayForAgent({ keyJson: jwk, relayUrl: `${RELAY}/mcp`, clientName: 'svc', acceptHostedTermsVersion: CURRENT });
     const without = relayForAgent({ keyJson: jwk, relayUrl: `${RELAY}/mcp`, clientName: 'svc' });
-    const mint = (c: unknown): Promise<string> => (c as { cfg: { bearer: { token(): Promise<string> } } }).cfg.bearer.token();
     await mint(withAgreement);
     await mint(without);
     expect(state.challengeBodies).toEqual([{ purpose: 'did-sig', termsVersion: CURRENT }, { purpose: 'did-sig' }]);
+  });
+
+  it('carries the caller\'s setting name into a refusal (tools/fleet-event.ts passes its own variable)', async () => {
+    const jwk = JSON.stringify(generateAgentKeyJwk());
+    const key = agentKeyFromJwk(jwk);
+    const { f } = fleet({ publicKeys: new Map([[key.did, String(JSON.parse(jwk).x)]]) });
+    globalThis.fetch = f;
+    const relay = relayForAgent({
+      keyJson: jwk, relayUrl: `${RELAY}/mcp`, clientName: 'interego-fleet', acceptHostedTermsSetting: 'INTEREGO_FLEET_ACCEPT_HOSTED_TERMS_VERSION',
+    });
+    const err = await mint(relay).then(() => null, (e: Error) => e);
+    expect(err).toBeInstanceOf(HostedTermsRequiredError);
+    expect(err?.message).toContain('set INTEREGO_FLEET_ACCEPT_HOSTED_TERMS_VERSION to that exact version');
   });
 });

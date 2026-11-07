@@ -35,8 +35,8 @@ import type { Published } from './descriptor.js';
 import { modalStatus } from './descriptor.js';
 
 export {
-  DEFAULT_RELAY_URL, DidTokenMinter, RelayClient, agentKeyFromJwk, base58btc, checkDidChallenge, didChallengeText, generateAgentKeyJwk,
-  lastJsonRpcMessage, signNonce,
+  DEFAULT_RELAY_URL, DidChallengeRefusedError, DidTokenMinter, HostedTermsRequiredError, RelayClient, agentKeyFromJwk, base58btc,
+  checkDidChallenge, didChallengeText, generateAgentKeyJwk, lastJsonRpcMessage, signNonce,
 } from '../../_shared/relay-agent/index.js';
 export type { AgentKey, MinterConfig, RelayConfig, TokenSource, ToolCallResult } from '../../_shared/relay-agent/index.js';
 
@@ -55,6 +55,8 @@ export function relayFromEnv(): RelayClient | null {
       key: agentKeyFromJwk(keyJson),
       clientName: process.env['INTEREGO_CLIENT_NAME'] ?? 'jev-harness-bridge',
       ...(acceptHostedTermsVersion ? { acceptHostedTermsVersion } : {}),
+      // Named in a 428 or a refused challenge, so the operator reads the variable THEY set.
+      acceptHostedTermsSetting: 'INTEREGO_AGENT_ACCEPT_HOSTED_TERMS_VERSION',
     });
     return new RelayClient({ url, bearer: minter, clientName: 'jev-harness', ...(podName ? { podName } : {}) });
   }

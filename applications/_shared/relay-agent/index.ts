@@ -37,7 +37,11 @@
  * statement. This module NEVER agrees on anybody's behalf: it sends a version only when the
  * operator configured one (`acceptHostedTermsVersion`), after reading those terms for the account
  * this key opens. Without one, an agent that already has an account signs in as it always did,
- * and a new one fails with the server's own refusal, naming the option.
+ * and a new one fails with the server's own refusal (`HostedTermsRequiredError`), naming where the
+ * operator sets the version (`acceptHostedTermsSetting`, e.g. the caller's environment variable)
+ * and saying whether one was sent. A challenge this module will not sign at all is a
+ * `DidChallengeRefusedError`; neither is retried with a fresh client registration, which cannot
+ * answer either.
  */
 
 import { createHash, createPrivateKey, generateKeyPairSync, randomBytes, sign as edSign, type JsonWebKey, type KeyObject } from 'node:crypto';
@@ -123,25 +127,43 @@ const HOSTED_TERMS_MARK = /Hosted Interego Terms/i;
 export function checkDidChallenge(
   challenge: { readonly nonce: string; readonly message?: unknown },
   acceptHostedTermsVersion: string | undefined,
+  setting: string = DEFAULT_HOSTED_TERMS_SETTING,
 ): string {
   if (!/^[A-Za-z0-9_-]{8,}$/.test(challenge.nonce)) {
-    throw new Error('identity /challenges issued a nonce that is not 8+ base64url characters, so nothing was signed');
+    throw new DidChallengeRefusedError('identity /challenges issued a nonce that is not 8+ base64url characters, so nothing was signed');
   }
   const text = didChallengeText(challenge);
   const agreementLines = text.split(/\r\n|\r|\n/).filter((line) => HOSTED_TERMS_MARK.test(line));
   if (agreementLines.length > 0) {
     if (!acceptHostedTermsVersion) {
-      throw new Error('identity /challenges returned a challenge carrying a Hosted Interego Terms agreement that this '
-        + 'agent\'s operator did not give (no acceptHostedTermsVersion), so nothing was signed');
+      throw new DidChallengeRefusedError('identity /challenges returned a challenge carrying a Hosted Interego Terms agreement '
+        + 'that this agent\'s operator did not give (' + setting + ' is not set), so nothing was signed');
     }
     const named = '/terms/' + acceptHostedTermsVersion + '/';
     if (agreementLines.some((line) => !line.includes(named))) {
-      throw new Error('identity /challenges returned a Hosted Interego Terms agreement that does not name version '
-        + acceptHostedTermsVersion + ', the one this agent\'s operator agreed to, so nothing was signed');
+      throw new DidChallengeRefusedError('identity /challenges returned a Hosted Interego Terms agreement that does not name '
+        + 'version ' + acceptHostedTermsVersion + ', the one this agent\'s operator agreed to (' + setting + '), so nothing '
+        + 'was signed');
     }
   }
   return text;
 }
+
+/**
+ * The identity server's did-sig challenge was not signed at all: its nonce could carry a line
+ * break into the signed text, or it carries a Hosted Terms agreement the operator did not give.
+ * Thrown by {@link checkDidChallenge} BEFORE anything is signed or sent, and never answered by
+ * registering the client again — no registration changes what the identity server issues.
+ */
+export class DidChallengeRefusedError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'DidChallengeRefusedError';
+  }
+}
+
+/** What a refusal names when the caller did not say where its operator sets the version. */
+const DEFAULT_HOSTED_TERMS_SETTING = 'acceptHostedTermsVersion';
 
 /**
  * The text a did-sig challenge asks the key to sign. An identity server that names itself in
@@ -182,6 +204,12 @@ export interface MinterConfig {
    * this module does not fetch the terms or pick a version — agreeing is the operator's decision.
    */
   readonly acceptHostedTermsVersion?: string;
+  /**
+   * WHERE this agent's operator sets {@link acceptHostedTermsVersion} — usually the caller's
+   * environment variable, e.g. `INTEREGO_AGENT_ACCEPT_HOSTED_TERMS_VERSION` — so a refusal names
+   * the one thing they can change. Defaults to the option's own name. A label, never a value.
+   */
+  readonly acceptHostedTermsSetting?: string;
 }
 
 interface MintedToken { readonly token: string; readonly expiresAt: number }
@@ -222,8 +250,9 @@ export class DidTokenMinter implements TokenSource {
       return await this.mintOnce(this.clientId ?? (this.clientId = await this.register()));
     } catch (err) {
       // A registration the relay no longer knows fails at /authorize; register again once.
-      // A Hosted Terms refusal is not that: no registration answers it, so it is reported as it came.
-      if (this.clientId === undefined || err instanceof HostedTermsRequiredError) throw err;
+      // A Hosted Terms refusal, and a challenge this key refused to sign, are not that: no
+      // registration answers either, so each is reported as it came, after one challenge.
+      if (this.clientId === undefined || err instanceof HostedTermsRequiredError || err instanceof DidChallengeRefusedError) throw err;
       this.clientId = undefined;
       return this.mintOnce(this.clientId = await this.register());
     }
@@ -271,7 +300,8 @@ export class DidTokenMinter implements TokenSource {
     }), 'identity /challenges');
     const nonce = challenge['nonce'];
     if (typeof nonce !== 'string') throw new Error('identity /challenges returned no nonce');
-    const signed = checkDidChallenge({ nonce, message: challenge['message'] }, accept);
+    const setting = this.cfg.acceptHostedTermsSetting ?? DEFAULT_HOSTED_TERMS_SETTING;
+    const signed = checkDidChallenge({ nonce, message: challenge['message'] }, accept, setting);
 
     const verifyRes = await this.f(`${origin}/oauth/verify`, {
       method: 'POST',
@@ -286,8 +316,8 @@ export class DidTokenMinter implements TokenSource {
     // server saying this key has no account yet and opening one needs the operator's agreement;
     // reporting it as a bare failed step hid what to do about it.
     if (!verifyRes.ok) {
-      const message = await refusal(verifyRes, 'relay /oauth/verify');
-      throw verifyRes.status === 428 ? new HostedTermsRequiredError(message) : new Error(message);
+      const message = await refusal(verifyRes, 'relay /oauth/verify', hostedTermsOperatorHint(accept, setting));
+      throw verifyRes.status === 428 ? new HostedTermsRequiredError(message, accept) : new Error(message);
     }
     const verified = await json(verifyRes, 'relay /oauth/verify');
     const redirect = verified['redirect'];
@@ -310,30 +340,44 @@ export class DidTokenMinter implements TokenSource {
 /**
  * The identity server refused to open an account for this key without its operator's agreement
  * to the Hosted Interego Terms (HTTP 428). Its message carries the server's words and the hint.
+ * `sentVersion` is the version that went with the challenge, if the operator configured one.
  */
 export class HostedTermsRequiredError extends Error {
   readonly status = 428;
-  constructor(message: string) {
+  constructor(message: string, readonly sentVersion?: string) {
     super(message);
     this.name = 'HostedTermsRequiredError';
   }
 }
 
-/** What the operator reads when the identity server refuses to open an account without the agreement. */
-export const HOSTED_TERMS_OPERATOR_HINT = ' This agent key has no hosted account yet, and the hosted identity server '
-  + 'opens one only with its operator\'s agreement to the Hosted Interego Terms. Read the current terms '
-  + '(GET <identity>/.well-known/hosted-interego-terms), and if you agree, configure that exact version as '
-  + 'acceptHostedTermsVersion. Nothing was created.';
+/**
+ * What the operator reads after a 428, naming where THEY set the version (`setting`).
+ *
+ * ★ TWO DIFFERENT FIXES, SO TWO DIFFERENT SENTENCES. With no version configured, the operator has
+ * not agreed to anything and the fix is to read the terms and set one. With one configured, it WAS
+ * sent and the server still refused: it opens an account only with the version it offers NOW, so
+ * the configured one has been replaced, and the fix is to read the new terms and change it.
+ */
+export function hostedTermsOperatorHint(sentVersion: string | undefined, setting: string): string {
+  const read = 'Read the current terms (GET <identity>/.well-known/hosted-interego-terms), and if you agree, set '
+    + setting + ' to that exact version. Nothing was created.';
+  return sentVersion
+    ? ' This agent key has no hosted account yet. Its operator\'s agreement to Hosted Interego Terms version '
+      + sentVersion + ' (' + setting + ') was sent and NOT accepted: the hosted identity server opens an account only '
+      + 'with the version it currently offers, so that one has most likely been replaced. ' + read
+    : ' This agent key has no hosted account yet, and the hosted identity server opens one only with its operator\'s '
+      + 'agreement to the Hosted Interego Terms; ' + setting + ' is not set, so none was sent. ' + read;
+}
 
-/** `<what> answered HTTP <status>: <error>`, with the operator hint after a 428. */
-async function refusal(res: Response, what: string): Promise<string> {
+/** `<what> answered HTTP <status>: <error>`, with `hint` after a 428. */
+async function refusal(res: Response, what: string, hint: string): Promise<string> {
   const text = await res.text();
   let error = text.slice(0, 300);
   try {
     const body = JSON.parse(text) as { error?: unknown };
     if (typeof body.error === 'string' && body.error !== '') error = body.error;
   } catch { /* not JSON: the text is the error */ }
-  return `${what} answered HTTP ${res.status}: ${error || 'no error given'}` + (res.status === 428 ? HOSTED_TERMS_OPERATOR_HINT : '');
+  return `${what} answered HTTP ${res.status}: ${error || 'no error given'}` + (res.status === 428 ? hint : '');
 }
 
 async function json(res: Response, what: string): Promise<Record<string, unknown>> {
@@ -476,11 +520,14 @@ export function relayForAgent(opts: {
   readonly keyJson: string; readonly relayUrl?: string; readonly clientName: string; readonly podName?: string;
   /** The operator's explicit Hosted Terms agreement; see {@link MinterConfig.acceptHostedTermsVersion}. */
   readonly acceptHostedTermsVersion?: string;
+  /** Where the operator sets it, named in a refusal; see {@link MinterConfig.acceptHostedTermsSetting}. */
+  readonly acceptHostedTermsSetting?: string;
 }): RelayClient {
   const url = opts.relayUrl ?? DEFAULT_RELAY_URL;
   const minter = new DidTokenMinter({
     relayOrigin: new URL(url).origin, key: agentKeyFromJwk(opts.keyJson), clientName: opts.clientName,
     ...(opts.acceptHostedTermsVersion ? { acceptHostedTermsVersion: opts.acceptHostedTermsVersion } : {}),
+    ...(opts.acceptHostedTermsSetting ? { acceptHostedTermsSetting: opts.acceptHostedTermsSetting } : {}),
   });
   return new RelayClient({ url, bearer: minter, clientName: opts.clientName, ...(opts.podName ? { podName: opts.podName } : {}) });
 }

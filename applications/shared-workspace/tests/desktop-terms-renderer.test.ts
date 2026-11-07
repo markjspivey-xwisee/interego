@@ -52,8 +52,16 @@ interface Calls {
   termsReads: number;
 }
 
-/** Boot the shipping window with a bridge that records what each sign-in carried, and refuses it. */
-async function open(opts: { offer: Offer | (() => Offer); accounts?: number }): Promise<{ doc: Document; calls: Calls }> {
+/**
+ * Boot the shipping window with a bridge that records what each sign-in carried, and refuses it —
+ * unless `succeed` says this case needs one to complete (a sign-in, a mint), which is how the
+ * redraw AFTER a completed use is reached at all.
+ */
+async function open(opts: {
+  offer: Offer | (() => Offer | Promise<Offer>);
+  accounts?: number;
+  succeed?: { readonly signIn?: boolean; readonly mint?: boolean };
+}): Promise<{ doc: Document; calls: Calls }> {
   const html = readFileSync(join(DESKTOP, 'index.html'), 'utf8');
   const dom = new JSDOM('<!doctype html><html><head><meta charset="utf-8"></head><body>' + html + '</body></html>', {
     runScripts: 'outside-only', url: 'file:///app/index.html', pretendToBeVisual: true,
@@ -67,21 +75,33 @@ async function open(opts: { offer: Offer | (() => Offer); accounts?: number }): 
   // sign-in card and what crossed the bridge is the whole of what a case reads.
   const refuse = (): never => { throw new Error(REFUSAL); };
   (win as unknown as Record<string, unknown>)['interego'] = {
-    hostedTerms: async () => { calls.termsReads++; return typeof opts.offer === 'function' ? opts.offer() : opts.offer; },
+    hostedTerms: async () => { calls.termsReads++; return await (typeof opts.offer === 'function' ? opts.offer() : opts.offer); },
     describe: async () => ({
       relay: 'https://relay.interego.xwisee.com', identityServer: 'https://identity.interego.xwisee.com',
       secretStore: true, hasStoredWallet: accounts.length > 0, accounts, signedInAs: null,
       session: { state: 'signed-out', pod: null, method: null, expiresAt: null, renewable: false, why: null },
       watchDescription: 're-read on a timer, not pushed',
     }),
-    signInWithWallet: async (v?: string) => { calls.wallet.push(v); return refuse(); },
+    signInWithWallet: async (v?: string) => {
+      calls.wallet.push(v);
+      if (!opts.succeed?.signIn) return refuse();
+      return { pod: 'u-eth-000000000001', displayName: null, method: 'wallet', address: '0x' + '1'.repeat(40), mintedNewKey: !accounts.length };
+    },
     signInWithBrowser: async () => refuse(),
     accountList: async () => ({ accounts, secretStore: true }),
     accountImport: async (_pk: string, v?: string) => { calls.imports.push(v); return refuse(); },
     accountSignInAs: async (_a: string, v?: string) => { calls.switches.push(v); return refuse(); },
-    delegateMint: async (v?: string) => { calls.mints.push(v); throw new Error('the relay did not accept this wallet proof (HTTP 428): delegate refused'); },
+    delegateMint: async (v?: string) => {
+      calls.mints.push(v);
+      if (!opts.succeed?.mint) throw new Error('the relay did not accept this wallet proof (HTTP 428): delegate refused');
+      return { address: '0x' + 'd'.repeat(40), agentId: 'did:web:identity.example:agents:delegate-' + calls.mints.length, pod: 'u-eth-dddddddddddd', privateKey: '0x' + 'e'.repeat(64) };
+    },
     delegateImport: async (_pk: string, v?: string) => { calls.delegateImports.push(v); throw new Error('refused'); },
     delegateList: async () => ({ delegates: [], secretStore: true }),
+    // A completed sign-in boots the workspace; there is no relay in this file, so that boot stops
+    // at its first call, on screen, which no case here reads.
+    call: async () => { throw new Error('no relay in this test'); },
+    signOut: async () => ({ accounts }),
     onSessionChanged: () => {},
     onTurnProgress: () => {},
   };
@@ -174,6 +194,59 @@ describe('the Hosted Terms on the desktop sign-in screen', () => {
     await click(doc, 'signin-wallet');
     expect(calls.wallet).toEqual([undefined]);
   });
+
+  it('★ a press that would mint WAITS for an offer still being read, and is refused when it turns out to need a tick', async () => {
+    let answer!: (o: Offer) => void;
+    const { doc, calls } = await open({ offer: () => new Promise<Offer>((r) => { answer = r; }) });
+    expect(box(doc, 'signin-terms-agree')).toBeNull();
+    await click(doc, 'signin-wallet');
+    // Nothing crosses while the offer is unknown, and the card cannot be pressed twice meanwhile.
+    expect(calls.wallet).toEqual([]);
+    expect((doc.getElementById('signin-wallet') as HTMLButtonElement).disabled).toBe(true);
+    answer(offered(CURRENT));
+    await settle();
+    expect(calls.wallet).toEqual([]);
+    expect(text(doc, 'signinnote')).toContain('tick "I agree" first');
+    expect(box(doc, 'signin-terms-agree')!.checked).toBe(false);
+    expect((doc.getElementById('signin-wallet') as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it('a press that would mint waits for the offer and goes on when the deployment offers none', async () => {
+    let answer!: (o: Offer) => void;
+    const { doc, calls } = await open({ offer: () => new Promise<Offer>((r) => { answer = r; }) });
+    await click(doc, 'signin-wallet');
+    expect(calls.wallet).toEqual([]);
+    answer({ state: 'none' });
+    await settle();
+    expect(calls.wallet).toEqual([undefined]);
+  });
+
+  it('★ with no key held, an UNREADABLE offer refuses the minting press and reads the terms again — "could not tell" is not "none needed"', async () => {
+    const { doc, calls } = await open({ offer: { state: 'unknown', why: 'the identity server answered HTTP 503' } });
+    const before = calls.termsReads;
+    await click(doc, 'signin-wallet');
+    expect(calls.wallet).toEqual([]);
+    expect(text(doc, 'signinnote')).toContain('could not be read');
+    expect(text(doc, 'signinnote')).toContain('the identity server answered HTTP 503');
+    expect(text(doc, 'signinnote')).toContain('Nothing was minted and nothing was sent');
+    expect(calls.termsReads).toBeGreaterThan(before);
+  });
+
+  it('★ the sign-in box is redrawn UNTICKED after a completed sign-in, and again on sign-out', async () => {
+    const { doc, calls } = await open({ offer: offered(CURRENT), succeed: { signIn: true } });
+    box(doc, 'signin-terms-agree')!.checked = true;
+    await click(doc, 'signin-wallet');
+    expect(calls.wallet).toEqual([CURRENT]);
+    expect(doc.getElementById('signin')!.hidden).toBe(true);
+    expect(box(doc, 'signin-terms-agree')!.checked).toBe(false);
+    // Ticked again while signed in (both boxes), then signed out: the card comes back empty.
+    box(doc, 'signin-terms-agree')!.checked = true;
+    box(doc, 'delegate-terms-agree')!.checked = true;
+    await click(doc, 'signoutbtn');
+    expect(doc.getElementById('signin')!.hidden).toBe(false);
+    expect(box(doc, 'signin-terms-agree')!.checked).toBe(false);
+    expect(box(doc, 'delegate-terms-agree')!.checked).toBe(false);
+  });
 });
 
 describe('a minted delegate\'s own agreement', () => {
@@ -188,6 +261,39 @@ describe('a minted delegate\'s own agreement', () => {
     await click(doc, 'delegatemint');
     expect(calls.mints).toEqual([CURRENT]);
     expect(text(doc, 'delegateresult')).toContain('(HTTP 428): delegate refused');
+  });
+
+  it('★ a tick is used ONCE: after a mint the box is unticked, and a second Mint without a fresh tick sends nothing', async () => {
+    for (const succeed of [false, true]) {
+      const { doc, calls } = await open({ offer: offered(CURRENT), accounts: 1, succeed: { mint: succeed } });
+      box(doc, 'delegate-terms-agree')!.checked = true;
+      await click(doc, 'delegatemint');
+      expect(calls.mints).toEqual([CURRENT]);
+      expect(box(doc, 'delegate-terms-agree')!.checked).toBe(false);
+      await click(doc, 'delegatemint');
+      expect(calls.mints).toEqual([CURRENT]);
+      expect(text(doc, 'delegateresult')).toContain('tick "I agree" first');
+    }
+  });
+
+  it('a delegate adoption uses the tick once too: the next one carries no version without a fresh tick', async () => {
+    const { doc, calls } = await open({ offer: offered(CURRENT), accounts: 1 });
+    const key = '0x' + '5'.repeat(64);
+    box(doc, 'delegate-terms-agree')!.checked = true;
+    (doc.getElementById('delegateimportkey') as HTMLInputElement).value = key;
+    await click(doc, 'delegateimport');
+    expect(box(doc, 'delegate-terms-agree')!.checked).toBe(false);
+    (doc.getElementById('delegateimportkey') as HTMLInputElement).value = key;
+    await click(doc, 'delegateimport');
+    expect(calls.delegateImports).toEqual([CURRENT, undefined]);
+  });
+
+  it('minting a delegate while the offer cannot be read is refused, and nothing crosses', async () => {
+    const { doc, calls } = await open({ offer: { state: 'unknown', why: 'the identity server answered HTTP 503' }, accounts: 1 });
+    await click(doc, 'delegatemint');
+    expect(calls.mints).toEqual([]);
+    expect(text(doc, 'delegateresult')).toContain('could not be read');
+    expect(text(doc, 'delegateresult')).toContain('Nothing was minted');
   });
 
   it('adopting a delegate key carries the delegate box\'s tick, and nothing without it', async () => {

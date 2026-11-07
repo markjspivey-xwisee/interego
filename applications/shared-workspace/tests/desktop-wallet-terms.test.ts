@@ -19,8 +19,12 @@
  */
 
 import { describe, expect, it } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { Wallet, verifyMessage } from 'ethers';
 import { ORDINARY_SIWE_STATEMENT, readHostedTerms, signInWithWallet } from '../desktop/src/auth.js';
+import { SELFTEST_ACCEPT_HOSTED_TERMS_ENV, selftestSignInOptions } from '../desktop/src/selftest-terms.js';
 
 const RELAY = 'https://relay.interego.xwisee.com';
 const IDENTITY = 'https://identity.example';
@@ -176,5 +180,38 @@ describe('reading the current Hosted Terms to show them', () => {
     const offer = await readHostedTerms(IDENTITY, (async () => { throw new Error('ECONNREFUSED'); }) as typeof fetch);
     expect(offer).toMatchObject({ state: 'unknown', why: expect.stringContaining('ECONNREFUSED') });
     expect((await readHostedTerms(IDENTITY, answering(503, {}))).state).toBe('unknown');
+  });
+});
+
+describe('the headless selftest\'s own Hosted Terms variable', () => {
+  /**
+   * ★ ITS OWN NAME, AND NO OTHER. The selftest mints a key when none is stored, so its first
+   * sign-in opens an account and needs the operator's agreement. It reads that from
+   * INTEREGO_SELFTEST_ACCEPT_HOSTED_TERMS_VERSION only: a value set for another driver is not an
+   * agreement for this run's account. `selftest.ts` itself boots Electron at import, so the
+   * plumbing is read from its source and the helper it calls is driven against the wire.
+   */
+  it('reads only INTEREGO_SELFTEST_ACCEPT_HOSTED_TERMS_VERSION, trimmed, and never defaults one', () => {
+    expect(SELFTEST_ACCEPT_HOSTED_TERMS_ENV).toBe('INTEREGO_SELFTEST_ACCEPT_HOSTED_TERMS_VERSION');
+    expect(selftestSignInOptions({})).toEqual({});
+    expect(selftestSignInOptions({ [SELFTEST_ACCEPT_HOSTED_TERMS_ENV]: '   ' })).toEqual({});
+    expect(selftestSignInOptions({ [SELFTEST_ACCEPT_HOSTED_TERMS_ENV]: ' ' + CURRENT + '\n' })).toEqual({ acceptHostedTermsVersion: CURRENT });
+    // Another driver's variable is not this run's agreement.
+    expect(selftestSignInOptions({ INTEREGO_ACCEPT_HOSTED_TERMS_VERSION: CURRENT, INTEREGO_AGENT_ACCEPT_HOSTED_TERMS_VERSION: CURRENT })).toEqual({});
+  });
+
+  it('★ what it returns is what reaches /challenges, and selftest.ts passes it straight to its one wallet sign-in', async () => {
+    const w = Wallet.createRandom();
+    const { f, seen } = fleet();
+    await signInWithWallet(RELAY, IDENTITY, w.address, (m) => w.signMessage(m), REDIRECT, undefined,
+      { fetchImpl: f, ...selftestSignInOptions({ [SELFTEST_ACCEPT_HOSTED_TERMS_ENV]: CURRENT }) });
+    expect(seen.challengeBodies).toEqual([{ purpose: 'siwe', termsVersion: CURRENT }]);
+    expect(seen.accounts.has(w.address.toLowerCase())).toBe(true);
+
+    const source = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '..', 'desktop', 'src', 'selftest.ts'), 'utf8');
+    const code = source.split('\n').filter((line) => !/^\s*(\*|\/\/|\/\*)/.test(line)).join('\n');
+    expect(code.match(/signInWithWallet\(/g)).toHaveLength(1);
+    expect(code).toMatch(/signInWithWallet\([^;]*selftestSignInOptions\(process\.env\)\)/);
+    expect(code).not.toMatch(/ACCEPT_HOSTED_TERMS_VERSION/);
   });
 });

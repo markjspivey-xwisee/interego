@@ -665,6 +665,14 @@ async function open(opts: {
     return { pod, displayName: null, method: 'wallet', address };
   };
   (win as unknown as Record<string, unknown>)['interego'] = {
+    /**
+     * ★ A DEPLOYMENT THAT ASKS FOR NO HOSTED TERMS AGREEMENT. This harness signs in by minting (it
+     * holds no key), and a minting press goes on only when the offer is KNOWN — `none`, or offered
+     * and ticked. Before the gate waited for a known answer this harness had no `hostedTerms` at
+     * all and minted on the failed read; the agreement itself is covered by
+     * `applications/shared-workspace/tests/desktop-terms-renderer.test.ts`.
+     */
+    hostedTerms: async () => ({ state: 'none' }),
     describe: async () => ({
       relay: RELAY, identityServer: 'https://identity.interego.xwisee.com',
       secretStore: true, hasStoredWallet: accounts.keys.length > 0, accounts: accounts.keys.slice(),

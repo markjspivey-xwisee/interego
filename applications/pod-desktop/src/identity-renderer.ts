@@ -1,5 +1,6 @@
 import type { DesktopApi, PodStatus } from './types.js';
 import type { LocalIdentityApproval, LocalIdentityStatus } from './local-identity-types.js';
+import { LOCAL_IDENTITY_NEEDS_ACCOUNT } from './local-identity-types.js';
 
 interface Context {
   pod(): PodStatus | null;
@@ -138,7 +139,9 @@ export function installIdentityUi(api: DesktopApi, context: Context): { refresh(
           if (!current || !state?.identity || signature(current) !== signature(request) || !acknowledged.has(signature(current)) || current.state !== 'waiting' || !fresh(current)
             || current.purpose === 'link' && (current.credentialDid !== state.identity.did || current.credentialFingerprint !== state.identity.fingerprint)) return;
           acknowledged.delete(signature(current)); void change(async () => { state = await identityApi.approveLocalIdentity(current.id, current.verificationCode); }, linking
-            ? 'Your PC key was added to your existing account. Return to your browser.' : 'Sign-in approved. Return to your browser.');
+            ? 'Your PC key was added to your existing account. Return to your browser.' : 'Sign-in approved. Return to your browser.',
+          // The one sign-in refusal this page names: the browser shows only that the sign-in ended.
+          linking ? [] : [LOCAL_IDENTITY_NEEDS_ACCOUNT]);
         });
         const deny = document.createElement('button'); deny.className = 'secondary'; deny.textContent = 'Decline';
         deny.addEventListener('click', () => { void change(async () => { state = await identityApi.denyLocalIdentity(request.id); }, linking ? 'Adding this PC key was declined.' : 'Sign-in declined.'); });
@@ -148,14 +151,22 @@ export function installIdentityUi(api: DesktopApi, context: Context): { refresh(
     }
     controls();
   }
-  async function change(operation: () => Promise<void>, success = ''): Promise<void> {
+  /**
+   * `named` lists this app's OWN fixed copy that a failure may be shown as. Any other failure,
+   * whatever text crossed the IPC boundary, is the one generic sentence.
+   */
+  async function change(operation: () => Promise<void>, success = '', named: readonly string[] = []): Promise<void> {
     if (occupied() || !available()) return;
     changing = true; epoch++; reading++; message(''); controls();
     try { await operation(); if (success) message(success); }
-    catch {
+    catch (error) {
       acknowledged.clear(); state = undefined; readFailure = true;
       try { state = await identityApi.localIdentityStatus(); readFailure = false; } catch { /* Do not present old approvals as current. */ }
-      message('This identity change could not be confirmed. Check the status before trying again.', true);
+      // Read structurally, not with `instanceof Error`: the error was made in another JavaScript
+      // world (the preload, across the context bridge) and is not this world's Error.
+      const said = (error as { message?: unknown } | null)?.message;
+      const own = typeof said === 'string' && named.includes(said) ? said : null;
+      message(own ?? 'This identity change could not be confirmed. Check the status before trying again.', true);
     }
     finally { changing = false; render(); }
   }

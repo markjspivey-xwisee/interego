@@ -13,11 +13,13 @@
  *   INTEREGO_SELFTEST_KEY=0x…            a secp256k1 key to put in the OS store and sign with
  *   INTEREGO_SELFTEST_WORKSPACE=https://… the workspace to open
  *   INTEREGO_SELFTEST_POST=1              also append an entry (a real, public write)
- *   INTEREGO_ACCEPT_HOSTED_TERMS_VERSION=… the Hosted Terms version the OPERATOR agreed to, for the
- *                                         account a NEW key opens (the live drivers' variable).
- *                                         With no key stored this run mints one, and hosted identity
- *                                         refuses a new account without the agreement (HTTP 428).
- *                                         Never defaulted; a key with an account ignores it.
+ *   INTEREGO_SELFTEST_ACCEPT_HOSTED_TERMS_VERSION=…
+ *                                         the Hosted Terms version the OPERATOR read and agreed to,
+ *                                         for the account a NEW key opens. With no key stored this
+ *                                         run mints one, and hosted identity refuses a new account
+ *                                         without the agreement (HTTP 428). The selftest's own
+ *                                         variable (`selftest-terms.ts`), read by nothing else;
+ *                                         never defaulted; a key with an account ignores it.
  *
  * Run:  npx electron dist/selftest.js
  */
@@ -30,6 +32,7 @@ import {
 } from '@interego/workspace-client';
 import { beginAuthorization, exchangeCode, signInWithWallet, startLoopbackReceiver } from './auth.js';
 import { getSecret, putSecret, secretStoreAvailable, WALLET_KEY } from './secrets.js';
+import { selftestSignInOptions } from './selftest-terms.js';
 
 const RELAY = process.env['INTEREGO_RELAY'] ?? 'https://relay.interego.xwisee.com';
 const IDENTITY = process.env['INTEREGO_IDENTITY'] ?? 'https://identity.interego.xwisee.com';
@@ -135,9 +138,8 @@ async function run(): Promise<number> {
   log('loopback receiver      :', recv.redirectUri);
   let bearer;
   try {
-    const accept = (process.env['INTEREGO_ACCEPT_HOSTED_TERMS_VERSION'] ?? '').trim();
     bearer = await signInWithWallet(RELAY, IDENTITY, wallet.address, (m) => wallet.signMessage(m), recv.redirectUri,
-      undefined, accept ? { acceptHostedTermsVersion: accept } : {});
+      undefined, selftestSignInOptions(process.env));
   } finally { recv.close(); }
   log('bearer                 :', bearer.kind, '· method', bearer.method, '· length', bearer.accessToken.length,
     '· expiresAt', bearer.expiresAt === null ? 'not reported by the grant' : new Date(bearer.expiresAt).toISOString());

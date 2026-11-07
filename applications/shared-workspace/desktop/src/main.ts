@@ -420,6 +420,38 @@ function agreedTermsVersion(v: unknown): string | undefined {
 }
 
 /**
+ * Refuse to MINT a key for an account nobody agreed to open. Throws; returns when minting may go on.
+ *
+ * ★ A KEY MINTED HERE ALWAYS OPENS A NEW HOSTED ACCOUNT, and the identity server opens one only with
+ * the agreement to the Hosted Terms version it currently offers (HTTP 428 otherwise). Minting
+ * first and finding that out at sign-in leaves a key stored on this machine for an account that
+ * was never opened. So before `auth:wallet` mints (nothing stored) and before `delegate:mint`, the
+ * offer is read from the identity server itself and minting goes on only when it offers no terms,
+ * or when the version that came across from the window IS the version it offers. When the offer
+ * cannot be read, nothing is minted: not being able to tell is not "none is needed". The renderer
+ * refuses the same presses first; this is the guard, that is the courtesy.
+ *
+ * A key the person brings (`account:import`, `delegate:import`) is not minted here and may already
+ * have an account, so it is not gated: its sign-in goes to the server, which decides.
+ */
+async function refuseMintWithoutAgreement(agreed: string | undefined, opens: string): Promise<void> {
+  const offer = await readHostedTerms(IDENTITY);
+  if (offer.state === 'none') return;
+  if (offer.state === 'unknown') {
+    throw new Error('The Hosted Interego Terms could not be read (' + offer.why + '), and ' + opens + ' opens a new hosted '
+      + 'account, which needs the agreement to them. Nothing was minted and nothing was stored.');
+  }
+  if (agreed === offer.version) return;
+  throw new Error(agreed === undefined
+    ? 'The identity server offers the Hosted Interego Terms (version ' + offer.version + '), and ' + opens + ' opens a new '
+      + 'hosted account, which needs your agreement to them; none came with this request. Tick "I agree" and try again. '
+      + 'Nothing was minted and nothing was stored.'
+    : 'The agreement that came with this request is to Hosted Interego Terms version ' + agreed + ', and the identity server '
+      + 'now offers version ' + offer.version + '. Read that version and tick "I agree" again. Nothing was minted and nothing '
+      + 'was stored.');
+}
+
+/**
  * Sign in as one account key: the whole ceremony, from the key to a live session.
  *
  * ★ ONE PATH, USED BY ALL THREE ENTRY POINTS — the wallet button, an import, and switching to a
@@ -1258,6 +1290,8 @@ app.whenReady().then(() => {
       if (slots.length) throw new Error('This machine holds ' + slots.length + ' account keys and none of them is currently '
         + 'the one to sign in with. Pick one from the list on the sign-in screen. Nothing was minted, because a new key is a '
         + 'new pod with none of your words on it.');
+      // ★ AND NOT FOR AN ACCOUNT NOBODY AGREED TO OPEN. See {@link refuseMintWithoutAgreement}.
+      await refuseMintWithoutAgreement(agreed, 'a key minted for this machine');
       pk = Wallet.createRandom().privateKey;
       putSecret(ACCOUNT_KEY(new Wallet(pk).address), pk);
       minted = true;
@@ -1673,6 +1707,8 @@ app.whenReady().then(() => {
    */
   ipcMain.handle('delegate:mint', async (_e, termsVersion?: unknown) => {
     const agreed = agreedTermsVersion(termsVersion);
+    // Before the key exists, so a refusal leaves nothing stored. See {@link refuseMintWithoutAgreement}.
+    await refuseMintWithoutAgreement(agreed, 'a minted delegate key');
     const wallet = Wallet.createRandom();
     putSecret(DELEGATE_KEY(wallet.address), wallet.privateKey);
     const d = await delegateSession(wallet.address, agreed);

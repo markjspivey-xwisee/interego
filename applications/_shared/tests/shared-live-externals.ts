@@ -695,29 +695,34 @@ export const SHARED_ONLY_THROUGH_IMPORTED_CODE: readonly {
     name: 'INTEREGO_BEARER',
     readIn: 'applications/jev-harness/src/publish.ts',
     why: 'the relay session token relayFromEnv() turns into a RelayClient. It addresses the '
-      + 'live relay, and no collected module reaches that read: only main() in the bridge '
-      + 'calls relayFromEnv(), tests build the app with relay null and publish.test.ts dials '
-      + 'a fake relay it starts itself. Shared because bridge.test.ts imports the server.',
+      + 'live relay, and no collected module dials it: main() in the bridge calls relayFromEnv() '
+      + 'for real; the one suite that calls it, jev-harness/tests/relay-from-env-terms.test.ts, '
+      + 'stubs every variable it reads (this one empty, the relay URL at an example host) and '
+      + 'replaces globalThis.fetch with a scripted relay first; other tests build the app with '
+      + 'relay null and publish.test.ts dials a fake relay it starts itself. Shared because '
+      + 'bridge.test.ts imports the server.',
   },
   {
     name: 'INTEREGO_RELAY_URL',
     readIn: 'applications/jev-harness/src/publish.ts',
-    why: 'the relay MCP endpoint relayFromEnv() would dial, read beside INTEREGO_BEARER and '
-      + 'reached by no collected module for the same reason.',
+    why: 'the relay MCP endpoint relayFromEnv() would dial, read beside INTEREGO_BEARER. The one '
+      + 'suite that calls relayFromEnv() stubs it to an example host and scripts globalThis.fetch, '
+      + 'so the live relay is reached by no collected module, for the same reason.',
   },
   {
     name: 'INTEREGO_AGENT_KEY_JSON',
     readIn: 'applications/jev-harness/src/publish.ts',
     why: 'an Ed25519 JWK that makes the bridge its own relay agent: relayFromEnv() mints relay tokens '
-      + 'from it through the OAuth flow, so nothing dials the relay unless a deployment sets it.',
+      + 'from it through the OAuth flow, so nothing dials the relay unless a deployment sets it. The '
+      + 'one suite that sets it (a freshly generated key) mints against a scripted globalThis.fetch.',
   },
   {
     name: 'INTEREGO_AGENT_ACCEPT_HOSTED_TERMS_VERSION',
     readIn: 'applications/jev-harness/src/publish.ts',
     why: 'the operator\'s explicit Hosted Terms agreement relayFromEnv() hands the agent-key minter, '
       + 'sent only with the did-sig challenge of a first login. It is an agreement, not an address '
-      + 'or a credential, and no collected module reaches that read: as for INTEREGO_AGENT_KEY_JSON, '
-      + 'only main() in the bridge calls relayFromEnv().',
+      + 'or a credential. jev-harness/tests/relay-from-env-terms.test.ts stubs it to check that it '
+      + 'reaches the challenge, against a scripted globalThis.fetch, as for INTEREGO_AGENT_KEY_JSON.',
   },
   {
     name: 'INTEREGO_RELAY',

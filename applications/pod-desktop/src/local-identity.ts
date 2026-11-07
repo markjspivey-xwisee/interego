@@ -2,6 +2,7 @@
 import { createCipheriv, createDecipheriv, pbkdf2, randomBytes, randomUUID } from 'node:crypto';
 import { promisify } from 'node:util';
 import type { LocalIdentityApproval, LocalIdentityContext, LocalIdentityLinkContext, LocalIdentityLinkedReceipt, LocalIdentityResult, LocalIdentityServiceOptions, LocalIdentityStart, LocalIdentityStatus, LocalIdentityTicket } from './local-identity-types.js';
+import { LOCAL_IDENTITY_NEEDS_ACCOUNT } from './local-identity-types.js';
 import { IDENTITY_ERROR, IDENTITY_HANDOFF, IDENTITY_NONCE, identityHash, identityObject, identityOrigin, identitySame, identityText,
   localIdentityContext, localIdentityPublic, localIdentityRedirect, newLocalIdentity, savedLocalIdentity, signLocalIdentity, type LocalIdentitySaved } from './local-identity-protocol.js';
 import { HostedTermsRefusal, identityAbortable, LINK_IDENTITY_REQUEST_TIMEOUT_MS, localIdentityJson, localIdentityNetwork } from './local-identity-network.js';
@@ -30,16 +31,6 @@ interface Pending {
 const MAX_REQUESTS = 8;
 const CANCELLED = 'This sign-in was stopped. Start a new sign-in when you are ready.';
 const FAILED = 'Sign-in could not be confirmed. Start a new sign-in rather than retrying this request.';
-/**
- * ★ A KEY WITH NO HOSTED ACCOUNT, AND WHY THIS APP DOES NOT OPEN ONE. Hosted identity opens a new
- * account only with the Hosted Interego Terms agreement (HTTP 428 otherwise). Installed-app
- * sign-in signs the relay's fixed challenge and nothing else, so it cannot carry that agreement and
- * never agrees on anybody's behalf. Retrying cannot help; linking the key, or creating the account
- * where the terms are shown, can.
- */
-const NEEDS_ACCOUNT = 'Hosted Interego has no account for this key, and creating one needs your agreement to the Hosted '
-  + 'Interego Terms, which signing in from this app cannot give. Link this key to your existing account first, or create '
-  + 'the account on the hosted sign-in page, where the terms are shown. Nothing was created.';
 const LINK_FAILED = 'The account link could not be confirmed. Check your registered credentials in the hosted dashboard before starting again. Your progress has not been moved.';
 const NOT_CONFIGURED = 'Create a local sign-in identity in Interego before connecting a website.';
 const BACKUP_ERROR = 'This identity backup could not be unlocked. Check the passphrase and file.';
@@ -207,7 +198,7 @@ export class LocalIdentityService {
         nonce: context.nonce, signature, native_handoff: context.completionCode }, entry.cancel.signal);
       await this.bound(entry); entry.redirect = localIdentityRedirect(result, context, this.options.allowLoopbackForTests); entry.context = undefined; entry.state = 'complete';
     } catch (error) {
-      const failure = entry.purpose === 'signin' && error instanceof HostedTermsRefusal ? NEEDS_ACCOUNT : undefined;
+      const failure = entry.purpose === 'signin' && error instanceof HostedTermsRefusal ? LOCAL_IDENTITY_NEEDS_ACCOUNT : undefined;
       if (this.pending.get(id) === entry && entry.state === 'completing') { entry.state = 'failed'; entry.context = undefined; entry.linkContext = undefined; entry.linked = undefined; entry.redirect = undefined; entry.failure = failure; }
       throw new Error(failure ?? (entry.purpose === 'link' ? LINK_FAILED : FAILED));
     }

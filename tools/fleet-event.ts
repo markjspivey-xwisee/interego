@@ -20,7 +20,8 @@
  * --dry-run prints the publish_context arguments and publishes nothing.
  * INTEREGO_FLEET_ACCEPT_HOSTED_TERMS_VERSION is the operator's explicit agreement to that exact
  * Hosted Interego Terms version, needed only on the first login of a key that has no hosted
- * account yet (the identity server answers 428 otherwise); it is never defaulted.
+ * account yet (the identity server answers 428 otherwise); it is never defaulted, and that 428
+ * names this variable and says whether it was unset or set to a version no longer on offer.
  *
  * ── WHY ────────────────────────────────────────────────────────────────────────────────────
  *
@@ -275,6 +276,8 @@ async function main(argv: readonly string[]): Promise<void> {
   const relay = relayForAgent({
     keyJson, relayUrl, clientName: process.env['INTEREGO_FLEET_CLIENT_NAME'] ?? 'interego-fleet', podName,
     ...(acceptHostedTermsVersion ? { acceptHostedTermsVersion } : {}),
+    // Named in a 428 or a refused challenge, so the operator reads the variable THEY set.
+    acceptHostedTermsSetting: 'INTEREGO_FLEET_ACCEPT_HOSTED_TERMS_VERSION',
   });
   const agentDid = relay.agentDid;
   if (!agentDid) throw new Error('the relay client carries no agent did');
