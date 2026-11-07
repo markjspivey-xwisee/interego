@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="referrer" content="no-referrer">
+  <meta name="robots" content="noindex,nofollow">
+  <meta name="color-scheme" content="light">
+  <title>Health Connections · Interego</title>
+  <link rel="stylesheet" href="/ui/style.css">
+  <script type="module" src="/ui/app.js"></script>
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to content</a>
+  <header class="masthead">
+    <a class="brand" href="/" aria-label="Interego Health Connections home"><span class="brand-mark" aria-hidden="true">i.</span><span><strong>Interego</strong><span class="brand-sub">HEALTH CONNECTIONS</span></span></a>
+    <div class="account-bar"><span class="private-label"><span aria-hidden="true">●</span> Private source workspace</span><a id="sign-in" class="button quiet" href="/oauth/interego/start">Sign in with Interego <span aria-hidden="true">↗</span></a><span id="signed-in" class="signed-in" hidden></span></div>
+  </header>
+  <main id="main">
+    <section class="intro" aria-labelledby="page-title">
+      <div><p class="eyebrow">ONE PLACE TO CONNECT THE SOURCES</p><h1 id="page-title">A clearer view.<br><span>Closer to the source.</span></h1><p class="intro-copy">Connect medical records and daily health information to your private Interego workspace. Each source keeps its dates, origin, and limits.</p></div>
+      <aside class="privacy-note"><span class="note-icon" aria-hidden="true">↗</span><p class="eyebrow">PRIVATE FIRST</p><h2>Choose what becomes public.</h2><p>Source connections alone do not publish. Public snapshots follow your Atlas publishing choice; raw source records stay private.</p></aside>
+    </section>
+
+    <div id="notice" class="notice" role="status" aria-live="polite" hidden></div>
+    <section class="consent-panel" aria-labelledby="consent-title">
+      <div><p class="eyebrow">YOUR PERMISSION</p><h2 id="consent-title">Allow private imports</h2><p id="consent-description">Sign in to choose whether this workspace may import health information.</p></div>
+      <button id="consent-button" class="button primary" type="button" disabled>Enable private imports</button>
+    </section>
+
+    <section class="connections-section" aria-labelledby="connections-title">
+      <div class="section-heading"><div><p class="eyebrow">THREE SOURCES. CLEAR BOUNDARIES.</p><h2 id="connections-title">Your connections</h2></div><button id="refresh-status" class="text-button" type="button">Refresh status <span aria-hidden="true">↻</span></button></div>
+      <div class="connection-grid">
+        <article class="connection-card" aria-labelledby="duke-title">
+          <div class="card-top"><span class="source-mark" aria-hidden="true">D</span><span id="duke-badge" class="status-badge">Checking setup</span></div>
+          <p class="eyebrow">MEDICAL RECORDS</p><h3 id="duke-title">Duke MyChart</h3><p class="card-description">Read-only access to the clinical information Duke makes available after patient or authorized proxy approval.</p>
+          <dl class="source-facts"><div><dt>Last sync</dt><dd id="duke-last-sync">Not checked</dd></div><div><dt>Imported records</dt><dd id="duke-count">—</dd></div></dl>
+          <p id="duke-detail" class="source-detail">Checking the connection requirements.</p>
+          <div class="card-actions"><button id="duke-connect" class="button primary" type="button" disabled>Connect MyChart <span aria-hidden="true">↗</span></button><button id="duke-sync" class="button quiet" type="button" disabled>Sync now</button><button id="duke-revoke" class="text-button subtle" type="button" disabled>Disconnect</button></div>
+          <details id="duke-registration" class="setup-details" hidden><summary>Application setup details</summary><p>An Epic application registration and production configuration are required before patient authorization can start.</p><dl id="duke-setup-fields"></dl><a href="https://www.mychart.org/l/en-us/help/share-health-data-app/" target="_blank" rel="noopener noreferrer">How MyChart app sharing works ↗</a></details>
+          <details id="duke-coverage" class="setup-details" hidden><summary>Coverage from the last sync</summary><div id="duke-coverage-list"></div></details>
+        </article>
+
+        <article class="connection-card" aria-labelledby="apple-title">
+          <div class="card-top"><span class="source-mark apple-mark" aria-hidden="true">a</span><span id="apple-badge" class="status-badge">Checking setup</span></div>
+          <p class="eyebrow">ON YOUR IPHONE</p><h3 id="apple-title">Apple Health</h3><p class="card-description">Send selected Health samples with an iPhone Shortcut and a credential that can only upload approved readings.</p>
+          <dl class="source-facts"><div><dt>Last upload</dt><dd id="apple-last-sync">Not checked</dd></div><div><dt>Imported samples</dt><dd id="apple-count">—</dd></div></dl>
+          <p id="apple-detail" class="source-detail">The phone must authorize Health access. Start with a manual upload; locked-device access can limit automation.</p>
+          <fieldset id="apple-metrics" class="metric-picker" disabled><legend>Choose readings to allow</legend><label><input type="checkbox" value="steps" checked>Steps</label><label><input type="checkbox" value="heartRate" checked>Heart rate</label><label><input type="checkbox" value="restingHeartRate" checked>Resting heart rate</label><label><input type="checkbox" value="activeEnergy">Active energy</label><label><input type="checkbox" value="bodyMass">Body mass</label><label><input type="checkbox" value="oxygenSaturation">Oxygen saturation</label><label><input type="checkbox" value="sleep" checked>Sleep samples</label></fieldset>
+          <div class="card-actions"><button id="apple-pair" class="button primary" type="button" disabled>Create iPhone pairing</button><button id="apple-revoke" class="text-button subtle" type="button" disabled>Revoke uploads</button></div>
+          <div id="pairing-result" class="pairing-result" hidden><h4>Your upload-only credential</h4><p>Shown for this pairing. Copy it into the Shortcut’s Authorization header. It is not an Interego account credential.</p><label for="pairing-token">Pairing token</label><textarea id="pairing-token" rows="3" readonly spellcheck="false" autocomplete="off"></textarea><button id="copy-token" class="button quiet" type="button">Copy token</button><dl id="pairing-fields"></dl><a id="shortcut-instructions" href="/docs/apple-shortcut.md" target="_blank" rel="noopener noreferrer">Open the iPhone setup recipe ↗</a></div>
+        </article>
+
+        <article class="connection-card" aria-labelledby="oura-title">
+          <div class="card-top"><span class="source-mark oura-mark" aria-hidden="true">o</span><span id="oura-badge" class="status-badge">Checking setup</span></div>
+          <p class="eyebrow">RING & DAILY PATTERNS</p><h3 id="oura-title">Oura</h3><p class="card-description">A planned source connection. Retained imports into Interego remain disabled while provider authorization for this use is unresolved.</p>
+          <dl class="source-facts"><div><dt>Last sync</dt><dd id="oura-last-sync">Not checked</dd></div><div><dt>Imported records</dt><dd id="oura-count">—</dd></div></dl>
+          <p id="oura-detail" class="source-detail">Checking the connection requirements.</p>
+          <div class="card-actions"><button id="oura-connect" class="button primary" type="button" disabled>Connect Oura <span aria-hidden="true">↗</span></button><button id="oura-sync" class="button quiet" type="button" disabled>Sync now</button><button id="oura-revoke" class="text-button subtle" type="button" disabled>Disconnect</button></div>
+          <p class="source-footnote">Oura scores and Apple Health samples keep their own source labels. Mirrored readings are not added together.</p>
+          <details id="oura-registration" class="setup-details" hidden><summary>Provider authorization and application setup</summary><p>An Oura account, application registration, and OAuth approval alone do not enable retained Interego imports or agent access. Additional provider authorization and a compliant connection design are required. No alternative Oura MCP connection is implemented here.</p><dl id="oura-setup-fields"></dl><a href="https://cloud.ouraring.com/docs" target="_blank" rel="noopener noreferrer">Oura developer documentation ↗</a></details>
+          <details id="oura-coverage" class="setup-details" hidden><summary>Coverage from the last sync</summary><div id="oura-coverage-list"></div></details>
+        </article>
+      </div>
+    </section>
+
+    <section class="records-section" aria-labelledby="records-title">
+      <div class="section-heading"><div><p class="eyebrow">FOLLOW EACH RECORD BACK TO ITS SOURCE</p><h2 id="records-title">Private import history</h2></div><p id="record-total" class="muted">Sign in to view imported records.</p></div>
+      <div class="record-controls"><label for="record-source">Source</label><select id="record-source" disabled><option value="">All sources</option><option value="duke">Duke MyChart</option><option value="apple">Apple Health</option><option value="oura">Oura</option></select><button id="load-records" class="button quiet" type="button" disabled>View records</button></div>
+      <div id="records-view" class="records-view"><p class="empty-state">No source records are loaded in this view.</p></div>
+    </section>
+    <section id="publication" class="publication-section" aria-labelledby="publication-title">
+      <div class="section-heading"><div><p class="eyebrow">FROM PRIVATE SOURCES TO THE SHARED RECORD</p><h2 id="publication-title">Mayya’s public Atlas</h2></div><span id="atlas-badge" class="status-badge">Sign in to check</span></div>
+      <div class="publication-destination"><span>Fixed public destination</span><a href="https://mayya-health-atlas.goldenfleece.chatgpt.site/" target="_blank" rel="noopener noreferrer">Mayya · Health Atlas <span aria-hidden="true">↗</span></a><p>Anyone with this public link can read a released snapshot. This page manages only this Atlas.</p></div>
+      <p id="atlas-status" class="publication-status">Sign in to manage the private-source updates shown in Mayya’s public Atlas.</p>
+      <button id="atlas-claim" class="button primary" type="button" hidden disabled>Link this account to Mayya’s Atlas</button>
+      <dl id="atlas-facts" class="publication-facts"></dl>
+      <div class="publication-actions"><button id="atlas-preview" class="button primary" type="button" disabled>Preview public update</button><button id="atlas-automatic" class="button quiet" type="button" disabled>Enable automatic public updates</button></div>
+      <p class="publication-boundary">The public projection includes selected structured Duke clinical fields. Raw notes, attachments, account identifiers, Apple Health samples, and Oura data are excluded. Medication orders remain orders; a source timestamp does not replace a clinical date.</p>
+      <div id="atlas-preview-panel" class="atlas-preview-panel" hidden>
+        <div class="section-heading"><div><p class="eyebrow">REVIEW THIS EXACT SNAPSHOT</p><h3>Public update preview</h3></div><span id="atlas-draft-date" class="muted"></span></div>
+        <p id="atlas-draft-summary"></p>
+        <dl id="atlas-preview-facts" class="publication-facts"></dl>
+        <div class="atlas-preview-columns"><section><h4>Additions in this projection</h4><ul id="atlas-additions"></ul></section><section><h4>Excluded from the public record</h4><ul id="atlas-exclusions"></ul></section></div>
+        <div id="atlas-diff" class="atlas-diff" hidden></div>
+        <details class="atlas-full-preview"><summary>Review the complete sanitized public snapshot</summary><p>This is the complete content selected for public release. It does not contain the private source payloads.</p><pre id="atlas-projection-json" tabindex="0"></pre></details>
+        <label class="automatic-choice"><input id="atlas-auto-choice" type="checkbox" checked><span><strong>Keep the public Atlas updated after each Duke sync</strong><span>After this release, future successful Duke syncs may publish the same allow-listed structured clinical fields. Raw notes and identifiers remain excluded. You can pause automatic public updates separately from private imports.</span></span></label>
+        <div class="publication-release"><button id="atlas-publish" class="button primary" type="button" disabled>Publish this snapshot publicly</button><p>Publishing releases the preview above to anyone who can open Mayya’s Atlas. A changed or expired preview must be prepared again.</p></div>
+      </div>
+      <div id="atlas-receipt" class="atlas-receipt" role="status" hidden></div>
+    </section>
+    <section class="boundaries" aria-labelledby="boundaries-title"><div><p class="eyebrow">WHAT THIS CONNECTION DOES</p><h2 id="boundaries-title">A source feed, with its limits.</h2></div><ul><li>Imports preserve source information and dates. Missing information does not mean a negative result.</li><li>Medication orders and administered doses remain different kinds of evidence.</li><li>This workspace does not poll continuously. Use Sync now; an ongoing schedule needs separate setup.</li><li>Phone permission, provider approval, and a successful receipt are needed before a source can be called synced.</li></ul></section>
+    <noscript><p class="notice error">JavaScript is required for sign-in and connection controls. The source bridge also exposes an agent-readable profile at <a href="/profile">/profile</a>.</p></noscript>
+  </main>
+  <footer><span>Interego <strong>Health Connections</strong></span><p>Source connections alone do not publish.<br>Public snapshots follow your Atlas publishing choice.</p><a href="/terms">Terms of use</a><a href="/privacy">Data handling</a><a href="/profile" target="_blank" rel="noopener noreferrer">Agent interface ↗</a></footer>
+</body>
+</html>
