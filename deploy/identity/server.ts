@@ -6966,7 +6966,7 @@ async function purgePlayOwner(userId: string, reopen?: PlayReopen): Promise<Play
         : `Janitor: kept ${userId}: it holds a credential now, or its anchor has not expired`);
       else if (held) {
         const entry = reopenedByBackfill.get(userId)!;
-        if (!entry.residueLogged) log(`Janitor: kept the purge of ${userId} unfinished, deleting nothing: the Play game-data backfill re-opened it for its game data alone, and its pod holds more now (${leftBecause}); it stays marked for an operator`);
+        if (!entry.residueLogged) log(`Janitor: kept the purge of ${userId} unfinished, deleting nothing: the Play game-data backfill re-opened it for its game data alone, and its pod holds more now (${leftBecause}); it stays marked, and after a restart its purge is an ordinary one`);
         entry.residueLogged = true;
       } else if (purge.outcome === 'kept' && leftBecause !== 'none' && leftBecause !== 'live') {
         log(`Janitor: Play game-data backfill left ${userId} as it is (${leftBecause}): its pod holds ${gameData} game document(s)`);

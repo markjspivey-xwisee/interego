@@ -879,6 +879,9 @@ test('backfill: the mark is written on the ETag of the record it decided on: an 
   assert.deepEqual(f.writes.map(w => w.result), ['precondition-failed'], 'refused, and not written again');
   assert.deepEqual(f.document!.webAuthnCredentials, [{ id: 'operator-passkey' }]);
   assert.equal(f.document!.deletedAt, undefined);
+  // The writer installed the restored record when the mark was refused; this server keeps that
+  // live copy (and its credential index entries) rather than forgetting the account.
+  assert.deepEqual(f.cached?.webAuthnCredentials, [{ id: 'operator-passkey' }], 'the live account stays in memory');
   assert.deepEqual(f.pod.changes(), [`OPTIONS ${save} 204`, 'PUT auth-methods.jsonld precondition-failed']);
   assert.ok(f.pod.has(save) && f.pod.has(budget));
   assert.equal(f.unfinishedPlayPurges.size + f.reopenedByBackfill.size, 0);
