@@ -4,7 +4,7 @@ import { createServer, type IncomingMessage, type Server as HttpServer, type Ser
 import { Server, WebStandardStreamableHTTPServerTransport, createMcpHandler, isLegacyRequest, type McpHttpHandler } from '@modelcontextprotocol/server';
 import { AgentService } from './agent-service.js';
 import { agentArguments } from './agent-client.js';
-import { AGENT_TOOLS, agentToolResult } from './agent-stdio.js';
+import { AGENT_TOOLS, agentToolPermitted, agentToolResult } from './agent-stdio.js';
 import type { AgentConnection, AgentPermission } from './agent-types.js';
 import type { BridgePendingApproval, BridgeStartInput, BridgeStatus } from './bridge-types.js';
 import { BridgeStateStore, type BridgeStateOptions, type BridgeSavedState } from './bridge-state.js';
@@ -408,7 +408,7 @@ export class BridgeServer {
       instructions: `This is ${this.activeStable ? 'a saved web connection' : 'a temporary web bridge'} to the user’s local Interego pod. Keep the Interego app and computer running. Use only granted tools. Results read through this bridge pass through the tunnel provider and your AI provider. Saving appends notes; it never edits or deletes. Federation remains off.` });
     server.setRequestHandler('tools/list', async () => {
       await this.agents.executeGranted(family.connectionId, 'status', {}, signal);
-      return { tools: AGENT_TOOLS.filter(entry => !entry.permission || family.scopes.includes(entry.permission)).map(entry => {
+      return { tools: AGENT_TOOLS.filter(entry => agentToolPermitted(entry, family.scopes)).map(entry => {
         const securitySchemes = [{ type: 'oauth2', scopes: entry.permission ? [entry.permission] : [...family.scopes] }];
         return { ...entry.tool, securitySchemes, _meta: { ...entry.tool._meta, securitySchemes } };
       }) };
@@ -417,7 +417,7 @@ export class BridgeServer {
       try {
         const active = AbortSignal.any([signal, context.mcpReq.signal]);
         const entry = AGENT_TOOLS.find(row => row.tool.name === request.params.name);
-        if (!entry || (entry.permission && !family.scopes.includes(entry.permission))) throw new Error('This tool is not permitted for this connection.');
+        if (!entry || !agentToolPermitted(entry, family.scopes)) throw new Error('This tool is not permitted for this connection.');
         const args = agentArguments(entry.operation, request.params.arguments);
         const result = await this.agents.executeGranted(family.connectionId, entry.operation, args, active);
         let value = agentToolResult(entry.operation, result, family.connectionId);

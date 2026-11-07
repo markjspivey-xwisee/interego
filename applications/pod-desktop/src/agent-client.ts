@@ -40,6 +40,12 @@ export function agentArguments(operation: AgentOperation, value: unknown): Recor
   const args = record(value === undefined ? {} : value);
   const keys = Object.keys(args).sort().join(',');
   if (operation === 'status' && keys === '') return {};
+  if (operation === 'workspaces.discover' && keys === '') return {};
+  if (operation === 'workspaces.act' && Object.keys(args).every(key => ['action', 'target', 'input'].includes(key))
+    && typeof args['action'] === 'string' && args['action'].length > 0 && args['action'].length <= 512
+    && (args['target'] === undefined || (typeof args['target'] === 'string' && args['target'].length > 0 && args['target'].length <= 1024))
+    && (args['input'] === undefined || (args['input'] !== null && typeof args['input'] === 'object' && !Array.isArray(args['input'])))
+    && Buffer.byteLength(JSON.stringify(args)) <= 128 * 1024) return { ...args };
   if (operation === 'notes.search' && ['query', 'limit,query'].includes(keys)
     && typeof args['query'] === 'string' && args['query'].length <= 200
     && (args['limit'] === undefined || (Number.isInteger(args['limit']) && Number(args['limit']) >= 1 && Number(args['limit']) <= 50))) {

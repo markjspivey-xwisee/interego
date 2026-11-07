@@ -1,5 +1,19 @@
 # Changelog
 
+## 2026-10-30 — Optional human-and-agent Workspaces in the local Windows app
+
+Windows preview.11 adds an optional Workspace vertical with encrypted local conversation records, human and separately attributed agent messages, selected-workspace read/chat grants, invitations, acceptance and membership removal. The consumer UI and two scoped MCP tools discover state-dependent JSON-LD affordances for the supported workflows. The implementation reuses the retained Workspace vocabulary and serializers without impersonating the hosted relay or claiming distributed per-participant pod storage or website-key signatures. A connection can hold workspace grants together with a selected-note read scope; each is stored and enforced on its own, so neither widens the other.
+
+An independently enabled Discord adapter connects one selected workspace, channel and allowlisted set of incoming participants. Its token is protected locally; saving setup sends nothing, every launch starts paused, and stop, revocation and queued writes are checked again at execution. Tests exercise real local storage and the MCP companion, the shipping renderer, JSON-LD expansion, permissions, persistence and an isolated two-way Discord connection. The packaged lifecycle includes workspace persistence and a real scoped agent conversation across launches. Hosted remains available, federation stays off by default, and neither optional connection is enabled by setup. Existing notes backups remain notes-only; hosted workspace import, multi-pod live chat, web-bridge workspace scopes, portable conversation backup and automatic model execution are separate capabilities.
+
+## 2026-10-30 — Archive the older Workspace desktop app for selective feature reuse
+
+Interego Workspace is archived for new desktop feature work, with the local pod app as the active desktop direction. Its source, installation, shared libraries, tests, Discord adapter and hosted compatibility are retained. Human-and-agent chat spaces and two-way Discord conversation bridging are the main features to evaluate bringing forward. The status notes distinguish retained implementation from capabilities not yet available in the local app; no runtime, identity migration, deployment or federation setting changes are included.
+
+## 2026-11-03 - Enforce selected note access for local agent grants
+
+New local connections can select an explicit set of existing note IDs. The protected registry and status preserve that scope, and the controller applies it before fetching or decrypting note payloads. Search excludes other notes; direct reads outside the grant are refused, and saving a new note does not expand read access. Existing all-note grants and web approval policy keep their prior scope. Source tests cover selection validation and persistence, controller isolation, and the native page's note picker; installed Windows behavior still requires separate verification.
+
 ## 2026-11-07 — Identity: a Play game-data backfill deletes the game saves and budgets that finished purges left on guests' pods
 
 Play purges that finished before the store's native conditional delete (from 2026-10-28 to 2026-10-30) deleted everything of a guest's pod except its game data: the saves (`hallowmarch/checkpoints/<64 hex>.json`), the write budget (`play-budget.json`) and the two containers that hold them. They then cleared the tombstone's mark, so neither the janitor nor a restart comes back to such a pod. A save the css-gate let through that lands after a purge's last listing stays the same way. Each identity process now runs a **Play game-data backfill** once, one janitor interval (`JANITOR_INTERVAL_MS`, 5 min by default) after it starts, and after its startup scan. With the janitor off (`JANITOR_INTERVAL_MS=0`) it does nothing. There is no flag, route or extra service: it runs again at every deploy, and once it has converged it writes and deletes nothing.
@@ -71,7 +85,7 @@ The new tests fail on the code before this change. `npm run build --workspace @i
 
 ## 2026-11-03 - Bind selected attachment manifests to health context
 
-The health workbench can prepare a detached import manifest from explicitly selected, caller-supplied attachment bytes. It checks case and source/review identity, selected entry/citation mappings, exact byte-view sizes and SHA-256 declarations, with per-file and total limits. The manifest binds the prepared note's title and body without copying attachment bytes, file paths or unknown fields. Fictional tests cover tampering, isolation, duplicate IDs and byte limits. Native storage, resource-scoped authorization, file safety and source authenticity remain independent checks; no host or provider operation is added. The lint gate's file floor for the applications tree now counts the two new modules, which lint clean; its error ceiling is unchanged.
+The health workbench can prepare a detached import manifest from explicitly selected, caller-supplied attachment bytes. It checks case and source/review identity, selected entry/citation mappings, exact byte-view sizes and SHA-256 declarations, with per-file and total limits. The manifest binds the prepared note's title and body without copying attachment bytes, file paths or unknown fields. Fictional tests cover tampering, isolation, duplicate IDs and byte limits. Native storage, resource-scoped authorization, file safety and source authenticity remain independent checks; no host or provider operation is added. The two new modules lint clean and fit inside the applications lint frontier pinned with #741, so the lint gate is unchanged.
 
 ## 2026-11-02 — Prepare selected health context for the encrypted local-note host
 

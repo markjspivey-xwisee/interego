@@ -1,5 +1,7 @@
 # Shared Workspace (`wsp:`)
 
+**Desktop app archived for now.** The old Interego Workspace Windows app is retained as reference work; the [new Interego app](../pod-desktop/README.md) is the active desktop direction. The main features to evaluate bringing forward are human-and-agent chat spaces and Discord conversation bridging. Shared libraries, tests, the Discord adapter and existing hosted compatibility remain intact. See [archive scope and feature candidates](ARCHIVE.md).
+
 A workspace where several people and several agents work together, without any of them
 giving up custody of what they wrote.
 

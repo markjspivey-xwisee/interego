@@ -47,6 +47,71 @@ async function fixture(overrides: Partial<AgentServiceOptions> = {}) {
   };
   return { service, options, directory, endpoint, connection, loadTicket, executed, setBinding: (value: string | null) => { binding = value; } };
 }
+it('persists selected note IDs, exposes immutable scope and refuses malformed scope instead of widening it', async () => {
+  let received: AgentPrincipal | undefined;
+  const f = await fixture({ execute: async (_operation, _args, authorize) => { received = await authorize(); return {}; } });
+  const id = randomUUID();
+  const requested = [id.toUpperCase()];
+  const grant = await f.service.create({ ...input, selectedNoteIds: requested });
+  requested.push(randomUUID());
+  expect(grant.selectedNoteIds).toEqual([id]);
+  expect(Object.isFrozen(grant.selectedNoteIds)).toBe(true);
+  await f.service.executeGranted(grant.id, 'notes.search', {}, new AbortController().signal);
+  expect(received?.selectedNoteIds).toEqual([id]);
+  expect(Object.isFrozen(received?.selectedNoteIds)).toBe(true);
+  await f.service.close();
+  const reopened = new AgentService(f.options); services.push(reopened);
+  expect((await reopened.get(grant.id)).selectedNoteIds).toEqual([id]);
+  const empty = await reopened.create({ ...input, selectedNoteIds: [] });
+  expect(empty.selectedNoteIds).toEqual([]);
+  expect((await reopened.get(f.connection.id)).selectedNoteIds).toBeUndefined();
+  for (const selectedNoteIds of [undefined, null, ['bad'], [id, id.toUpperCase()], Array(101).fill(id)]) {
+    await expect(reopened.create({ ...input, selectedNoteIds } as unknown as AgentConnectionInput)).rejects.toThrow();
+  }
+  await expect(reopened.create({ ...input, permissions: ['notes:create'], selectedNoteIds: [id] })).rejects.toThrow();
+  await reopened.revoke(grant.id);
+  await expect(reopened.executeGranted(grant.id, 'notes.search', {}, new AbortController().signal)).rejects.toThrow(/unavailable/);
+});
+
+it('keeps a selected-note scope and a selected-workspace grant side by side, each enforced on its own', async () => {
+  const seen: { operation: AgentOperation; principal: AgentPrincipal }[] = [];
+  const f = await fixture({ execute: async (operation, _args, authorize) => { seen.push({ operation, principal: await authorize() }); return {}; } });
+  const noteId = randomUUID();
+  const workspaceId = `urn:interego:local-workspaces:${'a'.repeat(32)}:workspace:${randomUUID()}`;
+  const grant = await f.service.create({ ...input, permissions: ['notes:read', 'workspaces:read'], selectedNoteIds: [noteId], workspaceIds: [workspaceId] });
+  expect(grant.selectedNoteIds).toEqual([noteId]);
+  expect(grant.workspaceIds).toEqual([workspaceId]);
+  for (const operation of ['notes.search', 'workspaces.discover'] as const) {
+    await f.service.executeGranted(grant.id, operation, {}, new AbortController().signal);
+  }
+  expect(seen.map(entry => entry.operation)).toEqual(['notes.search', 'workspaces.discover']);
+  for (const { principal } of seen) {
+    expect(principal.selectedNoteIds).toEqual([noteId]);
+    expect(principal.workspaceIds).toEqual([workspaceId]);
+  }
+  await expect(f.service.executeGranted(grant.id, 'notes.create', {}, new AbortController().signal)).rejects.toThrow(/unavailable/);
+  await f.service.close();
+  const reopened = new AgentService(f.options); services.push(reopened);
+  const restored = await reopened.get(grant.id);
+  expect(restored.selectedNoteIds).toEqual([noteId]);
+  expect(restored.workspaceIds).toEqual([workspaceId]);
+  // A note scope still needs note read access; a workspace grant does not stand in for it.
+  await expect(reopened.create({ ...input, permissions: ['workspaces:read'], selectedNoteIds: [noteId], workspaceIds: [workspaceId] })).rejects.toThrow(/distinct notes/);
+  await expect(reopened.create({ ...input, permissions: ['notes:read', 'workspaces:chat'], selectedNoteIds: [noteId] })).rejects.toThrow(/workspaces/);
+});
+
+it('refuses a damaged persisted selection instead of treating it as legacy broad access', async () => {
+  const f = await fixture();
+  await f.service.close();
+  const path = join(f.directory, 'connections.json');
+  const wrapper = JSON.parse(await readFile(path, 'utf8')) as { ciphertext: string };
+  const records = JSON.parse(f.options.protector.unprotect(wrapper.ciphertext)) as Record<string, unknown>[];
+  records[0]!['selectedNoteIds'] = null;
+  await writeFile(path, JSON.stringify({ version: 1, ciphertext: f.options.protector.protect(JSON.stringify(records)) }));
+  const reopened = new AgentService(f.options); services.push(reopened);
+  await expect(reopened.list()).rejects.toThrow(/distinct notes/);
+});
+
 function envelope(ticket: AgentTicket, endpoint: AgentEndpoint, operation: AgentOperation = 'status', issuedAt = Date.now(), args: unknown = {}) {
   return sealAgentMessage(ticket, endpoint, randomUUID(), 'request', { issuedAt, operation, arguments: args });
 }

@@ -1,11 +1,13 @@
 import { createCipheriv, createDecipheriv, createHash, createPrivateKey, createPublicKey, pbkdf2, randomBytes, randomUUID } from 'node:crypto';
+import { selectedNoteIds } from './agent-note-scope.js';
 import { lstat, mkdir, mkdtemp, open, readFile, rename, rmdir, unlink } from 'node:fs/promises';
 import { isAbsolute, join, resolve } from 'node:path';
 import { promisify } from 'node:util';
 import { createServer } from 'node:net';
 import {
   ContextDescriptor, escapeTurtleLiteral, generateKeyPair, turtleIriRef,
-  parseTrig, type EncryptionKeyPair, type IRI,
+  parseTrig, createEncryptedEnvelope, openEncryptedEnvelope, envelopeToJson, envelopeFromJson,
+  type EncryptionKeyPair, type IRI,
 } from '@interego/core';
 import { resolveDeploymentConfig, type LocalDeploymentConfig } from '@interego/deployment-config';
 import type { LocalNode, LocalNodeOptions } from '@interego/local-node';
@@ -268,6 +270,50 @@ export class PodController {
     return (await this.profile())?.keyFingerprint ?? null;
   }
 
+  /** Private application state in the actual local pod; no service credential or content key escapes. */
+  readVerticalState(namespace: string): Promise<unknown | null> {
+    return this.action('The local application data could not be opened. Your stored data was kept unchanged.', async () => {
+      if (!/^[a-z][a-z0-9-]{1,30}$/.test(namespace)) throw new PodError('Choose a supported local application.');
+      const node = this.runningNode();
+      const response = await node.fetch(new URL(`app-${namespace}.bin`, node.podUrl).href, { headers: { accept: 'application/octet-stream' } });
+      if (response.status === 404) return null;
+      if (!response.ok) throw new PodError('The local application data could not be opened.');
+      const bytes = new Uint8Array(await response.arrayBuffer());
+      if (bytes.byteLength > 8 * 1024 * 1024) throw new PodError('The local application data is too large.');
+      const key = keyPair(await this.vault.load());
+      const envelope = envelopeFromJson(Buffer.from(bytes).toString('utf8'));
+      const plain = openEncryptedEnvelope(envelope, key);
+      if (plain === null) throw new PodError('The local application data could not be decrypted with this pod key.');
+      const value = JSON.parse(plain) as Record<string, unknown>;
+      if (value['format'] !== 'interego-private-vertical-state' || value['version'] !== 1
+        || value['namespace'] !== namespace || value['binding'] !== fingerprint(key) || !Object.hasOwn(value, 'value')) {
+        throw new PodError('The local application data does not match this pod.');
+      }
+      return value['value'];
+    });
+  }
+
+  /** Caller owns application transactions; this queue excludes backup, restore and pod shutdown races. */
+  writeVerticalState(namespace: string, value: unknown, expectedBinding?: string, authorize?: () => Promise<void>): Promise<void> {
+    return this.action('The local application data could not be saved. Keep your work and try again.', async () => {
+      if (!/^[a-z][a-z0-9-]{1,30}$/.test(namespace)) throw new PodError('Choose a supported local application.');
+      const node = this.runningNode();
+      const key = keyPair(await this.vault.load());
+      if (expectedBinding !== undefined && expectedBinding !== fingerprint(key)) {
+        throw new PodError('This application request belongs to a different pod. Discover its available actions again.');
+      }
+      const plain = JSON.stringify({ format: 'interego-private-vertical-state', version: 1, namespace, binding: fingerprint(key), value });
+      if (Buffer.byteLength(plain) > 6 * 1024 * 1024) throw new PodError('The local application data is full.');
+      const encrypted = envelopeToJson(createEncryptedEnvelope(plain, [key.publicKey], key));
+      // Base64 and envelope metadata also count toward the reader's ciphertext limit.
+      if (Buffer.byteLength(encrypted) > 8 * 1024 * 1024) throw new PodError('The local application data is full.');
+      await authorize?.();
+      const response = await node.fetch(new URL(`app-${namespace}.bin`, node.podUrl).href,
+        { method: 'PUT', headers: { 'content-type': 'application/octet-stream' }, body: encrypted });
+      if (!response.ok) throw new PodError('The local application data could not be saved.');
+    });
+  }
+
   setup(): Promise<PodStatus> {
     return this.action('Your pod could not be created. Your saved data was kept unchanged.', async () => {
       if (await this.profile()) throw new PodError('Your pod is already set up. Start it to see your notes.');
@@ -318,7 +364,7 @@ export class PodController {
     return this.node;
   }
 
-  private async readNotes(node: LocalNode, key: EncryptionKeyPair): Promise<LocalNote[]> {
+  private async readNotes(node: LocalNode, key: EncryptionKeyPair, selected?: readonly string[]): Promise<LocalNote[]> {
     const entries = await discover(node.podUrl, undefined, { fetch: node.fetch as FetchFn });
     const result: LocalNote[] = [];
     const seen = new Set<string>();
@@ -326,6 +372,8 @@ export class PodController {
       const graph = entry.describes.find(iri => iri.startsWith(GRAPH_PREFIX));
       if (!graph) continue;
       const id = graph.slice(GRAPH_PREFIX.length);
+      // Scope is applied before fetching descriptors or decrypting note payloads.
+      if (selected !== undefined && !selected.includes(id.toLowerCase())) continue;
       if (!UUID.test(id) || seen.has(id)) throw new PodError('The pod contains an unfamiliar note record. Your data was kept unchanged.');
       const response = await node.fetch(entry.descriptorUrl, { headers: { accept: 'text/turtle' } });
       if (!response.ok) throw new PodError('A saved note could not be opened.');
@@ -427,6 +475,7 @@ export class PodController {
       if (!principal.permissions.includes(operation === 'notes.create' ? 'notes:create' : 'notes:read')) {
         throw new PodError('This connection does not have permission for that action.');
       }
+      const selected = selectedNoteIds(principal);
       if (!args || typeof args !== 'object' || Array.isArray(args)) throw new PodError('The agent request has invalid arguments.');
       const values = args as Record<string, unknown>;
       const allowed = operation === 'notes.search' ? ['query', 'limit'] : operation === 'notes.read' ? ['id'] : ['title', 'body'];
@@ -443,8 +492,10 @@ export class PodController {
         }
         if (operation === 'notes.read') {
           if (typeof values['id'] !== 'string' || !UUID.test(values['id'])) throw new PodError('Choose a valid note identifier.');
-          const notes = await this.readNotes(this.runningNode(), keyPair(await this.vault.load()));
-          const note = notes.find(value => value.id === values['id']);
+          const id = values['id'].toLowerCase();
+          if (selected !== undefined && !selected.includes(id)) throw new PodError('This note could not be found in your local pod.');
+          const notes = await this.readNotes(this.runningNode(), keyPair(await this.vault.load()), [id]);
+          const note = notes.find(value => value.id.toLowerCase() === id);
           if (!note) throw new PodError('This note could not be found in your local pod.');
           return { note };
         }
@@ -454,7 +505,7 @@ export class PodController {
         if (typeof query !== 'string' || query.length > 200 || !Number.isSafeInteger(limit) || Number(limit) < 1 || Number(limit) > 50) {
           throw new PodError('Use a search of up to 200 characters and a limit between 1 and 50.');
         }
-        const notes = await this.readNotes(this.runningNode(), keyPair(await this.vault.load()));
+        const notes = await this.readNotes(this.runningNode(), keyPair(await this.vault.load()), selected);
         const needle = query.trim().toLocaleLowerCase();
         return { notes: notes.filter(note => `${note.title}\n${note.body}`.toLocaleLowerCase().includes(needle)).slice(0, Number(limit))
           .map(note => ({ id: note.id, title: note.title, excerpt: note.body.slice(0, 240), createdAt: note.createdAt,

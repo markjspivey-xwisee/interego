@@ -1,5 +1,7 @@
 # A Discord bot that turns a thread into a record
 
+**Desktop project status:** the old Interego Workspace app is [archived for now](../ARCHIVE.md). This Discord adapter and its shared libraries remain available; the archive decision does not shut down a deployed bot. Human-and-agent conversations bridged to Discord are a priority for evaluating selective reuse in the new Interego app. Some limitations below describe earlier versions: current source also watches workspace entries and sends messages and agent answers back to Discord; this is not complete edit/delete synchronization or verified local-pod compatibility.
+
 `/workspace start` in a Discord thread creates a `wsp:` workspace on the caller's **own pod**.
 From then on, each linked participant's messages land as signed, chained `wsp:Entry` records on
 **their own pod**. Discord is the interface; the substrate is the record. When the thread scrolls

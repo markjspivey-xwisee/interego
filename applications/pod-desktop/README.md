@@ -2,6 +2,8 @@
 
 **Layer 3 consumer application, preview.** Install Interego and create a local pod without a terminal, Node.js, Docker, or a cloud account. The app includes its runtime and runs it on your computer. The existing hosted service remains available through the explicit **Use hosted Interego** action, which opens the hosted dashboard in your browser. Local startup does not sign in to or contact that service.
 
+This is the active Interego desktop app. Optional [Workspaces](WORKSPACES.md) adds encrypted local human-and-agent conversations, explicitly scoped invitations and discoverable hypermedia actions. Its separate Discord bridge connects one selected conversation and channel only after owner setup and Start; Discord begins paused on every launch. The older **Interego Workspace** app stays [archived for now](../shared-workspace/ARCHIVE.md). Existing keys, conversations and hosted workspace data are not automatically imported. Notes backups do not include workspace conversations; see the [backup boundary](WORKSPACES.md#start-a-local-conversation).
+
 ## Using the app
 
 1. Run the Windows setup executable and open Interego.
