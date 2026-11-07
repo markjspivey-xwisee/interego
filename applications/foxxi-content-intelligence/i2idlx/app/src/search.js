@@ -52,12 +52,13 @@ const prefixHit = (q, set) => {
 };
 
 /** → [{c, score, why}] best first. why: "label" | "alt" | "definition" | "note" | "fuzzy" */
-export function search(query, limit = 50) {
+export function search(query, limit = 50, lens = "x") {
   const q = norm(query).trim();
   if (!q) return [];
   const qt = tokens(q);
   const out = [];
   for (const x of IDX) {
+    if (lens === "i2idl" && x.c.origin?.kind === "authored") continue;
     let s = 0, why = "label";
     if (x.label === q) s = 1000;
     else if (x.alts.includes(q)) { s = 950; why = "alt"; }

@@ -31,6 +31,9 @@ const bridgeLog = (...values: unknown[]) => { process.stdout.write(format(...val
 const bridgeWarn = (...values: unknown[]) => { process.stderr.write(format(...values) + '\n'); };
 const bridgeError = (...values: unknown[]) => { process.stderr.write(format(...values) + '\n'); };
 import { readSelfXapi, writeSelfXapi } from '../src/self-xapi.js';
+import { persistStatementWithUsage } from '../src/i2idlx-usage-record.js';
+import { loadPublicTaskData } from '../src/i2idlx-client-tasks.js';
+import { resolveConceptIndex } from '../i2idlx/typescript/authored-concepts.js';
 import { configuredSelfXapiTimeout, createSelfXapiRequest } from '../src/self-xapi-request.js';
 import { composeOwnSubjectXapiVerifier } from '../src/own-subject-xapi-auth.js';
 import { OwnSubjectXapiWriteBudget, OwnSubjectXapiRequestBudget } from '../src/own-subject-xapi.js';
@@ -1598,7 +1601,7 @@ function elrAsLinks(elr: unknown, subjectDid: string, base: string): unknown {
         '@type': 'hydra:PartialCollectionView',
         target: `${base}/agent/lattice/self`,
         method: 'POST',
-        note: 'Self-scoped: send the same rev-196 envelope. The lattice read is the one your signature resolves to, so there is no parameter naming anyone else.',
+        note: 'Self-scoped: send the same rev-196 envelope. The lattice read is the one your signature resolves to, so there is no parameter naming anyone else. Supply uri to read its descriptor and exact retained artifact, including private derived usage graph_content and its SHA-256.',
       },
     };
   };
@@ -8556,7 +8559,7 @@ app.post('/agent/lattice/self', async (req, res) => {
     if (uri) {
       const turtle = projectAs(label, uri, 'rdf');
       if (typeof turtle !== 'string') { res.status(404).json({ ok: false, error: 'holon not found in your lattice', label }); return; }
-      res.json({ ok: true, label, subject: bound.callerDid, authMode: bound.authMode, uri, representation: turtle, contentType: 'text/turtle' });
+      res.json({ ok: true, label, subject: bound.callerDid, authMode: bound.authMode, uri, representation: turtle, contentType: 'text/turtle', artifact: readArtifact(label, uri) });
       return;
     }
     res.json({ ok: true, label, subject: bound.callerDid, authMode: bound.authMode, ...latticeNamespaceView(label) });
@@ -9888,13 +9891,27 @@ const signedXapiHandler = (operation: 'read' | 'write' | 'telemetry-ingest' | 't
           },
           request: createSelfXapiRequest({ port: PORT, principal, secret, timeoutMs: signedXapiTimeoutMs }),
           persist: async (statement) => {
-            const result = await composeIntoSharedLattice({
+            const persistOriginal = () => composeIntoSharedLattice({
             podUrl, agentDid: bound.callerDid, label: telemetry ? `${label}-llm-telemetry-v1` : label,
             ...(telemetry ? { resourceName: 'llm-telemetry-v1', publishDescriptor: false } : {}),
             terms: [bound.callerDid, String((statement.verb as { id?: string }).id), String((statement.object as { id?: string }).id)],
             content: statement, contentType: 'xapi:Statement',
             ts: typeof statement.timestamp === 'string' ? statement.timestamp : undefined,
             projections: ['rdf', 'activity'],
+            });
+            const result = telemetry ? await persistOriginal() : await persistStatementWithUsage(statement, {
+              persistStatement: persistOriginal,
+              context: async () => {
+                const data = await loadPublicTaskData({ baseUrl: bridgeBaseUrl });
+                return { ns: String((data.meta as Record<string, unknown>).ns), agentDid: bound.callerDid,
+                  concepts: resolveConceptIndex(data), generatedAt: new Date().toISOString() };
+              },
+              persistUsage: record => composeIntoSharedLattice({
+                podUrl, agentDid: bound.callerDid, label,
+                terms: [record.sourceStatementIri, ...record.concepts.map(concept => concept.iri)],
+                content: { ...record }, contentType: record.typeIri,
+                projections: ['rdf'], publishDescriptor: false,
+              }),
             });
             // Private records have no published descriptor; do not advertise a
             // derived but intentionally unpublished locator in their receipt.

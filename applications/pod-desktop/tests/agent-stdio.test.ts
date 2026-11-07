@@ -16,7 +16,8 @@ import type { LocalNote } from '../src/types.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const require_ = createRequire(import.meta.url);
-const tsxCli = join(dirname(require_.resolve('tsx/package.json')), 'dist', 'cli.mjs');
+// Node's import hook runs the same TS companion without the CLI's extra IPC socket.
+const tsxLoader = pathToFileURL(require_.resolve('tsx')).href;
 const directories: string[] = [];
 const services: AgentService[] = [];
 const clients: Client[] = [];
@@ -26,7 +27,7 @@ const protector: AgentProtector = { protect: value => Buffer.from(value).toStrin
 const originalNote: LocalNote = { id: randomUUID(), title: 'Owner note', body: 'Full private body '.repeat(30),
   createdAt: '2026-10-29T10:00:00.000Z', updatedAt: '2026-10-29T10:00:00.000Z' };
 
-async function fixture(permissions: readonly AgentPermission[] = ['notes:read'], execute?: AgentServiceOptions['execute']) {
+async function fixture(permissions: readonly AgentPermission[] = ['notes:read'], execute?: AgentServiceOptions['execute'], selectedNoteIds?: readonly string[]) {
   const directory = await mkdtemp(join(tmpdir(), 'interego-agent-stdio-'));
   directories.push(directory);
   const operations: AgentOperation[] = []; const notes = [originalNote];
@@ -41,11 +42,12 @@ async function fixture(permissions: readonly AgentPermission[] = ['notes:read'],
       notes.push(note); return { note };
     }) });
   services.push(service); const endpoint = await service.start();
-  const connection = await service.create({ name: 'My local client', client: 'codex', permissions, expiresInDays: 7 });
+  const connection = await service.create({ name: 'My local client', client: 'codex', permissions, expiresInDays: 7,
+    ...(selectedNoteIds === undefined ? {} : { selectedNoteIds }) });
   const script = join(directory, 'companion.mts');
   await writeFile(script, `import {runAgentStdio} from ${JSON.stringify(pathToFileURL(resolve(here, '../src/agent-stdio.ts')).href)};\nconst handle = await runAgentStdio({dataDir:process.argv[2],connectionId:process.argv[3],protector:{protect(value){throw new Error('Companion cannot issue tickets')},unprotect(value){const text=Buffer.from(value,'base64').toString('utf8');if(JSON.parse(text).connectionId!==process.argv[3])throw new Error('Only own ticket allowed');return text}}});\nawait handle.closed;\n`);
   const connect = async (mode: 'legacy' | 'auto' = 'legacy') => {
-    const transport = new StdioClientTransport({ command: process.execPath, args: [tsxCli, script, directory, connection.id], stderr: 'ignore',
+    const transport = new StdioClientTransport({ command: process.execPath, args: ['--import', tsxLoader, script, directory, connection.id], stderr: 'ignore',
       env: { ...process.env, NODE_OPTIONS: '' } as Record<string, string> });
     const client = new Client({ name: 'interego-installed-client-test', version: '1.0.0' }, mode === 'auto' ? { versionNegotiation: { mode: 'auto' } } : undefined);
     clients.push(client); await client.connect(transport); return client;
@@ -69,6 +71,14 @@ afterEach(async () => {
 });
 
 describe('installed local stdio companion', () => {
+  it('preserves selected note scope in status through a real MCP stdio client', async () => {
+    const f = await fixture(['notes:read'], undefined, [originalNote.id]);
+    const client = await f.connect();
+    const status = content<{ connection: AgentConnection }>(await client.callTool({ name: 'interego_status', arguments: {} }));
+    expect(status.connection.selectedNoteIds).toEqual([originalNote.id]);
+    await f.service.revoke(f.connection.id);
+    expect((await client.callTool({ name: 'interego_status', arguments: {} })).isError).toBe(true);
+  });
   for (const mode of ['legacy', 'auto'] as const) {
     it(`serves a real ${mode} MCP client, with summaries separate from full note reads`, async () => {
       const f = await fixture(); const client = await f.connect(mode);

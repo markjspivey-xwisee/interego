@@ -4,6 +4,8 @@ import type { AgentConnection, AgentConnectionInput, AgentSetup } from './agent-
 import type { BridgeClient, BridgeStartInput, BridgeStatus, StableBridgeInput, StableBridgeView } from './bridge-types.js';
 import type { FederationStatus, FederationResource } from '@interego/pod-federation';
 import type { LocalIdentityStatus } from './local-identity-types.js';
+import type { WorkspaceActRequest, WorkspaceRepresentation } from './workspace-types.js';
+import type { DiscordWorkspaceConfiguration, DiscordWorkspaceStatus } from './discord-workspaces.js';
 
 async function invoke<T>(operation: string, argument?: unknown): Promise<T> {
   const reply = await ipcRenderer.invoke(`pod:${operation}`, argument) as
@@ -13,6 +15,14 @@ async function invoke<T>(operation: string, argument?: unknown): Promise<T> {
 }
 
 const api: DesktopApi = Object.freeze({
+  workspaceStatus: () => invoke<WorkspaceRepresentation>('workspaceStatus'),
+  workspaceAct: (request: WorkspaceActRequest) => invoke<WorkspaceRepresentation>('workspaceAct', request),
+  discordWorkspaceStatus: () => invoke<DiscordWorkspaceStatus>('discordWorkspaceStatus'),
+  configureDiscordWorkspace: (input: DiscordWorkspaceConfiguration) => invoke<DiscordWorkspaceStatus>('configureDiscordWorkspace', input),
+  startDiscordWorkspace: () => invoke<DiscordWorkspaceStatus>('startDiscordWorkspace'),
+  stopDiscordWorkspace: () => invoke<DiscordWorkspaceStatus>('stopDiscordWorkspace'),
+  disconnectDiscordWorkspace: () => invoke<DiscordWorkspaceStatus>('disconnectDiscordWorkspace'),
+  openDiscordWorkspaceSetup: () => invoke<void>('openDiscordWorkspaceSetup'),
   localIdentityStatus: () => invoke<LocalIdentityStatus>('localIdentityStatus'),
   setupLocalIdentity: () => invoke<LocalIdentityStatus>('setupLocalIdentity'),
   approveLocalIdentity: (id: string, verificationCode: string) => invoke<LocalIdentityStatus>('approveLocalIdentity', { id, verificationCode }),

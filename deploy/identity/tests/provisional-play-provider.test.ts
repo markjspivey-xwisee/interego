@@ -4,6 +4,7 @@ import * as crypto from 'node:crypto';
 import { createProvisionalPlayProvider } from '../provisional-play-provider.js';
 import { publicPlayKey, playKeyThumbprint, bootstrapProofPayload, PlayError, type PlayClaims } from '../provisional-play.js';
 import { publicJwk } from './public-jwk.js';
+import { hostedTermsPolicy } from '../hosted-terms.js';
 
 function adapterFixture(overrides: { verified?: boolean; subject?: string; canSign?: boolean; recover?: string;
   missingEtag?: boolean; maxPods?: number; ledgerReadStatus?: number; ledgerWriteStatus?: number } = {}) {
@@ -71,12 +72,12 @@ function adapterFixture(overrides: { verified?: boolean; subject?: string; canSi
   const body = { playGrant: grant, publicKeyJwk, proof: crypto.sign('sha256', Buffer.from(bootstrapProofPayload(grant)), {
     key: key.privateKey, dsaEncoding: 'ieee-p1363',
   }).toString('base64url') };
-  const freshBody = (differentKey = false) => {
+  const freshBody = (differentKey = false, termsVersion?: string) => {
     const pair = differentKey ? crypto.generateKeyPairSync('ec', { namedCurve: 'prime256v1' }) : key;
     const jwk = publicPlayKey(publicJwk(pair.publicKey));
     const next = { ...grant, _signed_payload: JSON.stringify({ ...JSON.parse(grant._signed_payload),
       publicKeyThumbprint: playKeyThumbprint(jwk), challenge: crypto.randomBytes(24).toString('base64url') }) };
-    return { playGrant: next, publicKeyJwk: jwk, proof: crypto.sign('sha256', Buffer.from(bootstrapProofPayload(next)), {
+    return { playGrant: next, publicKeyJwk: jwk, termsVersion, proof: crypto.sign('sha256', Buffer.from(bootstrapProofPayload(next, termsVersion)), {
       key: pair.privateKey, dsaEncoding: 'ieee-p1363',
     }).toString('base64url') };
   };
@@ -84,6 +85,30 @@ function adapterFixture(overrides: { verified?: boolean; subject?: string; canSi
     onOwnerQueued: (observer: (userId: string) => void) => { observeOwner = observer; },
     get issued() { return issued; }, get message() { return recoveredMessage; } };
 }
+
+test('new hosted Play owners require a key-bound terms acceptance and record it in the anchor write', async () => {
+  const f = adapterFixture();
+  const hostedTerms = hostedTermsPolicy('2026-11-06-r2')!;
+  const play = createProvisionalPlayProvider({ ...f.options, hostedTerms });
+  await assert.rejects(play.bootstrap(f.body), { status: 428, code: 'hosted_terms_required' });
+  await assert.rejects(play.bootstrap(f.freshBody(false, '2026-11-06')), { status: 428, code: 'hosted_terms_required' });
+  await assert.rejects(play.bootstrap({ ...f.body, termsVersion: hostedTerms.version }), { status: 401, code: 'invalid_browser_proof' });
+  assert.equal(f.issued, 0);
+  assert.equal(f.documents.size, 0);
+  const admitted = await play.bootstrap(f.freshBody(false, hostedTerms.version));
+  const entry = [...f.documents.entries()].find(([url]) => url.endsWith('/auth-methods.jsonld'))!;
+  const acceptance = JSON.parse(entry[1].body).termsAcceptance;
+  assert.equal(acceptance.version, hostedTerms.version);
+  assert.ok(Number.isFinite(Date.parse(acceptance.acceptedAt)));
+  const resumed = await play.bootstrap(f.freshBody());
+  assert.equal(resumed.attestation, admitted.attestation);
+  assert.deepEqual(JSON.parse(f.documents.get(entry[0])!.body).termsAcceptance, acceptance);
+
+  const prior = adapterFixture();
+  const existing = await prior.play.bootstrap(prior.body);
+  const updated = createProvisionalPlayProvider({ ...prior.options, hostedTerms });
+  assert.equal((await updated.bootstrap(prior.freshBody())).attestation, existing.attestation);
+});
 test('adapter composes fixed native verification and conditional pod/admission writes before reply', async () => {
   const f = adapterFixture(); const response = await f.play.bootstrap(f.body);
   assert.equal(response.token, 'private-browser-credential'); assert.equal(f.issued, 1);

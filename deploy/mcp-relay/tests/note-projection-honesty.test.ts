@@ -91,7 +91,7 @@ const affTurtle = (opts: {
   const enc = opts.encrypted;
   const policy = (opts.withPolicy ?? true)
     ? ` iep:encrypted ${enc ? 'true' : 'false'}`
-      + `${opts.visibility === 'public' || opts.visibility === 'private' ? ` ; iep:visibility "${opts.visibility}"` : ''}`
+      + ` ; iep:visibility "${opts.visibility}"`
       + ' ;'
     : '';
   const fetchAction = enc ? 'canDecrypt' : 'canFetchPayload';
@@ -162,15 +162,16 @@ const NOTE_GRAPH = `@prefix ieh: <https://markjspivey-xwisee.github.io/interego/
   });
   ok('public note: the caller flag alone is enough (policy triples absent)', /^state: "public"$/m.test(byFlagOnly));
 
-  // THE PRE-FIX BYTES, asserted as the defect they were: no triples and no flag reads private.
-  // Kept so the fix cannot be "make everything public", which would pass every check above.
+  // No recorded policy is not evidence of a private audience. This neutral state also
+  // prevents a blanket "make everything public" change from passing the cases above.
   const preFix = noteToHyperMarkdown({
     viewUrl: VIEW_URL,
     authority: PUBLIC_DESCRIPTOR,
     descriptorTurtle: affTurtle({ encrypted: false, visibility: 'public', withPolicy: false }),
     plaintextTurtle: NOTE_GRAPH,
   });
-  ok('a descriptor that states no policy at all still reads private (fail-closed)', /^state: "private"$/m.test(preFix));
+  ok('a descriptor without audience metadata reads unknown', /^state: "unknown"$/m.test(preFix));
+  ok('an unknown audience does not promise that the note stays private', !preFix.includes('the note stays private'));
 }
 
 // ── 2. A private note is still private ───────────────────────────────────────
@@ -193,7 +194,115 @@ const NOTE_GRAPH = `@prefix ieh: <https://markjspivey-xwisee.github.io/interego/
     plaintextTurtle: NOTE_GRAPH,
     isPublic: false,
   });
-  ok('shared note: state is "private" (no iep:visibility triple is emitted for shared)', /^state: "private"$/m.test(shared));
+  ok('shared note: state is "shared"', /^state: "shared"$/m.test(shared));
+  ok('shared note: prose identifies sharing rather than promising privacy',
+    shared.includes('Shared note') && !shared.includes('Private note') && !shared.includes('the note stays private'));
+}
+
+// Audience is distinct from encryption and the number of envelope keys. Exercise
+// the persisted SDK distribution form as well as the inline publication form.
+{
+  type Audience = 'public' | 'private' | 'shared';
+  const project = (descriptorTurtle: string, hints: { visibility?: Audience; isPublic?: boolean } = {}): string =>
+    noteToHyperMarkdown({
+      viewUrl: VIEW_URL, authority: PUBLIC_DESCRIPTOR, descriptorTurtle,
+      plaintextTurtle: NOTE_GRAPH, ...hints,
+    });
+  const state = (md: string): string | undefined => parseHypermediaMarkdown(md).state;
+  const persisted = (audience?: Audience, encrypted = true, recipients = 4): string => `
+    @prefix iep: <${IEP}> .
+    @prefix hydra: <http://www.w3.org/ns/hydra/core#> .
+    @prefix dcat: <http://www.w3.org/ns/dcat#> .
+    <${DESC_ID}> a iep:ContextDescriptor .
+    <> iep:affordance [ a iep:Affordance, dcat:Distribution ;
+      iep:action iep:${encrypted ? 'canDecrypt' : 'canFetchPayload'} ;
+      hydra:method "GET" ; hydra:target <${PUBLIC_GRAPH_URL}> ;
+      dcat:accessURL <${PUBLIC_GRAPH_URL}> ; dcat:mediaType "${encrypted ? 'application/jose+json' : 'application/trig'}" ;
+      iep:encrypted ${encrypted} ; iep:recipientCount ${recipients}
+      ${audience ? `; iep:visibility "${audience}"` : ''} ] .`;
+
+  for (const audience of ['public', 'private', 'shared'] as const) {
+    const inline = project(affTurtle({ encrypted: audience !== 'public', visibility: audience }), { visibility: audience });
+    const reread = inlineRenderedForDescriptor({
+      descriptorUrl: PUBLIC_DESCRIPTOR, descriptorTurtle: persisted(audience, audience !== 'public'),
+      plaintextTurtle: NOTE_GRAPH, publicBase: RELAY, port: 8787,
+    });
+    ok(`${audience}: inline publication has the exact audience`, state(inline) === audience);
+    ok(`${audience}: persisted descriptor read agrees with inline publication`,
+      !!reread && state(reread.rendered) === audience && state(reread.rendered) === state(inline));
+    const flagOnly = project(affTurtle({ encrypted: audience !== 'public', visibility: audience, withPolicy: false }), { visibility: audience });
+    ok(`${audience}: the full typed publication hint preserves the audience without policy triples`, state(flagOnly) === audience);
+  }
+  ok('a false legacy public flag alone does not imply private',
+    state(project(affTurtle({ encrypted: true, visibility: 'shared', withPolicy: false }), { isPublic: false })) === 'unknown');
+
+  for (const recipients of [1, 4, 9]) {
+    const legacy = project(persisted(undefined, true, recipients));
+    ok(`legacy encryption with ${recipients} recipient keys has unknown audience`, state(legacy) === 'unknown');
+    ok(`legacy encryption with ${recipients} keys makes no private/public promise`,
+      !legacy.includes('Private note') && !legacy.includes('Public note') && !legacy.includes('the note stays private'));
+    for (const audience of ['private', 'shared'] as const) {
+      ok(`${audience} remains ${audience} with ${recipients} recipient keys`, state(project(persisted(audience, true, recipients))) === audience);
+    }
+  }
+  ok('plaintext alone does not establish public audience', state(project(persisted(undefined, false))) === 'unknown');
+
+  const aliased = persisted('shared').replace(/(^|\s)iep:/g, '$1policy:');
+  ok('an aliased policy namespace still reads shared', state(project(aliased)) === 'shared');
+  const expanded = persisted('shared').replace(/(^|\s)iep:([A-Za-z]+)/g,
+    (_match, space: string, local: string) => `${space}<${IEP}${local}>`);
+  ok('full policy IRIs still read shared', state(project(expanded)) === 'shared');
+  const typed = persisted('shared')
+    .replace('iep:visibility "shared"', 'iep:visibility "shared"^^<http://www.w3.org/2001/XMLSchema#string>')
+    .replace('iep:encrypted true', 'iep:encrypted "true"^^<http://www.w3.org/2001/XMLSchema#boolean>');
+  ok('properly typed audience and encryption literals retain shared', state(project(typed)) === 'shared');
+
+  const decoys = `
+    # iep:visibility "public"
+    <urn:unrelated> <${IEP}visibility> "public" ;
+      <http://purl.org/dc/terms/description> 'iep:visibility "public"' .`;
+  ok('unrelated subjects, comments and text cannot make an unknown audience public',
+    state(project(persisted(undefined) + decoys)) === 'unknown');
+  ok('unrelated subjects, comments and text cannot override private',
+    state(project(persisted('private') + decoys)) === 'private');
+  ok('an unlinked distribution cannot override the selected distribution',
+    state(project(persisted('shared') + `\n<urn:other-distribution> a <http://www.w3.org/ns/dcat#Distribution> ; <${IEP}visibility> "private" .`)) === 'shared');
+  const unrelatedAction = persisted('shared')
+    .replace('<> iep:affordance [', '<> iep:affordance <#review>, [')
+    + '\n<#review> a iep:Affordance ; iep:action <urn:review> ; iep:visibility "private" .';
+  ok('a linked non-distribution action does not set the note audience', state(project(unrelatedAction)) === 'shared');
+  const alternatePrivateDistribution = `
+    <> iep:affordance [ a iep:Affordance, dcat:Distribution ; iep:action iep:canDecrypt ;
+      hydra:method "GET" ; hydra:target <https://pod.example/alternate.envelope.jose.json> ;
+      dcat:mediaType "application/jose+json" ; iep:encrypted true ; iep:visibility "private" ] .`;
+  ok('an alternate private payload cannot supply the missing audience of the selected legacy payload',
+    state(project(persisted(undefined) + alternatePrivateDistribution)) === 'unknown');
+  ok('multiple payload distributions remain ambiguous even when their labels match',
+    state(project(persisted('private') + alternatePrivateDistribution)) === 'unknown');
+
+  for (const [audience, encrypted] of [['public', true], ['private', false], ['shared', false]] as const) {
+    const conflict = project(persisted(audience, encrypted));
+    ok(`${audience} with contradictory encryption metadata has unknown audience`, state(conflict) === 'unknown');
+    ok(`${audience} encryption conflict makes no claim that the note stays private`, !conflict.includes('the note stays private'));
+  }
+  ok('a typed publication hint conflicting with the descriptor is unknown',
+    state(project(persisted('private'), { visibility: 'shared' })) === 'unknown');
+  ok('a false legacy public hint cannot mask a public descriptor',
+    state(project(persisted('public', false), { isPublic: false })) === 'unknown');
+  ok('multiple audience classes are not reduced to the first one',
+    state(project(persisted('shared').replace('iep:visibility "shared"', 'iep:visibility "shared", "private"'))) === 'unknown');
+  ok('a root declaration and its distribution must agree',
+    state(project(persisted('shared').replace('a iep:ContextDescriptor .', 'a iep:ContextDescriptor ; iep:visibility "private" .'))) === 'unknown');
+  ok('an unsupported audience literal is unknown',
+    state(project(persisted('shared').replace('"shared"', '"friends"'))) === 'unknown');
+  ok('an audience literal carrying a language tag is not an exact policy marker',
+    state(project(persisted('shared').replace('"shared"', '"shared"@en'))) === 'unknown');
+  ok('contradictory encryption flags are unknown',
+    state(project(persisted('shared').replace('iep:encrypted true', 'iep:encrypted true, false'))) === 'unknown');
+  ok('an invalid encryption value cannot support a private assurance',
+    state(project(persisted('private').replace('iep:encrypted true', 'iep:encrypted "maybe"'))) === 'unknown');
+  ok('malformed descriptor metadata is unknown rather than guessed private',
+    state(project(persisted('private') + '\n<urn:broken> <urn:predicate> "unterminated')) === 'unknown');
 }
 
 // ── 3. THE BUG: the authority must be something a reader can dereference ─────
@@ -484,10 +593,11 @@ const NOTE_GRAPH = `@prefix ieh: <https://markjspivey-xwisee.github.io/interego/
   const block = /const fetchAction = enc \?[\s\S]*?renderedNote = noteToHyperMarkdown\(\{[\s\S]*?\}\);/.exec(src)?.[0] ?? '';
   ok('server.ts: the hand-back block is still recognisable', block.length > 0);
   ok('server.ts: the synthesized descriptor states iep:encrypted', /iep:encrypted \$\{enc \? 'true' : 'false'\}/.test(block));
-  ok('server.ts: the synthesized descriptor states iep:visibility for public/private',
-    /iep:visibility "\$\{visibility\}"/.test(block) && /visibility === 'public' \|\| visibility === 'private'/.test(block));
+  ok('server.ts: the synthesized descriptor states every declared audience class',
+    /iep:visibility "\$\{visibility\}"/.test(block)
+      && !/visibility === 'public' \|\| visibility === 'private'/.test(block));
   ok('server.ts: the hand-back passes the audience class it already holds',
-    /isPublic: visibility === 'public'/.test(block));
+    /renderedNote = noteToHyperMarkdown\(\{[\s\S]*?\bvisibility(?:\s*,|\s*:\s*visibility\b)/.test(block));
   ok('server.ts: the hand-back passes the invoke screen so the marking cannot over-promise',
     /isFollowable: isFollowableTarget/.test(block));
   ok('server.ts: the authority is derived through publishableAuthority, from the outward spelling',

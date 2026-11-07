@@ -20,7 +20,7 @@ function component(path, header, end, bindings, exports) {
 }
 
 const picker = component("../src/picker.jsx", "export function ConceptPicker(", "  const pick =",
-  ["byId", "search", "useOutside", "window", "ResizeObserver"], ["box", "pop"]);
+  ["byId", "search", "useUI", "useOutside", "window", "ResizeObserver"], ["box", "pop"]);
 const wholeMap = component("../src/views/map.jsx", "function WholeMap(", "  const nb = useMemo",
   ["useStored", "useUI", "LAYOUT", "d3", "fitBox", "ResizeObserver", "setTimeout", "clearTimeout"],
   ["svgRef", "gRef", "zoomRef", "centerOn"]);
@@ -70,7 +70,7 @@ function pickerFixture() {
   const hook = hooks(["learn", true]), observer = observers(), viewport = Object.assign(events(), { width: 800, height: 600 });
   const window = Object.assign(events(), { innerWidth: 800, innerHeight: 600, visualViewport: viewport });
   const refs = picker(hook.React, { byId: new Map(), search: () => [{ c: { id: "one" } }],
-    useOutside() {}, window, ResizeObserver: observer.ResizeObserver })({});
+    useUI: () => ({ lens: "x" }), useOutside() {}, window, ResizeObserver: observer.ResizeObserver })({});
   const anchor = node(), popup = node(); refs.box.current = anchor; refs.pop.current = popup;
   const cleanup = hook.effects[0]();
   return { ...hook, ...refs, observer, window, viewport, anchor, popup, cleanup,

@@ -1,6 +1,7 @@
+import { safeNavigationHref } from "../navigation-links.js";
 // For the I2IDL team: what their linked data makes possible, laid against their own roadmap.
 // Credits what I2IDL built first, then shows each of its next priorities running on its data today.
-import { C, META, MAPPINGS, ENACTMENTS, SUGGESTIONS, RELEASES, PORTS, QUERIES, SOURCES, byId, kindPhrase, provenanceLine, controlsFor, iriOf } from "../data.js";
+import { CANONICAL_C as C, META, MAPPINGS, ENACTMENTS, SUGGESTIONS, RELEASES, PORTS, QUERIES, SOURCES, byId, kindPhrase, provenanceLine, controlsFor, iriOf } from "../data.js";
 import { useCaps, consensus, CONSENSUS_LABEL } from "../caps.js";
 import { Icon } from "../icons.jsx";
 import { ConceptChip, CopyBtn, Modal, useUI } from "../ui.jsx";
@@ -58,7 +59,7 @@ export function ForI2IDL() {
             </div>
           ))}
         </div>
-        <p className="tiny muted">From <a href={up.roadmap} target="_blank" rel="noopener">your {up.roadmapName} at {META.commit.slice(0, 7)}</a>. Every figure on this page is recomputed from {META.release} at build time.</p>
+        <p className="tiny muted">From <a href={safeNavigationHref(up.roadmap)} target="_blank" rel="noopener">your {up.roadmapName} at {META.commit.slice(0, 7)}</a>. Every figure on this page is recomputed from {META.release} at build time.</p>
       </section>
 
       <section className="stack" style={{ gap: 14 }}>
@@ -70,7 +71,7 @@ export function ForI2IDL() {
           <div className="small muted">Predicates: {PRED_ORDER.map((p) => [p, unesco.filter((m) => m.p === p).length]).filter(([, n]) => n).map(([p, n]) => `${n} ${p}`).join(" · ")}. All are proposals: a <code>skos:*Match</code> triple appears only after ratification, internal relations and external mappings stay distinct (the shapes reject any crosswalk that points back into <code>id.i2idl.org</code>), and {META.unesco.groups.filter((g) => g.only).length} concepts that cite only a UNESCO microthesaurus group get a modeling note instead of a mapping.</div>
           <div className="row wrap">
             <a className="btn sm primary" href="#review-method.evidence-cited"><Icon name="review" />Review the {unesco.length}</a>
-            <a className="btn sm" href={META.iri.mappings} target="_blank" rel="noopener"><Icon name="external" />The proposals graph</a>
+            <a className="btn sm" href={safeNavigationHref(META.iri.mappings)} target="_blank" rel="noopener"><Icon name="external" />The proposals graph</a>
           </div>
         </Priority>
 
@@ -79,7 +80,7 @@ export function ForI2IDL() {
             : <>Your current documentation describes implemented REST and MCP interfaces. The I2IDL-X examples below use controls from the published catalog: <b>Try here</b> evaluates this pinned release; <b>Live</b> opens the corresponding query on your SPARQL service.</>}>
           <ApiRoutes routes={up.routes} />
           <div className="small muted">For agents, the same projections are a HyprCat catalog on Interego: {PORTS.length} controls, {QUERIES.length} stored queries and your published limits as data, pointing at <code>id.i2idl.org</code>.</div>
-          <div className="row wrap"><a className="btn sm" href="#agents"><Icon name="agent" />Agent console</a><a className="btn sm" href={META.iri.catalog} target="_blank" rel="noopener"><Icon name="external" />The catalog graph</a></div>
+          <div className="row wrap"><a className="btn sm" href="#agents"><Icon name="agent" />Agent console</a><a className="btn sm" href={safeNavigationHref(META.iri.catalog)} target="_blank" rel="noopener"><Icon name="external" />The catalog graph</a></div>
         </Priority>
 
         <Priority n={3} title={prio(3).title} anchor={prio(3).anchor} o="derived"
@@ -93,7 +94,7 @@ export function ForI2IDL() {
           <ChangeLog />
           <div className="small muted">Every event type your {up.roadmapName} lists has a kind, refined where the history shows a difference: evidence that received its first relation is <i>classified</i>, not <i>reclassified</i>. Each entry here shows its own history.</div>
           <div className="row wrap">
-            <a className="btn sm" href={META.iri.changes} target="_blank" rel="noopener"><Icon name="external" />The change history graph</a>
+            <a className="btn sm" href={safeNavigationHref(META.iri.changes)} target="_blank" rel="noopener"><Icon name="external" />The change history graph</a>
             <a className="btn sm" href="#c-learning-record-store-lrs"><Icon name="history" />A term's history</a>
             <a className="btn sm ghost" href="#insights-releases"><Icon name="insights" />Release charts</a>
           </div>
@@ -116,7 +117,7 @@ export function ForI2IDL() {
       <section className="stack" style={{ gap: 12 }}>
         <div className="sec-h"><h2>How I2IDL-X stays out of your way</h2></div>
         <ul className="principles">
-          <li><b>Your IRIs stay canonical.</b> Nothing is minted under <code>id.i2idl.org</code>; the I2IDL-X graphs live on Interego and point at your IRIs. Your <a href={up.principleSource} target="_blank" rel="noopener">{up.principleName}</a> ask that “{lastSentence(up.principle)}” — I2IDL-X depends on exactly that.</li>
+          <li><b>Your IRIs stay canonical.</b> Nothing is minted under <code>id.i2idl.org</code>; the I2IDL-X graphs live on Interego and point at your IRIs. Your <a href={safeNavigationHref(up.principleSource)} target="_blank" rel="noopener">{up.principleName}</a> ask that “{lastSentence(up.principle)}” — I2IDL-X depends on exactly that.</li>
           <li><b>Your record is untouched.</b> This page embeds {META.release} as published. The <b>I2IDL only</b> lens in the top bar shows it with every layer hidden, and every addition is labelled with where it comes from.</li>
           <li><b>Claims you haven't made stay Hypothetical.</b> Crosswalks and capability links are proposals until reviewers ratify them, and even then they reach you as a suggestion, never an edit.</li>
           <li><b>Rights travel with the words.</b> Every evidence record keeps its source's terms; exports carry I2IDL's attribution and each source's rights.</li>
@@ -146,7 +147,7 @@ function Priority({ n, title, anchor, o, lead, children }) {
     <article className="prio">
       <div className="prio-h">
         <span className="prio-n">{n}</span>
-        <div className="grow"><h3>{title}</h3><a className="tiny muted" href={META.upstream.roadmap + "#" + anchor} target="_blank" rel="noopener">your {META.upstream.roadmapName}, next priority {n}</a></div>
+        <div className="grow"><h3>{title}</h3><a className="tiny muted" href={safeNavigationHref(META.upstream.roadmap + "#" + anchor)} target="_blank" rel="noopener">your {META.upstream.roadmapName}, next priority {n}</a></div>
         <Origin o={o} quiet />
       </div>
       <p className="prio-lead">{lead}</p>
@@ -163,7 +164,7 @@ function UnescoTable({ rows }) {
         <tr key={m.id}>
           <td><ConceptChip id={m.c} /></td>
           <td><code>skos:{m.p}</code>{m.ip ? <div className="tiny muted">you assert <code>{m.ip.map((x) => "skos:" + x).join(", ")}</code></div> : null}</td>
-          <td><a href={m.pg} target="_blank" rel="noopener" title={m.o}>{m.ol}</a>{m.od ? <div className="tiny muted ellipsis" style={{ maxWidth: 360 }} title={m.od}>{m.od}</div> : null}</td>
+          <td><a href={safeNavigationHref(m.pg)} target="_blank" rel="noopener" title={m.o}>{m.ol}</a>{m.od ? <div className="tiny muted ellipsis" style={{ maxWidth: 360 }} title={m.od}>{m.od}</div> : null}</td>
           <td className="n">{m.cf.toFixed(2)}</td>
         </tr>
       ))}</tbody>
@@ -207,7 +208,7 @@ function ApiRoutes({ routes }) {
         <div key={r.route} className="route">
           <div className="row wrap" style={{ gap: 8 }}>
             <code className="rt">{r.route}</code><Icon name="arrowRight" size={14} /><span className="small muted grow">{r.how}</span>
-            {r.url ? <a className="btn sm" href={r.url} target="_blank" rel="noopener"><Icon name="external" />Live</a> : null}
+            {r.url ? <a className="btn sm" href={safeNavigationHref(r.url)} target="_blank" rel="noopener"><Icon name="external" />Live</a> : null}
             <button className="btn sm ghost" onClick={() => setOpen(open === i ? null : i)} aria-expanded={open === i}>{open === i ? "Hide" : "Try here"}</button>
           </div>
           {open === i && r.local ? (
@@ -228,7 +229,7 @@ function ProvenanceCards() {
   return (
     <div className="pcards">
       {cards.map((c) => (
-        <a key={c.id} className="pcard" href={"#c-" + c.id}>
+        <a key={c.id} className="pcard" href={safeNavigationHref("#c-" + c.id)}>
           <div className="pt">{c.l}</div>
           <div className="pd">{c.d.length > 200 ? c.d.slice(0, 200).replace(/\s+\S*$/, "") + "…" : c.d}</div>
           <div className={"provline " + c.pv}><span>Definition provenance: <b>{provenanceLine(c)}</b></span></div>
@@ -255,7 +256,7 @@ function ChangeLog() {
 
 function Tile({ icon, o, title, body, href }) {
   return (
-    <a className="tile fitile" href={href}>
+    <a className="tile fitile" href={safeNavigationHref(href)}>
       <Origin o={o} quiet />
       <div className="row"><Icon name={icon} /><b className="grow">{title}</b></div>
       <p className="small">{body}</p>

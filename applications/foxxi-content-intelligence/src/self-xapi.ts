@@ -4,12 +4,13 @@
  * A successful write additionally requires an awaited encrypted PGSL persistence.
  */
 import { validateStatement } from './xapi-validate.js';
+import type { PersistedUsageReceipt } from './i2idlx-usage-record.js';
 
 type Json = Record<string, unknown>;
 export interface SelfXapiReply { status: number; body: unknown }
 export interface SelfXapiDependencies {
   request(method: 'GET' | 'POST', query: URLSearchParams, body?: unknown): Promise<SelfXapiReply>;
-  persist(statement: Json): Promise<{ persisted: boolean; descriptorUrl?: string; holonUri?: string } | null>;
+  persist(statement: Json): Promise<{ persisted: boolean; descriptorUrl?: string; holonUri?: string; usageRecord?: PersistedUsageReceipt } | null>;
 }
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const QUERY_KEYS = new Set(['statementId', 'verb', 'activity', 'registration', 'since', 'until', 'ascending', 'limit', 'cursor']);
@@ -43,7 +44,7 @@ export async function writeSelfXapi(callerDid: string, input: unknown, deps: Sel
       error: 'LRS write outcome is unconfirmed; reconcile or retry these same ids and content' } };
   }
   if (accepted.status < 200 || accepted.status >= 300) return accepted;
-  const receipts: Array<{ statementId: string; persisted: boolean; descriptorUrl?: string; holonUri?: string }> = [];
+  const receipts: Array<{ statementId: string; persisted: boolean; descriptorUrl?: string; holonUri?: string; usageRecord?: PersistedUsageReceipt }> = [];
   // Read the actual LRS-enriched envelopes, never persist a caller-authored substitute.
   for (const id of ids) {
     const read = await deps.request('GET', new URLSearchParams({ statementId: id })).catch(() => null);
@@ -52,7 +53,7 @@ export async function writeSelfXapi(callerDid: string, input: unknown, deps: Sel
     }
     let persisted: Awaited<ReturnType<SelfXapiDependencies['persist']>> = null;
     try { persisted = await deps.persist(read.body as Json); } catch { /* report partial commit below */ }
-    receipts.push({ statementId: id, persisted: persisted?.persisted === true, ...(persisted?.descriptorUrl ? { descriptorUrl: persisted.descriptorUrl } : {}), ...(persisted?.holonUri ? { holonUri: persisted.holonUri } : {}) });
+    receipts.push({ statementId: id, persisted: persisted?.persisted === true, ...(persisted?.descriptorUrl ? { descriptorUrl: persisted.descriptorUrl } : {}), ...(persisted?.holonUri ? { holonUri: persisted.holonUri } : {}), ...(persisted?.usageRecord ? { usageRecord: persisted.usageRecord } : {}) });
   }
   const durable = receipts.every(r => r.persisted);
   return { status: durable ? 200 : 502, body: { ok: durable, lrsAccepted: true, statementIds: [...ids], durable, receipts, ...(!durable ? { error: 'LRS accepted the batch but pod persistence is incomplete; retry the same ids and content' } : {}) } };

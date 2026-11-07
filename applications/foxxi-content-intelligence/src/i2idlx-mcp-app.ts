@@ -12,6 +12,7 @@ import {
 } from '@modelcontextprotocol/server';
 import { acceptForSdkTransport, protocolMembersOnly } from '@interego/core';
 import { clientTaskFailure, executeClientTask, loadPublicTaskData, type ClientTaskConfig } from './i2idlx-client-tasks.js';
+import { projectWorkbenchData, authoredCatalogPorts } from '../i2idlx/typescript/authored-concepts.js';
 import { createSemanticTaskExecutor, type SemanticTaskConfig, type SemanticOperation } from './i2idlx-semantic-tasks.js';
 import { semanticCheckOperations } from './i2idlx-semantic-affordances.js';
 import { executeInterventionTask, interventionTaskFailure, INTERVENTION_TASK_INPUT_SCHEMA, type InterventionTaskConfig } from './i2idlx-intervention-tasks.js';
@@ -115,9 +116,12 @@ function packet(body: Row, error = false, httpStatus = 200) {
 function taskConfig(config: I2idlxMcpAppConfig): ClientTaskConfig {
   return { baseUrl: config.baseUrl, appDataFile: config.appDataFile, checkOperations: semanticCheckOperations(config.baseUrl) };
 }
-function publicSource(data: Row) {
+function publicSource(data: Row, baseUrl: string) {
   const meta = object(data.meta) ? data.meta : {}, scheme = object(meta.scheme) ? meta.scheme : {}, license = object(meta.license) ? meta.license : {};
-  return { release: meta.release, commit: meta.commit, built: meta.built, concept_count: Array.isArray(data.concepts) ? data.concepts.length : 0,
+  const counts = object(meta.counts) ? meta.counts : {};
+  return { release: meta.release, commit: meta.commit, built: meta.built, concept_count: counts.canonicalConcepts ?? (Array.isArray(data.concepts) ? data.concepts.length : 0),
+    authored_concept_count: counts.authoredConcepts ?? 0, available_concept_count: Array.isArray(data.concepts) ? data.concepts.length : 0,
+    authored_catalog: data.authoredCatalog ? authoredCatalogPorts(baseUrl) : [],
     title: scheme.title, rights: scheme.rights, license: { holder: license.holder, name: license.name, url: license.url },
     mode: 'pinned', freshness: 'not_checked' };
 }
@@ -150,7 +154,8 @@ export function createI2idlxAppServer(config: I2idlxMcpAppConfig): Server {
       // Confirm source data is present and valid, rather than displaying a stale placeholder.
       const data = await loadPublicTaskData(clientConfig);
       const embedded = /<script\b[^>]*id="i2-data"[^>]*>([\s\S]*?)<\/script>/i.exec(html);
-      const parsed: unknown = embedded ? JSON.parse(embedded[1]!) : null;
+      const raw: unknown = embedded ? JSON.parse(embedded[1]!) : null;
+      const parsed: unknown = object(raw) ? projectWorkbenchData(raw) : null;
       if (!object(parsed) || !object(parsed.meta) || !object(data.meta) || parsed.meta.release !== data.meta.release || parsed.meta.commit !== data.meta.commit ||
           !Array.isArray(parsed.concepts) || parsed.concepts.length !== (data.concepts as unknown[]).length || JSON.stringify(parsed) !== JSON.stringify(data)) throw new Error('Workbench page and public data source pins differ.');
       return { contents: [{ uri: I2IDLX_APP_RESOURCE, mimeType: I2IDLX_APP_MIME, text: buildWorkbenchAppResource(html, baseUrl),
@@ -197,7 +202,7 @@ export function createI2idlxAppServer(config: I2idlxMcpAppConfig): Server {
       const data = await loadPublicTaskData(clientConfig);
       const ids = Array.isArray(args.concept_ids) ? args.concept_ids : [], known = new Set((data.concepts as Row[]).map(c => c.id));
       if (ids.some(id => !known.has(id))) return packet({ error: 'Unknown concept identifier; search first.', writes_performed: false, sampling_performed: false }, true, 400);
-      return { ...packet({ task: 'workbench', source: publicSource(data), initial_view: args.view ?? 'home', concept_ids: ids, query: args.query ?? '',
+      return { ...packet({ task: 'workbench', source: publicSource(data, baseUrl), initial_view: args.view ?? 'home', concept_ids: ids, query: args.query ?? '',
         writes_performed: false, sampling_performed: false, model_execution: 'surrounding ChatGPT conversation' }), _meta: { ...widget, 'i2idlx/httpStatus': 200 } };
     } catch (error) { const failure = clientTaskFailure(error); return packet(failure.body, true, failure.status); }
   });

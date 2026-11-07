@@ -39,6 +39,16 @@ function transport(options: { missingSchema?: string; unavailable?: boolean; for
 }
 async function withServer(run: (base: string) => Promise<void>, config: Partial<CapabilityDirectoryConfig> = {}) {
   const app = express(); app.use(express.json({ limit: '1mb' }));
+  app.use((req, _res, next) => {
+    // Mirror the bridge's shared JSON request decoration before mounting the runner.
+    if (req.body && typeof req.body === 'object') {
+      req.body.__client_ip = req.ip;
+      const authorization = req.get('Authorization') ?? '';
+      const token = authorization.slice(0, 7).toLowerCase() === 'bearer ' ? authorization.slice(7).trim() : '';
+      if (token) req.body.__caller_token = token;
+    }
+    next();
+  });
   attachCapabilityDirectoryRoutes(app, { baseUrl: BASE, foxxiAffordances: production, fetch: transport().fetcher, build: 'fixture-build', ...config });
   const server = app.listen(0, '127.0.0.1');
   await new Promise<void>(resolve => server.once('listening', resolve));
@@ -66,11 +76,22 @@ describe('current workbench capability directory and bounded examples', () => {
         expect(row.input_schema?.required).toEqual(a.inputs.filter(i => i.required).map(i => i.name));
       }
       expect(data.actions.filter(a => a.n.startsWith('foxxi.i2idlx_')).map(a => a.n).sort()).toEqual([
-        'foxxi.i2idlx_ask', 'foxxi.i2idlx_capabilities', 'foxxi.i2idlx_challenge', 'foxxi.i2idlx_classify',
+        'foxxi.i2idlx_ask', 'foxxi.i2idlx_authored_catalog', 'foxxi.i2idlx_authored_rdf', 'foxxi.i2idlx_authored_shapes',
+        'foxxi.i2idlx_capabilities', 'foxxi.i2idlx_challenge', 'foxxi.i2idlx_classify',
         'foxxi.i2idlx_intervention_ask', 'foxxi.i2idlx_interventions', 'foxxi.i2idlx_orchestrate',
         'foxxi.i2idlx_peer_term', 'foxxi.i2idlx_read', 'foxxi.i2idlx_session', 'foxxi.i2idlx_source_version',
         'foxxi.i2idlx_validate', 'foxxi.i2idlx_write',
       ]);
+      for (const [name, path] of [
+        ['foxxi.i2idlx_authored_catalog', '/i2idlx/authored-catalog'],
+        ['foxxi.i2idlx_authored_rdf', '/i2idlx/authored.ttl'],
+        ['foxxi.i2idlx_authored_shapes', '/i2idlx/authored-shapes.ttl'],
+      ]) {
+        expect(data.actions.find(a => a.n === name)).toMatchObject({
+          m: 'GET', u: BASE + path, ro: true, de: false, ix: true, xr: true,
+          in: [], input_schema: { required: [] }, execution: { mode: 'prepare-only' },
+        });
+      }
       expect(data.actions.find(a => a.n === 'foxxi.i2idlx_interventions')).toMatchObject({
         m: 'GET', u: BASE + '/i2idlx/api/interventions', ro: true, xr: true,
         input_schema: { required: [] }, execution: { mode: 'prepare-only' },
@@ -133,6 +154,41 @@ describe('current workbench capability directory and bounded examples', () => {
       expect(new Headers(call.init?.headers).has('Authorization')).toBe(false);
     }, { fetch: io.fetcher });
   });
+  it('ignores bridge-added transport context only at the request envelope', async () => {
+    const io = transport(), token = 'fixture-transport-token';
+    await withServer(async base => {
+      const action_iri = canonical('discover-lrs');
+      const post = (body: Record<string, unknown>) => fetch(base + '/i2idlx/directory/run', {
+        method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token },
+        body: JSON.stringify({ action_iri, payload: {}, mode: 'example', ...body }),
+      });
+      const live = await post({});
+      expect(live.status).toBe(200);
+      const liveResult = await live.json();
+      expect(liveResult).toMatchObject({ status: 'executed', request: { payload: {} } });
+      expect(JSON.stringify(liveResult)).not.toMatch(/__client_ip|__caller_token|fixture-transport-token/);
+      const target = io.calls.find(call => call.url === BASE + '/xapi/about')!;
+      expect(new Headers(target.init?.headers).has('Authorization')).toBe(false);
+      expect(target.init?.body).toBeUndefined();
+
+      const before = io.calls.length;
+      const validate = await post({ mode: 'validate' });
+      expect(validate.status).toBe(200);
+      const validation = await validate.json();
+      expect(validation).toMatchObject({ status: 'contract-valid', executed: false, request: { payload: {} } });
+      expect(JSON.stringify(validation)).not.toMatch(/__client_ip|__caller_token|fixture-transport-token/);
+
+      const unknown = await post({ target: 'https://example.invalid' });
+      expect(unknown.status).toBe(400);
+      expect(await unknown.json()).toMatchObject({ status: 'invalid', executed: false });
+      const nested = await post({ payload: { nested: { __caller_token: 'fixture-nested-secret' } }, mode: 'validate' });
+      expect(nested.status).toBe(400);
+      const refusal = await nested.json();
+      expect(refusal).toMatchObject({ status: 'refused', executed: false });
+      expect(JSON.stringify(refusal)).not.toMatch(/fixture-nested-secret|fixture-transport-token/);
+      expect(io.calls).toHaveLength(before);
+    }, { fetch: io.fetcher });
+  });
   it('runs only explicit reviewed profiles, never a generic read-only or state-changing affordance', async () => {
     const io = transport();
     await withServer(async base => {
@@ -143,7 +199,7 @@ describe('current workbench capability directory and bounded examples', () => {
       const protectedRead = data.actions.find(a => a.n === 'foxxi.le_analyze_learning_curve')!;
       expect(protectedRead.ro).toBe(true); expect(protectedRead.execution.mode).toBe('prepare-only');
       expect((await run(base, protectedRead.iri, { concept_id: 'example', attempts: [] })).status).toBe(403);
-      for (const name of ['foxxi.i2idlx_interventions', 'foxxi.i2idlx_intervention_ask']) {
+      for (const name of ['foxxi.i2idlx_interventions', 'foxxi.i2idlx_intervention_ask', 'foxxi.i2idlx_authored_catalog', 'foxxi.i2idlx_authored_rdf', 'foxxi.i2idlx_authored_shapes']) {
         const intervention = data.actions.find(a => a.n === name)!;
         expect(intervention.ro).toBe(true); expect(intervention.execution.mode).toBe('prepare-only');
         const payload = name === 'foxxi.i2idlx_intervention_ask'
@@ -202,6 +258,34 @@ describe('current workbench capability directory and bounded examples', () => {
       expect(io.calls.some(c => c.url.includes('127.0.0.1'))).toBe(false);
     }, { fetch: io.fetcher });
   });
+  it('refuses incomplete edited computation inputs before calling their targets', async () => {
+    const io = transport();
+    await withServer(async base => {
+      const data = await getDirectory(base), compose = data.actions.find(a => a.n === 'relay.compose')!;
+      const align = data.actions.find(a => a.n === 'foxxi.resolve_aligned_competency')!;
+      const before = io.calls.length;
+      const invalid = [
+        { action: compose, payload: { ...compose.example.payload, operator: 'restriction' } },
+        { action: compose, payload: { ...compose.example.payload, operator: 'restriction', types: [] } },
+        ...['isAlignedTo', 'isEquivalentTo'].map(associationType => ({
+          action: align,
+          payload: {
+            ...align.example.payload,
+            required_competency_iri: 'urn:example:competency:other',
+            alignments: [{ associationType, originNode: { uri: 'urn:example:competency:record-store' } }],
+          },
+        })),
+      ];
+      for (const { action, payload } of invalid) {
+        const response = await run(base, action.iri, payload);
+        expect(response.status).toBe(403);
+        expect(await response.json()).toMatchObject({ status: 'refused', executed: false, evidence: { source: 'schema-only' } });
+      }
+      expect(io.calls).toHaveLength(before);
+      const accepted = await run(base, compose.iri, { ...compose.example.payload, operator: 'restriction', types: ['Semiotic'] });
+      expect(accepted.status).toBe(200);
+    }, { fetch: io.fetcher });
+  });
   it('records actual HTTP and semantic refusals as refusals even when the target answers 200', async () => {
     for (const result of [{ kind: 'refusal', error: 'Not authorized' }, { error: { code: 400, message: 'Missing domain input' } }, { skipped: true }]) {
       const io = transport({ result });
@@ -211,6 +295,48 @@ describe('current workbench capability directory and bounded examples', () => {
         expect(await response.json()).toMatchObject({ status: 'refused', executed: false, result, evidence: { source: 'live-http', http_status: 200 } });
       }, { fetch: io.fetcher });
     }
+  });
+  it('preserves target throttling and the retry hint with live response evidence', async () => {
+    const io = transport();
+    const fetcher: typeof fetch = async (input, init) => {
+      if (input === BASE + '/xapi/about') {
+        return Response.json({ error: 'The public target is busy.' }, { status: 429, headers: { 'Retry-After': '4' } });
+      }
+      return io.fetcher(input, init);
+    };
+    await withServer(async base => {
+      const response = await run(base, canonical('discover-lrs'), {});
+      expect(response.status).toBe(429);
+      expect(response.headers.get('retry-after')).toBe('4');
+      expect(await response.json()).toMatchObject({
+        status: 'refused', executed: false, result: { error: 'The public target is busy.' },
+        evidence: { source: 'live-http', http_status: 429, invocation_attempted: true },
+      });
+    }, { fetch: fetcher });
+  });
+  it('reports attempted delivery when the target times out or returns a successful HTML page', async () => {
+    const io = transport();
+    let timeout = true;
+    const fetcher: typeof fetch = async (input, init) => {
+      if (input !== BASE + '/xapi/about') return io.fetcher(input, init);
+      if (timeout) throw new DOMException('Fixture timeout', 'TimeoutError');
+      return new Response('<h1>Proxy error</h1>', { headers: { 'Content-Type': 'text/html' } });
+    };
+    await withServer(async base => {
+      const missing = await run(base, canonical('discover-lrs'), {});
+      expect(missing.status).toBe(503);
+      expect(await missing.json()).toMatchObject({
+        status: 'unavailable', executed: false, error: expect.stringContaining('too long'),
+        evidence: { source: 'live-http', invocation_attempted: true },
+      });
+      timeout = false;
+      const wrong = await run(base, canonical('discover-lrs'), {});
+      expect(wrong.status).toBe(503);
+      expect(await wrong.json()).toMatchObject({
+        status: 'unavailable', executed: false,
+        evidence: { source: 'live-http', http_status: 200, invocation_attempted: true },
+      });
+    }, { fetch: fetcher });
   });
   it('fails closed when a known profile target changes and when implementation is declared unavailable', async () => {
     const original = production.find(a => a.toolName === 'foxxi.discover_lrs')!;

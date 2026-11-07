@@ -10,6 +10,7 @@ on:
       - 'applications/foxxi-content-intelligence/src/ns/**'
       - 'applications/foxxi-content-intelligence/src/i2idlx-workbench.ts'
       - 'applications/foxxi-content-intelligence/src/i2idlx-agent-sessions.ts'
+      - 'applications/foxxi-content-intelligence/src/i2idlx-user-courses.ts'
       - 'applications/foxxi-content-intelligence/tests/workbench-owner-binding.test.ts'
       - 'applications/foxxi-content-intelligence/src/decorations/**'
       - 'applications/foxxi-content-intelligence/tests/i2idlx-*.test.ts'
@@ -130,9 +131,11 @@ jobs:
       - name: Provider-neutral agent transport and actual Ask engine checks
         run: |
           node applications/foxxi-content-intelligence/i2idlx/app/tools/agent-session-check.mjs
+          node applications/foxxi-content-intelligence/i2idlx/app/tools/orc-report-provenance-check.mjs
           node applications/foxxi-content-intelligence/i2idlx/app/tools/ask-engine-check.mjs
+          node applications/foxxi-content-intelligence/i2idlx/app/tools/user-course-check.mjs
           node --experimental-strip-types applications/foxxi-content-intelligence/i2idlx/app/tools/agent-session-http-check.mjs
-          npx vitest run applications/foxxi-content-intelligence/tests/i2idlx-agent-sessions.test.ts
+          npx vitest run applications/foxxi-content-intelligence/tests/i2idlx-agent-sessions.test.ts applications/foxxi-content-intelligence/tests/i2idlx-user-courses.test.ts
       - name: Compile the production visitor oracle before release
         run: python3 -m py_compile tools/i2idlx-live-visitor-smoke.py
       - name: Independently reject invalid REST argument bindings with SHACL

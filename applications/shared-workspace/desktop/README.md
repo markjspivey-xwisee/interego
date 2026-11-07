@@ -1,5 +1,7 @@
 # Interego Workspace — desktop shell
 
+**Archived for now.** New desktop feature work belongs in the [Interego local pod app](../../pod-desktop/README.md). This shell, its installed data and its implementation are retained for reference and selective feature reuse, especially human-and-agent chat spaces and Discord bridging. This is not an account migration or a shutdown of hosted services. See [archive scope and feature candidates](../ARCHIVE.md). The instructions and validation history below describe the retained implementation.
+
 Against the **live** relay, with no fixtures anywhere in it:
 
     boot -> create an account with a passkey -> a pod is provisioned for you

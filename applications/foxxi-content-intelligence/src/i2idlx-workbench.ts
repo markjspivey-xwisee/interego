@@ -14,7 +14,8 @@ import {
 import { readDelegationCredential, verifyAgentDelegation } from '@interego/solid';
 import type { VerifyPrivateCaller } from './private-performance-auth.js';
 import { attachClientTaskRoutes } from './i2idlx-client-tasks.js';
-import { attachAgentSessionRoutes } from './i2idlx-agent-sessions.js';
+import { agentSessionRoutine, attachAgentSessionRoutes } from './i2idlx-agent-sessions.js';
+import { attachUserCourseRoutes } from './i2idlx-user-courses.js';
 import { attachSemanticTaskRoutes } from './i2idlx-semantic-tasks.js';
 import { semanticCheckOperations } from './i2idlx-semantic-affordances.js';
 import { foxxiAffordances } from '../affordances.js';
@@ -325,7 +326,17 @@ export function attachWorkbenchRoutes(app: Express, config: WorkbenchConfig): vo
   const checkOperations = semanticCheckOperations(base);
   attachClientTaskRoutes(app, { baseUrl: base, appDataFile: config.appDataFile, checkOperations });
   // Independent, explicitly paired agent execution; the public MCP packet surface stays read-only.
-  attachAgentSessionRoutes(app, { baseUrl: base, verifyCaller: config.verifyCaller });
+  const agentSessions = attachAgentSessionRoutes(app, {
+    baseUrl: base,
+    verifyCaller: config.verifyCaller,
+    routine: input => agentSessionRoutine(input, config.fetch),
+  });
+  attachUserCourseRoutes(app, {
+    baseUrl: base,
+    sessions: agentSessions,
+    taskConfig: { baseUrl: base, appDataFile: config.appDataFile, checkOperations },
+    fetch: config.fetch,
+  });
   // Derive both discovery representations from the actual vertical declarations.
   // The generic Interego follower parses Turtle and resolves the action subject;
   // the existing JSON clients retain their original shape and receive its link.
@@ -357,6 +368,20 @@ export function attachWorkbenchRoutes(app: Express, config: WorkbenchConfig): vo
       connection: 'Connect Interego in your AI client, discover I2IDL-X Ask/Orchestrate, then follow their advertised actions and execute returned instructions with your own model. Browser pod identity is a separate optional connection.',
       descriptor_url: descriptorUrl,
       checkOperations,
+      personalCourses: {
+        href: base + '/i2idlx/api/user-courses', method: 'POST', providers: ['scorm-cloud', 'source-service'],
+        authentication: 'Verified paired browser session; unavailable to the agent driver.',
+        operations: ['connect', 'status', 'courses', 'grant', 'access-status', 'source', 'delete', 'request-deletion', 'deletion-status', 'disconnect'],
+        access_modes: {
+          transient: 'Read an explicitly permitted course export in temporary memory for each question.',
+          cached: 'Keep owner-authorized instructional text and a derived content graph in this session until its permission expires or it is deleted.',
+          virtual: 'Ask a compatible source service for bounded cited passages; no package export or local course cache, and no fallback to either.',
+        },
+        permission: 'Explicit course/version/mode grant required. SCORM Cloud permission is a user assertion; source-service permission is checked with that provider on each retrieval. LTI launch alone grants no content rights.',
+        deletion: 'Delete or revoke local derived content immediately. External derived-content deletion is confirmed only by the provider receipt; this never deletes the original course or promises erasure from an AI client.',
+        lifetime: 'This connection only; credentials, text and graphs are cleared on disconnect or expiry. No durable course import is performed.',
+        persisted: false,
+      },
       _affordances: actions.map(a => ({ action: a.action, href: a.targetTemplate.replace('{base}', base), method: a.method })),
     });
   });

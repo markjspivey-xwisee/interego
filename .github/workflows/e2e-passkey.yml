@@ -38,7 +38,9 @@ concurrency:
 jobs:
   playwright:
     name: Passkey OAuth (Playwright, virtual authenticator)
-    runs-on: ubuntu-latest
+    # The locked Playwright release supports Ubuntu 24.04; ubuntu-latest is now 26.04, where
+    # `playwright install --with-deps chromium` refuses to install.
+    runs-on: ubuntu-24.04
     needs: []
     timeout-minutes: 10
 

@@ -48,12 +48,14 @@ The machine-readable authority is `CAPABILITY_MATRIX` / `capabilitiesFor()` in `
 | Solid pod storage | Durable file-backed CSS | Existing hosted storage | Separate Solid composition required |
 | Encrypted graph payloads | Existing publisher with caller-owned keys | Existing encrypted publishing | Separate encrypted P2P shares |
 | Owner key custody and recovery | Caller-managed; Windows app adds separate protected notes/sign-in keys and encrypted backups | Existing hosted account model | Private bridge key configuration required |
-| MCP tools | Windows app adds scoped local notes tools and optional remote MCP access through a saved user-owned address or temporary link; low-level runtime has no adapter | Existing tool surface retained | Six P2P tools |
+| MCP tools | Windows app adds scoped local notes tools and optional Workspace discovery/actions for selected conversations; optional remote bridge remains notes-only; low-level runtime has no adapter | Existing tool surface retained | Six P2P tools |
 | Hosted OAuth | Not required or started | Existing flow retained | Not included |
 | Solid notifications | Gateway support pending | Existing service | Not included |
 | Cross-pod Solid federation | Transport not included | Existing selected sharing/discovery | Separate Solid composition required |
 | Encrypted relay sharing | Transport not included | Separate bridge composition required | Explicit selected-relay configuration |
 | Reliable cross-domain offline delivery | Not guaranteed | Not guaranteed | Durable outbox pending |
+
+The Windows app's optional [Workspaces vertical](../applications/pod-desktop/WORKSPACES.md) adds encrypted owner-pod chat, scoped agent memberships and state-sensitive JSON-LD affordances. An independent outbound Discord adapter connects only the selected conversation, channel and incoming participants; it starts paused on every app launch. Local capability IRIs resolve through `interego_discover` and `interego_act`, not through public HTTP URLs. This does not supply a general hosted Workspace adapter, distributed per-author pod logs, a portable chat backup or automatic model execution. Enabling Workspaces, granting agent access and starting Discord do not enable pod federation.
 
 The explicit configuration model can represent federation intent. The bare local storage runtime refuses `federation.enabled: true` because it does not implement a transport. The Windows app now separately composes `@interego/pod-federation` with its optional HTTPS bridge for [invited local-to-local and local-to-hosted snapshot sharing](../applications/pod-desktop/POD-SHARING.md). Its Solid storage stays on loopback; peer routes have separate keys, permissions and explicit owner consent. Sharing starts off on every app launch. Pairing an agent does not enable federation. Existing hosted sharing remains available; reliable offline delivery remains a later capability.
 

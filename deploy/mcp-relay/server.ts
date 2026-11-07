@@ -3942,16 +3942,9 @@ async function handlePublishContext(args: ToolArgs): Promise<string> {
       // Minimal descriptor turtle carrying the note's real affordances (the same
       // ones the persisted descriptor advertises) so its controls render inline.
       //
-      // ★ IT MUST ALSO CARRY THE NOTE'S POLICY, because the function it is handed to reads
-      // policy OFF A DESCRIPTOR. `noteToHyperMarkdown` decides public-vs-private from
-      // `iep:visibility` / `iep:encrypted`, exactly as `packages/solid/src/client.ts` writes
-      // them into the persisted descriptor. This block emitted neither, so both probes failed
-      // unconditionally and EVERY note handed back here — a world-readable `visibility:
-      // "public"` one included — took the private branch: `state: "private"`, the footer "the
-      // note stays private", and the title "Private note" for a note carrying none of its own.
-      // A reader told their public note is private is being actively misled, so the two triples
-      // are not decoration. `isPublic` below says the same thing from the argument we already
-      // hold; these make the synthesized descriptor honest to anyone who reads it as one.
+      // Carry all three audience classes, matching the persisted distribution metadata.
+      // The inline projection also receives the computed value directly; encryption
+      // alone cannot distinguish private from shared notes on a later read.
       //
       // ★ `visibility` is the NARROWED union from computePublishRecipients ('public' |
       // 'private' | 'shared'), not `args.visibility` — no caller bytes reach the Turtle, which
@@ -4013,7 +4006,7 @@ async function handlePublishContext(args: ToolArgs): Promise<string> {
         `@prefix hydra: <http://www.w3.org/ns/hydra/core#> .`,
         `@prefix dcat: <http://www.w3.org/ns/dcat#> .`,
         `${descIdRef} a iep:ContextDescriptor ; iep:encrypted ${enc ? 'true' : 'false'}`
-          + `${visibility === 'public' || visibility === 'private' ? ` ; iep:visibility "${visibility}"` : ''}`
+          + ` ; iep:visibility "${visibility}"`
           + `${affordanceRefs.length > 0 ? ` ; iep:affordance ${affordanceRefs.join(', ')}` : ''} .`,
         ...(fetchTargetRef
           ? [`<#${fetchAction}> a iep:Affordance ; iep:action <${IEP_NS}${fetchAction}> ; hydra:target ${fetchTargetRef} ; hydra:method "GET" .`]
@@ -4032,7 +4025,7 @@ async function handlePublishContext(args: ToolArgs): Promise<string> {
         // audience class as a value. Passing it means the publish path no longer depends on a
         // regex over a serialization this same block writes — the shape that let the policy
         // triples go missing with a green suite over the projection the whole time.
-        isPublic: visibility === 'public',
+        visibility,
         // The SAME screen invoke_affordance applies, so a control this document leaves
         // unmarked is one invoke would accept a target for. See `isFollowable` in note-view.
         isFollowable: isFollowableTarget,
@@ -4378,7 +4371,7 @@ async function handleRemember(args: ToolArgs): Promise<string> {
     // The complete HyperMarkdown note, ready to display INLINE (prose + fields +
     // links + controls). No HTTP GET, no bearer — it is right here.
     rendered: published['rendered'] ?? '',
-    hint: 'Display `rendered` inline as Markdown — it IS the artifact (no fetch needed). Signed, private memory; NOT an AMEP exchange. To re-read later, get_descriptor on descriptorUrl decrypts through your session.',
+    hint: 'Display `rendered` inline as Markdown — it IS the artifact (no fetch needed). Signed memory; NOT an AMEP exchange. To re-read later, get_descriptor on descriptorUrl decrypts through your session.',
   });
 }
 

@@ -1,8 +1,13 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { execFileSync } from 'node:child_process';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import type { Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
+import { tmpdir } from 'node:os';
+import { basename, dirname, join } from 'node:path';
 import { createApp } from '../bridge/server.js';
 import { act, dereference, findAffordance, validateAgainstShape } from '../src/follower.js';
+import { GitRepositorySource } from '../src/repository-source.js';
 import { HarnessStore } from '../src/store.js';
 import { fixtureRepo, idOf, preferringJev } from './helpers.js';
 import { choiceAnswer, FakeJevClient, type Answer } from '../src/jev-client.js';
@@ -127,4 +132,94 @@ describe('a real repository', () => {
     expect(inv.files.some((f) => f.path === 'src/repo.ts')).toBe(true);
     expect(inv.files.some((f) => f.path.startsWith('vendor/'))).toBe(false);
   });
+
+  it('judges a newly fetched revision without restarting or losing earlier judgments', async () => {
+    const prefix = 'jev-source-bridge-';
+    const scratch = mkdtempSync(join(tmpdir(), prefix));
+    const remote = join(scratch, 'repository');
+    const stateRoot = join(scratch, 'state');
+    const checkoutRoot = join(scratch, 'checkouts');
+    const originalPath = 'src/agents-directory.ts';
+    const newPath = 'src/agents-filters.ts';
+    const originalContent = 'export const directoryCount = 217;\n';
+    const git = (...args: string[]): string => execFileSync('git', [
+      '-C', remote, '-c', `core.hooksPath=${join(scratch, 'no-hooks')}`, ...args,
+    ], { encoding: 'utf8' }).trim();
+    const commit = (message: string): string => {
+      git('add', '.');
+      git('-c', 'user.name=Jev Test', '-c', 'user.email=jev-test@example.invalid', '-c', 'commit.gpgsign=false', 'commit', '-qm', message);
+      return git('rev-parse', 'HEAD');
+    };
+    let listener: Server | undefined;
+    try {
+      mkdirSync(join(remote, 'src'), { recursive: true });
+      mkdirSync(checkoutRoot);
+      const source = new GitRepositorySource(remote, 0, checkoutRoot);
+      git('init', '-q', '--initial-branch=master');
+      writeFileSync(join(remote, originalPath), originalContent);
+      const firstCommit = commit('Add the Agents directory');
+      const jev = preferringJev((id, state) => {
+        if (id !== 'change') return undefined;
+        const { task } = state as { task: string };
+        return idOf(state, task.includes('refreshed') ? newPath : originalPath);
+      });
+      const { app } = createApp({ jev, repoRoot: stateRoot, base: 'http://127.0.0.1:0', repositorySource: source });
+      const active = app.listen(0, '127.0.0.1');
+      listener = active;
+      await new Promise<void>((ready, fail) => { active.once('listening', ready).once('error', fail); });
+      const origin = `http://127.0.0.1:${(active.address() as AddressInfo).port}`;
+      const post = (path: string, body: Record<string, unknown>): Promise<Response> => fetch(`${origin}/jev-harness/${path}`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+        signal: AbortSignal.timeout(10_000),
+      });
+      const health = async (): Promise<{ commit: string; files: number }> => {
+        const response = await fetch(`${origin}/health`, { signal: AbortSignal.timeout(10_000) });
+        expect(response.status).toBe(200);
+        return await response.json() as { commit: string; files: number };
+      };
+      const navigate = async (task: string): Promise<{ id: string; files: Array<{ path: string }>; repository: { commit: string } }> => {
+        const response = await post('navigate', { task });
+        expect(response.status).toBe(200);
+        return (await response.json() as { judgment: { id: string; files: Array<{ path: string }>; repository: { commit: string } } }).judgment;
+      };
+
+      expect(await health()).toMatchObject({ commit: firstCommit, files: 1 });
+      const noChangedFiles = await post('select-tests', { base_ref: firstCommit });
+      expect(noChangedFiles.status).toBe(400);
+      expect(await noChangedFiles.text()).toContain('changed_files');
+      const noDiff = await post('review-gate', { base_ref: firstCommit });
+      expect(noDiff.status).toBe(400);
+      expect(await noDiff.text()).toContain('diff');
+      const prior = await navigate('Find the original Agents directory');
+      expect(prior.repository.commit).toBe(firstCommit);
+      expect(prior.files[0]?.path).toBe(originalPath);
+
+      await source.read(async (oldRoot) => {
+        writeFileSync(join(remote, originalPath), 'export const directoryCount = 218;\n');
+        writeFileSync(join(remote, newPath), 'export const linkedExamplesCount = 3;\n');
+        const secondCommit = commit('Update the Agents directory filters');
+
+        expect(await health()).toMatchObject({ commit: secondCommit, files: 2 });
+        const refreshed = await navigate('Find the refreshed Agents directory filters');
+        expect(refreshed.repository.commit).toBe(secondCommit);
+        expect(refreshed.files[0]?.path).toBe(newPath);
+        const selection = await post('select-tests', { changed_files: [newPath] });
+        expect(selection.status).toBe(200);
+        expect(await selection.json()).toMatchObject({ judgment: { repository: { commit: secondCommit } } });
+        expect(readFileSync(join(oldRoot, originalPath), 'utf8').trim()).toBe(originalContent.trim());
+        expect(existsSync(join(oldRoot, newPath))).toBe(false);
+
+        const response = await fetch(`${origin}/jev-harness/judgments`, { signal: AbortSignal.timeout(10_000) });
+        expect(response.status).toBe(200);
+        const stored = await response.json() as Array<{ id: string }>;
+        expect(stored.map(({ id }) => id)).toEqual(expect.arrayContaining([prior.id, refreshed.id]));
+      });
+    } finally {
+      if (listener) await new Promise<void>((closed) => listener?.close(() => closed()));
+      const target = realpathSync(scratch);
+      expect(dirname(target), 'fixture parent').toBe(realpathSync(tmpdir()));
+      expect(basename(target).startsWith(prefix), 'fixture name').toBe(true);
+      rmSync(target, { recursive: true, force: true, maxRetries: 3 });
+    }
+  }, 25_000);
 });
