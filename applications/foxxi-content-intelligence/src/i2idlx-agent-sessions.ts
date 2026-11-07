@@ -23,6 +23,7 @@ type Routine = { state: 'starting' | 'ready' | 'unavailable'; hash: string | nul
 type Session = {
   id: string; browserHash: string; inviteHash: string | null; inviteExpires: number;
   expires: number; driver: string | null; driverHash: string | null; turn: Turn | null; turnCount: number;
+  lifetime: AbortController;
   routineSender?: AgentSessionRoutine;
   routine?: Routine;
 };
@@ -66,6 +67,13 @@ export interface AgentSessionConfig {
   leaseTtlMs?: number;
   requestTtlMs?: number;
   maxSessions?: number;
+}
+/** Server-internal identity for a private capability used by its owning browser. */
+export interface AgentBrowserIdentity {
+  session_id: string;
+  actor: string;
+  expires_at: number;
+  signal: AbortSignal;
 }
 export class AgentSessionError extends Error {
   readonly status: number;
@@ -164,7 +172,7 @@ export class AgentSessionStore {
     // Keep only the capability tombstone until the next creation so holders get an explicit 410.
     for (const [ip, bucket] of this.creations) if (bucket.reset <= now) this.creations.delete(ip);
     for (const s of this.sessions.values()) {
-      if (s.expires <= now) { s.turn = null; s.driver = null; s.driverHash = null; s.inviteHash = null; s.routine = undefined; s.routineSender = undefined; continue; }
+      if (s.expires <= now) { s.lifetime.abort(); s.turn = null; s.driver = null; s.driverHash = null; s.inviteHash = null; s.routine = undefined; s.routineSender = undefined; continue; }
       if (s.routine?.state === 'starting' && s.routine.deadline <= now) this.stopStartup(s.routine);
       if (s.turn && active(s.turn) && s.turn.created + this.requestTtl <= now) {
         s.turn.state = 'failed'; s.turn.error = 'The agent request expired.'; s.turn.error_code = 'request_timeout'; s.turn.revision++;
@@ -184,6 +192,7 @@ export class AgentSessionStore {
   }
   dispose(): void {
     if (this.sweepTimer) clearInterval(this.sweepTimer);
+    for (const s of this.sessions.values()) s.lifetime.abort();
     this.sweepTimer = null; this.sessions.clear(); this.creations.clear();
   }
   private memoryReplacing(session: Session, replacement: Turn): void {
@@ -241,13 +250,15 @@ export class AgentSessionStore {
     bucket.count++; this.creations.set(ip, bucket);
     const browser = opaque(), now = this.clock();
     const s: Session = { id: id(), browserHash: digest(browser), inviteHash: null,
-      inviteExpires: now, expires: now + this.sessionTtl, driver: null, driverHash: null, turn: null, turnCount: 0 };
+      inviteExpires: now, expires: now + this.sessionTtl, driver: null, driverHash: null, turn: null, turnCount: 0, lifetime: new AbortController() };
     this.sessions.set(s.id, s);
     const driver = this.base + AGENT_SESSION_PATH + '/driver';
     return { ...this.invitation(s), browser_token: browser, browser_url: this.base + AGENT_SESSION_PATH + '/browser',
       links: { driver: { href: driver, method: 'POST', action: AGENT_SESSION_ACTION, authentication: 'existing Interego signed caller' } } };
   }
   private invitation(s: Session): Row {
+    s.lifetime.abort();
+    s.lifetime = new AbortController();
     if (s.turn && active(s.turn)) this.cancel(s.turn, 'The agent connection changed.');
     const token = opaque();
     s.inviteHash = digest(token);
@@ -289,6 +300,13 @@ export class AgentSessionStore {
       limits: { messages: 32, tools: 30, task_bytes: TASK_BYTES, text_bytes: OUTPUT_BYTES, tool_calls: 16, tool_arguments_bytes: 16 * KiB },
     };
   }
+  authorizeBrowser(sessionId: unknown, capability: unknown): AgentBrowserIdentity {
+    const s = this.session(sessionId);
+    if (!tokenMatches(capability, s.browserHash)) reject('Agent session not found.', 404);
+    this.live(s);
+    if (!s.driver) reject('Connect a verified Interego agent before attaching private course content.', 409);
+    return { session_id: s.id, actor: s.driver, expires_at: s.expires, signal: s.lifetime.signal };
+  }
   browser(raw: unknown, capability: unknown): Row {
     const body = record(raw), s = this.session(body.session_id);
     if (!tokenMatches(capability, s.browserHash)) reject('Agent session not found.', 404);
@@ -328,6 +346,7 @@ export class AgentSessionStore {
         exact(body, ['session_id', 'operation']);
         if (s.turn && active(s.turn)) this.cancel(s.turn, 'The browser disconnected.');
         s.driver = null; s.driverHash = null; s.inviteHash = null; s.turn = null; s.routine = undefined; s.routineSender = undefined; s.expires = this.clock();
+        s.lifetime.abort();
         return { session_id: s.id, state: 'disconnected', ephemeral: true, persisted: false };
       }
       default: reject('Unknown browser agent-session operation.');

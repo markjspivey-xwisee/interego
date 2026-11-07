@@ -9,6 +9,7 @@ import { useUI, Seg } from "../ui.jsx";
 import { MiniMarkdown } from "../text.jsx";
 import { useStored } from "../util.js";
 import { AIClientTaskLinks } from "../connection.jsx";
+import { useCourseContext } from "../course-context.jsx";
 
 const { useState, useRef, useEffect, useCallback } = React;
 
@@ -55,7 +56,7 @@ export function useAskEngine() {
   useEffect(() => () => { generation.current++; if (ctl.current) ctl.current.abort(); }, []);
   const sample = caps.sample;
 
-  const tools = useCallback((trace) => [
+  const tools = useCallback((trace, executor = sample) => [
     {
       name: "search_glossary",
       description: "Search the glossary's labels, alternate labels and definitions. Returns up to `limit` (default 8) matches as {id, label, kind, field, definition}.",
@@ -71,7 +72,7 @@ export function useAskEngine() {
         if (!c) throw new Error(`No concept with id "${id}". Search first.`);
         trace("Read " + c.l);
         // Pairing a reasoning executor grants public glossary tools, not access to team annotations.
-        const notes = sample?.allowTeamNotes === false ? undefined : caps.allNotes.filter((n) => n.c === c.id).slice(-8).map((n) => n.text.slice(0, 400));
+        const notes = executor?.allowTeamNotes === false ? undefined : caps.allNotes.filter((n) => n.c === c.id).slice(-8).map((n) => n.text.slice(0, 400));
         return full(c, notes);
       },
     },
@@ -115,9 +116,9 @@ export function useAskEngine() {
     },
   ], [caps.allNotes, sample]);
 
-  const send = useCallback(async (text, ids = ctx, interventionContext = null) => {
+  const send = useCallback(async (text, ids = ctx, interventionContext = null, executor = sample) => {
     const q = (text || "").trim();
-    if (!q || !sample || busy) return;
+    if (!q || !executor || busy) return;
     const run = ++generation.current;
     const current = () => generation.current === run;
     const ctxLabel = ids.map((id) => byId.get(id)).filter(Boolean).map((c) => `${c.l} [[${c.id}]]`).join(", ");
@@ -133,7 +134,10 @@ export function useAskEngine() {
     try {
       let useTools = caps.tools;
       let maxTools = 5;
-      try { const l = await sample.limits(); useTools = !!(l && l.tools); maxTools = (l && l.tools && l.tools.maxCount) || 5; } catch { /* keep default */ }
+      try { const l = await executor.limits(); useTools = !!(l && l.tools); maxTools = (l && l.tools && l.tools.maxCount) || 5; } catch (error) {
+        if (executor !== sample) throw error;
+        /* keep the existing host default */
+      }
       if (!current()) return;
       if (controller.signal.aborted) throw Object.assign(new Error('Cancelled.'), { code: 'cancelled' });
       const lead = RULES(ctxLabel) + (useTools ? "" : retrieval(q, ids)) + (interventionContext
@@ -143,8 +147,8 @@ export function useAskEngine() {
       const input = [{ role: "user", content: lead }, ...history, userTurn];
       const signal = controller.signal;
       const opts = { signal, modelTier: tier, onText: ({ text: t }) => { if (current() && !signal.aborted) setTurns((all) => all.map((x, i) => (i === all.length - 1 ? { ...x, content: t, pending: false } : x))); } };
-      if (useTools) opts.tools = tools(trace).slice(0, maxTools); else opts.cache = false;
-      const res = await sample(input, opts);
+      if (useTools) opts.tools = tools(trace, executor).slice(0, maxTools); else opts.cache = false;
+      const res = await executor(input, opts);
       if (!current()) return;
       if (signal.aborted) throw Object.assign(new Error('Cancelled.'), { code: 'cancelled' });
       setTurns((all) => all.map((x, i) => (i === all.length - 1 ? { ...x, content: res.text, pending: false, truncated: res.truncated } : x)));
@@ -178,7 +182,8 @@ const STARTERS = [
 ];
 
 export function Ask({ engine }) {
-  const { turns, busy, draft, setDraft, send, stop, reset, ctx, setCtx, available, modelTiers, tier, setTier } = engine;
+  const { turns, busy, draft, setDraft, reset, ctx, setCtx, available, modelTiers, tier, setTier } = engine;
+  const course = useCourseContext(engine), send = course.send, working = busy || course.loading;
   const log = useRef(null);
   const box = useRef(null);
   useEffect(() => { if (log.current) log.current.scrollTop = log.current.scrollHeight; }, [turns]);
@@ -188,6 +193,7 @@ export function Ask({ engine }) {
       <div className="page" style={{ maxWidth: 720 }}>
         <div className="empty"><Icon name="sparkle" /><div><b>Connect an AI agent to ask here</b></div>
           <div className="small">Use Connect in the toolbar to pair an active agent with this workbench. Your questions, glossary lookups and answers then stay together here, using that agent's own available model. Existing host adapters remain supported. Browsing, exports and local packs work before you connect.</div></div>
+        {course.panel}
         <p className="small muted">You can also use your AI client's own conversation through these optional links.</p>
         <AIClientTaskLinks />
       </div>
@@ -196,12 +202,13 @@ export function Ask({ engine }) {
   return (
     <div className="ask">
       <div className="ask-log" ref={log}>
+        {course.panel}
         {!turns.length ? (
           <div className="stack" style={{ gap: 14, paddingTop: 20 }}>
             <div className="eyebrow">Ask · grounded in {META.release}</div>
             <h1 className="serif" style={{ fontSize: 34, fontWeight: 600, lineHeight: 1.1 }}>Ask the glossary anything.</h1>
             <p className="lede">The model looks terms up in the release as it answers and cites every term it uses. Capability links and crosswalks are flagged as hypotheses. Answers run on your connected model account.</p>
-            <div className="suggests">{STARTERS.map((s) => <button key={s} className="chip" onClick={() => send(s, [])}>{s}</button>)}</div>
+            <div className="suggests">{STARTERS.map((s) => <button key={s} className="chip" disabled={working || course.blocked} onClick={() => send(s, [])}>{s}</button>)}</div>
           </div>
         ) : turns.map((t, i) => (
           <div key={i} className={"msg " + (t.role === "user" ? "user" : "bot")}>
@@ -218,16 +225,18 @@ export function Ask({ engine }) {
         ))}
       </div>
       <div className="ask-in">
+        {course.selected ? <p className="tiny muted">Course context · {course.selected.title} · Version {course.selected.version}</p> : null}
+        {course.blocked ? <p className="tiny" role="status">Reconnect your course source above, or choose Use glossary only.</p> : null}
         {ctx.length ? <div className="row wrap small"><span className="muted">About:</span>{ctx.map((id) => byId.get(id) ? <span key={id} className="chip"><span className={"dot kd-" + byId.get(id).k} />{byId.get(id).l}</span> : null)}<button className="btn ghost sm" onClick={() => setCtx([])}>Clear</button></div> : null}
         <div className="box">
-          <textarea ref={box} rows={1} value={draft} placeholder="Ask about any term, compare terms, or plan a course glossary…" onChange={(e) => setDraft(e.target.value)}
+          <textarea ref={box} rows={1} value={draft} disabled={course.loading} placeholder={course.selected ? "Ask about " + course.selected.title + "…" : "Ask about any term, compare terms, or plan a course glossary…"} onChange={(e) => setDraft(e.target.value)}
             onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(draft); } }} aria-label="Ask" />
-          {busy ? <button className="btn" onClick={stop}><Icon name="stop" />Stop</button> : <button className="btn primary" onClick={() => send(draft)} disabled={!draft.trim()}><Icon name="arrowRight" />Ask</button>}
+          {working ? <button className="btn" onClick={course.stop}><Icon name="stop" />Stop</button> : <button className="btn primary" onClick={() => send(draft)} disabled={!draft.trim() || course.blocked}><Icon name="arrowRight" />Ask</button>}
         </div>
         <div className="row wrap tiny muted">
           {modelTiers ? <Seg label="Speed" value={tier} onChange={setTier} options={[{ v: "quick", l: "Fast" }, { v: "default", l: "Thorough" }]} /> : null}
           <span className="grow">Uses your connected model account. Answers can be wrong; check the cited entries.</span>
-          {turns.length ? <button className="btn ghost sm" onClick={reset}>New conversation</button> : null}
+          {turns.length ? <button className="btn ghost sm" onClick={() => { course.stop(); reset(); }}>New conversation</button> : null}
         </div>
       </div>
     </div>

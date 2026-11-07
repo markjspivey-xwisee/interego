@@ -6,16 +6,44 @@ const source = await readFile(new URL('../src/views/ask.jsx', import.meta.url), 
 const body = source.slice(source.indexOf('export function useAskEngine()'), source.indexOf('\nconst STARTERS'));
 assert.ok(body.startsWith('export function useAskEngine()'));
 function deferred() { let resolve; const promise = new Promise(r => { resolve = r; }); return { promise, resolve }; }
-function harness(sample) {
+function harness(sample, extra = {}) {
   const values = [], cleanups = [];
   let cursor = 0;
   const useState = initial => { const n = cursor++; values[n] = typeof initial === 'function' ? initial() : initial; return [values[n], next => { values[n] = typeof next === 'function' ? next(values[n]) : next; }]; };
   const useAskEngine = runInNewContext('(' + body.replace('export function', 'function') + ')', {
     useState, useRef: value => ({ current: value }), useEffect: fn => { const c = fn(); if (c) cleanups.push(c); },
-    useCallback: fn => fn, useStored: (_key, value) => [value, () => {}], useCaps: () => ({ sample, tools: false, allNotes: [] }),
-    AbortController, RULES: () => 'Pinned glossary instructions.', retrieval: () => '', byId: new Map(),
+    useCallback: fn => fn, useStored: (_key, value) => [value, () => {}], useCaps: () => ({ sample, tools: false, allNotes: [], ...extra.caps }),
+    AbortController, RULES: () => 'Pinned glossary instructions.', retrieval: () => '', byId: extra.byId || new Map(), full: extra.full,
   });
   return { engine: useAskEngine(), turns: () => values[0], cleanup: () => cleanups.forEach(fn => fn()) };
+}
+{
+  let hosts = 0, pairs = 0, input, concept;
+  const host = async () => { hosts++; return { text: 'Host answer.' }; };
+  host.limits = async () => ({ tools: false });
+  const paired = async (messages, options) => {
+    pairs++; input = messages;
+    concept = options.tools.find(tool => tool.name === 'get_concept').execute({ id: 'objective' });
+    return { text: 'Paired answer.' };
+  };
+  paired.limits = async () => ({ tools: { maxCount: 30 } }); paired.allowTeamNotes = false;
+  const h = harness(host, { byId: new Map([['objective', { id: 'objective', l: 'Learning objective' }]]),
+    full: (c, notes) => ({ id: c.id, teamNotes: notes }), caps: { allNotes: [{ c: 'objective', text: 'Private team note.' }] } });
+  await h.engine.send('Private course question.', [], { kind: 'instructional-source-reference', passages: [{ id: 'SC1', body: 'Private passage.' }] }, paired);
+  assert.equal(hosts, 0); assert.equal(pairs, 1);
+  assert.ok(input[0].content.includes('Private passage.'));
+  assert.equal(concept.teamNotes, undefined, 'paired source tools must not inherit host team-note access');
+  await h.engine.send('Ordinary glossary question.');
+  assert.equal(hosts, 1, 'ordinary Ask retains host priority'); h.cleanup();
+}
+{
+  let calls = 0;
+  const host = async () => { throw new Error('Private source must not fall back to the host.'); };
+  const stalePaired = async () => { calls++; return { text: 'Wrong recipient.' }; };
+  stalePaired.limits = async () => { throw Object.assign(new Error('Pairing changed.'), { code: 'cancelled' }); };
+  const h = harness(host);
+  await h.engine.send('Private source from old pairing.', [], { passages: ['SC1'] }, stalePaired);
+  assert.equal(calls, 0); assert.equal(h.turns().at(-1).stopped, true); h.cleanup();
 }
 {
   const first = deferred(), second = deferred(), calls = [];
@@ -75,4 +103,4 @@ for (const [code, expected] of [
   assert.equal(h.turns().at(-1).error, expected);
   h.cleanup();
 }
-console.log('6 actual Ask-engine checks passed: stale limits, ignored abort, intervention source context, request timeout recovery, session expiry, agent failure.');
+console.log('8 actual Ask-engine checks passed: paired source routing without team notes or host fallback, stale paired executor, stale limits, ignored abort, intervention source context, timeout recovery, session expiry, agent failure.');

@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-11-07 — Ask about a course through your own SCORM Cloud connection
+
+Ask lets a paired visitor connect their own SCORM Cloud application, select a course and retrieve its versioned instructional text for each question. Answers carry course passage references alongside the glossary context. Switching the course clears the conversation.
+
+The read-only connector belongs to that verified visitor connection. Credentials remain in server memory until disconnect or expiry, and never enter the AI request, public package store or deployment settings. Expired connections require an explicit reconnect or a choice to continue with the glossary alone.
+
 ## 2026-11-06 — Clarify the shared xAPI performance verb
 
 The Foxxi and AGP xAPI Profiles explain how the object activity type identifies the work described by `performed` and how a projected descriptor supplies that type. The verb IRI and template rules stay the same.

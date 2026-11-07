@@ -13,6 +13,8 @@ export const renewAgentInvitation = () => agentSessions.renewInvitation();
 export const disconnectAgentSession = () => agentSessions.disconnect();
 export const refreshAgentSession = () => agentSessions.refresh();
 export const subscribeAgentSession = listener => agentSessions.subscribe(listener);
+export const userCourseRequest = (args, signal) => agentSessions.requestUserCourses(args, signal);
+export const userCourseSample = () => agentSessions.getUserCourseSample();
 const failure = (message, code = "unavailable") => Object.assign(new Error(message), { code });
 const json = async (r) => {
   const data = await r.json().catch(() => ({}));
