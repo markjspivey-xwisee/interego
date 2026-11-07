@@ -6,6 +6,10 @@ import { prepareComposition, executeComposition, transport } from './composition
 import { parseProcedureCatalog, renderCatalog, renderRunRequest, graphIndex, PC, HC, PR, DCT, HYDRA } from './profile.mjs';
 import { prepareDecisionPacket } from './organizational-packet.mjs';
 import { fixture, learning, organizational, SIGNER, ISSUER } from './fixtures.mjs';
+import { HMD_APP_LOGIC_JS } from '../../deploy/mcp-relay/hmd-app-logic.ts';
+
+// The relay's HMD widget logic, evaluated as deploy/mcp-relay/_hmd-app-test.ts does (one source of truth).
+const widget = new Function(`${HMD_APP_LOGIC_JS}\nreturn { safeMarkdown, escapeHtml };`)();
 
 test('optional profile classes specialize W3C types; local properties stay in the urn: profile namespace', () => {
   const graph = graphIndex(readFileSync(new URL('./profile.ttl', import.meta.url), 'utf8'));
@@ -30,6 +34,7 @@ for (const [name, task, steps] of [['learning', learning, 28], ['organizational'
     const exact = p.candidates.filter(c => c.exact); assert.equal(exact.length, 1);
     assert.equal(exact[0].metrics.editCost, 0); assert.equal(exact[0].invariants.length, 3);
     const hmd = parseHypermediaMarkdown(p.hmd); assert.equal(hmd.fields.reviewDigest, p.reviewDigest);
+    assert.ok(hmd.body.includes('Review covers the exact inputs')); assert.ok(!hmd.body.includes('No invocation is selected'));
     assert.equal(hmd.controls.length, 0); assert.equal(parseHypermediaMarkdown(p.procedureHmd).links.filter(l => l.rel?.endsWith('#step')).length, steps);
     const r = await executeComposition({ ...options, reviewDigest: p.reviewDigest });
     assert.equal(r.status, 'completed', JSON.stringify(r.run)); assert.equal(r.run.metrics.automaticSteps, steps);
@@ -68,6 +73,9 @@ test('equal exact candidates require explicit selection, irrespective of heurist
     products: [f.products.learning, p], peers: [f.catalogB] });
   const ambiguous = await prepareComposition({ ...f, task: learning });
   assert.equal(ambiguous.status, 'needs-decision'); assert.equal(ambiguous.candidates.filter(c => c.exact).length, 2);
+  // Nothing is selected, so the review must not tell the host its inputs and pins are covered.
+  const undecided = parseHypermediaMarkdown(ambiguous.hmd).body;
+  assert.ok(!undecided.includes('Review covers the exact inputs')); assert.ok(undecided.includes('No invocation is selected'));
   const selected = await prepareComposition({ ...f, task: learning, selectedProductId: p.id });
   assert.equal(selected.status, 'ready'); assert.equal(selected.selected.id, p.id);
 });
@@ -172,29 +180,46 @@ test('review digest includes invocation inputs and catalogue policy and versions
 
 test('the review HMD shows, escaped, the inputs, catalogue pins and untrusted peers it covers', async () => {
   const f = fixture(), note = 'a|b\r\nc <img src=x> [l](https://e.invalid) \\ `t` *e* &amp;';
+  // No backtick, so each of these is one code span; the URLs carry _ and & that backslash escaping would show.
+  const plain = 'a|b\r\nc <img src=y> [m](https://e.invalid) \\ *e* &amp;';
+  const graph = 'https://pod.example/u-pk-abc/my_graph.ttl', query = 'https://pod.example/u-pk-abc/search?a=1&b=2';
   const procedure = f.heads.get('urn:fixture:procedure:organizational').head;
   f.resources.get(f.products.organizational.requestUrl).graph.content = renderRunRequest({ id: 'urn:fixture:run:organizational',
     procedureDescriptor: procedure.descriptorUrl, procedureGraph: 'urn:fixture:procedure:organizational', procedurePod: f.catalogs[0].podUrl,
-    procedureCid: procedure.cid, input: { ...f.organizationalInput, note } });
+    procedureCid: procedure.cid, input: { ...f.organizationalInput, note, plain, graph, query, blank: '' } });
   f.heads.get(f.catalogB).head.cid = 'cid|`b`<i>';
   f.resources.get(f.heads.get(f.catalogB).head.descriptorUrl).graph.content = renderCatalog({ graphIri: f.catalogB, issuer: ISSUER,
     products: [f.products.organizational], peers: [f.catalogA, 'urn:fixture:catalog:untrusted'] });
   const p = await prepareComposition({ ...f, task: organizational });
   assert.equal(p.status, 'ready'); assert.equal(p.review.request.input.note, note);
-  const body = parseHypermediaMarkdown(p.hmd).body;
+  const body = parseHypermediaMarkdown(p.hmd).body, code = v => '`' + v + '`';
   const shows = row => assert.ok(body.includes(row), `review HMD lacks ${row}`);
-  for (const [key, value] of Object.entries(f.organizationalInput)) shows(`| ${key} | ${value} |`);
-  shows('| note | a\\|b c \\<img src=x\\> \\[l\\](https://e.invalid) \\\\ &#96;t&#96; \\*e\\* \\&amp; |');
-  shows(`| ${f.catalogA} | ${ISSUER} | ${SIGNER} | ${f.catalogs[0].podUrl} | ${f.heads.get(f.catalogA).head.descriptorUrl} | fixture-cid-catalog-a |`);
-  shows(`| ${f.catalogB} | ${ISSUER} | ${SIGNER} | ${f.catalogs[1].podUrl} | ${f.heads.get(f.catalogB).head.descriptorUrl} | cid\\|&#96;b&#96;\\<i\\> |`);
-  shows('| urn:fixture:catalog:untrusted |'); assert.deepEqual(p.untrustedPeers, ['urn:fixture:catalog:untrusted']);
-  shows(`| Procedure descriptor | ${procedure.descriptorUrl} |`); shows(`| Procedure CID | ${procedure.cid} |`);
-  shows(`| Domain | ${organizational.domain} |`); shows(`| Goal | ${organizational.goal} |`);
-  assert.doesNotMatch(p.hmd, /(?<!\\)<(img|i)\b|(?<!\\)\[l\]/u);
-  // Each hostile value stays one table cell under HMD's own table lift (which unescapes only \|).
+  for (const [key, value] of Object.entries(f.organizationalInput)) shows(`| ${code(key)} | ${code(value)} |`);
+  // A value with a backtick falls back to backslash escapes; any other value is one code span with only | escaped.
+  shows('| `note` | a\\|b c \\<img src=x\\> \\[l\\](https://e.invalid) \\\\ &#96;t&#96; \\*e\\* \\&amp; |');
+  shows('| `plain` | `a\\|b c <img src=y> [m](https://e.invalid) \\ *e* &amp;` |');
+  shows(`| \`graph\` | ${code(graph)} |`); shows(`| \`query\` | ${code(query)} |`); shows('| `blank` |  |');
+  shows(`| ${[f.catalogA, ISSUER, SIGNER, f.catalogs[0].podUrl, f.heads.get(f.catalogA).head.descriptorUrl, 'fixture-cid-catalog-a'].map(code).join(' | ')} |`);
+  shows(`| ${[f.catalogB, ISSUER, SIGNER, f.catalogs[1].podUrl, f.heads.get(f.catalogB).head.descriptorUrl].map(code).join(' | ')} | cid\\|&#96;b&#96;\\<i\\> |`);
+  shows('| `urn:fixture:catalog:untrusted` |'); assert.deepEqual(p.untrustedPeers, ['urn:fixture:catalog:untrusted']);
+  shows(`| Procedure descriptor | ${code(procedure.descriptorUrl)} |`); shows(`| Procedure CID | ${code(procedure.cid)} |`);
+  shows(`| Domain | ${code(organizational.domain)} |`); shows(`| Goal | ${code(organizational.goal)} |`);
+  // Outside code spans no raw image, tag or link markup remains.
+  const outsideCode = body.split('\n').map(line => line.replace(/`[^`]*`/gu, '')).join('\n');
+  assert.doesNotMatch(outsideCode, /(?<!\\)<(img|i)\b|(?<!\\)\[(l|m)\]/u);
+  // HMD's own table lift (which unescapes only \|) keeps each hostile value one cell, and a
+  // code-span value lifts as exactly the value in single backticks, nothing added.
   const cells = liftHypermediaMarkdown(p.hmd).filter(t => t.p.endsWith('cellText')).map(t => t.o);
   assert.ok(cells.includes('a|b c \\<img src=x\\> \\[l\\](https://e.invalid) \\\\ &#96;t&#96; \\*e\\* \\&amp;'));
   assert.ok(cells.includes('cid|&#96;b&#96;\\<i\\>'));
+  assert.ok(cells.includes(code('a|b c <img src=y> [m](https://e.invalid) \\ *e* &amp;')));
+  for (const value of [graph, query, organizational.domain, procedure.cid]) assert.ok(cells.includes(code(value)), `lift lacks ${code(value)}`);
+  assert.ok(cells.includes(''));
+  // The HMD widget shows each code-span value in <code>, HTML-escaped and without backslashes.
+  const html = widget.safeMarkdown(body), td = v => `<td><code>${widget.escapeHtml(v)}</code></td>`;
+  for (const value of [graph, query, organizational.domain, procedure.cid]) assert.ok(html.includes(td(value)), `widget lacks ${td(value)}`);
+  assert.ok(html.includes('<td><code>https://pod.example/u-pk-abc/search?a=1&amp;b=2</code></td>'));
+  assert.doesNotMatch(html, /<(img|i)\b/u);
 });
 
 test('a signed input change requires a new review even when the procedure pin is unchanged', async () => {

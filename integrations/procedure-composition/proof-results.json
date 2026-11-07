@@ -76,9 +76,11 @@
   },
   "validation": {
     "focusedNodeTests": {
-      "passed": 54,
+      "passed": 67,
       "failed": 0,
-      "platform": "Windows, Node 22"
+      "platform": "Linux, Node 22.22.0",
+      "command": "node --import tsx --test integrations/procedure-composition/*.test.mjs integrations/procedure-runner/*.test.mjs",
+      "earlierRun": { "passed": 54, "failed": 0, "platform": "Windows, Node 22", "commit": "a1053fbd", "note": "Recorded before the review-fix tests were added." }
     },
     "broaderHmdSuite": { "passed": 28, "failed": 0, "typecheckGate": "clean after building workspace dependencies" },
     "ownershipTableSuite": { "passed": 4, "failed": 0 },

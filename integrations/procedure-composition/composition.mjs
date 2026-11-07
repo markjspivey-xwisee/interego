@@ -44,14 +44,34 @@ function current(raw) {
   return { cid: data.head.cid, descriptorUrl: data.head.descriptorUrl };
 }
 const sameHead = (a, b) => a.cid === b.cid && a.descriptorUrl === b.descriptorUrl;
-/** Untrusted text as one inert GFM table cell or paragraph: line breaks become
- *  spaces, a backslash and every character that could open a cell boundary,
- *  link, image, HTML tag, entity or emphasis is backslash-escaped, and a
- *  backtick becomes a character reference (HMD's table lift reads any backtick
- *  as a code-span toggle). The rendered text is the value, character for character. */
-const cell = x => String(x).replace(/[\\|*_~[\]<>&]/gu, c => '\\' + c).replaceAll('`', '&#96;').replace(/\r\n?|\n/gu, ' ');
-const table = (head, rows) => `| ${head.join(' | ')} |\n|${head.map(() => ' --- |').join('')}\n`
-  + rows.map(row => `| ${row.map(cell).join(' | ')} |`).join('\n') + '\n';
+/** Untrusted text as one GFM paragraph line, also the table fallback below: line
+ *  breaks become spaces, a backslash and each of | * _ ~ [ ] < > & gain a
+ *  backslash, and a backtick becomes `&#96;`. GFM shows the value itself. HMD's
+ *  lift (hmd:cellText) and the HMD widget (deploy/mcp-relay/hmd-app-logic.ts)
+ *  unescape only `\|`, and only in a table row, so they show every other
+ *  backslash and `&#96;` as written. */
+const prose = x => String(x).replace(/[\\|*_~[\]<>&]/gu, c => '\\' + c).replaceAll('`', '&#96;').replace(/\r\n?|\n/gu, ' ');
+/** Untrusted value as one table cell. An empty value is an empty cell. A value
+ *  without a backtick (every IRI, CID and digest) is one code span, with each
+ *  line break a space and `|` written `\|`, which all three row splitters (GFM,
+ *  the lift's splitTableRow, the widget's splitRowCells) read as a literal pipe
+ *  inside the cell, unescaping nothing else. So, for value V:
+ *  - GFM: <code>V</code>, literal (minus one space at each end when V both
+ *    starts and ends with a space);
+ *  - HMD lift: hmd:cellText is V in single backticks, nothing else added;
+ *  - widget: <code>V</code>, HTML-escaped, no backslashes. Its inline() still
+ *    applies its [label](href) and * / ** patterns inside a code span (with a
+ *    sanitized href), as it did to the backslash-escaped form.
+ *  A value containing a backtick (no IRI can) falls back to `prose`. */
+const cell = x => {
+  const s = String(x).replace(/\r\n?|\n/gu, ' ');
+  if (s === '') return '';
+  return s.includes('`') ? prose(s) : '`' + s.replaceAll('|', '\\|') + '`';
+};
+/** A GFM table of untrusted values, each through `cell`. With `labels`, the first
+ *  column is this module's own fixed text (Domain, Procedure CID, ...), written as is. */
+const table = (head, rows, labels = false) => `| ${head.join(' | ')} |\n|${head.map(() => ' --- |').join('')}\n`
+  + rows.map(row => `| ${row.map((v, i) => labels && i === 0 ? v : cell(v)).join(' | ')} |`).join('\n') + '\n';
 
 function view({ status, reason, task, candidates, selected, reviewDigest, catalogs, untrustedPeers }) {
   const links = catalogs.map(c => ({ label: 'Catalogue authority', href: c.head.descriptorUrl, rel: 'describedby', type: 'text/turtle' }));
@@ -61,12 +81,12 @@ function view({ status, reason, task, candidates, selected, reviewDigest, catalo
   return renderHypermediaMarkdown({ id: 'urn:interego:procedure-composition:review:' + (reviewDigest ?? digest(candidates)),
     type: 'pc:Review', descriptorUrl: catalogs[0].head.descriptorUrl, title: 'Evidence-review composition', controls: [], links,
     extraContext: { pc: PC, reviewDigest: PC + 'reviewDigest' }, fields: { state: status, ...(reviewDigest ? { reviewDigest } : {}) },
-    body: '# Evidence-review composition\n\n' + cell(reason) + '\n\n'
+    body: '# Evidence-review composition\n\n' + prose(reason) + '\n\n'
       + (request ? 'The installed client loads the signed request and directed RDF steps. Review covers the exact inputs and observed catalogue and procedure pins shown below; the separate procedure HMD shows the compiled steps. Re-run preparation after a change.\n\n'
         : 'No invocation is selected, so nothing here is ready to approve. Re-run preparation after a change.\n\n')
       + '| Candidate | Exact reuse | Additions | Unexplained task triples |\n| --- | --- | --- | --- |\n'
       + candidates.map(c => `| ${cell(c.title)} | ${c.exact} | ${c.differential.proposedAdditions.length} | ${c.differential.unexplainedCurrent.length} |`).join('\n') + '\n'
-      + '\n## Task\n\n' + table(['Term', 'IRI'], [['Domain', task.domain], ['Goal', task.goal]])
+      + '\n## Task\n\n' + table(['Term', 'IRI'], [['Domain', task.domain], ['Goal', task.goal]], true)
       + '\n## Observed catalogue pins\n\n' + table(['Catalogue', 'Issuer', 'Trusted signer', 'Pod', 'Head descriptor', 'Head CID'],
         catalogs.map(c => [c.policy.graphIri, c.policy.issuer, c.policy.trustedSigner, c.policy.podUrl, c.head.descriptorUrl, c.head.cid]))
       + '\n## Untrusted peers\n\n' + (untrustedPeers.length
@@ -74,7 +94,7 @@ function view({ status, reason, task, candidates, selected, reviewDigest, catalo
         : 'No observed catalogue advertises a peer outside the trust bindings.\n')
       + (request ? '\n## Procedure pin\n\n' + table(['Pin', 'Value'], [['Product', selected.id], ['Signed request', selected.requestUrl],
           ['Procedure root', selected.procedureId], ['Procedure descriptor', request.procedureDescriptor], ['Procedure graph', request.procedureGraph],
-          ['Procedure pod', request.procedurePod], ['Procedure CID', request.procedureCid]])
+          ['Procedure pod', request.procedurePod], ['Procedure CID', request.procedureCid]], true)
         + '\n## Invocation inputs\n\n' + table(['Input', 'Value'], Object.keys(request.input).sort().map(key => [key, request.input[key]])) : '')
       + '\nCatalogue signatures establish attribution and publication binding. A successful review establishes the procedure’s declared checks, within its evidence limits.\n'
   });
@@ -172,7 +192,7 @@ export async function executeComposition({ reviewDigest, ...options }) {
     hmd: renderHypermediaMarkdown({ id: 'urn:interego:procedure-composition:result:' + reviewDigest, type: 'pc:Result',
       descriptorUrl: selected.requestUrl, title: 'Evidence review result', extraContext: { pc: PC }, fields: { state: run.status }, controls: [],
       links: [{ label: 'Signed invocation', href: selected.requestUrl, rel: PC + 'request', type: 'text/turtle' }],
-      body: '# Evidence review result\n\nStatus: ' + cell(run.status) + '\n\n```json\n' + JSON.stringify(run.output ?? { reason: run.reason, observation: run.observation }, null, 2).replaceAll('```', '\\u0060\\u0060\\u0060') + '\n```\n' }) };
+      body: '# Evidence review result\n\nStatus: ' + prose(run.status) + '\n\n```json\n' + JSON.stringify(run.output ?? { reason: run.reason, observation: run.observation }, null, 2).replaceAll('```', '\\u0060\\u0060\\u0060') + '\n```\n' }) };
   await options.onEvent({ type: 'composition-result', phase: 'composition', result });
   return result;
 }
