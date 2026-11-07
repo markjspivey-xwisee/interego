@@ -14,6 +14,12 @@ Tests: `tests/workspace-agent-session-terms.test.ts` drives `openAgentSession` a
 
 Not fixed here, and failing the same way for a new wallet against hosted identity: the shared-workspace desktop app's new-wallet sign-in and its `delegate:mint` have no agreement step, and neither do the developer live-probe scripts that sign in through `applications/shared-workspace/tools/live-identity.ts`.
 
+## 2026-11-07 — Health workbench: a selected context refuses sparse and accessor-backed arrays
+
+`prepareLocalHealthNote` (`applications/health-workbench/local-context.mjs`) checked each array with `Array.isArray` and a length bound, then validated it with `map`, `every` and a `Set`-size comparison. `every` skips holes, while `map` keeps them and a `Set` of one hole still has size 1. So a one-hole `options.selectedEntryIds`, a hole in an entry's `sourceIds` (even `Array(1)`, which also got past the one-citation minimum), `conceptIds` or `dates`, in a concept's `aliases`, or in `limits` passed and put `null` values into the prepared note. Holes in `entries`, `citations` and `concepts` already failed, but with an engine `TypeError` rather than the module's message.
+
+`list()` now copies each array once from its own data elements, and every caller uses that copy. A hole, a getter or a length that is not an exact integer within the bound fails with `expected a dense array of data values` or `expected a bounded array`. Valid packets prepare exactly as before. A new test covers holes in the selection and in each packet array, getter elements, and lying `length` values; it fails on the previous code. This covers arrays only: object fields are still read with ordinary property access, as before. Packets parsed from JSON can carry neither holes nor getters, so this hardens programmatic callers.
+
 ## 2026-10-30 — Optional human-and-agent Workspaces in the local Windows app
 
 Windows preview.11 adds an optional Workspace vertical with encrypted local conversation records, human and separately attributed agent messages, selected-workspace read/chat grants, invitations, acceptance and membership removal. The consumer UI and two scoped MCP tools discover state-dependent JSON-LD affordances for the supported workflows. The implementation reuses the retained Workspace vocabulary and serializers without impersonating the hosted relay or claiming distributed per-participant pod storage or website-key signatures. A connection can hold workspace grants together with a selected-note read scope; each is stored and enforced on its own, so neither widens the other.
