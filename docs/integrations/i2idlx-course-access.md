@@ -35,6 +35,8 @@ Course identity is stable for this connection, course and provider version. The 
 
 For this path **SCORM Cloud is the LTI platform and Foxxi is the tool**. Cloud Dispatch has the opposite direction and is not reused as an incoming launch proof. Account-specific credentials, connector IDs, client/deployment IDs, selected courses and agent bindings are supplied or created at runtime; none are global environment defaults.
 
+The inbound LTI receiver requires a public HTTPS workbench address. Existing local HTTP course connections still work without that receiver; preparing LTI there reports the missing HTTPS requirement without ending the course connection.
+
 1. Connect your own Cloud account in Ask, select the original course/version, choose an access mode and confirm the owner's permission.
 2. Expand **Connect this course through LTI** and prepare its public connection settings. Preparation creates no Cloud registration.
 3. The owner can explicitly create one trusted Cloud LTI content connector and a separate private helper course. This requires a Cloud credential allowed to manage those objects. The original course is not edited. The temporary tool publishes only a public key; it requests no grade or roster service and cannot use its discarded private key for outbound LTI service calls.

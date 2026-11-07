@@ -84,6 +84,19 @@ describe('private SCORM Cloud course connections', () => {
       permission: { authorized: true, authority: 'authorized-by-owner', retention_minutes: minutes } }, session);
     return (value.grant as Row).id;
   };
+  it('preserves local HTTP course access without enabling a non-public LTI receiver', async () => {
+    const f = await setup(), store = new UserCourseStore({ ...f.config, baseUrl: 'http://localhost:6080' });
+    cleanups.push(() => store.dispose());
+    const request = (operation: string, extra: Row = {}) => store.request({ session_id: f.alice.session_id, operation, ...extra }, f.alice.browser_token);
+    const connected = await request('connect', { credentials: basic });
+    const input = selected(connected);
+    const allowed = await request('grant', { ...input, mode: 'cached', permission: { authorized: true, authority: 'owner', retention_minutes: 10 } });
+    const grant_id = (allowed.grant as Row).id;
+    expect(await request('source', { ...input, grant_id, question: 'Which code should I record?' })).toMatchObject({ access: { mode: 'cached', cache: { present: true } } });
+    await expect(request('lti-prepare', { ...input, grant_id })).rejects.toMatchObject({ status: 503, code: 'course_lti_unavailable' });
+    expect(await request('status')).toMatchObject({ connected: true });
+    expect(await request('disconnect')).toEqual({ connected: false });
+  });
   it('requires an explicit course grant and refuses unsupported modes before exporting content', async () => {
     const f = await setup(), connected = await f.connect(), input = selected(connected);
     await expect(f.rawRequest('source', { ...input, question: 'What code?' })).rejects.toMatchObject({ status: 403, code: 'course_permission_required' });

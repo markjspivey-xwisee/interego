@@ -187,20 +187,32 @@ export class UserCourseStore {
   private active = 0;
   private cacheBytes = 0;
   private deletionSequence = 0;
-  private readonly lti: CourseLtiManager;
+  private readonly ltiInstance?: CourseLtiManager;
+  private get lti(): CourseLtiManager {
+    if (!this.ltiInstance) refuse('LTI setup requires a public HTTPS workbench address. The current course connection remains available without LTI.', 503, 'course_lti_unavailable');
+    return this.ltiInstance;
+  }
   constructor(private readonly config: UserCourseConfig) {
     this.clock = config.now ?? Date.now;
     this.fetcher = config.fetch ?? globalThis.fetch;
     this.ttl = Math.min(config.connectionTtlMs ?? 30 * 60_000, 30 * 60_000);
-    this.lti = config.ltiManager ?? new CourseLtiManager({ baseUrl: config.baseUrl, now: this.clock });
+    this.ltiInstance = config.ltiManager;
+    if (!this.ltiInstance) {
+      try { this.ltiInstance = new CourseLtiManager({ baseUrl: config.baseUrl, now: this.clock }); }
+      catch (error) {
+        // Existing local HTTP course access does not need an inbound LTI tool.
+        // The strict public HTTPS requirement still applies when LTI is used.
+        if (!(error instanceof CourseLtiError)) throw error;
+      }
+    }
     if (!Number.isFinite(this.ttl) || this.ttl <= 0) throw new Error('Invalid private course connection bounds.');
   }
-  dispose(): void { for (const connection of this.connections.values()) this.drop(connection); this.requests.clear(); this.lti.dispose(); }
-  attachLtiRoutes(app: Express): void { this.lti.attachRoutes(app); }
+  dispose(): void { for (const connection of this.connections.values()) this.drop(connection); this.requests.clear(); this.ltiInstance?.dispose(); }
+  attachLtiRoutes(app: Express): void { this.ltiInstance?.attachRoutes(app); }
   private drop(connection: Connection): void {
     if (this.connections.get(connection.session) !== connection) return;
     if (this.connections.get(connection.session) === connection) this.connections.delete(connection.session);
-    this.lti.revokeConnection(connection.id);
+    this.ltiInstance?.revokeConnection(connection.id);
     // Expiry revokes the local receiver immediately. Remote cleanup is bounded
     // and best-effort; an explicit disconnect awaits and reports its outcome.
     const authorization = connection.authorization;
