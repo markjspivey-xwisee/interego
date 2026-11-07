@@ -109,3 +109,72 @@ test('duplicate catalog identifiers and oversized catalogs are rejected', () => 
   assert.throws(() => prepareSelectedHealthImport(packet, [row, row], options), /unique case-bound/);
   assert.throws(() => prepareSelectedHealthImport(packet, Array(9).fill(row), options), /bounded attachment/);
 });
+
+test('sparse identifier arrays fail instead of skipping their holes', () => {
+  const mutations = [
+    x => { x.row.entryIds = Array(1); x.row.sourceIds = Array(1); },
+    x => { x.row.entryIds = [x.packet.entries[0].id, , ]; }, // eslint-disable-line no-sparse-arrays
+    x => { x.row.sourceIds = [...x.row.sourceIds, , ]; }, // eslint-disable-line no-sparse-arrays
+    x => { x.options.selectedEntryIds = [x.packet.entries[0].id, , ]; }, // eslint-disable-line no-sparse-arrays
+    x => { x.options.selectedAttachmentIds = Array(1); },
+  ];
+  for (const mutate of mutations) {
+    const input = setup(); mutate(input);
+    assert.throws(() => prepare(input), /Invalid selected import/);
+  }
+  const { packet, row, options } = setup();
+  assert.throws(() => prepareSelectedHealthImport(packet, Array(1), { ...options, selectedAttachmentIds: Array(1) }), /attachment selection/);
+  assert.throws(() => prepareSelectedHealthImport(packet, [row, , ], options), /bounded attachment/); // eslint-disable-line no-sparse-arrays
+});
+
+test('accessor properties are refused without being invoked, so the manifest records only what was checked', () => {
+  const real = setup();
+  const reads = { count: 0 };
+  const getter = value => ({ enumerable: true, get() { reads.count += 1; return reads.count > 1 ? `sha256:${'0'.repeat(64)}` : value; } });
+  const cases = [
+    x => Object.defineProperty(x.row, 'digest', getter(real.row.digest)),
+    x => Object.defineProperty(x.row, 'byteLength', getter(real.row.byteLength)),
+    x => Object.defineProperty(x.row, 'entryIds', getter(real.row.entryIds)),
+    x => Object.defineProperty(x.row, 'id', getter(real.row.id)),
+    x => Object.defineProperty(x.options, 'selectedAttachmentIds', getter([real.row.id])),
+    x => Object.defineProperty(x.options, 'selectedEntryIds', getter(real.options.selectedEntryIds)),
+    x => Object.defineProperty(x.options, 'includeReaderQuestion', getter(false)),
+    x => { const ids = [x.row.sourceIds[0]]; Object.defineProperty(ids, 0, getter(x.row.sourceIds[0])); x.row.sourceIds = ids; },
+  ];
+  for (const install of cases) {
+    const input = setup(); reads.count = 0; install(input);
+    assert.throws(() => prepare(input), /Invalid selected import/);
+    assert.equal(reads.count, 0);
+  }
+  const result = prepare(setup());
+  assert.equal(result.manifest.attachments[0].digest, real.row.digest);
+});
+
+test('byte views are measured from their internal slots, not from properties a caller can redefine', () => {
+  const spoofs = [
+    x => { x.row.bytes = new Uint8Array(MAX_ATTACHMENT_BYTES + 1); Object.defineProperty(x.row.bytes, 'byteLength', { value: 1 }); rehash(x.row); x.row.byteLength = 1; },
+    x => { class Short extends Uint8Array { get byteLength() { return 3; } } x.row.bytes = new Short(1000); rehash(x.row); x.row.byteLength = 3; },
+    x => { x.row.bytes = new Uint8Array(new SharedArrayBuffer(16)); Object.defineProperty(x.row.bytes, 'buffer', { value: new ArrayBuffer(16) }); rehash(x.row); x.row.byteLength = 16; },
+    x => { x.row.bytes = new Proxy(x.row.bytes, {}); },
+  ];
+  for (const spoof of spoofs) {
+    const input = setup(); spoof(input);
+    assert.throws(() => prepare(input), /Invalid selected import: (?:ordinary byte buffer|attachment byte length)/);
+  }
+  const buffer = setup();
+  buffer.row.bytes = Buffer.from('Invented order source, for contract testing only.');
+  rehash(buffer.row);
+  assert.equal(prepare(buffer).manifest.attachments[0].byteLength, buffer.row.bytes.length);
+});
+
+test('array lengths must be exact nonnegative integers within the bound', () => {
+  const lying = values => { let reads = 0; return new Proxy(values, { get: (target, key, receiver) => key === 'length' ? { valueOf: () => (++reads === 1 ? 1 : target.length) } : Reflect.get(target, key, receiver) }); };
+  const { packet, row, options } = setup();
+  const rows = Array.from({ length: 10 }, (_, index) => ({ ...row, id: `${packet.case.id}#attachment-${index + 1}` }));
+  const ids = rows.map(entry => entry.id);
+  assert.throws(() => prepareSelectedHealthImport(packet, lying(rows), { ...options, selectedAttachmentIds: lying(ids) }), /Invalid selected import/);
+  for (const length of [NaN, -1, 1.5]) {
+    const catalog = new Proxy([], { get: (target, key, receiver) => key === 'length' ? length : Reflect.get(target, key, receiver) });
+    assert.throws(() => prepareSelectedHealthImport(packet, catalog, { ...options, selectedAttachmentIds: [] }), /bounded attachment/);
+  }
+});
