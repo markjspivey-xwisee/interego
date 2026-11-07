@@ -16,6 +16,13 @@ No other code under `deploy/` or `packages/` JWK-exports a key that `generateKey
 
 The earlier entry names EC and OKP keys. RSA keys hang the same way on Node 20.20, and so does the JWK of a public key that `createPublicKey` derives from a generated private key: both loops hung, at 0% CPU, before 1,000 iterations. Outside `deploy/` and `packages/`, these JWK exports of generated keys remain, and this change does not touch them. `tests/client-authorization.test.ts` exports P-256, P-384, P-521 and RSA keys, and `tests/browser-signing-handoff.test.ts` exports a P-256 key. CI runs both in the whole root suite on Node 20 (`bridge-typecheck.yml`). `tests/browser-signing-handoff.chromium.test.ts` makes the same P-256 export but runs only on Node 22, in `identity-tests.yml`. `es256Keys` in `applications/foxxi-content-intelligence/src/lti13.ts` derives one when no PEM is configured, but the Foxxi bridge image runs Node 22.
 
+## 2026-11-07 — Dependencies: nodemailer 10.3.1 and CSS 7.3.0 for local pods, in place of Dependabot's #766
+
+This lands Dependabot's #766 with the changelog entry its checks needed.
+
+- **Root lockfile:** `packages/local-node` (the Windows local pod) asks for `@solid/community-server` `^7.3.0` instead of `^7.1.9`. CSS 7.3.0 is a minor release: lock and pod-quota fixes, streamed container listings, dedicated storage for OIDC clients, and no listed breaking or configuration changes. It is the first CSS release that asks for a fixed nodemailer itself (`^10.0.9`), so the root workspace now resolves nodemailer 10.3.1 with no override, in place of 9.1.1 and its nine audit advisories.
+- **The css image:** `integrations/pgsl-css-accessor` keeps CSS 7.2.0, and its nodemailer override moves from `^10.2.1` to `^10.3.1`. The deployed configs still never send mail. The image stays on 7.2.0 because the boot line its deploy waits for was measured against 7.2.0. Moving it to 7.3.0 means re-running that measurement, and then the override can go. The header of `integrations/tests/css-nodemailer-is-patched-and-unused.test.ts` now says this instead of claiming no CSS release admits a fixed nodemailer.
+
 ## 2026-11-06 — Clarify the shared xAPI performance verb
 
 The Foxxi and AGP xAPI Profiles explain how the object activity type identifies the work described by `performed` and how a projected descriptor supplies that type. The verb IRI and template rules stay the same.
