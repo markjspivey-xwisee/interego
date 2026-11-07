@@ -180,6 +180,30 @@ describe('the Hosted Terms on the desktop sign-in screen', () => {
     expect(calls.wallet).toEqual([CURRENT, undefined]);
   });
 
+  it('★ an OLDER read of the terms that answers LATE never overwrites a newer one', async () => {
+    // Every read waits until the case answers it, in whatever order the case chooses.
+    const answers: Array<(o: Offer) => void> = [];
+    const { doc, calls } = await open({ offer: () => new Promise<Offer>((r) => { answers.push(r); }), accounts: 1 });
+    // The boot read is still out. A refused sign-in (a stored key, so it waits for nothing) reads again.
+    await click(doc, 'signin-wallet');
+    expect(calls.wallet).toEqual([undefined]);
+    expect(answers).toHaveLength(2);
+    // The NEWER read answers first, with the new version; the person ticks it.
+    answers[1]!(offered(NEXT));
+    await settle();
+    box(doc, 'signin-terms-agree')!.checked = true;
+    // Then the OLDER read answers, with the version it saw. It must not redraw the box, untick it,
+    // or put back a version the server has since replaced.
+    answers[0]!(offered(CURRENT));
+    await settle();
+    const agree = box(doc, 'signin-terms-agree')!;
+    expect(agree.dataset['version']).toBe(NEXT);
+    expect(agree.checked).toBe(true);
+    expect((doc.querySelector('#signin-terms a') as HTMLAnchorElement).href).toBe(TERMS_URL(NEXT));
+    await click(doc, 'signin-wallet');
+    expect(calls.wallet).toEqual([undefined, NEXT]);
+  });
+
   it('an unreadable offer says so, and does not stop a returning account', async () => {
     const { doc, calls } = await open({ offer: { state: 'unknown', why: 'the identity server answered HTTP 503' }, accounts: 1 });
     expect(box(doc, 'signin-terms-agree')).toBeNull();

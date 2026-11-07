@@ -14,9 +14,10 @@
 
 import { describe, expect, it, vi } from 'vitest';
 import { randomBytes } from 'node:crypto';
+import { createServer } from 'node:http';
 import { LocalIdentityService, type LocalIdentityServiceOptions } from '../src/local-identity.js';
 import { identityHash } from '../src/local-identity-protocol.js';
-import { localIdentityJson, HostedTermsRefusal } from '../src/local-identity-network.js';
+import { localIdentityJson, localIdentityNetwork, HostedTermsRefusal } from '../src/local-identity-network.js';
 import type { LocalIdentityContext } from '../src/local-identity-types.js';
 
 const relay = 'https://relay.example.com';
@@ -80,5 +81,30 @@ describe('installed-app sign-in and the Hosted Terms', () => {
     const redirected = new Response('{}', { status: 428, headers: { 'content-type': 'application/json' } });
     Object.defineProperty(redirected, 'redirected', { value: true });
     await expect(localIdentityJson(redirected, signal)).rejects.not.toBeInstanceOf(HostedTermsRefusal);
+  });
+
+  it('★ over the REAL transport a 428 becomes a HostedTermsRefusal with its body dropped, and a 401 stays "could not be reached safely"', async () => {
+    // The app's own transport (not a scripted fetch), against a loopback server it is allowed to reach in tests.
+    let status = 428;
+    const server = createServer((req, res) => {
+      req.resume();
+      req.on('end', () => { res.writeHead(status, { 'content-type': 'application/json' }); res.end(JSON.stringify({ error: 'secret server detail' })); });
+    });
+    await new Promise<void>((r) => { server.listen(0, '127.0.0.1', () => r()); });
+    try {
+      const url = new URL(`http://127.0.0.1:${(server.address() as { port: number }).port}/oauth/verify`);
+      const signal = new AbortController().signal;
+      const refused = await localIdentityNetwork(url, '{}', signal, true);
+      expect(refused.status).toBe(428);
+      expect(await refused.clone().text()).toBe('');
+      await expect(localIdentityJson(refused, signal)).rejects.toBeInstanceOf(HostedTermsRefusal);
+      status = 401;
+      const other = await localIdentityNetwork(url, '{}', signal, true).then(() => null, (e: Error) => e);
+      expect(other).not.toBeInstanceOf(HostedTermsRefusal);
+      expect(other?.message).toBe('The sign-in service could not be reached safely. Start a new sign-in and try again.');
+    } finally {
+      server.closeAllConnections();
+      await new Promise<void>((r) => { server.close(() => r()); });
+    }
   });
 });

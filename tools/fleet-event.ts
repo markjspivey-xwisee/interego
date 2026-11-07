@@ -46,7 +46,8 @@
  * the grow-only store" superseding it, then the Asserted resolved incident naming the 45 GB of
  * history and the rebuild, superseding the diagnosis. A deploy is a fact and takes no --modal.
  *
- * The pure part — arguments in, events and the publish_context call out — is exported for
+ * The pure part — arguments in, events and the publish_context call out, and the relay sign-in
+ * settings read from the environment (fleetRelayOptions) — is exported for
  * tests/fleet-event.test.ts; main() reads the environment and dials the relay.
  */
 
@@ -255,6 +256,24 @@ export function publishArgs(e: FleetEvent, target: PublishTarget): Record<string
   };
 }
 
+/**
+ * The relay sign-in settings, read from the environment. Exported so the variable names are tested:
+ * a misspelt variable is a sign-in that silently carries no Hosted Terms agreement, and a missing
+ * setting name is a 428 that points the operator at the library's option instead of THEIR variable.
+ */
+export function fleetRelayOptions(
+  env: Readonly<Record<string, string | undefined>>,
+  at: { readonly keyJson: string; readonly relayUrl: string; readonly podName: string },
+): Parameters<typeof relayForAgent>[0] {
+  const acceptHostedTermsVersion = env['INTEREGO_FLEET_ACCEPT_HOSTED_TERMS_VERSION'];
+  return {
+    keyJson: at.keyJson, relayUrl: at.relayUrl, clientName: env['INTEREGO_FLEET_CLIENT_NAME'] ?? 'interego-fleet', podName: at.podName,
+    ...(acceptHostedTermsVersion ? { acceptHostedTermsVersion } : {}),
+    // Named in a 428 or a refused challenge, so the operator reads the variable THEY set.
+    acceptHostedTermsSetting: 'INTEREGO_FLEET_ACCEPT_HOSTED_TERMS_VERSION',
+  };
+}
+
 async function main(argv: readonly string[]): Promise<void> {
   const p = parseArgs(argv);
   const readFile = (path: string): string => readFileSync(path, 'utf8');
@@ -272,13 +291,7 @@ async function main(argv: readonly string[]): Promise<void> {
   if (!keyJson) { console.error('INTEREGO_FLEET_AGENT_KEY_JSON is not set; nothing was published'); process.exit(2); }
   if (!podName) { console.error('INTEREGO_FLEET_POD_NAME (or --pod) names the pod the agent is registered on; nothing was published'); process.exit(2); }
 
-  const acceptHostedTermsVersion = process.env['INTEREGO_FLEET_ACCEPT_HOSTED_TERMS_VERSION'];
-  const relay = relayForAgent({
-    keyJson, relayUrl, clientName: process.env['INTEREGO_FLEET_CLIENT_NAME'] ?? 'interego-fleet', podName,
-    ...(acceptHostedTermsVersion ? { acceptHostedTermsVersion } : {}),
-    // Named in a 428 or a refused challenge, so the operator reads the variable THEY set.
-    acceptHostedTermsSetting: 'INTEREGO_FLEET_ACCEPT_HOSTED_TERMS_VERSION',
-  });
+  const relay = relayForAgent(fleetRelayOptions(process.env, { keyJson, relayUrl, podName }));
   const agentDid = relay.agentDid;
   if (!agentDid) throw new Error('the relay client carries no agent did');
   const events = eventsFromArgs(p, { agentDid, now: new Date(), readFile });
