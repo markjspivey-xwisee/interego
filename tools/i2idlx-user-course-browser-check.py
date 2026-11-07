@@ -198,6 +198,12 @@ with sync_playwright() as p:
     assert len(agent_calls) == before + 1
     assert "Selected intervention reference context" not in json.dumps(agent_calls[-1])
     print("PASS course expiry clears private context, retains AI pairing and requires explicit glossary fallback")
+    page.evaluate("location.hash = 'browse'")
+    page.locator(".lex-list .li").first.wait_for()
+    page.evaluate("location.hash = 'ask'")
+    page.get_by_role("textbox", name="Ask", exact=True).wait_for()
+    assert page.locator(".msg").count() == 2, "ordinary glossary conversations survive page navigation"
+    print("PASS ordinary glossary conversation survives leaving and returning to Ask")
 
     state["expire"] = False
     connect_course()

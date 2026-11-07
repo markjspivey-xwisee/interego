@@ -20,16 +20,21 @@ export function useCourseContext(engine) {
   const [page, setPage] = useState(null), [selected, setSelected] = useState(null), [packet, setPacket] = useState(null);
   const [loading, setLoading] = useState(false), [error, setError] = useState(''), [courseMode, setCourseMode] = useState(false);
   const appId = useRef(null), secret = useRef(null), request = useRef(null), generation = useRef(0);
-  const mode = useRef(false), mounted = useRef(true);
+  const mode = useRef(false), mounted = useRef(true), initialized = useRef(false);
   const eligible = ready(agent), sessionId = agent?.connectionId;
   const clearCredentials = () => { if (appId.current) appId.current.value = ''; if (secret.current) secret.current.value = ''; };
   const invalidate = () => { generation.current++; request.current?.abort(); request.current = null; setLoading(false); };
   const clearSource = () => { setConnection(null); setCourses([]); setPage(null); setSelected(null); setPacket(null); clearCredentials(); };
   const current = run => mounted.current && generation.current === run;
   useEffect(() => subscribeAgentSession(setAgent), []);
-  useEffect(() => { mounted.current = true; return () => { mounted.current = false; generation.current++; request.current?.abort(); clearCredentials(); }; }, []);
+  useEffect(() => { mounted.current = true; return () => {
+    mounted.current = false; generation.current++; request.current?.abort(); clearCredentials();
+    if (mode.current) engine.reset();
+  }; }, [engine.reset]);
   useEffect(() => {
-    invalidate(); clearSource(); engine.reset(); setError('');
+    invalidate(); clearSource();
+    if (initialized.current) engine.reset();
+    initialized.current = true; setError('');
     if (!eligible) {
       if (mode.current) setError('Your course connection ended. Reconnect the AI agent and course source, or choose Use glossary only.');
       return;
