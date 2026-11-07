@@ -1,5 +1,5 @@
 // Lexicon: an instant, faceted list beside the entry. Filters survive reloads (per viewer).
-import { C, KINDS, COLLECTIONS, SOURCES, RIGHTS, reuseClass, kindById, fieldById, typeById, curatedById, enactByConcept, mapsByConcept, byId, degree } from "../data.js";
+import { C, conceptsForLens, KINDS, COLLECTIONS, SOURCES, RIGHTS, reuseClass, kindById, fieldById, typeById, curatedById, enactByConcept, mapsByConcept, byId, degree } from "../data.js";
 import { search, snippet } from "../search.js";
 import { Icon } from "../icons.jsx";
 import { PopButton, useUI } from "../ui.jsx";
@@ -39,6 +39,7 @@ export function Lexicon({ route }) {
   const { ws } = useCaps();
   const drive = useDrive();
   const { hover, lens } = useUI();
+  const visibleConcepts = conceptsForLens(lens);
   const FACETS_NOW = lens === "i2idl" ? FACETS.filter((f) => f.o === "i2idl") : FACETS;
   const [q, setQ] = useStored("lex.q", "");
   const [filters, setFilters] = useStored("lex.filters", {});
@@ -55,7 +56,7 @@ export function Lexicon({ route }) {
 
   const ctx = { stars: ws.stars };
   const results = useMemo(() => {
-    let base = q.trim() ? search(q, 400) : C.map((c) => ({ c, score: 0, why: "label" }));
+    let base = q.trim() ? search(q, 2000, lens) : visibleConcepts.map((c) => ({ c, score: 0, why: "label" }));
     for (const f of FACETS_NOW) {
       const vals = filters[f.key];
       if (vals && vals.length) base = base.filter((r) => vals.some((v) => f.test(r.c, v, ctx)));
@@ -69,7 +70,7 @@ export function Lexicon({ route }) {
 
   const counts = (f) => {
     // counts for a facet's options under the other active filters and the query
-    let base = q.trim() ? search(q, 400).map((r) => r.c) : C;
+    let base = q.trim() ? search(q, 2000, lens).map((r) => r.c) : visibleConcepts;
     for (const g of FACETS_NOW) {
       if (g.key === f.key) continue;
       const vals = filters[g.key];
@@ -115,7 +116,7 @@ export function Lexicon({ route }) {
           <div className="row" style={{ position: "relative" }}>
             <Icon name="search" className="muted" />
             <input ref={inputRef} className="input" style={{ border: 0, boxShadow: "none", padding: 0, height: 30 }} value={q}
-              onChange={(e) => setQ(e.target.value)} placeholder={`Filter ${C.length} terms…`} aria-label="Filter terms" />
+              onChange={(e) => setQ(e.target.value)} placeholder={`Filter ${visibleConcepts.length} terms…`} aria-label="Filter terms" />
             {q ? <button className="btn ghost sm icon" onClick={() => setQ("")} aria-label="Clear"><Icon name="x" /></button> : null}
           </div>
         </div>
@@ -143,7 +144,7 @@ export function Lexicon({ route }) {
         </div>
         <div className="lex-list" ref={listRef} onScroll={hover.now}>
           <div className="lex-count">
-            <span className="grow">{results.length === C.length ? `${C.length} terms` : `${results.length} of ${C.length}`}</span>
+            <span className="grow">{results.length === visibleConcepts.length ? `${visibleConcepts.length} terms` : `${results.length} of ${visibleConcepts.length}`}</span>
             {!q.trim() ? (
               <select className="select" style={{ height: 24, width: "auto", fontSize: 12, padding: "0 6px" }} value={sort} onChange={(e) => setSort(e.target.value)} aria-label="Sort">
                 <option value="az">A–Z</option><option value="connected">Most connected</option>
@@ -161,7 +162,7 @@ export function Lexicon({ route }) {
                 {head ? <div className="letter">{head}</div> : null}
                 <button className="li" data-id={c.id} aria-current={sel === c.id} onClick={() => go("c-" + c.id)}>
                   <span className={"dot kd-" + c.k} title={kindById.get(c.k).label} />
-                  <span className="t"><HL text={c.l} q={q} /></span>
+                  <span className="t"><HL text={c.l} q={q} />{c.origin?.kind === "authored" ? <span className="tiny muted"> · I2IDL-X proposal</span> : null}</span>
                   <span className="s">
                     {q.trim() && why === "alt" ? <span className="why">also “{c.a.find((a) => a.toLowerCase().includes(q.trim().toLowerCase().split(" ")[0])) || c.a[0]}” · </span> : null}
                     {q.trim() && (why === "definition" || why === "note" || why === "fuzzy") ? <HL text={snippet(why === "note" ? c.x : c.d, q, 90)} q={q} /> : fieldById.get(c.pf).label}

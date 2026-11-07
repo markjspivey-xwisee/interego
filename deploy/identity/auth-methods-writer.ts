@@ -47,7 +47,7 @@
 /** The top-level keys server.ts reads from an auth-methods document (normaliseAuthMethods). */
 export const AUTH_METHODS_KEYS: ReadonlySet<string> = new Set([
   '@context', '@id', '@type', 'userId', 'name', 'agentId', 'walletAddresses', 'webAuthnCredentials', 'didKeys',
-  'sessionEpoch', 'provisionalPlayAnchor', 'provisionalPlayReceipts', 'deletedAt', 'provisionalPlayPurgePending',
+  'sessionEpoch', 'provisionalPlayAnchor', 'provisionalPlayReceipts', 'termsAcceptance', 'deletedAt', 'provisionalPlayPurgePending',
 ]);
 
 /**

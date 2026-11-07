@@ -12,7 +12,11 @@ export function mountProvisionalPlay(app: express.Express, play: ProvisionalPlay
     res.setHeader('Cache-Control', 'no-store');
     try { res.json(await fn(req.body)); }
     catch (error) {
-      if (error instanceof PlayError) { res.status(error.status).json({ valid: false, error: error.code }); return; }
+      if (error instanceof PlayError) {
+        const terms = error.code === 'hosted_terms_required' ? play.metadata().terms : undefined;
+        res.status(error.status).json({ valid: false, error: error.code, terms });
+        return;
+      }
       log(`Provisional Play dependency unavailable: ${(error as Error).name}`);
       res.status(503).json({ valid: false, error: 'provisional_play_unavailable' });
     }

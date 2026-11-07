@@ -113,6 +113,8 @@ function SiteFooter() {
         </div>
       </div>
       <div style={{ display: 'flex', gap: 16, alignItems: 'center', flexWrap: 'wrap' }}>
+        <a href="/privacy/">Privacy Notice</a>
+        <a href="/terms/2026-11-06-r2/">Terms of Service</a>
         <a href="https://github.com/markjspivey-xwisee/interego">Source</a>
         <a href="https://markjspivey-xwisee.github.io/interego/spec/interego-1.0.html">L1 spec</a>
       </div>

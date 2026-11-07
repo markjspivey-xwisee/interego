@@ -35,7 +35,7 @@ For a set of changed files (or a git base_ref to diff against), return the tests
 | Input | Type | Required | Description |
 | --- | --- | --- | --- |
 | `changed_files` | array of string | no | Repository-relative paths that changed. |
-| `base_ref` | string | no | Git ref to diff against when changed_files is not given. |
+| `base_ref` | string | no | Git ref to diff against on a locally configured checkout. For the hosted snapshot, supply changed_files. |
 | `head_ref` | string | no | Git ref of the change; defaults to the working tree. |
 | `task` | string | no | Optional task sentence for context. |
 
@@ -71,7 +71,7 @@ Decide whether a diff may proceed without a person: deterministic checks (secret
 | Input | Type | Required | Description |
 | --- | --- | --- | --- |
 | `diff` | string | no | A unified diff. Either this or base_ref. |
-| `base_ref` | string | no | Git ref to diff against. |
+| `base_ref` | string | no | Git ref to diff against on a locally configured checkout. For the hosted snapshot, supply diff. |
 | `head_ref` | string | no | Git ref of the change; defaults to the working tree. |
 | `title` | string | no | Change title (PR title or commit subject). |
 | `description` | string | no | Change description (PR body). |

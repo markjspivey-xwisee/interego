@@ -8,11 +8,15 @@
  * The seven moderate ones (DKIM header unfolding, malformed envelope recipients, a TLS
  * servername reused across transports, nested recipient arrays, and addressparser releasing
  * comment, group or angle-addr text as a recipient) are fixed between 10.0.2 and 10.1.4, so
- * 10.1.4 is the first release that clears all nine. @solid/community-server 7.2.0, the newest
- * stable release, asks for ^9.0.1, which tops out at 9.1.1; the 8.0.0 alphas ask for even
+ * 10.1.4 is the first release that clears all nine. @solid/community-server 7.2.0, which the
+ * css image runs, asks for ^9.0.1, which tops out at 9.1.1; the 8.0.0 alphas ask for even
  * older majors, move to Components.js 6 (the accessor builds against 5) and, from alpha.1,
- * need Node 22 (the image runs 20). No CSS release admits a fixed nodemailer, so
- * integrations/pgsl-css-accessor/package.json overrides it.
+ * need Node 22 (the image runs 20). So integrations/pgsl-css-accessor/package.json overrides
+ * it. CSS 7.3.0 (2026-11-02) is the first release that asks for a fixed nodemailer itself
+ * (^10.0.9); the root workspace's local-node package moved to it in place of Dependabot's
+ * #766. The css image stays on 7.2.0 for now because tests/build-sha-is-verifiable.test.ts
+ * pins the boot line its deploy waits for to a measurement taken against 7.2.0. Moving the
+ * image to 7.3.0 means re-running that measurement, and then this override can go.
  *
  * ★ WHY 10.x UNDER CSS 7 IS SAFE HERE. CSS calls nodemailer from one class, BaseEmailSender,
  * through createTransport(options) and transporter.sendMail({ from, to, subject, text, html }).
