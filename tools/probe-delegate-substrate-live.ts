@@ -14,7 +14,7 @@
  * workspace tools because that is where they happen to live today, and neither is delegate logic:
  *
  *   · `mintBearer` — the headless SIWE sign-in. Duplicating it here is what
- *     `tests/workspace-live-identity-parity.test.ts` exists to prevent.
+ *     `applications/shared-workspace/tests/live-identity-parity.test.ts` exists to prevent.
  * The point stands regardless: the affordance is reached through a PORT, so anything that can
  * call a relay tool can drive it. Here that port is three lines.
  *

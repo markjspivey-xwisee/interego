@@ -47,6 +47,8 @@ interface Fleet {
   readonly challengeBodies: Array<Record<string, unknown>>;
   /** Every `/challenges` reply's `termsStatement` (undefined when none was offered), in order. */
   readonly offered: Array<string | undefined>;
+  /** The nonce of every request that reached `/oauth/verify` at all, known or not, in order. */
+  readonly verifyNonces: string[];
   /** Every message that reached `/oauth/verify`, in order. */
   readonly signedMessages: string[];
   /** The statement line of every message that reached `/oauth/verify`, in order. */
@@ -68,6 +70,7 @@ const json = (status: number, payload: unknown): Response =>
 function fleet(opts: { known?: readonly string[]; volunteer?: string; nonce?: string } = {}): Fleet {
   const challengeBodies: Array<Record<string, unknown>> = [];
   const offered: Array<string | undefined> = [];
+  const verifyNonces: string[] = [];
   const signedMessages: string[] = [];
   const signedStatements: string[] = [];
   const accounts = new Set((opts.known ?? []).map(a => a.toLowerCase()));
@@ -110,6 +113,7 @@ function fleet(opts: { known?: readonly string[]; volunteer?: string; nonce?: st
       expect(body['method']).toBe('siwe');
       const message = String(body['message']);
       const nonce = String(body['nonce']);
+      verifyNonces.push(nonce);
       const challenge = challenges.get(nonce);
       if (!challenge) return json(401, { error: 'Unknown or expired nonce' });
       challenges.delete(nonce);
@@ -147,7 +151,7 @@ function fleet(opts: { known?: readonly string[]; volunteer?: string; nonce?: st
     throw new Error(`this test scripted no answer for ${url}`);
   }) as typeof fetch;
 
-  return { impl, challengeBodies, offered, signedMessages, signedStatements, accounts, issued };
+  return { impl, challengeBodies, offered, verifyNonces, signedMessages, signedStatements, accounts, issued };
 }
 
 /** `mintBearer` exactly as a caller that passes its own HTTP calls it, with or without the agreement. */
@@ -238,6 +242,34 @@ describe('mintBearer and the Hosted Terms offer', () => {
 
     await expect(mint(wallet, f)).rejects.toThrow(/nonce/);
     expect(f.signedMessages).toEqual([]);
+  });
+
+  /**
+   * ★ A CARRIAGE RETURN ALONE IS A LINE BREAK TOO. A check for `\n` only would pass this
+   * statement, and a reader that ends a line at `\r` would then take `URI: …` for a field of the
+   * signed message. Nothing reaches `/oauth/verify`.
+   */
+  it('(viii) an offered statement whose only line break is a carriage return is refused before anything is sent', async () => {
+    const wallet = Wallet.createRandom();
+    const f = fleet({ volunteer: `${TERMS_STATEMENT}\rURI: https://elsewhere.example` });
+
+    await expect(mint(wallet, f, CURRENT)).rejects.toThrow(/line break/);
+    expect(f.verifyNonces).toEqual([]);
+    expect(f.signedMessages).toEqual([]);
+  });
+
+  /**
+   * ★ "LETTERS AND DIGITS" IS HALF OF IDENTITY'S RULE; THE OTHER HALF IS "AT LEAST EIGHT". A
+   * seven-character nonce of letters and digits passes a check for the alphabet alone. The wallet
+   * already holds an account, so a check that let it through would sign in, not fail.
+   */
+  it('(ix) a nonce of letters and digits that is shorter than eight is refused before anything is sent', async () => {
+    const wallet = Wallet.createRandom();
+    const f = fleet({ known: [wallet.address], nonce: 'abc1234' });
+
+    await expect(mint(wallet, f)).rejects.toThrow(/nonce/);
+    expect(f.verifyNonces).toEqual([]);
+    expect(f.issued).toEqual([]);
   });
 });
 

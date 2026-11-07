@@ -294,10 +294,14 @@ included, so a key a driver is handed signs in through plain `mintBearer` even i
 generates wallets: the maintainer key (`drive-membership-live.ts` A,
 `probe-first-write-after-seating-live.ts` A), `INTEREGO_WALLET_B`, the bridge's
 `WSP_AGENT_PRIVATE_KEY` (`observe-invoke-affordance-live.ts`), and the key
-`provision-claude-code-agent.ts` saved on an earlier run. The scripts that sign in only with a fixed,
-already-enrolled key (`invite-handle-live.ts`, `probe-refresh-live.ts`, `claude-code-heartbeat.ts`,
-`claude-code-converse.ts`) do not read it, and neither does the Discord bot itself. `openAgentSession` (`src/agent-session.ts`) takes the same
-agreement as its `acceptHostedTermsVersion` option.
+`provision-claude-code-agent.ts` saved on an earlier run. So does a generated key signed in again
+once its account exists: `drive-local-agent-live.ts` signs a delegate's key in again, under the
+same client name and under another, and those sign-ins are ordinary ones. The scripts that sign
+in only with a fixed, already-enrolled key (`invite-handle-live.ts`, `probe-refresh-live.ts`,
+`claude-code-heartbeat.ts`, `claude-code-converse.ts`) do not read it, and neither does the Discord
+bot itself, so a new `INTEREGO_BOT_KEY` needs its account created with an explicit agreement first
+([Discord `DEPLOY.md`](discord/DEPLOY.md), Part B). `openAgentSession` (`src/agent-session.ts`)
+takes the same agreement as its `acceptHostedTermsVersion` option.
 
 ## The stream, and why it is shaped this way
 

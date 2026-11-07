@@ -7,8 +7,10 @@
  * `desktop/src/auth.ts` runs. It is duplicated here for one reason: `auth.ts` imports nothing
  * from Electron but it lives in an Electron package whose `main` is a bundled CJS entry, and a
  * `tsx` driver importing across that boundary would be testing the bundler rather than the
- * relay. What it must NOT do is diverge, so `tests/workspace-live-identity-parity.test.ts` pins
- * the two message bodies against each other.
+ * relay. What it must NOT do is diverge, so `../tests/live-identity-parity.test.ts` runs both
+ * ceremonies against one stand-in relay and identity server and pins what each sends, the signed
+ * message included, byte for byte against the other. It compares the default statement only: the
+ * desktop shell has no Hosted Terms path.
  *
  * The redirect URI is a loopback address that is never listened on: the wallet path posts its
  * own proof and reads the code out of the relay's redirect, so no browser and no socket are
@@ -50,8 +52,9 @@ const SIGN_IN_STATEMENT = 'Sign in to Interego';
 
 /**
  * The SIWE message the relay expects. With the default statement it is byte-identical to
- * `desktop/src/auth.ts`; the only other statement ever passed is the Hosted Terms agreement
- * identity returned for the version the operator agreed to (see {@link mintBearer}).
+ * `desktop/src/auth.ts` (`../tests/live-identity-parity.test.ts` holds it there); the only other
+ * statement ever passed is the Hosted Terms agreement identity returned for the version the
+ * operator agreed to (see {@link mintBearer}).
  */
 export function siweMessage(relay: string, address: string, nonce: string, issuedAt: string, statement = SIGN_IN_STATEMENT): string {
   return 'relay.interego.xwisee.com wants you to sign in with your Ethereum account:\n'

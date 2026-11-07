@@ -219,8 +219,10 @@ Both mint new wallets, and hosted identity creates an account for a new wallet o
 operator's Hosted Terms agreement. Set `INTEREGO_ACCEPT_HOSTED_TERMS_VERSION` to the version you
 agreed to, as described in
 [the workspace README](../README.md#live-drivers-and-the-hosted-terms); unset, the first sign-in is
-refused with HTTP 428. The bot itself never reads that variable: it signs in with
-`INTEREGO_BOT_KEY`, whose account already exists, and its sign-in is unchanged.
+refused with HTTP 428. The bot itself never reads that variable and never gives the agreement: it
+signs `INTEREGO_BOT_KEY` in with the ordinary sign-in, unchanged, so that key must already hold an
+account. A new bot key is refused with HTTP 428 until its account has been created with an
+explicit Hosted Terms agreement; [`DEPLOY.md`](DEPLOY.md), Part B, says how.
 
 `drive-bot-live.ts` mints three disposable identities, has two of them publish real delegations
 from their own clients, and then runs **the bot's own command functions** against
