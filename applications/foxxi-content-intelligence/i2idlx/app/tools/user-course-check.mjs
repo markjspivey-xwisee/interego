@@ -122,4 +122,51 @@ await test('selected course packets require exact source identity and both diges
   assert.throws(() => validate(packet, 'another-connection', course), /does not match/);
 });
 
+await test('virtual source packets bind the advertised provider, string version and exact permission without a package export', async () => {
+  const source = await readFile(new URL('../src/course-context.jsx', import.meta.url), 'utf8');
+  const validation = source.slice(source.indexOf('const object ='), source.indexOf('export function useCourseContext'))
+    .replace('export function selectedCoursePacket', 'function selectedCoursePacket');
+  const validate = runInNewContext(validation + '\nselectedCoursePacket;', {});
+  const course = { id: 'external-course', version: 'revision-23' };
+  const grant = { id: 'owner-approved-virtual', mode: 'virtual', expires_at: expires };
+  const packet = { connection_id: 'source-connection', source: { provider: 'source-service', course_id: course.id,
+    version: course.version, content_sha256: 'c'.repeat(64) }, access: { mode: 'virtual', permission: grant },
+    citations: [], interventionContext: {} };
+  assert.equal(validate(packet, 'source-connection', course, grant, 'source-service'), packet);
+  assert.throws(() => validate(packet, 'source-connection', course, grant), /does not match/);
+  assert.throws(() => validate(packet, 'source-connection', course, { ...grant, id: 'different-permission' }, 'source-service'), /does not match/);
+  for (const access of [undefined, {}, { mode: 'cached', permission: grant }, { mode: 'virtual', permission: { ...grant, mode: 'cached' } }]) {
+    assert.throws(() => validate({ ...packet, access }, 'source-connection', course, grant, 'source-service'), /does not match/);
+  }
+  assert.throws(() => validate({ ...packet, source: { ...packet.source, package_sha256: 'f'.repeat(64) } }, 'source-connection', course, grant, 'source-service'), /does not match/);
+  assert.throws(() => validate({ ...packet, source: { ...packet.source, version: 23 } }, 'source-connection', course, grant, 'source-service'), /does not match/);
+  assert.throws(() => validate({ ...packet, source: { ...packet.source, content_sha256: null } }, 'source-connection', course, grant, 'source-service'), /does not match/);
+});
+
+await test('deletion messages distinguish local removal from pending, failed and provider-reported remote completion', async () => {
+  const source = await readFile(new URL('../src/course-context.jsx', import.meta.url), 'utf8');
+  const validation = source.slice(source.indexOf('const object ='), source.indexOf('export function useCourseContext'))
+    .replace('export function selectedCoursePacket', 'function selectedCoursePacket');
+  const message = runInNewContext(validation + '\ndeletionMessage;', {});
+  const deleted = { deleted: true, permission_revoked: true };
+  assert.match(message({ ...deleted, remote_deletion: { status: 'submitting' } }), /no receipt has been confirmed/);
+  assert.match(message({ ...deleted, remote_deletion: { status: 'pending' } }), /completion is pending/);
+  assert.match(message({ ...deleted, remote_deletion: { status: 'completed' } }), /source service reports/);
+  assert.match(message({ ...deleted, remote_deletion: { status: 'failed' } }), /did not confirm/);
+  assert.match(message({ ...deleted, remote_deletion: { status: 'unsupported' } }), /only this session/);
+  assert.match(message({ deleted: false, remote_deletion: { status: 'completed' } }), /not confirmed/);
+  assert.match(message(deleted), /outside this deletion/);
+  const recover = runInNewContext(validation + '\nrecoveredDeletion;', {});
+  const course = { id: 'course-a', version: 'revision-23' };
+  const status = { connection_id: 'own-connection', course_id: course.id, version: course.version,
+    deletion: { ...deleted, grant_id: 'a'.repeat(48), remote_deletion: { status: 'pending', request_id: 'actual-source-receipt' } } };
+  const recovered = recover(status, 'own-connection', course);
+  assert.equal(recovered.target.grant_id, 'a'.repeat(48));
+  assert.equal(recovered.result.remote_deletion.request_id, 'actual-source-receipt');
+  assert.equal(recover(status, 'another-connection', course), null);
+  assert.equal(recover(status, 'own-connection', { ...course, id: 'another-course' }), null);
+  assert.equal(recover(status, 'own-connection', { ...course, version: 23 }), null);
+  assert.equal(recover({ ...status, deletion: { ...status.deletion, grant_id: 'not-an-issued-handle' } }, 'own-connection', course), null);
+});
+
 process.stdout.write('PASS ' + count + ' user course adapter checks\n');

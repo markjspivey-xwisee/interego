@@ -8,6 +8,7 @@ import express from 'express';
 import AdmZip from 'adm-zip';
 import { AgentSessionStore } from '../src/i2idlx-agent-sessions.js';
 import { attachUserCourseRoutes, UserCourseStore, USER_COURSE_PATH } from '../src/i2idlx-user-courses.js';
+import type { SourceTransport } from '../src/i2idlx-course-provider.js';
 
 type Row = Record<string, unknown>;
 const BASE = 'https://workbench.example';
@@ -61,18 +62,234 @@ async function setup(fetcher?: typeof fetch, ttl?: number) {
     fetch: f.cloudFetch as typeof fetch, now: f.now, connectionTtlMs: f.ttl };
   const store = new UserCourseStore(config);
   cleanups.push(() => store.dispose());
-  const request = (operation: string, extra: Row = {}, session = f.alice) => store.request({ session_id: session.session_id, operation, ...extra }, session.browser_token);
+  const rawRequest = (operation: string, extra: Row = {}, session = f.alice) => store.request({ session_id: session.session_id, operation, ...extra }, session.browser_token);
+  // Earlier provider/ZIP tests exercise explicitly permitted transient reads. Permission
+  // refusal, cached modes and deletion use rawRequest below to test the actual gate.
+  const request = async (operation: string, extra: Row = {}, session = f.alice) => {
+    if (operation === 'source' && extra.grant_id === undefined) {
+      const permission = await rawRequest('grant', { connection_id: extra.connection_id, course_id: extra.course_id, version: extra.version,
+        mode: 'transient', permission: { authorized: true, authority: 'owner', retention_minutes: 10 } }, session);
+      extra = { ...extra, grant_id: (permission.grant as Row).id };
+    }
+    return rawRequest(operation, extra, session);
+  };
   const connect = (credentials: unknown = basic, session = f.alice) => request('connect', { credentials }, session);
-  return { ...f, config, store, request, connect };
+  return { ...f, config, store, request, rawRequest, connect };
 }
 
 describe('private SCORM Cloud course connections', () => {
+  const selected = (connection: Row) => ({ connection_id: connection.connection_id, course_id: course.id, version: course.version });
+  const permit = async (f: Awaited<ReturnType<typeof setup>>, connection: Row, mode = 'cached', minutes = 10, session = f.alice) => {
+    const value = await f.rawRequest('grant', { ...selected(connection), mode,
+      permission: { authorized: true, authority: 'authorized-by-owner', retention_minutes: minutes } }, session);
+    return (value.grant as Row).id;
+  };
+  it('requires an explicit course grant and refuses unsupported modes before exporting content', async () => {
+    const f = await setup(), connected = await f.connect(), input = selected(connected);
+    await expect(f.rawRequest('source', { ...input, question: 'What code?' })).rejects.toMatchObject({ status: 403, code: 'course_permission_required' });
+    for (const permission of [undefined, { authorized: false, authority: 'owner', retention_minutes: 10 },
+      { authorized: true, authority: 'learner', retention_minutes: 10 }]) {
+      await expect(f.rawRequest('grant', { ...input, mode: 'cached', permission })).rejects.toMatchObject({ status: 403 });
+    }
+    await expect(f.rawRequest('grant', { ...input, mode: 'virtual', permission: { authorized: true, authority: 'owner', retention_minutes: 10 } })).rejects.toMatchObject({ code: 'course_mode_unsupported' });
+    expect(f.cloudFetch).toHaveBeenCalledTimes(1);
+  });
+
+  it('caches only instructional text and observed structure, rechecks access, and avoids a second ZIP download', async () => {
+    let zipReads = 0, permissionReads = 0;
+    const f = await setup((async url => {
+      if (String(url).endsWith('/courses')) return Response.json({ courses: [course] });
+      if (String(url).endsWith('/zip')) { zipReads++; return new Response(Uint8Array.from(packageZip())); }
+      permissionReads++; return Response.json(course);
+    }) as typeof fetch);
+    const connected = await f.connect(), grant_id = await permit(f, connected), input = { ...selected(connected), grant_id };
+    const first = await f.rawRequest('source', { ...input, question: 'What code?' });
+    expect(first.access).toMatchObject({ mode: 'cached', permission: { id: grant_id, verification: 'user-attested' },
+      cache: { present: true, hit: false }, graph: { representation: 'published-structure', semantic_prerequisites_inferred: false } });
+    const second = await f.rawRequest('source', { ...input, question: 'What is recorded in the simulation log?' });
+    expect(second.access).toMatchObject({ cache: { present: true, hit: true }, graph: { seed_section_ids: ['index.html'] } });
+    expect(second.citations).toEqual(first.citations);
+    expect(zipReads).toBe(1); expect(permissionReads).toBe(1);
+    const connections = (f.store as unknown as { connections: Map<string, { grants: Map<string, { cache: unknown }> }> }).connections;
+    const retained = [...connections.values()].flatMap(c => [...c.grants.values()]).map(g => g.cache);
+    expect(JSON.stringify(retained)).toContain('BLUE-27');
+    expect(JSON.stringify(retained)).not.toMatch(/HIDDEN-|RUNTIME-PRIVATE|PRIVATE-SCORM-SECRET|question-bank/);
+  });
+
+  it('deletes text and graph, revokes permission, and makes deletion retries idempotent', async () => {
+    const f = await setup(), connected = await f.connect(), grant_id = await permit(f, connected), input = { ...selected(connected), grant_id };
+    await f.rawRequest('source', { ...input, question: 'What code?' });
+    expect((f.store as unknown as { cacheBytes: number }).cacheBytes).toBeGreaterThan(0);
+    for (let i = 0; i < 27; i++) await f.rawRequest('status');
+    await expect(f.rawRequest('status')).rejects.toMatchObject({ status: 429 });
+    expect(await f.rawRequest('delete', input)).toMatchObject({ deleted: true, permission_revoked: true, scope: 'this-session' });
+    expect((f.store as unknown as { cacheBytes: number }).cacheBytes).toBe(0);
+    f.advance(60_001);
+    expect(await f.rawRequest('access-status', selected(connected))).toMatchObject({ grant: null, cache: { present: false } });
+    await expect(f.rawRequest('source', { ...input, question: 'What code?' })).rejects.toMatchObject({ code: 'course_permission_required' });
+    expect(await f.rawRequest('delete', input)).toMatchObject({ deleted: true });
+    expect(await f.rawRequest('request-deletion', input)).toMatchObject({ deleted: true, remote_deletion: { status: 'unsupported' } });
+  });
+
+  it('cannot resurrect retained course text after deletion interrupts an export', async () => {
+    let release!: (response: Response) => void, fetchSignal: AbortSignal | undefined;
+    const f = await setup((async (url, options) => {
+      if (String(url).endsWith('/courses')) return Response.json({ courses: [course] });
+      fetchSignal = options?.signal as AbortSignal;
+      return new Promise<Response>(resolve => { release = resolve; });
+    }) as typeof fetch);
+    const connected = await f.connect(), grant_id = await permit(f, connected), input = { ...selected(connected), grant_id };
+    const pending = f.rawRequest('source', { ...input, question: 'What code?' });
+    await vi.waitFor(() => expect(fetchSignal).toBeDefined());
+    const rejection = expect(pending).rejects.toMatchObject({ code: 'course_permission_required' });
+    expect(await f.rawRequest('delete', input)).toMatchObject({ deleted: true });
+    expect(fetchSignal?.aborted).toBe(true);
+    release(new Response(Uint8Array.from(packageZip()))); await rejection;
+    expect((f.store as unknown as { cacheBytes: number }).cacheBytes).toBe(0);
+    expect(await f.rawRequest('access-status', selected(connected))).toMatchObject({ grant: null, cache: { present: false } });
+  });
+
+  it('expires course permission before the connection and drops its retained text', async () => {
+    const f = await setup(), connected = await f.connect(), grant_id = await permit(f, connected, 'cached', 1);
+    await f.rawRequest('source', { ...selected(connected), grant_id, question: 'What code?' });
+    f.advance(60_001);
+    expect(await f.rawRequest('access-status', selected(connected))).toMatchObject({ grant: null, cache: { present: false } });
+    expect((f.store as unknown as { cacheBytes: number }).cacheBytes).toBe(0);
+    expect(await f.rawRequest('status')).toMatchObject({ connected: true });
+  });
+
+  it('rebuilds an explicitly refreshed cache and binds citations to the new contents', async () => {
+    let body = 'Record code BLUE-27.';
+    const f = await setup((async url => String(url).endsWith('/courses') ? Response.json({ courses: [course] })
+      : new Response(Uint8Array.from(packageZip(body)))) as typeof fetch);
+    const connected = await f.connect(), grant_id = await permit(f, connected), input = { ...selected(connected), grant_id, question: 'What code?' };
+    const first = await f.rawRequest('source', input);
+    body = 'Record code GREEN-64.';
+    const changed = await f.rawRequest('source', { ...input, refresh: true });
+    expect(changed.access).toMatchObject({ cache: { present: true, hit: false } });
+    expect((changed.source as Row).content_sha256).not.toBe((first.source as Row).content_sha256);
+    expect(JSON.stringify(changed.citations)).toContain('GREEN-64');
+    expect(JSON.stringify(changed.citations)).not.toContain('BLUE-27');
+  });
+
+  it('clears a cached source if provider authorization has been revoked', async () => {
+    const f = await setup((async url => String(url).endsWith('/courses') ? Response.json({ courses: [course] })
+      : String(url).endsWith('/zip') ? new Response(Uint8Array.from(packageZip())) : new Response('private denied body', { status: 403 })) as typeof fetch);
+    const connected = await f.connect(), grant_id = await permit(f, connected), input = { ...selected(connected), grant_id, question: 'What code?' };
+    await f.rawRequest('source', input);
+    await expect(f.rawRequest('source', input)).rejects.toMatchObject({ code: 'course_provider_authentication_failed' });
+    expect((f.store as unknown as { cacheBytes: number }).cacheBytes).toBe(0);
+    expect(await f.rawRequest('status')).toEqual({ connected: false });
+  });
+
+  it.each([404, 429, 503])('reports actual cache grant revocation when the provider recheck answers %s', async status => {
+    const f = await setup((async url => String(url).endsWith('/courses') ? Response.json({ courses: [course] })
+      : String(url).endsWith('/zip') ? new Response(Uint8Array.from(packageZip())) : new Response('private provider body', { status })) as typeof fetch);
+    const connected = await f.connect(), grant_id = await permit(f, connected), input = { ...selected(connected), grant_id, question: 'What code?' };
+    await f.rawRequest('source', input);
+    await expect(f.rawRequest('source', input)).rejects.toMatchObject({ code: 'course_permission_revoked', status: status === 429 ? 429 : status === 404 ? 404 : 502 });
+    expect(await f.rawRequest('access-status', selected(connected))).toMatchObject({ grant: null, cache: { present: false } });
+    expect((f.store as unknown as { cacheBytes: number }).cacheBytes).toBe(0);
+    expect(await f.rawRequest('status')).toMatchObject({ connected: true });
+  });
+
+  it('withholds a stopped cache read without revoking its valid permission or re-exporting the course', async () => {
+    let release!: (response: Response) => void, recheckSignal: AbortSignal | undefined, pause = true, zipReads = 0;
+    const f = await setup((async (url, options) => {
+      if (String(url).endsWith('/courses')) return Response.json({ courses: [course] });
+      if (String(url).endsWith('/zip')) { zipReads++; return new Response(Uint8Array.from(packageZip())); }
+      if (pause) { recheckSignal = options?.signal as AbortSignal; return new Promise<Response>(resolve => { release = resolve; }); }
+      return Response.json(course);
+    }) as typeof fetch);
+    const connected = await f.connect(), grant_id = await permit(f, connected), input = { ...selected(connected), grant_id, question: 'What code?' };
+    await f.rawRequest('source', input);
+    const stop = new AbortController();
+    const pending = f.store.request({ session_id: f.alice.session_id, operation: 'source', ...input }, f.alice.browser_token, stop.signal);
+    await vi.waitFor(() => expect(recheckSignal).toBeDefined());
+    const rejected = expect(pending).rejects.toMatchObject({ status: 504 });
+    stop.abort(); expect(recheckSignal?.aborted).toBe(true); release(Response.json(course)); await rejected;
+    expect(await f.rawRequest('access-status', selected(connected))).toMatchObject({ grant: { id: grant_id }, cache: { present: true } });
+    pause = false;
+    expect(await f.rawRequest('source', input)).toMatchObject({ access: { cache: { present: true, hit: true } } });
+    expect(zipReads).toBe(1);
+  });
+
+  it('isolates cached text and deletion between two browser sessions of the same actor', async () => {
+    const f = await setup(), alice = await f.connect(), bob = await f.connect(basic, f.bob);
+    const ga = await permit(f, alice), gb = await permit(f, bob, 'cached', 10, f.bob);
+    await f.rawRequest('source', { ...selected(alice), grant_id: ga, question: 'What code?' });
+    await f.rawRequest('source', { ...selected(bob), grant_id: gb, question: 'What code?' }, f.bob);
+    await expect(f.rawRequest('delete', { ...selected(alice), grant_id: ga }, f.bob)).rejects.toMatchObject({ status: 404 });
+    await f.rawRequest('delete', { ...selected(alice), grant_id: ga });
+    expect(await f.rawRequest('access-status', selected(bob), f.bob)).toMatchObject({ grant: { id: gb }, cache: { present: true } });
+  });
+
+  it('coalesces concurrent deletion calls, recovers receipts and reuses the request key after an ambiguous failure', async () => {
+    const f = await setup();
+    const remoteCourse = { id: 'source-course', title: 'Source course', version: 'v2', standard: 'External', source_uri: 'https://source.example/course', access_modes: ['virtual'] };
+    const remoteGrant = { id: 'owner-grant', owner: 'did:web:source.example:owner', actor, course_id: remoteCourse.id,
+      version: remoteCourse.version, expires_at: new Date(f.now() + 120_000).toISOString(), access_modes: ['virtual'],
+      permissions: ['read-passages', 'share-with-paired-agent', 'request-deletion'] };
+    let deletionCalls = 0, statusCalls = 0, failNext = false;
+    let release!: () => void;
+    const keys: string[] = [];
+    const receipt = { request_id: 'actual-owner-receipt', course_id: remoteCourse.id, version: remoteCourse.version,
+      status: 'pending', scope: 'derived-content', requested_at: new Date(f.now()).toISOString() };
+    const transport: SourceTransport = async (_url, bytes) => {
+      const input = JSON.parse(bytes.toString('utf8')) as Row;
+      let value: Row;
+      if (input.operation === 'capabilities') value = { operations: ['courses', 'permission', 'context', 'request-deletion', 'deletion-status'], access_modes: ['virtual'] };
+      else if (input.operation === 'courses') value = { courses: [remoteCourse] };
+      else if (input.operation === 'permission') value = { grant: remoteGrant };
+      else if (input.operation === 'request-deletion') {
+        deletionCalls++; keys.push(String(input.idempotency_key));
+        await new Promise<void>(resolve => { release = resolve; });
+        if (failNext) { failNext = false; throw new Error('Simulated response lost after the owner accepted it'); }
+        value = { receipt };
+      } else if (input.operation === 'deletion-status') { statusCalls++; value = { receipt }; }
+      else throw new Error('Unexpected source operation');
+      return { status: 200, headers: { 'content-type': 'application/json' }, body: Buffer.from(JSON.stringify({ protocol: 'i2idlx-course-source/1', ...value })) };
+    };
+    const store = new UserCourseStore({ ...f.config, sourceTransport: transport }); cleanups.push(() => store.dispose());
+    const request = (operation: string, extra: Row = {}, session = f.alice) => store.request({ operation, session_id: session.session_id, ...extra }, session.browser_token);
+    const connected = await request('connect', { provider: 'source-service', credentials: { service_url: 'https://source.example/retrieve', token: 'scoped-fixture-token' } });
+    const common = { connection_id: connected.connection_id, course_id: remoteCourse.id, version: remoteCourse.version };
+    const authorize = async () => (await request('grant', { ...common, mode: 'virtual', permission: { authorized: true, authority: 'authorized-by-owner', retention_minutes: 1 } })).grant as Row;
+    const grant = await authorize(), input = { ...common, grant_id: grant.id };
+    const first = request('request-deletion', input), second = request('request-deletion', input);
+    await vi.waitFor(() => expect(deletionCalls).toBe(1));
+    expect(await request('access-status', common)).toMatchObject({ grant: null, deletion: { grant_id: grant.id, remote_deletion: { status: 'submitting' } } });
+    release();
+    const responses = await Promise.all([first, second]);
+    expect(responses[0]).toEqual(responses[1]);
+    expect(responses[0]).toMatchObject({ remote_deletion: { request_id: receipt.request_id, status: 'pending' } });
+    expect(deletionCalls).toBe(1);
+    const restored = await request('access-status', common);
+    expect(restored).toMatchObject({ connection_id: connected.connection_id, course_id: remoteCourse.id, version: remoteCourse.version,
+      grant: null, deletion: { grant_id: grant.id, remote_deletion: { request_id: receipt.request_id, status: 'pending' } } });
+    const freshGrant = await authorize();
+    expect(await request('access-status', common)).toMatchObject({ grant: { id: freshGrant.id }, deletion: { grant_id: grant.id } });
+    await expect(request('access-status', common, f.bob)).rejects.toMatchObject({ status: 404 });
+    await request('deletion-status', { ...input, request_id: receipt.request_id });
+    expect(statusCalls).toBe(1); expect(deletionCalls).toBe(1);
+
+    failNext = true;
+    const retryInput = { ...common, grant_id: freshGrant.id };
+    const lost = request('request-deletion', retryInput);
+    await vi.waitFor(() => expect(deletionCalls).toBe(2)); release();
+    expect(await lost).toMatchObject({ deleted: true, remote_deletion: { status: 'failed', retryable: true } });
+    expect(await request('access-status', common)).toMatchObject({ deletion: { grant_id: freshGrant.id, remote_deletion: { status: 'failed' } } });
+    const retry = request('request-deletion', retryInput);
+    await vi.waitFor(() => expect(deletionCalls).toBe(3)); release();
+    expect(await retry).toMatchObject({ remote_deletion: { request_id: receipt.request_id, status: 'pending' } });
+    expect(keys[1]).toMatch(/^[a-f0-9]{48}$/); expect(keys[2]).toBe(keys[1]); expect(keys[0]).not.toBe(keys[1]);
+  });
   it('retrieves an exact listed version with bounded instructional citations and no credentials or assessments', async () => {
     const f = await setup();
     const connected = await f.connect();
     expect(connected).toMatchObject({ connected: true, provider: 'scorm-cloud', persisted: false });
     const listing = await f.request('courses', { connection_id: connected.connection_id });
-    expect(listing.courses).toEqual([{ id: course.id, title: course.title, version: 2, standard: 'SCORM_12' }]);
+    expect(listing.courses).toEqual([{ id: course.id, title: course.title, version: 2, standard: 'SCORM_12', access_modes: ['transient', 'cached'] }]);
     const result = await f.request('source', { connection_id: connected.connection_id,
       course_id: course.id, version: 2, question: 'What code is recorded\nin the simulation log?' });
     expect(result.source).toEqual({ provider: 'scorm-cloud', course_id: course.id, title: course.title, version: 2,

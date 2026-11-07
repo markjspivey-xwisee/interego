@@ -20,6 +20,12 @@ Not fixed here, and failing the same way for a new wallet against hosted identit
 
 `list()` now copies each array once from its own data elements, and every caller uses that copy. A hole, a getter or a length that is not an exact integer within the bound fails with `expected a dense array of data values` or `expected a bounded array`. Valid packets prepare exactly as before. A new test covers holes in the selection and in each packet array, getter elements, and lying `length` values; it fails on the previous code. This covers arrays only: object fields are still read with ordinary property access, as before. Packets parsed from JSON can carry neither holes nor getters, so this hardens programmatic callers.
 
+## 2026-11-07 — Explicit course access modes in Ask
+
+Ask now requires course/version permission before retrieving content. SCORM Cloud supports temporary reading or a session-only instructional text and published-structure graph cache, with expiry, refresh, access rechecks and immediate local deletion. A separate virtual source-service mode requests bounded cited passages where the content lives, rechecks the source owner's grant and never falls back to a course export. Connections and credentials are selected at runtime.
+
+External derived-content deletion has separate request and completion receipts; local deletion does not erase the original course or conversations already sent to an AI client. The source-side adapter includes a verified-LTI-callback handoff helper, while an LMS/publisher must install its own authorized reader and owner policy. Browser assertions and provider attestations are labeled separately. Details: [course access integration](docs/integrations/i2idlx-course-access.md).
+
 ## 2026-10-30 — Optional human-and-agent Workspaces in the local Windows app
 
 Windows preview.11 adds an optional Workspace vertical with encrypted local conversation records, human and separately attributed agent messages, selected-workspace read/chat grants, invitations, acceptance and membership removal. The consumer UI and two scoped MCP tools discover state-dependent JSON-LD affordances for the supported workflows. The implementation reuses the retained Workspace vocabulary and serializers without impersonating the hosted relay or claiming distributed per-participant pod storage or website-key signatures. A connection can hold workspace grants together with a selected-note read scope; each is stored and enforced on its own, so neither widens the other.
