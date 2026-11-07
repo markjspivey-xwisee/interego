@@ -9,6 +9,8 @@ import type { DesktopApi, LocalNote, PodStatus } from '../src/types.js';
 import type { AgentConnection, AgentSetup } from '../src/agent-types.js';
 import type { BridgeStatus, StableBridgeView } from '../src/bridge-types.js';
 import type { FederationStatus } from '@interego/pod-federation';
+import type { WorkspaceRepresentation } from '../src/workspace-types.js';
+import type { DiscordWorkspaceStatus } from '../src/discord-workspaces.js';
 import type { LocalIdentityApproval, LocalIdentityLinkApproval, LocalIdentitySignInApproval, LocalIdentityStatus } from '../src/local-identity-types.js';
 
 const APP = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -54,6 +56,16 @@ const webReady = (): BridgeStatus => ({ state: 'ready', client: 'chatgpt-web', n
 const webRequest = () => ({ id: 'request-1', clientName: 'ChatGPT', redirectOrigin: 'https://chatgpt.com',
   permissions: ['notes:read'] as const, createdAt: '2026-10-29T12:00:00Z', expiresAt: '2026-10-29T12:10:00Z', verificationCode: '1234-5678' });
 const sharingOff = (): FederationStatus => ({ enabled: false, configured: false, invites: [], pending: [], peers: [], joining: [], received: [], sent: [] });
+const workspacesOff = (): WorkspaceRepresentation => ({
+  '@context': { hydra: 'http://www.w3.org/ns/hydra/core#' }, '@id': 'urn:interego:local-workspaces:fixture',
+  '@type': 'hydra:Collection', id: 'urn:interego:local-workspaces:fixture', enabled: false, configured: true,
+  localOnly: true, federationEnabled: false, transport: { kind: 'local-capability', discovery: 'interego_discover', action: 'interego_act' },
+  attribution: 'authenticated-local-connection', affordances: [], notice: 'Workspaces are off.',
+});
+const discordOff = (): DiscordWorkspaceStatus => ({
+  configured: false, running: false, state: 'off', participants: [], receivedCount: 0, sentCount: 0,
+  disclosure: 'Discord starts paused and needs a separate choice.',
+});
 const stableView = (): StableBridgeView => ({ provider: 'cloudflare', origin: 'https://memory.example.com', port: 49111, hasCredential: true,
   policy: { client: 'chatgpt-web', name: 'My web assistant', permissions: ['notes:read'], expiresInDays: 30 } });
 const webPaused = (settings = stableView(), connections: BridgeStatus['connections'] = []): BridgeStatus => ({
@@ -77,6 +89,14 @@ async function mount(initial = state('unconfigured'), overrides: Partial<Desktop
   let stableSettings = initialStable;
   let bridge: BridgeStatus = initialStable ? webPaused(initialStable) : { state: 'off', permissions: [], pendingApprovals: [], connections: [] };
   const api: DesktopApi = {
+    workspaceStatus: vi.fn(async () => workspacesOff()),
+    workspaceAct: vi.fn(async () => workspacesOff()),
+    discordWorkspaceStatus: vi.fn(async () => discordOff()),
+    configureDiscordWorkspace: vi.fn(async () => discordOff()),
+    startDiscordWorkspace: vi.fn(async () => discordOff()),
+    stopDiscordWorkspace: vi.fn(async () => discordOff()),
+    disconnectDiscordWorkspace: vi.fn(async () => discordOff()),
+    openDiscordWorkspaceSetup: vi.fn(async () => undefined),
     localIdentityStatus: vi.fn(async () => ({ configured: false, pending: [] })),
     setupLocalIdentity: vi.fn(async () => ({ configured: false, pending: [] })),
     approveLocalIdentity: vi.fn(async () => ({ configured: false, pending: [] })),
@@ -696,6 +716,29 @@ describe('Interego consumer desktop', () => {
     app.submit('connection-form'); await flush();
     expect(app.api.createConnection).toHaveBeenCalledWith(expect.objectContaining({ permissions: ['notes:read'], selectedNoteIds: [chosen.id] }));
     expect(app.get('connections-list').textContent).toContain('Read 1 selected note');
+  });
+
+  it('submits selected notes and selected workspaces together without widening either scope', async () => {
+    const chosen = note('Chosen fiction');
+    const other = { ...note('Other fiction'), id: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb' };
+    const room = { id: `urn:interego:local-workspaces:${'a'.repeat(32)}:workspace:cccccccc-cccc-4ccc-8ccc-cccccccccccc`,
+      title: 'Fictional planning room', createdAt: '2026-10-29T12:00:00Z', updatedAt: '2026-10-29T12:00:00Z', entryCount: 0, memberCount: 1 };
+    const app = await mount(state('running', 2), { workspaceStatus: vi.fn(async () => ({ ...workspacesOff(), enabled: true, workspaces: [room] })) }, [chosen, other]);
+    app.click('nav-connections'); await flush(); app.click('add-connection'); await flush();
+    app.fill('connection-read-scope', 'selected');
+    app.get('connection-read-scope').dispatchEvent(new app.dom.window.Event('change')); await flush();
+    app.get<HTMLSelectElement>('connection-read-notes').options[0]!.selected = true;
+    app.get('connection-read-notes').dispatchEvent(new app.dom.window.Event('change'));
+    app.get<HTMLInputElement>('permission-workspaces-read').checked = true;
+    app.get('permission-workspaces-read').dispatchEvent(new app.dom.window.Event('change'));
+    const rooms = app.get<HTMLSelectElement>('connection-workspaces');
+    expect(Array.from(rooms.options).map(option => option.textContent)).toEqual(['Fictional planning room']);
+    rooms.options[0]!.selected = true;
+    expect(app.get<HTMLButtonElement>('create-connection').disabled).toBe(false);
+    app.submit('connection-form'); await flush();
+    expect(app.api.createConnection).toHaveBeenCalledWith(expect.objectContaining({
+      permissions: ['notes:read', 'workspaces:read'], selectedNoteIds: [chosen.id], workspaceIds: [room.id] }));
+    expect(app.get('connections-list').textContent).toContain('Read 1 selected note · Read selected workspaces');
   });
 
   it('preserves connection choices across polls and validates permissions before creating', async () => {

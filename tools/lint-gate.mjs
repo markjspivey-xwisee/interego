@@ -292,7 +292,11 @@ const UNLINTED_FRONTIER = {
   //    verticals (src, bridge, ui, demo and tests of each) took the root past the slack. All of
   //    it lints clean (`npx eslint applications/practice-evidence applications/work-redesign`:
   //    0 problems).
-  applications: { errors: 1452, files: 1026 },
+  //    1026 -> 1084 files, errors not raised: master had already grown to 1073 inside the slack, and
+  //    the pod-desktop Workspaces vertical (#741: workspace-service, workspace-types,
+  //    workspaces-renderer, discord-workspaces, workspace-smoke and their five test modules) with
+  //    #762's agent-note-scope adds 11 more, past the 1078 ceiling. All 11 lint clean.
+  applications: { errors: 1452, files: 1084 },
   // The controller comparison adds two lint-clean audit modules; the census is 46.
   // Re-pin the file floor to that measured count without raising the error ceiling.
   benchmarks: { errors: 193, files: 46 },
