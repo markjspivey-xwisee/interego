@@ -2,7 +2,7 @@
 
 ## 2026-11-03 - Bind selected attachment manifests to health context
 
-The health workbench can prepare a detached import manifest from explicitly selected, caller-supplied attachment bytes. It checks case and source/review identity, selected entry/citation mappings, exact byte-view sizes and SHA-256 declarations, with per-file and total limits. The manifest binds the prepared note's title and body without copying attachment bytes, file paths or unknown fields. Fictional tests cover tampering, isolation, duplicate IDs and byte limits. Native storage, resource-scoped authorization, file safety and source authenticity remain independent checks; no host or provider operation is added.
+The health workbench can prepare a detached import manifest from explicitly selected, caller-supplied attachment bytes. It checks case and source/review identity, selected entry/citation mappings, exact byte-view sizes and SHA-256 declarations, with per-file and total limits. The manifest binds the prepared note's title and body without copying attachment bytes, file paths or unknown fields. Fictional tests cover tampering, isolation, duplicate IDs and byte limits. Native storage, resource-scoped authorization, file safety and source authenticity remain independent checks; no host or provider operation is added. The lint gate's file floor for the applications tree now counts the two new modules, which lint clean; its error ceiling is unchanged.
 
 ## 2026-11-02 — Prepare selected health context for the encrypted local-note host
 
