@@ -28,7 +28,7 @@ import { deriveEncryptionKeyPair, type EncryptionKeyPair } from '@interego/core'
 // against each other precisely because a third spelling of the same message is a bot that cannot
 // sign in for a reason nobody can see. A relative import across the sibling directory is the price
 // of there being one copy, and it is cheaper than the copy.
-import { mintBearer, type Signer } from '../../tools/live-identity.js';
+import { mintBearer, type MintBearerOptions, type Signer } from '../../tools/live-identity.js';
 
 /** Re-mint this long before the grant expires. Enough slack for a cold relay. */
 export const REMINT_MARGIN_MS = 5 * 60 * 1000;
@@ -56,24 +56,30 @@ export const REMINT_MARGIN_MS = 5 * 60 * 1000;
 export const DISCORD_CLIENT_NAME = 'interego-discord';
 
 /**
- * THE ONE VARIABLE THROUGH WHICH THE BOT'S OPERATOR AGREES TO THE HOSTED TERMS FOR ITS ACCOUNT.
+ * THE BOT'S OWN HOSTED TERMS OPT-IN: THE ONE VARIABLE THROUGH WHICH ITS OPERATOR AGREES FOR ITS
+ * ACCOUNT.
  *
- * ★ ONLY A NEW KEY NEEDS IT. Hosted identity opens a new account only for a wallet that signed the
- * Hosted Interego Terms agreement for the current version, and answers any other first sign-in
- * HTTP 428 `hosted_terms_required`. A deployment with a NEW `INTEREGO_BOT_KEY` is exactly that first
- * sign-in; an existing deployment's key already has its account and never needs this.
+ * ★ ONLY A NEW KEY NEEDS IT. Hosted identity creates an account only for a wallet that signed the
+ * Hosted Terms agreement statement, and answers any other first sign-in HTTP 428
+ * `hosted_terms_required`. A deployment with a NEW `INTEREGO_BOT_KEY` is exactly that first sign-in.
+ * Setting this variable is one way to start it; creating the key's account first with an explicit
+ * agreement is the other (`DEPLOY.md`, Part B). A key that already holds an account, such as the
+ * deployed bot's, signs in without either.
  *
- * ★ ITS OWN NAME, NOT THE LIVE DRIVERS'. The drivers read `INTEREGO_ACCEPT_HOSTED_TERMS_VERSION`;
- * a bot running where that happens to be set must not start agreeing for its own account because
- * of it. Setting THIS variable is the operator saying, for this bot's account, "I read the terms at
- * `<identity>/.well-known/hosted-interego-terms` and agree to that version". Nothing defaults it.
+ * ★ ITS OWN NAME, NOT THE LIVE DRIVERS'. `INTEREGO_ACCEPT_HOSTED_TERMS_VERSION` is the drivers'
+ * operator agreeing for the disposable accounts THEIR run creates, and a bot running where it
+ * happens to be set must not take it as an agreement for its own account. The bot's operator holds
+ * `INTEREGO_BOT_KEY`, so agreeing for that account is their own act, and setting THIS variable is
+ * them doing it: "I read the terms at `<identity>/.well-known/hosted-interego-terms` and agree to
+ * that version for this bot's account". Nothing defaults it, and nothing here reads that endpoint to
+ * fill it in.
  */
 export const BOT_ACCEPT_HOSTED_TERMS_ENV = 'INTEREGO_BOT_ACCEPT_HOSTED_TERMS_VERSION';
 
-/** The operator's agreement for the bot's account, as the environment states it, or undefined. */
-export function botHostedTerms(env: Readonly<Record<string, string | undefined>>): string | undefined {
-  const v = (env[BOT_ACCEPT_HOSTED_TERMS_ENV] ?? '').trim();
-  return v === '' ? undefined : v;
+/** The bot operator's agreement as the environment states it: `{}` when it states none (unset or blank). */
+export function botHostedTerms(env: Readonly<Record<string, string | undefined>>): MintBearerOptions {
+  const version = (env[BOT_ACCEPT_HOSTED_TERMS_ENV] ?? '').trim();
+  return version === '' ? {} : { acceptHostedTermsVersion: version };
 }
 
 export interface BotIdentity {
@@ -127,16 +133,17 @@ export class BotSession {
   out: ((m: string) => void) | null = null;
 
   /**
-   * The Hosted Terms version the bot's OPERATOR explicitly agreed to for its account, or undefined.
-   * See {@link BOT_ACCEPT_HOSTED_TERMS_ENV}. Passed to every ceremony, as `openAgentSession` does:
-   * the server uses it only to open a NEW account, and an existing one signs in either way.
+   * The Hosted Terms version the bot's OPERATOR explicitly agreed to for its account, or '' for
+   * none. See {@link BOT_ACCEPT_HOSTED_TERMS_ENV}; `main()` passes {@link botHostedTerms} of the
+   * environment and nothing else. Passed to every ceremony, as `openAgentSession` does: identity
+   * needs it only to create a NEW account, and an existing one signs in either way.
    */
-  private readonly acceptHostedTermsVersion: string | undefined;
+  private readonly acceptHostedTermsVersion: string;
 
-  constructor(relay: string, identityServer: string, privateKey: string, fetchImpl?: typeof fetch, acceptHostedTermsVersion?: string) {
+  constructor(relay: string, identityServer: string, privateKey: string, fetchImpl?: typeof fetch, terms: MintBearerOptions = {}) {
     this.relay = relay.replace(/\/$/, '');
     this.identityServer = identityServer.replace(/\/$/, '');
-    this.acceptHostedTermsVersion = acceptHostedTermsVersion;
+    this.acceptHostedTermsVersion = terms.acceptHostedTermsVersion ?? '';
     this.wallet = new Wallet(privateKey);
     this.encryption = deriveEncryptionKeyPair(privateKey);
     this.opener = openerFor(privateKey);
@@ -172,28 +179,31 @@ export class BotSession {
   }
 
   /**
-   * One SIWE ceremony under this bot's own client name, carrying the operator's agreement when
-   * there is one.
+   * One SIWE ceremony under this bot's own client name, carrying its operator's agreement when
+   * there is one and nothing otherwise.
    *
-   * ★ A 428 SAYS WHAT TO DO, IN THE SERVER'S WORDS FIRST. It is a NEW key with no account and no
-   * agreement, and the person who can answer it is the operator, so the error names this bot's
-   * variable and where the current terms are published. It never retries with a version of its
-   * own choosing: that would be agreeing.
+   * ★ A 428 SAYS WHAT TO DO, AFTER IDENTITY'S OWN WORDS. `mintBearer` throws
+   * `SIWE verify answered HTTP 428: <identity's text>`, and that line is what the operator sees
+   * after `FATAL: ` at boot. It means a key with no account and no agreement, and the person who can
+   * answer it is the bot's operator, so the error goes on to name the two ways to start a new key:
+   * this bot's own variable, and creating the account first. It never retries with a version of
+   * its own choosing: that would be agreeing.
    */
   private async mint(): Promise<RelayOAuthBearer> {
-    const options = this.acceptHostedTermsVersion ? { acceptHostedTermsVersion: this.acceptHostedTermsVersion } : {};
+    const version = this.acceptHostedTermsVersion;
     try {
-      return await mintBearer(this.relay, this.identityServer, this.wallet, DISCORD_CLIENT_NAME, this.fetchImpl, options);
+      return await mintBearer(this.relay, this.identityServer, this.wallet, DISCORD_CLIENT_NAME, this.fetchImpl,
+        version !== '' ? { acceptHostedTermsVersion: version } : {});
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
-      if (!/HTTP 428\b/.test(msg)) throw e;
+      if (!msg.startsWith('SIWE verify answered HTTP 428:')) throw e;
       const where = this.identityServer + '/.well-known/hosted-interego-terms';
-      throw new Error(msg + (this.acceptHostedTermsVersion === undefined
-        ? ' — this bot\'s key (INTEREGO_BOT_KEY) has no hosted account yet, and opening one needs its operator\'s agreement '
-          + 'to the Hosted Interego Terms. Read the version and terms at ' + where + ' and, only if you agree to them for '
-          + 'this bot\'s account, set ' + BOT_ACCEPT_HOSTED_TERMS_ENV + '=<that version>. Nothing was created.'
-        : ' — ' + BOT_ACCEPT_HOSTED_TERMS_ENV + ' is ' + this.acceptHostedTermsVersion + ', and the identity server did not '
-          + 'take it as agreement for a new account; the version it offers now is at ' + where + '. Nothing was created.'), { cause: e });
+      throw new Error(msg + (version === ''
+        ? ' (INTEREGO_BOT_KEY has no account yet, and creating one needs the Hosted Terms agreement. Read the version '
+          + 'and terms at ' + where + ' and, only if you agree to them for this bot\'s account, set '
+          + BOT_ACCEPT_HOSTED_TERMS_ENV + '=<that version>, or create the account first as DEPLOY.md Part B says)'
+        : ' (' + BOT_ACCEPT_HOSTED_TERMS_ENV + ' is ' + version + ', and identity did not take it as agreement for a '
+          + 'new account; the version it offers now is at ' + where + ')'), { cause: e });
     }
   }
 

@@ -32,6 +32,9 @@ import {
   siweMessage,
   type Signer,
 } from '../tools/live-identity.js';
+// The live demo's headless `DEMO_YOU_WALLET` sign-in: a key the demo is handed, signed in through
+// plain `mintBearer`. Importing it loads no server; `lib/relay.ts` only defines.
+import { walletSignIn } from '../../../demos/live/lib/relay.js';
 
 const RELAY = 'https://relay.example';
 const IDENTITY = 'https://identity.example';
@@ -360,6 +363,39 @@ describe('the drivers\' opt-in: INTEREGO_ACCEPT_HOSTED_TERMS_VERSION', () => {
       expect(f.challengeBodies).toEqual([{ purpose: 'siwe' }]);
       expect(f.signedStatements).toEqual(['Sign in to Interego']);
       expect(bearer.accessToken).toBe(f.issued[0]);
+    } finally {
+      if (before === undefined) delete process.env[ACCEPT_HOSTED_TERMS_ENV];
+      else process.env[ACCEPT_HOSTED_TERMS_ENV] = before;
+    }
+  });
+});
+
+describe('the live demo\'s headless DEMO_YOU_WALLET sign-in, a key the demo is handed', () => {
+  /**
+   * ★ `demos/live` NEVER AGREES FOR THE KEY IT IS POINTED AT. The browser path shows the terms on
+   * the relay's page; this path asks nobody, and the drivers' variable is their operator agreeing for
+   * the accounts a driver run creates. So it is plain `mintBearer`: with that variable set and a
+   * statement on offer, a wallet that holds an account signs the ordinary statement, and one that
+   * holds none is refused once and told how to enrol, without the drivers' variable being suggested.
+   */
+  it('asks for no version with the drivers\' variable set, and a key with no account is told how to enrol it', async () => {
+    const known = Wallet.createRandom();
+    const fresh = Wallet.createRandom();
+    const f = fleet({ known: [known.address] });
+    const before = process.env[ACCEPT_HOSTED_TERMS_ENV];
+    process.env[ACCEPT_HOSTED_TERMS_ENV] = CURRENT;
+    try {
+      const bearer = await walletSignIn(RELAY, IDENTITY, known, f.impl);
+      const refused = await walletSignIn(RELAY, IDENTITY, fresh, f.impl).then(() => null, (e: Error) => e);
+
+      expect(bearer.accessToken).toBe(f.issued[0]);
+      expect(refused?.message.startsWith(`SIWE verify answered HTTP 428: ${TERMS_REFUSAL} (`)).toBe(true);
+      expect(refused?.message).toContain('the DEMO_YOU_WALLET key has no account yet');
+      expect(refused?.message).toContain('run the demo once without DEMO_YOU_WALLET');
+      expect(refused?.message).not.toContain(ACCEPT_HOSTED_TERMS_ENV);
+      expect(f.challengeBodies).toEqual([{ purpose: 'siwe' }, { purpose: 'siwe' }]);
+      expect(f.signedStatements).toEqual(['Sign in to Interego', 'Sign in to Interego']);
+      expect(f.accounts.has(fresh.address.toLowerCase())).toBe(false);
     } finally {
       if (before === undefined) delete process.env[ACCEPT_HOSTED_TERMS_ENV];
       else process.env[ACCEPT_HOSTED_TERMS_ENV] = before;

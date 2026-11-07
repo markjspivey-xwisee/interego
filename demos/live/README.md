@@ -70,7 +70,7 @@ Two more pieces of the ADL Total Learning Architecture, for both learners. cmi5 
 | `DEMO_AGENT_MODEL` | `sonnet` | The Claude model the Author and the Verifier run on. |
 | `DEMO_CLAUDE_BIN` | the first `claude` on PATH outside `node_modules` | The Claude Code CLI to run. |
 | `FOXXI_BRIDGE`, `INTEREGO_RELAY`, `INTEREGO_GATE` | the deployed services | Where the calls go. |
-| `DEMO_YOU_WALLET` | unset | Testing only: sign "you" in with a wallet instead of a passkey, with no browser. A wallet with no hosted account needs its operator's agreement to the Hosted Interego Terms: set `INTEREGO_ACCEPT_HOSTED_TERMS_VERSION` to the version at `https://identity.interego.xwisee.com/.well-known/hosted-interego-terms` you agreed to (unset, the first sign-in is refused with HTTP 428). The browser sign-in asks on the relay's page instead. |
+| `DEMO_YOU_WALLET` | unset | Testing only: sign "you" in with a wallet instead of a passkey, with no browser. This sign-in never gives the Hosted Terms agreement for the key, and does not read the live drivers' `INTEREGO_ACCEPT_HOSTED_TERMS_VERSION`, so a wallet with no hosted account is refused (`SIWE verify answered HTTP 428: …`, followed by how to enrol it). To enrol one, run the demo once without it and, on the relay's sign-in page, which shows the terms, sign in with that key in a browser wallet and tick the agreement, only if you agree to them for its account. A wallet that already holds an account signs in as before. |
 | `DEMO_DEBUG` | unset | Testing only: print the course answers to this process's console. They never reach the page. |
 
 ## What it leaves behind

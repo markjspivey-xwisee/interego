@@ -92,19 +92,28 @@ it, and that agent DID is the string every participant delegates to (Part D). So
   until each person re-linked. Losing the key is not a data-loss event (the records already
   written stand on their authors' pods), but it is a re-onboard-everyone event.
 - **Do not commit it.** It goes on the Railway service and nowhere else.
-- **A new key needs an account first, and the bot will not create one.** Hosted identity creates
-  an account only for a wallet that signed the Hosted Terms agreement, and the bot never gives it:
-  it signs `INTEREGO_BOT_KEY` in with the ordinary sign-in and does not read
-  `INTEREGO_ACCEPT_HOSTED_TERMS_VERSION`. A key generated above therefore has no account, and its
-  first sign-in is refused with HTTP 428: the bot logs `FATAL: SIWE verify answered HTTP 428: …` at
-  boot and exits. Before the first deploy with a new key, create its account with an explicit
-  agreement. Read the version identity offers, and the terms it names, at
-  `https://identity.interego.xwisee.com/.well-known/hosted-interego-terms`; only if you agree to
-  them for the bot's account, sign the key in once with that version. `mintBearer` in
-  [`../tools/live-identity.ts`](../tools/live-identity.ts) takes it as its
-  `{ acceptHostedTermsVersion }` option, and passing `DISCORD_CLIENT_NAME` (`src/identity.ts`) as
-  the client name seats the same agent the bot will run as. Nothing in this repository agrees on
-  your behalf. A key that already holds an account, such as the deployed bot's, needs none of this.
+- **A new key has no account, and creating one needs your Hosted Terms agreement.** Hosted
+  identity creates an account only for a wallet that signed the Hosted Terms agreement. The bot
+  gives it only when you, its operator, set `INTEREGO_BOT_ACCEPT_HOSTED_TERMS_VERSION`: it never
+  reads the live drivers' `INTEREGO_ACCEPT_HOSTED_TERMS_VERSION`, and nothing defaults it. Without
+  one of the two steps below, a key generated above is refused at its first sign-in with HTTP 428:
+  the bot logs `FATAL: SIWE verify answered HTTP 428: …` at boot, followed by both ways out,
+  and exits. First read the version identity offers, and the terms it names, at
+  `https://identity.interego.xwisee.com/.well-known/hosted-interego-terms`. Then, only if you agree
+  to them for the bot's account, do one of these:
+  1. **Set the bot's own variable.** Put `INTEREGO_BOT_ACCEPT_HOSTED_TERMS_VERSION` = that version
+     on the service (Part C). The bot's first sign-in then signs the agreement statement identity
+     returns for exactly that version, and the account is created. It is not a secret. You can
+     remove it once the bot has started; left set, each re-mint signs the same agreement for the
+     same account while identity still offers that version, and the ordinary sign-in once it
+     offers a newer one.
+  2. **Or create the account first.** Before the first deploy, sign the key in once with that
+     version. `mintBearer` in [`../tools/live-identity.ts`](../tools/live-identity.ts) takes it as
+     its `{ acceptHostedTermsVersion }` option, and passing `DISCORD_CLIENT_NAME`
+     (`src/identity.ts`) as the client name seats the same agent the bot will run as.
+
+  Nothing in this repository agrees on your behalf. A key that already holds an account, such as
+  the deployed bot's, needs neither.
 
 ---
 
@@ -133,6 +142,10 @@ This produces `ghcr.io/markjspivey-xwisee/interego-discord:<sha>` and `:latest`.
 - **Variables** — set the two secrets:
   - `DISCORD_BOT_TOKEN` = the token from Part A
   - `INTEREGO_BOT_KEY` = the key from Part B
+
+  and, for a NEW key whose account you chose to create through the bot (Part B, step 1), the
+  Hosted Terms version you read and agreed to for the bot's account:
+  - `INTEREGO_BOT_ACCEPT_HOSTED_TERMS_VERSION` = that version
 - **No public networking.** Do not generate a domain — it has no port to expose. Leave it as a
   private worker.
 - **Optional but recommended — a volume for link state.** The bot records which Discord account is
@@ -186,7 +199,8 @@ bot signs in under `DISCORD_CLIENT_NAME` (`src/identity.ts`). The pod half comes
 new DID; a changed client name is a new DID on the SAME pod. Either invalidates every delegation
 already published, because a delegation names one exact agent string. If instead you see the
 `INTEREGO_BOT_KEY is not set` / `DISCORD_BOT_TOKEN is not set` refusal, a variable did not take; if
-you see `FATAL: SIWE verify answered HTTP 428: …`, the key has no account yet (Part B); if you see
+you see `FATAL: SIWE verify answered HTTP 428: …`, the key has no account yet and the bot was given
+no agreement identity takes for one (Part B); if you see
 close code `4014`, the MESSAGE CONTENT intent (Part A step 3) is off.
 
 ### Two symptoms in Discord, and which one is a bug
