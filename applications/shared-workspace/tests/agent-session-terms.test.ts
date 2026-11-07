@@ -25,7 +25,7 @@
 
 import { afterEach, describe, expect, it } from 'vitest';
 import { Wallet, verifyMessage } from 'ethers';
-import { openAgentSession } from '../applications/shared-workspace/src/agent-session.js';
+import { openAgentSession } from '../src/agent-session.js';
 
 const RELAY = 'https://relay.example';
 const IDENTITY = 'https://identity.example';
