@@ -18,6 +18,10 @@ Tests: `applications/shared-workspace/tests/live-identity-terms.test.ts` drives 
 
 Not changed: neither the Discord bot nor the `demos/live` headless sign-in agrees to the terms, so a NEW `INTEREGO_BOT_KEY` or `DEMO_YOU_WALLET` key, which has no account, is still refused at its first sign-in; the refusal now carries the status and identity's text, and Discord `DEPLOY.md` Part B says to create a new bot key's account with an explicit agreement first. `probe-refresh-live.ts` keeps its own copy of the ceremony for a fixed key. The desktop app's sign-in is separate.
 
+## 2026-11-07 — I2IDL-X release: run the live visitor check on a runner its pinned Playwright supports
+
+`i2idlx-v93-release.yml`'s `live-visitor` job installs `playwright==1.56.0` and its Chromium on `ubuntu-latest`, which now resolves to Ubuntu 26.04. That Playwright refuses to install there, so the next release's post-deploy visitor check would fail before visiting the site. It now runs on `ubuntu-24.04`, like the I2IDL-X UI oracle job that pins the same Playwright, and like the live client-signature check (#789). With this change, every workflow job that installs a browser runs on `ubuntu-24.04`.
+
 ## 2026-11-07 — Live client-signature check: run its Chromium step on a runner the locked Playwright supports
 
 With #788 the live check's client step passes against the deployed relay and identity (run 42398216683: `CLIENT_SIGNATURE_LIVE_RESULT {"passed":true}`). The next step, `npx playwright install --with-deps chromium`, then failed: `ubuntu-latest` now resolves to Ubuntu 26.04, and the locked Playwright release refuses it ("Playwright does not support chromium on ubuntu26.04-x64"). `client-signature-live.yml` and `e2e-passkey.yml` now run on `ubuntu-24.04`, as `identity-tests.yml`'s passkey browser job already does (26d2fd3b).
@@ -41,6 +45,12 @@ Not fixed here, and failing the same way for a new wallet against hosted identit
 `prepareLocalHealthNote` (`applications/health-workbench/local-context.mjs`) checked each array with `Array.isArray` and a length bound, then validated it with `map`, `every` and a `Set`-size comparison. `every` skips holes, while `map` keeps them and a `Set` of one hole still has size 1. So a one-hole `options.selectedEntryIds`, a hole in an entry's `sourceIds` (even `Array(1)`, which also got past the one-citation minimum), `conceptIds` or `dates`, in a concept's `aliases`, or in `limits` passed and put `null` values into the prepared note. Holes in `entries`, `citations` and `concepts` already failed, but with an engine `TypeError` rather than the module's message.
 
 `list()` now copies each array once from its own data elements, and every caller uses that copy. A hole, a getter or a length that is not an exact integer within the bound fails with `expected a dense array of data values` or `expected a bounded array`. Valid packets prepare exactly as before. A new test covers holes in the selection and in each packet array, getter elements, and lying `length` values; it fails on the previous code. This covers arrays only: object fields are still read with ordinary property access, as before. Packets parsed from JSON can carry neither holes nor getters, so this hardens programmatic callers.
+
+## 2026-11-07 — Native source-file reading and dynamic Cloud LTI in Ask
+
+SCORM Cloud courses can now use bounded, versioned file-list and asset reads without ZIP export or a retained course cache. Foxxi plans the question over source paths and manifest titles; the UI distinguishes this from provider-executed question search and labels selected projection hashes separately from stable source version identity.
+
+An owner can prepare a connection-specific LTI tool, explicitly create a Cloud connector and separate helper course, verify Cloud's signed launch, and attach it only to the initiating authenticated browser, paired actor and selected source/version. Owner permission remains separate, and the model receives the launch reference without the platform subject or roles. No account/client credentials are deployment defaults. Temporary setup removal targets only its generated helper and connector, handles uncertain writes without duplicate creation, waits for in-flight setup, and reports incomplete cleanup honestly. Details: [course access integration](docs/integrations/i2idlx-course-access.md).
 
 ## 2026-11-07 — Explicit course access modes in Ask
 

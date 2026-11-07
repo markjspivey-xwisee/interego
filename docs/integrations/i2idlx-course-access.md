@@ -6,6 +6,7 @@ Ask supports three explicit access modes. The provider advertises which modes it
 | --- | --- | --- |
 | Read when I ask | A SCORM Cloud package export in request memory; only selected passages are sent to the paired agent. No retained course cache. | Explicit course/version permission assertion. Disconnect ends access. |
 | Temporary local content graph | The first export is parsed in memory. Instructional text and a graph of published sections, folders and order remain in this browser connection's server session; raw ZIP/media are not retained. | Explicit owner or owner-authorized assertion, selected expiry up to 30 minutes and no later than the paired session. Delete/revoke removes the local text and graph and cancels in-flight retrieval. |
+| Read selected source files (SCORM Cloud virtual) | Foxxi plans the question from versioned file paths and manifest titles, reads bounded selected Cloud assets into request memory, and returns cited instructional passages. No ZIP export, media download, retained course text or retained graph. | Explicit course/version permission assertion. Every question authenticates fresh versioned file-list and asset reads. A source version identifies the course; a separate projection hash describes only returned material. |
 | Query at source | A compatible provider executes retrieval against its own course and optional graph, returning only bounded question passages and graph evidence. No package/export operation or local course cache exists in this mode. | A current source-issued grant for the actor, course and version is checked on every question. Owner policy can revoke it. External derived-content deletion is pending until the provider confirms completion. |
 
 These are temporary connections, not a persistent content library. Neither account credentials nor course IDs are application defaults. The local graph expresses published structure and lexical matches; it does not invent semantic prerequisites or certify learning. A provider can supply a richer graph from its own index.
@@ -21,6 +22,32 @@ These are temporary connections, not a persistent content library. Neither accou
 Deletion prevents future application reuse and late results from restoring the local cache/history. It does not recall passages already sent to an AI client or erase that client's conversations. Owners should allow that sharing explicitly in their source grant. Managed retention outside this session requires a separate owner-controlled storage and deletion integration; it is not silently enabled here.
 
 Stopping a question cancels that retrieval without deleting a still-valid cache or permission. A failed access recheck that revokes permission clears the visible course context immediately; a rejected Cloud credential also clears the connection and shows the reconnect form.
+
+## Native SCORM Cloud virtual access
+
+Cloud's native API supplies a versioned file list and individual assets; it does not execute natural-language questions. The workbench selects files using question terms, source paths and manifest titles, then uses its existing instructional reader. Selected files cross the network, and one HTML file can contain an entire small course. This mode means no package replication or retained course cache, not that no text is copied during a read.
+
+The reader requires a root SCORM manifest and a supported instructional format. The file list is limited to 2,000 entries and 256 KiB. A question may read at most eight files including the manifest, 64 KiB per file and 192 KiB in total. Unsafe paths, ambiguous duplicates, changing sizes, oversized assets and unsupported formats are refused; there is no ZIP or media fallback. Known assessment files and assessment pages are excluded, without claiming semantic certification of all source material. Normal context limits still bound the passages sent to the paired agent.
+
+Course identity is stable for this connection, course and provider version. The displayed selected-projection hash is not a full-course or package fingerprint. Any request-local graph describes only observed containment and headings in selected files; omitted files do not establish source adjacency, semantic prerequisites or course completeness.
+
+## Dynamic Cloud LTI launch
+
+For this path **SCORM Cloud is the LTI platform and Foxxi is the tool**. Cloud Dispatch has the opposite direction and is not reused as an incoming launch proof. Account-specific credentials, connector IDs, client/deployment IDs, selected courses and agent bindings are supplied or created at runtime; none are global environment defaults.
+
+The inbound LTI receiver requires a public HTTPS workbench address. Existing local HTTP course connections still work without that receiver; preparing LTI there reports the missing HTTPS requirement without ending the course connection.
+
+1. Connect your own Cloud account in Ask, select the original course/version, choose an access mode and confirm the owner's permission.
+2. Expand **Connect this course through LTI** and prepare its public connection settings. Preparation creates no Cloud registration.
+3. The owner can explicitly create one trusted Cloud LTI content connector and a separate private helper course. This requires a Cloud credential allowed to manage those objects. The original course is not edited. The temporary tool publishes only a public key; it requests no grade or roster service and cannot use its discarded private key for outbound LTI service calls.
+4. Open the helper course. Cloud performs OIDC and form-posts an LTI 1.3 resource launch to the connection-specific Foxxi callback. Foxxi verifies the registered platform key, issuer, audience, deployment, target, nonce/state, times, resource and exact helper context.
+5. Return to the original Ask tab, check the connection, review its verified platform subject/course association, and explicitly use the verified launch. Only that authenticated browser session and paired actor can consume the proof. An LTI subject is not interpreted as an Interego DID, and an LTI role is not ownership or permission to share content.
+6. Ask about the original course using the chosen reader. The signed launch reference accompanies context only after attachment; the raw platform subject, roles and custom claims are not sent to the AI agent. Cloud content reading still requires the separate current source connection and course permission.
+7. Remove the Cloud LTI setup when finished. This deletes only the generated helper course and exact connector created for it. Source disconnect also attempts cleanup and reports uncertainty. An import still running, an unknown create result, expiry or a server interruption cannot be called completed removal. Local receivers/proofs expire or revoke immediately; unconfirmed Cloud objects may need removal in the owner's Cloud settings.
+
+Setup and cleanup serialize around in-flight creation. Revocation prevents further helper creation and late verification from restoring a binding. Uncertain creation is reconciled through the exact generated public key and callback URLs; it never triggers a blind duplicate create. Cleanup of an older setup does not revoke a newly granted course permission.
+
+The provider contracts are documented by the [Cloud API](https://cloud.scorm.com/docs/v2/reference/swagger/) and [Cloud's LTI 1.3 platform setup](https://support.scorm.com/hc/en-us/articles/6809218403739-How-To-Use-SCORM-Cloud-as-an-LTI-1-3-Platform). This is an owner-operated, temporary integration; it does not imply that every external LMS exposes course text through LTI.
 
 ## Source service protocol
 
@@ -49,4 +76,4 @@ An LMS/publisher must install and configure this adapter, map its verified launc
 
 ## Verification scope
 
-Focused tests cover actual cache reuse, permission expiry/revocation, cross-session isolation, deletion during an in-flight read, content identity/refresh, source-provider protocol binding, DNS/redirect/response bounds, owner policy and source-side deletion receipts. Local source-service round trips prove the implemented protocol; they do not certify an arbitrary publisher or an installed external LMS integration. The earlier live SCORM Cloud Q&A test remains separate evidence for that provider's export path.
+Focused tests cover cache reuse, native versioned asset reads without ZIP fallback, permission expiry/revocation, cross-session isolation, deletion during an in-flight read/setup, content identity/refresh, source-provider protocol binding, DNS/redirect/response bounds, owner policy and deletion receipts. LTI tests separately verify real RSA/ECDSA signatures and HTTP protocol handling; combined fixtures verify explicit attachment, native course context, uncertainty and cleanup. Local tests do not certify an arbitrary publisher or establish a live Cloud launch. Live evidence must record the actual deployment, vendor launch, asset provenance and confirmed cleanup separately from the earlier export/cache tests.
