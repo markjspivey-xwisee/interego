@@ -30,8 +30,10 @@ await new Promise((resolve, reject) => { server.once('error', reject); server.li
 const address = server.address();
 assert.ok(address && typeof address !== 'string');
 const base = 'http://127.0.0.1:' + address.port;
+let brokerNow = Date.now(), clientNow = brokerNow;
 const store = attachAgentSessionRoutes(app, {
   baseUrl: base,
+  now: () => brokerNow,
   verifyCaller: async (body, write) => {
     assert.equal(write, true);
     if (!body || body.fixture_verified !== true || !body.fixture_payload || body.fixture_actor !== FIXTURE_ACTOR) {
@@ -51,7 +53,7 @@ const localFetch = async (input, options) => {
   if (new URL(input).pathname === AGENT_SESSION_PATH + '/create') created = await response.clone().json();
   return response;
 };
-const client = createAgentSessionClient({ fetch: localFetch, url: path => base + path, origin: () => base + '/', pollMs: 5, onState: state => statuses.push(state.state) });
+const client = createAgentSessionClient({ fetch: localFetch, url: path => base + path, origin: () => base + '/', now: () => clientNow, pollMs: 5, onState: state => statuses.push(state.state) });
 async function driver(operation, extra = {}, expectedStatus = 200) {
   assert.ok(created);
   const payload = {
@@ -179,10 +181,68 @@ try {
   assert.equal(client.status().state, 'disconnected');
   await driver('next', {}, 410);
 
+  // Use the production ten-minute request and thirty-minute session bounds with
+  // injected clocks. Exercise both sides of the deadline race without waiting.
+  await client.connect(); driverToken = null;
+  await driver('claim', { invite_token: created.invite_token });
+  await client.refresh();
+  const timedSample = client.getSample();
+  const serverTimeout = samplePromise(timedSample('A question whose broker deadline will expire.'));
+  const expiredTurn = await nextTurn();
+  brokerNow += 10 * 60_000 + 1;
+  await assert.rejects(serverTimeout, error => error.code === 'request_timeout');
+  assert.equal(client.status().state, 'connected');
+  assert.equal(client.status().pending, false);
+  assert.equal(client.getSample(), timedSample);
+  assert.equal((await driver('next')).state, 'idle');
+  const expiredSnapshot = await localFetch(created.browser_url, {
+    method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + created.browser_token },
+    body: JSON.stringify({ session_id: created.session_id, operation: 'poll', turn_id: expiredTurn.turn_id }),
+  }).then(response => response.json());
+  assert.equal(expiredSnapshot.error_code, 'request_timeout');
+  assert.equal(expiredSnapshot.error, 'The agent request expired.');
+  await driver('finish', update(expiredTurn, { text: 'Too late.' }), 409);
+
+  async function recover(previous) {
+    const pending = samplePromise(timedSample('A fresh question on the same paired connection.'));
+    const fresh = await nextTurn(previous);
+    assert.equal(fresh.error_code, undefined, 'A new turn must not inherit the timed-out turn code.');
+    await driver('finish', update(fresh, { text: 'A fresh answer on the same connection.' }));
+    assert.equal((await pending).text, 'A fresh answer on the same connection.');
+    return fresh.turn_id;
+  }
+  const recovered = await recover(expiredTurn.turn_id);
+
+  clientNow = brokerNow;
+  const clientTimeout = samplePromise(timedSample('A question whose client deadline will expire first.'));
+  const cutoffTurn = await nextTurn(recovered);
+  clientNow += 10 * 60_000 + 1;
+  await assert.rejects(clientTimeout, error => error.code === 'request_timeout');
+  assert.equal(client.status().state, 'connected');
+  assert.equal(client.status().pending, false);
+  assert.equal(client.getSample(), timedSample);
+  await driver('finish', update(cutoffTurn, { text: 'Too late after client cancellation.' }), 409);
+  const recoveredAgain = await recover(cutoffTurn.turn_id);
+
+  // Identical prose from an agent is still an agent failure, not broker expiry.
+  const agentFailure = samplePromise(timedSample('A genuine connected-agent failure.'));
+  const failedTurn = await nextTurn(recoveredAgain);
+  await driver('finish', update(failedTurn, { error: 'An agent error.', error_code: 'request_timeout' }), 400);
+  const failed = await driver('finish', update(failedTurn, { error: 'The agent request expired.' }));
+  assert.equal(failed.error_code, undefined);
+  await assert.rejects(agentFailure, error => error.code === 'unavailable');
+
+  // Keep the client clock inside the session to exercise a genuine HTTP 410.
+  brokerNow = Date.parse(created.expires_at) + 1;
+  await assert.rejects(timedSample('A question after the real session deadline.'), error => error.code === 'session_expired');
+  assert.equal(client.status().state, 'expired');
+  assert.equal(client.getSample(), null);
+  await driver('next', {}, 410);
+
   console.log(JSON.stringify({
     status: 'passed', transport: 'real loopback HTTP', browserClient: 'actual agent-session.js', router: 'actual attachAgentSessionRoutes',
     verifier: 'deterministic fixture; not cryptographic authentication', model: 'deterministic driver fixture; no subscription or provider called',
-    checks: ['explicit pairing', 'unsigned and wrong driver capability refusal', 'streamed onText snapshots', 'final answer', 'advertised tool execution', 'actual tool-result round trip', 'plain orchestration prompts', 'zero-argument page tools', 'cumulative tool-round handoff offsets', 'cancellation', 'late finish refusal', 'disconnect revocation'],
+    checks: ['explicit pairing', 'unsigned and wrong driver capability refusal', 'streamed onText snapshots', 'final answer', 'advertised tool execution', 'actual tool-result round trip', 'plain orchestration prompts', 'zero-argument page tools', 'cumulative tool-round handoff offsets', 'cancellation', 'late finish refusal', 'disconnect revocation', 'broker request timeout and same-session recovery', 'client request timeout and same-session recovery', 'agent failure remains distinct', 'real session expiry'],
     httpRequests: requestCount, streamedSnapshots: streams.length, executedPageTools: toolExecutions,
   }));
 } finally {

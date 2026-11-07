@@ -8,11 +8,14 @@ import { resolve, join, dirname } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { execFileSync } from 'node:child_process';
 import { createRequire } from 'node:module';
+import { createHash } from 'node:crypto';
 import { loadConfig } from './config.js';
 import * as hist from './history.js';
 import * as SEMM from './semantic.js';
-import { safeIri } from './rdf.js';
+import { safeIri, parseTurtle, serializeTurtle } from './rdf.js';
+import { authoredReferenceShapes } from './authored-shapes.js';
 import { cw, mappingIds } from './generate.js';
+import { AUTHORED_CATALOG, authoredReferentTurtle, authoredCatalogView } from './authored-concepts.js';
 
 // JSON input is verified at the projection boundary; its values may be heterogeneous.
 type Value = ReturnType<typeof JSON.parse>;
@@ -655,7 +658,10 @@ export async function buildApp(root = resolve(dirname(fileURLToPath(import.meta.
   };
   const runFile = join(root, 'examples', 'orchestra', 'kestrel-point-run.json'), orchestra = existsSync(runFile) ? json(runFile) : null;
   if (orchestra) check(orchestra.v === 1 && orchestra.events.every((e: Row) => ['step', 'say', 'call', 'result', 'decision'].includes(e.k)), 'recorded run has known event kinds');
-  const data: Row = { meta, kinds, roles, statuses, methods, interrogatives, collections, sources, concepts, actions, enactments, inherited, roleCaps, mappings, releases, ports, queries, suggestions: annotation.suggestions, changeKinds, forms: annotation.forms, semantic, orchestra };
+  // The unchanged canonical projection remains independently comparable with the Python oracle.
+  // Authored definitions have their own namespace, origin and revision; consumers combine them explicitly.
+  const data: Row = { meta, kinds, roles, statuses, methods, interrogatives, collections, sources, concepts, actions, enactments, inherited, roleCaps, mappings, releases, ports, queries, suggestions: annotation.suggestions, changeKinds, forms: annotation.forms, semantic, orchestra,
+    authoredCatalog: { ...AUTHORED_CATALOG, baseUrl: new URL(cfg.appArtifactUrl!).origin, canonicalSource: json(join(root, 'typescript', 'upstream-pin.json')) } };
   mkdirSync(OUTPUT, { recursive: true }); const out = join(OUTPUT, 'data.json'); writeFileSync(out, JSON.stringify(data));
   if (failures.length) throw new Error('App data validation failed:\n' + failures.slice(0, 40).join('\n'));
   if (options.dataOnly) return data;
@@ -675,6 +681,10 @@ export async function buildApp(root = resolve(dirname(fileURLToPath(import.meta.
     '<script type="application/json" id="i2-data">' + inlineJson(data) + '</script>\n<script>' + shareUrlBootstrap(cfg.archivedAppArtifactUrl || cfg.appArtifactUrl || '') + '</script>\n' +
     cdn.map(u => '<script src="' + u + '" crossorigin="anonymous"></script>\n').join('') + '<script>\n' + inlineJs(readFileSync(bundle, 'utf8')) + '\n</script>\n</body>\n</html>\n';
   mkdirSync(SITE, { recursive: true }); writeFileSync(join(SITE, 'app.html'), page);
+  const authoredBase = new URL(cfg.appArtifactUrl!).origin, authoredRdf = authoredReferentTurtle(data, authoredBase);
+  writeFileSync(join(SITE, 'authored.ttl'), authoredRdf);
+  writeFileSync(join(SITE, 'authored-shapes.ttl'), await serializeTurtle(authoredReferenceShapes(data, parseTurtle(readFileSync(join(DIST, 'i2idlx-shapes.ttl'), 'utf8')))));
+  writeFileSync(join(SITE, 'authored-catalog.json'), JSON.stringify(authoredCatalogView(data, authoredBase, createHash('sha256').update(authoredRdf).digest('hex')), null, 2) + '\n');
   check(Buffer.byteLength(page) < 16000000, 'workbench HTML is below the 16 MB artifact limit');
   if (failures.length) throw new Error(failures.join('\n'));
   process.stdout.write('wrote ' + join(SITE, 'app.html') + '\n'); return data;

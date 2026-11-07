@@ -10,6 +10,7 @@ import { resolveSubjectPodUrlPure } from '../src/subject-pod-url.js';
 import { safePublicUrlOrUndefined } from '../src/ssrf-guard.js';
 import { actorForPod } from '../src/mesh-event-projector.js';
 import { readSelfXapi, writeSelfXapi } from '../src/self-xapi.js';
+import { persistStatementWithUsage } from '../src/i2idlx-usage-record.js';
 
 const source = readFileSync(new URL('../bridge/server.ts', import.meta.url), 'utf8');
 const ast = ts.createSourceFile('server.ts', source, ts.ScriptTarget.ES2022, true);
@@ -35,7 +36,7 @@ function fixture({ authenticated = true, persisted = true } = {}) {
   class CaptureError extends Error { status = 500; }
   const ports = {
     tenantPodUrl: 'https://gate.example/foxxi/', SAME_STORE_ORIGINS: new Set(['https://gate.example', 'http://css.internal:3456']),
-    resolveSubjectPodUrlPure, safePublicUrlOrUndefined, actorForPod, MESH_ACTOR_LABELS: {}, readSelfXapi, writeSelfXapi,
+    resolveSubjectPodUrlPure, safePublicUrlOrUndefined, actorForPod, MESH_ACTOR_LABELS: {}, readSelfXapi, writeSelfXapi, persistStatementWithUsage,
     bindSignedCaller: async (payload: Record<string, unknown>) => authenticated
       ? { ok: true, callerDid: did, payload } : { ok: false, status: 401, error: 'invalid signature' },
     checkAgenticRateLimit: () => ({ ok: true }), telemetryCaptureStore: () => ({}), randomUUID, randomBytes,

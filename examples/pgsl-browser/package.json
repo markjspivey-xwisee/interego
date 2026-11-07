@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
-    "build": "esbuild server.ts --platform=node --target=node20 --format=esm --outfile=dist/server.js --sourcemap",
+    "build": "esbuild server.ts --bundle --packages=external --platform=node --target=node20 --format=esm --outfile=dist/server.js --sourcemap",
     "start": "node dist/server.js",
     "dev": "tsx server.ts"
   },

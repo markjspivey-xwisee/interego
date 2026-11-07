@@ -3,7 +3,7 @@
 // that q-classify concludes nothing an OWL 2 RL reasoner does not, and check_app_logic.py checks this file
 // against q-classify). Clashes come from the category disjointness table, which OWL 2 RL confirmed pair by pair.
 import N3Parser from "n3/src/N3Parser.js";
-import { META, SEMANTIC as S, C, byId, CONCEPT_NS } from "./data.js";
+import { META, SEMANTIC as S, C, byId, byIri, iriOf, CONCEPT_NS } from "./data.js";
 
 export const SEM = S;
 export const CATS = S.categories;
@@ -95,7 +95,7 @@ const DEFAULT_PREFIXES = `@prefix i2x:   <${META.ns}> .\n@prefix i2idl: <${CONCE
 /** A starter snippet that classifies one made-up thing with a concept. */
 export function snippetFor(cid) {
   const c = byId.get(cid);
-  return `${DEFAULT_PREFIXES}@prefix ex:    <https://example.org/my-org/> .\n\nex:my-${cid.slice(0, 40)} rdfs:label ${JSON.stringify("Our " + c.l.toLowerCase())} ;\n    i2x:isClassifiedBy i2idl:${cid} .\n`;
+  return `${DEFAULT_PREFIXES}@prefix ex:    <https://example.org/my-org/> .\n\nex:my-${cid.slice(0, 40)} rdfs:label ${JSON.stringify("Our " + c.l.toLowerCase())} ;\n    i2x:isClassifiedBy <${iriOf(cid)}> .\n`;
 }
 
 /**
@@ -122,10 +122,10 @@ export function classify(text, extraBridges) {
     if (p === RDF_TYPE && q.object.termType === "NamedNode") get(s).types.add(q.object.value);
     else if (p === CLASSIFIED_BY) {
       const o = q.object;
-      const id = o.termType === "NamedNode" && o.value.startsWith(CONCEPT_NS) ? o.value.slice(CONCEPT_NS.length) : null;
+      const id = o.termType === "NamedNode" ? byIri.get(o.value)?.id : null;
       if (id && byId.has(id)) get(s).by.set(id, { c: id, how: "stated" });
       else get(s).problems.push(o.termType === "NamedNode"
-        ? { kind: "unknown", v: o.value, text: o.value.startsWith(CONCEPT_NS) ? `${o.value} is not a concept in I2IDL ${META.release}.` : `${o.value} is not an I2IDL concept; i2x:isClassifiedBy names one by its IRI under ${CONCEPT_NS}.` }
+        ? { kind: "unknown", v: o.value, text: `${o.value} is not an available canonical or authored concept in this workbench.` }
         : { kind: "literal", v: o.value, text: `"${o.value}" is text; i2x:isClassifiedBy needs an I2IDL concept IRI.` });
     } else if (LABEL_PREDS.includes(p) && q.object.termType === "Literal") {
       const r = get(s);
@@ -167,7 +167,7 @@ export function classify(text, extraBridges) {
     typings += list.length;
     const subject = r.iri.startsWith("_:") ? r.iri : "<" + r.iri + ">"; // a blank node stays one, in every line
     for (const x of list) lines.push(`${subject} a <${expand(x.t)}> .`);
-    for (const b of r.by.values()) if (b.how === "bridge") lines.push(`${subject} <${CLASSIFIED_BY}> <${CONCEPT_NS + b.c}> .`);
+    for (const b of r.by.values()) if (b.how === "bridge") lines.push(`${subject} <${CLASSIFIED_BY}> <${iriOf(b.c)}> .`);
     resources.push({ iri: r.iri, label: r.label, by: [...r.by.values()], cats: uniq, classes: list, clashes, notes, problems: r.problems,
       types: [...r.types].map(curieOf) });
   }

@@ -1,3 +1,4 @@
+import { safeNavigationHref } from "../navigation-links.js";
 // The map: the whole glossary as a territory (fields are regions, laid out once at build time),
 // a focused neighborhood, and the path between any two terms.
 import { C, KINDS, LAYOUT, COLLECTIONS, byId, kindById, fieldById, degree, ADJ, shortestPaths, relationBetween } from "../data.js";
@@ -11,6 +12,8 @@ import { OriginStrip } from "../origin.jsx";
 const { useState, useEffect, useMemo, useRef, useCallback } = React;
 
 export function MapView({ route }) {
+  const { lens, setLens } = useUI();
+  if (lens === "i2idl" && [route.id, route.a, route.b].some((id) => byId.get(id)?.origin?.kind === "authored")) return <div className="page"><p>This term belongs to the authored I2IDL-X proposal layer.</p><button className="btn" onClick={() => setLens("x")}>Show + I2IDL-X</button></div>;
   const mode = route.mode || "whole";
   const setMode = (m) => {
     if (m === "whole") go("whole" + (route.id ? "-" + route.id : ""));
@@ -24,7 +27,7 @@ export function MapView({ route }) {
           { v: "whole", l: "Whole glossary", icon: "globe" }, { v: "neighborhood", l: "Neighborhood", icon: "graph" }, { v: "path", l: "Path", icon: "route" },
         ]} />
         <span className="spacer" />
-        <span className="mapstrip"><OriginStrip items={[["i2idl", "relations and fields"], ["derived", "layout and kinds"]]} /></span>
+        <span className="mapstrip"><OriginStrip items={[["i2idl", "canonical relations and fields"], ["proposed", "authored concept and links"], ["derived", "layout and kinds"]]} /></span>
         {mode !== "path" ? <div style={{ width: "min(320px, 100%)" }}><ConceptPicker small placeholder="Find on the map…" onPick={(id) => go((mode === "whole" ? "whole-" : "map-") + id)} /></div> : null}
       </div>
       {mode === "whole" ? <WholeMap focus={route.id} /> : mode === "neighborhood" ? <Neighborhood id={route.id} /> : <PathView a={route.a} b={route.b} />}
@@ -36,7 +39,7 @@ export function MapView({ route }) {
 const EDGES = (() => {
   const out = [];
   for (const c of C) {
-    for (const r of c.r) if (c.id < r) out.push({ a: c.id, b: r, t: "r", x: c.pf !== byId.get(r).pf });
+    for (const r of c.r) if (c.id < r || c.origin?.kind === "authored") out.push({ a: c.id, b: r, t: "r", proposed: c.origin?.kind === "authored", x: c.pf !== byId.get(r).pf });
     for (const b of c.b) out.push({ a: c.id, b, t: "b", x: c.pf !== byId.get(b).pf });
   }
   return out;
@@ -55,7 +58,7 @@ function WholeMap({ focus }) {
   const [hidden, setHidden] = useStored("map.hiddenKinds", []);
   const [field, setField] = useStored("map.field", "");
   const [showRelated, setShowRelated] = useStored("map.related", true);
-  const { hover } = useUI();
+  const { hover, lens } = useUI();
 
   useEffect(() => {
     const element = svgRef.current, group = gRef.current;
@@ -109,7 +112,7 @@ function WholeMap({ focus }) {
   }, [hoverId, sel]);
   const fieldSet = field ? new Set(C.filter((c) => c.f.includes(field)).map((c) => c.id)) : null;
   const hiddenSet = new Set(hidden);
-  const visible = (c) => !hiddenSet.has(c.k);
+  const visible = (c) => !hiddenSet.has(c.k) && (lens !== "i2idl" || c.origin?.kind !== "authored");
   const z = (s * k) / 0.6; // effective zoom relative to a ~1000px-wide map
   const labelCut = z < 0.8 ? 8 : z < 1.2 ? 16 : z < 1.8 ? 32 : z < 2.6 ? 70 : z < 4 ? 150 : 400;
   const px = (n) => n / (s * k); // screen pixels → layout units at the current zoom
@@ -120,7 +123,7 @@ function WholeMap({ focus }) {
   return (
     <div className="mapwrap">
       <svg ref={svgRef} viewBox={`0 0 ${LAYOUT.w} ${LAYOUT.h}`} preserveAspectRatio="xMidYMid meet" role="img"
-        aria-label={`Map of ${C.length} terms in ${COLLECTIONS.field.length} fields`} onClick={(e) => { if (e.target === svgRef.current) setSel(null); }}>
+        aria-label={`Map of ${C.filter(visible).length} terms in ${COLLECTIONS.field.length} fields`} onClick={(e) => { if (e.target === svgRef.current) setSel(null); }}>
         <g ref={gRef} style={{ "--k": k }}>
           {LAYOUT.regions.map((r) => (
             <text key={r.f} className="region" x={r.x} y={r.y} textAnchor="middle" style={{ fontSize: Math.max(10, Math.min(19, 30 * s)) / (s * Math.sqrt(k)) }}
@@ -213,9 +216,9 @@ function MapSide({ c, onClose }) {
       <p>{c.d}</p>
       {c.r.length || c.b.length || c.n.length ? <div className="chips">{[...c.b, ...c.n, ...c.r].slice(0, 12).map((x) => <ConceptChip key={x} id={x} />)}</div> : null}
       <div className="row wrap">
-        <a className="btn sm primary" href={"#c-" + c.id}>Open entry</a>
-        <a className="btn sm" href={"#map-" + c.id}><Icon name="graph" />Neighborhood</a>
-        <a className="btn sm" href={"#path-" + c.id + "~"}><Icon name="route" />Path from here</a>
+        <a className="btn sm primary" href={safeNavigationHref("#c-" + c.id)}>Open entry</a>
+        <a className="btn sm" href={safeNavigationHref("#map-" + c.id)}><Icon name="graph" />Neighborhood</a>
+        <a className="btn sm" href={safeNavigationHref("#path-" + c.id + "~")}><Icon name="route" />Path from here</a>
       </div>
     </div>
   );
@@ -225,8 +228,8 @@ function MapSide({ c, onClose }) {
 function Neighborhood({ id }) {
   const c = byId.get(id);
   const [depth, setDepth] = useStored("map.depth", 1);
-  const { hover } = useUI();
-  const layout = useMemo(() => (c ? radial(c, depth) : null), [id, depth]);
+  const { hover, lens } = useUI();
+  const layout = useMemo(() => (c ? radial(c, depth, lens) : null), [id, depth, lens]);
   const [wrapRef, wrapW] = useWidth(200);
   if (!c) return <div className="page"><div className="note"><Icon name="info" />Pick a term to see its neighborhood.</div></div>;
   const { nodes, edges, box } = layout;
@@ -273,14 +276,14 @@ function Neighborhood({ id }) {
         <h3>{c.l}</h3>
         <p>{c.d}</p>
         <div className="row wrap">
-          <a className="btn sm primary" href={"#c-" + c.id}>Open entry</a>
-          <a className="btn sm" href={"#whole-" + c.id}><Icon name="globe" />On the map</a>
-          <a className="btn sm" href={"#path-" + c.id + "~"}><Icon name="route" />Path from here</a>
+          <a className="btn sm primary" href={safeNavigationHref("#c-" + c.id)}>Open entry</a>
+          <a className="btn sm" href={safeNavigationHref("#whole-" + c.id)}><Icon name="globe" />On the map</a>
+          <a className="btn sm" href={safeNavigationHref("#path-" + c.id + "~")}><Icon name="route" />Path from here</a>
         </div>
         {groups.map(([lab, list]) => (
           <div key={lab} className="stack" style={{ gap: 6 }}>
             <div className="eyebrow">{lab} · {list.length}</div>
-            <div className="chips">{list.map((x) => <a key={x} className="cchip" href={"#map-" + x}><span className={"dot kd-" + byId.get(x).k} /><span className="lbl">{byId.get(x).l}</span></a>)}</div>
+            <div className="chips">{list.map((x) => <a key={x} className="cchip" href={safeNavigationHref("#map-" + x)}><span className={"dot kd-" + byId.get(x).k} /><span className="lbl">{byId.get(x).l}</span></a>)}</div>
           </div>
         ))}
         <p className="tiny muted">Click any term to move the neighborhood there; click the center to open its entry.</p>
@@ -289,7 +292,7 @@ function Neighborhood({ id }) {
   );
 }
 
-function radial(c, depth) {
+function radial(c, depth, lens) {
   const nodes = new Map([[c.id, { id: c.id, x: 0, y: 0, d: 0, t: 0 }]]);
   const edges = [];
   const rel = c.r.map((x) => [x, "r"]);
@@ -313,7 +316,7 @@ function radial(c, depth) {
     const R2 = R1 + 190;
     for (const [x] of ring) {
       const parent = nodes.get(x);
-      const kids = ADJ.get(x).filter(([y]) => !nodes.has(y)).slice(0, 5);
+      const kids = ADJ.get(x).filter(([y]) => !nodes.has(y) && (lens !== "i2idl" || byId.get(y)?.origin?.kind !== "authored")).slice(0, 5);
       const spread = Math.min(step * 0.9, 0.11 * (kids.length - 1));
       kids.forEach(([y, r], i) => {
         const t = parent.t - spread / 2 + (kids.length > 1 ? (spread * i) / (kids.length - 1) : 0);
@@ -338,15 +341,16 @@ function radial(c, depth) {
 
 // ── Path between two terms ───────────────────────────────────────────────────────────────────────
 function PathView({ a, b }) {
+  const { lens } = useUI();
   const A = a && byId.get(a), B = b && byId.get(b);
-  const paths = useMemo(() => (A && B ? shortestPaths(A.id, B.id, 4) : []), [a, b]);
+  const paths = useMemo(() => (A && B ? shortestPaths(A.id, B.id, 4, lens) : []), [a, b, lens]);
   const set = (x, y) => go("path-" + (x || "") + "~" + (y || ""));
   return (
     <div className="view" style={{ overflow: "auto" }}>
       <div className="page stack" style={{ gap: 18 }}>
         <div className="stack" style={{ gap: 6 }}>
           <h1 className="h-display" style={{ fontSize: 26 }}>How are two terms connected?</h1>
-          <p className="muted">Shortest routes through I2IDL's editorial links (related, broader, narrower).</p>
+          <p className="muted">{lens === "i2idl" ? "Shortest routes through I2IDL's editorial links" : "Shortest routes through canonical I2IDL and authored I2IDL-X links"} (related, broader, narrower).</p>
         </div>
         <div className="qparams" style={{ maxWidth: 720 }}>
           <label className="field"><span>From</span><ConceptPicker value={a} onPick={(x) => set(x, b)} placeholder="First term…" /></label>
@@ -365,7 +369,7 @@ function PathView({ a, b }) {
                     const rel = j < p.length - 1 ? relationBetween(id, p[j + 1]) : null;
                     return (
                       <React.Fragment key={id}>
-                        <a className="pstep" href={"#c-" + id} style={{ textDecoration: "none", color: "inherit" }}>
+                        <a className="pstep" href={safeNavigationHref("#c-" + id)} style={{ textDecoration: "none", color: "inherit" }}>
                           <div className="row small muted"><span className={"dot kd-" + c.k} />{kindById.get(c.k).label}</div>
                           <h4>{c.l}</h4><p>{c.d}</p>
                         </a>
@@ -376,7 +380,7 @@ function PathView({ a, b }) {
                 </div>
                 </div>
               ))}
-              <div className="row wrap"><a className="btn sm" href={`#cmp-${A.id}~${B.id}`}><Icon name="compare" />Compare side by side</a></div>
+              <div className="row wrap"><a className="btn sm" href={safeNavigationHref(`#cmp-${A.id}~${B.id}`)}><Icon name="compare" />Compare side by side</a></div>
             </div>
           ) : <div className="note"><Icon name="info" />No route links these two terms in this release.</div>
         ) : <div className="muted small">Pick two terms.</div>}

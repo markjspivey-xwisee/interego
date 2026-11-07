@@ -1,6 +1,6 @@
 // Ask, grounded in the glossary: a connected executor reads the release through page tools (search, look up,
 // paths, capabilities, team notes) and cites every term as [[concept-id]]. Runs on the viewer's own account.
-import { C, META, byId, kindById, typeById, fieldById, SOURCES, ACTIONS, roleById, enactByConcept, mapsByConcept, inhByConcept, shortestPaths, relationBetween, conceptsByAction, systemLabel, COLLECTIONS } from "../data.js";
+import { C, META, byId, iriOf, kindById, typeById, fieldById, SOURCES, ACTIONS, roleById, enactByConcept, mapsByConcept, inhByConcept, shortestPaths, relationBetween, conceptsByAction, systemLabel, COLLECTIONS } from "../data.js";
 import { search } from "../search.js";
 import { askInstructions } from "../ask-rules.js";
 import { useCaps } from "../caps.js";
@@ -9,6 +9,7 @@ import { useUI, Seg } from "../ui.jsx";
 import { MiniMarkdown } from "../text.jsx";
 import { useStored } from "../util.js";
 import { AIClientTaskLinks } from "../connection.jsx";
+import { useCourseContext } from "../course-context.jsx";
 
 const { useState, useRef, useEffect, useCallback } = React;
 
@@ -16,11 +17,11 @@ const INDEX = C.map((c) => `${c.id}: ${c.l}`).join("\n");
 const short = (s, n) => (s && s.length > n ? s.slice(0, n).replace(/\s+\S*$/, "") + "…" : s);
 
 function brief(c) {
-  return { id: c.id, label: c.l, kind: kindById.get(c.k).label, field: fieldById.get(c.pf).label, definition: short(c.d, 320) };
+  return { id: c.id, iri: iriOf(c.id), origin: c.origin, label: c.l, kind: kindById.get(c.k).label, field: fieldById.get(c.pf).label, definition: short(c.d, 320) };
 }
 function full(c, notes) {
   return {
-    id: c.id, label: c.l, alsoKnownAs: c.a, definition: c.d, editorialNote: c.x, type: typeById.get(c.t).label, agenticKind: kindById.get(c.k).label,
+    id: c.id, iri: iriOf(c.id), origin: c.origin, candidateAssociations: c.candidateAssociations || [], label: c.l, alsoKnownAs: c.a, definition: c.d, editorialNote: c.x, type: typeById.get(c.t).label, agenticKind: kindById.get(c.k).label,
     fields: c.f.map((f) => fieldById.get(f).label), provenance: c.pv === "g" ? "source-grounded" : "synthesized",
     broader: c.b.map((x) => ({ id: x, label: byId.get(x).l })), narrower: c.n.map((x) => ({ id: x, label: byId.get(x).l })),
     related: c.r.map((x) => ({ id: x, label: byId.get(x).l })),
@@ -32,7 +33,7 @@ function full(c, notes) {
   };
 }
 
-const RULES = (ctx) => askInstructions({ schemeTitle: META.scheme.title, release: META.release, conceptCount: C.length, context: ctx, index: INDEX });
+const RULES = (ctx) => askInstructions({ schemeTitle: META.scheme.title, release: META.release, conceptCount: C.length, canonicalCount: META.counts.canonicalConcepts, authoredCount: META.counts.authoredConcepts, context: ctx, index: INDEX });
 
 function retrieval(question, ctxIds) {
   // used when this viewer can't run page tools: put the likely-relevant entries in the prompt
@@ -52,10 +53,22 @@ export function useAskEngine() {
   const [tier, setTier] = useStored("ask.tier", "default");
   const ctl = useRef(null);
   const generation = useRef(0);
+  const transcript = useRef([]), scope = useRef(null), running = useRef(false), courseControl = useRef(null);
+  // Callers can retain an older hook closure. Conversation authority lives in these
+  // synchronous refs, so reset/source transitions cannot resurrect its captured turns.
+  const writeTurns = useCallback(update => {
+    const next = typeof update === 'function' ? update(transcript.current) : update;
+    transcript.current = next; setTurns(next);
+  }, []);
+  const captureGeneration = useCallback(() => generation.current, []);
+  const registerCourseContext = useCallback(control => {
+    courseControl.current = control;
+    return () => { if (courseControl.current === control) courseControl.current = null; };
+  }, []);
   useEffect(() => () => { generation.current++; if (ctl.current) ctl.current.abort(); }, []);
   const sample = caps.sample;
 
-  const tools = useCallback((trace) => [
+  const tools = useCallback((trace, executor = sample) => [
     {
       name: "search_glossary",
       description: "Search the glossary's labels, alternate labels and definitions. Returns up to `limit` (default 8) matches as {id, label, kind, field, definition}.",
@@ -71,7 +84,7 @@ export function useAskEngine() {
         if (!c) throw new Error(`No concept with id "${id}". Search first.`);
         trace("Read " + c.l);
         // Pairing a reasoning executor grants public glossary tools, not access to team annotations.
-        const notes = sample?.allowTeamNotes === false ? undefined : caps.allNotes.filter((n) => n.c === c.id).slice(-8).map((n) => n.text.slice(0, 400));
+        const notes = executor?.allowTeamNotes === false ? undefined : caps.allNotes.filter((n) => n.c === c.id).slice(-8).map((n) => n.text.slice(0, 400));
         return full(c, notes);
       },
     },
@@ -115,25 +128,38 @@ export function useAskEngine() {
     },
   ], [caps.allNotes, sample]);
 
-  const send = useCallback(async (text, ids = ctx, interventionContext = null) => {
+  const send = useCallback(async (text, ids = ctx, interventionContext = null, executor = sample, sourceIdentity = null) => {
     const q = (text || "").trim();
-    if (!q || !sample || busy) return;
+    if (!q || !executor) return;
+    if (!interventionContext && (scope.current?.kind === 'reference' || courseControl.current?.active())) {
+      throw Object.assign(new Error('This conversation needs fresh source context. Choose Use glossary only to start a glossary question.'), { code: 'source_context_required' });
+    }
+    if (running.current) return;
+    const reference = interventionContext?.source_context;
+    const nextScope = { kind: interventionContext ? 'reference' : 'glossary',
+      source: interventionContext ? sourceIdentity || JSON.stringify([reference?.source, reference?.id, reference?.version]) : null,
+      recipient: executor.contextKey || executor };
+    if (scope.current && (scope.current.kind !== nextScope.kind || scope.current.source !== nextScope.source || scope.current.recipient !== nextScope.recipient)) writeTurns([]);
+    scope.current = nextScope;
     const run = ++generation.current;
     const current = () => generation.current === run;
     const ctxLabel = ids.map((id) => byId.get(id)).filter(Boolean).map((c) => `${c.l} [[${c.id}]]`).join(", ");
-    const history = turns.filter((t) => !t.error && t.content).slice(-8).map((t) => ({ role: t.role, content: t.content }));
+    const history = transcript.current.filter((t) => !t.error && t.content).slice(-8).map((t) => ({ role: t.role, content: t.content }));
     const userTurn = { role: "user", content: q };
     const bot = { role: "assistant", content: "", trace: [], pending: true };
-    setTurns((t) => [...t, userTurn, bot]);
+    writeTurns((t) => [...t, userTurn, bot]);
     setDraft("");
-    setBusy(true);
+    running.current = true; setBusy(true);
     const controller = new AbortController();
     ctl.current = controller;
-    const trace = (s) => { if (current()) setTurns((t) => t.map((x, i) => (i === t.length - 1 ? { ...x, trace: [...(x.trace || []), s] } : x))); };
+    const trace = (s) => { if (current()) writeTurns((t) => t.map((x, i) => (i === t.length - 1 ? { ...x, trace: [...(x.trace || []), s] } : x))); };
     try {
       let useTools = caps.tools;
       let maxTools = 5;
-      try { const l = await sample.limits(); useTools = !!(l && l.tools); maxTools = (l && l.tools && l.tools.maxCount) || 5; } catch { /* keep default */ }
+      try { const l = await executor.limits(); useTools = !!(l && l.tools); maxTools = (l && l.tools && l.tools.maxCount) || 5; } catch (error) {
+        if (executor !== sample) throw error;
+        /* keep the existing host default */
+      }
       if (!current()) return;
       if (controller.signal.aborted) throw Object.assign(new Error('Cancelled.'), { code: 'cancelled' });
       const lead = RULES(ctxLabel) + (useTools ? "" : retrieval(q, ids)) + (interventionContext
@@ -142,30 +168,43 @@ export function useAskEngine() {
       : "");
       const input = [{ role: "user", content: lead }, ...history, userTurn];
       const signal = controller.signal;
-      const opts = { signal, modelTier: tier, onText: ({ text: t }) => { if (current() && !signal.aborted) setTurns((all) => all.map((x, i) => (i === all.length - 1 ? { ...x, content: t, pending: false } : x))); } };
-      if (useTools) opts.tools = tools(trace).slice(0, maxTools); else opts.cache = false;
-      const res = await sample(input, opts);
+      const opts = { signal, modelTier: tier, onText: ({ text: t }) => { if (current() && !signal.aborted) writeTurns((all) => all.map((x, i) => (i === all.length - 1 ? { ...x, content: t, pending: false } : x))); } };
+      if (useTools) opts.tools = tools(trace, executor).slice(0, maxTools); else opts.cache = false;
+      const res = await executor(input, opts);
       if (!current()) return;
       if (signal.aborted) throw Object.assign(new Error('Cancelled.'), { code: 'cancelled' });
-      setTurns((all) => all.map((x, i) => (i === all.length - 1 ? { ...x, content: res.text, pending: false, truncated: res.truncated } : x)));
+      writeTurns((all) => all.map((x, i) => (i === all.length - 1 ? { ...x, content: res.text, pending: false, truncated: res.truncated } : x)));
     } catch (e) {
       if (!current()) return;
       const code = e && e.code;
       const msg = code === "cancelled" ? null
         : code === "not_granted" || code === "sampling_disabled" || code === "not_declared" || code === "capability_disabled" ? "A model isn't connected on this page for your account."
         : code === "rate_limited" ? "Too many requests right now. Try again in a little while."
+        : code === "request_timeout" ? "That request timed out. Your agent connection is still open. Try asking again."
         : code === "session_expired" ? "Your session expired. Sign in again to keep asking."
         : code === "prompt_too_large" ? "That conversation got too long. Start a new one."
         : "Something went wrong reaching your connected model. Try again.";
-      setTurns((all) => all.map((x, i) => (i === all.length - 1 ? { ...x, content: (e && e.text) || x.content, pending: false, error: msg, stopped: code === "cancelled" } : x)));
+      writeTurns((all) => all.map((x, i) => (i === all.length - 1 ? { ...x, content: (e && e.text) || x.content, pending: false, error: msg, stopped: code === "cancelled" } : x)));
     } finally {
-      if (current()) setBusy(false);
+      if (current()) { running.current = false; setBusy(false); }
     }
-  }, [sample, busy, turns, ctx, tier, tools, caps.tools]);
+  }, [sample, ctx, tier, tools, caps.tools, writeTurns]);
 
   const stop = useCallback(() => { if (ctl.current) ctl.current.abort(); }, []);
-  const reset = useCallback(() => { stop(); generation.current++; setBusy(false); setTurns([]); setCtx([]); }, [stop]);
-  return { available: !!sample, modelTiers: !!sample && sample.modelTiers !== false, turns, busy, draft, setDraft, ctx, setCtx, send, stop, reset, tier, setTier };
+  const reset = useCallback(() => { stop(); generation.current++; running.current = false; scope.current = null; setBusy(false); writeTurns([]); setCtx([]); }, [stop, writeTurns]);
+  const sendGlossary = useCallback((text, ids = []) => {
+    const transition = () => {
+      const leavingSource = scope.current?.kind === 'reference' || courseControl.current?.active();
+      if (leavingSource) { courseControl.current?.clear(); reset(); }
+      setCtx(ids);
+    };
+    // An explicit glossary shortcut changes the visible source consent before a
+    // host request, including when a private course retrieval is still pending.
+    if (typeof ReactDOM !== 'undefined' && typeof ReactDOM.flushSync === 'function') ReactDOM.flushSync(transition);
+    else transition();
+    return text?.trim() ? send(text, ids) : undefined;
+  }, [reset, send]);
+  return { available: !!sample, modelTiers: !!sample && sample.modelTiers !== false, turns, busy, draft, setDraft, ctx, setCtx, send, sendGlossary, stop, reset, captureGeneration, registerCourseContext, tier, setTier };
 }
 
 const STARTERS = [
@@ -177,7 +216,8 @@ const STARTERS = [
 ];
 
 export function Ask({ engine }) {
-  const { turns, busy, draft, setDraft, send, stop, reset, ctx, setCtx, available, modelTiers, tier, setTier } = engine;
+  const { turns, busy, draft, setDraft, reset, ctx, setCtx, available, modelTiers, tier, setTier } = engine;
+  const course = useCourseContext(engine), send = course.send, working = busy || course.loading;
   const log = useRef(null);
   const box = useRef(null);
   useEffect(() => { if (log.current) log.current.scrollTop = log.current.scrollHeight; }, [turns]);
@@ -187,6 +227,7 @@ export function Ask({ engine }) {
       <div className="page" style={{ maxWidth: 720 }}>
         <div className="empty"><Icon name="sparkle" /><div><b>Connect an AI agent to ask here</b></div>
           <div className="small">Use Connect in the toolbar to pair an active agent with this workbench. Your questions, glossary lookups and answers then stay together here, using that agent's own available model. Existing host adapters remain supported. Browsing, exports and local packs work before you connect.</div></div>
+        {course.panel}
         <p className="small muted">You can also use your AI client's own conversation through these optional links.</p>
         <AIClientTaskLinks />
       </div>
@@ -195,12 +236,13 @@ export function Ask({ engine }) {
   return (
     <div className="ask">
       <div className="ask-log" ref={log}>
+        {course.panel}
         {!turns.length ? (
           <div className="stack" style={{ gap: 14, paddingTop: 20 }}>
             <div className="eyebrow">Ask · grounded in {META.release}</div>
             <h1 className="serif" style={{ fontSize: 34, fontWeight: 600, lineHeight: 1.1 }}>Ask the glossary anything.</h1>
             <p className="lede">The model looks terms up in the release as it answers and cites every term it uses. Capability links and crosswalks are flagged as hypotheses. Answers run on your connected model account.</p>
-            <div className="suggests">{STARTERS.map((s) => <button key={s} className="chip" onClick={() => send(s, [])}>{s}</button>)}</div>
+            <div className="suggests">{STARTERS.map((s) => <button key={s} className="chip" disabled={working || course.blocked} onClick={() => send(s, [])}>{s}</button>)}</div>
           </div>
         ) : turns.map((t, i) => (
           <div key={i} className={"msg " + (t.role === "user" ? "user" : "bot")}>
@@ -217,16 +259,18 @@ export function Ask({ engine }) {
         ))}
       </div>
       <div className="ask-in">
+        <p className="tiny muted" data-testid="ask-context-scope">{course.selected ? <>Course context · {course.selected.title} · Version {course.selected.version}</> : 'Glossary only'}</p>
+        {course.blocked ? <p className="tiny" role="status">Reconnect your course source above, or choose Use glossary only.</p> : null}
         {ctx.length ? <div className="row wrap small"><span className="muted">About:</span>{ctx.map((id) => byId.get(id) ? <span key={id} className="chip"><span className={"dot kd-" + byId.get(id).k} />{byId.get(id).l}</span> : null)}<button className="btn ghost sm" onClick={() => setCtx([])}>Clear</button></div> : null}
         <div className="box">
-          <textarea ref={box} rows={1} value={draft} placeholder="Ask about any term, compare terms, or plan a course glossary…" onChange={(e) => setDraft(e.target.value)}
+          <textarea ref={box} rows={1} value={draft} disabled={course.loading} placeholder={course.selected ? "Ask about " + course.selected.title + "…" : "Ask about any term, compare terms, or plan a course glossary…"} onChange={(e) => setDraft(e.target.value)}
             onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(draft); } }} aria-label="Ask" />
-          {busy ? <button className="btn" onClick={stop}><Icon name="stop" />Stop</button> : <button className="btn primary" onClick={() => send(draft)} disabled={!draft.trim()}><Icon name="arrowRight" />Ask</button>}
+          {working ? <button className="btn" onClick={course.stop}><Icon name="stop" />Stop</button> : <button className="btn primary" onClick={() => send(draft)} disabled={!draft.trim() || course.blocked}><Icon name="arrowRight" />Ask</button>}
         </div>
         <div className="row wrap tiny muted">
           {modelTiers ? <Seg label="Speed" value={tier} onChange={setTier} options={[{ v: "quick", l: "Fast" }, { v: "default", l: "Thorough" }]} /> : null}
           <span className="grow">Uses your connected model account. Answers can be wrong; check the cited entries.</span>
-          {turns.length ? <button className="btn ghost sm" onClick={reset}>New conversation</button> : null}
+          {turns.length ? <button className="btn ghost sm" onClick={() => { course.stop(); reset(); }}>New conversation</button> : null}
         </div>
       </div>
     </div>

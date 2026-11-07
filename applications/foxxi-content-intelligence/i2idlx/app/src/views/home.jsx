@@ -1,6 +1,7 @@
+import { safeNavigationHref } from "../navigation-links.js";
 import { identityCopy } from "../identity-copy.js";
 // Home: one search box, the day's term, and the ways in — fields, collections, kinds, and the layers.
-import { C, META, KINDS, COLLECTIONS, byId, kindById, fieldById, termOfDay, ITEMS, ENACTMENTS, MAPPINGS, ACTIONS, QUERIES, SEMANTIC } from "../data.js";
+import { C, CANONICAL_C, AUTHORED_C, conceptsForLens, META, KINDS, COLLECTIONS, byId, kindById, fieldById, termOfDay, ITEMS, ENACTMENTS, MAPPINGS, ACTIONS, QUERIES, SEMANTIC } from "../data.js";
 import { useCaps, consensus } from "../caps.js";
 import { Icon } from "../icons.jsx";
 import { ConceptChip, useUI } from "../ui.jsx";
@@ -17,11 +18,12 @@ function KindBar({ ids }) {
 }
 
 export function Home() {
-  const { palette, ask } = useUI();
+  const { palette, ask, lens } = useUI();
   const { ws, tallies, policy, signedIn, writable } = useCaps();
-  const wotd = termOfDay();
-  const recents = (store.get("recents", []) || []).filter((id) => byId.has(id)).slice(0, 8);
-  const fieldMembers = useMemo(() => new Map(COLLECTIONS.field.map((f) => [f.id, C.filter((c) => c.f.includes(f.id)).map((c) => c.id)])), []);
+  const wotd = termOfDay(new Date(), lens);
+  const visibleConcepts = conceptsForLens(lens);
+  const recents = (store.get("recents", []) || []).filter((id) => byId.has(id) && (lens !== "i2idl" || byId.get(id).origin?.kind !== "authored")).slice(0, 8);
+  const fieldMembers = useMemo(() => new Map(COLLECTIONS.field.map((f) => [f.id, visibleConcepts.filter((c) => c.f.includes(f.id)).map((c) => c.id)])), [lens]);
   const review = useMemo(() => {
     let need = 0, ratified = 0;
     for (const i of ITEMS) {
@@ -38,10 +40,10 @@ export function Home() {
         <section className="hero">
           <div className="eyebrow">I2IDL Digital Learning Glossary · {META.release} · with I2IDL-X</div>
           <h1>Every digital-learning term, <em>with what you can do with it.</em></h1>
-          <p className="lede">{C.length} published definitions from <b>I2IDL</b>, exactly as published, with their evidence, rights and relations. Kept visibly separate on top: the <b>I2IDL-X</b> layer — provenance lines, history and reading aids derived from I2IDL's own data; capability links to Foxxi and Interego and crosswalks to UNESCO, xAPI, IEEE LER, ADL TLA and schema.org, proposed for review — and your team's votes, notes and usage.</p>
+          <p className="lede">{CANONICAL_C.length} published definitions from <b>I2IDL</b>, exactly as published, with their evidence, rights and relations. {lens !== "i2idl" && AUTHORED_C.length ? <>{AUTHORED_C.length} separately authored <b>I2IDL-X proposal</b> appears alongside them with its own identity and attribution. </> : null}Kept visibly separate on top: the <b>I2IDL-X</b> layer — provenance lines, history and reading aids derived from I2IDL's own data; capability links to Foxxi and Interego and crosswalks to UNESCO, xAPI, IEEE LER, ADL TLA and schema.org, proposed for review — and your team's votes, notes and usage.</p>
           <button className="bigsearch" onClick={() => palette.open()}><Icon name="search" size={20} /><span className="grow">Search terms, definitions, sources…</span><kbd>/</kbd></button>
           <div className="statline">
-            <span><b>{C.length}</b> terms</span><span><b>{META.counts.evidence}</b> evidence records</span><span><b>{META.counts.sources}</b> sources</span>
+            <span><b>{CANONICAL_C.length}</b> canonical terms</span>{lens !== "i2idl" && AUTHORED_C.length ? <span><b>{AUTHORED_C.length}</b> authored proposal</span> : null}<span><b>{META.counts.evidence}</b> canonical evidence records</span><span><b>{META.counts.sources}</b> canonical sources</span>
             <span><b>{META.counts.related}</b> related pairs</span><span><b>{ENACTMENTS.length}</b> capability links</span><span><b>{MAPPINGS.length}</b> crosswalks</span>
           </div>
         </section>
@@ -59,10 +61,10 @@ export function Home() {
         <div className="two">
           <section className="wotd" aria-label="Term of the day">
             <div className="row"><span className="eyebrow grow">Term of the day</span><span className={"dot kd-" + wotd.k} /><span className="small muted">{kindById.get(wotd.k).label} · {fieldById.get(wotd.pf).label}</span></div>
-            <h3><a href={"#c-" + wotd.id} style={{ color: "inherit", textDecoration: "none" }}>{wotd.l}</a></h3>
+            <h3><a href={safeNavigationHref("#c-" + wotd.id)} style={{ color: "inherit", textDecoration: "none" }}>{wotd.l}</a></h3>
             <p><Hypertext text={wotd.d} spans={wotd.md} linked={new Set([...wotd.r, ...wotd.b, ...wotd.n])} /></p>
             <div className="chips">{wotd.r.slice(0, 5).map((x) => <ConceptChip key={x} id={x} />)}</div>
-            <div className="row wrap"><a className="btn sm" href={"#c-" + wotd.id}>Open entry <Icon name="arrowRight" /></a><a className="btn sm ghost" href={"#map-" + wotd.id}><Icon name="graph" />Neighborhood</a></div>
+            <div className="row wrap"><a className="btn sm" href={safeNavigationHref("#c-" + wotd.id)}>Open entry <Icon name="arrowRight" /></a><a className="btn sm ghost" href={safeNavigationHref("#map-" + wotd.id)}><Icon name="graph" />Neighborhood</a></div>
           </section>
           <section className="stack" aria-label="Your workspace">
             <div className="card pad stack" style={{ gap: 10 }}>
@@ -72,7 +74,7 @@ export function Home() {
             </div>
             <div className="card pad stack" style={{ gap: 10 }}>
               <div className="row"><Icon name="pack" /><b className="grow">Packs</b><a className="small" href="#packs">Open</a></div>
-              {ws.packs.length ? ws.packs.slice(0, 3).map((p) => <a key={p.id} href={"#packs-" + p.id} className="row small" style={{ textDecoration: "none" }}><span className="grow">{p.name}</span><span className="muted">{plural(p.items.length, "term")}</span></a>)
+              {ws.packs.length ? ws.packs.slice(0, 3).map((p) => <a key={p.id} href={safeNavigationHref("#packs-" + p.id)} className="row small" style={{ textDecoration: "none" }}><span className="grow">{p.name}</span><span className="muted">{plural(p.items.length, "term")}</span></a>)
                 : <div className="small muted">Build a course glossary from any terms, with notes and attribution, and export it as a handout, CSV, JSON-LD, flashcards or xAPI tags.</div>}
             </div>
             {recents.length ? (
@@ -88,7 +90,7 @@ export function Home() {
           <div className="sec-h"><h2>Fields</h2><Origin o="i2idl" quiet /><span className="meta">I2IDL's field collections · bars show I2IDL-X agentic kinds</span></div>
           <div className="tiles">
             {COLLECTIONS.field.map((f) => (
-              <a key={f.id} className="tile" href={"#browse-f." + f.id}>
+              <a key={f.id} className="tile" href={safeNavigationHref("#browse-f." + f.id)}>
                 <div className="tt"><span className="grow">{f.label}</span><span className="muted small">{f.n}</span></div>
                 <KindBar ids={fieldMembers.get(f.id)} />
               </a>
@@ -100,7 +102,7 @@ export function Home() {
           <div className="sec-h"><h2>Curated collections</h2><Origin o="i2idl" quiet /></div>
           <div className="tiles">
             {COLLECTIONS.curated.map((f) => (
-              <a key={f.id} className="tile" href={"#browse-cu." + f.id}>
+              <a key={f.id} className="tile" href={safeNavigationHref("#browse-cu." + f.id)}>
                 <div className="tt"><Icon name="book" /><span className="grow">{f.label}</span><span className="muted small">{f.n}</span></div>
                 <div className="td">{f.desc}</div>
               </a>
@@ -112,8 +114,8 @@ export function Home() {
           <div className="sec-h"><h2>Agentic kinds</h2><Origin o="derived" quiet /><span className="meta">What an agent can do with a concept, derived from I2IDL's 16 types</span></div>
           <div className="tiles">
             {KINDS.map((k) => (
-              <a key={k.id} className="tile" href={"#browse-k." + k.id}>
-                <div className="tt"><span className={"dot kd-" + k.id} /><span className="grow">{k.label}</span><span className="muted small">{C.filter((c) => c.k === k.id).length}</span></div>
+              <a key={k.id} className="tile" href={safeNavigationHref("#browse-k." + k.id)}>
+                <div className="tt"><span className={"dot kd-" + k.id} /><span className="grow">{k.label}</span><span className="muted small">{visibleConcepts.filter((c) => c.k === k.id).length}</span></div>
                 <div className="td">{k.def.split(". ")[0]}.</div>
               </a>
             ))}
@@ -136,7 +138,7 @@ export function Home() {
               const cats = SEMANTIC.categories.filter((k) => k.group === g);
               const n = C.filter((c) => cats.some((k) => k.id === c.rc)).length;
               return (
-                <a key={g} className="tile" href={"#semantic-cat." + cats[0].id}>
+                <a key={g} className="tile" href={safeNavigationHref("#semantic-cat." + cats[0].id)}>
                   <div className="tt"><Icon name="tree" /><span className="grow">{g}</span><span className="muted small">{n}</span></div>
                   <div className="td">{cats.map((k) => k.label).join(" · ")}</div>
                 </a>

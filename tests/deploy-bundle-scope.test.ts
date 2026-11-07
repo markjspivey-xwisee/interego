@@ -509,6 +509,28 @@ describe('prebuildInputs — every way it must refuse instead of guessing', () =
 });
 
 describe('bundlePathsFor — against the real repository', () => {
+  it('deploys only Foxxi for an Agents page, browser test and changelog change', () => {
+    const agentsChange = [
+      'applications/foxxi-content-intelligence/i2idlx/app/src/views/directory.jsx',
+      'applications/foxxi-content-intelligence/i2idlx/tools/check_capability_directory.py',
+      'CHANGELOG.md',
+    ];
+    const scopes = Object.entries(SERVICES).filter(([, service]) => service.repo).map(([name]) => {
+      const scope = bundlePathsFor(name);
+      expect(scope.confident, name).toBe(true);
+      return { name, paths: scope.paths };
+    });
+    const shipping = (files: readonly string[]) => scopes.filter(({ paths }) =>
+      files.some((file) => paths.some((path) => file === path || file.startsWith(`${path}/`))),
+    ).map(({ name }) => name);
+    expect(shipping(agentsChange)).toEqual(['foxxi-bridge']);
+    expect(shipping(['applications/foxxi-content-intelligence/src/learner-record.ts'])).toEqual(
+      expect.arrayContaining(['foxxi-bridge', 'agp-bridge']),
+    );
+    expect(shipping(['docs/ns/adl-tla-proficiency.ttl'])).toContain('agp-bridge');
+    expect(shipping(['applications/jev-harness/src/repository-source.ts'])).toContain('jev-harness-bridge');
+  });
+
   it('resolves the relay to its own per-file COPY list plus packages/', () => {
     const r = bundlePathsFor('relay');
     expect(r.confident).toBe(true);

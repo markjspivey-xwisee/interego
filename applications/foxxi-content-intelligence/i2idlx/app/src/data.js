@@ -1,7 +1,8 @@
 // The embedded release: the I2IDL glossary joined with the I2IDL-X layers (built by tools/build_app.py).
 // Everything here is derived once at load; views only read.
 
-const raw = JSON.parse(document.getElementById("i2-data").textContent);
+import { projectWorkbenchData, authoredCatalogPorts } from "../../typescript/authored-concepts.ts";
+const raw = projectWorkbenchData(JSON.parse(document.getElementById("i2-data").textContent));
 
 export const META = raw.meta;
 export const KINDS = raw.kinds;
@@ -12,6 +13,10 @@ export const INTERROGATIVES = raw.interrogatives;
 export const COLLECTIONS = raw.collections;
 export const SOURCES = raw.sources;
 export const C = raw.concepts;
+export const CANONICAL_C = C.filter((c) => c.origin?.kind !== "authored");
+export const AUTHORED_C = C.filter((c) => c.origin?.kind === "authored");
+export const conceptsForLens = (lens) => lens === "i2idl" ? CANONICAL_C : C;
+export const AUTHORED_PORTS = raw.authoredCatalog ? authoredCatalogPorts(raw.authoredCatalog.baseUrl || "https://foxxi-bridge.interego.xwisee.com") : [];
 export const ACTIONS = raw.actions;
 export const ENACTMENTS = raw.enactments;
 export const INHERITED = raw.inherited;
@@ -64,7 +69,8 @@ export const collectionLabel = (path) => {
   return col ? col.label : id;
 };
 
-export const iriOf = (id) => CONCEPT_NS + id;
+export const iriOf = (id) => byId.get(id)?.iri || CONCEPT_NS + id;
+export const byIri = new Map(C.map((c) => [iriOf(c.id), c]));
 export const degree = (c) => c.r.length + c.b.length + c.n.length;
 
 function group(list, key) {
@@ -109,8 +115,10 @@ export const itemByKey = new Map(ITEMS.map((i) => [i.key, i]));
 
 // Undirected editorial graph (related ∪ broader/narrower), for paths and neighborhoods.
 export const ADJ = new Map(C.map((c) => [c.id, [...c.r.map((x) => [x, "r"]), ...c.b.map((x) => [x, "b"]), ...c.n.map((x) => [x, "n"])]]));
+// Authored relations are an additional, explicitly proposed graph; canonical records stay untouched.
+for (const c of AUTHORED_C) for (const id of c.r) if (!ADJ.get(id).some(([other]) => other === c.id)) ADJ.get(id).push([c.id, "r"]);
 
-export function shortestPaths(a, b, max = 3) {
+export function shortestPaths(a, b, max = 3, lens = "x") {
   if (a === b) return [[a]];
   const dist = new Map([[a, 0]]);
   const preds = new Map([[a, []]]);
@@ -119,6 +127,7 @@ export function shortestPaths(a, b, max = 3) {
     const next = [];
     for (const u of frontier) {
       for (const [v] of ADJ.get(u)) {
+        if (lens === "i2idl" && byId.get(v)?.origin?.kind === "authored") continue;
         if (!dist.has(v)) {
           dist.set(v, dist.get(u) + 1);
           preds.set(v, [u]);
@@ -147,6 +156,7 @@ export function relationBetween(a, b) {
   if (A.r.includes(b)) return "related";
   if (A.b.includes(b)) return "narrower"; // a is narrower than b
   if (A.n.includes(b)) return "broader"; // a is broader than b
+  if (byId.get(b)?.origin?.kind === "authored" && byId.get(b).r.includes(a)) return "related";
   return null;
 }
 
@@ -160,7 +170,7 @@ export const RIGHTS = {
   permission: { label: "Permission / terms", short: "Permission", note: "Used by I2IDL with permission or under the publisher's terms; ask before reuse." },
 };
 // I2IDL's own card wording for definition provenance (its roadmap, next priority 3), computed from its evidence relations.
-export const provenanceLine = (c) => (c.pv === "g" ? META.upstream.provenance[0] : META.upstream.provenance[1]);
+export const provenanceLine = (c) => c.origin?.kind === "authored" ? "Authored I2IDL-X proposal; not adopted by I2IDL" : (c.pv === "g" ? META.upstream.provenance[0] : META.upstream.provenance[1]);
 export const unescoByConcept = (() => {
   const m = new Map();
   for (const x of MAPPINGS) if (x.v === "UNESCO Thesaurus") { if (!m.has(x.c)) m.set(x.c, []); m.get(x.c).push(x); }
@@ -177,9 +187,9 @@ export function reuseClass(c) {
 }
 
 // A deterministic "term of the day".
-export function termOfDay(date = new Date()) {
+export function termOfDay(date = new Date(), lens = "x") {
   const d = Math.floor(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()) / 864e5);
-  const pool = C.filter((c) => c.r.length >= 2);
+  const pool = conceptsForLens(lens).filter((c) => c.r.length >= 2);
   return pool[(Math.imul(d, 2654435761) >>> 0) % pool.length];
 }
 
@@ -188,6 +198,7 @@ export const quoteAll = (s) => encodeURIComponent(s).replace(/[!'()*]/g, (ch) =>
 
 // Per-concept decorated controls — the same recipe the build proves against all 1,985 materialized targets.
 export function controlsFor(c) {
+  if (c.origin?.kind === "authored") return AUTHORED_PORTS.map((p) => ({ id: p.action, title: p.mediaType === "application/json" ? "Authored catalog and provenance" : p.href.endsWith("shapes.ttl") ? "Authored reference shapes" : "Authored definitions and semantic RDF", m: p.method, u: p.href, mt: p.mediaType }));
   const q = META.neighborhoodQuery.replace(/\$concept\b/g, "<" + iriOf(c.id) + ">");
   return [
     { id: "resolve", title: "Resolve (Turtle)", m: "GET", mt: "text/turtle", u: iriOf(c.id) + ".ttl", via: "tmpl-concept-turtle" },

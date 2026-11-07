@@ -1,6 +1,7 @@
+import { safeNavigationHref } from "../navigation-links.js";
 import { identityCopy } from "../identity-copy.js";
 // Insights: the glossary's shape and health, its release history, I2IDL-X coverage and team activity.
-import { C, META, KINDS, COLLECTIONS, SOURCES, RELEASES, SUGGESTIONS, ITEMS, itemByKey, byId, kindById, fieldById, enactByConcept, mapsByConcept, reuseClass, RIGHTS, degree, kindPhrase } from "../data.js";
+import { CANONICAL_C as C, META, KINDS, COLLECTIONS, SOURCES, RELEASES, SUGGESTIONS, ITEMS, itemByKey, byId, kindById, fieldById, enactByConcept, mapsByConcept, reuseClass, RIGHTS, degree, kindPhrase } from "../data.js";
 import { OriginStrip } from "../origin.jsx";
 import { useCaps, consensus } from "../caps.js";
 import { Icon } from "../icons.jsx";
@@ -22,7 +23,7 @@ export function Insights({ route }) {
   const byKind = KINDS.map((k) => ({ label: k.label, value: C.filter((c) => c.k === k.id).length, color: `var(--k-${k.id})`, k: k.id }));
   const byField = COLLECTIONS.field.map((f) => ({ label: f.label, value: f.n, f: f.id })).sort((a, b) => b.value - a.value);
   const evBySource = SOURCES.map((s, i) => ({ label: s.label, value: C.reduce((a, c) => a + c.ev.filter((e) => e.s === i).length, 0), s, tip: <span><b>{s.title}</b><br />{s.rights}</span> }))
-    .sort((a, b) => b.value - a.value);
+    .filter((r) => r.s.origin !== "authored").sort((a, b) => b.value - a.value);
   const reuse = ["open", "sharealike", "nc", "permission"].map((k, i) => ({
     label: RIGHTS[k].label, value: C.filter((c) => reuseClass(c) === k).length,
     color: ["var(--k-notion)", "var(--k-enactable)", "var(--k-system)", "var(--k-standard)"][i], ink: i >= 2 ? "#142029" : "#fff",
@@ -64,7 +65,7 @@ export function Insights({ route }) {
         <div className="eyebrow">Insights · {META.scheme.title} {META.release}</div>
         <div className="row wrap" style={{ alignItems: "flex-end", gap: 18 }}>
           <div><div className="hero-fig">{C.length}</div><div className="muted">published concepts</div></div>
-          <p className="lede" style={{ maxWidth: "52ch" }}>Built from commit <a href={`${META.repo}/commit/${META.commit}`} target="_blank" rel="noopener"><code>{META.commit.slice(0, 7)}</code></a> ({fmtDate(META.commitDate)}). Every number below is computed from that release and the I2IDL-X graphs published on Interego.</p>
+          <p className="lede" style={{ maxWidth: "52ch" }}>Built from commit <a href={safeNavigationHref(`${META.repo}/commit/${META.commit}`)} target="_blank" rel="noopener"><code>{META.commit.slice(0, 7)}</code></a> ({fmtDate(META.commitDate)}). Every number below is computed from that release and the I2IDL-X graphs published on Interego.</p>
         </div>
       </div>
       <OriginStrip items={[["i2idl", "I2IDL's release"], ["derived", "kinds, reuse, history, health checks"], ["proposed", "capability coverage"], ["team", "team activity"]]} />
@@ -97,7 +98,7 @@ export function Insights({ route }) {
         <div className="chart">
           <StackBar parts={reuse} total={C.length} />
           <div className="small muted">Non-commercial: {SOURCES.filter((s) => s.rc === "nc").map((s) => s.label).join(", ")}. Permission or publisher terms: {SOURCES.filter((s) => s.rc === "permission").map((s) => s.label).join(", ")}. I2IDL-original text is {META.license.name}.</div>
-          <div className="row wrap">{["nc", "permission", "sharealike"].map((k) => <a key={k} className="btn sm" href={"#browse-rc." + k}><RightsBadge rc={k} text={`Browse ${RIGHTS[k].label.toLowerCase()} (${reuse.find((r) => r.label === RIGHTS[k].label).value})`} /></a>)}</div>
+          <div className="row wrap">{["nc", "permission", "sharealike"].map((k) => <a key={k} className="btn sm" href={safeNavigationHref("#browse-rc." + k)}><RightsBadge rc={k} text={`Browse ${RIGHTS[k].label.toLowerCase()} (${reuse.find((r) => r.label === RIGHTS[k].label).value})`} /></a>)}</div>
         </div>
       </section>
 
@@ -112,9 +113,9 @@ export function Insights({ route }) {
             <HBars rows={coverage} max={100} suffix="%" labelW={110} />
           </ChartCard>
         </div>
-        <details className="chk"><summary><Icon name="history" /><b className="grow">Release log</b><span className="small muted">{RELEASES.length} versions · <a href={META.iri.changes} target="_blank" rel="noopener" onClick={(e) => e.stopPropagation()}>as PROV on Interego</a></span></summary>
+        <details className="chk"><summary><Icon name="history" /><b className="grow">Release log</b><span className="small muted">{RELEASES.length} versions · <a href={safeNavigationHref(META.iri.changes)} target="_blank" rel="noopener" onClick={(e) => e.stopPropagation()}>as PROV on Interego</a></span></summary>
           <div className="body"><div className="tablewrap"><table className="tbl"><thead><tr><th>Release</th><th>Date</th><th className="n">Concepts</th><th className="n">Related</th><th>Changes</th></tr></thead>
-            <tbody>{[...RELEASES].reverse().map((r) => <tr key={r.v}><td><b>{r.v}</b>{r.diff ? <> · <a href={r.diff} target="_blank" rel="noopener">diff</a></> : null}</td><td className="nowrap">{fmtDate(r.at)}</td><td className="n">{r.n}</td><td className="n">{r.rel}</td>
+            <tbody>{[...RELEASES].reverse().map((r) => <tr key={r.v}><td><b>{r.v}</b>{r.diff ? <> · <a href={safeNavigationHref(r.diff)} target="_blank" rel="noopener">diff</a></> : null}</td><td className="nowrap">{fmtDate(r.at)}</td><td className="n">{r.n}</td><td className="n">{r.rel}</td>
               <td>{r.nch ? <div className="small">{Object.entries(r.ch).map(([k, n]) => kindPhrase(k, n)).join(" · ")}</div> : <span className="muted small">No change to the graph</span>}
                 {r.add.length ? <div className="chips" style={{ marginTop: 4 }}>{r.add.map((id) => byId.has(id) ? <ConceptChip key={id} id={id} /> : <span key={id} className="chip soft">{id}</span>)}</div> : null}</td></tr>)}</tbody></table></div></div>
         </details>

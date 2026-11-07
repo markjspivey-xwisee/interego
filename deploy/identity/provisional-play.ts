@@ -1,5 +1,6 @@
 /** Browser-key provisional owners. All authoritative state is a signed pod anchor. */
 import * as crypto from 'node:crypto';
+import { hostedPrivacyUrl, type HostedTermsPolicy, type TermsAcceptance } from './hosted-terms.js';
 
 export type PublicPlayKey = { kty: 'EC'; crv: 'P-256'; x: string; y: string };
 export type PlayClient = { agentDid: string; podUrl: string };
@@ -44,8 +45,9 @@ export function playKeyThumbprint(key: PublicPlayKey): string {
 export function provisionalUserId(audience: string, thumbprint: string): string {
   return `u-try-play-${crypto.createHash('sha256').update(`${audience}\n${thumbprint}`).digest('hex').slice(0, 32)}`;
 }
-export function bootstrapProofPayload(grant: PlayGrant): string {
-  return `interego-play-provisional-v1\n${grant._signed_payload}\n${grant._signature}`;
+export function bootstrapProofPayload(grant: PlayGrant, termsVersion?: string): string {
+  const proof = `interego-play-provisional-v1\n${grant._signed_payload}\n${grant._signature}`;
+  return termsVersion ? `${proof}\nHosted-Interego-Terms: ${termsVersion}` : proof;
 }
 export function playProofPayload(attestation: string, audience: string, challenge: string): string {
   return `interego-play-proof-v1\n${attestation}\n${audience}\n${challenge}`;
@@ -90,13 +92,15 @@ export interface PlayDependencies {
   clients: ReadonlyMap<string, PlayClient>;
   ttlSeconds: number;
   maxPods: number;
+  hostedTerms?: HostedTermsPolicy;
   now?: () => number;
   /** Uses a fixed configured relay and configured principal/pod, never caller URLs. */
   verifyGrantSignature(grant: PlayGrant, client: PlayClient): Promise<boolean>;
   /** Read a canonical pod anchor; null only on 404. Errors must fail closed. */
   readAnchor(userId: string): Promise<string | null>;
   /** Serialize + compare/create durably; enforce admission capacity before creating. */
-  provision(claims: PlayClaims, attestation: string, maxPods: number, receipt: { hash: string; expiresAt: number }): Promise<string>;
+  provision(claims: PlayClaims, attestation: string, maxPods: number, receipt: { hash: string; expiresAt: number },
+    termsAcceptance?: TermsAcceptance): Promise<string>;
   issueCredential(claims: PlayClaims): Promise<Record<string, unknown>>;
 }
 
@@ -133,7 +137,7 @@ export class ProvisionalPlay {
   }
   async bootstrap(input: unknown): Promise<Record<string, unknown>> {
     if (!this.deps.clients.size) return fail(503, 'provisional_play_disabled');
-    const body = input as { playGrant?: PlayGrant; publicKeyJwk?: unknown; proof?: unknown };
+    const body = input as { playGrant?: PlayGrant; publicKeyJwk?: unknown; proof?: unknown; termsVersion?: unknown };
     const key = publicPlayKey(body?.publicKeyJwk);
     const grant = body?.playGrant;
     if (!grant || typeof grant._signed_payload !== 'string' || grant._signed_payload.length > 8192
@@ -151,7 +155,10 @@ export class ProvisionalPlay {
       || !Number.isFinite(timestamp) || timestamp > now + 5 || timestamp < now - 120
       || !Number.isInteger(payload.expiresAt) || Number(payload.expiresAt) <= now
       || Number(payload.expiresAt) > timestamp + 120) return fail(401, 'invalid_play_grant');
-    if (!verifyPlayProof(key, bootstrapProofPayload(grant), body.proof)) return fail(401, 'invalid_browser_proof');
+    const policy = this.deps.hostedTerms;
+    const termsVersion = policy && body.termsVersion === policy.version ? policy.version : undefined;
+    if (body.termsVersion !== undefined && !termsVersion) return fail(428, 'hosted_terms_required');
+    if (!verifyPlayProof(key, bootstrapProofPayload(grant, termsVersion), body.proof)) return fail(401, 'invalid_browser_proof');
     if (!await this.deps.verifyGrantSignature(grant, client)) return fail(401, 'invalid_play_grant');
     const thumbprint = playKeyThumbprint(key);
     const userId = provisionalUserId(audience, thumbprint);
@@ -169,7 +176,8 @@ export class ProvisionalPlay {
     // Storage returns the first committed anchor. Replays/refreshes never extend its TTL.
     const receipt = { hash: crypto.createHash('sha256').update(`${grant._signed_payload}\n${grant._signature}`).digest('base64url'),
       expiresAt: Number(payload.expiresAt) };
-    const attestation = await this.deps.provision(proposed, this.seal(proposed), this.maxPods, receipt);
+    const termsAcceptance = termsVersion ? { version: termsVersion, acceptedAt: new Date(now * 1000).toISOString() } : undefined;
+    const attestation = await this.deps.provision(proposed, this.seal(proposed), this.maxPods, receipt, termsAcceptance);
     const claims = this.open(attestation);
     if (claims.userId !== userId || claims.audience !== audience || claims.proofKeyThumbprint !== thumbprint)
       return fail(409, 'provisional_owner_conflict');
@@ -192,12 +200,15 @@ export class ProvisionalPlay {
     return { ...claims, valid: true, expiresAt: new Date(claims.expiresAt * 1000).toISOString() };
   }
   metadata() {
+    const policy = this.deps.hostedTerms;
     return {
       issuer: this.deps.issuer, enabled: this.deps.clients.size > 0,
       bootstrapEndpoint: `${this.deps.issuer}/play/provisional`,
       verificationEndpoint: `${this.deps.issuer}/play/provisional/verify`,
       grantMethod: 'interego-sign_request', proofAlgorithm: 'ECDSA-P256-SHA256', proofEncoding: 'base64url-ieee-p1363',
       bootstrapProofTemplate: 'interego-play-provisional-v1\\n{_signed_payload}\\n{_signature}',
+      ...(policy ? { terms: { version: policy.version, url: policy.termsUrl, privacyUrl: hostedPrivacyUrl },
+        bootstrapTermsProofSuffix: '\\nHosted-Interego-Terms: {version}' } : {}),
       proofTemplate: 'interego-play-proof-v1\\n{attestation}\\n{audience}\\n{challenge}',
       ttlSeconds: this.ttlSeconds, maxGuestPods: this.maxPods,
       maxLifetimeGuestOwners: this.maxPods,

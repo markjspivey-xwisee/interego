@@ -37,7 +37,8 @@ RUN npm ci \
  && npm run build \
  # build-time-only deps must NOT survive into runtime: componentsjs-generator
  # brings a newer @comunica/componentsjs that collides with CSS's at load time.
- && rm -rf node_modules/componentsjs-generator node_modules/typescript node_modules/tsx
+ && rm -rf node_modules/componentsjs-generator node_modules/typescript node_modules/tsx \
+ && npm run test:contexts:offline
 
 # ---- runtime stage: pruned tree, run CSS via its CLI (no tsx/typescript) ----
 FROM node:20-slim AS runtime

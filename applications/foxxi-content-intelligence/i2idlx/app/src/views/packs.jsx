@@ -1,3 +1,4 @@
+import { safeNavigationHref } from "../navigation-links.js";
 import { identityCopy } from "../identity-copy.js";
 import { isChatGPTApp } from "../chatgpt-host.js";
 // Packs: build a course glossary from any terms — order, notes, smart suggestions, rights check, exports.
@@ -31,8 +32,8 @@ export function Packs({ route }) {
       <div className="pk">
         <aside className="stack" style={{ gap: 10 }}>
           <div className="row"><h1 className="h-display grow" style={{ fontSize: 24 }}>Packs</h1><button className="btn sm primary" onClick={create}><Icon name="plus" />New</button></div>
-          <p className="small muted">Course glossaries you build from the release. {wsSource === "sandbox" ? "Packs here belong to this run's sandbox." : wsSource === "held" ? "Your account's packs could not be loaded; changes are kept in this browser and saved to your account on a later visit." : signedIn && canWrite === false ? "Kept in this browser: this page does not let you save to your account." : signedIn ? "Saved privately to your account." : identityCopy("packs")}</p>
-          <OriginStrip items={[["i2idl", "definitions and attribution"], ["team", "your packs"]]} />
+          <p className="small muted">Course glossaries you build from available canonical and separately authored terms. {wsSource === "sandbox" ? "Packs here belong to this run's sandbox." : wsSource === "held" ? "Your account's packs could not be loaded; changes are kept in this browser and saved to your account on a later visit." : signedIn && canWrite === false ? "Kept in this browser: this page does not let you save to your account." : signedIn ? "Saved privately to your account." : identityCopy("packs")}</p>
+          <OriginStrip items={[["i2idl", "canonical definitions"], ["proposed", "authored definitions, separately attributed"], ["team", "your packs"]]} />
           <div className="pklist">
             {packs.map((p) => (
               <button key={p.id} className="pkitem" aria-current={cur && cur.id === p.id} onClick={() => go("packs-" + p.id)}>
@@ -131,7 +132,7 @@ function PackEditor({ pack, setPack }) {
               <div className="pkterm" key={it.id}>
                 <span className="n">{i + 1}</span>
                 <div style={{ minWidth: 0 }}>
-                  <div className="row"><span className={"dot kd-" + c.k} /><a className="t" href={"#c-" + c.id} style={{ color: "inherit" }}>{c.l}</a>
+                  <div className="row"><span className={"dot kd-" + c.k} /><a className="t" href={safeNavigationHref("#c-" + c.id)} style={{ color: "inherit" }}>{c.l}</a>
                     {reuseClass(c) === "nc" || reuseClass(c) === "permission" ? <RightsBadge rc={reuseClass(c)} /> : null}</div>
                   <div className="d">{c.d}</div>
                   <textarea className="textarea" rows={1} value={it.note} placeholder="Course note (optional): how you use it, an example…" onChange={(e) => setNote(it.id, e.target.value)} />
@@ -200,7 +201,7 @@ function ExportPanel({ pack, onXapi }) {
         <b className="small">Rights check</b>
         <div className="small">{Object.entries(rs).filter(([, l]) => l.length).map(([k, l]) => <div key={k} className="row"><RightsBadge rc={k} text={RIGHTS[k].label} /><span className="grow" /><span className="num">{l.length}</span></div>)}</div>
         {restricted.length ? <div className="note warn"><Icon name="warn" /><span className="small">{plural(restricted.length, "definition")} rest directly on non-commercial or permission-only sources ({restricted.slice(0, 4).map((c) => c.l).join(", ")}{restricted.length > 4 ? "…" : ""}). Check the source terms before commercial reuse. Attribution for every source is added to each export.</span></div>
-          : <div className="small muted">Every definition here rests on openly licensed sources or on I2IDL's own CC BY 4.0 text. Attribution is added to each export.</div>}
+          : <div className="small muted">Exports distinguish canonical definitions, authored proposals and their source-specific attribution.</div>}
       </div>
     </aside>
   );
@@ -231,7 +232,7 @@ function SharedPack({ s }) {
       <div className="pkterms">
         {s.ids.map((id, i) => {
           const c = byId.get(id);
-          return <div className="pkterm" key={id}><span className="n">{i + 1}</span><div><a className="t" href={"#c-" + id} style={{ color: "inherit" }}>{c.l}</a><div className="d">{c.d}</div></div><span /></div>;
+          return <div className="pkterm" key={id}><span className="n">{i + 1}</span><div><a className="t" href={safeNavigationHref("#c-" + id)} style={{ color: "inherit" }}>{c.l}</a><div className="d">{c.d}</div></div><span /></div>;
         })}
       </div>
     </div>
