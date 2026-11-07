@@ -16,6 +16,12 @@ No other code under `deploy/` or `packages/` JWK-exports a key that `generateKey
 
 The earlier entry names EC and OKP keys. RSA keys hang the same way on Node 20.20, and so does the JWK of a public key that `createPublicKey` derives from a generated private key: both loops hung, at 0% CPU, before 1,000 iterations. Outside `deploy/` and `packages/`, these JWK exports of generated keys remain, and this change does not touch them. `tests/client-authorization.test.ts` exports P-256, P-384, P-521 and RSA keys, and `tests/browser-signing-handoff.test.ts` exports a P-256 key. CI runs both in the whole root suite on Node 20 (`bridge-typecheck.yml`). `tests/browser-signing-handoff.chromium.test.ts` makes the same P-256 export but runs only on Node 22, in `identity-tests.yml`. `es256Keys` in `applications/foxxi-content-intelligence/src/lti13.ts` derives one when no PEM is configured, but the Foxxi bridge image runs Node 22.
 
+## 2026-11-07 — Ask about a course through your own SCORM Cloud connection
+
+Ask lets a paired visitor connect their own SCORM Cloud application, select a course and retrieve its versioned instructional text for each question. Answers carry course passage references alongside the glossary context. Switching the course clears the conversation.
+
+The read-only connector belongs to that verified visitor connection. Credentials remain in server memory until disconnect or expiry, and never enter the AI request, public package store or deployment settings. Expired connections require an explicit reconnect or a choice to continue with the glossary alone.
+
 ## 2026-11-07 — Dependencies: nodemailer 10.3.1 and CSS 7.3.0 for local pods, in place of Dependabot's #766
 
 This lands Dependabot's #766 with the changelog entry its checks needed.
