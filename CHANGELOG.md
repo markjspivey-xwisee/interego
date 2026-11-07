@@ -110,6 +110,14 @@ The deployed Foxxi middleware adds internal client-address and caller-token cont
 
 HTTP tests now include that context decoration and check that body tokens cannot authorize a browser or override creation budgets. The packaged-server startup proof exercises creation, capability-protected status, invalid body-token refusal and disconnect through the actual entrypoint middleware before an image can ship.
 
+## 2026-11-02 — Prepare selected health context for the encrypted local-note host
+
+A separate Layer 3 health component prepares explicit, case-bound evidence selections as the existing Windows app's append-note arguments. It preserves exact dependent citations, qualified dates, record statuses, specimen identities, source interpretation limits and omission metadata. Draft questions require explicit inclusion; retrieval queries and unknown fields are excluded. Cross-case references, unresolved citations, inconsistent omission declarations and oversized output are rejected before returning a note.
+
+The adapter performs no host, network, storage, provider, consent or publication action. Its output is plaintext until an independently authorized host saves it. The native read grant still covers all notes; a selected context is not case-scoped authorization. Fictional fixtures and standalone Linux/Windows CI exercise the preparation contract, including native character bounds. Installed-app pairing, encrypted persistence, revocation and broader health-file ingestion remain separate checks.
+
+An offline Windows verification kit now emits the fixed fictional note arguments and compares a supplied native save/read response for exact content, native metadata and the independently observed author connection. Its bounded CLI never pairs, saves, reads the pod or echoes supplied content on failure. Reports explicitly leave native response authenticity, storage encryption, restart persistence and grant enforcement unverified until independently observed.
+
 ## 2026-11-02 — Pair a standalone Interpretant conversation with an external agent
 
 Interpretant retains its embedded glossary chat and adds in-page intervention discussion with per-question source retrieval, citation context, recent history and cancellation. An explicitly paired external agent can supply reasoning through its existing model session, including the original live Orchestrate sandbox's plain prompts, no-argument tools and cumulative handoffs; ChatGPT conversation handoffs, existing host adapters, Interego pod saves and the prior API fallback remain separate optional paths.
