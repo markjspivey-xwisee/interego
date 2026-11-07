@@ -1,5 +1,12 @@
 # Changelog
 
+## 2026-11-07 — Dependencies: nodemailer 10.3.1 and CSS 7.3.0 for local pods, in place of Dependabot's #766
+
+This lands Dependabot's #766 with the changelog entry its checks needed.
+
+- **Root lockfile:** `packages/local-node` (the Windows local pod) asks for `@solid/community-server` `^7.3.0` instead of `^7.1.9`. CSS 7.3.0 is a minor release: lock and pod-quota fixes, streamed container listings, dedicated storage for OIDC clients, and no listed breaking or configuration changes. It is the first CSS release that asks for a fixed nodemailer itself (`^10.0.9`), so the root workspace now resolves nodemailer 10.3.1 with no override, in place of 9.1.1 and its nine audit advisories.
+- **The css image:** `integrations/pgsl-css-accessor` keeps CSS 7.2.0, and its nodemailer override moves from `^10.2.1` to `^10.3.1`. The deployed configs still never send mail. The image stays on 7.2.0 because the boot line its deploy waits for was measured against 7.2.0. Moving it to 7.3.0 means re-running that measurement, and then the override can go. The header of `integrations/tests/css-nodemailer-is-patched-and-unused.test.ts` now says this instead of claiming no CSS release admits a fixed nodemailer.
+
 ## 2026-11-06 — Clarify the shared xAPI performance verb
 
 The Foxxi and AGP xAPI Profiles explain how the object activity type identifies the work described by `performed` and how a projected descriptor supplies that type. The verb IRI and template rules stay the same.
