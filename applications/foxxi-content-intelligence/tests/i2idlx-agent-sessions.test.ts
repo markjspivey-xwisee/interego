@@ -67,6 +67,47 @@ function routineFixture(deliver?: (event: WakeEvent) => Promise<void>) {
 }
 
 describe('explicit, ephemeral external-agent workbench sessions', () => {
+  it('authorizes private browser capabilities only for a verified attached actor and revokes their lifetime', () => {
+    const f = fixture();
+    fails(() => f.store.authorizeBrowser(f.sid, f.made.browser_token), 409);
+    const claimed = f.connect();
+    fails(() => f.store.authorizeBrowser(f.sid, claimed.driver_token), 404);
+    const identity = f.store.authorizeBrowser(f.sid, f.made.browser_token);
+    assert.equal(identity.session_id, f.sid);
+    assert.equal(identity.actor, ALICE);
+    assert.equal(identity.expires_at, 1_000_000 + 30 * 60_000);
+    assert.equal(identity.signal.aborted, false);
+    f.browser('disconnect');
+    assert.equal(identity.signal.aborted, true);
+    fails(() => f.store.authorizeBrowser(f.sid, f.made.browser_token), 410);
+
+    const expired = fixture({ sessionTtlMs: 100 });
+    expired.connect();
+    const expiring = expired.store.authorizeBrowser(expired.sid, expired.made.browser_token);
+    expired.advance(101);
+    fails(() => expired.store.authorizeBrowser(expired.sid, expired.made.browser_token), 410);
+    assert.equal(expiring.signal.aborted, true);
+    const disposed = fixture();
+    disposed.connect();
+    const disposing = disposed.store.authorizeBrowser(disposed.sid, disposed.made.browser_token);
+    disposed.store.dispose();
+    assert.equal(disposing.signal.aborted, true);
+  });
+
+  it('revokes private capability lifetimes when pairing is renewed and starts a fresh lifetime on reclaim', () => {
+    const f = fixture();
+    f.connect();
+    const old = f.store.authorizeBrowser(f.sid, f.made.browser_token);
+    const invitation = f.browser('invite');
+    assert.equal(old.signal.aborted, true);
+    fails(() => f.store.authorizeBrowser(f.sid, f.made.browser_token), 409);
+    f.driver('claim', { invite_token: invitation.invite_token });
+    const fresh = f.store.authorizeBrowser(f.sid, f.made.browser_token);
+    assert.notEqual(fresh.signal, old.signal);
+    assert.equal(fresh.signal.aborted, false);
+    f.store.dispose();
+  });
+
   it('keeps browser credentials out of driver discovery and consumes the invitation once', () => {
     const f = fixture();
     assert.match(String(f.made.browser_token), /^[a-f0-9]{64}$/);
