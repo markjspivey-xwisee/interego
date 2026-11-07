@@ -2,7 +2,7 @@
 
 ## 2026-11-07 — Identity: a test pins the X25519 keys the server publishes, and no other generated key is JWK-exported under deploy/ or packages/
 
-The "Node 20 crypto deadlock" entry further down changed how `generateEd25519` in `deploy/identity/server.ts` reads the raw X25519 public key. It had read the `x` of a JWK export, and now reads the last 32 bytes of the SPKI DER. That entry checked on 20,000 keys that both give the same bytes, but no test checked it. The derivation is now `x25519PublicKeyEncodings` in `deploy/identity/key-encoding.ts`. The base58btc codec and the Ed25519 and X25519 multibase encoders it uses moved there from `server.ts` unchanged. `server.ts` imports them, and `deploy/Dockerfile.identity` copies the new file.
+The "Node 20 crypto deadlock" entry further down changed how `generateEd25519` in `deploy/identity/server.ts` reads the raw X25519 public key. It had read the `x` of a JWK export, and now reads the last 32 bytes of the SPKI DER. That entry checked on 20,000 keys that both give the same bytes, but no test checked it. The derivation is now `x25519PublicKeyEncodings` in `deploy/identity/key-encoding.ts`. The base58btc codec and the Ed25519 and X25519 multibase encoders it uses moved there from `server.ts` unchanged. `server.ts` imports them, and `deploy/Dockerfile.identity` copies the new file. The two new files take the lint gate's file count for `deploy/` to 278, past the slack on its pin of 262, so `tools/lint-gate.mjs` now pins 278. Both lint clean, and the error pin is unchanged.
 
 `tests/key-encoding.test.ts` checks three things:
 
