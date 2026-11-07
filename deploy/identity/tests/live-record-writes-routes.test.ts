@@ -4214,17 +4214,22 @@ test('P17: the Play game-data backfill re-opens a finished purge whose pod holds
   const [a, b, c, d, e, f, g, h, i] = Array.from({ length: 9 }, () => playOwner());
   const twoHours = 7200;
   const passkey = P();
-  // A: a purge finished before the native delete, its game data left. B: the same beside the relay's
+  // A: a purge finished before the native delete, its game data left (its guest deadline ten days ago, its
+  // tombstone dated nine days ago, as production's leftovers are). B: the same beside the relay's
   // card (what a guest's own deletion leaves). C: its deadline passed 10 min ago. D: no game data.
   // E: game data and no record. F: claimed (a passkey). G: its anchor sealed with another key. H: filed
   // under A's anchor. I: a guest's own deletion, dated the day before its guest deadline.
   const ledger: Record<string, string> = {};
   for (const o of [a, b, c, d, e, f, g, h, i]) ledger[o.id] = expiredAnchor(issuer, o, twoHours);
+  ledger[a.id] = expiredAnchor(issuer, a, 10 * 86_400);
   ledger[c.id] = expiredAnchor(issuer, c, 600);
   ledger[g.id] = expiredAnchor(issuer, g, twoHours, crypto.randomBytes(32));
   ledger[h.id] = ledger[a.id]!;
   const saves = new Map<string, string>();
-  for (const o of [a, b, c, g, h]) saves.set(o.id, leftoverPod(o.id));
+  const aDeleted = utcDay(Date.now() - 9 * 86_400_000);
+  finishedPurge(a.id, aDeleted);
+  saves.set(a.id, saveGame(a.id));
+  for (const o of [b, c, g, h]) saves.set(o.id, leftoverPod(o.id));
   putOther(`/${b.id}/profile/card`);
   finishedPurge(d.id);
   saves.set(e.id, saveGame(e.id));
@@ -4240,9 +4245,9 @@ test('P17: the Play game-data backfill re-opens a finished purge whose pod holds
     let janitor = await startIdentity(port, { JANITOR_INTERVAL_MS: '1000' });
     try {
       assert.ok(await logs(janitor, /Play game-data backfill done/), `the backfill never finished${out(janitor)}`);
-      assert.match(janitor.output(), /Play game-data backfill: 9 owner\(s\) in the admission ledger \(2 that do not open[^)]*\), 6 past their guest deadline by over 1 h; checking 5\n/);
-      assert.equal(backfillSummary(janitor), '5 checked: 1 re-opened (1 finished, 0 unfinished, left to the janitor), 3 left holding game data, '
-        + '1 holding none, 0 live, 0 closed elsewhere, 0 in flight, 0 could not be checked');
+      assert.match(janitor.output(), /Play game-data backfill: 9 owner\(s\) in the admission ledger \(2 that do not open[^)]*\), 6 past their guest deadline by over 1 h; 0 of them with a purge unfinished, finished first; checking 5\n/);
+      assert.equal(backfillSummary(janitor), '0 of 0 unfinished purge(s) finished first; 5 checked: 1 re-opened (1 finished, 0 unfinished, left to the janitor), '
+        + '0 marked already (0 finished, 0 unfinished), 3 left holding game data, 1 holding none, 0 live, 0 closed elsewhere, 0 in flight, 0 could not be checked');
       // A: marked again on the ETag read, its game data deleted by native delete, then its containers, and the mark cleared.
       assert.deepEqual(docPuts(a.id, since).map(r => [r.body?.['provisionalPlayPurgePending'] === true, r.ifMatch !== undefined, r.status]),
         [[true, true, 205], [false, true, 205]]);
@@ -4251,10 +4256,10 @@ test('P17: the Play game-data backfill re-opens a finished purge whose pod holds
         `DELETE /${a.id}/hallowmarch/checkpoints/`, `DELETE /${a.id}/hallowmarch/`,
         `HEAD /${a.id}/play-budget.json`, `NATIVE-DELETE /${a.id}/play-budget.json`]);
       assert.deepEqual(below(`/${a.id}/`), [], 'nothing of the pod is left but the record');
-      assert.equal(record(a.id)!.deletedAt, utcDay(Date.now()));
+      assert.equal(record(a.id)!.deletedAt, aDeleted);
       assert.equal(record(a.id)!.provisionalPlayPurgePending, undefined);
       const output = janitor.output();
-      const reopened = output.search(new RegExp(`re-opened the finished purge of ${a.id} \\(its tombstone of \\d{4}-\\d\\d-\\d\\d, guest deadline [^)]+\\): its pod still holds 2 game document\\(s\\): hallowmarch/checkpoints/[0-9a-f]{64}\\.json, play-budget\\.json`));
+      const reopened = output.search(new RegExp(`re-opened the finished purge of ${a.id} \\(its tombstone of ${aDeleted}, guest deadline [^)]+\\): its pod still holds 2 game document\\(s\\): hallowmarch/checkpoints/[0-9a-f]{64}\\.json, play-budget\\.json`));
       assert.ok(reopened >= 0 && reopened < output.search(new RegExp(`finished the purge of ${a.id}(?![,\\w-])`)), `re-opened, then finished${out(janitor)}`);
       // Everyone else: nothing written, deleted, read for its ETag or asked about its native delete.
       for (const o of untouched) assert.deepEqual(podChanges(o.id, since, otherSince), [], o.id);
@@ -4276,8 +4281,8 @@ test('P17: the Play game-data backfill re-opens a finished purge whose pod holds
     janitor = await startIdentity(port, { JANITOR_INTERVAL_MS: '1000' });
     try {
       assert.ok(await logs(janitor, /Play game-data backfill done/), `the backfill never finished${out(janitor)}`);
-      assert.equal(backfillSummary(janitor), '5 checked: 0 re-opened (0 finished, 0 unfinished, left to the janitor), 3 left holding game data, '
-        + '2 holding none, 0 live, 0 closed elsewhere, 0 in flight, 0 could not be checked');
+      assert.equal(backfillSummary(janitor), '0 of 0 unfinished purge(s) finished first; 5 checked: 0 re-opened (0 finished, 0 unfinished, left to the janitor), '
+        + '0 marked already (0 finished, 0 unfinished), 3 left holding game data, 2 holding none, 0 live, 0 closed elsewhere, 0 in flight, 0 could not be checked');
       for (const o of [a, ...untouched]) assert.deepEqual(podChanges(o.id, since, otherSince), [], o.id);
       assert.deepEqual([a, b, c, d, e, f, g, h, i].map(o => listings(o.id, since)), [1, 1, 0, 1, 1, 0, 0, 0, 1]);
       // One read of each record by the startup scan, and one more of B's and I's.
@@ -4313,7 +4318,7 @@ test('P18: where the store does not advertise its native delete, the backfill ma
     janitor = await startIdentity(port, { JANITOR_INTERVAL_MS: '1000' });
     try {
       assert.ok(await logs(janitor, /Play game-data backfill done/), `the backfill never finished${out(janitor)}`);
-      assert.match(backfillSummary(janitor)!, /^1 checked: 1 re-opened \(1 finished, 0 unfinished/);
+      assert.match(backfillSummary(janitor)!, /^0 of 0 unfinished purge\(s\) finished first; 1 checked: 1 re-opened \(1 finished, 0 unfinished/);
       assert.deepEqual(below(`/${o.id}/`), []);
       assert.equal(record(o.id)!.provisionalPlayPurgePending, undefined);
     } finally {
@@ -4335,7 +4340,7 @@ test('P19: game data that reaches a re-opened purge after its deletions (a save 
       assert.ok(await logs(janitor, /Play game-data backfill done/), `the backfill never finished${out(janitor)}`);
       assert.match(janitor.output(), new RegExp(`ERROR: identity_play_backfill_halted ${o.id} Provisional cleanup: game data is on the pod again after its deletion \\(hallowmarch/checkpoints/[0-9a-f]{64}\\.json\\); 0 owner\\(s\\) not re-opened`),
         `the backfill did not stop at the unfinished purge${out(janitor)}`);
-      assert.match(backfillSummary(janitor)!, /^1 checked: 1 re-opened \(0 finished, 1 unfinished, left to the janitor\)/);
+      assert.match(backfillSummary(janitor)!, /^0 of 0 unfinished purge\(s\) finished first; 1 checked: 1 re-opened \(0 finished, 1 unfinished, left to the janitor\)/);
       assert.ok(await waitFor(() => (record(o.id)?.provisionalPlayPurgePending ? undefined : true), 15_000), `the janitor never finished the purge${out(janitor)}`);
       assert.deepEqual(otherRequests.filter(r => r.path === late && r.method === 'DELETE').map(r => [r.native ?? false, r.status]), [[true, 205]]);
       assert.deepEqual(below(`/${o.id}/`), []);
@@ -4378,7 +4383,7 @@ test('P20: a purge the backfill re-opened, which the instance a deploy replaces 
       held!.release();
       assert.ok(await logs(fresh, new RegExp(`finished the purge of ${o.id}(?![,\\w-])`)), `the new instance's purge did not finish${out(fresh)}`);
       assert.ok(await logs(fresh, /Play game-data backfill done/));
-      assert.match(backfillSummary(fresh)!, /^1 checked: 1 re-opened \(1 finished, 0 unfinished/);
+      assert.match(backfillSummary(fresh)!, /^0 of 0 unfinished purge\(s\) finished first; 1 checked: 1 re-opened \(1 finished, 0 unfinished/);
       assert.equal(others.has(save) || others.has(`/${o.id}/play-budget.json`), false);
       assert.deepEqual(below(`/${o.id}/`), []);
       assert.ok(record(o.id)!.deletedAt);
@@ -4394,35 +4399,112 @@ test('P20: a purge the backfill re-opened, which the instance a deploy replaces 
   });
 });
 
-test('P21: a re-opened purge the store refuses (its native delete answered 400) stops the backfill at it: only that owner is marked again, and the others are not even listed', { timeout: 120_000 }, async () => {
+test('P21: a re-opened purge the store refuses (its native delete answered 400) stops the backfill at it: only that owner is marked again, and the others are not even listed; the next start re-opens nothing while that purge stays unfinished, and the rest once it finishes', { timeout: 180_000 }, async () => {
   const port = await freePort();
   const owners = [playOwner(), playOwner(), playOwner()];
   const saves = owners.map(o => leftoverPod(o.id));
   const [first, ...rest] = owners;
   forcedOther.set(`NATIVE-DELETE ${saves[0]}`, 400);
-  await withLedger(Object.fromEntries(owners.map(o => [o.id, expiredAnchor(`http://127.0.0.1:${port}`, o, 7200)])), async () => {
+  /** Nothing of the owners after the first is listed, written or deleted since `since` and `otherSince`. */
+  const restUntouched = (since: number, otherSince: number) => {
+    for (const [n, o] of rest.entries()) {
+      assert.equal(listings(o.id, since), 0, o.id);
+      assert.deepEqual(podChanges(o.id, since, otherSince), [], o.id);
+      assert.ok(others.has(saves[n + 1]!));
+      assert.equal(record(o.id)!.provisionalPlayPurgePending, undefined);
+    }
+  };
+  try {
+    await withLedger(Object.fromEntries(owners.map(o => [o.id, expiredAnchor(`http://127.0.0.1:${port}`, o, 7200)])), async () => {
+      let since = mark();
+      let otherSince = otherRequests.length;
+      let janitor = await startIdentity(port, { JANITOR_INTERVAL_MS: '1000' });
+      try {
+        assert.ok(await logs(janitor, /Play game-data backfill done/), `the backfill never finished${out(janitor)}`);
+        assert.match(janitor.output(), new RegExp(`ERROR: identity_play_backfill_halted ${first!.id} Provisional cleanup: the native delete of hallowmarch/checkpoints/[0-9a-f]{64}\\.json was answered 400; 2 owner\\(s\\) not re-opened`),
+          `the backfill did not stop${out(janitor)}`);
+        assert.equal(backfillSummary(janitor), '0 of 0 unfinished purge(s) finished first; 1 checked: 1 re-opened (0 finished, 1 unfinished, left to the janitor), '
+          + '0 marked already (0 finished, 0 unfinished), 0 left holding game data, 0 holding none, 0 live, 0 closed elsewhere, 0 in flight, 0 could not be checked; 2 not checked (stopped)');
+        await sleep(2_500);   // the janitor's passes retry the first, and touch nothing else
+        assert.equal(record(first!.id)!.provisionalPlayPurgePending, true);
+        assert.ok(otherRequests.slice(otherSince).filter(r => r.path === saves[0] && r.native).length >= 2, 'the janitor retries it');
+        restUntouched(since, otherSince);
+      } finally {
+        await janitor.stop();
+      }
+      // The next start, the store still refusing: the startup scan finds the first owner's mark, its purge is
+      // taken up before anything is re-opened, and as it does not finish, nothing more is.
+      since = mark();
+      otherSince = otherRequests.length;
+      janitor = await startIdentity(port, { JANITOR_INTERVAL_MS: '1000' });
+      try {
+        assert.ok(await logs(janitor, /Play game-data backfill done/), `the backfill never finished${out(janitor)}`);
+        assert.match(janitor.output(), /Play game-data backfill: 3 owner\(s\) in the admission ledger \(0 that do not open[^)]*\), 3 past their guest deadline by over 1 h; 1 of them with a purge unfinished, finished first; checking 2\n/);
+        assert.match(janitor.output(), new RegExp(`ERROR: identity_play_backfill_halted ${first!.id} unfinished from before this run: Provisional cleanup: the native delete of hallowmarch/checkpoints/[0-9a-f]{64}\\.json was answered 400; 2 owner\\(s\\) not re-opened`),
+          `the backfill did not stop at the purge left unfinished${out(janitor)}`);
+        assert.equal(backfillSummary(janitor), '0 of 1 unfinished purge(s) finished first; 0 checked: 0 re-opened (0 finished, 0 unfinished, left to the janitor), '
+          + '0 marked already (0 finished, 0 unfinished), 0 left holding game data, 0 holding none, 0 live, 0 closed elsewhere, 0 in flight, 0 could not be checked; 2 not checked (stopped)');
+        assert.doesNotMatch(janitor.output(), /re-opened the finished purge/);
+        restUntouched(since, otherSince);
+      } finally {
+        forcedOther.clear();
+        await janitor.stop();
+      }
+      // Once the store takes the native delete: the next start's janitor takes that purge up (held at its read
+      // of the record, while the backfill cannot read the ledger yet), and the backfill waits for it to finish
+      // before it re-opens the others.
+      forcedOther.set(`GET ${LEDGER}`, 503);
+      const held = hold('GET', first!.id, 2);   // the read after the startup scan's: the janitor's purge
+      janitor = await startIdentity(port, { JANITOR_INTERVAL_MS: '1000' });
+      try {
+        assert.ok(await Promise.race([held.arrived.then(() => true), sleep(20_000).then(() => false)]), `the janitor never took the purge up${out(janitor)}`);
+        forcedOther.delete(`GET ${LEDGER}`);
+        assert.ok(await logs(janitor, /1 of them with a purge unfinished, finished first; checking 2\n/), `the backfill never started${out(janitor)}`);
+        held.release();
+        assert.ok(await logs(janitor, /Play game-data backfill done/), `the backfill never finished${out(janitor)}`);
+        assert.equal(backfillSummary(janitor), '1 of 1 unfinished purge(s) finished first; 2 checked: 2 re-opened (2 finished, 0 unfinished, left to the janitor), '
+          + '0 marked already (0 finished, 0 unfinished), 0 left holding game data, 0 holding none, 0 live, 0 closed elsewhere, 0 in flight, 0 could not be checked');
+        assert.doesNotMatch(janitor.output(), /identity_play_backfill_halted/);
+        for (const o of rest) assert.match(janitor.output(), new RegExp(`re-opened the finished purge of ${o.id}`));
+        for (const o of owners) {
+          assert.deepEqual(below(`/${o.id}/`), [], o.id);
+          assert.equal(record(o.id)!.provisionalPlayPurgePending, undefined, o.id);
+        }
+      } finally {
+        held.release();
+        forcedOther.clear();
+        await janitor.stop();
+      }
+    });
+  } finally {
+    // A failure above leaves no mark for the tests after this one.
+    forcedOther.clear();
+    if (record(first!.id)!.provisionalPlayPurgePending) outOfBand(first!.id, doc => { delete doc['provisionalPlayPurgePending']; });
+  }
+});
+
+test('P22: a tombstone the backfill finds marked already (a purge left unfinished that the startup scan did not see) is finished, and logged and counted apart from the purges it re-opened', { timeout: 120_000 }, async () => {
+  const port = await freePort();
+  const o = playOwner();
+  leftoverPod(o.id);
+  // Marked once the backfill has read the ledger: after the startup scan, which would have queued it.
+  onAnswered.set(`GET ${LEDGER} 200`, () => outOfBand(o.id, doc => { doc['provisionalPlayPurgePending'] = true; }));
+  await withLedger({ [o.id]: expiredAnchor(`http://127.0.0.1:${port}`, o, 7200) }, async () => {
     const since = mark();
-    const otherSince = otherRequests.length;
     const janitor = await startIdentity(port, { JANITOR_INTERVAL_MS: '1000' });
     try {
       assert.ok(await logs(janitor, /Play game-data backfill done/), `the backfill never finished${out(janitor)}`);
-      assert.match(janitor.output(), new RegExp(`ERROR: identity_play_backfill_halted ${first!.id} Provisional cleanup: the native delete of hallowmarch/checkpoints/[0-9a-f]{64}\\.json was answered 400; 2 owner\\(s\\) not re-opened`),
-        `the backfill did not stop${out(janitor)}`);
-      assert.equal(backfillSummary(janitor), '1 checked: 1 re-opened (0 finished, 1 unfinished, left to the janitor), 0 left holding game data, '
-        + '0 holding none, 0 live, 0 closed elsewhere, 0 in flight, 0 could not be checked; 2 not checked (stopped)');
-      await sleep(2_500);   // the janitor's passes retry the first, and touch nothing else
-      assert.equal(record(first!.id)!.provisionalPlayPurgePending, true);
-      assert.ok(otherRequests.slice(otherSince).filter(r => r.path === saves[0] && r.native).length >= 2, 'the janitor retries it');
-      for (const [n, o] of rest.entries()) {
-        assert.equal(listings(o.id, since), 0, o.id);
-        assert.deepEqual(podChanges(o.id, since, otherSince), [], o.id);
-        assert.ok(others.has(saves[n + 1]!));
-        assert.equal(record(o.id)!.provisionalPlayPurgePending, undefined);
-      }
+      assert.equal(backfillSummary(janitor), '0 of 0 unfinished purge(s) finished first; 1 checked: 0 re-opened (0 finished, 0 unfinished, left to the janitor), '
+        + '1 marked already (1 finished, 0 unfinished), 0 left holding game data, 0 holding none, 0 live, 0 closed elsewhere, 0 in flight, 0 could not be checked');
+      const output = janitor.output();
+      const takenUp = output.search(new RegExp(`Play game-data backfill took up the unfinished purge of ${o.id}: its tombstone is marked already`));
+      assert.ok(takenUp >= 0 && takenUp < output.search(new RegExp(`finished the purge of ${o.id}(?![,\\w-])`)), out(janitor));
+      assert.doesNotMatch(output, /re-opened the finished purge/);
+      assert.deepEqual(docPuts(o.id, since).map(r => r.body?.['provisionalPlayPurgePending'] === true), [false], 'nothing written but the mark cleared');
+      assert.deepEqual(below(`/${o.id}/`), []);
     } finally {
-      forcedOther.clear();
+      onAnswered.clear();
       await janitor.stop();
-      outOfBand(first!.id, doc => { delete doc['provisionalPlayPurgePending']; });
     }
   });
 });

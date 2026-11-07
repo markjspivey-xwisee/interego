@@ -43,7 +43,7 @@ function deferred() {
 }
 const userId = `u-try-play-${'1'.repeat(32)}`;
 /** The game-data backfill's turn for an owner (server.ts PlayReopen). */
-type Reopen = { deadline: number; run: { nativeDelete?: boolean }; purging?: boolean };
+type Reopen = { deadline: number; run: { nativeDelete?: boolean }; purging?: boolean; found?: boolean };
 type Methods = {
   userId: string; provisionalPlayAnchor?: string;
   webAuthnCredentials: Array<{ id: string; counter?: number; publicKey?: string }>;
@@ -163,6 +163,8 @@ function fixture(options: { pod?: Record<string, 'native' | 'plain'> } = {}) {
   // Every write of the record, with its condition and what came of it.
   const writes: Array<{ doc: Methods; pre: WritePrecondition; result: 'ok' | 'precondition-failed' }> = [];
   let reads = 0;
+  // How the next reads of the record go, in turn: `true` fails one, as a read the pod answers 503 does.
+  let readFailures: boolean[] = [];
   let beforeDelete: () => Promise<void> = async () => {};
   // DELETEs of the pod's resources by the purge that the pod answers 500 (the next N).
   let failingDeletes = 0;
@@ -174,6 +176,7 @@ function fixture(options: { pod?: Record<string, 'native' | 'plain'> } = {}) {
   const etag = () => `"${version}-application/ld+json"`;
   const readLive = async () => {
     reads++;
+    if (readFailures.shift()) throw new PodReadError(`https://css.test/${userId}/auth-methods.jsonld`, 'answered 503');
     return document
       ? { methods: structuredClone(document), raw: structuredClone(document), etag: etag() }
       : { methods: null, raw: null, etag: null };
@@ -340,11 +343,11 @@ function fixture(options: { pod?: Record<string, 'native' | 'plain'> } = {}) {
   const reopenFinishedPlayPurge = new Function('assertLockHeld', 'PLAY_BACKFILL_MARGIN_MS', 'awaitsGuestRetry', 'unconfirmedPlayDeletions',
     'readLive', 'playReopenRefusal', 'playResidueOutside', 'advertisesNativeDelete', 'playPodRequest', 'CSS_URL', 'applyUpdate',
     'NoWrite', 'Write', 'AuthMethodsWriteError', 'isTombstone', 'authMethodsCache', 'removeFromIndexes', 'reopenedByBackfill', 'log',
-    `${productionFunction('reopenFinishedPlayPurge')}; return reopenFinishedPlayPurge;`)(
+    'unfinishedPlayPurges', `${productionFunction('reopenFinishedPlayPurge')}; return reopenFinishedPlayPurge;`)(
     assertLockHeld, productionNumber('PLAY_BACKFILL_MARGIN_MS'), awaitsGuestRetry, unconfirmedPlayDeletions,
     readLive, playReopenRefusal, playResidueOutside, advertisesNativeDelete, (url: string, init?: RequestInit) => fetcher(url, init),
     'https://css.test/', applyUpdate, NoWrite, Write, AuthMethodsWriteError, isTombstone, authMethodsCache, () => {}, reopenedByBackfill,
-    janitorLine,
+    janitorLine, unfinishedPlayPurges,
   );
   const purgePlayOwner = new Function('withIdentityPodMutex', 'purgeProvisionalPlayPod', 'CSS_URL', 'deleteUserCompletely',
     'playOwnerPurgeable', 'unfinishedPlayPurges', 'finishPlayPurge', 'log', 'awaitsGuestRetry', 'playPurgesInFlight',
@@ -373,6 +376,7 @@ function fixture(options: { pod?: Record<string, 'native' | 'plain'> } = {}) {
     set now(value: number) { now = value; },
     set beforePersist(value: () => Promise<void>) { beforePersist = value; },
     set afterPersist(value: () => Promise<void>) { afterPersist = value; },
+    set readFailures(value: boolean[]) { readFailures = value; },
     set beforeDelete(value: () => Promise<void>) { beforeDelete = value; },
     set failingDeletes(value: number) { failingDeletes = value; },
     set registryFailures(value: Array<'timeout' | number>) { registryFailures = value; },
@@ -919,7 +923,7 @@ test('backfill: a re-opened purge whose native delete fails stays marked and que
   assert.equal(f.unfinishedPlayPurges.size + f.reopenedByBackfill.size, 0);
 });
 
-test('backfill: a mark the pod applied but answered 500 is what the writer settles on: the purge goes on and finishes', async () => {
+test('backfill: a mark the pod applied but answered 500 is what the writer settles on: the purge goes on and finishes; one it refused is no mark, and the run goes on', async () => {
   const f = leftover();
   f.afterPersist = async () => {
     f.afterPersist = async () => {};
@@ -932,9 +936,76 @@ test('backfill: a mark the pod applied but answered 500 is what the writer settl
   assert.equal(f.pod.has(save) || f.pod.has(budget), false);
   assert.equal(f.unfinishedPlayPurges.size + f.reopenedByBackfill.size, 0);
   assert.match(f.janitorLog.join('\n'), /re-opened the finished purge of u-try-play-1+[\s\S]*finished the purge of u-try-play-1+/);
+  // One the pod did not apply, settled so: nothing is on the pod, the owner is not queued, and the run goes on.
+  const g = leftover();
+  g.beforePersist = async () => { g.beforePersist = async () => {}; throw new AuthMethodsWriteError('PUT failed: 500 Internal Server Error', true); };
+  const second = await g.backfill(2 * HOUR);
+  assert.equal(second.outcome, 'error:PUT failed: 500 Internal Server Error');
+  assert.equal(second.reopen.purging, false);
+  assert.equal(g.document!.provisionalPlayPurgePending, undefined);
+  assert.equal(g.unfinishedPlayPurges.size + g.reopenedByBackfill.size, 0);
+  assert.match(g.janitorLog.join('\n'), /Play game-data backfill could not check u-try-play-1+: PUT failed: 500/);
+  assert.ok(g.pod.has(save) && g.pod.has(budget));
 });
 
-test('backfill: a deletion\'s tombstone, dated before the day of the guest deadline, is left as it is; one dated that day is taken for a purge\'s', async () => {
+test('backfill: a re-opened purge whose mark landed but whose next read of the record failed is queued and held to the game data: the janitor\'s next pass deletes nothing more', async () => {
+  const f = leftover();
+  // The mark lands; the read of the record right after it (deleteUserCompletely's) fails.
+  f.afterPersist = async () => { f.afterPersist = async () => {}; f.readFailures = [true]; };
+  const { outcome, reopen } = await f.backfill(2 * HOUR);
+  assert.match(outcome, /^error:could not read \S+auth-methods\.jsonld: answered 503$/);
+  assert.equal(reopen.purging, true, 'a purge it took up that did not finish: the run stops');
+  assert.equal(f.document!.provisionalPlayPurgePending, true);
+  assert.deepEqual([...f.unfinishedPlayPurges], [userId], 'and the janitor comes back to it at its next pass');
+  assert.deepEqual([...f.reopenedByBackfill.keys()], [userId]);
+  assert.match(f.janitorLog.join('\n'), /purge of u-try-play-1+ unfinished, its account closed; tried again at the next pass: could not read/);
+  assert.doesNotMatch(f.janitorLog.join('\n'), /could not check/);
+  // The relay's card is written meanwhile: that pass deletes nothing, and the purge stays marked.
+  f.pod.write('profile/card', 'plain');
+  const since = f.pod.changes().length;
+  assert.equal(await f.cleanup(), 'kept:outside: profile/card, profile/');
+  assert.deepEqual(f.pod.changes().slice(since), []);
+  assert.ok(f.pod.has('profile/card') && f.pod.has(save));
+  f.pod.remove('profile/card');
+  f.pod.remove('profile/');
+  assert.equal(await f.cleanup(), 'purged');
+  assert.equal(f.pod.has(save) || f.pod.has(budget), false);
+  assert.equal(f.unfinishedPlayPurges.size + f.reopenedByBackfill.size, 0);
+});
+
+test('backfill: a mark nothing could settle stops the run and queues the owner, held to the game data: a pass that finds it landed deletes nothing more, and one that finds it did not only forgets the owner', async () => {
+  // The pod stored the mark without answering, and the read that would settle it failed.
+  const f = leftover();
+  f.afterPersist = async () => { f.afterPersist = async () => {}; f.readFailures = [true]; throw new AuthMethodsWriteError('PUT timed out', true, true); };
+  const { outcome, reopen } = await f.backfill(2 * HOUR);
+  assert.equal(outcome, 'error:PUT timed out');
+  assert.equal(reopen.purging, true, 'the mark may be on the pod: the run stops');
+  assert.equal(f.document!.provisionalPlayPurgePending, true);
+  assert.deepEqual([...f.unfinishedPlayPurges], [userId]);
+  assert.deepEqual([...f.reopenedByBackfill.keys()], [userId]);
+  assert.doesNotMatch(f.janitorLog.join('\n'), /could not check/);
+  f.pod.write('profile/card', 'plain');
+  const since = f.pod.changes().length;
+  assert.equal(await f.cleanup(), 'kept:outside: profile/card, profile/');
+  assert.deepEqual(f.pod.changes().slice(since), []);
+  // The mark, and the fence that would settle it, were never answered, and never stored.
+  const g = leftover();
+  let unanswered = 0;
+  g.beforePersist = async () => { if (unanswered++ < 2) throw new AuthMethodsWriteError('PUT timed out', true, true); };
+  const second = await g.backfill(2 * HOUR);
+  assert.equal(second.outcome, 'error:PUT timed out');
+  assert.equal(second.reopen.purging, true);
+  assert.equal(g.document!.provisionalPlayPurgePending, undefined);
+  assert.deepEqual([...g.unfinishedPlayPurges], [userId]);
+  // The janitor's next pass finds the tombstone unmarked: it forgets the owner, and deletes nothing.
+  const gSince = g.pod.changes().length;
+  assert.equal(await g.cleanup(), 'closed');
+  assert.deepEqual(g.pod.changes().slice(gSince), []);
+  assert.ok(g.pod.has(save) && g.pod.has(budget));
+  assert.equal(g.unfinishedPlayPurges.size + g.reopenedByBackfill.size, 0);
+});
+
+test('backfill: a deletion\'s tombstone, dated before the day of the guest deadline, is left as it is; one dated that day, or after it and before today, is taken for a purge\'s', async () => {
   const f = leftover(finishedPurge(day(Date.now() - 2 * HOUR - 24 * HOUR)));
   const { outcome } = await f.backfill(2 * HOUR);
   assert.match(outcome, /^kept:deletion: its tombstone of \d{4}-\d\d-\d\d is older than its guest deadline of \d{4}-\d\d-\d\d$/);
@@ -943,6 +1014,10 @@ test('backfill: a deletion\'s tombstone, dated before the day of the guest deadl
   assert.equal(left(f, 'deletion: '), 1);
   const g = leftover(finishedPurge(day(Date.now() - 2 * HOUR)));
   assert.equal((await g.backfill(2 * HOUR)).outcome, 'purged');
+  // The leftovers as production has them: a guest deadline ten days ago, its purge's tombstone dated nine days ago.
+  const h = leftover(finishedPurge(day(Date.now() - 9 * 24 * HOUR)));
+  assert.equal((await h.backfill(10 * 24 * HOUR)).outcome, 'purged');
+  assert.equal(h.pod.has(save) || h.pod.has(budget), false);
 });
 
 test('backfill: a tombstone marked already (an unfinished purge the startup scan did not find) is finished as the janitor finishes one: everything of the pod but the record', async () => {
@@ -951,11 +1026,35 @@ test('backfill: a tombstone marked already (an unfinished purge the startup scan
   const { outcome, reopen } = await f.backfill(2 * HOUR);
   assert.equal(outcome, 'purged');
   assert.equal(reopen.purging, true);
+  assert.equal(reopen.found, true, 'counted apart from the purges the run re-opened');
   assert.deepEqual(f.writes.map(w => w.doc.provisionalPlayPurgePending ?? false), [false], 'nothing is written but the mark cleared');
   assert.ok(f.pod.changes().includes('DELETE agents 205'));
   assert.equal(f.pod.has('agents') || f.pod.has(save) || f.pod.has(budget), false);
+  const takenUp = `Janitor: Play game-data backfill took up the unfinished purge of ${userId}: its tombstone is marked already`;
+  assert.ok(f.janitorLog.indexOf(takenUp) >= 0 && f.janitorLog.indexOf(takenUp) < f.janitorLog.indexOf(`Janitor: finished the purge of ${userId}`), f.janitorLog.join('\n'));
   assert.doesNotMatch(f.janitorLog.join('\n'), /re-opened/);
   assert.equal(f.reopenedByBackfill.size, 0);
+  // Marked between the backfill's read and its write (the other instance's backfill): taken up the same way.
+  const g = leftover();
+  g.beforePersist = async () => { g.beforePersist = async () => {}; g.outOfBand(m => { m.provisionalPlayPurgePending = true; }); };
+  const second = await g.backfill(2 * HOUR);
+  assert.equal(second.outcome, 'purged');
+  assert.equal(second.reopen.found, true);
+  assert.deepEqual(g.writes.map(w => [w.result, w.doc.provisionalPlayPurgePending ?? false]), [['precondition-failed', true], ['ok', false]]);
+  assert.ok(g.janitorLog.includes(takenUp));
+  assert.doesNotMatch(g.janitorLog.join('\n'), /re-opened/);
+  // One the run marked itself is not.
+  const h = leftover();
+  assert.equal((await h.backfill(2 * HOUR)).reopen.found, undefined);
+  // A read after the backfill's own that fails leaves the owner queued for the janitor, as the startup scan would have.
+  const k = leftover({ ...finishedPurge(), provisionalPlayPurgePending: true });
+  k.readFailures = [false, true];
+  const third = await k.backfill(2 * HOUR);
+  assert.match(third.outcome, /^error:could not read /);
+  assert.equal(third.reopen.purging, true);
+  assert.deepEqual([...k.unfinishedPlayPurges], [userId]);
+  assert.equal(k.reopenedByBackfill.size, 0, 'an ordinary purge, not one the backfill re-opened');
+  assert.equal(await k.cleanup(), 'purged');
 });
 
 test('backfill: a purge it re-opened deletes nothing at a later pass while its pod holds more than the game data, stays marked and queued, and says so once', async () => {
