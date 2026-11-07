@@ -289,7 +289,10 @@ const REPO_ROOT = fileURLToPath(new URL('..', import.meta.url));
 // Foxxi's lti-platform-readiness, lti-platform-publication and lti-platform-rate-limit
 // regression modules consumed the remaining headroom. Pin the expanded tree;
 // no modules were removed, excluded or skipped to meet the floor.
-export const MIN_TEST_MODULES = 620;
+// 620 -> 622: the number the run-integrity reporter named on the merge of master (dfab3722)
+// into the first-party Hosted Terms clients branch: 653 modules in the tree, 33 above 620,
+// past the 31 of slack. Nothing was removed, excluded or skipped.
+export const MIN_TEST_MODULES = 622;
 
 /**
  * How far below the real module count MIN_TEST_MODULES may sit before that is itself a
