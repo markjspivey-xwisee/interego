@@ -12,13 +12,14 @@ vi.mock('node:https', () => ({ request: mocks.request }));
 vi.mock('node:dns/promises', () => ({ lookup: mocks.lookup }));
 
 const NOW = Date.parse('2026-11-07T20:00:00Z');
+const BASE = 'https://workbench.example';
 const PLATFORM: CourseLtiPlatform = { issuer: 'https://platform.example/lti', clientId: 'runtime-client', deploymentId: 'runtime-deployment',
   jwksUrl: 'https://keys.example/jwks', authorizationEndpoint: 'https://platform.example/authorize', tokenEndpoint: 'https://platform.example/token' };
 const managers: CourseLtiManager[] = [];
 beforeEach(() => { mocks.request.mockReset(); mocks.lookup.mockReset(); });
 afterEach(() => { for (const manager of managers.splice(0)) manager.dispose(); });
 
-function fixture(verifyJwt?: (jwt: string, jwks: string, signal: AbortSignal) => Promise<CourseLtiVerifyResult>) {
+function fixture(verifyJwt?: (jwt: string, jwks: string, signal: AbortSignal) => Promise<CourseLtiVerifyResult>, endpoints: Partial<CourseLtiPlatform> = {}) {
   const time = { value: NOW }, controller = new AbortController();
   const binding: CourseLtiBinding = { sessionId: 'browser-session', actor: 'did:web:identity.example:agents:alice', connectionId: 'source-connection',
     courseId: 'native-course', version: 0, expiresAt: NOW + 10 * 60_000, signal: controller.signal };
@@ -26,7 +27,7 @@ function fixture(verifyJwt?: (jwt: string, jwks: string, signal: AbortSignal) =>
     verifyJwt: verifyJwt ?? (async token => ({ ok: true, header: { alg: 'RS256' }, payload: JSON.parse(token) })) });
   managers.push(manager);
   const descriptor = manager.prepare(binding);
-  manager.configure(descriptor.id, PLATFORM, descriptor.id, 'resource-1');
+  manager.configure(descriptor.id, { ...PLATFORM, ...endpoints }, descriptor.id, 'resource-1');
   const login = () => new URL(manager.login(descriptor.id, { iss: PLATFORM.issuer, client_id: PLATFORM.clientId, lti_deployment_id: PLATFORM.deploymentId,
     target_link_uri: descriptor.launch_url, login_hint: 'opaque-platform-hint', lti_message_hint: 'opaque-message' }));
   const claims = (nonce: string) => ({ iss: PLATFORM.issuer, aud: PLATFORM.clientId, azp: PLATFORM.clientId, sub: 'cloud-subject-42',
@@ -139,9 +140,43 @@ describe('dynamic user-scoped LTI course connection', () => {
     expect(results.filter(result => result.status === 'fulfilled')).toHaveLength(1);
     expect(f.manager.status(f.descriptor.id, f.binding).state).toBe('verified');
   });
-  it.each(['https://127.0.0.1/jwks', 'https://platform.example/jwks?key=secret', 'http://platform.example/jwks', 'https://host.local/jwks'])('refuses unsafe registered endpoints %s', jwksUrl => {
+  it.each(['https://127.0.0.1/jwks?externalConfig=synthetic', 'https://user:password@platform.example/jwks?externalConfig=synthetic',
+    'https://platform.example/jwks?externalConfig=synthetic#fragment', 'http://platform.example/jwks?externalConfig=synthetic', 'https://host.local/jwks?externalConfig=synthetic'])('refuses unsafe registered endpoints %s', jwksUrl => {
     const f = fixture(); const next = f.manager.prepare({ ...f.binding, connectionId: 'different' });
     expect(() => f.manager.configure(next.id, { ...PLATFORM, jwksUrl }, next.id)).toThrow(/public HTTPS/);
+  });
+  it.each(['https://platform.example/lti?tenant=synthetic', 'https://platform.example/lti?', 'https://platform.example/lti#fragment'])('keeps issuer identifiers query/fragment-free: %s', issuer => {
+    const f = fixture(), next = f.manager.prepare({ ...f.binding, connectionId: 'different' });
+    expect(() => f.manager.configure(next.id, { ...PLATFORM, issuer }, next.id)).toThrow(/without credentials, query or fragment/);
+  });
+  it('keeps workbench/tool addresses strict while allowing opaque registered platform routing queries', () => {
+    expect(() => new CourseLtiManager({ baseUrl: BASE + '?tenant=synthetic' })).toThrow(/without credentials, query or fragment/);
+    const f = fixture(undefined, { jwksUrl: PLATFORM.jwksUrl + '?externalConfig=SYNTHETIC-OPAQUE',
+      tokenEndpoint: PLATFORM.tokenEndpoint + '?externalConfig=SYNTHETIC-OPAQUE',
+      authorizationEndpoint: PLATFORM.authorizationEndpoint + '?externalConfig=SYNTHETIC-OPAQUE&tenant=course-owner' });
+    const url = f.login();
+    expect(url.searchParams.get('externalConfig')).toBe('SYNTHETIC-OPAQUE');
+    expect(url.searchParams.get('tenant')).toBe('course-owner');
+    expect(new URL(f.descriptor.login_url).search).toBe(''); expect(new URL(f.descriptor.launch_url).search).toBe('');
+    expect(JSON.stringify(f.manager.status(f.descriptor.id, f.binding))).not.toContain('SYNTHETIC-OPAQUE');
+  });
+  it('replaces all configured OIDC/LTI authority parameters and removes stale optional hints while keeping routing queries', () => {
+    const configured = new URL(PLATFORM.authorizationEndpoint);
+    configured.searchParams.set('externalConfig', 'SYNTHETIC-ROUTING');
+    for (const key of ['state', 'STATE', 'nonce', 'client_id', 'redirect_uri', 'response_type', 'response_mode', 'scope', 'prompt', 'login_hint',
+      'lti_message_hint', 'lti_deployment_id', 'target_link_uri', 'iss', 'request', 'request_uri', 'id_token_hint', 'claims', 'max_age',
+      'acr_values', 'ui_locales', 'display', 'code_challenge', 'code_challenge_method', 'authorization_details', 'resource', 'audience',
+      'client_secret', 'access_token', 'id_token']) configured.searchParams.append(key, 'STALE-CONFIGURED-VALUE');
+    const f = fixture(undefined, { authorizationEndpoint: configured.href });
+    const actual = new URL(f.manager.login(f.descriptor.id, { iss: PLATFORM.issuer, login_hint: 'current-login-hint', target_link_uri: f.descriptor.launch_url }));
+    expect(actual.searchParams.get('externalConfig')).toBe('SYNTHETIC-ROUTING');
+    expect(actual.searchParams.getAll('state')).toHaveLength(1); expect(actual.searchParams.get('state')).toMatch(/^[a-f0-9]{48}$/);
+    expect(actual.searchParams.get('nonce')).toMatch(/^[a-f0-9]{48}$/);
+    expect(actual.searchParams.get('client_id')).toBe(PLATFORM.clientId); expect(actual.searchParams.get('redirect_uri')).toBe(f.descriptor.launch_url);
+    expect(actual.searchParams.get('login_hint')).toBe('current-login-hint'); expect(actual.searchParams.get('response_type')).toBe('id_token');
+    expect(actual.searchParams.get('response_mode')).toBe('form_post'); expect(actual.searchParams.get('scope')).toBe('openid');
+    expect(actual.searchParams.get('prompt')).toBe('none'); expect(actual.searchParams.has('lti_message_hint')).toBe(false);
+    expect(actual.href).not.toContain('STALE-CONFIGURED-VALUE'); expect(actual.searchParams.has('STATE')).toBe(false);
   });
   it('does not let login parameters replace the registered issuer, client or target', () => {
     const f = fixture();
@@ -190,11 +225,11 @@ describe('real JWT verification over the bounded registered-key transport', () =
       return request;
     });
   }
-  function signed(algorithm: 'RS256' | 'ES256') {
+  function signed(algorithm: 'RS256' | 'ES256', claims: Record<string, unknown> = { iss: PLATFORM.issuer, sub: 'actual-signed-subject' }) {
     const keys = algorithm === 'RS256' ? generateKeyPairSync('rsa', { modulusLength: 2048 }) : generateKeyPairSync('ec', { namedCurve: 'P-256' });
     const jwk = { ...keys.publicKey.export({ format: 'jwk' }), alg: algorithm, kid: 'platform-key', use: 'sig' };
     const header = Buffer.from(JSON.stringify({ alg: algorithm, kid: 'platform-key', jku: 'http://127.0.0.1/private' })).toString('base64url');
-    const payload = Buffer.from(JSON.stringify({ iss: PLATFORM.issuer, sub: 'actual-signed-subject' })).toString('base64url');
+    const payload = Buffer.from(JSON.stringify(claims)).toString('base64url');
     const input = header + '.' + payload;
     const signature = algorithm === 'RS256' ? sign('RSA-SHA256', Buffer.from(input), keys.privateKey)
       : sign('sha256', Buffer.from(input), { key: keys.privateKey, dsaEncoding: 'ieee-p1363' });
@@ -208,6 +243,36 @@ describe('real JWT verification over the bounded registered-key transport', () =
     expect(mocks.lookup).toHaveBeenCalledTimes(1);
     transport([{ ...data.jwk, kid: 'wrong-key' }]);
     expect((await verifyCourseLtiJwt(data.jwt, PLATFORM.jwksUrl, new AbortController().signal)).ok).toBe(false);
+  });
+  it('completes the real HTTP form launch using queried platform endpoints and an actual RSA-signed token', async () => {
+    const manager = new CourseLtiManager({ baseUrl: 'https://workbench.example', now: () => NOW }); managers.push(manager);
+    const binding: CourseLtiBinding = { sessionId: 'query-session', actor: 'did:web:identity.example:agents:query', connectionId: 'query-source',
+      courseId: 'query-course', version: 0, expiresAt: NOW + 600_000 };
+    const descriptor = manager.prepare(binding);
+    const queried = { ...PLATFORM, jwksUrl: 'https://keys.example/jwks?externalConfig=SYNTHETIC-OPAQUE%2BVALUE',
+      authorizationEndpoint: PLATFORM.authorizationEndpoint + '?externalConfig=SYNTHETIC-OPAQUE%2BVALUE',
+      tokenEndpoint: PLATFORM.tokenEndpoint + '?externalConfig=SYNTHETIC-OPAQUE%2BVALUE' };
+    manager.configure(descriptor.id, queried, descriptor.id, 'resource-query');
+    const app = express(); manager.attachRoutes(app); const server = app.listen(0, '127.0.0.1');
+    await new Promise<void>(resolve => server.once('listening', resolve));
+    const base = 'http://127.0.0.1:' + (server.address() as AddressInfo).port;
+    try {
+      const login = await fetch(base + new URL(descriptor.login_url).pathname, { method: 'POST', redirect: 'manual',
+        body: new URLSearchParams({ iss: queried.issuer, login_hint: 'query-hint', target_link_uri: descriptor.launch_url }) });
+      expect(login.status).toBe(302); const redirect = new URL(login.headers.get('location')!);
+      expect(redirect.searchParams.get('externalConfig')).toBe('SYNTHETIC-OPAQUE+VALUE');
+      const token = signed('RS256', { iss: queried.issuer, aud: queried.clientId, sub: 'signed-query-subject', iat: NOW / 1000, exp: NOW / 1000 + 300,
+        nonce: redirect.searchParams.get('nonce'), [LTI_CLAIMS.deploymentId]: queried.deploymentId, [LTI_CLAIMS.version]: '1.3.0',
+        [LTI_CLAIMS.messageType]: 'LtiResourceLinkRequest', [LTI_CLAIMS.targetLinkUri]: descriptor.launch_url,
+        [LTI_CLAIMS.context]: { id: descriptor.id }, [LTI_CLAIMS.resourceLink]: { id: 'resource-query' }, [LTI_CLAIMS.roles]: ['Learner'] });
+      transport([token.jwk]);
+      const response = await fetch(base + new URL(descriptor.launch_url).pathname, { method: 'POST',
+        body: new URLSearchParams({ state: redirect.searchParams.get('state')!, id_token: token.jwt }) });
+      expect(response.status).toBe(200); expect(await response.text()).toContain('Course launch verified');
+      expect(mocks.request.mock.calls[0]![0].href).toBe(queried.jwksUrl);
+      expect(manager.status(descriptor.id, binding)).toMatchObject({ state: 'verified', launch: { subject: 'signed-query-subject', course_id: binding.courseId } });
+      expect(JSON.stringify(manager.status(descriptor.id, binding))).not.toContain('SYNTHETIC-OPAQUE');
+    } finally { await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve())); }
   });
   it.each([[302, 'application/json', undefined], [200, 'text/html', undefined], [200, 'application/json', 65_537]] as const)('rejects key response status/mime/size %j', async (status, mime, length) => {
     const data = signed('RS256'); transport([data.jwk], status, mime, length);

@@ -13,6 +13,12 @@ const ROOT = '/i2idlx/course-lti';
 const MAX_RECORDS = 1000, MAX_PER_CONNECTION = 4, MAX_LOGINS = 4;
 const LOGIN_MS = 5 * 60_000, SESSION_MS = 30 * 60_000;
 const MAX_JWT = 65_536, MAX_JWKS = 65_536;
+// An exact registered endpoint may carry opaque vendor routing parameters.
+// OIDC/LTI request authority always comes from the current pending launch.
+const AUTHORIZATION_ARGUMENTS = new Set(['response_type', 'response_mode', 'client_id', 'redirect_uri', 'scope', 'prompt', 'state', 'nonce',
+  'login_hint', 'lti_message_hint', 'lti_deployment_id', 'target_link_uri', 'iss', 'request', 'request_uri', 'id_token_hint', 'claims',
+  'max_age', 'acr_values', 'ui_locales', 'display', 'code_challenge', 'code_challenge_method', 'authorization_details', 'resource', 'audience',
+  'client_secret', 'access_token', 'id_token']);
 const opaque = () => randomBytes(24).toString('hex');
 const object = (value: unknown): value is Row => !!value && typeof value === 'object' && !Array.isArray(value);
 const bounded = (value: unknown, max: number): value is string => typeof value === 'string' && !!value.trim() &&
@@ -96,7 +102,24 @@ interface Entry {
 
 function publicUrl(value: unknown): string {
   if (!bounded(value, 2048)) fail('The registered LTI endpoint must be a public HTTPS URL.');
-  try { sourceServiceUrl(value); } catch { fail('The registered LTI endpoint must be a public HTTPS URL without credentials, query or fragment.'); }
+  try {
+    if (/[?#]/.test(value)) throw new Error('Issuer and tool addresses do not take routing arguments.');
+    sourceServiceUrl(value);
+  } catch { fail('The registered LTI endpoint must be a public HTTPS URL without credentials, query or fragment.'); }
+  return value;
+}
+/** Only program-registered platform endpoints allow fixed query parameters.
+ * Validate the same origin/path through the existing public-network guard, then
+ * preserve the original opaque query. It is never copied into error messages.
+ */
+function platformEndpoint(value: unknown): string {
+  if (!bounded(value, 2048)) fail('The registered platform endpoint must be a public HTTPS URL.');
+  try {
+    const screened = new URL(value);
+    if (value.includes('#')) throw new Error('Endpoint fragments are not supported.');
+    screened.search = '';
+    sourceServiceUrl(screened.href);
+  } catch { fail('The registered platform endpoint must be a public HTTPS URL without credentials or fragments.'); }
   return value;
 }
 function decode(segment: string): Row {
@@ -109,7 +132,7 @@ function decode(segment: string): Row {
 
 /** A bounded GET whose actual socket resolves only public addresses. No redirects. */
 async function readJwks(raw: string, signal: AbortSignal): Promise<Row[]> {
-  const url = sourceServiceUrl(raw);
+  const url = new URL(platformEndpoint(raw));
   const deadline = AbortSignal.any([signal, AbortSignal.timeout(10_000)]);
   const body = await new Promise<Buffer>((resolve, reject) => {
     if (signal.aborted) { reject(new CourseLtiError('LTI connection ended.', 410)); return; }
@@ -231,8 +254,8 @@ export class CourseLtiManager {
     if (!bounded(platform.clientId, 512) || !bounded(platform.deploymentId, 512) || !bounded(expectedContextId, 255) ||
         expectedResourceLinkId !== undefined && !bounded(expectedResourceLinkId, 255)) fail('Exact platform and course identifiers are required.');
     const copy: CourseLtiPlatform = { issuer: publicUrl(platform.issuer), clientId: platform.clientId, deploymentId: platform.deploymentId,
-      jwksUrl: publicUrl(platform.jwksUrl), authorizationEndpoint: publicUrl(platform.authorizationEndpoint),
-      ...(platform.tokenEndpoint ? { tokenEndpoint: publicUrl(platform.tokenEndpoint) } : {}) };
+      jwksUrl: platformEndpoint(platform.jwksUrl), authorizationEndpoint: platformEndpoint(platform.authorizationEndpoint),
+      ...(platform.tokenEndpoint ? { tokenEndpoint: platformEndpoint(platform.tokenEndpoint) } : {}) };
     entry.platform = copy; entry.contextId = expectedContextId; entry.resourceLinkId = expectedResourceLinkId;
   }
   status(id: string, binding: CourseLtiBinding): CourseLtiStatus {
@@ -261,6 +284,10 @@ export class CourseLtiManager {
     if (entry.logins.size >= MAX_LOGINS) fail('Too many pending launches. Retry after the earlier launch expires.', 429);
     const state = opaque(), nonce = opaque(); entry.logins.set(state, { nonce, expires: Math.min(entry.expires, now + LOGIN_MS) });
     const url = new URL(platform.authorizationEndpoint);
+    // Remove duplicates and alternate-cased reserved names before inserting the
+    // current state, nonce and registered client/target. In particular a stale
+    // configured lti_message_hint must not survive when this login has none.
+    for (const key of [...url.searchParams.keys()]) if (AUTHORIZATION_ARGUMENTS.has(key.toLowerCase())) url.searchParams.delete(key);
     for (const [key, value] of Object.entries({ response_type: 'id_token', response_mode: 'form_post', client_id: platform.clientId,
       redirect_uri: entry.descriptor.launch_url, scope: 'openid', prompt: 'none', state, nonce, login_hint: raw.login_hint,
       ...(typeof raw.lti_message_hint === 'string' ? { lti_message_hint: raw.lti_message_hint } : {}) })) url.searchParams.set(key, value);
