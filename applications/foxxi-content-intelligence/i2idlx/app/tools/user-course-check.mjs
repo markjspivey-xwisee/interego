@@ -174,7 +174,7 @@ await test('LTI controls retain only safe setup metadata and accept a Cloud laun
     tool: { login_url: 'https://workbench.example/lti/login', launch_url: 'https://workbench.example/lti/launch', jwks_url: 'https://workbench.example/lti/jwks', public_key_pem: 'PUBLIC-KEY' },
     launch: { issuer: 'https://cloud.scorm.com/platform', client_id: 'client-one', deployment_id: 'deployment-one', subject: 'platform-account-one',
       context_id: 'placement-context', resource_link_id: 'resource-one', verified_at: expires, course_id: 'native-cloud-course', version: 3,
-      id_token: 'PRIVATE-LTI-TOKEN', browser_token: BROWSER } };
+      id_token: 'PRIVATE-TOKEN', browser_token: BROWSER } };
   const safe = view(raw, 'lti-setup-one');
   assert.equal(safe.launch.subject, 'platform-account-one');
   assert(!JSON.stringify(safe).includes('PRIVATE-'));
