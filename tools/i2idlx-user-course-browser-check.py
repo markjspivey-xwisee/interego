@@ -12,9 +12,12 @@ from playwright.sync_api import sync_playwright
 
 root, cache, shots = [pathlib.Path(value).resolve() for value in sys.argv[1:4]]
 shots.mkdir(parents=True, exist_ok=True)
-html = (root / "site/app.html").read_text(encoding="utf-8")
+html_path = root / "site/app.html"
+if not html_path.exists():
+    html_path = root / "site-ts/app.html"
+html = html_path.read_text(encoding="utf-8")
 if len(sys.argv) > 4:
-    scripts = list(re.finditer(r"<script\b[^>]*>.*?</script>", html, re.S))
+    scripts = list(re.finditer(r"<script\b[^>]*>.*?</script\s*>", html, re.S | re.I))
     last = scripts[-1]
     html = html[:last.start()] + "<script>" + pathlib.Path(sys.argv[4]).read_text(encoding="utf-8") + "</script>" + html[last.end():]
 
