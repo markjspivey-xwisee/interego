@@ -183,12 +183,18 @@ Interpretant adds the reviewed Competency framework definition as a Hypothetical
 The two specialized Foxxi LER/TLA framework classes classify into the authored generic concept in one direction. The CTDL-ASN candidate annotation creates no typing or ratified mapping. Focused browser/server, HTTP, classifier, SHACL, export and Orchestrate regressions exercise these boundaries. The PR template now requests concrete upstream/downstream semantic integration impact.
 
 - Signed xAPI writes retain a private usage artifact with same-owner readback and distinct event, LRS storage and projection timestamps.
+## 2026-11-04 - Keep the native LRS CI context local
+
+The isolated native CSS test fixture retains the generator's exact Components.js context definitions before pruning its build dependencies. This removes a remote JSON-LD context lookup that repeatedly failed with HTTP 500. A regression test blocks remote context requests and checks the parsed RDF definitions; production configuration and review gates are unchanged.
 
 ## 2026-11-03 — Distinguish paired-agent request timeout from session expiry
 
 A timed-out question now directs the user to ask again on the active agent connection, instead of advising sign-in. The broker marks only its request deadline as request_timeout; agent failures and genuine session expiry retain their separate errors. Ask and live Orchestrate explain the retry without discarding the paired session.
 
 Actual client/router HTTP checks use injected clocks with the production ten-minute request and thirty-minute session bounds. They cover both deadline races, successful fresh questions on the same connection, agent failures with matching error prose, and real session expiry. These deterministic checks make no model or production calls.
+## 2026-11-03 - Enforce selected note access for local agent grants
+
+New local connections can select an explicit set of existing note IDs. The protected registry and status preserve that scope, and the controller applies it before fetching or decrypting note payloads. Search excludes other notes; direct reads outside the grant are refused, and saving a new note does not expand read access. Existing all-note grants and web approval policy keep their prior scope. Source tests cover selection validation and persistence, controller isolation, and the native page's note picker; installed Windows behavior still requires separate verification.
 
 ## 2026-11-03 — Respect paired-agent concurrency in live Orchestrate
 

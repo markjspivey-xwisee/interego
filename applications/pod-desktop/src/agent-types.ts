@@ -8,6 +8,8 @@ export interface AgentConnection {
   readonly name: string;
   readonly client: AgentClient;
   readonly permissions: readonly AgentPermission[];
+  /** Absent means all current/future notes; an array limits reads to these IDs. */
+  readonly selectedNoteIds?: readonly string[];
   readonly createdAt: string;
   readonly expiresAt: string;
   readonly state: AgentConnectionState;
@@ -19,6 +21,7 @@ export interface AgentConnectionInput {
   readonly name: string;
   readonly client: AgentClient;
   readonly permissions: readonly AgentPermission[];
+  readonly selectedNoteIds?: readonly string[];
   readonly expiresInDays: 7 | 30 | 90;
 }
 
@@ -35,6 +38,7 @@ export interface AgentPrincipal {
   readonly id: string;
   readonly name: string;
   readonly permissions: readonly AgentPermission[];
+  readonly selectedNoteIds?: readonly string[];
 }
 
 export type AgentOperation = 'status' | 'notes.search' | 'notes.read' | 'notes.create';
