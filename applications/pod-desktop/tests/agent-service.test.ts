@@ -47,6 +47,44 @@ async function fixture(overrides: Partial<AgentServiceOptions> = {}) {
   };
   return { service, options, directory, endpoint, connection, loadTicket, executed, setBinding: (value: string | null) => { binding = value; } };
 }
+it('persists selected note IDs, exposes immutable scope and refuses malformed scope instead of widening it', async () => {
+  let received: AgentPrincipal | undefined;
+  const f = await fixture({ execute: async (_operation, _args, authorize) => { received = await authorize(); return {}; } });
+  const id = randomUUID();
+  const requested = [id.toUpperCase()];
+  const grant = await f.service.create({ ...input, selectedNoteIds: requested });
+  requested.push(randomUUID());
+  expect(grant.selectedNoteIds).toEqual([id]);
+  expect(Object.isFrozen(grant.selectedNoteIds)).toBe(true);
+  await f.service.executeGranted(grant.id, 'notes.search', {}, new AbortController().signal);
+  expect(received?.selectedNoteIds).toEqual([id]);
+  expect(Object.isFrozen(received?.selectedNoteIds)).toBe(true);
+  await f.service.close();
+  const reopened = new AgentService(f.options); services.push(reopened);
+  expect((await reopened.get(grant.id)).selectedNoteIds).toEqual([id]);
+  const empty = await reopened.create({ ...input, selectedNoteIds: [] });
+  expect(empty.selectedNoteIds).toEqual([]);
+  expect((await reopened.get(f.connection.id)).selectedNoteIds).toBeUndefined();
+  for (const selectedNoteIds of [undefined, null, ['bad'], [id, id.toUpperCase()], Array(101).fill(id)]) {
+    await expect(reopened.create({ ...input, selectedNoteIds } as unknown as AgentConnectionInput)).rejects.toThrow();
+  }
+  await expect(reopened.create({ ...input, permissions: ['notes:create'], selectedNoteIds: [id] })).rejects.toThrow();
+  await reopened.revoke(grant.id);
+  await expect(reopened.executeGranted(grant.id, 'notes.search', {}, new AbortController().signal)).rejects.toThrow(/unavailable/);
+});
+
+it('refuses a damaged persisted selection instead of treating it as legacy broad access', async () => {
+  const f = await fixture();
+  await f.service.close();
+  const path = join(f.directory, 'connections.json');
+  const wrapper = JSON.parse(await readFile(path, 'utf8')) as { ciphertext: string };
+  const records = JSON.parse(f.options.protector.unprotect(wrapper.ciphertext)) as Record<string, unknown>[];
+  records[0]!['selectedNoteIds'] = null;
+  await writeFile(path, JSON.stringify({ version: 1, ciphertext: f.options.protector.protect(JSON.stringify(records)) }));
+  const reopened = new AgentService(f.options); services.push(reopened);
+  await expect(reopened.list()).rejects.toThrow(/distinct notes/);
+});
+
 function envelope(ticket: AgentTicket, endpoint: AgentEndpoint, operation: AgentOperation = 'status', issuedAt = Date.now(), args: unknown = {}) {
   return sealAgentMessage(ticket, endpoint, randomUUID(), 'request', { issuedAt, operation, arguments: args });
 }

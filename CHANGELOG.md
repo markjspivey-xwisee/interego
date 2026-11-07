@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-11-03 - Enforce selected note access for local agent grants
+
+New local connections can select an explicit set of existing note IDs. The protected registry and status preserve that scope, and the controller applies it before fetching or decrypting note payloads. Search excludes other notes; direct reads outside the grant are refused, and saving a new note does not expand read access. Existing all-note grants and web approval policy keep their prior scope. Source tests cover selection validation and persistence, controller isolation, and the native page's note picker; installed Windows behavior still requires separate verification.
+
 ## 2026-11-07 — Identity: a Play game-data backfill deletes the game saves and budgets that finished purges left on guests' pods
 
 Play purges that finished before the store's native conditional delete (from 2026-10-28 to 2026-10-30) deleted everything of a guest's pod except its game data: the saves (`hallowmarch/checkpoints/<64 hex>.json`), the write budget (`play-budget.json`) and the two containers that hold them. They then cleared the tombstone's mark, so neither the janitor nor a restart comes back to such a pod. A save the css-gate let through that lands after a purge's last listing stays the same way. Each identity process now runs a **Play game-data backfill** once, one janitor interval (`JANITOR_INTERVAL_MS`, 5 min by default) after it starts, and after its startup scan. With the janitor off (`JANITOR_INTERVAL_MS=0`) it does nothing. There is no flag, route or extra service: it runs again at every deploy, and once it has converged it writes and deletes nothing.

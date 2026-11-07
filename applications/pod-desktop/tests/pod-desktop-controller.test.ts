@@ -1,4 +1,4 @@
-import { afterAll, describe, expect, it } from 'vitest';
+import { afterAll, describe, expect, it, vi } from 'vitest';
 import { mkdtemp, readFile, readdir, rm, stat, unlink, writeFile } from 'node:fs/promises';
 import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
@@ -171,6 +171,30 @@ describe('the consumer pod controller uses the real local encrypted pod', () => 
     await expect(controller.executeAgent('notes.read', { id: owner.id }, async () => reader)).rejects.toThrow(/Start your pod/);
     expect((await controller.getStatus()).state).toBe('stopped');
   }, 300_000);
+
+  it('enforces selected note access on the encrypted store, including guessed IDs and future self-created notes', async () => {
+    const { controller, vault } = await fixture();
+    await controller.setup();
+    const allowed = await controller.saveNote({ title: 'Selected fiction', body: 'One approved example.' });
+    const excluded = await controller.saveNote({ title: 'Unselected fiction', body: 'Must stay outside results.' });
+    const principal: AgentPrincipal = { id: randomUUID(), name: 'Selected reader', permissions: ['notes:read', 'notes:create'], selectedNoteIds: [allowed.id] };
+    const search = await controller.executeAgent('notes.search', { query: '', limit: 1 }, async () => principal) as { notes: { id: string }[] };
+    expect(search.notes.map(note => note.id)).toEqual([allowed.id]);
+    const keyLookup = vi.spyOn(vault, 'load'); keyLookup.mockClear();
+    await expect(controller.executeAgent('notes.read', { id: excluded.id }, async () => principal)).rejects.toThrow(/could not be found/);
+    expect(keyLookup).not.toHaveBeenCalled(); keyLookup.mockRestore();
+    expect(await controller.executeAgent('notes.read', { id: allowed.id.toUpperCase() }, async () => principal)).toMatchObject({ note: { id: allowed.id } });
+    expect(await controller.executeAgent('notes.search', { query: 'Must stay' }, async () => principal)).toEqual({ notes: [] });
+    await expect(controller.executeAgent('notes.search', { query: '', selectedNoteIds: [excluded.id] }, async () => principal)).rejects.toThrow(/unsupported/);
+    const created = await controller.executeAgent('notes.create', { title: 'Later fiction', body: 'Saving does not enlarge reading.' }, async () => principal) as { note: { id: string } };
+    await expect(controller.executeAgent('notes.read', { id: created.note.id }, async () => principal)).rejects.toThrow(/could not be found/);
+    expect(await controller.executeAgent('notes.search', {}, async () => ({ ...principal, selectedNoteIds: [] }))).toEqual({ notes: [] });
+    await expect(controller.executeAgent('notes.search', {}, async () => ({ ...principal, selectedNoteIds: undefined }))).rejects.toThrow(/distinct notes/);
+    await controller.stop(); await controller.start();
+    expect(await controller.executeAgent('notes.search', {}, async () => principal)).toMatchObject({ notes: [{ id: allowed.id }] });
+    const { selectedNoteIds: _scope, ...legacy } = principal;
+    expect((await controller.executeAgent('notes.search', {}, async () => legacy) as { notes: unknown[] }).notes).toHaveLength(3);
+  }, 180_000);
 
   it('rechecks queued agent authority before touching storage', async () => {
     const { controller, vault } = await fixture();
