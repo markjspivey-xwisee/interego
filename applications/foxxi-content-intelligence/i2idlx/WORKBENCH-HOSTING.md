@@ -98,9 +98,9 @@ Run the repository build/typecheck and targeted test module in CI, then verify p
 
 ## Trying capabilities in the hosted workbench
 
-Open [Capability directory](https://foxxi-bridge.interego.xwisee.com/i2idlx/#agents-directory) and refresh the live inventory. The hosted directory reads the deployment's Foxxi contracts and Relay's advertised operations and input schemas; an unavailable source is shown as partial, and the embedded build snapshot remains explicitly unverified.
+Open [Try live examples](https://foxxi-bridge.interego.xwisee.com/i2idlx/#agents-examples) for runnable examples or [Capability directory](https://foxxi-bridge.interego.xwisee.com/i2idlx/#agents-directory) for the full inventory. The hosted directory reads the deployment's Foxxi contracts and Relay's advertised operations and input schemas. A partial inventory identifies the unavailable source, and the embedded snapshot carries its own label.
 
-Expand an operation, choose **Load example**, edit its typed fields or JSON, and use **Run live example** where offered. The result shows the actual target response, HTTP status, timestamp and duration. Good starting points are LRS discovery, intervention methods, decoration binding and Relay descriptor composition. Use the current LRS discovery response (`/xapi/about`) as evidence of the deployment's storage mode rather than assuming a mode from an embedded snapshot.
+Expand an operation to see its example inputs. Edit the typed fields or JSON, use **Reset to example** to restore the sample, then choose **Run live example** where offered. The result identifies input failures, target refusals and successful responses. It includes the HTTP status, timestamp and duration when available. Try LRS discovery, competency alignment, intervention evidence review or Relay descriptor composition.
 
 **Validate inputs** checks supported declared input constraints without invoking the operation. Protected operations provide a prepared call for an authenticated Interego client and display the required identity, permissions, data and configuration. **Prepare client task** returns real grounded instructions for the connected AI client; it does not execute a model or complete the workflow. A listed operation or a schema-valid request is not execution evidence.
 

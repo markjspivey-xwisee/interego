@@ -31,10 +31,17 @@ const bridgeLog = (...values: unknown[]) => { process.stdout.write(format(...val
 const bridgeWarn = (...values: unknown[]) => { process.stderr.write(format(...values) + '\n'); };
 const bridgeError = (...values: unknown[]) => { process.stderr.write(format(...values) + '\n'); };
 import { readSelfXapi, writeSelfXapi } from '../src/self-xapi.js';
+import { persistStatementWithUsage } from '../src/i2idlx-usage-record.js';
+import { loadPublicTaskData } from '../src/i2idlx-client-tasks.js';
+import { resolveConceptIndex } from '../i2idlx/typescript/authored-concepts.js';
 import { configuredSelfXapiTimeout, createSelfXapiRequest } from '../src/self-xapi-request.js';
 import { composeOwnSubjectXapiVerifier } from '../src/own-subject-xapi-auth.js';
 import { OwnSubjectXapiWriteBudget, OwnSubjectXapiRequestBudget } from '../src/own-subject-xapi.js';
 import { createOwnSubjectActivityStore } from '../src/own-subject-activity-store.js';
+import { rateLimit } from 'express-rate-limit';
+import { createOwnLtiReconciliation, validateRecoveryEntry, type RecoveryEntry } from '../src/lti-own-reconciliation.js';
+import { createOwnLtiReconciliationStore } from '../src/lti-own-reconciliation-store.js';
+import { createRecoveryAttestation, ownLtiReconciliationHandler, ownLtiReconciliationRateLimitOptions } from '../src/lti-own-reconciliation-http.js';
 import { ingestTelemetry, normalizeQuery, telemetryReport, mergeTelemetrySnapshot, type TelemetryDependencies } from '../../llm-telemetry/service.js';
 import { telemetryProfile } from '../../llm-telemetry/profile.js';
 import { normalizeOtlpLogs } from '../../llm-telemetry/otlp.js';
@@ -307,6 +314,9 @@ import {
   registerSnapshot as registerBridgeSnap,
   dirty as markBridgeDirty,
   loadLatestSnapshot as loadBridgeSnap,
+  loadLatestSnapshotStrict as loadBridgeSnapStrict,
+  readLegacySnapshotFailureWitness,
+  seedLatestSnapshotHead,
   FOXXI_SNAPSHOT_TYPES as BRIDGE_SNAP_TYPES,
 } from '../src/pod-snapshot-publisher.js';
 interface TrajectorySnap { byTenant: Record<string, Array<[string, AgentTrajectory]>>; }
@@ -461,7 +471,8 @@ import { attachCmi5LmsRoutes, buildCmi5Launch, chooseAu, cmi5BearerRegistration,
 import { HostedPackages, PACKAGE_SHA, attachHostedPackageRoutes, hostedPackageCourse, hostedPackageOf, isPackagePath, type PackageAbout } from '../src/scorm-hosting.js';
 import { unwrapScormPackage } from '../../_shared/scorm/index.js';
 import { AGS_SCOPE, attachLti13Routes, type Lti13Tool, type VerifiedResourceLaunch } from '../src/lti13.js';
-import { LtiPlatform, attachLtiPlatformRoutes, type PlatformSnapshot } from '../src/lti-platform.js';
+import { LtiPlatform, attachLtiPlatformRoutes } from '../src/lti-platform.js';
+import { LtiPlatformReadiness, isPlatformSnapshot } from '../src/lti-platform-readiness.js';
 import { agsScore, answersFrom, renderGonePage, renderOutcomePage, renderScoPage, type GradePassback, type GradedView, type ScoView } from '../src/lti-player.js';
 import { attachScormDispatchRoutes, DispatchRegistry, perAddressLimiter, registryWriter, type DispatchEngine } from '../src/scorm-dispatch.js';
 import { glossaryLoader } from '../src/i2idl-glossary.js';
@@ -1590,7 +1601,7 @@ function elrAsLinks(elr: unknown, subjectDid: string, base: string): unknown {
         '@type': 'hydra:PartialCollectionView',
         target: `${base}/agent/lattice/self`,
         method: 'POST',
-        note: 'Self-scoped: send the same rev-196 envelope. The lattice read is the one your signature resolves to, so there is no parameter naming anyone else.',
+        note: 'Self-scoped: send the same rev-196 envelope. The lattice read is the one your signature resolves to, so there is no parameter naming anyone else. Supply uri to read its descriptor and exact retained artifact, including private derived usage graph_content and its SHA-256.',
       },
     };
   };
@@ -5877,13 +5888,24 @@ const instrumentedHandlers = Object.fromEntries(
 // Foxxi as its own LMS: the LTI 1.3 Platform that launches this bridge's own Tool over HTTP, the
 // way any LMS would, and keeps the gradebook the Tool posts grades to. The gradebook is kept on
 // the tenant pod like the Tool's line items. Its key is fresh per process unless one is set.
-const ltiPlatform = new LtiPlatform({
+const ltiPlatform: LtiPlatform = new LtiPlatform({
   selfBaseUrl: bridgeBaseUrl,
   ...(process.env.FOXXI_LTI_PLATFORM_PRIVATE_KEY_PEM ? { privateKeyPem: process.env.FOXXI_LTI_PLATFORM_PRIVATE_KEY_PEM.replace(/\\n/g, '\n') } : {}),
   onChange: () => markBridgeDirty('lti-platform'),
+  ensureReady: () => ltiPlatformReadiness.ensureReady(),
 });
-registerBridgeSnap({ surface: 'lti-platform', typeIri: BRIDGE_SNAP_TYPES.LtiPlatformGradebook, collect: () => ltiPlatform.snapshot() });
-void loadBridgeSnap<PlatformSnapshot>('lti-platform').then((snap) => ltiPlatform.restore(snap)).catch(() => undefined);
+const ltiPlatformReadiness: LtiPlatformReadiness = new LtiPlatformReadiness({
+  load: async () => {
+    const result = await loadBridgeSnapStrict('lti-platform', { typeIri: BRIDGE_SNAP_TYPES.LtiPlatformGradebook, validate: isPlatformSnapshot, followLatestDescriptor: true });
+    seedLatestSnapshotHead('lti-platform', result);
+    return result;
+  },
+  restore: (snap) => ltiPlatform.restore(snap),
+  collect: () => ltiPlatform.snapshot(),
+  onState: (state) => console.info('[lti-platform/readiness]', JSON.stringify(state)),
+});
+registerBridgeSnap({ surface: 'lti-platform', typeIri: BRIDGE_SNAP_TYPES.LtiPlatformGradebook, collect: () => ltiPlatformReadiness.snapshotForPublish(), immutableLatest: true });
+void ltiPlatformReadiness.ensureReady();
 /** The Tool's side, once mounted: how a grade gets back to the platform that launched the course. */
 let ltiTool: Lti13Tool | undefined;
 
@@ -8537,7 +8559,7 @@ app.post('/agent/lattice/self', async (req, res) => {
     if (uri) {
       const turtle = projectAs(label, uri, 'rdf');
       if (typeof turtle !== 'string') { res.status(404).json({ ok: false, error: 'holon not found in your lattice', label }); return; }
-      res.json({ ok: true, label, subject: bound.callerDid, authMode: bound.authMode, uri, representation: turtle, contentType: 'text/turtle' });
+      res.json({ ok: true, label, subject: bound.callerDid, authMode: bound.authMode, uri, representation: turtle, contentType: 'text/turtle', artifact: readArtifact(label, uri) });
       return;
     }
     res.json({ ok: true, label, subject: bound.callerDid, authMode: bound.authMode, ...latticeNamespaceView(label) });
@@ -9869,13 +9891,27 @@ const signedXapiHandler = (operation: 'read' | 'write' | 'telemetry-ingest' | 't
           },
           request: createSelfXapiRequest({ port: PORT, principal, secret, timeoutMs: signedXapiTimeoutMs }),
           persist: async (statement) => {
-            const result = await composeIntoSharedLattice({
+            const persistOriginal = () => composeIntoSharedLattice({
             podUrl, agentDid: bound.callerDid, label: telemetry ? `${label}-llm-telemetry-v1` : label,
             ...(telemetry ? { resourceName: 'llm-telemetry-v1', publishDescriptor: false } : {}),
             terms: [bound.callerDid, String((statement.verb as { id?: string }).id), String((statement.object as { id?: string }).id)],
             content: statement, contentType: 'xapi:Statement',
             ts: typeof statement.timestamp === 'string' ? statement.timestamp : undefined,
             projections: ['rdf', 'activity'],
+            });
+            const result = telemetry ? await persistOriginal() : await persistStatementWithUsage(statement, {
+              persistStatement: persistOriginal,
+              context: async () => {
+                const data = await loadPublicTaskData({ baseUrl: bridgeBaseUrl });
+                return { ns: String((data.meta as Record<string, unknown>).ns), agentDid: bound.callerDid,
+                  concepts: resolveConceptIndex(data), generatedAt: new Date().toISOString() };
+              },
+              persistUsage: record => composeIntoSharedLattice({
+                podUrl, agentDid: bound.callerDid, label,
+                terms: [record.sourceStatementIri, ...record.concepts.map(concept => concept.iri)],
+                content: { ...record }, contentType: record.typeIri,
+                projections: ['rdf'], publishDescriptor: false,
+              }),
             });
             // Private records have no published descriptor; do not advertise a
             // derived but intentionally unpublished locator in their receipt.
@@ -10165,6 +10201,62 @@ const CREDENTIAL_VALIDITY_DAYS = 365;
  */
 const gradedKey = issuerKeySeed ? createHash('sha256').update(`foxxi-graded:${issuerKeySeed}`).digest('hex') : '';
 const gradedHere = (statement: Record<string, unknown>): boolean => gradedKey !== '' && isGradedBy(statement, gradedKey);
+
+// A separately attested owner ledger, never an alternate global LMS baseline.
+const ownRecoveryRateOptions = ownLtiReconciliationRateLimitOptions();
+const ownRecoveryTotalRateLimit = rateLimit(ownRecoveryRateOptions.total);
+const ownRecoveryClientRateLimit = rateLimit(ownRecoveryRateOptions.client);
+const ownLtiReconciliationPorts = {
+  verify: verifyOwnSubjectXapiCaller,
+  allow: (key: string, limit: number) => ownSubjectRequestBudget.allow(key, limit),
+  compose: (authority: import('../src/own-subject-xapi-auth.js').OwnSubjectXapiAuthority, readOnly: boolean) => {
+    const privateKey = process.env.FOXXI_BRIDGE_PRIVATE_KEY ?? '';
+    const integrity = createRecoveryAttestation(privateKey);
+    const identityOrigin = new URL(process.env.INTEREGO_IDENTITY_URL ?? 'https://identity.interego.xwisee.com').origin;
+    const user = authority.subjectDid.slice(authority.subjectDid.lastIndexOf(':') + 1);
+    const principal = { subjectDid: authority.subjectDid, learnerWebId: `${identityOrigin}/users/${user}/profile#me`, callerDid: authority.callerDid, podUrl: authority.podUrl };
+    let reservation: ReturnType<OwnSubjectXapiWriteBudget['begin']> | undefined;
+    const ledger = createOwnLtiReconciliationStore<RecoveryEntry>(authority, {
+      privateKey, readOnly, validateEntry: value => validateRecoveryEntry(value, { principal, verify: integrity.verify }),
+      fetch: async (input, init) => {
+        const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+        await assertSafeFetchTarget(url);
+        if (init?.method?.toUpperCase() === 'PUT') {
+          const body = init.body;
+          const size = typeof body === 'string' ? Buffer.byteLength(body, 'utf8') : body instanceof ArrayBuffer ? body.byteLength : ArrayBuffer.isView(body) ? body.byteLength : null;
+          if (size === null || !reservation) throw new Error('Unreserved recovery write');
+          reservation.reserveWrite(size);
+        }
+        return globalThis.fetch(input, { ...init, redirect: 'manual' });
+      },
+    });
+    // This partition is derived solely from the authenticated person's own pod.
+    const lrs = getStatementStore(lensTenantFor(actorForPod(authority.podUrl, MESH_ACTOR_LABELS)));
+    const workflow = createOwnLtiReconciliation({
+      principal, source: { actorHomePage: String(authoritativeSource), courseBaseUri: `${bridgeBaseUrl}/agent/scorm/course/`, contextUri: ltiPlatform.contextUrl, platform: 'Foxxi LMS over LTI 1.3' },
+      readStatement: async id => { const record = await lrs.get(id); return record && !record.voided ? record.statement : null; },
+      readRange: async query => { const result = await lrs.query(query); return { statements: result.statements.filter(record => !record.voided).map(record => record.statement), more: result.more ?? '' }; },
+      gradedHere,
+      readLegacyWitness: () => readLegacySnapshotFailureWitness('lti-platform', { config: { podUrl: tenantPodUrl, authoritativeSource, fetch: globalThis.fetch }, typeIri: BRIDGE_SNAP_TYPES.LtiPlatformGradebook, validate: isPlatformSnapshot }),
+      ledger, ...integrity, now: Date.now,
+    });
+    return { ...workflow, apply: async (input: unknown) => {
+      reservation = ownSubjectWriteBudget.begin(authority.subjectDid, 0);
+      try { return await workflow.apply(input); } finally { reservation.release(); reservation = undefined; }
+    } };
+  },
+};
+app.post('/agent/lti/reconciliation/preview', ownRecoveryTotalRateLimit, ownRecoveryClientRateLimit, ownLtiReconciliationHandler('preview', ownLtiReconciliationPorts));
+app.post('/agent/lti/reconciliation/apply', ownRecoveryTotalRateLimit, ownRecoveryClientRateLimit, ownLtiReconciliationHandler('apply', ownLtiReconciliationPorts));
+app.post('/agent/lti/reconciliation/read', ownRecoveryTotalRateLimit, ownRecoveryClientRateLimit, ownLtiReconciliationHandler('read', ownLtiReconciliationPorts));
+app.get('/agent/lti/reconciliation/affordance', (_req, res) => {
+  res.type('text/turtle').send(affordancesManifestTurtle(`${bridgeBaseUrl}/agent/lti/reconciliation/affordance`, [
+    canonicalAffordance('urn:iep:action:foxxi:lti-reconciliation-contract'),
+    canonicalAffordance('urn:iep:action:foxxi:lti-reconciliation-preview-signed'),
+    canonicalAffordance('urn:iep:action:foxxi:lti-reconciliation-apply-signed'),
+    canonicalAffordance('urn:iep:action:foxxi:lti-reconciliation-read-signed'),
+  ], bridgeBaseUrl, { verticalLabel: 'Own-account LMS reconciliation', rdfsComment: 'Version 1.0.0. New private owner entries from freshly authenticated original engine records. Original LMS persistence remains unverified.' }));
+});
 
 const statementIri = (id: string): string => (id.includes(':') ? id : `urn:uuid:${id}`);
 
@@ -12444,6 +12536,7 @@ app.post('/agent/lti/launch', async (req, res) => {
     const course = await resolveCourseForRead(courseId);
     if (!course) { res.status(404).json({ error: `no course ${courseId} is played on this bridge's SCORM engine` }); return; }
     const learner = await signedLearner(auth);
+    if (!await ltiPlatform.ensureReady()) { res.set('Retry-After', '1').status(503).json({ error: 'lti_gradebook_unavailable', readiness: ltiPlatformReadiness.diagnostics() }); return; }
     const start = ltiPlatform.beginLaunch({ sub: learner.did, podUrl: learner.podUrl }, { id: course.courseId, title: course.title });
     if (!start.ok) { res.status(start.status).json({ error: start.error }); return; }
     res.json({
@@ -12463,8 +12556,10 @@ app.post('/agent/lti/gradebook', async (req, res) => {
     const auth = await verifyDelegatedCaller(req.body);
     if (!auth.ok) { res.status(auth.status).json({ error: auth.error }); return; }
     const learner = await signedLearner(auth);
+    if (!await ltiPlatform.ensureReady()) { res.set('Retry-After', '1').status(503).json({ error: 'lti_gradebook_unavailable', readiness: ltiPlatformReadiness.diagnostics() }); return; }
     res.json({
       kind: 'lti-gradebook', platform: ltiPlatform.issuer, context: ltiPlatform.context,
+      readiness: ltiPlatformReadiness.diagnostics(),
       learner: learner.did, ...(learner.via ? { via: learner.via } : {}),
       rows: ltiPlatform.gradebookFor(learner.did),
     });

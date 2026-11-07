@@ -1,8 +1,15 @@
-"""Additional hosted-path visitor check; original smoke_app.py remains unchanged."""
+"""Additional hosted-path visitor checks of the pinned release and authored extension."""
 import json
 import pathlib
 import sys
 from playwright.sync_api import sync_playwright
+
+
+# Explicit loading also works under Python -I, which omits the script directory.
+import importlib.util
+_oracle_spec = importlib.util.spec_from_file_location("corpus_oracle", pathlib.Path(__file__).resolve().parents[1] / "applications/foxxi-content-intelligence/i2idlx/tools/corpus_oracle.py")
+_oracle = importlib.util.module_from_spec(_oracle_spec)
+_oracle_spec.loader.exec_module(_oracle)
 
 root = pathlib.Path(sys.argv[1]).resolve()
 cache = pathlib.Path(sys.argv[2]).resolve()
@@ -10,6 +17,7 @@ shots = pathlib.Path(sys.argv[3]).resolve()
 shots.mkdir(parents=True, exist_ok=True)
 html = (root / "site" / "app.html").read_text()
 data = json.loads((root / "app" / "build" / "data.json").read_text())
+corpus = _oracle.validate_corpus(data)
 errors, writes = [], []
 
 def route_handler(route):
@@ -46,11 +54,17 @@ with sync_playwright() as p:
         page.wait_for_selector(".hero h1")
         assert page.evaluate("window.__APP_URL__") == "http://app.test/i2idlx/", "hosted shares must stay on the serving origin"
         assert page.evaluate("!window.claude && !window.ethereum && !window.InteregoHost"), "visitor has no signed host, wallet or Claude SDK"
+        _oracle.assert_embedded_source(page, data)
+        def visit(name, selector):
+            page.evaluate("location.hash = " + json.dumps(name))
+            page.wait_for_selector(selector, timeout=12000)
+        _oracle.assert_browser_corpus(page, corpus, visit)
+        print("PASS hosted exact combined/source-only counts, owned IRI and authored origin", width)
         for name, selector in routes:
             page.evaluate("location.hash = " + json.dumps(name))
             page.wait_for_selector(selector, timeout=12000)
             if name == "whole":
-                assert page.locator(".mapwrap svg circle").count() == len(data["concepts"]), "every actual concept must be drawn"
+                assert page.locator(".mapwrap svg circle").count() == corpus["combined_count"], "every canonical and declared authored concept must be drawn"
             if name == "c-learning-record-store-lrs":
                 assert page.inner_text("#hw") == next(c["l"] for c in data["concepts"] if c["id"] == "learning-record-store-lrs")
             if name == "c-learning-management-systems":
@@ -65,7 +79,7 @@ with sync_playwright() as p:
                 page.keyboard.press("/")
                 search = page.locator('input[aria-label="Search"][role="combobox"]')
                 search.wait_for(state="visible")
-                assert str(len(data["concepts"])) in search.get_attribute("placeholder"), "search count must follow the loaded release"
+                assert search.get_attribute("placeholder").startswith("Search " + str(corpus["combined_count"]) + " terms"), "search count must include exactly the declared corpus"
                 page.keyboard.press("Escape")
             if name in ("home", "c-learning-record-store-lrs", "whole", "semantic", "ask"):
                 page.screenshot(path=str(shots / ("hosted-" + name + "-" + str(width) + ".png")), full_page=False)

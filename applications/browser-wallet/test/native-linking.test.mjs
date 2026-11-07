@@ -22,6 +22,7 @@ function fixture(options = {}) {
   const permissions = new Set([provider, relay]); const registered = new Map(); const messages = []; const calls = []; const scripts = []; const done = deferred(); let opens = 0; let disconnected = 0;
   const native = { onMessage: event(), onDisconnect: event(), disconnect: () => { disconnected++; }, postMessage: request => {
     calls.push(request);
+    if (options.respond) { options.respond(request, native); return; }
     const value = request.operation === 'start' ? options.ticket?.() ?? ticket() : options.result?.() ?? linked();
     queueMicrotask(() => native.onMessage.emit({ version: 1, id: request.id, ok: true, value }));
   } };
@@ -66,6 +67,38 @@ test('native linking sends no dashboard bearer or account claim and returns only
   assert.ok(!JSON.stringify(f.calls).includes('DO_NOT_READ_OR_FORWARD')); assert.equal(f.disconnected(), 1);
   f.page.onMessage.emit({ type: 'start', handoffCode: cap }); await flush(); assert.equal(f.calls.filter(value => value.operation === 'start').length, 1);
 });
+
+test('link start waits up to sixty-five seconds and does not retry or claim success after a lost reply', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const f = fixture({ respond: () => {} }); f.start(); await flush();
+  assert.equal(f.calls.length, 1); t.mock.timers.tick(64_999); await flush(); assert.equal(f.messages.length, 0);
+  t.mock.timers.tick(1); await f.done;
+  assert.equal(f.messages.at(-1).state, 'failed'); assert.match(f.messages.at(-1).message, /could not confirm whether this PC key was added/i);
+  assert.match(f.messages.at(-1).message, /registered credentials/i); assert.equal(f.calls.length, 1); assert.equal(f.disconnected(), 1);
+  f.native.onMessage.emit({ version: 1, id: f.calls[0].id, ok: true, value: ticket() }); await flush();
+  assert.equal(f.messages.length, 1); assert.equal(f.calls.length, 1);
+});
+
+test('the longer link transport budget remains in effect for polls on the same native channel', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const f = fixture({ respond: (request, native) => {
+    if (request.operation === 'start') queueMicrotask(() => native.onMessage.emit({ version: 1, id: request.id, ok: true, value: ticket() }));
+  } });
+  f.start(); await flush(); assert.deepEqual(f.calls.map(value => value.operation), ['start', 'poll']);
+  t.mock.timers.tick(64_999); await flush(); assert.deepEqual(f.messages.map(value => value.state), ['waiting']);
+  t.mock.timers.tick(1); await f.done; assert.equal(f.messages.at(-1).state, 'failed'); assert.match(f.messages.at(-1).message, /registered credentials/i);
+  assert.equal(f.calls.length, 2); assert.equal(f.disconnected(), 1);
+});
+
+test('expired or failed link polls remain unconfirmed while an explicit owner denial stays distinct', async () => {
+  for (const state of ['expired', 'failed', 'denied']) {
+    const f = fixture({ result: () => ({ state, message: 'private server error must not be forwarded' }) }); f.start(); await f.done;
+    const result = f.messages.at(-1); assert.equal(result.state, state);
+    if (state === 'denied') assert.match(result.message, /declined/i);
+    else { assert.match(result.message, /could not confirm whether this PC key was added/i); assert.match(result.message, /registered credentials/i); }
+    assert.ok(!result.message.includes('private server')); assert.equal(f.calls.filter(value => value.operation === 'start').length, 1);
+  }
+});
 test('page-selected owners, proof fields and cross-purpose handoffs are refused', async () => {
   for (const extra of [{ owner: linked().owner }, { did: linked().credentialDid }, { token: 'not-authority' }]) {
     const f = fixture(); f.start({ type: 'start', handoffCode: cap, ...extra }); await f.done; assert.equal(f.opens(), 0);
@@ -100,6 +133,7 @@ test('permission removal or either policy change cancels the native channel and 
     if (policy === 'permission') f.chrome.permissions.onRemoved.emit({ origins: [provider + '/*'] });
     else await f.broker.dispatch(policy === 'linking' ? { type: 'NATIVE_CONFIGURE_LINKING', providers: [] } : { type: 'NATIVE_CONFIGURE', relays: [] }, app);
     await f.done; waiting.resolve(); await flush(); assert.equal(f.disconnected(), 1); assert.equal(f.messages.at(-1).state, 'failed'); assert.equal(f.calls.length, 1);
+    assert.match(f.messages.at(-1).message, /could not confirm whether this PC key was added/i); assert.match(f.messages.at(-1).message, /registered credentials/i);
   }
 });
 test('serialized settings keep a newer failed linking change denied instead of restoring an older successful provider list', async () => {
@@ -139,6 +173,16 @@ test('dashboard completion displays public identity as text and refreshes only t
   const f = await contentFixture({ prepared: true }); f.click(); const value = linked(); value.owner.displayName = '<img src=x onerror=steal()>'; f.port.onMessage.emit(value);
   assert.ok(f.status.textContent.includes(value.owner.displayName)); assert.ok(f.status.textContent.includes(value.owner.did)); assert.equal(f.status.children.length, 1); assert.equal(f.status.dataset.nativeState, 'linked');
   const refresh = f.status.children[0]; refresh.listeners.click({ isTrusted: false }); assert.equal(f.reloads(), 0); refresh.listeners.click({ isTrusted: true }); assert.equal(f.reloads(), 1);
+});
+
+test('an unconfirmed link offers a deliberate dashboard refresh without starting another link', async () => {
+  const f = await contentFixture({ prepared: true }); f.click();
+  f.port.onMessage.emit({ state: 'failed', message: 'The account link could not be confirmed. Check your registered credentials.' });
+  assert.equal(f.status.dataset.nativeState, 'failed'); assert.equal(f.reloads(), 0); assert.equal(f.status.children.length, 1);
+  const refresh = f.status.children[0]; assert.match(refresh.textContent, /refresh this dashboard/i);
+  refresh.listeners.click({ isTrusted: false }); assert.equal(f.reloads(), 0);
+  refresh.listeners.click({ isTrusted: true }); assert.equal(f.reloads(), 1); assert.equal(f.opened(), 1); assert.equal(f.posted.length, 1);
+  f.mutate(); f.click(); assert.equal(f.opened(), 1);
 });
 test('dashboard path changes and newly prepared ceremonies close older native channels', async () => {
   const f = await contentFixture({ prepared: true }); f.click(); f.prepare(cap.replace(/s/g, 't')); assert.equal(f.disconnected(), 1); assert.equal(f.button.disabled, false);

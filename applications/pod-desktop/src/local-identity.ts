@@ -4,7 +4,7 @@ import { promisify } from 'node:util';
 import type { LocalIdentityApproval, LocalIdentityContext, LocalIdentityLinkContext, LocalIdentityLinkedReceipt, LocalIdentityResult, LocalIdentityServiceOptions, LocalIdentityStart, LocalIdentityStatus, LocalIdentityTicket } from './local-identity-types.js';
 import { IDENTITY_ERROR, IDENTITY_HANDOFF, IDENTITY_NONCE, identityHash, identityObject, identityOrigin, identitySame, identityText,
   localIdentityContext, localIdentityPublic, localIdentityRedirect, newLocalIdentity, savedLocalIdentity, signLocalIdentity, type LocalIdentitySaved } from './local-identity-protocol.js';
-import { identityAbortable, localIdentityJson, localIdentityNetwork } from './local-identity-network.js';
+import { identityAbortable, LINK_IDENTITY_REQUEST_TIMEOUT_MS, localIdentityJson, localIdentityNetwork } from './local-identity-network.js';
 import { IDENTITY_LINK_HANDOFF, localIdentityLinkContext, localIdentityLinkedReceipt } from './local-identity-link.js';
 export type { LocalIdentityApproval, LocalIdentityResult, LocalIdentityServiceOptions, LocalIdentityStart, LocalIdentityStatus, LocalIdentityTicket } from './local-identity-types.js';
 export { ProtectedLocalIdentityStore } from './local-identity-store.js';
@@ -130,15 +130,21 @@ export class LocalIdentityService {
     this.current(entry); const binding = await this.options.binding(); this.current(entry);
     if (!entry.identity || binding !== entry.identity.binding) throw new Error('The local pod changed. Start a new sign-in after reviewing local identity setup.');
   }
-  private async post(origin: string, path: string, value: unknown, signal: AbortSignal): Promise<unknown> {
+  private async post(origin: string, path: string, value: unknown, signal: AbortSignal, expiresAt?: number): Promise<unknown> {
     const url = new URL(path, origin); const body = JSON.stringify(value);
     if (url.origin !== origin || !['/oauth/local-identity/context', '/oauth/verify', '/local-identity/link/context', '/local-identity/link/complete'].includes(url.pathname) || Buffer.byteLength(body) > 16 * 1024) throw new Error(IDENTITY_ERROR);
     const request = new Request(url, { method: 'POST', headers: { accept: 'application/json', 'content-type': 'application/json' }, body, redirect: 'error', signal });
-    const timeout = new AbortController(); const timer = setTimeout(() => timeout.abort(), 15_000);
+    const linking = path === '/local-identity/link/context' || path === '/local-identity/link/complete';
+    const budget = linking ? Math.min(LINK_IDENTITY_REQUEST_TIMEOUT_MS, Math.floor((expiresAt ?? 0) - this.now())) : 15_000;
+    if (budget <= 0 || !Number.isSafeInteger(budget)) throw new Error(IDENTITY_ERROR);
+    // One deadline spans DNS, headers and the entire body. Do not restart it on
+    // progress, retry a consumed handoff, or outlive the known request expiry.
+    const timeout = new AbortController(); const timer = setTimeout(() => timeout.abort(), budget);
     const active = AbortSignal.any([signal, timeout.signal]);
     let response: Response | undefined;
     try {
-      const operation = this.options.fetch ? this.options.fetch(new Request(request, { signal: active })) : localIdentityNetwork(url, body, active, this.options.allowLoopbackForTests);
+      const operation = this.options.fetch ? this.options.fetch(new Request(request, { signal: active })) : localIdentityNetwork(url, body, active,
+        this.options.allowLoopbackForTests, linking ? budget : undefined);
       operation.then(late => { if (active.aborted) void late.body?.cancel().catch(() => {}); }, () => {});
       response = await identityAbortable(operation, active); return await localIdentityJson(response, active);
     }
@@ -159,7 +165,7 @@ export class LocalIdentityService {
     try {
       entry.identity = await identityAbortable(this.required(), entry.cancel.signal); this.current(entry);
       const context = linking
-        ? localIdentityLinkContext(await this.post(provider, '/local-identity/link/context', { handoffCode: code, did: localIdentityPublic(entry.identity).did }, entry.cancel.signal), provider,
+        ? localIdentityLinkContext(await this.post(provider, '/local-identity/link/context', { handoffCode: code, did: localIdentityPublic(entry.identity).did }, entry.cancel.signal, entry.expiresAt), provider,
           localIdentityPublic(entry.identity).did, this.now(), this.options.allowLoopbackForTests)
         : localIdentityContext(await this.post(relay, '/oauth/local-identity/context', { handoffCode: code }, entry.cancel.signal), relay, provider, this.now(), this.options.allowLoopbackForTests);
       await this.bound(entry);
@@ -180,7 +186,7 @@ export class LocalIdentityService {
         const link = entry.linkContext;
         const signature = signLocalIdentity(identity, link.message);
         const result = await this.post(link.identityOrigin, '/local-identity/link/complete', { completionCode: link.completionCode, did: link.credentialDid,
-          nonce: link.nonce, signature }, entry.cancel.signal);
+          nonce: link.nonce, signature }, entry.cancel.signal, entry.expiresAt);
         await this.bound(entry); entry.linked = localIdentityLinkedReceipt(result, link); entry.linkContext = undefined; entry.state = 'complete'; return;
       }
       if (!context) throw new Error(IDENTITY_ERROR);

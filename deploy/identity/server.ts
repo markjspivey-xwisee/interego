@@ -78,7 +78,9 @@ import { createRecordWatchers } from './record-watch.js';
 import { createProvisionalPlayProvider } from './provisional-play-provider.js';
 import { parsePlayClients } from './provisional-play.js';
 import { mountProvisionalPlay } from './provisional-play-routes.js';
-import { purgeProvisionalPlayPod } from './provisional-play-cleanup.js';
+import { advertisesNativeDelete, playGameDataResidue, purgeProvisionalPlayPod, type PlayGameDataResidue } from './provisional-play-cleanup.js';
+import { isAdmissionLedger, readAdmissionLedger } from './provisional-play-admission.js';
+import { hostedBetaNotice, hostedPrivacyUrl, hostedTermsPolicy, readTermsAcceptance, type TermsAcceptance } from './hosted-terms.js';
 import {
   SurfaceAgentRestores,
   checkAgentIdForRegistration,
@@ -90,10 +92,12 @@ import {
 import { clientIp, createLimiter, limitByIp, rateLimit, sendRateLimited } from './rate-limit.js';
 import { forwardAsyncRouteErrors, installProcessSafetyNet, routeErrorHandler } from './route-errors.js';
 import { parseSiweMessage, SIWE_DOMAIN_SUFFIX } from './siwe-message.js';
+import { ED25519_MULTICODEC, base58btcDecode, encodeEd25519Multibase, x25519PublicKeyEncodings } from './key-encoding.js';
 import { mountLocalIdentityLink, LocalIdentityLinkError, localLinkPublicKey, type LinkSession, type LinkOwner, type LinkHumanCredential, type LinkAccount, type LinkStepUp } from './local-identity-link.js';
 import { localIdentityLinkDashboard } from './local-identity-link-dashboard.js';
 import { mountReturningPasskeyLogin, returningPasskeyRelay, ReturningPasskeyLoginError, type ReturningPasskeyProof } from './returning-passkey-login.js';
 import { returningPasskeyLoginDashboard } from './returning-passkey-dashboard.js';
+import { dashboardInboxScript } from './dashboard-inbox.js';
 
 // ── Lazy heavy imports ──────────────────────────────────────
 //
@@ -138,6 +142,8 @@ const CSS_URL = process.env['CSS_URL'] ?? 'http://css.railway.internal:3456/';
 const BASE_URL_HOST = new URL(BASE_URL).host;
 const BASE_URL_HOST_NO_PORT = BASE_URL_HOST.replace(/:.*$/, '');
 const BASE_URL_HOSTNAME = new URL(BASE_URL).hostname;
+const hostedTerms = hostedTermsPolicy(process.env['HOSTED_TERMS_VERSION']);
+const showHostedPrivacy = BASE_URL_HOSTNAME === 'identity.interego.xwisee.com' || hostedTerms !== null;
 // The sibling MCP relay — surfaced on the landing page so agent
 // operators can copy it into their MCP client without hunting.
 // No literal-URL fallback: IaC is the source of truth (see the
@@ -326,112 +332,6 @@ interface KeyPair {
   x25519PublicKeyBase64: string;
 }
 
-// ── base58btc (Bitcoin alphabet) — for W3C did:key + multibase ──
-//
-// `did:key:z<...>` per the W3C did:key Method Spec is multibase-encoded
-// with prefix 'z' = base58btc, and the decoded bytes are
-//   multicodec_prefix || raw_public_key
-// For Ed25519 the multicodec prefix is the varint 0xed 0x01, followed by
-// the 32-byte raw public key — total 34 bytes.
-//
-// Why hand-rolled: this deploy package intentionally keeps zero runtime
-// deps beyond express/ethers/@simplewebauthn (see package.json) and
-// pulls no separate base58/multibase library. The implementation is
-// ~30 LOC of unambiguous arithmetic; correctness is verified against
-// the W3C did:key test vectors at runtime via the round-trip
-// emit-then-parse done on every new registration.
-const BASE58_ALPHABET = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
-const BASE58_INDEX: Record<string, number> = (() => {
-  const m: Record<string, number> = {};
-  for (let i = 0; i < BASE58_ALPHABET.length; i++) m[BASE58_ALPHABET[i]!] = i;
-  return m;
-})();
-
-function base58btcEncode(bytes: Uint8Array): string {
-  // Count leading zero bytes — each maps to a '1' in the output.
-  let zeros = 0;
-  while (zeros < bytes.length && bytes[zeros] === 0) zeros++;
-  // Convert the big-endian byte string to base58 by repeated division.
-  // Work on a copy because we mutate.
-  const buf = Array.from(bytes);
-  const out: number[] = [];
-  let start = zeros;
-  while (start < buf.length) {
-    let carry = 0;
-    for (let i = start; i < buf.length; i++) {
-      const v = (buf[i]! & 0xff) + carry * 256;
-      buf[i] = Math.floor(v / 58);
-      carry = v % 58;
-    }
-    out.push(carry);
-    if (buf[start] === 0) start++;
-  }
-  let result = '';
-  for (let i = 0; i < zeros; i++) result += BASE58_ALPHABET[0];
-  for (let i = out.length - 1; i >= 0; i--) result += BASE58_ALPHABET[out[i]!];
-  return result;
-}
-
-function base58btcDecode(str: string): Uint8Array {
-  if (str.length === 0) return new Uint8Array(0);
-  let zeros = 0;
-  while (zeros < str.length && str[zeros] === BASE58_ALPHABET[0]) zeros++;
-  const buf: number[] = [];
-  for (let i = 0; i < str.length; i++) {
-    const ch = str[i]!;
-    const digit = BASE58_INDEX[ch];
-    if (digit === undefined) throw new Error(`invalid base58 character '${ch}' at position ${i}`);
-    let carry = digit;
-    for (let j = 0; j < buf.length; j++) {
-      const v = buf[j]! * 58 + carry;
-      buf[j] = v & 0xff;
-      carry = v >> 8;
-    }
-    while (carry > 0) {
-      buf.push(carry & 0xff);
-      carry >>= 8;
-    }
-  }
-  // The leading-zero-character count from base58 reflects leading zero
-  // bytes in the original. Append them.
-  const out = new Uint8Array(zeros + buf.length);
-  for (let i = 0; i < buf.length; i++) out[zeros + i] = buf[buf.length - 1 - i]!;
-  return out;
-}
-
-// Multicodec varint for Ed25519 public key: 0xed 0x01.
-const ED25519_MULTICODEC = Uint8Array.from([0xed, 0x01]);
-// Multicodec varint for X25519 public key: 0xec 0x01.
-const X25519_MULTICODEC = Uint8Array.from([0xec, 0x01]);
-
-/**
- * Encode a 32-byte raw Ed25519 public key as a W3C-spec multibase string:
- *   'z' + base58btc(0xed 0x01 || rawKey)
- * This is the canonical form for `did:key:z…` and for the
- * `publicKeyMultibase` field of `Ed25519VerificationKey2020`.
- */
-function encodeEd25519Multibase(rawKey: Buffer): string {
-  if (rawKey.length !== 32) throw new Error(`Ed25519 raw key must be 32 bytes, got ${rawKey.length}`);
-  const buf = new Uint8Array(ED25519_MULTICODEC.length + 32);
-  buf.set(ED25519_MULTICODEC, 0);
-  buf.set(rawKey, ED25519_MULTICODEC.length);
-  return 'z' + base58btcEncode(buf);
-}
-
-/**
- * Encode a 32-byte raw X25519 public key as a W3C-spec multibase string:
- *   'z' + base58btc(0xec 0x01 || rawKey)
- * Canonical form for `publicKeyMultibase` on `X25519KeyAgreementKey2020`
- * verification methods (W3C Security Vocabulary — X25519 Key Agreement 2020).
- */
-function encodeX25519Multibase(rawKey: Buffer): string {
-  if (rawKey.length !== 32) throw new Error(`X25519 raw key must be 32 bytes, got ${rawKey.length}`);
-  const buf = new Uint8Array(X25519_MULTICODEC.length + 32);
-  buf.set(X25519_MULTICODEC, 0);
-  buf.set(rawKey, X25519_MULTICODEC.length);
-  return 'z' + base58btcEncode(buf);
-}
-
 /**
  * Parse a `did:key:z…` Ed25519 DID and return the 32-byte raw public key.
  *
@@ -530,19 +430,10 @@ function generateEd25519(): KeyPair {
   // X25519 — keyAgreement (envelope-recipient key for cross-pod E2EE
   // sharing). Per-identity so each agent has its own encryption key
   // (FIX 6 with FIX 3). The raw 32 bytes are the end of the 44-byte SPKI
-  // DER, as for Ed25519 above. Not via JWK: on Node 20 a JWK export of a
-  // freshly generated key holds the key pair's mutex while it allocates,
-  // a GC there can run the finished keygen job's destructor, which takes
-  // the same mutex, and the thread deadlocks with itself (see
-  // tests/public-jwk.ts). The SPKI export takes no lock.
+  // DER, as for Ed25519 above, and never a JWK export, which on Node 20
+  // can deadlock this thread (see x25519PublicKeyEncodings).
   const { publicKey: x25519PublicKey, privateKey: x25519PrivateKey } = crypto.generateKeyPairSync('x25519');
-  const xSpki = x25519PublicKey.export({ type: 'spki', format: 'der' });
-  if (xSpki.length !== 44) {
-    throw new Error(`X25519 SPKI must be 44 bytes, got ${xSpki.length}`);
-  }
-  const xRaw = xSpki.subarray(xSpki.length - 32);
-  const x25519PublicKeyMultibase = encodeX25519Multibase(xRaw);
-  const x25519PublicKeyBase64 = xRaw.toString('base64');
+  const { multibase: x25519PublicKeyMultibase, base64: x25519PublicKeyBase64 } = x25519PublicKeyEncodings(x25519PublicKey);
 
   return {
     publicKeyMultibase,
@@ -611,6 +502,8 @@ interface AuthMethods {
   /** Provider-signed immutable Play owner anchor; not an enrolled human credential. */
   provisionalPlayAnchor?: string;
   provisionalPlayReceipts?: Array<{ hash: string; expiresAt: number }>;
+  /** The server's receipt from the hosted enrollment ceremony. */
+  termsAcceptance?: TermsAcceptance;
   /**
    * Set (to the day, YYYY-MM-DD) on the tombstone a deleted account leaves at this URL. Its
    * derived id may never be opened again; see deletionTombstone.
@@ -621,7 +514,8 @@ interface AuthMethods {
    * resource of the pod is deleted (purgePlayOwner), the guest's game data included (by the store's
    * native delete), but the documents outside it that the pod refuses to delete with 409 (native
    * heads nothing expects, which stay): a purge that fails part-way is retried from it, at the next
-   * pass and after a restart (loadAccountFromPod). A deletion's tombstone has none.
+   * pass and after a restart (loadAccountFromPod). A deletion's tombstone has none. The game-data
+   * backfill sets it again on a finished purge's tombstone (reopenFinishedPlayPurge).
    */
   provisionalPlayPurgePending?: true;
 }
@@ -643,6 +537,29 @@ function emptyAuthMethods(userId: string, name = userId, agentId?: string): Auth
   };
   if (agentId) m.agentId = agentId;
   return m;
+}
+
+function acceptedTermsVersion(input: unknown): string | undefined {
+  return hostedTerms && input === hostedTerms.version ? hostedTerms.version : undefined;
+}
+
+function refuseMissingTerms(res: express.Response): void {
+  res.setHeader('Cache-Control', 'no-store');
+  res.status(428).json({
+    error: 'Review the Hosted Interego Terms of Service and select I agree before creating an account.',
+    code: 'hosted_terms_required',
+    termsVersion: hostedTerms?.version,
+    termsUrl: hostedTerms?.termsUrl,
+    privacyUrl: hostedPrivacyUrl,
+  });
+}
+
+/** Only the first credential on an account needs a new receipt, if the guest did not already agree. */
+function recordEnrollmentTerms(methods: AuthMethods, version: string | undefined): boolean {
+  if (!hostedTerms || methods.termsAcceptance?.version === hostedTerms.version || hasAnyCredential(methods)) return true;
+  if (version !== hostedTerms.version) return false;
+  methods.termsAcceptance = { version, acceptedAt: new Date().toISOString() };
+  return true;
 }
 
 interface TokenRecord {
@@ -738,6 +655,14 @@ const deletedUserIds = new Set<string>();
 // whose deletion this process answered 503, which the janitor took up after its guest deadline, but
 // whose agent registry DELETE failed then (unconfirmedPlayDeletions): its next pass sends it again.
 const unfinishedPlayPurges = new Set<string>();
+
+// Play owners whose finished purge the game-data backfill marked again (reopenFinishedPlayPurge), or
+// may have (a mark nothing settled), while that purge is unfinished. Every pass of such a purge, the
+// janitor's retries included, deletes nothing while the pod holds anything but the game data, the
+// record, the root and the game data's two containers (the backfill re-opened it for its game data
+// alone), and leaves it marked and queued, logging that once (`residueLogged`). Process-local: after
+// a restart the startup scan finds the mark, and the purge is an ordinary one.
+const reopenedByBackfill = new Map<string, { residueLogged: boolean }>();
 
 // Play owners whose purge (purgePlayOwner) is waiting for the owner's lock or running. A purge
 // puts its owner in unfinishedPlayPurges before it sends its DELETEs, so every pass that started
@@ -1296,6 +1221,7 @@ async function deletedBeforeTombstones(userId: string, existing: AuthMethods | n
  */
 type FirstSignInOnPod =
   | Exclude<FirstSignInOutcome<AuthMethods>, { kind: 'unconfirmed' }>
+  | { readonly kind: 'terms-required' }
   | { readonly kind: 'unconfirmed'; readonly reason: string; readonly undetermined: boolean;
       readonly onPod?: AuthMethods | null; readonly pending?: WritePrecondition; readonly fenced?: boolean };
 
@@ -1340,8 +1266,10 @@ async function claimFirstSignInOnPod(
   add: (methods: AuthMethods) => void,
   mayCreate = true,
   derived = false,
+  termsVersion?: string,
 ): Promise<FirstSignInOnPod> {
   const probe = derived && DERIVED_USER_ID.test(userId);
+  const needsTerms = mayCreate && hostedTerms !== null && termsVersion !== hostedTerms.version;
   let evidence: string | null = null;
   // Set when this claim's write failed in a way that may have landed (a 5xx, a timeout): what the
   // pod held once settled (undefined: unsettled), and, for a write the pod never answered that
@@ -1360,7 +1288,7 @@ async function claimFirstSignInOnPod(
     // Set once `retire` has run: what it wrote (or read after a refused write) is installed, not `live`.
     let retired = false;
     const outcome = await claimFirstSignIn<AuthMethods>({
-      mayCreate,
+      mayCreate: mayCreate && !needsTerms,
       closed: isTombstone,
       conflicted: attempts => logWriteConflict(userId, 'first-sign-in', attempts),
       ...(probe ? {
@@ -1407,6 +1335,7 @@ async function claimFirstSignInOnPod(
         // as a passkey registration's does: it used to keep the id.
         const methods = existing ? { ...structuredClone(existing), agentId } : emptyAuthMethods(userId, displayName, agentId);
         if (!methods.name || methods.name === userId) methods.name = displayName;
+        recordEnrollmentTerms(methods, termsVersion);
         add(methods);
         return methods;
       },
@@ -1445,6 +1374,9 @@ async function claimFirstSignInOnPod(
       installAuthMethods(userId, outcome.methods);
     } else if ((outcome.kind === 'refused' || outcome.kind === 'deleted') && live.methods && !retired) {
       installAuthMethods(userId, live.methods);
+    }
+    if (outcome.kind === 'refused' && needsTerms && (!live.methods || !hasAnyCredential(live.methods))) {
+      return { kind: 'terms-required' } as const;
     }
     return outcome;
   });
@@ -1777,6 +1709,7 @@ function normaliseAuthMethods(raw: unknown, userId: string): AuthMethods {
   const base = emptyAuthMethods(userId);
   if (!raw || typeof raw !== 'object') return base;
   const src = raw as Partial<AuthMethods>;
+  const termsAcceptance = readTermsAcceptance(src.termsAcceptance);
   return {
     ...base,
     name: typeof src.name === 'string' ? src.name : userId,
@@ -1789,6 +1722,7 @@ function normaliseAuthMethods(raw: unknown, userId: string): AuthMethods {
     ...(Number.isInteger(src.sessionEpoch) ? { sessionEpoch: src.sessionEpoch } : {}),
     ...(typeof src.provisionalPlayAnchor === 'string' ? { provisionalPlayAnchor: src.provisionalPlayAnchor } : {}),
     ...(Array.isArray(src.provisionalPlayReceipts) ? { provisionalPlayReceipts: src.provisionalPlayReceipts } : {}),
+    ...(termsAcceptance ? { termsAcceptance } : {}),
     ...(typeof src.deletedAt === 'string' ? { deletedAt: src.deletedAt } : {}),
     ...(src.provisionalPlayPurgePending === true ? { provisionalPlayPurgePending: true as const } : {}),
   };
@@ -2352,6 +2286,7 @@ interface Challenge {
   // did-sig: the text the DID's key signs (didSignInMessage), kept so /auth/did verifies the
   // bytes it handed out.
   message?: string;
+  termsVersion?: string;
   // For WebAuthn flows: the transient session-user handle emitted in
   // the registration options (so the `/register` step can match the
   // ceremony back to this challenge). NOT the final userId.
@@ -3016,6 +2951,21 @@ app.use(corsMiddleware({
   allowHeaders: 'Accept, Content-Type, Authorization',
 }));
 
+app.get('/.well-known/hosted-interego-terms', (_req, res) => {
+  res.setHeader('Cache-Control', 'no-store');
+  res.json({ terms: hostedTerms && { version: hostedTerms.version, url: hostedTerms.termsUrl },
+    privacyUrl: showHostedPrivacy ? hostedPrivacyUrl : null,
+    ...(showHostedPrivacy ? { betaNotice: hostedBetaNotice } : {}) });
+});
+
+function hostedTermsCheckbox(): string {
+  if (!hostedTerms) return '';
+  return `<p class="terms-agreement"><strong>${hostedBetaNotice}</strong></p>
+<p class="terms-agreement"><label><input id="termsAgree" type="checkbox" data-version="${hostedTerms.version}"> I am at least 18 and I agree to the <a href="${hostedTerms.termsUrl}" target="_blank" rel="noopener noreferrer">Hosted Interego Terms of Service</a>.</label></p>`;
+}
+
+const hostedPrivacyLink = showHostedPrivacy ? `<a href="${hostedPrivacyUrl}">Privacy Notice</a>` : '';
+
 // ── Per-IP rate limiting (auth endpoints) ──────────────────────────
 //
 // Sliding-window counters per IP × endpoint family. Without these, an
@@ -3112,8 +3062,9 @@ const LANDING_HTML = `<!doctype html>
 <p class="muted" style="margin-top:-0.8em;margin-bottom:1.6em;font-size:0.88rem">Reference implementation on the maintainer's own hosting. Fine for evaluation; self-host before you depend on it.</p>
 
 <h2 style="margin-top:1.2em">60-second setup</h2>
-<p>Click the button to mint an anonymous, ephemeral pod + bearer token (no signup, reaped after 7 days). Paste the personalized config into your MCP client and the agent has working pod-rooted memory immediately. Want to keep it? Enroll a passkey or wallet at <code>/connect</code> using the same token as <code>addDeviceToken</code> and the pod becomes permanently yours.</p>
-<button id="tryBtn" class="btn" type="button" style="margin:0.4em 0 0.8em">Try it now — no signup &rarr;</button>
+<p>Create an anonymous, ephemeral pod and bearer token, normally cleaned up after 7 days. Paste the personalized config into your MCP client to use the pod. To keep it, enroll a passkey or wallet at <code>/connect</code> using the same token as <code>addDeviceToken</code>.</p>
+${hostedTermsCheckbox()}
+<button id="tryBtn" class="btn" type="button" style="margin:0.4em 0 0.8em">Start guest access &rarr;</button>
 <span id="tryStatus" class="muted" style="margin-left:0.6em;font-size:0.88rem"></span>
 <div id="trySnippetWrap" style="display:none;margin-top:0.6em">
   <p style="margin-bottom:0.3em" class="muted">Paste into <code>~/.claude.json</code>, <code>.cursor/mcp.json</code>, or the Codex equivalent:</p>
@@ -3141,18 +3092,30 @@ const LANDING_HTML = `<!doctype html>
   var pre = document.getElementById('trySnippet');
   var ttl = document.getElementById('tryTtl');
   var copy = document.getElementById('tryCopyBtn');
+  var agree = document.getElementById('termsAgree');
   if (!btn) return;
   btn.addEventListener('click', function(){
+    if (agree && !agree.checked) {
+      status.textContent = 'Select I agree to start guest access.';
+      agree.focus();
+      return;
+    }
     btn.disabled = true;
     status.textContent = 'Provisioning…';
-    fetch('/try', { method: 'POST', headers: { 'Content-Type': 'application/json' } })
-      .then(function(r){ if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+    fetch('/try', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ termsVersion: agree ? agree.dataset.version : undefined }) })
+      .then(async function(r){
+        var result = await r.json();
+        if (!r.ok) throw new Error(result.error || ('HTTP ' + r.status));
+        return result;
+      })
       .then(function(j){
         pre.textContent = j.mcpConfigSnippet;
         wrap.style.display = 'block';
         ttl.textContent = j.ttlNote || '';
         status.textContent = 'Ready — userId ' + j.userId;
         btn.textContent = 'Generate another →';
+        if (agree) agree.checked = false;
         btn.disabled = false;
       })
       .catch(function(e){
@@ -3202,12 +3165,14 @@ Open source · <a href="${REPO_URL}">github.com/markjspivey-xwisee/interego</a> 
 <a href="/dashboard">dashboard</a> ·
 <a href="/health">status</a> ·
 <a href="/.well-known/did.json">did.json</a> ·
+${hostedPrivacyLink ? `${hostedPrivacyLink} ·` : ''}
 this deployment is the maintainer's free reference instance
 </footer>
 </body>
 </html>`;
 
 app.get(['/', '/try'], (_req, res) => {
+  if (showHostedPrivacy) res.setHeader('Cache-Control', 'no-store');
   res.type('text/html').send(LANDING_HTML);
 });
 
@@ -3365,6 +3330,10 @@ app.post('/challenges', challengeLimiter, async (req, res) => {
     }
   }
   const ch = issueChallenge(purpose, userId);
+  if (hostedTerms && (purpose === 'siwe' || purpose === 'did-sig') && acceptedTermsVersion(req.body?.termsVersion)) {
+    ch.termsVersion = hostedTerms.version;
+    if (purpose === 'did-sig') ch.message += `\n${hostedTerms.statement}`;
+  }
   // Pin the relying party for WebAuthn-authenticate ceremonies to the
   // origin this challenge was requested from — so /authenticate later
   // verifies against the same origin the browser ran the ceremony on.
@@ -3376,6 +3345,7 @@ app.post('/challenges', challengeLimiter, async (req, res) => {
     ch.rpOrigin = rp.origin;
   }
   const resp: Record<string, unknown> = { nonce: ch.nonce, expiresAt: new Date(ch.expiresAt).toISOString() };
+  if (purpose === 'siwe' && ch.termsVersion) resp.termsStatement = hostedTerms?.statement;
   if (ch.message) resp.message = ch.message;
   if (ch.rpId) resp.rpId = ch.rpId;
   if (checksummedAddress) resp.address = checksummedAddress;
@@ -3442,7 +3412,7 @@ const SIWE_CLOCK_SKEW_MS = 5 * 60 * 1000;
 const SIWE_ISSUED_AT_WINDOW_MS = 24 * 60 * 60 * 1000;
 
 type SiweMessageCheck =
-  | { ok: true; address: string }
+  | { ok: true; address: string; termsVersion?: string }
   | { ok: false; status: 400; body: Record<string, string> };
 
 /**
@@ -3515,7 +3485,8 @@ async function checkSiweMessage(message: string, ch: Challenge): Promise<SiweMes
   if (f.notBefore !== undefined && Date.parse(f.notBefore) > now + SIWE_CLOCK_SKEW_MS) {
     return refuse({ error: 'SIWE message is not valid yet (Not Before is in the future)' });
   }
-  return { ok: true, address: f.address.toLowerCase() };
+  const termsVersion = hostedTerms && f.statement === hostedTerms.statement ? acceptedTermsVersion(ch.termsVersion) : undefined;
+  return { ok: true, address: f.address.toLowerCase(), termsVersion };
 }
 
 /**
@@ -3860,7 +3831,12 @@ app.post('/auth/siwe', authEnrollLimiter, async (req, res) => {
       const outcome = await claimFirstSignInOnPod(targetUserId, agentId, displayName,
         m => m.walletAddresses.some(a => a.toLowerCase() === recoveredAddress),
         m => { m.walletAddresses.push(recoveredAddress); }, /* mayCreate */ !loading && !existingOnly,
-        /* derived */ resolved.mode === 'derive');
+        /* derived */ resolved.mode === 'derive', checked.termsVersion);
+      if (outcome.kind === 'terms-required') {
+        if (resolved.mode === 'bootstrap') CONSUMED_INVITES.delete(targetUserId);
+        refuseMissingTerms(res);
+        return;
+      }
       if (outcome.kind === 'unreadable' || outcome.kind === 'unconfirmed') {
         log(`WARN: first-time SIWE sign-in to ${targetUserId} not completed (${outcome.kind}): ${outcome.reason}`);
         // Nothing settled what the pod holds after the failed write: the wallet may be on that
@@ -3902,11 +3878,14 @@ app.post('/auth/siwe', authEnrollLimiter, async (req, res) => {
       // only once the pod has it, unless that record signed out everywhere since the bearer's
       // token was issued (signedOutSince).
       let signedOut = false;
+      let missingTerms = false;
       try {
         await commitCredentialEnrollment(user.id, 'siwe-add-wallet', methods => {
           signedOut = signedOutSince(methods, bearerEpoch);
           if (signedOut) return false;
           if (methods.walletAddresses.some(a => a.toLowerCase() === recoveredAddress)) return false;
+          missingTerms = !recordEnrollmentTerms(methods, checked.termsVersion);
+          if (missingTerms) return false;
           methods.walletAddresses.push(recoveredAddress);
         });
       } catch (err) {
@@ -3926,6 +3905,7 @@ app.post('/auth/siwe', authEnrollLimiter, async (req, res) => {
         res.status(401).json({ error: SIGNED_OUT_DURING_ADD });
         return;
       }
+      if (missingTerms) { refuseMissingTerms(res); return; }
       if (timingEnabled()) logTiming('siwe-pod-write-completed', requestStart, { branch: 'add-wallet' });
       log(`Wallet ${recoveredAddress} linked to existing user ${user.id}`);
     }
@@ -3967,6 +3947,7 @@ app.post('/auth/siwe', authEnrollLimiter, async (req, res) => {
  */
 app.post('/auth/webauthn/register-options', authEnrollLimiter, async (req, res) => {
   const { name, bootstrapUserId, bootstrapInvite } = req.body ?? {};
+  const termsVersion = acceptedTermsVersion(req.body?.termsVersion);
   if (!name) {
     res.status(400).json({ error: 'name is required' });
     return;
@@ -3985,6 +3966,7 @@ app.post('/auth/webauthn/register-options', authEnrollLimiter, async (req, res) 
     addDeviceUserId = tr.record!.userId;
     addDeviceEpoch = tokenEpoch(authHeader.slice(7));
   }
+  if (hostedTerms && !addDeviceUserId && !termsVersion) { refuseMissingTerms(res); return; }
 
   // Mode (B): validate bootstrap invite (do NOT consume yet — consumption
   // happens at /register after the ceremony actually verifies).
@@ -4068,6 +4050,10 @@ app.post('/auth/webauthn/register-options', authEnrollLimiter, async (req, res) 
   let excludeCredentials: Array<{ id: string; transports?: import('@simplewebauthn/server').AuthenticatorTransportFuture[] }> = [];
   if (addDeviceUserId) {
     const m = await readAuthMethods(addDeviceUserId);
+    if (hostedTerms && !hasAnyCredential(m) && m.termsAcceptance?.version !== hostedTerms.version && !termsVersion) {
+      refuseMissingTerms(res);
+      return;
+    }
     excludeCredentials = m.webAuthnCredentials.map(c => ({
       id: c.id,
       transports: (c.transports ?? []) as unknown as import('@simplewebauthn/server').AuthenticatorTransportFuture[],
@@ -4098,6 +4084,7 @@ app.post('/auth/webauthn/register-options', authEnrollLimiter, async (req, res) 
     expiresAt: Date.now() + CHALLENGE_TTL_MS,
     purpose: 'webauthn-register',
     userId: sessionUserId,
+    termsVersion,
   };
   if (addDeviceUserId) {
     ch.addDeviceUserId = addDeviceUserId;
@@ -4246,7 +4233,8 @@ app.post('/auth/webauthn/register', authEnrollLimiter, async (req, res) => {
       m => {
         if (!m.name || m.name === targetUserId) m.name = displayName;
         m.webAuthnCredentials.push(record);
-      }, /* mayCreate */ true, /* derived */ true);
+      }, /* mayCreate */ true, /* derived */ true, ch.termsVersion);
+    if (outcome.kind === 'terms-required') { refuseMissingTerms(res); return; }
     if (outcome.kind === 'unreadable') {
       log(`WARN: passkey registration of ${targetUserId} not completed (unreadable): ${outcome.reason}`);
       res.status(503).json({
@@ -4313,7 +4301,7 @@ app.post('/auth/webauthn/register', authEnrollLimiter, async (req, res) => {
   // binds a passkey to one that holds no credential yet; an added device needs the document.
   if (!created) {
     const bootstrap = !ch.addDeviceUserId && !!ch.bootstrapUserId;
-    let refusal: 'claimed' | 'signed-out' | undefined;
+    let refusal: 'claimed' | 'signed-out' | 'terms-required' | undefined;
     // Nothing was enrolled, so the shell seeded above for it goes again: left in memory it
     // would make the account look loaded (its profile and did:web document resolvable).
     const rollBack = () => { for (const id of seeded.splice(0)) { identities.delete(id); keys.delete(id); } };
@@ -4325,6 +4313,7 @@ app.post('/auth/webauthn/register', authEnrollLimiter, async (req, res) => {
         // An added device: not onto an account that signed out everywhere since the options.
         if (ch.addDeviceUserId && signedOutSince(methods, ch.addDeviceEpoch ?? 0)) { refusal = 'signed-out'; return false; }
         if (methods.webAuthnCredentials.some(c => c.id === record.id)) return false;
+        if (!recordEnrollmentTerms(methods, ch.termsVersion)) { refusal = 'terms-required'; return false; }
         if (!methods.name || methods.name === targetUserId) methods.name = user.name;
         if (!methods.agentId) {
           const a = [...identities.values()].find(i => i.type === 'agent' && i.owner === targetUserId);
@@ -4383,6 +4372,12 @@ app.post('/auth/webauthn/register', authEnrollLimiter, async (req, res) => {
     if (refusal === 'signed-out') {
       rollBack();
       res.status(401).json({ error: SIGNED_OUT_DURING_ADD });
+      return;
+    }
+    if (refusal === 'terms-required') {
+      rollBack();
+      if (bootstrap) CONSUMED_INVITES.delete(targetUserId);
+      refuseMissingTerms(res);
       return;
     }
   }
@@ -4785,6 +4780,7 @@ app.post('/auth/did', authEnrollLimiter, async (req, res) => {
     // Appended: a legacy-form did:key has set a Warning of its own above.
     res.append('Warning', '299 - "a DID signature over the bare nonce is deprecated; sign the message POST /challenges returns"');
   }
+  const termsVersion = proof === 'message' ? acceptedTermsVersion(ch.termsVersion) : undefined;
 
   // If the initial pod-index rebuild hasn't settled yet, give it a small
   // budget before we look up `did` in didIndex. Without this race the
@@ -5012,7 +5008,12 @@ app.post('/auth/did', authEnrollLimiter, async (req, res) => {
             keyType: 'Ed25519VerificationKey2020',
             createdAt: new Date().toISOString(),
           });
-        }, mayCreate, /* derived */ resolved.mode === 'derive');
+        }, mayCreate, /* derived */ resolved.mode === 'derive', termsVersion);
+      if (outcome.kind === 'terms-required') {
+        if (resolved.mode === 'bootstrap') CONSUMED_INVITES.delete(targetUserId);
+        refuseMissingTerms(res);
+        return;
+      }
       if (outcome.kind === 'unreadable' || outcome.kind === 'unconfirmed') {
         log(`WARN: first-time DID sign-in to ${targetUserId} not completed (${outcome.kind}): ${outcome.reason}`);
         if (outcome.kind === 'unconfirmed' && outcome.undetermined) recordUnconfirmed(didKey, targetUserId, outcome.pending, resolved.mode === 'derive');
@@ -5048,11 +5049,14 @@ app.post('/auth/did', authEnrollLimiter, async (req, res) => {
       // once the pod has it, unless that record signed out everywhere since the bearer's token was
       // issued (signedOutSince: the request may have waited for the DID's turn meanwhile).
       let signedOut = false;
+      let missingTerms = false;
       try {
         await commitCredentialEnrollment(user.id, 'did-add-did', methods => {
           signedOut = signedOutSince(methods, bearerEpoch);
           if (signedOut) return false;
           if (methods.didKeys.some(k => k.did === did)) return false;
+          missingTerms = !recordEnrollmentTerms(methods, termsVersion);
+          if (missingTerms) return false;
           methods.didKeys.push({
             did,
             publicKeyMultibase: canonicalPublicKeyMultibase,
@@ -5075,6 +5079,7 @@ app.post('/auth/did', authEnrollLimiter, async (req, res) => {
         res.status(401).json({ error: SIGNED_OUT_DURING_ADD });
         return;
       }
+      if (missingTerms) { refuseMissingTerms(res); return; }
       if (timingEnabled()) logTiming('did-pod-write-completed', requestStart, { branch: 'add-did' });
       log(`DID ${logValue(did, 200)} linked to existing user ${user.id}`);
     }
@@ -5116,7 +5121,9 @@ app.post('/auth/did', authEnrollLimiter, async (req, res) => {
 // the underlying user).
 const tryProvisionLimiter = rateLimit('try-provision', { windowMs: 60 * 60 * 1000, max: 5 });
 
-app.post('/try', tryProvisionLimiter, async (_req, res) => {
+app.post('/try', tryProvisionLimiter, async (req, res) => {
+  const termsVersion = acceptedTermsVersion(req.body?.termsVersion);
+  if (hostedTerms && !termsVersion) { refuseMissingTerms(res); return; }
   // userId derivation is global per the CLAUDE.md invariant — for `/try`
   // there's no credential to derive from, so we use a fresh random suffix
   // and prefix `u-try-` so the janitor knows to reap it. Same shape as
@@ -5136,6 +5143,7 @@ app.post('/try', tryProvisionLimiter, async (_req, res) => {
   try {
     await withIdentityPodMutex(userId, async () => {
       const doc = emptyAuthMethods(userId, name, agentId);
+      recordEnrollmentTerms(doc, termsVersion);
       let result: WriteResult;
       try {
         result = await writeLive(userId, doc, { kind: 'absent' }, 'try');
@@ -5144,7 +5152,8 @@ app.post('/try', tryProvisionLimiter, async (_req, res) => {
         // abandoned below. The id is random, so a record there now with this request's agent is
         // the one it wrote (a slow pod that stored it after the timeout): it was provisioned.
         const now = await reconcileAfterWriteFailure(userId, undefined, { kind: 'absent' }, 'try');
-        if (now && !isTombstone(now) && now.agentId === agentId && !hasAnyCredential(now)) {
+        if (now && !isTombstone(now) && now.agentId === agentId && !hasAnyCredential(now)
+          && (!hostedTerms || now.termsAcceptance?.version === hostedTerms.version)) {
           log(`WARN: try-it identity ${userId}: the pod took the write without confirming it (${(err as Error).message})`);
           return;
         }
@@ -5210,6 +5219,7 @@ const provisionalPlay = createProvisionalPlayProvider({
   clientsJson: process.env['PROVISIONAL_PLAY_CLIENTS'],
   ttlSeconds: Number(process.env['PROVISIONAL_PLAY_TTL_SECONDS'] ?? 86400),
   maxPods: Number(process.env['PROVISIONAL_PLAY_MAX_PODS'] ?? 100),
+  hostedTerms: hostedTerms ?? undefined,
   withOwnerLock: withIdentityPodMutex,
   empty: claims => emptyAuthMethods(claims.userId, 'Play guest', claims.authenticatedAgentId) as unknown as import('./provisional-play-store.js').PlayAnchorDocument,
   // Runs inside the owner's lock, once the anchor's conditional write has landed.
@@ -5860,11 +5870,14 @@ app.post('/wallet/link', authEnrollLimiter, async (req, res) => {
     // Written only while the record has not signed out everywhere since the bearer's token was
     // issued (signedOutSince): the request may have waited for the wallet's turn meanwhile.
     let signedOut = false;
+    let missingTerms = false;
     try {
       await commitCredentialEnrollment(userId, 'wallet-link', methods => {
         signedOut = signedOutSince(methods, linkEpoch);
         if (signedOut) return false;
         if (methods.walletAddresses.some(a => a.toLowerCase() === addr)) return false;
+        missingTerms = !recordEnrollmentTerms(methods, checked.termsVersion);
+        if (missingTerms) return false;
         methods.walletAddresses.push(addr);
       });
     } catch (err) {
@@ -5889,6 +5902,7 @@ app.post('/wallet/link', authEnrollLimiter, async (req, res) => {
       res.status(401).json({ error: SIGNED_OUT_DURING_ADD });
       return;
     }
+    if (missingTerms) { refuseMissingTerms(res); return; }
     log(`Linked wallet ${addr} to user ${userId}`);
     return true;
   });
@@ -6765,6 +6779,9 @@ async function deleteUserCompletely(
  * the other instance's provisioning does not wait for this server's lock, so deleting the pod's
  * resources then could delete those of an owner provisioned again meanwhile. A purge marks only a
  * tombstone it writes over an anchor whose deadline has passed, which provisioning refuses to restore.
+ * The game-data backfill (`reopen`, backfillPlayGameData) also marks a tombstone: a finished purge's,
+ * again, only where the admission ledger, which provisioning checks too, proves the guest deadline
+ * passed, and only to delete the game data (reopenFinishedPlayPurge).
  * One exception: a deletion this process answered 503 (unconfirmedPlayDeletions), which the sweep
  * passes over before its guest deadline (the guest's retry finishes it), and which close() keeps if
  * a purge decided before the 503 reaches it all the same. After that deadline, close() finishes
@@ -6776,21 +6793,34 @@ async function deleteUserCompletely(
  * At most one purge of an owner is queued on its lock or running (playPurgesInFlight): one asked
  * for while another is returns at once, and the janitor's first pass after that other has returned
  * takes the owner up again if its purge is still unfinished.
+ *
+ * Returns what the purge came to, which only the game-data backfill reads.
  */
-async function purgePlayOwner(userId: string): Promise<void> {
+async function purgePlayOwner(userId: string, reopen?: PlayReopen): Promise<PlayPurgeOutcome> {
   if (playPurgesInFlight.has(userId)) {
     log(`Janitor: not queuing another purge of ${userId}: the one an earlier pass started is still waiting for its lock or running`);
-    return;
+    return 'in-flight';
   }
   playPurgesInFlight.add(userId);
   let closed = false;
   let finished = false;
   // Why the agent registry DELETE failed, of a deletion answered 503 that close() took up (deleteUserCompletely).
   let registryLeft: string | undefined;
+  // Why close() left the owner as it is: the backfill's reason (reopenFinishedPlayPurge), or, for a
+  // purge it re-opened, what its pod holds besides the game data (reopenedByBackfill).
+  let leftBecause: string | undefined;
+  let gameData = 0;
+  let outcome: PlayPurgeOutcome;
   try {
-    await withIdentityPodMutex(userId, async () => {
+    outcome = await withIdentityPodMutex(userId, async () => {
       const purge = await purgeProvisionalPlayPod({ userId, cssUrl: CSS_URL,
-        close: async () => {
+        close: async listed => {
+          if (reopen || reopenedByBackfill.has(userId)) {
+            const residue = playGameDataResidue(new URL(`${userId}/`, CSS_URL), listed);
+            gameData = residue.gameData.length;
+            leftBecause = reopen ? await reopenFinishedPlayPurge(userId, residue, reopen) : playResidueOutside(residue);
+            if (leftBecause !== undefined) return 'kept';
+          }
           const r = await deleteUserCompletely(userId, { lockHeld: true, stillDeletable: playOwnerPurgeable, playPurge: true });
           if (r.kept) return 'kept';
           closed = true;
@@ -6800,9 +6830,15 @@ async function purgePlayOwner(userId: string): Promise<void> {
         },
       });
       if (purge.outcome === 'purged') await finishPlayPurge(userId);
-      // The owner, forgotten when its account closed, is walked only from here at the next pass.
-      if (registryLeft === undefined) unfinishedPlayPurges.delete(userId);
-      else unfinishedPlayPurges.add(userId);
+      // The owner, forgotten when its account closed, is walked only from here at the next pass; so
+      // is a purge the backfill re-opened that its pod's other resources keep unfinished. A backfill
+      // turn that left the owner as it is leaves the queue as it was (reopenFinishedPlayPurge takes
+      // out an owner it queued itself): an on-demand load may have queued it since the run began.
+      const held = purge.outcome === 'kept' && !reopen && leftBecause !== undefined;
+      if (!reopen || leftBecause === undefined) {
+        if (registryLeft === undefined && !held) unfinishedPlayPurges.delete(userId);
+        else unfinishedPlayPurges.add(userId);
+      }
       // Logged once: the mark is cleared, so neither a later pass nor a restart comes back to it. A
       // finished purge was logged only with what it kept, which every guest who had saved had.
       if (purge.outcome === 'purged') {
@@ -6811,22 +6847,34 @@ async function purgePlayOwner(userId: string): Promise<void> {
           : `Janitor: finished the purge of ${userId}, keeping ${purge.retained.length} resource(s) outside its game data that its pod's store refused to delete (409: a native head): `
             + purge.retained.map(url => (url.startsWith(pod) ? url.slice(pod.length) : url)).join(', '));
       }
-      if (purge.outcome === 'kept') log(awaitsGuestRetry(userId)
+      if (purge.outcome === 'kept' && leftBecause === undefined) log(awaitsGuestRetry(userId)
         ? `Janitor: left ${userId} to its guest's retry: its deletion was answered 503 (not confirmed), and its guest deadline has not passed`
         : `Janitor: kept ${userId}: it holds a credential now, or its anchor has not expired`);
+      else if (held) {
+        const entry = reopenedByBackfill.get(userId)!;
+        if (!entry.residueLogged) log(`Janitor: kept the purge of ${userId} unfinished, deleting nothing: the Play game-data backfill re-opened it for its game data alone, and its pod holds more now (${leftBecause}); it stays marked, and after a restart its purge is an ordinary one`);
+        entry.residueLogged = true;
+      } else if (purge.outcome === 'kept' && leftBecause !== 'none' && leftBecause !== 'live') {
+        log(`Janitor: Play game-data backfill left ${userId} as it is (${leftBecause}): its pod holds ${gameData} game document(s)`);
+      }
       if (purge.outcome === 'closed') log(!finished
         ? `Janitor: forgot ${userId}: its record is a tombstone no purge left unfinished (a deletion's); its pod is left as it is`
         : registryLeft === undefined
           ? `Janitor: finished the deletion of ${userId} answered 503 (not confirmed) and not retried before its guest deadline: its agent registry deleted`
           : `Janitor: the deletion of ${userId} answered 503 (not confirmed) and not retried before its guest deadline is unfinished: its agent registry's DELETE failed (${registryLeft}); tried again at the next pass`);
+      return purge.outcome === 'kept' ? `kept:${leftBecause ?? (awaitsGuestRetry(userId) ? 'guest-retry' : 'account')}` as const : purge.outcome;
     });
   } catch (err) {
     log(closed || unfinishedPlayPurges.has(userId)
       ? `Janitor: purge of ${userId} unfinished, its account closed; tried again at the next pass: ${(err as Error).message}`
+      : reopen ? `Janitor: Play game-data backfill could not check ${userId}: ${(err as Error).message}`
       : `Janitor: provisional cleanup kept ${userId}: ${(err as Error).message}`);
+    outcome = `error:${(err as Error).message}`;
   } finally {
     playPurgesInFlight.delete(userId);
+    if (!unfinishedPlayPurges.has(userId)) reopenedByBackfill.delete(userId);
   }
+  return outcome;
 }
 
 /**
@@ -6845,6 +6893,224 @@ async function finishPlayPurge(userId: string): Promise<void> {
   }, { tombstone: 'replace', absent: 'pass' });
   authMethodsCache.delete(userId);
   removeFromIndexes(userId);
+}
+
+// ── Play game-data backfill ─────────────────────────────────
+//
+// A Play purge that finished before it used the store's native delete deleted everything of the pod
+// but the guest's game data (its saves and write budget, native heads no plain DELETE removes) and
+// the containers that held them, and cleared its tombstone's mark: neither the janitor nor a restart
+// comes back to such a tombstone, so the game data stayed. So does a save the
+// css-gate let through that lands after a purge's last listing (provisional-play-cleanup.ts). Once a
+// process, one janitor interval after it starts, backfillPlayGameData takes each owner the admission
+// ledger proves past its guest deadline through the purge again, one at a time: the purge's own
+// listing, under the owner's lock, decides whether its tombstone is marked again
+// (reopenFinishedPlayPurge), and the purge's own deletion, closure fence and finishPlayPurge then
+// delete the game data and its two containers and clear the mark. Nothing new deletes anything.
+
+/** What a purge of a Play owner came to (purgePlayOwner), which the game-data backfill tallies. */
+type PlayPurgeOutcome = 'purged' | 'closed' | 'in-flight' | `kept:${string}` | `error:${string}`;
+/**
+ * One owner's turn in the game-data backfill: its guest deadline (ms) from the admission ledger, and
+ * the run's answer from the store on its native delete (asked once a run). `purging`: the purge went
+ * on to delete (a mark written, found, or perhaps on the pod after a write nothing settled), so the
+ * run stops unless it finishes. `found`: the mark was there already, not written by this run, which
+ * counts such a purge apart from those it re-opened.
+ */
+type PlayReopen = { deadline: number; run: { nativeDelete?: boolean }; purging?: boolean; found?: boolean };
+
+// How long after an owner's guest deadline the backfill waits before it marks its tombstone again:
+// clock skew with the css-gate, which refuses a guest's writes from that deadline on.
+const PLAY_BACKFILL_MARGIN_MS = 3_600_000;
+const PLAY_OWNER_ID = /^u-try-play-[a-f0-9]{32}$/;
+
+/** A request of a Play pod made under its owner's lock, bounded as provisional-play-cleanup.ts bounds its own. */
+const playPodRequest = (url: string, init: RequestInit = {}) =>
+  fetch(url, { ...init, redirect: 'error', signal: AbortSignal.timeout(POD_RECORD_TIMEOUT_MS) });
+
+/**
+ * Why the backfill does not mark the record `m` again, the UTC day of its guest deadline given:
+ * 'orphan' (no record: none is ever created), 'live' (no tombstone: a claimed or provisioned owner
+ * keeps its game data), 'marked' (an unfinished purge already), or a deletion's tombstone, dated
+ * before that day: a guest's own deletion needs a guest token, which its deadline ends, while a
+ * purge writes its tombstone only once that deadline has passed.
+ */
+function playReopenRefusal(m: Readonly<AuthMethods> | null, deadlineDay: string): string | undefined {
+  if (!m) return 'orphan';
+  if (!isTombstone(m)) return 'live';
+  if (m.provisionalPlayPurgePending === true) return 'marked';
+  if (m.deletedAt! < deadlineDay) return `deletion: its tombstone of ${m.deletedAt} is older than its guest deadline of ${deadlineDay}`;
+  return undefined;
+}
+
+/** What a Play pod holds besides its game data, as a reason to leave it (its first five paths), or undefined for nothing. */
+function playResidueOutside(residue: PlayGameDataResidue): string | undefined {
+  if (residue.outside.length === 0) return undefined;
+  return `outside: ${residue.outside.slice(0, 5).join(', ')}${residue.outside.length > 5 ? `, and ${residue.outside.length - 5} more` : ''}`;
+}
+
+/**
+ * The backfill's decision on one owner, under its lock, from the pod as its purge listed it
+ * (`residue`, purgePlayOwner): undefined to let the purge close it (deleteUserCompletely, which finds
+ * the marked tombstone: 'purge'), or why it is left as it is. It marks a tombstone again only where
+ * the pod holds game data and nothing else but its root, its record and the game data's two
+ * containers; the guest deadline passed over PLAY_BACKFILL_MARGIN_MS ago and no deletion answered 503
+ * here waits for its guest; the record is a finished purge's tombstone; and the store advertises its
+ * native delete. The mark goes through the writer, on the ETag of the record it reads and decides on.
+ * A tombstone marked already (an unfinished purge the startup scan did not see) goes on as the
+ * janitor's next pass would. Wherever the mark is, or may be, on the pod, the owner is in
+ * unfinishedPlayPurges before anything can fail, so the janitor's next pass takes it up.
+ */
+async function reopenFinishedPlayPurge(userId: string, residue: PlayGameDataResidue, reopen: PlayReopen): Promise<string | undefined> {
+  assertLockHeld(userId);
+  if (residue.gameData.length === 0) return 'none';
+  if (!residue.record) return 'orphan';
+  if (reopen.deadline > Date.now() - PLAY_BACKFILL_MARGIN_MS || awaitsGuestRetry(userId) || unconfirmedPlayDeletions.has(userId)) return 'not-due';
+  const deadlineDay = new Date(reopen.deadline).toISOString().slice(0, 10);
+  const live = (await readLive(userId)).methods;
+  const refusal = playReopenRefusal(live, deadlineDay);
+  const takenUp = () => log(`Janitor: Play game-data backfill took up the unfinished purge of ${userId}: its tombstone is marked already`);
+  if (refusal === 'marked') {
+    reopen.purging = reopen.found = true;
+    unfinishedPlayPurges.add(userId);
+    takenUp();
+    return undefined;
+  }
+  if (refusal !== undefined) return refusal;
+  const outside = playResidueOutside(residue);
+  if (outside !== undefined) return outside;
+  // An answer is kept for the run; a 5xx or a timeout throws, keeps nothing, and the next owner asks again.
+  reopen.run.nativeDelete ??= await advertisesNativeDelete(playPodRequest, `${CSS_URL}${userId}/${residue.gameData[0]}`);
+  if (!reopen.run.nativeDelete) return 'no-native-delete';
+  // From here the mark may be on the pod: queued, and every pass held to the game data, until one settles it.
+  reopen.purging = true;
+  unfinishedPlayPurges.add(userId);
+  reopenedByBackfill.set(userId, { residueLogged: false });
+  const unmarked = () => { reopen.purging = false; unfinishedPlayPurges.delete(userId); reopenedByBackfill.delete(userId); };
+  let keptLive = false;
+  let marked: boolean;
+  try {
+    const r = await applyUpdate(userId, 'play-purge-reopened', (draft, now) => {
+      const changed = playReopenRefusal(now, deadlineDay);
+      keptLive = changed === 'live';
+      if (changed !== undefined) return NoWrite(changed === 'marked' ? 'marked' : 'changed');
+      draft.provisionalPlayPurgePending = true;
+      return Write;
+    }, { tombstone: 'replace', absent: 'pass' });
+    if (r.written === false && r.reason === 'changed') { unmarked(); return 'changed'; }
+    marked = r.written;
+  } catch (err) {
+    // A mark the pod applied but did not confirm (a 5xx), which the writer settled: the purge goes on.
+    // Anything else is thrown; one nothing could settle may be on the pod, and stays as above.
+    const after = err instanceof AuthMethodsWriteError ? err.podRecord as AuthMethods | null | undefined : null;
+    if (!after || !isTombstone(after) || after.provisionalPlayPurgePending !== true) {
+      if (after !== undefined) unmarked();
+      keptLive = !!after && !isTombstone(after);
+      throw err;
+    }
+    marked = true;
+  } finally {
+    // The writer installed what it read or wrote: a closed account's is dropped, as finishPlayPurge drops it.
+    if (!keptLive) { authMethodsCache.delete(userId); removeFromIndexes(userId); }
+  }
+  if (marked) log(`Janitor: re-opened the finished purge of ${userId} (its tombstone of ${live!.deletedAt}, guest deadline ${new Date(reopen.deadline).toISOString()}): its pod still holds ${residue.gameData.length} game document(s): ${residue.gameData.join(', ')}`);
+  else { reopen.found = true; takenUp(); }
+  return undefined;
+}
+
+/**
+ * Each Play owner's guest deadline (ms) in the admission ledger, which holds the original anchor of
+ * every owner ever provisioned and is never pruned: the anchor provisioning checks again before it
+ * provisions an owner (provisional-play-admission.ts), opened with this server's key and issuer, its
+ * expiry allowed. An entry that does not open, or opens to another owner than the one it is filed
+ * under, is `unreadable`, never guessed at. No ledger (404) is an empty one; a ledger that cannot be
+ * read, or is not a version 1 ledger, throws.
+ */
+async function playAdmissionDeadlines(): Promise<{ total: number; unreadable: number; deadlines: Map<string, number> }> {
+  const read = await readAdmissionLedger(url => fetch(url, { redirect: 'error', signal: AbortSignal.timeout(POD_READ_TIMEOUT_MS) }), CSS_URL);
+  const deadlines = new Map<string, number>();
+  if (read === null) return { total: 0, unreadable: 0, deadlines };
+  if (!isAdmissionLedger(read.ledger)) throw new Error('not a version 1 admission ledger');
+  const entries = Object.entries(read.ledger.owners);
+  // No more than the most admissions a deployment allows (provisional-play.ts maxPods).
+  for (const [id, attestation] of entries.slice(0, 1000)) {
+    try {
+      const claims = provisionalPlay.open(attestation, true);
+      if (claims.userId === id && PLAY_OWNER_ID.test(id)) deadlines.set(id, claims.expiresAt * 1000);
+    } catch { /* unreadable */ }
+  }
+  return { total: entries.length, unreadable: entries.length - deadlines.size, deadlines };
+}
+
+/**
+ * The Play game-data backfill (see above), after the startup scan: each owner in the admission ledger
+ * whose guest deadline passed over PLAY_BACKFILL_MARGIN_MS ago and that this process does not hold
+ * when the run starts (its account, an unfinished purge, a purge in flight, a deletion answered 503)
+ * goes through purgePlayOwner with `reopen`, awaited one at a time; one queued since, whose turn
+ * leaves it as it is, stays queued for the janitor. The run stops re-opening at the first purge it
+ * took up that does not finish, and at a store that does not advertise its native delete. Before it
+ * re-opens anything it finishes, one at a time, the purge of each due owner that is unfinished (one an
+ * earlier start re-opened, whose mark the startup scan found), and re-opens nothing if one does not
+ * finish: so a failure that repeats leaves one owner marked for the janitor's retries, not one more at
+ * every start. A start after it has converged lists the pod of each such owner once, and writes and
+ * deletes nothing.
+ */
+async function backfillPlayGameData(): Promise<void> {
+  const started = Date.now();
+  let ledger: Awaited<ReturnType<typeof playAdmissionDeadlines>>;
+  for (const wait of [2_000, 5_000, 15_000, 0]) {
+    try { ledger = await playAdmissionDeadlines(); break; } catch (err) {
+      if (wait === 0) { log(`ERROR: identity_play_backfill_ledger_unreadable: ${(err as Error).message}; nothing re-opened until the next start`); return; }
+      await new Promise(resolve => setTimeout(resolve, wait));
+    }
+  }
+  const now = Date.now();
+  const due = [...ledger!.deadlines].filter(([, deadline]) => deadline <= now - PLAY_BACKFILL_MARGIN_MS);
+  const unfinished = due.filter(([id]) => unfinishedPlayPurges.has(id)).map(([id]) => id);
+  const candidates = due.filter(([id]) => !identities.has(id) && !unfinishedPlayPurges.has(id) && !playPurgesInFlight.has(id) && !unconfirmedPlayDeletions.has(id));
+  log(`Janitor: Play game-data backfill: ${ledger!.total} owner(s) in the admission ledger (${ledger!.unreadable} that do not open, with this server's key and issuer, to the owner they are filed under), ${due.length} past their guest deadline by over 1 h; ${unfinished.length} of them with a purge unfinished, finished first; checking ${candidates.length}`);
+  const why = (outcome: PlayPurgeOutcome) => (outcome.startsWith('error:') ? outcome.slice('error:'.length) : `its purge came to ${outcome}`);
+  let finishedFirst = 0;
+  let stopped = false;
+  for (const id of unfinished) {
+    // One a janitor pass is running is waited for, and taken up again only if still unfinished.
+    while (playPurgesInFlight.has(id)) await new Promise(resolve => setTimeout(resolve, 1_000));
+    if (unfinishedPlayPurges.has(id)) {
+      const outcome = await purgePlayOwner(id);
+      if (unfinishedPlayPurges.has(id)) {
+        log(`ERROR: identity_play_backfill_halted ${id} unfinished from before this run: ${why(outcome)}; ${candidates.length} owner(s) not re-opened`);
+        stopped = true;
+        break;
+      }
+    }
+    finishedFirst++;
+  }
+  const run: PlayReopen['run'] = {};
+  const tally = { finished: 0, unfinished: 0, foundFinished: 0, foundUnfinished: 0, left: 0, none: 0, live: 0, closed: 0, inFlight: 0, unchecked: 0 };
+  let checked = 0;
+  for (const [id, deadline] of stopped ? [] : candidates) {
+    const reopen: PlayReopen = { deadline, run };
+    const outcome = await purgePlayOwner(id, reopen);
+    checked++;
+    const kept = outcome.startsWith('kept:') ? outcome.slice('kept:'.length) : undefined;
+    if (reopen.found) tally[outcome === 'purged' ? 'foundFinished' : 'foundUnfinished']++;
+    else if (reopen.purging) tally[outcome === 'purged' ? 'finished' : 'unfinished']++;
+    else if (kept === 'none') tally.none++;
+    else if (kept === 'live' || kept === 'account' || kept === 'guest-retry') tally.live++;
+    else if (kept !== undefined) tally.left++;
+    else if (outcome === 'closed') tally.closed++;
+    else if (outcome === 'in-flight') tally.inFlight++;
+    else tally.unchecked++;
+    if (reopen.purging && outcome !== 'purged') {
+      log(`ERROR: identity_play_backfill_halted ${id} ${why(outcome)}; ${candidates.length - checked} owner(s) not re-opened`);
+      break;
+    }
+    if (run.nativeDelete === false) {
+      log(`ERROR: identity_play_backfill_no_native_delete: the store at ${CSS_URL} does not advertise its native delete (Interego-Native-Delete: 1 on OPTIONS); nothing re-opened, ${candidates.length - checked} owner(s) not checked`);
+      break;
+    }
+  }
+  log(`Janitor: Play game-data backfill done in ${Date.now() - started} ms: ${finishedFirst} of ${unfinished.length} unfinished purge(s) finished first; ${checked} checked: ${tally.finished + tally.unfinished} re-opened (${tally.finished} finished, ${tally.unfinished} unfinished, left to the janitor), ${tally.foundFinished + tally.foundUnfinished} marked already (${tally.foundFinished} finished, ${tally.foundUnfinished} unfinished), ${tally.left} left holding game data, ${tally.none} holding none, ${tally.live} live, ${tally.closed} closed elsewhere, ${tally.inFlight} in flight, ${tally.unchecked} could not be checked${checked < candidates.length ? `; ${candidates.length - checked} not checked (stopped)` : ''}`);
 }
 
 app.post('/users/me/delete', tokenLimiter, async (req, res) => {
@@ -7106,6 +7372,8 @@ app.get('/dashboard', (_req, res) => {
     return resp.json();
   }
 
+${dashboardInboxScript()}
+
   function copyButton(text) {
     const btn = document.createElement('button');
     btn.className = 'copy';
@@ -7310,7 +7578,7 @@ ${returningPasskeyLoginDashboard(localLinkOrigin, returningRelay)}
       }
       idCard.innerHTML = '<h2>🆔 Your Identity</h2><div class="err">Could not load identity: ' + e.message + '</div>';
       credCard.innerHTML = '<h2>🔐 Registered Credentials</h2><div class="err">' + e.message + '</div>';
-      inboxCard.innerHTML = '<h2>📬 Inbox</h2><div class="err">' + e.message + '</div>';
+      renderDashboardInboxError(inboxCard, e);
       document.getElementById('greeting').textContent = 'Not signed in';
       // Even on non-auth errors, give the user a way out.
       var retry = document.createElement('button');
@@ -7391,30 +7659,8 @@ ${returningPasskeyLoginDashboard(localLinkOrigin, returningRelay)}
       credCard.innerHTML = '<h2>🔐 Registered Credentials</h2><div class="err">' + e.message + '</div>';
     }
 
-    // Fetch /inbox?pod=podUrl from relay
-    try {
-      const inbox = await api(RELAY_BASE, '/inbox?pod=' + encodeURIComponent(meData.podHint) + '&limit=20');
-      inboxCard.innerHTML = '<h2>📬 Inbox <span style="color:#888;font-weight:400;font-size:0.85rem">(' + inbox.count + ' / ' + inbox.totalOnPod + ' in last 7 days)</span></h2>';
-      if (inbox.count === 0) {
-        const empty = document.createElement('div');
-        empty.className = 'empty';
-        empty.textContent = inbox.hint || 'Nothing in the last 7 days.';
-        inboxCard.appendChild(empty);
-      } else {
-        for (const ev of inbox.events) {
-          const it = document.createElement('div');
-          it.className = 'inbox-item';
-          const pillClass = ev.modalStatus ? 'pill-' + ev.modalStatus.toLowerCase() : '';
-          it.innerHTML =
-            '<div>' + (pillClass ? '<span class="pill ' + pillClass + '">' + ev.modalStatus + '</span>' : '') +
-            '<span class="url">' + ev.descriptorUrl + '</span></div>' +
-            '<div class="meta">' + (ev.validFrom || 'no validFrom') + (ev.trustLevel ? ' · ' + ev.trustLevel : '') + '</div>';
-          inboxCard.appendChild(it);
-        }
-      }
-    } catch (e) {
-      inboxCard.innerHTML = '<h2>📬 Inbox</h2><div class="err">Could not load inbox: ' + e.message + '</div>';
-    }
+    // This page has an identity session, rather than a relay OAuth grant.
+    await renderDashboardInbox(inboxCard);
 
     // Footer
     const foot = document.createElement('div');
@@ -7462,6 +7708,7 @@ ${localIdentityLinkDashboard()}
  */
 app.get('/connect', (_req, res) => {
   res.setHeader('Content-Type', 'text/html');
+  if (showHostedPrivacy) res.setHeader('Cache-Control', 'no-store');
   res.send(`<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -7475,6 +7722,9 @@ app.get('/connect', (_req, res) => {
   h1 { font-size:1.45rem; margin-bottom:8px; letter-spacing:-0.02em; }
   .lede { color:#9aa0ac; margin-bottom:22px; font-size:0.92rem; line-height:1.55; }
   input { width:100%; padding:10px 14px; border:1px solid #2a2a3a; border-radius:8px; background:#0a0a0f; color:#e0e0e8; font-size:0.9rem; margin-bottom:10px; }
+  .terms-agreement { margin-bottom:16px; font-size:0.9rem; line-height:1.5; }
+  .terms-agreement input { width:auto; margin:0 4px 0 0; }
+  .terms-agreement a { color:#a5a9ff; }
   button { width:100%; padding:13px; border:none; border-radius:9px; font-size:0.97rem; font-weight:600; cursor:pointer; }
   .primary { background:#6366f1; color:white; }
   .primary:hover { background:#818cf8; }
@@ -7503,6 +7753,8 @@ app.get('/connect', (_req, res) => {
     <input id="displayName" placeholder="Display name (optional) — e.g. Mark J" />
   </div>
 
+  ${hostedTermsCheckbox()}
+
   <div class="step">
     <button class="primary" onclick="passkeyCreate()">Create with a passkey</button>
     <p class="hint">Touch ID, Windows Hello, a security key, or your password manager. Recommended — works on most modern devices, nothing to install.</p>
@@ -7523,11 +7775,12 @@ app.get('/connect', (_req, res) => {
   </details>
 
   <div id="status" class="status"></div>
-  <p class="foot">Already enrolled? <a href="/dashboard">Open your dashboard</a>. New here? <a href="/">Start at the overview</a>.</p>
+  <p class="foot">Already enrolled? <a href="/dashboard">Open your dashboard</a>. New here? <a href="/">Start at the overview</a>.${hostedPrivacyLink ? ` ${hostedPrivacyLink}` : ''}</p>
 </div>
 
 <script>
 const BASE = window.location.origin;
+const TERMS_AGREE = document.getElementById('termsAgree');
 
 function setStatus(msg, type) {
   const el = document.getElementById('status');
@@ -7613,10 +7866,16 @@ async function passkeyCreate() {
   }
   let adv;
   try { adv = readAdvanced(); } catch (e) { setStatus(e.message, 'error'); return; }
+  const termsVersion = TERMS_AGREE?.checked ? TERMS_AGREE.dataset.version : undefined;
+  if (TERMS_AGREE && !termsVersion && !adv.addDeviceToken) {
+    setStatus('Select I agree before creating an account.', 'error');
+    TERMS_AGREE.focus();
+    return;
+  }
   const name = document.getElementById('displayName').value.trim() || 'Interego user';
   try {
     setStatus('Creating your passkey...', 'info');
-    const body = { name };
+    const body = { name, termsVersion };
     if (adv.bootstrapUserId) { body.bootstrapUserId = adv.bootstrapUserId; body.bootstrapInvite = adv.bootstrapInvite; }
     const headers = { 'Content-Type': 'application/json' };
     if (adv.addDeviceToken) headers['Authorization'] = 'Bearer ' + adv.addDeviceToken;
@@ -7669,6 +7928,7 @@ async function connectMetaMask() {
   let adv;
   try { adv = readAdvanced(); } catch (e) { setStatus(e.message, 'error'); return; }
   const displayName = document.getElementById('displayName').value.trim();
+  const termsVersion = TERMS_AGREE?.checked ? TERMS_AGREE.dataset.version : undefined;
 
   try {
     setStatus('Requesting wallet connection...', 'info');
@@ -7678,7 +7938,7 @@ async function connectMetaMask() {
     // (and checks its domain line) only with a checksummed address.
     const chResp = await fetch(BASE + '/challenges', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ purpose: 'siwe', address: accounts[0] }),
+      body: JSON.stringify({ purpose: 'siwe', address: accounts[0], termsVersion }),
     });
     const ch = await chResp.json();
     if (!chResp.ok || !ch.nonce) throw new Error(ch.error || ('Could not get a challenge (HTTP ' + chResp.status + ')'));
@@ -7689,7 +7949,7 @@ async function connectMetaMask() {
     const issuedAt = new Date().toISOString();
     const siweMessage = domain + ' wants you to sign in with your Ethereum account:\\n'
       + address + '\\n\\n'
-      + 'Sign in to Interego\\n\\n'
+      + (ch.termsStatement || 'Sign in to Interego') + '\\n\\n'
       + 'URI: ' + window.location.origin + '\\n'
       + 'Version: 1\\n'
       + 'Chain ID: 1\\n'
@@ -7920,6 +8180,12 @@ app.listen(PORT, () => {
       }
     }, JANITOR_INTERVAL_MS).unref();
     log(`Janitor: scanning every ${JANITOR_INTERVAL_MS}ms; test grace ${TEST_USER_GRACE_MS}ms (pattern ${TEST_AGENT_PATTERN}); try-it TTL ${TRY_USER_TTL_MS}ms`);
+    // The Play game-data backfill, once a process, after the startup scan: one interval after the
+    // start, so that the instance a deploy replaces has usually stopped.
+    setTimeout(() => {
+      void startInitialIndexRebuild().then(backfillPlayGameData)
+        .catch(err => log(`ERROR: identity_play_backfill_failed: ${(err as Error).message}`));
+    }, JANITOR_INTERVAL_MS).unref();
   }
 });
 

@@ -10,6 +10,7 @@ const LINK_SCRIPT = 'interego-native-identity-link';
 const CODE = /^interego-login:v1:[A-Za-z0-9_-]{43}\.[A-Za-z0-9_-]{43}$/;
 const TOKEN = /^[A-Za-z0-9_-]{43}$/;
 const UUID = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i;
+const LINK_UNCONFIRMED = 'Interego could not confirm whether this PC key was added. Refresh your registered credentials on this dashboard before starting another link.';
 export function authorizeSender(sender, runtime, origins) {
   if (sender?.id !== runtime.id || sender.frameId !== 0 || !Number.isInteger(sender.tab?.id)) throw new Error('Open a relay sign-in page in the main browser tab.');
   const u = new URL(sender.url);
@@ -79,15 +80,15 @@ export function createNativeIdentity({ chrome, randomUUID = () => crypto.randomU
   }
   function handlePort(page) {
     if (page.name !== 'interego-local-identity') return;
-    let native; let stopped = false; let started = false; let pending; let authorization;
+    let native; let stopped = false; let started = false; let pending; let authorization; let linking = false;
     const send = value => { if (!stopped) { try { page.postMessage(value); } catch { stop(); } } };
     const stop = () => { if (stopped) return; stopped = true; pending?.reject(new Error('Local sign-in cancelled.')); native?.disconnect(); active.delete(cancel); };
-    const cancel = () => { send({ state: 'failed', message: 'Browser access changed. Start a new request after reviewing Interego Wallet settings.' }); stop(); };
-    const fail = error => { send({ state: 'failed', message: error.message || 'Open the Interego app and try again.' }); stop(); };
+    const cancel = () => { send({ state: 'failed', message: linking ? LINK_UNCONFIRMED + ' Review Interego Wallet settings before connecting again.' : 'Browser access changed. Start a new request after reviewing Interego Wallet settings.' }); stop(); };
+    const fail = error => { send({ state: 'failed', message: linking ? LINK_UNCONFIRMED : error.message || 'Open the Interego app and try again.' }); stop(); };
     active.add(cancel); page.onDisconnect.addListener(stop);
     function rpc(operation) {
       return new Promise((resolve, reject) => {
-        const id = randomUUID(); const timer = setTimeout(() => { if (pending?.id === id) { pending = undefined; reject(new Error('The installed app did not respond. Open Interego and try again.')); } }, 20_000);
+        const id = randomUUID(); const timer = setTimeout(() => { if (pending?.id === id) { pending = undefined; reject(new Error(linking ? LINK_UNCONFIRMED : 'The installed app did not respond. Open Interego and try again.')); } }, linking ? 65_000 : 20_000);
         pending = { id, resolve: value => { clearTimeout(timer); resolve(value); }, reject: error => { clearTimeout(timer); reject(error); } };
         try { native.postMessage({ version: 1, id, ...operation }); }
         catch { const current = pending; pending = undefined; current?.reject(new Error('The installed app connection closed. Open Interego and start again.')); }
@@ -98,7 +99,7 @@ export function createNativeIdentity({ chrome, randomUUID = () => crypto.randomU
       started = true;
       void (async () => {
         if (!message || Object.keys(message).length !== 2 || message.type !== 'start' || typeof message.handoffCode !== 'string' || (!CODE.test(message.handoffCode) && !LINK_CODE.test(message.handoffCode))) throw new Error('Restart this request from your app or identity dashboard.');
-        const linking = LINK_CODE.test(message.handoffCode);
+        linking = LINK_CODE.test(message.handoffCode);
         authorization = await allowed(page.sender, linking); if (stopped) return;
         native = chrome.runtime.connectNative(NATIVE_HOST);
         native.onDisconnect.addListener(() => { if (!stopped) fail(new Error('Open Interego on this computer and enable browser sign-in. Then try again.')); });
@@ -118,10 +119,10 @@ export function createNativeIdentity({ chrome, randomUUID = () => crypto.randomU
           const result = await rpc({ operation: 'poll', requestId: start.id, receipt: start.receipt });
           if (!linking && result?.state === 'complete') { await allowed(page.sender); send({ state: 'complete', redirect: validatedRedirect(result.redirect, authorization) }); stop(); return; }
           if (linking && result?.state === 'linked') { await allowed(page.sender, true); send(validatedLinkedResult(result, authorization.origin)); stop(); return; }
-          if (['denied', 'expired', 'failed'].includes(result?.state)) { send({ state: result.state, message: linking ? result.state === 'denied' ? 'Account linking was declined in Interego.' : 'This account link ended. Authenticate again on your dashboard to start a fresh request.' : result.state === 'denied' ? 'Sign-in was declined in Interego.' : 'Sign-in ended. Start again from your app.' }); stop(); return; }
+          if (['denied', 'expired', 'failed'].includes(result?.state)) { send({ state: result.state, message: linking ? result.state === 'denied' ? 'Account linking was declined in Interego.' : LINK_UNCONFIRMED : result.state === 'denied' ? 'Sign-in was declined in Interego.' : 'Sign-in ended. Start again from your app.' }); stop(); return; }
           if (!['waiting', 'completing'].includes(result?.state)) throw new Error('The installed app response could not be verified.');
         }
-        if (!stopped) { send({ state: 'expired', message: 'This sign-in request expired. Start again from your app.' }); stop(); }
+        if (!stopped) { send({ state: 'expired', message: linking ? LINK_UNCONFIRMED : 'This sign-in request expired. Start again from your app.' }); stop(); }
       })().catch(fail);
     });
   }

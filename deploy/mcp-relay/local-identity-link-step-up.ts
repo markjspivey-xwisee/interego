@@ -12,7 +12,7 @@ export function localIdentityLinkStepUpPage(identityOrigin: string, nonce: strin
   'use strict';
   const provider = ${literal};
   const button = document.getElementById('verify'); const status = document.getElementById('status'); const account = document.getElementById('account');
-  const abort = new AbortController(); let context; let busy = false;
+  const abort = new AbortController(); let context; let busy = false; let expiryTimer; let expired = false; let submitted = false;
   const code = location.hash.slice(1); history.replaceState(null, '', location.pathname);
   const token = /^[A-Za-z0-9_-]{43}$/;
   const cap = /^interego-link-step-up:v1:[A-Za-z0-9_-]{43}\\.[A-Za-z0-9_-]{43}$/;
@@ -38,7 +38,13 @@ export function localIdentityLinkStepUpPage(identityOrigin: string, nonce: strin
     const joined = new Uint8Array(size); let offset = 0; for (const chunk of chunks) { joined.set(chunk, offset); offset += chunk.length; }
     return JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(joined));
   }
-  function fail() { context = undefined; button.disabled = true; status.textContent = 'This verification could not be completed. Return to your account dashboard and start a new link. Your progress has not been moved.'; }
+  function clearExpiry() { clearTimeout(expiryTimer); expiryTimer = undefined; }
+  function expire() {
+    if (submitted || expired) return;
+    expired = true; context = undefined; button.disabled = true; clearExpiry(); abort.abort();
+    status.textContent = 'This two-minute request expired. Return to your existing account dashboard and start a new link. Your progress has not been moved.';
+  }
+  function fail() { if (expired) return; clearExpiry(); context = undefined; button.disabled = true; status.textContent = 'This verification could not be completed. Return to your account dashboard and start a new link. Your progress has not been moved.'; }
   async function prepare() {
     if (!cap.test(code) || !window.PublicKeyCredential) throw new Error('Invalid request');
     const value = await post('/local-identity/link/step-up/context', { stepUpCode: code });
@@ -50,11 +56,14 @@ export function localIdentityLinkStepUpPage(identityOrigin: string, nonce: strin
       || !Array.isArray(options.allowCredentials) || !options.allowCredentials.length || options.allowCredentials.length > 100
       || options.allowCredentials.some(c => !c || c.type !== 'public-key' || typeof c.id !== 'string' || !/^[A-Za-z0-9_-]{1,2048}$/.test(c.id))
       || !value.owner || typeof value.owner.did !== 'string' || value.owner.did.length > 512) throw new Error('Invalid context');
-    context = value; account.textContent = 'Existing account: ' + value.owner.did;
+    if (abort.signal.aborted) return;
+    context = value; expiryTimer = setTimeout(expire, Math.max(1, expiry - Date.now()));
+    account.textContent = 'Existing account: ' + value.owner.did;
     status.textContent = 'Check the account above, then verify with its existing passkey.'; button.disabled = false;
   }
   button.addEventListener('click', event => {
-    if (!event.isTrusted || busy || !context || Date.parse(context.expiresAt) <= Date.now()) return;
+    if (!event.isTrusted || busy || !context) return;
+    if (Date.parse(context.expiresAt) <= Date.now()) { expire(); return; }
     busy = true; button.disabled = true; const value = context; context = undefined;
     void (async () => {
       const options = value.options;
@@ -65,12 +74,16 @@ export function localIdentityLinkStepUpPage(identityOrigin: string, nonce: strin
         authenticatorData: encode(assertion.response.authenticatorData), clientDataJSON: encode(assertion.response.clientDataJSON), signature: encode(assertion.response.signature),
         userHandle: assertion.response.userHandle ? encode(assertion.response.userHandle) : null },
         clientExtensionResults: assertion.getClientExtensionResults ? assertion.getClientExtensionResults() : {} };
+      // Once submitted before the deadline, the server decides the proof's outcome. A slow
+      // response must not turn genuine server verification into a local expiry.
+      if (Date.parse(value.expiresAt) <= Date.now()) { expire(); return; }
+      submitted = true; clearExpiry();
       const result = await post('/local-identity/link/step-up/complete', { completionCode: value.completionCode, response });
       if (result.verified !== true || Object.keys(result).length !== 1) throw new Error('Unconfirmed');
       status.textContent = 'Existing account verified. Return to your account dashboard to connect the Interego app. You can close this tab.';
     })().catch(fail);
   });
-  window.addEventListener('pagehide', () => { context = undefined; abort.abort(); }, { once: true });
+  window.addEventListener('pagehide', () => { clearExpiry(); context = undefined; button.disabled = true; abort.abort(); }, { once: true });
   void prepare().catch(fail);
 })();
 </script></body></html>`;

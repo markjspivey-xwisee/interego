@@ -150,6 +150,25 @@ async function registration(f: Awaited<ReturnType<typeof fixture>>, scope: Autho
 }
 
 describe('missing-only same-session delegation repair', () => {
+  it.each([true, false])('accepts server-injected native lifecycle metadata %s without changing the existing grant', async nativeLifecycle => {
+    const f = await fixture();
+    try {
+      const before = ownerProfileToTurtle(f.profile);
+      const result = await repairOnlySessionDelegation({ ...f.args, _session_native_lifecycle: nativeLifecycle }, f.options);
+      expect(result).toMatchObject({ registered: false, repaired: true, repair_only: true,
+        agent, scope: f.row.scope, credential: f.credentialUrl });
+      expect(f.puts()).toHaveLength(1);
+      expect(f.puts()[0]?.path).toBe('/alice/credentials/' + encodeURIComponent(agent) + '.jsonld');
+      const registry = await f.options.fetch(f.options.podUrl + 'agents', { headers: { 'Cache-Control': 'no-cache' } });
+      expect(await registry.text()).toBe(before);
+      const stored = await f.stored();
+      const credential = parseDelegationCredential(new TextDecoder().decode(stored!.bytes));
+      expect(credential.credentialSubject).toEqual({ id: agent, delegatedBy: owner,
+        scope: ['publish', 'discover', 'subscribe'], pod: f.options.podUrl });
+      expect(await f.verifier(canonicalCredentialPayload(credential), credential.proof!)).toBe(true);
+    } finally { await f.close(); }
+  });
+
   it('creates only the encoded missing VC through actual HTTP/native CAS and verifies the real ECDSA chain', async () => {
     const f = await fixture();
     try {
@@ -179,8 +198,8 @@ describe('missing-only same-session delegation repair', () => {
         { scope: 'ReadWrite' }, { scope: null }, { tenant_admin: false }, { encryption_public_key: null },
         { label: 'changed' }, { owner_name: 'changed' }, { unknown_permission: true }, { repair_only: false }, { repair_only: 'true' },
       ];
-      for (const change of changes) {
-        const result = await repairOnlySessionDelegation({ ...f.args, ...change }, f.options);
+      for (const nativeLifecycle of [true, false]) for (const change of changes) {
+        const result = await repairOnlySessionDelegation({ ...f.args, _session_native_lifecycle: nativeLifecycle, ...change }, f.options);
         expect(result).toMatchObject({ repaired: false, dispatched: false }); expect(result.error).toBeTypeOf('string');
       }
       for (const ownPodUrl of [undefined, 'https://foreign.example/alice/']) {

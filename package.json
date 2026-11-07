@@ -115,6 +115,7 @@
     "vitest": "^4.1.12"
   },
   "dependencies": {
+    "@comunica/actor-optimize-query-operation-query-source-skolemize": "5.2.3",
     "@comunica/query-sparql": "^5.1.3",
     "@digitalbazaar/bbs-signatures": "^1.2.0",
     "@modelcontextprotocol/server": "^2.0.0",
@@ -122,6 +123,7 @@
     "@noble/hashes": "^2.0.1",
     "@types/ws": "^8.18.1",
     "ethers": "^6.16.0",
+    "express-rate-limit": "8.6.1",
     "jsonld": "9.0.0",
     "multiformats": "^13.4.2",
     "pdf-parse": "^2.4.5",

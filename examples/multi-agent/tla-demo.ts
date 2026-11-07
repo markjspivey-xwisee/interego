@@ -30,6 +30,7 @@
  */
 
 import type { ChildProcess } from 'node:child_process';
+import { demoExperienceRdf } from '../xapi-record-rdf.js';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -132,81 +133,80 @@ async function agentLRS() {
   log('LRS', 'Learner: CPT Sarah Chen (did:web:learner.airforce.mil:chen.sarah)');
   log('LRS', 'Activity: T-38C Instrument Approach Training');
 
-  // xAPI statements serialized as RDF (per xAPI ontology + ADL vocabulary)
-  const xapiGraph = `
-@prefix xapi: <https://w3id.org/xapi/ontology#>.
-@prefix verb: <https://w3id.org/xapi/adl/verbs/>.
-@prefix act: <https://w3id.org/xapi/acrossx/activities/>.
-@prefix schema: <https://schema.org/>.
-@prefix xsd: <http://www.w3.org/2001/XMLSchema#>.
-@prefix result: <https://w3id.org/xapi/ontology#result/>.
-
-<urn:xapi:stmt:001> a xapi:Statement ;
-    xapi:actor <did:web:learner.airforce.mil:chen.sarah> ;
-    xapi:verb verb:completed ;
-    xapi:object <urn:activity:ils-approach-rwy-28L> ;
-    xapi:timestamp "2026-03-15T14:30:00Z"^^xsd:dateTime ;
-    result:score "92"^^xsd:integer ;
-    result:success "true"^^xsd:boolean ;
-    result:duration "PT45M"^^xsd:duration ;
-    xapi:context [
-        xapi:platform "T-38C Flight Simulator v4.2" ;
-        xapi:instructor <did:web:instructor.airforce.mil:jones.michael> ;
-        xapi:registration "urn:reg:chen-ils-2026-03"
-    ].
-
-<urn:xapi:stmt:002> a xapi:Statement ;
-    xapi:actor <did:web:learner.airforce.mil:chen.sarah> ;
-    xapi:verb verb:completed ;
-    xapi:object <urn:activity:vor-approach-rwy-10R> ;
-    xapi:timestamp "2026-03-15T15:45:00Z"^^xsd:dateTime ;
-    result:score "88"^^xsd:integer ;
-    result:success "true"^^xsd:boolean ;
-    result:duration "PT35M"^^xsd:duration ;
-    xapi:context [
-        xapi:platform "T-38C Flight Simulator v4.2" ;
-        xapi:instructor <did:web:instructor.airforce.mil:jones.michael>
-    ].
-
-<urn:xapi:stmt:003> a xapi:Statement ;
-    xapi:actor <did:web:learner.airforce.mil:chen.sarah> ;
-    xapi:verb verb:completed ;
-    xapi:object <urn:activity:gps-approach-rwy-04> ;
-    xapi:timestamp "2026-03-16T09:15:00Z"^^xsd:dateTime ;
-    result:score "95"^^xsd:integer ;
-    result:success "true"^^xsd:boolean ;
-    result:duration "PT40M"^^xsd:duration ;
-    xapi:context [
-        xapi:platform "T-38C Flight Simulator v4.2" ;
-        xapi:instructor <did:web:instructor.airforce.mil:jones.michael>
-    ].
-
-<urn:xapi:stmt:004> a xapi:Statement ;
-    xapi:actor <did:web:learner.airforce.mil:chen.sarah> ;
-    xapi:verb verb:attempted ;
-    xapi:object <urn:activity:emergency-missed-approach> ;
-    xapi:timestamp "2026-03-16T10:30:00Z"^^xsd:dateTime ;
-    result:score "78"^^xsd:integer ;
-    result:success "false"^^xsd:boolean ;
-    result:duration "PT25M"^^xsd:duration ;
-    xapi:context [
-        xapi:platform "T-38C Flight Simulator v4.2" ;
-        xapi:instructor <did:web:instructor.airforce.mil:jones.michael>
-    ].
-
-<urn:xapi:stmt:005> a xapi:Statement ;
-    xapi:actor <did:web:learner.airforce.mil:chen.sarah> ;
-    xapi:verb verb:completed ;
-    xapi:object <urn:activity:emergency-missed-approach> ;
-    xapi:timestamp "2026-03-17T08:00:00Z"^^xsd:dateTime ;
-    result:score "91"^^xsd:integer ;
-    result:success "true"^^xsd:boolean ;
-    result:duration "PT30M"^^xsd:duration ;
-    xapi:context [
-        xapi:platform "T-38C Flight Simulator v4.2" ;
-        xapi:instructor <did:web:instructor.airforce.mil:jones.michael>
-    ].
-`.trim();
+  // Explicit synthetic demo fixtures; historical activity IRIs stay distinct.
+  // Non-UUID legacy registration is preserved in source JSON, not asserted as a current UUID.
+  const experiences = [
+  {
+    "verb": "completed",
+    "activity": "ils-approach-rwy-28L",
+    "activityName": "ILS Approach Rwy 28L",
+    "score": 92,
+    "success": true,
+    "duration": "PT45M",
+    "timestamp": "2026-03-15T14:30:00Z",
+    "context": {
+      "platform": "T-38C Flight Simulator v4.2",
+      "instructor": "did:web:instructor.airforce.mil:jones.michael",
+      "registration": "urn:reg:chen-ils-2026-03"
+    }
+  },
+  {
+    "verb": "completed",
+    "activity": "vor-approach-rwy-10R",
+    "activityName": "VOR Approach Rwy 10R",
+    "score": 88,
+    "success": true,
+    "duration": "PT35M",
+    "timestamp": "2026-03-15T15:45:00Z",
+    "context": {
+      "platform": "T-38C Flight Simulator v4.2",
+      "instructor": "did:web:instructor.airforce.mil:jones.michael"
+    }
+  },
+  {
+    "verb": "completed",
+    "activity": "gps-approach-rwy-04",
+    "activityName": "GPS Approach Rwy 04",
+    "score": 95,
+    "success": true,
+    "duration": "PT40M",
+    "timestamp": "2026-03-16T09:15:00Z",
+    "context": {
+      "platform": "T-38C Flight Simulator v4.2",
+      "instructor": "did:web:instructor.airforce.mil:jones.michael"
+    }
+  },
+  {
+    "verb": "attempted",
+    "activity": "emergency-missed-approach",
+    "activityName": "Emergency Missed Approach",
+    "score": 78,
+    "success": false,
+    "duration": "PT25M",
+    "timestamp": "2026-03-16T10:30:00Z",
+    "context": {
+      "platform": "T-38C Flight Simulator v4.2",
+      "instructor": "did:web:instructor.airforce.mil:jones.michael"
+    }
+  },
+  {
+    "verb": "completed",
+    "activity": "emergency-missed-approach",
+    "activityName": "Emergency Missed Approach",
+    "score": 91,
+    "success": true,
+    "duration": "PT30M",
+    "timestamp": "2026-03-17T08:00:00Z",
+    "context": {
+      "platform": "T-38C Flight Simulator v4.2",
+      "instructor": "did:web:instructor.airforce.mil:jones.michael"
+    }
+  }
+];
+  const xapiGraph = experiences.map((s, i) => demoExperienceRdf(
+    'urn:xapi:stmt:' + String(i + 1).padStart(3, '0'),
+    'did:web:learner.airforce.mil:chen.sarah', s,
+  )).join('\n');
 
   log('LRS', '5 xAPI statements received:');
   log('LRS', '  stmt:001 — completed ILS Approach Rwy 28L (score: 92)');

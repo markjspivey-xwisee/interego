@@ -1,4 +1,5 @@
 import { PlayError, type PlayClaims } from './provisional-play.js';
+import type { TermsAcceptance } from './hosted-terms.js';
 
 export interface PlayReceipt { hash: string; expiresAt: number }
 export interface PlayAnchorDocument {
@@ -27,7 +28,8 @@ function holdsCredential(document: PlayAnchorDocument): boolean {
 
 /** Bounded receipts live beside the immutable signed anchor in the owner's pod. */
 export async function provisionPlayAnchor(storage: PlayAnchorStorage, claims: PlayClaims,
-  attestation: string, maxPods: number, receipt: PlayReceipt): Promise<string> {
+  attestation: string, maxPods: number, receipt: PlayReceipt,
+  terms?: { requiredVersion: string; acceptance?: TermsAcceptance }): Promise<string> {
   const now = storage.now ?? (() => Math.floor(Date.now() / 1000));
   // Conditional writes protect the same owner even if a process restarts or two
   // requests race. New owners reserve the durable lifetime budget before writing.
@@ -49,6 +51,10 @@ export async function provisionPlayAnchor(storage: PlayAnchorStorage, claims: Pl
       if (live.userId !== claims.userId || live.audience !== claims.audience || live.proofKeyThumbprint !== claims.proofKeyThumbprint)
         throw new PlayError(409, 'provisional_owner_conflict');
     } else {
+      if (terms) {
+        if (terms.acceptance?.version !== terms.requiredVersion) throw new PlayError(428, 'hosted_terms_required');
+        document.termsAcceptance = terms.acceptance;
+      }
       document.provisionalPlayAnchor = await storage.reserveAdmission(claims, attestation, maxPods);
       const reserved = storage.validate(document.provisionalPlayAnchor);
       if (reserved.userId !== claims.userId || reserved.proofKeyThumbprint !== claims.proofKeyThumbprint)

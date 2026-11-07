@@ -10,6 +10,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.RegularExpressions;
 using System.Web.Script.Serialization;
+using Microsoft.Win32;
 
 internal static class IdentityHost
 {
@@ -32,6 +33,35 @@ internal static class IdentityHost
 
     private static int Main(string[] args)
     {
+        // Fixed-key, read-only registration inspection. Neither registry values
+        // nor request-selected registry locations enter the response.
+        if (args.Length > 0 && args[0] == "--registration-status")
+        {
+            if (args.Length != 1) return 1;
+            try
+            {
+                byte[] request = ReadBounded(Console.OpenStandardInput(), 4096);
+                try
+                {
+                    Dictionary<string, object> registrationInput = Parse(request);
+                    ExactKeys(registrationInput, "manifestPath");
+                    string expected = BoundedString(registrationInput["manifestPath"], 4096);
+                    if (!Regex.IsMatch(expected, @"\A[A-Za-z]:\\", RegexOptions.CultureInvariant)
+                        || expected.StartsWith(@"\\", StringComparison.Ordinal)
+                        || !String.Equals(Path.GetFileName(expected), "com.interego.identity.json", StringComparison.Ordinal)
+                        || !String.Equals(Path.GetFullPath(expected), expected, StringComparison.OrdinalIgnoreCase)) return 1;
+                    Dictionary<string, object> result = Record("version", 1,
+                        "chrome", ReadBrowserRegistration(@"Software\Google\Chrome\NativeMessagingHosts\com.interego.identity", expected),
+                        "edge", ReadBrowserRegistration(@"Software\Microsoft\Edge\NativeMessagingHosts\com.interego.identity", expected));
+                    Console.Out.Write(Json.Serialize(result));
+                    Console.Out.Flush();
+                    return 0;
+                }
+                finally { Array.Clear(request, 0, request.Length); }
+            }
+            catch { return 1; }
+        }
+
         // Protection mode has no Native Messaging framing and never accepts a secret in argv.
         if (args.Length == 1 && args[0] == "--protect-ticket")
         {
@@ -62,6 +92,7 @@ internal static class IdentityHost
         Stream input = Console.OpenStandardInput();
         Stream output = Console.OpenStandardOutput();
         Context context = null;
+        bool linking = false;
         string channel = Guid.NewGuid().ToString("D");
         string browserOrigin;
         string dataDir;
@@ -85,8 +116,9 @@ internal static class IdentityHost
                     string operation;
                     Dictionary<string, object> arguments;
                     ValidateMessage(message, out operation, out arguments);
+                    if (operation == "start") linking = Regex.IsMatch((string)arguments["handoffCode"], @"\Ainterego-link:v1:[A-Za-z0-9_-]{43}\.[A-Za-z0-9_-]{43}\z", RegexOptions.CultureInvariant);
                     if (context == null) context = LoadContext(dataDir);
-                    Dictionary<string, object> result = Exchange(context, browserOrigin, channel, operation, arguments);
+                    Dictionary<string, object> result = Exchange(context, browserOrigin, channel, operation, arguments, linking);
                     Dictionary<string, object> reply = Record("version", 1, "id", browserId, "ok", result["ok"]);
                     if ((bool)result["ok"]) reply.Add("value", result["value"]);
                     else reply.Add("error", Failure);
@@ -103,11 +135,46 @@ internal static class IdentityHost
             // connectNative's port lifetime is also the approval/channel lifetime.
             if (context != null)
             {
-                try { Exchange(context, browserOrigin, channel, "close", new Dictionary<string, object>()); }
+                try { Exchange(context, browserOrigin, channel, "close", new Dictionary<string, object>(), linking); }
                 catch { /* Shutdown cannot write a second, unsolicited browser response. */ }
                 context.Dispose();
             }
         }
+    }
+
+    private static string ReadBrowserRegistration(string subkey, string expected)
+    {
+        try
+        {
+            using (RegistryKey root = RegistryKey.OpenBaseKey(RegistryHive.CurrentUser, RegistryView.Registry64))
+            using (RegistryKey key = root.OpenSubKey(subkey, false))
+                return RegistrationState(key, expected);
+        }
+        catch { return "unavailable"; }
+    }
+
+    // The test assembly supplies only its own isolated RegistryKey. Release
+    // command dispatch above always selects the two fixed browser keys.
+    internal static string RegistrationState(RegistryKey key, string expected)
+    {
+        try
+        {
+            if (key == null) return "absent";
+            bool hasDefault = false;
+            foreach (string name in key.GetValueNames()) if (name.Length == 0) hasDefault = true;
+            if (!hasDefault) return "absent";
+            // GetValue can return its default for unsupported native kinds too.
+            // Establish presence and type before asking for the string payload.
+            if (key.GetValueKind(String.Empty) != RegistryValueKind.String) return "wrong-type";
+            object missing = new object();
+            object value = key.GetValue(String.Empty, missing, RegistryValueOptions.DoNotExpandEnvironmentNames);
+            if (Object.ReferenceEquals(value, missing)) return "unavailable";
+            string path = value as string;
+            if (path == null) return "unavailable";
+            if (path.Length == 0) return "foreign";
+            return String.Equals(path, expected, StringComparison.OrdinalIgnoreCase) ? "matching" : "foreign";
+        }
+        catch { return "unavailable"; }
     }
 
     private static void ParseArguments(string[] args, out string browserOrigin, out string dataDir)
@@ -191,7 +258,7 @@ internal static class IdentityHost
         else throw new InvalidDataException();
     }
 
-    private static Dictionary<string, object> Exchange(Context context, string origin, string channel, string operation, Dictionary<string, object> arguments)
+    private static Dictionary<string, object> Exchange(Context context, string origin, string channel, string operation, Dictionary<string, object> arguments, bool linking)
     {
         string requestId = Guid.NewGuid().ToString("D");
         long issuedAt = (DateTime.UtcNow.Ticks - 621355968000000000L) / TimeSpan.TicksPerMillisecond;
@@ -204,10 +271,13 @@ internal static class IdentityHost
         request.ContentLength = payload.Length;
         request.Proxy = null;
         request.AllowAutoRedirect = false;
-        request.Timeout = 15000;
-        request.ReadWriteTimeout = 15000;
+        request.Timeout = linking ? 60000 : 15000;
+        request.ReadWriteTimeout = linking ? 60000 : 15000;
         request.KeepAlive = false;
         request.ServicePoint.Expect100Continue = false;
+        // HttpWebRequest's header and stream timeouts are separate. Keep the
+        // link-only outer ceiling absolute even when both phases make progress.
+        System.Threading.Timer deadline = linking ? new System.Threading.Timer(_ => { try { request.Abort(); } catch { } }, null, 60000, System.Threading.Timeout.Infinite) : null;
         try
         {
             using (Stream stream = request.GetRequestStream()) stream.Write(payload, 0, payload.Length);
@@ -225,7 +295,7 @@ internal static class IdentityHost
                 return result;
             }
         }
-        finally { Array.Clear(payload, 0, payload.Length); request.Abort(); }
+        finally { if (deadline != null) deadline.Dispose(); Array.Clear(payload, 0, payload.Length); request.Abort(); }
     }
 
     private static Dictionary<string, object> Seal(Context context, string requestId, object value)

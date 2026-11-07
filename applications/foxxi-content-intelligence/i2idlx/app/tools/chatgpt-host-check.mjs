@@ -245,10 +245,12 @@ for (const value of [false, true, "enabled", [], null]) {
 }
 {
   const adapterSource = await fs.readFile(new URL("../src/interego-caps.js", import.meta.url), "utf8");
+  const agentSource = await fs.readFile(new URL("../src/agent-session.js", import.meta.url), "utf8");
   const adapter = async (f, hosted = true) => {
     const module = new vm.SourceTextModule(adapterSource, { context: f.context });
     await module.link(specifier => {
       if (specifier === "./chatgpt-host.js") return f.module;
+      if (specifier === "./agent-session.js") return new vm.SourceTextModule(agentSource, { context: f.context });
       assert.equal(specifier, "./backend-url.js");
       return new vm.SyntheticModule(["backendUrl", "workbenchHosted"], function () {
         this.setExport("backendUrl", value => value); this.setExport("workbenchHosted", () => hosted);
@@ -316,3 +318,4 @@ for (const value of [false, true, "enabled", [], null]) {
   }
 }
 console.log(JSON.stringify({ ok: true, checks, scope: "Isolated MCP Apps transport, capability, lifecycle, host downloads, truthful-result and host-aware identity-copy checks; not a real ChatGPT host acceptance test." }));
+

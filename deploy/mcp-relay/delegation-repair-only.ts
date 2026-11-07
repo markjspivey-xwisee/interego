@@ -19,6 +19,7 @@ const ALLOWED_FIELDS = new Set([
   'agent_id', 'pod_name', 'pod_url', 'owner_webid', 'repair_only',
   '_session_bearer', '_session_principal', '_identity_token',
   '_session_agent_did', '_session_agent_id', '_session_user_id', '_session_owner_webid',
+  '_session_native_lifecycle',
   '_pod_url_injected', '_pod_name_injected',
 ]);
 

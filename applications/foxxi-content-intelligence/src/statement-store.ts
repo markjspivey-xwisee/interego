@@ -28,6 +28,7 @@
 import { promises as fs } from 'node:fs';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
+import { Console } from 'node:console';
 import { getHeapStatistics } from 'node:v8';
 import {
   withTransientRetry,
@@ -601,12 +602,29 @@ export function createConfiguredNativeLrsDatabase(env: NodeJS.ProcessEnv = proce
     return originalFetch(input, { ...init, headers, method: init?.method ?? request?.method ?? 'GET',
       redirect: 'manual', signal: init?.signal ?? AbortSignal.timeout(15000) });
   };
+  const queryDiagnostics = new Console({ stdout: process.stderr, stderr: process.stderr, ignoreErrors: true });
   const client = new NativeCommitStore({ scope: config.scope, fetch: transport, senderKeyPair,
-    cacheImmutableReads: true,
+    cacheImmutableReads: true, indexReadConcurrency: 8,
+    onHeadRead: event => {
+      // Numeric projection only; operation/event/phase/outcome codes are documented
+      // by NativeHeadReadDiagnostic. No scope, URL, record, query or error text.
+      queryDiagnostics.warn('[foxxi-lrs] native-head ' + JSON.stringify({
+        readNumber: event.readNumber, operation: event.operation, event: event.event, phase: event.phase, outcome: event.outcome,
+        elapsedMs: event.elapsedMs, currentMs: event.currentMs, materializationMs: event.materializationMs,
+        indexNodes: event.indexNodes, indexBranches: event.indexBranches, indexLeaves: event.indexLeaves,
+        peakIndexReads: event.peakIndexReads, indexReadConcurrency: event.indexReadConcurrency,
+      }));
+    },
     ownerPublicKey: config.ownerPublicKey, recipientPublicKeys: [...new Set([config.ownerPublicKey, senderKeyPair.publicKey])] });
   return new NativeInteregoLrsDatabase({ client, owner: config.scope.owner,
     scopeIdentity: JSON.stringify(config.scope),
-    cursorSecret: createNativeCursorSecret(config.privateKey, config.scope.owner) });
+    cursorSecret: createNativeCursorSecret(config.privateKey, config.scope.owner),
+    onSlowQuery: event => {
+      // Explicit projection keeps future diagnostics from leaking query values.
+      queryDiagnostics.warn('[foxxi-lrs] slow-query ' + JSON.stringify({ event: event.event, phase: event.phase, outcome: event.outcome,
+        elapsedMs: event.elapsedMs, readyMs: event.readyMs, headMs: event.headMs, indexMs: event.indexMs, scanMs: event.scanMs,
+        indexedRows: event.indexedRows, scannedRows: event.scannedRows, returnedRows: event.returnedRows }));
+    } });
 }
 function createNativeCursorSecret(privateKey: string, owner: string): Uint8Array {
   // A domain-separated stable MAC key; no random restart key and no unsigned pod key lookup.

@@ -71,7 +71,14 @@ const bridgeUi = installBridgeUi(api, {
   onAccessChanged: () => { drawConnections(); void loadConnections(); },
 });
 const federationUi = installFederationUi(api, { pod: () => status, locallyBusy: () => busy !== null });
-const identityUi = installIdentityUi(api, { pod: () => status, locallyBusy: () => busy !== null, openDialog, closeDialog });
+const identityUi = installIdentityUi(api, {
+  pod: () => status, locallyBusy: () => busy !== null, openDialog, closeDialog,
+  showIdentity: () => {
+    if (busy !== null || document.querySelector('dialog[open]')) return false;
+    if (currentPage !== 'identity') selectPage('identity');
+    return true;
+  },
+});
 const workspacesUi = installWorkspacesUi(api, { pod: () => status, busy: () => busy !== null });
 
 function connectionDate(value: string): string {

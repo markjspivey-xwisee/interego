@@ -95,13 +95,14 @@ COPY packages/ ./packages/
 # at /app/docs/ns is enough: the package walks up from its own dist/ and finds it there, so
 # no INTEREGO_NS_DIR is needed here.
 COPY docs/ns/pgsl-lexicon.ttl ./docs/ns/pgsl-lexicon.ttl
+# Foxxi's proficiency evaluator reads these thresholds from the published rule graph.
+COPY docs/ns/adl-tla-proficiency.ttl ./docs/ns/adl-tla-proficiency.ttl
 COPY applications/_shared/ ./applications/_shared/
 COPY applications/shared-workspace/ ./applications/shared-workspace/
-# The vertical itself, plus Foxxi: agp/src/agent-trajectory.ts composes Foxxi's
-# PERFORMED_VERB/PERF_EXT (the correct L2 -> L1 edge, not a cycle), so the image
-# that runs agp must carry Foxxi's source too.
+# AGP imports Foxxi modules for learner records, content fragments and xAPI profiles.
+# Keep their transitive sources at the paths those imports resolve to.
 COPY applications/agentic-performance-practice/ ./applications/agentic-performance-practice/
-COPY applications/foxxi-content-intelligence/ ./applications/foxxi-content-intelligence/
+COPY applications/foxxi-content-intelligence/src/ ./applications/foxxi-content-intelligence/src/
 
 # Compile the @interego/* packages to their dist/ — every package's exports map
 # resolves there, so this is load-bearing at runtime, not a lint pass.

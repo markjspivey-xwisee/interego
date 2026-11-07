@@ -4,14 +4,14 @@ import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { basename, dirname, join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
-import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { IdentityBrowser } from '../src/identity-browser.js';
 import { LocalIdentityService } from '../src/local-identity.js';
 import { NativeIdentityHost } from '../src/native-identity-host.js';
 import { openAgentMessage, sealAgentMessage } from '../src/agent-protocol.js';
 import { identityHash, type LocalIdentitySaved } from '../src/local-identity-protocol.js';
 import type { AgentEndpoint, AgentTicket } from '../src/agent-types.js';
-import type { LocalIdentityContext, LocalIdentityTicket } from '../src/local-identity-types.js';
+import type { LocalIdentityContext, LocalIdentityLinkContext, LocalIdentityTicket } from '../src/local-identity-types.js';
 
 type RecordValue = Record<string, unknown>;
 const appRoot = fileURLToPath(new URL('../', import.meta.url));
@@ -63,7 +63,7 @@ class NativePort {
 function message(operation: string, args: RecordValue = {}): RecordValue { return { version: 1, id: randomUUID(), operation, ...args }; }
 function startMessage() { return message('start', { relayOrigin: relay, handoffCode }); }
 function pollMessage(ticket: LocalIdentityTicket) { return message('poll', { requestId: ticket.id, receipt: ticket.receipt }); }
-async function fixture(input: { allowedOrigins?: () => Promise<readonly string[]>; directory?: string } = {}) {
+async function fixture(input: { allowedOrigins?: () => Promise<readonly string[]>; directory?: string; beforeContext?: () => Promise<void> } = {}) {
   const directory = input.directory ?? await mkdtemp(join(tmpdir(), 'interego-identity-browser-')); directories.add(directory);
   const dataDir = join(directory, 'identity-browser'); let saved: unknown = null; let ticket!: AgentTicket;
   const nonce = token(); const context: LocalIdentityContext = { version: 1, issuer: relay, identityOrigin: provider, pendingId: randomBytes(16).toString('hex'),
@@ -75,7 +75,19 @@ async function fixture(input: { allowedOrigins?: () => Promise<readonly string[]
   const service = new LocalIdentityService({ store: { load: async () => saved, save: async value => { saved = structuredClone(value); } }, binding: async () => 'private-local-pod',
     trustedRelays: [{ relayOrigin: relay, identityOrigin: provider }], fetch: async (request, init) => {
       const req = new Request(request, init); const body = JSON.parse(await req.text()) as RecordValue; posts.push({ url: req.url, body });
-      if (new URL(req.url).pathname.endsWith('/context')) return Response.json(context);
+      if (new URL(req.url).pathname.endsWith('/context')) {
+        await input.beforeContext?.();
+        if (req.url === provider + '/local-identity/link/context') {
+          const owner = { userId: 'u-pk-existing-player', did: 'did:web:identity.example.com:users:u-pk-existing-player',
+            webId: provider + '/users/u-pk-existing-player/profile#me', podUrl: 'https://store.example.com/u-pk-existing-player/', displayName: 'Existing player' };
+          const link = { version: 1 as const, purpose: 'link' as const, issuer: provider, identityOrigin: provider, pendingId: token(), owner,
+            credentialDid: String(body['did']), nonce: token(), message: '', expiresAt: context.expiresAt, challengeExpiresAt: context.expiresAt,
+            completionCode: 'interego-link-result:v1:' + token() + '.' + token() } satisfies LocalIdentityLinkContext;
+          link.message = `Interego local identity link v1\nHost: identity.example.com\nAccount: ${owner.did}\nPod: ${owner.podUrl}\nCredential: ${link.credentialDid}\nRequest: ${link.pendingId}\nNonce: ${link.nonce}\nExpires: ${link.expiresAt}`;
+          return Response.json(link);
+        }
+        return Response.json(context);
+      }
       if (new URL(req.url).pathname === '/oauth/verify') return Response.json({ redirect: callback + '?code=short-lived-code&state=browser-session-state' });
       throw new Error('Unexpected test endpoint.');
     } });
@@ -94,6 +106,7 @@ async function fixture(input: { allowedOrigins?: () => Promise<readonly string[]
 }
 
 afterEach(async () => {
+  vi.restoreAllMocks();
   await Promise.all(children.splice(0).map(child => new Promise<void>(done => {
     if (child.exitCode !== null) { done(); return; } child.once('close', () => done()); child.kill();
   })));
@@ -127,6 +140,16 @@ describe.skipIf(process.platform !== 'win32')('Windows browser companion through
     expect(await port.send(pollMessage(ticket))).toMatchObject({ ok: true, value: { state: 'expired' } });
     await expect(f.service.approve(ticket.id, ticket.verificationCode)).rejects.toThrow(); expect(f.posts).toHaveLength(2); await port.end();
   });
+  it('keeps a real Windows link channel alive past the previous native and broker cutoffs and retains its mode for polling', async () => {
+    const f = await fixture({ beforeContext: () => new Promise(resolve => setTimeout(resolve, 21_000)) });
+    const timers = vi.spyOn(globalThis, 'setTimeout'); const port = new NativePort(f.directory);
+    const start = await port.send(message('start', { relayOrigin: provider, handoffCode: 'interego-link:v1:' + token() + '.' + token() }));
+    expect(start['ok']).toBe(true); const ticket = start['value'] as LocalIdentityTicket;
+    expect((await f.service.status()).pending[0]).toMatchObject({ purpose: 'link', owner: { userId: 'u-pk-existing-player' } });
+    expect(await port.send(pollMessage(ticket))).toMatchObject({ ok: true, value: { state: 'waiting' } });
+    expect(timers.mock.calls.filter(call => typeof call[1] === 'number' && call[1] > 54_000 && call[1] <= 55_000).length).toBeGreaterThanOrEqual(2);
+    expect(f.posts).toHaveLength(1); await port.end(); expect((await f.service.status()).pending).toEqual([]);
+  }, 35_000);
   it('returns a native denial and cancels an unapproved request on actual native-port EOF', async () => {
     const f = await fixture(); const port = new NativePort(f.directory); const ticket = (await port.send(startMessage()))['value'] as LocalIdentityTicket;
     f.service.deny(ticket.id); expect(await port.send(pollMessage(ticket))).toMatchObject({ ok: true, value: { state: 'denied' } });
