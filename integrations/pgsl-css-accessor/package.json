@@ -9,7 +9,8 @@
   "lsd:module": "https://linkedsoftwaredependencies.org/bundles/npm/pgsl-css-accessor",
   "lsd:components": "dist/components/components.jsonld",
   "lsd:contexts": {
-    "https://linkedsoftwaredependencies.org/bundles/npm/pgsl-css-accessor/^1.0.0/components/context.jsonld": "dist/components/context.jsonld"
+    "https://linkedsoftwaredependencies.org/bundles/npm/pgsl-css-accessor/^1.0.0/components/context.jsonld": "dist/components/context.jsonld",
+    "https://linkedsoftwaredependencies.org/bundles/npm/componentsjs/^6.0.0/components/context.jsonld": "dist/components/componentsjs-6-context.jsonld"
   },
   "lsd:importPaths": {
     "https://linkedsoftwaredependencies.org/bundles/npm/pgsl-css-accessor/^1.0.0/components/": "dist/components/",
@@ -18,13 +19,14 @@
   },
   "scripts": {
     "build:ts": "tsc",
-    "build:components": "componentsjs-generator -s src -c dist/components -r pgsl --lenient",
+    "build:components": "componentsjs-generator -s src -c dist/components -r pgsl --lenient && node src/retain-componentsjs-context.mjs",
     "build": "npm run build:ts && npm run build:components",
     "test:it": "tsx test/accessor.it.ts",
     "test:server": "tsx test/server.it.ts",
     "test:contract": "tsx test/contract.it.ts",
     "test:native": "tsx test/native-commit.it.ts",
-    "test:expiry": "tsx test/expiring-cleanup.it.ts"
+    "test:expiry": "tsx test/expiring-cleanup.it.ts",
+    "test:contexts:offline": "node test/components-context-offline.mjs"
   },
   "dependencies": {
     "@solid/community-server": "^7.1.9"
@@ -35,6 +37,6 @@
     "typescript": "^5.6.0"
   },
   "overrides": {
-    "nodemailer": "^10.2.1"
+    "nodemailer": "^10.3.1"
   }
 }

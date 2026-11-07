@@ -40,7 +40,8 @@ concurrency:
 jobs:
   browser:
     name: Original client oracles and hosted visitor render
-    runs-on: ubuntu-latest
+    # The locked Playwright release supports Ubuntu 24.04.
+    runs-on: ubuntu-24.04
     timeout-minutes: 25
     env:
       I2IDLX_ROOT: applications/foxxi-content-intelligence/i2idlx
@@ -222,14 +223,20 @@ jobs:
           JS
       - name: Cache only the scripts and fonts named by the generated page
         run: npx tsx applications/foxxi-content-intelligence/i2idlx/typescript/cache-ui-assets.ts "$I2IDLX_ROOT/site/app.html" "$I2IDLX_ROOT/.cache/ui-oracle-assets"
-      - name: Unchanged desktop, mobile, export and workspace smoke oracle
-        run: python3 -I "$I2IDLX_ROOT/tools/smoke_app.py" "$I2IDLX_ROOT" "$I2IDLX_ROOT/.cache/ui-oracle-assets" --shots "$I2IDLX_ROOT/.cache/ui-oracle-shots"
+      - name: Exact canonical/authored contract and desktop, mobile, export and workspace smoke oracle
+        run: |
+          python3 -I "$I2IDLX_ROOT/tools/test_corpus_oracle.py" "$I2IDLX_ROOT"
+          python3 -I "$I2IDLX_ROOT/tools/smoke_app.py" "$I2IDLX_ROOT" "$I2IDLX_ROOT/.cache/ui-oracle-assets" --shots "$I2IDLX_ROOT/.cache/ui-oracle-shots"
       - name: Original control, SPARQL, classification and exported-record cross-check
         run: python3 -I "$I2IDLX_ROOT/tools/check_app_logic.py" "$I2IDLX_ROOT" "$I2IDLX_ROOT/.cache/ui-oracle-shots"
-      - name: Require all current replay outputs to match the reviewed v93 migration fixture
+      - name: Require all canonical replay outputs to match the unchanged reviewed v93 fixture
         run: >-
           python3 -I "$I2IDLX_ROOT/tools/check_orchestra.py" "$I2IDLX_ROOT"
-          --migration "$I2IDLX_ROOT/examples/orchestra/kestrel-point-v93-replay-expectations.json"
+          --migration "$I2IDLX_ROOT/examples/orchestra/kestrel-point-v93-replay-expectations.json" --canonical
+      - name: Require all combined replay outputs to match the two-case authored overlay
+        run: |
+          python3 -I "$I2IDLX_ROOT/tools/test_replay_overlay.py" "$I2IDLX_ROOT"
+          python3 -I "$I2IDLX_ROOT/tools/check_orchestra.py" "$I2IDLX_ROOT" --migration "$I2IDLX_ROOT/examples/orchestra/kestrel-point-v93-replay-expectations.json" --authored-overlay "$I2IDLX_ROOT/examples/orchestra/kestrel-point-v93-authored-replay-overlay.json"
       - name: Require a wrong expected replay digest to fail the migration gate
         run: |
           node --input-type=module <<'JS'
@@ -239,11 +246,25 @@ jobs:
           fixture.results.find(row => row.id === 'c8').expectedSha256 = '0'.repeat(64);
           fs.writeFileSync(path.join(process.env.RUNNER_TEMP, 'invalid-replay-expectations.json'), JSON.stringify(fixture));
           JS
-          if python3 -I "$I2IDLX_ROOT/tools/check_orchestra.py" "$I2IDLX_ROOT" --migration "$RUNNER_TEMP/invalid-replay-expectations.json" > "$RUNNER_TEMP/replay-negative.log" 2>&1; then
+          if python3 -I "$I2IDLX_ROOT/tools/check_orchestra.py" "$I2IDLX_ROOT" --migration "$RUNNER_TEMP/invalid-replay-expectations.json" --canonical > "$RUNNER_TEMP/replay-negative.log" 2>&1; then
             echo 'The migration gate accepted a deliberately incorrect expected digest.' >&2
             exit 1
           fi
           grep -F 'FAIL 47 of 48 v0.0.93 migration tool results reproduced exactly; actual digest mismatch:' "$RUNNER_TEMP/replay-negative.log"
+      - name: Require a wrong authored replay digest to fail the combined gate
+        run: |
+          node --input-type=module <<'JS'
+          import fs from 'node:fs';
+          import path from 'node:path';
+          const overlay = JSON.parse(fs.readFileSync(process.env.I2IDLX_ROOT + '/examples/orchestra/kestrel-point-v93-authored-replay-overlay.json', 'utf8'));
+          overlay.results.find(row => row.id === 'c9').combinedExpectedSha256 = '0'.repeat(64);
+          fs.writeFileSync(path.join(process.env.RUNNER_TEMP, 'invalid-authored-replay-overlay.json'), JSON.stringify(overlay));
+          JS
+          if python3 -I "$I2IDLX_ROOT/tools/check_orchestra.py" "$I2IDLX_ROOT" --migration "$I2IDLX_ROOT/examples/orchestra/kestrel-point-v93-replay-expectations.json" --authored-overlay "$RUNNER_TEMP/invalid-authored-replay-overlay.json" > "$RUNNER_TEMP/authored-replay-negative.log" 2>&1; then
+            echo 'The combined gate accepted a deliberately incorrect expected digest.' >&2
+            exit 1
+          fi
+          grep -F 'FAIL 47 of 48 v0.0.93 migration tool results reproduced exactly; actual digest mismatch:' "$RUNNER_TEMP/authored-replay-negative.log"
       - name: Hosted path without credentials or model capabilities
         run: python3 -I tools/i2idlx-hosted-visitor-smoke.py "$I2IDLX_ROOT" "$I2IDLX_ROOT/.cache/ui-oracle-assets" "$I2IDLX_ROOT/.cache/ui-oracle-shots"
       - name: MCP App transport and honest conversation receipts

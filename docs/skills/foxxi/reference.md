@@ -1,6 +1,6 @@
 # Foxxi content intelligence, learner surface: every affordance
 
-Derived from `applications/foxxi-content-intelligence/affordances.ts` by `tools/build-skills.ts`; the skill is [SKILL.md](SKILL.md). 81 affordances.
+Derived from `applications/foxxi-content-intelligence/affordances.ts` by `tools/build-skills.ts`; the skill is [SKILL.md](SKILL.md). 84 affordances.
 
 ## `foxxi.i2idlx_classify`
 
@@ -49,6 +49,39 @@ Compare the pinned glossary release with the canonical scheme fetched now. An ou
 
 - Action: `urn:iep:action:foxxi:i2idlx-source-version`
 - HTTP: `POST https://foxxi-bridge.interego.xwisee.com/i2idlx/api/source-version` (served by a bespoke route; not through the bridge's MCP endpoint)
+- Inputs: none
+
+## `foxxi.i2idlx_authored_catalog`
+
+**Read the authored glossary catalog**
+
+Read the deployment-owned Hypothetical authored layer with origin and source binding. No canonical source edit, ratification, learner claim or publication occurs.
+
+- Action: `urn:iep:action:foxxi:i2idlx-authored-catalog`
+- HTTP: `GET https://foxxi-bridge.interego.xwisee.com/i2idlx/authored-catalog` (served by a bespoke route; not through the bridge's MCP endpoint)
+- Media type: `application/json`
+- Inputs: none
+
+## `foxxi.i2idlx_authored_rdf`
+
+**Read authored glossary RDF**
+
+Read the deployment-owned Hypothetical authored layer with origin and source binding. No canonical source edit, ratification, learner claim or publication occurs.
+
+- Action: `urn:iep:action:foxxi:i2idlx-authored-rdf`
+- HTTP: `GET https://foxxi-bridge.interego.xwisee.com/i2idlx/authored.ttl` (served by a bespoke route; not through the bridge's MCP endpoint)
+- Media type: `text/turtle`
+- Inputs: none
+
+## `foxxi.i2idlx_authored_shapes`
+
+**Read the canonical and exact-authored reference shapes**
+
+Read the deployment-owned Hypothetical authored layer with origin and source binding. No canonical source edit, ratification, learner claim or publication occurs.
+
+- Action: `urn:iep:action:foxxi:i2idlx-authored-shapes`
+- HTTP: `GET https://foxxi-bridge.interego.xwisee.com/i2idlx/authored-shapes.ttl` (served by a bespoke route; not through the bridge's MCP endpoint)
+- Media type: `text/turtle`
 - Inputs: none
 
 ## `foxxi.i2idlx_capabilities`

@@ -3406,12 +3406,10 @@ function buildDistributionBlock(d: {
   if (d.encrypted && typeof d.recipientCount === 'number') {
     lines.push(`    ; iep:recipientCount ${d.recipientCount}`);
   }
-  // Visibility is the audience-class signal for consumers (and for ACL
-  // writers that mirror it onto the pod). Default-omitted preserves the
-  // historical wire format for `shared` graphs; only emit when caller
-  // declared `public` or `private` so older parsers don't trip on an
-  // unknown predicate.
-  if (d.visibility === 'public' || d.visibility === 'private') {
+  // Persist every explicitly declared audience. Encryption alone cannot tell
+  // a later reader whether a note was private or shared. Omitted SDK options
+  // remain omitted rather than inventing an audience for older publications.
+  if (d.visibility === 'public' || d.visibility === 'private' || d.visibility === 'shared') {
     lines.push(`    ; iep:visibility "${d.visibility}"`);
   }
   /**

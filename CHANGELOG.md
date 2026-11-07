@@ -1,11 +1,5 @@
 # Changelog
 
-## 2026-11-03 - Keep Foxxi HTTP context outside agent-session inputs
-
-The deployed Foxxi middleware adds internal client-address and caller-token context to parsed JSON. Browser agent-session creation and polling now discard only those two transport fields before checking their exact input contract. Browser authority still comes only from the Authorization header, creation budgets still use the actual request address, and signed driver identity and payload checks are unchanged.
-
-HTTP tests now include that context decoration and check that body tokens cannot authorize a browser or override creation budgets. The packaged-server startup proof exercises creation, capability-protected status, invalid body-token refusal and disconnect through the actual entrypoint middleware before an image can ship.
-
 ## 2026-11-02 — Prepare selected health context for the encrypted local-note host
 
 A separate Layer 3 health component prepares explicit, case-bound evidence selections as the existing Windows app's append-note arguments. It preserves exact dependent citations, qualified dates, record statuses, specimen identities, source interpretation limits and omission metadata. Draft questions require explicit inclusion; retrieval queries and unknown fields are excluded. Cross-case references, unresolved citations, inconsistent omission declarations and oversized output are rejected before returning a note.
@@ -13,6 +7,214 @@ A separate Layer 3 health component prepares explicit, case-bound evidence selec
 The adapter performs no host, network, storage, provider, consent or publication action. Its output is plaintext until an independently authorized host saves it. The native read grant still covers all notes; a selected context is not case-scoped authorization. Fictional fixtures and standalone Linux/Windows CI exercise the preparation contract, including native character bounds. Installed-app pairing, encrypted persistence, revocation and broader health-file ingestion remain separate checks.
 
 An offline Windows verification kit now emits the fixed fictional note arguments and compares a supplied native save/read response for exact content, native metadata and the independently observed author connection. Its bounded CLI never pairs, saves, reads the pod or echoes supplied content on failure. Reports explicitly leave native response authenticity, storage encryption, restart persistence and grant enforcement unverified until independently observed.
+
+## 2026-11-07 — Identity: a Play game-data backfill deletes the game saves and budgets that finished purges left on guests' pods
+
+Play purges that finished before the store's native conditional delete (from 2026-10-28 to 2026-10-30) deleted everything of a guest's pod except its game data: the saves (`hallowmarch/checkpoints/<64 hex>.json`), the write budget (`play-budget.json`) and the two containers that hold them. They then cleared the tombstone's mark, so neither the janitor nor a restart comes back to such a pod. A save the css-gate let through that lands after a purge's last listing stays the same way. Each identity process now runs a **Play game-data backfill** once, one janitor interval (`JANITOR_INTERVAL_MS`, 5 min by default) after it starts, and after its startup scan. With the janitor off (`JANITOR_INTERVAL_MS=0`) it does nothing. There is no flag, route or extra service: it runs again at every deploy, and once it has converged it writes and deletes nothing.
+
+What it does (`deploy/identity/server.ts` backfillPlayGameData and reopenFinishedPlayPurge):
+- It reads `<CSS_URL>provisional-play-admission.json` (retried after 2, 5 and 15 s). For each entry it opens the owner's original anchor with this server's `TOKEN_SIGNING_KEY` and issuer (`BASE_URL`) and requires it to name the id it is filed under. That gives the guest deadline that provisioning checks too.
+- It takes each owner whose guest deadline passed over an hour ago (clock skew with the css-gate) and that this process does not hold (an account in memory, an unfinished purge, a purge in flight, a deletion answered `503`) through the existing purge, one owner at a time.
+- Under the owner's lock, from the purge's own listing, it marks the owner's tombstone again (`provisionalPlayPurgePending`, a conditional write on the ETag it read). It does so only when all of these hold: the pod holds game data and nothing besides the pod root, `auth-methods.jsonld`, `hallowmarch/` and `hallowmarch/checkpoints/`; the record is an unmarked tombstone dated no earlier than the UTC day of the guest deadline; and the store advertises its native delete (`OPTIONS`, asked once a run). The purge then deletes the game data with the existing native conditional delete, deletes the two emptied containers, lists the pod again (the closure fence) and clears the mark. It adds no delete code of its own.
+- A tombstone marked already (an unfinished purge the startup scan missed) is finished as the janitor would finish it, and is logged and counted apart from the purges the run re-opened.
+- A turn that leaves an owner as it is leaves the janitor's queue as it was. An on-demand load can queue an owner after the run chose its owners (a mark the startup scan could not read); a turn that then found no game data on its pod used to take it out of the queue, and nothing logged it or came back to its purge before the next restart.
+
+Pods it touches: Play pods (`u-try-play-<32 hex>`) in the admission ledger, past their guest deadline by over an hour, whose record is a finished purge's tombstone and whose pod holds nothing but game data. On those it deletes the saves, the budget and their two containers, and it writes only the tombstone's mark, set and then cleared, each time on its ETag. It never touches `auth-methods.jsonld` beyond that mark, the pod root, or the ledger. It never touches a pod outside the ledger, an entry that does not open with this server's key and issuer, a claimed or live owner, an owner before its deadline plus an hour, or an owner whose deletion is waiting for its guest's retry. It also leaves a pod with no record (it never creates one: `orphan`), a pod holding anything else, such as the relay's `profile/card` or `context-graphs/` (`outside`), and a tombstone dated before the deadline's day, which is a guest's own deletion (`deletion`). Two kinds of pod are still included when they hold nothing but game data, because their tombstones look exactly like a purge's: a guest's own deletion made on the day of its deadline, and an owner that claimed the pod with a credential and later deleted its account. `PROVISIONAL-PLAY.md` and `AUTH-ARCHITECTURE.md` say so.
+
+Safeguards:
+- **It stops early.** The run stops at the first purge it took up that does not finish, one it re-opened or found marked already (`ERROR: identity_play_backfill_halted <id> <message>; <k> owner(s) not re-opened`), and where the store answers `OPTIONS` without the native delete (`ERROR: identity_play_backfill_no_native_delete`). An `OPTIONS` answered `5xx` is not taken for a store without it: like one that times out, it is logged as `Play game-data backfill could not check <id>: Provisional cleanup: the store's OPTIONS was answered <status>`, nothing is kept for the run, and the next owner is asked again. The purge's own check (`deleteGameData`) now gives the same message for a `5xx`, where it said the store does not advertise the native delete; that purge stays unfinished for the next pass either way. Before it re-opens anything, each start finishes, one at a time, the purge of every due owner that is unfinished (one an earlier start re-opened, whose mark the startup scan found), and re-opens nothing if one of them does not finish (`ERROR: identity_play_backfill_halted <id> unfinished from before this run: <message>; <k> owner(s) not re-opened`). A failure that repeats therefore leaves one owner marked for the janitor's retries, not every owner and not one more at every start. Once that purge finishes, the next start goes on with the rest.
+- **A re-opened purge stays limited to game data.** While a purge the backfill re-opened is unfinished, every later pass (the janitor's retries included) deletes nothing if the pod holds anything outside the game data. The purge stays marked and queued, and this is logged once per process (`kept the purge of <id> unfinished, deleting nothing`). From the moment the mark may be on the pod, the owner is queued and held to this: a failure after the mark (a read of the record that fails), or a mark nothing could settle, leaves it so, and the janitor's next pass finishes the purge, or, finding the tombstone unmarked, only forgets the owner. The set of such owners is held in memory, so after a restart the startup scan finds the mark and the purge is an ordinary one, which deletes everything listed but the record and the root.
+- **A mark that the pod applied but answered with an error** (the writer settles the record) counts as written, and the purge goes on. Any other failure is logged as `Play game-data backfill could not check <id>: <message>`, and the next start tries again.
+
+To verify from the identity logs:
+- At each start: `Janitor: Play game-data backfill: <n> owner(s) in the admission ledger (<u> that do not open, with this server's key and issuer, to the owner they are filed under), <d> past their guest deadline by over 1 h; <p> of them with a purge unfinished, finished first; checking <c>`.
+- For each pod it re-opens: `Janitor: re-opened the finished purge of <id> (its tombstone of <day>, guest deadline <ISO>): its pod still holds <k> game document(s): <paths>`, then the existing `Janitor: finished the purge of <id>`. For a tombstone marked already: `Janitor: Play game-data backfill took up the unfinished purge of <id>: its tombstone is marked already`.
+- For each pod left holding game data: `Janitor: Play game-data backfill left <id> as it is (<reason>): its pod holds <k> game document(s)`. The reason is `orphan`, `outside: <paths>`, `deletion: ...`, `no-native-delete`, `changed` (the record changed under the mark) or `not-due`.
+- At the end: `Janitor: Play game-data backfill done in <ms> ms: <q> of <p> unfinished purge(s) finished first; <c> checked: <r> re-opened (<f> finished, <x> unfinished, left to the janitor), <m> marked already (<mf> finished, <mx> unfinished), <l> left holding game data, <z> holding none, <v> live, <s> closed elsewhere, <i> in flight, <e> could not be checked`. The categories after `checked` add up to it; a stopped run adds `; <k> not checked (stopped)`.
+- What to expect: every re-opened id, and every one taken up marked already, has a later `finished the purge of <id>` line, no backfill `ERROR` line appears, and the next deploy's summary says `0 of 0 unfinished purge(s) finished first` and `0 re-opened`. For a pod the backfill re-opened, its `re-opened` line names the game documents and its `finished` line means the closure fence listed the pod again and found none, so the pair shows its game data deleted. A `finished` line on its own reads the same whether or not the pod held game data, so the logs alone cannot show that the native delete works in production. That was checked on 2026-10-30, when the first purge of a guest who had saved deleted its saves (#728); if it has stopped working, the run halts at the first owner it re-opens.
+- The cost after convergence: one ledger read, one listing of each due owner's pod that the process does not hold, and one record read for each pod left with game data and a record.
+
+Also changed: the ledger read is shared by provisioning and the backfill (`readAdmissionLedger`, `isAdmissionLedger` in `provisional-play-admission.ts`). The cleanup's `close()` receives the listing it checked (`provisional-play-cleanup.ts`, which also exports `playGameDataResidue` and `advertisesNativeDelete`). `purgePlayOwner` returns what the purge came to; the janitor ignores it.
+
+Tests:
+- **`tests/provisional-play-cleanup.test.ts`.** `close()` receives the checked listing, children before their containers, which is exactly what the purge then deletes; a `kept` or `closed` answer sends nothing but listings. `playGameDataResidue` classifies a leftover pod, the relay's files, look-alike paths (upper-case or short digests, other containers, an encoded record) and another pod's URL. An `OPTIONS` answered `500` or `503` fails the purge with its status, not as a store without the native delete, and sends nothing more.
+- **`tests/provisional-play-enrollment.test.ts`** runs the production `purgePlayOwner`, `reopenFinishedPlayPurge` and the writer, sliced from `server.ts`, over a pod that answers as the store does. It covers: the re-open and purge, with the mark on the ETag read; the deadline and its one-hour margin, before which the record is not even read; an operator re-opening the id during the mark (nothing written or deleted) and a tombstone edit read again; an orphan with no record (nothing written, `If-None-Match: *` included); a re-opened purge whose native delete fails, finished at the janitor's next pass; a mark applied but answered `500`, and one refused and answered `500`; a mark that landed followed by a read of the record that fails, and a mark nothing could settle, each queued and held to the game data (the next pass deletes nothing beside the relay's card, or only forgets an owner whose mark did not land); the deletion date check, with a deadline ten days ago and a tombstone nine days ago as production has them; a tombstone marked already, at the read or at the write, queued, logged and counted apart; the outside check at later passes, logged once; a pod holding more, a live owner, and a store without the native delete (asked once a run); a capability check answered `503` (that owner is not checked, nothing is kept for the run, and the next check asks again and purges); an owner queued after the run chose its owners, whose turn finds no game data or finds it not due, still queued after it, and the janitor's next pass finishing its purge.
+- **`tests/live-record-writes-routes.test.ts`**, last in the file, each test putting the stand-in's ledger back:
+  - P17: nine ledger owners. Only the leftover pod (its deadline ten days ago, its tombstone nine) is re-opened and purged. Every other owner gets no `PUT`, `DELETE`, `HEAD` or `OPTIONS`. A restart lists only the due owners it does not hold, reads only two records, re-opens nothing and writes nothing. The primary instance, whose janitor is off, never reads the ledger.
+  - P18: a store without the native delete: one `ERROR` line, and the run stops at the first of two owners; the second is not listed, and its record is read by the startup scan alone. The next start purges both.
+  - P19: the closure fence on a re-opened purge.
+  - P20: a deploy overlap, where the replaced instance takes the re-marked purge up through an on-demand load.
+  - P21: the circuit breaker (a native delete answered `400`: only the first owner is marked, the others are not even listed), across restarts: the next start takes that purge up first and re-opens nothing while it fails, and, once the store takes the delete, the start after waits for the janitor's own pass over that purge to finish, then re-opens and finishes the others.
+  - P22: a tombstone marked after the startup scan, which the backfill takes up, logs and counts apart.
+  - P23: the circuit breaker past the first owner: three owners, the second's native delete answered `400`. The first is purged, the run stops at the second (`1 owner(s) not re-opened`), and the third is not listed, written or marked.
+  - P24: a capability check answered `503` for the first of two owners: it is logged `could not check` and gets nothing but that `OPTIONS`; the second is re-opened and purged, and no `identity_play_backfill_no_native_delete` line appears.
+  - P25: a tombstone found marked already whose native delete is answered `400` stops the run like a purge it re-opened: the second owner is not listed, written or marked.
+  - The stand-in records which instance sent each request for a pod's other documents, and can answer one (an `OPTIONS` included) with a fixed status.
+
+Each guard was reverted alone in a scratch copy, and a test failed for each one:
+- the deadline check in the purge (the enrollment margin test) and in the backfill's choice of owners (P17);
+- the one-hour margin set to 0 (both);
+- the tombstone check, and the pass-through for a tombstone marked already;
+- the outside check (P17 too), and the same check at later passes;
+- the orphan refusal on the listing (P17 too) and on the record read;
+- the deletion date check (P17 too);
+- the mark sent unconditionally instead of on its ETag (enrollment, P17, P20);
+- the native delete check (enrollment, P17, P18);
+- the backfill started outside the `JANITOR_INTERVAL_MS > 0` block (P17: the primary read the ledger);
+- the check that a ledger entry names the owner it is filed under (P17);
+- the circuit breaker (P19, P21, P23, P25), the circuit breaker skipping a tombstone found marked already (P25), and the circuit breaker weakened to a canary that stops only at the first owner checked, or only while no re-opened purge has finished (P23 alone: P17 to P22 and the enrollment tests passed with either);
+- an `OPTIONS` answered `5xx` taken for a store without the native delete, in the shared check (enrollment, cleanup, P24) or by the backfill catching the check's failure as `false` (enrollment, P24);
+- a mark the pod applied but answered `500` taken as a failure;
+- the owner queued and held to the game data before its mark is written, and each half alone (enrollment: a mark that landed then a failed read, a mark nothing could settle);
+- a mark nothing settled taken as off the pod, and a write settled unmarked left queued (enrollment);
+- the owner of a tombstone marked already queued before its purge goes on (enrollment);
+- a tombstone marked already counted as re-opened, at the read or at the write (enrollment, P22);
+- the unfinished purges not taken up first, no stop when one stays unfinished, and no wait for one a janitor pass is running (P21);
+- the deletion date compared with today instead of the deadline's day (enrollment, P17);
+- the stop at a store that does not advertise its native delete (P18);
+- a turn that leaves an owner as it is taking it out of the janitor's queue (enrollment);
+- the sets left alone where the mark meets a changed record (enrollment): this went unnoticed while purgePlayOwner emptied them for any `kept` of a backfill turn.
+
+The new tests fail on the code before this change. `npm run build --workspace @interego/identity` and the identity tests pass: 449 tests, then 95 in `live-record-writes-routes.test.ts`.
+
+## 2026-11-07 — Identity: a test pins the X25519 keys the server publishes, and no other generated key is JWK-exported under deploy/ or packages/
+
+The "Node 20 crypto deadlock" entry further down changed how `generateEd25519` in `deploy/identity/server.ts` reads the raw X25519 public key. It had read the `x` of a JWK export, and now reads the last 32 bytes of the SPKI DER. That entry checked on 20,000 keys that both give the same bytes, but no test checked it. The derivation is now `x25519PublicKeyEncodings` in `deploy/identity/key-encoding.ts`. The base58btc codec and the Ed25519 and X25519 multibase encoders it uses moved there from `server.ts` unchanged. `server.ts` imports them, and `deploy/Dockerfile.identity` copies the new file. The two new files take the lint gate's file count for `deploy/` to 278, past the slack on its pin of 262, so `tools/lint-gate.mjs` now pins 278. Both lint clean, and the error pin is unchanged.
+
+`tests/key-encoding.test.ts` checks three things:
+
+- The fixed X25519 key from RFC 7748 §6.1 gets the base64 and multibase that its JWK `x` gives. Both values are also frozen in the test; the multibase (`z6LSkdrX…`) was computed separately with the multiformats library.
+- 200 generated keys get the encodings of their JWK `x`. The test reads that JWK from a copy parsed out of DER (`tests/public-jwk.ts`).
+- A P-256 key is refused, because its SPKI is 91 bytes.
+
+Reading the raw key one byte off fails the first two. The identity suite passes on Node 22.22: 436 tests, master's 433 and these 3, then the 86 of `live-record-writes-routes.test.ts`. Before master's latest changes were merged in, it also passed on Node 20.20. On Node 20.20 with frequent garbage collection (`--max-semi-space-size=1`), the server's key generation ran 200,000 times through the new function in each of 3 runs. The same loop with the old JWK export hung before 5,000 in every run.
+
+No other code under `deploy/` or `packages/` JWK-exports a key that `generateKeyPairSync` made. `deploy/mcp-relay/client-authorization.ts` exports the JWKs of keys it parsed from a JWK, and no generator job shares a lock with those. `deploy/mcp-relay/tests/dpop.test.ts` exports the JWK of a key from WebCrypto's `generateKey`, and is unchanged. WebCrypto generates keys in an asynchronous job, and Node frees that job as soon as it has handed over the key, so no garbage collection can free it later, in the middle of an export. On Node 20.20 with frequent garbage collection, a loop of `generateKey` and then `exportKey('jwk')` ran 60,000 times in each of 3 runs. So the WebCrypto test that the earlier entry changed in `provisional-play.test.ts` was not at risk either. That change does no harm and stays.
+
+The earlier entry names EC and OKP keys. RSA keys hang the same way on Node 20.20, and so does the JWK of a public key that `createPublicKey` derives from a generated private key: both loops hung, at 0% CPU, before 1,000 iterations. Outside `deploy/` and `packages/`, these JWK exports of generated keys remain, and this change does not touch them. `tests/client-authorization.test.ts` exports P-256, P-384, P-521 and RSA keys, and `tests/browser-signing-handoff.test.ts` exports a P-256 key. CI runs both in the whole root suite on Node 20 (`bridge-typecheck.yml`). `tests/browser-signing-handoff.chromium.test.ts` makes the same P-256 export but runs only on Node 22, in `identity-tests.yml`. `es256Keys` in `applications/foxxi-content-intelligence/src/lti13.ts` derives one when no PEM is configured, but the Foxxi bridge image runs Node 22.
+
+## 2026-11-07 — Ask about a course through your own SCORM Cloud connection
+
+Ask lets a paired visitor connect their own SCORM Cloud application, select a course and retrieve its versioned instructional text for each question. Answers carry course passage references alongside the glossary context. Switching the course clears the conversation.
+
+The read-only connector belongs to that verified visitor connection. Credentials remain in server memory until disconnect or expiry, and never enter the AI request, public package store or deployment settings. Expired connections require an explicit reconnect or a choice to continue with the glossary alone.
+
+## 2026-11-07 — Dependencies: nodemailer 10.3.1 and CSS 7.3.0 for local pods, in place of Dependabot's #766
+
+This lands Dependabot's #766 with the changelog entry its checks needed.
+
+- **Root lockfile:** `packages/local-node` (the Windows local pod) asks for `@solid/community-server` `^7.3.0` instead of `^7.1.9`. CSS 7.3.0 is a minor release: lock and pod-quota fixes, streamed container listings, dedicated storage for OIDC clients, and no listed breaking or configuration changes. It is the first CSS release that asks for a fixed nodemailer itself (`^10.0.9`), so the root workspace now resolves nodemailer 10.3.1 with no override, in place of 9.1.1 and its nine audit advisories.
+- **The css image:** `integrations/pgsl-css-accessor` keeps CSS 7.2.0, and its nodemailer override moves from `^10.2.1` to `^10.3.1`. The deployed configs still never send mail. The image stays on 7.2.0 because the boot line its deploy waits for was measured against 7.2.0. Moving it to 7.3.0 means re-running that measurement, and then the override can go. The header of `integrations/tests/css-nodemailer-is-patched-and-unused.test.ts` now says this instead of claiming no CSS release admits a fixed nodemailer.
+
+## 2026-11-06 — Clarify the shared xAPI performance verb
+
+The Foxxi and AGP xAPI Profiles explain how the object activity type identifies the work described by `performed` and how a projected descriptor supplies that type. The verb IRI and template rules stay the same.
+
+## 2026-11-06 — Disclose the hosted Interego beta risks
+
+The site and enrollment screens identify hosted Interego as a beta prototype for testing. The revised Terms spell out the risks a user assumes when they accept them. Same-day revisions have distinct version identifiers so prior receipts remain tied to the text users accepted.
+
+## 2026-11-06 — Add agreement to hosted Interego enrollment
+
+The hosted site publishes versioned Terms of Service. When the deployment enables a version, the web, guest and connected-app signup flows require an explicit agreement. Identity records the version and acceptance time in the private account record as part of enrollment. Returning sign-ins and existing Play sessions can continue.
+
+## 2026-11-05 — Add a privacy notice for hosted Interego
+
+The Interego homepage now links to the hosted service's Privacy Notice. The notice describes sign-in and guest records, Railway hosting, publishing through Pinata and IPFS, and how to request removal of records separately from closing an account.
+
+## 2026-11-05 — Explain the counts on Agents filters
+
+The Agents directory explains that each button shows how many operations it would display with the other filters and search applied.
+
+## 2026-11-05 — Isolate Agents page deployments to Foxxi
+
+AGP packages the Foxxi runtime source and its proficiency graph. The hosted JEV evaluator refreshes a separate checkout of the public Interego repository and reports the exact commit it evaluated. Agents page and browser test changes now select only Foxxi for deployment, while JEV can read the updated files without a new image.
+
+## 2026-11-05 — Show matching counts in the I2IDL-X Agents filters
+
+Each filter option shows how many operations it would display with the other row and text search applied. The result summary shows the matching count, and the directory heading shows the full inventory size.
+
+## 2026-11-05 — Repair and organize the I2IDL-X Agents examples
+
+The live directory runner separates bridge transport metadata from visitor inputs before checking the public example contract. It preserves target throttling and shows whether a request reached the target. The competency example now demonstrates an alignment hop between two fictional frameworks, and the consulting example identifies required work products.
+
+The Agents page links directly to live examples, separates them from client tasks and prepared calls, and puts request controls and results ahead of contract details. Fresh inventory supplies current defaults while edited drafts survive a refresh.
+
+The runner tests reproduce the bridge's transport fields and check that the example target and result receive no authorization token.
+
+## 2026-11-05 — Select automatic monitoring per workbench connection
+
+The standalone HTTPS workbench accepts an optional Grok Bot Routine setup for the current pairing. Each temporary session keeps its own trigger configuration and binds the actor from the verified Interego claim. A Routine-backed session grants work only through signed, turn-scoped wake references. Routine setup no longer requires a service variable or redeploy for each client. Manual pairing uses its existing driver credential.
+
+## 2026-11-05 — Start workbench monitoring through an opted-in agent routine
+
+An I2IDL-X deployment can bind one background Routine to an exact verified agent DID. An opted-in claim triggers a startup check and the workbench waits for a signed acknowledgment. Each queued turn, including browser tool results, triggers the Routine with only opaque references. A signed, turn-scoped capability is required to take that work. Manual drivers and staged approval retain their existing behavior.
+
+## 2026-11-04 — Complete Orchestrate reports after the human decision
+
+Live Orchestrate now uses the actual sandbox summary to generate and show its report after either approval or decline. An idle or expired connected agent no longer leaves that report waiting for another chat message. The human decision remains required, repeated clicks cannot change it, and the page sends no staged calls. The report's provenance identifies it as workflow generated; recorded runs retain their original behavior.
+
+## 2026-11-04 — Preserve bound blank nodes during classifier closure
+
+The classifier restores Comunica's source-scoped blank terms before feeding each pass back into its request dataset. Full producer records with anonymous Context, Result and Score components now reach a fixed point without cloning those components. The public library inverse mapping leaves named IRIs and genuinely fresh constructed nodes unchanged; the existing nonconvergence and capacity guards still refuse partial results. The stored query, ontology, canonical source and authored artifact pins are unchanged.
+
+Regression checks use the complete synthetic PGSL and TLA producer graphs, independent blank identities and reserved-prefix IRIs. The public inverse-mapping package is declared directly at its existing lockfile version so the production image retains it.
+
+## 2026-11-04 — Package the PGSL browser's local RDF helper
+
+The browser build now bundles its local demo projection helper while keeping npm packages external. Its Docker build preserves the helper's relative source path. This repairs the missing-module startup crash observed during the normal rollout of the legacy xAPI alignment; the original demo projection and health identity contract are unchanged.
+
+The actual standalone emitted server is tested after removing its TypeScript sources, with outbound HTTP denied. The existing cold image workflow also starts the built browser image without network access and checks its baked build identity at `/health` before accepting the image.
+
+## 2026-11-04 — Close chained classifications and align legacy xAPI producers
+
+The public classifier now iterates the pinned query to a bounded monotone fixed point. Chained bridges complete in one request; nonconvergence fails without a partial result. Only submitted subjects are returned. The existing proposed AI-CFT-to-LER mapping can therefore reach the authored generic Competency framework concept; this is a Hypothetical entailment of that mapping, not editorial ratification of a new canonical relation.
+
+Authored catalog 0.1.1 scopes catalog and bridge authorship to their author, retains both English definition creators, and records Claude's actual review separately with content-bound review documents. CTDL-ASN direct evidence and two IEEE supporting references now agree with the upstream draft, and peer bridge headings identify their vocabulary.
+
+Both actual TLA demo producers emit a distinct current informational record, a separate lossless JSON source entity and nested Result/Score predicates. The legacy activity identity is not aliased to a record. The demo fixtures remain synthetic. Real encrypted-lattice tests verify that a failed usage projection followed by the same signed statement retry preserves exactly one original through warm and cold recovery.
+
+The companion Learning Fabric and legacy adapters are documented in `applications/foxxi-content-intelligence/i2idlx/xapi-alignment.md`. The canonical v0.0.93 source, historical records and access controls are unchanged.
+
+## 2026-11-04 — Record the verified private usage catalog publication
+
+The isolated CSS package retains the generator's exact lockfile-pinned ComponentsJS 6.4 context before pruning build dependencies and registers its emitted version-6 IRI through the supported local context map. Docker and both isolated CI assembly paths test the real ComponentsJS 5 manager with network access denied after generator removal; no version-5 alias or dependency change is introduced. Existing storage/recovery assertions are unchanged.
+
+The concept-usage port now describes the deployed writer's exact concept references, immutable LRS-enriched original and separate encrypted private usage artifact. Unknown tags are reported and excluded; usage about a concept does not assert learner achievement or publish globally queryable RDF. The tracked catalog receipt records the genuine current publication and retains its predecessor under superseded, with all other graph receipts preserved.
+
+Existing signed-chain authority and a matching version precondition governed the publication. Public readback verifies relay-attested authorship and content binding; negotiated RDF matches the reviewed catalog. Native and Python publication records and app projections agree, while both canonical and combined workflow replay expectations remain unchanged. The production visitor oracle also matches the current disconnected-agent labels and checks connection guidance and the absent model conversation. These catalog and visitor changes add no app behavior, canonical adoption or permission; the context packaging correction preserves storage and recovery semantics.
+
+## 2026-11-04 — Keep authored competency terminology distinct from the canonical glossary
+
+Interpretant adds the reviewed Competency framework definition as a Hypothetical authored I2IDL-X concept with its own IRI, provenance and read ports. The canonical 420-concept v0.0.93 source, byte pin and definitions remain unchanged. Browser and server search, Ask and classification share the same explicit corpus projection; source-only views retain canonical terms only. Authored RDF and an exact-reference SHACL profile are discoverable and hash-bound to the executed checks, and Orchestrate preserves authored IRIs when staging drafts.
+
+The two specialized Foxxi LER/TLA framework classes classify into the authored generic concept in one direction. The CTDL-ASN candidate annotation creates no typing or ratified mapping. Focused browser/server, HTTP, classifier, SHACL, export and Orchestrate regressions exercise these boundaries. The PR template now requests concrete upstream/downstream semantic integration impact.
+
+- Signed xAPI writes retain a private usage artifact with same-owner readback and distinct event, LRS storage and projection timestamps.
+
+## 2026-11-03 — Distinguish paired-agent request timeout from session expiry
+
+A timed-out question now directs the user to ask again on the active agent connection, instead of advising sign-in. The broker marks only its request deadline as request_timeout; agent failures and genuine session expiry retain their separate errors. Ask and live Orchestrate explain the retry without discarding the paired session.
+
+Actual client/router HTTP checks use injected clocks with the production ten-minute request and thirty-minute session bounds. They cover both deadline races, successful fresh questions on the same connection, agent failures with matching error prose, and real session expiry. These deterministic checks make no model or production calls.
+
+## 2026-11-03 — Respect paired-agent concurrency in live Orchestrate
+
+Live Orchestrate respects the connected executor's advertised request capacity. The paired-agent transport advertises one active request, so independent role steps run in sequence instead of failing at the first parallel handoff. Host executors keep the existing two-step parallel limit.
+
+The actual Orchestrate hook and twelve-step dependency graph run through the browser transport with deterministic completion fixtures in agent-session-check.mjs. The regression fails before the change and passes afterward; host parallelism, invalid/wider limits and overlapping-consumer isolation are checked. These checks make no provider or production calls and do not establish Claude or complete production acceptance.
+
+## 2026-11-03 — Show private and shared note audiences accurately in HMD
+
+Shared publications now retain an explicit audience marker alongside private and public publications. Inline and later note projections use that declared audience, rather than labelling every encrypted record private. Older records with missing or conflicting audience metadata show an unknown audience without changing their access.
+
+Namespace-aware projection tests and actual SDK publication tests cover audience metadata, legacy records and private/shared/public agreement. Encryption, recipients, authorization and generic HMD workflow states are unchanged. Hosted remains available; federation remains off by default.
+
+## 2026-11-03 - Keep Foxxi HTTP context outside agent-session inputs
+
+The deployed Foxxi middleware adds internal client-address and caller-token context to parsed JSON. Browser agent-session creation and polling now discard only those two transport fields before checking their exact input contract. Browser authority still comes only from the Authorization header, creation budgets still use the actual request address, and signed driver identity and payload checks are unchanged.
+
+HTTP tests now include that context decoration and check that body tokens cannot authorize a browser or override creation budgets. The packaged-server startup proof exercises creation, capability-protected status, invalid body-token refusal and disconnect through the actual entrypoint middleware before an image can ship.
 
 ## 2026-11-02 — Pair a standalone Interpretant conversation with an external agent
 

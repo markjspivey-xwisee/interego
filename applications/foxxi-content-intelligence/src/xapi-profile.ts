@@ -77,8 +77,8 @@ const verbs = [
   { id: `${FOXXI_NS}verbs/framework-aligned`,  prefLabel: { en: 'framework-aligned' },  definition: { en: 'Foxxi extension — admin declared a CASE 1.0 cross-tenant alignment association' } },
   { id: `${FOXXI_NS}verbs/policy-decided`,     prefLabel: { en: 'policy-decided' },     definition: { en: 'Foxxi extension — ABAC policy returned an access decision (allow / deny) for a substrate call' } },
   { id: `${FOXXI_NS}verbs/affordance-invoked`, prefLabel: { en: 'affordance-invoked' }, definition: { en: 'Foxxi extension — a bridge affordance was called (instrumented every handler)' } },
-  // Performance verb (IEEE P2997) — every agent substrate act projects as this.
-  { id: `${FOXXI_NS}performed`, prefLabel: { en: 'performed' }, definition: { en: 'A unit of on-the-job production work was performed by a human or an AI agent. The single principled performance verb every substrate activity projects to — what was done is carried by the object type (the descriptor\'s own conformsTo), never by a domain verb.' } },
+  // Shared performance verb for production work (IEEE P2997).
+  { id: `${FOXXI_NS}performed`, prefLabel: { en: 'performed' }, definition: { en: 'A human or AI agent carried out a unit of on-the-job production work. The object activity type identifies the kind of work. For a projected descriptor, use its declared conformsTo as the activity type when available.' } },
   // Structural (modal) verbs — name the MODAL MODE of any agent's context-descriptor
   // act (iep:ModalStatusEnum), domain-agnostic. These label the agentic-native
   // trajectory step; the xAPI statement verb itself is always `performed` (or the

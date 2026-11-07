@@ -21,6 +21,9 @@ export function Home({ onNavigate }: { onNavigate: (r: Route) => void }) {
           on a single cryptographic root. Verticals (learning, organizational memory, agent
           development, agent collaboration) compose on top without extending the protocol.
         </p>
+        <p style={{ ...para, borderLeft: '3px solid var(--accent)', paddingLeft: 14 }}>
+          <strong>Hosted Interego is a beta prototype for testing.</strong> Bugs, outages, and data loss are possible.
+        </p>
         <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
           <button style={btnPrimary} onClick={() => onNavigate('substrate')}>The substrate →</button>
           <button style={btnOutline} onClick={() => onNavigate('verticals')}>Verticals</button>

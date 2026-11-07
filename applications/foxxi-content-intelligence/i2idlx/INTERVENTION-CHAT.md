@@ -24,6 +24,41 @@ The pane retains its draft during navigation while the workbench stays open.
 It does not automatically save supplied material to browser storage or a pod.
 The conversation owns its discussion history; no server chat session is created.
 
+## Personal course sources on Ask
+
+On **Ask**, expand **Ask about a course**, pair an AI agent with the workbench,
+and connect your own SCORM Cloud application. Select a course from that
+application, then ask a question. The read-only connector retrieves the selected
+version's package and projects its instructional passages for that question.
+Each follow-up retrieves source context again. The source details retain course
+identity, version, archive digest, package-contents digest, passage identifiers
+and missing material. Source and citation identity binds the provider, course,
+version and exact file contents. ZIP timestamp, compression or ordering changes
+alone preserve the conversation; a file-content change clears it. The raw archive
+digest remains separate evidence of the actual downloaded bytes.
+
+Clicking Ask shares those retrieved passages with the explicitly paired AI.
+The application ID and provider secret are cleared from the input fields after
+the connection attempt and never enter model context. The server keeps them only
+in the verified browser session's in-memory connection. Disconnecting, replacing
+the pairing or session expiry revokes the connection and cancels pending reads.
+There is no account-specific service variable, default course or public package
+upload. A server restart requires reconnecting.
+
+An expired course connection blocks further course questions until the visitor
+reconnects or explicitly chooses **Use glossary only**. Changing the selected
+course clears the old conversation so its passages cannot silently carry into
+another course's answers. Source retrieval creates no course attempt, assessment,
+grade, learner record or xAPI statement.
+
+The browser-only contract is `POST /i2idlx/api/user-courses`, advertised in
+`/i2idlx/capabilities` under `personalCourses`. Its operations are `connect`,
+`status`, `courses`, `source` and `disconnect`. Every call needs the current
+paired browser's authorization and session ID. A signed agent driver request
+does not grant access to provider credentials or this API. Provider requests use
+only the official SCORM Cloud API origin, with bounded responses and package
+inflation limits. Visitor-supplied URLs and upstream redirects are refused.
+
 ## Shared read contract
 
 - `i2idlx_interventions` / `GET /i2idlx/api/interventions` returns at most forty

@@ -34,7 +34,7 @@ RUN mkdir -p /tarballs && \
 # ────────────────────────────────────────────────────────────
 #  Build stage: compile the pgsl-browser server against the lib
 # ────────────────────────────────────────────────────────────
-WORKDIR /app
+WORKDIR /app/examples/pgsl-browser
 
 COPY examples/pgsl-browser/package.json ./package.json.template
 # Drop every @interego/* workspace specifier from the pgsl-browser's
@@ -53,6 +53,8 @@ RUN node -e "const fs=require('fs');const p=JSON.parse(fs.readFileSync('./packag
 # esbuild build (per the prior README note: pgsl-browser is a demo;
 # type drift is tolerated; tsc is reserved for the core library).
 COPY examples/pgsl-browser/server.ts ./
+# Keep the server's parent-relative local helper available to the bundler.
+COPY examples/xapi-record-rdf.ts ../xapi-record-rdf.ts
 COPY examples/pgsl-browser/index.html ./
 COPY examples/pgsl-browser/observatory.html ./
 RUN npm run build
@@ -65,11 +67,11 @@ FROM gcr.io/distroless/nodejs22-debian12
 
 WORKDIR /app
 
-COPY --from=build /app/dist ./dist
-COPY --from=build /app/node_modules ./node_modules
-COPY --from=build /app/package.json ./
-COPY --from=build /app/index.html ./
-COPY --from=build /app/observatory.html ./
+COPY --from=build /app/examples/pgsl-browser/dist ./dist
+COPY --from=build /app/examples/pgsl-browser/node_modules ./node_modules
+COPY --from=build /app/examples/pgsl-browser/package.json ./
+COPY --from=build /app/examples/pgsl-browser/index.html ./
+COPY --from=build /app/examples/pgsl-browser/observatory.html ./
 
 EXPOSE 5000
 

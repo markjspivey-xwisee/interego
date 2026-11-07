@@ -8,11 +8,13 @@ const hosted = workbenchHosted;
 let connected = null, personalSample = null;
 const announce = () => window.dispatchEvent(new Event("interego-workbench:changed"));
 const agentSessions = createAgentSessionClient({ url: backendUrl, onState: announce });
-export const connectAgentSession = () => agentSessions.connect();
+export const connectAgentSession = routine => agentSessions.connect(routine);
 export const renewAgentInvitation = () => agentSessions.renewInvitation();
 export const disconnectAgentSession = () => agentSessions.disconnect();
 export const refreshAgentSession = () => agentSessions.refresh();
 export const subscribeAgentSession = listener => agentSessions.subscribe(listener);
+export const userCourseRequest = (args, signal) => agentSessions.requestUserCourses(args, signal);
+export const userCourseSample = () => agentSessions.getUserCourseSample();
 const failure = (message, code = "unavailable") => Object.assign(new Error(message), { code });
 const json = async (r) => {
   const data = await r.json().catch(() => ({}));

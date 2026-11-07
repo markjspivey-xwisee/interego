@@ -1,3 +1,4 @@
+import { safeNavigationHref } from "../navigation-links.js";
 import { identityCopy } from "../identity-copy.js";
 // Review: the shared queue that closes the ratification loop for I2IDL-X crosswalks and capability links.
 import { ITEMS as ALL_ITEMS, META, byId, ACTIONS, roleById, methodById, systemLabel, itemByKey as ITEM_BY_KEY, METHODS } from "../data.js";
@@ -181,7 +182,7 @@ function ReviewCard({ item, s, focused, onFocus }) {
         <span className="row" style={{ gap: 6 }} title="Drafting confidence"><Meter v={r.cf} /><span className="num">{r.cf.toFixed(2)}</span></span>
         <span className="spacer" />
         {item.sandbox ? <code className="tiny muted" title="Proposed in this run; it gets its IRI when the staged call is published">mp:{r.id}</code>
-          : <a className="tiny muted" href={item.iri} target="_blank" rel="noopener" title={item.iri}><code>{item.type === "mapping" ? "mp:" : "en:"}{r.id}</code></a>}
+          : <a className="tiny muted" href={safeNavigationHref(item.iri)} target="_blank" rel="noopener" title={item.iri}><code>{item.type === "mapping" ? "mp:" : "en:"}{r.id}</code></a>}
       </div>
       <div className="rpair">
         <div className="rside">
@@ -197,13 +198,13 @@ function ReviewCard({ item, s, focused, onFocus }) {
           <div className="rs-h">{item.type === "mapping" ? r.v : systemLabel(a && a.sys)}</div>
           {item.type === "mapping" ? (
             <>
-              <div className="rs-t"><a href={r.pg || r.o} target="_blank" rel="noopener" title={r.o}>{r.ol || r.o.split(/[#/]/).pop()}</a></div>
+              <div className="rs-t"><a href={safeNavigationHref(r.pg || r.o)} target="_blank" rel="noopener" title={r.o}>{r.ol || r.o.split(/[#/]/).pop()}</a></div>
               <div className="rs-d">{r.od ? <>{r.on ? <span className="tiny muted">{r.on}: </span> : null}{r.od.length > 220 ? r.od.slice(0, 220) + "…" : r.od}</> : <span className="muted small">{item.sandbox ? "I2IDL-X's pinned term index confirms the term and its label." : r.v === "UNESCO Thesaurus" ? "UNESCO publishes no scope note for this term." : "Its vocabulary publishes no definition."}</span>}</div>
               {r.oa && r.oa.length ? <div className="tiny muted">Also: {r.oa.slice(0, 5).join(", ")}</div> : null}
             </>
           ) : (
             <>
-              <div className="rs-t"><a href={"#agents-act." + a.sys + "." + a.n}>{a.t || a.n}</a></div>
+              <div className="rs-t"><a href={safeNavigationHref("#agents-act." + a.sys + "." + a.n)}>{a.t || a.n}</a></div>
               <div className="row small" style={{ gap: 6 }}><MethodTag m={a.m} /><code className="tiny ellipsis">{a.u.replace(/^https:\/\//, "")}</code></div>
               <div className="rs-d ui">{a.d ? (a.d.length > 200 ? a.d.slice(0, 200).replace(/\s+\S*$/, "") + "…" : a.d) : null}</div>
             </>
@@ -213,7 +214,7 @@ function ReviewCard({ item, s, focused, onFocus }) {
       <div className="small"><span className="muted">Rationale: </span>{r.w}</div>
       <VoteBar itemKey={item.key} />
       <Voters itemKey={item.key} />
-      {s === "ratified" && item.type === "mapping" ? <div><a className="btn sm" href={upstreamIssue(item, tallies.get(item.key))} target="_blank" rel="noopener"><Icon name="flag" />Suggest to I2IDL editors</a></div> : null}
+      {s === "ratified" && item.type === "mapping" ? <div><a className="btn sm" href={safeNavigationHref(upstreamIssue(item, tallies.get(item.key)))} target="_blank" rel="noopener"><Icon name="flag" />Suggest to I2IDL editors</a></div> : null}
     </article>
   );
 }

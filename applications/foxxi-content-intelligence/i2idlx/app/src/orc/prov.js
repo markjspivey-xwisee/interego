@@ -36,19 +36,24 @@ export function provTurtle({ log, world, mode, recordedAt, recordedRelease }) {
     out.push(`<${run}/recording> a prov:Entity ; rdfs:label "Original Claude transcript"@en${recordedRelease ? ` ; owl:versionInfo ${lit(recordedRelease)}` : ""}${recordedAt ? ` ; dct:identifier ${lit(recordedAt)}` : ""} .`);
   }
   for (const a of AGENTS) out.push(`<urn:interpretant:agent:${a.id}> a prov:SoftwareAgent ; rdfs:label ${lit(a.name)}@en ; prov:actedOnBehalfOf <${who}> .`);
+  const workflow = "urn:interpretant:workflow:orchestrate";
+  if (log.some((x) => x.execution === "workflow")) out.push(`<${workflow}> a prov:SoftwareAgent ; rdfs:label "Interpretant workflow"@en ; prov:actedOnBehalfOf <${who}> .`);
   const turns = new Set();
   let n = 0;
   for (const x of log) {
     if (x.type === "step" && x.status !== "skipped" && !turns.has(x.step)) {
       turns.add(x.step);
       const s = stepById.get(x.step);
-      out.push(`<${run}/turn/${x.step}> a ieh:AgentTurn ; rdfs:label ${lit(s.title)}@en ;\n    prov:wasAssociatedWith <urn:interpretant:agent:${s.agent}> ; ieh:answeredFor <${who}> ; dct:isPartOf <${run}> .`);
+      const generated = x.execution === "workflow";
+      out.push(`<${run}/turn/${x.step}> a ${generated ? "prov:Activity" : "ieh:AgentTurn"} ; rdfs:label ${lit(s.title)}@en ;\n    prov:wasAssociatedWith <${generated ? workflow : "urn:interpretant:agent:" + s.agent}> ; ${generated ? 'dct:description "Generated automatically from actual run results; no model call."@en' : `ieh:answeredFor <${who}>`} ; dct:isPartOf <${run}> .`);
     }
     if (x.type === "call" && x.status !== "running") {
       n++;
       const via = TOOLS[x.tool] && TOOLS[x.tool].via;
-      out.push(`<${run}/action/${n}> a ieh:AgentAction ; dct:title ${lit(x.tool)} ;\n    prov:wasAssociatedWith <urn:interpretant:agent:${x.agent}> ; prov:wasInformedBy <${run}/turn/${x.step}> ;\n    ieh:toolArgs ${lit(JSON.stringify(x.input || {}))} ; ieh:outcome ${lit(x.status === "ok" ? "success" : "failure")}${via ? ` ;\n    prov:used cat:${via}` : ""} .`);
+      const generated = x.execution === "workflow";
+      out.push(`<${run}/action/${n}> a ${generated ? "prov:Activity" : "ieh:AgentAction"} ; dct:title ${lit(x.tool)} ;\n    prov:wasAssociatedWith <${generated ? workflow : "urn:interpretant:agent:" + x.agent}> ; prov:wasInformedBy <${run}/turn/${x.step}> ;\n    ieh:toolArgs ${lit(JSON.stringify(x.input || {}))} ; ieh:outcome ${lit(x.status === "ok" ? "success" : "failure")}${via ? ` ;\n    prov:used cat:${via}` : ""} .`);
     }
+    if (x.type === "say" && x.execution === "workflow" && x.summary) out.push(`<${run}/report> a prov:Entity ; dct:title "Automatic run report"@en ; dct:format "application/json" ;\n    prov:wasGeneratedBy <${run}/turn/${x.step}> ; prov:value ${lit(JSON.stringify(x.summary))} .`);
     if (x.type === "decision") out.push(`<${run}/decision> a prov:Activity ; rdfs:label ${lit(x.decision === "approved" ? "Approved the staged calls" : "Declined the staged calls")}@en ;\n    prov:wasAssociatedWith <${who}> ; dct:isPartOf <${run}> .`);
   }
   return `# The run as provenance (Interego harness vocabulary).\n${out.join("\n")}\n\n# What the run produced: the organization's context graph.\n${worldTurtle(world).replace(/^#.*\n/, "")}`;

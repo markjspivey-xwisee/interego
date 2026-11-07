@@ -1,7 +1,7 @@
 import { identityCopy } from "./identity-copy.js";
 // Review governance: votes under Interego's ratification algebra (Asserted = for, Counterfactual = against,
 // Hypothetical = abstain), the workbench's consensus policy, and exports that close the loop on Interego.
-import { META, ITEMS, itemByKey, byId, ACTIONS, roleById, PORTS } from "./data.js";
+import { META, ITEMS, itemByKey, byId, iriOf, ACTIONS, roleById, PORTS } from "./data.js";
 import { useCaps, useProfiles, consensus, CONSENSUS_LABEL } from "./caps.js";
 import { Icon } from "./icons.jsx";
 import { Avatar, useUI } from "./ui.jsx";
@@ -175,19 +175,20 @@ ${PREFIXES()}
 export function upstreamIssue(item, tally) {
   const port = PORTS.find((p) => p.id === "port-upstream-review");
   const c = byId.get(item.c);
+  const source = c.origin?.kind === "authored" ? "Authored I2IDL-X proposal" : "I2IDL concept";
   let title, body;
   if (item.type === "mapping") {
     const m = item.rec;
     title = `Mapping candidate: ${c.l} skos:${m.p} ${m.ol || m.o}`;
     body = `A crosswalk candidate for editorial consideration (proposed in I2IDL-X, ratified by its reviewers).\n\n` +
-      `- I2IDL concept: ${c.l} — https://id.i2idl.org/concepts/${c.id}\n- Proposed: skos:${m.p}\n- Target: ${m.o}${m.ol ? ` (${m.ol}, ${m.v})` : ""}\n` +
+      `- ${source}: ${c.l} — ${iriOf(c.id)}\n- Proposed: skos:${m.p}\n- Target: ${m.o}${m.ol ? ` (${m.ol}, ${m.v})` : ""}\n` +
       `- Rationale: ${m.w}\n- Method: ${m.m}; confidence ${m.cf.toFixed(2)}\n- Votes: ${tally.for.length} for, ${tally.against.length} against, ${tally.abstain.length} abstain\n` +
       `- Record: ${item.iri}\n\nI2IDL publishes mappings by editorial judgement; this is a candidate, not an assertion.`;
   } else {
     const e = item.rec;
     const a = ACTIONS[e.a];
     title = `Capability link candidate: ${c.l} ${roleById.get(e.r).by} ${a ? a.t : e.a}`;
-    body = `- I2IDL concept: ${c.l} — https://id.i2idl.org/concepts/${c.id}\n- Link: ${roleById.get(e.r).by} ${e.a}\n- Rationale: ${e.w}\n` +
+    body = `- ${source}: ${c.l} — ${iriOf(c.id)}\n- Link: ${roleById.get(e.r).by} ${e.a}\n- Rationale: ${e.w}\n` +
       `- Votes: ${tally.for.length} for, ${tally.against.length} against\n- Record: ${item.iri}`;
   }
   return port.tpl.replace("{?title,body}", "?title=" + encodeURIComponent(title) + "&body=" + encodeURIComponent(body));

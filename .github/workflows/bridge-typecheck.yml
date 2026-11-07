@@ -417,6 +417,7 @@ jobs:
           npm run build
           # Generator is build-time only; matches the production runtime.
           rm -rf node_modules/componentsjs-generator
+          npm run test:contexts:offline
       - name: Install and check existing gateway policy
         run: |
           npm ci --prefix deploy/css-gate

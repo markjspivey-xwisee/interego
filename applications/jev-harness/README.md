@@ -48,6 +48,8 @@ export TYPESAFE_API_KEY=...            # https://console.typesafe.ai (Windows: a
 PORT=6090 JEV_HARNESS_REPO=/path/to/repo BRIDGE_DEPLOYMENT_URL=http://localhost:6090 npm run bridge
 ```
 
+The hosted image reads `master` from the public Interego Git remote configured by `JEV_HARNESS_REPO_REMOTE`. It checks for a new revision on demand, at most once per minute during normal operation. Each judgment keeps the same checkout for its duration, and `/health` reports the evaluated `commit` separately from the deployed `build`. For hosted test selection and review, supply `changed_files` and `diff` respectively. Local and CI bridges can still use Git refs against their `JEV_HARNESS_REPO` checkout.
+
 Then follow the graph:
 
 ```bash

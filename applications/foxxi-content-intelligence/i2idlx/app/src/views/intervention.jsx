@@ -1,3 +1,4 @@
+import { safeNavigationHref } from "../navigation-links.js";
 // Intervention context belongs to the viewer until an explicit preview or conversation handoff.
 import { META, C, byId } from '../data.js';
 import { backendUrl } from '../backend-url.js';
@@ -105,7 +106,7 @@ function ContextPreview({ packet, previewOnly = true }) {
     <div className="note stack" style={{ gap: 8 }}>
       <b>{source.title || source.id || 'Selected intervention'}</b>
       <div className="row wrap"><span className="tag">{source.kind || packet.request?.source || 'Intervention'}</span>{source.version ? <span className="tag">{source.version}</span> : null}</div>
-      {uri ? <div className="small">Source: {href ? <a href={href} target="_blank" rel="noopener">{uri}</a> : <span>{uri}</span>}</div> : null}
+      {uri ? <div className="small">Source: {href ? <a href={safeNavigationHref(href)} target="_blank" rel="noopener">{uri}</a> : <span>{uri}</span>}</div> : null}
       {source.rights ? <p className="small muted">{source.rights}</p> : null}
       {source.provenance ? <p className="small muted">{typeof source.provenance === 'string' ? source.provenance : source.provenance.attribution || source.provenance.note || source.provenance.origin || ''}</p> : null}
     </div>

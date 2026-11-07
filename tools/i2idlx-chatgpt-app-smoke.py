@@ -15,6 +15,13 @@ import re
 import sys
 
 
+# Explicit loading also works under Python -I, which omits the script directory.
+import importlib.util
+_oracle_spec = importlib.util.spec_from_file_location("corpus_oracle", pathlib.Path(__file__).resolve().parents[1] / "applications/foxxi-content-intelligence/i2idlx/tools/corpus_oracle.py")
+_oracle = importlib.util.module_from_spec(_oracle_spec)
+_oracle_spec.loader.exec_module(_oracle)
+
+
 LAST_GRAPH_COMMIT = "b75261de5ad7851c1f61607091cc00e486bbbb5f"
 APP_URL = "http://i2idlx-frame.test/i2idlx/"
 DEPLOYMENT_APP_URL = "https://i2idlx-backend.test/i2idlx/"
@@ -165,6 +172,7 @@ def main():
 
         html = embedded_html((root / "site" / "app.html").read_text(encoding="utf-8"))
         data = json.loads((root / "app" / "build" / "data.json").read_text(encoding="utf-8"))
+        corpus = _oracle.validate_corpus(data)
         concepts = {concept["id"]: concept for concept in data["concepts"]}
         check("fixture_source_v93", data["meta"]["release"] == "v0.0.93"
               and data["meta"]["commit"] == LAST_GRAPH_COMMIT and len(concepts) == 420)
@@ -272,18 +280,22 @@ def main():
                             check(tag + ":page_fits_width:" + route, frame.evaluate(
                                 "document.documentElement.scrollWidth <= window.innerWidth + 2"))
 
+                        _oracle.assert_embedded_source(frame, data)
+                        _oracle.assert_browser_corpus(frame, corpus, visit)
+                        check(tag + ":exact_combined_and_source_only_corpus", True)
+
                         # Render all ordinary workbench views in the real embedded document.
                         visit("home", ".hero h1")
                         frame.locator('nav[aria-label="Views"] a[href="#browse"]:visible').first.click()
                         visit("browse", ".lex-list .li")
-                        check(tag + ":browse_420", frame.locator(".lex-list .li").count() == 420)
+                        check(tag + ":browse_combined", frame.locator(".lex-list .li").count() == corpus["combined_count"])
                         visit("c-learning-management-systems", "#hw")
                         lms = concepts["learning-management-systems"]
                         frame.wait_for_function("label => document.querySelector('#hw')?.textContent === label", arg=lms["l"])
                         check(tag + ":v93_new_term_definition", " ".join(lms["d"].split()) == " ".join(frame.locator(".definition .def").text_content().split()))
                         check(tag + ":unknown_editorial_status", "Not supplied" in frame.locator(".def-meta").inner_text())
                         visit("whole", ".mapwrap svg circle")
-                        check(tag + ":map_420", frame.locator(".mapwrap svg circle").count() == 420)
+                        check(tag + ":map_combined", frame.locator(".mapwrap svg circle").count() == corpus["combined_count"])
                         visit("cmp-formative-evaluation~formative-assessment", ".cmp-grid .cmp-row")
                         check(tag + ":compare_two_definitions", frame.locator(".cmp-head h3").count() == 2)
                         visit("annotate", ".an textarea")

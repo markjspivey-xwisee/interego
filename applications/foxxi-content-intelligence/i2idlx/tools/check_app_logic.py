@@ -9,6 +9,7 @@ python3 -I tools/check_app_logic.py <i2idlx-root>
 3. Exports the smoke test saved parse, and the governed-write records conform to the I2IDL-X shapes.
 """
 import csv
+import hashlib
 import io
 import json
 import os
@@ -19,6 +20,12 @@ import sys
 from pyshacl import validate
 from rdflib import BNode, Graph, URIRef
 from rdflib.namespace import RDF, SKOS
+
+# Explicit loading also works under Python -I, which omits the script directory.
+import importlib.util
+_oracle_spec = importlib.util.spec_from_file_location("corpus_oracle", pathlib.Path(__file__).with_name("corpus_oracle.py"))
+_oracle = importlib.util.module_from_spec(_oracle_spec)
+_oracle_spec.loader.exec_module(_oracle)
 
 ROOT = pathlib.Path(sys.argv[1]).resolve()
 APP = ROOT / "app"
@@ -47,7 +54,9 @@ out = json.loads(subprocess.run(["node", "build/check.cjs", "build/data.json"], 
 
 # 0. annotation and the editorial packet
 data = json.loads((APP / "build" / "data.json").read_text())
+corpus = _oracle.validate_corpus(data)
 labels = {c["id"]: c["l"] for c in data["concepts"]}
+labels.update({c["id"]: c["label"] for c in corpus["authored"]})
 whole = [cid for cid, spans in out["selfMatch"].items() if len(spans) == 1 and spans[0][0] == 0 and spans[0][1] == len(labels[cid])]
 own = [cid for cid in whole if out["selfMatch"][cid][0][2] == cid]
 shared = {f.lower() for c in data["concepts"] for f in [c["l"]] if sum(1 for d in data["concepts"] if d["l"].lower() == f.lower() or f.lower() in (a.lower() for a in d["a"])) > 1}
@@ -74,14 +83,39 @@ deco = Graph().parse(ROOT / "dist" / f"{cfg['slugs']['decorations']}.ttl", forma
 IEP = "https://markjspivey-xwisee.github.io/interego/ns/iep#"
 HYDRA = "http://www.w3.org/ns/hydra/core#"
 bad = 0
-for cid, ctl in out["controls"].items():
+check(set(out["controls"]) == set(labels), "controls cover exactly the canonical and declared authored concepts")
+canonical_controls = {cid: out["controls"][cid] for cid in (c["id"] for c in data["concepts"])}
+for cid, ctl in canonical_controls.items():
     got = {str(a).split("--", 1)[1]: str(deco.value(a, URIRef(HYDRA + "target"))) for a in deco.objects(URIRef("https://id.i2idl.org/concepts/" + cid), URIRef(IEP + "affordance"))}
     if got != ctl:
         bad += 1
-check(bad == 0 and len(out["controls"]) == 420, f"client controls match all {len(out['controls']) * 5} materialized targets ({bad} concepts differ)")
+check(bad == 0 and len(canonical_controls) == _oracle.CANONICAL_COUNT, f"client controls match all {len(canonical_controls) * 5} materialized targets ({bad} concepts differ)")
+
+# Authored terms expose their own public read ports, not invented canonical decorations.
+for concept in corpus["authored"]:
+    base = corpus["catalog"]["baseUrl"].rstrip("/")
+    expected = {"urn:iep:action:foxxi:i2idlx-authored-catalog": base + "/i2idlx/authored-catalog",
+                "urn:iep:action:foxxi:i2idlx-authored-rdf": base + "/i2idlx/authored.ttl",
+                "urn:iep:action:foxxi:i2idlx-authored-shapes": base + "/i2idlx/authored-shapes.ttl"}
+    check(out["controls"][concept["id"]] == expected, f"{concept['iri']}: exact authored catalog/RDF/shapes controls")
 
 # 2. stored queries
-gl = Graph().parse(pathlib.Path(cfg["i2idl"]["localClone"]) / cfg["i2idl"]["graphPath"], format="json-ld", base="https://id.i2idl.org/")
+source_path = pathlib.Path(cfg["i2idl"]["localClone"]) / cfg["i2idl"]["graphPath"]
+# Read the immutable Git blob: Windows checkout line-ending conversion is not
+# part of the publisher's pinned bytes. App rows must still match this blob.
+clone = str(pathlib.Path(cfg["i2idl"]["localClone"]).resolve())
+source_bytes = subprocess.run(["git", "-c", "safe.directory=" + clone, "-C", clone, "show",
+                               _oracle.SOURCE_PIN["commit"] + ":" + _oracle.SOURCE_PIN["graphPath"]],
+                              check=True, capture_output=True).stdout
+check(hashlib.sha256(source_bytes).hexdigest() == _oracle.SOURCE_PIN["graphSha256"], "canonical source bytes retain the exact pinned digest")
+gl = Graph().parse(data=source_bytes, format="json-ld", publicID="https://id.i2idl.org/")
+canonical_bad = []
+for c in data["concepts"]:
+    iri = URIRef("https://id.i2idl.org/concepts/" + c["id"])
+    definition = " ".join(str(gl.value(URIRef(c["di"]), RDF.value)).split())
+    if str(gl.value(iri, SKOS.prefLabel)) != c["l"] or definition != c["d"]:
+        canonical_bad.append(c["id"])
+check(not canonical_bad, f"all 420 raw canonical identities, labels and active definitions match the pinned graph ({len(canonical_bad)} differ)")
 short = lambda v: str(v).replace("https://id.i2idl.org/concepts/", "")
 # client-side queries run over what their ports return (vocabulary, alignments, referents) plus the sample data
 over = Graph()

@@ -21,9 +21,14 @@ import {
   actionKey,
   controlsFromAffordances,
   extractAffordancesFromTurtle,
+  findSubjectsOfType,
+  parseTrig,
   renderHypermediaMarkdown,
   HYPERMEDIA_MARKDOWN_MEDIA_TYPE,
   type HypermediaControl,
+  type IRI,
+  type ParsedSubject,
+  type ParsedTerm,
 } from '@interego/core';
 
 const IEP_NS_VIEW = 'https://markjspivey-xwisee.github.io/interego/ns/iep#';
@@ -89,18 +94,10 @@ export interface NoteViewInput {
    *  descriptor turtle doesn't carry iep:describes (publish_context's synthesized
    *  affordance turtle); otherwise it is derived from descriptorTurtle. */
   readonly graphIri?: string;
-  /**
-   * The note's audience class, when the CALLER already holds it as a value.
-   *
-   * ★ SUPPLIED BECAUSE A REGEX OVER A SERIALIZATION IS NOT A POLICY READ. Without it this
-   * function infers public-vs-private by probing `descriptorTurtle` for `iep:visibility` /
-   * `iep:encrypted` — correct against a PERSISTED descriptor, and silently wrong against a
-   * synthesized one that omits them. Both probes then fail for reasons that have nothing to do
-   * with the note, which is how every publish_context hand-back came to project `state:
-   * "private"` and "the note stays private" whatever the caller's `visibility` said.
-   * publish_context has the audience class in a variable; it passes it. `get_descriptor` does
-   * not (it only has the persisted bytes), so the probe below remains its path.
-   */
+  /** Computed publication audience, when the caller already holds it. This is
+   * presentation metadata, never an authorization or recipient-selection input. */
+  readonly visibility?: 'public' | 'shared' | 'private';
+  /** Legacy public-only hint. false establishes no particular non-public audience. */
   readonly isPublic?: boolean;
   /**
    * Can `invoke_affordance` follow a control declaring this `hydra:target`?
@@ -198,6 +195,71 @@ function dedent(s: string): string {
   return deMin.map((l) => l.replace(/^[ \t]{4,}/, '   ')).join('\n');
 }
 
+type NoteAudience = NonNullable<NoteViewInput['visibility']>;
+
+/** Read only this descriptor's audience metadata, not similarly named predicates
+ * in comments, literals, payloads or unrelated subjects. Encryption and recipient
+ * counts cannot establish whether an audience was private or shared. */
+function noteAudience(input: NoteViewInput): { visibility: NoteAudience | 'unknown'; encrypted?: boolean } {
+  const unknown = { visibility: 'unknown' } as const;
+  try {
+    const doc = parseTrig(input.descriptorTurtle);
+    const descriptors = findSubjectsOfType(doc, `${IEP_NS_VIEW}ContextDescriptor` as IRI);
+    const descriptor = descriptors.length === 1 ? descriptors[0] : undefined;
+    if (!descriptor) return unknown;
+    // The SDK appends distribution metadata under <> (the document resource),
+    // while its typed descriptor has a URN identity. Both name this descriptor.
+    const roots = [descriptor, ...doc.subjects.filter(s => s.subject === '' && s !== descriptor)];
+    const key = (s: ParsedSubject): string => typeof s.subject === 'string' ? s.subject : `_:${s.subject.bnode}`;
+    const subjects = new Map(doc.subjects.map(s => [key(s), s]));
+    const metadata = new Set(roots);
+    const distributions = new Set<ParsedSubject>();
+    for (const root of roots) {
+      for (const predicate of ['affordance', 'hasDistribution']) {
+        for (const ref of root.properties.get(`${IEP_NS_VIEW}${predicate}` as IRI) ?? []) {
+          const linked = ref.kind === 'iri' ? subjects.get(ref.iri) : ref.kind === 'bnode' ? subjects.get(`_:${ref.id}`) : undefined;
+          if (!linked) continue;
+          const distribution = linked.properties.get('http://www.w3.org/1999/02/22-rdf-syntax-ns#type' as IRI)
+            ?.some(t => t.kind === 'iri' && t.iri === 'http://www.w3.org/ns/dcat#Distribution');
+          const fetch = linked.properties.get(`${IEP_NS_VIEW}action` as IRI)
+            ?.some(t => t.kind === 'iri' && [ `${IEP_NS_VIEW}canDecrypt`, `${IEP_NS_VIEW}canFetchPayload` ].includes(t.iri));
+          if (distribution || fetch) {
+            distributions.add(linked);
+            metadata.add(linked);
+          }
+        }
+      }
+    }
+    // The caller provides one plaintext payload, without a selected distribution
+    // identity. Another payload's declaration cannot supply its missing audience.
+    if (distributions.size > 1) return unknown;
+    const values = (predicate: string): ParsedTerm[] => [...metadata].flatMap(s => [...(s.properties.get(`${IEP_NS_VIEW}${predicate}` as IRI) ?? [])]);
+    const audiences = new Set<NoteAudience>();
+    for (const term of values('visibility')) {
+      if (term.kind !== 'literal' || term.language || term.datatype && term.datatype !== 'http://www.w3.org/2001/XMLSchema#string'
+        || !['public', 'shared', 'private'].includes(term.value)) return unknown;
+      audiences.add(term.value as NoteAudience);
+    }
+    if (input.visibility !== undefined) {
+      if (!['public', 'shared', 'private'].includes(input.visibility)) return unknown;
+      audiences.add(input.visibility);
+    }
+    if (input.isPublic === true) audiences.add('public');
+    const encryption = new Set<boolean>();
+    for (const term of values('encrypted')) {
+      if (term.kind !== 'literal' || term.language || term.datatype && term.datatype !== 'http://www.w3.org/2001/XMLSchema#boolean'
+        || !['true', 'false', '1', '0'].includes(term.value)) return unknown;
+      encryption.add(term.value === 'true' || term.value === '1');
+    }
+    if (audiences.size !== 1 || encryption.size > 1) return unknown;
+    const visibility = [...audiences][0]!;
+    const encrypted = encryption.size ? [...encryption][0] : undefined;
+    if (visibility === 'public' && (encrypted === true || input.isPublic === false)
+      || visibility !== 'public' && encrypted === false) return unknown;
+    return { visibility, encrypted };
+  } catch { return unknown; }
+}
+
 export function noteToHyperMarkdown(input: NoteViewInput): string {
   // DESCRIPTOR-level controls (canDecrypt / renderView) — source = the signed
   // descriptor (the transport authority).
@@ -269,14 +331,9 @@ export function noteToHyperMarkdown(input: NoteViewInput): string {
     executableKeys.has(actionKey(c.action)) ? c : { ...c, whenToUse: DECLARATIVE_SCOPE_NOTE }
   ));
   const anyDeclarative = controls.length > 0 && controls.some((c) => c.whenToUse === DECLARATIVE_SCOPE_NOTE);
-  // Reflect the note's ACTUAL visibility in the projection. A PUBLIC note must NOT be labelled
-  // or stated as private/encrypted (georgio: public note mislabeled private). The caller's own
-  // `isPublic` wins when supplied; otherwise read the descriptor's `iep:visibility` /
-  // `iep:encrypted`. See NoteViewInput.isPublic for why the probe alone was not enough.
-  const isPublic = input.isPublic ?? (
-    /iep:visibility\s+"public"/.test(input.descriptorTurtle) || /iep:encrypted\s+false\b/.test(input.descriptorTurtle)
-  );
-  const title = pickLiteral(input.plaintextTurtle, 'dct:title|schema:name|rdfs:label|schema:headline') || (isPublic ? 'Note' : 'Private note');
+  const { visibility, encrypted } = noteAudience(input);
+  const fallbackTitle = visibility === 'private' ? 'Private note' : visibility === 'shared' ? 'Shared note' : 'Note';
+  const title = pickLiteral(input.plaintextTurtle, 'dct:title|schema:name|rdfs:label|schema:headline') || fallbackTitle;
   // Dedent: the stored graph is re-serialized on persist and its multi-line text
   // literal comes back uniformly indented, which CommonMark renders as a code
   // block on re-fetch (but not on the publish hand-back). Normalize both.
@@ -292,9 +349,13 @@ export function noteToHyperMarkdown(input: NoteViewInput): string {
   const body = [
     ...(textOpensWithH1 ? [] : [`# ${title.replace(/\s+/g, ' ')}`, ``]),
     ...(safeText ? [safeText, ``] : []),
-    isPublic
-      ? `_Public note — plaintext, readable by anyone. Its controls and links are below._`
-      : `_Private note — encrypted at rest; decrypted here for you, the authorized agent. Its controls and links are below; the note stays private._`,
+    visibility === 'public'
+      ? `_Public note — ${encrypted === false ? 'plaintext, readable by anyone' : 'marked for public access'}. Its controls and links are below._`
+      : visibility === 'private'
+        ? `_Private note${encrypted === true ? ' — encrypted at rest' : ''}. Its controls and links are below._`
+        : visibility === 'shared'
+          ? `_Shared note${encrypted === true ? ' — encrypted at rest for selected recipients' : ''}. Its controls and links are below._`
+          : `_Audience unknown — this record does not establish whether it is private, shared or public. Its controls and links are below._`,
     // Only when at least one control is declarative — i.e. only when the standing footer would
     // otherwise over-promise. A document whose controls are all followable needs no qualifier.
     ...(anyDeclarative ? [``, DECLARATIVE_BODY_NOTE] : []),
@@ -303,10 +364,10 @@ export function noteToHyperMarkdown(input: NoteViewInput): string {
     id: input.viewUrl,
     type: ['ieh:AgentMemory', 'hmd:Document'],
     descriptorUrl: input.authority,
-    state: isPublic ? 'public' : 'private',
+    state: visibility,
     links: [
       { label: 'Signed descriptor (authority)', href: input.authority, rel: 'describedby', type: 'text/turtle' },
-      { label: isPublic ? 'Turtle' : 'Turtle (decrypted)', href: `${input.viewUrl}?format=turtle`, rel: 'alternate', type: 'text/turtle' },
+      { label: encrypted === true ? 'Turtle (decrypted)' : 'Turtle', href: `${input.viewUrl}?format=turtle`, rel: 'alternate', type: 'text/turtle' },
     ],
     controls,
     body,
@@ -478,9 +539,8 @@ export function inlineRenderedForDescriptor(input: {
       authority: publishableAuthority(input.authorityUrl, authority, input.isFollowable),
       descriptorTurtle,
       plaintextTurtle,
-      // No `isPublic`: this caller has only the PERSISTED descriptor, which carries
-      // `iep:visibility` / `iep:encrypted` itself (packages/solid/src/client.ts writes both),
-      // so the probe inside noteToHyperMarkdown is the right — and only — read here.
+      // This caller has only persisted metadata. The projection reads its declared
+      // audience; older descriptors without one retain an unknown audience label.
       ...(input.isFollowable ? { isFollowable: input.isFollowable } : {}),
     });
     return { rendered, mediaType: HYPERMEDIA_MARKDOWN_MEDIA_TYPE };

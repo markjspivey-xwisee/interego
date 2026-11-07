@@ -57,7 +57,8 @@
  * names any of the game data the purge throws and stays marked for the next pass, which deletes it.
  * The listing names the record and the containers that are kept (the pod's own, and those of a
  * `retained` document) too; only the game data holds the purge open. A write that reaches the store
- * only after that listing is not seen: the purge, finished, does not come back to it.
+ * only after that listing is not seen: the purge, finished, does not come back to it, but the
+ * game-data backfill at the identity server's next start does (server.ts backfillPlayGameData).
  */
 export interface PlayPodPurge {
   /**
@@ -98,7 +99,48 @@ export function isPlayGameData(root: URL, url: string): boolean {
   return relative !== null && PLAY_GAME_DATA.some(pattern => pattern.test(relative));
 }
 
+/** What a listing of a Play pod holds (playGameDataResidue), by path relative to the pod's root. */
+export interface PlayGameDataResidue {
+  /** The game data (PLAY_GAME_DATA). */
+  gameData: string[];
+  /** Everything but the root, the record, the game data and the two containers that hold it (a URL outside the pod, whole). */
+  outside: string[];
+  /** Whether the listing names the record (auth-methods.jsonld). */
+  record: boolean;
+}
+
+/**
+ * What `listed` (purgeProvisionalPlayPod's listing of the pod whose root is `root`, as close() is given
+ * it) holds: the game-data backfill (server.ts reopenFinishedPlayPurge) re-opens only a purge whose pod
+ * holds game data and nothing `outside` it. Only those exact spellings count as the root, the record
+ * and the containers `hallowmarch/` and `hallowmarch/checkpoints/`.
+ */
+export function playGameDataResidue(root: URL, listed: readonly string[]): PlayGameDataResidue {
+  const residue: PlayGameDataResidue = { gameData: [], outside: [], record: false };
+  for (const url of listed) {
+    const relative = inPod(root, url);
+    if (relative === '' || relative === 'hallowmarch/' || relative === 'hallowmarch/checkpoints/') continue;
+    if (relative === 'auth-methods.jsonld') residue.record = true;
+    else if (relative !== null && isPlayGameData(root, url)) residue.gameData.push(relative);
+    else residue.outside.push(relative ?? url);
+  }
+  return residue;
+}
+
 type PodRequest = (url: string, init?: RequestInit) => Promise<Response>;
+
+/**
+ * Whether the store advertises its native conditional delete for `url`: an OPTIONS answered with a 2xx
+ * that carries `Interego-Native-Delete: 1`. An OPTIONS answered 5xx (a gateway's 502, say) says
+ * neither, and throws, as one that times out does, so that no caller takes it for a store without it.
+ * Asked before the first native delete (deleteGameData), and by the game-data backfill before it
+ * re-opens a purge (server.ts reopenFinishedPlayPurge).
+ */
+export async function advertisesNativeDelete(request: PodRequest, url: string): Promise<boolean> {
+  const response = await request(url, { method: 'OPTIONS' });
+  if (response.status >= 500) throw new Error(`Provisional cleanup: the store's OPTIONS was answered ${response.status}`);
+  return response.ok && response.headers.get('interego-native-delete')?.trim() === '1';
+}
 
 /**
  * The native delete of the game data of the pod whose root is `root` (see the head of this file),
@@ -115,8 +157,7 @@ export function deleteGameData(root: URL, request: PodRequest): (url: string) =>
     if (relative !== null && [relative, decoded(relative)].some(path => path === '' || path === 'auth-methods.jsonld'))
       throw new Error('Refusing a native delete of the pod or its sign-in record');
     if (!isPlayGameData(root, url)) throw new Error('Refusing a native delete outside the Play game data');
-    advertised ??= request(url, { method: 'OPTIONS' })
-      .then(response => response.ok && response.headers.get('interego-native-delete')?.trim() === '1');
+    advertised ??= advertisesNativeDelete(request, url);
     if (!await advertised) throw new Error('Provisional cleanup: the pod\'s store does not advertise native delete (Interego-Native-Delete: 1 on OPTIONS)');
     const read = await request(url, { method: 'HEAD' });
     if (read.status === 404) return;   // gone already
@@ -135,9 +176,10 @@ export async function purgeProvisionalPlayPod(options: {
    * Close the owner's account under its lock: 'purge' once its record is the purge's tombstone,
    * 'closed' when it is another tombstone (nothing of the pod is deleted here; for a deletion its
    * process answered 503, once its guest deadline has passed, close() has sent the owner's agent
-   * registry a DELETE first, which may have failed), 'kept' when the account is kept.
+   * registry a DELETE first, which may have failed), 'kept' when the account is kept. `listed`: the
+   * pod's tree as checked, children before their containers, the URLs 'purge' then deletes.
    */
-  close(): Promise<'purge' | 'closed' | 'kept'>;
+  close(listed: readonly string[]): Promise<'purge' | 'closed' | 'kept'>;
 }): Promise<PlayPodPurge> {
   if (!/^u-try-play-[a-f0-9]{32}$/.test(options.userId)) throw new Error('Refusing non-Play pod cleanup');
   const root = new URL(`${options.userId}/`, options.cssUrl);
@@ -171,7 +213,7 @@ export async function purgeProvisionalPlayPod(options: {
   };
   // Discover and validate the entire bounded tree before changing anything.
   const listed = await list();
-  const closed = await options.close();
+  const closed = await options.close(listed);
   if (closed !== 'purge') return { outcome: closed, retained: [] };
   // Children before their containers (the order list() gives); never the record, nor the
   // container that holds it.

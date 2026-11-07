@@ -8,7 +8,7 @@
  * `invoke_affordance` perform. Action IRIs use the urn:iep:action:jev-harness:<verb>
  * convention; targets use {base} for the bridge's deployment URL.
  *
- * Every judgment affordance READS the repository the bridge is bound to (JEV_HARNESS_REPO) —
+ * Every judgment affordance READS the repository the operator bound the bridge to —
  * declared under `reads` so a caller can tell an empty answer from a wrong repository.
  */
 
@@ -19,8 +19,8 @@ const NS = process.env['JEV_HARNESS_NS'] ?? DEFAULT_NS;
 
 const REPO_READ = {
   store: 'JEV_HARNESS_REPO',
-  label: 'The git working tree the bridge is bound to',
-  populatedBy: 'the operator, at bridge start; the answer names its commit',
+  label: 'The configured local checkout or hosted repository snapshot',
+  populatedBy: 'the operator configures the source. The answer names the evaluated commit.',
 } as const;
 
 export const jevHarnessAffordances: ReadonlyArray<Affordance> = [
@@ -64,7 +64,7 @@ export const jevHarnessAffordances: ReadonlyArray<Affordance> = [
     annotations: { title: 'Select tests', readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
     inputs: [
       { name: 'changed_files', type: 'array', required: false, description: 'Repository-relative paths that changed.', itemType: 'string' },
-      { name: 'base_ref', type: 'string', required: false, description: 'Git ref to diff against when changed_files is not given.' },
+      { name: 'base_ref', type: 'string', required: false, description: 'Git ref to diff against on a locally configured checkout. For the hosted snapshot, supply changed_files.' },
       { name: 'head_ref', type: 'string', required: false, description: 'Git ref of the change; defaults to the working tree.' },
       { name: 'task', type: 'string', required: false, description: 'Optional task sentence for context.' },
     ],
@@ -99,7 +99,7 @@ export const jevHarnessAffordances: ReadonlyArray<Affordance> = [
     annotations: { title: 'Review gate', readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
     inputs: [
       { name: 'diff', type: 'string', required: false, description: 'A unified diff. Either this or base_ref.' },
-      { name: 'base_ref', type: 'string', required: false, description: 'Git ref to diff against.' },
+      { name: 'base_ref', type: 'string', required: false, description: 'Git ref to diff against on a locally configured checkout. For the hosted snapshot, supply diff.' },
       { name: 'head_ref', type: 'string', required: false, description: 'Git ref of the change; defaults to the working tree.' },
       { name: 'title', type: 'string', required: false, description: 'Change title (PR title or commit subject).' },
       { name: 'description', type: 'string', required: false, description: 'Change description (PR body).' },

@@ -2,12 +2,14 @@
 import { byId } from "./data.js";
 import { search } from "./search.js";
 import { Icon } from "./icons.jsx";
+import { useUI } from "./ui.jsx";
 import { HL } from "./text.jsx";
 import { useOutside } from "./util.js";
 
 const { useState, useRef, useLayoutEffect } = React;
 
 export function ConceptPicker({ value, onPick, placeholder = "Find a term…", exclude = [], autoFocus, clearOnPick, small }) {
+  const { lens } = useUI();
   const c = value ? byId.get(value) : null;
   const [q, setQ] = useState("");
   const [open, setOpen] = useState(false);
@@ -17,7 +19,7 @@ export function ConceptPicker({ value, onPick, placeholder = "Find a term…", e
   const pop = useRef(null);
   useOutside(box, () => setOpen(false), open);
   const ex = new Set(exclude);
-  const res = q.trim() ? search(q, 20).filter((r) => !ex.has(r.c.id)).slice(0, 8) : [];
+  const res = q.trim() ? search(q, 20, lens).filter((r) => !ex.has(r.c.id)).slice(0, 8) : [];
   useLayoutEffect(() => {
     if (!open || !box.current || !pop.current) return;
     const anchor = box.current, popup = pop.current, viewport = window.visualViewport;
