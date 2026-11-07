@@ -171,15 +171,6 @@ Optional: `INTEREGO_RELAY` (default `https://relay.interego.xwisee.com`),
 `INTEREGO_IDENTITY` (default `https://identity.interego.xwisee.com`),
 `INTEREGO_DISCORD_STATE` (default `~/.interego/discord-workspace.json`).
 
-**A new key needs the Hosted Terms agreement once.** The first sign-in of a key that has never
-signed in opens the bot's hosted account, and hosted identity opens one only with the operator's
-agreement to the current Hosted Interego Terms of Service (otherwise it refuses with HTTP 428
-`hosted_terms_required`, and the bot exits with that refusal and this variable's name). Read the
-version and terms at `https://identity.interego.xwisee.com/.well-known/hosted-interego-terms` and,
-only if you agree to them for the bot's account, set `INTEREGO_BOT_ACCEPT_HOSTED_TERMS_VERSION` to
-that version. Nothing defaults it, the bot never reads the live drivers'
-`INTEREGO_ACCEPT_HOSTED_TERMS_VERSION`, and a key that already has its account signs in without it.
-
 ### In the Discord Developer Portal
 
 1. Create an application, add a Bot.
@@ -228,8 +219,10 @@ Both mint new wallets, and hosted identity creates an account for a new wallet o
 operator's Hosted Terms agreement. Set `INTEREGO_ACCEPT_HOSTED_TERMS_VERSION` to the version you
 agreed to, as described in
 [the workspace README](../README.md#live-drivers-and-the-hosted-terms); unset, the first sign-in is
-refused with HTTP 428. The bot itself never reads that variable: its own agreement, needed only
-when `INTEREGO_BOT_KEY` is a new key, is `INTEREGO_BOT_ACCEPT_HOSTED_TERMS_VERSION` (above).
+refused with HTTP 428. The bot itself never reads that variable and never gives the agreement: it
+signs `INTEREGO_BOT_KEY` in with the ordinary sign-in, unchanged, so that key must already hold an
+account. A new bot key is refused with HTTP 428 until its account has been created with an
+explicit Hosted Terms agreement; [`DEPLOY.md`](DEPLOY.md), Part B, says how.
 
 `drive-bot-live.ts` mints three disposable identities, has two of them publish real delegations
 from their own clients, and then runs **the bot's own command functions** against

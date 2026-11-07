@@ -143,6 +143,53 @@ await test('virtual source packets bind the advertised provider, string version 
   assert.throws(() => validate({ ...packet, source: { ...packet.source, content_sha256: null } }, 'source-connection', course, grant, 'source-service'), /does not match/);
 });
 
+await test('Cloud virtual packets identify selected projections separately from stable course versions', async () => {
+  const source = await readFile(new URL('../src/course-context.jsx', import.meta.url), 'utf8');
+  const validation = source.slice(source.indexOf('const object ='), source.indexOf('export function useCourseContext'))
+    .replace('export function selectedCoursePacket', 'function selectedCoursePacket');
+  const { validate, identity, details } = runInNewContext(validation + '\n({validate:selectedCoursePacket,identity:sourceIdentity,details:modeDetails});', {});
+  const course = { id: 'native-cloud-course', version: 3 }, grant = { id: 'native-owner-grant', mode: 'virtual', expires_at: expires };
+  const packet = { connection_id: 'cloud-connection', source: { provider: 'scorm-cloud', course_id: course.id, version: course.version,
+    source_version: 'course-version:3', projection_sha256: 'd'.repeat(64), fingerprint_scope: 'selected-instructional-projection' },
+    access: { mode: 'virtual', permission: grant }, citations: [], interventionContext: {} };
+  assert.equal(validate(packet, 'cloud-connection', course, grant), packet);
+  for (const change of [{ source_version: undefined }, { projection_sha256: undefined }, { projection_sha256: 'bad' },
+    { fingerprint_scope: 'whole-course' }, { package_sha256: 'e'.repeat(64) }, { content_sha256: 'f'.repeat(64) }]) {
+    assert.throws(() => validate({ ...packet, source: { ...packet.source, ...change } }, 'cloud-connection', course, grant), /does not match/);
+  }
+  assert.equal(identity(packet.source), identity({ ...packet.source, projection_sha256: 'e'.repeat(64) }));
+  assert.notEqual(identity(packet.source), identity({ ...packet.source, source_version: 'course-version:4' }));
+  assert.equal(details('virtual', 'scorm-cloud').label, 'Read selected source files (virtual)');
+  assert.match(details('virtual', 'scorm-cloud').description, /SCORM Cloud does not perform the question search/);
+  assert.equal(details('virtual', 'source-service').label, 'Query at source (virtual)');
+});
+
+await test('LTI controls retain only safe setup metadata and accept a Cloud launch only for navigation', async () => {
+  const source = await readFile(new URL('../src/course-context.jsx', import.meta.url), 'utf8');
+  const validation = source.slice(source.indexOf('const object ='), source.indexOf('export function useCourseContext'))
+    .replace('export function selectedCoursePacket', 'function selectedCoursePacket');
+  const { view, launch } = runInNewContext(validation + '\n({view:ltiView,launch:cloudLaunchUrl});', { URL });
+  const raw = { id: 'lti-setup-one', state: 'verified', expires_at: expires, connector_id: 'connector-one', helper_course_id: 'helper-one',
+    launch_url: 'PRIVATE-CLOUD-LAUNCH-CAPABILITY', secret: 'PRIVATE-SECRET',
+    tool: { login_url: 'https://workbench.example/lti/login', launch_url: 'https://workbench.example/lti/launch', jwks_url: 'https://workbench.example/lti/jwks', public_key_pem: 'PUBLIC-KEY' },
+    launch: { issuer: 'https://cloud.scorm.com/platform', client_id: 'client-one', deployment_id: 'deployment-one', subject: 'platform-account-one',
+      context_id: 'placement-context', resource_link_id: 'resource-one', verified_at: expires, course_id: 'native-cloud-course', version: 3,
+      id_token: 'PRIVATE-TOKEN', browser_token: BROWSER } };
+  const safe = view(raw, 'lti-setup-one');
+  assert.equal(safe.launch.subject, 'platform-account-one');
+  assert(!JSON.stringify(safe).includes('PRIVATE-'));
+  assert(!JSON.stringify(safe).includes(BROWSER));
+  assert.throws(() => view(raw, 'another-setup'), /did not match/);
+  assert.throws(() => view({ ...raw, state: 'asserted-by-browser' }), /did not match/);
+  assert.throws(() => view(raw, 'lti-setup-one', { id: 'another-course', version: 3 }), /selected course/);
+  assert.throws(() => view(raw, 'lti-setup-one', { id: 'native-cloud-course', version: 4 }), /selected course/);
+  assert.throws(() => view({ ...raw, tool: { ...raw.tool, launch_url: 'https://workbench.example/lti/launch?private_capability=secret' } }), /invalid endpoint/);
+  assert.equal(view({ id: 'cleanup-one', state: 'cleanup-failed', connector_id: 'created-one', note: 'Retry removal.' }).state, 'cleanup-failed');
+  assert.equal(launch('https://app.cloud.scorm.com/preview?short_lived=synthetic'), 'https://app.cloud.scorm.com/preview?short_lived=synthetic');
+  for (const url of ['http://cloud.scorm.com/preview', 'https://cloud.scorm.com.evil.example/preview', 'https://evilcloud.scorm.com/preview',
+    'https://user:password@app.cloud.scorm.com/preview', 'https://app.cloud.scorm.com:8443/preview', 'javascript:alert(1)']) assert.throws(() => launch(url), /launch link/);
+});
+
 await test('deletion messages distinguish local removal from pending, failed and provider-reported remote completion', async () => {
   const source = await readFile(new URL('../src/course-context.jsx', import.meta.url), 'utf8');
   const validation = source.slice(source.indexOf('const object ='), source.indexOf('export function useCourseContext'))

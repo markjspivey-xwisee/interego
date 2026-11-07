@@ -288,10 +288,20 @@ request and signs the agreement statement identity returns for it — only that 
 only when identity offers exactly that version. Unset, or set to a version identity no longer
 offers, the ordinary `Sign in to Interego` is signed: a wallet that already holds an account signs
 in as before, and a new wallet is refused with `SIWE verify answered HTTP 428: …` followed by what
-to set. The scripts that sign in only with a fixed, already-enrolled key (`invite-handle-live.ts`,
-`probe-refresh-live.ts`, `claude-code-heartbeat.ts`, `claude-code-converse.ts`) do not read it, and
-neither does the Discord bot itself. `openAgentSession` (`src/agent-session.ts`) takes the same
-agreement as its `acceptHostedTermsVersion` option.
+to set. The variable reaches only the wallets a driver generates. With it at the offered version,
+`mintBearerWithOperatorTerms` has every wallet it is given sign the agreement, an existing account
+included, so a key a driver is handed signs in through plain `mintBearer` even in a driver that also
+generates wallets: the maintainer key (`drive-membership-live.ts` A,
+`probe-first-write-after-seating-live.ts` A), `INTEREGO_WALLET_B`, the bridge's
+`WSP_AGENT_PRIVATE_KEY` (`observe-invoke-affordance-live.ts`), and the key
+`provision-claude-code-agent.ts` saved on an earlier run. So does a generated key signed in again
+once its account exists: `drive-local-agent-live.ts` signs a delegate's key in again, under the
+same client name and under another, and those sign-ins are ordinary ones. The scripts that sign
+in only with a fixed, already-enrolled key (`invite-handle-live.ts`, `probe-refresh-live.ts`,
+`claude-code-heartbeat.ts`, `claude-code-converse.ts`) do not read it, and neither does the Discord
+bot itself, so a new `INTEREGO_BOT_KEY` needs its account created with an explicit agreement first
+([Discord `DEPLOY.md`](discord/DEPLOY.md), Part B). `openAgentSession` (`src/agent-session.ts`)
+takes the same agreement as its `acceptHostedTermsVersion` option.
 
 ## The stream, and why it is shaped this way
 

@@ -51,7 +51,7 @@ import { probeClaude, runClaude } from '../desktop/src/modelprovider.js';
 // renderer and quietly dies in another is not a distinction the system has. This is the Discord
 // conduit's own author clause, with its own longer copy, over the identical substrate value.
 import { authorOf as discordAuthorOf } from '../discord/src/render.js';
-import { mintBearerWithOperatorTerms, type Signer } from './live-identity.js';
+import { mintBearer, mintBearerWithOperatorTerms, type Signer } from './live-identity.js';
 
 const RELAY = process.env['INTEREGO_RELAY'] ?? 'https://relay.interego.xwisee.com';
 const IDENTITY = process.env['INTEREGO_IDENTITY'] ?? 'https://identity.interego.xwisee.com';
@@ -73,9 +73,17 @@ interface Party { wallet: Signer; client: WorkspaceClient; viewer: Viewer }
  * using; a DELEGATE signs in under `DELEGATE_SURFACE`, the one constant every host shares —
  * because the relay puts the OAuth client name inside the agent DID, so a delegate signed in
  * under an application's own name would be a different delegate in every application.
+ *
+ * ★ `creates` SAYS WHETHER THIS SIGN-IN CREATES THE WALLET'S ACCOUNT. Every key here is one this
+ * run generated, and only its FIRST sign-in carries the operator's Hosted Terms agreement. Point 3
+ * signs a delegate's key in again once its account exists, and that sign-in goes through plain
+ * `mintBearer`, as the desktop shell would sign a returning key in: the agreement is for the
+ * accounts the run creates, and an account that exists is not created again.
  */
-async function open(wallet: Signer, who: string, clientName?: string): Promise<Party> {
-  const bearer = await mintBearerWithOperatorTerms(RELAY, IDENTITY, wallet, clientName);
+async function open(wallet: Signer, who: string, creates: boolean, clientName?: string): Promise<Party> {
+  const bearer = creates
+    ? await mintBearerWithOperatorTerms(RELAY, IDENTITY, wallet, clientName)
+    : await mintBearer(RELAY, IDENTITY, wallet, clientName);
   const client = new WorkspaceClient(RELAY, new RelayMcpTransport(RELAY, bearer));
   await client.connect();
   const viewer = await readViewer(client);
@@ -192,15 +200,15 @@ async function main(): Promise<void> {
     + ' one and they are still two delegates.');
 
   head('1 · two people, and two delegates of the first');
-  const A = await open(Wallet.createRandom(), 'A (a person)');
-  const B = await open(Wallet.createRandom(), 'B (another person)');
+  const A = await open(Wallet.createRandom(), 'A (a person)', true);
+  const B = await open(Wallet.createRandom(), 'B (another person)', true);
   check('A and B are different pods', A.viewer.podName !== B.viewer.podName, A.viewer.podName + ' vs ' + B.viewer.podName);
 
   // ★ THE DELEGATES SIGN IN UNDER `DELEGATE_SURFACE`, NOT UNDER THIS DRIVER'S NAME.
   const k1 = Wallet.createRandom();
   const k2 = Wallet.createRandom();
-  const D1 = await open(k1, 'A\'s delegate #1', DELEGATE_SURFACE);
-  const D2 = await open(k2, 'A\'s delegate #2', DELEGATE_SURFACE);
+  const D1 = await open(k1, 'A\'s delegate #1', true, DELEGATE_SURFACE);
+  const D2 = await open(k2, 'A\'s delegate #2', true, DELEGATE_SURFACE);
   const d1Id = D1.viewer.agentDid ?? '';
   const d2Id = D2.viewer.agentDid ?? '';
   check('each delegate has its own agent id', !!d1Id && !!d2Id && d1Id !== d2Id, d1Id + ' vs ' + d2Id);
@@ -210,11 +218,11 @@ async function main(): Promise<void> {
 
   head('2 · identity is the key, not the host and not the channel');
   // Same key, same surface, a SECOND session: the same delegate.
-  const again = await open(k1, 'delegate #1, signed in a second time', DELEGATE_SURFACE);
+  const again = await open(k1, 'delegate #1, signed in a second time', false, DELEGATE_SURFACE);
   check('the same key under the same surface is the SAME delegate', again.viewer.agentDid === d1Id,
     (again.viewer.agentDid ?? 'none') + ' vs ' + d1Id);
   // Same key, a DIFFERENT surface: a different agent id — which is exactly why the constant exists.
-  const elsewhere = await open(k1, 'delegate #1, signed in as some other client', 'interego-some-other-app');
+  const elsewhere = await open(k1, 'delegate #1, signed in as some other client', false, 'interego-some-other-app');
   check('the same key under a DIFFERENT client name is a different id, which is why DELEGATE_SURFACE exists',
     elsewhere.viewer.agentDid !== d1Id, (elsewhere.viewer.agentDid ?? 'none'));
 
