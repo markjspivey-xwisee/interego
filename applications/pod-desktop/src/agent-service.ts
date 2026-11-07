@@ -3,6 +3,7 @@ import { randomBytes, randomUUID } from 'node:crypto';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { lstat, mkdir, open, rename, unlink } from 'node:fs/promises';
 import { isAbsolute, join, resolve } from 'node:path';
+import { selectedNoteIds } from './agent-note-scope.js';
 import {
   AGENT_ID_PATTERN, AGENT_REQUEST_WINDOW_MS, MAX_AGENT_REQUEST_BYTES,
   openAgentMessage, sealAgentMessage, type AgentEnvelope,
@@ -38,18 +39,20 @@ function object(value: unknown): Record<string, unknown> {
 }
 function validateInput(value: AgentConnectionInput): AgentConnectionInput {
   const input = object(value);
-  if (Object.keys(input).sort().join(',') !== 'client,expiresInDays,name,permissions'
+  if (Object.keys(input).filter(key => key !== 'selectedNoteIds').sort().join(',') !== 'client,expiresInDays,name,permissions'
     || typeof value.name !== 'string' || !value.name.trim() || value.name.trim().length > 80 || /[\u0000-\u001f\u007f]/.test(value.name)
     || !CLIENTS.includes(value.client) || ![7, 30, 90].includes(value.expiresInDays)
     || !Array.isArray(value.permissions) || !value.permissions.length || value.permissions.length > 2
     || new Set(value.permissions).size !== value.permissions.length || value.permissions.some(p => !PERMISSIONS.includes(p))) {
     throw new Error('Choose an agent name, permissions and expiry.');
   }
-  return { name: value.name.trim(), client: value.client, permissions: [...value.permissions], expiresInDays: value.expiresInDays };
+  const selected = selectedNoteIds(value);
+  return { name: value.name.trim(), client: value.client, permissions: [...value.permissions], expiresInDays: value.expiresInDays,
+    ...(selected === undefined ? {} : { selectedNoteIds: selected }) };
 }
 function validateRecord(raw: unknown): ConnectionRecord {
   const value = object(raw);
-  const allowed = ['id', 'name', 'client', 'permissions', 'createdAt', 'expiresAt', 'lastUsedAt', 'revokedAt', 'secret', 'podBinding'];
+  const allowed = ['id', 'name', 'client', 'permissions', 'selectedNoteIds', 'createdAt', 'expiresAt', 'lastUsedAt', 'revokedAt', 'secret', 'podBinding'];
   if (Object.keys(value).some(k => !allowed.includes(k)) || typeof value['id'] !== 'string' || !AGENT_ID_PATTERN.test(value['id'])
     || typeof value['createdAt'] !== 'string' || !Number.isFinite(Date.parse(value['createdAt']))
     || typeof value['expiresAt'] !== 'string' || !Number.isFinite(Date.parse(value['expiresAt']))
@@ -61,7 +64,8 @@ function validateRecord(raw: unknown): ConnectionRecord {
     throw new Error('Agent access data is damaged.');
   }
   validateInput({ name: value['name'], client: value['client'], permissions: value['permissions'], expiresInDays: 7 } as AgentConnectionInput);
-  return value as unknown as ConnectionRecord;
+  const selected = selectedNoteIds(value as unknown as ConnectionRecord);
+  return { ...value, ...(selected === undefined ? {} : { selectedNoteIds: selected }) } as unknown as ConnectionRecord;
 }
 
 async function regularFile(path: string, limit: number): Promise<string | null> {
@@ -156,6 +160,7 @@ export class AgentService {
     const state = record.revokedAt ? 'revoked' : Date.parse(record.expiresAt) <= Date.now() ? 'expired'
       : record.podBinding !== binding ? 'pod-changed' : record.lastUsedAt ? 'active' : 'waiting';
     return Object.freeze({ id: record.id, name: record.name, client: record.client, permissions: Object.freeze([...record.permissions]),
+      ...(record.selectedNoteIds === undefined ? {} : { selectedNoteIds: Object.freeze([...record.selectedNoteIds]) }),
       createdAt: record.createdAt, expiresAt: record.expiresAt, state,
       ...(record.lastUsedAt ? { lastUsedAt: record.lastUsedAt } : {}), ...(record.revokedAt ? { revokedAt: record.revokedAt } : {}) });
   }
@@ -190,6 +195,7 @@ export class AgentService {
         retained = retained.filter(r => r.id !== inactive.id);
       }
       const record: ConnectionRecord = { id: randomUUID(), name: value.name, client: value.client, permissions: value.permissions,
+        ...(value.selectedNoteIds === undefined ? {} : { selectedNoteIds: value.selectedNoteIds }),
         createdAt: new Date(now).toISOString(), expiresAt: new Date(now + value.expiresInDays * 86_400_000).toISOString(),
         secret: randomBytes(32).toString('base64'), podBinding: binding };
       const ticket: AgentTicket = { version: 1, connectionId: record.id, secret: record.secret };
@@ -221,7 +227,8 @@ export class AgentService {
     if (!record || record.revokedAt || Date.parse(record.expiresAt) <= Date.now()
       || !binding || record.podBinding !== binding
       || (operation.startsWith('notes.') && !record.permissions.includes(operation === 'notes.create' ? 'notes:create' : 'notes:read'))) throw new Error(AUTH_ERROR);
-    return Object.freeze({ id: record.id, name: record.name, permissions: Object.freeze([...record.permissions]) });
+    return Object.freeze({ id: record.id, name: record.name, permissions: Object.freeze([...record.permissions]),
+      ...(record.selectedNoteIds === undefined ? {} : { selectedNoteIds: Object.freeze([...record.selectedNoteIds]) }) });
   }
 
   private reply(response: ServerResponse, status: number, value: unknown): void {
