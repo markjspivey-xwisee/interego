@@ -113,7 +113,7 @@ export function useCourseContext(engine) {
   }
   function failed(e, run, controller) {
     if (!current(run) || controller.signal.aborted) return;
-    if (['course_connection_expired', 'course_connection_not_found', 'session_expired'].includes(e.code)) {
+    if (['course_connection_expired', 'course_connection_not_found', 'course_provider_authentication_failed', 'session_expired', 'session_unauthorized'].includes(e.code)) {
       clearSource(); engine.reset();
     } else if (['course_permission_expired', 'course_permission_required', 'course_permission_revoked', 'course_grant_not_found', 'course_grant_expired'].includes(e.code)) {
       clearApproval(); engine.reset();

@@ -68,7 +68,7 @@ external_courses = [{"id": "external-course", "title": "Publisher hosted exercis
 errors, calls, source_calls, agent_calls, host_calls, pending_sources = [], [], [], [], [], []
 state = {"session": 0, "connection": None, "expire": False, "wrong_source": False, "omit_content_digest": False, "defer_source": False,
          "digest": "a" * 64, "content_digest": "c" * 64, "content_body": "Inspect the equipment before use.",
-         "provider": "scorm-cloud", "grants": {}, "cached": set(), "grant_serial": 0, "remote_status": "pending", "grant_expires": EXPIRES, "fail_local_delete": False, "deletions": {}}
+         "provider": "scorm-cloud", "grants": {}, "cached": set(), "grant_serial": 0, "remote_status": "pending", "grant_expires": EXPIRES, "fail_local_delete": False, "deletions": {}, "authentication_failed": False, "permission_revoked": False}
 
 def reply(route, value, status=200):
     return route.fulfill(status=status, content_type="application/json", body=json.dumps(value))
@@ -185,6 +185,16 @@ def route_handler(route):
             return reply(route, result)
         assert operation == "source"
         source_calls.append(body)
+        if state["authentication_failed"]:
+            state["connection"] = None
+            state["grants"].clear()
+            state["cached"].clear()
+            state["deletions"].clear()
+            return reply(route, {"code": "course_provider_authentication_failed", "error": "SCORM Cloud refused these credentials. Connect again."}, 401)
+        if state["permission_revoked"]:
+            state["grants"].clear()
+            state["cached"].clear()
+            return reply(route, {"code": "course_permission_revoked", "error": "The course permission was revoked because source access could not be rechecked. Grant access again."}, 503)
         if state["expire"]:
             state["connection"] = None
             return reply(route, {"code": "course_connection_expired", "error": "Your course connection expired. Reconnect your source."}, 410)
@@ -300,10 +310,11 @@ with sync_playwright() as p:
             approve_course(selected_mode)
 
     def ask(question, answer=True):
+        expected_answer = len(agent_calls) + 1
         page.get_by_role("textbox", name="Ask", exact=True).fill(question)
         page.get_by_role("button", name="Ask", exact=True).click()
         if answer:
-            page.locator(".msg.bot").last.get_by_text("Fixture answer", exact=False).wait_for()
+            page.locator(".msg.bot").last.get_by_text("Fixture answer " + str(expected_answer) + " cites", exact=False).wait_for()
         else:
             page.get_by_role("button", name="Stop", exact=True).wait_for(state="hidden")
 
@@ -495,6 +506,64 @@ with sync_playwright() as p:
     assert not page.get_by_label("Refresh course content for next question", exact=True).is_checked()
     page.screenshot(path=str(shots / "ask-course-cached-graph-desktop.png"), full_page=True)
     print("PASS cached mode identifies the actual published-structure graph and exposes explicit source refresh")
+
+    before = len(agent_calls)
+    assert page.locator(".msg").count() > 0 and state["cached"], "revocation starts with cached content and private conversation"
+    state["authentication_failed"] = True
+    ask("A cached course question after provider access was revoked", answer=False)
+    page.get_by_label("SCORM Cloud secret", exact=True).wait_for()
+    assert len(agent_calls) == before and page.locator(".msg").count() == 0
+    assert not state["connection"] and not state["cached"] and not state["grants"]
+    assert not panel.get_by_text("Course sources for the latest question", exact=True).count()
+    assert not page.get_by_role("button", name="Delete local content and revoke permission", exact=True).count()
+    assert page.get_by_label("SCORM Cloud application ID", exact=True).input_value() == ""
+    assert page.get_by_label("SCORM Cloud secret", exact=True).input_value() == ""
+    assert page.get_by_role("button", name="Ask", exact=True).is_disabled()
+    assert page.get_by_role("button", name="Agent connected", exact=True).count() == 1
+    assert "SCORM Cloud refused these credentials. Connect again." in panel.inner_text()
+    state["authentication_failed"] = False
+    print("PASS provider authentication revocation immediately clears cached source, grant and private history and returns an empty reconnect form")
+
+    connect_course()
+    select_course(0, selected_mode="cached")
+    ask("A fresh permitted cached question before permission revocation")
+    before = len(agent_calls)
+    state["permission_revoked"] = True
+    ask("A cached question after source access recheck failed", answer=False)
+    page.get_by_label("Confirm course owner permission", exact=True).wait_for()
+    assert len(agent_calls) == before and page.locator(".msg").count() == 0
+    assert state["connection"] and not state["cached"] and not state["grants"]
+    assert page.get_by_label("SCORM Cloud course", exact=True).count() == 1
+    assert not page.get_by_label("SCORM Cloud secret", exact=True).count()
+    assert not page.get_by_label("Confirm course owner permission", exact=True).is_checked()
+    assert not panel.get_by_text("Course sources for the latest question", exact=True).count()
+    assert page.get_by_role("button", name="Ask", exact=True).is_disabled()
+    assert "source access could not be rechecked" in panel.inner_text()
+    state["permission_revoked"] = False
+    print("PASS source recheck failure clears revoked grant, cache and private context while retaining the source connection for fresh permission")
+
+    approve_course("cached")
+    ask("A fresh permitted cached question before stopping a read")
+    before = len(agent_calls)
+    previous_deletions = sum(body.get("operation") in ("delete", "request-deletion") for _, body in calls)
+    state["defer_source"] = True
+    with page.expect_request(lambda request: request.url.endswith("/user-courses") and request.post_data_json.get("operation") == "source"):
+        page.get_by_role("textbox", name="Ask", exact=True).fill("Pending cached course question before Stop")
+        page.get_by_role("button", name="Ask", exact=True).click()
+    page.get_by_text("Reading your course source…", exact=True).wait_for()
+    page.get_by_role("button", name="Stop", exact=True).click()
+    page.get_by_role("button", name="Stop", exact=True).wait_for(state="hidden")
+    state["defer_source"] = False
+    for pending_route, packet in pending_sources:
+        reply(pending_route, packet)
+    pending_sources.clear()
+    page.evaluate("new Promise(resolve => setTimeout(resolve, 0))")
+    assert len(agent_calls) == before and state["cached"] and state["grants"]
+    assert page.locator(".msg").count() == 2
+    assert page.get_by_role("button", name="Delete local content and revoke permission", exact=True).is_enabled()
+    assert sum(body.get("operation") in ("delete", "request-deletion") for _, body in calls) == previous_deletions
+    assert "Pending cached course question before Stop" not in page.locator(".ask-log").inner_text()
+    print("PASS Stop ignores a late course response without deleting an existing permitted cache or its conversation")
 
     state["defer_source"] = True
     with page.expect_request(lambda request: request.url.endswith("/user-courses") and request.post_data_json.get("operation") == "source"):

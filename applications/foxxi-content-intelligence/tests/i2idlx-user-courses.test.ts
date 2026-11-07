@@ -182,6 +182,38 @@ describe('private SCORM Cloud course connections', () => {
     expect(await f.rawRequest('status')).toEqual({ connected: false });
   });
 
+  it.each([404, 429, 503])('reports actual cache grant revocation when the provider recheck answers %s', async status => {
+    const f = await setup((async url => String(url).endsWith('/courses') ? Response.json({ courses: [course] })
+      : String(url).endsWith('/zip') ? new Response(Uint8Array.from(packageZip())) : new Response('private provider body', { status })) as typeof fetch);
+    const connected = await f.connect(), grant_id = await permit(f, connected), input = { ...selected(connected), grant_id, question: 'What code?' };
+    await f.rawRequest('source', input);
+    await expect(f.rawRequest('source', input)).rejects.toMatchObject({ code: 'course_permission_revoked', status: status === 429 ? 429 : status === 404 ? 404 : 502 });
+    expect(await f.rawRequest('access-status', selected(connected))).toMatchObject({ grant: null, cache: { present: false } });
+    expect((f.store as unknown as { cacheBytes: number }).cacheBytes).toBe(0);
+    expect(await f.rawRequest('status')).toMatchObject({ connected: true });
+  });
+
+  it('withholds a stopped cache read without revoking its valid permission or re-exporting the course', async () => {
+    let release!: (response: Response) => void, recheckSignal: AbortSignal | undefined, pause = true, zipReads = 0;
+    const f = await setup((async (url, options) => {
+      if (String(url).endsWith('/courses')) return Response.json({ courses: [course] });
+      if (String(url).endsWith('/zip')) { zipReads++; return new Response(Uint8Array.from(packageZip())); }
+      if (pause) { recheckSignal = options?.signal as AbortSignal; return new Promise<Response>(resolve => { release = resolve; }); }
+      return Response.json(course);
+    }) as typeof fetch);
+    const connected = await f.connect(), grant_id = await permit(f, connected), input = { ...selected(connected), grant_id, question: 'What code?' };
+    await f.rawRequest('source', input);
+    const stop = new AbortController();
+    const pending = f.store.request({ session_id: f.alice.session_id, operation: 'source', ...input }, f.alice.browser_token, stop.signal);
+    await vi.waitFor(() => expect(recheckSignal).toBeDefined());
+    const rejected = expect(pending).rejects.toMatchObject({ status: 504 });
+    stop.abort(); expect(recheckSignal?.aborted).toBe(true); release(Response.json(course)); await rejected;
+    expect(await f.rawRequest('access-status', selected(connected))).toMatchObject({ grant: { id: grant_id }, cache: { present: true } });
+    pause = false;
+    expect(await f.rawRequest('source', input)).toMatchObject({ access: { cache: { present: true, hit: true } } });
+    expect(zipReads).toBe(1);
+  });
+
   it('isolates cached text and deletion between two browser sessions of the same actor', async () => {
     const f = await setup(), alice = await f.connect(), bob = await f.connect(basic, f.bob);
     const ga = await permit(f, alice), gb = await permit(f, bob, 'cached', 10, f.bob);

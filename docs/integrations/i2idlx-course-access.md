@@ -20,6 +20,8 @@ These are temporary connections, not a persistent content library. Neither accou
 
 Deletion prevents future application reuse and late results from restoring the local cache/history. It does not recall passages already sent to an AI client or erase that client's conversations. Owners should allow that sharing explicitly in their source grant. Managed retention outside this session requires a separate owner-controlled storage and deletion integration; it is not silently enabled here.
 
+Stopping a question cancels that retrieval without deleting a still-valid cache or permission. A failed access recheck that revokes permission clears the visible course context immediately; a rejected Cloud credential also clears the connection and shows the reconnect form.
+
 ## Source service protocol
 
 The implementation is `src/i2idlx-course-provider.ts` and the source-side adapter is `src/i2idlx-course-source-service.ts` under `applications/foxxi-content-intelligence/`.

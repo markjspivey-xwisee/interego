@@ -263,6 +263,15 @@ export class UserCourseStore {
     if (grant.expires <= this.clock()) { this.revoke(connection, grant); refuse('Course permission expired. Grant permission again.', 410, 'course_permission_expired'); }
     return grant;
   }
+  private retrievalFailure(connection: Connection, grant: Grant, signal: AbortSignal, error: unknown): never {
+    // Stop/timeout is not an owner revocation. Withhold this result and recheck
+    // on the next question; preserve a still-valid grant/cache on cancellation.
+    if (signal.aborted || connection.abort.signal.aborted || this.connections.get(connection.session) !== connection) throw error;
+    this.revoke(connection, grant);
+    const known = error instanceof UserCourseError || error instanceof SourceProviderError;
+    const message = known ? error.message : 'The course source could not be checked.';
+    throw new UserCourseError(message + ' Confirm course permission again before retrying.', known ? error.status : 502, 'course_permission_revoked');
+  }
   private async grant(connection: Connection, args: Row, signal: AbortSignal): Promise<Row> {
     const course = this.course(connection, args), key = courseKey(course.id, course.version);
     // Preserve unresolved deletion receipts and stable retry keys. At most 16 older
@@ -417,7 +426,7 @@ export class UserCourseStore {
       if (grant.mode !== 'virtual') refuse('This source permits virtual retrieval only.', 403, 'course_mode_unsupported');
       let result;
       try { result = await connection.remote.source(course as SourceCourse, question, combined); }
-      catch (error) { this.revoke(connection, grant); throw error; }
+      catch (error) { this.retrievalFailure(connection, grant, combined, error); }
       if (!grant.remote || result.grant.id !== grant.remote.id || result.grant.owner !== grant.remote.owner) {
         this.revoke(connection, grant); refuse('The source owner\'s permission changed. Grant access again.', 403, 'course_permission_required');
       }
@@ -431,7 +440,7 @@ export class UserCourseStore {
       if (grant.cache) {
         // Recheck provider access before returning retained instructional content.
         try { await this.read(connection, '/courses/' + encodeURIComponent(course.id), combined, 1024 * 1024); }
-        catch (error) { if (!grant.abort.signal.aborted) this.revoke(connection, grant); throw error; }
+        catch (error) { this.retrievalFailure(connection, grant, combined, error); }
         this.requireGrant(connection, course, grant.id); hit = true;
       }
       if (!grant.cache) {
@@ -493,7 +502,7 @@ export class UserCourseStore {
         const remote = await connection.remote.permission(course as SourceCourse, signal);
         if (!grant.remote || remote.id !== grant.remote.id || remote.owner !== grant.remote.owner) { this.revoke(connection, grant); return this.accessState(connection, course); }
         grant.expires = Math.min(grant.expires, Date.parse(remote.expires_at));
-      } catch (error) { this.revoke(connection, grant); throw error; }
+      } catch (error) { this.retrievalFailure(connection, grant, signal, error); }
     }
     this.requireGrant(connection, course, grant.id);
     return this.accessState(connection, course, grant);
