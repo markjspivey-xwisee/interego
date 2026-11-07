@@ -20,8 +20,10 @@
  * Most drivers here sign a freshly generated wallet in, so each of them creates an account. The
  * agreement is the operator's to give: `mintBearer` takes it as `acceptHostedTermsVersion`, and
  * the drivers read it from {@link ACCEPT_HOSTED_TERMS_ENV} through
- * {@link mintBearerWithOperatorTerms}. Unset, the ceremony is exactly the one it always was. The
- * same opt-in, with the same guards, is `openAgentSession`'s in `../src/agent-session.ts`.
+ * {@link mintBearerWithOperatorTerms}, for the wallets they generate and for no other. A key a
+ * driver is handed (a file, an environment variable) signs in through plain `mintBearer`. Unset,
+ * the ceremony is exactly the one it always was. The same opt-in, with the same guards, is
+ * `openAgentSession`'s in `../src/agent-session.ts`.
  */
 
 import { createHash, randomBytes } from 'node:crypto';
@@ -190,6 +192,7 @@ export async function mintBearer(
  * version it offers, and the terms it names, at `<identity>/.well-known/hosted-interego-terms`;
  * setting this says the operator read those terms and agrees to them for every account the run
  * creates. Nothing in this repository sets it, and no driver reads that endpoint to fill it in.
+ * It reaches only the wallets a driver generates: see {@link mintBearerWithOperatorTerms}.
  */
 export const ACCEPT_HOSTED_TERMS_ENV = 'INTEREGO_ACCEPT_HOSTED_TERMS_VERSION';
 
@@ -200,15 +203,19 @@ export function operatorHostedTerms(env: Readonly<Record<string, string | undefi
 }
 
 /**
- * {@link mintBearer} for a live driver that may sign a NEW wallet in, with the operator's Hosted
+ * {@link mintBearer} for a wallet a live driver GENERATED this run, with the operator's Hosted
  * Terms agreement read from {@link ACCEPT_HOSTED_TERMS_ENV} when (and only when) it is set.
+ *
+ * ★ ONLY FOR A GENERATED WALLET. Nothing here can tell a wallet with an account from one without,
+ * so with the variable at the version identity offers, EVERY wallet passed in signs the agreement
+ * statement, one that already holds an account included. The operator agreed for the accounts the
+ * run creates, and a key the driver was handed is not one of them: the maintainer's key, a
+ * deployed service's key, a key saved by an earlier run. Those sign in through plain
+ * {@link mintBearer}, so a driver whose parties mix a handed key and generated ones calls both.
  *
  * ★ A REFUSAL SAYS WHAT TO DO. A 428 here is a wallet with no account and no agreement, and the
  * person who can fix it is the one running the driver, so the error names the variable and where
  * the current version is published. It does not retry with that version: that would be agreeing.
- *
- * A wallet that already holds an account signs in as it always did, with or without the variable,
- * so a driver whose parties mix a fixed key and fresh ones can mint every party through this.
  */
 export async function mintBearerWithOperatorTerms(
   relay: string, identityServer: string, wallet: Signer,

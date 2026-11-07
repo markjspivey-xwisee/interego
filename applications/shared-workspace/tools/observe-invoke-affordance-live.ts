@@ -50,7 +50,8 @@
  *
  * The convener's wallet is new, and hosted identity creates an account for a new wallet only with
  * the operator's Hosted Terms agreement: see `INTEREGO_ACCEPT_HOSTED_TERMS_VERSION` in
- * `applications/shared-workspace/tools/live-identity.ts`. Unset, that sign-in is refused.
+ * `applications/shared-workspace/tools/live-identity.ts`. Unset, that sign-in is refused. The
+ * member's key is the deployed bridge's own, so it signs in without that agreement either way.
  */
 
 import { Wallet } from 'ethers';
@@ -61,7 +62,7 @@ import {
   type Viewer,
 } from '@interego/workspace-client';
 import { legacyWorkspaceCapabilityTurtle } from '../src/advertise.js';
-import { mintBearerWithOperatorTerms, type Signer } from './live-identity.js';
+import { mintBearer, mintBearerWithOperatorTerms, type Signer } from './live-identity.js';
 
 const RELAY = process.env['INTEREGO_RELAY'] ?? 'https://relay.interego.xwisee.com';
 const IDENTITY = process.env['INTEREGO_IDENTITY'] ?? 'https://identity.interego.xwisee.com';
@@ -78,8 +79,15 @@ interface Party {
   readonly publish: (args: Record<string, unknown>) => Promise<Record<string, unknown>>;
 }
 
-async function party(label: string, wallet: Signer): Promise<Party> {
-  const bearer = await mintBearerWithOperatorTerms(RELAY, IDENTITY, wallet);
+/**
+ * `generated` is whether this run made the key. Only such a wallet may carry the operator's Hosted
+ * Terms agreement: the member's key belongs to a deployed service, and the operator's agreement
+ * covers the accounts this run creates, not that one.
+ */
+async function party(label: string, wallet: Signer, generated: boolean): Promise<Party> {
+  const bearer = generated
+    ? await mintBearerWithOperatorTerms(RELAY, IDENTITY, wallet)
+    : await mintBearer(RELAY, IDENTITY, wallet);
   const client = new WorkspaceClient(RELAY, new RelayMcpTransport(RELAY, bearer));
   await client.connect();
   const viewer = await readViewer(client);
@@ -289,8 +297,8 @@ async function run(): Promise<number> {
   }
 
   head('the two identities');
-  const convener = await party('convener', Wallet.createRandom());
-  const member = await party('member', new Wallet(agentKey));
+  const convener = await party('convener', Wallet.createRandom(), true);
+  const member = await party('member', new Wallet(agentKey), false);
   if (convener.viewer.podName === member.viewer.podName) {
     log('FAIL: both identities resolved to the same pod; there is no second party.');
     return 2;

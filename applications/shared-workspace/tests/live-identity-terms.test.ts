@@ -290,15 +290,47 @@ describe('the drivers\' opt-in: INTEREGO_ACCEPT_HOSTED_TERMS_VERSION', () => {
     expect(f.signedStatements).toEqual(['Sign in to Interego']);
   });
 
-  it('a fixed key that already holds an account signs in the same with or without the variable', async () => {
+  /**
+   * ★ WHY A KEY A DRIVER IS HANDED NEVER GOES THROUGH `mintBearerWithOperatorTerms`. Nothing in it
+   * can tell a wallet that holds an account from one that does not, so at the version identity
+   * offers it has an EXISTING account sign the agreement statement too. The operator agreed for the
+   * accounts the run creates; the maintainer's key or a deployed service's key is not one of them.
+   * This pins that behaviour, so the drivers' choice of plain `mintBearer` for such keys has a
+   * reason on record, and the next case pins that plain `mintBearer` is that safe route.
+   */
+  it('a wallet that already holds an account: ordinary statement when unset or stale, the agreement statement at the offered version', async () => {
     const wallet = Wallet.createRandom();
     const f = fleet({ known: [wallet.address] });
 
     await mintBearerWithOperatorTerms(RELAY, IDENTITY, wallet, undefined, { fetchImpl: f.impl, env: {} });
     await mintBearerWithOperatorTerms(RELAY, IDENTITY, wallet, undefined,
       { fetchImpl: f.impl, env: { [ACCEPT_HOSTED_TERMS_ENV]: STALE } });
+    await mintBearerWithOperatorTerms(RELAY, IDENTITY, wallet, undefined,
+      { fetchImpl: f.impl, env: { [ACCEPT_HOSTED_TERMS_ENV]: CURRENT } });
 
-    expect(f.signedStatements).toEqual(['Sign in to Interego', 'Sign in to Interego']);
-    expect(f.issued).toHaveLength(2);
+    expect(f.challengeBodies).toEqual([
+      { purpose: 'siwe' },
+      { purpose: 'siwe', termsVersion: STALE },
+      { purpose: 'siwe', termsVersion: CURRENT },
+    ]);
+    expect(f.signedStatements).toEqual(['Sign in to Interego', 'Sign in to Interego', TERMS_STATEMENT]);
+    expect(f.issued).toHaveLength(3);
+  });
+
+  it('plain mintBearer, the route for a key a driver is handed, asks for no version and signs the ordinary statement with the variable set', async () => {
+    const wallet = Wallet.createRandom();
+    const f = fleet({ known: [wallet.address], volunteer: TERMS_STATEMENT });
+    const before = process.env[ACCEPT_HOSTED_TERMS_ENV];
+    process.env[ACCEPT_HOSTED_TERMS_ENV] = CURRENT;
+    try {
+      const bearer = await mintBearer(RELAY, IDENTITY, wallet, undefined, f.impl);
+
+      expect(f.challengeBodies).toEqual([{ purpose: 'siwe' }]);
+      expect(f.signedStatements).toEqual(['Sign in to Interego']);
+      expect(bearer.accessToken).toBe(f.issued[0]);
+    } finally {
+      if (before === undefined) delete process.env[ACCEPT_HOSTED_TERMS_ENV];
+      else process.env[ACCEPT_HOSTED_TERMS_ENV] = before;
+    }
   });
 });

@@ -22,22 +22,26 @@
  *
  * The delegate key is new, and hosted identity creates an account for a new wallet only with the
  * operator's Hosted Terms agreement: see `INTEREGO_ACCEPT_HOSTED_TERMS_VERSION` in
- * `applications/shared-workspace/tools/live-identity.ts`. Unset, that sign-in is refused.
+ * `applications/shared-workspace/tools/live-identity.ts`. Unset, that sign-in is refused. A's key
+ * is handed to this probe, so it signs in without that agreement either way.
  */
 
 import { readFileSync } from 'node:fs';
 import { Wallet } from 'ethers';
 import { DELEGATE_SURFACE, delegateAgentId } from '@interego/core/delegate';
 import { RelayMcpTransport } from '@interego/core/relay';
-import { mintBearerWithOperatorTerms, type Signer } from '../applications/shared-workspace/tools/live-identity.js';
+import { mintBearer, mintBearerWithOperatorTerms, type Signer } from '../applications/shared-workspace/tools/live-identity.js';
 
 const RELAY = process.env['INTEREGO_RELAY'] ?? 'https://relay.interego.xwisee.com';
 const IDENTITY = process.env['INTEREGO_IDENTITY'] ?? 'https://identity.interego.xwisee.com';
 const log = (...a: unknown[]): void => { process.stdout.write(a.map(String).join(' ') + '\n'); };
 const head = (s: string): void => { log('\n== ' + s + ' ' + '='.repeat(Math.max(0, 66 - s.length))); };
 
-async function session(w: Signer, clientName?: string): Promise<RelayMcpTransport> {
-  const bearer = await mintBearerWithOperatorTerms(RELAY, IDENTITY, w, clientName);
+/** `generated`: this run made the key, so it alone may carry the operator's Hosted Terms agreement. */
+async function session(w: Signer, generated: boolean, clientName?: string): Promise<RelayMcpTransport> {
+  const bearer = generated
+    ? await mintBearerWithOperatorTerms(RELAY, IDENTITY, w, clientName)
+    : await mintBearer(RELAY, IDENTITY, w, clientName);
   return new RelayMcpTransport(RELAY, bearer);
 }
 
@@ -49,7 +53,7 @@ const call = async (t: RelayMcpTransport, name: string, args: Record<string, unk
 async function run(): Promise<number> {
   head('two identities');
   const seedA = (JSON.parse(readFileSync(process.env['INTEREGO_WALLET_A'] ?? '.interego/maintainer.json', 'utf8')) as { privateKey: string }).privateKey;
-  const aTx = await session(new Wallet(seedA));
+  const aTx = await session(new Wallet(seedA), false);
   const aStatus = await call(aTx, 'get_pod_status', {});
   log('A status', JSON.stringify(aStatus).slice(0, 400));
   const aPodUrl = String(aStatus['podUrl'] ?? aStatus['pod'] ?? '');
@@ -58,7 +62,7 @@ async function run(): Promise<number> {
   log('A pod', aPod, '· webId', aWebId);
 
   const dKey = Wallet.createRandom();
-  const dTx = await session(dKey, DELEGATE_SURFACE);
+  const dTx = await session(dKey, true, DELEGATE_SURFACE);
   const dStatus = await call(dTx, 'get_pod_status', {});
   const dAgentId = delegateAgentId(new URL(IDENTITY).host, String(dStatus['displayName'] ?? dStatus['podName'] ?? ''));
   log('D agent', dAgentId);

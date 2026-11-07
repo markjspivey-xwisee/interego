@@ -34,21 +34,23 @@
  *
  * The first run's key is new, and hosted identity creates an account for a new wallet only with
  * the operator's Hosted Terms agreement: see `INTEREGO_ACCEPT_HOSTED_TERMS_VERSION` in
- * `applications/shared-workspace/tools/live-identity.ts`. Unset, that sign-in is refused. A
- * later run reuses the saved key, whose account already exists.
+ * `applications/shared-workspace/tools/live-identity.ts`. Unset, that sign-in is refused, and
+ * nothing is saved. A later run reuses the saved key, whose account already exists, and signs it
+ * in without that agreement whatever the environment says.
  *
- * The keypair is written to `.interego/claude-code-agent.json` (gitignored) and REUSED on later
- * runs, so the agent keeps one stable identity across sessions instead of becoming a new principal
- * every time — which is what made the delegate's signing anchor rotate four times in five turns.
+ * The keypair is written to `.interego/claude-code-agent.json` (gitignored) once its sign-in has
+ * succeeded, and REUSED on later runs, so the agent keeps one stable identity across sessions
+ * instead of becoming a new principal every time — which is what made the delegate's signing
+ * anchor rotate four times in five turns.
  */
 
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Wallet } from 'ethers';
-import { WorkspaceClient, RelayMcpTransport, readViewer, agentPort, agentInbox } from '@interego/workspace-client';
+import { WorkspaceClient, RelayMcpTransport, readViewer, agentPort, agentInbox, type RelayOAuthBearer } from '@interego/workspace-client';
 import { publishPresence, publishCapability, agentDocIri } from '@interego/core/agent';
-import { mintBearerWithOperatorTerms, type Signer } from './live-identity.js';
+import { mintBearer, mintBearerWithOperatorTerms, type Signer } from './live-identity.js';
 
 const REPO = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
 const RELAY = process.env['INTEREGO_RELAY'] ?? 'https://relay.interego.xwisee.com';
@@ -70,22 +72,43 @@ const head = (s: string): void => { log('\n== ' + s + ' ' + '='.repeat(Math.max(
 
 // ── 1. A stable key of this agent's own ──────────────────────────────────────────────────────
 head('identity');
+const reused = existsSync(KEYFILE);
 let wallet: Wallet;
-if (existsSync(KEYFILE)) {
+if (reused) {
   const saved = JSON.parse(readFileSync(KEYFILE, 'utf8')) as { privateKey: string };
   wallet = new Wallet(saved.privateKey);
   log('reusing the existing key — one stable principal across sessions');
 } else {
   wallet = Wallet.createRandom() as unknown as Wallet;
-  mkdirSync(join(REPO, '.interego'), { recursive: true });
-  writeFileSync(KEYFILE, JSON.stringify({ address: wallet.address, privateKey: wallet.privateKey }, null, 2), 'utf8');
-  log('minted a NEW key (saved to .interego/claude-code-agent.json, gitignored)');
+  log('minted a NEW key (saved once it has signed in)');
 }
 log('address  :', wallet.address);
 
 // ── 2. Seat it: mint a bearer, which provisions the identity and its own pod ─────────────────
 head('seating');
-const bearer = await mintBearerWithOperatorTerms(RELAY, IDENTITY, wallet as unknown as Signer, CLIENT_NAME);
+/**
+ * ★ ONLY THE KEY THIS RUN GENERATED MAY CARRY THE OPERATOR'S HOSTED TERMS AGREEMENT. The operator
+ * agreed for the account this run creates; the saved key's account already exists, so it signs in
+ * through plain `mintBearer` whatever the environment says. An earlier version of this tool saved a
+ * new key BEFORE seating it, so a refused first run could leave a key with no account behind; the
+ * refusal of such a key says what to do about it.
+ */
+let bearer: RelayOAuthBearer;
+if (reused) {
+  try {
+    bearer = await mintBearer(RELAY, IDENTITY, wallet as unknown as Signer, CLIENT_NAME);
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    if (!msg.startsWith('SIWE verify answered HTTP 428:')) throw e;
+    throw new Error(msg + ' (the key saved at .interego/claude-code-agent.json has no account; an earlier version of'
+      + ' this tool saved a new key before seating it. Remove that file and run again to mint a new key)', { cause: e });
+  }
+} else {
+  bearer = await mintBearerWithOperatorTerms(RELAY, IDENTITY, wallet as unknown as Signer, CLIENT_NAME);
+  mkdirSync(join(REPO, '.interego'), { recursive: true });
+  writeFileSync(KEYFILE, JSON.stringify({ address: wallet.address, privateKey: wallet.privateKey }, null, 2), 'utf8');
+  log('saved the new key to .interego/claude-code-agent.json (gitignored)');
+}
 const client = new WorkspaceClient(RELAY, new RelayMcpTransport(RELAY, bearer));
 await client.connect();
 const viewer = await readViewer(client);
