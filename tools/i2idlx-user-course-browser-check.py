@@ -6,9 +6,47 @@ No provider, model, wallet or other external API is contacted.
 """
 import json
 import pathlib
-import re
 import sys
+from html.parser import HTMLParser
 from playwright.sync_api import sync_playwright
+
+
+def replace_final_script(source, bundle):
+    """Replace one closed script in a generated preview, preserving its surrounding HTML."""
+    class ScriptSpans(HTMLParser):
+        def __init__(self):
+            super().__init__(convert_charrefs=False)
+            self.line_starts = [0] + [i + 1 for i, char in enumerate(source) if char == "\n"]
+            self.open_script = None
+            self.spans = []
+
+        def absolute_offset(self):
+            line, column = self.getpos()
+            return self.line_starts[line - 1] + column
+
+        def handle_starttag(self, tag, attrs):
+            if tag == "script":
+                self.open_script = self.absolute_offset()
+
+        def handle_startendtag(self, tag, attrs):
+            if tag == "script":
+                raise ValueError("A preview cannot replace a self-closing script tag.")
+
+        def handle_endtag(self, tag):
+            if tag == "script" and self.open_script is not None:
+                self.spans.append((self.open_script, source.index(">", self.absolute_offset()) + 1))
+                self.open_script = None
+
+    parser = ScriptSpans()
+    parser.feed(source)
+    parser.close()
+    if parser.open_script is not None:
+        raise ValueError("A preview cannot replace an unclosed script tag.")
+    if not parser.spans:
+        raise ValueError("The preview has no closed script tag to replace.")
+    start, end = parser.spans[-1]
+    return source[:start] + "<script>" + bundle + "</script>" + source[end:]
+
 
 root, cache, shots = [pathlib.Path(value).resolve() for value in sys.argv[1:4]]
 shots.mkdir(parents=True, exist_ok=True)
@@ -17,9 +55,7 @@ if not html_path.exists():
     html_path = root / "site-ts/app.html"
 html = html_path.read_text(encoding="utf-8")
 if len(sys.argv) > 4:
-    scripts = list(re.finditer(r"<script\b[^>]*>.*?</script\s*>", html, re.S | re.I))
-    last = scripts[-1]
-    html = html[:last.start()] + "<script>" + pathlib.Path(sys.argv[4]).read_text(encoding="utf-8") + "</script>" + html[last.end():]
+    html = replace_final_script(html, pathlib.Path(sys.argv[4]).read_text(encoding="utf-8"))
 
 EXPIRES = "2099-01-01T00:00:00.000Z"
 APP_ID, SECRET = "local-app-fixture", "local-secret-never-send-to-agent"
