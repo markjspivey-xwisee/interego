@@ -139,7 +139,9 @@ jobs:
   live-visitor:
     name: Verify real public desktop and mobile visitor journeys
     needs: deploy
-    runs-on: ubuntu-latest
+    # The pinned Playwright (1.56.0) supports Ubuntu 24.04; ubuntu-latest is now 26.04, where
+    # `playwright install --with-deps chromium` refuses to install. Same runner as the oracle job.
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
       contents: read
