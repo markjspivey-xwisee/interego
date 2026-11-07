@@ -24,7 +24,9 @@ permissions:
 jobs:
   live-client-signatures:
     name: Submitter and two reviewer processes complete a synthetic approval test
-    runs-on: ubuntu-latest
+    # The locked Playwright release supports Ubuntu 24.04; ubuntu-latest is now 26.04, where
+    # `playwright install --with-deps chromium` refuses to install.
+    runs-on: ubuntu-24.04
     timeout-minutes: 50
     steps:
       - uses: actions/checkout@v6
