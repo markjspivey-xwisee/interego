@@ -164,9 +164,12 @@ test('the native delete refuses the pod and its sign-in record, and anything out
 });
 
 test('a store that does not advertise native delete is sent none: the purge stops, and stays open for the next pass', async () => {
-  for (const options of [{ advertise: null }, { advertise: '2' }, { optionsStatus: 405 }, { optionsStatus: 500 }]) {
+  // An OPTIONS answered 5xx says nothing of it (the header it carries here included), and is not taken for a store without it.
+  const stores: Array<Parameters<typeof fakePod>[1]> = [{ advertise: null }, { advertise: '2' }, { optionsStatus: 405 }, { optionsStatus: 500 }, { optionsStatus: 503, advertise: null }];
+  for (const options of stores) {
     const pod = fakePod({ 'auth-methods.jsonld': 'plain', [save]: 'native', [budget]: 'native' }, options);
-    await assert.rejects(purge(pod), /does not advertise native delete/, JSON.stringify(options));
+    await assert.rejects(purge(pod), (options.optionsStatus ?? 0) >= 500 ? new RegExp(`the store's OPTIONS was answered ${options.optionsStatus}`)
+      : /does not advertise native delete/, JSON.stringify(options));
     assert.deepEqual(pod.changes().filter(e => !e.startsWith('OPTIONS ')), [], `${JSON.stringify(options)}: nothing but OPTIONS is sent: ${pod.changes()}`);
     assert.ok(pod.has(save) && pod.has(budget));
   }

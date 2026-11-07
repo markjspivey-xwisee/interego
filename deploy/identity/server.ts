@@ -7089,6 +7089,7 @@ async function reopenFinishedPlayPurge(userId: string, residue: PlayGameDataResi
   if (refusal !== undefined) return refusal;
   const outside = playResidueOutside(residue);
   if (outside !== undefined) return outside;
+  // An answer is kept for the run; a 5xx or a timeout throws, keeps nothing, and the next owner asks again.
   reopen.run.nativeDelete ??= await advertisesNativeDelete(playPodRequest, `${CSS_URL}${userId}/${residue.gameData[0]}`);
   if (!reopen.run.nativeDelete) return 'no-native-delete';
   // From here the mark may be on the pod: queued, and every pass held to the game data, until one settles it.

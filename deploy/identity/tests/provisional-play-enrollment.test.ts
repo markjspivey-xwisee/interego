@@ -1101,3 +1101,22 @@ test('backfill: a pod holding more than the game data, an owner whose record is 
   assert.deepEqual(h.pod.changes(), [`OPTIONS ${save} 204`]);
   assert.equal(h.puts, 0);
 });
+
+test('backfill: a capability check answered 5xx is no answer: the owner is not checked, nothing is kept for the run, and the next check asks again', async () => {
+  // It used to be kept for the run as a store without the native delete, which stopped the backfill until the next start.
+  const f = leftover();
+  f.pod.hooks.answer = label => (label === `OPTIONS ${save}` ? (f.pod.hooks.answer = undefined, 503) : undefined);
+  const run: Reopen['run'] = {};
+  const { outcome, reopen } = await f.backfill(2 * HOUR, run);
+  assert.equal(outcome, 'error:Provisional cleanup: the store\'s OPTIONS was answered 503');
+  assert.equal(run.nativeDelete, undefined);
+  assert.equal(reopen.purging, undefined);
+  assert.equal(f.puts, 0);
+  assert.deepEqual(f.pod.changes(), [`OPTIONS ${save} 503`]);
+  assert.equal(f.unfinishedPlayPurges.size + f.reopenedByBackfill.size, 0);
+  assert.match(f.janitorLog.join('\n'), /Play game-data backfill could not check u-try-play-1+: Provisional cleanup: the store's OPTIONS was answered 503/);
+  assert.equal(left(f, 'no-native-delete'), 0);
+  assert.equal((await f.backfill(2 * HOUR, run)).outcome, 'purged');
+  assert.equal(run.nativeDelete, true);
+  assert.equal(f.pod.has(save) || f.pod.has(budget), false);
+});

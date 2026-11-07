@@ -131,11 +131,14 @@ type PodRequest = (url: string, init?: RequestInit) => Promise<Response>;
 
 /**
  * Whether the store advertises its native conditional delete for `url`: an OPTIONS answered with a 2xx
- * that carries `Interego-Native-Delete: 1`. Asked before the first native delete (deleteGameData), and
- * by the game-data backfill before it re-opens a purge (server.ts reopenFinishedPlayPurge).
+ * that carries `Interego-Native-Delete: 1`. An OPTIONS answered 5xx (a gateway's 502, say) says
+ * neither, and throws, as one that times out does, so that no caller takes it for a store without it.
+ * Asked before the first native delete (deleteGameData), and by the game-data backfill before it
+ * re-opens a purge (server.ts reopenFinishedPlayPurge).
  */
 export async function advertisesNativeDelete(request: PodRequest, url: string): Promise<boolean> {
   const response = await request(url, { method: 'OPTIONS' });
+  if (response.status >= 500) throw new Error(`Provisional cleanup: the store's OPTIONS was answered ${response.status}`);
   return response.ok && response.headers.get('interego-native-delete')?.trim() === '1';
 }
 
