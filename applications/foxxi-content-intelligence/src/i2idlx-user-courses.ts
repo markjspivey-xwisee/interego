@@ -11,12 +11,19 @@ import { readAnyPackage } from './tool-exports.js';
 import { isPackagePath } from './scorm-hosting.js';
 import { buildCourseGraph, graphCourseSections, courseCacheBytes, clearCourseCache, type CachedCourse, type CourseMaterial } from './i2idlx-course-cache.js';
 import { SourceCourseProvider, SourceProviderError, type SourceCourse, type SourceGrant, type SourceTransport } from './i2idlx-course-provider.js';
+import { readScormSource, ScormSourceError } from './i2idlx-scorm-source.js';
+import { CourseLtiManager, CourseLtiError, type CourseLtiBinding, type CourseLtiDescriptor, type CourseLtiLaunchEvidence } from './i2idlx-course-lti.js';
 
 type Row = Record<string, unknown>;
 type Course = { id: string; title: string; version: number | string; standard: string; access_modes: AccessMode[] };
 type AccessMode = 'transient' | 'cached' | 'virtual';
 type Grant = { id: string; course: string; mode: AccessMode; authority: string; verification: string; expires: number;
-  abort: AbortController; timer?: ReturnType<typeof setTimeout>; remote?: SourceGrant; cache?: CachedCourse };
+  abort: AbortController; timer?: ReturnType<typeof setTimeout>; remote?: SourceGrant; cache?: CachedCourse; ltiId?: string; lti?: CourseLtiLaunchEvidence };
+type LtiSetup = { id: string; course: string; grantId: string; binding: CourseLtiBinding; tool: CourseLtiDescriptor;
+  state: 'prepared' | 'setting-up' | 'ready' | 'verified' | 'attached' | 'revoked' | 'cleanup-failed';
+  connectorId?: string; helperCourseId?: string; importJobId?: string; configured?: boolean; helperRequested?: boolean;
+  cleanup?: Promise<boolean>; pending?: Promise<void>; note?: string; setupStarted?: boolean; connectorRequested?: boolean;
+  helperSettled?: boolean; removed?: boolean };
 type RevokedGrant = { course: string; idempotencyKey: string; remote?: SourceGrant; result?: Row; requestId?: string;
   inFlight?: Promise<Row>; deletedAt?: number; deletionOrder?: number };
 type Connection = {
@@ -25,6 +32,7 @@ type Connection = {
   courses: Map<string, Course>; pages: Map<string, string>; busy: boolean;
   provider: 'scorm-cloud' | 'source-service'; remote?: SourceCourseProvider;
   grants: Map<string, Grant>; revoked: Map<string, RevokedGrant>;
+  ltiSetups: Map<string, LtiSetup>;
 };
 export interface UserCourseConfig {
   baseUrl: string;
@@ -35,6 +43,8 @@ export interface UserCourseConfig {
   connectionTtlMs?: number;
   /** Program-only fixture injection; never accepted through request JSON. */
   sourceTransport?: SourceTransport;
+  /** Program-only injection for signed launch fixtures; never accepted from request JSON. */
+  ltiManager?: CourseLtiManager;
 }
 export const USER_COURSE_PATH = '/i2idlx/api/user-courses';
 const CLOUD = 'https://cloud.scorm.com/api/v2';
@@ -177,15 +187,24 @@ export class UserCourseStore {
   private active = 0;
   private cacheBytes = 0;
   private deletionSequence = 0;
+  private readonly lti: CourseLtiManager;
   constructor(private readonly config: UserCourseConfig) {
     this.clock = config.now ?? Date.now;
     this.fetcher = config.fetch ?? globalThis.fetch;
     this.ttl = Math.min(config.connectionTtlMs ?? 30 * 60_000, 30 * 60_000);
+    this.lti = config.ltiManager ?? new CourseLtiManager({ baseUrl: config.baseUrl, now: this.clock });
     if (!Number.isFinite(this.ttl) || this.ttl <= 0) throw new Error('Invalid private course connection bounds.');
   }
-  dispose(): void { for (const connection of this.connections.values()) this.drop(connection); this.requests.clear(); }
+  dispose(): void { for (const connection of this.connections.values()) this.drop(connection); this.requests.clear(); this.lti.dispose(); }
+  attachLtiRoutes(app: Express): void { this.lti.attachRoutes(app); }
   private drop(connection: Connection): void {
+    if (this.connections.get(connection.session) !== connection) return;
     if (this.connections.get(connection.session) === connection) this.connections.delete(connection.session);
+    this.lti.revokeConnection(connection.id);
+    // Expiry revokes the local receiver immediately. Remote cleanup is bounded
+    // and best-effort; an explicit disconnect awaits and reports its outcome.
+    const authorization = connection.authorization;
+    for (const setup of connection.ltiSetups.values()) void this.cleanupLti(connection, setup, authorization).catch(() => false);
     connection.authorization = '';
     connection.remote?.dispose();
     for (const grant of connection.grants.values()) this.revoke(connection, grant, false);
@@ -204,7 +223,7 @@ export class UserCourseStore {
   }
   private status(connection: Connection): Row {
     return { connected: true, provider: connection.provider, connection_id: connection.id, expires_at: new Date(connection.expires).toISOString(), ephemeral: true, persisted: false,
-      access_modes: connection.provider === 'scorm-cloud' ? ['transient', 'cached'] : ['virtual'] };
+      access_modes: connection.provider === 'scorm-cloud' ? ['transient', 'cached', 'virtual'] : ['virtual'] };
   }
   private clearCache(grant: Grant): void {
     if (!grant.cache) return;
@@ -213,6 +232,8 @@ export class UserCourseStore {
   }
   private revoke(connection: Connection, grant: Grant, receipt = true): RevokedGrant {
     this.clearCache(grant); clearTimeout(grant.timer); grant.abort.abort();
+    if (grant.ltiId) { const setup = connection.ltiSetups.get(grant.ltiId); if (setup) setup.state = 'revoked'; }
+    grant.lti = undefined;
     if (connection.grants.get(grant.course) === grant) connection.grants.delete(grant.course);
     const previous = connection.revoked.get(grant.id);
     if (previous) return previous;
@@ -246,8 +267,10 @@ export class UserCourseStore {
   }
   private accessState(connection: Connection, course: Course, grant?: Grant): Row {
     const deletion = this.deletionView(connection, course);
+    const setup = [...connection.ltiSetups.values()].reverse().find(value => value.course === courseKey(course.id, course.version) && !value.removed);
     return { connection_id: connection.id, course_id: course.id, version: course.version,
-      grant: grant ? this.grantView(grant) : null, cache: this.cacheView(grant), ...(deletion ? { deletion } : {}) };
+      grant: grant ? this.grantView(grant) : null, cache: this.cacheView(grant), ...(deletion ? { deletion } : {}),
+      ...(setup ? { lti: this.ltiView(setup) } : {}) };
   }
   private course(connection: Connection, args: Row): Course {
     const id = text(args.course_id, 256, 'Course identifier');
@@ -324,6 +347,7 @@ export class UserCourseStore {
     } catch (error) {
       if (error instanceof UserCourseError) throw error;
       if (error instanceof SourceProviderError) throw new UserCourseError(error.message, error.status, error.code);
+      if (error instanceof CourseLtiError || error instanceof ScormSourceError) throw new UserCourseError(error.message, error.status, error.code);
       this.requireCurrent(connection);
       return refuse(connection.provider === 'scorm-cloud' ? 'The course could not be read from SCORM Cloud. Try again.' : 'The course source service is unavailable. Try again.', 502, 'course_provider_unavailable');
     } finally {
@@ -332,9 +356,14 @@ export class UserCourseStore {
     }
   }
   private async read(connection: Connection, path: string, signal: AbortSignal, limit: number): Promise<Buffer> {
+    return this.cloudRequest(connection, path, signal, limit);
+  }
+  private async cloudRequest(connection: Connection, path: string, signal: AbortSignal, limit: number, method = 'GET', body?: Row): Promise<Buffer> {
     this.requireCurrent(connection);
-    const response = await this.fetcher(CLOUD + path, { method: 'GET', redirect: 'error', signal,
-      headers: { Authorization: connection.authorization, Accept: path.endsWith('/zip') ? '*/*' : 'application/json' } });
+    const asset = path.includes('/asset?');
+    const response = await this.fetcher(CLOUD + path, { method, redirect: 'error', signal,
+      headers: { Authorization: connection.authorization, Accept: asset ? 'application/octet-stream' : path.endsWith('/zip') ? '*/*' : 'application/json',
+        ...(body ? { 'Content-Type': 'application/json' } : {}) }, ...(body ? { body: JSON.stringify(body) } : {}) });
     if (signal.aborted) {
       await response.body?.cancel();
       this.requireCurrent(connection);
@@ -342,6 +371,9 @@ export class UserCourseStore {
     }
     if (!response.ok || response.redirected || response.url && response.url !== CLOUD + path) {
       await response.body?.cancel();
+      if (response.status === 403 && (method !== 'GET' || path.startsWith('/contentConnectors') || path.startsWith('/courses/importJobs'))) {
+        refuse('SCORM Cloud did not authorize this LTI setup operation. A credential with the required account permissions is needed.', 403, 'course_lti_permission_denied');
+      }
       if (response.status === 401 || response.status === 403) {
         this.drop(connection);
         refuse('SCORM Cloud refused these credentials. Connect again.', 401, 'course_provider_authentication_failed');
@@ -350,7 +382,7 @@ export class UserCourseStore {
       if (response.status === 404) refuse('This course version is unavailable from SCORM Cloud.', 404, 'course_source_unavailable');
       refuse('SCORM Cloud returned an unusable response.', 502, 'course_provider_unavailable');
     }
-    const bytes = await boundedBody(response, limit);
+    const bytes = response.status === 204 ? Buffer.alloc(0) : await boundedBody(response, limit);
     this.requireCurrent(connection);
     return bytes;
   }
@@ -376,7 +408,9 @@ export class UserCourseStore {
       if (!object(value)) continue;
       const id = text(value.id, 256, 'Course identifier'), title = text(value.title, 400, 'Course title');
       if (!Number.isSafeInteger(value.version) || Number(value.version) < 0) continue;
-      const course: Course = { id, title, version: Number(value.version), standard: typeof value.learningStandard === 'string' ? value.learningStandard.slice(0, 100) : typeof value.courseLearningStandard === 'string' ? value.courseLearningStandard.slice(0, 100) : 'Unreported', access_modes: ['transient', 'cached'] };
+      const standard = typeof value.learningStandard === 'string' ? value.learningStandard.slice(0, 100) : typeof value.courseLearningStandard === 'string' ? value.courseLearningStandard.slice(0, 100) : 'Unreported';
+      const course: Course = { id, title, version: Number(value.version), standard,
+        access_modes: /^SCORM/i.test(standard) ? ['transient', 'cached', 'virtual'] : ['transient', 'cached'] };
       courses.push(course);
       if (connection.courses.size >= 1000 && !connection.courses.has(courseKey(id, course.version))) refuse('This connection reached its course browsing capacity. Reconnect to browse again.', 413, 'course_source_too_large');
       connection.courses.set(courseKey(id, course.version), course);
@@ -434,8 +468,23 @@ export class UserCourseStore {
       material = result.material as CourseMaterial; source = result.source;
       graph = { representation: result.graph ? 'source-service' : 'none', local_content_graph: false,
         ...(result.graph ? { evidence: result.graph } : {}) };
+    } else if (grant.mode === 'virtual') {
+      let loaded;
+      try {
+        loaded = await readScormSource({ sourceScope: connection.id, courseId: course.id, version: Number(course.version),
+          title: course.title, question, signal: combined, request: (path, limit, abort) => this.read(connection, path, abort, limit) });
+      } catch (error) {
+        if (error instanceof ScormSourceError) throw new UserCourseError(error.message, error.status, error.code);
+        this.retrievalFailure(connection, grant, combined, error);
+      }
+      material = loaded.material;
+      source = { provider: 'scorm-cloud', course_id: course.id, title: course.title, version: course.version,
+        source_version: material.version, projection_sha256: loaded.projectionSha256, fingerprint_scope: 'selected-instructional-projection',
+        retrieval: loaded.retrieval };
+      graph = { representation: 'request-local-source-structure', nodes: loaded.graph.nodes.length, edges: loaded.graph.edges.length,
+        local_content_graph: false, retained: false, semantic_prerequisites_inferred: false,
+        retrieval: loaded.retrieval.strategy, scope: 'selected-source-files-only' };
     } else {
-      if (grant.mode === 'virtual') refuse('SCORM Cloud export cannot be used in virtual mode.', 400, 'course_mode_unsupported');
       if (args.refresh === true) this.clearCache(grant);
       if (grant.cache) {
         // Recheck provider access before returning retained instructional content.
@@ -486,9 +535,13 @@ export class UserCourseStore {
     const citations = (context.sections as Row[]).map(section => ({ id: section.citation_id, title: section.title,
       body: section.body, locator: section.locator, source_uri: section.source_uri }));
     const access = { mode: grant.mode, permission: this.grantView(grant), cache: this.cacheView(grant, hit), graph,
-      scope: 'this-session', copied_content: grant.mode === 'virtual' ? 'question-selected passages only' : 'package retrieved in memory; cached mode retains instructional text and graph only',
+      ...(grant.lti ? { lti: this.ltiContext(grant.lti) } : {}),
+      scope: 'this-session', copied_content: grant.mode === 'virtual' ? connection.provider === 'scorm-cloud'
+        ? 'bounded selected source files read in request memory; no ZIP export or retained course text/graph; question planning runs in Foxxi'
+        : 'question-selected passages only' : 'package retrieved in memory; cached mode retains instructional text and graph only',
       client_retention: 'Passages already shared with your AI client are subject to that client\'s retention and are not erased by deleting this cache.' };
     packet.course_access = access;
+    if (grant.lti) source.lti = this.ltiContext(grant.lti);
     return { connection_id: connection.id, source, access,
       citations, missing_context: context.missing_context, retrieved_at: new Date(this.clock()).toISOString(),
       truncated: (context.retrieval as Row).excerpt_truncated, interventionContext: packet };
@@ -506,6 +559,244 @@ export class UserCourseStore {
     }
     this.requireGrant(connection, course, grant.id);
     return this.accessState(connection, course, grant);
+  }
+  private ltiView(setup: LtiSetup): Row {
+    let launch: CourseLtiLaunchEvidence | undefined;
+    if (!['revoked', 'cleanup-failed'].includes(setup.state)) {
+      try {
+        const status = this.lti.status(setup.id, setup.binding); launch = status.launch;
+        if (status.state === 'verified') setup.state = 'verified';
+        else if (status.state === 'consumed') setup.state = 'attached';
+      } catch { setup.state = 'revoked'; }
+    }
+    return { id: setup.id, state: setup.state, tool: setup.tool, expires_at: setup.tool.expires_at,
+      ...(setup.connectorId ? { connector_id: setup.connectorId } : {}), ...(setup.helperCourseId ? { helper_course_id: setup.helperCourseId } : {}),
+      ...(launch ? { launch } : {}), ...(setup.note ? { note: setup.note } : {}) };
+  }
+  private ltiContext(launch: CourseLtiLaunchEvidence): Row {
+    const { subject: _privatePlatformSubject, ...reference } = launch;
+    return { verification: 'signed-lti13-platform-launch', ...reference, subject_shared: false,
+      identity_binding: 'The verified platform subject was explicitly associated with this authenticated browser session.' };
+  }
+  private async cloudJson(connection: Connection, path: string, signal: AbortSignal, method = 'GET', body?: Row): Promise<Row> {
+    const bytes = await this.cloudRequest(connection, path, signal, 1024 * 1024, method, body);
+    let value: unknown;
+    try { value = JSON.parse(bytes.toString('utf8')); } catch { refuse('SCORM Cloud returned an unsupported setup response.', 502, 'course_lti_provider_unavailable'); }
+    if (!object(value)) refuse('SCORM Cloud returned an unsupported setup response.', 502, 'course_lti_provider_unavailable');
+    return value;
+  }
+  private cloudEndpoint(value: unknown, label: string): string {
+    const raw = text(value, 2048, label), url = new URL(raw);
+    if (url.protocol !== 'https:' || !['cloud.scorm.com', 'app.cloud.scorm.com'].includes(url.hostname) || url.username || url.password ||
+        url.hash || url.port && url.port !== '443') refuse('The Cloud LTI endpoint is outside the supported provider.', 502, 'course_lti_provider_unavailable');
+    return raw;
+  }
+  private async cloudConnector(connection: Connection, setup: LtiSetup, signal: AbortSignal): Promise<Row | null> {
+    const listing = await this.cloudJson(connection, '/contentConnectors?includeAdditionalInstanceInformation=true', signal);
+    if (!Array.isArray(listing.connectorEntries) || listing.connectorEntries.length > 500) refuse('The Cloud LTI connection list exceeds capacity.', 502, 'course_lti_provider_unavailable');
+    const matches = listing.connectorEntries.filter((item): item is Row => {
+      if (!object(item) || item.contentConnectorType !== 'ContentConnector.Lti13' || !object(item.configuration)) return false;
+      const config = item.configuration;
+      return config.toolPublicKey === setup.tool.public_key_pem && config.toolOidcLoginInitiationsEndpoint === setup.tool.login_url &&
+        Array.isArray(config.toolOidcLaunchRedirectUris) && config.toolOidcLaunchRedirectUris.length === 1 && config.toolOidcLaunchRedirectUris[0] === setup.tool.launch_url;
+    });
+    if (matches.length > 1) refuse('Cloud returned ambiguous connections for this setup. Check Cloud before removing either connection.', 409, 'course_lti_setup_uncertain');
+    const found = matches[0];
+    if (!found) return null;
+    const id = text(found.connectorId, 256, 'Cloud LTI connection identifier');
+    if (setup.connectorId && setup.connectorId !== id) refuse('The Cloud LTI connection identity changed.', 409, 'course_lti_setup_uncertain');
+    setup.connectorId = id;
+    return found;
+  }
+  private async reconcileLti(connection: Connection, setup: LtiSetup, signal: AbortSignal): Promise<void> {
+    if (setup.removed || setup.state === 'revoked' || setup.state === 'cleanup-failed') return;
+    const connector = await this.cloudConnector(connection, setup, signal);
+    this.requireLtiActive(connection, setup, signal);
+    if (!connector) { setup.note = 'Cloud has not confirmed creation of this exact connection. Check again; do not create a duplicate.'; return; }
+    if (connector.enabled !== true || !object(connector.additionalInstanceInformation)) refuse('The Cloud LTI connection is disabled or incomplete.', 409, 'course_lti_setup_uncertain');
+    if (!setup.configured) {
+      const info = connector.additionalInstanceInformation;
+      this.lti.configure(setup.id, { issuer: this.cloudEndpoint(info.issuer, 'Cloud issuer'),
+        clientId: text(info.toolClientId, 512, 'Cloud client identifier'), deploymentId: text(info.deploymentId, 512, 'Cloud deployment identifier'),
+        jwksUrl: this.cloudEndpoint(info.jwksEndpoint, 'Cloud keys endpoint'), authorizationEndpoint: this.cloudEndpoint(info.oidcAuthorizationUrl, 'Cloud authorization endpoint'),
+        ...(info.accessTokenUrl ? { tokenEndpoint: this.cloudEndpoint(info.accessTokenUrl, 'Cloud token endpoint') } : {}) }, setup.id);
+      setup.configured = true;
+    }
+    if (!setup.helperRequested) {
+      setup.note = 'The Cloud connection was confirmed, but the helper course has not been requested. If setup was interrupted, remove this temporary connection before preparing another.';
+      return;
+    }
+    if (setup.importJobId) {
+      const job = await this.cloudJson(connection, '/courses/importJobs/' + encodeURIComponent(setup.importJobId), signal);
+      this.requireLtiActive(connection, setup, signal);
+      if (job.jobId !== setup.importJobId || !['RUNNING', 'COMPLETE', 'ERROR'].includes(String(job.status))) refuse('Cloud returned an unsupported helper-course status.', 502, 'course_lti_provider_unavailable');
+      if (job.status === 'RUNNING') { setup.note = 'Cloud is still preparing the separate LTI helper course. Check its status again.'; return; }
+      if (job.status === 'ERROR') { setup.helperSettled = true; setup.note = 'Cloud could not prepare the LTI helper course. Remove this temporary setup before trying again.'; return; }
+      if (!object(job.importResult) || !object(job.importResult.course) || job.importResult.course.id !== setup.helperCourseId) refuse('The imported helper does not match this setup.', 409, 'course_lti_setup_uncertain');
+      setup.helperSettled = true;
+    }
+    let helper: Row;
+    try { helper = await this.cloudJson(connection, '/courses/' + encodeURIComponent(setup.helperCourseId!), signal); }
+    catch (error) { if (error instanceof UserCourseError && error.status === 404) { setup.note = 'Cloud has not confirmed the helper course yet. Check its status again.'; return; } throw error; }
+    this.requireLtiActive(connection, setup, signal);
+    if (helper.id !== setup.helperCourseId) refuse('The Cloud helper course identity changed.', 409, 'course_lti_setup_uncertain');
+    setup.state = 'ready'; setup.note = undefined;
+    // Preserve a launch which finished while a provider status read was in flight.
+    this.ltiView(setup);
+  }
+  private requireLtiActive(connection: Connection, setup: LtiSetup, signal: AbortSignal): void {
+    this.requireCurrent(connection);
+    const grant = connection.grants.get(setup.course);
+    if (!grant || grant.id !== setup.grantId || grant.expires <= this.clock() || grant.abort.signal.aborted || signal.aborted ||
+        setup.removed || ['revoked', 'cleanup-failed'].includes(setup.state)) {
+      refuse('This LTI course permission ended. No further setup operation was authorized.', 410, 'course_lti_expired');
+    }
+  }
+  private async cleanupLti(connection: Connection, setup: LtiSetup, authorization: string): Promise<boolean> {
+    if (setup.removed) return true;
+    if (setup.cleanup) return setup.cleanup;
+    try { this.lti.revoke(setup.id, setup.binding); } catch (error) { if (!(error instanceof CourseLtiError && error.status === 410)) return false; }
+    const grant = connection.grants.get(setup.course);
+    if (grant?.ltiId === setup.id) { grant.lti = undefined; grant.ltiId = undefined; }
+    setup.state = 'revoked';
+    setup.cleanup = (async () => {
+      const signal = AbortSignal.timeout(15_000);
+      // Do not race deletion against a provider create which is still settling.
+      if (setup.pending) {
+        let settled = false;
+        await Promise.race([setup.pending.catch(() => undefined).then(() => { settled = true; }), new Promise<void>(resolve => {
+          if (signal.aborted) resolve(); else signal.addEventListener('abort', () => resolve(), { once: true });
+        })]);
+        if (!settled) { setup.state = 'cleanup-failed'; setup.note = 'Cloud setup is still settling. Local access ended; check cleanup again.'; return false; }
+      }
+      // Recover a lost connector-create response through its exact public key
+      // and unique callback URLs, using only the original connection credential.
+      if (setup.connectorRequested && !setup.connectorId && authorization) {
+        try {
+          const response = await this.fetcher(CLOUD + '/contentConnectors?includeAdditionalInstanceInformation=true', {
+            method: 'GET', redirect: 'error', signal, headers: { Authorization: authorization, Accept: 'application/json' } });
+          if (response.ok && !response.redirected && (!response.url || response.url === CLOUD + '/contentConnectors?includeAdditionalInstanceInformation=true')) {
+            const listing: unknown = JSON.parse((await boundedBody(response, 1024 * 1024)).toString('utf8'));
+            if (object(listing) && Array.isArray(listing.connectorEntries) && listing.connectorEntries.length <= 500) {
+              const matches = listing.connectorEntries.filter((row): row is Row => object(row) && object(row.configuration) &&
+                row.contentConnectorType === 'ContentConnector.Lti13' && row.configuration.toolPublicKey === setup.tool.public_key_pem &&
+                row.configuration.toolOidcLoginInitiationsEndpoint === setup.tool.login_url && Array.isArray(row.configuration.toolOidcLaunchRedirectUris) &&
+                row.configuration.toolOidcLaunchRedirectUris.length === 1 && row.configuration.toolOidcLaunchRedirectUris[0] === setup.tool.launch_url);
+              if (matches.length === 1 && typeof matches[0]!.connectorId === 'string') setup.connectorId = text(matches[0]!.connectorId, 256, 'Created Cloud connection identifier');
+            }
+          } else await response.body?.cancel();
+        } catch { /* Unknown creation never becomes a confirmed deletion. */ }
+      }
+      const remove = async (path: string): Promise<boolean> => {
+        if (!authorization) return false;
+        try {
+          const response = await this.fetcher(CLOUD + path, { method: 'DELETE', redirect: 'error', signal,
+            headers: { Authorization: authorization, Accept: 'application/json' } });
+          await response.body?.cancel();
+          return !response.redirected && (!response.url || response.url === CLOUD + path) && (response.status === 204 || response.status === 404);
+        } catch { return false; }
+      };
+      let helper = !setup.helperRequested, connector = !setup.connectorRequested;
+      if (setup.helperRequested && !setup.helperSettled && setup.importJobId && authorization) {
+        try {
+          const response = await this.fetcher(CLOUD + '/courses/importJobs/' + encodeURIComponent(setup.importJobId), {
+            method: 'GET', redirect: 'error', signal, headers: { Authorization: authorization, Accept: 'application/json' } });
+          if (response.ok && !response.redirected && (!response.url || response.url === CLOUD + '/courses/importJobs/' + encodeURIComponent(setup.importJobId))) {
+            const job: unknown = JSON.parse((await boundedBody(response, 64 * 1024)).toString('utf8'));
+            if (object(job) && job.jobId === setup.importJobId && (job.status === 'ERROR' || job.status === 'COMPLETE' && object(job.importResult) && object(job.importResult.course) && job.importResult.course.id === setup.helperCourseId)) setup.helperSettled = true;
+          } else await response.body?.cancel();
+        } catch { /* A pending or unreadable import is not confirmed removed. */ }
+      }
+      if (setup.helperCourseId && setup.helperRequested) {
+        // The only deletion target is the independently generated helper ID.
+        if (setup.helperCourseId !== 'i2idlx-lti-qa-' + setup.id || setup.binding.courseId === setup.helperCourseId) return false;
+        helper = await remove('/courses/' + encodeURIComponent(setup.helperCourseId)) && setup.helperSettled === true;
+      }
+      if (setup.connectorId) connector = await remove('/contentConnectors/' + encodeURIComponent(setup.connectorId));
+      if (!connector && setup.connectorId && authorization) {
+        try {
+          const response = await this.fetcher(CLOUD + '/contentConnectors/' + encodeURIComponent(setup.connectorId), {
+            method: 'PUT', redirect: 'error', signal, headers: { Authorization: authorization, 'Content-Type': 'application/json' }, body: JSON.stringify({ enabled: false }) });
+          await response.body?.cancel();
+        } catch { /* The outcome remains unconfirmed; never claim removal here. */ }
+      }
+      setup.removed = helper && connector;
+      setup.state = setup.removed ? 'revoked' : 'cleanup-failed';
+      setup.note = setup.removed ? undefined : 'Foxxi access was revoked, but Cloud helper or connection removal is unconfirmed. Retry removal or check Cloud settings.';
+      return setup.removed;
+    })().finally(() => { setup.cleanup = undefined; });
+    return setup.cleanup;
+  }
+  private async ltiOperation(connection: Connection, args: Row, signal: AbortSignal): Promise<Row> {
+    if (connection.provider !== 'scorm-cloud') refuse('This LTI setup is available for SCORM Cloud connections only.', 400, 'course_mode_unsupported');
+    const course = this.course(connection, args), key = courseKey(course.id, course.version), operation = String(args.operation);
+    if (operation === 'lti-prepare') {
+      const grant = this.requireGrant(connection, course, args.grant_id);
+      const prior = [...connection.ltiSetups.values()].find(value => value.grantId === grant.id && !value.removed);
+      if (prior) return { lti: this.ltiView(prior) };
+      for (const [id, entry] of connection.ltiSetups) if (entry.removed) connection.ltiSetups.delete(id);
+      if (connection.ltiSetups.size >= 4) refuse('Remove an older LTI setup before preparing another.', 429, 'course_rate_limited');
+      const binding: CourseLtiBinding = { sessionId: connection.session, actor: connection.actor, connectionId: connection.id,
+        courseId: course.id, version: course.version, expiresAt: grant.expires, signal: AbortSignal.any([connection.abort.signal, grant.abort.signal]) };
+      const tool = this.lti.prepare(binding), setup: LtiSetup = { id: tool.id, course: key, grantId: grant.id, binding, tool, state: 'prepared' };
+      connection.ltiSetups.set(tool.id, setup); grant.ltiId = tool.id;
+      return { lti: this.ltiView(setup) };
+    }
+    const id = text(args.lti_id, 64, 'LTI setup identifier'), setup = connection.ltiSetups.get(id);
+    if (!setup || setup.course !== key || args.grant_id !== undefined && args.grant_id !== setup.grantId) refuse('This LTI setup does not belong to the selected course connection.', 404, 'course_lti_binding_mismatch');
+    if (operation === 'lti-disconnect') {
+      // Recover the exact created connector after an uncertain create, never a guessed ID.
+      if (setup.connectorRequested && !setup.connectorId && !setup.removed) await this.cloudConnector(connection, setup, signal);
+      const removed = await this.cleanupLti(connection, setup, connection.authorization);
+      return { removed, lti: removed ? null : this.ltiView(setup), original_course_unchanged: true };
+    }
+    const grant = this.requireGrant(connection, course, args.grant_id);
+    if (grant.id !== setup.grantId) refuse('This LTI setup belongs to an earlier course permission.', 403, 'course_lti_binding_mismatch');
+    signal = AbortSignal.any([signal, grant.abort.signal]);
+    this.requireLtiActive(connection, setup, signal);
+    if (operation === 'lti-setup') {
+      if (grant.authority !== 'owner') refuse('Only the source owner may create a trusted Cloud LTI connection.', 403, 'course_lti_permission_denied');
+      if (setup.setupStarted) return { lti: this.ltiView(setup) };
+      setup.setupStarted = true; setup.state = 'setting-up';
+      const pending = (async () => {
+      try {
+        this.requireLtiActive(connection, setup, signal);
+        setup.connectorRequested = true;
+        const created = await this.cloudJson(connection, '/contentConnectors', signal, 'POST', { contentConnectorType: 'ContentConnector.Lti13',
+          configuration: { toolPublicKey: setup.tool.public_key_pem, toolOidcLoginInitiationsEndpoint: setup.tool.login_url,
+            toolOidcLaunchRedirectUris: [setup.tool.launch_url] }, enabled: true });
+        setup.connectorId = text(created.result, 256, 'Created Cloud connection identifier');
+        this.requireLtiActive(connection, setup, signal);
+        await this.reconcileLti(connection, setup, signal);
+        if (!setup.configured) return;
+        this.requireLtiActive(connection, setup, signal);
+        setup.helperCourseId = 'i2idlx-lti-qa-' + setup.id; setup.helperRequested = true;
+        const imported = await this.cloudJson(connection, '/courses/importJobs/noUpload?' + new URLSearchParams({ courseId: setup.helperCourseId, mayCreateNewVersion: 'false' }), signal, 'POST', {
+          connectorReferenceRequest: { connectorId: setup.connectorId, metadataForConnector: { url: setup.tool.launch_url,
+            title: utf8Prefix('Course Q&A: ' + course.title, 200), ltiMetadata: { description: 'Temporary owner-authorized course Q&A launch', context: { contextId: setup.id } } } } });
+        setup.importJobId = text(imported.result, 256, 'Cloud helper import job');
+        this.requireLtiActive(connection, setup, signal);
+        await this.reconcileLti(connection, setup, signal);
+      } catch (error) {
+        if (!['revoked', 'cleanup-failed'].includes(setup.state)) setup.note = 'Cloud setup is unconfirmed. Check the connection before retrying or removing it.';
+        if (connection.abort.signal.aborted || signal.aborted || error instanceof UserCourseError && error.code === 'course_provider_authentication_failed') throw error;
+      }
+      })();
+      setup.pending = pending;
+      try { await pending; } finally { setup.pending = undefined; }
+      return { lti: this.ltiView(setup) };
+    }
+    if (operation === 'lti-status') { if (setup.setupStarted) await this.reconcileLti(connection, setup, signal); return { lti: this.ltiView(setup) }; }
+    if (operation === 'lti-attach') {
+      if (!grant.lti) grant.lti = this.lti.consume(setup.id, setup.binding);
+      setup.state = 'attached'; return { ...this.accessState(connection, course, grant), lti: this.ltiView(setup) };
+    }
+    if (operation === 'lti-launch') {
+      if (!['ready', 'verified'].includes(setup.state)) refuse('Check the LTI setup before opening a launch.', 409, 'course_lti_launch_required');
+      const preview = await this.cloudJson(connection, '/courses/' + encodeURIComponent(setup.helperCourseId!) + '/preview', signal, 'POST', { expiry: 120 });
+      return { lti: this.ltiView(setup), launch_url: this.cloudEndpoint(preview.launchLink, 'Cloud preview link') };
+    }
+    refuse('Unknown LTI connection operation.');
   }
   private async deleteContent(connection: Connection, args: Row, signal?: AbortSignal): Promise<Row> {
     const course = this.course(connection, args), key = courseKey(course.id, course.version), id = text(args.grant_id, 64, 'Course permission');
@@ -559,8 +850,13 @@ export class UserCourseStore {
     if (operation === 'disconnect') {
       exact(args, ['session_id', 'operation']);
       const connection = this.connections.get(identity.session_id);
-      if (connection) this.drop(connection);
-      return { connected: false };
+      let removed = true, hadLti = false;
+      if (connection) {
+        hadLti = connection.ltiSetups.size > 0;
+        const results = await Promise.all([...connection.ltiSetups.values()].map(setup => this.cleanupLti(connection, setup, connection.authorization)));
+        removed = results.every(Boolean); this.drop(connection);
+      }
+      return { connected: false, ...(hadLti ? { lti_cleanup: { removed, ...(!removed ? { note: 'Foxxi access ended, but some temporary Cloud LTI setup could not be confirmed removed. Check the connection in your SCORM Cloud settings.' } : {}) } } : {}) };
     }
     // Removing local private content must remain available even after read throttling.
     if (operation !== 'delete') this.limit(identity);
@@ -580,7 +876,7 @@ export class UserCourseStore {
       if (this.connections.size >= 64) refuse('Too many temporary course connections.', 429, 'course_rate_limited');
       const connection = { id: opaque(), session: identity.session_id, actor: identity.actor, authorization,
         expires: Math.min(identity.expires_at, this.clock() + this.ttl), abort: new AbortController(),
-        courses: new Map(), pages: new Map(), grants: new Map(), revoked: new Map(), busy: false, provider, ...(remote ? { remote } : {}) } as Connection;
+        courses: new Map(), pages: new Map(), grants: new Map(), revoked: new Map(), ltiSetups: new Map(), busy: false, provider, ...(remote ? { remote } : {}) } as Connection;
       const close = () => this.drop(connection);
       identity.signal.addEventListener('abort', close, { once: true });
       connection.release = () => identity.signal.removeEventListener('abort', close);
@@ -602,11 +898,15 @@ export class UserCourseStore {
     else if (operation === 'source') exact(args, ['session_id', 'operation', 'connection_id', 'course_id', 'version', 'question', 'grant_id', 'refresh']);
     else if (operation === 'grant') exact(args, ['session_id', 'operation', 'connection_id', 'course_id', 'version', 'mode', 'permission']);
     else if (operation === 'access-status') exact(args, ['session_id', 'operation', 'connection_id', 'course_id', 'version']);
+    else if (typeof operation === 'string' && ['lti-prepare', 'lti-setup', 'lti-status', 'lti-launch', 'lti-attach', 'lti-disconnect'].includes(operation)) {
+      exact(args, ['session_id', 'operation', 'connection_id', 'course_id', 'version', 'grant_id', ...(operation === 'lti-prepare' ? [] : ['lti_id'])]);
+    }
     else if (operation === 'delete' || operation === 'request-deletion' || operation === 'deletion-status') exact(args, ['session_id', 'operation', 'connection_id', 'course_id', 'version', 'grant_id', ...(operation === 'deletion-status' ? ['request_id'] : [])]);
     else refuse('Unknown course connection operation.');
     if (!connection || connection.actor !== identity.actor || connection.id !== args.connection_id) refuse('Course connection not found.', 404, 'course_connection_not_found');
     this.requireCurrent(connection);
     if (operation === 'delete' || operation === 'request-deletion' || operation === 'deletion-status') return this.deleteContent(connection, args, signal);
+    if (typeof operation === 'string' && operation.startsWith('lti-')) return this.work(connection, fetchSignal => this.ltiOperation(connection, args, fetchSignal), signal);
     return this.work(connection, fetchSignal => operation === 'courses' ? this.list(connection, args.page, fetchSignal)
       : operation === 'grant' ? this.grant(connection, args, fetchSignal)
       : operation === 'access-status' ? this.accessStatus(connection, args, fetchSignal) : this.source(connection, args, fetchSignal), signal);
@@ -615,6 +915,7 @@ export class UserCourseStore {
 
 export function attachUserCourseRoutes(app: Express, config: UserCourseConfig): UserCourseStore {
   const store = new UserCourseStore(config), origin = new URL(config.baseUrl).origin;
+  store.attachLtiRoutes(app);
   app.post(USER_COURSE_PATH, async (req, res) => {
     const abort = new AbortController();
     const closed = () => { if (!res.writableEnded) abort.abort(); };

@@ -24,6 +24,12 @@ Not fixed here, and failing the same way for a new wallet against hosted identit
 
 `list()` now copies each array once from its own data elements, and every caller uses that copy. A hole, a getter or a length that is not an exact integer within the bound fails with `expected a dense array of data values` or `expected a bounded array`. Valid packets prepare exactly as before. A new test covers holes in the selection and in each packet array, getter elements, and lying `length` values; it fails on the previous code. This covers arrays only: object fields are still read with ordinary property access, as before. Packets parsed from JSON can carry neither holes nor getters, so this hardens programmatic callers.
 
+## 2026-11-07 — Native source-file reading and dynamic Cloud LTI in Ask
+
+SCORM Cloud courses can now use bounded, versioned file-list and asset reads without ZIP export or a retained course cache. Foxxi plans the question over source paths and manifest titles; the UI distinguishes this from provider-executed question search and labels selected projection hashes separately from stable source version identity.
+
+An owner can prepare a connection-specific LTI tool, explicitly create a Cloud connector and separate helper course, verify Cloud's signed launch, and attach it only to the initiating authenticated browser, paired actor and selected source/version. Owner permission remains separate, and the model receives the launch reference without the platform subject or roles. No account/client credentials are deployment defaults. Temporary setup removal targets only its generated helper and connector, handles uncertain writes without duplicate creation, waits for in-flight setup, and reports incomplete cleanup honestly. Details: [course access integration](docs/integrations/i2idlx-course-access.md).
+
 ## 2026-11-07 — Explicit course access modes in Ask
 
 Ask now requires course/version permission before retrieving content. SCORM Cloud supports temporary reading or a session-only instructional text and published-structure graph cache, with expiry, refresh, access rechecks and immediate local deletion. A separate virtual source-service mode requests bounded cited passages where the content lives, rechecks the source owner's grant and never falls back to a course export. Connections and credentials are selected at runtime.

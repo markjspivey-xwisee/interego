@@ -91,7 +91,7 @@ describe('private SCORM Cloud course connections', () => {
       { authorized: true, authority: 'learner', retention_minutes: 10 }]) {
       await expect(f.rawRequest('grant', { ...input, mode: 'cached', permission })).rejects.toMatchObject({ status: 403 });
     }
-    await expect(f.rawRequest('grant', { ...input, mode: 'virtual', permission: { authorized: true, authority: 'owner', retention_minutes: 10 } })).rejects.toMatchObject({ code: 'course_mode_unsupported' });
+    await expect(f.rawRequest('grant', { ...input, mode: 'unbounded', permission: { authorized: true, authority: 'owner', retention_minutes: 10 } })).rejects.toMatchObject({ code: 'course_mode_unsupported' });
     expect(f.cloudFetch).toHaveBeenCalledTimes(1);
   });
 
@@ -289,7 +289,7 @@ describe('private SCORM Cloud course connections', () => {
     const connected = await f.connect();
     expect(connected).toMatchObject({ connected: true, provider: 'scorm-cloud', persisted: false });
     const listing = await f.request('courses', { connection_id: connected.connection_id });
-    expect(listing.courses).toEqual([{ id: course.id, title: course.title, version: 2, standard: 'SCORM_12', access_modes: ['transient', 'cached'] }]);
+    expect(listing.courses).toEqual([{ id: course.id, title: course.title, version: 2, standard: 'SCORM_12', access_modes: ['transient', 'cached', 'virtual'] }]);
     const result = await f.request('source', { connection_id: connected.connection_id,
       course_id: course.id, version: 2, question: 'What code is recorded\nin the simulation log?' });
     expect(result.source).toEqual({ provider: 'scorm-cloud', course_id: course.id, title: course.title, version: 2,

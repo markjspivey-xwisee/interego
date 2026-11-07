@@ -62,13 +62,14 @@ EXPIRES = "2099-01-01T00:00:00.000Z"
 # Obvious synthetic placeholders; these have no SCORM Cloud provider access.
 APP_ID, SECRET = "fixture-app", "test-secret"
 SOURCE_URL, SOURCE_TOKEN = "https://source.example/course-access", "fixture-source-token"
-courses = [{"id": "course-a", "title": "Safety fundamentals", "version": 3, "standard": "SCORM 2004", "access_modes": ["transient", "cached"]},
-           {"id": "course-b", "title": "Equipment checks", "version": 5, "standard": "SCORM 1.2", "access_modes": ["transient", "cached"]}]
+courses = [{"id": "course-a", "title": "Safety fundamentals", "version": 3, "standard": "SCORM 2004", "access_modes": ["transient", "cached", "virtual"]},
+           {"id": "course-b", "title": "Equipment checks", "version": 5, "standard": "SCORM 1.2", "access_modes": ["transient", "cached", "virtual"]}]
 external_courses = [{"id": "external-course", "title": "Publisher hosted exercise", "version": "revision-23", "standard": "External", "access_modes": ["virtual"]}]
-errors, calls, source_calls, agent_calls, host_calls, pending_sources = [], [], [], [], [], []
+errors, calls, source_calls, agent_calls, host_calls, pending_sources, pending_lti_status = [], [], [], [], [], [], []
 state = {"session": 0, "connection": None, "expire": False, "wrong_source": False, "omit_content_digest": False, "defer_source": False,
          "digest": "a" * 64, "content_digest": "c" * 64, "content_body": "Inspect the equipment before use.",
-         "provider": "scorm-cloud", "grants": {}, "cached": set(), "grant_serial": 0, "remote_status": "pending", "grant_expires": EXPIRES, "fail_local_delete": False, "deletions": {}, "authentication_failed": False, "permission_revoked": False}
+         "provider": "scorm-cloud", "grants": {}, "cached": set(), "grant_serial": 0, "remote_status": "pending", "grant_expires": EXPIRES, "fail_local_delete": False, "deletions": {}, "authentication_failed": False, "permission_revoked": False,
+         "lti": None, "lti_setup_calls": 0, "lti_setup_uncertain": False, "lti_cleanup_fail": False, "defer_lti_status": False, "projection_digest": "d" * 64}
 
 def reply(route, value, status=200):
     return route.fulfill(status=status, content_type="application/json", body=json.dumps(value))
@@ -146,13 +147,15 @@ def route_handler(route):
             state["grants"].clear()
             state["cached"].clear()
             state["deletions"].clear()
+            state["lti"] = None
             return reply(route, {"connected": True, "provider": state["provider"], "connection_id": state["connection"], "expires_at": EXPIRES})
         if operation == "disconnect":
             state["connection"] = None
             state["grants"].clear()
             state["cached"].clear()
             state["deletions"].clear()
-            return reply(route, {"connected": False})
+            state["lti"] = None
+            return reply(route, {"connected": False, "lti_cleanup": {"removed": not state["lti_cleanup_fail"]}})
         assert body["connection_id"] == state["connection"]
         if operation == "courses":
             return reply(route, {"connection_id": state["connection"], "courses": courses if state["provider"] == "scorm-cloud" else external_courses})
@@ -160,20 +163,62 @@ def route_handler(route):
         if operation == "access-status":
             return reply(route, {"connection_id": state["connection"], "course_id": body["course_id"], "version": body["version"],
                 "grant": state["grants"].get(source_key), "deletion": state["deletions"].get(source_key),
-                "cache": {"present": source_key in state["cached"], "bytes": 1200 if source_key in state["cached"] else 0}})
+                "cache": {"present": source_key in state["cached"], "bytes": 1200 if source_key in state["cached"] else 0}, "lti": state["lti"]})
         if operation == "grant":
             permission = body["permission"]
             assert permission["authorized"] is True and permission["authority"] in ("owner", "authorized-by-owner")
             assert permission["retention_minutes"] in (5, 10, 30)
-            assert body["mode"] in (["transient", "cached"] if state["provider"] == "scorm-cloud" else ["virtual"])
+            assert body["mode"] in (["transient", "cached", "virtual"] if state["provider"] == "scorm-cloud" else ["virtual"])
             state["grant_serial"] += 1
             grant = {"id": format(state["grant_serial"], "048x"), "mode": body["mode"], "expires_at": state["grant_expires"],
                      "authority": permission["authority"], "verification": "user-attested" if state["provider"] == "scorm-cloud" else "source-service-attested"}
             state["grants"][source_key] = grant
             return reply(route, {"grant": grant, "cache": {"present": False, "bytes": 0}})
+        # Only a deterministic UI state machine: actual LTI signature/nonce/owner
+        # verification belongs to backend integration tests and the live provider test.
+        if operation.startswith("lti-"):
+            assert state["provider"] == "scorm-cloud"
+            if operation == "lti-prepare":
+                assert body["grant_id"] == state["grants"][source_key]["id"]
+                state["lti"] = {"id": "fixture-lti-" + str(state["grant_serial"]), "state": "prepared", "expires_at": EXPIRES,
+                    "tool": {"login_url": "https://workbench.example/lti/login", "launch_url": "https://workbench.example/lti/launch",
+                             "jwks_url": "https://workbench.example/lti/jwks", "public_key_pem": "PUBLIC-KEY"}}
+                return reply(route, {"lti": state["lti"]})
+            assert state["lti"] and body["lti_id"] == state["lti"]["id"]
+            if operation == "lti-setup":
+                assert state["grants"][source_key]["authority"] == "owner", "reading permission alone cannot configure trusted account access"
+                state["lti_setup_calls"] += 1
+                state["lti"].update(state="ready", connector_id="fixture-created-connector", helper_course_id="fixture-separate-helper")
+                if state["lti_setup_uncertain"]:
+                    return reply(route, {"code": "course_provider_unavailable", "error": "The Cloud setup response was interrupted. Check its status."}, 502)
+            elif operation == "lti-launch":
+                assert state["lti"]["state"] in ("ready", "verified", "attached")
+                return reply(route, {"lti": state["lti"], "launch_url": "https://app.cloud.scorm.com/fixture-lti-preview?handoff=PRIVATE-LAUNCH-URL"})
+            elif operation == "lti-attach":
+                assert state["lti"]["state"] == "verified"
+                state["lti"]["state"] = "attached"
+            elif operation == "lti-disconnect":
+                assert "grant_id" not in body, "removing an older setup must not bind to a newer source grant"
+                if state["lti_cleanup_fail"]:
+                    state["lti"].update(state="cleanup-failed", note="The provider did not confirm cleanup. Retry removal.")
+                    return reply(route, {"removed": False, "lti": state["lti"], "original_course_unchanged": True})
+                state["lti"] = None
+                return reply(route, {"removed": True, "lti": None, "original_course_unchanged": True})
+            else:
+                assert operation == "lti-status"
+                if state["defer_lti_status"]:
+                    pending_lti_status.append((route, {"lti": json.loads(json.dumps(state["lti"]))}))
+                    return
+            return reply(route, {"lti": state["lti"]})
         if operation in ("delete", "request-deletion", "deletion-status"):
             state["grants"].pop(source_key, None)
             state["cached"].discard(source_key)
+            if state["lti"]:
+                if state["lti"].get("connector_id") or state["lti"].get("helper_course_id"):
+                    state["lti"]["state"] = "revoked"
+                    state["lti"].pop("launch", None)
+                else:
+                    state["lti"] = None
             if operation == "delete" and state["fail_local_delete"]:
                 return reply(route, {"error": "Local deletion response was interrupted.", "code": "course_provider_unavailable"}, 502)
             status = "not_requested" if operation == "delete" else "completed" if operation == "deletion-status" else state["remote_status"] if state["provider"] == "source-service" else "unsupported"
@@ -205,7 +250,15 @@ def route_handler(route):
         source = {"provider": state["provider"], "course_id": selected["id"], "title": selected["title"],
                   "version": selected["version"], "content_sha256": state["content_digest"]}
         if state["provider"] == "scorm-cloud":
-            source["package_sha256"] = state["digest"]
+            if grant["mode"] == "virtual":
+                source.pop("content_sha256")
+                source.update(source_version="course-version:" + str(selected["version"]), projection_sha256=state["projection_digest"], fingerprint_scope="selected-instructional-projection")
+                if state["lti"] and state["lti"]["state"] == "attached":
+                    source["lti"] = {key: value for key, value in state["lti"]["launch"].items() if key != "subject"}
+                    source["lti"].update(verification="signed-lti13-platform-launch", subject_shared=False,
+                        identity_binding="The verified platform subject was explicitly associated with this authenticated browser session.")
+            else:
+                source["package_sha256"] = state["digest"]
         else:
             source["lti"] = {"context_id": "provider-context", "resource_link_id": "provider-resource"}
         if state["wrong_source"]:
@@ -217,7 +270,7 @@ def route_handler(route):
         cache_hit = source_key in state["cached"] and not body.get("refresh")
         if grant["mode"] == "cached":
             state["cached"].add(source_key)
-        graph = {"representation": "published-structure", "nodes": 3, "edges": 2, "semantic_prerequisites_inferred": False} if grant["mode"] == "cached" else {"representation": "source-service" if grant["mode"] == "virtual" else "none"}
+        graph = {"representation": "published-structure", "nodes": 3, "edges": 2, "semantic_prerequisites_inferred": False} if grant["mode"] == "cached" else {"representation": "source-service" if grant["mode"] == "virtual" and state["provider"] == "source-service" else "none"}
         packet = {"connection_id": state["connection"], "source": source, "citations": [citation], "missing_context": [],
             "retrieved_at": "2026-11-07T12:00:00.000Z", "truncated": False,
             "access": {"mode": grant["mode"], "permission": grant, "cache": {"present": grant["mode"] == "cached", "hit": cache_hit, "bytes": 1200 if grant["mode"] == "cached" else 0, "stored_at": "2026-11-07T11:59:00.000Z" if grant["mode"] == "cached" else None, "expires_at": EXPIRES}, "graph": graph},
@@ -228,6 +281,12 @@ def route_handler(route):
         return reply(route, packet)
     if request.method not in ("GET", "HEAD"):
         raise AssertionError("unexpected external write " + url)
+    if url.startswith("https://app.cloud.scorm.com/fixture-lti-preview"):
+        assert state["lti"] and state["lti"]["state"] in ("ready", "verified", "attached")
+        state["lti"].update(state="verified", launch={"issuer": "https://cloud.scorm.com/fixture-platform", "client_id": "fixture-client",
+            "deployment_id": "fixture-deployment", "subject": "fixture-lms-account", "context_id": "fixture-context", "resource_link_id": "fixture-resource",
+            "verified_at": "2026-11-07T12:00:00.000Z", "course_id": courses[0]["id"], "version": courses[0]["version"]})
+        return route.fulfill(status=200, content_type="text/html", body="<!doctype html><title>Fixture LTI helper</title><p>Fixture launch returned.</p>")
     if url.startswith("http://app.test/i2idlx/"):
         return route.fulfill(status=200, content_type="text/html", body=html)
     if url.startswith("https://cdnjs.cloudflare.com/"):
@@ -265,7 +324,7 @@ with sync_playwright() as p:
             _signed_payload: JSON.stringify({...payload, agent_id: 'did:example:fixture-host'}),
             _signature: 'fixture-host-signature'})};
     })();""")
-    page.route("**/*", route_handler)
+    page.context.route("**/*", route_handler)
     page.on("pageerror", lambda error: errors.append(str(error)))
     page.goto("http://app.test/i2idlx/#ask")
     panel = page.get_by_test_id("ask-course-source")
@@ -289,7 +348,7 @@ with sync_playwright() as p:
         page.get_by_role("button", name="Connect my SCORM Cloud", exact=True).click()
         page.get_by_label("SCORM Cloud course", exact=True).wait_for()
 
-    def approve_course(selected_mode="transient"):
+    def approve_course(selected_mode="transient", authority="authorized-by-owner"):
         page.get_by_text("Reading your course source…", exact=True).wait_for(state="hidden")
         mode = page.get_by_label("Course access mode", exact=True)
         if page.get_by_role("button", name="Delete local content and revoke permission", exact=True).count() and mode.input_value() == selected_mode:
@@ -299,7 +358,7 @@ with sync_playwright() as p:
         assert not page.get_by_label("Confirm course owner permission", exact=True).is_checked()
         assert page.get_by_label("Course permission authority", exact=True).input_value() == ""
         assert page.get_by_role("button", name="Apply course permission", exact=True).is_disabled()
-        page.get_by_label("Course permission authority", exact=True).select_option("authorized-by-owner")
+        page.get_by_label("Course permission authority", exact=True).select_option(authority)
         page.get_by_label("Confirm course owner permission", exact=True).check()
         page.get_by_role("button", name="Apply course permission", exact=True).click()
         page.get_by_role("button", name="Delete local content and revoke permission", exact=True).wait_for()
@@ -326,10 +385,10 @@ with sync_playwright() as p:
     page.get_by_label("Course access mode", exact=True).wait_for()
     assert page.get_by_label("Course access mode", exact=True).input_value() == ""
     assert page.get_by_role("button", name="Ask", exact=True).is_disabled()
-    assert page.get_by_label("Course access mode", exact=True).locator('option[value="virtual"]').count() == 0
+    assert page.get_by_label("Course access mode", exact=True).locator('option[value="virtual"]').count() == 1
     approve_course()
     assert not source_calls and not agent_calls, "selecting a source does not share it"
-    print("PASS course selection requires explicit mode, unchecked permission and authority; Cloud never offers virtual fallback")
+    print("PASS course selection requires explicit mode, unchecked permission and authority; Cloud offers native virtual reading explicitly")
     ask("What should I inspect?")
     assert source_calls[-1]["question"] == "What should I inspect?"
     assert "instructional-source-reference" in json.dumps(agent_calls[-1])
@@ -606,7 +665,139 @@ with sync_playwright() as p:
     assert sum(body.get("operation") == "request-deletion" for _, body in calls) == prior_remote_requests
     print("PASS retrying an uncertain local deletion does not escalate into an unrequested remote deletion")
 
+    approve_course("virtual")
+    ask("Read selected native Cloud source files")
+    panel.get_by_text("Course sources for the latest question", exact=True).click()
+    assert "Read selected source files (virtual)" in panel.inner_text()
+    assert "SCORM Cloud does not perform the question search" in panel.inner_text()
+    assert "Selected instructional passage fingerprint" in panel.inner_text()
+    assert "not the whole course" in panel.inner_text() and "Source version: course-version:3" in panel.inner_text()
+    assert "Export archive SHA-256" not in panel.inner_text() and not state["cached"]
+    state["projection_digest"] = "e" * 64
+    ask("A follow-up selecting another native source projection")
+    assert page.locator(".msg").count() == 4, "a new selected projection does not represent a new course version"
+    assert "course content changed" not in panel.inner_text()
+    print("PASS Cloud virtual reading labels local query planning and preserves conversation across different selected projections")
+
+    lti_panel = page.get_by_test_id("course-lti-connection")
+    lti_panel.locator("summary").first.click()
+    assert state["lti_setup_calls"] == 0
+    page.get_by_role("button", name="Prepare LTI connection", exact=True).click()
+    page.get_by_role("button", name="Create LTI connection in my SCORM Cloud", exact=True).wait_for()
+    assert page.get_by_role("button", name="Create LTI connection in my SCORM Cloud", exact=True).is_disabled()
+    assert "current reading permission does not authorize it" in lti_panel.inner_text()
+    assert state["lti_setup_calls"] == 0
+    print("PASS preparing public LTI settings does not create Cloud objects and owner-authorized reading does not enable trusted account setup")
+
+    page.get_by_role("button", name="Delete local content and revoke permission", exact=True).click()
+    page.get_by_text("The local text, graph and permission were removed from this session.", exact=False).wait_for()
+    approve_course("virtual", authority="owner")
+    lti_panel = page.get_by_test_id("course-lti-connection")
+    if not lti_panel.evaluate("element => element.open"):
+        lti_panel.locator("summary").first.click()
+    page.get_by_role("button", name="Prepare LTI connection", exact=True).click()
+    page.get_by_role("button", name="Create LTI connection in my SCORM Cloud", exact=True).wait_for()
+    assert "separate private helper course" in lti_panel.inner_text() and "does not edit your original course" in lti_panel.inner_text()
+    state["lti_setup_uncertain"] = True
+    page.get_by_role("button", name="Create LTI connection in my SCORM Cloud", exact=True).click()
+    page.get_by_text("Cloud setup was not confirmed.", exact=False).wait_for()
+    assert state["lti_setup_calls"] == 1
+    assert not page.get_by_role("button", name="Create LTI connection in my SCORM Cloud", exact=True).count()
+    state["lti_setup_uncertain"] = False
+    page.get_by_role("button", name="Check LTI connection", exact=True).click()
+    page.get_by_role("button", name="Open Cloud LTI helper course", exact=True).wait_for()
+    assert state["lti"]["helper_course_id"] != courses[0]["id"]
+    assert state["lti_setup_calls"] == 1
+    print("PASS uncertain Cloud LTI creation requires a manual status check rather than another creation and uses a separate helper course")
+
+    with page.expect_popup() as popup_event:
+        page.get_by_role("button", name="Open Cloud LTI helper course", exact=True).click()
+    helper_popup = popup_event.value
+    helper_popup.get_by_text("Fixture launch returned.", exact=True).wait_for()
+    assert "PRIVATE-LAUNCH-URL" not in page.locator("body").inner_text()
+    assert state["lti"]["state"] == "verified"
+    page.get_by_role("button", name="Check LTI connection", exact=True).click()
+    page.get_by_role("button", name="Use verified LTI launch", exact=True).wait_for()
+    assert not page.get_by_role("button", name="Open Cloud LTI helper course", exact=True).count(), "a verified one-use launch is attached rather than reopened"
+    ask("A native file question before explicitly attaching the launch")
+    assert "fixture-resource" not in json.dumps(agent_calls[-1]), "verified metadata is not shared before explicit attachment"
+    assert "fixture-lms-account" not in json.dumps(agent_calls[-1])
+    page.get_by_role("button", name="Use verified LTI launch", exact=True).click()
+    page.get_by_text("The verified LTI launch is attached to this paired agent and selected course.", exact=True).wait_for()
+    assert not page.get_by_role("button", name="Open Cloud LTI helper course", exact=True).count(), "an attached one-use launch cannot reopen"
+    ask("A native Cloud question after verified launch attachment")
+    assert "fixture-resource" in json.dumps(agent_calls[-1]), "only the explicitly attached verified reference is shared"
+    assert "fixture-lms-account" not in json.dumps(agent_calls[-1]), "the private platform subject stays out of model context"
+    assert len(agent_calls[-1]["messages"]) == 2, "attaching the launch starts a fresh scoped conversation"
+    if not panel.get_by_text("Course sources for the latest question", exact=True).evaluate("element => element.parentElement.open"):
+        panel.get_by_text("Course sources for the latest question", exact=True).click()
+    assert "This source is bound to the verified LTI launch shown above" in panel.inner_text()
+    assert "PRIVATE-LAUNCH-URL" not in panel.inner_text()
+    page.screenshot(path=str(shots / "ask-native-cloud-lti-attached-fixture.png"), full_page=True)
+    print("PASS the one-use popup stays private and explicit attachment shares a verified launch reference without its platform subject")
+
+    page.get_by_role("link", name="Lexicon", exact=True).click()
+    page.locator(".lex-list .li").first.wait_for()
+    page.get_by_role("link", name="Ask", exact=True).click()
+    page.get_by_role("textbox", name="Ask", exact=True).wait_for()
+    if not panel.evaluate("element => element.open"):
+        panel.locator("summary").first.click()
+    page.get_by_role("button", name="Refresh courses", exact=True).click()
+    select_course(0, selected_mode="virtual")
+    lti_panel = page.get_by_test_id("course-lti-connection")
+    if not lti_panel.evaluate("element => element.open"):
+        lti_panel.locator("summary").first.click()
+    assert "verified LTI launch is attached" in lti_panel.inner_text()
+    assert state["lti_setup_calls"] == 1
+    state["defer_lti_status"] = True
+    with page.expect_request(lambda request: request.url.endswith("/user-courses") and request.post_data_json.get("operation") == "lti-status"):
+        page.get_by_role("button", name="Check LTI connection", exact=True).click()
+    page.get_by_role("button", name="Delete local content and revoke permission", exact=True).click()
+    page.get_by_text("The local text, graph and permission were removed from this session.", exact=False).wait_for()
+    state["defer_lti_status"] = False
+    for pending_route, lti_response in pending_lti_status:
+        reply(pending_route, lti_response)
+    pending_lti_status.clear()
+    page.evaluate("new Promise(resolve => setTimeout(resolve, 0))")
+    assert page.get_by_role("button", name="Ask", exact=True).is_disabled()
+    assert "local LTI binding ended" in lti_panel.inner_text()
+    assert "verified LTI launch is attached" not in lti_panel.inner_text()
+    assert not page.get_by_role("button", name="Use verified LTI launch", exact=True).count()
+    print("PASS a late LTI status response cannot restore the verified binding or permission after local revocation")
+    assert page.get_by_role("button", name="Remove Cloud LTI setup", exact=True).is_enabled()
+    state["lti_cleanup_fail"] = True
+    page.get_by_role("button", name="Remove Cloud LTI setup", exact=True).click()
+    page.get_by_text("Cloud cleanup was not confirmed. Retry removal before disconnecting this source;", exact=False).wait_for()
+    assert state["lti"]["state"] == "cleanup-failed"
+    assert not page.get_by_text("The temporary Cloud LTI connection and helper course were removed.", exact=False).count()
+    approve_course("virtual", authority="owner")
+    current_grant = state["grants"][json.dumps([courses[0]["id"], courses[0]["version"]])]["id"]
+    state["lti_cleanup_fail"] = False
+    page.get_by_role("button", name="Remove Cloud LTI setup", exact=True).click()
+    page.get_by_text("The temporary Cloud LTI connection and helper course were removed. Your original course is unchanged.", exact=True).wait_for()
+    assert state["lti"] is None
+    assert state["grants"][json.dumps([courses[0]["id"], courses[0]["version"]])]["id"] == current_grant
+    assert page.get_by_label("SCORM Cloud course", exact=True).locator("option").count() == 3
+    print("PASS LTI attachment recovers after remount and cleanup of an older setup preserves fresh source permission and the original course")
+
+    approve_course("virtual", authority="owner")
+    lti_panel = page.get_by_test_id("course-lti-connection")
+    if not lti_panel.evaluate("element => element.open"):
+        lti_panel.locator("summary").first.click()
+    page.get_by_role("button", name="Prepare LTI connection", exact=True).click()
+    page.get_by_role("button", name="Create LTI connection in my SCORM Cloud", exact=True).click()
+    page.get_by_role("button", name="Open Cloud LTI helper course", exact=True).wait_for()
+    state["lti_cleanup_fail"] = True
     page.get_by_role("button", name="Disconnect course source", exact=True).click()
+    page.get_by_label("SCORM Cloud secret", exact=True).wait_for()
+    assert "removal of the temporary Cloud LTI setup was not confirmed" in panel.inner_text()
+    assert "do not assume the helper course and connection were removed" in panel.inner_text()
+    assert not state["connection"]
+    state["lti_cleanup_fail"] = False
+    print("PASS source disconnect clears local access while preserving an honest warning when Cloud cleanup is unconfirmed")
+
+    if page.get_by_role("button", name="Disconnect course source", exact=True).count():
+        page.get_by_role("button", name="Disconnect course source", exact=True).click()
     page.get_by_label("Course source provider", exact=True).select_option("source-service")
     page.get_by_label("Source service URL", exact=True).fill(SOURCE_URL)
     page.get_by_label("Source service access token", exact=True).fill(SOURCE_TOKEN)
