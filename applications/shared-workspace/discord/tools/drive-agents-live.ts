@@ -23,6 +23,10 @@
  *
  *   npx tsx applications/shared-workspace/discord/tools/drive-agents-live.ts
  *
+ * Its wallets are new, and hosted identity creates an account for a new wallet only with the
+ * operator's Hosted Terms agreement: see `INTEREGO_ACCEPT_HOSTED_TERMS_VERSION` in
+ * `applications/shared-workspace/tools/live-identity.ts`. Unset, a run stops at the first sign-in.
+ *
  * Every write is public and disposable. Nothing touches `u-eth-8f3b8e939600`.
  */
 
@@ -39,7 +43,7 @@ import {
   type Presence, type SeenEntry,
 } from '@interego/workspace-client';
 import { RESPOND_AS_MEMBER } from '../../affordances.js';
-import { mintBearer } from '../../tools/live-identity.js';
+import { mintBearerWithOperatorTerms } from '../../tools/live-identity.js';
 import { LinkStore } from '../src/links.js';
 import { ask, askCandidates, askChoices, resolveTarget } from '../src/ask.js';
 import { beginLink, confirmLink, recordMessage, showWorkspace, startWorkspace, type Deps } from '../src/workspace.js';
@@ -128,10 +132,10 @@ async function party(clientName?: string): Promise<Party> {
   const wait = lastMint + MINT_GAP_MS - Date.now();
   if (wait > 0) await sleep(wait);
   const wallet = Wallet.createRandom();
-  let bearer: Awaited<ReturnType<typeof mintBearer>> | null = null;
+  let bearer: Awaited<ReturnType<typeof mintBearerWithOperatorTerms>> | null = null;
   for (let attempt = 1; attempt <= MINT_TRIES && bearer === null; attempt++) {
     lastMint = Date.now();
-    try { bearer = await mintBearer(RELAY, IDENTITY, wallet, clientName); }
+    try { bearer = await mintBearerWithOperatorTerms(RELAY, IDENTITY, wallet, clientName); }
     catch (e) {
       const msg = (e as Error).message ?? String(e);
       if (msg.indexOf('429') < 0 || attempt === MINT_TRIES) throw e;

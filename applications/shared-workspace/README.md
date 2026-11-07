@@ -246,7 +246,7 @@ notices; over-privileging is a failure nobody notices.
 | [`tools/verify-stream-live.ts`](tools/verify-stream-live.ts) | the stream, against the **live** relay. |
 | [`tools/verify-compose-live.ts`](tools/verify-compose-live.ts) | two real identities, two real pods, one view. |
 | [`tools/verify-can-live.ts`](tools/verify-can-live.ts) | a live refusal, at both layers that can refuse. |
-| [`tools/live-identity.ts`](tools/live-identity.ts) | mints a relay OAuth bearer from a secp256k1 key, headlessly — the desktop shell's own SIWE ceremony minus the shell. Shared by the four drivers below; it is why they can each be a *real* identity rather than a fixture. |
+| [`tools/live-identity.ts`](tools/live-identity.ts) | mints a relay OAuth bearer from a secp256k1 key, headlessly — the desktop shell's own SIWE ceremony minus the shell. Shared by every driver below, by the Discord bot and its drivers, and by several root `tools/*-live.ts` probes; it is why they can each be a *real* identity rather than a fixture. A driver that signs a **new** wallet in needs the operator's Hosted Terms agreement — see [below](#live-drivers-and-the-hosted-terms). |
 | [`tools/drive-membership-live.ts`](tools/drive-membership-live.ts) | **every membership and canvas flow, two real identities, two real pods**: create → invite → accept → switch → post from both → canvas create → save → forced stale 412 → merge forward → revoke, plus the 403 that refuses one party the other's pod. Runs the same `@interego/workspace-client` functions the artifact and the desktop shell run. |
 | [`tools/invite-handle-live.ts`](tools/invite-handle-live.ts) | the convener half of "getting a second person in", holding **only** the convener's key and taking the other party's handle as an argument — the position a convener is actually in. It is how the desktop shell becomes the second person, accepting with its own key out of the OS secret store. |
 | [`tools/probe-watch-live.ts`](tools/probe-watch-live.ts) | asks the relay what a live watch could actually be, before one is written: `GET /notifications/:podSlug` and `GET /sse`, with two bearers on two pods. The measurement behind `RelayMcpTransport.watchTool`. |
@@ -266,6 +266,32 @@ notices; over-privileging is a failure nobody notices.
 
 Roles are data: a workspace wanting different governance publishes a different profile, not
 a new release.
+
+### Live drivers and the Hosted Terms
+
+Most of the drivers above, the Discord drivers and several root `tools/*-live.ts` probes sign a
+**freshly generated wallet** in, so each run creates accounts on hosted identity. Hosted identity
+creates an account only for a wallet that signed the Hosted Terms agreement, and refuses any other
+first sign-in with HTTP 428 `hosted_terms_required`. The agreement is the operator's to give, and
+nothing here gives it by default:
+
+```bash
+# Read the version identity offers, and the terms it links to:
+curl -s https://identity.interego.xwisee.com/.well-known/hosted-interego-terms
+# Only if you agree to those terms for the disposable accounts the run creates:
+INTEREGO_ACCEPT_HOSTED_TERMS_VERSION=<that version> \
+  npx tsx applications/shared-workspace/tools/drive-membership-live.ts
+```
+
+With the variable set, `mintBearerWithOperatorTerms` sends that version with the SIWE challenge
+request and signs the agreement statement identity returns for it — only that exact statement, and
+only when identity offers exactly that version. Unset, or set to a version identity no longer
+offers, the ordinary `Sign in to Interego` is signed: a wallet that already holds an account signs
+in as before, and a new wallet is refused with `SIWE verify answered HTTP 428: …` followed by what
+to set. The scripts that sign in only with a fixed, already-enrolled key (`invite-handle-live.ts`,
+`probe-refresh-live.ts`, `claude-code-heartbeat.ts`, `claude-code-converse.ts`) do not read it, and
+neither does the Discord bot itself. `openAgentSession` (`src/agent-session.ts`) takes the same
+agreement as its `acceptHostedTermsVersion` option.
 
 ## The stream, and why it is shaped this way
 

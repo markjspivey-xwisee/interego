@@ -215,6 +215,13 @@ npx tsx applications/shared-workspace/discord/tools/drive-bot-live.ts
 npx tsx applications/shared-workspace/discord/tools/probe-delegation-live.ts
 ```
 
+Both mint new wallets, and hosted identity creates an account for a new wallet only with the
+operator's Hosted Terms agreement. Set `INTEREGO_ACCEPT_HOSTED_TERMS_VERSION` to the version you
+agreed to, as described in
+[the workspace README](../README.md#live-drivers-and-the-hosted-terms); unset, the first sign-in is
+refused with HTTP 428. The bot itself never reads that variable: it signs in with
+`INTEREGO_BOT_KEY`, whose account already exists, and its sign-in is unchanged.
+
 `drive-bot-live.ts` mints three disposable identities, has two of them publish real delegations
 from their own clients, and then runs **the bot's own command functions** against
 `https://relay.interego.xwisee.com`: refuse before linking, refuse a pod that delegated nothing,

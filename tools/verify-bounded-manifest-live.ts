@@ -19,6 +19,10 @@
  *   5. assert the total is conserved — nothing archived is lost.
  *
  *   npx tsx tools/verify-bounded-manifest-live.ts
+ *
+ * Its wallets are new, and hosted identity creates an account for a new wallet only with the
+ * operator's Hosted Terms agreement: see `INTEREGO_ACCEPT_HOSTED_TERMS_VERSION` in
+ * `applications/shared-workspace/tools/live-identity.ts`. Unset, a run stops at the first sign-in.
  */
 
 import { Wallet } from 'ethers';
@@ -29,7 +33,7 @@ import {
 import { ContextDescriptor, dereference, setSolidModuleForTests } from '@interego/core';
 import type { IRI } from '@interego/core';
 import type { FetchFn } from '@interego/core/http';
-import { mintBearer, type Signer } from '../applications/shared-workspace/tools/live-identity.js';
+import { mintBearerWithOperatorTerms, type Signer } from '../applications/shared-workspace/tools/live-identity.js';
 
 const GATE = process.env['INTEREGO_GATE'] ?? 'https://gate.interego.xwisee.com';
 const RELAY = process.env['INTEREGO_RELAY'] ?? 'https://relay.interego.xwisee.com';
@@ -94,7 +98,7 @@ function seedDescriptor(pod: string, i: number): string {
 async function main(): Promise<void> {
   head('a disposable pod');
   const wallet = Wallet.createRandom();
-  const bearer = await mintBearer(RELAY, IDENTITY, wallet as unknown as Signer, 'bounded-manifest-verify');
+  const bearer = await mintBearerWithOperatorTerms(RELAY, IDENTITY, wallet as unknown as Signer, 'bounded-manifest-verify');
   const token = bearer.accessToken;
   const pod = `${GATE}/u-eth-${wallet.address.slice(2, 14).toLowerCase()}/`;
   log(`pod ${pod}`);

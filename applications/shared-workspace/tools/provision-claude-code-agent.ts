@@ -32,6 +32,11 @@
  * Usage:
  *   npx tsx applications/shared-workspace/tools/provision-claude-code-agent.ts [--lease-minutes 60]
  *
+ * The first run's key is new, and hosted identity creates an account for a new wallet only with
+ * the operator's Hosted Terms agreement: see `INTEREGO_ACCEPT_HOSTED_TERMS_VERSION` in
+ * `applications/shared-workspace/tools/live-identity.ts`. Unset, that sign-in is refused. A
+ * later run reuses the saved key, whose account already exists.
+ *
  * The keypair is written to `.interego/claude-code-agent.json` (gitignored) and REUSED on later
  * runs, so the agent keeps one stable identity across sessions instead of becoming a new principal
  * every time — which is what made the delegate's signing anchor rotate four times in five turns.
@@ -43,7 +48,7 @@ import { fileURLToPath } from 'node:url';
 import { Wallet } from 'ethers';
 import { WorkspaceClient, RelayMcpTransport, readViewer, agentPort, agentInbox } from '@interego/workspace-client';
 import { publishPresence, publishCapability, agentDocIri } from '@interego/core/agent';
-import { mintBearer, type Signer } from './live-identity.js';
+import { mintBearerWithOperatorTerms, type Signer } from './live-identity.js';
 
 const REPO = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
 const RELAY = process.env['INTEREGO_RELAY'] ?? 'https://relay.interego.xwisee.com';
@@ -80,7 +85,7 @@ log('address  :', wallet.address);
 
 // ── 2. Seat it: mint a bearer, which provisions the identity and its own pod ─────────────────
 head('seating');
-const bearer = await mintBearer(RELAY, IDENTITY, wallet as unknown as Signer, CLIENT_NAME);
+const bearer = await mintBearerWithOperatorTerms(RELAY, IDENTITY, wallet as unknown as Signer, CLIENT_NAME);
 const client = new WorkspaceClient(RELAY, new RelayMcpTransport(RELAY, bearer));
 await client.connect();
 const viewer = await readViewer(client);

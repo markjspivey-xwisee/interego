@@ -22,10 +22,14 @@
  * `rdfCodec.ingest` → `PgslStore.compose`.
  *
  *   npx tsx tools/measure-manifest-write-cost-live.ts
+ *
+ * Its wallets are new, and hosted identity creates an account for a new wallet only with the
+ * operator's Hosted Terms agreement: see `INTEREGO_ACCEPT_HOSTED_TERMS_VERSION` in
+ * `applications/shared-workspace/tools/live-identity.ts`. Unset, a run stops at the first sign-in.
  */
 
 import { Wallet } from 'ethers';
-import { mintBearer, type Signer } from '../applications/shared-workspace/tools/live-identity.js';
+import { mintBearerWithOperatorTerms, type Signer } from '../applications/shared-workspace/tools/live-identity.js';
 
 const GATE = process.env['INTEREGO_GATE'] ?? 'https://gate.interego.xwisee.com';
 const RELAY = process.env['INTEREGO_RELAY'] ?? 'https://relay.interego.xwisee.com';
@@ -139,7 +143,7 @@ async function main(): Promise<void> {
 
   head('2. a disposable pod');
   const wallet = Wallet.createRandom();
-  const bearer = await mintBearer(RELAY, IDENTITY, wallet as unknown as Signer, 'manifest-cost-probe');
+  const bearer = await mintBearerWithOperatorTerms(RELAY, IDENTITY, wallet as unknown as Signer, 'manifest-cost-probe');
   const token = bearer.accessToken;
   // The gate binds a user bearer to `/<userId>/`; derive it the way the relay does.
   const pod = `u-eth-${wallet.address.slice(2, 14).toLowerCase()}`;

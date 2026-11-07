@@ -25,6 +25,10 @@
  *
  *   npx tsx tools/probe-delegate-substrate-live.ts
  *
+ * Its wallets are new, and hosted identity creates an account for a new wallet only with the
+ * operator's Hosted Terms agreement: see `INTEREGO_ACCEPT_HOSTED_TERMS_VERSION` in
+ * `applications/shared-workspace/tools/live-identity.ts`. Unset, a run stops at the first sign-in.
+ *
  * Every identity is freshly minted and disposable; runtime pod data is throwaway.
  */
 
@@ -35,7 +39,7 @@ import {
   type AuthorshipStatements, type DelegateRegistryPort,
 } from '@interego/core/delegate';
 import { RelayMcpTransport } from '@interego/core/relay';
-import { mintBearer } from '../applications/shared-workspace/tools/live-identity.js';
+import { mintBearerWithOperatorTerms } from '../applications/shared-workspace/tools/live-identity.js';
 
 const RELAY = process.env['INTEREGO_RELAY'] ?? 'https://relay.interego.xwisee.com';
 const IDENTITY = process.env['INTEREGO_IDENTITY'] ?? 'https://identity.interego.xwisee.com';
@@ -61,7 +65,7 @@ async function main(): Promise<void> {
   const person = Wallet.createRandom();
   const delegateKey = Wallet.createRandom();
 
-  const personBearer = await mintBearer(RELAY, IDENTITY, person);
+  const personBearer = await mintBearerWithOperatorTerms(RELAY, IDENTITY, person);
   const personTx = new RelayMcpTransport(RELAY, personBearer);
   const port = portFor(personTx);
 
@@ -72,7 +76,7 @@ async function main(): Promise<void> {
   check('and a WebID the registry names as its owner', webId.length > 0, webId);
 
   // The delegate signs in under the SHARED surface constant, never this probe's own name.
-  const delegateBearer = await mintBearer(RELAY, IDENTITY, delegateKey, DELEGATE_SURFACE);
+  const delegateBearer = await mintBearerWithOperatorTerms(RELAY, IDENTITY, delegateKey, DELEGATE_SURFACE);
   const delegateTx = new RelayMcpTransport(RELAY, delegateBearer);
   const dStatus = await delegateTx.callTool('get_pod_status', {}, { cache: false }) as Record<string, unknown>;
   const delegatePod = String(dStatus['displayName'] ?? '');

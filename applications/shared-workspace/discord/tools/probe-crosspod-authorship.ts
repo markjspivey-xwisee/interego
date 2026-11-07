@@ -12,13 +12,17 @@
  * rather than on prose in a `reason` string.
  *
  *   npx tsx applications/shared-workspace/discord/tools/probe-crosspod-authorship.ts
+ *
+ * Its wallets are new, and hosted identity creates an account for a new wallet only with the
+ * operator's Hosted Terms agreement: see `INTEREGO_ACCEPT_HOSTED_TERMS_VERSION` in
+ * `applications/shared-workspace/tools/live-identity.ts`. Unset, a run stops at the first sign-in.
  */
 
 import { Wallet } from 'ethers';
 import {
   DELEGATE_SURFACE, RelayMcpTransport, WorkspaceClient, delegateLabel, postEntry,
 } from '@interego/workspace-client';
-import { mintBearer } from '../../tools/live-identity.js';
+import { mintBearerWithOperatorTerms } from '../../tools/live-identity.js';
 
 const RELAY = process.env['INTEREGO_RELAY'] ?? 'https://relay.interego.xwisee.com';
 const IDENTITY = process.env['INTEREGO_IDENTITY'] ?? 'https://identity.interego.xwisee.com';
@@ -26,7 +30,7 @@ const log = (s = ''): void => { process.stdout.write(s + '\n'); };
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
 
 async function party(clientName?: string): Promise<{ pod: string; agentId: string; client: WorkspaceClient }> {
-  const client = new WorkspaceClient(RELAY, new RelayMcpTransport(RELAY, await mintBearer(RELAY, IDENTITY, Wallet.createRandom(), clientName)));
+  const client = new WorkspaceClient(RELAY, new RelayMcpTransport(RELAY, await mintBearerWithOperatorTerms(RELAY, IDENTITY, Wallet.createRandom(), clientName)));
   await client.connect();
   const st = await client.podStatus();
   const pod = String(st['pod'] ?? '').replace(/\/$/, '').split('/').pop() ?? '';

@@ -47,6 +47,10 @@
  *       failed), so no call was made and nothing was observed.
  *
  *   WSP_AGENT_PRIVATE_KEY=0x… npx tsx applications/shared-workspace/tools/observe-invoke-affordance-live.ts
+ *
+ * The convener's wallet is new, and hosted identity creates an account for a new wallet only with
+ * the operator's Hosted Terms agreement: see `INTEREGO_ACCEPT_HOSTED_TERMS_VERSION` in
+ * `applications/shared-workspace/tools/live-identity.ts`. Unset, that sign-in is refused.
  */
 
 import { Wallet } from 'ethers';
@@ -57,7 +61,7 @@ import {
   type Viewer,
 } from '@interego/workspace-client';
 import { legacyWorkspaceCapabilityTurtle } from '../src/advertise.js';
-import { mintBearer, type Signer } from './live-identity.js';
+import { mintBearerWithOperatorTerms, type Signer } from './live-identity.js';
 
 const RELAY = process.env['INTEREGO_RELAY'] ?? 'https://relay.interego.xwisee.com';
 const IDENTITY = process.env['INTEREGO_IDENTITY'] ?? 'https://identity.interego.xwisee.com';
@@ -75,7 +79,7 @@ interface Party {
 }
 
 async function party(label: string, wallet: Signer): Promise<Party> {
-  const bearer = await mintBearer(RELAY, IDENTITY, wallet);
+  const bearer = await mintBearerWithOperatorTerms(RELAY, IDENTITY, wallet);
   const client = new WorkspaceClient(RELAY, new RelayMcpTransport(RELAY, bearer));
   await client.connect();
   const viewer = await readViewer(client);

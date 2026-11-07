@@ -18,6 +18,11 @@
  *   INTEREGO_WALLET_A=.interego/maintainer.json   identity A (the convener). Default shown.
  *   INTEREGO_WALLET_B=<path>                      identity B. Omitted: a fresh key is minted.
  *   INTEREGO_DRIVE_SLUG=<slug>                    reuse a workspace instead of creating one.
+ *
+ * B (when `INTEREGO_WALLET_B` is omitted) and the delegate key are new wallets, and hosted
+ * identity creates an account for a new wallet only with the operator's Hosted Terms agreement:
+ * see `INTEREGO_ACCEPT_HOSTED_TERMS_VERSION` in `applications/shared-workspace/tools/live-identity.ts`.
+ * Unset, that sign-in is refused.
  */
 
 import { readFileSync } from 'node:fs';
@@ -34,7 +39,7 @@ import {
 // The Discord conduit's own author clause — a SECOND consumer of the same substrate value, so this
 // run measures whether the distinction survives more than one renderer.
 import { authorOf as discordAuthorOf } from '../discord/src/render.js';
-import { mintBearer, type Signer } from './live-identity.js';
+import { mintBearerWithOperatorTerms, type Signer } from './live-identity.js';
 
 const RELAY = process.env['INTEREGO_RELAY'] ?? 'https://relay.interego.xwisee.com';
 const IDENTITY = process.env['INTEREGO_IDENTITY'] ?? 'https://identity.interego.xwisee.com';
@@ -55,7 +60,7 @@ interface Party { readonly client: WorkspaceClient; readonly viewer: Viewer; rea
 // exercise the two-identity case it exists for.
 async function party(label: string, wallet: Signer): Promise<Party> {
   const t0 = Date.now();
-  const bearer = await mintBearer(RELAY, IDENTITY, wallet);
+  const bearer = await mintBearerWithOperatorTerms(RELAY, IDENTITY, wallet);
   const client = new WorkspaceClient(RELAY, new RelayMcpTransport(RELAY, bearer));
   await client.connect();
   const viewer = await readViewer(client);
@@ -237,7 +242,7 @@ async function run(): Promise<number> {
    */
   head('A authorises ONE delegate, which then speaks BOTH ways into A\'s log');
   const dKey = Wallet.createRandom();
-  const dBearer = await mintBearer(RELAY, IDENTITY, dKey, DELEGATE_SURFACE);
+  const dBearer = await mintBearerWithOperatorTerms(RELAY, IDENTITY, dKey, DELEGATE_SURFACE);
   const dTx = new RelayMcpTransport(RELAY, dBearer);
   const dClient = new WorkspaceClient(RELAY, dTx);
   const dStatus = await dTx.callTool('get_pod_status', {}, { cache: false }) as Record<string, unknown>;

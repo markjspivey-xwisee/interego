@@ -8,13 +8,17 @@
  *
  *   npx tsx applications/shared-workspace/discord/tools/probe-delegation-live.ts
  *
+ * Its wallets are new, and hosted identity creates an account for a new wallet only with the
+ * operator's Hosted Terms agreement: see `INTEREGO_ACCEPT_HOSTED_TERMS_VERSION` in
+ * `applications/shared-workspace/tools/live-identity.ts`. Unset, a run stops at the first sign-in.
+ *
  * Every write it makes is public and disposable. It writes ONE probe graph per pod.
  */
 
 import { Wallet } from 'ethers';
 import { randomBytes } from 'node:crypto';
 import { RelayMcpTransport, WorkspaceClient } from '@interego/workspace-client';
-import { mintBearer } from '../../tools/live-identity.js';
+import { mintBearerWithOperatorTerms } from '../../tools/live-identity.js';
 
 const RELAY = process.env['INTEREGO_RELAY'] ?? 'https://relay.interego.xwisee.com';
 const IDENTITY = process.env['INTEREGO_IDENTITY'] ?? 'https://identity.interego.xwisee.com';
@@ -26,7 +30,7 @@ interface Party { readonly name: string; readonly client: WorkspaceClient; reado
 
 async function party(name: string): Promise<Party> {
   const wallet = Wallet.createRandom();
-  const bearer = await mintBearer(RELAY, IDENTITY, wallet);
+  const bearer = await mintBearerWithOperatorTerms(RELAY, IDENTITY, wallet);
   const client = new WorkspaceClient(RELAY, new RelayMcpTransport(RELAY, bearer));
   await client.connect();
   const st = await client.podStatus();

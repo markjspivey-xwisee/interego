@@ -26,6 +26,10 @@
  *
  *   npx tsx applications/shared-workspace/tools/drive-local-agent-live.ts
  *
+ * Its wallets are new, and hosted identity creates an account for a new wallet only with the
+ * operator's Hosted Terms agreement: see `INTEREGO_ACCEPT_HOSTED_TERMS_VERSION` in
+ * `applications/shared-workspace/tools/live-identity.ts`. Unset, a run stops at the first sign-in.
+ *
  * Every identity is freshly minted and disposable. The maintainer pod is deliberately NOT used:
  * it is contended, and nothing here needs it.
  */
@@ -47,7 +51,7 @@ import { probeClaude, runClaude } from '../desktop/src/modelprovider.js';
 // renderer and quietly dies in another is not a distinction the system has. This is the Discord
 // conduit's own author clause, with its own longer copy, over the identical substrate value.
 import { authorOf as discordAuthorOf } from '../discord/src/render.js';
-import { mintBearer, type Signer } from './live-identity.js';
+import { mintBearerWithOperatorTerms, type Signer } from './live-identity.js';
 
 const RELAY = process.env['INTEREGO_RELAY'] ?? 'https://relay.interego.xwisee.com';
 const IDENTITY = process.env['INTEREGO_IDENTITY'] ?? 'https://identity.interego.xwisee.com';
@@ -71,7 +75,7 @@ interface Party { wallet: Signer; client: WorkspaceClient; viewer: Viewer }
  * under an application's own name would be a different delegate in every application.
  */
 async function open(wallet: Signer, who: string, clientName?: string): Promise<Party> {
-  const bearer = await mintBearer(RELAY, IDENTITY, wallet, clientName);
+  const bearer = await mintBearerWithOperatorTerms(RELAY, IDENTITY, wallet, clientName);
   const client = new WorkspaceClient(RELAY, new RelayMcpTransport(RELAY, bearer));
   await client.connect();
   const viewer = await readViewer(client);

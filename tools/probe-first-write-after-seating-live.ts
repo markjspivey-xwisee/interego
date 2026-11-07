@@ -19,13 +19,17 @@
  * it lands in `/publish/status` instead, which is a different (also real) problem.
  *
  *   npx tsx tools/probe-first-write-after-seating-live.ts
+ *
+ * The delegate key is new, and hosted identity creates an account for a new wallet only with the
+ * operator's Hosted Terms agreement: see `INTEREGO_ACCEPT_HOSTED_TERMS_VERSION` in
+ * `applications/shared-workspace/tools/live-identity.ts`. Unset, that sign-in is refused.
  */
 
 import { readFileSync } from 'node:fs';
 import { Wallet } from 'ethers';
 import { DELEGATE_SURFACE, delegateAgentId } from '@interego/core/delegate';
 import { RelayMcpTransport } from '@interego/core/relay';
-import { mintBearer, type Signer } from '../applications/shared-workspace/tools/live-identity.js';
+import { mintBearerWithOperatorTerms, type Signer } from '../applications/shared-workspace/tools/live-identity.js';
 
 const RELAY = process.env['INTEREGO_RELAY'] ?? 'https://relay.interego.xwisee.com';
 const IDENTITY = process.env['INTEREGO_IDENTITY'] ?? 'https://identity.interego.xwisee.com';
@@ -33,7 +37,7 @@ const log = (...a: unknown[]): void => { process.stdout.write(a.map(String).join
 const head = (s: string): void => { log('\n== ' + s + ' ' + '='.repeat(Math.max(0, 66 - s.length))); };
 
 async function session(w: Signer, clientName?: string): Promise<RelayMcpTransport> {
-  const bearer = await mintBearer(RELAY, IDENTITY, w, clientName);
+  const bearer = await mintBearerWithOperatorTerms(RELAY, IDENTITY, w, clientName);
   return new RelayMcpTransport(RELAY, bearer);
 }
 
