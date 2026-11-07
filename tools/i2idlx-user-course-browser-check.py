@@ -482,7 +482,7 @@ with sync_playwright() as p:
     select_course(0, selected_mode="cached")
     ask("Use the local course graph")
     panel.get_by_text("Course sources for the latest question", exact=True).click()
-    assert "Local content graph: 3 sections, 2 published structure links" in panel.inner_text()
+    assert "Local content graph: 3 graph items, 2 published structure links" in panel.inner_text()
     assert "Semantic prerequisites have not been inferred" in panel.inner_text()
     ask("Follow up using the local graph")
     assert "Local text and graph used for the latest question" in panel.inner_text()
