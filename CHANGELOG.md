@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-11-07 — Live client-signature check: run its Chromium step on a runner the locked Playwright supports
+
+With #788 the live check's client step passes against the deployed relay and identity (run 42398216683: `CLIENT_SIGNATURE_LIVE_RESULT {"passed":true}`). The next step, `npx playwright install --with-deps chromium`, then failed: `ubuntu-latest` now resolves to Ubuntu 26.04, and the locked Playwright release refuses it ("Playwright does not support chromium on ubuntu26.04-x64"). `client-signature-live.yml` and `e2e-passkey.yml` now run on `ubuntu-24.04`, as `identity-tests.yml`'s passkey browser job already does (26d2fd3b).
+
 ## 2026-11-07 — Live client-signature check: new synthetic accounts answer the Hosted Terms offer, and a refused sign-in says why
 
 The live client-signature check (`tools/client-signature-canary.mjs`) failed on every run since #778. Each run creates a new wallet for each synthetic actor, so the actor's first sign-in creates an account, and since #778 hosted identity requires the Hosted Terms agreement to create one. Identity correctly answered HTTP 428 `hosted_terms_required`. The canary never sent the agreement, and `mintBearer` in `applications/shared-workspace/src/agent-session.ts` reported the refusal as "SIWE verify returned no authorization code", without the status or the server's text.
