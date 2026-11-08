@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { LearningAuthError, type LearningPrincipal } from '../src/i2idlx-learning-auth.js';
 import { emptyLearningState, LearningConnectionsStore, type LearningPolicy, type LearningSnapshot, type LearningRepository } from '../src/i2idlx-learning-connections.js';
 import { LearningLaunchService } from '../src/i2idlx-learning-launch.js';
-import { LearningJourneyService, learningMapProjection, readReleasedQuizReview } from '../src/i2idlx-learning-journey.js';
+import { LearningJourneyService, learningMapProjection, readReleasedQuizReview, reviewInstructionPaths, type ReleasedQuizReview } from '../src/i2idlx-learning-journey.js';
 import type { LearningCourseMapInput, LearningCourseMapSnapshot } from '../src/i2idlx-learning-map.js';
 
 type Row = Record<string, unknown>;
@@ -37,6 +37,30 @@ const courseMap = (): LearningCourseMapInput => ({ schema_version: 1, course_id:
   objectives: [{ id: 'incident-objective', label: 'Log an incident', competency_iris: ['https://competency.example/incident-logging'], location_ids: ['incident-ref'] }],
   prerequisites: [{ course_id: 'orientation-course', label: 'Orientation', relation: 'required' }, { course_id: 'optional-course', label: 'Extra practice', relation: 'recommended' }],
   curriculum: { label: 'Owner proposed pathway', sequence: [{ course_id: 'orientation-course' }, { course_id: 'course-a', version: 2 }] },
+});
+
+describe('question-specific released instructional references', () => {
+  const records = () => Array.from({ length: 30 }, (_, index) => ({ citation_id: 'review-' + index, activity_id: 'quiz', interaction_id: 'module-' + index,
+    question_label: 'Practice for module-' + index, result: index === 29 ? 'correct' : 'incorrect', observed_at: new Date(NOW).toISOString(), submission: 'completed',
+    locations: [{ id: 'location-' + index, label: 'Module-' + index, source_file: 'lesson-' + index + '.html' }] }));
+  it('selects a named later question beyond the initial sixteen without rearranging provider records', () => {
+    const values = records(), before = JSON.stringify(values);
+    const review: ReleasedQuizReview = { status: 'available', reason: 'Fixture', count: values.length, records: values, observed_at: new Date(NOW).toISOString() };
+    const paths = reviewInstructionPaths(review, 'Explain module-29 and where to study it.');
+    expect(paths[0]).toBe('lesson-29.html'); expect(paths).toHaveLength(16); expect(JSON.stringify(values)).toBe(before);
+  });
+  it('prioritizes recorded incorrect results for a general review without regrading numeric results', () => {
+    const values = records().slice(0, 3); values[0]!.result = '0.2'; values[1]!.result = 'correct';
+    const review: ReleasedQuizReview = { status: 'available', reason: 'Fixture', count: values.length, records: values, observed_at: new Date(NOW).toISOString() };
+    expect(reviewInstructionPaths(review, 'Which questions did I get wrong and where should I review?')[0]).toBe('lesson-2.html');
+    expect(values[0]!.result).toBe('0.2'); expect(reviewInstructionPaths(undefined, 'Any question')).toEqual([]);
+  });
+  it('distinguishes a numbered question from later identifiers that share its prefix', () => {
+    const values = records(); values[2]!.result = 'correct';
+    const review: ReleasedQuizReview = { status: 'available', reason: 'Fixture', count: values.length, records: values, observed_at: new Date(NOW).toISOString() };
+    expect(reviewInstructionPaths(review, 'Explain module-2 and where to study it.')[0]).toBe('lesson-2.html');
+    expect(reviewInstructionPaths(review, 'Review question 2.')[0]).toBe('lesson-2.html');
+  });
 });
 function reviewTree(): Row {
   const question = (id: string, result: string, response: string) => ({ id, result, learnerResponse: response,

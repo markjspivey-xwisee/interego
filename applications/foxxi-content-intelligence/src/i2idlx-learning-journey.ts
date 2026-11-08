@@ -28,6 +28,20 @@ export interface ReleasedQuizReview {
   reason: string; count: number; observed_at: string; records: ReleasedReviewRecord[];
 }
 export interface LearningReviewBinding { registrationId: string; instance?: number; }
+/** Rank source references, never the reported results themselves. A bounded read
+ * must still reach a later mapped lesson when the learner names its question. */
+export function reviewInstructionPaths(review: ReleasedQuizReview | undefined, question: string): string[] {
+  if (!review) return [];
+  const stop = new Set(['the', 'and', 'for', 'what', 'which', 'when', 'where', 'how', 'does', 'this', 'that', 'with', 'your', 'from', 'about', 'please', 'course', 'question', 'questions', 'answer', 'answers', 'result', 'results', 'review', 'wrong', 'missed', 'get', 'got', 'did', 'should', 'can']);
+  const tokens = (text: string) => new Set((text.toLowerCase().match(/[\p{L}\p{N}]+(?:-[\p{L}\p{N}]+)*/gu) ?? []).flatMap(token => [token, ...token.split('-')]));
+  const terms = [...tokens(question)].filter(term => (term.length > 1 || /^\d$/u.test(term)) && !stop.has(term)).slice(0, 64);
+  const ranked = review.records.map((record, index) => {
+    const searchable = tokens([record.question_label, record.interaction_id, record.learner_response_label ?? '', ...record.locations.map(location => location.label + ' ' + location.source_file)].join(' '));
+    return { record, index, relevance: terms.reduce((score, term) => score + (searchable.has(term) ? 1 : 0), 0),
+      incorrect: typeof record.result === 'string' && ['incorrect', 'wrong'].includes(record.result.toLowerCase()) ? 1 : 0 };
+  }).sort((a, b) => b.relevance - a.relevance || b.incorrect - a.incorrect || a.index - b.index);
+  return [...new Set(ranked.flatMap(value => value.record.locations.map(location => location.source_file)))].slice(0, 16);
+}
 export function assertLearningReviewBinding(access: LearningAccess, binding?: LearningReviewBinding): void {
   if (!binding) return;
   const current = access.registrations.find(value => value.id === binding.registrationId);

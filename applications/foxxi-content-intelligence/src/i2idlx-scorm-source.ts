@@ -151,10 +151,10 @@ export async function readScormSource(input: ScormSourceInput): Promise<ScormSou
   const excluded = files.filter(file => assessmentPath(file.path) || assessmentReferences.has(file.path)).length;
   const candidates = files.filter(file => file !== manifest && instructionalPath(file.path) && !assessmentPath(file.path) && !assessmentReferences.has(file.path));
   if (input.preferredPaths !== undefined && (!Array.isArray(input.preferredPaths) || input.preferredPaths.length > 16)) fail('The preferred source selection exceeds reader capacity.', 400, 'course_request_invalid');
-  const preferred = new Set((input.preferredPaths ?? []).map(relativePath));
+  const preferred = new Map((input.preferredPaths ?? []).map((path, index) => [relativePath(path), index]));
   const terms = termsOf(question);
   const ranked = candidates.map(file => ({ file, score: terms.reduce((sum, term) => sum +
-    (file.path.toLowerCase().includes(term) ? 4 : 0) + ((titles.get(file.path) ?? '').toLowerCase().includes(term) ? 8 : 0), preferred.has(file.path) ? 100_000 : 0) }))
+    (file.path.toLowerCase().includes(term) ? 4 : 0) + ((titles.get(file.path) ?? '').toLowerCase().includes(term) ? 8 : 0), preferred.has(file.path) ? 100_000 - preferred.get(file.path)! * 1000 : 0) }))
     .sort((a, b) => b.score - a.score || (order.get(a.file.path) ?? Number.MAX_SAFE_INTEGER) - (order.get(b.file.path) ?? Number.MAX_SAFE_INTEGER) || a.file.path.localeCompare(b.file.path, 'en'));
   const matched = ranked.filter(row => row.score > 0);
   const selected = (matched.length ? matched : ranked).slice(0, SCORM_SOURCE_LIMITS.files - fetched.length);

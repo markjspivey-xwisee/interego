@@ -11,7 +11,7 @@ import type { ClientTaskConfig } from './i2idlx-client-tasks.js';
 import { executeInterventionTask } from './i2idlx-intervention-tasks.js';
 import { readScormSource, ScormSourceError, type ScormSourceResult } from './i2idlx-scorm-source.js';
 import type { CourseMaterial } from './i2idlx-course-cache.js';
-import { assertLearningReviewBinding, learningMapProjection, readReleasedQuizReview, type ReleasedQuizReview, type LearningReviewBinding } from './i2idlx-learning-journey.js';
+import { assertLearningReviewBinding, learningMapProjection, readReleasedQuizReview, reviewInstructionPaths, type ReleasedQuizReview, type LearningReviewBinding } from './i2idlx-learning-journey.js';
 
 type Row = Record<string, unknown>;
 type Message = { role: string; content: string };
@@ -197,7 +197,7 @@ export class LearningContextService {
       }
       let content: ScormSourceResult | undefined;
       if (sharing.content) content = await readScormSource({ sourceScope: scope, courseId, version, title, question, signal: active,
-        preferredPaths: review ? [...new Set(review.records.flatMap(record => record.locations.map(location => location.source_file)))].slice(0, 16) : [],
+        preferredPaths: reviewInstructionPaths(review, question),
         request: (path, limit, abort) => this.asset(path, limit, before.authorization, abort) });
       currentHuman = await interrupted(this.human(currentHuman, paired), active);
       if (!samePair(this.config.sessions.authorizeBrowser(sessionId, browserCapability), paired)) fail(403, 'learning_access_revoked');
