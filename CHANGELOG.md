@@ -68,6 +68,32 @@ redeclares every internal name. The test makes its sample nonces with
 `randomInt`, so every letter is equally likely. No site uses it yet; the
 Practice Evidence and Work Redesign changes follow separately.
 
+## 2026-11-08 — Practice Evidence and Work Redesign: the Contact link can be an operator's mailto, checked by one shared rule
+
+Both sites now take their operator-set "Contact" link through one shared check,
+`applications/_shared/contact-link` (`contactHrefOf`): an https page with no
+user name, password or `@` in it (written or escaped as `%40`, so no address
+in a query either) whose normalised link is at most 500 characters, or a
+`mailto:` link to exactly one address with nothing after it (no `?subject=`,
+fragment, `%` escape, comma, space or second `@`; the scheme in any case, the
+domain lower-cased, the link rebuilt from the matched parts). Everything else
+is refused. The check gives back, for its own output, that output again, so a
+page value that escaping makes longer than the cap is refused at the first
+check rather than stopping the Practice Evidence bridge at the second.
+
+Practice Evidence (`PEV_CONTACT_URL`) used to refuse every value with an `@`,
+so an operator could not give a mail address; it now accepts one mailto
+address, and `contactUrlOf` delegates to the shared rule. Work Redesign
+(`WRD_CONTACT_URL`) used to put any value into the pages' links, so a
+`javascript:` or `data:` value would have reached an href; it now ignores an
+unusable value with a warning and keeps the guide's contact section, as when
+the variable is unset. Neither bridge stops over it. Startup lines never
+print a mail address: an accepted mailto is named by its domain, and a refused
+value with an `@` in it is not shown. The address itself is set only on the
+service, never in the repository or an image; tests and docs use
+`mailto:operator@example.org`. The address appears only inside the Contact
+links' `href`, never in text a person reads.
+
 ## 2026-11-07 — Verify Cloud LTI helpers through native sandbox launches
 
 Owner LTI verification opens the exact generated helper in the current

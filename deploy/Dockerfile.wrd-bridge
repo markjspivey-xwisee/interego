@@ -131,6 +131,8 @@ ENV WRD_DEFAULT_POD_URL=https://gate.interego.xwisee.com/work-redesign/
 #                                   say) forks those graphs (409)
 #   WRD_SERVED_PODS                 pods records are read and written on; unset → the default pod
 #   WRD_PUBLIC_READS                1 → unsigned reads of every record; unset → signed reads only
+#   WRD_CONTACT_URL                 where the pages' "Contact us" links go: an https page or a
+#                                   mailto: link to one address. Set on the service, never baked here.
 ENV WRD_PLATFORM_KEY=
 ENV WRD_RECORD_KEY=
 ENV WRD_POD_WRITE_SECRET=

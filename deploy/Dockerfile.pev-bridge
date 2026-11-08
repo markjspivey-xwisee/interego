@@ -147,6 +147,8 @@ ENV PEV_RELAY_URL=https://relay.interego.xwisee.com
 #                                   no route, because this bridge never picks a model. The
 #                                   provisioning workflow never writes either. Check by variable
 #                                   NAME that the service has none of the three.
+#   PEV_CONTACT_URL                 where the pages' Contact links go: an https page or a mailto:
+#                                   link to one address. Set on the service, never baked here.
 # Never set PEV_DEMO_ROLES on a deployment: it holds demo role keys and refuses a non-loopback
 # HOST anyway.
 ENV PEV_PLATFORM_KEY=
