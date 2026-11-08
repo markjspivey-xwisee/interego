@@ -3454,10 +3454,15 @@ function authorForm(A, paint) {
     out.push(callout({ tone: 'info', title: "You'll need to sign in, and be an author, to save", body: 'You can fill in the form now.', actions }));
   }
 
-  // Drafting help: the author's own AI assistant, from Claude or ChatGPT or by copy and paste.
-  const brief = h('textarea', { id: 'draft-brief', class: 'textarea', rows: 3, maxlength: 4000, placeholder: 'For example: a project manager tells a client sponsor that two defects block the payment flow.' });
-  const source = h('textarea', { id: 'draft-source', class: 'textarea', rows: 3, maxlength: 20000 });
-  const pasted = h('textarea', { id: 'draft-json', class: 'textarea textarea--mono', rows: 3, 'aria-label': "Your AI's answer" });
+  // Drafting help: the author's own AI assistant, from Claude or ChatGPT or by copy and paste. What the author types
+  // here is kept in S.author, not only in these fields: the form is drawn again after each choice below, after loading
+  // a draft, and when turning their own API key on or off, and would otherwise empty the brief, the material and a
+  // pasted answer.
+  const D = A.drafting || (A.drafting = { brief: '', source: '', pasted: '' });
+  const kept = (k) => (e) => { D[k] = e.target.value; };
+  const brief = h('textarea', { id: 'draft-brief', class: 'textarea', rows: 3, maxlength: 4000, placeholder: 'For example: a project manager tells a client sponsor that two defects block the payment flow.', value: D.brief, oninput: kept('brief') });
+  const source = h('textarea', { id: 'draft-source', class: 'textarea', rows: 3, maxlength: 20000, value: D.source, oninput: kept('source') });
+  const pasted = h('textarea', { id: 'draft-json', class: 'textarea textarea--mono', rows: 3, 'aria-label': "Your AI's answer", value: D.pasted, oninput: kept('pasted') });
   const draftOut = h('div', { class: 'outcome' });
   const draftKids = [];
   if (chatReady()) {
@@ -3514,12 +3519,12 @@ function authorForm(A, paint) {
     paint();
     return null;
   }) });
-  draftKids.push(h('details', { class: 'disclosure draft-paste', open: !chatReady() }, h('summary', { text: `${chatOffered() ? 'No connector? ' : ''}Copy and paste a draft` }),
+  draftKids.push(h('details', { class: 'disclosure draft-paste', open: !chatReady() || Boolean(D.pasted.trim()) }, h('summary', { text: `${chatOffered() ? 'No connector? ' : ''}Copy and paste a draft` }),
     h('div', { class: 'disclosure__body form' },
       para('Get the message, paste it into any chat app, then paste its whole answer here.', ''),
       h('div', {}, packetBtn), pasteOut,
       formField({ label: "Your AI's answer", control: pasted }), h('div', {}, pasteBtn), loadOut)));
-  out.push(h('details', { class: 'card disclosure draft-card', open: !A.model.title },
+  out.push(h('details', { class: 'card disclosure draft-card', open: !A.model.title || Boolean(D.brief.trim() || D.source.trim() || D.pasted.trim()) },
     h('summary', {}, icon('sparkle'), 'Start from an AI draft (optional)'),
     h('div', { class: 'card__body form' },
       para("Your AI assistant can draft the conversation, the other person and the criteria. It never decides how the scenario is used, how clear-cut good performance is, or how it's scored. You do."),
