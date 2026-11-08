@@ -62,7 +62,7 @@ import { discordLinkPlan } from '@interego/workspace-discord/src/link-plan.js';
  * One function so the two answers cannot differ.
  */
 import { checkPrivateKey } from './privatekey.js';
-import type { AccountKeyInfo, BridgeFailure, HostedDelegateInfo, ProviderInfo, SessionInfo, TurnProgress, WorkspaceBridge } from './preload.js';
+import type { AccountKeyInfo, BridgeFailure, HostedDelegateInfo, HostedTermsOffer, ProviderInfo, SessionInfo, TurnProgress, WorkspaceBridge } from './preload.js';
 
 declare global {
   interface Window { interego: WorkspaceBridge }
@@ -644,6 +644,182 @@ function renderSession(s: SessionInfo): void {
   }
 }
 
+// ── the Hosted Interego Terms ────────────────────────────────────────────────
+
+/**
+ * WHAT THE IDENTITY SERVER OFFERS, AND WHETHER ANYBODY HERE AGREED TO IT.
+ *
+ * ★ AN OFFER IS SHOWN; ONLY A TICK IS AN AGREEMENT. Since hosted identity began requiring the
+ * Hosted Interego Terms for a NEW account, a wallet key that has never signed in is refused (HTTP
+ * 428) unless its sign-in carries the current version. So the screen shows the terms link next
+ * to an "I agree" box that starts UNTICKED, every time it is drawn, and the version goes to the
+ * main process only from a box the person ticked — never from a default, a remembered choice, or
+ * the other box on this page. A returning account signs in with the box unticked, as it always did.
+ *
+ * ★ TWO BOXES, BECAUSE THEY ARE TWO ACCOUNTS. The sign-in screen's box is the person agreeing for
+ * their own account. The delegate panel's box is the person agreeing for the NEW account a
+ * delegate key opens when it is minted. Ticking one never ticks the other.
+ *
+ * ★ AND A TICK IS USED ONCE. Each box is redrawn UNTICKED after the press it was given for: a mint
+ * or a delegate adoption, whatever its outcome, for the delegate box; a completed sign-in, and a
+ * sign-out, for the sign-in box. A second account needs a second tick. (A sign-in that FAILS keeps
+ * the box as it was, unless the offer changed — see {@link loadTerms} — so a retry after a network
+ * fault is still the agreement the person just gave.)
+ */
+let termsOffer: HostedTermsOffer | null = null;
+/** The newest read of the offer still in flight, so a minting press can wait for it. See {@link refuseMintWithoutTerms}. */
+let termsInFlight: Promise<void> | null = null;
+/** Which read is newest, so an older answer arriving late cannot overwrite a newer one. */
+let termsReadSerial = 0;
+
+/** The agreement boxes this page draws, and the copy each one carries. */
+const TERMS_BOXES = {
+  signin: {
+    box: 'signin-terms',
+    check: 'signin-terms-agree',
+    when: 'Needed only when a wallet key opens a NEW hosted account — always for a key this app mints, and for a key '
+      + 'you paste that has never signed in. A key that already has an account signs in without it. Passkey sign-in '
+      + 'asks for the same agreement on the browser page.',
+    target: 'signinnote',
+    unticked: 'This machine holds no wallet key, so this button mints one, and a new key opens a new hosted account. Opening one '
+      + 'needs your agreement to the Hosted Interego Terms above. Nothing was minted and nothing was sent.',
+    unreadable: 'This machine holds no wallet key, so this button mints one, and a new key opens a new hosted account — which '
+      + 'needs your agreement to terms this window could not show you. Nothing was minted and nothing was sent.',
+  },
+  delegate: {
+    box: 'delegate-terms',
+    check: 'delegate-terms-agree',
+    when: 'A delegate key signs in as itself, so minting one opens a NEW hosted account for it, and that account needs '
+      + 'your agreement in its own right. Your agreement for your own account does not carry over. Adopting a delegate '
+      + 'that already has an account does not need it.',
+    target: 'delegateresult',
+    unticked: 'Minting a delegate opens a new hosted account for it, and that needs '
+      + 'your agreement to the Hosted Interego Terms in the delegate panel — your agreement for your own account does not '
+      + 'carry over. Nothing was minted.',
+    unreadable: 'Minting a delegate opens a new hosted account for it, and that needs your agreement to terms this window '
+      + 'could not show you. Nothing was minted.',
+  },
+} as const;
+type TermsBox = keyof typeof TERMS_BOXES;
+
+/** Draw one agreement box from the current offer. Always drawn UNTICKED. */
+function drawTermsBox(which: TermsBox): void {
+  const spec = TERMS_BOXES[which];
+  const host = document.getElementById(spec.box);
+  if (!host) return;
+  clear(host);
+  const offer = termsOffer;
+  if (!offer || offer.state === 'none') return;
+  if (offer.state === 'unknown') {
+    host.appendChild(el('div', 'note', 'The current Hosted Interego Terms could not be read (' + offer.why + '). An account '
+      + 'that already exists signs in without them; opening a new one is refused by the identity server until they can be '
+      + 'shown and agreed to here.'));
+    return;
+  }
+  const p = el('div', 'panel pending');
+  if (offer.betaNotice) p.appendChild(el('div', undefined, offer.betaNotice));
+  const label = document.createElement('label');
+  const check = document.createElement('input');
+  check.type = 'checkbox';
+  check.id = spec.check;
+  check.checked = false;
+  check.dataset['version'] = offer.version;
+  label.appendChild(check);
+  label.appendChild(document.createTextNode(which === 'signin'
+    ? ' I am at least 18 and I agree to the '
+    : ' For this delegate\'s new hosted account: I am at least 18 and I agree to the '));
+  const link = document.createElement('a');
+  link.href = offer.url;
+  link.target = '_blank';
+  link.rel = 'noopener noreferrer';
+  link.textContent = 'Hosted Interego Terms of Service';
+  label.appendChild(link);
+  label.appendChild(document.createTextNode(' (version ' + offer.version + ').'));
+  p.appendChild(label);
+  if (offer.privacyUrl) {
+    const privacy = el('div', 'note');
+    const a = document.createElement('a');
+    a.href = offer.privacyUrl;
+    a.target = '_blank';
+    a.rel = 'noopener noreferrer';
+    a.textContent = 'Privacy Notice';
+    privacy.appendChild(document.createTextNode('How hosted data is handled: '));
+    privacy.appendChild(a);
+    p.appendChild(privacy);
+  }
+  p.appendChild(el('div', 'note', spec.when));
+  host.appendChild(p);
+}
+
+/**
+ * Read the offer again and redraw, UNTICKED, only where it changed.
+ *
+ * ★ A NEW VERSION CLEARS THE TICK. Somebody who agreed to one version has not agreed to the next,
+ * so a box whose version moved is redrawn empty; one whose offer is unchanged keeps what the
+ * person did with it.
+ */
+function loadTerms(): Promise<void> {
+  const serial = ++termsReadSerial;
+  const run = (async (): Promise<void> => {
+    let next: HostedTermsOffer;
+    try {
+      next = await window.interego.hostedTerms();
+    } catch (e) {
+      next = { state: 'unknown', why: 'this window could not ask for them: ' + ((e as Error)?.message ?? String(e)) };
+    }
+    if (serial !== termsReadSerial) return;
+    const same = JSON.stringify(next) === JSON.stringify(termsOffer);
+    termsOffer = next;
+    if (same) return;
+    drawTermsBox('signin');
+    drawTermsBox('delegate');
+  })();
+  termsInFlight = run;
+  void run.finally(() => { if (termsInFlight === run) termsInFlight = null; });
+  return run;
+}
+
+/**
+ * The version the person ticked "I agree" for in THIS box, or undefined.
+ *
+ * Read off the box itself and checked against the offer it was drawn from, so a box left over from
+ * an older offer can never send a version the server is no longer offering under that name.
+ */
+function agreedTerms(which: TermsBox): string | undefined {
+  const check = document.getElementById(TERMS_BOXES[which].check) as HTMLInputElement | null;
+  if (!check?.checked || termsOffer?.state !== 'offered') return undefined;
+  return check.dataset['version'] === termsOffer.version ? termsOffer.version : undefined;
+}
+
+/**
+ * Refuse, before anything is minted or sent, a press that MINTS a key — and so opens a new hosted
+ * account — unless it is known that nobody's agreement is missing. Returns true when it refused.
+ *
+ * ★ ONLY TWO ANSWERS LET A MINT THROUGH: the identity server offers no terms (`none`), or it offers
+ * them and THIS box is ticked for the version it offers. A press while the offer is still being
+ * read waits for that read rather than deciding on no answer; a press while the offer could not be
+ * read is refused and the offer is read again, because "could not tell" is not "none is needed".
+ * The main process checks the same before it creates a key, so a window that got this wrong
+ * still could not leave a key stored for an account the server refuses to open.
+ */
+async function refuseMintWithoutTerms(which: TermsBox): Promise<boolean> {
+  if (termsInFlight) await termsInFlight;
+  else if (!termsOffer) await loadTerms();
+  const offer = termsOffer;
+  const spec = TERMS_BOXES[which];
+  if (offer?.state === 'none') return false;
+  if (offer?.state === 'offered') {
+    if (agreedTerms(which) !== undefined) return false;
+    say(spec.target, 'refused', 'Read the Hosted Interego Terms and tick "I agree" first', spec.unticked);
+    return true;
+  }
+  say(spec.target, 'refused', 'The Hosted Interego Terms could not be read, so no new account can be agreed for here',
+    spec.unreadable + ' (' + (offer?.state === 'unknown' ? offer.why : 'no answer yet') + '.) They are being read again; '
+    + 'when the "I agree" box appears, read them, tick it and press again.');
+  void loadTerms();
+  return true;
+}
+
 // ── sign in ──────────────────────────────────────────────────────────────────
 
 async function describe(): Promise<void> {
@@ -658,6 +834,8 @@ async function describe(): Promise<void> {
   if (d.hasStoredWallet) s.appendChild(el('div', 'note', 'A wallet key is already stored here, so signing in with it returns to the same pod.'));
   S.accounts = d.accounts ?? [];
   renderAccounts();
+  // Not awaited: a slow terms read must not hold up a returning account, which never needs them.
+  void loadTerms();
   renderSession(d.session);
   window.interego.onSessionChanged(renderSession);
   // ★ ONCE. See `activeWatch` — this is `ipcRenderer.on`, so registering per turn would leak a
@@ -726,6 +904,10 @@ const signInButtons = (): readonly HTMLButtonElement[] => [btn('signin-wallet'),
 
 /** The one place a completed sign-in changes the window, whichever of the four paths got there. */
 async function signedIn(pod: string): Promise<void> {
+  // ★ THE TICK WAS FOR THIS SIGN-IN, AND IT IS DONE. Redrawn unticked so the card a later sign-out
+  // shows never carries an agreement into somebody else's first sign-in. See `TERMS_BOXES`.
+  drawTermsBox('signin');
+  drawTermsBox('delegate');
   $('signin').hidden = true;
   $('whoami').textContent = pod;
   btn('lobbybtn').hidden = false;
@@ -733,20 +915,41 @@ async function signedIn(pod: string): Promise<void> {
   await boot();
 }
 
-/** The one place a failed sign-in reports, so no path can fail silently or lock the buttons. */
+/**
+ * The one place a failed sign-in reports, so no path can fail silently or lock the buttons.
+ *
+ * ★ AND THE TERMS ARE READ AGAIN. The commonest reason a new account is refused after a tick is that
+ * the version moved while the screen was open; re-reading redraws the box UNTICKED for the new one,
+ * so the next attempt is an agreement to what is actually on offer.
+ */
 function signInFailed(e: unknown, where: string): void {
   step('auth', 'Sign-in did not complete', 'err');
   clear($('signinnote')).appendChild(errBox(e, where));
   signInButtons().forEach((b) => { b.disabled = false; });
+  void loadTerms();
 }
 
 async function signIn(kind: 'wallet' | 'browser'): Promise<void> {
+  /**
+   * ★ A PRESS THAT WILL MINT IS A PRESS THAT OPENS AN ACCOUNT. With no key on this machine the wallet
+   * button mints one, and a key nobody has seen before is a new hosted account — which the identity
+   * server refuses without the agreement. Refused here, before a key is minted and stored for an
+   * account that cannot be opened, unless the agreement is given or known not to be needed; see
+   * {@link refuseMintWithoutTerms}. The buttons are held while it waits for the offer, so a second
+   * press cannot start a second ceremony behind the first.
+   */
   signInButtons().forEach((b) => { b.disabled = true; });
+  if (kind === 'wallet' && !S.accounts.length && await refuseMintWithoutTerms('signin')) {
+    signInButtons().forEach((b) => { b.disabled = false; });
+    return;
+  }
+  // Read AFTER any wait above: a box redrawn for a new version while it waited is a box nobody ticked.
+  const terms = kind === 'wallet' ? agreedTerms('signin') : undefined;
   step('auth', kind === 'wallet'
     ? 'Signing a SIWE message with the key in your OS secret store'
     : 'Waiting for you to finish signing in, in your browser', 'wait');
   try {
-    const who = kind === 'wallet' ? await window.interego.signInWithWallet() : await window.interego.signInWithBrowser();
+    const who = kind === 'wallet' ? await window.interego.signInWithWallet(terms) : await window.interego.signInWithBrowser();
     step('auth', 'Signed in — you are pod ' + who.pod + (kind === 'wallet' ? '' : ' (browser sign-in)'), 'done');
     if (kind === 'wallet' && 'mintedNewKey' in who && who.mintedNewKey) {
       $('signinnote').textContent = 'A new wallet key was minted and stored, so this is a brand new pod with nothing on it yet. '
@@ -790,7 +993,7 @@ async function importAccount(): Promise<void> {
   step('auth', 'Signing in as the key you pasted. If its pod does not exist yet the relay provisions one on this first call, '
     + 'which has been measured at anything from 2 to 31 seconds on this fleet — a wait here is normal and is not a hang', 'wait');
   try {
-    const who = await window.interego.accountImport(parsed.key);
+    const who = await window.interego.accountImport(parsed.key, agreedTerms('signin'));
     step('auth', 'Signed in — you are pod ' + who.pod, 'done');
     const note = clear($('signinnote'));
     note.appendChild(el('div', undefined, who.alreadyHeld
@@ -829,7 +1032,7 @@ async function signInAs(address: string): Promise<void> {
   signInButtons().forEach((b) => { b.disabled = true; });
   step('auth', 'Signing a SIWE message with the key for ' + address, 'wait');
   try {
-    const who = await window.interego.accountSignInAs(address);
+    const who = await window.interego.accountSignInAs(address, agreedTerms('signin'));
     step('auth', 'Signed in — you are pod ' + who.pod, 'done');
     await signedIn(who.pod);
   } catch (e) {
@@ -902,6 +1105,10 @@ async function signOut(): Promise<void> {
   btn('signoutbtn').hidden = true;
   btn('signoutbtn').disabled = false;
   clear($('signinnote'));
+  // ★ AND THE CARD COMES BACK WITH NOBODY'S AGREEMENT ON IT. Whoever signs in next — the same
+  // person with another key, or somebody else at this machine — ticks for their own account.
+  drawTermsBox('signin');
+  drawTermsBox('delegate');
   $('signin').hidden = false;
   signInButtons().forEach((b) => { b.disabled = false; });
   renderAccounts();
@@ -4972,9 +5179,16 @@ function renderDelegatePlan(): void {
 }
 
 async function mintDelegate(): Promise<void> {
+  // ★ REFUSED BEFORE A KEY EXISTS. A minted delegate key always opens its own hosted account, so
+  // minting without the delegate panel's own agreement would store a key for an account the
+  // identity server will not open. See `TERMS_BOXES.delegate` and `refuseMintWithoutTerms`.
   btn('delegatemint').disabled = true;
+  if (await refuseMintWithoutTerms('delegate')) {
+    btn('delegatemint').disabled = false;
+    return;
+  }
   try {
-    const got = await window.interego.delegateMint();
+    const got = await window.interego.delegateMint(agreedTerms('delegate'));
     S.mintedKey = { address: got.address, agentId: got.agentId, privateKey: got.privateKey };
     inp('delegateagent').value = got.agentId;
     await loadDelegates();
@@ -4983,7 +5197,11 @@ async function mintDelegate(): Promise<void> {
       + 'is what lets it write, and revoking it is what stops it.');
   } catch (e) {
     clear($('delegateresult')).appendChild(errBox(e, 'No delegate was minted.'));
+    void loadTerms();
   }
+  // ★ USED ONCE, WHATEVER CAME OF IT. The tick was for the account THIS mint opens; the next mint
+  // is another account and needs its own.
+  drawTermsBox('delegate');
   btn('delegatemint').disabled = false;
 }
 
@@ -4992,7 +5210,7 @@ async function importDelegate(): Promise<void> {
   if (!pk) return;
   btn('delegateimport').disabled = true;
   try {
-    const got = await window.interego.delegateImport(pk);
+    const got = await window.interego.delegateImport(pk, agreedTerms('delegate'));
     inp('delegateagent').value = got.agentId;
     // Cleared immediately: a private key sitting in an input is a private key on screen.
     inp('delegateimportkey').value = '';
@@ -5003,7 +5221,10 @@ async function importDelegate(): Promise<void> {
       + 'delegation row: ' + got.agentId);
   } catch (e) {
     clear($('delegateresult')).appendChild(errBox(e, 'Nothing was imported and nothing was stored.'));
+    void loadTerms();
   }
+  // Used once, as for minting: the next key adopted is another account.
+  drawTermsBox('delegate');
   btn('delegateimport').disabled = false;
 }
 
