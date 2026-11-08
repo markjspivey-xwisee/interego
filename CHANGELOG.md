@@ -1,5 +1,20 @@
 # Changelog
 
+## 2026-11-08 — Clear stale enrolled-course controls when a learning link ends
+
+Refreshing a missing or inactive learning account link now removes its cached
+course picker, progress, citations and sharing choices. Terminal link or
+connection refusals clear the same state and stop offering the invalid cached
+link. Private Ask stays blocked until the learner chooses an active learning
+context or explicitly switches to the glossary. Server enrollment rules are
+unchanged.
+
+Nine actual-hook and panel checks cover ended/missing links, provider refusals
+and preservation of a still-active context; CI runs them with the existing
+learning transport checks. The regression fails against the previous hook.
+A local fixture using actual React and the composed Ask engine also confirmed
+that revocation clears the private conversation without a model fallback.
+
 ## 2026-11-08 — Practice Evidence and Work Redesign: the Contact link can be an operator's mailto, checked by one shared rule
 
 Both sites now take their operator-set "Contact" link through one shared check,
