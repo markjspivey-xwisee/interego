@@ -21,10 +21,16 @@ function principal(name: string): LearningPrincipal {
   return { subject: 'did:web:identity.example:users:' + name, userId: name, webId: `https://identity.example/users/${name}/profile#me`,
     podUrl: `https://pods.example/${name}/`, sessionId: 'session-' + name, expiresAt: NOW + 3_600_000, signal: new AbortController().signal };
 }
+function deferred() {
+  let resolve!: () => void; const promise = new Promise<void>(done => { resolve = done; }); return { promise, resolve };
+}
 async function fixture(options: { publicRequestsPerMinute?: number } = {}) {
   let now = NOW, writes = 0, reads = 0, value: LearningSnapshot = { revision: null, state: emptyLearningState() };
   const owner = principal('owner'), student = principal('student'), other = principal('other');
-  const controls = { loseCreate: false, loseImport: false, importRunning: false, deleteFails: false, failJwt: false, revoked: false, badPlatform: false };
+  const controls = { loseCreate: false, loseImport: false, importRunning: false, deleteFails: false, failJwt: false, revoked: false, badPlatform: false,
+    loseSettings: false, ignoreSettings: false, settingsReady: false,
+    holdSettingsWrite: null as null | ReturnType<typeof deferred>, settingsWriteStarted: null as null | ReturnType<typeof deferred> };
+  const settings = new Map<string, Row>();
   const calls: Array<{ method: string; path: string; body?: Row }> = [], connectors = new Map<string, Row>(), helpers = new Map<string, Row>(), jobs = new Map<string, string>();
   const repository = { async read() { reads++; return copy(value); }, async write(expected: string | null, state: LearningState) {
     if (expected !== value.revision) throw Object.assign(Error('conflict'), { status: 409 }); value = { revision: 'revision-' + (++writes), state: copy(state) };
@@ -56,6 +62,21 @@ async function fixture(options: { publicRequestsPerMinute?: number } = {}) {
       return id ? json({ jobId: job, status: controls.importRunning ? 'RUNNING' : 'COMPLETE', importResult: { course: { id } } }) : json({}, 404);
     }
     if (path.startsWith('/courses/')) {
+      if (path.endsWith('/configuration')) {
+        const id = decodeURIComponent(path.slice('/courses/'.length, -'/configuration'.length));
+        expect(id).toMatch(/^i2idlx-learning-[a-f0-9]{32}$/); if (!helpers.has(id)) return json({}, 404);
+        if (method === 'GET') return json(settings.get(id) ?? { settingItems: [
+          { id: 'PlayerLaunchType', effectiveValue: 'FRAMESET' }, { id: 'PlayerScoLaunchType', effectiveValue: controls.settingsReady ? 'FRAMESET' : 'NEW_WINDOW' },
+          { id: 'Lti13PrivacySettings', effectiveValue: controls.settingsReady ? 'NO_LEARNER_INFO' : 'LEARNER_NAME_ONLY' },
+        ] });
+        if (method === 'POST') {
+          expect(body).toEqual({ settings: [{ settingId: 'PlayerLaunchType', value: 'FRAMESET' }, { settingId: 'PlayerScoLaunchType', value: 'FRAMESET' }, { settingId: 'Lti13PrivacySettings', value: 'NO_LEARNER_INFO' }] });
+          if (!controls.ignoreSettings) settings.set(id, { settingItems: (body!.settings as Row[]).map(item => ({ id: item.settingId, effectiveValue: item.value })) });
+          if (controls.holdSettingsWrite) { const held = controls.holdSettingsWrite; controls.holdSettingsWrite = null; controls.settingsWriteStarted?.resolve(); await held.promise; }
+          if (controls.loseSettings) { controls.loseSettings = false; throw Error('Lost settings reply'); }
+          return new Response(null, { status: 204 });
+        }
+      }
       const id = decodeURIComponent(path.slice('/courses/'.length));
       if (method === 'GET') return helpers.has(id) ? json(helpers.get(id)) : json({}, 404);
       if (method === 'DELETE') { expect(id).toMatch(/^i2idlx-learning-/); if (controls.deleteFails) return json({}, 503); helpers.delete(id); return new Response(null, { status: 204 }); }
@@ -111,11 +132,72 @@ async function fixture(options: { publicRequestsPerMinute?: number } = {}) {
     body: new URLSearchParams({ state: p.redirect.searchParams.get('state')!, id_token: signJwt(payload(p, patch)) }).toString() });
   const claim = (cookies: string, human = 'student', csrf = 'test-csrf') => request(ROOT + '/receipt/claim', cookies + (human ? '; human=' + human : ''), { method: 'POST',
     headers: { Origin: BASE, 'Content-Type': 'application/json', 'X-I2IDLX-Learning-CSRF': csrf }, body: '{}' });
-  return { manager, store, owner, student, other, connector, id, config, controls, calls, connectors, helpers, request, installed, begin, launch, claim,
+  return { manager, store, owner, student, other, connector, id, config, controls, calls, connectors, helpers, settings, request, installed, begin, launch, claim,
     state: () => copy(value.state), reads: () => reads, advance: (ms: number) => { now += ms; } };
 }
 
 describe('institution-owned SCORM Cloud LTI discovery', () => {
+  it.each(['status', 'install'] as const)('blocks historical ready public routes until owner %s confirms current helper settings', async operation => {
+    const f = await fixture(), ready = await f.installed(), oldLaunch = await f.begin(ready);
+    expect(f.state().connectors[0]!.lti).toMatchObject({ state: 'ready', helperSettingsVersion: 1 });
+    await f.store.updateConnector(f.owner, f.id, connector => { delete connector.lti!.helperSettingsVersion; });
+    f.settings.clear(); // A historical helper still inherits popup/name defaults.
+    const before = f.calls.length;
+    expect((await f.manager.prepare(f.owner, f.id)).state).toBe('installing');
+    expect(f.calls).toHaveLength(before);
+    const settings = ready.settings!, login = new URL(settings.login_url);
+    login.search = new URLSearchParams({ iss: 'https://cloud.scorm.com', client_id: 'fixture-client', target_link_uri: settings.launch_url, login_hint: 'opaque-hint' }).toString();
+    expect((await f.request(login.pathname + login.search)).status).toBe(404);
+    expect((await f.request(new URL(settings.jwks_url).pathname)).status).toBe(404);
+    expect((await f.launch(oldLaunch)).status).toBe(404); // A previously issued state cannot bypass migration.
+    const upgraded = await f.manager[operation](f.owner, f.id); expect(upgraded.state).toBe('ready');
+    expect(f.state().connectors[0]!.lti).toMatchObject({ state: 'ready', helperSettingsVersion: 1 });
+    expect(f.calls.slice(before).filter(call => call.method === 'POST' && call.path.endsWith('/configuration'))).toHaveLength(1);
+    expect(f.calls.filter(call => call.method === 'POST' && call.path === '/contentConnectors')).toHaveLength(1);
+    expect(f.calls.filter(call => call.method === 'POST' && call.path.startsWith('/courses/importJobs/noUpload'))).toHaveLength(1);
+    const p = await f.begin(upgraded); expect((await f.launch(p)).status).toBe(303);
+  });
+  it('keeps a failed legacy confirmation pending and reconciles its lost settings acknowledgement', async () => {
+    const f = await fixture(), ready = await f.installed();
+    await f.store.updateConnector(f.owner, f.id, connector => { delete connector.lti!.helperSettingsVersion; }); f.settings.clear(); f.controls.loseSettings = true;
+    expect((await f.manager.status(f.owner, f.id)).state).toBe('installing');
+    expect(f.state().connectors[0]!.lti).not.toHaveProperty('helperSettingsVersion');
+    expect((await f.request(new URL(ready.settings!.jwks_url).pathname)).status).toBe(404);
+    const writes = f.calls.filter(call => call.method === 'POST' && call.path.endsWith('/configuration')).length;
+    expect((await f.manager.status(f.owner, f.id)).state).toBe('ready');
+    expect(f.calls.filter(call => call.method === 'POST' && call.path.endsWith('/configuration'))).toHaveLength(writes);
+  });
+  it('cannot persist helper confirmation or allow public launch after revocation during a settings write', async () => {
+    const f = await fixture(), ready = await f.installed(), oldLaunch = await f.begin(ready);
+    await f.store.updateConnector(f.owner, f.id, connector => { delete connector.lti!.helperSettingsVersion; }); f.settings.clear();
+    const held = deferred(), started = deferred(); f.controls.holdSettingsWrite = held; f.controls.settingsWriteStarted = started;
+    const pending = f.manager.status(f.owner, f.id), outcome = pending.then(() => null, error => error as unknown);
+    await started.promise;
+    expect(f.state().connectors[0]!.lti).toMatchObject({ state: 'installing' });
+    expect((await f.request(new URL(ready.settings!.jwks_url).pathname)).status).toBe(404);
+    await f.store.request(f.owner, { operation: 'revoke-connector', connector_id: f.id });
+    held.resolve(); expect(await outcome).toMatchObject({ status: 403, code: 'learning_connection_revoked' });
+    expect(f.state().connectors[0]!).toMatchObject({ status: 'revoked', authorization: null });
+    expect(f.state().connectors[0]!).not.toHaveProperty('lti');
+    expect((await f.launch(oldLaunch)).status).toBe(404); expect(f.state().links).toHaveLength(0);
+  });
+  it('configures only the generated helper in-frame without learner PII and reconciles a lost settings acknowledgement', async () => {
+    const f = await fixture(); await f.manager.prepare(f.owner, f.id); f.controls.loseSettings = true;
+    const pending = await f.manager.install(f.owner, f.id); expect(pending).toMatchObject({ state: 'installing', note: expect.stringContaining('privacy settings are unconfirmed') });
+    expect((await f.manager.status(f.owner, f.id)).state).toBe('ready');
+    expect(f.calls.filter(call => call.method === 'POST' && call.path.endsWith('/configuration'))).toHaveLength(1);
+    expect(f.calls.filter(call => call.method === 'POST' && call.path === '/contentConnectors')).toHaveLength(1);
+    expect(f.calls.filter(call => call.method === 'POST' && call.path.startsWith('/courses/importJobs/noUpload'))).toHaveLength(1);
+    expect(f.calls.some(call => /appManagement|registrations|learners|roles/.test(call.path))).toBe(false);
+    expect((await f.manager.remove(f.owner, f.id)).state).toBe('removed'); expect(f.helpers.size).toBe(0);
+  });
+  it('requires effective settings readback and does not write when helper defaults are already safe', async () => {
+    const f = await fixture(); await f.manager.prepare(f.owner, f.id); f.controls.ignoreSettings = true;
+    expect((await f.manager.install(f.owner, f.id)).state).toBe('installing');
+    f.controls.ignoreSettings = false; expect((await f.manager.status(f.owner, f.id)).state).toBe('ready');
+    const g = await fixture(); g.controls.settingsReady = true; await g.installed();
+    expect(g.calls.some(call => call.method === 'POST' && call.path.endsWith('/configuration'))).toBe(false);
+  });
   it('persists isolated install settings, exact Cloud routing and public-only tool keys across restart', async () => {
     const f = await fixture(), prepared = await f.manager.prepare(f.owner, f.id); expect(prepared.state).toBe('prepared');
     expect(f.calls.filter(c => c.method !== 'GET')).toHaveLength(0);

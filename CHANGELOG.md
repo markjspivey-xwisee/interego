@@ -1,5 +1,27 @@
 # Changelog
 
+## 2026-11-07 — Verify Cloud LTI helpers through native sandbox launches
+
+Owner LTI verification opens the exact generated helper in the current
+connection's SCORM Cloud management page. The owner uses Cloud's sandbox
+Launch control, then checks and attaches the signed launch in Ask. The
+workbench does not mint a contextless preview or create a learner identity.
+Owner sandbox verification remains separate from student enrollment.
+
+Both generated-helper paths confirm inline player/SCO launch and
+`NO_LEARNER_INFO` settings before becoming ready. Only the disposable helper
+is configured. Failed settings and lost acknowledgements remain pending;
+readback reconciles retries, and cleanup waits for configuration work.
+Previously saved ready helpers without the new settings confirmation remain
+pending on public launch paths until their owner refreshes the setup.
+
+Live verification: one approved synthetic registered Cloud launch passed the
+unchanged signature/context checks, attached explicitly and delivered a
+source-cited course answer in virtual mode with zero retained cache bytes.
+The helper, connector and synthetic registration were independently confirmed
+removed; the original hosted course stayed available. This does not establish
+a real student's identity or enrollment.
+
 ## 2026-11-07 — Open registered courses from Ask and identify supported lesson destinations
 
 Ask adds deliberate course-launch controls tied to the signed-in learner's

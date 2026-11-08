@@ -58,9 +58,11 @@ async function fixture() {
     ['resume.html', Buffer.from('<html><head><title>Resume exercise</title></head><body><h1>Resume exercise</h1><p>Resume only when READY-9 is shown.</p></body></html>')],
     ['quiz/answers.html', Buffer.from('<p>HIDDEN-ANSWER-KEY</p>')],
   ]);
-  const connectors = new Map<string, Row>(), helpers = new Map<string, Row>(), jobs = new Map<string, string>();
+  const connectors = new Map<string, Row>(), helpers = new Map<string, Row>(), jobs = new Map<string, string>(), settings = new Map<string, Row>();
   const calls: Call[] = [];
   const controls = { loseCreateResponse: false, hideConnectors: false, connectorDeleteFailures: 0, importRunning: false,
+    loseSettingsResponse: false, ignoreSettingsWrite: false, settingsInitiallyReady: false,
+    holdSettingsRead: null as null | ReturnType<typeof deferred<void>>, settingsReadStarted: null as null | ReturnType<typeof deferred<void>>,
     holdConnectorList: null as null | ReturnType<typeof deferred<void>>, connectorListStarted: null as null | ReturnType<typeof deferred<void>> };
   const platform = { issuer: 'https://cloud.scorm.com', toolClientId: 'client-' + suffix,
     jwksEndpoint: 'https://cloud.scorm.com/api/v2/plugin/lti13/connector-' + suffix + '/jwks?externalConfig=fixture-' + suffix,
@@ -119,9 +121,24 @@ async function fixture() {
     }
     if (path.startsWith('/courses/')) {
       const encoded = path.slice('/courses/'.length);
-      if (method === 'POST' && encoded.endsWith('/preview')) {
-        const id = decodeURIComponent(encoded.slice(0, -'/preview'.length)); expect(helpers.has(id)).toBe(true); expect(body).toEqual({ expiry: 120 });
-        return Response.json({ launchLink: 'https://cloud.scorm.com/preview/fixture' });
+      if (encoded.endsWith('/configuration')) {
+        const id = decodeURIComponent(encoded.slice(0, -'/configuration'.length));
+        expect(id).toMatch(/^i2idlx-lti-qa-[a-f0-9]{48}$/); expect(id).not.toBe(original.id); expect(id).not.toBe(alternate.id);
+        if (!helpers.has(id)) return Response.json({}, { status: 404 });
+        if (method === 'GET') {
+          if (controls.holdSettingsRead) { const held = controls.holdSettingsRead; controls.holdSettingsRead = null; controls.settingsReadStarted?.resolve(); await held.promise; }
+          return Response.json(settings.get(id) ?? { settingItems: [
+            { id: 'PlayerLaunchType', effectiveValue: 'FRAMESET' },
+            { id: 'PlayerScoLaunchType', effectiveValue: controls.settingsInitiallyReady ? 'FRAMESET' : 'NEW_WINDOW' },
+            { id: 'Lti13PrivacySettings', effectiveValue: controls.settingsInitiallyReady ? 'NO_LEARNER_INFO' : 'LEARNER_NAME_ONLY' },
+          ] });
+        }
+        if (method === 'POST') {
+          expect(body).toEqual({ settings: [{ settingId: 'PlayerLaunchType', value: 'FRAMESET' }, { settingId: 'PlayerScoLaunchType', value: 'FRAMESET' }, { settingId: 'Lti13PrivacySettings', value: 'NO_LEARNER_INFO' }] });
+          if (!controls.ignoreSettingsWrite) settings.set(id, { settingItems: (body!.settings as Row[]).map(item => ({ id: item.settingId, effectiveValue: item.value })) });
+          if (controls.loseSettingsResponse) { controls.loseSettingsResponse = false; throw Error('Lost helper settings acknowledgement'); }
+          return new Response(null, { status: 204 });
+        }
       }
       const id = decodeURIComponent(encoded);
       if (method === 'GET' && id === original.id) return Response.json(original);
@@ -179,10 +196,41 @@ async function fixture() {
     return { caches: [...connections.connections.values()].flatMap(connection => [...connection.grants.values()].map(grant => grant.cache)), bytes: connections.cacheBytes };
   };
   return { store, sessions, lti, owner, sameDidOtherBrowser, original, alternate, controls, calls, connectors, helpers, request, connect, permit, prepare,
-    verifiedLaunch, caches, advance: (milliseconds: number) => { now += milliseconds; } };
+    verifiedLaunch, caches, applicationId: 'app-' + suffix, advance: (milliseconds: number) => { now += milliseconds; } };
 }
 
 describe('per-user SCORM Cloud LTI to native source workflow', () => {
+  it('confirms in-frame helper launch and no learner PII before ready, reconciling a lost settings write without duplicate creates', async () => {
+    const f = await fixture(), connection = await f.connect(), common = await f.permit(connection), prepared = await f.prepare(common), scoped = { ...common, lti_id: prepared.id };
+    f.controls.loseSettingsResponse = true;
+    expect((await f.request('lti-setup', scoped)).lti).toMatchObject({ state: 'setting-up', note: expect.stringContaining('privacy settings are unconfirmed') });
+    await expect(f.request('lti-launch', scoped)).rejects.toMatchObject({ status: 409 });
+    expect((await f.request('lti-status', scoped)).lti).toMatchObject({ state: 'ready' });
+    const writes = f.calls.filter(call => call.method === 'POST' && call.path.endsWith('/configuration'));
+    expect(writes).toHaveLength(1); expect(writes[0]!.path).toBe('/courses/i2idlx-lti-qa-' + prepared.id + '/configuration');
+    expect(f.calls.filter(call => call.method === 'POST' && call.path === '/contentConnectors')).toHaveLength(1);
+    expect(f.calls.filter(call => call.method === 'POST' && call.path.startsWith('/courses/importJobs/noUpload'))).toHaveLength(1);
+  });
+  it('does not mark a helper ready without effective launch/privacy confirmation, and skips writes when already configured', async () => {
+    const f = await fixture(), connection = await f.connect(), common = await f.permit(connection), prepared = await f.prepare(common), scoped = { ...common, lti_id: prepared.id };
+    f.controls.ignoreSettingsWrite = true;
+    expect((await f.request('lti-setup', scoped)).lti).toMatchObject({ state: 'setting-up' });
+    await expect(f.request('lti-launch', scoped)).rejects.toMatchObject({ status: 409 });
+    f.controls.ignoreSettingsWrite = false; expect((await f.request('lti-status', scoped)).lti).toMatchObject({ state: 'ready' });
+    const g = await fixture(), connected = await g.connect(), args = await g.permit(connected), setup = await g.prepare(args); g.controls.settingsInitiallyReady = true;
+    expect((await g.request('lti-setup', { ...args, lti_id: setup.id })).lti).toMatchObject({ state: 'ready' });
+    expect(g.calls.some(call => call.method === 'POST' && call.path.endsWith('/configuration'))).toBe(false);
+  });
+  it('cannot configure a helper or restore ready state after permission deletion while settings are delayed', async () => {
+    const f = await fixture(), connection = await f.connect(), common = await f.permit(connection), prepared = await f.prepare(common), scoped = { ...common, lti_id: prepared.id };
+    const held = deferred<void>(), started = deferred<void>(); f.controls.holdSettingsRead = held; f.controls.settingsReadStarted = started;
+    const pending = f.request('lti-setup', scoped), result = pending.then(() => true, () => false); await started.promise;
+    expect(await f.request('delete', common)).toMatchObject({ deleted: true, permission_revoked: true });
+    held.resolve(); expect(await result).toBe(false);
+    expect(f.calls.some(call => call.method === 'POST' && call.path.endsWith('/configuration'))).toBe(false);
+    expect(await f.request('lti-disconnect', { ...scoped, grant_id: undefined })).toMatchObject({ removed: true, original_course_unchanged: true });
+    expect(f.helpers.size).toBe(0); expect(f.connectors.size).toBe(0);
+  });
   it('binds a verified launch explicitly, reads cited versioned assets without an export/cache, then revokes and removes only its temporary setup', async () => {
     const f = await fixture(), connected = await f.connect(), common = await f.permit(connected);
     const before = await f.request('source', { ...common, question: 'What incident code should I record?' });
@@ -194,7 +242,14 @@ describe('per-user SCORM Cloud LTI to native source workflow', () => {
     await f.request('lti-setup', scoped);
     expect(f.calls.filter(call => call.method === 'POST' && call.path === '/contentConnectors')).toHaveLength(1);
     expect(f.calls.filter(call => call.method === 'POST' && call.path.startsWith('/courses/importJobs/noUpload'))).toHaveLength(1);
-    expect(await f.request('lti-launch', scoped)).toMatchObject({ launch_url: 'https://cloud.scorm.com/preview/fixture' });
+    const providerCalls = f.calls.length;
+    const handoff = await f.request('lti-launch', scoped);
+    const ownerPage = new URL(String(handoff.owner_course_url));
+    expect(ownerPage.origin + ownerPage.pathname).toBe('https://app.cloud.scorm.com/sc/user/Course');
+    expect([...ownerPage.searchParams]).toEqual([['courseId', 'i2idlx-lti-qa-' + prepared.id], ['appId', f.applicationId]]);
+    expect(handoff).not.toHaveProperty('launch_url');
+    expect(f.calls).toHaveLength(providerCalls);
+    expect(f.calls.some(call => call.path.endsWith('/preview') || call.path.startsWith('/registrations'))).toBe(false);
     await f.verifiedLaunch(prepared);
     expect((await f.request('lti-status', scoped)).lti).toMatchObject({ state: 'verified', launch: {
       course_id: f.original.id, version: 2, subject: expect.stringMatching(/^platform-subject-/) } });

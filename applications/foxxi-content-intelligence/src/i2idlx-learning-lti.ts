@@ -3,11 +3,12 @@
 import express, { type Express, type Request, type Response } from 'express';
 import rateLimit from 'express-rate-limit';
 import { createHash, createPublicKey, generateKeyPairSync, randomBytes } from 'node:crypto';
-import type { LearningAccountAuth, LearningPrincipal } from './i2idlx-learning-auth.js';
+import { LearningAuthError, type LearningAccountAuth, type LearningPrincipal } from './i2idlx-learning-auth.js';
 import type { LearningConnector, LearningConnectionsStore } from './i2idlx-learning-connections.js';
 import { verifyCourseLtiJwt, type CourseLtiPlatform, type CourseLtiVerifyResult } from './i2idlx-course-lti.js';
 import { LTI_CLAIMS } from './lti13.js';
 import { sourceServiceUrl } from './i2idlx-course-provider.js';
+import { ltiHelperSettingsConfirmed, ltiHelperSettingsRequest } from './i2idlx-lti-helper-settings.js';
 
 type Row = Record<string, unknown>;
 type Phase = 'prepared' | 'installing' | 'ready' | 'removing' | 'cleanup-failed' | 'removed';
@@ -15,6 +16,8 @@ interface Saved {
   format: 'i2idlx.learning-lti/v1'; id: string; state: Phase; publicKeyPem: string;
   connectorRequested: boolean; helperRequested: boolean; helperSettled: boolean;
   cloudConnectorId?: string; importJobId?: string; platform?: CourseLtiPlatform; note?: string;
+  /** Set only after effective FRAMESET and NO_LEARNER_INFO readback. */
+  helperSettingsVersion?: 1;
 }
 export interface LearningLtiSettings { login_url: string; launch_url: string; jwks_url: string; public_key_pem: string; }
 export interface LearningLtiDto { state: Phase | 'unavailable'; settings: LearningLtiSettings | null; note?: string; }
@@ -105,11 +108,12 @@ export class LearningLtiManager {
   private saved(connector: LearningConnector): Saved | null {
     if (connector.lti === undefined) return null;
     const v = connector.lti;
-    if (Object.keys(v).some(key => !['format', 'id', 'state', 'publicKeyPem', 'connectorRequested', 'helperRequested', 'helperSettled', 'cloudConnectorId', 'importJobId', 'platform', 'note'].includes(key))
+    if (Object.keys(v).some(key => !['format', 'id', 'state', 'publicKeyPem', 'connectorRequested', 'helperRequested', 'helperSettled', 'cloudConnectorId', 'importJobId', 'platform', 'note', 'helperSettingsVersion'].includes(key))
       || v.format !== FORMAT || typeof v.id !== 'string' || !HEX.test(v.id) || !['prepared', 'installing', 'ready', 'removing', 'cleanup-failed', 'removed'].includes(String(v.state))
       || typeof v.publicKeyPem !== 'string' || Buffer.byteLength(v.publicKeyPem) > 2048 || !/^-----BEGIN PUBLIC KEY-----\r?\n[A-Za-z0-9+/=\r\n]+-----END PUBLIC KEY-----\r?\n?$/.test(v.publicKeyPem)
       || !['connectorRequested', 'helperRequested', 'helperSettled'].every(key => typeof v[key] === 'boolean')
-      || v.cloudConnectorId !== undefined && !text(v.cloudConnectorId, 256) || v.importJobId !== undefined && !text(v.importJobId, 256)) fail(503, 'learning_lti_state_invalid');
+      || v.cloudConnectorId !== undefined && !text(v.cloudConnectorId, 256) || v.importJobId !== undefined && !text(v.importJobId, 256)
+      || v.helperSettingsVersion !== undefined && v.helperSettingsVersion !== 1) fail(503, 'learning_lti_state_invalid');
     try { const key = createPublicKey(v.publicKeyPem); const bits = key.asymmetricKeyDetails?.modulusLength ?? 0; if (key.asymmetricKeyType !== 'rsa' || bits < 2048 || bits > 4096) fail(503, 'learning_lti_state_invalid'); }
     catch { fail(503, 'learning_lti_state_invalid'); }
     const saved = structuredClone(v) as unknown as Saved;
@@ -124,7 +128,11 @@ export class LearningLtiManager {
       jwksUrl: cloudEndpoint(info.jwksUrl, 'jwks', connectorId), authorizationEndpoint: cloudEndpoint(info.authorizationEndpoint, 'authorization', connectorId),
       ...(info.tokenEndpoint ? { tokenEndpoint: cloudEndpoint(info.tokenEndpoint, 'token', connectorId) } : {}) };
   }
-  private view(id: string, saved: Saved): LearningLtiDto { return { state: saved.state, settings: this.settings(id, saved), ...(saved.note ? { note: saved.note } : {}) }; }
+  private view(id: string, saved: Saved): LearningLtiDto {
+    if (saved.state === 'ready' && saved.helperSettingsVersion !== 1) return { state: 'installing', settings: this.settings(id, saved),
+      note: 'Refresh this connection to confirm its helper launch and privacy settings before using LTI discovery.' };
+    return { state: saved.state, settings: this.settings(id, saved), ...(saved.note ? { note: saved.note } : {}) };
+  }
   private async owned(principal: LearningPrincipal, id: string): Promise<LearningConnector> {
     this.ready(); await this.auth.revalidate(principal);
     const c = await this.store.readConnector(id);
@@ -136,7 +144,7 @@ export class LearningLtiManager {
     this.ready();
     if (!HEX.test(id) || !HEX.test(setup)) fail(404, 'learning_lti_not_found');
     const connector = await this.store.readConnector(id), saved = connector ? this.saved(connector) : null;
-    if (!connector || !saved || saved.id !== setup || connector.status !== 'active' || !connector.authorization || !connector.joinCode || saved.state !== 'ready') fail(404, 'learning_lti_not_found');
+    if (!connector || !saved || saved.id !== setup || connector.status !== 'active' || !connector.authorization || !connector.joinCode || saved.state !== 'ready' || saved.helperSettingsVersion !== 1) fail(404, 'learning_lti_not_found');
     return { connector, saved };
   }
   private async save(principal: LearningPrincipal, id: string, saved: Saved): Promise<void> {
@@ -204,10 +212,35 @@ export class LearningLtiManager {
     if (saved.helperRequested) {
       const helper = await this.cloud(connector, '/courses/' + encodeURIComponent(helperId(saved)), principal);
       if (helper && helper.id === helperId(saved) && helper.title === helperTitle(saved) && saved.helperSettled) {
-        saved.state = 'ready'; saved.note = 'The separate Cloud helper discovers account-link requests only. An administrator must verify the learner registration, and the learner must confirm. It supplies no enrollment, curriculum, roster or grade authority.';
+        if (await this.configureHelper(connector, saved, principal)) {
+          saved.helperSettingsVersion = 1;
+          saved.state = 'ready'; saved.note = 'The separate Cloud helper discovers account-link requests only. An administrator must verify the learner registration, and the learner must confirm. It supplies no enrollment, curriculum, roster or grade authority.';
+        } else {
+          delete saved.helperSettingsVersion;
+          saved.state = 'installing'; saved.note = 'Cloud helper launch and privacy settings are unconfirmed. Refresh this connection or remove the temporary setup.';
+        }
       } else saved.note = 'The exact separate discovery helper is not confirmed. Refresh or remove this setup; do not create a duplicate.';
     }
     await this.save(principal, connector.id, saved);
+  }
+  private async configureHelper(connector: LearningConnector, saved: Saved, principal: LearningPrincipal): Promise<boolean> {
+    if (!saved.helperRequested || !saved.helperSettled || !/^i2idlx-learning-[a-f0-9]{32}$/.test(helperId(saved))) fail(409, 'learning_lti_setup_uncertain');
+    const path = '/courses/' + encodeURIComponent(helperId(saved)) + '/configuration';
+    const currentSetup = async () => {
+      const current = this.saved(await this.owned(principal, connector.id));
+      if (!current || current.id !== saved.id || !['installing', 'ready'].includes(current.state)) fail(409, 'learning_lti_setup_uncertain');
+    };
+    try {
+      let settings = await this.cloud(connector, path, principal); await currentSetup();
+      if (!ltiHelperSettingsConfirmed(settings)) {
+        await this.cloud(connector, path, principal, 'POST', ltiHelperSettingsRequest()); await currentSetup();
+        settings = await this.cloud(connector, path, principal); await currentSetup();
+      }
+      return ltiHelperSettingsConfirmed(settings);
+    } catch (error) {
+      if (principal.signal.aborted || error instanceof LearningLtiError && [401, 403, 409].includes(error.status) || error instanceof LearningAuthError) throw error;
+      return false;
+    }
   }
   async prepare(principal: LearningPrincipal, id: string): Promise<LearningLtiDto> {
     return this.exclusive(id, async () => {
@@ -223,9 +256,11 @@ export class LearningLtiManager {
     return this.exclusive(id, async () => {
       const connector = await this.owned(principal, id), saved = this.saved(connector);
       if (!saved || ['removing', 'cleanup-failed', 'removed'].includes(saved.state)) fail(409, 'learning_lti_prepare_required');
-      if (saved.state === 'ready') return this.view(id, saved);
+      if (saved.state === 'ready' && saved.helperSettingsVersion === 1) return this.view(id, saved);
       const settings = this.settings(id, saved);
+      const legacyReady = saved.state === 'ready';
       saved.state = 'installing';
+      if (legacyReady) { delete saved.helperSettingsVersion; await this.save(principal, id, saved); }
       if (!saved.connectorRequested) {
         saved.connectorRequested = true; await this.save(principal, id, saved);
         const result = await this.cloud(connector, '/contentConnectors', principal, 'POST', { contentConnectorType: 'ContentConnector.Lti13', enabled: true,
@@ -250,6 +285,9 @@ export class LearningLtiManager {
     return this.exclusive(id, async () => {
       const connector = await this.owned(principal, id), saved = this.saved(connector);
       if (!saved) return { state: 'unavailable', settings: null, note: 'Prepare the optional institution discovery helper to view its settings.' };
+      if (saved.state === 'ready' && saved.helperSettingsVersion !== 1) {
+        saved.state = 'installing'; await this.save(principal, id, saved);
+      }
       if (saved.state === 'installing') await this.reconcile(connector, saved, principal);
       return this.view(id, saved);
     });
