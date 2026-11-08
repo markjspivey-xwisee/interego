@@ -1226,18 +1226,28 @@ describe('your own AI assistant: connect Claude or ChatGPT, or copy and paste; n
   beforeAll(async () => { nm = await serve({ relayUrl: RELAY, deploymentUrl: DEPLOY, relayFetch: relay.fetchFn }, { handlers: noModelHandlers }); }, SLOW);
 
   it('Connect your AI: each chat app\'s setup steps, the connector address and the workspace details to copy, in plain words; only for a person signed in with Interego', async () => {
+    // The guide and the landing page show the connector address this workspace signs in through, as its Connect dialog does.
+    const help = await (await fetch(`${nm.base}/ui/help`)).text();
+    const landing = await (await fetch(`${nm.base}/`, { headers: { accept: 'text/html' } })).text();
+    for (const page of [help, landing]) {
+      expect(page).toContain(`<code>${RELAY}/mcp</code>`);
+      expect(page).not.toContain('relay.interego.xwisee.com');
+      expect(page).not.toContain('doesn\'t offer Interego sign-in');
+    }
     const p = await signedInPage(nm);
     await p.until(() => p.q('article.scenario'), 'the scenarios');
     expect(p.text('#view .own-ai')).toContain('Claude or ChatGPT can play the other person and save each exchange to your session.');
     // Getting started names the chat route this person has here, and the judge message.
     const steps = await learnerSteps(p);
     expect(steps).toContain('On the session page, copy the start-up message into Claude or ChatGPT and talk it through there');
-    expect(steps).toContain('Choose Send to your judge and send the message to your appointed judge.');
+    expect(steps).toContain('Under Send to your judge, choose Copy message for my judge and send it to your appointed judge.');
     p.q('#connect-ai-button')!.click();
     const d = await p.until(() => p.q('#connect-ai[open]'), 'the Connect dialog');
     expect(d.querySelector('#connect-title')?.textContent).toBe('Use your own AI assistant');
     expect(d.querySelector('#connect-desc')?.textContent).toContain('never asks for an API key');
-    expect((d.querySelector('#connector-address') as HTMLInputElement).value).toBe(`${RELAY}/mcp`);
+    expect((d.querySelector('#connector-address') as HTMLTextAreaElement).value).toBe(`${RELAY}/mcp`);
+    // A text area that wraps, so a long address shows whole on a phone; it is still no page text.
+    expect([d.querySelector('#connector-address')?.tagName, d.querySelector('#connector-address')?.hasAttribute('readonly')]).toEqual(['TEXTAREA', true]);
     // Two apps, two sets of steps; the one not chosen is hidden.
     const tabs = [...d.querySelectorAll('[role="tab"]')];
     expect(tabs.map((t) => [t.textContent, t.getAttribute('aria-selected')])).toEqual([['In Claude', 'true'], ['In ChatGPT', 'false']]);
@@ -1260,6 +1270,19 @@ describe('your own AI assistant: connect Claude or ChatGPT, or copy and paste; n
     const details = p.copied[0]!;
     for (const says of [`My Practice Evidence workspace: ${nm.base}/`, `descriptor_url: "${nm.base}/affordances"`, `"${DEMO_POD}"`, 'sign_payload',
       `except ${PEV_ACTION.listScenarios} and ${PEV_ACTION.draftScenarioPacket}`, 'nonce = the step name']) expect(details).toContain(says);
+    // With no step of its own, its nonce example names no step at all: never one this workspace does not have.
+    expect(details).not.toMatch(/For example [A-Za-z0-9-]+-4-|read-items/);
+    // The confirmation is in the open dialog, where the person pressed Copy: the button says so and the
+    // dialog's own status line is announced. Nothing goes to the page's toasts, under the dialog's backdrop.
+    const said = await p.until(() => d.querySelector(':scope > .dialog-said')?.textContent, 'the confirmation in the dialog');
+    expect(said).toBe('Workspace details copied. Paste them into your chat.');
+    expect([d.querySelector(':scope > .dialog-said')?.getAttribute('role'), p.text('#copy-workspace-details'), p.q('#toasts')?.children.length]).toEqual(['status', 'Copied', 0]);
+    (d.querySelector('.copy-field-group button') as HTMLElement).click();
+    await p.until(() => p.copied.length === 2 && d.querySelector(':scope > .dialog-said')?.textContent === 'Connector address copied.', 'the copied connector address');
+    expect([p.copied[1], d.querySelector('.copy-field-group button')?.textContent]).toEqual([`${RELAY}/mcp`, 'Copied']);
+    // The button says what it did for a moment, then what it does again.
+    await p.until(() => p.text('#copy-workspace-details') === 'Copy workspace details', 'the button back as it was', 10_000);
+    expect(p.q('#toasts')?.children.length).toBe(0);
     // The account menu offers it too, where the key used to be.
     expect([...p.w.document.querySelectorAll('#user-menu .menu__item')].map((x) => x.textContent)).toContain('Connect your AI assistant');
     expect(p.text('#user-menu')).not.toContain('provider key');
@@ -1299,7 +1322,22 @@ describe('your own AI assistant: connect Claude or ChatGPT, or copy and paste; n
     await out.until(() => out.q('#connect-ai[open]'), 'the Connect dialog');
     expect([out.q('#connect-ai #connector-address'), out.q('#connect-ai #copy-workspace-details')]).toEqual([null, null]);
     expect(out.text('#connect-ai')).toContain('Your AI assistant acts as your Interego account, not your wallet.');
-    expect([...q.errors, ...out.errors]).toEqual([]);
+    // The way there is right beside it: Interego sign-in, which leaves the wallet behind in this tab.
+    expect(out.text('#connect-ai .callout')).toContain('To use Claude or ChatGPT, sign in with Interego: this tab then stops using your wallet.');
+    const toInterego = out.q('#connect-ai .callout [data-sign-in="interego"]');
+    expect(toInterego?.textContent).toBe('Sign in with Interego');
+    // The account menu offers it too.
+    expect([out.q('#user-menu #wallet-to-interego')?.getAttribute('data-sign-in'), out.text('#user-menu #wallet-to-interego')]).toEqual(['interego', 'Sign in with Interego instead']);
+    // Getting started does not mark Interego sign-in done for a wallet: it says what the wallet is, and what Interego adds.
+    const first = out.q('.checklist__item');
+    expect([first?.querySelector('.checklist__title-item')?.textContent, first?.querySelector('.checklist__text')?.textContent])
+      .toEqual(['Done: Sign in', 'You\'re signed in with your wallet. To use Claude or ChatGPT here, sign in with Interego instead.']);
+    // Pressing it closes the dialog and starts the same sign-in as the header's button: the page leaves for the relay.
+    toInterego!.click();
+    await out.until(() => out.q('#interego-continue') ?? out.q('#signing .refusal'), 'the way to Interego');
+    expect([out.q('#connect-ai[open]'), out.q('#interego-continue')?.getAttribute('href')?.startsWith(`${RELAY}/authorize?`)]).toEqual([null, true]);
+    await out.until(() => out.errors.includes(NAVIGATION), 'the navigation to the relay');
+    expect([...q.errors, ...out.errors.filter((e) => e !== NAVIGATION)]).toEqual([]);
   }, SLOW);
 
   it('the chat hand-off: a start-up message for Claude or ChatGPT, lines saved from the chat appear when the person comes back (no timer, nothing typed lost), and the judge gets a message without the conversation', async () => {
@@ -1310,6 +1348,8 @@ describe('your own AI assistant: connect Claude or ChatGPT, or copy and paste; n
     const handoff = await p.until(() => p.q('#view .chat-handoff'), 'the chat hand-off');
     const attemptIri = decodeURIComponent(p.w.location.hash.slice('#/attempt/'.length));
     expect(p.q('#send')).toBeNull();
+    // One saved version so far, and it reads as one.
+    expect(p.all('#view .versions summary').map((x) => x.textContent)).toContain('History (1 saved version)');
     // Copy and paste is still there, closed, for a plan without connectors.
     const packet = p.q('#view details.packet') as HTMLDetailsElement;
     expect([packet.open, packet.querySelector('summary')?.textContent, packet.contains(p.q('#line'))]).toEqual([false, 'No connector? Copy and paste one line at a time', true]);
@@ -1320,7 +1360,8 @@ describe('your own AI assistant: connect Claude or ChatGPT, or copy and paste; n
     const startup = p.copied[0]!;
     for (const says of [attemptIri, PEV_ACTION.counterpartPacket, PEV_ACTION.recordTurns, PEV_ACTION.endConversation, 'sign_payload: true', `descriptor_url: "${nm.base}/affordances"`,
       `"pod_url":"${DEMO_POD}"`, 'T starts at 1.', 'nextTurnIndex', 'turn-out-of-order', '"ended": true', 'payload.action is exactly this urn', 'Never change my words.',
-      "Sam Okafor's last line was: \"You wanted to see me?"]) expect(startup, says).toContain(says);
+      "Sam Okafor's last line was: \"You wanted to see me?", 'For example counterpart-packet-4-q8Xr2mVp7LkA9dTz,']) expect(startup, says).toContain(says);
+    expect(startup).not.toContain('read-items');
     expect(startup).not.toMatch(/llm_api_key|api key/i);
 
     // Claude, connected as this person, saves an exchange: the page shows it when the person comes back to the tab.
@@ -1330,7 +1371,7 @@ describe('your own AI assistant: connect Claude or ChatGPT, or copy and paste; n
     expect(p.all('.bubble').length).toBe(1);
     p.w.document.dispatchEvent(new p.w.Event('visibilitychange'));
     await p.until(() => p.all('.bubble').length === 3, 'the lines saved from the chat');
-    expect(p.all('.bubble.them').at(-1)?.textContent).toContain('Written by your own AI (Anthropic not shown), as you declared');
+    expect(p.all('.bubble.them').at(-1)?.textContent).toContain('Written by your own AI (Anthropic, model not shown), as declared');
     // The first line made Finish possible, so the panel was drawn again (nothing was typed in it).
     await p.until(() => p.q('#view .conversation__finish'), 'Finish conversation');
     // One read, with the signed read the page already held: nobody was asked to sign anything.
@@ -1362,6 +1403,8 @@ describe('your own AI assistant: connect Claude or ChatGPT, or copy and paste; n
     await p.until(() => p.text('#state') === 'Finished: not assessed yet', 'the finished session');
     expect(p.text('#view .judgments')).toContain('Waiting for a judge.');
     expect(p.text('#view .judgments')).toContain('If you don\'t have one yet, ask your admin.');
+    // Nothing assessed yet, and the Feedback card says so: no Provisional pill over an empty card.
+    expect(p.text('#view .judgments .card__header .status')).toBe('Not assessed yet');
 
     // Send to your judge: the session's ID and what to paste, never the conversation.
     const send = await p.until(() => p.q('#copy-judge-message'), 'Send to your judge');
@@ -1369,7 +1412,8 @@ describe('your own AI assistant: connect Claude or ChatGPT, or copy and paste; n
     send.click();
     await p.until(() => p.copied.length === 3, 'the message for the judge');
     const judge = p.copied[2]!;
-    for (const says of [attemptIri, PEV_ACTION.judgePacket, PEV_ACTION.recordJudgment, 'usedPacketPrompt', 'wait for my go-ahead', `Workspace: ${nm.base}/`]) expect(judge, says).toContain(says);
+    for (const says of [attemptIri, PEV_ACTION.judgePacket, PEV_ACTION.recordJudgment, 'usedPacketPrompt', 'wait for my go-ahead', `Workspace: ${nm.base}/`,
+      'For example judge-packet-4-q8Xr2mVp7LkA9dTz,']) expect(judge, says).toContain(says);
     expect(judge).not.toContain('The report was due Thursday');
     expect(judge).not.toContain('The feed was late again');
     plain('the finished session', `${shownText(p.q('#bar'))} ${shownText(p.q('#view'))}`);
@@ -1428,6 +1472,10 @@ describe('your own AI assistant: connect Claude or ChatGPT, or copy and paste; n
     }
     // The AI never sees a weight or a pass mark: the message names neither.
     expect(msg).not.toMatch(/weight|passRule|minPercent/i);
+    // The draft's placeholder holds no quote marks, so its JSON line carries no escaped quotes; the nonce example is this message's own signed step.
+    expect(msg).toContain('"scenario":"<the draft object, with assessmentUse feedback-only and workRegime as I chose>"');
+    expect(msg).not.toContain('\\"');
+    expect(msg).toContain('For example author-scenario-4-q8Xr2mVp7LkA9dTz,');
     expect(p.errors).toEqual([]);
   }, SLOW);
 
@@ -1458,6 +1506,12 @@ describe('your own AI assistant: connect Claude or ChatGPT, or copy and paste; n
     p.w.dispatchEvent(new p.w.Event('focus'));
     await new Promise((r) => setTimeout(r, 200));
     expect([calls.filter((c) => c === 'personal_sign').length, p.asked.filter((x) => x === 'POST /pev/get_attempt').length]).toEqual([signs, reads]);
+    // Writing a scenario with the wallet: the sentence is about drafting, not about a session to start or finish.
+    p.w.location.hash = '#/author';
+    await p.until(() => p.q('#draft-brief'), 'the author form');
+    const draftCard = p.text('#view .draft-card');
+    expect(draftCard).toContain('Your AI assistant acts as your Interego account, not your wallet. To draft in Claude or ChatGPT, sign in with Interego. Until then, copy and paste a draft below.');
+    expect(draftCard).not.toMatch(/start the session|finish a session/);
     expect(p.errors).toEqual([]);
   }, SLOW);
 });

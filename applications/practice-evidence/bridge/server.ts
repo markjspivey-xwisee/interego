@@ -310,6 +310,9 @@ async function main(): Promise<void> {
   // and the route trusts it. Its relay calls follow no redirect, are capped and timed, and go through
   // the SSRF guard unless the operator's relay is on loopback (a local relay, which the guard refuses).
   const uiSignIn = relayUrl !== undefined && relayAddresses.length > 0 && identityHost !== undefined;
+  // What the landing page and the guide offer a chat assistant: the Interego connector wherever the
+  // route trusts a relay (with its address when PEV_RELAY_URL names it), copy and paste otherwise.
+  const chatConnector = relayAddresses.length > 0 && identityHost !== undefined ? (relayUrl !== undefined ? { relayUrl } : {}) : null;
   const relayIsLoopback = relayUrl !== undefined && ((): boolean => { try { return LOOPBACK.has(new URL(relayUrl).hostname); } catch { return false; } })();
 
   const llmKey = env('PEV_LLM_API_KEY') ?? env('ANTHROPIC_API_KEY');
@@ -400,8 +403,8 @@ async function main(): Promise<void> {
         ontologyTurtle: readOntologyTurtle, shapesTurtle: readShapesTurtle,
       });
       attachUi(a, uiSignIn && relayUrl !== undefined
-        ? { interego: { relayUrl, deploymentUrl: base, relayFetch: relayCallFetch(baseFetch, { privateRelay: relayIsLoopback }), ...(relayDelegation !== undefined ? { relayDelegation } : {}) }, ...contact }
-        : contact);
+        ? { interego: { relayUrl, deploymentUrl: base, relayFetch: relayCallFetch(baseFetch, { privateRelay: relayIsLoopback }), ...(relayDelegation !== undefined ? { relayDelegation } : {}) }, connector: chatConnector, ...contact }
+        : { connector: chatConnector, ...contact });
     },
   });
 

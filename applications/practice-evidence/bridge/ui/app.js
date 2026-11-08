@@ -288,10 +288,21 @@ function replyWords(t) {
   const d = t.disclosure;
   if (!d) return null;
   if (d.route === 'scripted') return { text: 'Sample reply: no AI ran', tone: 'demo' };
-  if (d.route === 'client-packet') return { text: `Written by your own AI (${[d.provider, d.model].filter(Boolean).join(' ')}), as you declared`, tone: 'warning' };
+  if (d.route === 'client-packet') return { text: `Written by your own AI (${declaredAi(d)}), as declared`, tone: 'warning' };
   if (d.keySource === 'per-request-byok') return { text: `Reply by ${d.model || d.requestedModel}, with your own key`, tone: '' };
   return { text: `Reply by ${d.model || d.requestedModel}, via Practice Evidence`, tone: '' };
 }
+
+/** The company and model declared for a line: "Anthropic, model not shown" when the model's name was not shown. */
+function declaredAi(d) {
+  const model = String(d.model || '').trim();
+  const provider = String(d.provider || '').trim();
+  if (!model || /^not shown$/i.test(model)) return provider ? `${provider}, model not shown` : 'model not shown';
+  return [provider, model].filter(Boolean).join(' ');
+}
+
+/** "1 saved version", "2 saved versions". */
+function savedVersions(n) { return `${n} saved ${n === 1 ? 'version' : 'versions'}`; }
 
 /** Which AI drafted a scenario, in plain words. */
 function draftWords(d) {
@@ -441,9 +452,53 @@ function linkButton(href, label, cls, iconName) {
   return h('a', { class: `btn ${cls || 'btn--secondary'}`, href }, iconName === 'arrow-right' ? null : ic, label, iconName === 'arrow-right' ? ic : null);
 }
 
+/**
+ * Where a toast goes: the open dialog's own region while one is open, because a modal dialog sits
+ * in the top layer, over the page's region, and makes the rest of the page inert, so the page's
+ * region would be dimmed and never announced; the page's own region otherwise.
+ */
+function toastRegion() {
+  const open = [...document.querySelectorAll('dialog[open]')].map((d) => d.querySelector(':scope > .toast-region')).filter(Boolean);
+  return open.length ? open[open.length - 1] : document.getElementById('toasts');
+}
+
+/**
+ * A dialog's own places to say something: a region for toasts (see toastRegion), and a status line
+ * a screen reader announces, for what saidInPlace confirms without a toast.
+ */
+function dialogToasts() {
+  return [h('div', { class: 'toast-region', role: 'status', 'aria-live': 'polite', 'aria-label': 'Notifications' }),
+    h('p', { class: 'visually-hidden dialog-said', role: 'status', 'aria-live': 'polite' })];
+}
+
+/** Buttons showing "Copied" for a moment: what they said before, and the timer that puts it back. */
+const copiedButtons = new WeakMap();
+
+/**
+ * A copy confirmed where it happened, in an open dialog: the button says Copied for a moment and
+ * the dialog's status line says what was copied. A toast there would cover the dialog's own
+ * buttons (and one on the page would sit under the dialog, dimmed and never announced).
+ */
+function saidInPlace(dialog, button, words) {
+  const said = dialog.querySelector(':scope > .dialog-said');
+  if (said) { said.textContent = ''; said.textContent = words; }
+  const was = copiedButtons.get(button);
+  if (was) clearTimeout(was.timer);
+  const kids = was ? was.kids : [...button.childNodes];
+  if (!was) button.style.setProperty('min-width', `${button.offsetWidth}px`);
+  clear(button).append(icon('check', 'sm'), 'Copied');
+  const timer = setTimeout(() => {
+    copiedButtons.delete(button);
+    if (!button.isConnected) return;
+    clear(button).append(...kids);
+    button.style.removeProperty('min-width');
+  }, 2500);
+  copiedButtons.set(button, { kids, timer });
+}
+
 /** A short confirmation in the corner. Errors never use one: they get a callout where they happened. */
 function toast(o) {
-  const region = document.getElementById('toasts');
+  const region = toastRegion();
   if (!region) return;
   const tone = o.tone || 'info';
   const ic = icon(tone === 'success' ? 'check' : tone === 'warning' || tone === 'danger' ? 'warning' : 'info');
@@ -490,10 +545,13 @@ function placeMenus() {
   }
 }
 
-async function copyText(text, what, hint) {
+/** Copy text, and say so: in place when `button` is in an open dialog (saidInPlace), with a toast otherwise. */
+async function copyText(text, what, hint, button) {
   try {
     await navigator.clipboard.writeText(text);
-    toast({ tone: 'success', title: `${what} copied`, text: hint });
+    const dialog = button && typeof button.closest === 'function' ? button.closest('dialog[open]') : null;
+    if (dialog) saidInPlace(dialog, button, `${what} copied.${hint ? ` ${hint}` : ''}`);
+    else toast({ tone: 'success', title: `${what} copied`, text: hint });
   } catch {
     toast({ tone: 'warning', title: 'Select the text and copy it yourself' });
   }
@@ -950,6 +1008,9 @@ function onSignInClick(e) {
   e.preventDefault();
   const how = t.getAttribute('data-sign-in');
   closeMenuOf(t);
+  // A sign-in started from a dialog closes it, so what happens next (or why it could not start) is in view.
+  const dialog = typeof t.closest === 'function' ? t.closest('dialog') : null;
+  if (dialog) closeDialog(dialog);
   if (how === 'interego') {
     t.setAttribute('aria-busy', 'true');
     t.disabled = true;
@@ -1285,7 +1346,11 @@ function accountActions() {
           h('p', { text: `Member ID: ${i.principal || 'not known yet'}` }),
           h('p', {}, 'Signed by agent: ', h('span', { id: 'interego-agent', text: i.agentId || 'not known yet' })))));
   }
-  if (S.mode === 'wallet') menu.append(h('p', { class: 'menu__text mono', text: S.account }));
+  if (S.mode === 'wallet') {
+    menu.append(h('p', { class: 'menu__text mono', text: S.account }));
+    // Claude or ChatGPT act as an Interego account, never a wallet: the way to them is from here too.
+    if (interegoOffered()) menu.append(h('button', { type: 'button', id: 'wallet-to-interego', class: 'menu__item', dataset: { signIn: 'interego' } }, icon('sign-in'), 'Sign in with Interego instead'));
+  }
   menu.append(...(S.mode === 'demo' ? [] : [h('hr', { class: 'menu__sep' })]),
     menuItem('Getting started', 'check', () => { forget(CHECKLIST_HIDDEN_KEY); S.checklistOpen = true; go('#/practice'); }),
     menuItem('Connect your AI assistant', 'sparkle', () => openConnect()),
@@ -1347,7 +1412,8 @@ function workspaceDialog() {
       h('section', { class: 'settings__section' }, h('h3', { text: 'Your AI assistant' }),
         para('Practice Evidence never asks for an API key. Connect Claude or ChatGPT to do the AI steps on your own subscription.'),
         connectButton('Connect your AI', 'btn--secondary btn--sm'))),
-    h('div', { class: 'modal__footer' }, h('button', { type: 'button', class: 'btn btn--primary', text: 'Done', onclick: () => closeDialog(d) })));
+    h('div', { class: 'modal__footer' }, h('button', { type: 'button', class: 'btn btn--primary', text: 'Done', onclick: () => closeDialog(d) })),
+    ...dialogToasts());
   d.addEventListener('click', (e) => { if (e.target === d) closeDialog(d); });
   return d;
 }
@@ -1391,11 +1457,22 @@ function connectorAddress() { return `${String(S.bridge.interegoSignIn.relayUrl)
 function siteBase() { return new URL('./', location.href).href; }
 function actionsUrl() { return `${siteBase()}affordances`; }
 
-/** Where a signed-in person's chat route stops: a wallet or manual signer, or a visitor not signed in. */
-function chatNotHereWords() {
+/**
+ * Where a signed-in person's chat route stops: a wallet or manual signer, or a visitor not signed
+ * in. `where` is the place it is said: 'session' (the session page), 'draft' (writing a scenario)
+ * or 'dialog' (Connect your AI, which offers Sign in with Interego beside it).
+ */
+function chatNotHereWords(where) {
   if (S.mode === 'paste' && !S.manual) return 'Sign in with Interego first. Your AI assistant acts as your Interego account, so it can work here once you\'re signed in with it.';
-  if (S.mode === 'paste') return "Your AI assistant acts as your Interego account, not the key you sign with. To continue in Claude or ChatGPT, sign in with Interego and start the session there. You can finish a session you signed yourself here, with copy and paste.";
-  return "Your AI assistant acts as your Interego account, not your wallet. To continue in Claude or ChatGPT, sign in with Interego and start the session there. You can finish a session you started with your wallet here, with copy and paste.";
+  const manual = S.mode === 'paste';
+  const lead = `Your AI assistant acts as your Interego account, not ${manual ? 'the key you sign with' : 'your wallet'}.`;
+  const own = manual ? 'a session you signed yourself' : 'a session you started with your wallet';
+  if (where === 'draft') return `${lead} To draft in Claude or ChatGPT, sign in with Interego.`;
+  if (where === 'dialog') {
+    return `${lead} To use Claude or ChatGPT, sign in with Interego: this tab then stops using ${manual ? 'manual signing' : 'your wallet'}. `
+      + `Finish ${own} here, with copy and paste.`;
+  }
+  return `${lead} To continue in Claude or ChatGPT, sign in with Interego and start the session there. You can finish ${own} here, with copy and paste.`;
 }
 
 /** "Copy workspace details": what an assistant needs once per chat to act here as the person. */
@@ -1420,11 +1497,14 @@ function openConnect() {
   if (d) openDialog(d);
 }
 
-/** A copyable address: a read-only field (its value is not page text) and a Copy button. */
+/**
+ * A copyable address: a read-only field (its value is not page text) and a Copy button. The field
+ * is a one-line text area that wraps, so a long address is shown whole on a phone, never cut off.
+ */
 function copyField(id, label, value, what) {
-  const input = h('input', { type: 'text', id, class: 'input input--mono', readOnly: true, value, 'aria-label': label });
+  const field = h('textarea', { id, class: 'input input--mono copy-field', rows: 1, readOnly: true, spellcheck: 'false', value, 'aria-label': label });
   return h('div', { class: 'field' }, h('label', { class: 'label', for: id, text: label }),
-    h('div', { class: 'input-group' }, input, h('button', { type: 'button', class: 'btn btn--secondary btn--sm', text: 'Copy', onclick: () => copyText(value, what) })));
+    h('div', { class: 'input-group copy-field-group' }, field, h('button', { type: 'button', class: 'btn btn--secondary btn--sm', text: 'Copy', onclick: (e) => copyText(value, what, undefined, e.currentTarget) })));
 }
 
 /** "In Claude" / "In ChatGPT": each app's own setup steps. */
@@ -1476,7 +1556,7 @@ function byokSection() {
   return h('details', { class: 'disclosure', id: 'byok-section' },
     h('summary', { text: `Advanced: use your own Anthropic API key${noOwnAi() ? ' (drafts only)' : ''}` }),
     h('div', { class: 'disclosure__body form' },
-      para('Only for people with their own Anthropic account. Your AI assistant above needs no key.'),
+      para('Only for people with their own Anthropic account. Claude or ChatGPT needs no key here, connected or by copy and paste.'),
       h('label', { class: 'choice' }, toggle, h('span', { class: 'choice__text' }, 'Use my own Anthropic API key in this tab',
         h('span', { class: 'choice__hint', text: byokHint(S.bridge) }))),
       fields));
@@ -1492,23 +1572,29 @@ function connectAiDialog() {
         chatAppTabs()),
       h('section', { class: 'settings__section' }, h('h3', { text: 'Then, in the chat' }),
         para('Copy this workspace\'s details into the chat once, then ask for what you need.'),
-        h('div', {}, h('button', { type: 'button', id: 'copy-workspace-details', class: 'btn btn--primary btn--sm', onclick: () => copyText(workspaceDetails(), 'Workspace details', 'Paste them into your chat.') },
+        h('div', {}, h('button', { type: 'button', id: 'copy-workspace-details', class: 'btn btn--primary btn--sm', onclick: (e) => copyText(workspaceDetails(), 'Workspace details', 'Paste them into your chat.', e.currentTarget) },
           icon('clipboard', 'sm'), 'Copy workspace details')),
         h('ul', { class: 'connect-roles' },
           h('li', {}, h('strong', { text: 'Learners: ' }), 'start a session here, then choose Copy the start-up message on the session page.'),
           h('li', {}, h('strong', { text: 'Authors: ' }), 'in Write a scenario, choose Draft it in Claude or ChatGPT.'),
           h('li', {}, h('strong', { text: 'Appointed judges: ' }), 'paste the message a learner sends you.'))));
   } else if (chatOffered()) {
+    // Signed in another way (a wallet, a key of their own) or not yet: Interego sign-in, from here.
+    // Signing in leaves the page for Interego and comes back signed in, no longer with the wallet.
     body.append(h('section', { class: 'settings__section' }, callout({ tone: 'neutral', title: 'Use Claude or ChatGPT while signed in with Interego',
-      body: chatNotHereWords(), actions: [S.mode === 'paste' && !S.manual ? signInButton('interego', 'Sign in with Interego', 'sm') : null] })));
-  } else {
-    body.append(h('section', { class: 'settings__section' }, callout({ tone: 'neutral', title: 'Use copy and paste here',
-      body: "This workspace doesn't offer Interego sign-in, so a chat assistant can't connect to it. Every AI step has Copy for my AI instead." })));
+      body: chatNotHereWords('dialog'), actions: [signInButton('interego', 'Sign in with Interego', 'sm')] })));
+  }
+  const pasteWords = 'Each AI step here has a Copy for my AI button. Paste what it copies into any chat app, then paste the answer back and say which AI wrote it.';
+  if (!chatOffered()) {
+    // No connector is possible here, so copy and paste is the way: said once, not as a fallback.
+    body.append(h('section', { class: 'settings__section', id: 'connect-paste', 'aria-labelledby': 'connect-paste-title' }, h('h3', { id: 'connect-paste-title', text: 'Copy and paste' }),
+      para(`This workspace doesn't offer Interego sign-in, so a chat assistant can't connect to it. ${pasteWords} It works with any chat app and any plan.`)));
   }
   body.append(h('section', { class: 'settings__section' },
-    h('details', { class: 'disclosure', id: 'connect-paste', open: !chatOffered() }, h('summary', { text: 'No connector? Copy and paste instead' }),
-      h('div', { class: 'disclosure__body' },
-        para('Each AI step here has a Copy for my AI button. Paste what it copies into any chat app, then paste the answer back and say which AI wrote it. It\'s slower, and it works with any plan.'))),
+    chatOffered()
+      ? h('details', { class: 'disclosure', id: 'connect-paste' }, h('summary', { text: 'No connector? Copy and paste instead' }),
+        h('div', { class: 'disclosure__body' }, para(`${pasteWords} It's slower, and it works with any plan.`)))
+      : null,
     chatOffered() ? h('details', { class: 'disclosure', id: 'connect-limits' }, h('summary', { text: "What your assistant can and can't do here" }),
       h('div', { class: 'disclosure__body' }, h('ul', {},
         h('li', { text: 'It acts as you, through your Interego account. Each record says which app made it, for example "via ChatGPT".' }),
@@ -1521,10 +1607,13 @@ function connectAiDialog() {
   d.append(
     h('div', { class: 'modal__header' }, h('div', {},
       h('h2', { class: 'modal__title', id: 'connect-title', text: 'Use your own AI assistant' }),
-      h('p', { class: 'modal__desc', id: 'connect-desc', text: 'Practice Evidence has no AI of its own and never asks for an API key. Claude, ChatGPT or another assistant that supports connectors can do the AI work on your own subscription. Practice Evidence checks it and records which AI did it.' })),
+      h('p', { class: 'modal__desc', id: 'connect-desc', text: chatOffered()
+        ? 'Practice Evidence has no AI of its own and never asks for an API key. Claude, ChatGPT or another assistant that supports connectors can do the AI work on your own subscription. Practice Evidence checks it and records which AI did it.'
+        : 'Practice Evidence has no AI of its own and never asks for an API key. Your own Claude, ChatGPT or any chat app does the AI work, on your own subscription. Practice Evidence checks it and records which AI did it.' })),
     h('button', { type: 'button', class: 'btn btn--ghost btn--icon modal__close', 'aria-label': 'Close', onclick: () => closeDialog(d) }, icon('close'))),
     body,
-    h('div', { class: 'modal__footer' }, h('button', { type: 'button', class: 'btn btn--primary', text: 'Done', onclick: () => closeDialog(d) })));
+    h('div', { class: 'modal__footer' }, h('button', { type: 'button', class: 'btn btn--primary', text: 'Done', onclick: () => closeDialog(d) })),
+    ...dialogToasts());
   d.addEventListener('click', (e) => { if (e.target === d) closeDialog(d); });
   return d;
 }
@@ -1730,7 +1819,10 @@ const MEMBER_STEP = { member: true, title: 'Send your Member ID to your admin', 
 /** Each role's first steps: [title, text, target] where the target is a link, a scroll, or nothing. */
 const CHECKLISTS = {
   learner: [
-    { signIn: true, title: 'Sign in with Interego', text: "Your Interego account is how Practice Evidence knows it's you." },
+    // Done for anyone signed in; a wallet learner is told what Interego sign-in adds, not that they did it.
+    { signIn: true, title: () => (S.mode === 'wallet' ? 'Sign in' : 'Sign in with Interego'),
+      text: () => (S.mode !== 'wallet' ? "Your Interego account is how Practice Evidence knows it's you."
+        : chatOffered() ? "You're signed in with your wallet. To use Claude or ChatGPT here, sign in with Interego instead." : "You're signed in with your wallet.") },
     { member: true, title: 'Copy your Member ID and send it to your admin', text: 'Your admin uses this to give you a role.' },
     { practice: true, title: 'Pick a scenario', text: "Read what you're practicing and open the rubric.", scroll: '#scenarios', label: 'See scenarios' },
     { practice: true, title: 'Start', text: 'Say whether anyone helped you prepare, then press Start practice.' },
@@ -1793,8 +1885,8 @@ function feedbackStepText() {
   const b = S.bridge;
   if (!b) return 'Send it to your judge, or press Get AI assessment where it is offered. Not sure who your judge is? Ask your admin.';
   if (b.judgeRoute !== 'none') return 'Press Get AI assessment on the finished session.';
-  if (chatOffered()) return 'Choose Send to your judge and send the message to your appointed judge. Not sure who that is? Ask your admin.';
-  return 'Choose Get the hand-off and send it to your appointed judge. Not sure who that is? Ask your admin.';
+  if (chatOffered()) return 'Under Send to your judge, choose Copy message for my judge and send it to your appointed judge. Not sure who that is? Ask your admin.';
+  return 'Choose Get the hand-off, then Copy message for my judge, and send it to your appointed judge. Not sure who that is? Ask your admin.';
 }
 
 function checklistVisible() { return S.mode !== 'paste' && recall(CHECKLIST_HIDDEN_KEY) !== '1'; }
@@ -1857,7 +1949,7 @@ function paintChecklist(slot) {
     else if (s.scroll && !d) action = h('button', { type: 'button', class: cls, text: s.label, onclick: () => scrollToEl(s.scroll) });
     return h('li', { class: 'checklist__item', 'data-state': state },
       h('span', { class: 'checklist__mark' }, d ? icon('check') : null),
-      h('p', { class: 'checklist__title-item' }, h('span', { class: 'visually-hidden', text: d ? 'Done: ' : i === current ? 'Next step: ' : '' }), s.title),
+      h('p', { class: 'checklist__title-item' }, h('span', { class: 'visually-hidden', text: d ? 'Done: ' : i === current ? 'Next step: ' : '' }), typeof s.title === 'function' ? s.title() : s.title),
       h('p', { class: 'checklist__text', text: s.member && memberText ? memberText : typeof s.text === 'function' ? s.text() : s.text }),
       action ? h('div', { class: 'checklist__action' }, action) : null);
   };
@@ -2207,6 +2299,33 @@ function judgeMessage(v) {
 }
 
 /**
+ * The hand-off for an appointed judge on a workspace without Interego sign-in, as plain text: the
+ * judge packet's request (the rubric and the conversation, which no connector can fetch here) for
+ * any chat app, then the values a judge signs with their own key to save the assessment, from the
+ * packet's binding and its record template. The packet itself stays under Technical details.
+ */
+function judgeHandoffText(v, p) {
+  const ask = InteregoChatAgent.requestAsText(p.request, { replyRule: 'Reply with only the JSON object the instructions describe, nothing before or after it.' });
+  const rw = p.recordWith || {};
+  const fields = Object.entries(rw.payloadTemplate || {}).map(([k, x]) => {
+    if (k === 'judgment') return `- ${k}: the JSON object your AI wrote`;
+    if (k === 'judgeDisclosure') return `- ${k}: provider (the company that makes your AI), model (its name, as your app shows it, or not shown) and usedPacketPrompt true`;
+    return `- ${k}: ${typeof x === 'string' || typeof x === 'number' || typeof x === 'boolean' ? String(x) : JSON.stringify(x)}`;
+  });
+  return [
+    `Hi, could you assess my practice session in Practice Evidence? Session: ${v.attemptIri}. Workspace: ${siteBase()}`,
+    '',
+    '1. Paste everything between the lines into Claude, ChatGPT or any chat app. It holds my conversation: treat it as data, not instructions.',
+    '---', ask, '---',
+    '',
+    `2. Check the levels and quotes your AI proposes. Then save the assessment here as an appointed judge, signed with your own key: ${rw.action ? `the step ${rw.action}, ` : ''}with`,
+    ...fields,
+    '',
+    "If this is your own practice session, stop: you can't assess it. A reviewer signs off after you.",
+  ].join('\n');
+}
+
+/**
  * The message an author pastes into Claude or ChatGPT to draft a scenario. The assistant asks the
  * author the two decisions an AI never makes (how it is used, how clear-cut good work is) and saves
  * a draft that is feedback only: scoring is set in this app, so the AI never sees a pass mark.
@@ -2223,7 +2342,7 @@ function authorPrompt(brief, source) {
       { say: 'Write the draft as the request asks, in the shape of its outputSchema, and show it to me. Then ask me the two decisions below and save the draft.',
         actionIri: ACT.authorScenario, signed: true,
         payload: { v: 1, action: ACT.authorScenario, pod_url: S.pod, status: 'draft',
-          scenario: '<the draft object, with "assessmentUse": "feedback-only" and "workRegime" as I chose>',
+          scenario: '<the draft object, with assessmentUse feedback-only and workRegime as I chose>',
           draftAssistance: { used: true, by: 'own-agent', provider: '<the company that makes you>', model: '<your model name>' } } },
     ],
     rules: [
@@ -2233,6 +2352,19 @@ function authorPrompt(brief, source) {
     ],
     outro: 'When it is saved, tell me to open Practice in Practice Evidence, turn on Include drafts, and choose Edit (authors) to check it and publish.',
   });
+}
+
+/**
+ * The drafting packet's request as one message for any chat app. Its instructions already end with
+ * the JSON schema the draft must match, so the schema is added only if they ever stop carrying it.
+ */
+function draftPasteMessage(p) {
+  const schema = JSON.stringify(p.outputSchema);
+  const carried = [p.request && p.request.system, p.request && p.request.user].some((x) => typeof x === 'string' && x.includes(schema));
+  const text = InteregoChatAgent.requestAsText(p.request, { replyRule: carried
+    ? 'Reply with only the JSON object the instructions describe, nothing before or after it.'
+    : 'Reply with only the JSON object described below, nothing before or after it.' });
+  return carried ? text : [text, `The JSON object's shape:\n${schema}`].join('\n\n');
 }
 
 /** The session's card for the chat route: copy the start-up message, talk it through in Claude or ChatGPT, and watch the lines arrive here. */
@@ -2275,7 +2407,7 @@ function conversationPanel(v) {
   const packetRoute = hasNext(v, 'counterpartPacket') && hasNext(v, 'recordTurns');
   const chatRoute = !canSay && packetRoute && chatReady();
   if (chatRoute) body.append(chatHandoffCard(v, cur));
-  else if (!canSay && packetRoute && chatOffered()) body.append(callout({ tone: 'neutral', title: 'Finish this session here', body: chatNotHereWords() }));
+  else if (!canSay && packetRoute && chatOffered()) body.append(callout({ tone: 'neutral', title: 'Finish this session here', body: chatNotHereWords('session') }));
   body.append(chat);
 
   if (v.endProposedAtTurn !== undefined && hasNext(v, 'endConversation')) {
@@ -2472,7 +2604,7 @@ function packetTurnForm(v, cur, box, composer, out, o) {
     return null;
   }, { progress: 'Saving…' }) });
   const node = h('details', { class: 'disclosure packet', open: o.open },
-    h('summary', { text: composer ? 'No connector? Copy and paste one line at a time' : 'Or let your own AI play the other person (copy and paste)' }),
+    h('summary', { text: composer ? `${chatOffered() ? 'No connector? ' : ''}Copy and paste one line at a time` : 'Or let your own AI play the other person (copy and paste)' }),
     h('div', { class: 'disclosure__body form' },
       para(`Type your line here, copy the message for your AI, paste it into any chat app, then paste the reply back. The record will say your own AI wrote ${name}'s lines.`, ''),
       composer, h('div', {}, getBtn), packetOut,
@@ -2526,8 +2658,10 @@ const judgmentName = (j) => (j.index === 0 ? 'First AI assessment' : `Opinion ${
 
 function judgmentsPanel(v) {
   const final = Boolean(v.finalAssessment);
+  // Final once reviewed; Provisional only when an assessment exists; otherwise nothing is assessed yet.
+  const pill = final ? statusPill('Final', 'success') : v.judgments.length ? statusPill('Provisional', 'warning') : statusPill('Not assessed yet', 'pending');
   const sec = h('section', { class: 'card judgments' },
-    h('div', { class: 'card__header' }, h('h2', { class: 'card__title', text: 'Feedback' }), statusPill(final ? 'Final' : 'Provisional', final ? 'success' : 'warning')));
+    h('div', { class: 'card__header' }, h('h2', { class: 'card__title', text: 'Feedback' }), pill));
   const body = h('div', { class: 'card__body' });
   sec.append(body);
   if (!v.judgments.length) {
@@ -2731,14 +2865,19 @@ function actionsPanel(v, o, inConversation) {
         onclick: () => copyText(judgeMessage(v), 'Message for your judge', 'Send it to your appointed judge.') }, icon('clipboard', 'sm'), 'Copy message for my judge'));
       after.push(h('details', { class: 'disclosure' }, h('summary', { text: 'Preview the message' }), h('pre', { class: 'json prompt-preview', text: judgeMessage(v) })));
     } else if (n.action === ACT.judgePacket) {
+      // No connector here, so the judge's AI cannot fetch the session: the message carries the
+      // request as plain text (the conversation included), and how to save the assessment.
       end.append(btn('Get the hand-off', async () => {
         const p = await act(ACT.judgePacket, { attemptIri: v.attemptIri }, { read: true });
+        const text = judgeHandoffText(v, p);
         return callout({ tone: 'info', title: 'Hand-off ready',
-          body: "Send this to your appointed judge with the session's link. They assess the session with their own AI assistant and save the result. A reviewer still signs off.",
-          actions: [h('button', { type: 'button', class: 'btn btn--secondary btn--sm', text: 'Copy hand-off', onclick: () => copyText(JSON.stringify(p, null, 2), 'Hand-off') }),
-            h('button', { type: 'button', class: 'btn btn--ghost btn--sm', text: 'Copy session link', onclick: () => copyText(location.href, 'Session link') })],
-          kids: [h('details', { class: 'disclosure' }, h('summary', { text: 'Show the request (JSON)' }), jsonBlock(p))],
-          techLines: [p.instructions] });
+          body: 'Send this message to your appointed judge. They paste it into any chat app, check the levels their AI proposes, and save the assessment with their own key. A reviewer still signs off.',
+          actions: [h('button', { type: 'button', class: 'btn btn--primary btn--sm', id: 'copy-judge-handoff', onclick: () => copyText(text, 'Message for your judge', 'Send it to your appointed judge.') },
+            icon('clipboard', 'sm'), 'Copy message for my judge'),
+          h('button', { type: 'button', class: 'btn btn--ghost btn--sm', text: 'Copy session link', onclick: () => copyText(location.href, 'Session link') })],
+          kids: [h('details', { class: 'disclosure' }, h('summary', { text: 'Preview the message' }), h('pre', { class: 'json prompt-preview', text })),
+            h('details', { class: 'disclosure' }, h('summary', { text: 'Technical details' }),
+              h('div', { class: 'disclosure__body disclosure__body--tech' }, h('div', { text: String(p.instructions || '') }), jsonBlock(p)))] });
       }, 'btn--secondary', 'One moment…'));
     } else if (n.action === ACT.exportRecord) {
       end.append(btn('Download', async () => {
@@ -2746,13 +2885,13 @@ function actionsPanel(v, o, inConversation) {
         const text = JSON.stringify(r, null, 2);
         const saved = download(`pev-record-${v.attemptIri.split(':').pop()}.json`, text, 'application/json');
         const n2 = r.versions.length;
-        return callout({ tone: 'success', title: saved ? `Downloaded ${n2} saved versions.` : `Your record has ${n2} saved versions, but this browser couldn't save the file.`, techLines: r.verify });
+        return callout({ tone: 'success', title: saved ? `Downloaded ${savedVersions(n2)}.` : `Your record has ${savedVersions(n2)}, but this browser couldn't save the file.`, techLines: r.verify });
       }, 'btn--secondary', 'Preparing…', 'download'));
     } else if (n.action === ACT.holderCopy) {
       const target = h('input', { type: 'url', class: 'input', placeholder: 'https://your-storage.example/', 'aria-label': 'Your storage address' });
       end.append(formField({ label: 'Your storage address', control: target, hideLabel: true }), btn('Copy', async () => {
         const r = await act(ACT.holderCopy, { attemptIri: v.attemptIri, targetPodUrl: target.value.trim() });
-        return callout({ tone: 'success', title: `Copied ${r.copies.length} saved versions to your storage.`,
+        return callout({ tone: 'success', title: `Copied ${savedVersions(r.copies.length)} to your storage.`,
           body: `${r.copiesVerified} checked after copying${r.skippedContentDeleted ? `; ${r.skippedContentDeleted} skipped because their text was deleted` : ''}.`, techLines: [`Copied to ${r.targetPodUrl}`] });
       }, 'btn--secondary', 'Copying…'));
     } else if (n.action === ACT.contestReview) {
@@ -2823,7 +2962,7 @@ function versionsPanel(v) {
   return h('section', { class: 'card versions' }, h('div', { class: 'card__header' }, h('h2', { class: 'card__title', text: 'Signed record' })), h('div', { class: 'card__body' },
     h('div', { class: 'cluster' }, bound ? statusPill('Signature verified: unchanged since it was signed', 'success') : statusPill("Signature couldn't be verified", 'danger')),
     bound ? null : para("This record doesn't match its signature. Don't rely on it; contact your admin.", 'text-sm'),
-    h('details', { class: 'disclosure' }, h('summary', { text: `History (${v.versions.length} saved versions)` }),
+    h('details', { class: 'disclosure' }, h('summary', { text: `History (${savedVersions(v.versions.length)})` }),
       h('div', { class: 'disclosure__body' }, h('ol', { class: 'list' }, v.versions.map((x) => h('li', {}, h('div', { class: 'list__item' },
         h('div', { class: 'list__main' }, h('span', { class: 'list__title', text: versionWords(x) }),
           h('code', { class: 'mono list__meta', text: x.descriptorUrl })))))))),
@@ -3282,7 +3421,7 @@ function authorForm(A, paint) {
       h('p', { class: 'hint', text: "Fill in What should people practice? first, and it's included." }),
       details));
   } else if (chatOffered() && (S.mode !== 'paste' || S.manual)) {
-    draftKids.push(para(`${chatNotHereWords()} Until then, copy and paste a draft below.`, 'text-sm text-secondary'));
+    draftKids.push(para(`${chatNotHereWords('draft')} Until then, copy and paste a draft below.`, 'text-sm text-secondary'));
   }
   // This workspace's own AI, or the person's own Anthropic key: shown only where one can draft.
   if (!noOwnAi() || S.byok.on) {
@@ -3299,19 +3438,20 @@ function authorForm(A, paint) {
     draftKids.push(h('div', { class: 'btn-group' }, draftBtn));
   }
   let pasteMessage = '';
+  // The message's outcome goes right under its button, above the answer box it tells the person to fill.
   const pasteOut = h('div', { class: 'outcome' });
+  const loadOut = h('div', { class: 'outcome' });
   const packetBtn = h('button', { type: 'button', class: 'btn btn--secondary', text: 'Get the message for my AI', dataset: { action: ACT.draftScenarioPacket }, onclick: () => busy(packetBtn, pasteOut, async () => {
     if (!brief.value.trim()) return errorText('Fill in What should people practice? first: the message includes it.');
     const p = await invoke(ACT.draftScenarioPacket, { brief: brief.value, ...(source.value.trim() ? { source_text: source.value } : {}) });
-    pasteMessage = [InteregoChatAgent.requestAsText(p.request, { replyRule: 'Reply with only the JSON object described below, nothing before or after it.' }),
-      `The JSON object's shape:\n${JSON.stringify(p.outputSchema)}`].join('\n\n');
+    pasteMessage = draftPasteMessage(p);
     return callout({ tone: 'info', title: 'Message ready',
-      body: 'Copy it into Claude, ChatGPT or any chat app. Paste its whole answer below, then read and edit the draft before you save.',
+      body: "Copy it into Claude, ChatGPT or any chat app. Paste its whole answer into Your AI's answer below, then read and edit the draft before you save.",
       techLines: [p.instructions],
       actions: [h('button', { type: 'button', class: 'btn btn--primary btn--sm', id: 'copy-draft-paste', text: 'Copy for my AI', onclick: () => copyText(pasteMessage, 'Message', 'Paste it into your chat app.') })],
       kids: [h('details', { class: 'disclosure' }, h('summary', { text: 'Preview the message' }), h('pre', { class: 'json prompt-preview', text: pasteMessage }))] });
   }) });
-  const pasteBtn = h('button', { type: 'button', class: 'btn btn--secondary btn--sm', text: 'Load the draft', onclick: () => busy(pasteBtn, pasteOut, async () => {
+  const pasteBtn = h('button', { type: 'button', id: 'load-draft', class: 'btn btn--secondary btn--sm', text: 'Load the draft', onclick: () => busy(pasteBtn, loadOut, async () => {
     const found = InteregoChatAgent.extractJsonObject(pasted.value);
     if (!found.ok) return h('div', {}, errorText("We couldn't find a draft in that answer. Paste the whole answer, including the part from { to }."), tech([found.why]));
     A.model = { ...modelFrom(found.value), assessmentUse: '', workRegime: '', passGateWhy: '' };
@@ -3322,11 +3462,11 @@ function authorForm(A, paint) {
     paint();
     return null;
   }) });
-  draftKids.push(h('details', { class: 'disclosure draft-paste', open: !chatReady() }, h('summary', { text: 'No connector? Copy and paste a draft' }),
+  draftKids.push(h('details', { class: 'disclosure draft-paste', open: !chatReady() }, h('summary', { text: `${chatOffered() ? 'No connector? ' : ''}Copy and paste a draft` }),
     h('div', { class: 'disclosure__body form' },
       para('Get the message, paste it into any chat app, then paste its whole answer here.', ''),
-      h('div', {}, packetBtn),
-      formField({ label: "Your AI's answer", control: pasted }), h('div', {}, pasteBtn), pasteOut)));
+      h('div', {}, packetBtn), pasteOut,
+      formField({ label: "Your AI's answer", control: pasted }), h('div', {}, pasteBtn), loadOut)));
   out.push(h('details', { class: 'card disclosure draft-card', open: !A.model.title },
     h('summary', {}, icon('sparkle'), 'Start from an AI draft (optional)'),
     h('div', { class: 'card__body form' },

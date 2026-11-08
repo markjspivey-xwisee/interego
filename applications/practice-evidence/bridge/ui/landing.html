@@ -36,7 +36,8 @@
       <a class="btn btn--primary btn--lg" href="ui#/signin"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M15 3h3a3 3 0 0 1 3 3v12a3 3 0 0 1-3 3h-3"/><path d="M10 17l5-5-5-5"/><path d="M15 12H3"/></svg>Sign in</a>
       <a class="btn btn--secondary btn--lg" href="#how">See how it works</a>
     </div>
-    <p class="hero__fine">New here? You'll create your Interego account with a passkey when you sign in. No password, no email.</p>
+    <!--connector--><p class="hero__fine">New here? You'll create your Interego account with a passkey when you sign in. No password, no email.</p><!--/connector-->
+    <!--no-connector--><p class="hero__fine">Sign in with a crypto wallet, or sign each step with your own key. No password, no email.</p><!--/no-connector-->
     <ul class="hero__proof">
       <li><svg class="icon icon--sm" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>Every quote checked word for word</li>
       <li><svg class="icon icon--sm" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>A person signs off every result</li>
@@ -145,15 +146,18 @@
   <div>
     <span class="eyebrow">Works where you already are</span>
     <h2 class="section__title">Use it from Claude or ChatGPT</h2>
-    <p class="section__lede">Practice Evidence runs no AI of its own, and you never need an API key. Connect Claude or ChatGPT once with the Interego connector, and your assistant can play the other person, draft scenarios and help judges assess, on your own subscription. Practice Evidence checks the work and records which AI did it.</p>
+    <!--connector--><p class="section__lede">Practice Evidence runs no AI of its own, and you never need an API key. Connect Claude or ChatGPT once with the Interego connector, and your assistant can play the other person, draft scenarios and help judges assess, on your own subscription. Practice Evidence checks the work and records which AI did it.</p><!--/connector-->
+    <!--no-connector--><p class="section__lede">Practice Evidence runs no AI of its own, and you never need an API key. Your own Claude, ChatGPT or any chat app plays the other person, drafts scenarios and helps judges assess, on your own subscription. Practice Evidence checks the work and records which AI did it.</p><!--/no-connector-->
     <ul class="stack assistants__points">
-      <li><strong>Practice in your chat app.</strong> Start a session here, copy one message into Claude or ChatGPT, and talk it through there. Each exchange can be saved to your session, and the session page shows it when you come back.</li>
+      <!--connector--><li><strong>Practice in your chat app.</strong> Start a session here, copy one message into Claude or ChatGPT, and talk it through there. Each exchange can be saved to your session, and the session page shows it when you come back.</li><!--/connector-->
+      <!--no-connector--><li><strong>Copy and paste on this workspace.</strong> This workspace doesn't offer Interego sign-in, so a chat assistant can't connect to it. Each AI step offers Copy for my AI: paste it into any chat app, paste the answer back, and say which AI wrote it.</li><!--/no-connector-->
       <li><strong>Assessment stays independent.</strong> You can't assess your own session, and neither can your assistant. A judge your admin appoints assesses it with their own AI assistant. Practice Evidence checks every quote, and a reviewer signs off before anything counts.</li>
       <li><strong>Every AI step is labeled.</strong> The record says which app and which AI wrote each line, drafted each scenario and proposed each level. Sessions where the learner's own AI played the other person are flagged for review.</li>
-      <li><strong>No connector? Copy and paste.</strong> If your Claude or ChatGPT plan can't add custom connectors, each AI step offers Copy for my AI. Paste it into any chat app and paste the answer back. It's slower, and you say which AI wrote it.</li>
-      <li><strong>Decisions happen in the web app.</strong> Approving a rubric, signing off a review, changing someone's role and withdrawing a review all put a person's name behind a result. These are done in the Practice Evidence web app, not from a chat assistant, unless your admin allows otherwise.</li>
+      <!--connector--><li><strong>No connector? Copy and paste.</strong> If your Claude or ChatGPT plan can't add custom connectors, each AI step offers Copy for my AI. Paste it into any chat app and paste the answer back. It's slower, and you say which AI wrote it.</li><!--/connector-->
+<!--connector-->      <li><strong>Decisions happen in the web app.</strong> Approving a rubric, signing off a review, changing someone's role and withdrawing a review all put a person's name behind a result. These are done in the Practice Evidence web app, not from a chat assistant, unless your admin allows otherwise.</li><!--/connector-->
     </ul>
   </div>
+  <!--connector-->
   <div class="card setup-card"><div class="card__body">
     <h3 class="card__title">Set it up in four steps</h3>
     <ol class="steps">
@@ -170,6 +174,17 @@
       <li>"Download my signed record."</li>
     </ul>
   </div></div>
+  <!--/connector--><!--no-connector-->
+  <div class="card setup-card"><div class="card__body">
+    <h3 class="card__title">On this workspace: copy and paste</h3>
+    <ol class="steps">
+      <li class="step"><p class="step__text">On any AI step, choose <strong>Copy for my AI</strong>.</p></li>
+      <li class="step"><p class="step__text">Paste it into Claude, ChatGPT or any chat app, on your own subscription.</p></li>
+      <li class="step"><p class="step__text">Paste the answer back, and say which AI wrote it. Practice Evidence checks it and records it.</p></li>
+    </ol>
+    <p class="text-secondary">To connect Claude or ChatGPT with the Interego connector instead, ask your admin about a workspace with Interego sign-in.</p>
+  </div></div>
+  <!--/no-connector-->
 </div></section>
 
 <section class="section section--sunken" id="fit"><div class="container">
@@ -182,7 +197,7 @@
     <li class="card"><div class="card__body"><h3 class="card__title">You need a certificate, badge or credential.</h3><p class="text-secondary">Practice Evidence records practice. It never issues a credential, and every record says "practice".</p></div></li>
     <li class="card"><div class="card__body"><h3 class="card__title">You want AI to grade without a person.</h3><p class="text-secondary">Here a reviewer signs off every result before it counts. That is the point of the product.</p></div></li>
     <li class="card"><div class="card__body"><h3 class="card__title">You want to open practice to the public, customers or anonymous users.</h3><p class="text-secondary">There is no automatic screening yet of what learners type or of what authors publish. Use it with your own colleagues.</p></div></li>
-    <li class="card"><div class="card__body"><h3 class="card__title">Your learners must sign in with company SSO, email or your LMS.</h3><p class="text-secondary">Today people sign in with an Interego account (passkey) or a crypto wallet.</p></div></li>
+    <li class="card"><div class="card__body"><h3 class="card__title">Your learners must sign in with company SSO, email or your LMS.</h3><!--connector--><p class="text-secondary">Today people sign in with an Interego account (passkey) or a crypto wallet.</p><!--/connector--><!--no-connector--><p class="text-secondary">On this workspace people sign in with a crypto wallet, or sign each step with their own key.</p><!--/no-connector--></div></li>
     <li class="card"><div class="card__body"><h3 class="card__title">You need automatic sync to your LMS or learning record store.</h3><p class="text-secondary">We produce a standard xAPI statement for each reviewed result, and you send it to your learning record store yourself. SCORM, LTI grade passback and launching from an LMS aren't supported.</p></div></li>
     <li class="card"><div class="card__body"><h3 class="card__title">You need voice, avatars, or an interface in a language other than English.</h3><p class="text-secondary">Practice is text-based. Replies appear when complete, not word by word. The interface hasn't had an accessibility review yet.</p></div></li>
     <li class="card"><div class="card__body"><h3 class="card__title">You need transcripts deleted automatically after a set period.</h3><p class="text-secondary">Learners and admins can delete conversation text, but there are no automatic retention windows yet.</p></div></li>
@@ -198,10 +213,10 @@
   <div class="faq">
     <details class="faq__item"><summary class="faq__q">Who owns the data?</summary><div class="faq__a"><p>Records are kept in a data store your organization chooses at setup: the Interego-hosted store or one you run. They aren't locked inside our app. Each learner can download their complete signed record at any time and verify it without us, and they can delete the conversation text from the workspace.</p></div></details>
     <details class="faq__item"><summary class="faq__q">How is AI used?</summary><div class="faq__a"><p>In three places, each labeled, and always by an AI assistant that you or a colleague connects. An author's assistant can draft a scenario. The learner's assistant plays the other person. An appointed judge's assistant proposes a level for each criterion, quoting the learner. Practice Evidence runs no AI of its own. AI never decides how a scenario is used, never sees the weights or the pass mark, never calculates a score and never has the final say.</p></div></details>
-    <details class="faq__item"><summary class="faq__q">Which AI, and do we need an API key?</summary><div class="faq__a"><p>No API key, ever. People use their own Claude, ChatGPT or another assistant that supports connectors, through the Interego connector, on their own subscription. Every line and assessment shows which AI produced it. On plans without custom connectors, copy and paste works with any chat app.</p></div></details>
+    <details class="faq__item"><summary class="faq__q">Which AI, and do we need an API key?</summary><div class="faq__a"><!--connector--><p>No API key, ever. People use their own Claude, ChatGPT or another assistant that supports connectors, through the Interego connector, on their own subscription. Every line and assessment shows which AI produced it. On plans without custom connectors, copy and paste works with any chat app.</p><!--/connector--><!--no-connector--><p>No API key, ever. People use their own Claude, ChatGPT or any chat app, on their own subscription, by copy and paste: this workspace doesn't offer Interego sign-in, so a chat assistant can't connect to it. Every line and assessment shows which AI produced it.</p><!--/no-connector--></div></details>
     <details class="faq__item"><summary class="faq__q">What if the AI gets it wrong?</summary><div class="faq__a"><p>That's what the design is for. A quote that doesn't match the learner's words doesn't count, and that criterion stays at its lowest level until a reviewer sets it. A qualified person reviews every result before it counts. A learner who disagrees can ask for another review, up to twice per session, and it must come from a different reviewer. Both reviews are kept.</p></div></details>
     <details class="faq__item"><summary class="faq__q">Is it secure? Who can read what?</summary><div class="faq__a"><p>Conversation text, AI assessments and reviewer notes are encrypted before they're stored, and no stored record names the learner. Inside the workspace, a session can be read by the learner, reviewers, admins, and a judge who assessed it. Authors see scenario results only as counts, with small numbers hidden. Every action is signed, so changes can be detected. When you sign in with Interego, the Interego sign-in service sees each action it signs for you, including the text of your lines. The Practice Evidence service holds your sign-in for up to an hour. When you use Claude or ChatGPT here, the Interego connector passes everything your assistant reads and writes, including conversation text, and the company behind your assistant processes it under your own account's terms.</p></div></details>
-    <details class="faq__item"><summary class="faq__q">What is an Interego account?</summary><div class="faq__a"><p>It's your sign-in for Practice Evidence and other Interego apps. You create it once with a passkey (your device's fingerprint, face or PIN) or a crypto wallet. There is no password and no email. The same account works in the web app and inside Claude or ChatGPT, so you're one person everywhere. When you act through it, Interego confirms it's you, and your records note that.</p></div></details>
+    <!--connector--><details class="faq__item"><summary class="faq__q">What is an Interego account?</summary><div class="faq__a"><p>It's your sign-in for Practice Evidence and other Interego apps. You create it once with a passkey (your device's fingerprint, face or PIN) or a crypto wallet. There is no password and no email. The same account works in the web app and inside Claude or ChatGPT, so you're one person everywhere. When you act through it, Interego confirms it's you, and your records note that.</p></div></details><!--/connector-->
     <details class="faq__item"><summary class="faq__q">Is a result a certification?</summary><div class="faq__a"><p>No. Every record and export says "practice". Whether the learner said they had help preparing, and which attempt this was, are both recorded with the result.</p></div></details>
     <details class="faq__item"><summary class="faq__q">Does it work with our LMS or learning record store?</summary><div class="faq__a"><p>For every reviewed result on an approved rubric, Practice Evidence builds a standard xAPI statement (the format learning record stores use) and gives it to you to send. It also lists what the statement leaves out, such as the transcript and the reviewer's reasons. It doesn't post to your learning record store for you, and it doesn't support SCORM, LTI or launching from an LMS.</p></div></details>
     <details class="faq__item"><summary class="faq__q">Can anyone see how an individual did?</summary><div class="faq__a"><p>Not from the reports. On results pages, any group with 1 to 4 people shows only its total. AI judge statistics are visible without signing in, but only as totals, with small numbers hidden the same way.</p></div></details>

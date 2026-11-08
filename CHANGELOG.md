@@ -22,12 +22,31 @@ feedback-only draft, so no assistant sees a pass mark.
 
 The chat route appears only where it can work: on a workspace with Interego
 sign-in, for a person signed in with it. Wallet sessions and workspaces
-without sign-in get copy and paste, which now copies plain text, not JSON.
+without sign-in get copy and paste, which now copies plain text, not JSON:
+without sign-in, "Get the hand-off" copies a message for the judge with the
+request as text (the rubric and the conversation, which no connector can
+fetch there) and the fields the judge signs with their own key, and keeps
+the packet's JSON under Technical details. A wallet or manual signer is
+offered Sign in with Interego in the Connect dialog and the account menu, and
+Getting started no longer marks Interego sign-in done for a wallet. The
+landing page and the guide say what each workspace offers: copy and paste
+where no relay is trusted, and elsewhere the connector address of the relay
+the workspace signs in through (the live relay's when none is named).
 It reads a pasted draft even with prose or code fences around it, and asks
 which AI wrote each reply. A person's own Anthropic key stays available,
 closed under the dialog's Advanced section; it is gone from the header and
-settings. The learner's Getting started steps name what the session page
-offers that person on that workspace. `/ui/app.js` is now the shared chat-agent helpers followed by the
+settings. The learner's Getting started steps, and the guide, name the buttons the
+session page offers that person on that workspace. The Connect dialog
+confirms a copy on the button pressed, never with a toast under its
+backdrop; on a phone its description scrolls away with the body, and the
+connector address wraps to show whole. The Feedback card says "Not assessed
+yet" until a judge has assessed; the author's paste route shows its message
+above the answer box it points to; the drafting messages carry no escaped
+quotes and the schema once; the other person's brief never doubles a full
+stop (the template, and so its hash, is unchanged); a line saved from a chat
+reads "Anthropic, model not shown", as declared; one saved version is "1
+saved version"; and each copied message's nonce example names one of its own
+steps. `/ui/app.js` is now the shared chat-agent helpers followed by the
 app, and a test parses it as the module a browser loads. The landing page
 and guide now describe this, and the README documents the exact act
 sequence and records a live Claude run of it (no ChatGPT run yet). The
@@ -50,7 +69,9 @@ ChatGPT through the Interego connector. There is no operator model and no key.
 `actPrompt` builds a paste-ready prompt that states how to call the
 connector's `act` tool, says per step whether it is signed or plain, names
 the exact action each payload carries, and gives one nonce rule: step name,
-turn number, then 16 random letters or digits. Both sites' nonce checks
+turn number, then 16 random letters or digits. Its example is made from the
+prompt's own first signed step (in words when no step is signed), so a
+prompt never names a step its site does not have. Both sites' nonce checks
 accept the result. `requestAsText` turns a packet's model request into a
 prompt to paste into any chat app, and renders a synthetic opening line as a
 stage direction rather than as the person's own words. `extractJsonObject`

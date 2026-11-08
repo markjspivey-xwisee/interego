@@ -209,3 +209,14 @@
 .watch > .outcome { flex-basis: 100%; }
 .prompt-preview { max-height: 18rem; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; }
 .waiting-judge strong { color: var(--text); }
+/* The Connect dialog on a phone: its title and description scroll away with the body, so the setup
+   steps get the screen, and Done stays in reach. A copyable address wraps and shows whole, and its
+   Copy button goes under it on the narrowest screens. */
+.copy-field { display: block; resize: none; overflow: hidden; overflow-wrap: anywhere; field-sizing: content; }
+@supports not (field-sizing: content) { .copy-field { min-height: calc(2lh + 1.125rem + 2px); } }
+@media (max-width: 29.99em) { .copy-field-group > .copy-field { flex-basis: 100%; } }
+@media (max-width: 47.99em) {
+  #connect-ai[open] { overflow-y: auto; overscroll-behavior: contain; }
+  #connect-ai > .modal__body { flex: none; overflow: visible; }
+  #connect-ai > .modal__footer { position: sticky; bottom: 0; }
+}
