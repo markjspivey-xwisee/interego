@@ -1,5 +1,30 @@
 # Changelog
 
+## 2026-11-08 — Work Redesign: Tab after a click, ChatGPT steps in order, sign_request on its own
+
+After "Skip to content" in the Work Redesign app, a click or tap on plain text
+in the main area now sets where the next Tab starts. Before, the main area kept
+focus through the click, so the next Tab jumped back to the first control at
+the top of the view. Now the main area gives up focus as soon as the person
+presses, and the browser starts Tab from where they pressed.
+
+The landing page and the guide now give ChatGPT's set-up in the order OpenAI's
+guide does: the first step only opens Plugins, then +, then Add custom MCP
+server; the second names it Interego and pastes the connector address as its
+Server URL with OAuth, and only then accepts the warning, selects Create as a
+plugin and installs it. Before, the first step said to create and install the
+plugin before the address it needs had been given. Claude's steps are
+unchanged.
+
+Where Work Redesign's own words tell an assistant without a sign_payload
+option to sign in two calls (the workspace details, the envelope template's
+signing rule, the relay-signed inputs and descriptions of each affordance, and
+the README), they now say to call sign_request with the payload as its only
+argument, then call act with the same descriptor_url and action_iri and with
+the returned signature and signed payload as its payload, unchanged. Anything
+passed to sign_request beside the payload is signed along with it, so the
+payload must be its only argument.
+
 ## 2026-11-08 — Work Redesign: copied messages carry the shared helpers' newer nonce example
 
 The Work Redesign branch now carries master's shared chat helpers unchanged.

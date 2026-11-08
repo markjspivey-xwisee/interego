@@ -297,10 +297,12 @@ describe('work-redesign customer site', () => {
     for (const [page, html] of [['landing', landing], ['help', help]] as const) {
       for (const s of [
         'this workspace’s address: <code class="connector-url">http://127.0.0.1</code>', '<strong>Use your AI assistant</strong> copies it',
-        'paste <code class="connector-url">https://relay.example.org/mcp</code>',
         'In Claude, turn on Interego in each new chat from the chat’s tools menu (+). In ChatGPT, type @ in a chat and choose Interego.', 'the company behind your assistant sees it too', limit,
-        // ChatGPT's half of the first step, as OpenAI's guide to custom MCP servers gives it, and no plan named.
-        'In Claude, open <strong>Settings → Connectors → Add custom connector</strong>. In ChatGPT on the web, open <strong>Plugins → + → Add custom MCP server</strong>, create it as a plugin and install it.',
+        // ChatGPT's set-up in the order OpenAI's guide to custom MCP servers gives it, and no plan named: the first step only
+        // opens Add custom MCP server; the second names it, gives the address as its Server URL with OAuth, and only then
+        // has the warning accepted and the plugin created and installed. Claude's half of each step is as it was.
+        '<p class="step__text">In Claude, open <strong>Settings → Connectors → Add custom connector</strong>. In ChatGPT on the web, open <strong>Plugins → + → Add custom MCP server</strong>.</p>',
+        '<p class="step__text">Name it <strong>Interego</strong> and paste the connector address (in ChatGPT, as its Server URL, with OAuth): <code class="connector-url">https://relay.example.org/mcp</code> In ChatGPT, accept the warning, select <strong>Create as a plugin</strong>, then install it.</p>',
         'Whether you can add a connector depends on your plan or workspace settings.',
         '<span class="mono">http://127.0.0.1/mcp</span>&nbsp;(for developers’ tools that sign their own requests; Claude and ChatGPT use the Interego connector)',
         // One sentence for signing in to the connector, the same as the app's panel says it.
@@ -308,6 +310,8 @@ describe('work-redesign customer site', () => {
         // Drafting a map from a chat starts from the message Map a process copies (it carries the document and its limit), not a bare ask.
         'Here’s the message from Map a process in Work Redesign. Draft the map, and record it once I’ve checked it.',
       ]) expect([page, html], s).toEqual([page, expect.stringContaining(s)]);
+      // Nowhere does creating the plugin come before the address it needs.
+      expect([page, html.includes('create it as a plugin')]).toEqual([page, false]);
       expect([page, html.includes('(MCP endpoint)'), html.includes('{{'), html.includes('passkey when asked'), html.includes('Draft a process map from this procedure document')]).toEqual([page, false, false, false, false]);
       expect([page, html.includes('isn’t set up for connecting Claude or ChatGPT')]).toEqual([page, false]);
       expect([page, html.match(PLAN_CLAIM)?.[0] ?? null, html.includes('Settings → Connectors → Add</strong>')]).toEqual([page, null, false]);

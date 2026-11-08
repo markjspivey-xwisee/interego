@@ -902,8 +902,9 @@ async function refresh(quiet = false) {
  * The shell's "Skip to content" (a link to #main): focus moves to the screen's main area, so the next Tab starts in it,
  * scrolled to only where it is off the screen. The address is left as it is: a task page lives in it (#task=…), and
  * following the link would have taken the page off its task. A click meant for a new tab or window is the browser's.
- * The main area takes focus for this alone (tabindex -1 while it has it, mainLeft): otherwise a click on its plain text
- * would focus it, and the next Tab would go back to its first control instead of on from where the person clicked.
+ * The main area takes focus for this alone (tabindex -1 while it has it: mainLeft, mainPressed): otherwise a click on its
+ * plain text would focus it, and the next Tab would go back to its first control instead of on from where the person
+ * clicked.
  */
 function skipToContent(e) {
   if (e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
@@ -923,6 +924,15 @@ function mainLeft(e) {
   const main = e.target;
   if (main?.id !== 'main' || main.tagName !== 'MAIN' || !main.hasAttribute('tabindex')) return;
   setTimeout(() => { if (document.activeElement !== main) main.removeAttribute('tabindex'); }, 0);
+}
+/**
+ * A press of the mouse, a pen or a finger while the main area has focus from the skip link: it takes focus no more, before
+ * the press lands, so the press sets where the next Tab starts. Otherwise a press on its plain text left focus on it, and
+ * the next Tab went back to its first control, at the top of the view, instead of on from where the person pressed.
+ */
+function mainPressed() {
+  const main = document.getElementById('main');
+  if (main?.hasAttribute('tabindex') && document.activeElement === main) main.removeAttribute('tabindex');
 }
 
 async function boot() {
@@ -1700,7 +1710,11 @@ document.addEventListener('keydown', (e) => {
   else if (!MODIFIER_KEYS.has(e.key) && !pressOfFocused(e)) { tabbedAt = -Infinity; pressedOn = null; }
 }, { capture: true, passive: true });
 for (const k of ['pointerdown', 'wheel', 'touchmove']) {
-  document.addEventListener(k, (e) => { tabbedAt = -Infinity; pressedOn = k === 'pointerdown' && e.target instanceof Element ? e.target : null; }, { capture: true, passive: true });
+  document.addEventListener(k, (e) => {
+    tabbedAt = -Infinity;
+    pressedOn = k === 'pointerdown' && e.target instanceof Element ? e.target : null;
+    if (k === 'pointerdown') mainPressed();
+  }, { capture: true, passive: true });
 }
 /**
  * Whether the browser may still be bringing into view what Tab reached: html scrolls smoothly (the design system), and in
@@ -2805,7 +2819,7 @@ function workspaceDetails() {
         '  - instead of urn:iep:action:wrd:envelope-template use urn:iep:action:wrd:read-envelope-template',
         '  - instead of urn:iep:action:wrd:list-records use urn:iep:action:wrd:read-records',
         '  - instead of urn:iep:action:wrd:calibration use urn:iep:action:wrd:read-calibration'].join('\n'),
-      'Every other action here is signed (sign_payload true; where your act tool has no sign_payload option, sign the payload with the connector\'s sign_request tool first, then pass act exactly the _signature and _signed_payload it returns), except one that takes plain arguments (sign_payload false): urn:iep:action:wrd:task-map-packet',
+      'Every other action here is signed (sign_payload true; where your act tool has no sign_payload option, first call the connector\'s sign_request tool with payload as its only argument, set to the step\'s payload, then call act with the same descriptor_url and action_iri and with payload set to exactly the _signature and _signed_payload it returned, unchanged), except one that takes plain arguments (sign_payload false): urn:iep:action:wrd:task-map-packet',
       'A signed payload\'s intent is the action\'s last part after "wrd:": urn:iep:action:wrd:ratify-task takes "intent": "wrd:ratify-task". Two exceptions: the three reads (read-records, read-envelope-template, read-calibration) all take "intent": "wrd:read-records", and a review you sign for urn:iep:action:wrd:log-agent-run takes "intent": "wrd:review-agent-run". Every signed payload also carries podUrl and a nonce, and no issuedAt.',
       'Never invent people, AI agents, types of task, answers or numbers: ask me. Show me what you will record, and record it only once I agree.',
       chatAgentsDecide() ? 'Ask me before any action that approves or declines a decision, changes people and roles, records results, or grants or withdraws an AI permission.'

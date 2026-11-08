@@ -1184,8 +1184,9 @@ describe('work-redesign web UI: sign in with your Interego account', () => {
     const details = String(copied[1]);
     for (const s of [`My Work Redesign workspace: ${DEPLOYED}`, `descriptor_url: "${DEPLOYED}/affordances"`, `My storage address (pod_url): "${DEMO_POD}"`, `"podUrl":"${DEMO_POD}"`, 'urn:iep:action:wrd:read-records', 'urn:iep:action:wrd:read-envelope-template',
       'except one that takes plain arguments (sign_payload false): urn:iep:action:wrd:task-map-packet\n', 'nonce = the step name', 'done in the Work Redesign app, not from a chat',
-      // An act tool with no sign_payload option signs through the connector's sign_request and passes act the pair unchanged.
-      'Every other action here is signed (sign_payload true; where your act tool has no sign_payload option, sign the payload with the connector\'s sign_request tool first, then pass act exactly the _signature and _signed_payload it returns)',
+      // An act tool with no sign_payload option signs through the connector's sign_request, with the step's payload as its
+      // only argument (what is passed beside it is signed too), and passes act the pair unchanged.
+      'Every other action here is signed (sign_payload true; where your act tool has no sign_payload option, first call the connector\'s sign_request tool with payload as its only argument, set to the step\'s payload, then call act with the same descriptor_url and action_iri and with payload set to exactly the _signature and _signed_payload it returned, unchanged)',
       // The actions act can't pass arguments to, each with the signed read to use instead (changed: one per line, so no
       // action is followed straight by a comma or a colon, which would read as part of its name), and the intents that
       // are not the action's own name.
@@ -1319,8 +1320,8 @@ describe('work-redesign web UI: sign in with your Interego account', () => {
     expect(page.errors).toEqual([]);
   }, 90_000);
 
-  it('tells an assistant whose act tool has no sign_payload option to sign through the connector\'s sign_request and pass act the pair unchanged, wherever Work Redesign\'s own words say to sign: the envelope template\'s rule, every relay-signed input and each signed affordance\'s envelope', async () => {
-    const TWO_CALLS = 'where your act tool has no sign_payload option, call the connector\'s sign_request tool with this payload, then act with exactly the _signature and _signed_payload it returned';
+  it('tells an assistant whose act tool has no sign_payload option to sign through the connector\'s sign_request, with the payload as its only argument, and pass act the pair unchanged, wherever Work Redesign\'s own words say to sign: the envelope template\'s rule, every relay-signed input and each signed affordance\'s envelope', async () => {
+    const TWO_CALLS = 'where your act tool has no sign_payload option, call the connector\'s sign_request tool with payload as its only argument, set to this payload, then call act with the same descriptor_url and action_iri and with payload set to exactly the _signature and _signed_payload it returned, unchanged';
     expect(RELAY_SIGNING).toContain(TWO_CALLS);
     expect(RELAY_SIGNING).toContain('act with sign_payload: true and this payload');
     // The template the bridge hands out carries it.
@@ -1331,13 +1332,19 @@ describe('work-redesign web UI: sign in with your Interego account', () => {
     const inputs = wrdAffordances.flatMap((a) => (a.inputs ?? []).map((i) => ({ action: String(a.action), name: i.name, description: String(i.description ?? '') })));
     const signedPayload = inputs.filter((i) => i.name === '_signed_payload');
     expect(signedPayload.length).toBeGreaterThan(0);
-    for (const i of signedPayload) expect([i.action, i.description]).toEqual([i.action, expect.stringContaining('act with sign_payload: true, or, where act has no sign_payload option, the connector\'s sign_request tool,')]);
+    for (const i of signedPayload) expect([i.action, i.description]).toEqual([i.action, expect.stringContaining('act with sign_payload: true, or, where act has no sign_payload option, the connector\'s sign_request tool with payload as its only argument;')]);
     // Where a description says what act sends (two inputs' and one affordance's own), it holds for either way of signing.
     const texts = [...inputs, ...wrdAffordances.map((a) => ({ action: String(a.action), name: '(the affordance)', description: String(a.description ?? '') }))];
     const pairOnly = texts.filter((i) => i.description.includes('sends only the signed pair'));
     expect(pairOnly.length).toBeGreaterThanOrEqual(3);
-    for (const i of pairOnly) expect([i.action, i.name, i.description]).toEqual([i.action, i.name, expect.stringContaining('act sends only the signed pair, whether made with sign_payload: true or passed on as sign_request returned it')]);
+    for (const i of pairOnly) expect([i.action, i.name, i.description]).toEqual([i.action, i.name, expect.stringContaining('act sends only the signed pair, whether made with sign_payload: true or passed on as returned by sign_request with payload as its only argument')]);
     expect(texts.filter((i) => i.description.includes('act … sign_payload: true sends only'))).toEqual([]);
+    // sign_request signs what it is given beside the payload too (descriptor_url or action_iri passed to it would be folded
+    // into what is signed), so every Work Redesign text that names it says the payload is its only argument.
+    const namingIt = [{ action: '(RELAY_SIGNING)', name: '', description: RELAY_SIGNING }, { action: '(the template)', name: 'signing', description: String(t['signing']) }, ...texts]
+      .filter((i) => i.description.includes('sign_request'));
+    expect(namingIt.length).toBeGreaterThanOrEqual(signedPayload.length + pairOnly.length + 2);
+    for (const i of namingIt) expect([i.action, i.name, i.description]).toEqual([i.action, i.name, expect.stringContaining('with payload as its only argument')]);
   }, 60_000);
 
   it('the panel works from the keyboard: its two set-ups are tabs the arrow keys, Home and End move between, Escape closes it back to what opened it, and where the browser refuses the clipboard the text to copy opens over it and closes back to it', async () => {
@@ -1849,6 +1856,15 @@ describe('work-redesign web UI: sign in with your Interego account', () => {
     must(redrawn.querySelector('button'), 'a control in the view').focus();
     await settle();
     expect([redrawn.hasAttribute('tabindex'), clickFocuses(must(redrawn.querySelector('p'), 'its text'))]).toEqual([false, null]);
+    // Back on it from the skip link, a press on its plain text: it takes focus no more before the press lands (a browser
+    // then gives focus to the page), so the press focuses nothing and the next Tab goes on from where the person pressed,
+    // not back to the view's first control at its top.
+    const pressed = must([...redrawn.querySelectorAll('p')].find((x) => !x.closest(FOCUSABLE) && (x.textContent ?? '').trim() !== ''), 'plain text in the view');
+    skip.click();
+    await settle();
+    expect([d.activeElement === redrawn, redrawn.getAttribute('tabindex'), clickFocuses(pressed) === redrawn]).toEqual([true, '-1', true]);
+    pressed.dispatchEvent(new page.window.MouseEvent('pointerdown', { bubbles: true, cancelable: true, button: 0 }));
+    expect([redrawn.hasAttribute('tabindex'), clickFocuses(pressed), tops]).toEqual([false, null, []]);
     // #main in the address (typed, or an old link) is the browser's: nothing is drawn again, and the page stays where it is.
     win.location.hash = '#main';
     await page.until(() => changes.length === 1, 'the address changed');

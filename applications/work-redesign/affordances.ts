@@ -11,7 +11,7 @@
  * Every signed affordance also takes the Interego relay's signed form, `_signed_payload` and
  * `_signature` (what `act … sign_payload: true` sends from Claude, ChatGPT or this bridge's web
  * UI, and what an assistant whose act has no sign_payload option gets from the relay's sign_request
- * tool and passes to act unchanged): a person who signs in with their Interego account holds no key, and the bridge identifies
+ * tool, called with the payload as its only argument, and passes to act unchanged): a person who signs in with their Interego account holds no key, and the bridge identifies
  * them as the user their signed-in agent belongs to when the signature recovers to a relay it
  * trusts. Relay-attested, not user-held; records made this way say relay-delegated.
  *
@@ -51,7 +51,7 @@ const envelope = (intent: EnvelopeIntent, name = 'envelope', alternative = 'Send
 const RELAY_INPUTS: readonly AffordanceInput[] = [
   {
     name: '_signed_payload', type: 'string', required: false,
-    description: 'Relay-signed form, in place of the envelope: JSON.stringify of the payload you asked the relay to sign (act with sign_payload: true, or, where act has no sign_payload option, the connector\'s sign_request tool, with the same fields as the envelope payload, podUrl and a nonce included; issuedAt is not needed), with the relay\'s agent_id, subject_pod_url (your own pod, never read as the pod an act targets), timestamp, and your podUrl as pod_url. The person acting is the user the agent belongs to (relay-attested, not a key you hold); acts that change who may do what come only from this bridge\'s web UI unless the operator sets WRD_CHAT_AGENTS_DECIDE=1.',
+    description: 'Relay-signed form, in place of the envelope: JSON.stringify of the payload you asked the relay to sign (act with sign_payload: true, or, where act has no sign_payload option, the connector\'s sign_request tool with payload as its only argument; the same fields as the envelope payload, podUrl and a nonce included; issuedAt is not needed), with the relay\'s agent_id, subject_pod_url (your own pod, never read as the pod an act targets), timestamp, and your podUrl as pod_url. The person acting is the user the agent belongs to (relay-attested, not a key you hold); acts that change who may do what come only from this bridge\'s web UI unless the operator sets WRD_CHAT_AGENTS_DECIDE=1.',
   },
   { name: '_signature', type: 'string', required: false, description: "The relay's signature: EIP-191 personal_sign by its delegation key over sha256:<hex sha256 of _signed_payload>. It must recover to a relay this bridge trusts." },
 ];
@@ -167,7 +167,7 @@ export const wrdAffordances: ReadonlyArray<Affordance> = [
     inputs: [
       envelope('wrd:record-task-map'),
       ...RELAY_INPUTS,
-      { name: 'document_text', type: 'string', required: false, description: 'The document the quotes come from; its sha256 must equal payload.document.sha256. Required: beside the envelope, or, relay-signed (act sends only the signed pair, whether made with sign_payload: true or passed on as sign_request returned it), inside the payload the relay signs, which the record then keeps, so only with payload.document.storeText true.' },
+      { name: 'document_text', type: 'string', required: false, description: 'The document the quotes come from; its sha256 must equal payload.document.sha256. Required: beside the envelope, or, relay-signed (act sends only the signed pair, whether made with sign_payload: true or passed on as returned by sign_request with payload as its only argument), inside the payload the relay signs, which the record then keeps, so only with payload.document.storeText true.' },
       POD_INPUT,
     ],
     outputs: {
@@ -202,7 +202,7 @@ export const wrdAffordances: ReadonlyArray<Affordance> = [
     inputs: [
       envelope('wrd:revise-task'),
       ...RELAY_INPUTS,
-      { name: 'document_text', type: 'string', required: false, description: "Only with new sourceQuotes: the workflow's document, whose sha256 must match the one recorded. Relay-signed (act sends only the signed pair, whether made with sign_payload: true or passed on as sign_request returned it), it goes inside the payload the relay signs, which the record then keeps, so only for a workflow that stored its document text." },
+      { name: 'document_text', type: 'string', required: false, description: "Only with new sourceQuotes: the workflow's document, whose sha256 must match the one recorded. Relay-signed (act sends only the signed pair, whether made with sign_payload: true or passed on as returned by sign_request with payload as its only argument), it goes inside the payload the relay signs, which the record then keeps, so only for a workflow that stored its document text." },
       POD_INPUT,
     ],
     outputs: {
@@ -398,7 +398,7 @@ export const wrdAffordances: ReadonlyArray<Affordance> = [
     toolName: 'wrd.read_envelope_template',
     targetTemplate: '{base}/wrd/read_envelope_template',
     title: 'Get the payload to sign for a write, filled from the pod (signed read)',
-    description: `wrd.envelope_template with a signed read, carried in the JSON body so it never appears in a URL: the JSON Schema and a template — ${TEMPLATE_SHAPE} — filled with ${TEMPLATE_FILLED}. For an admin or a key in the pod's registry; any other key is refused (403), and a stale read 401, as wrd.read_records refuses them. Relay-signed (act sends only the signed pair, whether made with sign_payload: true or passed on as sign_request returned it), the payload the relay signs is the read's, intent wrd:read-records, with the arguments below (intent, task_iri, …) under template: {"intent": "wrd:read-records", "podUrl": …, "nonce": …, "template": {"intent": "wrd:classify-task", "task_iri": …}}. Signs nothing and writes nothing.`,
+    description: `wrd.envelope_template with a signed read, carried in the JSON body so it never appears in a URL: the JSON Schema and a template — ${TEMPLATE_SHAPE} — filled with ${TEMPLATE_FILLED}. For an admin or a key in the pod's registry; any other key is refused (403), and a stale read 401, as wrd.read_records refuses them. Relay-signed (act sends only the signed pair, whether made with sign_payload: true or passed on as returned by sign_request with payload as its only argument), the payload the relay signs is the read's, intent wrd:read-records, with the arguments below (intent, task_iri, …) under template: {"intent": "wrd:read-records", "podUrl": …, "nonce": …, "template": {"intent": "wrd:classify-task", "task_iri": …}}. Signs nothing and writes nothing.`,
     method: 'POST',
     annotations: { title: 'Payload template (signed read)', readOnlyHint: true, destructiveHint: false, idempotentHint: false, openWorldHint: true },
     reads: READS,
