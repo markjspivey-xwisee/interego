@@ -33,6 +33,8 @@ import { ALLOWED, jargonIn, urnsRunningIntoPunctuation, visibleText } from './pl
 
 /** /ui/app.js as the bridge serves it: the shared chat-agent helpers, then the app (bridge/ui.ts). */
 const APP_JS = `${chatAgentJs()}\n${readFileSync(new URL('../bridge/ui/app.js', import.meta.url), 'utf8')}`;
+/** A claim about which Claude or ChatGPT plans allow a connector: no page, and not the README, names a plan. */
+const PLAN_CLAIM = /(Claude|ChatGPT) plans?\b|plans? that allows?|on a plan that|on your plan\?|plan must allow|plans can(?:'|’)?t/i;
 const must = <T>(v: T | null | undefined, what: string): T => { if (v === null || v === undefined) throw new Error(`missing ${what}`); return v; };
 const BROWSER = 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8';
 const listeners: TestListener[] = [];
@@ -296,7 +298,10 @@ describe('work-redesign customer site', () => {
       for (const s of [
         'this workspace’s address: <code class="connector-url">http://127.0.0.1</code>', '<strong>Use your AI assistant</strong> copies it',
         'paste <code class="connector-url">https://relay.example.org/mcp</code>',
-        'In each new chat, turn on Interego from the chat’s tools menu (+).', 'the company behind your assistant sees it too', limit,
+        'In Claude, turn on Interego in each new chat from the chat’s tools menu (+). In ChatGPT, type @ in a chat and choose Interego.', 'the company behind your assistant sees it too', limit,
+        // ChatGPT's half of the first step, as OpenAI's guide to custom MCP servers gives it, and no plan named.
+        'In Claude, open <strong>Settings → Connectors → Add custom connector</strong>. In ChatGPT on the web, open <strong>Plugins → + → Add custom MCP server</strong>, create it as a plugin and install it.',
+        'Whether you can add a connector depends on your plan or workspace settings.',
         '<span class="mono">http://127.0.0.1/mcp</span>&nbsp;(for developers’ tools that sign their own requests; Claude and ChatGPT use the Interego connector)',
         // One sentence for signing in to the connector, the same as the app's panel says it.
         'Connect, and when it asks, sign in with the same Interego account you use for Work Redesign.',
@@ -305,6 +310,7 @@ describe('work-redesign customer site', () => {
       ]) expect([page, html], s).toEqual([page, expect.stringContaining(s)]);
       expect([page, html.includes('(MCP endpoint)'), html.includes('{{'), html.includes('passkey when asked'), html.includes('Draft a process map from this procedure document')]).toEqual([page, false, false, false, false]);
       expect([page, html.includes('isn’t set up for connecting Claude or ChatGPT')]).toEqual([page, false]);
+      expect([page, html.match(PLAN_CLAIM)?.[0] ?? null, html.includes('Settings → Connectors → Add</strong>')]).toEqual([page, null, false]);
       // Where the connector works, the pages say what to add, what to ask and what stays in the app.
       for (const s of ['Add the Interego connector', 'Things you can ask it', 'What stays in the Work Redesign app', 'Use it from Claude or ChatGPT</a>']) {
         expect([page, s, html.includes(s)]).toEqual([page, s, true]);
@@ -316,7 +322,12 @@ describe('work-redesign customer site', () => {
     expect(help).toContain('<strong>In Claude or ChatGPT</strong>, with the Interego connector: press <strong>Copy the message for my assistant</strong>');
     expect(APP_JS).toContain('\'Connect, and when it asks, sign in with the same Interego account you use for Work Redesign.\'');
     // The guide's note after the steps is spaced from them as the landing page's is.
-    expect(help).toContain('</ol>\n        <p class="assistants__note">In each new chat, turn on Interego');
+    expect(help).toContain('</ol>\n        <p class="assistants__note">In Claude, turn on Interego');
+    // The guide says what ChatGPT asks before a write and how to pick up new tools, and links OpenAI's guide as its other outside links open.
+    expect(help).toContain('ChatGPT asks before each write unless you let it remember your choice for that chat. If Interego’s tools look out of date, refresh it from its page in your app settings. More in <a href="https://developers.openai.com/api/docs/guides/custom-mcp-server" target="_blank" rel="noopener">OpenAI’s guide to custom MCP servers</a>.');
+    const readmeText = readFileSync(new URL('../README.md', import.meta.url), 'utf8');
+    expect(readmeText).toContain('Plugins, +, Add custom MCP server');
+    expect(readmeText.match(PLAN_CLAIM)?.[0] ?? null).toBeNull();
     expect(relayCalls).toEqual([]);
     expect(landing).toContain('<h3 class="feature__title">Teams without an AI assistant</h3>');
     expect(landing).toContain('Three things to know.');

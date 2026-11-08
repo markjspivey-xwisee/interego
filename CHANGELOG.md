@@ -1,5 +1,30 @@
 # Changelog
 
+## 2026-11-08 — Work Redesign: ChatGPT set-up as OpenAI's guide gives it, and no plan named
+
+Work Redesign's ChatGPT set-up now follows OpenAI's guide to custom MCP
+servers, checked on 2026-11-08: in ChatGPT on the web, open Plugins, select +,
+then Add custom MCP server; name it Interego, paste the connector address as
+its Server URL and choose OAuth; accept the warning, select Create as a plugin
+and install it; sign in with the same Interego account; then type @ in a chat
+and choose Interego. The app's "Use your AI assistant" panel shows the
+connector address first and these five steps after it, then says that a
+workspace's settings decide whether a person can add one, that ChatGPT asks
+before each write unless told to remember the choice for that chat, and how to
+pick up new tools, with a link to OpenAI's guide. The landing page and the
+guide give the same first step in one sentence, and the guide links OpenAI's
+guide too. Claude's steps are unchanged.
+
+No page claims any longer that a ChatGPT or Claude plan must allow custom
+connectors: whether a person can add one depends on their plan or workspace
+settings, and without one they can still draft a process map with copy and
+paste. Where Work Redesign's own words tell an assistant to sign (the workspace
+details, the map message, the envelope template's signing rule and the
+relay-signed inputs of each affordance), they now also say what to do when
+the assistant's act tool has no sign_payload option: sign the payload with the
+connector's sign_request tool, then pass act exactly the signature and signed
+payload it returned.
+
 ## 2026-11-08 — Work Redesign: a click, quick presses and Dismiss keep the person's place
 
 In the Work Redesign app, the main area now takes focus only from "Skip to

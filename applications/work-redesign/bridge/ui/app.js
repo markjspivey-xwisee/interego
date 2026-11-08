@@ -122,7 +122,22 @@ const CHAT_PRIVACY = 'The Interego connector passes everything your assistant re
 const CHAT_YOURS = 'Your answers to the seven questions and every number in a plan must be yours. Your assistant asks; you answer.';
 const CHAT_STAYS = 'For safety, the actions that change who may do what can be taken only in the Work Redesign app, not from a chat assistant: approving or declining a decision, changing people and roles, recording results, and granting or withdrawing AI permissions.';
 const CHAT_DECIDES = 'Your workspace provider lets chat assistants take every action here too, including approving or declining decisions, changing people and roles, recording results, and granting or withdrawing AI permissions. Check what you ask for before your assistant records it.';
-const CHAT_NO_CONNECTOR = 'Some Claude and ChatGPT plans can\'t add connectors. You can still draft a process map with copy and paste: choose From a procedure document, then Copy and paste.';
+const CHAT_NO_CONNECTOR = 'Whether you can add a connector depends on your plan or workspace settings. Without one, you can still draft a process map with copy and paste: choose From a procedure document, then Copy and paste.';
+/**
+ * ChatGPT's set-up, as OpenAI's guide to custom MCP servers gives it (CHATGPT_GUIDE): a custom MCP server added from
+ * Plugins, created as a plugin and installed, then chosen in a chat with @. The guide names no plans, and nor does this:
+ * whether a person can add one is their workspace's setting.
+ */
+const CHATGPT_STEPS = [
+  'In ChatGPT on the web, open Plugins, select +, then Add custom MCP server.',
+  'Name it Interego, paste the address above as its Server URL, and choose OAuth.',
+  'Accept the warning, select Create as a plugin, then install it.',
+  'When it asks, sign in with the same Interego account you use here.',
+  'In a chat, type @ and choose Interego.',
+];
+const CHATGPT_WHERE = 'Your workspace\'s settings decide whether you can add one. If you don\'t see the option, use copy and paste instead (below).';
+const CHATGPT_ASKS = 'ChatGPT asks before each write unless you let it remember your choice for that chat. If Interego\'s tools look out of date, refresh it from its page in your app settings.';
+const CHATGPT_GUIDE = 'https://developers.openai.com/api/docs/guides/custom-mcp-server';
 // Where the chat route is not offered (chatWhyNot says why): no "connect once", and no plan reason that isn't the reason.
 const CHAT_LEDE_OFF = 'Work Redesign runs no AI of its own and never asks for an API key. Your own AI assistant does any drafting, on your own subscription, and Work Redesign checks everything it records.';
 const CHAT_PASTE_ANYWAY = 'You can still draft a process map with copy and paste, in any chat app: choose From a procedure document, then Copy and paste.';
@@ -2790,7 +2805,7 @@ function workspaceDetails() {
         '  - instead of urn:iep:action:wrd:envelope-template use urn:iep:action:wrd:read-envelope-template',
         '  - instead of urn:iep:action:wrd:list-records use urn:iep:action:wrd:read-records',
         '  - instead of urn:iep:action:wrd:calibration use urn:iep:action:wrd:read-calibration'].join('\n'),
-      'Every other action here is signed (sign_payload true), except one that takes plain arguments (sign_payload false): urn:iep:action:wrd:task-map-packet',
+      'Every other action here is signed (sign_payload true; where your act tool has no sign_payload option, sign the payload with the connector\'s sign_request tool first, then pass act exactly the _signature and _signed_payload it returns), except one that takes plain arguments (sign_payload false): urn:iep:action:wrd:task-map-packet',
       'A signed payload\'s intent is the action\'s last part after "wrd:": urn:iep:action:wrd:ratify-task takes "intent": "wrd:ratify-task". Two exceptions: the three reads (read-records, read-envelope-template, read-calibration) all take "intent": "wrd:read-records", and a review you sign for urn:iep:action:wrd:log-agent-run takes "intent": "wrd:review-agent-run". Every signed payload also carries podUrl and a nonce, and no issuedAt.',
       'Never invent people, AI agents, types of task, answers or numbers: ask me. Show me what you will record, and record it only once I agree.',
       chatAgentsDecide() ? 'Ask me before any action that approves or declines a decision, changes people and roles, records results, or grants or withdraws an AI permission.'
@@ -2821,18 +2836,24 @@ function chatPanel(mode = S.mode) {
       h('h3', { class: 'chat-panel__title', text: 'Copy and paste instead' }), pasteRoute(CHAT_PASTE_ANYWAY));
   }
   // Two set-ups, one per app, as tabs; switching shows one and hides the other (no re-render, so nothing typed is lost).
+  // ChatGPT's steps say "the address above": its connector address comes first, then the steps and what to know after.
+  const address = () => copyField('Connector address', connector, 'The connector address');
   const apps = [
-    ['claude', 'In Claude', 'In Claude, open Settings, then Connectors, then Add custom connector.', ''],
-    ['chatgpt', 'In ChatGPT', 'In ChatGPT, open Settings, then Connectors, then Add. Custom connectors need a ChatGPT plan that allows them.', 'If you don\'t see the option, use copy and paste instead (below).'],
+    ['claude', 'In Claude', [
+      h('ol', { class: 'chat-steps' },
+        h('li', { text: 'In Claude, open Settings, then Connectors, then Add custom connector.' }),
+        h('li', null, 'Name it Interego and paste this address:', address()),
+        h('li', { text: 'Connect, and when it asks, sign in with the same Interego account you use for Work Redesign.' }),
+        h('li', { text: 'In each new chat, turn on Interego from the chat\'s tools menu (+).' }))]],
+    ['chatgpt', 'In ChatGPT', [
+      address(),
+      h('ol', { class: 'chat-steps' }, CHATGPT_STEPS.map((t) => h('li', { text: t }))),
+      hint(CHATGPT_WHERE),
+      hint(CHATGPT_ASKS),
+      h('p', { class: 'hint' }, h('a', { href: CHATGPT_GUIDE, target: '_blank', rel: 'noopener', text: 'OpenAI\'s guide to custom MCP servers' }))]],
   ];
   const tabs = apps.map(([id, label], i) => h('button', { type: 'button', class: 'tab', role: 'tab', id: `chat-tab-${id}`, 'aria-selected': i === 0 ? 'true' : 'false', 'aria-controls': `chat-setup-${id}`, tabindex: i === 0 ? '0' : '-1', text: label }));
-  const panels = apps.map(([id, , first, plan], i) => h('div', { class: 'tab-panel', role: 'tabpanel', id: `chat-setup-${id}`, 'aria-labelledby': `chat-tab-${id}`, hidden: i !== 0 },
-    h('ol', { class: 'chat-steps' },
-      h('li', { text: first }),
-      h('li', null, 'Name it Interego and paste this address:', copyField('Connector address', connector, 'The connector address')),
-      h('li', { text: 'Connect, and when it asks, sign in with the same Interego account you use for Work Redesign.' }),
-      h('li', { text: 'In each new chat, turn on Interego from the chat\'s tools menu (+).' })),
-    plan ? hint(plan) : null));
+  const panels = apps.map(([id, , setUp], i) => h('div', { class: 'tab-panel stack stack--sm', role: 'tabpanel', id: `chat-setup-${id}`, 'aria-labelledby': `chat-tab-${id}`, hidden: i !== 0 }, setUp));
   const pick = (i, focus) => tabs.forEach((u, j) => {
     u.setAttribute('aria-selected', i === j ? 'true' : 'false');
     u.tabIndex = i === j ? 0 : -1;
@@ -2914,7 +2935,7 @@ function taskMapChatMessage(st) {
       'Show me the draft. For each task, ask me who does it today, which person or AI agent does it, and its type of task, choosing only from what step 2 lists. Never invent them.',
       `currentLevel is one of: ${levels}. Leave out personAddress or agentAddress when the level doesn't need it.`,
       'Record only after I say the draft is right. document.storeText is true: recording from a chat stores the document\'s text with the map.',
-      'If you are unsure of a field, ask for the template with urn:iep:action:wrd:read-envelope-template as the action, sign_payload true, and payload {"intent": "wrd:read-records", "podUrl": the storage address above, "nonce": a new one, "template": {"intent": "wrd:record-task-map"}}.',
+      'If you are unsure of a field, ask for the template in a signed step, with urn:iep:action:wrd:read-envelope-template as the action and payload {"intent": "wrd:read-records", "podUrl": the storage address above, "nonce": a new one, "template": {"intent": "wrd:record-task-map"}}.',
     ],
     outro: 'When the map is recorded, tell me, and I will check it under Processes in Work Redesign.',
   });

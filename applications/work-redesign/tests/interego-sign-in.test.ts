@@ -45,6 +45,7 @@ import { wrdAffordances } from '../affordances.js';
 import { createWrdHandlers } from '../bridge/handlers.js';
 import { attachUi, parseEveryQueryPair, SIGN_IN_CLIENT_NAME, UI_CSP, type RelayLimits, type UiSignIn } from '../bridge/ui.js';
 import { memoryPod, demoClock, DEMO_POD, DEMO_RECORD_KEY } from '../demo/run.js';
+import { RELAY_SIGNING } from '../src/payloads.js';
 import type { RelayDelegationPolicy } from '../src/relay-delegated.js';
 import { jargonIn, urnsRunningIntoPunctuation, visibleText } from './plain-words.js';
 
@@ -74,6 +75,20 @@ const RELAY = importWallet(`0x${sha256Hex('wrd-sign-in-test:relay')}`, 'agent', 
 const SIGN_IN = 'Sign in with your Interego account';
 const SESSION_KEY = 'wrd.interego.session';
 const FLOW_KEY = 'wrd.interego.flow';
+/**
+ * A claim about which Claude or ChatGPT plans allow a connector. The pages name no plans: whether a person can add one is
+ * their plan's or workspace's setting, and that is all they say.
+ */
+const PLAN_CLAIM = /(Claude|ChatGPT) plans?\b|plans? that allows?|on a plan that|on your plan\?|plan must allow|plans can(?:'|’)?t/i;
+/** ChatGPT's set-up, step by step, as OpenAI's guide to custom MCP servers gives it (verified 2026-11-08). */
+const CHATGPT_STEPS = [
+  'In ChatGPT on the web, open Plugins, select +, then Add custom MCP server.',
+  'Name it Interego, paste the address above as its Server URL, and choose OAuth.',
+  'Accept the warning, select Create as a plugin, then install it.',
+  'When it asks, sign in with the same Interego account you use here.',
+  'In a chat, type @ and choose Interego.',
+];
+const CHATGPT_GUIDE = 'https://developers.openai.com/api/docs/guides/custom-mcp-server';
 /** What the callback page says to an answer that does not carry the state this tab stored. */
 const NOT_STARTED_HERE = 'This tab did not start this sign-in, so nothing in the answer was shown or exchanged.';
 
@@ -1137,9 +1152,26 @@ describe('work-redesign web UI: sign in with your Interego account', () => {
     (tabs[1] as HTMLButtonElement).click();
     expect((d.getElementById('chat-setup-chatgpt') as HTMLElement).hidden).toBe(false);
     expect((d.getElementById('chat-setup-claude') as HTMLElement).hidden).toBe(true);
-    expect(d.getElementById('chat-setup-chatgpt')?.textContent).toContain('If you don\'t see the option, use copy and paste instead');
-    // Signing in to the connector is said in the same sentence as on the landing page and the guide.
-    for (const id of ['chat-setup-claude', 'chat-setup-chatgpt']) expect(d.getElementById(id)?.textContent).toContain('Connect, and when it asks, sign in with the same Interego account you use for Work Redesign.');
+    // ChatGPT's set-up is OpenAI's own: the connector address first ("the address above"), then its five steps, then whose
+    // setting decides, what ChatGPT asks before a write, how to pick up new tools, and OpenAI's guide. No plan is named.
+    const chatgpt = must(d.getElementById('chat-setup-chatgpt'), 'ChatGPT\'s set-up');
+    expect([...chatgpt.querySelectorAll('ol.chat-steps > li')].map((li) => li.textContent)).toEqual(CHATGPT_STEPS);
+    expect([...chatgpt.children].map((c) => c.className)).toEqual(['field', 'chat-steps', 'hint', 'hint', 'hint']);
+    expect(chatgpt.querySelector('.field textarea')?.getAttribute('class')).toBe('input input--mono copy-address__box');
+    expect([...chatgpt.querySelectorAll('p.hint')].map((x) => x.textContent)).toEqual([
+      'Your workspace\'s settings decide whether you can add one. If you don\'t see the option, use copy and paste instead (below).',
+      'ChatGPT asks before each write unless you let it remember your choice for that chat. If Interego\'s tools look out of date, refresh it from its page in your app settings.',
+      'OpenAI\'s guide to custom MCP servers',
+    ]);
+    const guide = must(chatgpt.querySelector('a'), 'the guide link');
+    expect([guide.getAttribute('href'), guide.getAttribute('target'), guide.getAttribute('rel'), guide.textContent]).toEqual([CHATGPT_GUIDE, '_blank', 'noopener', 'OpenAI\'s guide to custom MCP servers']);
+    // Claude's set-up is as it was. Signing in to the connector is said in the same sentence as on the landing page and the guide.
+    expect([...must(d.getElementById('chat-setup-claude'), 'Claude\'s set-up').querySelectorAll('ol.chat-steps > li')].map((li) => li.firstChild?.textContent)).toEqual([
+      'In Claude, open Settings, then Connectors, then Add custom connector.', 'Name it Interego and paste this address:',
+      'Connect, and when it asks, sign in with the same Interego account you use for Work Redesign.', 'In each new chat, turn on Interego from the chat\'s tools menu (+).']);
+    // No claim about which plans allow a connector, anywhere in the panel: whose setting it is, and copy and paste without one.
+    expect(panel.textContent?.match(PLAN_CLAIM) ?? null).toBeNull();
+    expect(panel.textContent).toContain('Whether you can add a connector depends on your plan or workspace settings. Without one, you can still draft a process map with copy and paste');
     const seen = visibleText(d);
     for (const s of ['Work Redesign runs no AI of its own and never asks for an API key', 'the company behind your assistant sees it too', 'What stays in the Work Redesign app', 'Your assistant asks; you answer.', 'Add people by their Interego ID']) expect(seen, s).toContain(s);
     expect(jargonIn(seen)).toEqual([]);
@@ -1152,6 +1184,8 @@ describe('work-redesign web UI: sign in with your Interego account', () => {
     const details = String(copied[1]);
     for (const s of [`My Work Redesign workspace: ${DEPLOYED}`, `descriptor_url: "${DEPLOYED}/affordances"`, `My storage address (pod_url): "${DEMO_POD}"`, `"podUrl":"${DEMO_POD}"`, 'urn:iep:action:wrd:read-records', 'urn:iep:action:wrd:read-envelope-template',
       'except one that takes plain arguments (sign_payload false): urn:iep:action:wrd:task-map-packet\n', 'nonce = the step name', 'done in the Work Redesign app, not from a chat',
+      // An act tool with no sign_payload option signs through the connector's sign_request and passes act the pair unchanged.
+      'Every other action here is signed (sign_payload true; where your act tool has no sign_payload option, sign the payload with the connector\'s sign_request tool first, then pass act exactly the _signature and _signed_payload it returns)',
       // The actions act can't pass arguments to, each with the signed read to use instead (changed: one per line, so no
       // action is followed straight by a comma or a colon, which would read as part of its name), and the intents that
       // are not the action's own name.
@@ -1192,7 +1226,7 @@ describe('work-redesign web UI: sign in with your Interego account', () => {
       expect([mode, other.querySelector('input, textarea'), other.textContent?.includes('Set it up once')]).toEqual([mode, null, false]);
       expect([mode, other.textContent]).toEqual([mode, expect.stringContaining('Draft a map with copy and paste')]);
       // No "connect once" above "can't work here", and no plan reason that isn't the reason.
-      expect([mode, other.textContent?.includes('Connect Claude or ChatGPT once'), other.textContent?.includes('Some Claude and ChatGPT plans can\'t add connectors.')]).toEqual([mode, false, false]);
+      expect([mode, other.textContent?.includes('Connect Claude or ChatGPT once'), other.textContent?.match(PLAN_CLAIM) ?? null]).toEqual([mode, false, null]);
       expect([mode, other.textContent]).toEqual([mode, expect.stringContaining('You can still draft a process map with copy and paste, in any chat app')]);
     }
 
@@ -1237,6 +1271,8 @@ describe('work-redesign web UI: sign in with your Interego account', () => {
     const message = String(copied[4]);
     for (const s of ['urn:iep:action:wrd:task-map-packet', 'urn:iep:action:wrd:read-records', 'urn:iep:action:wrd:record-task-map', 'sign_payload: false', 'sign_payload: true',
       '"storeText":true', 'request.documentSha256', 'Ignore their note about pasting the draft into the capture table', '"document_title":"AP-SOP-014"', `"pod_url":"${DEMO_POD}"`,
+      // Its own rule names a signed step, not one way of signing it: the step text says how, sign_payload or sign_request.
+      'If you are unsure of a field, ask for the template in a signed step, with urn:iep:action:wrd:read-envelope-template as the action and payload',
       `----- DOCUMENT: AP-SOP-014 -----\n${docText}\n----- END OF DOCUMENT -----`]) expect(message, s).toContain(s);
     // Each level the map may name, exactly as the bridge takes it.
     for (const level of ['"person"', '"person-with-agent-assist"', '"agent-drafts-person-decides"', '"agent-acts-person-audits"']) expect(message, level).toContain(level);
@@ -1283,6 +1319,27 @@ describe('work-redesign web UI: sign in with your Interego account', () => {
     expect(page.errors).toEqual([]);
   }, 90_000);
 
+  it('tells an assistant whose act tool has no sign_payload option to sign through the connector\'s sign_request and pass act the pair unchanged, wherever Work Redesign\'s own words say to sign: the envelope template\'s rule, every relay-signed input and each signed affordance\'s envelope', async () => {
+    const TWO_CALLS = 'where your act tool has no sign_payload option, call the connector\'s sign_request tool with this payload, then act with exactly the _signature and _signed_payload it returned';
+    expect(RELAY_SIGNING).toContain(TWO_CALLS);
+    expect(RELAY_SIGNING).toContain('act with sign_payload: true and this payload');
+    // The template the bridge hands out carries it.
+    const w = await world({ lead: true });
+    const t = objOf(await (await fetch(`${w.bridge}/wrd/envelope_template?intent=${encodeURIComponent('wrd:ratify-task')}`)).json());
+    expect([t['status'], String(t['signing'])]).toEqual(['templated', expect.stringContaining(TWO_CALLS)]);
+    // Every relay-signed input: how to make it without sign_payload, and what act then sends.
+    const inputs = wrdAffordances.flatMap((a) => (a.inputs ?? []).map((i) => ({ action: String(a.action), name: i.name, description: String(i.description ?? '') })));
+    const signedPayload = inputs.filter((i) => i.name === '_signed_payload');
+    expect(signedPayload.length).toBeGreaterThan(0);
+    for (const i of signedPayload) expect([i.action, i.description]).toEqual([i.action, expect.stringContaining('act with sign_payload: true, or, where act has no sign_payload option, the connector\'s sign_request tool,')]);
+    // Where a description says what act sends (two inputs' and one affordance's own), it holds for either way of signing.
+    const texts = [...inputs, ...wrdAffordances.map((a) => ({ action: String(a.action), name: '(the affordance)', description: String(a.description ?? '') }))];
+    const pairOnly = texts.filter((i) => i.description.includes('sends only the signed pair'));
+    expect(pairOnly.length).toBeGreaterThanOrEqual(3);
+    for (const i of pairOnly) expect([i.action, i.name, i.description]).toEqual([i.action, i.name, expect.stringContaining('act sends only the signed pair, whether made with sign_payload: true or passed on as sign_request returned it')]);
+    expect(texts.filter((i) => i.description.includes('act … sign_payload: true sends only'))).toEqual([]);
+  }, 60_000);
+
   it('the panel works from the keyboard: its two set-ups are tabs the arrow keys, Home and End move between, Escape closes it back to what opened it, and where the browser refuses the clipboard the text to copy opens over it and closes back to it', async () => {
     const w = await world({ lead: true });
     const page = await openPage(w.bridge, '/ui', { [SESSION_KEY]: JSON.stringify({ token: w.relay.mint(), expiresAt: new Date(Date.now() + 3600_000).toISOString() }) });
@@ -1311,7 +1368,7 @@ describe('work-redesign web UI: sign in with your Interego account', () => {
     expect(shown()).toEqual({ selected: ['claude'], tabindex: ['0', '-1'], visible: ['claude'], focused: 'chat-tab-claude' });
     expect(press('ArrowRight')).toBe(true);
     expect(shown()).toEqual({ selected: ['chatgpt'], tabindex: ['-1', '0'], visible: ['chatgpt'], focused: 'chat-tab-chatgpt' });
-    expect(d.getElementById('chat-setup-chatgpt')?.textContent).toContain('In ChatGPT, open Settings, then Connectors, then Add.');
+    expect(d.getElementById('chat-setup-chatgpt')?.textContent).toContain(CHATGPT_STEPS[0]);
     expect(press('ArrowRight')).toBe(true);   // wraps
     expect(shown()).toEqual({ selected: ['claude'], tabindex: ['0', '-1'], visible: ['claude'], focused: 'chat-tab-claude' });
     expect(press('ArrowLeft')).toBe(true);    // wraps the other way

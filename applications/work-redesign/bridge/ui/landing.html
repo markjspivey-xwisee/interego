@@ -159,12 +159,12 @@
         <p class="section__lede">Add the Interego connector to Claude or ChatGPT once, and your assistant can work in Work Redesign for you. There’s no API key and nothing to install. Your assistant can do the drafting on your own subscription; Work Redesign checks what it records.</p>
         <h3 class="assistants__subtitle">Set up in two minutes</h3>
         <ol class="steps steps--compact">
-          <li class="step"><p class="step__text">In Claude, open <strong>Settings → Connectors → Add custom connector</strong>. In ChatGPT, open <strong>Settings → Connectors → Add</strong>, on a plan that allows custom connectors.</p></li>
+          <li class="step"><p class="step__text">In Claude, open <strong>Settings → Connectors → Add custom connector</strong>. In ChatGPT on the web, open <strong>Plugins → + → Add custom MCP server</strong>, create it as a plugin and install it.</p></li>
           <li class="step"><p class="step__text">Name it <strong>Interego</strong> and paste <code class="connector-url">{{connector_url}}</code></p></li>
           <li class="step"><p class="step__text">Connect, and when it asks, sign in with the same Interego account you use for Work Redesign.</p></li>
           <li class="step"><p class="step__text">Tell your assistant this workspace’s address: <code class="connector-url">{{base}}</code> In the app, <strong>Use your AI assistant</strong> copies it, with everything else your assistant needs.</p></li>
         </ol>
-        <p class="text-sm text-secondary assistants__note">In each new chat, turn on Interego from the chat’s tools menu (+). No connector option on your plan? You can still draft a process map with copy and paste, in any chat app.</p>
+        <p class="text-sm text-secondary assistants__note">In Claude, turn on Interego in each new chat from the chat’s tools menu (+). In ChatGPT, type @ in a chat and choose Interego. Whether you can add a connector depends on your plan or workspace settings. Without one, you can still draft a process map with copy and paste, in any chat app.</p>
         <p class="text-sm text-secondary assistants__note">The Interego connector passes everything your assistant reads and writes here, including your documents, and the company behind your assistant sees it too, under your own account’s terms.</p>{{/chat_ready}}
         {{^chat_ready}}<span class="eyebrow">Your own AI assistant</span>
         <h2 class="section__title" id="assistants-title">Draft with your own AI assistant</h2>
