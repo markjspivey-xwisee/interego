@@ -235,6 +235,17 @@ describe('work-redesign customer site', () => {
     expect(named.landing).toContain('<a class="btn btn--secondary btn--lg" href="https://example.org/book">Contact us</a>');
     expect(named.landing).toContain('we’ll walk you through it');
     expect(named.help).toContain('<a href="https://example.org/book">Contact us</a>');
+    // An operator's mailto: (bridge/server.ts takes one only through the shared contactHrefOf) goes on the
+    // same links; the address is inside their href only, never in the text a person reads.
+    const mailto = 'mailto:operator@example.org';
+    const mailed = await page({ landing: { contactHref: mailto } });
+    expect(mailed.landing).toContain(`<a class="btn btn--secondary btn--lg" href="${mailto}">Contact us</a>`);
+    expect(mailed.landing).toContain('we’ll walk you through it');
+    expect(mailed.help).toContain(`<a href="${mailto}">Contact us</a>`);
+    for (const html of [mailed.landing, mailed.help]) {
+      expect(html.split(`href="${mailto}"`).length - 1).toBeGreaterThan(0);
+      expect(html.replace(/<[^>]*>/g, ' ')).not.toMatch(/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[a-z]{2,}/);
+    }
     // Encryption: untold, only what a workspace with a record key gets; told, what this server does. Never "every record".
     for (const html of [plain.landing, plain.help]) expect(html).toContain('Record contents are encrypted in storage when your workspace has a record key (our hosted service always does).');
     expect((await page({ landing: { recordsSealed: true } })).landing).toContain('Record contents are encrypted in storage on this workspace.');

@@ -1212,6 +1212,32 @@ describe('server.ts: the client address the web UI\'s sign-in limits count by', 
   }, SLOW);
 });
 
+describe('server.ts: the Contact links', () => {
+  it('takes PEV_CONTACT_URL through contactUrlOf: an https page or one mailto: address is used, anything else is ignored with a warning, and no line prints an address', async () => {
+    const server = readFileSync(new URL('../bridge/server.ts', import.meta.url), 'utf8');
+    expect(server).toContain("const contactRaw = env('PEV_CONTACT_URL');");
+    expect(server).toContain('const contactUrl = contactRaw !== undefined ? contactUrlOf(contactRaw) ?? undefined : undefined;');
+    const ADDRESS = 'operator@example.org';
+    const WARNS = /PEV_CONTACT_URL is (.*); it takes an https page or a mailto: link with one address and nothing after it\. Ignored: the Contact links go to the guide's contact section\./;
+    const GUIDE = "Contact links: the guide's contact section (";
+    const cases: readonly (readonly [string, string, string | null])[] = [
+      ['https://example.org/book', 'Contact links: https://example.org/book (PEV_CONTACT_URL)', null],
+      [`MAILTO:${ADDRESS}`, 'Contact links: a mailto: link to one address at example.org (the address itself is not printed) (PEV_CONTACT_URL)', null],
+      ['javascript:alert(1)', GUIDE, '"javascript:alert(1)"'],
+      ['http://example.org/book', GUIDE, '"http://example.org/book"'],
+      [`mailto:${ADDRESS}?subject=x`, GUIDE, 'a value with an @ in it (not printed)'],
+      [`mailto:${ADDRESS}%0Abcc:other@example.org`, GUIDE, 'a value with an @ in it (not printed)'],
+    ];
+    const runs = await Promise.all(cases.map(([contact]) => startServer({ PEV_CONTACT_URL: contact })));
+    for (const [i, [contact, says, shown]] of cases.entries()) {
+      const r = runs[i]!;
+      expect([contact, r.started, r.out.includes(says), r.err.includes('Not listening')]).toEqual([contact, true, true, false]);
+      expect([contact, WARNS.exec(r.err)?.[1] ?? null]).toEqual([contact, shown]);
+      expect([contact, `${r.out}${r.err}`.includes(ADDRESS)]).toEqual([contact, false]);
+    }
+  }, SLOW);
+});
+
 describe('the relay\'s account-token routes', () => {
   it('no bridge in this file ever called /identity-token or /tool/ at the relay: every sign went to /mcp with the access token', () => {
     const all = allRelays.flatMap((r) => r.calls);
