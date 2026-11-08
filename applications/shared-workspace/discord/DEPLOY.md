@@ -92,6 +92,19 @@ it, and that agent DID is the string every participant delegates to (Part D). So
   until each person re-linked. Losing the key is not a data-loss event (the records already
   written stand on their authors' pods), but it is a re-onboard-everyone event.
 - **Do not commit it.** It goes on the Railway service and nowhere else.
+- **A new key needs an account first, and the bot will not create one.** Hosted identity creates
+  an account only for a wallet that signed the Hosted Terms agreement, and the bot never gives it:
+  it signs `INTEREGO_BOT_KEY` in with the ordinary sign-in and does not read
+  `INTEREGO_ACCEPT_HOSTED_TERMS_VERSION`. A key generated above therefore has no account, and its
+  first sign-in is refused with HTTP 428: the bot logs `FATAL: SIWE verify answered HTTP 428: …` at
+  boot and exits. Before the first deploy with a new key, create its account with an explicit
+  agreement. Read the version identity offers, and the terms it names, at
+  `https://identity.interego.xwisee.com/.well-known/hosted-interego-terms`; only if you agree to
+  them for the bot's account, sign the key in once with that version. `mintBearer` in
+  [`../tools/live-identity.ts`](../tools/live-identity.ts) takes it as its
+  `{ acceptHostedTermsVersion }` option, and passing `DISCORD_CLIENT_NAME` (`src/identity.ts`) as
+  the client name seats the same agent the bot will run as. Nothing in this repository agrees on
+  your behalf. A key that already holds an account, such as the deployed bot's, needs none of this.
 
 ---
 
@@ -173,7 +186,8 @@ bot signs in under `DISCORD_CLIENT_NAME` (`src/identity.ts`). The pod half comes
 new DID; a changed client name is a new DID on the SAME pod. Either invalidates every delegation
 already published, because a delegation names one exact agent string. If instead you see the
 `INTEREGO_BOT_KEY is not set` / `DISCORD_BOT_TOKEN is not set` refusal, a variable did not take; if
-you see close code `4014`, the MESSAGE CONTENT intent (Part A step 3) is off.
+you see `FATAL: SIWE verify answered HTTP 428: …`, the key has no account yet (Part B); if you see
+close code `4014`, the MESSAGE CONTENT intent (Part A step 3) is off.
 
 ### Two symptoms in Discord, and which one is a bug
 

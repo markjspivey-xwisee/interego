@@ -34,12 +34,16 @@
  *   npx esbuild applications/shared-workspace/tools/probe-sealed-live.ts \
  *     --bundle --format=cjs --platform=node --target=es2022 --outfile=/tmp/probe-sealed.cjs
  *   node /tmp/probe-sealed.cjs
+ *
+ * Its wallets are new, and hosted identity creates an account for a new wallet only with the
+ * operator's Hosted Terms agreement: see `INTEREGO_ACCEPT_HOSTED_TERMS_VERSION` in
+ * `applications/shared-workspace/tools/live-identity.ts`. Unset, a run stops at the first sign-in.
  */
 
 import { Wallet } from 'ethers';
 import { deriveEncryptionKeyPair, openEncryptedEnvelope, type EncryptedEnvelope } from '@interego/core';
 import { sealForRoster } from '@interego/workspace-client/sealer';
-import { mintBearer } from './live-identity.js';
+import { mintBearerWithOperatorTerms } from './live-identity.js';
 
 const RELAY = process.env['INTEREGO_RELAY'] ?? 'https://relay.interego.xwisee.com';
 const IDENTITY = process.env['INTEREGO_IDENTITY'] ?? 'https://identity.interego.xwisee.com';
@@ -72,7 +76,7 @@ async function callTool(bearer: string, name: string, args: Record<string, unkno
 async function main(): Promise<number> {
   head('one throwaway identity, holding its own key');
   const w = Wallet.createRandom();
-  const bearer = await mintBearer(RELAY, IDENTITY, { address: w.address, signMessage: (m: string) => w.signMessage(m) });
+  const bearer = await mintBearerWithOperatorTerms(RELAY, IDENTITY, { address: w.address, signMessage: (m: string) => w.signMessage(m) });
   const me = deriveEncryptionKeyPair(w.privateKey);
   log('  ' + w.address.slice(0, 12) + '… · key ' + me.publicKey.slice(0, 12) + '…');
 

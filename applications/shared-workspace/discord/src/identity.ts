@@ -24,10 +24,10 @@ import { RelayMcpTransport, WorkspaceClient, type RelayOAuthBearer } from '@inte
 import { openerFor, sealedBindingCheck } from '@interego/workspace-client/opener';
 import { deriveEncryptionKeyPair, type EncryptionKeyPair } from '@interego/core';
 // ★ IMPORTED, NOT REPEATED. This SIWE ceremony already exists twice — `desktop/src/auth.ts` and
-// this driver helper — and `tests/workspace-live-identity-parity.test.ts` pins the two message
-// bodies against each other precisely because a third spelling of the same message is a bot that
-// cannot sign in for a reason nobody can see. A relative import across the sibling directory is
-// the price of there being one copy, and it is cheaper than the copy.
+// this driver helper — and `../../tests/live-identity-parity.test.ts` pins the two message bodies
+// against each other precisely because a third spelling of the same message is a bot that cannot
+// sign in for a reason nobody can see. A relative import across the sibling directory is the price
+// of there being one copy, and it is cheaper than the copy.
 import { mintBearer, type Signer } from '../../tools/live-identity.js';
 
 /** Re-mint this long before the grant expires. Enough slack for a cold relay. */

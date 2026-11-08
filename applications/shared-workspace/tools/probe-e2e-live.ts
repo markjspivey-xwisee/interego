@@ -42,12 +42,16 @@
  *     --bundle --format=cjs --platform=node --target=es2022 --outfile=/tmp/probe-e2e.cjs
  *   node /tmp/probe-e2e.cjs
  *
+ * Its wallets are new, and hosted identity creates an account for a new wallet only with the
+ * operator's Hosted Terms agreement: see `INTEREGO_ACCEPT_HOSTED_TERMS_VERSION` in
+ * `applications/shared-workspace/tools/live-identity.ts`. Unset, a run stops at the first sign-in.
+ *
  * `PROBE_DEBUG=1` additionally dumps the publish response and the descriptor it wrote.
  */
 import { Wallet } from 'ethers';
 import { deriveEncryptionKeyPair } from '@interego/core';
 import { openGraph } from '../../../packages/workspace-client/src/opener.js';
-import { mintBearer } from './live-identity.js';
+import { mintBearerWithOperatorTerms } from './live-identity.js';
 
 const RELAY = process.env['INTEREGO_RELAY'] ?? 'https://relay.interego.xwisee.com';
 const IDENTITY = process.env['INTEREGO_IDENTITY'] ?? 'https://identity.interego.xwisee.com';
@@ -81,7 +85,7 @@ async function callTool(bearer: string, name: string, args: Record<string, unkno
 async function main(): Promise<void> {
   const wallet = Wallet.createRandom();
   process.stdout.write('\nminting a throwaway identity on the live fleet…\n');
-  const bearer = await mintBearer(RELAY, IDENTITY, {
+  const bearer = await mintBearerWithOperatorTerms(RELAY, IDENTITY, {
     address: wallet.address,
     signMessage: (m: string) => wallet.signMessage(m),
   });
