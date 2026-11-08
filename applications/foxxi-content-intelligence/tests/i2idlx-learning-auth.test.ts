@@ -95,9 +95,13 @@ describe('independent human learning-account sign-in', () => {
     const before = await f.request(PATH + '/session'); assert.deepEqual(await before.json(), { authenticated: false, enabled: true, account: null, csrf: null, expires_at: null, sign_in_url: PATH + '/oauth/start' });
     const client = await f.request(PATH + '/oauth/client.json'); const document = await client.json(); assert.equal(document.scope, 'mcp:read'); assert.deepEqual(document.grant_types, ['authorization_code']);
     const p = await f.begin(); assert.ok(!p.location.includes('code_verifier')); assert.ok(!p.location.includes('test-token'));
+    const pendingHeader = p.start.headers.getSetCookie().find(value => value.startsWith('__Host-i2idlx-learning-pending='))!;
+    for (const flag of ['Secure', 'HttpOnly', 'SameSite=Lax', 'Path=/', 'Max-Age=300']) assert.ok(pendingHeader.includes(flag));
+    assert.ok(!pendingHeader.includes('Domain='));
     const logged = await f.finish(p); assert.equal(logged.response.status, 303); assert.equal(logged.response.headers.get('location'), BASE + '/i2idlx/#ask');
     const header = logged.response.headers.getSetCookie().find(value => value.startsWith('__Host-i2idlx-learning='))!;
     for (const flag of ['Secure', 'HttpOnly', 'SameSite=Lax', 'Path=/']) assert.ok(header.includes(flag)); assert.ok(!header.includes('Domain='));
+    assert.ok(header.includes('Max-Age=3600'));
     const statusResponse = await f.request(PATH + '/session', logged.cookie); const text = await statusResponse.text(), status = JSON.parse(text);
     assert.equal(status.authenticated, true); assert.equal(status.account.id, `did:web:identity.example:users:${ALICE}`); assert.match(status.csrf, /^[a-f0-9]{64}$/);
     for (const secret of [...f.tokens.keys(), 'test-refresh', f.forms[0]!.get('code_verifier')!]) assert.ok(!text.includes(secret) && !header.includes(secret));

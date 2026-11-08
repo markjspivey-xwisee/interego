@@ -482,7 +482,7 @@ describe('opt-in background agent monitoring', () => {
 describe('HTTP driver authentication boundary', () => {
   const cleanup: (() => Promise<void>)[] = [];
   afterEach(async () => { await Promise.all(cleanup.splice(0).map(close => close())); });
-  function httpFixture(verifyCaller?: AgentSessionConfig['verifyCaller'], routine?: AgentSessionConfig['routine']) {
+  function httpFixture(verifyCaller?: AgentSessionConfig['verifyCaller'], routine?: AgentSessionConfig['routine'], browserAdmissionLimit?: number) {
     const app = express();
     app.use(express.json({ limit: '600kb' }));
     // Reproduce the context added by Foxxi's upstream HTTP middleware. The
@@ -496,7 +496,7 @@ describe('HTTP driver authentication boundary', () => {
       }
       next();
     });
-    const store = attachAgentSessionRoutes(app, { baseUrl: BASE, verifyCaller, routine });
+    const store = attachAgentSessionRoutes(app, { baseUrl: BASE, verifyCaller, routine, browserAdmissionLimit });
     const server = app.listen(0, '127.0.0.1');
     const listening = new Promise<string>((resolve, reject) => {
       server.once('error', reject);
@@ -649,4 +649,14 @@ describe('HTTP driver authentication boundary', () => {
     assert.equal(limited.status, 429); assert.equal(limited.retryAfter, '60');
     assert.equal(verifications, AGENT_DRIVER_REQUESTS_PER_MINUTE);
   }, 15_000);
+  it('bounds browser admission before session authorization without trusting request limits or client addresses', async () => {
+    const h = httpFixture(undefined, undefined, 2);
+    let authorizations = 0;
+    const authorize = h.store.browserAuthorized.bind(h.store);
+    h.store.browserAuthorized = async (...args) => { authorizations++; return authorize(...args); };
+    for (let n = 0; n < 2; n++) assert.equal((await h.invoke('browser', { session_id: 'unknown', operation: 'status' })).status, 404);
+    const limited = await h.invoke('browser', { session_id: 'unknown', operation: 'status', browserAdmissionLimit: 6000 }, { 'X-Forwarded-For': '198.51.100.77' });
+    assert.equal(limited.status, 429); assert.equal(limited.retryAfter, '60');
+    assert.equal(authorizations, 2);
+  });
 });

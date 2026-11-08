@@ -1,6 +1,7 @@
 /** Institution-owned Cloud LTI discovery. A helper launch can request an account
  * association, never establish learner identity, enrollment, curriculum or grades. */
 import express, { type Express, type Request, type Response } from 'express';
+import rateLimit from 'express-rate-limit';
 import { createHash, createPublicKey, generateKeyPairSync, randomBytes } from 'node:crypto';
 import type { LearningAccountAuth, LearningPrincipal } from './i2idlx-learning-auth.js';
 import type { LearningConnector, LearningConnectionsStore } from './i2idlx-learning-connections.js';
@@ -22,6 +23,8 @@ export interface LearningLtiConfig {
   store: Pick<LearningConnectionsStore, 'readConnector' | 'updateConnector' | 'requestLink'>;
   auth: Pick<LearningAccountAuth, 'resolve' | 'revalidate' | 'assertMutation'>;
   fetch?: typeof fetch; now?: () => number;
+  /** Program-only fixture policy; public input cannot change admission. */
+  publicRequestsPerMinute?: number;
   /** Program-only isolated signature fixture; request JSON cannot select a verifier. */
   verifyJwt?: (jwt: string, jwksUrl: string, signal: AbortSignal) => Promise<CourseLtiVerifyResult>;
 }
@@ -49,7 +52,9 @@ function cookie(req: Request, name: string): string | null {
   const value = matches.length === 1 ? matches[0]!.slice(name.length + 1) : '';
   return /^[a-f0-9]{64}$/.test(value) ? value : null;
 }
-function setCookie(res: Response, name: string, value: string, seconds: number): void { res.append('Set-Cookie', `${name}=${value}; Path=/; Secure; HttpOnly; SameSite=Lax; Max-Age=${seconds}`); }
+function setCookie(res: Response, name: string, value: string, seconds: number): void {
+  res.cookie(name, value, { secure: true, httpOnly: true, sameSite: 'lax', path: '/', maxAge: Math.max(0, seconds * 1000) });
+}
 function secure(res: Response): void { res.set('Cache-Control', 'no-store').set('Referrer-Policy', 'no-referrer').set('X-Content-Type-Options', 'nosniff'); }
 function errorResponse(res: Response, error: unknown): void {
   secure(res);
@@ -81,11 +86,14 @@ export class LearningLtiManager {
   private readonly handoffs = new Map<string, Handoff>();
   private readonly expected = new WeakMap<Saved, string>();
   private verifications = 0;
+  private readonly publicRequestsPerMinute: number;
   constructor(config: LearningLtiConfig) {
     let base = '';
     try { sourceServiceUrl(config.baseUrl); const u = new URL(config.baseUrl); if (u.pathname === '/' && !u.search && !u.hash) base = u.origin; } catch { /* ordinary local HTTP startup remains available */ }
     this.base = base; this.store = config.store; this.auth = config.auth; this.fetcher = config.fetch ?? globalThis.fetch;
     this.now = config.now ?? Date.now; this.verifyJwt = config.verifyJwt ?? verifyCourseLtiJwt;
+    this.publicRequestsPerMinute = config.publicRequestsPerMinute ?? 300;
+    if (!Number.isSafeInteger(this.publicRequestsPerMinute) || this.publicRequestsPerMinute < 1 || this.publicRequestsPerMinute > 300) throw Error('Invalid LTI public request limit');
   }
   dispose(): void { this.pending.clear(); this.receipts.clear(); this.handoffs.clear(); }
   private ready(): void { if (!this.base) fail(503, 'learning_lti_unavailable'); }
@@ -379,23 +387,28 @@ export class LearningLtiManager {
     } catch (error) { receipt.claiming = false; throw error; }
   }
   attachRoutes(app: Express): void {
+    // One constant process bucket has a fixed memory footprint. Every public
+    // route is admitted before an encrypted-state read or signature/key work.
+    const admission = rateLimit({ windowMs: 60_000, limit: this.publicRequestsPerMinute,
+      keyGenerator: () => 'i2idlx-learning-lti-public', standardHeaders: false, legacyHeaders: false,
+      handler: (_req, res) => { secure(res); res.set('Retry-After', '60').status(429).json({ error: 'learning_lti_rate_limited' }); } });
     const route = (work: (req: Request, res: Response) => Promise<void>) => (req: Request, res: Response) => { secure(res); void work(req, res).catch(error => errorResponse(res, error)); };
-    app.get(ROOT + '/receipt', route(async (req, res) => {
+    app.get(ROOT + '/receipt', admission, route(async (req, res) => {
       if (Object.keys(req.query).length) fail(400, 'learning_lti_request_invalid');
       this.receipt(req);
       res.set('Content-Security-Policy', "default-src 'none'; script-src 'self'; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'")
         .type('html').send('<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Link your learning account</title><h1>Link your learning account</h1><p>This verified helper launch can request a learner-account link. It does not prove course enrollment or learner identity.</p><p><a href="/i2idlx/learning/oauth/start" target="_blank" rel="noopener">Sign in with Interego</a>, then return here.</p><button id="claim" type="button">Request account link</button><p id="status" role="status"></p><script src="/i2idlx/learning/lti/receipt.js" defer></script></html>');
     }));
-    app.get(ROOT + '/receipt.js', (_req, res) => { secure(res); res.type('application/javascript').send(RECEIPT_JS); });
-    app.post(ROOT + '/receipt/claim', route((req, res) => this.claim(req, res)));
-    app.get(ROOT + '/open', route((req, res) => this.openHandoff(req, res)));
-    app.get(ROOT + '/:connectorId/:setupId/login', route((req, res) => this.login(String(req.params.connectorId), String(req.params.setupId), req, res)));
-    app.get(ROOT + '/:connectorId/:setupId/jwks', route(async (req, res) => {
+    app.get(ROOT + '/receipt.js', admission, (_req, res) => { secure(res); res.type('application/javascript').send(RECEIPT_JS); });
+    app.post(ROOT + '/receipt/claim', admission, route((req, res) => this.claim(req, res)));
+    app.get(ROOT + '/open', admission, route((req, res) => this.openHandoff(req, res)));
+    app.get(ROOT + '/:connectorId/:setupId/login', admission, route((req, res) => this.login(String(req.params.connectorId), String(req.params.setupId), req, res)));
+    app.get(ROOT + '/:connectorId/:setupId/jwks', admission, route(async (req, res) => {
       if (Object.keys(req.query).length) fail(400, 'learning_lti_request_invalid');
       const { saved } = await this.publicConnector(String(req.params.connectorId), String(req.params.setupId));
       res.json({ keys: [{ ...createPublicKey(saved.publicKeyPem).export({ format: 'jwk' }), alg: 'RS256', use: 'sig', kid: 'learning-' + saved.id }] });
     }));
-    app.post(ROOT + '/:connectorId/:setupId/launch', express.urlencoded({ extended: false, limit: '96kb', parameterLimit: 8 }), route(async (req, res) => {
+    app.post(ROOT + '/:connectorId/:setupId/launch', admission, express.urlencoded({ extended: false, limit: '96kb', parameterLimit: 8 }), route(async (req, res) => {
       if (Object.keys(req.query).length) fail(400, 'learning_lti_request_invalid');
       await this.launch(String(req.params.connectorId), String(req.params.setupId), req.body, res);
     }));

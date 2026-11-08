@@ -21,12 +21,12 @@ function principal(name: string): LearningPrincipal {
   return { subject: 'did:web:identity.example:users:' + name, userId: name, webId: `https://identity.example/users/${name}/profile#me`,
     podUrl: `https://pods.example/${name}/`, sessionId: 'session-' + name, expiresAt: NOW + 3_600_000, signal: new AbortController().signal };
 }
-async function fixture() {
-  let now = NOW, writes = 0, value: LearningSnapshot = { revision: null, state: emptyLearningState() };
+async function fixture(options: { publicRequestsPerMinute?: number } = {}) {
+  let now = NOW, writes = 0, reads = 0, value: LearningSnapshot = { revision: null, state: emptyLearningState() };
   const owner = principal('owner'), student = principal('student'), other = principal('other');
   const controls = { loseCreate: false, loseImport: false, importRunning: false, deleteFails: false, failJwt: false, revoked: false, badPlatform: false };
   const calls: Array<{ method: string; path: string; body?: Row }> = [], connectors = new Map<string, Row>(), helpers = new Map<string, Row>(), jobs = new Map<string, string>();
-  const repository = { async read() { return copy(value); }, async write(expected: string | null, state: LearningState) {
+  const repository = { async read() { reads++; return copy(value); }, async write(expected: string | null, state: LearningState) {
     if (expected !== value.revision) throw Object.assign(Error('conflict'), { status: 409 }); value = { revision: 'revision-' + (++writes), state: copy(state) };
   } };
   const platform = { issuer: 'https://cloud.scorm.com', toolClientId: 'fixture-client', deploymentId: 'fixture-deployment',
@@ -83,7 +83,8 @@ async function fixture() {
     const ok = verify('RSA-SHA256', Buffer.from(parts[0] + '.' + parts[1]), keys.publicKey, Buffer.from(parts[2]!, 'base64url'));
     return { ok, header: record(JSON.parse(Buffer.from(parts[0]!, 'base64url').toString())), payload: record(JSON.parse(Buffer.from(parts[1]!, 'base64url').toString())) };
   };
-  const config = { baseUrl: BASE, store, auth, fetch: cloud, now: () => now, verifyJwt };
+  const config = { baseUrl: BASE, store, auth, fetch: cloud, now: () => now, verifyJwt,
+    ...(options.publicRequestsPerMinute === undefined ? {} : { publicRequestsPerMinute: options.publicRequestsPerMinute }) };
   const manager = new LearningLtiManager(config), app = express(); app.use(express.json()); manager.attachRoutes(app);
   const server = app.listen(0, '127.0.0.1'); await once(server, 'listening'); const address = server.address(); assert.ok(address && typeof address !== 'string');
   const local = `http://127.0.0.1:${address.port}`;
@@ -111,7 +112,7 @@ async function fixture() {
   const claim = (cookies: string, human = 'student', csrf = 'test-csrf') => request(ROOT + '/receipt/claim', cookies + (human ? '; human=' + human : ''), { method: 'POST',
     headers: { Origin: BASE, 'Content-Type': 'application/json', 'X-I2IDLX-Learning-CSRF': csrf }, body: '{}' });
   return { manager, store, owner, student, other, connector, id, config, controls, calls, connectors, helpers, request, installed, begin, launch, claim,
-    state: () => copy(value.state), advance: (ms: number) => { now += ms; } };
+    state: () => copy(value.state), reads: () => reads, advance: (ms: number) => { now += ms; } };
 }
 
 describe('institution-owned SCORM Cloud LTI discovery', () => {
@@ -163,10 +164,16 @@ describe('institution-owned SCORM Cloud LTI discovery', () => {
     const framedAgain = await f.request(handoff, '', { headers: { 'Sec-Fetch-Dest': 'frame' } }); expect(framedAgain.status).toBe(200);
     expect(framedAgain.headers.getSetCookie()).toEqual([]); expect(await framedAgain.text()).toContain('Continue in a new tab');
     const opened = await f.request(handoff, '', { headers: { 'Sec-Fetch-Dest': 'document' } }); expect(opened.status).toBe(302);
+    const nonceHeader = opened.headers.getSetCookie().find(value => value.startsWith('__Host-i2idlx-learning-lti='))!;
+    for (const flag of ['Secure', 'HttpOnly', 'SameSite=Lax', 'Path=/', 'Max-Age=900']) expect(nonceHeader).toContain(flag);
+    expect(nonceHeader).not.toContain('Domain=');
     const browser = cookiePair(opened, '__Host-i2idlx-learning-lti'); expect(browser).toMatch(/^__Host-i2idlx-learning-lti=[a-f0-9]{64}$/);
     const redirect = new URL(opened.headers.get('location')!); expect(redirect.searchParams.get('login_hint')).toBe('private-platform-login-hint');
     expect(redirect.searchParams.get('lti_message_hint')).toBe('private-platform-message-hint'); expect(redirect.searchParams.get('nonce')).toMatch(/^[a-f0-9]{64}$/);
     const launched = await f.launch({ redirect, browser, launch: new URL(settings.launch_url).pathname }); expect(launched.status).toBe(303);
+    const receiptHeader = launched.headers.getSetCookie().find(value => value.startsWith('__Host-i2idlx-learning-lti-receipt='))!;
+    for (const flag of ['Secure', 'HttpOnly', 'SameSite=Lax', 'Path=/', 'Max-Age=600']) expect(receiptHeader).toContain(flag);
+    expect(receiptHeader).not.toContain('Domain=');
     const receipt = cookiePair(launched, '__Host-i2idlx-learning-lti-receipt'); const claimed = await f.claim(browser + '; ' + receipt); expect(claimed.status).toBe(200); await claimed.text();
     expect(f.state().links[0]!.status).toBe('pending-admin'); expect(f.state().links[0]!.learnerId).toBeUndefined();
     const replay = await f.request(handoff, '', { headers: { 'Sec-Fetch-Dest': 'document' } }); expect(replay.status).toBe(410); await replay.text();
@@ -210,5 +217,16 @@ describe('institution-owned SCORM Cloud LTI discovery', () => {
     await expect(g.manager.install(g.owner, g.id)).rejects.toMatchObject({ code: 'learning_lti_helper_collision' });
     expect((await g.manager.remove(g.owner, g.id)).state).toBe('removed');
     expect(g.helpers.size).toBe(1); expect(g.calls.some(c => c.method === 'DELETE' && c.path.startsWith('/courses/'))).toBe(false);
+  });
+  it('admits every public route before encrypted-state reads or key work with a fixed bounded process bucket', async () => {
+    const f = await fixture({ publicRequestsPerMinute: 2 }), ready = await f.installed(), jwks = new URL(ready.settings!.jwks_url).pathname;
+    const accepted = await f.request(jwks); expect(accepted.status).toBe(200); await accepted.text(); await f.begin(ready);
+    const before = f.reads(), login = new URL(ready.settings!.login_url).pathname, launch = new URL(ready.settings!.launch_url).pathname;
+    for (const [path, method] of [[jwks, 'GET'], [login, 'GET'], [ROOT + '/open?handoff=' + 'a'.repeat(64), 'GET'], [ROOT + '/receipt', 'GET'],
+      [ROOT + '/receipt.js', 'GET'], [ROOT + '/receipt/claim', 'POST'], [launch, 'POST']]) {
+      const r = await f.request(path!, '', { method }); expect(r.status).toBe(429); expect(r.headers.get('retry-after')).toBe('60');
+      expect(await r.json()).toEqual({ error: 'learning_lti_rate_limited' }); expect(f.reads()).toBe(before);
+    }
+    expect(() => new LearningLtiManager({ ...f.config, publicRequestsPerMinute: 301 })).toThrow('Invalid LTI public request limit');
   });
 });

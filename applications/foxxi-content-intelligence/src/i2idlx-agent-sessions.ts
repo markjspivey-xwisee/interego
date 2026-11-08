@@ -67,6 +67,8 @@ export interface AgentSessionConfig {
   leaseTtlMs?: number;
   requestTtlMs?: number;
   maxSessions?: number;
+  /** Program-owned test/deployment budget; may only lower the public route limit. */
+  browserAdmissionLimit?: number;
   openLearningAccess?: (receipt: string, identity: AgentBrowserIdentity, messages: readonly Message[]) => AgentLearningAccess | Promise<AgentLearningAccess>;
 }
 export type AgentLearningPhase = 'enqueue' | 'dispatch' | 'stream' | 'finish' | 'read';
@@ -90,6 +92,7 @@ export class AgentSessionError extends Error {
 export const AGENT_SESSION_ACTION = 'urn:foxxi:i2idlx:agent-session';
 export const AGENT_SESSION_PATH = '/i2idlx/api/agent-sessions';
 export const AGENT_DRIVER_REQUESTS_PER_MINUTE = 600;
+export const AGENT_BROWSER_REQUESTS_PER_MINUTE = 6000;
 const KiB = 1024;
 const TASK_BYTES = 512 * KiB, OUTPUT_BYTES = 128 * KiB, BODY_BYTES = 576 * KiB;
 const MEMORY_BYTES = 16 * 1024 * KiB;
@@ -582,6 +585,10 @@ function browserArguments(value: unknown): Row {
   return body;
 }
 export function attachAgentSessionRoutes(app: Express, config: AgentSessionConfig): AgentSessionStore {
+  const browserLimit = config.browserAdmissionLimit ?? AGENT_BROWSER_REQUESTS_PER_MINUTE;
+  if (!Number.isSafeInteger(browserLimit) || browserLimit < 1 || browserLimit > AGENT_BROWSER_REQUESTS_PER_MINUTE) {
+    throw new Error('Invalid browser agent-session admission budget.');
+  }
   const store = new AgentSessionStore(config), base = new URL(config.baseUrl).origin;
   store.startAutomaticSweep();
   // Bound signature/delegation verification before performing authorization. One process-wide
@@ -592,6 +599,14 @@ export function attachAgentSessionRoutes(app: Express, config: AgentSessionConfi
     standardHeaders: false, legacyHeaders: false,
     handler: (_req, res) => { res.status(429).set('Retry-After', '60').json({ error: 'The agent driver is busy. Try again in a minute.' }); },
   });
+  // A fixed bucket bounds memory and authorization work across all browser sessions.
+  // The default accommodates 64 active sessions polling once per second.
+  const browserAdmission = rateLimit({
+    windowMs: 60_000, limit: browserLimit,
+    keyGenerator: () => 'interpretant-agent-browser',
+    standardHeaders: false, legacyHeaders: false,
+    handler: (_req, res) => { res.status(429).set('Retry-After', '60').json({ error: 'The workbench is busy. Try again in a minute.' }); },
+  });
   function browserOrigin(req: Request): void {
     if (Object.keys(req.query).length) reject('Agent-session credentials and inputs belong in headers or JSON, never URLs.');
     const origin = req.get('Origin');
@@ -601,7 +616,7 @@ export function attachAgentSessionRoutes(app: Express, config: AgentSessionConfi
     try { browserOrigin(req); exact(browserArguments(req.body), []); respond(res, store.create(req.ip ?? req.socket.remoteAddress ?? 'unknown')); }
     catch (e) { fail(res, e); }
   });
-  app.post(AGENT_SESSION_PATH + '/browser', async (req, res) => {
+  app.post(AGENT_SESSION_PATH + '/browser', browserAdmission, async (req, res) => {
     try {
       browserOrigin(req);
       const body = browserArguments(req.body);

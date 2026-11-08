@@ -41,7 +41,7 @@ function cookie(req: Request, name: string): string | null {
   return /^[a-f0-9]{64}$/.test(value) ? value : null;
 }
 function setCookie(res: Response, name: string, value: string, maxAge: number): void {
-  res.append('Set-Cookie', `${name}=${value}; Path=/; Secure; HttpOnly; SameSite=Lax; Max-Age=${Math.max(0, Math.floor(maxAge / 1000))}`);
+  res.cookie(name, value, { secure: true, httpOnly: true, sameSite: 'lax', path: '/', maxAge: Math.max(0, maxAge) });
 }
 function secure(res: Response): void {
   res.set('Cache-Control', 'no-store').set('Pragma', 'no-cache').set('Referrer-Policy', 'no-referrer').set('X-Content-Type-Options', 'nosniff');
