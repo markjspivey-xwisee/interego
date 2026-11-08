@@ -299,9 +299,11 @@ once its account exists: `drive-local-agent-live.ts` signs a delegate's key in a
 same client name and under another, and those sign-ins are ordinary ones. The scripts that sign
 in only with a fixed, already-enrolled key (`invite-handle-live.ts`, `probe-refresh-live.ts`,
 `claude-code-heartbeat.ts`, `claude-code-converse.ts`) do not read it, and neither does the Discord
-bot itself, so a new `INTEREGO_BOT_KEY` needs its account created with an explicit agreement first
-([Discord `DEPLOY.md`](discord/DEPLOY.md), Part B). `openAgentSession` (`src/agent-session.ts`)
-takes the same agreement as its `acceptHostedTermsVersion` option.
+bot itself: its operator gives the agreement for the bot's own account only through the bot's own
+`INTEREGO_BOT_ACCEPT_HOSTED_TERMS_VERSION`, so a new `INTEREGO_BOT_KEY` needs that variable or its
+account created with an explicit agreement first ([Discord `DEPLOY.md`](discord/DEPLOY.md), Part B).
+`openAgentSession` (`src/agent-session.ts`) takes the same agreement as its
+`acceptHostedTermsVersion` option.
 
 ## The stream, and why it is shaped this way
 

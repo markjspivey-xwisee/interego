@@ -8,6 +8,9 @@
  *   INTEREGO_RELAY      default https://relay.interego.xwisee.com
  *   INTEREGO_IDENTITY   default https://identity.interego.xwisee.com
  *   INTEREGO_DISCORD_STATE  where the link index lives. Default ~/.interego/discord-workspace.json
+ *   INTEREGO_BOT_ACCEPT_HOSTED_TERMS_VERSION  unset. Only for a NEW key, and only if the bot's
+ *                       operator agrees: the Hosted Terms version they agreed to for the bot's
+ *                       account (see `BOT_ACCEPT_HOSTED_TERMS_ENV` in identity.ts). Not a secret.
  *
  * ★ NEITHER SECRET MAY EVER BE IN THE REPO and this file reads both from the environment only.
  * There is no config file, no default token and no fallback key: a missing one refuses to start
@@ -39,7 +42,7 @@ import { pathToFileURL } from 'node:url';
 import { resolve as resolvePath } from 'node:path';
 import { presenceLine } from '@interego/workspace-client';
 import { LinkStore } from './links.js';
-import { BotSession, type BotIdentity } from './identity.js';
+import { BotSession, botHostedTerms, type BotIdentity } from './identity.js';
 import {
   COMMANDS, DiscordGateway, DiscordRest, commandFingerprint,
   type GatewayAutocomplete, type GatewayInteraction, type GatewayMessage, type GatewayModalSubmit,
@@ -93,13 +96,19 @@ export interface Boot {
   readonly argv?: readonly string[];
   /** Defaults to the stdout writer above. */
   readonly out?: (line: string) => void;
-  /** Passed to `DiscordRest`. Defaults to global `fetch`. */
+  /**
+   * Passed to `DiscordRest`, and to the `BotSession` this makes when `session` is not given.
+   * Defaults to global `fetch`.
+   */
   readonly fetchImpl?: typeof fetch;
   /** Passed to `DiscordGateway`. Defaults to a real `ws` socket. */
   readonly openSocket?: ConstructorParameters<typeof DiscordGateway>[2];
   /** Passed to `LinkStore`. Defaults to `INTEREGO_DISCORD_STATE` / `~/.interego/…`. */
   readonly statePath?: string;
-  /** Defaults to `new BotSession(relay, identity, INTEREGO_BOT_KEY)`. */
+  /**
+   * Defaults to `new BotSession(relay, identity, INTEREGO_BOT_KEY)`, with the bot operator's
+   * Hosted Terms agreement from `INTEREGO_BOT_ACCEPT_HOSTED_TERMS_VERSION` when that is set.
+   */
   readonly session?: SessionLike;
   /**
    * Defaults to `process.on`. A test must not leave SIGINT/SIGTERM listeners behind in its
@@ -177,7 +186,9 @@ export async function main(boot: Boot = {}): Promise<Started | null> {
     return null;
   }
 
-  const session: SessionLike = boot.session ?? new BotSession(RELAY, IDENTITY, key as string);
+  // ★ THE HOSTED TERMS AGREEMENT IS THE BOT OPERATOR'S, FROM THE BOT'S OWN VARIABLE ONLY, never the
+  // live drivers' `INTEREGO_ACCEPT_HOSTED_TERMS_VERSION`. See `BOT_ACCEPT_HOSTED_TERMS_ENV`.
+  const session: SessionLike = boot.session ?? new BotSession(RELAY, IDENTITY, key as string, boot.fetchImpl, botHostedTerms(env));
   // Set BEFORE `open()`, so a re-mint during the very first call is still reported.
   if ('out' in session) (session as { out: ((m: string) => void) | null }).out = out;
   const identity = await session.open();
