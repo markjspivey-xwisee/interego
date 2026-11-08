@@ -12,8 +12,9 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const require = createRequire(join(root, 'package.json'));
 assert.throws(() => require.resolve('componentsjs-generator/package.json'), { code: 'MODULE_NOT_FOUND' }, 'Generator must be absent at runtime');
 const iri = 'https://linkedsoftwaredependencies.org/bundles/npm/componentsjs/^6.0.0/components/context.jsonld';
-const generated = JSON.parse(readFileSync(join(root, 'dist/components/context.jsonld'), 'utf8'));
-assert.ok(JSON.stringify(generated).includes(iri), 'Keep the generator-emitted v6 IRI; do not alias it to v5');
+const packageMetadata = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'));
+assert.equal(packageMetadata['lsd:contexts']?.[iri], 'dist/components/componentsjs-6-context.jsonld',
+  'Keep the generator ComponentsJS 6 context explicitly registered for the pruned runtime');
 const bytes = readFileSync(join(root, 'dist/components/componentsjs-6-context.jsonld'));
 assert.equal(createHash('sha256').update(bytes).digest('hex'), 'e901f402321d504bbd2722e48e8d1fe197558f63865ecd137ab15ef98592e2eb', 'Retained context bytes changed');
 const expected = JSON.parse(bytes.toString('utf8'));
