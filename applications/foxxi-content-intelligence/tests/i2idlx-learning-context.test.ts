@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { tmpdir } from 'node:os';
+import { execFileSync } from 'node:child_process';
 import { AgentSessionStore } from '../src/i2idlx-agent-sessions.js';
 import { LearningAuthError, type LearningPrincipal } from '../src/i2idlx-learning-auth.js';
 import { emptyLearningState, LearningConnectionsStore, type LearningPolicy, type LearningRepository, type LearningSnapshot, type LearningState } from '../src/i2idlx-learning-connections.js';
@@ -331,7 +332,7 @@ describe('actual agent broker with enrolled learning authorization', () => {
         curriculum: { label: 'Owner suggested study sequence', sequence: [{ course_id: 'orientation' }, { course_id: 'course-a', version: 2 }] } } });
     return { ...f, saved };
   }
-  it('delivers only explicitly shared released own-review and mapped instructional evidence through the actual broker', async () => {
+  it('delivers the actual server review through the public browser adapter and broker without rewriting its bound packet', async () => {
     const f = await reviewedFixture(), result = await f.source({ share_review: true }), packet = row(result.interventionContext);
     expect(packet.quiz_review).toMatchObject({ status: 'available', records: [{ question_label: 'Which incident code did you record?', learner_response: 'B', learner_response_label: 'GREEN-12', result: 'incorrect', locations: [{ source_file: 'incident.html' }] }] });
     expect(packet.learning_map).toMatchObject({ status: 'owner-supplied', prerequisites: [{ relation: 'required' }, { relation: 'recommended' }] });
@@ -340,7 +341,16 @@ describe('actual agent broker with enrolled learning authorization', () => {
     expect(JSON.stringify(packet)).not.toMatch(/HIDDEN-|PRIVATE-|private@example|"correctResponses"\s*:|"suspendData"\s*:/);
     expect(f.calls.some(call => call.path.includes('includeInteractionsAndObjectives=true'))).toBe(true);
     expect(f.calls.some(call => /quiz\/answers|\.zip/.test(call.path))).toBe(false);
-    const queued = await f.enqueue(result), next = await f.driver('next'); expect(next.turn_id).toBe(queued.turn_id);
+    // Exercise the real browser boundary: a parallel hand-authored DTO hid the
+    // live nested-review mismatch even while server and UI fixtures were green.
+    const clientScript = "import { readFileSync } from 'node:fs'; const { selectedLearningPacket } = await import(process.argv[1]); const input = JSON.parse(readFileSync(0, 'utf8')); process.stdout.write(JSON.stringify(selectedLearningPacket(input.value, input.expected)));";
+    const clientResult = row(JSON.parse(execFileSync(process.execPath, ['--input-type=module', '--eval', clientScript,
+      new URL('../i2idlx/app/src/learning-client.js', import.meta.url).href], { encoding: 'utf8', timeout: 5000, windowsHide: true,
+      input: JSON.stringify({ value: result, expected: { link_id: f.link.id, course: f.original, share_content: true, share_progress: true, share_review: true } }) })));
+    expect(result.quiz_review).toBeUndefined();
+    expect(row(clientResult.quiz_review).count).toBe(1);
+    expect(JSON.stringify(clientResult.interventionContext)).toBe(JSON.stringify(packet));
+    const queued = await f.enqueue(clientResult), next = await f.driver('next'); expect(next.turn_id).toBe(queued.turn_id);
     expect(JSON.stringify(next.task)).toContain('GREEN-12');
     expect(JSON.stringify(next.task)).not.toMatch(/HIDDEN-|PRIVATE-/);
     const finished = await f.driver('finish', { turn_id: next.turn_id, lease_id: next.lease_id, revision: next.revision, text: 'Your recorded response was incorrect. Review the incident procedure source.' });
