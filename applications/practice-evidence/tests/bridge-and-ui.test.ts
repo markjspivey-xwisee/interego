@@ -1110,7 +1110,11 @@ describe('the web UI works, driven in a DOM against the real handlers', () => {
     expect((p.q('[data-field="title"] input') as HTMLInputElement).value).toBe(String(demoDraft()['title']));
     expect(p.text('#view')).toContain('You pasted a draft from an AI: choose My AI assistant and name it.');
     expect((p.all('[data-field="choice"] input[type=radio]') as HTMLInputElement[]).some((r) => r.checked)).toBe(false);
-    // Turning on a key of your own (Advanced) offers drafting with it.
+    // Turning on a key of your own (Advanced) offers drafting with it, and what the author typed for the
+    // draft survives the form being drawn again: the brief, the material and the pasted answer.
+    const typed = { '#draft-brief': 'A sponsor hears that two defects block the payment flow.', '#draft-source': 'Defect log, week 12.', '#draft-json': 'Their whole answer' };
+    for (const [sel, v] of Object.entries(typed)) p.set(p.q(sel), v);
+    const values = (): string[] => Object.keys(typed).map((sel) => (p.q(sel) as HTMLTextAreaElement | null)?.value ?? '(gone)');
     p.click('#connect-ai-button');
     await p.until(() => p.q('#connect-ai[open]'), 'the Connect dialog');
     const toggle = p.q('#connect-ai #byok') as HTMLInputElement;
@@ -1118,6 +1122,18 @@ describe('the web UI works, driven in a DOM against the real handlers', () => {
     p.fire(toggle, 'change');
     await p.until(() => p.q(button(PEV_ACTION.draftScenario)), 'drafting with your own key');
     expect(p.text(button(PEV_ACTION.draftScenario))).toBe('Draft with my Anthropic key');
+    expect(values()).toEqual(Object.values(typed));
+    // The draft card and the paste box stay open to show what is in them, even with a draft loaded.
+    expect((p.q('.draft-card') as HTMLDetailsElement).open && (p.q('.draft-paste') as HTMLDetailsElement).open).toBe(true);
+    toggle.checked = false;
+    p.fire(toggle, 'change');
+    await p.until(() => !p.q(button(PEV_ACTION.draftScenario)), 'drafting by copy and paste again');
+    expect(values()).toEqual(Object.values(typed));
+    // Starting a new scenario starts with an empty brief.
+    p.click('#connect-ai .modal__footer .btn--primary');
+    const fresh = p.all('#view button').find((b) => b.textContent === 'Start a new scenario');
+    fresh!.click();
+    await p.until(() => (p.q('#draft-brief') as HTMLTextAreaElement | null)?.value === '', 'a new, empty scenario');
     expect(p.errors).toEqual([]);
   }, SLOW);
 

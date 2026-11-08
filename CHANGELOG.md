@@ -20,6 +20,16 @@ and re-read Cloud rather than treating incoming payloads as learning evidence.
 Credentials, map metadata and notification configuration remain dynamically
 scoped to each managed connection and verified learner link.
 
+## 2026-11-08 — Practice Evidence: an author's draft brief survives the form being drawn again
+
+On Write a scenario, the brief, the material to draw on and a pasted AI
+answer lived only in their fields, so anything that drew the form again
+emptied them: turning the author's own Anthropic key on or off in the
+Connect dialog, each choice made below them, and loading a draft. They are
+now kept with the rest of the scenario being written, until "Start a new
+scenario". The draft card and the copy-and-paste box stay open while they
+hold text, so what was typed stays in view.
+
 ## 2026-11-08 — Practice Evidence: use your own Claude or ChatGPT, never our key
 
 Practice Evidence runs no AI of its own and never asks for an API key. The
