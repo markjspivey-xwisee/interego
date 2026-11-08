@@ -19,6 +19,12 @@
  *     on when it is not the agent's own, which is the delegate case: the pod owner registers
  *     the agent there with a publishing scope, and every descriptor is attributed to the agent
  *     on behalf of the owner.
+ *     The agent's FIRST login creates its own hosted account, which the hosted identity server
+ *     opens only with the operator's agreement to the Hosted Interego Terms (HTTP 428
+ *     `hosted_terms_required` otherwise). INTEREGO_AGENT_ACCEPT_HOSTED_TERMS_VERSION is that
+ *     agreement: the exact version (GET <identity>/.well-known/hosted-interego-terms) the
+ *     operator read and agreed to. It is never defaulted, and an agent that already has an
+ *     account does not need it.
  *   - INTEREGO_BEARER: a relay session token pasted in by hand; it lasts an hour.
  *
  * Without either, the bridge still writes every artifact locally and reports publish: 'skipped'.
@@ -29,8 +35,8 @@ import type { Published } from './descriptor.js';
 import { modalStatus } from './descriptor.js';
 
 export {
-  DEFAULT_RELAY_URL, DidTokenMinter, RelayClient, agentKeyFromJwk, base58btc, didChallengeText, generateAgentKeyJwk, lastJsonRpcMessage,
-  signNonce,
+  DEFAULT_RELAY_URL, DidChallengeRefusedError, DidTokenMinter, HostedTermsRequiredError, RelayClient, agentKeyFromJwk, base58btc,
+  checkDidChallenge, didChallengeText, generateAgentKeyJwk, lastJsonRpcMessage, signNonce,
 } from '../../_shared/relay-agent/index.js';
 export type { AgentKey, MinterConfig, RelayConfig, TokenSource, ToolCallResult } from '../../_shared/relay-agent/index.js';
 
@@ -43,10 +49,14 @@ export function relayFromEnv(): RelayClient | null {
   const podName = process.env['INTEREGO_POD_NAME'];
   const keyJson = process.env['INTEREGO_AGENT_KEY_JSON'];
   if (keyJson) {
+    const acceptHostedTermsVersion = process.env['INTEREGO_AGENT_ACCEPT_HOSTED_TERMS_VERSION'];
     const minter = new DidTokenMinter({
       relayOrigin: new URL(url).origin,
       key: agentKeyFromJwk(keyJson),
       clientName: process.env['INTEREGO_CLIENT_NAME'] ?? 'jev-harness-bridge',
+      ...(acceptHostedTermsVersion ? { acceptHostedTermsVersion } : {}),
+      // Named in a 428 or a refused challenge, so the operator reads the variable THEY set.
+      acceptHostedTermsSetting: 'INTEREGO_AGENT_ACCEPT_HOSTED_TERMS_VERSION',
     });
     return new RelayClient({ url, bearer: minter, clientName: 'jev-harness', ...(podName ? { podName } : {}) });
   }

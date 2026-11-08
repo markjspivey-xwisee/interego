@@ -8,6 +8,19 @@ export const MAX_IDENTITY_RESPONSE = 64 * 1024;
 // only a transport ceiling; the verified handoff expiry still limits authority.
 export const LINK_IDENTITY_REQUEST_TIMEOUT_MS = 45_000;
 const unavailable = () => new Error('The sign-in service could not be reached safely. Start a new sign-in and try again.');
+
+/**
+ * Hosted identity refused to open a NEW account for this key without the Hosted Interego Terms
+ * agreement (HTTP 428 `hosted_terms_required`, forwarded unchanged by the relay's `/oauth/verify`).
+ *
+ * ★ ONLY THE STATUS CROSSES, NEVER THE BODY. Every other non-200 answer stays the one
+ * indistinguishable `unavailable()`. This one is told apart because it is not a transport fault
+ * and retrying cannot fix it: the key has no hosted account, and installed-app sign-in cannot give
+ * the agreement that opening one needs. The caller says so in its own fixed words.
+ */
+export class HostedTermsRefusal extends Error {
+  constructor() { super('Hosted Interego requires the Hosted Terms agreement to create an account for this key.'); this.name = 'HostedTermsRefusal'; }
+}
 export function identityPublicAddress(address: string): boolean {
   if (isIP(address) === 4) {
     const [a = 0, b = 0, c = 0] = address.split('.').map(Number);
@@ -52,6 +65,8 @@ export async function localIdentityNetwork(url: URL, body: string, signal: Abort
       });
       response.once('error', reject);
       response.once('end', () => {
+        // The one refusal told apart, by status alone; its body is dropped here. See HostedTermsRefusal.
+        if (response.statusCode === 428) { resolve(new Response(null, { status: 428 })); return; }
         if (response.statusCode !== 200 || !(response.headers['content-type'] ?? '').toLowerCase().startsWith('application/json')) { reject(unavailable()); return; }
         resolve(new Response(Buffer.concat(chunks), { status: 200, headers: { 'content-type': 'application/json' } }));
       });
@@ -61,6 +76,7 @@ export async function localIdentityNetwork(url: URL, body: string, signal: Abort
 }
 
 export async function localIdentityJson(response: Response, signal: AbortSignal): Promise<unknown> {
+  if (response.status === 428 && !response.redirected) { void response.body?.cancel().catch(() => {}); throw new HostedTermsRefusal(); }
   if (response.status !== 200 || response.redirected || !(response.headers.get('content-type') ?? '').toLowerCase().startsWith('application/json')
     || Number(response.headers.get('content-length') ?? 0) > MAX_IDENTITY_RESPONSE) {
     void response.body?.cancel().catch(() => {}); throw unavailable();

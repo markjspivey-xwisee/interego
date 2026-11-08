@@ -82,6 +82,7 @@
   .panel.refused h4{color:var(--refused);}
   .panel.pending{border-color:color-mix(in srgb,var(--pending) 45%,transparent);background:var(--pending-bg);}
   .panel.pending h4{color:var(--pending);}
+  .terms label{display:block;}
   .kv{display:grid;grid-template-columns:auto minmax(0,1fr);gap:2px 9px;font-family:var(--mono);
       font-size:10.5px;margin:7px 0;overflow-wrap:anywhere;}
   .kv .k{color:var(--faint);} .kv .v.was{color:var(--refused);} .kv .v.is{color:var(--ok);}
@@ -202,6 +203,13 @@
       are different accounts, not two doors to one account — signing in the other way later shows an
       empty workspace, because it is a different pod.</p>
     <div id="storeline" class="note"></div>
+    <!--
+      ★ THE HOSTED TERMS, AND AN "I AGREE" BOX THAT STARTS UNTICKED. A wallet key that opens a NEW
+      hosted account is refused (HTTP 428) without the person's agreement to the current version;
+      the renderer draws the link and the box here from what the identity server offers, and sends
+      the version only from a box the person ticked. A returning account never needs it.
+    -->
+    <div id="signin-terms" class="terms"></div>
     <div class="row">
       <button class="primary" id="signin-browser">Create an account with a passkey</button>
       <button id="signin-wallet">Use a wallet key on this machine</button>
@@ -400,6 +408,8 @@
         <div class="hint">Derived from the delegate's key, never typed. Mint one below, or paste a key you
           already have to adopt the delegate it belongs to.</div>
       </div>
+      <!-- The delegate's OWN agreement: a minted delegate opens its own hosted account. -->
+      <div id="delegate-terms" class="terms"></div>
       <div class="row">
         <button id="delegatemint">Mint a new delegate identity</button>
       </div>

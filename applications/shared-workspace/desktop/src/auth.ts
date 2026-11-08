@@ -67,10 +67,12 @@ const json = { 'Content-Type': 'application/json' } as const;
  * binary is a public client id either way. PKCE is what actually binds the code to this
  * process.
  */
-export async function beginAuthorization(relay: string, clientName: string, redirectUri: string): Promise<PendingAuthorization> {
+export async function beginAuthorization(
+  relay: string, clientName: string, redirectUri: string, fetchImpl: typeof fetch = fetch,
+): Promise<PendingAuthorization> {
   const verifier = b64u(randomBytes(32));
   const challenge = b64u(createHash('sha256').update(verifier).digest());
-  const regRes = await fetch(relay + '/register', {
+  const regRes = await fetchImpl(relay + '/register', {
     method: 'POST',
     headers: json,
     body: JSON.stringify({
@@ -92,7 +94,7 @@ export async function beginAuthorization(relay: string, clientName: string, redi
     + '&code_challenge_method=S256&scope=mcp&state=' + b64u(randomBytes(9))
     + '&resource=' + encodeURIComponent(relay + '/');
 
-  const page = await (await fetch(authorizeUrl)).text();
+  const page = await (await fetchImpl(authorizeUrl)).text();
   const pendingId = /const PENDING_ID\s*=\s*['"]([^'"]+)/.exec(page)?.[1] ?? null;
   return { clientId: client.client_id, verifier, challenge, redirectUri, authorizeUrl, pendingId };
 }
@@ -125,8 +127,10 @@ function asBearer(tj: TokenGrant, method: RelayOAuthBearer['method'], clientId: 
 }
 
 /** Exchange an authorization code for a bearer. PKCE verifier is what proves it is ours. */
-export async function exchangeCode(relay: string, p: PendingAuthorization, code: string, method: RelayOAuthBearer['method']): Promise<RelayOAuthBearer> {
-  const res = await fetch(relay + '/token', {
+export async function exchangeCode(
+  relay: string, p: PendingAuthorization, code: string, method: RelayOAuthBearer['method'], fetchImpl: typeof fetch = fetch,
+): Promise<RelayOAuthBearer> {
+  const res = await fetchImpl(relay + '/token', {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body: new URLSearchParams({
@@ -201,6 +205,29 @@ export async function refreshBearer(relay: string, bearer: RelayOAuthBearer): Pr
  */
 export const DESKTOP_CLIENT_NAME = 'interego-workspace-desktop';
 
+/** The statement an ordinary wallet sign-in signs: no agreement of any kind. */
+export const ORDINARY_SIWE_STATEMENT = 'Sign in to Interego';
+
+/**
+ * What a wallet sign-in may carry beyond the key.
+ *
+ * ★ `acceptHostedTermsVersion` IS THE PERSON'S OWN TICK, PASSED THROUGH UNCHANGED. Since the
+ * hosted identity server began requiring the Hosted Interego Terms for a NEW account, a wallet
+ * key that has never signed in is refused with HTTP 428 `hosted_terms_required` unless the
+ * challenge was asked for with the current `termsVersion` and the message signs the
+ * `termsStatement` the server returned for it. This module never decides that on anybody's
+ * behalf: it does not fetch the terms, pick a version or default one. A version arrives here
+ * only because somebody ticked "I agree" next to that exact version in this app's window.
+ *
+ * Absent, the sign-in is exactly what it always was, and a RETURNING account is unaffected
+ * either way: the server only asks for the agreement when the wallet would open a new account.
+ */
+export interface WalletSignInOptions {
+  readonly acceptHostedTermsVersion?: string;
+  /** Injected for tests. Defaults to the global fetch. */
+  readonly fetchImpl?: typeof fetch;
+}
+
 export async function signInWithWallet(
   relay: string,
   identityServer: string,
@@ -208,32 +235,114 @@ export async function signInWithWallet(
   signMessage: (message: string) => Promise<string>,
   redirectUri: string,
   clientName: string = DESKTOP_CLIENT_NAME,
+  opts: WalletSignInOptions = {},
 ): Promise<RelayOAuthBearer> {
-  const p = await beginAuthorization(relay, clientName, redirectUri);
+  const f = opts.fetchImpl ?? fetch;
+  const accept = opts.acceptHostedTermsVersion;
+  const p = await beginAuthorization(relay, clientName, redirectUri, f);
   if (!p.pendingId) throw new Error('the relay\'s authorize page carried no PENDING_ID, so this sign-in has nothing to attach a wallet proof to');
 
-  const nonceRes = await fetch(identityServer + '/challenges', {
-    method: 'POST', headers: json, body: JSON.stringify({ purpose: 'siwe' }),
+  const nonceRes = await f(identityServer + '/challenges', {
+    method: 'POST', headers: json,
+    body: JSON.stringify({ purpose: 'siwe', ...(accept ? { termsVersion: accept } : {}) }),
   });
-  const { nonce } = await nonceRes.json() as { nonce?: string };
-  if (!nonce) throw new Error('the identity server issued no SIWE nonce');
+  const ch = await nonceRes.json().catch(() => ({})) as { nonce?: unknown; termsStatement?: unknown; error?: unknown };
+  const nonce = typeof ch.nonce === 'string' ? ch.nonce : '';
+  if (!nonce) {
+    throw new Error('the identity server issued no SIWE nonce'
+      + (nonceRes.ok ? '' : ' (HTTP ' + nonceRes.status + ': ' + (typeof ch.error === 'string' ? ch.error : 'no error given') + ')'));
+  }
+  // The nonce is a line of the signed message, so it gets the identity server's own rule
+  // (deploy/identity/siwe-message.ts NONCE): letters and digits only, at least eight. Anything
+  // else could carry a line break into the fields this key signs.
+  if (!/^[A-Za-z0-9]{8,}$/.test(nonce)) throw new Error('the identity server issued a SIWE nonce that is not 8+ letters or digits, so nothing was signed');
+  /**
+   * ★ THE AGREEMENT TEXT IS THE SERVER'S, AND IT IS SIGNED ONLY WHEN SOMEBODY AGREED. The server
+   * returns `termsStatement` only when it offers exactly the version asked for. No statement back
+   * is not an error — a version the server no longer offers must still let an existing account
+   * in, and the server then decides whether this key needs the agreement (a 428 below says so).
+   * A statement nobody asked for is never signed: without a version from the person this is the
+   * ordinary sign-in, whatever the reply carries.
+   */
+  const statement = accept && typeof ch.termsStatement === 'string' && ch.termsStatement !== ''
+    ? ch.termsStatement
+    : ORDINARY_SIWE_STATEMENT;
+  // The statement is one line of an ERC-4361 message; a line break in it would let the server's
+  // text write the fields that follow it (URI, Nonce, …) into what this key signs.
+  if (/[\r\n]/.test(statement)) throw new Error('the identity server offered a terms statement containing a line break, so nothing was signed');
 
   // The message is built to the relay's own expectations — host, URI and statement included —
   // because a SIWE message is only as good as what it commits to. Signing a bare nonce would
   // let the same signature be replayed at any other verifier that asked for one.
   const message = 'relay.interego.xwisee.com wants you to sign in with your Ethereum account:\n'
-    + address + '\n\nSign in to Interego\n\nURI: ' + relay + '\nVersion: 1\nChain ID: 1\n'
+    + address + '\n\n' + statement + '\n\nURI: ' + relay + '\nVersion: 1\nChain ID: 1\n'
     + 'Nonce: ' + nonce + '\nIssued At: ' + new Date().toISOString();
   const signature = await signMessage(message);
 
-  const vres = await fetch(relay + '/oauth/verify', {
+  const vres = await f(relay + '/oauth/verify', {
     method: 'POST', headers: json,
     body: JSON.stringify({ pending_id: p.pendingId, method: 'siwe', message, signature, nonce }),
   });
-  const vj = await vres.json() as { redirect?: string; error?: string; message?: string };
+  const vj = await vres.json().catch(() => ({})) as { redirect?: string; error?: string; message?: string };
   const code = /[?&]code=([^&]+)/.exec(vj.redirect ?? '')?.[1];
-  if (!code) throw new Error('the relay did not accept this wallet proof: ' + (vj.message ?? vj.error ?? JSON.stringify(vj).slice(0, 200)));
-  return exchangeCode(relay, p, code, 'siwe');
+  // ★ THE STATUS AND THE SERVER'S OWN WORDS. A 428 `hosted_terms_required` read as "did not accept
+  // this wallet proof" hid the one fact that said what to do: this key has no account yet, and
+  // opening one needs the agreement the sign-in screen asks for.
+  if (!code) {
+    throw new Error('the relay did not accept this wallet proof (HTTP ' + vres.status + '): '
+      + (vj.message ?? vj.error ?? JSON.stringify(vj).slice(0, 200))
+      + (vres.status === 428 ? HOSTED_TERMS_HINT : ''));
+  }
+  return exchangeCode(relay, p, code, 'siwe', f);
+}
+
+/**
+ * What the app adds to a 428, in its own words, after the server's. The renderer shows the whole
+ * message, so the person reads both the refusal and what to do about it.
+ */
+export const HOSTED_TERMS_HINT = ' This key has no hosted account yet. Creating one needs your agreement to the Hosted '
+  + 'Interego Terms: read them, tick "I agree" on this screen, and try again. Nothing was created.';
+
+/** The current Hosted Interego Terms, as the identity server advertises them, or why they are unknown. */
+export type HostedTermsOffer =
+  | { readonly state: 'offered'; readonly version: string; readonly url: string; readonly privacyUrl: string | null; readonly betaNotice: string | null }
+  | { readonly state: 'none' }
+  | { readonly state: 'unknown'; readonly why: string };
+
+/**
+ * Read `GET <identity>/.well-known/hosted-interego-terms`.
+ *
+ * ★ READ, NEVER AGREED TO. This returns what the server offers so a person can be SHOWN it; the
+ * only thing that turns an offer into an agreement is that person ticking the box next to it.
+ *
+ * ★ AND A LINK THE WINDOW WILL OPEN IS CHECKED HERE. The renderer opens it in the system browser,
+ * so anything but an https URL is refused as an offer this app cannot show honestly.
+ */
+export async function readHostedTerms(identityServer: string, fetchImpl: typeof fetch = fetch): Promise<HostedTermsOffer> {
+  let res: Response;
+  try {
+    res = await fetchImpl(identityServer + '/.well-known/hosted-interego-terms', { headers: { Accept: 'application/json' } });
+  } catch (e) {
+    return { state: 'unknown', why: 'the identity server could not be reached: ' + ((e as Error)?.message ?? String(e)) };
+  }
+  if (res.status === 404) return { state: 'none' };
+  if (!res.ok) return { state: 'unknown', why: 'the identity server answered HTTP ' + res.status };
+  const body = await res.json().catch(() => null) as { terms?: { version?: unknown; url?: unknown } | null; privacyUrl?: unknown; betaNotice?: unknown } | null;
+  if (!body || typeof body !== 'object') return { state: 'unknown', why: 'the identity server answered without JSON' };
+  if (body.terms === null || body.terms === undefined) return { state: 'none' };
+  const { version, url } = body.terms;
+  const https = (u: unknown): u is string => {
+    if (typeof u !== 'string' || /[\r\n]/.test(u)) return false;
+    try { return new URL(u).protocol === 'https:'; } catch { return false; }
+  };
+  if (typeof version !== 'string' || !/^\d{4}-\d{2}-\d{2}(?:-r[1-9]\d*)?$/.test(version) || !https(url)) {
+    return { state: 'unknown', why: 'the identity server advertised terms this app cannot show (no dated version or no https link)' };
+  }
+  return {
+    state: 'offered', version, url,
+    privacyUrl: https(body.privacyUrl) ? body.privacyUrl : null,
+    betaNotice: typeof body.betaNotice === 'string' && body.betaNotice.length <= 400 ? body.betaNotice : null,
+  };
 }
 
 /**

@@ -1,8 +1,11 @@
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { createHash, createPublicKey, randomBytes, verify as edVerify } from 'node:crypto';
-import { DidTokenMinter, RelayClient, agentKeyFromJwk, base58btc, didChallengeText, generateAgentKeyJwk, lastJsonRpcMessage, publishJudgment, recordTrajectoryStep, signNonce } from '../src/publish.js';
+import {
+  DidTokenMinter, HostedTermsRequiredError, RelayClient, agentKeyFromJwk, base58btc, didChallengeText, generateAgentKeyJwk, lastJsonRpcMessage,
+  publishJudgment, recordTrajectoryStep, relayFromEnv, signNonce,
+} from '../src/publish.js';
 import type { NavigationJudgment } from '../src/judgments/navigate.js';
 
 let server: Server;
@@ -352,5 +355,111 @@ describe('the text a did-sig challenge is signed over', () => {
     expect(didChallengeText({ nonce: 'n' })).toBe('n');
     expect(didChallengeText({ nonce: 'n', message: undefined })).toBe('n');
     expect(didChallengeText({ nonce: 'n', message: 7 })).toBe('n');
+  });
+});
+
+/**
+ * ── relayFromEnv() and the Hosted Terms ──
+ *
+ * The bridge's environment reaches the agent-key minter: INTEREGO_AGENT_ACCEPT_HOSTED_TERMS_VERSION
+ * goes out with the did-sig challenge of a first login, and a refusal names that variable.
+ *
+ * ★ WHAT THESE CASES EXIST TO CATCH. `relayFromEnv()` is the only place the deployed bridge's
+ * operator can give the Hosted Terms agreement its first login needs (HTTP 428 otherwise), and
+ * the minter it builds is otherwise tested only when constructed by hand. A read of the wrong name,
+ * or a minter built without the value, would leave a fresh bridge unable to log in with the
+ * variable set; a refusal that named the library option instead of the variable would point the
+ * operator at code they do not edit.
+ *
+ * ★ NOTHING HERE DIALS ANYTHING. Every variable `relayFromEnv()` reads is stubbed — the relay URL
+ * at an example host — and `globalThis.fetch` is replaced by a scripted relay and identity server
+ * for each case, then restored. The scripted identity admits a NEW key only when its challenge
+ * was asked for with the version on offer; that is the whole of the contract this question needs
+ * (the signed text and its Ed25519 verification are `applications/_shared/tests/relay-agent-terms.test.ts`).
+ */
+
+const TERMS_RELAY = 'https://relay.example';
+const TERMS_IDENTITY = 'https://identity.example';
+const TERMS_CURRENT = '2026-11-06-r2';
+const TERMS_REFUSAL = 'Review the Hosted Interego Terms of Service and select I agree before creating an account.';
+const TERMS_VARIABLE = 'INTEREGO_AGENT_ACCEPT_HOSTED_TERMS_VERSION';
+
+const termsJson = (status: number, payload: unknown): Response =>
+  new Response(JSON.stringify(payload), { status, headers: { 'Content-Type': 'application/json' } });
+
+/** A relay and identity server that open a new account only for a challenge asked for with TERMS_CURRENT. */
+function termsRelay(): { f: typeof fetch; challengeBodies: Array<Record<string, unknown>> } {
+  const challengeBodies: Array<Record<string, unknown>> = [];
+  const agreed = new Map<string, boolean>();
+  let serial = 0;
+  const f = (async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+    const url = String(input);
+    const raw = typeof init?.body === 'string' ? init.body : '';
+    const body = raw.startsWith('{') ? JSON.parse(raw) as Record<string, unknown> : {};
+    if (url === `${TERMS_RELAY}/register`) return termsJson(201, { client_id: 'client-1' });
+    if (url.startsWith(`${TERMS_RELAY}/authorize?`)) {
+      return new Response(`<script>const PENDING_ID = "p1";\nconst IDENTITY = "${TERMS_IDENTITY}";</script>`, { status: 200 });
+    }
+    if (url === `${TERMS_IDENTITY}/challenges`) {
+      challengeBodies.push(body);
+      const nonce = `Nonce${String(++serial).padStart(12, '0')}`;
+      const accepted = body['termsVersion'] === TERMS_CURRENT;
+      agreed.set(nonce, accepted);
+      const statement = accepted ? `\nI am at least 18 and agree to the Hosted Interego Terms of Service at https://interego.example/terms/${TERMS_CURRENT}/` : '';
+      return termsJson(200, { nonce, message: `Interego DID sign-in v1\nHost: identity.example\nNonce: ${nonce}${statement}` });
+    }
+    if (url === `${TERMS_RELAY}/oauth/verify`) {
+      return agreed.get(String(body['nonce'])) ? termsJson(200, { redirect: 'http://localhost:9999/cb?code=c1' }) : termsJson(428, { error: TERMS_REFUSAL });
+    }
+    if (url === `${TERMS_RELAY}/token`) return termsJson(200, { access_token: 'minted-token', expires_in: 3600 });
+    throw new Error(`unexpected request ${url}`);
+  }) as typeof fetch;
+  return { f, challengeBodies };
+}
+
+/** The bearer source `relayFromEnv()` built; minting it is the question, not the MCP call after it. */
+const mintFrom = (relay: unknown): Promise<string> => (relay as { cfg: { bearer: { token(): Promise<string> } } }).cfg.bearer.token();
+
+describe('relayFromEnv() and the operator\'s Hosted Terms agreement', () => {
+  const realFetch = globalThis.fetch;
+  beforeEach(() => {
+    vi.stubEnv('INTEREGO_RELAY_URL', `${TERMS_RELAY}/mcp`);
+    vi.stubEnv('INTEREGO_AGENT_KEY_JSON', JSON.stringify(generateAgentKeyJwk()));
+    vi.stubEnv('INTEREGO_CLIENT_NAME', 'jev-harness-test');
+    vi.stubEnv('INTEREGO_POD_NAME', '');
+    vi.stubEnv('INTEREGO_BEARER', '');
+  });
+  afterEach(() => {
+    globalThis.fetch = realFetch;
+    vi.unstubAllEnvs();
+  });
+
+  it('★ with the variable set, the challenge carries exactly that termsVersion and the first login opens the account', async () => {
+    vi.stubEnv(TERMS_VARIABLE, TERMS_CURRENT);
+    const { f, challengeBodies } = termsRelay();
+    globalThis.fetch = f;
+    await expect(mintFrom(relayFromEnv())).resolves.toBe('minted-token');
+    expect(challengeBodies).toEqual([{ purpose: 'did-sig', termsVersion: TERMS_CURRENT }]);
+  });
+
+  it('★ unset, nothing is agreed to, and the 428 names the variable the operator sets — not the library option', async () => {
+    vi.stubEnv(TERMS_VARIABLE, '');
+    const { f, challengeBodies } = termsRelay();
+    globalThis.fetch = f;
+    const err = await mintFrom(relayFromEnv()).then(() => null, (e: Error) => e);
+    expect(challengeBodies).toEqual([{ purpose: 'did-sig' }]);
+    expect(err).toBeInstanceOf(HostedTermsRequiredError);
+    expect(err?.message).toContain('answered HTTP 428: ' + TERMS_REFUSAL);
+    expect(err?.message).toContain(`${TERMS_VARIABLE} is not set, so none was sent`);
+    expect(err?.message).not.toContain('acceptHostedTermsVersion');
+  });
+
+  it('a configured version the server no longer offers is reported as sent and not accepted, naming the variable', async () => {
+    vi.stubEnv(TERMS_VARIABLE, '2026-10-01');
+    const { f, challengeBodies } = termsRelay();
+    globalThis.fetch = f;
+    const err = await mintFrom(relayFromEnv()).then(() => null, (e: Error) => e);
+    expect(challengeBodies).toEqual([{ purpose: 'did-sig', termsVersion: '2026-10-01' }]);
+    expect(err?.message).toContain(`version 2026-10-01 (${TERMS_VARIABLE}) was sent and NOT accepted`);
   });
 });

@@ -289,9 +289,15 @@ const REPO_ROOT = fileURLToPath(new URL('..', import.meta.url));
 // Foxxi's lti-platform-readiness, lti-platform-publication and lti-platform-rate-limit
 // regression modules consumed the remaining headroom. Pin the expanded tree;
 // no modules were removed, excluded or skipped to meet the floor.
-// Enrolled-learning security modules bring the measured tree to 658. Retain
-// the expanded suite; no include, assertion or module was removed to pass.
-export const MIN_TEST_MODULES = 658;
+// 620 -> 653, measured with the integrity test's tracked :(glob) includes on the merge of
+// master (4beb1fa9) into the first-party Hosted Terms clients branch: 653 modules, 33 above
+// 620, past the 31 of slack. The gate named 622, the least it would accept, but that leaves
+// no headroom (the 539 -> 567 note above), and the live drivers' opt-in adds two more
+// modules. The five new ones are this branch's desktop, relay-agent and pod-desktop terms
+// tests. Nothing was removed, excluded or skipped.
+// Enrolled-learning security modules plus the current master bring the exact
+// tracked tree to 663. Retain every module; no include or assertion was removed.
+export const MIN_TEST_MODULES = 663;
 
 /**
  * How far below the real module count MIN_TEST_MODULES may sit before that is itself a

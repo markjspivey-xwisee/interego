@@ -67,7 +67,8 @@ ceiling, and `readEntryAuthorship`, a Turtle adapter over the substrate's `judge
    from about 2 s to about 31 s** while the relay provisions a pod — measured at both ends, so
    half a minute is normal and is not a hang; the boot checklist counts up and names the step
    rather than spinning. Wallet sign-in stays on the same card for people who already have a
-   `u-eth-…` pod.
+   `u-eth-…` pod. A new account in either case needs your agreement to the Hosted Interego Terms
+   (see *The Hosted Interego Terms, for a NEW account* below).
 2. **Read *Getting set up*.** Four steps with their real state — account, model, workspace,
    Discord — each marked as established for, established against, or **not established**. Step 2
    is a finding against when the CLI was asked and said no; step 4 is an *unknown*, because
@@ -449,7 +450,9 @@ replaces is the human pressing buttons.
 cd applications/shared-workspace/desktop
 npx install-electron --no   # once (Electron 42+): fetches the binary into the root node_modules/electron/dist
 
-# wallet path: sign in, read a workspace, and append a real, public entry
+# wallet path: sign in, read a workspace, and append a real, public entry. A key with no
+# hosted account yet (or none at all: the run then mints one) also needs
+# INTEREGO_SELFTEST_ACCEPT_HOSTED_TERMS_VERSION=<the version you read and agreed to>.
 env -u ELECTRON_RUN_AS_NODE \
   INTEREGO_SELFTEST_KEY=0x... \
   INTEREGO_SELFTEST_WORKSPACE=https://relay.interego.xwisee.com/ns/POD/NAME \
@@ -476,6 +479,49 @@ and that is permanent:
 | Wallet key on this machine | OS secret store (`safeStorage`) | `u-eth-...` | no |
 | **A wallet key you already have** | OS secret store, after you paste it | whatever pod that key owns | no |
 | Sign in in my browser (passkey / Windows Hello) | the platform authenticator | `u-pk-...` | yes |
+
+### The Hosted Interego Terms, for a NEW account
+
+The hosted identity server opens a **new** account only with your agreement to the current Hosted
+Interego Terms of Service; any other first sign-in is refused with HTTP 428 `hosted_terms_required`.
+A returning account is never asked again.
+
+* **Browser (passkey) sign-in** shows the terms and an *I agree* box on the relay's own page.
+* **Wallet sign-in** shows them on the sign-in card: the app reads the current version from
+  `GET <identity>/.well-known/hosted-interego-terms` and draws the link next to an *I agree* box
+  that **starts unticked every time it is drawn**. The version crosses to the main process only
+  from a box you ticked (`auth:wallet`, `account:import`, `account:signInAs` take it as an
+  argument); the challenge is then requested with that `termsVersion`, and the wallet signs exactly
+  the `termsStatement` the identity server returns for it — never a statement it did not ask for,
+  and never one with a line break in it. With the box unticked the sign-in is exactly what it
+  always was, so a key that already has an account signs in as before.
+* Pressing *Use a wallet key on this machine* with **no** key held mints one, and a new key is a
+  new account. That press goes on only when the identity server offers **no** terms, or when the
+  box is ticked for the version it offers. Pressed while the terms are still being read, it waits
+  for them; pressed when they could not be read, it is refused (and they are read again). Either
+  refusal is on screen, before anything is minted or sent.
+* **The main process checks the same before it creates a key.** `auth:wallet` with nothing stored
+  and `delegate:mint` read the offer from the identity server themselves and mint only when it
+  offers no terms or the version that came across is the one it offers; otherwise they refuse with
+  nothing minted and nothing stored, so no key is left behind for an account that cannot be
+  opened. A key you paste (`account:import`, `delegate:import`) is not minted and may already have
+  an account, so it is not gated: its sign-in goes to the server, which decides.
+* **A tick is used once.** After a completed sign-in, and on sign-out, the sign-in card's box (and
+  the delegate panel's) is redrawn unticked; after every mint or delegate adoption, whatever its
+  outcome, the delegate panel's box is. A sign-in that fails keeps the box as it was, so a retry is
+  still the agreement you just gave — unless the version moved (below).
+* A refusal is shown in the server's own words with its status
+  (`the relay did not accept this wallet proof (HTTP 428): …`). After any failed sign-in the app
+  reads the terms again; if the version moved, the box is redrawn for the new version, unticked.
+* **A minted delegate needs its own agreement.** A delegate key signs in as itself, so minting one
+  opens a new hosted account for it. The delegate panel has its **own** *I agree* box, ticked in the
+  same action as pressing *Mint*; your agreement for your own account does not carry over, and
+  minting goes on under the same rule as the wallet button above. Adopting a delegate key that
+  already has an account does not need it. The agreement is used for that delegate's first sign-in
+  only — its later re-authorizations sign in to an account that exists.
+* The headless `selftest` (`npm run selftest`) mints a key when none is stored; it sends a version
+  only from its own `INTEREGO_SELFTEST_ACCEPT_HOSTED_TERMS_VERSION`, the operator's agreement for
+  that run's account, never defaulted.
 
 ### Signing in as an identity you already have, and why the app was broken without it
 
@@ -560,6 +606,7 @@ src/preload.ts    the whole surface the renderer gets: describe, sign in, call a
                   read the session and be told when it changes
 src/renderer.ts   draws; every substrate decision comes from @interego/workspace-client
 src/selftest.ts   the headless live run above
+src/selftest-terms.ts  the selftest's own Hosted Terms variable, apart so it is testable
 ```
 
 **The bearer never crosses the IPC boundary.** The renderer asks for a tool call by name and

@@ -2,11 +2,12 @@
  * tools/fleet-event.ts: the fleet's operations as descriptors. What is tested is the pure part —
  * the arguments, the events they build, the publish_context call they become — against the
  * shapes the workflows actually pass: auto-deploy's deploy matrix, the audit's captured log, the
- * collector's dry-run output. main() and the relay are exercised by the live runs, not here.
+ * collector's dry-run output. main() and the relay are exercised by the live runs, not here; the
+ * relay sign-in settings main() reads from the environment are (fleetRelayOptions).
  */
 import { describe, it, expect } from 'vitest';
 import { Parser } from 'n3';
-import { componentsFromMatrix, eventsFromArgs, parseArgs, publishArgs, quarterOf, summaryFromLog } from '../tools/fleet-event.js';
+import { componentsFromMatrix, eventsFromArgs, fleetRelayOptions, parseArgs, publishArgs, quarterOf, summaryFromLog } from '../tools/fleet-event.js';
 
 const DID = 'did:key:z6MkfleetTestAgent';
 const NOW = new Date('2026-09-21T01:30:00.000Z');
@@ -148,5 +149,24 @@ describe('the publish_context call', () => {
     expect(args['graph_iri']).toBe(e!.payload.graph_iri);
     expect(args['graph_content']).toBe(e!.payload.graph_content);
     expect(publishArgs(e!, {})).not.toHaveProperty('pod_name');
+  });
+});
+
+describe('the relay sign-in settings', () => {
+  const at = { keyJson: '{"kty":"OKP"}', relayUrl: 'https://relay.example/mcp', podName: 'u-pk-x' };
+  it('★ takes the Hosted Terms agreement from INTEREGO_FLEET_ACCEPT_HOSTED_TERMS_VERSION only, and names that variable as the setting', () => {
+    const set = fleetRelayOptions({ INTEREGO_FLEET_ACCEPT_HOSTED_TERMS_VERSION: '2026-11-06-r2' }, at);
+    expect(set).toEqual({
+      keyJson: at.keyJson, relayUrl: at.relayUrl, clientName: 'interego-fleet', podName: 'u-pk-x',
+      acceptHostedTermsVersion: '2026-11-06-r2', acceptHostedTermsSetting: 'INTEREGO_FLEET_ACCEPT_HOSTED_TERMS_VERSION',
+    });
+    // Never defaulted, and never read from another tool's variable; the setting is named either way,
+    // since a 428 for an unset version is exactly when the operator needs to know where to set it.
+    for (const env of [{}, { INTEREGO_AGENT_ACCEPT_HOSTED_TERMS_VERSION: '2026-11-06-r2' }, { INTEREGO_FLEET_ACCEPT_HOSTED_TERMS_VERSION: '' }]) {
+      const unset = fleetRelayOptions(env, at);
+      expect(unset).not.toHaveProperty('acceptHostedTermsVersion');
+      expect(unset.acceptHostedTermsSetting).toBe('INTEREGO_FLEET_ACCEPT_HOSTED_TERMS_VERSION');
+    }
+    expect(fleetRelayOptions({ INTEREGO_FLEET_CLIENT_NAME: 'fleet-ci' }, at).clientName).toBe('fleet-ci');
   });
 });
