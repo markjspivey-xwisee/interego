@@ -320,10 +320,10 @@ const handlers = createPevHandlers({
 
 const listeners: TestListener[] = [];
 /** A bridge on a loopback port; its sign-in has the handlers' relay-delegation policy unless `interego` names another. */
-async function serve(interego: InteregoUiOptions | undefined, o: { readonly trustProxy?: boolean } = {}): Promise<TestListener> {
+async function serve(interego: InteregoUiOptions | undefined, o: { readonly trustProxy?: boolean; readonly handlers?: Handlers } = {}): Promise<TestListener> {
   const allowed: string[] = [];
   const app: Express = createVerticalBridge({
-    verticalName: 'practice-evidence', affordances: pevAffordances, handlers, deploymentUrl: 'http://127.0.0.1:6110', defaultPodUrl: DEMO_POD,
+    verticalName: 'practice-evidence', affordances: pevAffordances, handlers: o.handlers ?? handlers, deploymentUrl: 'http://127.0.0.1:6110', defaultPodUrl: DEMO_POD,
     middleware: (a) => {
       // As server.ts does on a deployment behind one proxy hop: req.ip is then the X-Forwarded-For address.
       if (o.trustProxy === true) a.set('trust proxy', 1);
@@ -345,12 +345,13 @@ interface Page {
   readonly long: { readonly ms: number; readonly fire: () => void }[];
   until<T>(fn: () => T | null | undefined | false, what: string, ms?: number): Promise<T>;
   q(sel: string): HTMLElement | null;
+  all(sel: string): HTMLElement[];
   text(sel: string): string;
   session(k: string): string | null;
 }
 
-/** The page at `path`, its fetch reaching the bridge, `session` copied into its sessionStorage first. */
-async function openPage(l: TestListener, path: string, session: Record<string, string> = {}): Promise<Page> {
+/** The page at `path`, its fetch reaching the bridge, `session` copied into its sessionStorage first, `setup` run before the client. */
+async function openPage(l: TestListener, path: string, session: Record<string, string> = {}, setup?: (w: JSDOM['window']) => void): Promise<Page> {
   const errors: string[] = [];
   const asked: string[] = [];
   const vc = new VirtualConsole();
@@ -383,6 +384,7 @@ async function openPage(l: TestListener, path: string, session: Record<string, s
     clearTimeout: (id?: number): void => { if (id !== undefined && held.delete(id)) return; realClear(id); },
   });
   for (const [k, v] of Object.entries(session)) w.sessionStorage.setItem(k, v);
+  setup?.(w);
   w.eval(await (await fetch(`${l.base}/ui/app.js`)).text());
   const d = w.document;
   return {
@@ -397,6 +399,7 @@ async function openPage(l: TestListener, path: string, session: Record<string, s
       }
     },
     q: (sel) => d.querySelector<HTMLElement>(sel),
+    all: (sel) => [...d.querySelectorAll<HTMLElement>(sel)],
     text: (sel) => d.querySelector(sel)?.textContent ?? '',
     session: (k) => w.sessionStorage.getItem(k),
   };
@@ -1155,6 +1158,256 @@ describe('the web UI signs a person in with their Interego account and has the r
 // ═════════════════════════════════════════════════════════════════════════════════════════════
 //  server.ts: the client address the limits count by
 // ═════════════════════════════════════════════════════════════════════════════════════════════
+
+// ═════════════════════════════════════════════════════════════════════════════════════════════
+//  Your own AI assistant: the Connect dialog, the chat hand-off and the messages a person copies
+// ═════════════════════════════════════════════════════════════════════════════════════════════
+
+function ok(r: Out): Out {
+  expect(r['kind'], `expected success, got ${JSON.stringify(r).slice(0, 600)}`).toBeUndefined();
+  return r;
+}
+
+/** The same pod, platform key and relay policy as `handlers`, with no model: the live service's shape. */
+const noModelHandlers = createPevHandlers({
+  platformWallet: PLATFORM, platformKeyKind: 'demo-fixture', adminAddresses: [W.admin.address], adminDids: [PRINCIPAL],
+  fetchFn: pod.fetchFn, holderFetchFn: pod.fetchFn, defaultPodUrl: DEMO_POD, servedPods: [DEMO_POD], deploymentUrl: 'http://127.0.0.1:6110',
+  relayDelegation: POLICY, relayUrl: RELAY,
+} satisfies PevDeps) as Handlers;
+
+/** The text a person sees: closed disclosures, dialogs that are not open, menus, hidden text and what people or an AI wrote, left out. */
+function shownText(root: Element | null): string {
+  if (!root) return '';
+  const c = root.cloneNode(true) as Element;
+  for (const sel of ['details:not([open]) > :not(summary)', 'dialog:not([open])', '[popover]', '.visually-hidden', '[hidden]', 'option', '.chat__bubble', '.kv dd', 'q', '.card__title']) {
+    for (const el of [...c.querySelectorAll(sel)]) el.remove();
+  }
+  return c.textContent ?? '';
+}
+const JARGON = /\b(pod|bridge|affordance|envelope|nonce|hypothetical|ratif\w*|countersign\w*|relay|payload|sign_payload)\b/i;
+const CODES = /\b(EIP-191|IRI|DID)\b|HTTP \d{3}|urn:|https?:\/\//;
+const plain = (where: string, text: string): void => {
+  expect([text.match(JARGON)?.[0] ?? null, text.match(CODES)?.[0] ?? null], where).toEqual([null, null]);
+};
+
+/** A signed-in page (the web UI's own agent) on `l`, its clipboard and its timers recorded. */
+async function signedInPage(l: TestListener, extra?: (w: JSDOM['window']) => void): Promise<Page & { copied: string[]; intervals: number[] }> {
+  const copied: string[] = [];
+  const intervals: number[] = [];
+  const p = await openPage(l, '/ui', { [SESSION_KEY]: JSON.stringify({ accessToken: relay.mint(USER), at: Date.now(), expiresAt: Date.now() + 3_600_000 }) }, (w) => {
+    Object.defineProperty(w.navigator, 'clipboard', { configurable: true, value: { writeText: async (t: string): Promise<void> => { copied.push(t); } } });
+    const realInterval = w.setInterval.bind(w);
+    Object.assign(w, { setInterval: (fn: () => void, ms?: number): number => { intervals.push(Number(ms)); return realInterval(fn, ms); } });
+    extra?.(w);
+  });
+  await p.until(() => p.text('#acting-as') === `Signed in as ${USER} via the Practice Evidence web app`, 'the signed-in person');
+  return Object.assign(p, { copied, intervals });
+}
+
+/** One act a chat agent of the person's (Claude, through the relay) takes on its own, as the connector's act would post it. */
+async function fromChat(h: Handlers, tool: string, action: string, fields: Out): Promise<Out> {
+  const slug = `claude-${USER}`;
+  agentDocs.set(`https://${IDH}/agents/${slug}/did.json`, { '@context': ['https://www.w3.org/ns/did/v1'], id: `did:web:${IDH}:agents:${slug}`, controller: PRINCIPAL });
+  const sp = JSON.stringify({ v: 1, action, nonce: `chat-${nonce()}`, pod_url: DEMO_POD, ...fields, agent_id: `did:web:${IDH}:agents:${slug}`, subject_pod_url: `https://pods.ui.test/${USER}/`, timestamp: new Date().toISOString() });
+  return (await h[tool]!({ _signed_payload: sp, _signature: await signMessageRaw(RELAY_KEY, `sha256:${sha256Hex(sp)}`) })) as Out;
+}
+
+describe('your own AI assistant: connect Claude or ChatGPT, or copy and paste; never a key of ours', () => {
+  let nm: TestListener;
+  beforeAll(async () => { nm = await serve({ relayUrl: RELAY, deploymentUrl: DEPLOY, relayFetch: relay.fetchFn }, { handlers: noModelHandlers }); }, SLOW);
+
+  it('Connect your AI: each chat app\'s setup steps, the connector address and the workspace details to copy, in plain words; only for a person signed in with Interego', async () => {
+    const p = await signedInPage(nm);
+    await p.until(() => p.q('article.scenario'), 'the scenarios');
+    expect(p.text('#view .own-ai')).toContain('Claude or ChatGPT can play the other person and save each exchange to your session.');
+    p.q('#connect-ai-button')!.click();
+    const d = await p.until(() => p.q('#connect-ai[open]'), 'the Connect dialog');
+    expect(d.querySelector('#connect-title')?.textContent).toBe('Use your own AI assistant');
+    expect(d.querySelector('#connect-desc')?.textContent).toContain('never asks for an API key');
+    expect((d.querySelector('#connector-address') as HTMLInputElement).value).toBe(`${RELAY}/mcp`);
+    // Two apps, two sets of steps; the one not chosen is hidden.
+    const tabs = [...d.querySelectorAll('[role="tab"]')];
+    expect(tabs.map((t) => [t.textContent, t.getAttribute('aria-selected')])).toEqual([['In Claude', 'true'], ['In ChatGPT', 'false']]);
+    expect(shownText(d)).toContain('In Claude, open Settings, then Connectors, then Add custom connector.');
+    expect(shownText(d)).not.toContain('In ChatGPT, open Settings');
+    (tabs[1] as HTMLElement).click();
+    expect(shownText(d)).toContain('In ChatGPT, open Settings, then Connectors, then Add.');
+    expect(shownText(d)).toContain("ChatGPT needs a plan that allows custom connectors. If you don't see the option, use Copy for my AI on each step instead.");
+    expect(shownText(d)).toContain("In each new chat, turn on Interego from the chat's tools menu (+).");
+    // What it can and can't do: this workspace keeps the decisions in the web app, and says who sees what.
+    (d.querySelector('#connect-limits') as HTMLDetailsElement).open = true;
+    expect(d.querySelector('#connect-decisions')?.textContent).toBe('Approving rubrics, signing off reviews and changing roles happen here in the web app, not from a chat assistant.');
+    expect(shownText(d)).toContain('The Interego connector passes everything your assistant reads and writes here, including conversation text, and the company behind your assistant sees it too');
+    const byok = d.querySelector('#byok-section') as HTMLDetailsElement;
+    expect([byok.open, byok.querySelector('summary')?.textContent]).toEqual([false, 'Advanced: use your own Anthropic API key (drafts only)']);
+    (d.querySelector('#connect-paste') as HTMLDetailsElement).open = true;
+    plain('the Connect dialog', shownText(d));
+    (d.querySelector('#copy-workspace-details') as HTMLElement).click();
+    await p.until(() => p.copied.length === 1, 'the copied workspace details');
+    const details = p.copied[0]!;
+    for (const says of [`My Practice Evidence workspace: ${nm.base}/`, `descriptor_url: "${nm.base}/affordances"`, `"${DEMO_POD}"`, 'sign_payload',
+      `except ${PEV_ACTION.listScenarios} and ${PEV_ACTION.draftScenarioPacket}`, 'nonce = the step name']) expect(details).toContain(says);
+    // The account menu offers it too, where the key used to be.
+    expect([...p.w.document.querySelectorAll('#user-menu .menu__item')].map((x) => x.textContent)).toContain('Connect your AI assistant');
+    expect(p.text('#user-menu')).not.toContain('provider key');
+    expect(p.intervals).toEqual([]);
+    expect(p.errors).toEqual([]);
+
+    // A workspace that lets chat assistants decide says so instead.
+    const decide = await serve({ relayUrl: RELAY, deploymentUrl: DEPLOY, relayFetch: relay.fetchFn }, {
+      handlers: createPevHandlers({
+        platformWallet: PLATFORM, platformKeyKind: 'demo-fixture', adminAddresses: [W.admin.address], adminDids: [PRINCIPAL], chatAgentsDecide: true,
+        fetchFn: pod.fetchFn, holderFetchFn: pod.fetchFn, defaultPodUrl: DEMO_POD, servedPods: [DEMO_POD], deploymentUrl: 'http://127.0.0.1:6110', relayDelegation: POLICY, relayUrl: RELAY,
+      } satisfies PevDeps) as Handlers,
+    });
+    const q = await signedInPage(decide);
+    expect(q.text('#connect-decisions')).toBe('This workspace also lets assistants approve rubrics, sign off reviews and change roles, so check what you ask for.');
+
+    // Signed out, or signed in with a wallet: no connector steps, and the reason in plain words.
+    const out = await openPage(nm, '/ui', {}, (w) => {
+      w['ethereum'] = { request: async ({ method }: { method: string }): Promise<unknown> => (method === 'eth_requestAccounts' ? [W.learner.address] : null) };
+    });
+    await out.until(() => out.q('#view .own-ai [data-connect]'), 'the practice callout');
+    expect(out.q('#connect-ai-button')).toBeNull();
+    out.q('#view .own-ai [data-connect]')!.click();
+    expect([out.q('#connect-ai #connector-address'), out.text('#connect-ai').includes('Sign in with Interego first.')]).toEqual([null, true]);
+    out.q('#connect-ai .modal__footer .btn--primary')!.click();
+    out.q('#connect-wallet')!.click();
+    await out.until(() => out.text('#acting-as').startsWith('Signed in with wallet'), 'the wallet');
+    out.q('#connect-ai-button')!.click();
+    await out.until(() => out.q('#connect-ai[open]'), 'the Connect dialog');
+    expect([out.q('#connect-ai #connector-address'), out.q('#connect-ai #copy-workspace-details')]).toEqual([null, null]);
+    expect(out.text('#connect-ai')).toContain('Your AI assistant acts as your Interego account, not your wallet.');
+    expect([...q.errors, ...out.errors]).toEqual([]);
+  }, SLOW);
+
+  it('the chat hand-off: a start-up message for Claude or ChatGPT, lines saved from the chat appear when the person comes back (no timer, nothing typed lost), and the judge gets a message without the conversation', async () => {
+    const p = await signedInPage(nm);
+    const card = await p.until(() => p.q('article.scenario'), 'the scenarios');
+    card.querySelector<HTMLInputElement>('input[type=radio][value=no]')!.checked = true;
+    card.querySelector<HTMLElement>(`button[data-action="${PEV_ACTION.startAttempt}"]`)!.click();
+    const handoff = await p.until(() => p.q('#view .chat-handoff'), 'the chat hand-off');
+    const attemptIri = decodeURIComponent(p.w.location.hash.slice('#/attempt/'.length));
+    expect(p.q('#send')).toBeNull();
+    // Copy and paste is still there, closed, for a plan without connectors.
+    const packet = p.q('#view details.packet') as HTMLDetailsElement;
+    expect([packet.open, packet.querySelector('summary')?.textContent, packet.contains(p.q('#line'))]).toEqual([false, 'No connector? Copy and paste one line at a time', true]);
+    expect(shownText(handoff)).toContain('Have this conversation in Claude or ChatGPT');
+    plain('the session page', `${shownText(p.q('#bar'))} ${shownText(p.q('#view'))}`);
+    p.q('#copy-startup')!.click();
+    await p.until(() => p.copied.length === 1, 'the start-up message');
+    const startup = p.copied[0]!;
+    for (const says of [attemptIri, PEV_ACTION.counterpartPacket, PEV_ACTION.recordTurns, PEV_ACTION.endConversation, 'sign_payload: true', `descriptor_url: "${nm.base}/affordances"`,
+      `"pod_url":"${DEMO_POD}"`, 'T starts at 1.', 'nextTurnIndex', 'turn-out-of-order', '"ended": true', 'payload.action is exactly this urn', 'Never change my words.',
+      "Sam Okafor's last line was: \"You wanted to see me?"]) expect(startup, says).toContain(says);
+    expect(startup).not.toMatch(/llm_api_key|api key/i);
+
+    // Claude, connected as this person, saves an exchange: the page shows it when the person comes back to the tab.
+    const signsBefore = p.asked.filter((x) => x === 'POST /ui/relay/sign').length;
+    const readsBefore = p.asked.filter((x) => x === 'POST /pev/get_attempt').length;
+    ok(await fromChat(noModelHandlers, 'pev.record_turns', PEV_ACTION.recordTurns, { attemptIri, turnIndex: 1, learnerText: 'Thanks for coming in. The report was due Thursday.', counterpartText: 'Yes. The feed was late again.', counterpartDisclosure: { provider: 'Anthropic', model: 'not shown' } }));
+    expect(p.all('.bubble').length).toBe(1);
+    p.w.document.dispatchEvent(new p.w.Event('visibilitychange'));
+    await p.until(() => p.all('.bubble').length === 3, 'the lines saved from the chat');
+    expect(p.all('.bubble.them').at(-1)?.textContent).toContain('Written by your own AI (Anthropic not shown), as you declared');
+    // The first line made Finish possible, so the panel was drawn again (nothing was typed in it).
+    await p.until(() => p.q('#view .conversation__finish'), 'Finish conversation');
+    // One read, with the signed read the page already held: nobody was asked to sign anything.
+    expect([p.asked.filter((x) => x === 'POST /pev/get_attempt').length - readsBefore, p.asked.filter((x) => x === 'POST /ui/relay/sign').length - signsBefore]).toEqual([1, 0]);
+    // The next exchange from the chat is appended to what the page shows, and said so.
+    ok(await fromChat(noModelHandlers, 'pev.record_turns', PEV_ACTION.recordTurns, { attemptIri, turnIndex: 3, learnerText: 'What got in the way?', counterpartText: 'The finance feed, twice.', counterpartDisclosure: { provider: 'Anthropic', model: 'not shown' } }));
+    const chatBox = p.q('#view .chat.bubbles');
+    p.w.document.dispatchEvent(new p.w.Event('visibilitychange'));
+    await p.until(() => p.all('.bubble').length === 5, 'the next lines saved from the chat');
+    expect([p.q('#view .chat.bubbles') === chatBox, p.text('#view .watch').includes('2 new lines.')]).toEqual([true, true]);
+    expect(p.text('#view .conversation .card__subtitle')).toBe('2 of 12 lines used');
+    expect(p.asked.filter((x) => x === 'POST /ui/relay/sign').length - signsBefore).toBe(0);
+    // The next start-up message carries on from where the chat left off.
+    p.q('#copy-startup')!.click();
+    await p.until(() => p.copied.length === 2, 'the next start-up message');
+    expect(p.copied[1]).toContain('T starts at 5.');
+    expect(p.copied[1]).toContain("Sam Okafor's last line was: \"The finance feed, twice.\"");
+
+    // A reply typed into the copy-and-paste form is never drawn over: the session ended in the chat, and the page waits.
+    const typed = 'Half a reply I have not saved yet';
+    const theirs = p.q('#their-line') as HTMLTextAreaElement;
+    theirs.value = typed;
+    ok(await fromChat(noModelHandlers, 'pev.end_conversation', PEV_ACTION.endConversation, { attemptIri, turnIndex: 5 }));
+    p.w.dispatchEvent(new p.w.Event('focus'));
+    await p.until(() => p.text('#view .watch').includes('This session has changed.'), 'the changed-session note');
+    expect([(p.q('#their-line') as HTMLTextAreaElement | null)?.value, p.text('#state')]).toEqual([typed, 'In conversation']);
+    (p.q('#their-line') as HTMLTextAreaElement).value = '';
+    p.q('#check-lines')!.click();
+    await p.until(() => p.text('#state') === 'Finished: not assessed yet', 'the finished session');
+    expect(p.text('#view .judgments')).toContain('Waiting for a judge.');
+    expect(p.text('#view .judgments')).toContain('If you don\'t have one yet, ask your admin.');
+
+    // Send to your judge: the session's ID and what to paste, never the conversation.
+    const send = await p.until(() => p.q('#copy-judge-message'), 'Send to your judge');
+    expect(p.text('#view .card.actions')).toContain('Not sure who your judge is? Ask your admin.');
+    send.click();
+    await p.until(() => p.copied.length === 3, 'the message for the judge');
+    const judge = p.copied[2]!;
+    for (const says of [attemptIri, PEV_ACTION.judgePacket, PEV_ACTION.recordJudgment, 'usedPacketPrompt', 'wait for my go-ahead', `Workspace: ${nm.base}/`]) expect(judge, says).toContain(says);
+    expect(judge).not.toContain('The report was due Thursday');
+    expect(judge).not.toContain('The feed was late again');
+    plain('the finished session', `${shownText(p.q('#bar'))} ${shownText(p.q('#view'))}`);
+    // Nothing ran on a timer: every read above came from the person coming back, or asking.
+    expect(p.intervals).toEqual([]);
+    expect(p.errors).toEqual([]);
+  }, SLOW);
+
+  it('an author drafts in Claude or ChatGPT: the assistant asks only the two decisions and saves a feedback-only draft, never a score', async () => {
+    const p = await signedInPage(nm);
+    await p.until(() => p.q('article.scenario'), 'the scenarios');
+    p.w.location.hash = '#/author';
+    const chat = await p.until(() => p.q('#view .draft-chat'), 'Draft it in Claude or ChatGPT');
+    expect(p.q(`button[data-action="${PEV_ACTION.draftScenario}"]`)).toBeNull();
+    expect((p.q('#view .draft-paste') as HTMLDetailsElement).open).toBe(false);
+    plain('the draft card', shownText(chat));
+    const brief = 'A nurse lead asks a colleague to cover a weekend shift at short notice.';
+    (p.q('#draft-brief') as HTMLTextAreaElement).value = brief;
+    p.q('#copy-draft-message')!.click();
+    await p.until(() => p.copied.length === 1, 'the drafting message');
+    const msg = p.copied[0]!;
+    for (const says of [PEV_ACTION.draftScenarioPacket, PEV_ACTION.authorScenario, 'sign_payload: false', '"status":"draft"', '"by":"own-agent"', '"assessmentUse": "feedback-only"', 'workRegime', brief, 'Include drafts']) {
+      expect(msg, says).toContain(says);
+    }
+    // The AI never sees a weight or a pass mark: the message names neither.
+    expect(msg).not.toMatch(/weight|passRule|minPercent/i);
+    expect(p.errors).toEqual([]);
+  }, SLOW);
+
+  it('a session started with a wallet is finished here by copy and paste: no chat hand-off, and coming back to the tab asks the wallet for nothing', async () => {
+    const calls: string[] = [];
+    const p = await openPage(nm, '/ui', {}, (w) => {
+      w['ethereum'] = {
+        request: async ({ method, params }: { method: string; params?: string[] }): Promise<unknown> => {
+          calls.push(method);
+          if (method === 'eth_requestAccounts') return [W.learner.address];
+          if (method === 'personal_sign') return signMessageRaw(W.learner, Buffer.from(String(params?.[0]).slice(2), 'hex').toString('utf8'));
+          throw new Error(`unsupported ${method}`);
+        },
+      };
+    });
+    await p.until(() => p.q('article.scenario'), 'the scenarios');
+    p.q('#connect-wallet')!.click();
+    await p.until(() => p.text('#acting-as').startsWith('Signed in with wallet'), 'the wallet');
+    const card = await p.until(() => p.q('article.scenario'), 'the scenarios, again');
+    card.querySelector<HTMLInputElement>('input[type=radio][value=no]')!.checked = true;
+    card.querySelector<HTMLElement>(`button[data-action="${PEV_ACTION.startAttempt}"]`)!.click();
+    await p.until(() => p.q('#line') ?? p.q('#view .refusal'), 'the conversation');
+    expect([p.q('#view .chat-handoff'), p.q('#check-lines'), (p.q('#view details.packet') as HTMLDetailsElement).open]).toEqual([null, null, true]);
+    expect(p.text('#view .conversation')).toContain('Your AI assistant acts as your Interego account, not your wallet.');
+    const signs = calls.filter((c) => c === 'personal_sign').length;
+    const reads = p.asked.filter((x) => x === 'POST /pev/get_attempt').length;
+    p.w.document.dispatchEvent(new p.w.Event('visibilitychange'));
+    p.w.dispatchEvent(new p.w.Event('focus'));
+    await new Promise((r) => setTimeout(r, 200));
+    expect([calls.filter((c) => c === 'personal_sign').length, p.asked.filter((x) => x === 'POST /pev/get_attempt').length]).toEqual([signs, reads]);
+    expect(p.errors).toEqual([]);
+  }, SLOW);
+});
 
 /**
  * Start bridge/server.ts, as the image runs it, with nothing in its environment but `extra` (on

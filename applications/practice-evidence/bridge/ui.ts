@@ -2,7 +2,10 @@
  * The web UI and the browser-facing protection of a practice-evidence bridge.
  *
  * `attachUi` serves a static HTML shell at /ui, the client at /ui/app.js and its styles at
- * /ui/app.css (the shared Interego design system, then this product's own rules). The client is a
+ * /ui/app.css (the shared Interego design system, then this product's own rules). /ui/app.js is
+ * the shared chat-agent helpers (applications/_shared/chat-agent, one name: InteregoChatAgent)
+ * followed by this product's ui/app.js, one text, so the shell keeps a single module script. The
+ * helpers build the text a person copies into their own chat assistant; no model runs here. The client is a
  * Path-A client: it reads this bridge's affordance manifest and invokes every act at the target the
  * manifest names. It holds no key (demo role keys stay in the bridge; wallet keys stay in the
  * wallet) and computes nothing the record does not already say.
@@ -72,6 +75,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import type { Express, NextFunction, Request, Response } from 'express';
 import { guardedFetchFn } from '@interego/core';
+import { chatAgentJs } from '../../_shared/chat-agent/index.js';
 import { designSystemCss } from '../../_shared/design-system/index.js';
 import { refuse } from '../../_shared/vertical-bridge/refusal.js';
 import { openRelayDelegated, type RelayDelegationPolicy } from '../src/relay-delegated.js';
@@ -80,7 +84,8 @@ import { cappedFetch } from './pod-helpers.js';
 export const UI_CSP = "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' data:; form-action 'self'; base-uri 'none'; frame-ancestors 'none'";
 
 const readUiFile = (name: string): string => readFileSync(new URL(`./ui/${name}`, import.meta.url), 'utf8');
-const APP_JS = readUiFile('app.js');
+/** The shared chat-agent helpers, then this product's client: served as one script (see the header). */
+const APP_JS = `${chatAgentJs()}\n${readUiFile('app.js')}`;
 /** The Interego design system (shared with work-redesign), then this product's own rules. */
 const APP_CSS = `${designSystemCss()}\n${readUiFile('app.css')}`;
 const LANDING_HTML = readUiFile('landing.html');

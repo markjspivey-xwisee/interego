@@ -14,21 +14,23 @@
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { spawnSync } from 'node:child_process';
-import { readFileSync, readdirSync, statSync } from 'node:fs';
+import { mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { request } from 'node:http';
+import { tmpdir } from 'node:os';
 import { join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { JSDOM, VirtualConsole } from 'jsdom';
 import { Parser } from 'n3';
 import { canonicalJson, importWallet, sha256, sha256Hex, signMessageRaw, type Wallet } from '@interego/core';
 import type { Express, NextFunction, Request as ExpressRequest, Response as ExpressResponse } from 'express';
+import { chatAgentJs } from '../../_shared/chat-agent/index.js';
 import { createVerticalBridge } from '../../_shared/vertical-bridge/index.js';
 import { listenLoopback, type TestListener } from '../../_shared/vertical-bridge/listen-loopback.js';
 import { pevAffordances } from '../affordances.js';
 import { createPevHandlers, DEMO_ROLE_NAMES, type DemoRoleName, type PevDeps } from '../bridge/handlers.js';
 import { attachUi, contactPages, contactUrlOf, hostAllowlistGuard, UI_CSP } from '../bridge/ui.js';
 import {
-  DEMO_LINES, DEMO_POD, DEMO_ROLE_LABELS, FABRICATED_QUOTE, demoScenarioInput, demoSignerOf, demoWallet, inMemoryPod, scriptedPracticeModel,
+  DEMO_LINES, DEMO_POD, DEMO_ROLE_LABELS, FABRICATED_QUOTE, demoDraft, demoScenarioInput, demoSignerOf, demoWallet, inMemoryPod, scriptedPracticeModel,
 } from '../demo/run.js';
 import { inAuditSample } from '../src/calibration.js';
 import { PEV_ACTION, PEV_NS } from '../src/ontology.js';
@@ -259,7 +261,26 @@ describe('the web UI is served under a strict content policy', () => {
     expect(js.headers.get('content-type')).toMatch(/^text\/javascript/);
     expect(css.headers.get('content-type')).toMatch(/^text\/css/);
     expect([js.headers.get('content-security-policy'), css.headers.get('content-security-policy')]).toEqual([UI_CSP, UI_CSP]);
-    expect(await js.text()).toBe(read('bridge/ui/app.js'));
+    // The shared chat-agent helpers, then this product's client: one script, so the shell keeps one <script>.
+    expect(await js.text()).toBe(`${chatAgentJs()}\n${read('bridge/ui/app.js')}`);
+  });
+
+  it('serves a client that is valid as the module a browser loads: no top-level name of the app collides with the shared helpers', async () => {
+    const served = await (await fetch(`${demo.base}/ui/app.js`)).text();
+    const dir = mkdtempSync(join(tmpdir(), 'pev-app-'));
+    try {
+      const file = join(dir, 'app.mjs');
+      writeFileSync(file, served);
+      // `node --check` parses a .mjs file as a module: a duplicate top-level declaration is an early error there.
+      const r = spawnSync(process.execPath, ['--check', file], { encoding: 'utf8', timeout: 60_000 });
+      expect([r.status, r.stderr]).toEqual([0, '']);
+      writeFileSync(file, `${served}\nfunction InteregoChatAgent() {}\n`);
+      expect(spawnSync(process.execPath, ['--check', file], { encoding: 'utf8', timeout: 60_000 }).stderr).toContain("Identifier 'InteregoChatAgent' has already been declared");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+    // The client names the shared helpers and never redefines one of them.
+    expect(read('bridge/ui/app.js')).not.toMatch(/^(?:const|let|var|function|class)\s+InteregoChatAgent\b/m);
   });
 
   /** What a browser sends for a page: text/html first, with `*\/*` at a lower weight. */
@@ -284,7 +305,11 @@ describe('the web UI is served under a strict content policy', () => {
       'Conversation practice <em>your reviewers can stand behind.</em>', 'AI role-play is easy to buy. Its scores are hard to trust.',
       'From first sign-in to a result you can stand behind', 'Built for trust, not just for scoring', 'Use it from Claude or ChatGPT',
       'https://relay.interego.xwisee.com/mcp', 'When Practice Evidence isn\'t the right fit (yet)', 'Practice Evidence records practice, not a credential.',
+      // No AI of its own and no key: the person's own assistant, and an honest limit for teams without one.
+      'No API key, ever.', 'Your people don\'t use an AI assistant.', 'with their own AI assistant playing the other person', 'Connect your AI',
+      'the company behind your assistant processes it under your own account\'s terms',
     ]) expect(html).toContain(s);
+    expect(html).not.toMatch(/built-in AI|AI provider key|AI role-player/);
     // No protocol words, codes or statuses reach a visitor.
     const visible = html.replace(/<[^>]+>/g, ' ');
     expect(visible).not.toMatch(/\b(affordance|bridge|envelope|nonce|EIP-191|Hypothetical|DID)\b/);
@@ -321,9 +346,16 @@ describe('the web UI is served under a strict content policy', () => {
     expect(html).toBe(read('bridge/ui/help.html'));
     expect(html).not.toMatch(NO_INLINE_SCRIPT);
     expect(html).not.toMatch(NO_INLINE_STYLE);
-    for (const s of ['How to use Practice Evidence', 'id="claude-chatgpt"', 'https://relay.interego.xwisee.com/mcp', 'href="../affordances"', '<script type="module" src="help.js"></script>']) {
+    for (const s of ['How to use Practice Evidence', 'id="claude-chatgpt"', 'https://relay.interego.xwisee.com/mcp', 'href="../affordances"', '<script type="module" src="help.js"></script>',
+      '<dt>This step needs your AI assistant</dt>', '<dt>Waiting for a judge</dt>', 'In each new chat, turn on Interego from the chat\'s tools menu (+).',
+      'Appoint at least one judge, by their Interego Member ID', 'your plan must allow custom connectors', 'The company behind your assistant sees it too']) {
       expect(html).toContain(s);
     }
+    expect(html).not.toMatch(/built-in AI|AI provider key|AI role-player/);
+    // The judges' section is plain steps: no action names, no protocol words.
+    const judges = html.slice(html.indexOf('<section id="judges"'), html.indexOf('</section>', html.indexOf('<section id="judges"')));
+    expect(judges).toContain('Paste the message a learner sends you');
+    expect(judges.replace(/<[^>]+>/g, ' ')).not.toMatch(/urn:|\b(affordance|bridge|envelope|nonce|payload|relay)\b/i);
     const slash = await fetch(`${demo.base}/ui/help/`, { redirect: 'manual' });
     expect([slash.status, slash.headers.get('location')]).toEqual([301, '../help']);
     const js = await fetch(`${demo.base}/ui/help.js`);
@@ -353,7 +385,7 @@ describe('the web UI is served under a strict content policy', () => {
     expect(await (await fetch(`${l.base}/`, { headers: { accept: BROWSER } })).text()).toBe(pages.landing);
     expect(await (await fetch(`${l.base}/ui/help`)).text()).toBe(pages.help);
     const EMAIL = /[\w.+-]+@[\w-]+\.[\w.-]+/;
-    for (const html of [pages.landing, pages.help, read('bridge/ui/landing.html'), read('bridge/ui/help.html'), read('bridge/ui/app.js')]) expect(html).not.toMatch(EMAIL);
+    for (const html of [pages.landing, pages.help, read('bridge/ui/landing.html'), read('bridge/ui/help.html'), read('bridge/ui/app.js'), chatAgentJs()]) expect(html).not.toMatch(EMAIL);
     // The MCP endpoint is shown to copy, not linked: a browser that opens it waits on a stream.
     expect(read('bridge/ui/help.html')).not.toContain('href="../mcp"');
     expect(read('bridge/ui/help.html')).toContain('<code id="mcp-address">');
@@ -395,8 +427,16 @@ describe('the web UI is served under a strict content policy', () => {
 
   it('the client builds every node: no HTML parsing, no eval, no external origin; it signs EIP-191 over the canonical text', () => {
     const js = read('bridge/ui/app.js');
-    expect(js).not.toMatch(/innerHTML|outerHTML|insertAdjacentHTML|document\.write|\beval\(|new Function|setAttribute\(\s*['"]on/);
-    expect(js).not.toMatch(/fetch\(\s*['"`]https?:|import\(|<script/);
+    for (const src of [js, chatAgentJs()]) {
+      expect(src).not.toMatch(/innerHTML|outerHTML|insertAdjacentHTML|document\.write|\beval\(|new Function|setAttribute\(\s*['"]on/);
+      expect(src).not.toMatch(/fetch\(\s*['"`]https?:|import\(|<script/);
+    }
+    // No timer re-reads a session: new lines from a chat are read when the person comes back, or asks.
+    expect(js).not.toMatch(/setInterval\(/);
+    // Every action the copied prompts name is one this bridge declares, so a prompt cannot drift from the manifest.
+    const named = new Set(js.match(/urn:iep:action:[a-z0-9-]+:[a-z0-9-]+/g) ?? []);
+    expect(named.size).toBeGreaterThan(20);
+    expect([...named].filter((a) => !(Object.values(PEV_ACTION) as string[]).includes(a))).toEqual([]);
     expect(js).toContain("method: 'personal_sign', params: [hexUtf8(canonicalJson(payload)), S.account]");
     expect(js).toContain("method: 'eth_requestAccounts'");
     expect(js).toContain('DEMO MODE: this bridge holds these role keys and signs as whichever role you pick.');
@@ -797,13 +837,15 @@ describe('the web UI works, driven in a DOM against the real handlers', () => {
     expect(paste.errors).toEqual([]);
   }, SLOW);
 
-  it('a workspace with no built-in AI: no demo-key probe, plain instructions for the learner\'s own AI, and a key offered for drafts only', async () => {
+  it('a workspace with no AI of its own and no Interego sign-in: copy and paste in plain words, no chat hand-off, no connector address, and no key outside Advanced', async () => {
     const ana = W.learner;
     const asked: string[] = [];
+    const copied: string[] = [];
     const p = await openUi(noModel, (w) => {
       w['TextEncoder'] = TextEncoder;
       const f = w['fetch'] as (input: unknown, init?: RequestInit) => Promise<Response>;
       w['fetch'] = (input: unknown, init?: RequestInit): Promise<Response> => { asked.push(`${init?.method ?? 'GET'} ${new URL(String(input), 'http://x/').pathname}`); return f(input, init); };
+      Object.defineProperty(w.navigator, 'clipboard', { configurable: true, value: { writeText: async (t: string): Promise<void> => { copied.push(t); } } });
       w['ethereum'] = {
         request: async ({ method, params }: { method: string; params?: string[] }): Promise<unknown> => {
           if (method === 'eth_requestAccounts') return [ana.address];
@@ -815,22 +857,100 @@ describe('the web UI works, driven in a DOM against the real handlers', () => {
     await p.until(() => p.q('article.scenario'), 'the scenarios');
     // list_scenarios already said this bridge holds no demo keys, so the page never asks for them.
     expect(asked.filter((x) => x.endsWith('/pev/sign_as_demo_role'))).toEqual([]);
-    expect(p.text('#workspace-settings')).toContain('Used for AI drafts of scenarios. To practice or be assessed here, use your own AI assistant.');
+    // Workspace settings: no key there any more, and the AI is the person's own.
+    expect([p.q('#workspace-settings #byok'), p.text('#workspace-settings').includes('AI provider key')]).toEqual([null, false]);
+    expect(p.text('#workspace-settings')).toContain('Your own AI assistant (Claude, ChatGPT…)');
+    expect(p.text('#workspace-settings')).toContain('An appointed judge, with their own AI assistant');
+    expect(p.text('#view .own-ai')).toContain('Practice with your own AI assistant');
+    expect(p.text('#view')).not.toMatch(/built-in AI/);
     p.q('#connect-wallet')!.click();
     await p.until(() => p.text('#acting-as').startsWith('Signed in with wallet'), 'the connected wallet');
+
+    // Connect your AI, on a workspace without Interego sign-in: copy and paste only, and no connector address to set up in vain.
+    p.click('#connect-ai-button');
+    const dialog = await p.until(() => p.q('#connect-ai[open]'), 'the Connect dialog');
+    expect([dialog.querySelector('#connector-address'), dialog.querySelector('#copy-workspace-details'), dialog.querySelector('.connect-tabs')]).toEqual([null, null, null]);
+    expect(dialog.textContent).toContain('This workspace doesn\'t offer Interego sign-in');
+    expect((dialog.querySelector('#connect-paste') as HTMLDetailsElement).open).toBe(true);
+    expect(dialog.textContent).not.toContain('relay.interego');
+    // The key of your own is there, closed, as Advanced, and Anthropic's.
+    const byok = dialog.querySelector('#byok-section') as HTMLDetailsElement;
+    expect([byok.open, byok.querySelector('summary')?.textContent]).toEqual([false, 'Advanced: use your own Anthropic API key (drafts only)']);
+    const JARGON = /\b(pod|bridge|affordance|envelope|nonce|hypothetical|ratif\w*|countersign\w*|relay)\b/i;
+    const CODES = /\b(EIP-191|IRI|DID)\b|HTTP \d{3}|urn:/;
+    expect([visibleText(dialog).match(JARGON)?.[0] ?? null, visibleText(dialog).match(CODES)?.[0] ?? null]).toEqual([null, null]);
+    p.click('#connect-ai .modal__footer .btn--primary');
+
     const card = await p.until(() => p.q('article.scenario'), 'the scenarios, again');
     card.querySelector<HTMLInputElement>('input[type=radio][value=no]')!.checked = true;
     card.querySelector<HTMLElement>(button(PEV_ACTION.startAttempt))!.click();
     await p.until(() => p.q('#line') ?? p.q('#view .refusal'), 'the conversation');
-    expect(p.q('#send')).toBeNull();
-    p.set(p.q('#line'), 'Thanks for making time. The report was due Thursday at noon.');
+    expect([p.q('#send'), p.q('.chat-handoff'), p.q('#check-lines')]).toEqual([null, null, null]);
+    // The only route here is copy and paste, so it is open, and the line is typed inside it.
+    const packet = p.q('#view details.packet') as HTMLDetailsElement;
+    expect([packet.open, packet.contains(p.q('#line')), packet.querySelector('summary')?.textContent]).toEqual([true, true, 'No connector? Copy and paste one line at a time']);
+    const line = 'Thanks for making time. The report was due Thursday at noon.';
+    p.set(p.q('#line'), line);
     p.click(button(PEV_ACTION.counterpartPacket));
-    const ready = await p.until(() => p.all('#view .packet .callout').find((c) => (c.textContent ?? '').includes('Instructions ready')) ?? p.q('#view .packet .refusal'), 'the instructions');
+    const ready = await p.until(() => p.all('#view .packet .callout').find((c) => (c.textContent ?? '').includes('Message ready')) ?? p.q('#view .packet .refusal'), 'the message for my AI');
     const shown = visibleText(ready);
-    expect(shown).toContain('Copy these instructions into Claude or ChatGPT.');
+    expect(shown).toContain('Copy it into Claude, ChatGPT or any chat app.');
     expect(shown).not.toMatch(/pev\.|\bbridge\b|sampled|signed by the learner/);
     // The server's own instructions, for an agent with the connector, are kept under Technical details.
     expect(ready.querySelector('.disclosure__body--tech')?.textContent).toContain('pev.record_turns');
+    p.click('#copy-for-ai');
+    await p.until(() => copied.length === 1, 'the copied message');
+    const msg = copied[0]!;
+    // Plain text a chat app can take, not JSON: the scenario, the conversation and the line, then how to answer.
+    expect(msg.startsWith('{')).toBe(false);
+    for (const says of [line, 'Reply with only Sam Okafor\'s next line, nothing else.', '(Stage direction: The practice conversation starts. Say your first line.)', 'Me: Thanks for making time.', 'Sam Okafor: You wanted to see me?']) expect(msg).toContain(says);
+    expect(msg).not.toMatch(/llm_api_key|"messages"|"system"/);
+    // The reply comes back with who wrote it, in a person's words.
+    p.set(p.q('#their-line'), 'Fine. What do you need from me?');
+    p.set(p.q('#their-provider'), 'OpenAI');
+    p.set(p.q('#their-model'), 'not shown');
+    expect(p.text('#view .packet')).toContain("The name in its model picker. Write 'not shown' if your app doesn't say.");
+    const before = p.all('.bubble').length;
+    p.click(button(PEV_ACTION.recordTurns));
+    await p.until(() => p.all('.bubble').length === before + 2 || p.q('#view .conversation .refusal'), 'both lines saved');
+    expect(p.all('.bubble.them').at(-1)?.textContent).toContain('Written by your own AI (OpenAI not shown), as you declared');
+    const attemptIri = decodeURIComponent(p.w.location.hash.slice('#/attempt/'.length));
+    const v = await direct(noModelHandlers, 'pev.get_attempt', ana, PEV_ACTION.getAttempt, { attemptIri });
+    const them = (v['turns'] as Out[]).at(-1)!;
+    expect([them['source'], (them['disclosure'] as Out)['provider'], (them['disclosure'] as Out)['model'], (them['disclosure'] as Out)['route']]).toEqual(['client-packet', 'OpenAI', 'not shown', 'client-packet']);
+
+    // Writing a scenario here: no "Draft with AI" (no AI of its own and no key), and the paste route open.
+    p.w.location.hash = '#/author';
+    await p.until(() => p.q('#draft-brief'), 'the author form');
+    expect([p.q(button(PEV_ACTION.draftScenario)), p.q('.draft-chat')]).toEqual([null, null]);
+    expect((p.q('.draft-paste') as HTMLDetailsElement).open).toBe(true);
+    p.set(p.q('#draft-brief'), 'A project manager tells a client sponsor that two defects block the payment flow.');
+    p.click(button(PEV_ACTION.draftScenarioPacket));
+    await p.until(() => p.q('#copy-draft-paste') ?? p.q('#view .draft-paste .refusal'), 'the drafting message');
+    p.click('#copy-draft-paste');
+    await p.until(() => copied.length === 2, 'the copied drafting message');
+    expect(copied[1]!.startsWith('{')).toBe(false);
+    expect(copied[1]).toContain('Reply with only the JSON object described below');
+    expect(copied[1]).toContain('two defects block the payment flow');
+    // A pasted answer with prose around it loads; prose alone says what to paste.
+    p.set(p.q('#draft-json'), 'Here you go!');
+    p.click('#view .draft-paste .btn--sm');
+    await p.until(() => p.q('#view .draft-paste .error-text'), 'the paste error');
+    expect(p.text('#view .draft-paste .error-text')).toContain('We couldn\'t find a draft in that answer. Paste the whole answer, including the part from { to }.');
+    p.set(p.q('#draft-json'), `Sure.\n\`\`\`json\n${JSON.stringify(demoDraft())}\n\`\`\`\nHope this helps`);
+    p.click('#view .draft-paste .btn--sm');
+    await p.until(() => (p.q('[data-field="title"] input') as HTMLInputElement | null)?.value, 'the loaded draft');
+    expect((p.q('[data-field="title"] input') as HTMLInputElement).value).toBe(String(demoDraft()['title']));
+    expect(p.text('#view')).toContain('You pasted a draft from an AI: choose My AI assistant and name it.');
+    expect((p.all('[data-field="choice"] input[type=radio]') as HTMLInputElement[]).some((r) => r.checked)).toBe(false);
+    // Turning on a key of your own (Advanced) offers drafting with it.
+    p.click('#connect-ai-button');
+    await p.until(() => p.q('#connect-ai[open]'), 'the Connect dialog');
+    const toggle = p.q('#connect-ai #byok') as HTMLInputElement;
+    toggle.checked = true;
+    p.fire(toggle, 'change');
+    await p.until(() => p.q(button(PEV_ACTION.draftScenario)), 'drafting with your own key');
+    expect(p.text(button(PEV_ACTION.draftScenario))).toBe('Draft with my Anthropic key');
     expect(p.errors).toEqual([]);
   }, SLOW);
 

@@ -69,7 +69,8 @@
 
     <section id="what" aria-labelledby="what-title">
       <h2 id="what-title">What Practice Evidence is</h2>
-      <p>Practice Evidence lets your people rehearse difficult workplace conversations with an AI role-player and get feedback against a rubric your team writes. The AI proposes levels and quotes the learner's own words, the platform checks every quote, and a qualified reviewer signs off, so every result is a signed record you can defend and the learner can keep.</p>
+      <p>Practice Evidence lets your people rehearse difficult workplace conversations, with their own AI assistant playing the other person, and get feedback against a rubric your team writes. An appointed judge's AI assistant proposes levels and quotes the learner's own words, the platform checks every quote, and a qualified reviewer signs off, so every result is a signed record you can defend and the learner can keep.</p>
+      <p>Practice Evidence runs no AI of its own and never asks for an API key. The AI work is done by Claude, ChatGPT or another assistant that you or a colleague connects, on your own subscription, and every record says which AI did it.</p>
       <p>It records practice, not a credential.</p>
     </section>
 
@@ -88,8 +89,9 @@
         <li class="step"><p class="step__text">Sign in and open <strong>Practice</strong>.</p></li>
         <li class="step"><p class="step__text">Choose a scenario. Read what you're practicing, your part, the situation, and the rubric.</p></li>
         <li class="step"><p class="step__text">Say whether anyone helped you prepare, then press <strong>Start practice</strong>.</p></li>
-        <li class="step"><p class="step__text">Type your lines. The other person replies. Finish when you're ready, or when they signal the end and you agree.</p></li>
-        <li class="step"><p class="step__text">Get your assessment. Read each level, your highlighted words, and what the next level asks for.</p></li>
+        <li class="step"><p class="step__text">On the session page, choose <strong>Copy the start-up message</strong>, paste it into Claude or ChatGPT (with the Interego connector on), and talk it through there. Each exchange appears on the session page when you come back to it. No connector? Open <strong>No connector? Copy and paste one line at a time</strong>.</p></li>
+        <li class="step"><p class="step__text">When you're done, tell your assistant you're finished, or press <strong>Finish conversation</strong> here.</p></li>
+        <li class="step"><p class="step__text">Get your feedback: choose <strong>Send to your judge</strong> and send the message to your appointed judge. Not sure who your judge is? Ask your admin. Their levels, your highlighted words and what the next level asks for appear on the session page.</p></li>
         <li class="step"><p class="step__text">Wait for a reviewer's sign-off, or request another review if you disagree (up to twice, with a different reviewer).</p></li>
         <li class="step"><p class="step__text">Download your record. Optionally share it as an xAPI learning record, or delete the conversation text.</p></li>
         <li class="step"><p class="step__text">Practice again whenever you like: <strong>Start again</strong> is on the session page.</p></li>
@@ -101,7 +103,7 @@
       <h2 id="authors-title">For authors</h2>
       <ol class="steps help-steps">
         <li class="step"><p class="step__text">Open <strong>Write a scenario</strong>.</p></li>
-        <li class="step"><p class="step__text">Optional: start from an AI draft, with the workspace's AI or your own AI. The AI never chooses how the scenario is used or scored.</p></li>
+        <li class="step"><p class="step__text">Optional: have your AI assistant draft it. Choose <strong>Draft it in Claude or ChatGPT</strong>: your assistant drafts the scenario, asks you the two decisions it must never make, and saves it as a feedback-only draft for you to check. No connector? Copy and paste a draft instead. The AI never chooses how the scenario is used or scored, and never sees a pass mark.</p></li>
         <li class="step"><p class="step__text">Fill in the scenario and the other person: who they are, what they want, what they know, how they react, how they open, and when the conversation ends.</p></li>
         <li class="step"><p class="step__text">Make the two decisions: feedback only, or scored with a pass mark; and how clear-cut good performance is. A pass mark on situational or unsettled work needs a written reason.</p></li>
         <li class="step"><p class="step__text">Write the rubric: up to 12 criteria, each with 2 to 6 levels, lowest first.</p></li>
@@ -129,7 +131,7 @@
       <h2 id="admins-title">For admins</h2>
       <ol class="steps help-steps">
         <li class="step"><p class="step__text"><strong>Team</strong>: add and remove people by Member ID, and choose their roles. Have at least two reviewers, so a rubric can be approved by someone who didn't write it and a re-review can go to a different person.</p></li>
-        <li class="step"><p class="step__text">Appoint a judge if your workspace has no built-in AI.</p></li>
+        <li class="step"><p class="step__text">Appoint at least one judge, by their Interego Member ID, who uses Claude or ChatGPT with custom connectors. A judge added by wallet address can't assess from Claude or ChatGPT. Until a judge is appointed, sessions can't be assessed.</p></li>
         <li class="step"><p class="step__text">Withdraw a review for cause (the learner sees your reason), or delete a session's conversation text (a reason is required). Both are done in the web app, from the session page.</p></li>
         <li class="step"><p class="step__text">Monitor <strong>AI judge quality</strong>.</p></li>
       </ol>
@@ -137,22 +139,25 @@
 
     <section id="judges" aria-labelledby="judges-title">
       <h2 id="judges-title">For appointed judges</h2>
+      <p>Judging needs Claude or ChatGPT with the Interego connector, so your plan must allow custom connectors.</p>
       <ol class="steps help-steps">
         <li class="step"><p class="step__text">Connect Claude or ChatGPT (see <a href="#claude-chatgpt">Use from Claude or ChatGPT</a>).</p></li>
-        <li class="step"><p class="step__text">Get the judge hand-off for a session you've been given, assess it, and save your assessment.</p></li>
-        <li class="step"><p class="step__text">You can't assess your own practice. Your assessment is checked quote by quote, and a reviewer has the final say.</p></li>
+        <li class="step"><p class="step__text">Paste the message a learner sends you into that chat. Your assistant fetches the session, proposes levels with exact quotes, and waits for your go-ahead before saving.</p></li>
+        <li class="step"><p class="step__text">You can't assess your own practice. Every quote is checked, and a reviewer has the final say.</p></li>
       </ol>
     </section>
 
     <section id="claude-chatgpt" aria-labelledby="claude-chatgpt-title">
       <h2 id="claude-chatgpt-title">Use from Claude or ChatGPT</h2>
-      <p>Add the Interego connector to Claude or ChatGPT and sign in once with your Interego account. You're the same person in the chat app and in the web app.</p>
+      <p>Practice Evidence runs no AI of its own. Add the Interego connector to Claude or ChatGPT and sign in once with your Interego account: your assistant can then play the other person, draft scenarios and help judges assess, on your own subscription. You're the same person in the chat app and in the web app.</p>
       <ol class="steps help-steps">
-        <li class="step"><p class="step__text">In Claude or ChatGPT, open Settings, then Connectors, then Add custom connector.</p></li>
-        <li class="step"><p class="step__text">Paste the Interego connector address: <code>https://relay.interego.xwisee.com/mcp</code></p></li>
+        <li class="step"><p class="step__text">In Claude, open Settings, then Connectors, then Add custom connector. In ChatGPT, open Settings, then Connectors, then Add. ChatGPT needs a plan that allows custom connectors; if you don't see the option, use <strong>Copy for my AI</strong> on each step instead.</p></li>
+        <li class="step"><p class="step__text">Name it Interego and paste the connector address: <code>https://relay.interego.xwisee.com/mcp</code></p></li>
         <li class="step"><p class="step__text">Sign in with your Interego account when asked.</p></li>
-        <li class="step"><p class="step__text">Give your assistant your workspace's address (below) and tell it what you want to do.</p></li>
+        <li class="step"><p class="step__text">In each new chat, turn on Interego from the chat's tools menu (+).</p></li>
+        <li class="step"><p class="step__text">In Practice Evidence, choose <strong>Connect your AI</strong> and copy your workspace's details into the chat, or give your assistant your workspace's address (below). Then tell it what you want to do.</p></li>
       </ol>
+      <p>Your assistant acts as your Interego account. A session you started with a crypto wallet belongs to your wallet, so finish it in the web app with copy and paste.</p>
       <div class="card workspace-address"><div class="card__body">
         <p class="label">Your workspace's address</p>
         <div class="input-group"><code id="workspace-address">the address of this site, up to (not including) /ui/help</code><button id="copy-workspace-address" class="btn btn--secondary btn--sm" type="button" hidden>Copy</button></div>
@@ -162,7 +167,7 @@
         <div><p class="label">Learners</p><ul class="try-asking"><li>"List the practice scenarios."</li><li>"Start a practice session on 'Following up on a missed deadline' and play the other person."</li><li>"Show me my feedback."</li><li>"Download my signed record."</li></ul></div>
         <div><p class="label">Authors</p><ul class="try-asking"><li>"Draft a practice scenario about a project manager telling a client sponsor that two defects block the payment flow."</li><li>"Show me the results for my scenario."</li></ul></div>
         <div><p class="label">Reviewers</p><ul class="try-asking"><li>"What's waiting for my review, and why is each one near the top?"</li><li>"Show me how often the AI judge agrees with reviewers."</li></ul></div>
-        <div><p class="label">Appointed judges</p><ul class="try-asking"><li>"Get the judge hand-off for this session, assess it, and save my assessment." Paste the session link you were sent.</li></ul></div>
+        <div><p class="label">Appointed judges</p><ul class="try-asking"><li>Paste the message a learner sent you. Your assistant shows you the levels and quotes and waits for your go-ahead.</li></ul></div>
       </div>
       <h3>Which steps stay in the web app</h3>
       <p>Approving a rubric, signing off a review, changing someone's role and withdrawing a review all put a person's name behind a result. These are done in the Practice Evidence web app, not from a chat assistant, unless your admin allows otherwise.</p>
@@ -185,6 +190,8 @@
       <p><strong>Delete conversation text</strong> removes the words from the workspace. Levels and fingerprints stay, so a copy you downloaded still checks out. It can't be undone, so download your record first.</p>
       <h3>What the Interego sign-in service sees</h3>
       <p>When you sign in with Interego, the Interego sign-in service confirms each step for you, and it sees what it signs, including the text of your lines. Practice Evidence never sees your passkey.</p>
+      <h3>When you use Claude or ChatGPT</h3>
+      <p>The Interego connector passes everything your assistant reads and writes here, including conversation text, transcripts it fetches for a judge, and scenario drafts. The company behind your assistant sees it too, under your own account's terms. With copy and paste, the chat app sees what you paste into it.</p>
       <h3>How long you stay signed in</h3>
       <p>A sign-in lasts up to an hour. Signing out clears this browser tab. Your Interego sign-in itself stays valid until it expires, within that hour. Your practice is saved either way.</p>
     </section>
@@ -199,7 +206,8 @@
         <dt>You don't have access to this</dt><dd>Your role doesn't include this step. Copy your Member ID from the account menu and send it to your admin.</dd>
         <dt>Please do this in the web app</dt><dd>Approving rubrics, signing off reviews, changing roles and withdrawing reviews happen in the web app, not from a chat assistant.</dd>
         <dt>Someone else needs to do this</dt><dd>Reviews and approvals must come from someone other than the learner, the author or whoever assessed the session. Ask a colleague who can.</dd>
-        <dt>AI isn't available for this step</dt><dd>This workspace has no built-in AI, or its AI is only for people on your team. Use <strong>Let my AI play the other person</strong>, or ask your admin.</dd>
+        <dt>This step needs your AI assistant</dt><dd>Practice Evidence has no AI of its own. Use <strong>Connect your AI</strong>, or <strong>Copy for my AI</strong> on that step.</dd>
+        <dt>Waiting for a judge</dt><dd>Your workspace's appointed judge assesses your session. If you don't have one yet, ask your admin. Your session is saved and can be assessed later.</dd>
         <dt>Please wait a moment</dt><dd>You've reached an hourly limit, or many people are signing in at once. Wait for the time shown, then try again.</dd>
         <dt>This page is out of date</dt><dd>Something changed since you opened the page. Press <strong>Refresh</strong>, check, and try again. Your unsent line is kept.</dd>
         <dt>The AI didn't respond properly</dt><dd>Nothing was saved. Try again in a moment, or ask for a second opinion.</dd>
@@ -228,7 +236,9 @@
         <dt>Member ID</dt><dd>Your unique ID in Interego. Send it to your admin so they can give you a role.</dd>
         <dt>Storage</dt><dd>Where this workspace keeps its records. Interego calls this a pod: a data store your organization chooses.</dd>
         <dt>AI agent (not a person)</dt><dd>Marks a member as software. Software can never approve a rubric or sign off a review.</dd>
-        <dt>AI judge</dt><dd>Proposes a level for each criterion, quoting the learner. Never calculates the score and never has the final say.</dd>
+        <dt>Your AI assistant</dt><dd>Claude, ChatGPT or another chat app you use, on your own subscription. Practice Evidence has no AI of its own.</dd>
+        <dt>Interego connector</dt><dd>What you add to Claude or ChatGPT so your assistant can act here as you, through your Interego account.</dd>
+        <dt>AI judge</dt><dd>An appointed judge's AI assistant: it proposes a level for each criterion, quoting the learner. It never calculates the score and never has the final say.</dd>
         <dt>AI judge quality</dt><dd>How often each AI judge's levels match what reviewers decided, by criterion. This measures agreement, not accuracy: reviewers usually see the AI's levels first.</dd>
         <dt>Confidence score (Brier)</dt><dd>How well the AI's stated confidence matched outcomes. Lower is better.</dd>
         <dt>Track record</dt><dd>Shown for information. It never lets an AI skip a human review.</dd>

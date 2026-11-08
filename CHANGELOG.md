@@ -1,5 +1,41 @@
 # Changelog
 
+## 2026-11-08 — Practice Evidence: use your own Claude or ChatGPT, never our key
+
+Practice Evidence runs no AI of its own and never asks for an API key. The
+web app now hands each AI step to the person's own assistant. A new "Connect
+your AI" dialog (header and account menu) gives setup steps for Claude and
+for ChatGPT, the Interego connector address to copy, and "Copy workspace
+details". It also says what an assistant can and can't do here, including
+that the connector and the assistant's company see what it reads and writes.
+On the session page, "Copy the start-up message" lets Claude or ChatGPT play
+the other person. It reads the character brief once per chat, then makes one
+signed save per exchange, and takes the next turn from each answer. The page
+shows saved lines when the person comes back to the tab or presses "Check
+for new lines": nothing polls, and a reply typed into the copy-and-paste form
+is never drawn over. "Send to your judge" copies the session's ID and a
+judge prompt, never the conversation. "Draft it in Claude or ChatGPT" asks
+the author only the two decisions an AI must never make, and saves a
+feedback-only draft, so no assistant sees a pass mark.
+
+The chat route appears only where it can work: on a workspace with Interego
+sign-in, for a person signed in with it. Wallet sessions and workspaces
+without sign-in get copy and paste, which now copies plain text, not JSON.
+It reads a pasted draft even with prose or code fences around it, and asks
+which AI wrote each reply. A person's own Anthropic key stays available,
+closed under the dialog's Advanced section; it is gone from the header and
+settings. `/ui/app.js` is now the shared chat-agent helpers followed by the
+app, and a test parses it as the module a browser loads. The landing page
+and guide now describe this, and the README documents the exact act
+sequence.
+
+The bridge accepts an action's web-address form (the form a published
+manifest may advertise) wherever it accepted the urn, using the core's
+`sameAction`; any other action is still refused. The provisioning workflow
+no longer copies a model key to the service, and its test fails if one is
+ever written. Nothing was added to the relay, the MCP server or any
+ontology.
+
 ## 2026-11-08 — Shared helpers for connecting your own chat assistant
 
 New `applications/_shared/chat-agent/`: the text helpers Practice Evidence and

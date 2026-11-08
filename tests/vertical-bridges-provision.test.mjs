@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { readFileSync } from 'node:fs';
 import { TARGET, BRIDGES, newKey, planService, provisionBridges } from '../tools/vertical-bridges-provision.mjs';
 
 const ids = { 'wrd-bridge': 'svc-wrd', 'pev-bridge': 'svc-pev' };
@@ -57,14 +58,26 @@ for (const [why, opts] of [
   });
 }
 
-test('the model key is copied only when given, and never shown', async () => {
-  const b = backend(); const lines = [];
-  await provisionBridges({ gql: b.gql, apply: true, pevApiKey: 'sk-fixture-never-log', log: (l) => lines.push(l) });
-  assert.ok(writes(b.calls).some((x) => x.name === 'PEV_LLM_API_KEY' && x.serviceId === 'svc-pev'));
-  assert.equal(lines.join('\n').includes('sk-fixture-never-log'), false);
-  const c = backend();
-  await provisionBridges({ gql: c.gql, apply: true });
-  assert.equal(writes(c.calls).some((x) => x.name === 'PEV_LLM_API_KEY'), false);
+test('no model key is ever written: not from the environment, not when a caller passes one, and none is shown', async () => {
+  const before = process.env.PEV_LLM_API_KEY;
+  process.env.PEV_LLM_API_KEY = 'sk-fixture-never-log';
+  try {
+    const b = backend(); const lines = [];
+    // An old caller's argument is ignored, as the environment is.
+    await provisionBridges({ gql: b.gql, apply: true, pevApiKey: 'sk-fixture-never-log', log: (l) => lines.push(l) });
+    assert.equal(writes(b.calls).some((x) => /LLM|ANTHROPIC|MODEL/.test(x.name)), false);
+    assert.deepEqual(writes(b.calls).filter((x) => x.serviceId === 'svc-pev').map((x) => x.name).sort(), ['PEV_PLATFORM_KEY', 'PEV_RECORD_KEY']);
+    assert.equal(lines.join('\n').includes('sk-fixture-never-log'), false);
+    assert.deepEqual(planService('PEV', new Set(), { pevApiKey: 'sk-fixture-never-log' }).writes.map((w) => w.name), ['PEV_PLATFORM_KEY', 'PEV_RECORD_KEY']);
+    const c = backend();
+    await provisionBridges({ gql: c.gql, apply: true });
+    assert.equal(writes(c.calls).some((x) => x.name === 'PEV_LLM_API_KEY'), false);
+  } finally {
+    if (before === undefined) delete process.env.PEV_LLM_API_KEY; else process.env.PEV_LLM_API_KEY = before;
+  }
+  // The workflow hands the tool no model key either.
+  const workflow = readFileSync(new URL('../.github/workflows/vertical-bridges-provision.yml', import.meta.url), 'utf8');
+  assert.equal(/LLM_API_KEY|ANTHROPIC/.test(workflow), false);
 });
 
 test('a write Railway does not confirm, or does not list afterwards, is a refusal', async () => {

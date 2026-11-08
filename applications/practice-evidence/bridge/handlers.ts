@@ -40,7 +40,7 @@
  * returned refusal at the handler boundary; a thrown plain Error is a defect in this code.
  */
 import {
-  assertSafeFetchTarget, canonicalGraphDigestResult, sha256, validate,
+  assertSafeFetchTarget, canonicalGraphDigestResult, sameAction, sha256, validate,
   type EncryptionKeyPair, type ManifestEntry, type Wallet,
 } from '@interego/core';
 import { predictManifestUrl, PublishPreconditionFailedError, PublishShapeViolationError } from '@interego/solid';
@@ -1156,7 +1156,9 @@ async function eligibility(call: Call, pod: string, h: AttemptHead): Promise<Eli
   const signed = reverify(call.ctx, review.envelope);
   if (!signed || !samePrincipal(signed.signer, review.reviewer.address)) return notVerifiable;
   const act = signed.payload['action'];
-  if ((act !== A.countersignAttempt && act !== A.overrideAttempt) || signed.payload['attemptIri'] !== a.attemptIri) return notVerifiable;
+  // Signed in either form of the action's IRI (the core's sameAction), as checkEnvelope reads it.
+  if (typeof act !== 'string' || !(sameAction(act, A.countersignAttempt) || sameAction(act, A.overrideAttempt))
+    || signed.payload['attemptIri'] !== a.attemptIri) return notVerifiable;
   const t = signed.payload['target'];
   if (!isObj(t) || t['recordId'] !== review.target.recordId || t['descriptorUrl'] !== review.target.descriptorUrl
     || t['graphDigest'] !== review.target.graphDigest) return notVerifiable;

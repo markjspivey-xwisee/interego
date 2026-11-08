@@ -14,7 +14,10 @@
  * key already set is kept. Generated values go straight to Railway with `skipDeploys: true`; the
  * operator backs them up from the dashboard.
  *
- * Optionally copies PEV_LLM_API_KEY from the GitHub secret of that name, when it is present.
+ * ★ NO MODEL KEY, EVER. The hosted Practice Evidence bridge holds no model key: people use their
+ * own chat assistant, through the Interego connector or by copy and paste. This tool never writes
+ * PEV_LLM_API_KEY (or any other model setting), whatever the environment holds. It also removes
+ * nothing: a key already set on the service stays until someone deletes it there.
  */
 import { randomBytes } from 'node:crypto';
 import { pathToFileURL } from 'node:url';
@@ -40,8 +43,8 @@ export function newKey(rand = randomBytes) {
   }
 }
 
-/** What to write to one service, given the names already set. Never a key that exists. */
-export function planService(prefix, existing, { pevApiKey, rand } = {}) {
+/** What to write to one service, given the names already set. Never a key that exists, and never a model key. */
+export function planService(prefix, existing, { rand } = {}) {
   const writes = [];
   const kept = [];
   for (const k of ['PLATFORM_KEY', 'RECORD_KEY']) {
@@ -49,11 +52,10 @@ export function planService(prefix, existing, { pevApiKey, rand } = {}) {
     if (existing.has(name)) kept.push(name);
     else writes.push({ name, value: newKey(rand), kind: 'generated' });
   }
-  if (prefix === 'PEV' && pevApiKey) writes.push({ name: 'PEV_LLM_API_KEY', value: pevApiKey, kind: 'secret' });
   return { writes, kept };
 }
 
-export async function provisionBridges({ gql, pevApiKey, apply = false, rand, log = () => {} }) {
+export async function provisionBridges({ gql, apply = false, rand, log = () => {} }) {
   const identity = await gql('{projectToken{projectId environmentId}}');
   if (identity?.projectToken?.projectId !== TARGET.projectId || identity?.projectToken?.environmentId !== TARGET.environmentId) {
     throw new ProvisionRefusal('the token does not belong to the fleet project and environment this tool is pinned to');
@@ -75,8 +77,8 @@ export async function provisionBridges({ gql, pevApiKey, apply = false, rand, lo
 
   const plans = {};
   for (const [name, prefix] of Object.entries(BRIDGES)) {
-    plans[name] = planService(prefix, await namesOf(ids[name]), { pevApiKey, rand });
-    for (const w of plans[name].writes) log(`${name}: set  ${w.name}  (${w.kind === 'generated' ? 'generated now, never shown' : 'copied from the GitHub secret, never shown'})`);
+    plans[name] = planService(prefix, await namesOf(ids[name]), { rand });
+    for (const w of plans[name].writes) log(`${name}: set  ${w.name}  (generated now, never shown)`);
     for (const k of plans[name].kept) log(`${name}: keep ${k}  (already set; keys are never overwritten)`);
   }
   if (!apply) {
@@ -120,7 +122,6 @@ async function main() {
   };
   await provisionBridges({
     gql,
-    pevApiKey: (process.env.PEV_LLM_API_KEY ?? '').trim() || undefined,
     apply: process.env.APPLY === 'true',
     log: (line) => console.log(line),
   });
