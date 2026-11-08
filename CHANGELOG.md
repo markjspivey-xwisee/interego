@@ -30,7 +30,9 @@ settings. The learner's Getting started steps name what the session page
 offers that person on that workspace. `/ui/app.js` is now the shared chat-agent helpers followed by the
 app, and a test parses it as the module a browser loads. The landing page
 and guide now describe this, and the README documents the exact act
-sequence and records a live Claude run of it (no ChatGPT run yet).
+sequence and records a live Claude run of it (no ChatGPT run yet). The
+wallet case of its test waits for the practice callout, which the page adds
+only after the scenario list answers.
 
 The bridge accepts an action's web-address form (the form a published
 manifest may advertise) wherever it accepted the urn, using the core's

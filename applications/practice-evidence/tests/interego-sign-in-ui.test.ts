@@ -1291,6 +1291,9 @@ describe('your own AI assistant: connect Claude or ChatGPT, or copy and paste; n
     const walletSteps = await learnerSteps(out);
     expect(walletSteps).toContain('On the session page, copy each line into your own AI assistant and paste its reply back.');
     expect(walletSteps).not.toContain('start-up message');
+    // The practice view paints Getting started at once and adds this callout only after the scenario
+    // list answers, so wait for it rather than read it the moment the steps appear.
+    await out.until(() => out.text('#view .own-ai').includes('Signed in with Interego'), 'the wallet practice callout');
     expect(out.text('#view .own-ai')).toContain('Signed in with Interego, Claude or ChatGPT can play the other person and save each exchange to your session. Otherwise, copy each line');
     out.q('#connect-ai-button')!.click();
     await out.until(() => out.q('#connect-ai[open]'), 'the Connect dialog');
