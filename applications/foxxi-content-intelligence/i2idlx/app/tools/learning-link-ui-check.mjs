@@ -19,7 +19,7 @@ function fixture({ signedOut = false } = {}) {
   const intervals = new Map(), visibilityListeners = new Set(); let timerSerial = 0;
   const document = { visibilityState: 'visible', addEventListener: (_event, listener) => visibilityListeners.add(listener), removeEventListener: (_event, listener) => visibilityListeners.delete(listener) };
   let stateCursor = 0, refCursor = 0, effectCursor = 0, dirty = false, controller, generation = 0, history = [];
-  const provider = { status: 'active', missing: false, refusal: null, contentStatus: 'readable', reviewStatus: 'available', reviewSubmission: 'completed', progressCompletion: 'COMPLETED', connectors: [], map: null,
+  const provider = { status: 'active', missing: false, refusal: null, contentStatus: 'readable', reviewStatus: 'available', reviewSubmission: 'completed', progressCompletion: 'COMPLETED', connectors: [], map: null, readinessMap: null,
     notificationAvailable: false, notificationEnabled: false, notificationReceivedAt: null };
   const reviewStatus = () => ({ status: provider.reviewStatus, count: provider.reviewStatus === 'available' ? 1 : 0,
     reason: provider.reviewStatus === 'available' ? 'Released completed provider result' : 'The owner has not released this review.' });
@@ -31,7 +31,7 @@ function fixture({ signedOut = false } = {}) {
   const readiness = () => ({ course_id: courseId, version: 3, checked_at: expires,
     enrollment: { status: 'verified', observed_at: expires }, content: { status: provider.contentStatus }, quiz_review: reviewStatus(),
     launch: { kind: 'course', reason: 'No verified multi-SCO target is available.' },
-    learning_map: { status: 'unavailable', provider_prerequisites: 'unavailable', objectives: [], prerequisites: [] },
+    learning_map: provider.readinessMap || { status: 'unavailable', provider_prerequisites: 'unavailable', objectives: [], prerequisites: [] },
     retention: { mode: 'virtual', cached_bytes: 0, course_text_retained: false } });
   const link = () => ({ id: linkId, connector_id: 'c'.repeat(32), provider_label: 'Fixture learning provider', status: provider.status });
   const response = (body, status = 200) => ({ ok: status < 400, status, json: async () => body });
@@ -309,6 +309,38 @@ function change(h, name, value) { const node = field(h, name); assert.ok(!node.p
     await h.controller.send('Do not infer released review from this score.'); h.render();
     assert.equal(h.modelCalls.length, 0);
     process.stdout.write('PASS readiness is unknown until checked and a completion/score never enables unreleased question review\n');
+  } finally { h.cleanup(); }
+}
+
+{
+  const h = fixture(); await h.settle();
+  try {
+    await h.click('Show my enrolled courses'); change(h, 'Your enrolled course', JSON.stringify([courseId, 3]));
+    const choices = () => nodes(field(h, 'Your enrolled course')).filter(node => node.type === 'option').map(node => node.props.value);
+    const beforeChoices = choices();
+    h.provider.readinessMap = { status: 'owner-supplied', revision: 'a'.repeat(32), sha256: 'b'.repeat(64), saved_at: expires,
+      provider_prerequisites: 'unavailable', objectives: [], prerequisites: [], curriculum: { label: 'Owner-supplied suggested order',
+        sequence: [{ course_id: 'unenrolled-course', version: 0, label: 'Orientation practice' },
+          { course_id: courseId, version: 3, label: 'Practice quiz and review' }] } };
+    const ownerPanel = () => h.all().find(node => node.props['data-testid'] === 'learner-owner-map');
+    await h.click('Check course readiness');
+    assert.ok(text(ownerPanel()).includes('Orientation practice · Version 0'));
+    assert.ok(text(ownerPanel()).includes('Practice quiz and review · Version 3'));
+    assert.ok(!text(ownerPanel()).includes(courseTitle), 'An explicit owner label takes precedence over an enrolled catalog title.');
+    assert.ok(text(ownerPanel()).includes('This is an owner-supplied sequence, not a provider-confirmed required curriculum.'));
+    assert.deepEqual(choices(), beforeChoices, 'Owner-supplied references do not add enrolled course choices.');
+    h.provider.readinessMap.curriculum.sequence = [{ course_id: courseId, version: 3 }]; await h.click('Check course readiness');
+    assert.ok(text(ownerPanel()).includes(courseTitle + ' · Version 3'));
+    h.provider.readinessMap.curriculum.sequence = [{ course_id: courseId, version: 2 }]; await h.click('Check course readiness');
+    assert.ok(text(ownerPanel()).includes('Course title not supplied · Version 2'));
+    assert.ok(!text(ownerPanel()).includes(courseTitle), 'A different course version cannot supply the fallback title.');
+    const beforeCalls = h.calls.length;
+    change(h, 'Your enrolled course', JSON.stringify(['unenrolled-course', 0]));
+    assert.equal(h.controller.selected, null);
+    await h.controller.send('Ask about the unenrolled owner reference.'); h.render();
+    assert.equal(h.calls.length, beforeCalls); assert.equal(h.modelCalls.length, 0);
+    assert.ok(!h.all().some(node => node.type === 'button' && text(node) === 'Open course'));
+    process.stdout.write('PASS owner curriculum labels survive without enrollment and catalog fallback requires the exact course version\n');
   } finally { h.cleanup(); }
 }
 
