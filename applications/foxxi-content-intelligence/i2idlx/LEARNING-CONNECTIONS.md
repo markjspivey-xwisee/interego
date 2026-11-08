@@ -130,6 +130,27 @@ Cloud's public API does not document a reliable conversion from an LTI subject
 to its canonical learner ID, so the administrator/learner association remains
 required.
 
+Generated helpers use inline player/SCO launch settings and
+`Lti13PrivacySettings=NO_LEARNER_INFO`. Setup becomes ready only after Cloud
+reports those effective settings for the exact disposable helper. A lost
+settings acknowledgement remains pending and is reconciled before another
+write; neither the original course nor account defaults are configured.
+Previously saved ready helpers without this settings confirmation are shown
+as pending and cannot start a new public launch until their owner refreshes
+the connection and the effective settings are confirmed.
+
+The separate **Manage course content** owner test opens the generated helper's
+native SCORM Cloud course page, using the current connection's application ID.
+The owner signs in to Cloud and selects **Launch** in its testing sandbox,
+then returns to Ask to check and explicitly attach the verified launch.
+This does not identify or enroll a student. API access-token connections
+without an application ID instead receive instructions to open the helper in
+their Cloud library. The workbench does not create a learner for this handoff
+or substitute a Cloud preview. The tested Cloud API preview omitted the course
+context; the registered synthetic launch included it and passed the unchanged
+context checks. Student discovery continues to require a genuine LMS launch
+and the independent administrator/learner association above.
+
 This connector does not fetch NRPS rosters, write AGS grades, or expose a global
 learning transcript. NRPS membership and AGS results are context/tool scoped;
 they are not a general enrollment, curriculum or prerequisites API. SCORM Cloud
@@ -138,6 +159,7 @@ must advertise an authoritative source before Ask can answer those questions.
 
 Reference contracts: [Cloud API](https://cloud.scorm.com/docs/swagger.json),
 [Cloud users and learners](https://support.scorm.com/hc/en-us/articles/360039781254-SCORM-Cloud-User-vs-Learner),
+[Cloud sandbox registrations](https://support.scorm.com/hc/en-us/articles/360029498134-SCORM-Cloud-API-Documentation),
 [LTI 1.3](https://www.imsglobal.org/spec/lti/v1p3/),
 [NRPS](https://www.imsglobal.org/spec/lti-nrps/v2p0/) and
 [AGS](https://www.imsglobal.org/spec/lti-ags/v2p0/).

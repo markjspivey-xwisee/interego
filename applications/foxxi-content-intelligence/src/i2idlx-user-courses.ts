@@ -1,6 +1,7 @@
 /** Private course retrieval through a browser's verified, temporary Interego session. */
 import type { Express, Response as ExpressResponse } from 'express';
 import { createHash, randomBytes } from 'node:crypto';
+import { ltiHelperSettingsConfirmed, ltiHelperSettingsRequest } from './i2idlx-lti-helper-settings.js';
 import { inflateRawSync } from 'node:zlib';
 import AdmZip from 'adm-zip';
 import type { AgentBrowserIdentity, AgentSessionStore } from './i2idlx-agent-sessions.js';
@@ -23,11 +24,11 @@ type LtiSetup = { id: string; course: string; grantId: string; binding: CourseLt
   state: 'prepared' | 'setting-up' | 'ready' | 'verified' | 'attached' | 'revoked' | 'cleanup-failed';
   connectorId?: string; helperCourseId?: string; importJobId?: string; configured?: boolean; helperRequested?: boolean;
   cleanup?: Promise<boolean>; pending?: Promise<void>; note?: string; setupStarted?: boolean; connectorRequested?: boolean;
-  helperSettled?: boolean; removed?: boolean };
+  helperSettled?: boolean; helperConfiguration?: Promise<boolean>; removed?: boolean };
 type RevokedGrant = { course: string; idempotencyKey: string; remote?: SourceGrant; result?: Row; requestId?: string;
   inFlight?: Promise<Row>; deletedAt?: number; deletionOrder?: number };
 type Connection = {
-  id: string; session: string; actor: string; authorization: string; expires: number;
+  id: string; session: string; actor: string; authorization: string; expires: number; cloudAppId?: string;
   abort: AbortController; release: () => void; timer: ReturnType<typeof setTimeout>;
   courses: Map<string, Course>; pages: Map<string, string>; busy: boolean;
   provider: 'scorm-cloud' | 'source-service'; remote?: SourceCourseProvider;
@@ -652,9 +653,42 @@ export class UserCourseStore {
     catch (error) { if (error instanceof UserCourseError && error.status === 404) { setup.note = 'Cloud has not confirmed the helper course yet. Check its status again.'; return; } throw error; }
     this.requireLtiActive(connection, setup, signal);
     if (helper.id !== setup.helperCourseId) refuse('The Cloud helper course identity changed.', 409, 'course_lti_setup_uncertain');
+    if (!await this.configureLtiHelper(connection, setup, signal)) return;
+    this.requireLtiActive(connection, setup, signal);
     setup.state = 'ready'; setup.note = undefined;
     // Preserve a launch which finished while a provider status read was in flight.
     this.ltiView(setup);
+  }
+  private async configureLtiHelper(connection: Connection, setup: LtiSetup, signal: AbortSignal): Promise<boolean> {
+    if (setup.helperConfiguration) return setup.helperConfiguration;
+    const work = (async () => {
+      this.requireLtiActive(connection, setup, signal);
+      if (!setup.helperSettled || setup.helperCourseId !== 'i2idlx-lti-qa-' + setup.id || setup.helperCourseId === setup.binding.courseId) {
+        refuse('Only this setup\'s confirmed disposable helper may be configured.', 409, 'course_lti_setup_uncertain');
+      }
+      const path = '/courses/' + encodeURIComponent(setup.helperCourseId) + '/configuration';
+      let settings = await this.cloudJson(connection, path, signal);
+      this.requireLtiActive(connection, setup, signal);
+      if (!ltiHelperSettingsConfirmed(settings)) {
+        // Settings prevent a second popup and suppress learner name/email.
+        // Reading first reconciles a write whose acknowledgement was lost.
+        await this.cloudRequest(connection, path, signal, 64 * 1024, 'POST', ltiHelperSettingsRequest());
+        this.requireLtiActive(connection, setup, signal);
+        settings = await this.cloudJson(connection, path, signal);
+        this.requireLtiActive(connection, setup, signal);
+      }
+      return ltiHelperSettingsConfirmed(settings);
+    })();
+    setup.helperConfiguration = work;
+    try {
+      const confirmed = await work;
+      if (!confirmed) setup.note = 'Cloud helper launch and privacy settings are unconfirmed. Check this connection again or remove the temporary setup.';
+      return confirmed;
+    } catch (error) {
+      if (signal.aborted || connection.abort.signal.aborted || error instanceof UserCourseError && ['course_provider_authentication_failed', 'course_lti_expired'].includes(error.code)) throw error;
+      setup.note = 'Cloud helper launch and privacy settings are unconfirmed. Check this connection again or remove the temporary setup.';
+      return false;
+    } finally { if (setup.helperConfiguration === work) setup.helperConfiguration = undefined; }
   }
   private requireLtiActive(connection: Connection, setup: LtiSetup, signal: AbortSignal): void {
     this.requireCurrent(connection);
@@ -674,9 +708,10 @@ export class UserCourseStore {
     setup.cleanup = (async () => {
       const signal = AbortSignal.timeout(15_000);
       // Do not race deletion against a provider create which is still settling.
-      if (setup.pending) {
+      const pending = [setup.pending, setup.helperConfiguration].filter((value): value is Promise<void> | Promise<boolean> => value !== undefined);
+      if (pending.length) {
         let settled = false;
-        await Promise.race([setup.pending.catch(() => undefined).then(() => { settled = true; }), new Promise<void>(resolve => {
+        await Promise.race([Promise.all(pending.map(value => value.catch(() => undefined))).then(() => { settled = true; }), new Promise<void>(resolve => {
           if (signal.aborted) resolve(); else signal.addEventListener('abort', () => resolve(), { once: true });
         })]);
         if (!settled) { setup.state = 'cleanup-failed'; setup.note = 'Cloud setup is still settling. Local access ended; check cleanup again.'; return false; }
@@ -805,8 +840,14 @@ export class UserCourseStore {
     }
     if (operation === 'lti-launch') {
       if (!['ready', 'verified'].includes(setup.state)) refuse('Check the LTI setup before opening a launch.', 409, 'course_lti_launch_required');
-      const preview = await this.cloudJson(connection, '/courses/' + encodeURIComponent(setup.helperCourseId!) + '/preview', signal, 'POST', { expiry: 120 });
-      return { lti: this.ltiView(setup), launch_url: this.cloudEndpoint(preview.launchLink, 'Cloud preview link') };
+      if (!connection.cloudAppId) refuse('Open the generated helper in your SCORM Cloud library and select Launch in its testing sandbox. This access-token connection does not provide an application ID for the Cloud management link.', 409, 'course_lti_cloud_ui_required');
+      // Cloud management users and API learners are separate identities. The
+      // native sandbox performs an owner test; never mint a preview or invent a
+      // learner registration and present it as student identity or enrollment.
+      const ownerCourse = new URL('https://app.cloud.scorm.com/sc/user/Course');
+      ownerCourse.searchParams.set('courseId', setup.helperCourseId!);
+      ownerCourse.searchParams.set('appId', connection.cloudAppId);
+      return { lti: this.ltiView(setup), owner_course_url: ownerCourse.href };
     }
     refuse('Unknown LTI connection operation.');
   }
@@ -887,6 +928,7 @@ export class UserCourseStore {
       if (previous) this.drop(previous);
       if (this.connections.size >= 64) refuse('Too many temporary course connections.', 429, 'course_rate_limited');
       const connection = { id: opaque(), session: identity.session_id, actor: identity.actor, authorization,
+        ...(provider === 'scorm-cloud' && object(args.credentials) && args.credentials.type === 'basic' ? { cloudAppId: args.credentials.app_id as string } : {}),
         expires: Math.min(identity.expires_at, this.clock() + this.ttl), abort: new AbortController(),
         courses: new Map(), pages: new Map(), grants: new Map(), revoked: new Map(), ltiSetups: new Map(), busy: false, provider, ...(remote ? { remote } : {}) } as Connection;
       const close = () => this.drop(connection);

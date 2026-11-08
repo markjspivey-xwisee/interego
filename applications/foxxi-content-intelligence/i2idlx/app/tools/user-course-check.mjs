@@ -164,11 +164,11 @@ await test('Cloud virtual packets identify selected projections separately from 
   assert.equal(details('virtual', 'source-service').label, 'Query at source (virtual)');
 });
 
-await test('LTI controls retain only safe setup metadata and accept a Cloud launch only for navigation', async () => {
+await test('LTI controls retain only safe setup metadata', async () => {
   const source = await readFile(new URL('../src/course-context.jsx', import.meta.url), 'utf8');
   const validation = source.slice(source.indexOf('const object ='), source.indexOf('export function useCourseContext'))
     .replace('export function selectedCoursePacket', 'function selectedCoursePacket');
-  const { view, launch } = runInNewContext(validation + '\n({view:ltiView,launch:cloudLaunchUrl});', { URL });
+  const view = runInNewContext(validation + '\nltiView;', { URL });
   const raw = { id: 'lti-setup-one', state: 'verified', expires_at: expires, connector_id: 'connector-one', helper_course_id: 'helper-one',
     launch_url: 'PRIVATE-CLOUD-LAUNCH-CAPABILITY', secret: 'PRIVATE-SECRET',
     tool: { login_url: 'https://workbench.example/lti/login', launch_url: 'https://workbench.example/lti/launch', jwks_url: 'https://workbench.example/lti/jwks', public_key_pem: 'PUBLIC-KEY' },
@@ -185,9 +185,82 @@ await test('LTI controls retain only safe setup metadata and accept a Cloud laun
   assert.throws(() => view(raw, 'lti-setup-one', { id: 'native-cloud-course', version: 4 }), /selected course/);
   assert.throws(() => view({ ...raw, tool: { ...raw.tool, launch_url: 'https://workbench.example/lti/launch?private_capability=secret' } }), /invalid endpoint/);
   assert.equal(view({ id: 'cleanup-one', state: 'cleanup-failed', connector_id: 'created-one', note: 'Retry removal.' }).state, 'cleanup-failed');
-  assert.equal(launch('https://app.cloud.scorm.com/preview?short_lived=synthetic'), 'https://app.cloud.scorm.com/preview?short_lived=synthetic');
-  for (const url of ['http://cloud.scorm.com/preview', 'https://cloud.scorm.com.evil.example/preview', 'https://evilcloud.scorm.com/preview',
-    'https://user:password@app.cloud.scorm.com/preview', 'https://app.cloud.scorm.com:8443/preview', 'javascript:alert(1)']) assert.throws(() => launch(url), /launch link/);
+});
+
+await test('owner LTI handoff accepts only the generated helper page without preview capabilities', async () => {
+  const source = await readFile(new URL('../src/course-context.jsx', import.meta.url), 'utf8');
+  const validation = source.slice(source.indexOf('const object ='), source.indexOf('export function useCourseContext'))
+    .replace('export function selectedCoursePacket', 'function selectedCoursePacket');
+  const page = runInNewContext(validation + '\ncloudOwnerCourseUrl;', { URL });
+  const expected = 'https://app.cloud.scorm.com/sc/user/Course?courseId=helper-one&appId=dynamic-app';
+  assert.equal(page(expected, 'helper-one'), expected);
+  assert.equal(page('https://app.cloud.scorm.com/sc/user/Course?appId=dynamic-app&courseId=helper-one', 'helper-one'),
+    'https://app.cloud.scorm.com/sc/user/Course?appId=dynamic-app&courseId=helper-one');
+  assert.throws(() => page(expected, 'another-helper'), /expected helper course page/);
+  assert.throws(() => page(expected, undefined), /expected helper course page/);
+  for (const url of [undefined, {}, 'http://app.cloud.scorm.com/sc/user/Course?courseId=helper-one&appId=dynamic-app',
+    'https://cloud.scorm.com/sc/user/Course?courseId=helper-one&appId=dynamic-app',
+    'https://app.cloud.scorm.com.evil.example/sc/user/Course?courseId=helper-one&appId=dynamic-app',
+    'https://sub.app.cloud.scorm.com/sc/user/Course?courseId=helper-one&appId=dynamic-app',
+    'https://user:password@app.cloud.scorm.com/sc/user/Course?courseId=helper-one&appId=dynamic-app',
+    'https://app.cloud.scorm.com:8443/sc/user/Course?courseId=helper-one&appId=dynamic-app',
+    'https://app.cloud.scorm.com/preview?short_lived=synthetic', expected + '#', expected + '#fragment',
+    expected + '&appId=another-app', expected + '&courseId=another-helper', expected + '&secret=private',
+    'https://app.cloud.scorm.com/sc/user/Course?courseId=helper-one&appId=',
+    'https://app.cloud.scorm.com/sc/user/Course?courseId=helper-one&appId=%00',
+    'https://app.cloud.scorm.com/sc/user/Course?courseId=helper-one&appId=%20dynamic-app',
+    'javascript:alert(1)']) assert.throws(() => page(url, 'helper-one'), /helper course page/);
+});
+
+await test('owner LTI action navigates only after current-owner validation and releases the opened Cloud page', async () => {
+  const source = await readFile(new URL('../src/course-context.jsx', import.meta.url), 'utf8');
+  const validation = source.slice(source.indexOf('const object ='), source.indexOf('export function useCourseContext'))
+    .replace('export function selectedCoursePacket', 'function selectedCoursePacket');
+  const action = source.slice(source.indexOf('  async function ltiAction('), source.indexOf('  async function erase('));
+  const helper = 'helper-one', ownerPage = 'https://app.cloud.scorm.com/sc/user/Course?courseId=helper-one&appId=dynamic-app';
+  const lti = { id: 'lti-setup-one', state: 'ready', expires_at: expires, helper_course_id: helper };
+  async function scenario({ owner = true, blocked = false, active = true, destination = ownerPage } = {}) {
+    const seen = { calls: [], notices: [], errors: [], windows: [] }, launchWindow = { current: null };
+    const popup = { closed: false, opener: 'old-opener', location: { replace: value => { seen.destination = value; } }, close() { this.closed = true; } };
+    const controller = new AbortController();
+    const context = { URL, AbortController, eligible: true, connection: { provider: 'scorm-cloud', connection_id: 'owner-connection' },
+      selected: { id: 'source-course', version: 0 }, loading: false, grant: { id: 'owner-grant', authority: owner ? 'owner' : 'authorized-by-owner' },
+      engine: { busy: false, reset() {} }, lti, launchWindow,
+      closeLaunchWindow() { launchWindow.current?.close(); launchWindow.current = null; },
+      window: { open: (...args) => { seen.windows.push(args); return blocked ? null : popup; } },
+      begin: () => ({ run: 1, controller }), current: () => active,
+      userCourseRequest: async args => { seen.calls.push(args); return { lti, owner_course_url: destination }; },
+      setLti: value => { seen.lti = value; }, setLtiNotice: value => seen.notices.push(value),
+      setError: value => seen.errors.push(value), setLoading() {}, setPacket() {}, setGrant() {}, clearLtiProof() {},
+      failed: error => seen.errors.push(error.message) };
+    const run = runInNewContext(validation + '\n' + action + '\nltiAction;', context);
+    await run('lti-launch');
+    return { seen, popup, launchWindow };
+  }
+  const success = await scenario();
+  assert.equal(success.seen.calls.length, 1);
+  assert.equal(success.seen.calls[0].operation, 'lti-launch');
+  assert.equal(success.seen.calls[0].lti_id, lti.id);
+  assert.equal(success.seen.destination, ownerPage);
+  assert.equal(success.popup.opener, null);
+  assert.equal(success.popup.closed, false);
+  assert.equal(success.launchWindow.current, null);
+  assert.match(success.seen.notices.at(-1), /testing sandbox/);
+  assert.match(success.seen.notices.at(-1), /does not identify a student or establish enrollment/);
+  assert.equal(success.seen.lti.owner_course_url, undefined);
+  const notOwner = await scenario({ owner: false });
+  assert.equal(notOwner.seen.calls.length, 0);
+  assert.equal(notOwner.seen.windows.length, 0);
+  assert.match(notOwner.seen.errors[0], /Only the course owner/);
+  const blocked = await scenario({ blocked: true });
+  assert.equal(blocked.seen.calls.length, 0);
+  const cancelled = await scenario({ active: false });
+  assert.equal(cancelled.seen.destination, undefined);
+  assert.equal(cancelled.popup.closed, true);
+  const wrongHelper = await scenario({ destination: ownerPage.replace('helper-one', 'another-helper') });
+  assert.equal(wrongHelper.seen.destination, undefined);
+  assert.equal(wrongHelper.popup.closed, true);
+  assert.match(wrongHelper.seen.errors[0], /expected helper course page/);
 });
 
 await test('deletion messages distinguish local removal from pending, failed and provider-reported remote completion', async () => {

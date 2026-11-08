@@ -78,11 +78,18 @@ function ltiView(raw, expectedId = null, course = null) {
 }
 const hasLtiResources = value => !!(value?.connector_id || value?.helper_course_id);
 
-function cloudLaunchUrl(raw) {
+function cloudOwnerCourseUrl(raw, expectedHelperCourseId) {
   let url;
-  try { url = new URL(raw); } catch { throw new Error('SCORM Cloud did not return a valid launch link.'); }
-  if (url.protocol !== 'https:' || url.username || url.password || url.port && url.port !== '443' ||
-      !(url.hostname === 'cloud.scorm.com' || url.hostname.endsWith('.cloud.scorm.com'))) throw new Error('SCORM Cloud did not return a trusted launch link.');
+  try { if (typeof raw !== 'string' || raw.length > 4096) throw new Error(); url = new URL(raw); }
+  catch { throw new Error('SCORM Cloud did not return a valid helper course page.'); }
+  const keys = [...url.searchParams.keys()], appId = url.searchParams.get('appId');
+  if (url.protocol !== 'https:' || url.hostname !== 'app.cloud.scorm.com' || url.pathname !== '/sc/user/Course' ||
+      url.username || url.password || url.port && url.port !== '443' || url.href.includes('#') ||
+      typeof expectedHelperCourseId !== 'string' || !expectedHelperCourseId ||
+      url.searchParams.get('courseId') !== expectedHelperCourseId || keys.length !== 2 || new Set(keys).size !== 2 ||
+      keys.some(key => !['courseId', 'appId'].includes(key)) || !appId || appId.length > 256 || appId.trim() !== appId || /[\u0000-\u001f\u007f]/.test(appId)) {
+    throw new Error('SCORM Cloud did not return the expected helper course page.');
+  }
   return url.href;
 }
 
@@ -269,11 +276,12 @@ export function useCourseContext(engine) {
     if (!eligible || !connection || connection.provider !== 'scorm-cloud' || !selected || loading ||
         (!removing && (!grant || engine.busy)) || operation !== 'lti-prepare' && !lti) return;
     if (operation === 'lti-setup' && grant.authority !== 'owner') { setError('Only the course owner may create a trusted Cloud LTI connection.'); return; }
+    if (launching && grant.authority !== 'owner') { setError('Only the course owner may open this helper in SCORM Cloud.'); return; }
     let popup = null;
     if (launching) {
       closeLaunchWindow();
       popup = window.open('about:blank', '_blank');
-      if (!popup) { setError('Allow a new tab for this workbench, then open the LTI course again.'); return; }
+      if (!popup) { setError('Allow a new tab for this workbench, then open the helper in SCORM Cloud again.'); return; }
       popup.opener = null; launchWindow.current = popup;
     }
     const { run, controller } = begin(); setLtiNotice('');
@@ -304,10 +312,11 @@ export function useCourseContext(engine) {
         setLtiNotice('The verified LTI launch is attached to this paired agent and selected course.');
       }
       if (launching) {
-        const destination = cloudLaunchUrl(value.launch_url);
-        if (controller.signal.aborted || popup.closed) throw new Error('The LTI course tab closed before its launch was ready. Open it again.');
+        const destination = cloudOwnerCourseUrl(value.owner_course_url, lti.helper_course_id);
+        if (controller.signal.aborted || popup.closed) throw new Error('The SCORM Cloud tab closed before the helper page was ready. Open it again.');
         popup.location.replace(destination);
-        setLtiNotice('The Cloud LTI helper course opened in a new tab. When its launch finishes, check this connection, then use the verified launch.');
+        if (launchWindow.current === popup) launchWindow.current = null;
+        setLtiNotice('SCORM Cloud opened. Select Launch in its testing sandbox, then return here, check this connection and use the verified LTI launch. This verifies the owner connection; it does not identify a student or establish enrollment.');
       }
     } catch (e) {
       if (popup) { try { popup.close(); } catch {} if (launchWindow.current === popup) launchWindow.current = null; }
@@ -456,10 +465,11 @@ export function useCourseContext(engine) {
               </> : null}
               <div className="row wrap">
                 {grant && !['revoked', 'cleanup-failed'].includes(lti.state) ? <button className="btn sm" disabled={loading || engine.busy} onClick={() => ltiAction('lti-status')}>Check LTI connection</button> : null}
-                {grant && lti.state === 'ready' ? <button className="btn sm" disabled={loading || engine.busy} onClick={() => ltiAction('lti-launch')}>Open Cloud LTI helper course</button> : null}
+                {grant && lti.state === 'ready' && grant.authority === 'owner' ? <button className="btn sm" disabled={loading || engine.busy} onClick={() => ltiAction('lti-launch')}>Open helper in SCORM Cloud</button> : null}
                 {grant && ['verified', 'attached'].includes(lti.state) ? <button className="btn sm" disabled={loading || engine.busy || lti.state === 'attached'} onClick={() => ltiAction('lti-attach')}>Use verified LTI launch</button> : null}
                 <button className="btn sm" disabled={loading} onClick={() => ltiAction('lti-disconnect')}>Remove Cloud LTI setup</button>
               </div>
+              {grant && lti.state === 'ready' ? <p>The course owner opens this helper in SCORM Cloud and selects Launch in its testing sandbox. Then return here, check this connection and use the verified LTI launch. This verifies the owner connection; it does not identify a student or establish enrollment.</p> : null}
               <p>Removal deletes only the helper course and LTI connection created for this setup. Your original hosted course remains in Cloud.</p>
               {lti.note ? <p>{lti.note}</p> : null}
               {lti.launch ? <details><summary>Verified launch details</summary><div className="stack" style={{ gap: 5 }}>
