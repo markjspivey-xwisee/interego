@@ -32,6 +32,10 @@ export function useLearningContext(engine, { onActivate } = {}) {
     launcher.current.cancel();
     if (cancel) invalidate(); setSelected(null); setProgress(null); setPacket(null); setShareContent(false); setShareProgress(false); if (activeRef.current) engine.reset();
   };
+  const clearSelectedLink = () => {
+    // Keep private source intent blocked until the learner explicitly leaves it.
+    clearPrivate(); setLink(null); setCourses([]);
+  };
   const clear = () => { clearPrivate(); activeRef.current = false; setActive(false); setError(''); };
   const clearAccount = (cancel = true) => {
     clearPrivate(cancel); setLink(null); setLinks([]); setCourses([]); setConnectors([]); setPending({}); setDiscovery(null); setConfirmations({});
@@ -44,7 +48,10 @@ export function useLearningContext(engine, { onActivate } = {}) {
     if (!current(run) || controller.signal.aborted || cause?.code === 'cancelled') return;
     const locationOnly = ['learning_launch_location_expired', 'learning_targeted_launch_not_allowed', 'learning_launch_location_unavailable'].includes(cause?.code);
     if (['learning_sign_in_required', 'learning_session_expired', 'learning_account_invalid', 'learning_csrf_refused'].includes(cause?.code)) { clearAccount(); client.current.clear(); setSession(null); }
-    else if (!locationOnly && (cause?.status === 401 || cause?.status === 403 || ['learning_access_revoked', 'learning_authority_changed', 'learning_connection_not_found', 'learning_connection_revoked', 'learning_content_not_allowed', 'learning_progress_not_allowed', 'learning_link_inactive', 'learning_link_not_found', 'learning_link_required', 'learning_link_revoked', 'learning_enrollment_required', 'learning_permission_required', 'learning_context_revoked', 'learning_authorization_expired', 'session_expired', 'session_unauthorized'].includes(cause?.code))) clearPrivate();
+    else if (['learning_access_revoked', 'learning_context_revoked', 'learning_connection_not_found', 'learning_connection_revoked', 'learning_link_inactive', 'learning_link_not_found', 'learning_link_required', 'learning_link_revoked'].includes(cause?.code)) {
+      clearSelectedLink(); setLinks(old => old.filter(value => value.id !== link?.id));
+    }
+    else if (!locationOnly && (cause?.status === 401 || cause?.status === 403 || ['learning_authority_changed', 'learning_content_not_allowed', 'learning_progress_not_allowed', 'learning_enrollment_required', 'learning_permission_required', 'learning_authorization_expired', 'session_expired', 'session_unauthorized'].includes(cause?.code))) clearPrivate();
     const messages = {
       learning_sign_in_required: 'Sign in to your learning account again.', learning_session_expired: 'Your learning sign-in expired. Sign in again.',
       learning_link_inactive: 'This learning account link is no longer active. Refresh your connections.', learning_link_not_found: 'This learning account link could not be confirmed. Refresh your connections.',
@@ -93,6 +100,13 @@ export function useLearningContext(engine, { onActivate } = {}) {
     return () => { mounted.current = false; generation.current++; request.current?.abort(); launcher.current.cancel(); clearCredentials(); unsubscribe(); client.current.dispose(); try { popup.current?.close(); } catch {} };
   }, []);
   useEffect(() => subscribeAgentSession(setAgent), []);
+  useEffect(() => {
+    if (!link) return;
+    const refreshed = links.find(value => value.id === link.id);
+    if (!refreshed || refreshed.status !== 'active') {
+      clearSelectedLink(); setError('This learning account link is no longer active. Select an active link before continuing.');
+    } else setLink(refreshed);
+  }, [links, link?.id]);
   useEffect(() => {
     const identity = paired ? agent.connectionId : null;
     if (recipient.current !== identity) {
