@@ -1,6 +1,8 @@
 /* Practice Evidence: product rules on top of the Interego design system (served after it as /ui/app.css). */
 #bar { display: contents; }
 .app-main:focus { outline: none; }
+/* What #signing says (a sign-in note or problem) stands apart from the page heading below it. */
+#signing:not(:empty) { margin-bottom: var(--space-6); }
 .hide-below-md { display: none; }
 @media (min-width: 48em) { .hide-below-md { display: inline; } .side-nav .side-nav__mobile-only { display: none; } }
 @media (max-width: 63.99em) { .top-nav { display: none; } }

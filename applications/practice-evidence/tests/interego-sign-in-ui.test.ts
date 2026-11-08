@@ -1049,7 +1049,20 @@ describe('the web UI signs a person in with their Interego account and has the r
     expect(p2.text('#view .page-header')).toContain('Add people by their Member ID and choose their role.');
     expect(p2.text('label[for="member-id"]')).toBe('Member ID or wallet address');
     const field = p2.q('#member-id') as HTMLInputElement;
-    field.value = OTHER;
+    expect(field.placeholder).toContain('did:web:');
+    expect(p2.text('#member-id-hint')).toBe('Ask the person to copy it from their account menu.');
+    const save = (): void => p2.q(`button[data-action="${PEV_ACTION.registerRole}"]`)!.click();
+    const retype = (v: string): void => { field.value = v; field.dispatchEvent(new p2.w.Event('input')); };
+    retype('   ');
+    save();
+    await p2.until(() => p2.q('#member-id-error'), 'the empty-field message');
+    expect(p2.text('#member-id-error')).toBe('Enter their Member ID or wallet address.');
+    retype('bob@example');
+    expect(p2.q('#member-id-error')).toBeNull();
+    save();
+    await p2.until(() => p2.q('#member-id-error') ?? p2.q('#view .refusal'), 'the format message');
+    expect(p2.text('#member-id-error')).toMatch(/^That isn't a Member ID or a wallet address\. Ask the person to copy their Member ID from their account menu/);
+    retype(OTHER);
     p2.q(`button[data-action="${PEV_ACTION.registerRole}"]`)!.click();
     await p2.until(() => p2.q('#view .outcome table') ?? p2.q('#view .refusal'), 'the registry');
     expect([...p2.w.document.querySelectorAll('#view .outcome tr')].some((tr) => (tr.textContent ?? '').includes(OTHER))).toBe(true);
@@ -1578,9 +1591,18 @@ describe('your own AI assistant: connect Claude or ChatGPT, or copy and paste; n
     const signIn = judge.querySelector('.checklist__action [data-sign-in]');
     expect([signIn?.getAttribute('data-sign-in'), signIn?.textContent]).toEqual(['interego', 'Sign in with Interego']);
     expect(w.text('.checklist')).not.toContain('Copy my wallet address');
+    // A sign-in that cannot start says why at the top of the page and takes focus there, since this
+    // button sits far down Getting started; the button is ready to press again.
+    const reach = w.w['fetch'] as (input: unknown, init?: RequestInit) => Promise<Response>;
+    w.w['fetch'] = (input: unknown, init?: RequestInit): Promise<Response> =>
+      String(input).includes('ui/oauth/start') ? Promise.resolve(new Response('unavailable', { status: 503 })) : reach(input, init);
+    (signIn as HTMLElement).click();
+    const problem = await w.until(() => w.q('#signing .callout'), 'why the sign-in could not start');
+    expect([w.w.document.activeElement === problem, problem.getAttribute('role'), (signIn as HTMLButtonElement).disabled, signIn?.hasAttribute('aria-busy')]).toEqual([true, 'alert', false, false]);
+    w.w['fetch'] = reach;
     // It starts the same sign-in as the header's button: the page leaves for the relay.
     (signIn as HTMLElement).click();
-    await w.until(() => w.q('#interego-continue') ?? w.q('#signing .refusal'), 'the way to Interego');
+    await w.until(() => w.q('#interego-continue'), 'the way to Interego');
     expect(w.q('#interego-continue')?.getAttribute('href')?.startsWith(`${RELAY}/authorize?`)).toBe(true);
     await w.until(() => w.errors.includes(NAVIGATION), 'the navigation to the relay');
     expect([...p.errors, ...w.errors.filter((e) => e !== NAVIGATION)]).toEqual([]);

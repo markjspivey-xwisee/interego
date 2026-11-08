@@ -49,6 +49,11 @@ Interego sign-in is offered, a judge's first Getting started step asks
 for a Member ID: someone signed in with a wallet is asked to sign in with
 Interego first, since a judge added by wallet address can't assess from
 Claude or ChatGPT, and a copied wallet address no longer ticks that step.
+There, the guide's "Before you start" and "You don't have access to
+this" entries also give the way for someone signed in with a wallet
+(Getting started → Copy my wallet address). A sign-in that can't start says
+why at the top of the page and moves the page and focus there, since its
+button may be far down Getting started.
 It reads a pasted draft even with prose or code fences around it, and asks
 which AI wrote each reply. A person's own Anthropic key stays available,
 closed under the dialog's Advanced section; it is gone from the header and

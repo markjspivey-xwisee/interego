@@ -405,7 +405,7 @@ describe('the web UI is served under a strict content policy', () => {
     expect(chat).toContain('Saving the assessment takes a tool of your own that signs it with your key: this web app can\'t save it yet');
     expect(html).not.toMatch(/save (?:each|the) assessment with (?:your|their) own key/);
     // Nothing else on the page directs a person to Interego sign-in, a Member ID or the connector.
-    for (const s of ['Copy your Member ID from the account menu', 'Sign in with Interego (or another way', 'What the Interego sign-in service sees', '<dt>Interego connector</dt>',
+    for (const s of ['Send your admin your Member ID (account menu → Your Member ID → Copy) or, signed in with a wallet, your wallet address (Getting started → Copy my wallet address).', 'Sign in with Interego (or another way', 'What the Interego sign-in service sees', '<dt>Interego connector</dt>',
       '<dt>Your sign-in has ended</dt>', '<dt>Please do this in the web app</dt>', 'add and remove people by Member ID', 'Use <strong>Connect your AI</strong>']) expect(html).not.toContain(s);
     for (const s of ['Send your wallet address to your admin (Getting started → Copy my wallet address).', 'Sign in with your crypto wallet (or sign manually, from the sign-in menu)',
       'add and remove people by wallet address']) expect(html).toContain(s);
@@ -417,8 +417,9 @@ describe('the web UI is served under a strict content policy', () => {
     // With it, the connector's steps and this workspace's relay, as its Connect dialog shows it.
     for (const s of [`<code>${EXAMPLE_CONNECTOR_HTML}</code>`, 'In each new chat, turn on Interego from the chat\'s tools menu (+).', 'id="workspace-address"',
       'Appoint at least one judge, by their Interego Member ID', 'your plan must allow custom connectors', 'under <strong>Send to your judge</strong>',
-      'Copy your Member ID from the account menu', 'Sign in with Interego (or another way', 'What the Interego sign-in service sees', '<dt>Interego connector</dt>',
-      '<dt>Your sign-in has ended</dt>', 'add and remove people by Member ID']) expect(connected).toContain(s);
+      'Send your admin your Member ID (account menu → Your Member ID → Copy) or, signed in with a wallet, your wallet address (Getting started → Copy my wallet address).', 'Sign in with Interego (or another way', 'What the Interego sign-in service sees', '<dt>Interego connector</dt>',
+      '<dt>Your sign-in has ended</dt>', 'add and remove people by Member ID',
+      'Signed in with a wallet, send your wallet address instead (Getting started → Copy my wallet address); a judge needs a Member ID to assess from Claude or ChatGPT.']) expect(connected).toContain(s);
     for (const s of ['can\'t save an assessment yet', 'Send your wallet address to your admin', 'Sign in with your crypto wallet']) expect(connected).not.toContain(s);
     for (const s of [DEFAULT_CONNECTOR_ADDRESS, 'doesn\'t offer Interego sign-in']) expect(connected).not.toContain(s);
     // The pages and the code that fills them change together: a page without its blocks, an unclosed

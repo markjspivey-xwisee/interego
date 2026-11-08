@@ -1003,6 +1003,18 @@ function signInButton(how, label, size, variant, block) {
     how === 'interego' ? icon('sign-in') : null, label);
 }
 
+/** A sign-in that could not start: the reason goes at the top of the page, and the page goes there with
+ *  it, focus included. The button may be far down (Getting started's Judge step), where nothing would
+ *  visibly change. #signing opens <main>, so the top of the page shows it below the sticky header and tabs. */
+function showSignInProblem(err) {
+  const box = problemCallout(err, { alert: true });
+  box.setAttribute('tabindex', '-1');
+  clear($('#signing')).append(box);
+  const page = document.scrollingElement || document.documentElement;
+  if (page) page.scrollTop = 0;
+  box.focus({ preventScroll: true });
+}
+
 function onSignInClick(e) {
   const t = e.target && typeof e.target.closest === 'function' ? e.target.closest('[data-sign-in]') : null;
   if (!t) return;
@@ -1018,10 +1030,10 @@ function onSignInClick(e) {
     startInteregoSignIn().catch((err) => {
       t.removeAttribute('aria-busy');
       t.disabled = false;
-      clear($('#signing')).append(problemCallout(err, { alert: true }));
+      showSignInProblem(err);
     });
   } else if (how === 'wallet') {
-    connectWallet().then(() => { renderHeader(); route(); }, (err) => clear($('#signing')).append(problemCallout(err, { alert: true })));
+    connectWallet().then(() => { renderHeader(); route(); }, showSignInProblem);
   } else if (how === 'manual') {
     S.manual = true;
     S.readEnvelopes.clear();
