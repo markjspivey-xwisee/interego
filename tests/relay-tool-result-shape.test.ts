@@ -11,6 +11,8 @@
  */
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { JSDOM } from 'jsdom';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { HMD_APP_HTML } from '../deploy/mcp-relay/hmd-app.js';
 import {
   relayToolResult, summarizeToolResult, SUMMARY_MAX_CHARS, SURFACES_WHOSE_MODEL_READS_STRUCTURED_CONTENT,
@@ -208,6 +210,50 @@ describe('resultOptionsResolver: a tools/call does not cost a client lookup', ()
     for (const id of ['a', 'b', 'c', 'c', 'b', 'a']) await bounded(id);
     // 'a' was dropped to make room for 'c'; 'b' and 'c' were still held.
     expect(lookups).toEqual(['a', 'b', 'c', 'a']);
+  });
+
+  it('holds one id when told to hold none, instead of evicting forever', async () => {
+    // A zero that counts how often it is compared, so an eviction loop that never ends fails
+    // here rather than hanging the worker (a synchronous loop cannot be timed out).
+    let compared = 0;
+    const none = { valueOf: () => { if (++compared > 100) throw new Error('evicting forever'); return 0; } } as unknown as number;
+    const lookups: string[] = [];
+    const resolve = resultOptionsResolver(async (id) => { lookups.push(id); return id === 'known' ? chatgpt : undefined; },
+      surfaceOf, { maxEntries: none, now: () => 0 });
+    expect(await resolve('known')).toEqual({ modelReadsStructuredContent: true });
+    expect(await resolve('known')).toEqual({ modelReadsStructuredContent: true });
+    expect(await resolve('other')).toEqual({});
+    expect(await resolve('known')).toEqual({ modelReadsStructuredContent: true });
+    // 'known' was held until 'other' took its place.
+    expect(lookups).toEqual(['known', 'other', 'known']);
+    expect(await resultOptionsResolver(() => chatgpt, surfaceOf, { maxEntries: -1 })('x')).toEqual({ modelReadsStructuredContent: true });
+  });
+});
+
+describe('what the notes say about identifying ChatGPT is what the relay does', () => {
+  const ROOT = join(import.meta.dirname, '..');
+  const flat = (text: string): string => text.replace(/^\s*\*\s?/gm, '').replace(/\s+/g, ' ');
+  const header = flat(readFileSync(join(ROOT, 'deploy/mcp-relay/tool-result.ts'), 'utf8').split('*/')[0]!);
+  const changelog = readFileSync(join(ROOT, 'CHANGELOG.md'), 'utf8');
+  const start = changelog.indexOf('\n## 2026-11-08 — Relay: ChatGPT is identified by its redirect hosts');
+  const entry = flat(changelog.slice(start + 1, changelog.indexOf('\n## ', start + 1)));
+
+  it('does not say another client cannot finish sign-in with ChatGPT redirect URIs, because the relay suite does', () => {
+    // The relay suite signs in under ChatGPT's own redirect URI and reads the code from the redirect.
+    const suite = readFileSync(join(ROOT, 'deploy/mcp-relay/tests/tool-result-size.test.ts'), 'utf8');
+    expect(suite).toContain("CHATGPT_REDIRECT = 'https://chatgpt.com/");
+    expect(suite).toContain("oauthBearer('ChatGPT', CHATGPT_REDIRECT)");
+    expect(start).toBeGreaterThan(0);
+    for (const text of [header, entry]) {
+      expect(text).not.toMatch(/cannot finish sign-in/);
+      expect(text).toMatch(/captures its own redirect/);
+    }
+  });
+
+  it('says only a name that could not be made into a label fell back to the default surface', () => {
+    // server.ts surfaceAgentFromClient: an unmatched name keeps its own slug when it makes one.
+    expect(entry).not.toMatch(/whose name matched nothing on a relay/);
+    expect(entry).toMatch(/matched nothing and could not be turned into a short label/);
   });
 });
 

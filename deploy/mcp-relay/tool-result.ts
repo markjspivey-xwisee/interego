@@ -37,10 +37,13 @@
  * alone loses the whole result, silently. A client NAMES itself at registration, and a name is
  * only a claim: "my ChatGPT bridge" is a fine name for a client of the second kind. So the relay
  * requires the name AND every redirect URI the client registered to be on that surface's own
- * hosts ({@link SURFACES_WHOSE_MODEL_READS_STRUCTURED_CONTENT}). The authorization code is
- * delivered to a registered redirect URI, so a client that is not ChatGPT cannot finish sign-in
- * with redirect URIs that only ChatGPT receives. The deployment's default surface
- * (RELAY_DEFAULT_SURFACE_AGENT) is never consulted for this.
+ * hosts ({@link SURFACES_WHOSE_MODEL_READS_STRUCTURED_CONTENT}). The authorization code reaches a
+ * registered redirect URI through the person's browser, so a client that signs people in through
+ * their own browser cannot complete sign-in with ChatGPT's redirect URIs, and no ordinary client
+ * matches by accident. A client that drives the browser itself and captures its own redirect
+ * could (the relay suite signs in that way), and that changes only how its own results are laid
+ * out, never what it may do: the layout is never an authorization input. The deployment's
+ * default surface (RELAY_DEFAULT_SURFACE_AGENT) is never consulted for this.
  *
  * ── WHY THIS FILE EXISTS ─────────────────────────────────────────────────────
  *
@@ -137,8 +140,11 @@ export function resultOptionsForRegisteredClient(
  * metadata document refetched it whenever the store's copy expired.
  *
  * A known client's answer is kept for `ttlMs`, an unknown client's for the shorter `missTtlMs`;
- * a lookup that THROWS is not remembered, so a store outage is retried. At most `maxEntries`
- * ids are held, oldest dropped first. Any failure answers the default layout.
+ * a lookup that THROWS is not remembered. The relay's lookup, the OAuth provider's getClient,
+ * does not throw: a client it does not hold and a store or metadata read that failed both come
+ * back undefined, so either is kept for `missTtlMs`, and during a store outage a client not
+ * already in memory gets the default layout for up to that long. At most `maxEntries` ids are
+ * held (at least one), oldest dropped first. Any failure answers the default layout.
  */
 export function resultOptionsResolver(
   lookup: (clientId: string) => Promise<RegisteredClient | undefined> | RegisteredClient | undefined,
@@ -155,7 +161,7 @@ export function resultOptionsResolver(
     try { client = await lookup(clientId); } catch { return {}; }
     const options = resultOptionsForRegisteredClient(client, surfaceOfName);
     remembered.delete(clientId);
-    while (remembered.size >= maxEntries) remembered.delete(remembered.keys().next().value as string);
+    while (remembered.size > 0 && remembered.size >= maxEntries) remembered.delete(remembered.keys().next().value as string);
     remembered.set(clientId, { options, until: now() + (client ? ttlMs : missTtlMs) });
     return options;
   };

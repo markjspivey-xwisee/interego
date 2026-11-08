@@ -1,20 +1,44 @@
 # Changelog
 
+## 2026-11-08 — Relay: corrected notes on how ChatGPT is identified, and a client cache that could hang
+
+The next entry said that a client other than ChatGPT cannot finish sign-in
+with ChatGPT's redirect URIs. That is not so. The sign-in code reaches the
+redirect URI through the person's browser, so a client that drives the
+browser itself can read the code from the redirect, and the relay's own suite
+signs in that way. The entry and the comment above the code now say what is
+true: an ordinary client does not match by accident, and a client that
+captures its own redirect changes only how its own results are laid out,
+never what it may do. The entry also overstated the earlier behaviour: a
+name that matched nothing kept its own label, and only a name that could not
+be turned into a short label fell back to the default surface.
+
+The comment on the per-client cache said a failed client lookup is tried
+again. The relay's lookup does not report failures: a client it does not hold
+and a store read that failed look the same, so both are kept for a minute.
+The cache also looped forever on its first call if it was told to hold no
+clients. It now holds at least one. The relay uses the default of 1,024, so
+this did not happen in service. A check on the relay image no longer fails
+once the relay has no test-only devDependency left to strip.
+
 ## 2026-11-08 — Relay: ChatGPT is identified by its redirect hosts, errors keep their JSON, and read_inbox pages past an empty date
 
 The previous entry gave the summary-only layout to any session whose OAuth
 client's registered name contained "chatgpt", or whose name matched nothing
-on a relay whose default surface was set to chatgpt. A name is something a
-client says about itself, and the two mistakes are not alike: giving ChatGPT
-the default layout costs bytes, while giving the summary-only layout to a
-client whose model reads `content` alone loses the whole result without any
-sign. A session now gets that layout only when the client's name matches the
-ChatGPT pattern and every redirect URI it registered is on chatgpt.com or
-openai.com. The sign-in code is sent to a registered redirect URI, so another
-client cannot finish sign-in with those. The default surface setting is no
-longer consulted. The relay suite signs in as a client named "my chatgpt
-bridge", as a client named ChatGPT with its own redirect, and under a name that
-matches nothing, and each keeps the JSON first.
+and could not be turned into a short label, on a relay whose default surface
+was set to chatgpt. A name is something a client says about itself, and the
+two mistakes are not alike: giving ChatGPT the default layout costs bytes,
+while giving the summary-only layout to a client whose model reads `content`
+alone loses the whole result without any sign. A session now gets that layout
+only when the client's name matches the ChatGPT pattern and every redirect URI
+it registered is on chatgpt.com or openai.com. A client that signs people in
+through their own browser cannot complete sign-in with those redirect URIs, so
+no ordinary client matches by accident. A client that captures its own
+redirect could, and that changes only how its own results are laid out, never
+what it may do. The default surface setting is no longer consulted. The relay
+suite signs in as a client named "my chatgpt bridge", as a client named
+ChatGPT with its own redirect, and under a name that matches nothing, and each
+keeps the JSON first.
 
 An error result keeps its JSON in `content` for ChatGPT too. A failed signed
 interaction carries its reason inside `result`, where the summary line said
