@@ -1,5 +1,29 @@
 # Changelog
 
+## 2026-11-08 — Work Redesign: a click, quick presses and Dismiss keep the person's place
+
+In the Work Redesign app, the main area now takes focus only from "Skip to
+content", and only until focus leaves it. Before, it could take focus at any
+time, so a click on plain text focused it and the next Tab went back to its
+first control, taking the page to the top of the view. Now the next Tab goes on
+from where the person clicked. A redraw straight after the skip link still
+leaves focus in the main area.
+
+Pressing "Add a task" several times in quick succession now keeps the button
+where it is on the screen. The app's own scroll, which holds a pressed button
+in place through a redraw, was taken for the person scrolling, so a second
+redraw within a fifth of a second let the new task push the button off the
+screen. A button clicked straight after turning the mouse wheel now also stays
+under the pointer, while a page the person is still scrolling by other means is
+left to scroll.
+
+Dismissing an answer from the keyboard on the welcome screen or on "One more
+step" now moves focus to that screen's title, as it already did to a view's
+heading, instead of to the top of the page. While a new type of task is being
+signed, its "Add type of task" button only looks unavailable: it keeps focus,
+so the next Tab goes on from it, and a press is still ignored until the answer
+comes.
+
 ## 2026-11-08 — Work Redesign: use your own Claude or ChatGPT, or copy and paste
 
 Work Redesign still runs no model and asks for no key; the web app now lets

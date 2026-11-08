@@ -884,10 +884,11 @@ async function refresh(quiet = false) {
 }
 
 /**
- * The shell's "Skip to content" (a link to #main): focus moves to the screen's main area (tabindex -1), so the next Tab
- * starts in it, scrolled to only where it is off the screen. The address is left as it is: a task page lives in it
- * (#task=…), and following the link would have taken the page off its task. A click meant for a new tab or window is the
- * browser's.
+ * The shell's "Skip to content" (a link to #main): focus moves to the screen's main area, so the next Tab starts in it,
+ * scrolled to only where it is off the screen. The address is left as it is: a task page lives in it (#task=…), and
+ * following the link would have taken the page off its task. A click meant for a new tab or window is the browser's.
+ * The main area takes focus for this alone (tabindex -1 while it has it, mainLeft): otherwise a click on its plain text
+ * would focus it, and the next Tab would go back to its first control instead of on from where the person clicked.
  */
 function skipToContent(e) {
   if (e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
@@ -895,11 +896,23 @@ function skipToContent(e) {
   const main = document.getElementById('main');
   if (!main) return;
   e.preventDefault();
+  main.setAttribute('tabindex', '-1');
   main.focus();
+}
+/**
+ * Once focus has left the main area the skip link focused, it takes focus no more (skipToContent). Checked once the move
+ * is over: when the window itself loses focus, the main area still has the page's focus, and keeps it when the person comes
+ * back. A redraw while it has focus builds it again with its tabindex (focusMark), so focus stays on it.
+ */
+function mainLeft(e) {
+  const main = e.target;
+  if (main?.id !== 'main' || main.tagName !== 'MAIN' || !main.hasAttribute('tabindex')) return;
+  setTimeout(() => { if (document.activeElement !== main) main.removeAttribute('tabindex'); }, 0);
 }
 
 async function boot() {
   document.addEventListener('click', skipToContent);
+  document.addEventListener('focusout', mainLeft, true);
   // The relay's answer leaves the address bar (and this tab's sign-in flow leaves sessionStorage)
   // before this page sends any request, even the manifest's read, so a failure below leaves neither.
   const callback = takeCallback();
@@ -1151,7 +1164,7 @@ function render() {
   // What has focus stays where it was on the screen, else what the person was looking at (the browser's scroll anchoring
   // is off in #app, app.css: it has nothing to hold on to once every node is new). Whatever a caller scrolls to afterwards
   // (the top of a new view, a panel, an answer) still goes there.
-  if (placed && mark?.top != null) holdPlace(placed, mark.top);
+  if (placed && mark?.top != null) holdPlace(placed, mark.top, Boolean(pressedOn && mark.el.contains(pressedOn)));
   else if (anchor) holdPlace(twinOf(anchor, root), anchor.top);
   // Where the browser may still be bringing into view what Tab reached (Tab, then Enter at once on a button below the
   // screen), its scroll heads for where the old element was: the rebuilt one is shown instead, so focus is not left on a
@@ -1179,7 +1192,7 @@ function appFrame(content) {
     appHeader(),
     h('div', { class: 'app-shell' },
       sideNav(),
-      h('main', { class: 'app-main', id: 'main', tabindex: '-1' }, health(), resultNode(), panelNode(), content, appFooter())),
+      h('main', { class: 'app-main', id: 'main' }, health(), resultNode(), panelNode(), content, appFooter())),
   ];
 }
 
@@ -1371,7 +1384,7 @@ function podPicker() {
 
 /** Screen 1: the manifest could not be read. Nothing else is asked of the bridge. */
 function unreachableView() {
-  return [h('main', { class: 'auth', id: 'main', tabindex: '-1' }, h('div', { class: 'auth__card' }, brandMark(),
+  return [h('main', { class: 'auth', id: 'main' }, h('div', { class: 'auth__card' }, brandMark(),
     h('h1', { class: 'auth__title', text: 'We can\'t reach this workspace right now' }),
     h('p', { class: 'auth__text', text: 'Please try again in a minute. If it keeps happening, contact your admin.' }),
     h('div', { class: 'auth__actions' }, btn('Try again', { variant: 'primary', on: () => location.reload() })),
@@ -1402,7 +1415,7 @@ function welcomeView() {
     ];
   return [
     header,
-    h('main', { class: 'auth', id: 'main', tabindex: '-1' }, h('div', null,
+    h('main', { class: 'auth', id: 'main' }, h('div', null,
       h('div', { class: 'auth__card auth__card--welcome' },
         brandMark(),
         h('h1', { class: 'auth__title', text: 'Welcome to Work Redesign' }),
@@ -1442,7 +1455,7 @@ function notAddedView() {
   return [
     envBanner(),
     header,
-    h('main', { class: 'auth', id: 'main', tabindex: '-1' }, h('div', { class: 'auth__card auth__card--wide' },
+    h('main', { class: 'auth', id: 'main' }, h('div', { class: 'auth__card auth__card--wide' },
       brandMark(),
       h('h1', { class: 'auth__title', text: 'You\'re signed in. One more step.' }),
       r && !readRefusal ? resultNode() : null,
@@ -1497,9 +1510,12 @@ function openerOf(el) {
   const text = el.textContent ?? '';
   return { el, key: el.getAttribute('data-return'), text, nth: viewButtons(text).indexOf(el) };
 }
-/** The view's heading, focusable by script: where focus goes when what opened a panel is gone. */
+/**
+ * The view's heading, focusable by script: where focus goes when what opened a panel is gone. On a screen with no view
+ * (the welcome, one more step, the workspace unreachable), that screen's own title.
+ */
 function viewHeading() {
-  const title = document.querySelector('#app .page-title');
+  const title = document.querySelector('#app .page-title, #app .auth__title');
   title?.setAttribute('tabindex', '-1');
   return title;
 }
@@ -1621,19 +1637,31 @@ function twinOf(anchor, root) {
   const found = twinsOf(anchor.el, anchor.key, root);
   return found.length === 1 ? found[0] : null;
 }
-/** When the page last scrolled: a redraw does not cut short a scroll still under way (holdPlace). */
+/**
+ * When the page last scrolled: a redraw does not cut short a scroll still under way (holdPlace). The page's own instant
+ * scrolls (holdPlace's, keepInView's) do not count: the scroll event each one fires comes a moment later, where it left the
+ * page (ownScroll), and taking it for the person's would have a second redraw straight after leave its button pushed off
+ * the screen.
+ */
 let scrolledAt = -Infinity;
-window.addEventListener('scroll', () => { scrolledAt = performance.now(); }, { passive: true });
+let ownScroll = { top: NaN, at: -Infinity };
+const scrolledByPage = () => { ownScroll = { top: window.scrollY, at: performance.now() }; };
+window.addEventListener('scroll', () => {
+  if (performance.now() - ownScroll.at < 100 && Math.abs(window.scrollY - ownScroll.top) < 1) return;
+  scrolledAt = performance.now();
+}, { passive: true });
 /**
  * After a redraw, keep `el` at `top`, where it was on the screen before: what the redraw added or took away above it (a
  * hint, a waiting note) no longer moves it. Not while the page is still scrolling (the wheel, a swipe, a key, the browser
- * bringing a focused button into view): stopping that scroll where it is would cut it short.
+ * bringing a focused button into view): stopping that scroll where it is would cut it short. `pressed`: `el` is what the
+ * person just pressed with the mouse or a finger (pressedOn), so it stays under the pointer even straight after the wheel.
  */
-function holdPlace(el, top) {
-  if (!el || performance.now() - scrolledAt < 200) return;
+function holdPlace(el, top, pressed = false) {
+  if (!el || (!pressed && performance.now() - scrolledAt < 200)) return;
   const by = el.getBoundingClientRect().top - top;
   if (!Number.isFinite(by) || Math.abs(by) < 1) return;
   try { window.scrollTo({ top: window.scrollY + by, behavior: 'instant' }); } catch { /* a browser without instant scrolling */ }
+  scrolledByPage();
 }
 /**
  * When the person last pressed Tab, unless they have since used another key, clicked or tapped, turned the wheel or
@@ -1646,12 +1674,19 @@ const MODIFIER_KEYS = new Set(['Shift', 'Control', 'Alt', 'Meta', 'AltGraph', 'C
 const SPACE_PRESSES = 'button, summary, input, textarea, select, [role="button"], [role="tab"], [role="checkbox"], [role="switch"], [contenteditable]';
 const pressOfFocused = (e) => (e.key === 'Enter' ? e.target !== document.body && e.target !== document.documentElement
   : e.key === ' ' && Boolean(e.target?.closest?.(SPACE_PRESSES)));
+/**
+ * What the person last pressed with the mouse, a pen or a finger, until they turn the wheel, swipe or use another key
+ * (null then): a redraw that press brings keeps what it pressed where it was (holdPlace), as the person aimed at it there.
+ */
+let pressedOn = null;
 // These stay on the document for the page's life; watchMovingOn's, on the window, last one press each.
 document.addEventListener('keydown', (e) => {
-  if (e.key === 'Tab') tabbedAt = performance.now();
-  else if (!MODIFIER_KEYS.has(e.key) && !pressOfFocused(e)) tabbedAt = -Infinity;
+  if (e.key === 'Tab') { tabbedAt = performance.now(); pressedOn = null; }
+  else if (!MODIFIER_KEYS.has(e.key) && !pressOfFocused(e)) { tabbedAt = -Infinity; pressedOn = null; }
 }, { capture: true, passive: true });
-for (const k of ['pointerdown', 'wheel', 'touchmove']) document.addEventListener(k, () => { tabbedAt = -Infinity; }, { capture: true, passive: true });
+for (const k of ['pointerdown', 'wheel', 'touchmove']) {
+  document.addEventListener(k, (e) => { tabbedAt = -Infinity; pressedOn = k === 'pointerdown' && e.target instanceof Element ? e.target : null; }, { capture: true, passive: true });
+}
 /**
  * Whether the browser may still be bringing into view what Tab reached: html scrolls smoothly (the design system), and in
  * Chromium that took up to about 600 ms. A redraw then builds that element again, so the browser's scroll ends where the
@@ -1669,6 +1704,7 @@ function keepInView(el) {
   const r = el.getBoundingClientRect();
   if (r.top >= 0 && r.bottom <= window.innerHeight) return;
   try { el.scrollIntoView?.({ block: 'center', behavior: 'instant' }); } catch { el.scrollIntoView?.({ block: 'center' }); }
+  scrolledByPage();
 }
 /**
  * Open a panel over the view, remembering what opened it (openerOf), so closing it puts focus back there. `back`: a panel
@@ -4137,7 +4173,9 @@ function kindForm(admin) {
         field('Name', input(st.label, (e) => { st.label = e.target.value; }), { hint: 'For example "Invoice matching".' }),
         field('Short ID', input(st.slug, (e) => { st.slug = e.target.value; }), { hint: 'Lowercase letters, digits and hyphens, for example invoice-matching.' })),
       field('Definition', input(st.definition, (e) => { st.definition = e.target.value; }), { hint: 'One sentence.' }),
-      h('div', null, btn('Add type of task', { variant: 'primary', on: add, disabled: !admin || S.busy, why: admin ? '' : 'Only an admin can add a type of task.' })),
+      // While a change is signed the button only looks off (act ignores a press then): a disabled one could not keep focus
+      // through the redraw, which would leave it on the page's body, the next Tab back at the top of the view.
+      h('div', null, btn('Add type of task', { variant: 'primary', on: add, disabled: !admin, why: admin ? '' : 'Only an admin can add a type of task.', attrs: admin && S.busy ? { 'aria-disabled': 'true' } : {} })),
       admin ? null : whyNot('Only an admin can add a type of task.')));
 }
 

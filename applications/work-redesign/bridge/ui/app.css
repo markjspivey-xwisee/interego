@@ -7,8 +7,8 @@
    moved the page anyway: in Chromium, a copy from Map a process took it 65 px up. render() keeps what has focus in its
    place on the screen instead. */
 .app { overflow-anchor: none; }
-/* "Skip to content" moves focus to the screen's <main> (tabindex -1, app.js), so the next Tab starts in it; the whole
-   screen is not outlined as if it were one control. */
+/* "Skip to content" moves focus to the screen's <main> (tabindex -1 until focus leaves it, app.js), so the next Tab
+   starts in it; the whole screen is not outlined as if it were one control. */
 main[tabindex="-1"]:focus { outline: none; }
 /* Below 48em the navigation is a sticky strip under the sticky header (126 px together, past the page's 80 px scroll
    padding): the skip link's target stops below both, not with its first line under the strip. */

@@ -1677,6 +1677,93 @@ describe('work-redesign web UI: sign in with your Interego account', () => {
     expect(page.errors).toEqual([]);
   }, 60_000);
 
+  it('keeps a pressed button where it was through redraws straight after one another, not taking the page\'s own scroll for the person\'s, and keeps a button clicked just after the wheel under the pointer', async () => {
+    const { page, win, d } = await signedInLead();
+    // jsdom lays nothing out and scrolls nothing. Here the page has a scroll position, scrollTo moves it and, as in a browser,
+    // the scroll event comes a moment later; "Add a task" is 400 px down the screen, 300 px further down for each task added
+    // above it.
+    let y = 0;
+    Object.defineProperty(win, 'scrollY', { get: () => y, configurable: true });
+    const moveTo = (to: number): void => {
+      if (to === y) return;
+      y = to;
+      setTimeout(() => win.dispatchEvent(new win.Event('scroll')), 16);
+    };
+    const scrolls: unknown[] = [];
+    (win as unknown as { scrollTo: (o: { top?: number }) => void }).scrollTo = (o) => { scrolls.push(o); if (typeof o?.top === 'number') moveTo(o.top); };
+    const wait = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
+    page.click('Map a process');
+    await page.until(() => d.querySelector('[data-path="workflow.title"]'), 'Map a process, by hand');
+    await wait(250);
+    scrolls.length = 0;
+    const tasks = (): number => d.querySelectorAll('[data-path$=".name"]').length;
+    const n0 = tasks();
+    const box = win.HTMLElement.prototype.getBoundingClientRect;
+    win.HTMLElement.prototype.getBoundingClientRect = function (this: HTMLElement) {
+      if (!(this.tagName === 'BUTTON' && this.textContent === 'Add a task')) return box.call(this);
+      const top = 400 + 300 * (tasks() - n0) - y;
+      return { top, bottom: top + 44, left: 16, right: 200, width: 184, height: 44, x: 16, y: top, toJSON: () => ({}) } as DOMRect;
+    };
+    const addTask = (): HTMLButtonElement => must([...d.querySelectorAll('.app-main button')].find((b) => b.textContent === 'Add a task'), '"Add a task"') as HTMLButtonElement;
+    const shownAt = (): number => Math.round(addTask().getBoundingClientRect().top);
+    const enter = (b: HTMLButtonElement): void => { b.dispatchEvent(new win.KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true })); b.click(); };
+    const wheel = async (b: HTMLButtonElement): Promise<void> => {
+      b.dispatchEvent(new win.WheelEvent('wheel', { deltaY: 100, bubbles: true, cancelable: true }));
+      moveTo(y + 100);
+      await wait(40);
+    };
+    // Enter three times, 60 ms apart, on a still page: each redraw keeps the button at 400 px, though the scroll event of the
+    // redraw before has only just come.
+    addTask().focus();
+    for (const press of [1, 2, 3]) {
+      enter(addTask());
+      expect([press, tasks(), d.activeElement === addTask(), shownAt()]).toEqual([press, n0 + press, true, 400]);
+      await wait(60);
+    }
+    expect(scrolls).toEqual([300, 600, 900].map((top) => ({ top, behavior: 'instant' })));
+    // The person turns the wheel, then at once clicks the button where it now is: it stays there, under the pointer.
+    scrolls.length = 0;
+    const clicked = addTask();
+    await wheel(clicked);
+    const before = shownAt();
+    clicked.dispatchEvent(new win.MouseEvent('pointerdown', { bubbles: true, cancelable: true }));
+    clicked.focus();
+    clicked.click();
+    expect([tasks(), d.activeElement === addTask(), before, shownAt(), scrolls]).toEqual([n0 + 4, true, 300, 300, [{ top: 1300, behavior: 'instant' }]]);
+    // Enter straight after the wheel, or a click followed by the wheel: the page is still scrolling, and it is left to scroll.
+    scrolls.length = 0;
+    await wheel(addTask());
+    enter(addTask());
+    addTask().dispatchEvent(new win.MouseEvent('pointerdown', { bubbles: true, cancelable: true }));
+    await wheel(addTask());
+    enter(addTask());
+    expect([tasks(), d.activeElement === addTask(), scrolls]).toEqual([n0 + 6, true, []]);
+    expect(page.errors).toEqual([]);
+  }, 60_000);
+
+  it('Dismiss, pressed from the keyboard on an answer on the welcome screen or on "One more step", gives focus to that screen\'s title, so the next Tab goes on from there and not from the top of the page', async () => {
+    const w = await world({ admin: false });
+    const dismissed = (page: Page): unknown => {
+      const d = page.window.document;
+      const x = must(d.querySelector('#app .result button[aria-label="Dismiss"]'), 'Dismiss') as HTMLButtonElement;
+      x.focus();
+      x.click();
+      const a = d.activeElement;
+      return [d.querySelector('#app .result'), a?.tagName, a?.className, a?.textContent, a?.getAttribute('tabindex')];
+    };
+    // The welcome screen, answering a sign-in this tab did not start.
+    const welcome = await openPage(w.bridge, `/ui/oauth/callback?code=${'c'.repeat(32)}&state=${'B'.repeat(32)}`);
+    await welcome.until(() => welcome.text().includes(NOT_STARTED_HERE), 'the answer on the welcome screen');
+    expect(dismissed(welcome)).toEqual([null, 'H1', 'auth__title', 'Welcome to Work Redesign', '-1']);
+    // One more step: signed in, not yet added, with an answer shown (as a refused copy of the record leaves one).
+    const step = await openPage(w.bridge, '/ui', { [SESSION_KEY]: JSON.stringify({ token: w.relay.mint(), expiresAt: new Date(Date.now() + 3600_000).toISOString() }) });
+    await step.until(() => step.text().includes('One more step'), 'one more step');
+    (step.window.eval('showResult') as (tool: string, r: unknown) => void)('wrd.holder_copy', { ok: false, status: 400, body: { kind: 'refusal', error: 'The copy was not made.' } });
+    await step.until(() => step.window.document.querySelector('#app .result button[aria-label="Dismiss"]'), 'the answer');
+    expect(dismissed(step)).toEqual([null, 'H1', 'auth__title', 'You\'re signed in. One more step.', '-1']);
+    expect([...welcome.errors, ...step.errors]).toEqual([]);
+  }, 60_000);
+
   it('"Skip to content" moves focus into the screen, which is not drawn again or taken back to its top, and leaves the address (and so a task page) as it is; #main typed in the address draws nothing again; a task link still opens its task, and leaving it draws the view again', async () => {
     const { page, win, d } = await signedInLead();
     const tops: unknown[] = [];
@@ -1686,18 +1773,30 @@ describe('work-redesign web UI: sign in with your Interego account', () => {
     const skip = must(d.querySelector('a.skip-link'), 'the skip link') as HTMLAnchorElement;
     const settle = (): Promise<void> => new Promise((r) => setTimeout(r, 100));
     const main = must(d.getElementById('main'), 'the main element');
-    // Focusable by script only, so it takes focus from the skip link and the next Tab starts inside it.
-    expect([main.tagName, main.getAttribute('tabindex')]).toEqual(['MAIN', '-1']);
+    // The main area takes focus only from the skip link. jsdom does not focus on a click, so the browser's rule is applied
+    // here by hand: a click focuses the nearest element around what it hits that can take focus, else none. Were the main
+    // area focusable all the time, a click on its plain text would focus it, and the next Tab would go back to its first
+    // control instead of on from where the person clicked.
+    const FOCUSABLE = 'a[href], button, input, textarea, select, summary, [tabindex]';
+    const clickFocuses = (el: Element): Element | null => el.closest(FOCUSABLE);
+    const text = must([...main.querySelectorAll('p')].find((x) => !x.closest(FOCUSABLE) && (x.textContent ?? '').trim() !== ''), 'plain text in the view');
+    expect([main.tagName, main.hasAttribute('tabindex'), clickFocuses(text)]).toEqual(['MAIN', false, null]);
     skip.click();
     await settle();
-    expect([win.location.hash, changes, d.getElementById('main') === main, d.activeElement === main, tops]).toEqual(['', [], true, true, []]);
+    expect([win.location.hash, changes, d.getElementById('main') === main, d.activeElement === main, main.getAttribute('tabindex'), tops]).toEqual(['', [], true, true, '-1', []]);
+    // A redraw while it has focus builds it again, focusable, with focus on it, and does not move the page.
+    (page.window.eval('render') as () => void)();
+    const redrawn = must(d.getElementById('main'), 'the redrawn main element');
+    expect([redrawn === main, d.activeElement === redrawn, redrawn.getAttribute('tabindex'), tops]).toEqual([false, true, '-1', []]);
+    // Once focus moves on (Tab to the view's first control), it takes focus no more, and a click on its text focuses nothing.
+    must(redrawn.querySelector('button'), 'a control in the view').focus();
+    await settle();
+    expect([redrawn.hasAttribute('tabindex'), clickFocuses(must(redrawn.querySelector('p'), 'its text'))]).toEqual([false, null]);
     // #main in the address (typed, or an old link) is the browser's: nothing is drawn again, and the page stays where it is.
-    main.blur();
     win.location.hash = '#main';
     await page.until(() => changes.length === 1, 'the address changed');
-    main.focus();
     await settle();
-    expect([d.getElementById('main') === main, d.activeElement === main, tops]).toEqual([true, true, []]);
+    expect([d.getElementById('main') === redrawn, tops]).toEqual([true, []]);
     // A task link opens the task from its top. The skip link there keeps the task on the screen.
     win.location.hash = `#task=${encodeURIComponent('urn:wrd:task:not-here')}`;
     await page.until(() => page.text().includes('We couldn\'t find this task'), 'the task page');
@@ -1714,7 +1813,7 @@ describe('work-redesign web UI: sign in with your Interego account', () => {
     expect(page.errors).toEqual([]);
   }, 60_000);
 
-  it('"Add a type of task" keeps what was typed and stays open through a refusal, empties and closes once the type is added, and its button is off while signing; Dismiss on the answer, from the keyboard, gives focus to the view\'s heading', async () => {
+  it('"Add a type of task" keeps what was typed and stays open through a refusal, empties and closes once the type is added, and its button, pressed from the keyboard, keeps focus while signing and takes no second press; Dismiss on the answer, from the keyboard, gives focus to the view\'s heading', async () => {
     const { w, page, d } = await signedInLead();
     page.click('People & roles');
     await page.until(() => page.text().includes('Add a type of task'), 'People & roles');
@@ -1726,16 +1825,24 @@ describe('work-redesign web UI: sign in with your Interego account', () => {
     await page.until(() => form().open, 'the form open');
     const typed = ['Credit check', 'Not A Slug!', 'Check a customer\'s credit before an order ships.'];
     fields().forEach((f, i) => page.fill(f, typed[i] ?? ''));
-    // While the relay is signing, the button is off (and a redraw then builds the form again, as typed).
+    // While the relay is signing, the button only looks off: a redraw builds the form again, as typed, and focus stays on
+    // the rebuilt button, so the next Tab goes on from it. A press then sends nothing more.
     const release = w.relay.hold();
-    addButton().focus();
-    addButton().click();
+    const pressed = addButton();
+    pressed.focus();
+    pressed.click();
     await page.until(() => w.relay.held() === 1, 'the signature asked for');
-    expect([addButton().disabled, form().open, fields().map((f) => f.value)]).toEqual([true, true, typed]);
+    const signing = addButton();
+    expect([signing === pressed, signing.disabled, signing.getAttribute('aria-disabled'), d.activeElement === signing, form().open, fields().map((f) => f.value)])
+      .toEqual([false, false, 'true', true, true, typed]);
+    const sent = page.sent.length;
+    signing.click();
+    await new Promise((r) => setTimeout(r, 100));
+    expect([w.relay.held(), page.sent.slice(sent)]).toEqual([1, []]);
     release();
     // The bridge refuses the ID: the form is still open, with everything as it was typed, to fix.
     await page.until(() => !page.text().includes('Signing and sending') && answer() !== '', 'the refusal');
-    expect([answer(), form().open, fields().map((f) => f.value), addButton().disabled]).toEqual(['Something in this form isn\'t right', true, typed, false]);
+    expect([answer(), form().open, fields().map((f) => f.value), addButton().disabled, addButton().getAttribute('aria-disabled')]).toEqual(['Something in this form isn\'t right', true, typed, false, null]);
     page.fill(must(fields()[1], 'the Short ID'), 'credit-check');
     addButton().click();
     await page.until(() => answer() === 'People and roles updated' && page.text().includes('credit-check'), 'the type added');
