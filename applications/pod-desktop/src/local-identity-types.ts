@@ -1,3 +1,19 @@
+/**
+ * ★ A KEY WITH NO HOSTED ACCOUNT, AND WHY THIS APP DOES NOT OPEN ONE. Hosted identity opens a new
+ * account only with the Hosted Interego Terms agreement (HTTP 428 otherwise). Installed-app
+ * sign-in signs the relay's fixed challenge and nothing else, so it cannot carry that agreement and
+ * never agrees on anybody's behalf. Retrying cannot help; linking the key, or creating the account
+ * where the terms are shown, can.
+ *
+ * Fixed copy, shared by the service that reports it (`local-identity.ts`) and the Identity page
+ * that shows it (`identity-renderer.ts`), which shows an approval error verbatim only when it is
+ * exactly this. The browser companion shows its own fixed end for every failed poll and never this
+ * text, so the Identity page in Interego is where the reason is read.
+ */
+export const LOCAL_IDENTITY_NEEDS_ACCOUNT = 'Hosted Interego has no account for this key, and creating one needs your agreement to the Hosted '
+  + 'Interego Terms, which signing in from this app cannot give. Link this key to your existing account first, or create '
+  + 'the account on the hosted sign-in page, where the terms are shown. Nothing was created.';
+
 /** Native-held credential custody; unrelated to notes keys and pod-sharing keys. */
 export interface LocalIdentityPublic {
   readonly did: string;

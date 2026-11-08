@@ -404,7 +404,9 @@ async function scriptedRelay(url: string, init: RequestInit | undefined): Promis
   if (url.startsWith(RELAY + '/authorize')) {
     return new Response('<script>const PENDING_ID = \'pending-1\';</script>', { status: 200 });
   }
-  if (url === IDENTITY + '/challenges') return asJson({ nonce: 'nonce-1' });
+  // Letters and digits, as the identity server's SIWE nonces are: `auth.ts` refuses any other,
+  // because the nonce is a line of the message the key signs.
+  if (url === IDENTITY + '/challenges') return asJson({ nonce: 'nonce0001' });
   if (url === RELAY + '/oauth/verify') {
     const proof = JSON.parse(body) as { message?: string };
     // The address is the second line of a SIWE message, and it is what the code is minted for —
