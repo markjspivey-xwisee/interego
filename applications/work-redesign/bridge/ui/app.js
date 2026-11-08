@@ -2418,8 +2418,9 @@ function workspaceDetails() {
         payload: { intent: 'wrd:read-records', podUrl: pod, template: { intent: '<the step\'s intent, for example wrd:ratify-task>' } } },
     ],
     rules: [
-      'Every action here is signed (sign_payload true), except urn:iep:action:wrd:task-map-packet, which takes plain arguments (sign_payload false).',
-      'A signed payload\'s intent is the action\'s last part after "wrd:": urn:iep:action:wrd:ratify-task takes "intent": "wrd:ratify-task". It also carries podUrl and a nonce, and no issuedAt.',
+      'Leave out urn:iep:action:wrd:envelope-template, urn:iep:action:wrd:list-records and urn:iep:action:wrd:calibration: act passes them no arguments. Use urn:iep:action:wrd:read-envelope-template, urn:iep:action:wrd:read-records and urn:iep:action:wrd:read-calibration instead.',
+      'Every other action here is signed (sign_payload true), except urn:iep:action:wrd:task-map-packet, which takes plain arguments (sign_payload false).',
+      'A signed payload\'s intent is the action\'s last part after "wrd:": urn:iep:action:wrd:ratify-task takes "intent": "wrd:ratify-task". Two exceptions: the three reads (read-records, read-envelope-template, read-calibration) all take "intent": "wrd:read-records", and a review you sign for urn:iep:action:wrd:log-agent-run takes "intent": "wrd:review-agent-run". Every signed payload also carries podUrl and a nonce, and no issuedAt.',
       'Never invent people, AI agents, types of task, answers or numbers: ask me. Show me what you will record, and record it only once I agree.',
       chatAgentsDecide() ? 'Ask me before any action that approves or declines a decision, changes people and roles, records results, or grants or withdraws an AI permission.'
         : 'Approving or declining a decision, changing people and roles, recording results, and granting or withdrawing AI permissions are done in the Work Redesign app, not from a chat: if I ask for one, tell me so.',
@@ -2636,9 +2637,22 @@ function captureView() {
   const copyChatMessage = () => {
     if (!op) return;
     if (formProblems(docProblems())) return;
-    if (st.doc.text.length > CHAT_DOC_MAX) { render(); return; }
+    if (String(st.doc.text ?? '').length > CHAT_DOC_MAX) { gateChat(); return; }
     copyText(taskMapChatMessage(st), 'The message for your assistant. Paste it into a chat with Interego turned on.');
   };
+  // Card A's length gate, set again each time the text in step 1 changes: typing there redraws nothing,
+  // and a disabled button gets no click that could re-check it, so a shortened document turns it back on here.
+  const tooLongNote = note(TOO_LONG_FOR_CHAT, 'warning');
+  const chatButton = btn('Copy the message for my assistant', { variant: 'primary', icon: 'clipboard', on: copyChatMessage });
+  const gateChat = () => {
+    const tooLong = String(st.doc.text ?? '').length > CHAT_DOC_MAX;
+    tooLongNote.hidden = !tooLong;
+    // Only a process lead's assistant can record a map: anyone else's would be refused, so the message is not offered.
+    chatButton.disabled = tooLong || !op;
+    const why = !op ? WHY.operator : tooLong ? TOO_LONG_FOR_CHAT : '';
+    if (why) chatButton.title = why; else chatButton.removeAttribute('title');
+  };
+  gateChat();
   /** Who drafted the map, as the person says: prefilled from a pasted draft, always theirs to change. */
   const by = st.draftedBy && ['person', 'agent', 'not-declared'].includes(st.draftedBy.kind) ? st.draftedBy : { kind: 'not-declared' };
   const setBy = (next) => { st.draftedBy = next; rerender(); };
@@ -2706,8 +2720,7 @@ function captureView() {
   const closed = data().bridge?.reads === 'signed';
   // The chat route (Card A) only where it works: signed in with Interego on a workspace that names a connector.
   const chat = chatReady();
-  const tooLong = String(st.doc.text ?? '').length > CHAT_DOC_MAX;
-  const step = (n, title, ...kids) => h('li', { class: 'card capture-step' }, h('div', { class: 'card__body' },
+  const step =(n, title, ...kids) => h('li', { class: 'card capture-step' }, h('div', { class: 'card__body' },
     h('h2', { class: 'card__title' }, h('span', { class: 'capture-step__n', 'aria-hidden': 'true', text: String(n) }), title), kids));
   return [
     pageHeader({ title: 'Map a process', lede: 'Describe how the work is really done, by hand or from a procedure document. Your draft stays in this browser until you sign it.' }),
@@ -2721,16 +2734,16 @@ function captureView() {
         field('Document title', input(st.doc.title, (e) => { st.doc.title = e.target.value; save(); }), { path: 'document.title' }),
         field('Load a .txt or .md file', h('input', { type: 'file', class: 'input input--file', accept: '.txt,.md,text/plain,text/markdown', on: { change: loadFile } }),
           { hint: st.doc.text ? `Loaded: ${plural(st.doc.text.length, 'character')}. Loading another file replaces it.` : '' }),
-        field('Or paste the text', textarea(st.doc.text, (e) => { st.doc.text = e.target.value; save(); }, { class: 'textarea textarea--tall' }), { path: 'document.text' })),
+        field('Or paste the text', textarea(st.doc.text, (e) => { st.doc.text = e.target.value; save(); gateChat(); }, { class: 'textarea textarea--tall' }), { path: 'document.text' })),
       step(2, 'Have your AI draft the map',
         h('p', { class: 'text-secondary', text: 'Work Redesign doesn\'t draft anything itself: your own AI assistant does, and Work Redesign checks every quote against the document.' }),
         h('div', { class: `capture-routes${chat ? ' grid-2' : ''}` },
           chat ? h('section', { class: 'card route-card route-card--chat', 'aria-labelledby': 'route-chat-title' }, h('div', { class: 'card__body stack stack--sm' },
             h('h3', { class: 'card__title', id: 'route-chat-title', text: 'In Claude or ChatGPT (recommended)' }),
             h('p', { class: 'text-secondary', text: CARD_A_BODY }),
-            tooLong ? note(TOO_LONG_FOR_CHAT, 'warning') : null,
-            // Only a process lead's assistant can record a map: anyone else's would be refused, so the message is not offered.
-            h('div', null, btn('Copy the message for my assistant', { variant: 'primary', icon: 'clipboard', on: copyChatMessage, disabled: tooLong || !op, why: op ? TOO_LONG_FOR_CHAT : WHY.operator })),
+            // A live region, so the note is read out when typing makes the document too long (gateChat shows and hides it).
+            h('div', { 'aria-live': 'polite' }, tooLongNote),
+            h('div', null, chatButton),
             hint(CARD_A_AFTER),
             h('div', null, btn('Open Processes', { size: 'sm', on: async () => { await refresh(); goTab('tasks'); } })),
             h('details', { class: 'disclosure' }, h('summary', { text: 'Not connected yet?' }), h('div', { class: 'disclosure__body' },

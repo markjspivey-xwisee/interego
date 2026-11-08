@@ -283,6 +283,8 @@ async function world(o: {
   readonly lead?: boolean;
   /** The sign-in routes' relay limits and their clock, and whether the app trusts one proxy hop (as server.ts does off loopback), so X-Forwarded-For names the client. */
   readonly limits?: Partial<RelayLimits>; readonly now?: () => number; readonly trustProxy?: boolean;
+  /** Whether the operator lets chat agents take decisive acts too (WRD_CHAT_AGENTS_DECIDE=1); off unless set. */
+  readonly chatAgentsDecide?: boolean;
 } = {}): Promise<World> {
   const clock = demoClock();
   const pod = memoryPod();
@@ -298,7 +300,7 @@ async function world(o: {
   const handlers = createWrdHandlers({
     fetchFn: pod.fetchFn, defaultPodUrl: DEMO_POD, now: () => clock.now(), recordKey: DEMO_RECORD_KEY,
     platform: { wallet: importWallet(`0x${sha256Hex('wrd-sign-in-test:platform')}`, 'agent', 'wrd-platform'), keyKind: 'demo' },
-    adminDids: o.admin === false ? [] : [PERSON], relayDelegation: { ...policy, chatAgentsDecide: false, relayUrl: relay.base },
+    adminDids: o.admin === false ? [] : [PERSON], relayDelegation: { ...policy, chatAgentsDecide: o.chatAgentsDecide === true, relayUrl: relay.base },
     ...(o.lead === true ? { adminAddresses: [keyAdmin.address] } : {}),
   });
   if (o.lead === true) {
@@ -1141,7 +1143,10 @@ describe('work-redesign web UI: sign in with your Interego account', () => {
     await page.until(() => copied.length === 2, 'the workspace details copied');
     const details = String(copied[1]);
     for (const s of [`My Work Redesign workspace: ${DEPLOYED}`, `descriptor_url: "${DEPLOYED}/affordances"`, `My storage address (pod_url): "${DEMO_POD}"`, `"podUrl":"${DEMO_POD}"`, 'urn:iep:action:wrd:read-records', 'urn:iep:action:wrd:read-envelope-template',
-      'except urn:iep:action:wrd:task-map-packet, which takes plain arguments (sign_payload false)', 'nonce = the step name', 'done in the Work Redesign app, not from a chat']) expect(details, s).toContain(s);
+      'except urn:iep:action:wrd:task-map-packet, which takes plain arguments (sign_payload false)', 'nonce = the step name', 'done in the Work Redesign app, not from a chat',
+      // The actions act can't pass arguments to, and the intents that are not the action's own name.
+      'Leave out urn:iep:action:wrd:envelope-template, urn:iep:action:wrd:list-records and urn:iep:action:wrd:calibration', 'all take "intent": "wrd:read-records"', '"intent": "wrd:review-agent-run"']) expect(details, s).toContain(s);
+    expect(details).not.toContain('Every action here is signed');
     // Each starter is copied whole; its text is previewed only inside a closed disclosure.
     byLabel('Copy: Go through the seven questions with me').click();
     await page.until(() => copied.length === 3, 'the starter copied');
@@ -1186,14 +1191,48 @@ describe('work-redesign web UI: sign in with your Interego account', () => {
     expect(page.log.filter((r) => r.path === '/wrd/record_task_map' || r.path === '/wrd/task_map_packet')).toEqual([]);
     expect(jargonIn(visibleText(d))).toEqual([]);
 
-    // A document longer than a chat can record is held back, with the reason, and copy and paste stays.
-    page.fill(must(d.querySelector('[data-path="document.text"]'), 'the text field'), 'x'.repeat(20_001));
-    page.click('Copy the message for my assistant');
-    await page.until(() => page.text().includes('This document is too long to record from a chat. Use Copy and paste.'), 'the length note');
+    // A document longer than a chat can record is held back as it is typed, with the reason, and copy and paste stays.
+    const TOO_LONG = 'This document is too long to record from a chat. Use Copy and paste.';
+    const chatButton = (): HTMLButtonElement => [...d.querySelectorAll('button')].find((b) => b.textContent === 'Copy the message for my assistant') as HTMLButtonElement;
+    const textField = must(d.querySelector('[data-path="document.text"]'), 'the text field');
+    expect([chatButton().disabled, visibleText(d).includes(TOO_LONG)]).toEqual([false, false]);
+    page.fill(textField, 'x'.repeat(20_001));
+    expect([chatButton().disabled, visibleText(d).includes(TOO_LONG)]).toEqual([true, true]);
+    expect(chatButton().title).toBe(TOO_LONG);
+    chatButton().click();
     expect(copied).toHaveLength(5);
-    const chatButton = [...d.querySelectorAll('button')].find((b) => b.textContent === 'Copy the message for my assistant') as HTMLButtonElement;
-    expect(chatButton.disabled).toBe(true);
     expect([...d.querySelectorAll('button')].some((b) => b.textContent === 'Copy the message for my AI' && !(b as HTMLButtonElement).disabled)).toBe(true);
+    // Shortened again, with nothing redrawn in between, the chat route is back and the note is gone.
+    page.fill(textField, `${docText} `.repeat(20).slice(0, 2_000));
+    expect([chatButton().disabled, chatButton().hasAttribute('title'), visibleText(d).includes(TOO_LONG)]).toEqual([false, false, false]);
+    // Exactly the limit is still a chat's to record.
+    page.fill(textField, 'y'.repeat(20_000));
+    expect([chatButton().disabled, visibleText(d).includes(TOO_LONG)]).toEqual([false, false]);
+    page.fill(textField, docText);
+    page.click('Copy the message for my assistant');
+    await page.until(() => copied.length === 6, 'the chat message copied after shortening');
+    expect(String(copied[5])).toContain(`----- DOCUMENT: AP-SOP-014 -----\n${docText}\n----- END OF DOCUMENT -----`);
     expect(page.errors).toEqual([]);
   }, 90_000);
+
+  it('where the operator lets chat agents decide too, the panel says so, and the workspace details ask the assistant to check with the person first instead of sending them to the app', async () => {
+    const w = await world({ lead: true, chatAgentsDecide: true });
+    const page = await openPage(w.bridge, '/ui', { [SESSION_KEY]: JSON.stringify({ token: w.relay.mint(), expiresAt: new Date(Date.now() + 3600_000).toISOString() }) });
+    await page.until(() => page.text().includes(`Signed in as ${PERSON} via ${agentOf('work-redesign')}`) && page.text().includes('Map and change your process'), 'the signed-in lead');
+    const copied: string[] = [];
+    Object.defineProperty(page.window.navigator, 'clipboard', { value: { writeText: async (s: string) => { copied.push(s); } }, configurable: true });
+    const d = page.window.document;
+    page.click('Use your AI assistant');
+    await page.until(() => d.getElementById('panel-title')?.textContent === 'Use your own AI assistant', 'the panel');
+    const seen = visibleText(d);
+    expect(seen).toContain('Your assistant can take every action here');
+    expect(seen).toContain('Your workspace provider lets chat assistants take every action here too, including approving or declining decisions');
+    expect(seen).not.toContain('What stays in the Work Redesign app');
+    expect(jargonIn(seen)).toEqual([]);
+    page.click('Copy workspace details');
+    await page.until(() => copied.length === 1, 'the workspace details copied');
+    expect(copied[0]).toContain('Ask me before any action that approves or declines a decision, changes people and roles, records results, or grants or withdraws an AI permission.');
+    expect(copied[0]).not.toContain('done in the Work Redesign app, not from a chat');
+    expect(page.errors).toEqual([]);
+  }, 60_000);
 });

@@ -8,7 +8,11 @@ assistant": how to add the Interego connector in Claude or in ChatGPT (the
 address in a readonly field with Copy), this workspace's details to copy into
 a chat once, and copy-only starters for the seven questions and for plans,
 which tell the assistant never to answer for the person and to use only the
-person's own numbers. It is offered only to someone signed in with their
+person's own numbers. The workspace details name the actions the connector
+cannot pass arguments to and point to their signed reads, name the intents
+that differ from an action's own name, and, where the operator lets chat
+agents decide, ask the assistant to check with the person before a decisive
+act instead of sending them to the app. It is offered only to someone signed in with their
 Interego account on a bridge that trusts a relay; the shell names the
 connector only then. A wallet signer, the read-only page, a bridge with
 sign-in off and the demo are told why and offered copy and paste.
@@ -18,7 +22,9 @@ one copied message carries the document and the exact steps: get the
 drafting instructions (plain), read who is registered (signed), confirm the
 draft with the person, then record the map (signed, storing the document's
 text). The app offers it only to process leads and only for documents up to
-20,000 characters, since the signed payload has a size cap. Copy and paste now
+20,000 characters, since the signed payload has a size cap; the button and
+its note follow the text as it is typed, so shortening a document turns the
+route back on. Copy and paste now
 copies plain text with a one-object reply rule instead of the packet's JSON,
 reads the pasted answer through code fences and surrounding words, and lets
 the person say who drafted the map, which is signed as chosen. `/ui/app.js` is
