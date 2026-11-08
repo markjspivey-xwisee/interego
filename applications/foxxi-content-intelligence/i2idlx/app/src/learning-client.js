@@ -132,7 +132,7 @@ function learningMapStatus(value) {
     if (!object(value.curriculum) || !bounded(value.curriculum.label, 400)) invalid();
     result.curriculum = { label: value.curriculum.label, sequence: list(value.curriculum.sequence, 200).map(item => {
       if (!object(item) || !bounded(item.course_id, 256) || item.version !== undefined && !validVersion(item.version)) invalid();
-      return { course_id: item.course_id, ...(item.version !== undefined ? { version: item.version } : {}) };
+      return { course_id: item.course_id, ...(item.version !== undefined ? { version: item.version } : {}), ...(bounded(item.label, 400) ? { label: item.label } : {}) };
     }) };
   }
   return result;

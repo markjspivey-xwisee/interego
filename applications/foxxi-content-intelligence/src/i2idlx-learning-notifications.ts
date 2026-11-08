@@ -36,8 +36,11 @@ export interface LearningProgressNotificationsConfig {
   baseUrl: string; auth: Pick<LearningAccountAuth, 'revalidate'>; connections: LearningNotificationStore;
   fetch?: typeof fetch; now?: () => number;
 }
+/** Bounded diagnostics only: never include callback contents or header values. */
+export type LearningNotificationPayloadReason = 'query' | 'content_type' | 'content_length' | 'json_parse' |
+  'body_shape' | 'body_structure' | 'body_size' | 'registration_id_missing' | 'registration_id_invalid';
 export class LearningNotificationsError extends Error {
-  constructor(readonly status: number, readonly code: string) { super(code); }
+  constructor(readonly status: number, readonly code: string, readonly reason?: LearningNotificationPayloadReason) { super(code); }
 }
 export const LEARNING_NOTIFICATION_LIMITS = Object.freeze({ active: 8, targets: 16, linkRate: 12, rateLinks: 1024,
   requestMs: 30_000, payloadBytes: 64 * 1024, configBytes: 256 * 1024 });
@@ -53,7 +56,7 @@ const object = (v: unknown): v is Row => v !== null && typeof v === 'object' && 
 const plain = (v: unknown): v is Row => object(v) && (Object.getPrototypeOf(v) === Object.prototype || Object.getPrototypeOf(v) === null);
 const text = (v: unknown, max = 256): v is string => typeof v === 'string' && !!v && v === v.trim() &&
   Buffer.byteLength(v) <= max && !/[\u0000-\u001f\u007f]/.test(v) && Buffer.from(v).toString('utf8') === v;
-function fail(status: number, code: string): never { throw new LearningNotificationsError(status, code); }
+function fail(status: number, code: string, reason?: LearningNotificationPayloadReason): never { throw new LearningNotificationsError(status, code, reason); }
 const equal = (a: string, b: string) => timingSafeEqual(createHash('sha256').update(a).digest(), createHash('sha256').update(b).digest());
 function sameHuman(a: LearningPrincipal, b: LearningPrincipal): boolean {
   return a.subject === b.subject && a.userId === b.userId && a.webId === b.webId && a.podUrl === b.podUrl && a.sessionId === b.sessionId && a.signal === b.signal;
@@ -69,6 +72,27 @@ function boundedJson(value: unknown, depth = 0, nodes = { n: 0 }): boolean {
     const descriptor = Object.getOwnPropertyDescriptor(value, key);
     return !['__proto__', 'prototype', 'constructor'].includes(key) && !!descriptor && 'value' in descriptor && boundedJson(descriptor.value, depth + 1, nodes);
   });
+}
+function payloadDiagnostics(raw: unknown, contentType: string | undefined): Row {
+  const mediaType = contentType?.split(';')[0]?.trim().toLowerCase();
+  const valueType = (value: unknown): string => value === undefined ? 'undefined' : typeof value === 'string' ? 'string' :
+    Array.isArray(value) ? 'array' : plain(value) ? 'object' : 'other';
+  const fieldType = (key: string): string => {
+    const descriptor = Object.getOwnPropertyDescriptor(raw, key);
+    return descriptor === undefined ? 'missing' : 'value' in descriptor ? valueType(descriptor.value) : 'other';
+  };
+  return {
+    media_type: !mediaType ? 'missing' : mediaType === 'application/json' ? 'application_json' :
+      mediaType === 'application/x-www-form-urlencoded' ? 'form' : mediaType === 'application/xml' || mediaType === 'text/xml' ? 'xml' :
+        mediaType === 'text/json' ? 'text_json' : 'other',
+    parsed_type: valueType(raw),
+    // Fixed known schema names and finite type labels only. Never echo values,
+    // arbitrary payload keys, raw media types or registration identifiers.
+    ...(plain(raw) ? { known_fields: {
+      id: fieldType('id'), registrationId: fieldType('registrationId'), registrationid: fieldType('registrationid'),
+      registration: fieldType('registration'), data: fieldType('data'), registrationReport: fieldType('registrationReport'),
+    } } : {}),
+  };
 }
 function selected(access: LearningAccess) {
   return access.registrations.find(value => value.id === access.associatedRegistrationId) ?? (access.registrations.length === 1 ? access.registrations[0] : undefined);
@@ -384,7 +408,11 @@ export class LearningProgressNotifications {
       const expected = 'Basic ' + Buffer.from(linkId + ':' + (notifications?.secret ?? '0'.repeat(48))).toString('base64');
       const header = typeof authorization === 'string' && authorization.length <= 1024 ? authorization.replace(/^basic /i, 'Basic ') : '';
       if (!equal(header, expected) || !link || !notifications) fail(401, 'learning_notifications_authentication_failed');
-      if (!boundedJson(raw) || !plain(raw) || Buffer.byteLength(JSON.stringify(raw)) > LEARNING_NOTIFICATION_LIMITS.payloadBytes || !text(raw.id)) fail(400, 'learning_notifications_payload_invalid');
+      if (!plain(raw)) fail(400, 'learning_notifications_payload_invalid', 'body_shape');
+      if (!boundedJson(raw)) fail(400, 'learning_notifications_payload_invalid', 'body_structure');
+      if (Buffer.byteLength(JSON.stringify(raw)) > LEARNING_NOTIFICATION_LIMITS.payloadBytes) fail(400, 'learning_notifications_payload_invalid', 'body_size');
+      if (raw.id === undefined) fail(400, 'learning_notifications_payload_invalid', 'registration_id_missing');
+      if (!text(raw.id)) fail(400, 'learning_notifications_payload_invalid', 'registration_id_invalid');
       const target = notifications.registrations.find(value => value.registrationId === raw.id);
       if (!target) fail(403, 'learning_enrollment_required');
       const connector = await this.await(this.config.connections.readConnector(link.connectorId), signal); active.connector = link.connectorId;
@@ -410,15 +438,26 @@ export class LearningProgressNotifications {
     const parser = express.json({ limit: LEARNING_NOTIFICATION_LIMITS.payloadBytes, strict: true });
     app.post(CALLBACK + ':linkId', (req, res, next) => {
       res.set('Cache-Control', 'no-store').set('Pragma', 'no-cache').set('Referrer-Policy', 'no-referrer').set('X-Content-Type-Options', 'nosniff');
-      if (Object.keys(req.query).length || !req.is('application/json')) { res.status(400).json({ error: 'learning_notifications_payload_invalid' }); return; }
-      const length = req.get('Content-Length'); if (length && (!/^\d+$/.test(length) || Number(length) > LEARNING_NOTIFICATION_LIMITS.payloadBytes)) { res.status(413).json({ error: 'learning_notifications_payload_invalid' }); return; }
-      parser(req, res, error => { if (error) res.status(400).json({ error: 'learning_notifications_payload_invalid' }); else next(); });
+      const invalid = (status: number, reason: LearningNotificationPayloadReason, parsed = true): void => {
+        res.status(status).json({ error: 'learning_notifications_payload_invalid', reason, ...payloadDiagnostics(parsed ? req.body : undefined, req.get('Content-Type')) });
+      };
+      if (Object.keys(req.query).length) { invalid(400, 'query'); return; }
+      if (!req.is('application/json')) { invalid(400, 'content_type'); return; }
+      const length = req.get('Content-Length'); if (length && (!/^\d+$/.test(length) || Number(length) > LEARNING_NOTIFICATION_LIMITS.payloadBytes)) { invalid(413, 'content_length'); return; }
+      // The shared bridge uses Express 5's parser while this workspace uses
+      // Express 4's. Their private parsed-body flags differ; attempting to read
+      // the already-consumed stream again fails with stream.not.readable.
+      // Reuse only an existing body whose stream emitted end. The authenticated
+      // receiver still applies the same byte/structure/identifier checks below.
+      if (req.readableEnded && req.body !== undefined) { next(); return; }
+      parser(req, res, error => { if (error) invalid(400, 'json_parse', false); else next(); });
     }, async (req, res) => {
       const cancelled = new AbortController(), close = () => { if (!res.writableEnded) cancelled.abort(); }; res.on('close', close);
       try { const value = await this.receive(String(req.params.linkId), req.get('Authorization'), req.body, cancelled.signal); if (!cancelled.signal.aborted) res.json(value); }
       catch (error) { if (!cancelled.signal.aborted) {
         const known = error instanceof LearningNotificationsError || error instanceof LearningProviderError;
-        res.status(known ? error.status : 503).json({ error: known ? error.code : 'learning_notifications_unavailable' });
+        res.status(known ? error.status : 503).json({ error: known ? error.code : 'learning_notifications_unavailable',
+          ...(error instanceof LearningNotificationsError && error.reason ? { reason: error.reason, ...payloadDiagnostics(req.body, req.get('Content-Type')) } : {}) });
       } } finally { res.off('close', close); }
     });
   }
