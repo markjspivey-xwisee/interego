@@ -188,4 +188,20 @@ for (const [code, expected] of [
   assert.equal(h.turns().at(-1).error, expected);
   h.cleanup();
 }
+{
+  const ticket = 'e'.repeat(64); let received;
+  const sample = async (messages, options) => {
+    received = { messages, options };
+    options.onText({ text: 'Private partial answer.' });
+    throw Object.assign(new Error('Enrollment ended.'), { code: 'learning_access_revoked' });
+  };
+  sample.limits = async () => ({ tools: false });
+  const h = harness(sample);
+  await assert.rejects(h.engine.send('My progress?', [], { source_context: { sections: [] } }, sample, 'learner-a',
+    { learningAuthorization: ticket }), { code: 'learning_access_revoked' });
+  assert.equal(received.options.learningAuthorization, ticket);
+  assert.ok(!JSON.stringify(received.messages).includes(ticket));
+  assert.equal(h.turns().length, 0, 'revocation removes partial private history');
+  h.render(); assert.equal(h.engine.busy, false); h.cleanup();
+}
 process.stdout.write('PASS re-rendered actual Ask engine: source/recipient boundaries, guarded default sends, synchronous glossary transitions, stale closures/retrieval epochs, late limits/streams/results, no team-note leakage, timeout recovery and independent intervention context.\n');

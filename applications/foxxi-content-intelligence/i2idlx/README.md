@@ -4,6 +4,12 @@ An Interego / Foxxi **agentic superset** of the [I2IDL Digital Learning Glossary
 
 Version 0.5.0. Source pin: `blakeplock/i2idl-linked-data@0754254` (I2IDL v0.0.93), with Foxxi's ontologies at release 2026.10.1. See `dist-ts/verification-report.md` for freshly executed checks and [V93-REVIEW.md](V93-REVIEW.md) for the adoption review. Independent work by Mark Spivey (Foxxi Mediums Inc.), drafted with Claude. Not affiliated with or endorsed by I2IDL.
 
+The canonical Foxxi Ask page also supports independent human learning-account
+sign-in, institution-managed SCORM Cloud connections, administrator-approved
+learner associations, enrolled-course Q&A and own progress. See
+[Learning connections](LEARNING-CONNECTIONS.md) for setup, authorization,
+retention and the limits of LTI discovery.
+
 ### Separately authored glossary proposals
 
 `typescript/authored-concepts.ts` supplies a separate reviewed, Hypothetical catalog. Competency framework uses the owned I2IDL-X IRI `i2idlx#concept-competency-framework`; the proposed `id.i2idl.org` identifier is metadata only and is not an available canonical concept. The raw canonical projection remains 420 concepts at the exact existing pin. A shared browser/server projection adds one authored term, with separate canonical/authored/combined counts and explicit identity/origin. I2IDL-only browsing excludes that authored term.

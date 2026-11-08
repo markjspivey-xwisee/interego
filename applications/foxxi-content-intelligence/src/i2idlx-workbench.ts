@@ -16,6 +16,9 @@ import type { VerifyPrivateCaller } from './private-performance-auth.js';
 import { attachClientTaskRoutes } from './i2idlx-client-tasks.js';
 import { agentSessionRoutine, attachAgentSessionRoutes } from './i2idlx-agent-sessions.js';
 import { attachUserCourseRoutes } from './i2idlx-user-courses.js';
+import { attachLearningRoutes } from './i2idlx-learning-routes.js';
+import type { LearningRepository } from './i2idlx-learning-connections.js';
+import type { LearningContextService } from './i2idlx-learning-context.js';
 import { attachSemanticTaskRoutes } from './i2idlx-semantic-tasks.js';
 import { semanticCheckOperations } from './i2idlx-semantic-affordances.js';
 import { foxxiAffordances } from '../affordances.js';
@@ -50,6 +53,8 @@ export interface WorkbenchConfig {
   distDirectory?: string;
   /** Optional generated public-data file; never derived from a request input. */
   appDataFile?: string;
+  /** Deployment-owned human authority origins; provider accounts stay dynamic. */
+  learning?: { relayOrigin: string; identityOrigin: string; podOrigin: string; repository?: LearningRepository };
 }
 const MAX_STORED_ENVELOPE_BYTES = 6_000_000;
 const hex = (s: string) => createHash('sha256').update(s, 'utf8').digest('hex');
@@ -330,7 +335,13 @@ export function attachWorkbenchRoutes(app: Express, config: WorkbenchConfig): vo
     baseUrl: base,
     verifyCaller: config.verifyCaller,
     routine: input => agentSessionRoutine(input, config.fetch),
+    openLearningAccess: (receipt, identity, messages) => learningContext.openTaskAccess(receipt, identity, messages),
   });
+  const learningContext: LearningContextService = attachLearningRoutes(app, {
+    baseUrl: base, relayOrigin: config.learning?.relayOrigin ?? '', identityOrigin: config.learning?.identityOrigin ?? '',
+    podOrigin: config.learning?.podOrigin ?? '', repository: config.learning?.repository,
+    sessions: agentSessions, taskConfig: { baseUrl: base, appDataFile: config.appDataFile, checkOperations }, fetch: config.fetch,
+  }).context;
   attachUserCourseRoutes(app, {
     baseUrl: base,
     sessions: agentSessions,
@@ -368,6 +379,16 @@ export function attachWorkbenchRoutes(app: Express, config: WorkbenchConfig): vo
       connection: 'Connect Interego in your AI client, discover I2IDL-X Ask/Orchestrate, then follow their advertised actions and execute returned instructions with your own model. Browser pod identity is a separate optional connection.',
       descriptor_url: descriptorUrl,
       checkOperations,
+      learning: {
+        href: base + '/i2idlx/api/learning', method: 'POST', provider: 'scorm-cloud',
+        session: base + '/i2idlx/learning/session', authentication: 'Independent Interego human OAuth session and same-origin CSRF. The paired AI is not the learner identity.',
+        operations: ['owned-connectors', 'create-connector', 'my-links', 'discover', 'request-link', 'pending-links', 'approve-link', 'confirm-link', 'revoke-link', 'revoke-connector', 'courses', 'progress', 'prepare-lti', 'install-lti', 'remove-lti'],
+        source: { href: base + '/i2idlx/api/learning/context', method: 'POST', authentication: 'Human session plus explicitly paired browser capability; unavailable to the AI driver.' },
+        enrollment: 'Administrator-approved canonical provider learner link, activated by the learner. Fresh provider enrollment is required before every private course read and model dispatch/delivery.',
+        lti: 'Verified LTI launch discovers an institution connection. Platform subject is private evidence; it is not guessed to be a Cloud learner ID and grants no enrollment or content rights.',
+        progress: 'Own SCORM Cloud registration observations only; normalized completion, success, score percent and time where available. Prerequisites and curriculum are unavailable without an authoritative provider.',
+        storage: 'Service-owned encrypted connector credentials and identity mappings; no retained course bodies, graphs or progress. End the account link or remove the connector to erase its active authority.',
+      },
       personalCourses: {
         href: base + '/i2idlx/api/user-courses', method: 'POST', providers: ['scorm-cloud', 'source-service'],
         authentication: 'Verified paired browser session; unavailable to the agent driver.',

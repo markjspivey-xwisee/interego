@@ -1,0 +1,138 @@
+// Local developer fixture: actual React hooks; synthetic providers and model only.
+// Default prepares HTML. --serve starts a localhost preview for CUA inspection.
+import { build } from 'esbuild';
+import { readFile, writeFile, mkdir } from 'node:fs/promises';
+import { resolve, dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { createServer } from 'node:http';
+const app=resolve(dirname(fileURLToPath(import.meta.url)),'..'),repo=resolve(app,'../../../..');
+const assets=resolve(process.env.I2IDLX_UI_ASSETS||join(app,'../.cache/ui-oracle-assets'));
+const output=resolve(repo,'.local/learning-ui-fixture');
+const modules={
+  'data.js':'export const C=[],SOURCES=[],ACTIONS={},COLLECTIONS={field:[],type:[],curated:[]},META={scheme:{title:"Fixture glossary"},release:"fixture",counts:{canonicalConcepts:0,authoredConcepts:0}};export const byId=new Map(),kindById=new Map(),typeById=new Map(),fieldById=new Map(),roleById=new Map(),enactByConcept=new Map(),mapsByConcept=new Map(),inhByConcept=new Map(),conceptsByAction=new Map();export const iriOf=x=>x,shortestPaths=()=>[],relationBetween=()=>null,systemLabel=x=>x;',
+  'caps.js':'export const useCaps=()=>window.__fixtureCaps;',
+  'search.js':'export const search=()=>[];',
+  'util.js':'export const useStored=(key,initial)=>React.useState(initial);',
+  'ui.jsx':'export const useUI=()=>({});export const Seg=()=>null;',
+  'icons.jsx':'export const Icon=()=>null;',
+  'text.jsx':'export const MiniMarkdown=()=>null;',
+  'connection.jsx':'export const AIClientTaskLinks=()=>null;',
+  'interego-caps.js':[
+    'const listeners=new Set();export const subscribeAgentSession=fn=>{listeners.add(fn);fn(window.__fixtureAgent);return()=>listeners.delete(fn);};',
+    'export const workbenchConnectionStatus=()=>({agent:window.__fixtureAgent});export const userCourseRequest=(args,signal)=>window.__fixtureOwner(args,signal);',
+    'export const learningContextRequest=(args,signal)=>window.__fixtureContext(args,signal);export const userCourseSample=()=>window.__fixtureAgent.state==="connected"?window.__fixtureCaps.sample:null;',
+    'window.__fixtureSetAgent=value=>{window.__fixtureAgent=value;for(const fn of listeners)fn(value);};'
+  ].join('\n')
+};
+const entry=[
+  'import {useAskEngine} from '+JSON.stringify(join(app,'src/views/ask.jsx'))+';',
+  'import {useCourseContext} from '+JSON.stringify(join(app,'src/course-context.jsx'))+';',
+  'function Fixture(){const engine=useAskEngine(),course=useCourseContext(engine),[draft,setDraft]=React.useState("What is the safety code?");',
+  'window.__fixtureState=()=>({blocked:course.blocked,selected:course.selected?.title||null,turns:engine.turns.map(x=>({role:x.role,content:x.content})),modelCalls:window.__fixture.calls.length});',
+  'return <main><h1>Learning account developer fixture</h1><p>Synthetic accounts, registrations, courses and model. No live services.</p>',
+  '<section aria-label="Fixture scenario controls" className="scenarios"><b>Controlled provider scenarios</b>',
+  '<button onClick={()=>window.__scenario("alice")}>Fixture: use Alice account</button><button onClick={()=>window.__scenario("bob")}>Fixture: use Bob account</button><button onClick={()=>window.__scenario("anonymous")}>Fixture: expire human sign-in</button>',
+  '<button onClick={()=>window.__scenario("revoke-model")}>Fixture: revoke before model reply</button><button onClick={()=>window.__scenario("deny-source")}>Fixture: deny next private retrieval</button>',
+  '<button onClick={()=>window.__scenario("delay")}>Fixture: delay next source</button><button onClick={()=>window.__scenario("release")}>Fixture: release delayed source</button>',
+  '<button onClick={()=>window.__fixtureSetAgent({state:"connected",connectionId:"fixture-agent-two",monitoring:"ready"})}>Fixture: replace AI recipient</button>',
+  '<button onClick={()=>engine.sendGlossary("A glossary question",[])}>Fixture: glossary shortcut</button></section>',
+  '<p role="status" data-testid="fixture-scope">{course.blocked?"Private context blocked":"Ask available"} · Selected: {course.selected?.title||"none"} · Model calls: {window.__fixture.calls.length}</p>',
+  '{course.panel}<label>Fixture question<input aria-label="Fixture question" value={draft} onChange={e=>setDraft(e.target.value)}/></label>',
+  '<div><button disabled={course.blocked||course.loading||engine.busy} onClick={()=>course.send(draft)}>Send fixture question</button><button onClick={course.stop}>Stop fixture question</button></div>',
+  '<section aria-label="Fixture conversation">{engine.turns.map((turn,index)=><p key={index} data-testid="fixture-turn">{turn.role}: {turn.content}</p>)}</section></main>;}',
+  'ReactDOM.createRoot(document.getElementById("root")).render(<Fixture/>);'
+].join('\n');
+const result=await build({stdin:{contents:entry,resolveDir:app,sourcefile:'learning-fixture.jsx',loader:'jsx'},bundle:true,write:false,format:'iife',
+  jsxFactory:'React.createElement',jsxFragment:'React.Fragment',target:'es2020',
+  plugins:[{name:'synthetic-data-and-provider-adapters',setup(api){
+    api.onResolve({filter:/(?:^|\/)(data\.js|caps\.js|search\.js|util\.js|ui\.jsx|icons\.jsx|text\.jsx|connection\.jsx|interego-caps\.js)$/},args=>{
+      const name=args.path.split('/').pop();return Object.hasOwn(modules,name)?{path:name,namespace:'fixture'}:undefined;
+    });
+    api.onLoad({filter:/.*/,namespace:'fixture'},args=>({contents:modules[args.path],loader:'js'}));
+  }}]
+});
+const bootstrap=`(()=>{
+  const expires="2099-01-01T00:00:00.000Z",state=window.__fixture={human:null,calls:[],owner:false,grant:null,delay:false,waiting:[],modelRevoked:false,denySource:false,connectors:[]};
+  const channel=new BroadcastChannel("i2idlx-learning-developer-fixture");
+  channel.onmessage=event=>{if(event.data?.kind==="fixture-sign-in"&&["alice","bob"].includes(event.data.human))state.human=event.data.human;};
+  window.__fixtureAgent={state:"connected",connectionId:"fixture-agent-one",monitoring:"ready"};
+  const account=()=>({id:"did:web:fixture.invalid:users:"+state.human,userId:state.human,webId:"https://fixture.invalid/users/"+state.human});
+  const link=()=>({id:(state.human==="alice"?"a":"b").repeat(32),connector_id:"c".repeat(32),provider_label:"Fixture learning provider",status:"active"});
+  const course=()=>({id:state.human==="alice"?"alice-course":"bob-course",title:state.human==="alice"?"Alice enrolled safety":"Bob enrolled safety",version:3});
+  const fail=(code,status=403)=>Object.assign(new Error(code),{code,status});
+  const packet=(args,owner=false)=>{
+    const title=owner?"Owner inspection course":course().title,body=owner?"OWNER37":state.human==="alice"?"BLUE27":"GREEN18";
+    return {source:{provider:"scorm-cloud",course_id:args.course_id,title,version:args.version,source_version:"course-version:"+args.version,projection_sha256:"d".repeat(64),fingerprint_scope:"selected-instructional-projection"},
+      access:{link_id:args.link_id,sharing:{content:args.share_content,progress:args.share_progress}},
+      interventionContext:{kind:"instructional-source-reference",source_context:{source:"package",id:args.course_id,version:"course-version:"+args.version,sections:[{citation_id:"SC1",title:"Safety code",body}]}},
+      citations:[{id:"SC1",title:"Safety code",body}],missing_context:[],authorization_ticket:"e".repeat(64)};
+  };
+  const reply=value=>Promise.resolve(new Response(JSON.stringify(value),{headers:{"Content-Type":"application/json"}}));
+  window.fetch=async(input,init={})=>{
+    const path=new URL(typeof input==="string"?input:input.url,location.origin).pathname;
+    if(path==="/i2idlx/learning/session")return reply({enabled:true,authenticated:!!state.human,account:state.human?account():null,csrf:state.human?"c".repeat(64):null,expires_at:state.human?expires:null,sign_in_url:"/i2idlx/learning/oauth/start"});
+    if(path==="/i2idlx/learning/sign-out"){state.human=null;return reply({signed_out:true});}
+    if(path!=="/i2idlx/api/learning")throw Error("Fixture refuses an unmocked network request.");
+    const args=JSON.parse(init.body||"{}");if(!state.human)return new Response(JSON.stringify({code:"learning_sign_in_required"}),{status:401});
+    if(args.operation==="my-links")return reply({links:[link()]});
+    if(args.operation==="courses")return reply({link_id:args.link_id,courses:[course()],prerequisites:{status:"unavailable"},curriculum:{status:"unavailable"}});
+    if(args.operation==="progress")return reply({link_id:args.link_id,as_of:expires,records:[{course_id:course().id,title:course().title,version:3,completion:"COMPLETED",success:"PASSED",score:73,total_seconds:90,source:"SCORM Cloud",observed_at:expires}]});
+    if(args.operation==="owned-connectors")return reply({connectors:state.connectors});
+    if(args.operation==="create-connector"){
+      const connector={id:"f".repeat(32),label:args.label,status:"active",created_at:expires,join_code:"9".repeat(48),policy:args.policy,lti:{state:"installing",settings:null}};
+      state.connectors=[connector];return reply({connector});
+    }
+    if(args.operation==="pending-links")return reply({links:[{id:"8".repeat(32),account:{id:"did:web:fixture.invalid:users:bob",webId:"https://fixture.invalid/users/bob"},status:"approved",requested_at:expires}]});
+    throw Error("Fixture operation is not implemented: "+args.operation);
+  };
+  window.__fixtureContext=async args=>{
+    if(!state.human)throw fail("learning_sign_in_required",401);
+    if(state.denySource){state.denySource=false;state.human=null;throw fail("learning_sign_in_required",401);}
+    if(args.link_id!==link().id||args.course_id!==course().id)throw fail("learning_link_not_found",404);
+    const result=packet(args);if(state.delay){state.delay=false;await new Promise(resolve=>state.waiting.push(resolve));}return result;
+  };
+  window.__fixtureOwner=async args=>{
+    if(args.operation==="status")return {connected:state.owner,provider:"scorm-cloud",connection_id:"owner-connection",expires_at:expires};
+    if(args.operation==="connect"){state.owner=true;return {connected:true,provider:"scorm-cloud",connection_id:"owner-connection",expires_at:expires};}
+    if(args.operation==="courses")return {connection_id:"owner-connection",courses:[{id:"owner-course",title:"Owner inspection course",version:2,standard:"SCORM 2004",access_modes:["virtual"]}]};
+    if(args.operation==="access-status")return {connection_id:"owner-connection",course_id:args.course_id,version:args.version,grant:null,cache:{present:false}};
+    if(args.operation==="grant"){state.grant={id:"owner-grant",mode:args.mode,authority:args.permission.authority,verification:"user-attested",expires_at:expires};return {grant:state.grant,cache:{present:false}};}
+    if(args.operation==="source"){const result=packet({...args,share_content:true,share_progress:false},true);delete result.authorization_ticket;result.connection_id="owner-connection";result.access={mode:"virtual",permission:state.grant,cache:{present:false},graph:{representation:"none"}};return result;}
+    if(args.operation==="disconnect"){state.owner=false;return {connected:false,lti_cleanup:{removed:true}};}
+    throw Error("Fixture owner operation is not implemented.");
+  };
+  const sample=async(messages,options={})=>{
+    state.calls.push({messages,hasTicket:!!options.learningAuthorization,ticketInMessages:JSON.stringify(messages).includes("e".repeat(64))});
+    if(options.learningAuthorization&&state.modelRevoked){state.modelRevoked=false;throw fail("learning_access_revoked");}
+    const text=JSON.stringify(messages).includes("BLUE27")?"Answer grounded in BLUE27 [SC1].":JSON.stringify(messages).includes("GREEN18")?"Answer grounded in GREEN18 [SC1].":JSON.stringify(messages).includes("OWNER37")?"Owner answer OWNER37 [SC1].":"Glossary fixture answer.";
+    options.onText?.({text});return {text};
+  };
+  sample.limits=async()=>({tools:false});sample.contextKey="fixture-recipient";window.__fixtureCaps={sample,tools:false,allNotes:[]};
+  window.__scenario=kind=>{
+    if(kind==="alice"||kind==="bob")state.human=kind;if(kind==="anonymous")state.human=null;
+    if(kind==="revoke-model")state.modelRevoked=true;if(kind==="deny-source")state.denySource=true;
+    if(kind==="delay")state.delay=true;if(kind==="release")state.waiting.splice(0).forEach(resolve=>resolve());
+    document.getElementById("scenario-status").textContent="Fixture provider state: "+(state.human||"signed out")+"; "+kind;
+  };
+})();`;
+const scripts=await Promise.all([
+  readFile(join(assets,'cdnjs.cloudflare.com_ajax_libs_react_18.3.1_umd_react.production.min.js'),'utf8'),
+  readFile(join(assets,'cdnjs.cloudflare.com_ajax_libs_react-dom_18.3.1_umd_react-dom.production.min.js'),'utf8')
+]);
+const html='<!doctype html><meta charset="utf-8"><title>Learning hook fixture</title><style>body{font:15px system-ui;color:#142434;margin:24px auto;max-width:980px}button,input,select{font:inherit;margin:4px;padding:7px}label{display:block}.stack{display:flex;flex-direction:column;gap:8px}.row{display:flex;gap:8px}.note,details{border:1px solid #b5c6d2;border-radius:7px;padding:12px;margin:10px 0}.small{font-size:14px}.warn{color:#8a210b}.scenarios{border:2px dashed #75879b;padding:12px}.scenarios button{font-size:12px}pre{white-space:pre-wrap}</style><p id="scenario-status">Fixture provider state: signed out</p><div id="root"></div>'+
+  scripts.map(script=>'<script>'+script.replaceAll('</script','<\\/script')+'</script>').join('')+
+  '<script>'+bootstrap.replaceAll('</script','<\\/script')+'</script><script>'+result.outputFiles[0].text.replaceAll('</script','<\\/script')+'</script>';
+await mkdir(output,{recursive:true});await writeFile(join(output,'index.html'),html);
+process.stdout.write('Prepared actual-hook developer fixture: '+join(output,'index.html')+'\n');
+if(process.argv.includes('--serve')){
+  const server=createServer((req,res)=>{
+    if(req.url==='/favicon.ico'){res.writeHead(204);res.end();return;}
+    if(req.url==='/i2idlx/learning/oauth/start'){
+      res.writeHead(200,{'Content-Type':'text/html; charset=utf-8','Cache-Control':'no-store'});
+      res.end('<!doctype html><title>Synthetic Interego sign-in</title><h1>Fixture sign-in</h1><p>These are synthetic test accounts. No credentials are requested.</p><button onclick="complete(\'alice\')">Complete fixture sign-in as Alice</button><button onclick="complete(\'bob\')">Complete fixture sign-in as Bob</button><script>const channel=new BroadcastChannel("i2idlx-learning-developer-fixture");function complete(human){channel.postMessage({kind:"fixture-sign-in",human});setTimeout(()=>window.close(),100);}</script>');return;
+    }
+    if(req.url!=='/'){res.writeHead(404);res.end('Only the fixture page is served.');return;}
+    res.writeHead(200,{'Content-Type':'text/html; charset=utf-8','Cache-Control':'no-store','Content-Security-Policy':"default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'none'"});res.end(html);
+  });
+  server.listen(Number(process.env.I2IDLX_FIXTURE_PORT||43811),'127.0.0.1',()=>process.stdout.write('Local fixture ready: http://127.0.0.1:'+server.address().port+'/\n'));
+}

@@ -22,6 +22,7 @@
  */
 
 import express from 'express';
+import { oauthAccountHandler, nativeBackingIdentityValidator } from './oauth-account.js';
 import rateLimit from 'express-rate-limit';
 import { randomBytes, createHash, timingSafeEqual } from 'node:crypto';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
@@ -13498,6 +13499,7 @@ app.get('/.well-known/oauth-authorization-server', (req, res) => {
     issuer: DEFAULT_ISSUER.href,
     authorization_endpoint: `${issuerHref}/authorize`,
     token_endpoint: `${issuerHref}/token`,
+    interego_account_endpoint: `${issuerHref}/oauth/account`,
     registration_endpoint: `${issuerHref}/register`,
     response_types_supported: ['code'],
     grant_types_supported: ['authorization_code', 'refresh_token'],
@@ -15602,6 +15604,30 @@ app.get('/audit/compliance/:framework', bearerVerifyLimiter, async (req, res) =>
  * The identity token itself is bearer-bound to the user, so once the
  * dashboard has it, identity's own authorization checks apply.
  */
+// Bearer-bound own-account metadata, independent of the broader identity token.
+app.get('/oauth/account', oauthAccountHandler({
+  introspect: token => oauthProvider.introspectAccessToken(token),
+  identityOrigin: IDENTITY_URL,
+  podOrigin: CSS_PUBLIC_URL,
+  publicPod: asPublicPodUrl,
+  validateBackingIdentity: nativeBackingIdentityValidator({
+    identityUrl: IDENTITY_URL,
+    introspectionSecret: () => process.env['IDENTITY_INTROSPECTION_SECRET'],
+    publicPod: asPublicPodUrl,
+    lookupOAuth: async token => {
+      try {
+        const info = await oauthProvider.verifyAccessToken(token), extra = info.extra as {
+          userId?: string; ownerWebId?: string; ownerDid?: string; podUrl?: string; agentId?: string; identityToken?: string; provisionalPlay?: unknown;
+        } | undefined;
+        if (!extra?.userId || !extra.ownerWebId || !extra.podUrl || !extra.agentId || !extra.identityToken) return null;
+        return { valid: true as const, userId: extra.userId, ownerWebId: extra.ownerWebId,
+          ...(extra.ownerDid ? { ownerDid: extra.ownerDid } : {}), podUrl: extra.podUrl, agentId: extra.agentId,
+          clientId: info.clientId, scope: info.scopes ?? [], expiresAt: info.expiresAt ?? 0, identityToken: extra.identityToken,
+          ...(extra.provisionalPlay !== undefined ? { provisionalPlay: extra.provisionalPlay } : {}) };
+      } catch { return null; }
+    },
+  }),
+}));
 app.get('/identity-token', bearerVerifyLimiter, async (req, res) => {
   const authHeader = req.headers.authorization;
   if (!authHeader?.startsWith('Bearer ')) {

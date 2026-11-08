@@ -1,4 +1,5 @@
 import { userCourseRequest, userCourseSample, subscribeAgentSession, workbenchConnectionStatus } from './interego-caps.js';
+import { useLearningContext } from './learning-context.jsx';
 
 const { useState, useEffect, useRef } = React;
 const object = value => value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -137,7 +138,9 @@ export function useCourseContext(engine) {
   const clearCourseIntent = () => {
     invalidate(); clearSelection(); setError(''); mode.current = false; setCourseMode(false);
   };
-  useEffect(() => engine.registerCourseContext({ active: () => mode.current, clear: clearCourseIntent }), [engine.registerCourseContext]);
+  const learning = useLearningContext(engine, { onActivate: clearCourseIntent });
+  useEffect(() => engine.registerCourseContext({ active: () => mode.current || learning.activeRef.current,
+    clear: () => { clearCourseIntent(); learning.clear(); } }), [engine.registerCourseContext]);
   useEffect(() => subscribeAgentSession(setAgent), []);
   useEffect(() => { mounted.current = true; return () => {
     mounted.current = false; generation.current++; request.current?.abort(); clearCredentials(); closeLaunchWindow();
@@ -197,6 +200,7 @@ export function useCourseContext(engine) {
   }
   async function connect() {
     if (!eligible || loading || engine.busy) return;
+    learning.clear();
     let credentials;
     if (provider === 'scorm-cloud') {
       const id = appId.current?.value.trim(), password = secret.current?.value;
@@ -231,6 +235,7 @@ export function useCourseContext(engine) {
     finally { if (current(run)) setLoading(false); }
   }
   async function choose(value) {
+    learning.clear();
     const { run, controller } = begin(); engine.reset(); clearSelection();
     const course = courses.find(item => keyOf(item) === value) || null;
     mode.current = !!course; setCourseMode(!!course); setSelected(course);
@@ -354,7 +359,7 @@ export function useCourseContext(engine) {
     if (grant) return erase();
     invalidate(); clearApproval(); engine.reset(); setError('');
   }
-  function glossaryOnly() { clearCourseIntent(); engine.reset(); }
+  function glossaryOnly() { clearCourseIntent(); learning.clear(); engine.reset(); }
   async function disconnect() {
     const hadLtiResources = hasLtiResources(lti);
     const { run, controller } = begin(); clearSource(); engine.reset(); mode.current = false; setCourseMode(false);
@@ -369,6 +374,7 @@ export function useCourseContext(engine) {
     finally { if (current(run)) setLoading(false); }
   }
   async function send(text, ids = engine.ctx) {
+    if (learning.activeRef.current) return learning.send(text, ids);
     const question = (text || '').trim();
     if (!question || loading || engine.busy) return;
     if (!courseMode) return engine.send(question, ids);
@@ -391,12 +397,12 @@ export function useCourseContext(engine) {
     } catch (e) { failed(e, run, controller); }
     finally { if (current(run)) setLoading(false); }
   }
-  function stop() { invalidate(); engine.stop(); }
+  function stop() { invalidate(); learning.stop(); }
   const blocked = courseMode && (!eligible || !connection || !selected || !grant);
   const selectedModes = modesFor(selected), sourceName = providers[connection?.provider || provider];
   const remoteDeletion = deletion?.result?.remote_deletion;
   const panel = <details className="note" style={{ display: 'block' }} data-testid="ask-course-source">
-    <summary><b>Ask about a course</b>{selected ? ' · ' + selected.title : ''}</summary>
+    <summary><b>Manage course content · owner access</b>{selected ? ' · ' + selected.title : ''}</summary>
     <div className="stack" style={{ gap: 12, marginTop: 12 }}>
       <p className="small">Choose a course source, then confirm the owner’s permission and how the course may be read. Clicking Ask shares the selected passages with your paired AI agent.</p>
       {!eligible ? <p className="note small">Use Connect in the toolbar to pair an active AI agent first.</p> : null}
@@ -503,5 +509,7 @@ export function useCourseContext(engine) {
       </div></details> : null}
     </div>
   </details>;
-  return { panel, send, stop, loading, blocked, selected };
+  return { panel: <>{learning.panel}{panel}{learning.active ? <button className="btn ghost sm" onClick={glossaryOnly}>Use glossary only</button> : null}</>,
+    send, stop, loading: loading || learning.loading,
+    blocked: learning.active ? learning.blocked : blocked, selected: learning.active ? learning.selected : selected };
 }

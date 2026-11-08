@@ -131,6 +131,7 @@ COPY deploy/mcp-relay/server.ts ./
 COPY deploy/mcp-relay/signed-act.ts ./
 COPY deploy/mcp-relay/request-observers.ts ./
 COPY deploy/mcp-relay/oauth-provider.ts ./
+COPY deploy/mcp-relay/oauth-account.ts ./
 COPY deploy/mcp-relay/local-identity-handoff.ts ./
 COPY deploy/mcp-relay/local-identity-http.ts ./
 COPY deploy/mcp-relay/local-identity-link-step-up.ts ./

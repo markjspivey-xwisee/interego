@@ -1,5 +1,39 @@
 # Changelog
 
+## 2026-11-07 — Ask connects verified learners to their own SCORM Cloud registrations
+
+`933da17c` adds a human learning-account connection independent of the AI driving
+Ask. Interego OAuth uses a server-held read-only grant and a secure opaque
+browser cookie. Relay account reads recheck the backing native identity token
+and session epoch. Institution connectors, their credentials and learner
+associations are selected at runtime and stored in a sole-service-recipient
+encrypted Native CAS checkpoint; no account or learner is a deployment default.
+
+An administrator matches a verified Interego account to an actual Cloud
+registration, then the learner activates the association. Students see only the
+linked learner's registered courses and own observed progress. Private questions
+recheck human identity, policy, exact course/version and enrollment before source
+retrieval, model dispatch and delivery. Authorization receipts remain outside
+model messages; revoked authority clears queued and partial results. Selected
+native course files are read in request memory without a ZIP export or retained
+course text, graph or progress. Cloud scores retain their 0–100 percent units.
+
+Signed LTI launches discover pending account-link requests only; platform
+subjects are never guessed to be Cloud learner IDs. Embedded Cloud launches
+offer a bounded one-use new-tab handoff before first-party sign-in and explicit
+claim. Optional helper setup and removal retain uncertain cleanup state for a
+retry. Prerequisites and curriculum remain unavailable without an authoritative
+provider. The owner content-management path is separately labeled.
+
+Validation: 291 focused tests across 12 modules passed with the normal compiler
+and run-integrity gates; relay production/test compilation and five account HTTP
+tests passed. Browser adapter checks and actual rendered synthetic two-account
+controls verified selection, consent, progress and private-history clearing.
+The native app rebuild reused previously verified unchanged graph artifacts.
+These fixtures do not establish live student enrollment: no real institution
+connector, credential storage or learner association was created by this work.
+See `applications/foxxi-content-intelligence/i2idlx/LEARNING-CONNECTIONS.md`.
+
 ## 2026-11-07 — Discord bot: its operator can give the Hosted Terms agreement for a new bot key through the bot's own variable; the live demo's headless sign-in says how to enrol a new key
 
 Since #778 hosted identity creates an account only for a wallet that signed the Hosted Terms agreement. As #793 (the entry below) leaves it, the Discord bot never gives that agreement, so a NEW `INTEREGO_BOT_KEY` can start only once its account has been created separately with an explicit agreement, and the live demo's headless `DEMO_YOU_WALLET` sign-in refuses a new key without saying how to enrol it.

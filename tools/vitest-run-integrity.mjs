@@ -295,7 +295,9 @@ const REPO_ROOT = fileURLToPath(new URL('..', import.meta.url));
 // no headroom (the 539 -> 567 note above), and the live drivers' opt-in adds two more
 // modules. The five new ones are this branch's desktop, relay-agent and pod-desktop terms
 // tests. Nothing was removed, excluded or skipped.
-export const MIN_TEST_MODULES = 653;
+// Enrolled-learning security modules plus the current master bring the exact
+// tracked tree to 663. Retain every module; no include or assertion was removed.
+export const MIN_TEST_MODULES = 663;
 
 /**
  * How far below the real module count MIN_TEST_MODULES may sit before that is itself a
