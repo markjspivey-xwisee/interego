@@ -282,6 +282,24 @@ await test('readiness binds the exact enrolled source and distinguishes unavaila
   assert.throws(() => learningResponse('course-readiness', { ...expected, link_id: 'other-link', readiness }, expected));
 });
 
+await test('readiness preserves bounded owner sequence labels without turning references into enrollments', () => {
+  const expected = { course_id: 'course-a', version: 3 };
+  const sequence = [{ course_id: 'unenrolled-course', version: 0, label: 'Orientation practice' },
+    { course_id: 'course-a', version: 3, label: 'Practice quiz and review' }];
+  const readiness = { ...expected, checked_at: EXPIRES, enrollment: { status: 'verified', observed_at: EXPIRES },
+    content: { status: 'readable' }, quiz_review: { status: 'not-released', count: 0 }, launch: { kind: 'course', reason: 'Selected enrollment only.' },
+    learning_map: { status: 'owner-supplied', revision: 'a'.repeat(32), sha256: 'b'.repeat(64), saved_at: EXPIRES,
+      provider_prerequisites: 'unavailable', objectives: [], prerequisites: [], curriculum: { label: 'Owner-supplied sequence', sequence } },
+    retention: { mode: 'virtual', cached_bytes: 0, course_text_retained: false } };
+  const projected = learningReadiness(readiness, expected);
+  assert.deepEqual(projected.learning_map.curriculum.sequence, sequence);
+  assert.deepEqual(projected.enrollment, readiness.enrollment);
+  const invalidLabels = [{ course_id: 'unenrolled-course', version: 0, label: 'x'.repeat(401) }, { course_id: 'another-course', label: { unexpected: true } }];
+  const projectedInvalid = learningReadiness({ ...readiness, learning_map: { ...readiness.learning_map,
+    curriculum: { label: 'Owner-supplied sequence', sequence: invalidLabels } } }, expected);
+  assert.ok(projectedInvalid.learning_map.curriculum.sequence.every(item => !Object.hasOwn(item, 'label')));
+});
+
 await test('released own quiz review validates the canonical nested packet, exact model bytes and separate opt-in', async () => {
   const review = { status: 'available', count: 1, observed_at: EXPIRES, records: [{ citation_id: 'review-one',
     activity_id: 'quiz', interaction_id: 'question-one', question_label: 'Which code should be recorded?', learner_response: 'B',

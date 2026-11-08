@@ -217,6 +217,32 @@ open, through redraws and through a refusal, so a refused ID can be corrected.
 It empties and closes only once the type is added, and its button is off while
 the change is being signed.
 
+## 2026-11-08 — Ask: accept Cloud updates after the shared JSON parser
+
+The Cloud notification receiver reuses an existing parsed body only after the
+request stream has ended. This avoids asking the connector's Express 4 parser
+to read the stream already consumed by the shared Express 5 parser. Unread
+requests still go through the receiver's parser. Authentication, payload bounds,
+registration matching and fresh provider verification remain required; incoming
+score or completion fields still cannot set learning results.
+
+## 2026-11-08 — Ask: preserve owner-supplied course sequence labels
+
+Course readiness keeps the owner's optional curriculum item labels, including
+references outside the learner's enrolled course list. Catalog title fallback
+requires the same course and version. Showing an owner label does not add an
+enrollment, grant a launch or establish prerequisite completion; the existing
+owner-attribution notice remains visible.
+
+## 2026-11-08 — Ask: bounded Cloud callback diagnostics
+
+Rejected progress callbacks now report a fixed rejection reason and bounded
+media, body and known-field type labels. These diagnostics expose no supplied
+values, arbitrary field names, raw headers or credentials. Authentication,
+accepted payloads, enrollment checks and fresh provider reads keep their
+existing requirements. The change helps diagnose the live Cloud format
+mismatch; it does not claim that notification delivery has passed.
+
 ## 2026-11-08 — Ask: real Cloud callback configuration and review handoff
 
 Live student verification exposed Cloud responses that omit explicit setting
