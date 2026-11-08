@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { once } from 'node:events';
 import express from 'express';
+import { createVerticalBridge } from '../../_shared/vertical-bridge/index.js';
 import type { LearningPrincipal } from '../src/i2idlx-learning-auth.js';
 import type { LearningAccess, LearningConnector } from '../src/i2idlx-learning-connections.js';
 import { LEARNING_NOTIFICATION_LIMITS, LearningProgressNotifications, type LearningNotificationLink,
@@ -318,9 +319,9 @@ describe('optional authenticated per-link Cloud progress refresh notifications',
   it('rejects expired/cancelled human sessions and malformed or oversized callback bodies', async () => {
     const f = fixture(); f.lifetime.abort(); await expect(f.request('enable-progress-notifications')).rejects.toMatchObject({ status: 403 });
     const next = fixture(); await next.request('enable-progress-notifications');
-    await expect(next.service.receive(LINK, next.header(), { id: 'registration-one', raw: 'x'.repeat(LEARNING_NOTIFICATION_LIMITS.payloadBytes) })).rejects.toMatchObject({ status: 400 });
-    await expect(next.service.receive(LINK, next.header(), { registrationId: 'registration-one' })).rejects.toMatchObject({ status: 400 });
-    await expect(next.service.receive(LINK, next.header(), JSON.parse('{"id":"registration-one","__proto__":{"polluted":true}}'))).rejects.toMatchObject({ status: 400 });
+    await expect(next.service.receive(LINK, next.header(), { id: 'registration-one', raw: 'x'.repeat(LEARNING_NOTIFICATION_LIMITS.payloadBytes) })).rejects.toMatchObject({ status: 400, reason: 'body_size' });
+    await expect(next.service.receive(LINK, next.header(), { registrationId: 'registration-one' })).rejects.toMatchObject({ status: 400, reason: 'registration_id_missing' });
+    await expect(next.service.receive(LINK, next.header(), JSON.parse('{"id":"registration-one","__proto__":{"polluted":true}}'))).rejects.toMatchObject({ status: 400, reason: 'body_structure' });
     expect(next.receipts).toHaveLength(0);
   });
   it('bounds callback admission per link and never returns private source or progress records', async () => {
@@ -341,5 +342,66 @@ describe('optional authenticated per-link Cloud progress refresh notifications',
     expect(await result.json()).toEqual({ received: true, refresh_required: true, received_at: new Date(NOW).toISOString() });
     const invalid = await fetch(endpoint + '?extra=1', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: f.header() }, body: '{}' }); expect(invalid.status).toBe(400);
     const oversized = await fetch(endpoint, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: f.header() }, body: JSON.stringify({ id: 'registration-one', blob: 'x'.repeat(LEARNING_NOTIFICATION_LIMITS.payloadBytes) }) }); expect(oversized.status).toBe(413);
+  });
+  it('diagnoses rejected callback formats with finite labels and never echoes supplied values or arbitrary keys', async () => {
+    const f = fixture(); await f.request('enable-progress-notifications'); const app = express(); f.service.attachRoutes(app);
+    const server = app.listen(0, '127.0.0.1'); await once(server, 'listening');
+    cleanups.push(async () => { await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve())); });
+    const address = server.address(); if (!address || typeof address === 'string') throw Error('Missing local test server');
+    const endpoint = 'http://127.0.0.1:' + address.port + '/i2idlx/learning/progress-notifications/' + LINK;
+    const unknown = 'PRIVATE_CALLBACK_KEY', secret = 'PRIVATE_CALLBACK_SENTINEL';
+    const cases = [
+      { type: 'application/json', query: '?PRIVATE_QUERY=' + secret, body: '{}', status: 400, reason: 'query', media: 'application_json', parsed: 'undefined' },
+      { type: 'application/x-www-form-urlencoded', body: 'data=' + secret, status: 400, reason: 'content_type', media: 'form', parsed: 'undefined' },
+      { type: 'text/xml', body: '<data>' + secret + '</data>', status: 400, reason: 'content_type', media: 'xml', parsed: 'undefined' },
+      { type: 'text/json', body: '{}', status: 400, reason: 'content_type', media: 'text_json', parsed: 'undefined' },
+      { type: 'application/private-' + secret, body: '{}', status: 400, reason: 'content_type', media: 'other', parsed: 'undefined' },
+      { type: 'application/json', body: '{"' + unknown + '":', status: 400, reason: 'json_parse', media: 'application_json', parsed: 'undefined' },
+      { type: 'application/json', body: '[]', status: 400, reason: 'body_shape', media: 'application_json', parsed: 'array' },
+      { type: 'application/json', body: JSON.stringify({ registrationId: secret, registrationid: secret, registration: {}, data: {}, registrationReport: [], [unknown]: secret }),
+        status: 400, reason: 'registration_id_missing', media: 'application_json', parsed: 'object' },
+      { type: 'application/json', body: JSON.stringify({ id: { [unknown]: secret } }), status: 400, reason: 'registration_id_invalid', media: 'application_json', parsed: 'object' },
+      { type: 'application/json', body: '{"id":"' + secret + '","constructor":{}}', status: 400, reason: 'body_structure', media: 'application_json', parsed: 'object' },
+      { type: 'application/json', body: JSON.stringify({ id: secret, data: 'x'.repeat(LEARNING_NOTIFICATION_LIMITS.payloadBytes) }), status: 413, reason: 'content_length', media: 'application_json', parsed: 'undefined' },
+    ];
+    for (const item of cases) {
+      const response = await fetch(endpoint + (item.query ?? ''), { method: 'POST', headers: { 'Content-Type': item.type, Authorization: f.header() }, body: item.body });
+      expect(response.status).toBe(item.status);
+      const result = await response.json() as Row;
+      expect(result).toMatchObject({ error: 'learning_notifications_payload_invalid', reason: item.reason, media_type: item.media, parsed_type: item.parsed });
+      expect(JSON.stringify(result)).not.toMatch(/PRIVATE_CALLBACK|PRIVATE_QUERY|registration-one|private-learner/);
+      if (item.reason === 'registration_id_missing') expect(result.known_fields).toEqual({ id: 'missing', registrationId: 'string', registrationid: 'string', registration: 'object', data: 'object', registrationReport: 'array' });
+    }
+    expect(f.receipts).toHaveLength(0);
+  });
+  it('accepts documented Cloud JSON behind the real bridge factory parser and Foxxi request metadata', async () => {
+    const f = fixture(); await f.request('enable-progress-notifications');
+    const app = createVerticalBridge({ verticalName: 'notification-callback-fixture', affordances: [], handlers: {}, middleware(a) {
+      // Same ordering and object decoration as the live Foxxi bridge: the
+      // factory has already parsed JSON, and Basic never becomes a caller token.
+      a.use((req, _res, next) => {
+        const header = req.headers.authorization, token = typeof header === 'string' && /^Bearer\s+(.+)$/i.exec(header);
+        if (req.body && typeof req.body === 'object') {
+          const body = req.body as Row; body.__client_ip = req.ip ?? 'unknown';
+          if (token) body.__caller_token = token[1]!.trim();
+        }
+        next();
+      });
+    } });
+    f.service.attachRoutes(app);
+    const server = app.listen(0, '127.0.0.1'); await once(server, 'listening');
+    cleanups.push(async () => { await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve())); });
+    const address = server.address(); if (!address || typeof address === 'string') throw Error('Missing local test server');
+    const endpoint = 'http://127.0.0.1:' + address.port + '/i2idlx/learning/progress-notifications/' + LINK;
+    for (const contentType of ['application/json; charset=UTF-8', 'Application/JSON; charset=UTF-8']) {
+      const response = await fetch(endpoint, { method: 'POST', headers: { 'Content-Type': contentType, Authorization: f.header() }, body: JSON.stringify(f.registration) });
+      expect(response.status).toBe(200);
+      expect(await response.json()).toEqual({ received: true, refresh_required: true, received_at: new Date(NOW).toISOString() });
+    }
+    const wrapper = await fetch(endpoint, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: f.header() }, body: JSON.stringify({ data: f.registration }) });
+    expect(wrapper.status).toBe(400);
+    expect(await wrapper.json()).toMatchObject({ error: 'learning_notifications_payload_invalid', reason: 'registration_id_missing', media_type: 'application_json', parsed_type: 'object', known_fields: { id: 'missing', data: 'object' } });
+    expect(f.receipts).toHaveLength(2);
+    expect(JSON.stringify(f.receipts)).not.toMatch(/__client_ip|__caller_token|Not exposed|private@example/);
   });
 });
