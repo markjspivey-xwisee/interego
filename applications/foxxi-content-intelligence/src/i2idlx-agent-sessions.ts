@@ -84,7 +84,8 @@ export interface AgentBrowserIdentity {
 }
 export class AgentSessionError extends Error {
   readonly status: number;
-  constructor(message: string, status = 400, readonly code?: string) { super(message); this.status = status; }
+  readonly code?: string;
+  constructor(message: string, status = 400, code?: string) { super(message); this.status = status; this.code = code; }
 }
 export const AGENT_SESSION_ACTION = 'urn:foxxi:i2idlx:agent-session';
 export const AGENT_SESSION_PATH = '/i2idlx/api/agent-sessions';
