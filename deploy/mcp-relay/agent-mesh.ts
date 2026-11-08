@@ -280,6 +280,12 @@ function typeOf(value: unknown): string | undefined {
   return undefined;
 }
 
+/** A `published` literal: as {@link textOf}, except that an empty string names no time. */
+function dateTextOf(value: unknown): string | undefined {
+  const text = textOf(value);
+  return text === '' ? undefined : text;
+}
+
 /** The first candidate that reads as a string. */
 function first(read: (value: unknown) => string | undefined, ...candidates: unknown[]): string | undefined {
   for (const candidate of candidates) {
@@ -307,7 +313,11 @@ export function inboxItemFrom(url: string, stored: unknown): InboxItem | null {
     ['content', first(textOf, obj['content'], d['content'])],
     ['about', first(referenceOf, obj['iep:about'], obj[`${IEP_NS}about`], obj['interego:about'],
       obj['https://interego-emergent.example/ns/mcp-relay#about'], d['iep:about'], d['interego:about'], d['about'])],
-    ['published', first(textOf, d['published'])],
+    // An empty `published` names no time, so it is left out like a missing one. ★ It must be:
+    // the cursor writes a missing `published` as '' and reads '' back as missing, so an item that
+    // kept '' would sort in one place and be found by its cursor in another, and the page after
+    // it would skip items (see compareInboxItems).
+    ['published', first(dateTextOf, d['published'])],
   ];
   for (const [key, value] of fields) if (value !== undefined) item[key] = value;
   return item;
@@ -374,10 +384,15 @@ export const INBOX_MAX_LIMIT = 50;
  * text; no `published` at all, last. Ties break on the `published` text and then on `url`,
  * descending, so the order is total and a cursor (which carries `published` and `url`, the
  * whole key) names exactly one position.
+ *
+ * ★ An EMPTY `published` ranks as no `published`. The cursor spells a missing `published` as ''
+ * and reads '' back as missing, so the two must sort alike. When '' ranked as a non-date instead,
+ * a page ending on such an item resumed among the undated ones, and every non-date item, and
+ * every undated one at or after the cursor's url, was never served.
  */
 export function compareInboxItems(a: InboxItem, b: InboxItem): number {
   const rank = (item: InboxItem): [number, number] => {
-    if (item.published === undefined) return [2, 0];
+    if (item.published === undefined || item.published === '') return [2, 0];
     const time = Date.parse(item.published);
     return Number.isFinite(time) ? [0, time] : [1, 0];
   };
@@ -389,7 +404,10 @@ export function compareInboxItems(a: InboxItem, b: InboxItem): number {
   return byText !== 0 ? byText : b.url.localeCompare(a.url);
 }
 
-/** An opaque position: the sort key of the last item a page returned. */
+/**
+ * An opaque position: the sort key of the last item a page returned. A missing `published` is
+ * written as '', which {@link compareInboxItems} ranks exactly as it ranks a missing one.
+ */
 export function encodeInboxCursor(item: InboxItem): string {
   return Buffer.from(JSON.stringify({ p: item.published ?? '', u: item.url }), 'utf8').toString('base64url');
 }

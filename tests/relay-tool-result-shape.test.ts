@@ -14,8 +14,9 @@ import { JSDOM } from 'jsdom';
 import { HMD_APP_HTML } from '../deploy/mcp-relay/hmd-app.js';
 import {
   relayToolResult, summarizeToolResult, SUMMARY_MAX_CHARS, SURFACES_WHOSE_MODEL_READS_STRUCTURED_CONTENT,
+  resultOptionsForRegisteredClient, resultOptionsResolver, type RegisteredClient, type RelayToolResult,
 } from '../deploy/mcp-relay/tool-result.js';
-import { clientInteractionToolResult } from '../deploy/mcp-relay/client-interaction-mcp.js';
+import { clientInteractionMcpResult, clientInteractionToolResult } from '../deploy/mcp-relay/client-interaction-mcp.js';
 import {
   pageInboxItems, compareInboxItems, decodeInboxCursor, encodeInboxCursor, InboxPageError, inboxItemFrom, parseInboxPageArgs,
   INBOX_DEFAULT_LIMIT, INBOX_MAX_LIMIT, type InboxItem,
@@ -106,7 +107,107 @@ describe('a session whose model reads structuredContent (ChatGPT) gets the resul
   });
 
   it('is decided for ChatGPT only', () => {
-    expect([...SURFACES_WHOSE_MODEL_READS_STRUCTURED_CONTENT]).toEqual(['chatgpt']);
+    expect([...SURFACES_WHOSE_MODEL_READS_STRUCTURED_CONTENT.keys()]).toEqual(['chatgpt']);
+  });
+
+  // A settled interaction answers at once, without touching the server or the request context.
+  const settled = async (value: Record<string, unknown>): Promise<RelayToolResult> =>
+    await clientInteractionMcpResult(value, {} as never, {} as never,
+      { status: async () => value, cancel: async () => value }, undefined, { modelReadsStructuredContent: true }) as RelayToolResult;
+
+  it('keeps an error\'s JSON in content, so the reason reaches a client that reads content alone', async () => {
+    const text = JSON.stringify({ error: 'read_inbox: limit must be a whole number from 1 to 50', hint: 'pass 1 to 50' });
+    const refused = relayToolResult('read_inbox', text, undefined, { modelReadsStructuredContent: true });
+    expect(refused.content.map(c => c.text)).toEqual([text, 'read_inbox did not complete — limit must be a whole number from 1 to 50']);
+    // A failed signed interaction: isError, with the reason nested where no summary reaches it.
+    const failed = { id: 'i-9', status: 'failed', descriptorUrl: 'https://pod.example/d', result: { error: 'signature_invalid', message: 'The proof did not verify.' } };
+    const result = await settled(failed);
+    expect(result.isError).toBe(true);
+    expect(result.content).toHaveLength(2);
+    expect(JSON.parse(result.content[0]!.text)).toMatchObject({ status: 'failed', result: { error: 'signature_invalid' } });
+    expect(result.structuredContent).toEqual(failed);
+  });
+
+  it('a successful interaction still gets the summary line alone', async () => {
+    const done = { id: 'i-10', status: 'completed', descriptorUrl: 'https://pod.example/d', result: { judged: 'the body text' } };
+    const result = await settled(done);
+    expect(result.isError).toBeUndefined();
+    expect(result.content).toHaveLength(1);
+    expect(result.content[0]!.text).not.toContain('the body text');
+  });
+});
+
+describe('which session is ChatGPT: the registered name AND every redirect URI on its hosts', () => {
+  // server.ts matches the name against SURFACE_PATTERNS alone; this stands in for that match.
+  const surfaceOf = (name: string): string | undefined => (/chatgpt/i.test(name) ? 'chatgpt' : undefined);
+  const layout = (client: RegisteredClient | undefined) => resultOptionsForRegisteredClient(client, surfaceOf);
+  const CONNECTOR = 'https://chatgpt.com/connector_platform_oauth_redirect';
+
+  it('identifies ChatGPT by its name and its own redirect hosts', () => {
+    expect(layout({ client_name: 'ChatGPT', redirect_uris: [CONNECTOR] })).toEqual({ modelReadsStructuredContent: true });
+    expect(layout({ client_name: ' ChatGPT ', redirect_uris: ['https://platform.openai.com/apps-manage/oauth', CONNECTOR] }))
+      .toEqual({ modelReadsStructuredContent: true });
+  });
+
+  it('keeps the JSON for a client that only calls itself ChatGPT', () => {
+    expect(layout({ client_name: 'my chatgpt bridge', redirect_uris: ['https://bridge.example/oauth/callback'] })).toEqual({});
+    expect(layout({ client_name: 'ChatGPT', redirect_uris: ['http://127.0.0.1:9/callback'] })).toEqual({});
+    // EVERY redirect must be ChatGPT's: one elsewhere is a place a code can be delivered to.
+    expect(layout({ client_name: 'ChatGPT', redirect_uris: [CONNECTOR, 'https://bridge.example/cb'] })).toEqual({});
+    expect(layout({ client_name: 'ChatGPT', redirect_uris: ['http://chatgpt.com/connector_platform_oauth_redirect'] })).toEqual({});
+    expect(layout({ client_name: 'ChatGPT', redirect_uris: ['https://chatgpt.com.bridge.example/cb'] })).toEqual({});
+    expect(layout({ client_name: 'ChatGPT', redirect_uris: ['https://notchatgpt.com/cb'] })).toEqual({});
+    expect(layout({ client_name: 'ChatGPT', redirect_uris: [] })).toEqual({});
+    expect(layout({ client_name: 'ChatGPT', redirect_uris: [42] })).toEqual({});
+    expect(layout({ client_name: 'ChatGPT' })).toEqual({});
+  });
+
+  it('never takes the surface from anything but the name patterns', () => {
+    // A name the patterns do not match is not ChatGPT, whatever the deployment labels it.
+    expect(layout({ client_name: 'Some client', redirect_uris: [CONNECTOR] })).toEqual({});
+    expect(layout({ client_name: '', redirect_uris: [CONNECTOR] })).toEqual({});
+    expect(layout({ redirect_uris: [CONNECTOR] })).toEqual({});
+    expect(layout(undefined)).toEqual({});
+    expect(resultOptionsForRegisteredClient({ client_name: 'ChatGPT', redirect_uris: [CONNECTOR] }, () => 'claude')).toEqual({});
+  });
+});
+
+describe('resultOptionsResolver: a tools/call does not cost a client lookup', () => {
+  const surfaceOf = (name: string): string | undefined => (/chatgpt/i.test(name) ? 'chatgpt' : undefined);
+  const chatgpt: RegisteredClient = { client_name: 'ChatGPT', redirect_uris: ['https://chatgpt.com/connector_platform_oauth_redirect'] };
+
+  it('remembers an unknown client briefly and a known one longer', async () => {
+    let clock = 0;
+    const lookups: string[] = [];
+    const resolve = resultOptionsResolver(async (id) => { lookups.push(id); return id === 'known' ? chatgpt : undefined; },
+      surfaceOf, { ttlMs: 10_000, missTtlMs: 1_000, now: () => clock });
+    expect(await resolve('gone')).toEqual({});
+    expect(await resolve('gone')).toEqual({});
+    expect(await resolve('known')).toEqual({ modelReadsStructuredContent: true });
+    expect(await resolve('known')).toEqual({ modelReadsStructuredContent: true });
+    expect(lookups).toEqual(['gone', 'known']);
+    clock = 1_001;
+    await resolve('gone'); await resolve('known');
+    expect(lookups).toEqual(['gone', 'known', 'gone']);
+    clock = 10_001;
+    await resolve('known');
+    expect(lookups).toEqual(['gone', 'known', 'gone', 'known']);
+    expect(await resolve(undefined)).toEqual({});
+    expect(lookups).toHaveLength(4);
+  });
+
+  it('does not remember a lookup that failed, and holds a bounded number of ids', async () => {
+    let calls = 0;
+    const failing = resultOptionsResolver(async () => { calls++; throw new Error('store unreachable'); }, surfaceOf);
+    expect(await failing('a')).toEqual({});
+    expect(await failing('a')).toEqual({});
+    expect(calls).toBe(2);
+
+    const lookups: string[] = [];
+    const bounded = resultOptionsResolver((id) => { lookups.push(id); return undefined; }, surfaceOf, { maxEntries: 2, now: () => 0 });
+    for (const id of ['a', 'b', 'c', 'c', 'b', 'a']) await bounded(id);
+    // 'a' was dropped to make room for 'c'; 'b' and 'c' were still held.
+    expect(lookups).toEqual(['a', 'b', 'c', 'a']);
   });
 });
 
@@ -135,6 +236,9 @@ describe('inboxItemFrom: every field a string, whatever the sender stored', () =
     expect(item).toEqual({ url: 'u/1' });
     // A later candidate that IS a string still counts: summary falls through to object.summary.
     expect(inboxItemFrom('u/2', { summary: { no: 'value' }, object: { summary: 'from the object' } })).toEqual({ url: 'u/2', summary: 'from the object' });
+    // An empty published names no time: it is left out, as the cursor would read it back.
+    expect(inboxItemFrom('u/5', { published: '', summary: 'x' })).toEqual({ url: 'u/5', summary: 'x' });
+    expect(inboxItemFrom('u/6', { published: { '@value': '' } })).toEqual({ url: 'u/6' });
     expect(inboxItemFrom('u/3', ['not', 'an', 'object'])).toBeNull();
     expect(inboxItemFrom('u/4', 'a string')).toBeNull();
   });
@@ -253,6 +357,55 @@ describe('pageInboxItems: bounded, total, and a cursor that names one position',
     expect(() => pageInboxItems(inbox, { since: 'last week' })).toThrow(InboxPageError);
     expect(() => pageInboxItems(inbox, { before: 'garbage' })).toThrow(InboxPageError);
     expect(decodeInboxCursor(Buffer.from('{"p":1}').toString('base64url'))).toBeNull();
+  });
+
+  it('walks every item once when published is empty, a non-date, or missing', () => {
+    // The smallest case found: a page ending on a non-date resumed among the undated items, and
+    // b and z were never served.
+    const smallest: InboxItem[] = [
+      { url: 'https://pod.example/i/c', published: '' }, { url: 'https://pod.example/i/b', published: '' },
+      { url: 'https://pod.example/i/a', published: 'not a date' }, { url: 'https://pod.example/i/z' },
+    ];
+    const walk = (items: readonly InboxItem[], limit: number): string[] => {
+      const seen: string[] = [];
+      let before: string | undefined;
+      for (let pages = 0; pages < 200; pages++) {
+        const page = pageInboxItems(items, { limit, ...(before ? { before } : {}) });
+        seen.push(...page.items.map(i => i.url));
+        if (!page.hasMore) break;
+        before = page.nextCursor;
+      }
+      return seen;
+    };
+    expect(walk(smallest, 1)).toEqual([...smallest].sort(compareInboxItems).map(i => i.url));
+    expect(walk(smallest, 1)).toHaveLength(4);
+    // An empty published sorts with the missing ones, because that is how the cursor spells them.
+    expect(compareInboxItems({ url: 'u/x', published: '' }, { url: 'u/x' })).toBe(0);
+
+    // Every page size over a deterministic spread of inboxes holding all three kinds.
+    let seed = 7;
+    const next = (): number => { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return seed / 0x7fffffff; };
+    const kinds = ['2026-01-01T00:00:00Z', '2026-01-02T00:00:00+02:00', '2026-01-01T23:00:00-01:00', 'not a date', 'yesterday', '', undefined];
+    for (let round = 0; round < 60; round++) {
+      const items: InboxItem[] = Array.from({ length: 3 + Math.floor(next() * 25) }, (_, i) => {
+        const published = kinds[Math.floor(next() * kinds.length)];
+        return { url: `https://pod.example/i/${String.fromCharCode(97 + Math.floor(next() * 26))}${i}`, ...(published !== undefined ? { published } : {}) };
+      });
+      const order = [...items].sort(compareInboxItems).map(i => i.url);
+      for (let limit = 1; limit <= 6; limit++) expect(walk(items, limit), `round ${round}, limit ${limit}`).toEqual(order);
+      // The item a cursor names may be deleted before the next page: nothing after it is skipped.
+      const first = pageInboxItems(items, { limit: 2 });
+      if (!first.hasMore) continue;
+      const gone = first.items.at(-1)!.url;
+      const rest: string[] = [];
+      let before = first.nextCursor;
+      while (before) {
+        const page = pageInboxItems(items.filter(i => i.url !== gone), { limit: 2, before });
+        rest.push(...page.items.map(i => i.url));
+        before = page.hasMore ? page.nextCursor : undefined;
+      }
+      expect(rest, `round ${round}, after a deletion`).toEqual(order.slice(2));
+    }
   });
 
   it('answers an empty page, not the first page, for a cursor past the end', () => {

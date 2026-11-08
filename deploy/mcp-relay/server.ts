@@ -60,7 +60,7 @@ import { Wallet as EthersWalletCtor } from 'ethers';
 import { Server } from '@modelcontextprotocol/server';
 import { createRelayMcpHandler } from './mcp-serving.js';
 import { clientInteractionMcpResult, clientInteractionToolResult } from './client-interaction-mcp.js';
-import { relayToolResult, SURFACES_WHOSE_MODEL_READS_STRUCTURED_CONTENT, type RelayResultOptions } from './tool-result.js';
+import { relayToolResult, resultOptionsResolver, type RelayResultOptions } from './tool-result.js';
 import { clientInteractionHttpHandler } from './client-interaction-http.js';
 import { FederationService } from '@interego/pod-federation';
 import { FEDERATION_MANAGE_SCOPE, FederationHttpError, federationOwnerFromOAuth, hostedFederationHttp, type HostedFederationOwner } from './pod-federation-http.js';
@@ -658,13 +658,26 @@ const SURFACE_PATTERNS: Array<[RegExp, string]> = [
   [/openclaw/i, 'openclaw'],
 ];
 
+/**
+ * The surface a client name matches in SURFACE_PATTERNS, or undefined: no slugified name and no
+ * deployment default. The tool-result layout reads this, not surfaceAgentFromClient, because a
+ * fallback label says nothing about which model is reading.
+ */
+function surfaceFromClientName(clientName: string | undefined): string | undefined {
+  const name = clientName?.trim();
+  if (!name) return undefined;
+  for (const [re, slug] of SURFACE_PATTERNS) {
+    if (re.test(name)) return slug;
+  }
+  return undefined;
+}
+
 function surfaceAgentFromClient(clientName: string | undefined): string {
   if (!clientName) return RELAY_DEFAULT_SURFACE_AGENT;
   const name = clientName.trim();
   if (!name) return RELAY_DEFAULT_SURFACE_AGENT;
-  for (const [re, slug] of SURFACE_PATTERNS) {
-    if (re.test(name)) return slug;
-  }
+  const known = surfaceFromClientName(name);
+  if (known) return known;
   // Unknown client: slugify the name if it's reasonable, otherwise fall
   // back to the generic default. We don't want arbitrary attacker-
   // controlled client_name strings landing as pod-path components.
@@ -676,19 +689,16 @@ function surfaceAgentFromClient(clientName: string | undefined): string {
 /**
  * How tool results are laid out for the model behind one OAuth client (see tool-result.ts).
  *
- * The client's REGISTERED name is mapped with the same patterns that pick the surface agent
- * identity mints, so "the relay identifies this session as ChatGPT" means one thing everywhere.
- * An unnamed or unknown client gets the MCP default layout, never a guess. A lookup failure does
- * too: the default layout is the one that loses nothing for any client.
+ * The client's REGISTERED name is matched against SURFACE_PATTERNS, the patterns that pick the
+ * surface agent identity mints, and must name a surface whose model reads structuredContent;
+ * every redirect URI it registered must also be on that surface's own hosts. Only the patterns
+ * count: neither a slugified unknown name nor RELAY_DEFAULT_SURFACE_AGENT says which model reads
+ * the result. Anything less, an unknown client, or a failed lookup gets the MCP default layout,
+ * the one that loses nothing for any client. Answers are remembered per client id for a while
+ * (resultOptionsResolver), so a tools/call does not cost a client-store read.
  */
-async function resultOptionsForClient(clientId: string | undefined): Promise<RelayResultOptions> {
-  if (!clientId) return {};
-  try {
-    const name = (await oauthProvider.clientsStore.getClient(clientId))?.client_name?.trim();
-    return name && SURFACES_WHOSE_MODEL_READS_STRUCTURED_CONTENT.has(surfaceAgentFromClient(name))
-      ? { modelReadsStructuredContent: true } : {};
-  } catch { return {}; }
-}
+const resultOptionsForClient: (clientId: string | undefined) => Promise<RelayResultOptions> =
+  resultOptionsResolver(clientId => oauthProvider.clientsStore.getClient(clientId), surfaceFromClientName);
 
 // Singleton OAuth provider. Auth is delegated to the identity server — the
 // provider's login form collects userId+password, server.ts /oauth/login
@@ -17247,8 +17257,8 @@ function resolveAuthContext(ctx: { authInfo?: AuthInfo; requestInfo?: Request })
       // it for POST /amep/acts (see withAmepSession). OAuth branch only; the
       // legacy API-key path below never carries one, so no auto-forward there.
       ...(reqAuth.token ? { accessToken: reqAuth.token } : {}),
-      // The OAuth client this token was issued to. Its registered name says which surface is
-      // calling, which decides how a tool result is laid out for that surface's model
+      // The OAuth client this token was issued to. Its registered name and redirect URIs say
+      // whether ChatGPT is calling, which decides how a tool result is laid out for its model
       // (resultOptionsForClient). Never an authorization input.
       ...(typeof reqAuth.clientId === 'string' && reqAuth.clientId ? { clientId: reqAuth.clientId } : {}),
     };

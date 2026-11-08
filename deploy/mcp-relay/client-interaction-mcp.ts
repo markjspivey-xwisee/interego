@@ -101,8 +101,13 @@ export async function clientInteractionMcpResult(
     // its JSON body on EVERY return path, including reconnect and cancellation.
     const response = invocation ? { ...resourceActionResponse(invocation.reference, invocation.action, value, 'write'),
       ...(pending(value) ? { status: 202, statusText: 'Accepted' } : {}) } : value;
-    return { ...relayToolResult(invocation ? 'invoke_affordance' : 'act', JSON.stringify(response), response, options),
-      ...(value['status'] === 'failed' ? { isError: true } : {}) };
+    // A failed interaction is an isError result whose reason is nested (`result.error`), where
+    // the summary line cannot reach it. It keeps its JSON in content for every client, as a
+    // top-level error does (tool-result.ts): a client that reports isError from content alone
+    // would otherwise say only how many fields the result has.
+    const failed = value['status'] === 'failed';
+    return { ...relayToolResult(invocation ? 'invoke_affordance' : 'act', JSON.stringify(response), response, failed ? {} : options),
+      ...(failed ? { isError: true } : {}) };
   };
   if (!pending(initial)) return textResult(initial);
   const envelope = context.mcpReq.envelope as Record<string, unknown> | undefined;

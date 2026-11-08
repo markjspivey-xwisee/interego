@@ -1,5 +1,41 @@
 # Changelog
 
+## 2026-11-08 — Relay: ChatGPT is identified by its redirect hosts, errors keep their JSON, and read_inbox pages past an empty date
+
+The previous entry gave the summary-only layout to any session whose OAuth
+client's registered name contained "chatgpt", or whose name matched nothing
+on a relay whose default surface was set to chatgpt. A name is something a
+client says about itself, and the two mistakes are not alike: giving ChatGPT
+the default layout costs bytes, while giving the summary-only layout to a
+client whose model reads `content` alone loses the whole result without any
+sign. A session now gets that layout only when the client's name matches the
+ChatGPT pattern and every redirect URI it registered is on chatgpt.com or
+openai.com. The sign-in code is sent to a registered redirect URI, so another
+client cannot finish sign-in with those. The default surface setting is no
+longer consulted. The relay suite signs in as a client named "my chatgpt
+bridge", as a client named ChatGPT with its own redirect, and under a name that
+matches nothing, and each keeps the JSON first.
+
+An error result keeps its JSON in `content` for ChatGPT too. A failed signed
+interaction carries its reason inside `result`, where the summary line said
+only how many fields there were, and a client that reports an error from
+`content` alone showed that line as the error. The layout is also remembered
+per client for a while, so a tool call no longer repeats a store read for a
+client that is no longer registered.
+
+The previous entry said ChatGPT's model reads the whole result once. It reads
+`structuredContent`, which leaves out fields whose value is null: a result such
+as `{ "meet": null, "message": "…" }` reaches the model as the message alone.
+
+`read_inbox`: a notification whose `published` was an empty string sorted
+among the ones with a date that cannot be read, but the page cursor wrote it
+back as having no date. A page that ended on one started the next page in the
+wrong place, and some notifications were never returned. An empty `published`
+is now treated as missing everywhere. Also: the published workspace page is
+rebuilt from its package, which the previous entry changed without rebuilding,
+and the relay image no longer installs the MCP SDK client that only its tests
+use.
+
 ## 2026-11-08 — Relay: ChatGPT gets each result once, and read_inbox reads any sender's notification
 
 The previous entry's title claimed one copy of each result for the model. That

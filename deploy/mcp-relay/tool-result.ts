@@ -18,11 +18,29 @@
  * The layout above gives a client that shows its model only `content` exactly one copy. It
  * gives ChatGPT TWO: OpenAI's Apps SDK documents both `structuredContent` and `content` as
  * "surfaced to the model", and `_meta` as the only field hidden from it. ChatGPT is the client
- * whose report started this, so for a session the relay identifies as ChatGPT (the OAuth
- * client's registered name, mapped to the same surface slug identity mints agents under)
+ * whose report started this, so for a session the relay identifies as ChatGPT
  * {@link relayToolResult} leaves the JSON copy out of `content` and sends the summary line
  * alone. structuredContent is unchanged, so ChatGPT's model and its widget (`toolOutput`)
- * still read the whole result, once. Every other client keeps the JSON first.
+ * read the result once. Every other client keeps the JSON first.
+ *
+ * What "read the result" means there: structuredContent is the parsed result WITHOUT its
+ * null-valued fields (toStructuredContent omits them, so a declared `"type": "string"` is never
+ * handed a null). `{ "meet": null, "message": "…" }` reaches ChatGPT's model as the message
+ * alone; the null is said by the field being absent, not by a value.
+ *
+ * An error keeps its JSON in `content` for ChatGPT too: a top-level `error`, or a failed
+ * interaction the caller marks isError. Error bodies are small, the summary line cannot carry a
+ * nested reason, and a client that reports isError from `content` alone must still see why.
+ *
+ * ★ IDENTIFICATION IS NARROW, because the two mistakes are not alike. The default layout given
+ * to ChatGPT costs bytes; the summary-only layout given to a client whose model reads `content`
+ * alone loses the whole result, silently. A client NAMES itself at registration, and a name is
+ * only a claim: "my ChatGPT bridge" is a fine name for a client of the second kind. So the relay
+ * requires the name AND every redirect URI the client registered to be on that surface's own
+ * hosts ({@link SURFACES_WHOSE_MODEL_READS_STRUCTURED_CONTENT}). The authorization code is
+ * delivered to a registered redirect URI, so a client that is not ChatGPT cannot finish sign-in
+ * with redirect URIs that only ChatGPT receives. The deployment's default surface
+ * (RELAY_DEFAULT_SURFACE_AGENT) is never consulted for this.
  *
  * ── WHY THIS FILE EXISTS ─────────────────────────────────────────────────────
  *
@@ -68,8 +86,85 @@ export interface RelayResultOptions {
   readonly modelReadsStructuredContent?: boolean;
 }
 
-/** Surface slugs (server.ts `surfaceAgentFromClient`) whose model reads structuredContent. */
-export const SURFACES_WHOSE_MODEL_READS_STRUCTURED_CONTENT: ReadonlySet<string> = new Set(['chatgpt']);
+/**
+ * Surface slugs (server.ts `SURFACE_PATTERNS`) whose model reads structuredContent, each with the
+ * hosts its OAuth redirect URIs are on. A host covers its subdomains. ChatGPT's connector
+ * redirect is on chatgpt.com, and OpenAI's own app tooling redirects to openai.com hosts.
+ */
+export const SURFACES_WHOSE_MODEL_READS_STRUCTURED_CONTENT: ReadonlyMap<string, readonly string[]> = new Map([
+  ['chatgpt', ['chatgpt.com', 'openai.com']],
+]);
+
+/** The fields of a registered OAuth client (RFC 7591 metadata) the layout decision reads. */
+export interface RegisteredClient {
+  readonly client_name?: string;
+  readonly redirect_uris?: readonly unknown[];
+}
+
+/** Every URI is https on one of `hosts` or a subdomain of one. No URIs at all is not. */
+function redirectsOnlyTo(uris: readonly unknown[] | undefined, hosts: readonly string[]): boolean {
+  if (!Array.isArray(uris) || uris.length === 0) return false;
+  return uris.every((uri) => {
+    if (typeof uri !== 'string') return false;
+    let url: URL;
+    try { url = new URL(uri); } catch { return false; }
+    const host = url.hostname.toLowerCase();
+    return url.protocol === 'https:' && hosts.some(h => host === h || host.endsWith(`.${h}`));
+  });
+}
+
+/**
+ * The layout for one registered client. `surfaceOfName` maps a client name to a surface slug by
+ * the surface patterns alone, and answers undefined for a name they do not match: never the
+ * deployment's default surface, which says nothing about the client. A client gets the
+ * structuredContent layout only when its name maps to such a surface AND every redirect URI it
+ * registered is on that surface's hosts. Anything less gets the default layout.
+ */
+export function resultOptionsForRegisteredClient(
+  client: RegisteredClient | undefined, surfaceOfName: (name: string) => string | undefined,
+): RelayResultOptions {
+  const name = typeof client?.client_name === 'string' ? client.client_name.trim() : '';
+  if (!name) return {};
+  const surface = surfaceOfName(name);
+  const hosts = surface === undefined ? undefined : SURFACES_WHOSE_MODEL_READS_STRUCTURED_CONTENT.get(surface);
+  return hosts && redirectsOnlyTo(client?.redirect_uris, hosts) ? { modelReadsStructuredContent: true } : {};
+}
+
+/**
+ * The layout for each OAuth client id, remembered for a while so a tools/call does not cost a
+ * client lookup. Without it, every call by a token whose client is no longer registered repeated
+ * the store's read-through GET (the store keeps hits, not misses), and a client identified by a
+ * metadata document refetched it whenever the store's copy expired.
+ *
+ * A known client's answer is kept for `ttlMs`, an unknown client's for the shorter `missTtlMs`;
+ * a lookup that THROWS is not remembered, so a store outage is retried. At most `maxEntries`
+ * ids are held, oldest dropped first. Any failure answers the default layout.
+ */
+export function resultOptionsResolver(
+  lookup: (clientId: string) => Promise<RegisteredClient | undefined> | RegisteredClient | undefined,
+  surfaceOfName: (name: string) => string | undefined,
+  { ttlMs = 10 * 60_000, missTtlMs = 60_000, maxEntries = 1024, now = Date.now }:
+    { ttlMs?: number; missTtlMs?: number; maxEntries?: number; now?: () => number } = {},
+): (clientId: string | undefined) => Promise<RelayResultOptions> {
+  const remembered = new Map<string, { options: RelayResultOptions; until: number }>();
+  return async (clientId) => {
+    if (!clientId) return {};
+    const kept = remembered.get(clientId);
+    if (kept && kept.until > now()) return kept.options;
+    let client: RegisteredClient | undefined;
+    try { client = await lookup(clientId); } catch { return {}; }
+    const options = resultOptionsForRegisteredClient(client, surfaceOfName);
+    remembered.delete(clientId);
+    while (remembered.size >= maxEntries) remembered.delete(remembered.keys().next().value as string);
+    remembered.set(clientId, { options, until: now() + (client ? ttlMs : missTtlMs) });
+    return options;
+  };
+}
+
+/** A result that reports a failure: a non-empty top-level `error`. */
+function reportsError(structured: Record<string, unknown>): boolean {
+  return typeof structured['error'] === 'string' && structured['error'] !== '';
+}
 
 /**
  * One line describing a result without restating it. Deterministic, so the same result always
@@ -126,14 +221,16 @@ export function summarizeToolResult(name: string, structured: Record<string, unk
  * Build the envelope from a handler's output. `text` is kept VERBATIM as the back-compat copy
  * (handlers that emit human-readable text keep it); structuredContent is its parsed, null-free
  * object form via the core helper every Interego MCP surface shares. With
- * `modelReadsStructuredContent`, `text` is not sent: structuredContent is the one copy.
+ * `modelReadsStructuredContent`, `text` is not sent and structuredContent is the one copy,
+ * except for an error, which keeps its JSON in content for every client (see the header).
  */
 export function relayToolResult(
   name: string, text: string, structured: Record<string, unknown> = toStructuredContent(text), options: RelayResultOptions = {},
 ): RelayToolResult {
-  const summary: Text = { type: 'text', text: summarizeToolResult(name, structured, options) };
+  const oneCopy = options.modelReadsStructuredContent === true && !reportsError(structured);
+  const summary: Text = { type: 'text', text: summarizeToolResult(name, structured, oneCopy ? options : {}) };
   return {
-    content: options.modelReadsStructuredContent === true ? [summary] : [{ type: 'text', text }, summary],
+    content: oneCopy ? [summary] : [{ type: 'text', text }, summary],
     structuredContent: structured,
   };
 }

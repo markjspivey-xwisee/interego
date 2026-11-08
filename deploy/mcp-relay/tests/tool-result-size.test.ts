@@ -33,7 +33,10 @@
  *      on a mismatch) can read every page of an inbox that holds them.
  *   4. A session whose OAuth client registered as ChatGPT, whose model reads structuredContent as
  *      well as content, gets the summary line alone in content: one copy of the result for its
- *      model. A session from any other client keeps the JSON first.
+ *      model. "Registered as ChatGPT" means the name AND every redirect URI on ChatGPT's own
+ *      hosts: a client that only calls itself ChatGPT, a "chatgpt" bridge, and a name the relay
+ *      maps to nothing (so to RELAY_DEFAULT_SURFACE_AGENT, set to chatgpt here) all keep the
+ *      JSON first, as every other client does. An error keeps its JSON for ChatGPT too.
  *
  * Set RELAY_RESULT_SIZES_OUT=<file> to write the measured sizes as JSON.
  *
@@ -282,6 +285,9 @@ async function main(): Promise<void> {
       RELAY_MAINTAINER_POD_NAME: USER_ID,
       BASE_URL: base,
       PUBLIC_BASE_URL: base,
+      // A dedicated relay may label unknown clients as one surface. That label names agents; it
+      // must not decide how a result is laid out (section 5).
+      RELAY_DEFAULT_SURFACE_AGENT: 'chatgpt',
     },
     stdio: ['ignore', 'ignore', 'pipe'],
   });
@@ -327,10 +333,11 @@ async function main(): Promise<void> {
   };
   /**
    * A relay access token issued through the real authorization-code flow to a client that
-   * registered under `clientName`: /register, /authorize (PKCE), /oauth/verify, /token.
+   * registered under `clientName` with one redirect URI: /register, /authorize (PKCE),
+   * /oauth/verify, /token. The code is read from the redirect the relay answers with, which is
+   * never followed, so any redirect host works here.
    */
-  const oauthBearer = async (clientName: string): Promise<string> => {
-    const redirect = 'http://127.0.0.1:9/callback';
+  const oauthBearer = async (clientName: string, redirect = 'http://127.0.0.1:9/callback'): Promise<string> => {
     const registered = await (await fetch(`${base}/register`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ client_name: clientName, redirect_uris: [redirect], token_endpoint_auth_method: 'none',
@@ -614,7 +621,8 @@ async function main(): Promise<void> {
     // ── 5. A CHATGPT SESSION GETS THE RESULT ONCE ───────────────────────────
     console.log('\n5. a session the relay identifies as ChatGPT gets one copy of each result');
     {
-      const chatgpt = await oauthBearer('ChatGPT');
+      const CHATGPT_REDIRECT = 'https://chatgpt.com/connector_platform_oauth_redirect';
+      const chatgpt = await oauthBearer('ChatGPT', CHATGPT_REDIRECT);
       const other = await oauthBearer('Claude');
       const actArgs = { target: `${pod.base}/${USER_ID}/actions/judge`, action: 'urn:example:action:judge', method: 'POST', payload: { attempt: 'urn:example:attempt:1' } };
       for (const [tool, args, marker] of [
@@ -640,10 +648,27 @@ async function main(): Promise<void> {
             `${sizes['act_chatgpt']!.wireBytes} vs ${sizes['act']!.wireBytes}`);
         }
       }
-      const otherAct = await call('act', actArgs, other);
-      const otherContent = otherAct.body?.result?.content ?? [];
-      ok(otherContent.length === 2 && sameJson(parsed(otherContent[0]?.text), otherAct.body?.result?.structuredContent),
-        'any other client keeps the JSON result first in content', JSON.stringify(otherContent.map(c => (c.text ?? '').slice(0, 60))));
+      const jsonFirst = async (label: string, bearer: string): Promise<void> => {
+        const r = await call('act', actArgs, bearer);
+        const content = r.body?.result?.content ?? [];
+        ok(content.length === 2 && sameJson(parsed(content[0]?.text), r.body?.result?.structuredContent),
+          label, JSON.stringify(content.map(c => (c.text ?? '').slice(0, 60))));
+      };
+      await jsonFirst('any other client keeps the JSON result first in content', other);
+      // A name is a claim the client makes about itself. Each of these would lose the whole
+      // result if its model reads content alone and it were given the summary line instead.
+      await jsonFirst('a client whose name merely contains "chatgpt", with its own redirect, keeps the JSON first',
+        await oauthBearer('my chatgpt bridge', 'https://bridge.example/oauth/callback'));
+      await jsonFirst('a client named ChatGPT whose redirect is not on ChatGPT\'s hosts keeps the JSON first',
+        await oauthBearer('ChatGPT'));
+      await jsonFirst('a name no surface pattern matches keeps the JSON first, whatever RELAY_DEFAULT_SURFACE_AGENT says',
+        await oauthBearer('\u2713\u2713\u2713', CHATGPT_REDIRECT));
+      // An error keeps its JSON for ChatGPT too: error bodies are small and the reason must reach
+      // a client that reports isError from content alone.
+      const refused = await call('read_inbox', { limit: 2.5 }, chatgpt);
+      const refusedContent = refused.body?.result?.content ?? [];
+      ok(refusedContent.length === 2 && /limit must be a whole number/.test(String((parsed(refusedContent[0]?.text) as Payload | undefined)?.['error'] ?? '')),
+        'ChatGPT: an error result keeps its JSON first in content', JSON.stringify(refusedContent).slice(0, 300));
       const client = await strictClient(chatgpt);
       try {
         let thrown = '';
