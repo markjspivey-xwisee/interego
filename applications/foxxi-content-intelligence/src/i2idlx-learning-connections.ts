@@ -90,7 +90,7 @@ function notifications(value: unknown): value is LearningLinkNotifications {
   if (!plain(value) || !exact(value, ['secret', 'registrations']) || !text(value.secret, 48) || !JOIN.test(value.secret) || !Array.isArray(value.registrations) || value.registrations.length > 16) return false;
   const ids = new Set<string>();
   for (const target of value.registrations) {
-    if (!plain(target) || !exact(target, ['registrationId', 'courseId', 'version', 'lastReceiptAt']) || !text(target.registrationId, 256) || ids.has(target.registrationId) || !text(target.courseId, 256) || !Number.isSafeInteger(target.version) || Number(target.version) < 0 || target.lastReceiptAt !== undefined && !date(target.lastReceiptAt)) return false;
+    if (!plain(target) || !exact(target, ['registrationId', 'courseId', 'version', 'lastReceiptAt', 'jsonOverride']) || !text(target.registrationId, 256) || ids.has(target.registrationId) || !text(target.courseId, 256) || !Number.isSafeInteger(target.version) || Number(target.version) < 0 || target.lastReceiptAt !== undefined && !date(target.lastReceiptAt) || target.jsonOverride !== undefined && target.jsonOverride !== true) return false;
     ids.add(target.registrationId);
   }
   return true;

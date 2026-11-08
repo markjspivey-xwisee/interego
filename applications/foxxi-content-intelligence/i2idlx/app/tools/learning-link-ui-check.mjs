@@ -117,8 +117,7 @@ function fixture({ signedOut = false } = {}) {
       return { source: { provider: 'scorm-cloud', course_id: courseId, version: 3, source_version: 'course-version:3' },
         access: { link_id: linkId, sharing: { content: args.share_content, progress: args.share_progress, review: args.share_review === true } },
         interventionContext: { source_context: { sections: [...(args.share_content ? [{ body: 'Private safety passage BLUE27.' }] : []),
-          ...(args.share_progress ? [{ body: 'Own progress score 73.' }] : []), ...(args.share_review ? [{ body: JSON.stringify(reviewResult().records) }] : [])] } },
-        ...(args.share_review ? { quiz_review: reviewResult() } : {}),
+          ...(args.share_progress ? [{ body: 'Own progress score 73.' }] : [])] }, ...(args.share_review ? { quiz_review: reviewResult() } : {}) },
         citations: [{ id: 'SC1', title: 'Private safety source' }], missing_context: [], authorization_ticket: 'e'.repeat(64) };
     },
     AbortController, TextEncoder, document, setTimeout: () => 0, clearTimeout() {},

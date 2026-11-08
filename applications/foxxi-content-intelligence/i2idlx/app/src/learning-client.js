@@ -439,7 +439,10 @@ export function selectedLearningPacket(value, { link_id, course, share_content, 
       !object(value.interventionContext) || !object(value.interventionContext.source_context) || !Array.isArray(value.citations) || value.citations.length > 100 || !Array.isArray(value.missing_context) ||
       typeof value.authorization_ticket !== 'string' || !/^[a-f0-9]{64}$/.test(value.authorization_ticket)) invalid();
   if (!share_content && !share_progress && !share_review || value.authorization_ticket && JSON.stringify(value.interventionContext).includes(value.authorization_ticket)) invalid();
-  const review = value.quiz_review === undefined ? undefined : learningQuizReview(value.quiz_review);
+  // The authorization ticket covers this exact model-bound object. Validate the
+  // nested review without rewriting interventionContext or its property order.
+  const review = value.interventionContext.quiz_review === undefined ? undefined : learningQuizReview(value.interventionContext.quiz_review);
+  if (value.quiz_review !== undefined && (!review || JSON.stringify(learningQuizReview(value.quiz_review)) !== JSON.stringify(review))) invalid();
   if (share_review && (!review || review.status !== 'available' || review.count < 1) || !share_review && review?.records.length) invalid();
   const citations = value.citations.map(citation => { if (!object(citation) || !bounded(citation.id, 200)) invalid(); return { id: citation.id, ...(bounded(citation.title, 400) ? { title: citation.title } : {}) }; });
   const navigation = learningNavigation(value.navigation, citations);

@@ -282,7 +282,7 @@ await test('readiness binds the exact enrolled source and distinguishes unavaila
   assert.throws(() => learningResponse('course-readiness', { ...expected, link_id: 'other-link', readiness }, expected));
 });
 
-await test('released own quiz review requires its separate matching opt-in and actual nonempty records', () => {
+await test('released own quiz review validates the canonical nested packet, exact model bytes and separate opt-in', async () => {
   const review = { status: 'available', count: 1, observed_at: EXPIRES, records: [{ citation_id: 'review-one',
     activity_id: 'quiz', interaction_id: 'question-one', question_label: 'Which code should be recorded?', learner_response: 'B',
     learner_response_label: 'GREEN-12', result: 'incorrect', observed_at: EXPIRES,
@@ -290,15 +290,46 @@ await test('released own quiz review requires its separate matching opt-in and a
   assert.equal(learningQuizReview(review).records[0].learner_response, 'B');
   const raw = { source: { provider: 'scorm-cloud', course_id: 'course-a', version: 3, source_version: 'course-version:3' },
     access: { link_id: 'own-link', sharing: { content: false, progress: false, review: true } },
-    interventionContext: { source_context: { sections: [] } }, citations: [], missing_context: [],
-    authorization_ticket: 'e'.repeat(64), quiz_review: review };
+    interventionContext: { source_context: { sections: [] }, quiz_review: review }, citations: [], missing_context: [],
+    authorization_ticket: 'e'.repeat(64) };
   const expected = { link_id: 'own-link', course: { id: 'course-a', version: 3 }, share_content: false, share_progress: false, share_review: true };
-  assert.equal(selectedLearningPacket(raw, expected).quiz_review.records[0].result, 'incorrect');
+  const originalPacket = JSON.stringify(raw.interventionContext), result = selectedLearningPacket(raw, expected);
+  assert.equal(result.quiz_review.records[0].result, 'incorrect');
+  assert.equal(result.interventionContext, raw.interventionContext);
+  assert.equal(JSON.stringify(result.interventionContext), originalPacket);
+  assert.equal(JSON.stringify(raw.interventionContext), originalPacket);
   assert.throws(() => selectedLearningPacket(raw, { ...expected, share_review: false }));
-  assert.throws(() => selectedLearningPacket({ ...raw, quiz_review: undefined }, expected));
+  assert.throws(() => selectedLearningPacket({ ...raw, access: { ...raw.access, sharing: { content: true, progress: false, review: false } } }, { ...expected, share_content: true, share_review: false }));
+  const topOnly = { ...raw, interventionContext: { source_context: raw.interventionContext.source_context }, quiz_review: review };
+  assert.throws(() => selectedLearningPacket(topOnly, expected));
+  assert.throws(() => selectedLearningPacket({ ...raw, interventionContext: { ...raw.interventionContext, quiz_review: { ...review, count: 2 } } }, expected));
+  assert.throws(() => selectedLearningPacket({ ...raw, quiz_review: { ...review, records: [{ ...review.records[0], result: 'correct' }] } }, expected));
+  assert.equal(selectedLearningPacket({ ...raw, quiz_review: review }, expected).quiz_review.records[0].result, 'incorrect');
+  assert.throws(() => selectedLearningPacket({ ...raw, interventionContext: { source_context: raw.interventionContext.source_context } }, expected));
   assert.throws(() => learningQuizReview({ ...review, count: 2 }));
   assert.throws(() => learningQuizReview({ ...review, status: 'not-released' }));
   assert.throws(() => learningQuizReview({ ...review, records: [{ ...review.records[0], locations: [{ id: 'bad', label: 'Bad', source_file: 'https://attacker.example/file' }] }] }));
+  let contextReply = raw;
+  const paired = createAgentSessionClient({ origin: () => ORIGIN, fetch: async (url, init = {}) => {
+    const body = init.body ? JSON.parse(init.body) : null;
+    if (url.endsWith('/create')) return response({ session_id: 'a'.repeat(32), browser_token: 'b'.repeat(64), invite_token: 'd'.repeat(64), expires_at: EXPIRES, invite_expires_at: EXPIRES,
+      audience: ORIGIN, action_iri: 'urn:foxxi:i2idlx:agent-session', protocol: { driver: { signed_fields: { session_id: 'a'.repeat(32), bridge_audience: ORIGIN, i2idlx_operation: 'agent-session' } } } });
+    if (url === '/i2idlx/learning/session') return response(session());
+    if (url === '/i2idlx/api/learning/context') return response(contextReply);
+    if (body?.operation === 'status') return response({ state: 'connected', expires_at: EXPIRES, driver: { actor: 'did:example:paired' } });
+    if (body?.operation === 'disconnect') return response({});
+    throw Error('Unexpected fixture route');
+  } });
+  try {
+    await paired.connect(); await paired.refresh();
+    const args = { link_id: 'own-link', course_id: 'course-a', version: 3, share_content: false, share_progress: false, share_review: true, question: 'Explain my released result.' };
+    const delivered = await paired.requestLearningContext(args);
+    assert.equal(selectedLearningPacket(delivered, expected).quiz_review.count, 1);
+    assert.equal(JSON.stringify(delivered.interventionContext), originalPacket);
+    contextReply = topOnly;
+    const topDelivered = await paired.requestLearningContext(args);
+    assert.throws(() => selectedLearningPacket(topDelivered, expected), { code: 'learning_invalid_response' });
+  } finally { await paired.disconnect(); }
 });
 
 await test('owner map snapshots bind source and revision; mutations require an explicit current revision', async () => {

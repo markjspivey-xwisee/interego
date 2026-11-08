@@ -11,6 +11,9 @@ import { LearningProviderError, ScormCloudLearningProvider } from './i2idlx-lear
 
 export interface LearningProgressNotificationTarget {
   registrationId: string; courseId: string; version: number; lastReceiptAt?: string;
+  /** Saved installation intent, never proof of ownership by itself. Absent on
+   * older five-setting setups; those cannot delete a JSON setting. */
+  jsonOverride?: true;
 }
 export interface LearningLinkNotifications { secret: string; registrations: LearningProgressNotificationTarget[]; }
 export interface LearningNotificationLink {
@@ -77,12 +80,13 @@ function validateNotifications(raw: unknown): LearningLinkNotifications | undefi
     !raw.registrations.length || raw.registrations.length > LEARNING_NOTIFICATION_LIMITS.targets) fail(503, 'learning_notifications_state_invalid');
   const seen = new Set<string>();
   const registrations = raw.registrations.map(target => {
-    if (!plain(target) || Object.keys(target).some(key => !['registrationId', 'courseId', 'version', 'lastReceiptAt'].includes(key)) ||
+    if (!plain(target) || Object.keys(target).some(key => !['registrationId', 'courseId', 'version', 'lastReceiptAt', 'jsonOverride'].includes(key)) ||
       !text(target.registrationId) || !text(target.courseId) || !Number.isSafeInteger(target.version) || Number(target.version) < 0 || seen.has(target.registrationId) ||
-      target.lastReceiptAt !== undefined && (typeof target.lastReceiptAt !== 'string' || !Number.isFinite(Date.parse(target.lastReceiptAt)))) fail(503, 'learning_notifications_state_invalid');
+      target.lastReceiptAt !== undefined && (typeof target.lastReceiptAt !== 'string' || !Number.isFinite(Date.parse(target.lastReceiptAt))) ||
+      target.jsonOverride !== undefined && target.jsonOverride !== true) fail(503, 'learning_notifications_state_invalid');
     seen.add(target.registrationId);
     return { registrationId: target.registrationId, courseId: target.courseId, version: target.version as number,
-      ...(typeof target.lastReceiptAt === 'string' ? { lastReceiptAt: target.lastReceiptAt } : {}) };
+      ...(typeof target.lastReceiptAt === 'string' ? { lastReceiptAt: target.lastReceiptAt } : {}), ...(target.jsonOverride === true ? { jsonOverride: true as const } : {}) };
   });
   return { secret: raw.secret, registrations };
 }
@@ -147,14 +151,31 @@ export class LearningProgressNotifications {
     return this.base + CALLBACK + linkId;
   }
   private expected(linkId: string, secret: string): Map<string, string> {
-    return new Map([[SETTING.url, this.callback(linkId)], [SETTING.type, 'httpbasic'], [SETTING.user, linkId], [SETTING.passwordSetting, secret], [SETTING.format, 'course']]);
+    return new Map([[SETTING.url, this.callback(linkId)], [SETTING.type, 'httpbasic'], [SETTING.user, linkId], [SETTING.passwordSetting, secret], [SETTING.format, 'course'], [IS_JSON, 'true']]);
   }
-  private settingEqual(id: string, a: string, b: string): boolean { return id === SETTING.type || id === SETTING.format ? a.toLowerCase() === b.toLowerCase() : equal(a, b); }
-  private ours(settings: Settings, expected: Map<string, string>, emptyUrl = false): boolean {
-    return KEYS.every(id => {
-      const setting = settings.get(id), wanted = id === SETTING.url && emptyUrl ? '' : expected.get(id)!;
-      return !!setting && setting.source === 'registration' && setting.explicit !== undefined && this.settingEqual(id, setting.value, wanted) && this.settingEqual(id, setting.explicit, wanted);
-    });
+  private settingEqual(id: string, a: string, b: string): boolean { return id === SETTING.type || id === SETTING.format || id === IS_JSON ? a.toLowerCase() === b.toLowerCase() : equal(a, b); }
+  private owns(settings: Settings, id: string, wanted: string): boolean {
+    const setting = settings.get(id);
+    return !!setting && setting.source === 'registration' && setting.explicit !== undefined &&
+      this.settingEqual(id, setting.value, wanted) && this.settingEqual(id, setting.explicit, wanted);
+  }
+  private ours(settings: Settings, expected: Map<string, string>): boolean {
+    return KEYS.every(id => this.owns(settings, id, expected.get(id)!));
+  }
+  private inheritedJson(settings: Settings): boolean {
+    const setting = settings.get(IS_JSON);
+    return !setting || setting.source !== 'registration' && setting.explicit === undefined;
+  }
+  private jsonOurs(settings: Settings, target: LearningProgressNotificationTarget): boolean {
+    return target.jsonOverride === true && this.owns(settings, IS_JSON, 'true');
+  }
+  private configurable(settings: Settings, expected: Map<string, string>, target?: LearningProgressNotificationTarget): boolean {
+    // A saved marker is installation intent, not proof that a lone JSON
+    // registration override was installed by us. Retry that override only when
+    // the independently matched callback destination and private credentials
+    // still identify this feature's complete setup.
+    return this.free(settings) ? this.inheritedJson(settings) : !!target && this.ours(settings, expected) &&
+      (this.inheritedJson(settings) || this.jsonOurs(settings, target));
   }
   private free(settings: Settings): boolean {
     return KEYS.every(id => {
@@ -196,10 +217,15 @@ export class LearningProgressNotifications {
         item.effectiveValueSource !== undefined && !['default', 'application', 'learningStandardForApplication', 'dispatchDestination', 'course', 'dispatch', 'registration'].includes(String(item.effectiveValueSource))) fail(502, 'learning_notifications_provider_invalid');
       const value = typeof item.effectiveValue === 'string' ? item.effectiveValue : '';
       if (Buffer.byteLength(value) > 8192 || typeof item.explicitValue === 'string' && Buffer.byteLength(item.explicitValue) > 8192) fail(502, 'learning_notifications_provider_invalid');
-      result.set(item.id, { value, ...(typeof item.explicitValue === 'string' ? { explicit: item.explicitValue } : {}),
+      // Cloud's live response can omit explicitValue even for registration
+      // settings. The effective source and exact effective value are authoritative;
+      // an optional explicit value must agree, never contradict that evidence.
+      if (item.effectiveValueSource === 'registration' && typeof item.effectiveValue !== 'string' ||
+        typeof item.explicitValue === 'string' && !this.settingEqual(item.id, item.explicitValue, value)) fail(502, 'learning_notifications_provider_invalid');
+      result.set(item.id, { value, ...(typeof item.explicitValue === 'string' ? { explicit: item.explicitValue }
+        : item.effectiveValueSource === 'registration' ? { explicit: value } : {}),
         ...(typeof item.effectiveValueSource === 'string' ? { source: item.effectiveValueSource } : {}) });
     }
-    if (result.get(IS_JSON)?.value.toLowerCase() === 'false') fail(409, 'learning_notifications_existing_callback');
     return result;
   }
   private dto(linkId: string, courseId: string, version: number, available: boolean, enabled: boolean, target?: LearningProgressNotificationTarget, notice?: string): Row {
@@ -235,7 +261,7 @@ export class LearningProgressNotifications {
         if (!target || !config) return this.dto(linkId, courseId, version, true, false);
         const settings = await this.settings(own.scope, target, signal);
         this.unchanged(own.scope, await this.scope(principal, linkId, signal));
-        const enabled = !!settings && this.ours(settings, this.expected(linkId, config.secret));
+        const enabled = !!settings && this.ours(settings, this.expected(linkId, config.secret)) && this.jsonOurs(settings, target);
         return this.dto(linkId, courseId, version, true, enabled, target, enabled ? undefined : 'Cloud notification setup is not confirmed. Retry enabling it, or turn it off to remove this saved setup.');
       }
       if (operation === 'disable-progress-notifications') {
@@ -251,27 +277,35 @@ export class LearningProgressNotifications {
       }
       const settings = await this.settings(own.scope, own.target, signal);
       if (!settings) fail(403, 'learning_enrollment_required');
-      if (config && target && this.ours(settings, this.expected(linkId, config.secret))) {
+      if (config && target && this.ours(settings, this.expected(linkId, config.secret)) && this.jsonOurs(settings, target)) {
         this.unchanged(own.scope, (await this.own(principal, linkId, courseId, version, signal)).scope);
         return this.dto(linkId, courseId, version, true, true, target);
       }
-      if (!this.free(settings)) fail(409, 'learning_notifications_existing_callback');
-      if (!target) {
-        if (config && config.registrations.length >= LEARNING_NOTIFICATION_LIMITS.targets) fail(429, 'learning_notifications_capacity');
+      // An older failed five-setting setup may already have this link's exact
+      // private callback. Upgrade only its own target and an inherited JSON mode.
+      const priorExpected = config ? this.expected(linkId, config.secret) : new Map<string, string>();
+      if (!this.configurable(settings, priorExpected, target)) fail(409, 'learning_notifications_existing_callback');
+      if (!target || target.jsonOverride !== true) {
+        if (!target && config && config.registrations.length >= LEARNING_NOTIFICATION_LIMITS.targets) fail(429, 'learning_notifications_capacity');
         const fresh = await this.own(principal, linkId, courseId, version, signal); this.unchanged(own.scope, fresh.scope);
         const latest = validateNotifications(fresh.scope.link.notifications);
-        config = { secret: latest?.secret ?? randomBytes(24).toString('hex'), registrations: [...(latest?.registrations ?? []), own.target] };
+        const targets = latest?.registrations ?? [], marked: LearningProgressNotificationTarget = { ...own.target, jsonOverride: true };
+        config = { secret: latest?.secret ?? randomBytes(24).toString('hex'), registrations: target
+          ? targets.map(value => value.registrationId === own.target.registrationId ? { ...value, jsonOverride: true as const } : value)
+          : [...targets, marked] };
         await this.await(this.config.connections.updateLinkNotifications(principal, linkId, fresh.scope.link.revision, config), signal);
-        own = await this.own(principal, linkId, courseId, version, signal); target = own.target;
+        own = await this.own(principal, linkId, courseId, version, signal);
       }
       if (!config || !own.scope.link.notifications || !equal(config.secret, own.scope.link.notifications.secret)) fail(403, 'learning_access_revoked');
-      const current = await this.settings(own.scope, own.target, signal);
-      if (!current || !this.free(current)) fail(409, 'learning_notifications_existing_callback');
-      const fresh = await this.own(principal, linkId, courseId, version, signal); this.unchanged(own.scope, fresh.scope);
+      target = validateNotifications(own.scope.link.notifications)?.registrations.find(value => value.registrationId === own.target.registrationId && value.courseId === courseId && value.version === version);
+      if (!target || target.jsonOverride !== true) fail(403, 'learning_access_revoked');
       const expected = this.expected(linkId, config.secret);
+      const current = await this.settings(own.scope, own.target, signal);
+      if (!current || !this.configurable(current, expected, target)) fail(409, 'learning_notifications_existing_callback');
+      const fresh = await this.own(principal, linkId, courseId, version, signal); this.unchanged(own.scope, fresh.scope);
       await this.cloud(fresh.scope, this.path(own.target.registrationId), signal, 'POST', { settings: [...expected].map(([settingId, value]) => ({ settingId, value, explicit: true })) });
       const after = await this.settings(fresh.scope, own.target, signal);
-      if (!after || !this.ours(after, expected)) fail(502, 'learning_notifications_setup_incomplete');
+      if (!after || !this.ours(after, expected) || !this.jsonOurs(after, target)) fail(502, 'learning_notifications_setup_incomplete');
       this.unchanged(fresh.scope, (await this.own(principal, linkId, courseId, version, signal)).scope);
       return this.dto(linkId, courseId, version, true, true, target);
     });
@@ -280,22 +314,23 @@ export class LearningProgressNotifications {
     const expected = this.expected(initial.link.id, secret);
     const revalidate = async () => { const fresh = await this.scope(principal, initial.link.id, signal, ownerCleanup); this.unchanged(initial, fresh); return fresh; };
     let settings = await this.settings(initial, target, signal);
-    if (!settings || this.free(settings)) return;
+    if (!settings || this.free(settings) && (target.jsonOverride !== true || this.inheritedJson(settings))) return;
+    const ownedIds = [...KEYS, ...(target.jsonOverride === true ? [IS_JSON] : [])];
+    const jsonSafe = () => target.jsonOverride !== true || this.inheritedJson(settings!) || this.jsonOurs(settings!, target);
     const partial = () => {
-      const url = settings!.get(SETTING.url);
-      return !!url && url.source === 'registration' && url.explicit === '' && url.value === '' && KEYS.filter(id => id !== SETTING.url).every(id => {
-        const value = settings!.get(id); return !value?.explicit || value.source === 'registration' && this.settingEqual(id, value.explicit, expected.get(id)!) && this.settingEqual(id, value.value, expected.get(id)!);
+      // Retain this feature's destination until its credentials are gone. Cloud
+      // rejects an empty URL setting, and URL-first deletion could expose those
+      // credentials to an inherited destination. Partial cleanup keeps this URL.
+      return this.owns(settings!, SETTING.url, expected.get(SETTING.url)!) && jsonSafe() && ownedIds.filter(id => id !== SETTING.url).every(id => {
+        const value = settings!.get(id); return value?.explicit === undefined || this.owns(settings!, id, expected.get(id)!);
       });
     };
+    // JSON-only is ambiguous after an uncertain write: an administrator could
+    // have set it later. Never treat our saved intent as ownership of that row.
+    if (!partial()) fail(409, 'learning_notifications_cleanup_required');
     const registration = await this.await(this.provider(initial).getRegistration(target.registrationId, signal), signal);
     if (registration.learnerId !== initial.link.learnerId || registration.course.id !== target.courseId || registration.course.version !== target.version) fail(403, 'learning_enrollment_required');
-    if (this.ours(settings, expected)) {
-      const fresh = await revalidate();
-      await this.cloud(fresh, this.path(target.registrationId), signal, 'POST', { settings: [{ settingId: SETTING.url, value: '', explicit: true }] });
-      settings = await this.settings(fresh, target, signal);
-    }
-    if (!settings || !partial()) fail(409, 'learning_notifications_cleanup_required');
-    for (const id of [SETTING.passwordSetting, SETTING.user, SETTING.type, SETTING.format]) {
+    for (const id of [SETTING.passwordSetting, SETTING.user, SETTING.type, SETTING.format, ...(target.jsonOverride === true ? [IS_JSON] : [])]) {
       const current = settings.get(id);
       if (current?.explicit !== undefined) {
         if (current.source !== 'registration' || !this.settingEqual(id, current.explicit, expected.get(id)!)) fail(409, 'learning_notifications_cleanup_required');
@@ -306,7 +341,7 @@ export class LearningProgressNotifications {
     }
     await this.cloud(await revalidate(), this.path(target.registrationId) + '/' + SETTING.url, signal, 'DELETE');
     settings = await this.settings(initial, target, signal);
-    if (settings && KEYS.some(id => settings!.get(id)?.explicit !== undefined && this.settingEqual(id, settings!.get(id)!.explicit!, expected.get(id)!))) fail(409, 'learning_notifications_cleanup_required');
+    if (settings && ownedIds.some(id => settings!.get(id)?.explicit !== undefined && this.settingEqual(id, settings!.get(id)!.explicit!, expected.get(id)!))) fail(409, 'learning_notifications_cleanup_required');
   }
   /** Call before revocation, while private provider credentials are still usable. */
   async cleanupLink(principal: LearningPrincipal, linkId: string): Promise<void> {

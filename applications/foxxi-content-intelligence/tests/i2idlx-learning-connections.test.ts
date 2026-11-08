@@ -125,6 +125,20 @@ describe('human-owned learning connector and learner-link authority', () => {
     expect(await f.store.recordNotificationReceipt(changed.id, changed.revision, 'registration-private-1', new Date(NOW).toISOString())).toBe(false);
     expect(connector.id).toBe(changed.connectorId);
   });
+  it('retains optional JSON-override ownership intent privately and refuses unknown or false ownership flags', async () => {
+    const f = fixture(), { link } = await f.setup({ allowAiContent: true, allowAiProgress: true, allowProgressNotifications: true });
+    const before = (await f.store.readLink(String(link.id)))!;
+    const config = { secret: 'a'.repeat(48), registrations: [{ registrationId: 'registration-private-1', courseId: 'course-a', version: 2, jsonOverride: true as const }] };
+    const saved = await f.store.updateLinkNotifications(f.student.value, before.id, before.revision, config);
+    expect(saved.notifications?.registrations[0]?.jsonOverride).toBe(true);
+    expect((await f.store.readLink(saved.id))?.notifications?.registrations[0]?.jsonOverride).toBe(true);
+    const publicState = JSON.stringify(await f.store.request(f.student.value, { operation: 'my-links' }));
+    expect(publicState).not.toMatch(/jsonOverride|secret|registrations/);
+    const bad = copy(f.repository.value.state); Object.defineProperty(bad.links[0]!.notifications!.registrations[0]!, 'jsonOverride', { value: false });
+    expect(() => validateLearningState(bad)).toThrowError(expect.objectContaining({ code: 'learning_state_invalid' }));
+    delete bad.links[0]!.notifications!.registrations[0]!.jsonOverride;
+    expect(validateLearningState(bad).links[0]!.notifications?.registrations[0]?.jsonOverride).toBeUndefined();
+  });
   it('requires administrator approval and separate target-human confirmation before reading enrolled courses', async () => {
     const f = fixture(), connector = await f.create(), link = await f.requestLink(connector);
     expect(link.status).toBe('pending-admin');

@@ -1,5 +1,20 @@
 # Changelog
 
+## 2026-11-08 — Ask: real Cloud callback configuration and review handoff
+
+Live student verification exposed Cloud responses that omit explicit setting
+values and default a newly configured callback to legacy XML. Progress updates
+now verify the effective registration settings, explicitly configure JSON, and
+track the feature's JSON-override intent without treating intent alone as
+ownership. Removal deletes matching credentials before the callback URL and
+never sends the empty setting values Cloud rejects. Unrelated or ambiguous
+settings remain untouched for owner review.
+
+Course questions now validate released review in the same model-bound context
+the server returns. The browser passes that original packet through unchanged;
+an integration regression carries the real server response through the public
+browser adapter and broker rather than a parallel mock DTO.
+
 ## 2026-11-08 — Ask: enrolled quiz review and owner learning maps
 
 Ask guides administrators and learners through separate connection and account
