@@ -326,8 +326,9 @@ export class LearningLtiManager {
       this.handoffPage(ticket, platform, res); return;
     }
     if (this.pending.size >= MAX_PENDING || [...this.pending.values()].filter(p => p.connector === id).length >= 128) fail(429, 'learning_lti_capacity');
-    const secret = opaque(), state = opaque(), nonce = opaque();
-    this.pending.set(hash(state), { connector: id, setup, state, nonce, browserHash: hash(secret), expires: this.now() + 300_000, verifying: false });
+    // An opaque browser lookup handle binds this launch; provider credentials stay in the encrypted connector.
+    const browserHandle = opaque(), state = opaque(), nonce = opaque();
+    this.pending.set(hash(state), { connector: id, setup, state, nonce, browserHash: hash(browserHandle), expires: this.now() + 300_000, verifying: false });
     const url = new URL(platform.authorizationEndpoint);
     for (const key of [...url.searchParams.keys()]) if (RESERVED.has(key.toLowerCase())) url.searchParams.delete(key);
     for (const [key, value] of Object.entries({ response_type: 'id_token', response_mode: 'form_post', client_id: platform.clientId,
@@ -335,7 +336,7 @@ export class LearningLtiManager {
       ...(typeof raw.lti_message_hint === 'string' ? { lti_message_hint: raw.lti_message_hint } : {}) })) url.searchParams.set(key, value);
     // The pending launch lasts five minutes; its browser binding must also
     // survive the following ten-minute sign-in/explicit-claim window.
-    setCookie(res, NONCE_COOKIE, secret, 900); res.redirect(302, url.href);
+    setCookie(res, NONCE_COOKIE, browserHandle, 900); res.redirect(302, url.href);
   }
   private async launch(id: string, setup: string, raw: unknown, res: Response): Promise<void> {
     this.sweep();

@@ -216,20 +216,21 @@ export class LearningAccountAuth {
     if (Object.keys(req.query).length || req.get('Origin') && req.get('Origin') !== this.base) refuse(400, 'learning_sign_in_input_invalid');
     const oldPending = cookie(req, PENDING_COOKIE); if (oldPending) this.dropPending(hash(oldPending));
     if (this.pending.size >= this.maxPending) refuse(429, 'learning_sign_in_busy');
-    const endpoints = await this.discover(), secret = opaque();
+    // The cookie is only a random lookup handle; OAuth credentials stay server-side.
+    const endpoints = await this.discover(), pendingHandle = opaque();
     if (this.pending.size >= this.maxPending) refuse(429, 'learning_sign_in_busy');
     const prior = cookie(req, COOKIE), priorHash = prior ? hash(prior) : null;
-    const record = { hash: hash(secret), state: opaque(), verifier: randomBytes(32).toString('base64url'), expires: this.now() + 300_000,
+    const record = { hash: hash(pendingHandle), state: opaque(), verifier: randomBytes(32).toString('base64url'), expires: this.now() + 300_000,
       prior: priorHash && this.sessions.has(priorHash) ? priorHash : null, claimed: false, lifetime: new AbortController() };
     this.pending.set(record.hash, record);
     const url = new URL(endpoints.authorization);
     for (const [k, v] of Object.entries({ response_type: 'code', client_id: this.clientId, redirect_uri: this.callbackUrl, scope: 'mcp:read',
       resource: endpoints.resource, state: record.state, code_challenge: createHash('sha256').update(record.verifier).digest('base64url'), code_challenge_method: 'S256' })) url.searchParams.set(k, v);
-    setCookie(res, PENDING_COOKIE, secret, 300_000); secure(res); res.redirect(302, url.href);
+    setCookie(res, PENDING_COOKIE, pendingHandle, 300_000); secure(res); res.redirect(302, url.href);
   }
   async callback(req: Request, res: Response): Promise<void> {
     this.ready(); this.sweep(); this.admit('callbacks', 100);
-    const secret = cookie(req, PENDING_COOKIE), pending = secret ? this.pending.get(hash(secret)) : undefined;
+    const pendingHandle = cookie(req, PENDING_COOKIE), pending = pendingHandle ? this.pending.get(hash(pendingHandle)) : undefined;
     setCookie(res, PENDING_COOKIE, '', 0);
     const { code, state } = req.query;
     if (!pending || pending.claimed || Object.keys(req.query).some(k => !['code', 'state'].includes(k)) || typeof code !== 'string' || !/^[\x21-\x7e]{1,512}$/.test(code)
