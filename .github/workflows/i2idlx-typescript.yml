@@ -135,6 +135,7 @@ jobs:
           node applications/foxxi-content-intelligence/i2idlx/app/tools/ask-engine-check.mjs
           node applications/foxxi-content-intelligence/i2idlx/app/tools/user-course-check.mjs
           node applications/foxxi-content-intelligence/i2idlx/app/tools/learning-context-check.mjs
+          node applications/foxxi-content-intelligence/i2idlx/app/tools/learning-link-ui-check.mjs
           node --experimental-strip-types applications/foxxi-content-intelligence/i2idlx/app/tools/agent-session-http-check.mjs
           npx vitest run applications/foxxi-content-intelligence/tests/i2idlx-agent-sessions.test.ts applications/foxxi-content-intelligence/tests/i2idlx-user-courses.test.ts
       - name: Compile the production visitor oracle before release
