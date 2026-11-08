@@ -107,6 +107,12 @@
  *                                   an outcome, grant, revoke) are taken from chat agents too; unset or 0 → only
  *                                   from this bridge's web UI (agent slug work-redesign-…); any other
  *                                   value stops the bridge
+ *   WRD_CONTACT_URL                 where the web pages' "Contact us" links go: an https page, or a
+ *                                   mailto: link to one address with nothing after it
+ *                                   (applications/_shared/contact-link). Any other value is ignored
+ *                                   with a warning that does not print an address, and the links go
+ *                                   to the guide's contact section, as when it is unset. Set it on
+ *                                   the service; never bake it into an image
  *   WRD_TRUSTED_PLATFORM_ADDRESSES  comma list of earlier platform keys whose records stay trusted.
  *                                   An address that signed records on the pod stays listed for as
  *                                   long as the pod is used: dropping it cuts every line holding a
@@ -116,6 +122,7 @@ import { createWallet, importWallet, deriveEncryptionKeyPair, type EncryptionKey
 import { createVerticalBridge } from '../../_shared/vertical-bridge/index.js';
 import { installProcessSafetyNet } from '../../_shared/vertical-bridge/route-errors.js';
 import { attachOntologyServing } from '../../_shared/ontology-serve/index.js';
+import { contactForLog, contactHrefOf } from '../../_shared/contact-link/index.js';
 import { wrdAffordances } from '../affordances.js';
 import { WRD_NS, WRD_ONTOLOGY_IRI, readOntologyTurtle, readShapesTurtle } from '../src/ontology.js';
 import { createWrdHandlers, type PlatformSigner } from './handlers.js';
@@ -155,7 +162,10 @@ const publicReads = env('WRD_PUBLIC_READS') === '1';
 const key = env('WRD_PLATFORM_KEY');
 const adminAddresses = list(env('WRD_ADMIN_ADDRESSES'));
 // The web pages' "Contact us" link and the legal name on their © line; unset, the guide's contact section and "Interego".
-const contactUrl = env('WRD_CONTACT_URL');
+// The contact goes into an href on every page, so only an https page or a mailto: link to one address
+// is used; any other value is ignored with a warning (cosmetic: it never stops the bridge).
+const contactRaw = env('WRD_CONTACT_URL');
+const contactUrl = contactRaw !== undefined ? contactHrefOf(contactRaw) ?? undefined : undefined;
 const legalName = env('WRD_LEGAL_NAME');
 
 // Sign in with an Interego account (relay-delegated): every value is checked here, and a malformed
@@ -303,9 +313,12 @@ if (signIn.relayUrl !== null && uiRelayPolicy !== null) {
     ? `work-redesign: web UI sign-in limits count each caller by the address ${proxyHops} proxy hop(s) in front saw (X-Forwarded-For; ${proxyHopsValue !== undefined ? `WRD_TRUST_PROXY_HOPS=${proxyHops}` : 'off loopback'})\n`
     : `work-redesign: web UI sign-in limits count each caller by the address that connects to the bridge (no proxy hop trusted${proxyHopsValue !== undefined ? ', WRD_TRUST_PROXY_HOPS=0' : ' on loopback'}); behind a reverse proxy every caller is the proxy's address, so set WRD_TRUST_PROXY_HOPS to the hops in front\n`);
 }
-process.stdout.write(contactUrl
-  ? `work-redesign: "Contact us" on the pages goes to ${contactUrl} (WRD_CONTACT_URL)\n`
-  : 'work-redesign: WRD_CONTACT_URL is not set: "Contact us" goes to the guide\'s contact section (/ui/help#contact), and the pages offer no walkthrough; set it to a page or mailto: link that reaches you\n');
+if (contactRaw !== undefined && contactUrl === undefined) {
+  process.stderr.write(`work-redesign: WARNING: WRD_CONTACT_URL is ${contactForLog(contactRaw)}; it takes an https page or a mailto: link with one address and nothing after it. Ignored: "Contact us" goes to the guide's contact section (/ui/help#contact)\n`);
+}
+process.stdout.write(contactUrl !== undefined
+  ? `work-redesign: "Contact us" on the pages goes to ${contactForLog(contactUrl)} (WRD_CONTACT_URL)\n`
+  : `work-redesign: WRD_CONTACT_URL is ${contactRaw === undefined ? 'not set' : 'ignored (see the warning)'}: "Contact us" goes to the guide's contact section (/ui/help#contact), and the pages offer no walkthrough; set it to an https page or a mailto: link that reaches you\n`);
 process.stdout.write(`work-redesign: reads: ${publicReads ? 'PUBLIC (WRD_PUBLIC_READS=1): anyone who can reach this bridge reads every record' : 'signed reads only (wrd.read_records, wrd.read_calibration); unsigned GETs answer 401'}\n`);
 
 // Express 5 hands a failed bind to this callback rather than throwing, so it is handled here:

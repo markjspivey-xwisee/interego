@@ -765,6 +765,34 @@ describe('work-redesign offline demo and web UI', () => {
     expect(dockerfile).toMatch(/RELAY-ATTESTED, NOT USER-HELD/);
   }, 300_000);
 
+  it('the production server takes WRD_CONTACT_URL only through the shared contactHrefOf: an https page or one mailto: address is used; anything else starts it with the default contact and a warning naming the variable, and no line prints an address', async () => {
+    const server = read('../bridge/server.ts');
+    expect(server).toMatch(/^const contactRaw = env\('WRD_CONTACT_URL'\);$/m);
+    expect(server).toMatch(/^const contactUrl = contactRaw !== undefined \? contactHrefOf\(contactRaw\) \?\? undefined : undefined;$/m);
+    expect(server.match(/WRD_CONTACT_URL'/g)).toHaveLength(1);
+    expect(server).toContain('landing: { ...(contactUrl ? { contactHref: contactUrl } : {}),');
+    const ADDRESS = 'operator@example.org';
+    const DEFAULT = /WRD_CONTACT_URL is ignored \(see the warning\): "Contact us" goes to the guide's contact section \(\/ui\/help#contact\)/;
+    const WARNS = /work-redesign: WARNING: WRD_CONTACT_URL is (.*); it takes an https page or a mailto: link with one address and nothing after it\. Ignored: "Contact us" goes to the guide's contact section/;
+    const cases: ReadonlyArray<readonly [string | undefined, RegExp, string | null]> = [
+      [undefined, /WRD_CONTACT_URL is not set: "Contact us" goes to the guide's contact section/, null],
+      ['https://example.org/book', /"Contact us" on the pages goes to https:\/\/example\.org\/book \(WRD_CONTACT_URL\)/, null],
+      [`mailto:${ADDRESS}`, /"Contact us" on the pages goes to a mailto: link to one address at example\.org \(the address itself is not printed\) \(WRD_CONTACT_URL\)/, null],
+      ['javascript:alert(1)', DEFAULT, '"javascript:alert(1)"'],
+      ['data:text/html,x', DEFAULT, '"data:text/html,x"'],
+      [`mailto:${ADDRESS}?subject=x`, DEFAULT, 'a value with an @ in it (not printed)'],
+      [`mailto:${ADDRESS},other@example.org`, DEFAULT, 'a value with an @ in it (not printed)'],
+    ];
+    const runs = await startEach(cases.map(([contact]) => (contact === undefined ? {} : { WRD_CONTACT_URL: contact })));
+    for (const [i, [contact, says, shown]] of cases.entries()) {
+      const r = must(runs[i], 'run');
+      const label = JSON.stringify(contact);
+      expect([label, r.started, /did not start/.test(r.stderr), says.test(r.stdout)]).toEqual([label, true, false, true]);
+      expect([label, WARNS.exec(r.stderr)?.[1] ?? null]).toEqual([label, shown]);
+      expect([label, `${r.stdout}${r.stderr}`.includes(ADDRESS)]).toEqual([label, false]);
+    }
+  }, 300_000);
+
   it('the web UI, run in a DOM against a demo-composed bridge, signs one read per signer and reuses it, sending it only in a POST body, never in a URL; a signer with no role is refused and can switch back; with nothing to sign it meets the 401', async () => {
     const pod = memoryPod();
     const clock = demoClock();

@@ -335,7 +335,7 @@ describe('the web UI is served under a strict content policy', () => {
     expect(src).not.toMatch(/fetch\(\s*['"`]https?:|import\(|<script/);
   });
 
-  it('sends the Contact links to the operator\'s contact page when it sets one, and no page carries an email address', async () => {
+  it('sends the Contact links to the operator\'s contact page or one mailto: address when it sets one, refuses anything else, and no file or visible text carries an email address', async () => {
     // Unset, the pages are the files: the Contact links go to the guide's contact section.
     expect(contactPages()).toEqual({ landing: read('bridge/ui/landing.html'), help: read('bridge/ui/help.html') });
     const url = 'https://interego.example/contact?from=practice-evidence';
@@ -346,13 +346,37 @@ describe('the web UI is served under a strict content policy', () => {
     expect(pages.help).toContain(`<a href="${url}">contact Interego</a>`);
     // The guide's own table of contents still goes to its contact section.
     expect(pages.help).toContain('<a href="#contact">Contact</a>');
-    for (const bad of ['mailto:sales@interego.example', 'https://sales@interego.example/', 'https://interego.example/?to=sales@interego.example',
-      'http://interego.example/contact', 'javascript:alert(1)', 'not a url']) expect(contactUrlOf(bad), bad).toBeNull();
     expect(contactUrlOf('https://interego.example/a"b<c>')).toBe('https://interego.example/a%22b%3Cc%3E');
-    const l = await serve(demoHandlers, { contactUrl: url });
-    expect(await (await fetch(`${l.base}/`, { headers: { accept: BROWSER } })).text()).toBe(pages.landing);
-    expect(await (await fetch(`${l.base}/ui/help`)).text()).toBe(pages.help);
+    // An operator-set mailto: link to one address is taken, the domain lower-cased.
+    const mailto = 'mailto:operator@example.org';
+    expect(contactUrlOf(mailto)).toBe(mailto);
+    expect(contactUrlOf('MAILTO:Operator@Example.ORG')).toBe('mailto:Operator@example.org');
+    // Everything else is refused, and the pages keep their default links: an @ in an https page, any
+    // other scheme, and a mailto: with headers, a second address, an escape, a space or no address.
+    for (const bad of ['https://sales@interego.example/', 'https://interego.example/?to=sales@interego.example',
+      'http://interego.example/contact', 'javascript:alert(1)', 'not a url', 'data:text/html,x',
+      'mailto:a@example.org?subject=x', 'mailto:a@example.org,b@example.org', 'mailto:', 'mailto: a@example.org',
+      'mailto:a@example.org%0Abcc:c@example.org', 'mailto:a@@example.org']) {
+      expect(contactUrlOf(bad), bad).toBeNull();
+      expect(() => contactPages(bad), bad).toThrow(/an https page or a mailto: link with one address/);
+    }
+    // A mailto: goes on the same three links; the address is in their href only, never in the text a person reads.
+    const mail = contactPages(mailto);
+    expect(mail.landing).not.toContain('ui/help#contact');
+    expect(mail.landing.split(`href="${mailto}"`).length - 1).toBe(2);
+    expect(mail.help).toContain(`<a href="${mailto}">Contact us</a>`);
+    expect(mail.help).toContain(`<a href="${mailto}">contact Interego</a>`);
+    expect(mail.help).toContain('<a href="#contact">Contact</a>');
     const EMAIL = /[\w.+-]+@[\w-]+\.[\w.-]+/;
+    const textOf = (html: string): string => html.replace(/<[^>]*>/g, ' ');
+    for (const html of [mail.landing, mail.help]) expect(textOf(html)).not.toMatch(EMAIL);
+    // Served: the pages are exactly those, for an https page and for a mailto.
+    for (const [contactUrl, expected] of [[url, pages], [mailto, mail]] as const) {
+      const l = await serve(demoHandlers, { contactUrl });
+      expect(await (await fetch(`${l.base}/`, { headers: { accept: BROWSER } })).text()).toBe(expected.landing);
+      expect(await (await fetch(`${l.base}/ui/help`)).text()).toBe(expected.help);
+    }
+    // No file the pages are built from carries an email address: one reaches a page only from PEV_CONTACT_URL.
     for (const html of [pages.landing, pages.help, read('bridge/ui/landing.html'), read('bridge/ui/help.html'), read('bridge/ui/app.js')]) expect(html).not.toMatch(EMAIL);
     // The MCP endpoint is shown to copy, not linked: a browser that opens it waits on a stream.
     expect(read('bridge/ui/help.html')).not.toContain('href="../mcp"');
