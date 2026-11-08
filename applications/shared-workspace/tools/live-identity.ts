@@ -98,9 +98,10 @@ export async function mintBearer(
   // `globalThis.fetch` to read it would leak into every later test in the same process.
   // Every existing caller omits this and gets the global `fetch`, unchanged.
   fetchImpl: typeof fetch = fetch,
-  // ★ THE OPERATOR'S HOSTED TERMS AGREEMENT, AND ONLY AN EXPLICIT ONE. The Discord bot passes
-  // nothing here: it signs in an account that already exists, and it must not start agreeing to
-  // anything because some environment variable happens to be set where it runs.
+  // ★ THE OPERATOR'S HOSTED TERMS AGREEMENT, AND ONLY AN EXPLICIT ONE. The Discord bot passes only
+  // its own operator's, from `INTEREGO_BOT_ACCEPT_HOSTED_TERMS_VERSION` (`discord/src/identity.ts`),
+  // and nothing when that is unset: it must not start agreeing for its account because some other
+  // environment variable, the drivers' included, happens to be set where it runs.
   options: MintBearerOptions = {},
 ): Promise<RelayOAuthBearer> {
   const termsVersion = options.acceptHostedTermsVersion ?? '';

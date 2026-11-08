@@ -171,6 +171,16 @@ Optional: `INTEREGO_RELAY` (default `https://relay.interego.xwisee.com`),
 `INTEREGO_IDENTITY` (default `https://identity.interego.xwisee.com`),
 `INTEREGO_DISCORD_STATE` (default `~/.interego/discord-workspace.json`).
 
+**A new key has no account yet.** Hosted identity creates an account only for a wallet that signed
+the Hosted Terms agreement, so the first sign-in of a new `INTEREGO_BOT_KEY` is refused with HTTP 428
+unless you, the bot's operator, give that agreement for the bot's account. Read the version and the
+terms at `https://identity.interego.xwisee.com/.well-known/hosted-interego-terms`; only if you agree,
+either set `INTEREGO_BOT_ACCEPT_HOSTED_TERMS_VERSION` to that version, and the bot's first sign-in
+creates the account, or create the account first with an explicit agreement.
+[`DEPLOY.md`](DEPLOY.md), Part B, gives both. Nothing defaults that variable, the bot never reads
+the live drivers' `INTEREGO_ACCEPT_HOSTED_TERMS_VERSION`, and a key that already holds an account
+needs neither.
+
 ### In the Discord Developer Portal
 
 1. Create an application, add a Bot.
@@ -219,10 +229,12 @@ Both mint new wallets, and hosted identity creates an account for a new wallet o
 operator's Hosted Terms agreement. Set `INTEREGO_ACCEPT_HOSTED_TERMS_VERSION` to the version you
 agreed to, as described in
 [the workspace README](../README.md#live-drivers-and-the-hosted-terms); unset, the first sign-in is
-refused with HTTP 428. The bot itself never reads that variable and never gives the agreement: it
-signs `INTEREGO_BOT_KEY` in with the ordinary sign-in, unchanged, so that key must already hold an
-account. A new bot key is refused with HTTP 428 until its account has been created with an
-explicit Hosted Terms agreement; [`DEPLOY.md`](DEPLOY.md), Part B, says how.
+refused with HTTP 428. The bot itself never reads that variable: those are the accounts a driver
+run creates, not the bot's. It gives the agreement for its own account only from
+`INTEREGO_BOT_ACCEPT_HOSTED_TERMS_VERSION`, set by its operator, and otherwise signs
+`INTEREGO_BOT_KEY` in with the ordinary sign-in, so a new bot key is refused with HTTP 428 until its
+operator either sets that variable or creates the account first with an explicit Hosted Terms
+agreement; [`DEPLOY.md`](DEPLOY.md), Part B, says how.
 
 `drive-bot-live.ts` mints three disposable identities, has two of them publish real delegations
 from their own clients, and then runs **the bot's own command functions** against

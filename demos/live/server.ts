@@ -27,6 +27,7 @@ import { fileURLToPath } from 'node:url';
 import { randomUUID } from 'node:crypto';
 import { Hub } from './lib/ledger.js';
 import { RelayAuth, RelayMcp, RELAY } from './lib/relay.js';
+import { walletSignIn } from './lib/wallet-sign-in.js';
 import { BRIDGE, callTool, getJson, signedRoute, walletSigner } from './lib/foxxi.js';
 import { claudeBin, runClaudeAgent, type AgentEvent } from './lib/claude-agent.js';
 import { authorCourse, courseFromForm, type AuthoredCourse } from './lib/author.js';
@@ -1011,13 +1012,16 @@ app.post('/api/chapter/:action', async (req, res) => {
   }
 });
 
-/** Sign "you" in without a browser, with a wallet, for testing this demo headlessly. */
+/**
+ * Sign "you" in without a browser, with a wallet, for testing this demo headlessly. The browser
+ * path asks for the Hosted Terms on the relay's own page; this one never agrees to them on the
+ * key's behalf (see `walletSignIn`), so a key with no account is refused with how to enrol it.
+ */
 async function headlessSignIn(keyFile: string): Promise<void> {
-  const { mintBearer } = await import('../../applications/shared-workspace/tools/live-identity.js');
   const { Wallet } = await import('ethers');
   const saved = JSON.parse(readFileSync(keyFile, 'utf8')) as { privateKey: string };
   const bearer = await hub.track({ actor: 'you', service: 'relay', tool: 'siwe sign-in', summary: 'signing in with a wallet instead of a passkey (DEMO_YOU_WALLET)' }, async () => {
-    const b = await mintBearer(RELAY, IDENTITY, new Wallet(saved.privateKey), 'Interego Live Demo');
+    const b = await walletSignIn(RELAY, IDENTITY, new Wallet(saved.privateKey));
     return { value: b, summary: 'token issued' };
   });
   auth.token = { accessToken: bearer.accessToken, ...(bearer.refreshToken ? { refreshToken: bearer.refreshToken } : {}), expiresAt: bearer.expiresAt ?? Date.now() + 3_600_000 };
