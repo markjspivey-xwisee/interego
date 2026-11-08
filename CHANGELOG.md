@@ -1,5 +1,20 @@
 # Changelog
 
+## 2026-11-08 — Work Redesign: ChatGPT labels in bold, sign_request text in whole sentences
+
+On the landing page and in the guide, the second set-up step now shows
+ChatGPT's Server URL and OAuth labels in bold, as the steps already showed
+ChatGPT's other labels (Plugins, +, Add custom MCP server, Create as a plugin)
+and Claude's. "Accept the warning" stays plain words.
+
+The relay-signed input of each signed Work Redesign action described how to have a
+payload signed, then left "the same fields as the envelope payload, podUrl and
+a nonce included" after a semicolon with no verb. It now says it in whole
+sentences: call act with sign_payload: true or, where act has no sign_payload
+option, call the connector's sign_request tool with payload as its only
+argument; that payload has the same fields as the envelope payload, podUrl and
+a nonce included, and needs no issuedAt. Nothing else about signing changed.
+
 ## 2026-11-08 — Work Redesign: Tab after a click, ChatGPT steps in order, sign_request on its own
 
 After "Skip to content" in the Work Redesign app, a click or tap on plain text

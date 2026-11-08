@@ -300,9 +300,10 @@ describe('work-redesign customer site', () => {
         'In Claude, turn on Interego in each new chat from the chat’s tools menu (+). In ChatGPT, type @ in a chat and choose Interego.', 'the company behind your assistant sees it too', limit,
         // ChatGPT's set-up in the order OpenAI's guide to custom MCP servers gives it, and no plan named: the first step only
         // opens Add custom MCP server; the second names it, gives the address as its Server URL with OAuth, and only then
-        // has the warning accepted and the plugin created and installed. Claude's half of each step is as it was.
+        // has the warning accepted and the plugin created and installed. Claude's half of each step is as it was. Each
+        // ChatGPT label the steps name (Server URL and OAuth among them) is in bold, as Claude's are.
         '<p class="step__text">In Claude, open <strong>Settings → Connectors → Add custom connector</strong>. In ChatGPT on the web, open <strong>Plugins → + → Add custom MCP server</strong>.</p>',
-        '<p class="step__text">Name it <strong>Interego</strong> and paste the connector address (in ChatGPT, as its Server URL, with OAuth): <code class="connector-url">https://relay.example.org/mcp</code> In ChatGPT, accept the warning, select <strong>Create as a plugin</strong>, then install it.</p>',
+        '<p class="step__text">Name it <strong>Interego</strong> and paste the connector address (in ChatGPT, as its <strong>Server URL</strong>, with <strong>OAuth</strong>): <code class="connector-url">https://relay.example.org/mcp</code> In ChatGPT, accept the warning, select <strong>Create as a plugin</strong>, then install it.</p>',
         'Whether you can add a connector depends on your plan or workspace settings.',
         '<span class="mono">http://127.0.0.1/mcp</span>&nbsp;(for developers’ tools that sign their own requests; Claude and ChatGPT use the Interego connector)',
         // One sentence for signing in to the connector, the same as the app's panel says it.

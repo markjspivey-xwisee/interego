@@ -1332,7 +1332,9 @@ describe('work-redesign web UI: sign in with your Interego account', () => {
     const inputs = wrdAffordances.flatMap((a) => (a.inputs ?? []).map((i) => ({ action: String(a.action), name: i.name, description: String(i.description ?? '') })));
     const signedPayload = inputs.filter((i) => i.name === '_signed_payload');
     expect(signedPayload.length).toBeGreaterThan(0);
-    for (const i of signedPayload) expect([i.action, i.description]).toEqual([i.action, expect.stringContaining('act with sign_payload: true, or, where act has no sign_payload option, the connector\'s sign_request tool with payload as its only argument;')]);
+    // In whole sentences: how to have the payload signed either way, then what that payload holds (no fragment after a
+    // semicolon), and no issuedAt, which the relay's own timestamp takes the place of.
+    for (const i of signedPayload) expect([i.action, i.description]).toEqual([i.action, expect.stringContaining('. To have the payload signed, call act with sign_payload: true, or, where act has no sign_payload option, call the connector\'s sign_request tool with payload as its only argument. That payload has the same fields as the envelope payload, podUrl and a nonce included, and needs no issuedAt. ')]);
     // Where a description says what act sends (two inputs' and one affordance's own), it holds for either way of signing.
     const texts = [...inputs, ...wrdAffordances.map((a) => ({ action: String(a.action), name: '(the affordance)', description: String(a.description ?? '') }))];
     const pairOnly = texts.filter((i) => i.description.includes('sends only the signed pair'));
