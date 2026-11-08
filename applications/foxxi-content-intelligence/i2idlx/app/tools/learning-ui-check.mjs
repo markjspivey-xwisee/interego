@@ -92,8 +92,7 @@ const bootstrap=`(()=>{
     const title=owner?"Owner inspection course":course().title,body=owner?"OWNER37":state.human==="alice"?"BLUE27":"GREEN18";
     return {source:{provider:"scorm-cloud",course_id:args.course_id,title,version:args.version,source_version:"course-version:"+args.version,projection_sha256:"d".repeat(64),fingerprint_scope:"selected-instructional-projection"},
       access:{link_id:args.link_id,sharing:{content:args.share_content,progress:args.share_progress,review:args.share_review===true}},
-      interventionContext:{kind:"instructional-source-reference",source_context:{source:"package",id:args.course_id,version:"course-version:"+args.version,sections:args.share_content?[{citation_id:"SC1",title:"Safety code",body}]:[]},...(args.share_review?{quiz_review:ownReview()}:{}),...(args.share_progress?{progress:{completion:"COMPLETED",success:"PASSED",score:73,observed_at:new Date().toISOString()}}:{})},
-      ...(args.share_review?{quiz_review:ownReview()}:{}),learning_map:mapProjection(),
+      interventionContext:{kind:"instructional-source-reference",source_context:{source:"package",id:args.course_id,version:"course-version:"+args.version,sections:args.share_content?[{citation_id:"SC1",title:"Safety code",body}]:[]},learning_map:mapProjection(),...(args.share_review?{quiz_review:ownReview()}:{}),...(args.share_progress?{learning_progress:{records:[{completion:"COMPLETED",success:"PASSED",score:73,observed_at:new Date().toISOString()}]}}:{})},
       citations:args.share_content?[{id:"SC1",title:"Safety code",body}]:[],missing_context:[],authorization_ticket:"e".repeat(64),
       navigation:{course:{kind:"course"},locations:args.share_content?[{citation_id:"SC1",source_file:"lesson-a.html",precision:"published-file",target_kind:state.targeted?"activity":"course",...(state.targeted?{location_ref:"4".repeat(64),title:"Beacon fault lesson"}:{})}]:[]}};
   };
