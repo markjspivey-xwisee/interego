@@ -60,6 +60,7 @@ import { Wallet as EthersWalletCtor } from 'ethers';
 import { Server } from '@modelcontextprotocol/server';
 import { createRelayMcpHandler } from './mcp-serving.js';
 import { clientInteractionMcpResult, clientInteractionToolResult } from './client-interaction-mcp.js';
+import { relayToolResult } from './tool-result.js';
 import { clientInteractionHttpHandler } from './client-interaction-http.js';
 import { FederationService } from '@interego/pod-federation';
 import { FEDERATION_MANAGE_SCOPE, FederationHttpError, federationOwnerFromOAuth, hostedFederationHttp, type HostedFederationOwner } from './pod-federation-http.js';
@@ -119,7 +120,11 @@ import {
   buildNotification,
   deliverNotification,
   podRootPresence,
-  readInbox as readAgentInbox,
+  readAllInboxItems,
+  pageInboxItems,
+  InboxPageError,
+  INBOX_DEFAULT_LIMIT,
+  INBOX_MAX_LIMIT,
   type NotificationInput,
   type PodRootPresence,
 } from './agent-mesh.js';
@@ -9404,7 +9409,19 @@ async function handleReadInbox(args: ToolArgs): Promise<string> {
   }
   const podUrl = explicit ?? ownPod;
   if (!podUrl) return JSON.stringify({ error: 'read_inbox: no pod_url and could not derive your own pod' });
-  const limit = typeof args.limit === 'number' ? args.limit : 50;
+  // Paging arguments arrive typed on /mcp and as JSON on /tool and /messages, where a REST
+  // caller may send a number or a boolean as a string. Read both spellings; refuse what is
+  // neither rather than silently serving the first page for a malformed cursor.
+  const numeric = (v: unknown): number | undefined =>
+    typeof v === 'number' ? v : typeof v === 'string' && /^\d+$/.test(v.trim()) ? Number(v) : undefined;
+  const requestedLimit = numeric(args.limit);
+  const includeContentArg = args.include_content;
+  const includeContent = includeContentArg === undefined ? true
+    : includeContentArg === false || includeContentArg === 'false' ? false
+    : includeContentArg === true || includeContentArg === 'true' ? true : undefined;
+  if (includeContent === undefined) return JSON.stringify({ error: 'read_inbox: include_content must be true or false' });
+  const before = typeof args.before === 'string' && args.before ? args.before : undefined;
+  const since = typeof args.since === 'string' && args.since ? args.since : undefined;
   // The gate above already required `explicit` to be the caller's own pod by `canonicalPodKey`,
   // which separates every origin that is not this store's — so this asks the same question where
   // the value is USED rather than only where it was decided. `undefined` here means the pod is
@@ -9417,8 +9434,25 @@ async function handleReadInbox(args: ToolArgs): Promise<string> {
       detail: 'This relay reads inboxes it hosts. Omit pod_url to read the inbox of the authenticated caller.',
     });
   }
-  const items = await readAgentInbox(internal, solidFetch, limit);
-  return JSON.stringify({ inbox: inboxUrlFor(podUrl), count: items.length, items });
+  let page;
+  try {
+    page = pageInboxItems(await readAllInboxItems(internal, solidFetch), {
+      ...(requestedLimit !== undefined ? { limit: requestedLimit } : {}),
+      ...(before ? { before } : {}), ...(since ? { since } : {}), includeContent,
+    });
+  } catch (err) {
+    if (err instanceof InboxPageError) return JSON.stringify({ error: `read_inbox: ${err.message}` });
+    throw err;
+  }
+  // `count` is what this page holds — the field every existing caller reads — and `total` is
+  // what the inbox holds, so a short page and an empty inbox are no longer the same answer.
+  return JSON.stringify({
+    inbox: inboxUrlFor(podUrl), count: page.items.length, total: page.total, limit: page.limit,
+    ...(requestedLimit !== undefined && requestedLimit !== page.limit ? { limitRequested: requestedLimit } : {}),
+    hasMore: page.hasMore, ...(page.nextCursor ? { nextCursor: page.nextCursor } : {}),
+    ...(since ? { since } : {}), ...(includeContent ? {} : { includeContent: false }),
+    items: page.items,
+  });
 }
 
 async function handleRebuildManifest(args: ToolArgs): Promise<string> {
@@ -11108,7 +11142,7 @@ const TOOLS: Record<string, ToolEntry> = gateRequiredArgs({
   resolve_webfinger: { description: 'Resolve WebFinger to find a pod', handler: handleResolveWebfinger },
   // Agent-to-agent messaging (Linked Data Notifications over Solid inboxes)
   notify_agent: { description: 'Send a notification to another agent (fans out across their declared channels: LDN inbox + any discord/telegram/email/sms/voice)', handler: handleNotifyAgent },
-  read_inbox: { description: 'Read notifications delivered to your (or a given) pod\'s LDN inbox, newest-first', handler: handleReadInbox },
+  read_inbox: { description: 'Read one page of notifications delivered to your (or a given) pod\'s LDN inbox, newest-first', handler: handleReadInbox },
   sign_request: { description: 'Sign a payload as your bound identity (rev-196 envelope) so you can act on a signed-request affordance', handler: handleSignRequest },
   set_reachability: { description: 'Declare external reachability channels on your own agent card (discord/telegram/email/sms/voice)', handler: handleSetReachability },
   rebuild_manifest: { description: 'Reconstruct a pod\'s .well-known/context-graphs index from its on-pod descriptors (heals a collapsed/lost manifest; non-destructive)', handler: handleRebuildManifest },
@@ -11189,6 +11223,34 @@ const GENERIC_OUTPUT_SCHEMA = mcpOutputSchema({
   type: 'object',
   additionalProperties: true,
   description: "Tool returned a JSON object (or human-readable text) embedded in the MCP content[0].text field. See the tool's source for the exact shape.",
+});
+
+const READ_INBOX_OUTPUT = mcpOutputSchema({
+  type: 'object',
+  description: 'One page of an LDN inbox, newest-first. count is the size of this page; total is every notification matching since; nextCursor, present when hasMore is true, is the before value for the next page.',
+  properties: {
+    inbox: { type: 'string', description: 'The inbox container URL' },
+    count: { type: 'integer', description: 'Notifications on this page' },
+    total: { type: 'integer', description: 'Notifications in the inbox that match since (all of them when since is absent)' },
+    limit: { type: 'integer', description: 'The page size applied' },
+    limitRequested: { type: 'integer', description: 'Present when the requested limit was outside the accepted range' },
+    hasMore: { type: 'boolean', description: 'Whether notifications remain after this page' },
+    nextCursor: { type: 'string', description: 'Pass as before to read the next page' },
+    since: { type: 'string' },
+    includeContent: { type: 'boolean', description: 'false when bodies were omitted' },
+    items: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          url: { type: 'string' }, id: { type: 'string' }, type: { type: 'string' }, actor: { type: 'string' },
+          summary: { type: 'string' }, content: { type: 'string' }, about: { type: 'string' }, published: { type: 'string' },
+          contentLength: { type: 'integer', description: 'Characters in the omitted body, when include_content is false' },
+        },
+        required: ['url'],
+      },
+    },
+  },
 });
 
 const PUBLISH_CONTEXT_OUTPUT = mcpOutputSchema({
@@ -12250,15 +12312,20 @@ const TOOL_SCHEMAS = [
   },
   {
     name: 'read_inbox',
-    description: 'Read notifications delivered to your Linked Data Notifications (LDN) inbox, newest-first. Defaults to your own pod; pass pod_url to read a specific pod\'s inbox. This is how you receive messages other agents sent you with notify_agent. Check it when someone says "I left you a message on Interego".',
+    description: 'Read notifications delivered to your Linked Data Notifications (LDN) inbox, newest-first, one page at a time. Defaults to your own pod; pass pod_url to read a specific pod\'s inbox. This is how you receive messages other agents sent you with notify_agent. Check it when someone says "I left you a message on Interego". '
+      + `A page holds up to ${INBOX_DEFAULT_LIMIT} notifications unless you pass limit (at most ${INBOX_MAX_LIMIT}). The result reports total, hasMore and, when there is more, nextCursor: pass it back as before to read the next page. `
+      + 'To scan quickly, pass include_content: false to get summaries without message bodies, then read the ones you need; since limits the read to notifications published at or after an ISO-8601 time.',
     inputSchema: {
       type: 'object',
       properties: {
         pod_url: { type: 'string', description: 'Pod whose inbox to read. Defaults to your own pod.' },
-        limit: { type: 'integer', description: 'Max notifications to return (default 50).' },
+        limit: { type: 'integer', description: `Notifications per page: default ${INBOX_DEFAULT_LIMIT}, between 1 and ${INBOX_MAX_LIMIT}. A value outside that range is brought inside it and reported as limitRequested.` },
+        before: { type: 'string', description: 'The nextCursor value from the previous page. Returns the notifications after that page, still newest-first.' },
+        since: { type: 'string', description: 'ISO-8601 date-time. Only notifications published at or after it are counted and returned.' },
+        include_content: { type: 'boolean', description: 'Default true. false returns each notification\'s summary, sender, type, about and time without its body, with contentLength in place of content.' },
       },
     },
-    outputSchema: GENERIC_OUTPUT_SCHEMA,
+    outputSchema: READ_INBOX_OUTPUT,
     annotations: { title: 'Read your inbox', readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
   },
   {
@@ -13289,8 +13356,10 @@ function buildMcpServer(authContext: { agentId: string; ownerWebId?: string; own
       // (mcp-client-2025-04-04) validate it; lenient ones ignore it.
       // Non-object / unparseable returns are wrapped as { result: ... }
       // so structuredContent is always an object (the permissive
-      // outputSchema accepts it).
-      return clientInteractionToolResult(toStructuredContent(text), text);
+      // outputSchema accepts it). tool-result.ts owns the envelope: the
+      // JSON once in content, a one-line summary after it, nothing in _meta
+      // but what a widget alone needs — the same builder /messages uses.
+      return clientInteractionToolResult(toStructuredContent(text), text, name);
     } catch (err) {
       return { content: [{ type: 'text' as const, text: `Error: ${(err as Error).message}` }], isError: true };
     }
@@ -17029,7 +17098,7 @@ app.post('/messages', messagesLimiter, async (req, res) => {
     const toolName = params?.name;
     try {
       const result = await provisionalRestCall(toolName, { ...(params?.arguments ?? {}) }, req.headers.authorization);
-      if (result !== undefined) { res.json({ jsonrpc: '2.0', id, result: { content: [{ type: 'text', text: result }], structuredContent: toStructuredContent(result) } }); return; }
+      if (result !== undefined) { res.json({ jsonrpc: '2.0', id, result: relayToolResult(toolName, result) }); return; }
     } catch (error) {
       const code = error instanceof ProvisionalPlayError ? error.code : 'provisional_storage_unavailable';
       res.status(error instanceof ProvisionalPlayError ? error.status : 503).json({ jsonrpc: '2.0', id, error: { code: -32000, message: code } }); return;
@@ -17101,7 +17170,9 @@ app.post('/messages', messagesLimiter, async (req, res) => {
       // tools/list) but emits no structuredContent (the original
       // f-structuredcontent gap) — and any structuredContent it did emit
       // would hit f-schema-nullability. toStructuredContent runs omitNullish.
-      res.json({ jsonrpc: '2.0', id, result: { content: [{ type: 'text', text: result }], structuredContent: toStructuredContent(result) } });
+      // Built by the same tool-result.ts helper as /mcp, so the two transports
+      // cannot disagree about how many copies of a result they send.
+      res.json({ jsonrpc: '2.0', id, result: relayToolResult(toolName, result) });
     } catch (err) {
       res.json({ jsonrpc: '2.0', id, error: { code: -32000, message: (err as Error).message } });
     }

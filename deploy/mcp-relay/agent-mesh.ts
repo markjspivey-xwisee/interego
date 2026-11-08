@@ -241,6 +241,11 @@ export async function readInbox(
   fetchFn: FetchFn = defaultFetch(),
   limit = 50,
 ): Promise<InboxItem[]> {
+  return (await readAllInboxItems(podUrl, fetchFn)).slice(0, limit);
+}
+
+/** Every readable item of a pod's inbox, in {@link compareInboxItems} order. */
+export async function readAllInboxItems(podUrl: string, fetchFn: FetchFn = defaultFetch()): Promise<InboxItem[]> {
   const urls = await listInbox(podUrl, fetchFn);
   const items: InboxItem[] = [];
   await Promise.allSettled(urls.map(async url => {
@@ -268,6 +273,108 @@ export async function readInbox(
       });
     } catch { /* skip */ }
   }));
-  items.sort((a, b) => (b.published ?? '').localeCompare(a.published ?? ''));
-  return items.slice(0, limit);
+  items.sort(compareInboxItems);
+  return items;
+}
+
+// ── Paging ─────────────────────────────────────────────────────────────────
+//
+// ★ AN UNBOUNDED READ IS A READ NO CLIENT CAN RECEIVE. `read_inbox` with no arguments returned
+// up to 50 notifications with their full bodies, newest first, and nothing that said whether
+// there were more. Measured on the relay booted against a fixture inbox of 50 ordinary
+// notifications: 88,045 bytes per copy of the result, and every MCP result carries two copies.
+// Clients truncated it. A page is now bounded by count, can omit bodies, and states the total
+// and where the next page starts, so "the first page" and "the whole inbox" are distinguishable.
+
+/** Notifications returned when the caller names no limit. */
+export const INBOX_DEFAULT_LIMIT = 20;
+/**
+ * The most one page returns. ★ It is 50 because that is the largest limit any caller in this
+ * repository passes (`INBOX_LIMIT` / `REQUEST_INBOX_LIMIT` in the workspace client, which infer
+ * "saturated" from a page that came back exactly full). A lower ceiling would hand those callers
+ * a short page they would read as the whole inbox.
+ */
+export const INBOX_MAX_LIMIT = 50;
+
+/**
+ * Newest first by `published`; an item with no `published` sorts after every dated one; ties
+ * break on `url`, descending, so the order is total and a cursor names exactly one position.
+ */
+export function compareInboxItems(a: InboxItem, b: InboxItem): number {
+  const byTime = (b.published ?? '').localeCompare(a.published ?? '');
+  return byTime !== 0 ? byTime : b.url.localeCompare(a.url);
+}
+
+/** An opaque position: the sort key of the last item a page returned. */
+export function encodeInboxCursor(item: InboxItem): string {
+  return Buffer.from(JSON.stringify({ p: item.published ?? '', u: item.url }), 'utf8').toString('base64url');
+}
+
+export function decodeInboxCursor(cursor: string): { published: string; url: string } | null {
+  try {
+    const value = JSON.parse(Buffer.from(cursor, 'base64url').toString('utf8')) as unknown;
+    if (!value || typeof value !== 'object') return null;
+    const { p, u } = value as Record<string, unknown>;
+    if (typeof p !== 'string' || typeof u !== 'string' || !u) return null;
+    return { published: p, url: u };
+  } catch { return null; }
+}
+
+export interface InboxPageOptions {
+  /** Items per page; clamped to [1, {@link INBOX_MAX_LIMIT}]. Default {@link INBOX_DEFAULT_LIMIT}. */
+  readonly limit?: number;
+  /** A `nextCursor` from an earlier page: return only items after it in the order above. */
+  readonly before?: string;
+  /** ISO-8601: return only items published at or after this instant. Undated items are excluded. */
+  readonly since?: string;
+  /** false: each item keeps its summary and drops `content`, reporting `contentLength` instead. */
+  readonly includeContent?: boolean;
+}
+
+export type InboxPageItem = InboxItem & { contentLength?: number };
+
+export interface InboxPage {
+  readonly items: InboxPageItem[];
+  /** Items matching `since` (the whole inbox when absent), across every page. */
+  readonly total: number;
+  readonly limit: number;
+  readonly hasMore: boolean;
+  readonly nextCursor?: string;
+}
+
+export class InboxPageError extends Error {}
+
+/**
+ * One page of an already-read inbox. Pure, so the paging arithmetic is tested without a pod.
+ * Throws {@link InboxPageError} for a cursor or `since` it cannot interpret, rather than
+ * quietly answering with the first page.
+ */
+export function pageInboxItems(all: readonly InboxItem[], options: InboxPageOptions = {}): InboxPage {
+  const requested = options.limit;
+  const limit = typeof requested === 'number' && Number.isFinite(requested)
+    ? Math.min(INBOX_MAX_LIMIT, Math.max(1, Math.floor(requested)))
+    : INBOX_DEFAULT_LIMIT;
+  let matching = [...all].sort(compareInboxItems);
+  if (options.since !== undefined) {
+    const since = Date.parse(options.since);
+    if (!Number.isFinite(since)) throw new InboxPageError('since must be an ISO-8601 date-time');
+    matching = matching.filter(item => item.published !== undefined && Date.parse(item.published) >= since);
+  }
+  let start = 0;
+  if (options.before !== undefined) {
+    const cursor = decodeInboxCursor(options.before);
+    if (!cursor) throw new InboxPageError('before must be a nextCursor value from an earlier read_inbox page');
+    const position: InboxItem = { url: cursor.url, ...(cursor.published ? { published: cursor.published } : {}) };
+    start = matching.findIndex(item => compareInboxItems(position, item) < 0);
+    if (start < 0) start = matching.length;
+  }
+  const page = matching.slice(start, start + limit);
+  const hasMore = start + page.length < matching.length;
+  const items: InboxPageItem[] = options.includeContent === false
+    ? page.map(({ content, ...rest }) => (content === undefined ? rest : { ...rest, contentLength: content.length }))
+    : page;
+  return {
+    items, total: matching.length, limit, hasMore,
+    ...(hasMore && page.length > 0 ? { nextCursor: encodeInboxCursor(page[page.length - 1]!) } : {}),
+  };
 }

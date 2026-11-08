@@ -206,6 +206,8 @@ COPY deploy/mcp-relay/pod-federation-page.ts ./
 COPY deploy/mcp-relay/pod-federation-store.ts ./
 COPY deploy/mcp-relay/pod-federation-resources.ts ./
 COPY deploy/mcp-relay/client-interaction-mcp.ts ./
+# The one tool-result envelope (/mcp and /messages); client-interaction-mcp.ts imports it too.
+COPY deploy/mcp-relay/tool-result.ts ./
 COPY deploy/mcp-relay/mcp-serving.ts ./
 COPY deploy/mcp-relay/hmd-app-logic.ts ./
 COPY deploy/mcp-relay/tool-surface.ts ./

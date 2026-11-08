@@ -1,5 +1,32 @@
 # Changelog
 
+## 2026-11-08 — Relay: each tool result once for the model, and read_inbox in pages
+
+A chat assistant using the relay as a connector reported `act` results that
+looked like the same body several times over, and `read_inbox` answers its
+client cut short. Measured on the relay booted against loopback fixtures, every
+tool result carried its payload exactly twice: as the first text block and as
+`structuredContent`, byte for byte. There was no markdown copy and no copy in
+`_meta`. The size came from what was copied: an inbox read with no bound, a
+target's response carried as a string, and the inline JSON-LD context.
+
+Every result on `/mcp` and on `/messages` is now built by one helper. The JSON
+result is the first text block, where existing readers parse it, and is the
+only full copy in `content`. A one-line summary follows it, naming what came
+back (for `act`, the target and status, never the body). `structuredContent`
+is unchanged and still matches the declared output schema. A signing launch now
+puts only the fields the viewer checks and opens into `_meta`, not a second
+copy of the result.
+
+`read_inbox` returns pages. With no arguments it returns the newest 20, where it
+used to return up to 50 with every body: 88,045 bytes per copy on a 50-item
+inbox fell to 35,748. `limit` accepts 1 to 50; 50 is the largest value any
+caller here passes, so those callers see no change. Each page reports `total`,
+`hasMore` and a `nextCursor` to pass back as `before`. `include_content: false`
+returns summaries without bodies, and `since` limits the read by date. A cursor
+or date the relay cannot read is refused rather than treated as the first page.
+`POST /tool/read_inbox` shares the handler and accepts the same arguments.
+
 ## 2026-11-08 — Ask: enrolled quiz review and owner learning maps
 
 Ask guides administrators and learners through separate connection and account
