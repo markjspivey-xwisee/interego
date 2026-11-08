@@ -164,8 +164,8 @@ export class LearningJourneyService {
         enrollment: { status: 'verified', observed_at: after.registrations[0]!.observedAt }, content: contentStatus,
         quiz_review: { status: quiz.status, reason: quiz.reason, count: quiz.count, observed_at: quiz.observed_at }, launch,
         learning_map: learningMapProjection(after), retention: { mode: 'virtual', cached_bytes: 0, course_text_retained: false,
-          authority_expires_at: new Date(principal.expiresAt).toISOString(), credentials: 'encrypted until the owner revokes the connection',
-          owner_map_retention: 'Owner-authored map labels and relationships remain encrypted until their owner deletes the map or revokes the connection; retrieved source bodies and progress are not retained.',
+          authority_expires_at: new Date(principal.expiresAt).toISOString(), credentials: 'encrypted; revocation removes credentials from active configuration, while older encrypted storage versions can remain',
+          owner_map_retention: 'Owner-authored map labels and relationships are encrypted. Deleting the map or revoking its connection removes them from active use; older encrypted storage versions can remain. Retrieved source bodies and progress are not retained.',
           client_retention: 'Passages and observations shared with an AI client follow its retention. Ending a link stops future access; it does not erase earlier client copies.' } } };
     } finally { this.active.delete(principal.sessionId); }
   }

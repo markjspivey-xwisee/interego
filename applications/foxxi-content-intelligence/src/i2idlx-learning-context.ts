@@ -218,7 +218,7 @@ export class LearningContextService {
       const access = { link_id: linkId, sharing: { ...sharing }, mode: 'virtual', cache: { present: false, hit: false, bytes: 0 },
         policy: { ...after.policy }, enrollment: { verified: true, source: 'SCORM Cloud registrations', observed_at: after.registrations[0]!.observedAt },
         provisioning: 'administrator-approved account link; confirmed by the learner',
-        copied_content: sharing.content ? 'Bounded selected native files read in request memory; no ZIP export or retained source bodies/graph. Explicit owner-authored map labels are separate retained metadata until their owner deletes them.' : 'Only authorized observations and owner-authored map metadata; no course files read.',
+        copied_content: sharing.content ? 'Bounded selected native files read in request memory; no ZIP export or retained source bodies/graph. Explicit owner-authored map labels are separate encrypted metadata. Deletion removes the map from active use; older encrypted storage versions can remain.' : 'Only authorized observations and owner-authored map metadata; no course files read.',
         client_retention: 'Selected passages and observations shared with the connected AI client follow that client\'s retention; revocation does not erase earlier client copies.' };
       packet.course_access = access;
       packet.learning_map = map;

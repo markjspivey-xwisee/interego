@@ -62,6 +62,10 @@ in that checkpoint.
 Optional owner-authored learning maps and private notification configuration
 are metadata in the same encrypted checkpoint, with course-version and owner
 binding. Notification receipts contain a timestamp, not learner answers.
+Deletion or revocation removes the affected maps, links and credentials from
+active configuration and stops future authorized use. It does not physically
+erase older encrypted storage versions; reclaiming those unreferenced storage
+nodes requires separate storage cleanup.
 Corruption, missing keys, failed reads and uncertain writes fail closed. A true
 404 alone means an empty checkpoint. A service restart requires human sign-in
 and AI pairing again; it does not discard the encrypted connector registry.
