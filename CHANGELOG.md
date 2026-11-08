@@ -1,5 +1,30 @@
 # Changelog
 
+## 2026-11-08 — Shared helpers for connecting your own chat assistant
+
+New `applications/_shared/chat-agent/`: the text helpers Practice Evidence and
+Work Redesign will use to let people do AI steps in their own Claude or
+ChatGPT through the Interego connector. There is no operator model and no key.
+`actPrompt` builds a paste-ready prompt that states how to call the
+connector's `act` tool, says per step whether it is signed or plain, names
+the exact action each payload carries, and gives one nonce rule: step name,
+turn number, then 16 random letters or digits. Both sites' nonce checks
+accept the result. `requestAsText` turns a packet's model request into a
+prompt to paste into any chat app, and renders a synthetic opening line as a
+stage direction rather than as the person's own words. `extractJsonObject`
+reads a draft from a pasted answer: it tries fenced blocks first and matches
+braces only outside JSON strings. It never answers with part of a cut-off or
+broken object. `agentAppName` names the app a record came through, and reads
+any other OpenAI client as "ChatGPT or another OpenAI app".
+
+The sites will serve it by concatenation, `chatAgentJs()` followed by their
+own app.js, so each page keeps one module script. The file therefore declares
+exactly one top-level name, has no import or export, and touches no DOM or
+network. Its test runs the file both as a classic script, the way every jsdom
+harness runs /ui/app.js, and as a real ES module ahead of an app that
+redeclares every internal name. No site uses it yet; the Practice Evidence
+and Work Redesign changes follow separately.
+
 ## 2026-11-07 — Verify Cloud LTI helpers through native sandbox launches
 
 Owner LTI verification opens the exact generated helper in the current
