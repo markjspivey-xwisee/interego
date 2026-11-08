@@ -18,6 +18,12 @@
  *   INTEREGO_WALLET_A=.interego/maintainer.json   identity A (the convener). Default shown.
  *   INTEREGO_WALLET_B=<path>                      identity B. Omitted: a fresh key is minted.
  *   INTEREGO_DRIVE_SLUG=<slug>                    reuse a workspace instead of creating one.
+ *
+ * B (when `INTEREGO_WALLET_B` is omitted) and the delegate key are new wallets, and hosted
+ * identity creates an account for a new wallet only with the operator's Hosted Terms agreement:
+ * see `INTEREGO_ACCEPT_HOSTED_TERMS_VERSION` in `applications/shared-workspace/tools/live-identity.ts`.
+ * Unset, that sign-in is refused. Only those generated wallets carry it: A, and B read from
+ * `INTEREGO_WALLET_B`, are keys this run was handed, and sign in without it.
  */
 
 import { readFileSync } from 'node:fs';
@@ -34,7 +40,7 @@ import {
 // The Discord conduit's own author clause — a SECOND consumer of the same substrate value, so this
 // run measures whether the distinction survives more than one renderer.
 import { authorOf as discordAuthorOf } from '../discord/src/render.js';
-import { mintBearer, type Signer } from './live-identity.js';
+import { mintBearer, mintBearerWithOperatorTerms, type Signer } from './live-identity.js';
 
 const RELAY = process.env['INTEREGO_RELAY'] ?? 'https://relay.interego.xwisee.com';
 const IDENTITY = process.env['INTEREGO_IDENTITY'] ?? 'https://identity.interego.xwisee.com';
@@ -53,9 +59,15 @@ interface Party { readonly client: WorkspaceClient; readonly viewer: Viewer; rea
 // `Signer`, not `Wallet`: `Wallet.createRandom()` returns an `HDNodeWallet`, and identity B is
 // exactly that on a first run — a driver that could not take a freshly minted key could not
 // exercise the two-identity case it exists for.
-async function party(label: string, wallet: Signer): Promise<Party> {
+//
+// ★ `generated` SAYS WHOSE KEY THIS IS. Only a wallet this run generated may carry the operator's
+// Hosted Terms agreement; a key the run was handed (A's, B's from a file) signs in as the account
+// it already is, whatever the environment says.
+async function party(label: string, wallet: Signer, generated: boolean): Promise<Party> {
   const t0 = Date.now();
-  const bearer = await mintBearer(RELAY, IDENTITY, wallet);
+  const bearer = generated
+    ? await mintBearerWithOperatorTerms(RELAY, IDENTITY, wallet)
+    : await mintBearer(RELAY, IDENTITY, wallet);
   const client = new WorkspaceClient(RELAY, new RelayMcpTransport(RELAY, bearer));
   await client.connect();
   const viewer = await readViewer(client);
@@ -69,11 +81,10 @@ async function party(label: string, wallet: Signer): Promise<Party> {
 async function run(): Promise<number> {
   head('two identities');
   const seedA = (JSON.parse(readFileSync(process.env['INTEREGO_WALLET_A'] ?? '.interego/maintainer.json', 'utf8')) as { privateKey: string }).privateKey;
-  const A = await party('A', new Wallet(seedA));
-  const walletB = process.env['INTEREGO_WALLET_B']
-    ? new Wallet((JSON.parse(readFileSync(process.env['INTEREGO_WALLET_B'], 'utf8')) as { privateKey: string }).privateKey)
-    : Wallet.createRandom();
-  const B = await party('B', walletB);
+  const A = await party('A', new Wallet(seedA), false);
+  const B = process.env['INTEREGO_WALLET_B']
+    ? await party('B', new Wallet((JSON.parse(readFileSync(process.env['INTEREGO_WALLET_B'], 'utf8')) as { privateKey: string }).privateKey), false)
+    : await party('B', Wallet.createRandom(), true);
   must('the two identities are different pods', A.viewer.podName !== B.viewer.podName, A.viewer.podName + ' vs ' + B.viewer.podName);
 
   head('A: the handle a second person needs, composed then resolved');
@@ -237,7 +248,7 @@ async function run(): Promise<number> {
    */
   head('A authorises ONE delegate, which then speaks BOTH ways into A\'s log');
   const dKey = Wallet.createRandom();
-  const dBearer = await mintBearer(RELAY, IDENTITY, dKey, DELEGATE_SURFACE);
+  const dBearer = await mintBearerWithOperatorTerms(RELAY, IDENTITY, dKey, DELEGATE_SURFACE);
   const dTx = new RelayMcpTransport(RELAY, dBearer);
   const dClient = new WorkspaceClient(RELAY, dTx);
   const dStatus = await dTx.callTool('get_pod_status', {}, { cache: false }) as Record<string, unknown>;

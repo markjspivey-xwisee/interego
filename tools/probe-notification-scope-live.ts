@@ -49,10 +49,14 @@
  *       probe becomes a green light.
  *
  *   npx tsx tools/probe-notification-scope-live.ts
+ *
+ * Its wallets are new, and hosted identity creates an account for a new wallet only with the
+ * operator's Hosted Terms agreement: see `INTEREGO_ACCEPT_HOSTED_TERMS_VERSION` in
+ * `applications/shared-workspace/tools/live-identity.ts`. Unset, a run stops at the first sign-in.
  */
 
 import { Wallet } from 'ethers';
-import { mintBearer } from '../applications/shared-workspace/tools/live-identity.js';
+import { mintBearerWithOperatorTerms } from '../applications/shared-workspace/tools/live-identity.js';
 
 const RELAY = (process.env['INTEREGO_RELAY'] ?? 'https://relay.interego.xwisee.com').replace(/\/$/, '');
 const IDENTITY = (process.env['INTEREGO_IDENTITY'] ?? 'https://identity.interego.xwisee.com').replace(/\/$/, '');
@@ -127,8 +131,8 @@ async function run(): Promise<number> {
   log('identity A (the stranger) :', a.address);
   log('identity B (the victim)   :', b.address);
 
-  const bearerA = await mintBearer(RELAY, IDENTITY, a);
-  const bearerB = await mintBearer(RELAY, IDENTITY, b);
+  const bearerA = await mintBearerWithOperatorTerms(RELAY, IDENTITY, a);
+  const bearerB = await mintBearerWithOperatorTerms(RELAY, IDENTITY, b);
 
   const stA = await call(bearerA.accessToken, 'get_pod_status', {}) as Record<string, unknown>;
   const stB = await call(bearerB.accessToken, 'get_pod_status', {}) as Record<string, unknown>;

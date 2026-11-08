@@ -42,7 +42,7 @@ interface Seen { readonly url: string; readonly body: Record<string, unknown> | 
  * is the one the real code paths parse — the authorize page's inline `PENDING_ID`, the redirect
  * with the code in its query, the JSON-RPC envelope with `structuredContent`.
  */
-function scriptedFleet(): { impl: typeof fetch; seen: Seen[]; minted: () => number } {
+function scriptedFleet(opts: { volunteer?: string } = {}): { impl: typeof fetch; seen: Seen[]; minted: () => number } {
   const seen: Seen[] = [];
   /** How many SIWE ceremonies reached the token endpoint. One per real re-mint. */
   let tokens = 0;
@@ -62,7 +62,13 @@ function scriptedFleet(): { impl: typeof fetch; seen: Seen[]; minted: () => numb
         status: 200, headers: { 'Content-Type': 'text/html' },
       });
     }
-    if (url === IDENTITY + '/challenges') return json({ nonce: 'nonce-1' });
+    // ★ A NONCE OF THE FORM IDENTITY ISSUES: hex, 64 characters (`issueChallenge` for `siwe`).
+    // `mintBearer` refuses one that is not 8+ letters or digits before signing it, as identity's
+    // own message parser refuses it after. This was `nonce-1`, which the live fleet never issues.
+    // `volunteer` makes `/challenges` also return an agreement statement nobody asked for.
+    if (url === IDENTITY + '/challenges') {
+      return json({ nonce: 'a1'.repeat(32), ...(opts.volunteer !== undefined ? { termsStatement: opts.volunteer } : {}) });
+    }
     if (url === RELAY + '/oauth/verify') return json({ redirect: 'http://127.0.0.1:1/callback?code=code-1&state=s' });
     if (url === RELAY + '/token') return json({ access_token: 'access-' + (++tokens), expires_in: 3600 });
     if (url === RELAY + '/mcp') {
@@ -127,6 +133,32 @@ describe('the OAuth client name the bot signs in under', () => {
     const b = await new BotSession(RELAY, IDENTITY, KEY, scriptedFleet().impl).open();
     expect(a.address).toBe(b.address);
     expect(a.pod).toBe(b.pod);
+  });
+});
+
+describe('the bot and the Hosted Terms', () => {
+  /**
+   * ★ THE BOT SIGNS IN AN ACCOUNT THAT EXISTS, AND IT NEVER AGREES TO ANYTHING. `mintBearer` now
+   * takes the operator's Hosted Terms agreement for the live drivers that create accounts, and
+   * those drivers read it from `INTEREGO_ACCEPT_HOSTED_TERMS_VERSION`. The bot is not one of them:
+   * its sign-in must stay exactly what it was even where that variable is set, and even when
+   * identity's reply carries an agreement statement.
+   */
+  it('asks for no terms version and signs the ordinary statement, whatever the environment or the reply', async () => {
+    const variable = 'INTEREGO_ACCEPT_HOSTED_TERMS_VERSION';
+    const before = process.env[variable];
+    process.env[variable] = '2026-11-06-r2';
+    try {
+      const { impl, seen } = scriptedFleet({ volunteer: 'I am at least 18 and agree to the Hosted Interego Terms of Service at https://interego.example/terms/2026-11-06-r2/' });
+      await new BotSession(RELAY, IDENTITY, KEY, impl).open();
+
+      expect(seen.filter((s) => s.url === IDENTITY + '/challenges').map((s) => s.body)).toEqual([{ purpose: 'siwe' }]);
+      const proof = seen.find((s) => s.url === RELAY + '/oauth/verify')?.body as Record<string, unknown> | undefined;
+      expect(String(proof?.['message']).split('\n')[3]).toBe('Sign in to Interego');
+    } finally {
+      if (before === undefined) delete process.env[variable];
+      else process.env[variable] = before;
+    }
   });
 });
 

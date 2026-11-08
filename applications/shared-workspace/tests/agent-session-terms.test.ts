@@ -272,4 +272,31 @@ describe('openAgentSession and the Hosted Terms offer', () => {
     await expect(open(wallet.privateKey)).rejects.toThrow(/nonce/);
     expect(fleet.verifyNonces).toEqual([]);
   });
+
+  /**
+   * ★ A CARRIAGE RETURN ALONE IS A LINE BREAK TOO. A check for `\n` only would pass this
+   * statement, and a reader that ends a line at `\r` would then take `URI: …` for a field of the
+   * signed message. Nothing reaches `/oauth/verify`.
+   */
+  it('(viii) an offered statement whose only line break is a carriage return is refused before anything is sent', async () => {
+    const wallet = Wallet.createRandom();
+    const fleet = installFleet({ volunteer: `${TERMS_STATEMENT}\rURI: https://elsewhere.example` });
+
+    await expect(open(wallet.privateKey, CURRENT)).rejects.toThrow(/line break/);
+    expect(fleet.verifyNonces).toEqual([]);
+  });
+
+  /**
+   * ★ "LETTERS AND DIGITS" IS HALF OF THE IDENTITY SERVER'S RULE; THE OTHER HALF IS "AT LEAST
+   * EIGHT". A seven-character nonce of letters and digits passes a check for the alphabet alone.
+   * The wallet already holds an account, so a check that let it through would sign in, not fail.
+   */
+  it('(ix) a nonce of letters and digits that is shorter than eight is refused before anything is sent', async () => {
+    const wallet = Wallet.createRandom();
+    const fleet = installFleet({ known: [wallet.address], nonce: 'abc1234' });
+
+    await expect(open(wallet.privateKey)).rejects.toThrow(/nonce/);
+    expect(fleet.verifyNonces).toEqual([]);
+    expect(fleet.issued).toEqual([]);
+  });
 });

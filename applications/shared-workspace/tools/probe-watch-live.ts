@@ -15,13 +15,17 @@
  * each holds.
  *
  *   npx tsx applications/shared-workspace/tools/probe-watch-live.ts
+ *
+ * Identity B's wallet is new, and hosted identity creates an account for a new wallet only with
+ * the operator's Hosted Terms agreement: see `INTEREGO_ACCEPT_HOSTED_TERMS_VERSION` in
+ * `applications/shared-workspace/tools/live-identity.ts`. Unset, that sign-in is refused.
  */
 
 import { createHash } from 'node:crypto';
 import { Wallet } from 'ethers';
 import { readFileSync } from 'node:fs';
 import { RelayMcpTransport, WorkspaceClient, nsIri, type RelayOAuthBearer } from '@interego/workspace-client';
-import { mintBearer } from './live-identity.js';
+import { mintBearer, mintBearerWithOperatorTerms } from './live-identity.js';
 
 const RELAY = process.env['INTEREGO_RELAY'] ?? 'https://relay.interego.xwisee.com';
 const IDENTITY = process.env['INTEREGO_IDENTITY'] ?? 'https://identity.interego.xwisee.com';
@@ -71,7 +75,7 @@ async function run(): Promise<number> {
 
   const b = Wallet.createRandom();
   log('identity B wallet      :', b.address, '(fresh — provisions a new pod)');
-  const bearerB = await mintBearer(RELAY, IDENTITY, b);
+  const bearerB = await mintBearerWithOperatorTerms(RELAY, IDENTITY, b);
   const clientB = new WorkspaceClient(RELAY, new RelayMcpTransport(RELAY, bearerB));
   await clientB.connect();
   const stB = await clientB.podStatus();

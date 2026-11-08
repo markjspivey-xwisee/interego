@@ -44,13 +44,17 @@
  *   2 — inconclusive: the control failed, so nothing about `/sse` was established.
  *
  *   npx tsx tools/probe-sse-mcp-handshake-live.ts
+ *
+ * Its wallets are new, and hosted identity creates an account for a new wallet only with the
+ * operator's Hosted Terms agreement: see `INTEREGO_ACCEPT_HOSTED_TERMS_VERSION` in
+ * `applications/shared-workspace/tools/live-identity.ts`. Unset, a run stops at the first sign-in.
  */
 
 import { Wallet } from 'ethers';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { SSEClientTransport } from '@modelcontextprotocol/sdk/client/sse.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
-import { mintBearer } from '../applications/shared-workspace/tools/live-identity.js';
+import { mintBearerWithOperatorTerms } from '../applications/shared-workspace/tools/live-identity.js';
 
 const RELAY = process.env['INTEREGO_RELAY'] ?? 'https://relay.interego.xwisee.com';
 const IDENTITY = process.env['INTEREGO_IDENTITY'] ?? 'https://identity.interego.xwisee.com';
@@ -115,7 +119,7 @@ async function run(): Promise<number> {
   head('a disposable identity, and a real bearer');
   const wallet = Wallet.createRandom();
   log('wallet   :', wallet.address, '(fresh — provisions its own pod)');
-  const bearer = await mintBearer(RELAY, IDENTITY, wallet);
+  const bearer = await mintBearerWithOperatorTerms(RELAY, IDENTITY, wallet);
   log('bearer   : minted, method', bearer.method);
   const authHeader = { Authorization: 'Bearer ' + bearer.accessToken };
 

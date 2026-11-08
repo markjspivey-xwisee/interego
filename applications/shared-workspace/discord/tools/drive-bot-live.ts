@@ -18,6 +18,10 @@
  *
  *   npx tsx applications/shared-workspace/discord/tools/drive-bot-live.ts
  *
+ * Its wallets are new, and hosted identity creates an account for a new wallet only with the
+ * operator's Hosted Terms agreement: see `INTEREGO_ACCEPT_HOSTED_TERMS_VERSION` in
+ * `applications/shared-workspace/tools/live-identity.ts`. Unset, a run stops at the first sign-in.
+ *
  * Every write is public and disposable. Nothing touches `u-eth-8f3b8e939600`.
  */
 
@@ -26,7 +30,7 @@ import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { RelayMcpTransport, WorkspaceClient, checkDelegation } from '@interego/workspace-client';
-import { mintBearer } from '../../tools/live-identity.js';
+import { mintBearerWithOperatorTerms } from '../../tools/live-identity.js';
 import { LinkStore } from '../src/links.js';
 import { beginLink, confirmLink, recordMessage, showWorkspace, startWorkspace, unlink, type Deps } from '../src/workspace.js';
 import { renderConfirm, renderRecord, renderShow, renderStart } from '../src/render.js';
@@ -47,7 +51,7 @@ interface Party { readonly pod: string; readonly agentId: string; readonly clien
 
 async function party(): Promise<Party> {
   const wallet = Wallet.createRandom();
-  const client = new WorkspaceClient(RELAY, new RelayMcpTransport(RELAY, await mintBearer(RELAY, IDENTITY, wallet)));
+  const client = new WorkspaceClient(RELAY, new RelayMcpTransport(RELAY, await mintBearerWithOperatorTerms(RELAY, IDENTITY, wallet)));
   await client.connect();
   const st = await client.podStatus();
   const pod = String(st['pod'] ?? '').replace(/\/$/, '').split('/').pop() ?? '';

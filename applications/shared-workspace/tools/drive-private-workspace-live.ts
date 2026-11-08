@@ -32,6 +32,10 @@
  *   npx esbuild applications/shared-workspace/tools/drive-private-workspace-live.ts \
  *     --bundle --format=cjs --platform=node --target=es2022 --outfile=/tmp/drive-private.cjs
  *   node /tmp/drive-private.cjs
+ *
+ * Its wallets are new, and hosted identity creates an account for a new wallet only with the
+ * operator's Hosted Terms agreement: see `INTEREGO_ACCEPT_HOSTED_TERMS_VERSION` in
+ * `applications/shared-workspace/tools/live-identity.ts`. Unset, a run stops at the first sign-in.
  */
 
 import { Wallet } from 'ethers';
@@ -43,7 +47,7 @@ import {
   type Viewer,
 } from '@interego/workspace-client';
 import { openerFor, sealedBindingCheck } from '@interego/workspace-client/opener';
-import { mintBearer, type Signer } from './live-identity.js';
+import { mintBearerWithOperatorTerms, type Signer } from './live-identity.js';
 
 const RELAY = process.env['INTEREGO_RELAY'] ?? 'https://relay.interego.xwisee.com';
 const IDENTITY = process.env['INTEREGO_IDENTITY'] ?? 'https://identity.interego.xwisee.com';
@@ -64,7 +68,7 @@ interface Party { readonly client: WorkspaceClient; readonly viewer: Viewer; rea
  * prove nothing about whether B can read A's writing.
  */
 async function party(label: string, wallet: Signer & { privateKey: string }): Promise<Party> {
-  const bearer = await mintBearer(RELAY, IDENTITY, wallet);
+  const bearer = await mintBearerWithOperatorTerms(RELAY, IDENTITY, wallet);
   const client = new WorkspaceClient(RELAY, new RelayMcpTransport(RELAY, bearer));
   await client.connect();
   const viewer = await readViewer(client);
