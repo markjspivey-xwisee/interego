@@ -1473,8 +1473,8 @@ const CHAT_APPS = [
     'When it asks, sign in with the same Interego account you use here.',
     'In a chat, type @ and choose Interego.',
   ], notes: [
-    "Your workspace's settings decide whether you can add one. If you don't see the option, use Copy for my AI on each step instead.",
-    "ChatGPT asks before each write unless you let it remember your choice for that chat. If Interego's tools look out of date, refresh it from its page in your app settings.",
+    "Whether you can add a connector depends on your plan or workspace settings. If you don't see the option, use Copy for my AI on each step instead.",
+    "ChatGPT asks before each write unless you let it remember your choice for that tool in that chat. If Interego's tools look out of date, refresh it from its page in your app settings.",
   ], guide: { href: 'https://developers.openai.com/api/docs/guides/custom-mcp-server', text: "OpenAI's guide to custom MCP servers" } },
 ];
 const CHAT_PRIVACY = 'The Interego connector passes everything your assistant reads and writes here, including conversation text, and the company behind your assistant sees it too, under your own account\'s terms.';
@@ -1633,7 +1633,7 @@ function connectAiDialog() {
     chatOffered() ? h('details', { class: 'disclosure', id: 'connect-limits' }, h('summary', { text: "What your assistant can and can't do here" }),
       h('div', { class: 'disclosure__body' }, h('ul', {},
         h('li', { text: 'It acts as you, through your Interego account. Each record says which app made it, for example "via ChatGPT".' }),
-        h('li', { id: 'connect-judge', text: "It can't assess your own practice, even in a new chat or told to act as a judge: it still acts as you. A judge is a different person, with their own Interego account, whom your admin appoints by Member ID." }),
+        h('li', { id: 'connect-judge', text: "It can't assess a session you started with your Interego account, even in a new chat or told to act as a judge: it still acts as you. A judge is a different person, with their own Interego account, whom your admin appoints by Member ID." }),
         h('li', { text: 'It never decides a score. Practice Evidence works out every result, and a reviewer signs off.' }),
         h('li', { id: 'connect-decisions', text: S.bridge.interegoSignIn.chatAgentsDecide === true
           ? 'This workspace also lets assistants approve rubrics, sign off reviews and change roles, so check what you ask for.'
@@ -2349,8 +2349,13 @@ function judgeMessage(v) {
     ],
     rules: [
       'Between the two steps, follow the request the first step returns. For every criterion give a level, quotes copied exactly from the learner\'s own lines, and a short rationale. Show me the levels and quotes in plain words and wait for my go-ahead before you save.',
-      'If saving is refused with binding-mismatch or chain-moved (the session changed after the first step), envelope-already-used or envelope-expired, or you lose track: '
-        + 'do the first step again and assess what it returns, never an earlier assessment, and show me before you save.',
+      // A save refused as already used, or one sent before the assistant lost track, may have gone
+      // through, and the first step shows no earlier assessment: assessing again would save a
+      // second one. Only a save refused because the session changed was certainly not kept.
+      "If saving is refused with envelope-already-used, or you lose track after sending a save (or can't tell whether you sent one): "
+        + "don't assess or save again. Tell me the assessment may already be saved, and stop.",
+      'If saving is refused with binding-mismatch or chain-moved (the session changed after the first step), and no save of this session has been accepted in this chat: '
+        + 'do the first step again and assess what it returns, never an earlier assessment, and show me before you save. If one has been accepted, tell me and stop.',
       "If this is my own practice session, stop: I can't assess it, in any chat or role. A reviewer signs off after me.",
     ],
   });

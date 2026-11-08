@@ -1,5 +1,35 @@
 # Changelog
 
+## 2026-11-08 — Practice Evidence: a judge's assistant never saves the same assessment twice
+
+The judge's message sent the assistant back to fetch the session and assess it
+again when a save was refused as already used, or when it lost track. In both
+cases the first save may already have been kept, and fetching the session shows
+no earlier assessment, so following the message could record a second judgment
+of the same session by the same judge. Now a save refused as already used, or
+one the assistant lost track of after sending it, ends with the assistant
+telling the judge the assessment may already be saved, and stopping. Only a
+save refused because the session changed sends it back to fetch the session,
+and only while no save of that session has been accepted in that chat. The
+guide and the README say the same.
+
+The copied prompts now tell an assistant to call sign_request with the step's
+payload as its only argument, since it also signs any other argument it is
+given. A new relay test runs the relay's own code for both ways, through the
+argument handling a chat app's tool call reaches, and shows that sign_request
+called that way signs the same fields as act with sign_payload. The shared test
+could not show this, since it gave both ways one stand-in signer. While the
+identity service cannot be reached, the two can differ in the subject pod field
+alone, which no bridge reads as the pod an act targets.
+
+The ChatGPT tab of the Connect dialog now says what the Claude tab says about
+whether a connector can be added (it depends on plan or workspace settings),
+the guide and the landing page include accepting ChatGPT's warning, and a
+remembered approval is described as covering one tool in one chat. The Connect
+dialog, the guide and the landing page say a learner's own assistant cannot
+assess a session the learner started with their Interego account, which is
+what the bridge checks: a session started with a wallet belongs to the wallet.
+
 ## 2026-11-08 — Practice Evidence: signing without sign_payload, ChatGPT's own setup steps, and who may judge
 
 A chat app can show the connector's act tool without its sign_payload option
@@ -16,15 +46,16 @@ The ChatGPT setup steps follow OpenAI's own guide to custom MCP servers,
 checked today, and link to it: Plugins, then Add custom MCP server, its Server
 URL and OAuth, create it as a plugin and install it, then choose it with @ in a
 chat. The Connect dialog adds that ChatGPT asks before each write unless told
-to remember the choice for that chat, and that refreshing the app from its
+to remember the choice for that tool in that chat, and that refreshing the app from its
 settings page fetches new tools. No page claims which plans allow custom
 connectors any more: whether a person can add one depends on their plan or
 workspace settings.
 
 The guide and the Connect dialog now say plainly that a judge is a different
 person, with their own Interego account, appointed by Member ID, and that a
-learner's own assistant cannot assess their session in a new chat or told to
-act as a judge, since it still acts as the learner. The guide also says that an
+learner's own assistant cannot assess a session the learner started with their
+Interego account, in a new chat or told to act as a judge, since it still acts
+as that account. The guide also says that an
 assessment is tied to the exact session, conversation and rubric the judge's
 assistant fetched. The start-up message no longer retries a refused save at the
 next turn number, which could save the same reply twice: after a refusal for a
@@ -32,7 +63,7 @@ turn out of order, a step already used, a stale step or a session that moved
 on, or after losing track, the assistant reads the conversation again and
 reconciles before it writes or saves another reply. The judge's message has it
 judge a new copy of the session when a save is refused because the session
-changed.
+changed, unless a save of that session already went through in that chat.
 
 ## 2026-11-08 — Ask: enrolled quiz review and owner learning maps
 

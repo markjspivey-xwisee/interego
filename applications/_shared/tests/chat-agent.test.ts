@@ -26,7 +26,7 @@ const JS = readFileSync(new URL('../chat-agent/chat-agent.js', import.meta.url),
 
 /** The rule for an act tool that shows no sign_payload option, word for word as a prompt carries it. */
 const SIGN_FALLBACK = 'If your act tool has no sign_payload option, do a signed step in two calls: call the connector\'s sign_request tool '
-  + 'with payload set to the step\'s payload, then call act with the same descriptor_url and action_iri and with payload set to exactly '
+  + 'with payload as its only argument, set to the step\'s payload, then call act with the same descriptor_url and action_iri and with payload set to exactly '
   + 'the _signature and _signed_payload it returned, unchanged. A plain step is the same act call without sign_payload.';
 const EXPORTS = ['actPrompt', 'agentAppName', 'extractJsonObject', 'nonceRule', 'requestAsText'];
 
@@ -310,6 +310,9 @@ describe('actPrompt', () => {
     expect(A.actPrompt({ affordancesUrl, steps: [plainStep], rules: ['A reviewer signs off after me.'] })).not.toContain('sign_request');
   });
 
+  // With one stub signer for both ways, this shows only that the pair passes through unchanged. Whether
+  // the relay's sign_request, called alone through its dispatcher, signs the same fields as act's
+  // composition is the relay's own test: deploy/mcp-relay/tests/sign-request-alone-signs-what-act-signs.test.ts.
   it("the two calls send what act's sign_payload: true sends: sign_request's two fields, unchanged, as the payload", async () => {
     const payload = { v: 1, action: 'urn:example:action:save-lines', pod_url: podUrl, nonce: 'save-lines-4-q8Xr2mVp7LkA9dTz', turnIndex: 4 };
     const signs: Record<string, unknown>[] = [];
@@ -321,7 +324,7 @@ describe('actPrompt', () => {
     const descriptorUrl = affordancesUrl;
     // sign_payload: true, as the relay composes it.
     const composed = await signedActPayload({ descriptor_url: descriptorUrl, action_iri: payload.action, sign_payload: true }, payload, signRequest);
-    // The two calls the prompt describes: sign_request with payload set to the step's payload, then
+    // The two calls the prompt describes: sign_request with payload as its only argument, then
     // act's payload set to exactly the _signature and _signed_payload it returned.
     const returned = JSON.parse(await signRequest({ payload })) as Record<string, unknown>;
     const byHand = { _signature: returned['_signature'], _signed_payload: returned['_signed_payload'] };

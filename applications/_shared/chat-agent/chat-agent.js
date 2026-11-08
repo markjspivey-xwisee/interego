@@ -55,10 +55,12 @@ const InteregoChatAgent = (() => {
    * How to do a signed step when the person's chat app shows an act tool with no sign_payload option
    * (an app can keep a stale copy of the connector's tools). sign_payload: true is the connector
    * signing the payload with its sign_request tool and acting with the result, so the same two calls,
-   * made by the assistant, send the same request.
+   * made by the assistant, send the same request. Payload is sign_request's only argument because it
+   * signs a caller's other top-level arguments too; deploy/mcp-relay/tests/
+   * sign-request-alone-signs-what-act-signs.test.ts shows the two ways sign the same fields.
    */
   const SIGN_FALLBACK = 'If your act tool has no sign_payload option, do a signed step in two calls: call the connector\'s sign_request tool '
-    + 'with payload set to the step\'s payload, then call act with the same descriptor_url and action_iri and with payload set to exactly '
+    + 'with payload as its only argument, set to the step\'s payload, then call act with the same descriptor_url and action_iri and with payload set to exactly '
     + 'the _signature and _signed_payload it returned, unchanged. A plain step is the same act call without sign_payload.';
 
   /** A rule that speaks of signing, so a prompt that carries it needs the two-call way too. */

@@ -1204,7 +1204,7 @@ const JARGON = /\b(pod|bridge|affordance|envelope|nonce|hypothetical|ratif\w*|co
 const CODES = /\b(EIP-191|IRI|DID)\b|HTTP \d{3}|urn:|https?:\/\//;
 /** What every copied prompt that can lead to a signed step says, for a chat app whose act tool shows no sign_payload. */
 const SIGN_FALLBACK = 'If your act tool has no sign_payload option, do a signed step in two calls: call the connector\'s sign_request tool '
-  + 'with payload set to the step\'s payload, then call act with the same descriptor_url and action_iri and with payload set to exactly '
+  + 'with payload as its only argument, set to the step\'s payload, then call act with the same descriptor_url and action_iri and with payload set to exactly '
   + 'the _signature and _signed_payload it returned, unchanged. A plain step is the same act call without sign_payload.';
 const plain = (where: string, text: string): void => {
   expect([text.match(JARGON)?.[0] ?? null, text.match(CODES)?.[0] ?? null], where).toEqual([null, null]);
@@ -1285,8 +1285,11 @@ describe('your own AI assistant: connect Claude or ChatGPT, or copy and paste; n
       'When it asks, sign in with the same Interego account you use here.',
       'In a chat, type @ and choose Interego.',
     ]);
-    expect(shownText(d)).toContain("Your workspace's settings decide whether you can add one. If you don't see the option, use Copy for my AI on each step instead.");
-    expect(shownText(d)).toContain("ChatGPT asks before each write unless you let it remember your choice for that chat. If Interego's tools look out of date, refresh it from its page in your app settings.");
+    // What decides whether a connector can be added, in the same words as the Claude tab: a personal account has no workspace to check.
+    expect([...d.querySelectorAll('#connect-panel-chatgpt .hint')].map((x) => x.textContent)).toContain("Whether you can add a connector depends on your plan or workspace settings. If you don't see the option, use Copy for my AI on each step instead.");
+    expect(shownText(d)).not.toContain("Your workspace's settings decide");
+    // A remembered approval covers one tool in one chat, as OpenAI's guide says, not the whole chat.
+    expect(shownText(d)).toContain("ChatGPT asks before each write unless you let it remember your choice for that tool in that chat. If Interego's tools look out of date, refresh it from its page in your app settings.");
     const guide = [...d.querySelectorAll('#connect-panel-chatgpt a')];
     expect(guide.map((a) => [a.textContent, a.getAttribute('href'), a.getAttribute('rel'), a.getAttribute('target')]))
       .toEqual([["OpenAI's guide to custom MCP servers", 'https://developers.openai.com/api/docs/guides/custom-mcp-server', 'noopener', null]]);
@@ -1295,8 +1298,10 @@ describe('your own AI assistant: connect Claude or ChatGPT, or copy and paste; n
     for (const tab of ['claude', 'chatgpt']) {
       expect(d.querySelector(`#connect-panel-${tab}`)?.textContent, tab).not.toMatch(/\bplans? (that|which) allows?\b|needs a plan|plan must|plans don't|Some \w+ plans|Plus|Pro\b|Business|Enterprise|Team plan/);
     }
-    // Who judges, in plain words: a different person, with their own account, appointed by Member ID; never your assistant, in any chat or role.
-    expect(d.querySelector('#connect-judge')?.textContent).toBe("It can't assess your own practice, even in a new chat or told to act as a judge: it still acts as you. A judge is a different person, with their own Interego account, whom your admin appoints by Member ID.");
+    // Who judges, in plain words: a different person, with their own account, appointed by Member ID; never your assistant on a
+    // session your Interego account started, in any chat or role. The bridge refuses by account, so the sentence names the account:
+    // a session started with a wallet belongs to the wallet.
+    expect(d.querySelector('#connect-judge')?.textContent).toBe("It can't assess a session you started with your Interego account, even in a new chat or told to act as a judge: it still acts as you. A judge is a different person, with their own Interego account, whom your admin appoints by Member ID.");
     // What it can and can't do: this workspace keeps the decisions in the web app, and says who sees what.
     (d.querySelector('#connect-limits') as HTMLDetailsElement).open = true;
     expect(d.querySelector('#connect-decisions')?.textContent).toBe('Approving rubrics, signing off reviews and changing roles happen here in the web app, not from a chat assistant.');
@@ -1469,10 +1474,21 @@ describe('your own AI assistant: connect Claude or ChatGPT, or copy and paste; n
     // Its nonce example is its own first signed step, at turn 0: judging has no turn, and the rule says "or 0".
     for (const says of [attemptIri, PEV_ACTION.judgePacket, PEV_ACTION.recordJudgment, 'usedPacketPrompt', 'wait for my go-ahead', `Workspace: ${nm.base}/`,
       'For example judge-packet-0-q8Xr2mVp7LkA9dTz,', SIGN_FALLBACK,
-      // A save refused because the session moved on is judged again from a new packet, never resent.
-      '- If saving is refused with binding-mismatch or chain-moved (the session changed after the first step), envelope-already-used or envelope-expired, or you lose track: '
-        + 'do the first step again and assess what it returns, never an earlier assessment, and show me before you save.',
       "If this is my own practice session, stop: I can't assess it, in any chat or role."]) expect(judge, says).toContain(says);
+    // A save that may already have gone through is never assessed and saved again: the first step
+    // shows no earlier assessment, so going back to it would save a second one of this session.
+    const judgeRules = judge.split('\n').filter((line) => line.startsWith('- '));
+    expect(judgeRules.filter((r) => r.includes('envelope-already-used'))).toEqual([
+      "- If saving is refused with envelope-already-used, or you lose track after sending a save (or can't tell whether you sent one): "
+        + "don't assess or save again. Tell me the assessment may already be saved, and stop.",
+    ]);
+    // Only a save refused because the session changed goes back to the first step, and only while no save of it has been accepted in that chat.
+    const again = judgeRules.filter((r) => /first step again|step 1 again|again from the first step/.test(r));
+    expect(again).toEqual([
+      '- If saving is refused with binding-mismatch or chain-moved (the session changed after the first step), and no save of this session has been accepted in this chat: '
+        + 'do the first step again and assess what it returns, never an earlier assessment, and show me before you save. If one has been accepted, tell me and stop.',
+    ]);
+    for (const maySaved of ['envelope-already-used', 'envelope-expired', 'lose track']) expect(again[0], maySaved).not.toContain(maySaved);
     expect(judge).not.toMatch(/For example [A-Za-z0-9-]+-4-/);
     expect(judge).not.toContain('The report was due Thursday');
     expect(judge).not.toContain('The feed was late again');
