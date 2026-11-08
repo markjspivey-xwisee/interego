@@ -41,7 +41,7 @@ export const LEARNING_NOTIFICATION_LIMITS = Object.freeze({ active: 8, targets: 
 const CALLBACK = '/i2idlx/learning/progress-notifications/';
 const CLOUD = 'https://cloud.scorm.com/api/v2';
 const SETTING = Object.freeze({ url: 'ApiRollupRegistrationPostBackUrl', type: 'ApiRollupRegistrationAuthType',
-  user: 'ApiRollupRegistrationAuthUser', password: 'ApiRollupRegistrationAuthPassword', format: 'ApiRollupRegistrationFormat' });
+  user: 'ApiRollupRegistrationAuthUser', passwordSetting: 'ApiRollupRegistrationAuthPassword', format: 'ApiRollupRegistrationFormat' });
 const KEYS: readonly string[] = Object.values(SETTING), IS_JSON = 'ApiRollupRegistrationIsJson';
 type Row = Record<string, unknown>;
 type Settings = Map<string, { value: string; explicit?: string; source?: string }>;
@@ -147,7 +147,7 @@ export class LearningProgressNotifications {
     return this.base + CALLBACK + linkId;
   }
   private expected(linkId: string, secret: string): Map<string, string> {
-    return new Map([[SETTING.url, this.callback(linkId)], [SETTING.type, 'httpbasic'], [SETTING.user, linkId], [SETTING.password, secret], [SETTING.format, 'course']]);
+    return new Map([[SETTING.url, this.callback(linkId)], [SETTING.type, 'httpbasic'], [SETTING.user, linkId], [SETTING.passwordSetting, secret], [SETTING.format, 'course']]);
   }
   private settingEqual(id: string, a: string, b: string): boolean { return id === SETTING.type || id === SETTING.format ? a.toLowerCase() === b.toLowerCase() : equal(a, b); }
   private ours(settings: Settings, expected: Map<string, string>, emptyUrl = false): boolean {
@@ -160,7 +160,7 @@ export class LearningProgressNotifications {
     return KEYS.every(id => {
       const setting = settings.get(id); if (!setting) return true;
       if (setting.explicit !== undefined || setting.source && setting.source !== 'default' && setting.value !== '') return false;
-      if (([SETTING.url, SETTING.user, SETTING.password] as string[]).includes(id)) return setting.value === '';
+      if (([SETTING.url, SETTING.user, SETTING.passwordSetting] as string[]).includes(id)) return setting.value === '';
       return id === SETTING.type ? setting.value === '' || setting.value.toLowerCase() === 'form' : true;
     });
   }
@@ -295,7 +295,7 @@ export class LearningProgressNotifications {
       settings = await this.settings(fresh, target, signal);
     }
     if (!settings || !partial()) fail(409, 'learning_notifications_cleanup_required');
-    for (const id of [SETTING.password, SETTING.user, SETTING.type, SETTING.format]) {
+    for (const id of [SETTING.passwordSetting, SETTING.user, SETTING.type, SETTING.format]) {
       const current = settings.get(id);
       if (current?.explicit !== undefined) {
         if (current.source !== 'registration' || !this.settingEqual(id, current.explicit, expected.get(id)!)) fail(409, 'learning_notifications_cleanup_required');

@@ -321,9 +321,11 @@ await test('owner map snapshots bind source and revision; mutations require an e
 await test('progress notification DTOs expose verified availability without callback secrets and mutations require confirmation', async () => {
   const expected = { link_id: 'own-link', course_id: 'course-a', version: 3 };
   const raw = { ...expected, notifications: { available: true, enabled: true, last_received_at: EXPIRES, notice: 'An authenticated update signal was received.',
-    callback_secret: 'PRIVATE-CALLBACK-SECRET', callback_url: 'https://private.example/callback' } };
+    callback_secret: 'fixture', callback_url: 'https://private.example/callback' } };
   const result = learningResponse('progress-notification-status', raw, expected);
-  assert.equal(result.notifications.enabled, true); assert.ok(!JSON.stringify(result).includes('PRIVATE-CALLBACK'));
+  assert.equal(result.notifications.enabled, true);
+  assert.equal(Object.hasOwn(result.notifications, 'callback_secret'), false);
+  assert.equal(Object.hasOwn(result.notifications, 'callback_url'), false);
   assert.throws(() => learningResponse('progress-notification-status', raw, { ...expected, course_id: 'another-course' }));
   assert.throws(() => learningResponse('progress-notification-status', { ...raw, notifications: { ...raw.notifications, available: false } }, expected));
   const { client, calls } = fixture(); await client.refresh(); const before = calls.length;

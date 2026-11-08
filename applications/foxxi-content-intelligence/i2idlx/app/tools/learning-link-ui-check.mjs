@@ -19,13 +19,14 @@ function fixture({ signedOut = false } = {}) {
   const intervals = new Map(), visibilityListeners = new Set(); let timerSerial = 0;
   const document = { visibilityState: 'visible', addEventListener: (_event, listener) => visibilityListeners.add(listener), removeEventListener: (_event, listener) => visibilityListeners.delete(listener) };
   let stateCursor = 0, refCursor = 0, effectCursor = 0, dirty = false, controller, generation = 0, history = [];
-  const provider = { status: 'active', missing: false, refusal: null, contentStatus: 'readable', reviewStatus: 'available', connectors: [], map: null,
+  const provider = { status: 'active', missing: false, refusal: null, contentStatus: 'readable', reviewStatus: 'available', reviewSubmission: 'completed', progressCompletion: 'COMPLETED', connectors: [], map: null,
     notificationAvailable: false, notificationEnabled: false, notificationReceivedAt: null };
   const reviewStatus = () => ({ status: provider.reviewStatus, count: provider.reviewStatus === 'available' ? 1 : 0,
     reason: provider.reviewStatus === 'available' ? 'Released completed provider result' : 'The owner has not released this review.' });
   const reviewResult = () => ({ ...reviewStatus(), observed_at: expires, records: provider.reviewStatus === 'available' ? [{
     citation_id: 'QUIZ1', activity_id: 'quiz-sco', interaction_id: 'record-code', question_label: 'Which code should you record?',
     learner_response: 'B', learner_response_label: 'GREEN-12', result: 'incorrect', observed_at: expires,
+    ...(provider.reviewSubmission ? { submission: provider.reviewSubmission } : {}),
     locations: [{ id: 'incident', label: 'Incident recording', source_file: 'incident.html' }] }] : [] });
   const readiness = () => ({ course_id: courseId, version: 3, checked_at: expires,
     enrollment: { status: 'verified', observed_at: expires }, content: { status: provider.contentStatus }, quiz_review: reviewStatus(),
@@ -80,7 +81,7 @@ function fixture({ signedOut = false } = {}) {
     }
     if (args.operation === 'delete-course-map') { provider.map = null; return response({ course_map: null, deleted: true }); }
     if (args.operation === 'progress') return response({ link_id: linkId, as_of: expires, records: [{ course_id: courseId,
-      title: courseTitle, version: 3, completion: 'COMPLETED', success: 'PASSED', score: 73, total_seconds: 90,
+      title: courseTitle, version: 3, completion: provider.progressCompletion, success: 'PASSED', score: 73, total_seconds: 90,
       source: 'SCORM Cloud', observed_at: expires }] });
     throw Error('Unimplemented fixture operation: ' + args.operation);
   } });
@@ -179,7 +180,7 @@ function fixture({ signedOut = false } = {}) {
     await h.click('Add prerequisite'); change(h, 'Prerequisite course 0 ' + suffix, JSON.stringify(['pre-course', 1])); change(h, 'Prerequisite relation 0 ' + suffix, 'required');
     change(h, 'Include course sequence ' + suffix, true); await h.click('Add course to sequence'); change(h, 'Sequence course 0 ' + suffix, JSON.stringify(['pre-course', 1]));
     await h.click('Add course to sequence'); change(h, 'Sequence course 1 ' + suffix, JSON.stringify([courseId, 3])); await h.click('Move course 2 up');
-    change(h, 'Release completed quiz review ' + suffix, true); await h.click('Add released question mapping');
+    change(h, 'Release completed or terminal quiz results ' + suffix, true); await h.click('Add released question mapping');
     change(h, 'Released question label 0 ' + suffix, 'Which code should you record?'); change(h, 'Released question section 0 ' + suffix, section);
     change(h, 'Review activity ID 0 ' + suffix, 'quiz-sco'); change(h, 'Review interaction ID 0 ' + suffix, 'record-code');
     await h.click('Add response label for question 1'); change(h, 'Response code 0 0 ' + suffix, 'B'); change(h, 'Response label 0 0 ' + suffix, 'GREEN-12');
@@ -318,6 +319,7 @@ function change(h, name, value) { const node = field(h, name); assert.ok(!node.p
     await h.click('Check my released quiz review');
     assert.ok(text(h.controller.panel).includes('Your recorded response: GREEN-12'));
     assert.ok(text(h.controller.panel).includes('Recorded result: incorrect'));
+    assert.ok(text(h.controller.panel).includes('Provider reports this activity completed. This does not establish overall course completion.'));
     assert.equal(field(h, 'Share my released quiz review with AI').props.checked, false);
     assert.equal(h.modelCalls.length, 1, 'Viewing released results must not send them to AI.');
     change(h, 'Share selected enrolled course passages with AI', false);
@@ -334,6 +336,24 @@ function change(h, name, value) { const node = field(h, name); assert.ok(!node.p
     assert.equal(h.history().length, 0);
     assert.ok(!h.all().some(node => node.props['data-testid'] === 'learner-citations'));
     process.stdout.write('PASS released review uses a separate unchecked AI opt-in, exact own result scope and immediate policy-change clearing\n');
+  } finally { h.cleanup(); }
+}
+
+{
+  const h = await selectedFixture();
+  try {
+    h.provider.reviewSubmission = 'terminal-lesson-status'; h.provider.progressCompletion = 'INCOMPLETE';
+    await h.click('Check my progress'); await h.click('Check my released quiz review');
+    assert.ok(text(h.controller.panel).includes('Completion: INCOMPLETE'));
+    assert.ok(text(h.controller.panel).includes('Provider reports a terminal lesson status. This does not establish overall course completion.'));
+    assert.ok(!text(h.controller.panel).includes('Provider reports this activity completed.'));
+    assert.equal(field(h, 'Share my released quiz review with AI').props.checked, false);
+    assert.equal(h.modelCalls.length, 1, 'Viewing terminal results must not implicitly share them.');
+    h.provider.reviewSubmission = null; await h.click('Check my released quiz review');
+    assert.ok(text(h.controller.panel).includes('Completion basis not supplied. Overall course completion is not established here.'));
+    assert.ok(!text(h.controller.panel).includes('Provider reports this activity completed.'));
+    assert.ok(!text(h.controller.panel).includes('Provider reports a terminal lesson status.'));
+    process.stdout.write('PASS terminal and unspecified review bases never imply activity submission or overall course completion\n');
   } finally { h.cleanup(); }
 }
 

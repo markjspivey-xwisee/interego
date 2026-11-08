@@ -72,7 +72,7 @@ export async function readReleasedQuizReview(access: LearningAccess, courseId: s
       submission: activity.submission, locations });
   }
   return { status: records.length ? 'available' : 'no-completed-results', count: records.length, records, observed_at: review.observedAt,
-    reason: records.length ? 'Provider results for your own submitted activities, limited to the owner-released course map. Repeated records remain in provider order; this is not a reconstructed attempt history.'
+    reason: records.length ? 'Provider results for your own completed or terminal-status activities, limited to the owner-released course map. A terminal lesson status does not independently prove a submission event or overall course completion. Repeated records remain in provider order; this is not a reconstructed attempt history.'
       : 'No mapped completed or terminal submitted activity results were returned. In-progress activities and unreleased questions are excluded.' };
 }
 
