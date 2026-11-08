@@ -53,7 +53,7 @@
           <li class="step"><p class="step__text">Open your workspace link (the address your admin sent you) and press <strong>Sign in with your Interego account</strong>. You confirm with your passkey on Interego’s own page, then come straight back.</p></li>
           <li class="step"><p class="step__text">If you see <strong>One more step</strong>, copy your Interego ID and send it to your admin. Once they’ve added you, refresh the page.</p></li>
           <li class="step"><p class="step__text">Open <strong>Home</strong>. Your checklist shows what to do first for your role.</p></li>
-          <li class="step"><p class="step__text">Optional: connect Claude or ChatGPT (see <a href="#assistants">below</a>).</p></li>
+          {{#chat_ready}}<li class="step"><p class="step__text">Optional: connect Claude or ChatGPT (see <a href="#assistants">below</a>).</p></li>{{/chat_ready}}
         </ol>
         <div class="callout callout--info">{{icon:info}}<p class="callout__title">Got a link to a task?</p><p class="callout__body">Sign in from that link and we’ll open the task for you.</p></div>
       </section>
@@ -80,7 +80,7 @@
         <p>Open <strong>Map a process</strong>. Choose <strong>By hand</strong> and type each step people actually do, starting each with a verb. Or choose <strong>From a procedure document</strong>:</p>
         <ol>
           <li>Paste the document, or load a .txt or .md file.</li>
-          <li>Under <strong>Have your AI draft the map</strong>, choose how. <strong>In Claude or ChatGPT</strong>, with the Interego connector: press <strong>Copy the message for my assistant</strong> and paste it into a chat. Your assistant drafts the map, asks you who does each task, and records it; then open <strong>Processes</strong> to check it. This works for documents up to 20,000 characters, and stores the document’s text with the map. Or <strong>Copy and paste</strong>, with any chat app: press <strong>Copy the message for my AI</strong>, paste it into your AI assistant, then paste its whole answer under <strong>Paste your AI’s answer</strong> and press <strong>Fill the tasks from the answer</strong>.</li>
+          <li>{{#chat_ready}}Under <strong>Have your AI draft the map</strong>, choose how. <strong>In Claude or ChatGPT</strong>, with the Interego connector: press <strong>Copy the message for my assistant</strong> and paste it into a chat. Your assistant drafts the map, asks you who does each task, and records it; then open <strong>Processes</strong> to check it. This works for documents up to 20,000 characters, and stores the document’s text with the map. Or <strong>Copy and paste</strong>, with any chat app: press{{/chat_ready}}{{^chat_ready}}Under <strong>Have your AI draft the map</strong>, with any chat app: press{{/chat_ready}} <strong>Copy the message for my AI</strong>, paste it into your AI assistant, then paste its whole answer under <strong>Paste your AI’s answer</strong> and press <strong>Fill the tasks from the answer</strong>.</li>
           <li>Say who drafted the map, check that every quote shows “Source checked”, then sign.</li>
         </ol>
         <h3>2. Get confirmations</h3>
@@ -159,17 +159,16 @@
 
       <section class="help-section" id="assistants" aria-labelledby="assistants-title">
         <h2 id="assistants-title">Using Claude or ChatGPT</h2>
-        <p>Add the Interego connector once, and your assistant can work in Work Redesign for you. There’s no API key and nothing to install. Your admin adds you by your Interego ID: your assistant acts as your Interego account, never as a wallet.</p>
-        {{#chat_ready}}<ol class="steps steps--compact">
+        {{#chat_ready}}<p>Add the Interego connector once, and your assistant can work in Work Redesign for you. There’s no API key and nothing to install. Your admin adds you by your Interego ID: your assistant acts as your Interego account, never as a wallet.</p>
+        <ol class="steps steps--compact">
           <li class="step"><p class="step__text">In Claude, open <strong>Settings → Connectors → Add custom connector</strong>. In ChatGPT, open <strong>Settings → Connectors → Add</strong>, on a plan that allows custom connectors.</p></li>
           <li class="step"><p class="step__text">Name it <strong>Interego</strong> and paste <code class="connector-url">{{connector_url}}</code></p></li>
           <li class="step"><p class="step__text">Connect, and when it asks, sign in with the same Interego account you use for Work Redesign.</p></li>
-          <li class="step"><p class="step__text">Tell your assistant this workspace’s address: <code class="connector-url">{{base}}</code>. In the app, <strong>Use your AI assistant</strong> copies it, with everything else your assistant needs.</p></li>
+          <li class="step"><p class="step__text">Tell your assistant this workspace’s address: <code class="connector-url">{{base}}</code> In the app, <strong>Use your AI assistant</strong> copies it, with everything else your assistant needs.</p></li>
         </ol>
         <p class="assistants__note">In each new chat, turn on Interego from the chat’s tools menu (+). No connector option on your plan? You can still draft a process map with copy and paste: in <strong>Map a process</strong>, choose <strong>From a procedure document</strong>, then <strong>Copy and paste</strong>.</p>
         <h3>From the app</h3>
-        <p>Open your account menu and choose <strong>Use your AI assistant</strong>. It shows the connector address, copies this workspace’s details for your assistant, and has messages to start from. To draft a process map, use <strong>Map a process › From a procedure document › Copy the message for my assistant</strong>: the message carries the document and every step. Your answers to the seven questions and every number in a plan must be yours: your assistant asks, you answer.</p>{{/chat_ready}}
-        {{^chat_ready}}<p class="assistants__note">This workspace isn’t set up for connecting Claude or ChatGPT yet. Ask your workspace provider. You can still draft a process map with copy and paste, in any chat app: in <strong>Map a process</strong>, choose <strong>From a procedure document</strong>, then <strong>Copy and paste</strong>.</p>{{/chat_ready}}
+        <p>Open your account menu and choose <strong>Use your AI assistant</strong>. It shows the connector address, copies this workspace’s details for your assistant, and has messages to start from. To draft a process map, use <strong>Map a process › From a procedure document › Copy the message for my assistant</strong>: the message carries the document and every step. Your answers to the seven questions and every number in a plan must be yours: your assistant asks, you answer.</p>
         <p>The Interego connector passes everything your assistant reads and writes here, including your documents, and the company behind your assistant sees it too, under your own account’s terms.</p>
         <h3>Things you can ask it</h3>
         <ul>
@@ -179,7 +178,10 @@
           <li>“Propose a plan where an agent drafts the coding and Dee decides, then price it.”</li>
           <li>“Submit the plan for approval.”</li>
         </ul>
-        <div class="callout callout--neutral">{{icon:shield}}<p class="callout__title">What stays in the Work Redesign app</p><p class="callout__body">For safety, the actions that change who may do what can be taken only in the Work Redesign app, not from a chat assistant: approving or declining a decision, changing people and roles, recording results, and granting or withdrawing AI permissions. Your workspace provider can change this setting. When your assistant records a process map from chat, the document’s text is stored with the record.</p></div>
+        <div class="callout callout--neutral">{{icon:shield}}<p class="callout__title">What stays in the Work Redesign app</p><p class="callout__body">For safety, the actions that change who may do what can be taken only in the Work Redesign app, not from a chat assistant: approving or declining a decision, changing people and roles, recording results, and granting or withdrawing AI permissions. Your workspace provider can change this setting. When your assistant records a process map from chat, the document’s text is stored with the record.</p></div>{{/chat_ready}}
+        {{^chat_ready}}<p>Work Redesign runs no AI of its own and never asks for an API key. Your own AI assistant does any drafting, on your own subscription, and Work Redesign checks everything it records.</p>
+        <p class="assistants__note">This workspace isn’t set up for connecting Claude or ChatGPT yet. Ask your workspace provider. You can still draft a process map with copy and paste, in any chat app: in <strong>Map a process</strong>, choose <strong>From a procedure document</strong>, then <strong>Copy and paste</strong>.</p>
+        <p>When you paste a document into your AI assistant, the company behind your assistant sees it too, under your own account’s terms.</p>{{/chat_ready}}
       </section>
 
       <section class="help-section" id="data" aria-labelledby="data-title">
@@ -278,7 +280,7 @@
       <div>{{brand}}<p class="site-footer__about">Decide which work to hand to AI, price it honestly, and keep a record your people can check.</p></div>
       <div><p class="site-footer__heading">Product</p><ul class="site-footer__links">
         <li><a href="/#how-it-works">How it works</a></li><li><a href="/#trust">Built for trust</a></li>
-        <li><a href="#assistants">Use it from Claude or ChatGPT</a></li><li><a href="#limits">When not to use it</a></li>
+        <li><a href="#assistants">{{#chat_ready}}Use it from Claude or ChatGPT{{/chat_ready}}{{^chat_ready}}Your own AI assistant{{/chat_ready}}</a></li><li><a href="#limits">When not to use it</a></li>
         <li><a href="{{sibling_url}}">Also from Interego: {{sibling_name}}</a></li></ul></div>
       <div><p class="site-footer__heading">Get started</p><ul class="site-footer__links">
         <li><a href="/ui">Sign in</a></li><li><a href="{{identity_url}}">Create an Interego account</a></li>

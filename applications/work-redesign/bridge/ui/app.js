@@ -775,7 +775,7 @@ function fillSummary(fill) {
  * pod. Reads only. When this signer holds a fresh signed read for this pod, it goes as
  * read_envelope in the POST body of wrd.read_envelope_template, never in a URL, so the bridge
  * fills the whole template; without one (or if the bridge refuses it), the unsigned GET
- * wrd.envelope_template carries only the shape and the head binding.
+ * wrd.envelope_template carries only the shape and the head binding. Opened from a form's panel, it closes back to that form, as it was.
  */
 async function showPayload(intent, args) {
   const base = { intent, pod_url: S.pod || undefined, ...(args || {}) };
@@ -796,7 +796,7 @@ async function showPayload(intent, args) {
       `${r.body.signing ?? ''} Sent to ${r.body.toolName ?? ''}. Fields still yours to decide: ${fill.join(', ') || 'none'}.`,
       h('h4', { text: 'Template, filled from the pod' }), h('pre', { text: JSON.stringify(r.body.template, null, 2) }),
       Object.keys(r.body.context ?? {}).length ? [h('h4', { text: 'What the bridge read to fill it' }), h('pre', { text: JSON.stringify(r.body.context, null, 2) })] : null,
-      h('h4', { text: 'JSON Schema' }), h('pre', { text: JSON.stringify(r.body.schema, null, 2) }))));
+      h('h4', { text: 'JSON Schema' }), h('pre', { text: JSON.stringify(r.body.schema, null, 2) }))), panelToReturnTo());
 }
 const payloadButton = (intent, args) => btn('See exactly what you\'re signing', { variant: 'secondary', on: () => showPayload(intent, args), attrs: { title: 'The precise information your signature will cover. Nothing is sent until you press the main button.' } });
 
@@ -1080,6 +1080,10 @@ async function signOut() {
 function render() {
   const root = document.getElementById('app');
   if (!root) return;
+  // A panel's own node is drawn again, not rebuilt: what had focus in it keeps it through a redraw (a refresh landing while
+  // a field is typed in, or while a button in it waits for its answer), which moving the node would otherwise take away.
+  // Taken before the new frame is built, since building it already moves the node out of the page.
+  const focused = document.activeElement;
   let nodes;
   let title;
   if (S.bootError) { nodes = unreachableView(); title = 'Workspace unreachable'; }
@@ -1091,6 +1095,7 @@ function render() {
     title = iri ? taskBy(iri)?.name ?? 'Task' : TITLES[S.tab] ?? 'Home';
   }
   root.replaceChildren(...nodes.flat(Infinity).filter(Boolean));
+  if (focused && focused !== document.body && focused.isConnected && document.activeElement !== focused) focused.focus({ preventScroll: true });
   document.title = `${title} · Work Redesign`;
   if (S.panel?.focus) { S.panel.focus = false; document.getElementById('panel-title')?.focus(); }
   // The answer to an action shows at the top of the view, often above the button pressed: bring it into view, and focus it once it is in.
@@ -1395,36 +1400,86 @@ function notAddedView() {
   ];
 }
 
-/** A form opened over the view (it stays until closed or its action succeeds). Escape closes it, as its Close button does. */
+/** A field in a panel that something can be typed or chosen in (a read-only copy box is not one). */
+const EDITABLE = 'input:not([readonly]):not([type="hidden"]), textarea:not([readonly]), select';
+/**
+ * A panel opened over the view (it stays until closed or its action succeeds). Escape closes one that holds nothing to type
+ * or choose in (the AI assistant's set-up, "Copy this", "Exactly what you're signing"), as its Close button does; in a form
+ * it does nothing, so one key never throws away what was typed.
+ */
 function panelNode() {
   if (!S.panel) return null;
-  return h('section', { class: 'card card--highlight panel', 'aria-labelledby': 'panel-title', on: { keydown: (e) => { if (e.key === 'Escape') { e.preventDefault(); closePanel(); } } } },
+  const section = h('section', { class: 'card card--highlight panel', 'aria-labelledby': 'panel-title', on: { keydown: (e) => {
+    if (e.key !== 'Escape' || section.querySelector(EDITABLE)) return;
+    e.preventDefault();
+    closePanel();
+  } } },
     h('div', { class: 'card__header' }, h('h2', { class: 'card__title', id: 'panel-title', tabindex: '-1', text: S.panel.title }),
       h('button', { type: 'button', class: 'btn btn--ghost btn--icon btn--sm', 'aria-label': 'Close', on: { click: closePanel } }, icon('close', 'sm'))),
     h('div', { class: 'card__body' }, S.panel.node));
+  return section;
+}
+/** A button's lasting name across redraws: what it acts on and what it does. A row's "Edit" is that row's, so a panel it opened gives focus back to it. */
+const returnKey = (...parts) => ({ 'data-return': parts.join(' ') });
+/** The buttons in the view (not in a panel or the account menu) whose text is `text`, in page order. */
+const viewButtons = (text) => [...document.querySelectorAll('#app button')].filter((b) => b.textContent === text && !b.closest('#account-menu, .panel'));
+/**
+ * What opened a panel, so closing it can put focus back there: the account menu's button for one of its items; else the
+ * button itself while it is still on the page (a panel's own buttons stay while a panel opened over it is shown), and,
+ * for the next redraw, its data-return key (returnKey) or, without one, its text and place among the view's buttons with that text.
+ */
+function openerOf(el) {
+  if (!el || el === document.body || !el.closest?.('#app')) return null;
+  if (el.closest('#account-menu')) return { menu: true };
+  const text = el.textContent ?? '';
+  return { el, key: el.getAttribute('data-return'), text, nth: viewButtons(text).indexOf(el) };
+}
+/** The view's heading, focusable by script: where focus goes when what opened a panel is gone. */
+function viewHeading() {
+  const title = document.querySelector('#app .page-title');
+  title?.setAttribute('tabindex', '-1');
+  return title;
+}
+/** Focus what opened a panel (openerOf), opening any disclosure it sits in; when it is gone or disabled, `fallback`, else the view's heading. */
+function refocus(to, fallback = null) {
+  let target = null;
+  if (to?.menu) target = document.querySelector('.user-button');
+  else if (to?.el?.isConnected) target = to.el;
+  else if (to?.key) target = [...document.querySelectorAll('#app [data-return]')].find((b) => b.getAttribute('data-return') === to.key) ?? null;
+  else if (to && to.nth >= 0) target = viewButtons(to.text)[to.nth] ?? null;
+  for (let d = target?.closest('details'); d; d = d.parentElement?.closest('details')) d.open = true;
+  if (!target || target.disabled) target = fallback ?? viewHeading();
+  // A smooth scroll still under way (the panel's own, to the top, when it is closed straight after it opened) would carry
+  // the page away from what is focused here: stop it where it is first, so focusing brings the target into view.
+  try { window.scrollTo({ top: window.scrollY, behavior: 'instant' }); } catch { /* a browser without instant scrolling */ }
+  target?.focus();
 }
 /**
- * Open a panel over the view, remembering what opened it (a button's text; the account menu's button for one of its items),
- * so closing it puts focus back there. `back`: a panel to reopen when this one closes (copyText's "Copy this").
+ * Open a panel over the view, remembering what opened it (openerOf), so closing it puts focus back there. `back`: a panel
+ * to reopen when this one closes (copyText's "Copy this", showPayload's "Exactly what you're signing"), with focus on the
+ * button in it that opened this one.
  */
 function openPanel(title, node, back = null) {
-  const from = document.activeElement;
-  const returnTo = from && from !== document.body && from.closest?.('#app') ? { text: from.textContent ?? '', menu: Boolean(from.closest('#account-menu')) } : null;
-  S.panel = { title, node, focus: true, returnTo: back ? back.returnTo : returnTo, back };
+  const opener = openerOf(document.activeElement);
+  S.panel = { title, node, focus: true, returnTo: back ? back.returnTo : opener, back, backTo: back ? opener : null };
   render();
   window.scrollTo({ top: 0 });
 }
+/** The panel shown now, as a panel to go back to (`back` for openPanel): the one under "Copy this" when that is what is shown. */
+const panelToReturnTo = () => (S.panel && !S.panel.back ? { title: S.panel.title, node: S.panel.node, returnTo: S.panel.returnTo, back: null } : S.panel?.back ?? null);
 /** Close the panel: back to the panel it was opened over, if any, else to the view, with focus on what opened it. */
 function closePanel() {
   const p = S.panel;
   if (!p) return;
-  if (p.back) { S.panel = { ...p.back, focus: true }; render(); return; }
+  if (p.back) {
+    S.panel = { ...p.back, focus: true };
+    render();
+    refocus(p.backTo, document.getElementById('panel-title'));
+    return;
+  }
   S.panel = null;
   render();
-  const to = p.returnTo;
-  const target = !to ? null : to.menu ? document.querySelector('.user-button')
-    : [...document.querySelectorAll('#app button')].find((b) => b.textContent === to.text && !b.closest('#account-menu'));
-  target?.focus();
+  refocus(p.returnTo);
 }
 
 function goTab(id) {
@@ -1461,8 +1516,7 @@ const COPY_BY_HAND = 'This browser didn\'t let the page copy it. Select all of t
 async function copyText(s, what = 'Copied to your clipboard') {
   try { await navigator.clipboard.writeText(s); toast('Copied', what); }
   catch {
-    const from = S.panel && !S.panel.back ? { title: S.panel.title, node: S.panel.node, returnTo: S.panel.returnTo, back: null } : S.panel?.back ?? null;
-    openPanel('Copy this', [hint(COPY_BY_HAND), h('textarea', { value: s, readOnly: true, class: 'textarea textarea--tall', 'aria-label': 'The text to copy' })], from);
+    openPanel('Copy this', [hint(COPY_BY_HAND), h('textarea', { value: s, readOnly: true, class: 'textarea textarea--tall', 'aria-label': 'The text to copy' })], panelToReturnTo());
   }
 }
 
@@ -2061,7 +2115,7 @@ function taskNotes(t, ...extra) {
 
 function predictabilityCell(t, canSort) {
   const c = t.classification;
-  const sortBtn = () => h('div', null, btn('Sort by predictability', { variant: 'link', size: 'sm', on: () => classifyPanel(t) }));
+  const sortBtn = () => h('div', null, btn('Sort by predictability', { variant: 'link', size: 'sm', on: () => classifyPanel(t), attrs: returnKey(t.taskIri, 'sort') }));
   if (!c) return [h('span', { class: 'text-secondary', text: 'Not sorted yet' }), canSort ? sortBtn() : null];
   if (c.state !== 'ok') return [note('This answer was changed outside the app: sort again', 'danger'), canSort ? sortBtn() : null];
   const [st, tone] = CLASS_STATUS[c.status] ?? [c.status, ''];
@@ -2119,10 +2173,10 @@ function tasksView() {
       td(null, h('div', { class: 'stack stack--sm' }, taskStatus(t.status),
         t.namedParties.map((p) => person(p, false)), (t.owedRatification ?? []).map((p) => person(p, true)),
         t.revision ? h('span', { class: 'table__secondary', text: `Answers ${plural(t.revision.answers.length, 'dispute')}` }) : null,
-        (named || owed) && !myResponse(t, me) && t.status !== 'retired' ? h('div', null, btn('Confirm or dispute', { variant: 'link', size: 'sm', on: () => ratifyPanel(t, 'description') })) : null)),
+        (named || owed) && !myResponse(t, me) && t.status !== 'retired' ? h('div', null, btn('Confirm or dispute', { variant: 'link', size: 'sm', on: () => ratifyPanel(t, 'description'), attrs: returnKey(t.taskIri, 'confirm') })) : null)),
       td(null, predictabilityCell(t, canSort)),
       td({ class: 'actions' }, h('div', { class: 'row-actions' }, btn('Open', { size: 'sm', on: () => { location.hash = `task=${encodeURIComponent(t.taskIri)}`; } }),
-        btn('Copy link', { variant: 'ghost', size: 'sm', on: () => copyText(new URL(t.link, location.href).href, 'Task link') }))));
+        btn('Copy link', { variant: 'ghost', size: 'sm', on: () => copyText(new URL(t.link, location.href).href, 'Task link'), attrs: returnKey(t.taskIri, 'copy-link') }))));
   });
   return [
     header, picker, summary,
@@ -2870,7 +2924,7 @@ function captureResultNode(b) {
   if (!b?.tasks) return null;
   return h('ul', { class: 'list capture-result' }, b.tasks.map((t) => h('li', { class: 'list__item' },
     h('span', { class: 'list__main' }, h('span', { class: 'list__title', text: t.name })), h('span', { class: 'list__end' }, quotesBadge(t.quoteStatus),
-      btn('Copy link for the people named', { variant: 'ghost', size: 'sm', on: () => copyText(new URL(t.link, location.href).href, 'Task link') })))));
+      btn('Copy link for the people named', { variant: 'ghost', size: 'sm', on: () => copyText(new URL(t.link, location.href).href, 'Task link'), attrs: returnKey(t.link, 'copy-link') })))));
 }
 
 // ── Plans: who does each task next ────────────────────────────────────────────────────────
@@ -2991,7 +3045,7 @@ function planCard(p) {
         const [st, tone] = ASSIGNMENT_STATE[a.state] ?? [a.label, ''];
         return h('div', { class: 'assignment' }, h('span', { text: `${labelOf(a.personAddress)} on ${taskName(a.taskIri)}` }), status(st, tone), a.note ? h('span', { class: 'text-secondary text-sm', text: `“${a.note}”` }) : null,
           a.personAddress === me && a.state === 'not-acknowledged' ? h('span', { class: 'btn-group' }, btn('Accept assignment', { variant: 'primary', size: 'sm', on: () => acknowledge(p, a.taskIri, 'acknowledge') }),
-            btn('Object…', { variant: 'danger-quiet', size: 'sm', on: () => objectPanel(p, a.taskIri) })) : null);
+            btn('Object…', { variant: 'danger-quiet', size: 'sm', on: () => objectPanel(p, a.taskIri), attrs: returnKey(p.planIri, a.taskIri, 'object') })) : null);
       })) : null));
 }
 
@@ -3615,7 +3669,7 @@ function agentsView() {
         ? h('div', { class: 'card' }, emptyState({ icon: 'check', title: 'No AI work waiting for review', text: 'Work an agent does on its own appears here until a person reviews it. Unreviewed work counts toward nothing.', plain: true }))
         : h('div', { class: 'card' }, h('ul', { class: 'list' }, waiting.map((a) => h('li', { class: 'list__item' },
           h('span', { class: 'list__main' }, h('span', { class: 'list__title', text: `${labelOf(a.agentAddress)} on ${taskName(a.taskIri)}` }), h('span', { class: 'list__meta', text: kindLabel(a.taskKind) })),
-          h('span', { class: 'list__end' }, sampleBadge(a), btn('Review', { variant: 'primary', size: 'sm', on: () => reviewPanel(a), disabled: !reviewer || ownsAgent(a.agentAddress), why: ownsAgent(a.agentAddress) ? 'You own this agent, so someone else must review its work.' : 'Only process leads and approvers review AI work.' })))))) ),
+          h('span', { class: 'list__end' }, sampleBadge(a), btn('Review', { variant: 'primary', size: 'sm', on: () => reviewPanel(a), attrs: returnKey(a.runIri, 'review'), disabled: !reviewer || ownsAgent(a.agentAddress), why: ownsAgent(a.agentAddress) ? 'You own this agent, so someone else must review its work.' : 'Only process leads and approvers review AI work.' })))))) ),
     viewSection('AI work so far', '', (d.runs ?? []).length === 0 ? h('p', { class: 'text-tertiary', text: 'No AI work recorded yet.' })
       : table(['AI agent', 'Type of task', 'AI model', '#Reviewed', '#Done on its own', 'Cost reported by the AI (reviewed work only)'], (d.runs ?? []).map((r) => h('tr', null,
         td(null, h('span', { class: 'table__primary', text: labelOf(r.agentAddress) })), td(null, kindLabel(r.taskKind)), td(null, r.model), td({ class: 'num' }, String(r.reviewed)), td({ class: 'num' }, String(r.actedUnderGrant)),
@@ -3632,7 +3686,7 @@ function agentsView() {
             g.chainUnreadable ? note(g.chainUnreadable, 'danger', 'div') : null),
           td(null, h('span', { class: 'text-sm', text: `When granted: ${g.evaluation.samples} reviewed · ${pct(g.evaluation.acceptedShare)} accepted · ${g.evaluation.distinctConfirmers} different reviewers · ${g.evaluation.readyClaims ?? '—'} "ready" claims, ${pct(g.evaluation.readyClaimPrecision)} agreed` }),
             h('span', { class: 'table__secondary', text: `From ${g.evidenceTaskIris.map(taskName).join(', ')}` })),
-          td({ class: 'actions' }, g.status === 'granted' ? btn('Withdraw…', { variant: 'danger-quiet', size: 'sm', on: () => revokePanel(g), disabled: !can('approver'), why: WHY.approver }) : null))), { label: 'AI permissions' }),
+          td({ class: 'actions' }, g.status === 'granted' ? btn('Withdraw…', { variant: 'danger-quiet', size: 'sm', on: () => revokePanel(g), attrs: returnKey(g.grantIri, 'withdraw'), disabled: !can('approver'), why: WHY.approver }) : null))), { label: 'AI permissions' }),
       (d.grants ?? []).length ? techDetails('Technical details', (d.grants ?? []).map((g) => `${labelOf(g.agentAddress)} on ${g.taskKind}: ${g.status}; ${g.why}${g.revokedAt ? `; revoked ${when(g.revokedAt)}: ${g.revocationWhy}` : ''}`)) : null),
     h('section', { class: 'card view-section', 'aria-labelledby': 'grant-title' }, h('div', { class: 'card__body stack' },
       h('h2', { class: 'card__title', id: 'grant-title', text: 'Grant AI permission' }),
@@ -3702,8 +3756,8 @@ function rolesView() {
   const retire = (k) => confirmPanel(`Retire "${k.label}"?`,
     'It can no longer be chosen for a task. Tasks and records that already use it keep it.',
     'Retire', () => act('wrd.update_registry', 'wrd:update-registry', { taskKinds: [{ slug: k.slug, retire: true }] }));
-  const rowActions = (m) => h('div', { class: 'row-actions row-actions--inline' }, btn('Edit', { variant: 'ghost', size: 'sm', on: () => memberPanel(m), disabled: !admin, why: NOT_ADMIN }),
-    btn('Remove', { variant: 'danger-quiet', size: 'sm', on: () => remove(m), disabled: !admin, why: NOT_ADMIN }));
+  const rowActions = (m) => h('div', { class: 'row-actions row-actions--inline' }, btn('Edit', { variant: 'ghost', size: 'sm', on: () => memberPanel(m), disabled: !admin, why: NOT_ADMIN, attrs: returnKey(m.address, 'edit') }),
+    btn('Remove', { variant: 'danger-quiet', size: 'sm', on: () => remove(m), disabled: !admin, why: NOT_ADMIN, attrs: returnKey(m.address, 'remove') }));
   const ppNames = { maxLevel: 'Highest level allowed', floor: 'Minimum acceptance rate', minSamples: 'Reviewed pieces of work needed', minHumanConfirmations: 'People confirmations needed', minDistinctConfirmers: 'Different reviewers needed' };
   return [
     pageHeader({ title: 'People & roles', lede: 'Who\'s in this workspace, what each person may do, the types of task you work with, and the rules for AI permission.',
@@ -3728,7 +3782,7 @@ function rolesView() {
         : table(['Name', 'Definition', 'Status', ''], r.taskKinds.map((k) => h('tr', null,
           td(null, h('span', { class: 'table__primary', text: k.label }), h('span', { class: 'table__secondary', text: `ID: ${k.slug}` })), td(null, k.definition),
           td(null, k.retired ? badge('Retired') : status('In use', 'success')),
-          td({ class: 'actions' }, k.retired ? null : btn('Retire', { variant: 'ghost', size: 'sm', on: () => retire(k), disabled: !admin, why: NOT_ADMIN })))), { label: 'Types of task' }),
+          td({ class: 'actions' }, k.retired ? null : btn('Retire', { variant: 'ghost', size: 'sm', on: () => retire(k), disabled: !admin, why: NOT_ADMIN, attrs: returnKey(k.slug, 'retire') })))), { label: 'Types of task' }),
       kindForm(admin)),
     viewSection('Rules for earning AI permission', '',
       h('p', { text: `An AI agent earns permission on one type of task from at least ${gp.minSamples} pieces of work people reviewed on its current AI model, accepted at ${Math.round((gp.floor ?? 0) * 100)}% or better, confirmed by at least ${gp.minHumanConfirmations} people from at least ${gp.minDistinctConfirmers} different reviewers, and with "ready" claims accepted at ${Math.round((gp.minReadyClaimPrecision ?? 0) * 100)}% or better. Critical work needs ${gp.criticalWorkFailureCeiling ? Math.ceil(3 / gp.criticalWorkFailureCeiling) : '—'} clean runs.` }),
@@ -3779,7 +3833,7 @@ function memberPanel(m, kind) {
 /** A change that takes something away: said in a panel first, signed and sent only on its danger button. */
 function confirmPanel(title, text, label, onConfirm) {
   openPanel(title, h('div', { class: 'stack' }, h('p', { text }),
-    h('div', { class: 'btn-group' }, btn(label, { variant: 'danger', on: onConfirm }), btn('Cancel', { on: () => { S.panel = null; render(); } })),
+    h('div', { class: 'btn-group' }, btn(label, { variant: 'danger', on: onConfirm }), btn('Cancel', { on: closePanel })),
     footnote()));
 }
 

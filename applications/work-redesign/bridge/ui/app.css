@@ -34,6 +34,9 @@ button.side-nav__link { border: 0; background: none; font: inherit; cursor: poin
 .menu__id > code { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .menu .disclosure { padding: 0 var(--space-3); }
 
+/* A hint can name something with no spaces, a file's name or an address: it breaks inside it rather than run off the screen. */
+.hint { overflow-wrap: anywhere; }
+
 /* Vertical rhythm in the app: every block in a view sits a step below the one before it. */
 .app-main > :where(*) + :where(*) { margin-top: var(--space-6); }
 .view-block { margin-top: var(--space-6); }
@@ -106,6 +109,9 @@ details.card[open] > summary { border-bottom: 1px solid var(--border); }
 .capture-step > .card__body > .card__title { display: flex; align-items: center; gap: var(--space-3); margin-bottom: var(--space-4); }
 .capture-step__n { display: inline-grid; place-items: center; flex: none; width: 1.75rem; height: 1.75rem; border-radius: 50%; background: var(--accent); color: var(--on-accent); font-size: var(--text-sm); font-weight: var(--weight-bold); }
 .capture-step > .card__body > * + * { margin-top: var(--space-4); }
+/* A step may shrink to the screen: a grid item's automatic minimum is its widest word, so a long one in a step (a loaded
+   file's name in step 1's hint) would widen every step past a phone's screen; at 0 the word breaks instead (.hint, below). */
+.capture-steps > .capture-step { min-width: 0; }
 .capture-modes { margin-top: var(--space-2); }
 .capture-actions { display: grid; gap: var(--space-3); justify-items: start; margin-top: var(--space-6); }
 /* Step 2's two routes: your assistant through the connector, or copy and paste; side by side when there is room. */
@@ -259,10 +265,11 @@ details.card[open] > summary { border-bottom: 1px solid var(--border); }
 .assistants { align-items: start; }
 .assistants__subtitle { margin-top: var(--space-8); font-size: var(--text-lg); }
 .assistants__note { margin-top: var(--space-4); }
-/* An address on the site pages (the connector's, the workspace's) is always wholly on screen: where the line is too
-   narrow it wraps at its own hyphens and slashes, and inside a part only when one part is wider than the line. A tap
-   selects all of it, and a copy takes it whole. Its step's min-width 0 (above) keeps the list inside the screen. */
-.connector-url { display: inline-block; max-width: 100%; margin-top: var(--space-1); white-space: normal; overflow-wrap: anywhere; vertical-align: bottom; user-select: all; }
+/* An address on the site pages (the connector's, the workspace's) is on a line of its own, so no word or full stop of the
+   sentence hangs off it, and always wholly on screen: where the line is too narrow it fills the line and goes on at the
+   next one, breaking between any two characters rather than at a hyphen that would read as a word split for the line. A
+   tap selects all of it, and a copy takes it whole. Its step's min-width 0 (above) keeps the list inside the screen. */
+.connector-url { display: block; width: fit-content; max-width: 100%; margin-block: var(--space-1); white-space: normal; overflow-wrap: anywhere; word-break: break-all; user-select: all; }
 .trust-signin { margin-top: var(--space-6); }
 .site-footer__links li > .mono { display: inline-block; margin-top: var(--space-2); }
 .trust-signin > .icon { grid-row: 1 / span 2; color: var(--text-secondary); }

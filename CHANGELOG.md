@@ -36,20 +36,33 @@ bridge's own `/mcp` as a developer endpoint, not the connector.
 The pages' connector set-up follows the same rule as the app: it is shown only
 where the shell names a connector (`connectorUrlOf`, now in
 `bridge/landing.ts`, through `{{#chat_ready}}` sections the page renderer
-fills); elsewhere the landing page and the guide say the workspace isn't set
-up for it and point to copy and paste. With the deployed bridge's
-44-character address the set-up no longer widens either page on a phone: each
-step may shrink, and an address wraps at its hyphens and slashes instead. The
-panel is titled "Use your AI assistant", like every way into it; its two
-set-ups are tabs the arrow keys, Home and End move between; Escape closes it,
-with focus back on what opened it; and where the browser refuses the
-clipboard, the text to copy opens over the panel, says to select and copy it,
-and closes back to it. Where the chat route is not offered, the panel no
-longer asks to connect once or blames a plan. The pages and the panel say the
+fills). Elsewhere the landing page and the guide drop everything that assumes
+the connector (adding it, the things to ask it, what stays in the app, the
+guide's optional step and the chat route under Map a process), open with the
+panel's own words (Work Redesign runs no AI; your own assistant drafts), say
+once that the workspace isn't set up for it, point to copy and paste, and say
+what pasting a document shares. With the deployed bridge's 44-character
+address the set-up no longer widens either page on a phone: each step may
+shrink, and each address sits on a line of its own, filling it before going
+on, with no full stop hanging off it. The panel is titled "Use your AI
+assistant", like every way into it; its two set-ups are tabs the arrow keys,
+Home and End move between. Escape closes a panel with nothing to type in (the
+set-up, "Copy this", "Exactly what you're signing"), and does nothing in a
+form, so nothing typed is lost. Closing a panel puts focus back on the button
+that opened it, not just one with the same label: a row's "Edit" or "Remove"
+is that row's, a button in a disclosure opens it again, and where the button
+is gone, the view's heading. Where the browser refuses the clipboard, the
+text to copy opens over the panel, says to select and copy it, and closes
+back to it and to the Copy button pressed; "Exactly what you're signing",
+opened from a form, closes back to the form as it was, and a redraw while a
+panel is open keeps focus where it was. Where the chat route is not offered,
+the panel no longer asks to connect once or blames a plan. The pages and the panel say the
 connector's sign-in in one sentence, and the first thing to ask an assistant
 starts from the Map a process message. In Map a process, step 1 counts the
 text as it is typed (against a chat's 20,000 characters where that route is
-offered, "Loaded" only while the text is a file's), the copy-and-paste
+offered, "Loaded from" and the file's name only while the text is the
+file's, the name breaking inside itself on a phone rather than widening the
+steps), the copy-and-paste
 preview goes as soon as the title or text changes, the copied message leaves
 out the packet's note to programs, "not-declared" from an assistant is taken
 as no model, switching who drafted the map keeps what was typed, and the

@@ -1005,6 +1005,22 @@ describe('work-redesign offline demo and web UI', () => {
     await page.until(() => countHint().startsWith('Loaded from ap-sop.md:'), 'the loaded file named');
     expect(countHint()).toBe(`Loaded from ap-sop.md: ${docText.length} characters.`);
     expect(previewShown()).toBe(false);
+    // A long file name with no spaces or hyphens is named whole, and breaks inside itself instead of widening step 1 (and every
+    // step) past a phone's screen: the hint may break anywhere, and a step, a grid item, may shrink below its widest word.
+    // Checked as the page's own stylesheet applies (jsdom lays nothing out; real Chromium at 360 and 390 px is the QA's check).
+    const longName = 'AccountsPayable_Supplier_Invoice_Matching_Procedure_2026.txt';
+    expect(longName).toHaveLength(60);
+    Object.defineProperty(file, 'files', { value: [new w.File([docText], longName, { type: 'text/plain' })], configurable: true });
+    file.dispatchEvent(new w.Event('change', { bubbles: true }));
+    await page.until(() => countHint().startsWith(`Loaded from ${longName}:`), 'the long file name');
+    expect(countHint()).toBe(`Loaded from ${longName}: ${docText.length} characters.`);
+    const sheet = d.createElement('style');
+    sheet.textContent = await (await fetch(`${l.base}/ui/app.css`)).text();
+    d.head.append(sheet);
+    const countEl = must(page.q('[data-path="document.text"]')?.closest('.field')?.querySelector('.hint'), 'the count');
+    const stepEl = must(countEl.closest('.capture-step'), 'step 1');
+    expect([w.getComputedStyle(countEl).overflowWrap, w.getComputedStyle(stepEl).minWidth, w.getComputedStyle(must(stepEl.parentElement, 'the steps')).display]).toEqual(['anywhere', '0', 'grid']);
+    sheet.remove();
     fill(page.q('[data-path="document.text"]'), docText, 'the text, typed over the file');
     expect(countHint()).toBe(`${docText.length} characters.`);
     fill(page.q('[data-path="document.title"]'), 'AP-SOP-014', 'the title, back');

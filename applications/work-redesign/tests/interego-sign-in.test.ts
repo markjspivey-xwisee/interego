@@ -1288,8 +1288,10 @@ describe('work-redesign web UI: sign in with your Interego account', () => {
     expect(shown()).toMatchObject({ selected: ['chatgpt'], visible: ['chatgpt'] });
 
     // A browser that refuses the clipboard: the text to copy opens over the panel, says how to copy it by hand, and closes back to
-    // the panel as it was (ChatGPT's set-up still chosen).
+    // the panel as it was (ChatGPT's set-up still chosen), with focus on the Copy button that opened it.
     Object.defineProperty(page.window.navigator, 'clipboard', { value: { writeText: async () => { throw new Error('denied'); } }, configurable: true });
+    const copyDetails = (): HTMLButtonElement => must([...d.querySelectorAll('.chat-panel button')].find((b) => b.textContent === 'Copy workspace details'), 'Copy workspace details') as HTMLButtonElement;
+    copyDetails().focus();
     page.click('Copy workspace details');
     await page.until(() => panelTitle() === 'Copy this', 'the text to copy by hand');
     expect(page.text()).toContain('Select all of the text below and copy it yourself.');
@@ -1299,11 +1301,20 @@ describe('work-redesign web UI: sign in with your Interego account', () => {
     must(d.querySelector('button[aria-label="Close"]'), 'Close').dispatchEvent(new page.window.MouseEvent('click', { bubbles: true }));
     await page.until(() => panelTitle() === 'Use your AI assistant', 'the panel again');
     expect(shown()).toMatchObject({ selected: ['chatgpt'], visible: ['chatgpt'] });
-    // Escape in the text to copy goes back the same way.
+    expect(d.activeElement).toBe(copyDetails());
+    // Escape in the text to copy goes back the same way; from a starter's Copy, back to that one.
     page.click('Copy workspace details');
     await page.until(() => panelTitle() === 'Copy this', 'the text to copy by hand again');
     must(d.querySelector('#app textarea[readonly]'), 'the text to copy').dispatchEvent(new page.window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
     await page.until(() => panelTitle() === 'Use your AI assistant', 'the panel after Escape');
+    expect(d.activeElement).toBe(copyDetails());
+    const starterCopy = must(d.querySelector('.chat-starters button[aria-label="Copy: Submit a plan for approval"]'), 'a starter\'s Copy') as HTMLButtonElement;
+    starterCopy.focus();
+    starterCopy.click();
+    await page.until(() => panelTitle() === 'Copy this', 'the starter to copy by hand');
+    must(d.getElementById('panel-title'), 'the title').dispatchEvent(new page.window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+    await page.until(() => panelTitle() === 'Use your AI assistant', 'the panel after the starter');
+    expect(d.activeElement).toBe(starterCopy);
 
     // Escape closes the panel, and focus goes back to the account menu's button, which opened it.
     tab('chatgpt').focus();
@@ -1318,6 +1329,22 @@ describe('work-redesign web UI: sign in with your Interego account', () => {
     must(d.getElementById('panel-title'), 'the title').dispatchEvent(new page.window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
     await page.until(() => d.getElementById('panel-title') === null, 'the panel closed again');
     expect([d.activeElement?.textContent, d.activeElement?.closest('#account-menu')]).toEqual(['Use your AI assistant', null]);
+    // Opened from Map a process's "Not connected yet?", inside a disclosure the view draws closed: the disclosure opens again,
+    // with focus on the button in it.
+    page.click('Map a process');
+    await page.until(() => d.querySelectorAll('input[name="capture-mode"]').length === 2, 'the capture view');
+    (d.querySelectorAll('input[name="capture-mode"]')[1] as HTMLInputElement).click();
+    await page.until(() => page.text().includes('Have your AI draft the map'), 'the document route');
+    const notConnected = must([...d.querySelectorAll('.route-card details')].find((x) => x.querySelector('summary')?.textContent === 'Not connected yet?'), 'Not connected yet?') as HTMLDetailsElement;
+    notConnected.open = true;
+    const cardButton = must([...notConnected.querySelectorAll('button')].find((b) => b.textContent === 'Use your AI assistant'), 'its button') as HTMLButtonElement;
+    cardButton.focus();
+    cardButton.click();
+    await page.until(() => panelTitle() === 'Use your AI assistant', 'the panel from Map a process');
+    must(d.getElementById('panel-title'), 'the title').dispatchEvent(new page.window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+    await page.until(() => d.getElementById('panel-title') === null, 'the panel closed from Map a process');
+    const reopened = d.activeElement?.closest('details');
+    expect([d.activeElement?.textContent, reopened?.querySelector('summary')?.textContent, (reopened as HTMLDetailsElement | null | undefined)?.open]).toEqual(['Use your AI assistant', 'Not connected yet?', true]);
     expect(page.errors).toEqual([]);
   }, 60_000);
 

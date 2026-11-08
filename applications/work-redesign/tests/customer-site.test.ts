@@ -70,14 +70,18 @@ const trusted = (policy: 'trusted' | 'none' = 'trusted'): UiSignIn => ({
 /** The deployed bridge's address is 44 characters (https://wrd-bridge-production.up. and its host's 12): this has the same length, on a reserved example domain. */
 const PRODUCTION_LENGTH_BASE = 'https://wrd-bridge-production.up.example.org';
 
-/** The demo composition of the UI's DOM test: Ana a process lead and team member named on one unsorted task, Zed in no role, and the admin. */
-async function minimalDemo(): Promise<TestListener> {
+/**
+ * The demo composition of the UI's DOM test: Ana a process lead and team member named on one unsorted task, Zed in no role, and
+ * the admin. `withBo`: Bo, a team member, too, after Ana, so People & roles has two rows whose buttons read the same.
+ */
+async function minimalDemo(o: { readonly withBo?: boolean } = {}): Promise<TestListener> {
   const pod = memoryPod();
   const clock = demoClock();
   const seed = (id: string) => importWallet(`0x${sha256Hex(`wrd-customer-site:${id}`)}`, 'human', id);
   const admin = seed('admin');
   const ana = seed('ana');
   const zed = seed('zed');
+  const bo = seed('bo');
   const handlers = createWrdHandlers({
     fetchFn: pod.fetchFn, defaultPodUrl: DEMO_POD, now: () => clock.now(), platform: { wallet: seed('platform'), keyKind: 'demo' }, adminAddresses: [admin.address],
     recordKey: DEMO_RECORD_KEY,
@@ -85,7 +89,8 @@ async function minimalDemo(): Promise<TestListener> {
   });
   const registry = {
     intent: 'wrd:update-registry', podUrl: DEMO_POD, issuedAt: clock.now().toISOString(), nonce: 'customer-site-registry-1',
-    entries: [{ address: ana.address, roles: ['operator', 'worker'], label: 'Ana', softwareAgent: false, personRef: 'p-ana' }],
+    entries: [{ address: ana.address, roles: ['operator', 'worker'], label: 'Ana', softwareAgent: false, personRef: 'p-ana' },
+      ...(o.withBo ? [{ address: bo.address, roles: ['worker'], label: 'Bo', softwareAgent: false, personRef: 'p-bo' }] : [])],
     taskKinds: [{ slug: 'invoice-matching', label: 'Invoice matching', definition: 'Match an invoice to its purchase order.' }],
   };
   const registered = await handlers['wrd.update_registry']!({ envelope: { payload: registry, signature: await signMessageRaw(admin, canonicalJson(registry)) } }) as Record<string, unknown>;
@@ -300,7 +305,15 @@ describe('work-redesign customer site', () => {
       ]) expect([page, html], s).toEqual([page, expect.stringContaining(s)]);
       expect([page, html.includes('(MCP endpoint)'), html.includes('{{'), html.includes('passkey when asked'), html.includes('Draft a process map from this procedure document')]).toEqual([page, false, false, false, false]);
       expect([page, html.includes('isn’t set up for connecting Claude or ChatGPT')]).toEqual([page, false]);
+      // Where the connector works, the pages say what to add, what to ask and what stays in the app.
+      for (const s of ['Add the Interego connector', 'Things you can ask it', 'What stays in the Work Redesign app', 'Use it from Claude or ChatGPT</a>']) {
+        expect([page, s, html.includes(s)]).toEqual([page, s, true]);
+      }
     }
+    expect(landing).toContain('<div class="container grid-2 assistants">');
+    expect(landing).toContain('Work where you already work: in Claude or ChatGPT');
+    expect(help).toContain('Optional: connect Claude or ChatGPT');
+    expect(help).toContain('<strong>In Claude or ChatGPT</strong>, with the Interego connector: press <strong>Copy the message for my assistant</strong>');
     expect(APP_JS).toContain('\'Connect, and when it asks, sign in with the same Interego account you use for Work Redesign.\'');
     // The guide's note after the steps is spaced from them as the landing page's is.
     expect(help).toContain('</ol>\n        <p class="assistants__note">In each new chat, turn on Interego');
@@ -323,13 +336,26 @@ describe('work-redesign customer site', () => {
         const html = await (await fetch(`${l.base}${path}`, { headers: { accept: BROWSER } })).text();
         const at = [what, path];
         for (const s of ['This workspace isn’t set up for connecting Claude or ChatGPT yet. Ask your workspace provider.', 'You can still draft a process map with copy and paste, in any chat app:',
-          'the company behind your assistant sees it too']) expect([...at, html], s).toEqual([...at, expect.stringContaining(s)]);
+          'the company behind your assistant sees it too',
+          // What the app's panel says where the chat route is not offered (CHAT_LEDE_OFF), and what pasting a document shares.
+          'Work Redesign runs no AI of its own and never asks for an API key. Your own AI assistant does any drafting, on your own subscription, and Work Redesign checks everything it records.',
+          'When you paste a document into your AI assistant, the company behind your assistant sees it too']) expect([...at, html], s).toEqual([...at, expect.stringContaining(s)]);
         // No set-up steps, no connector address (the relay's, or the default one), and no promise of the app's set-up panel.
         for (const s of ['class="steps steps--compact"', 'connector-url', '/mcp</code>', `${INTEREGO_DEFAULTS.relayUrl}/mcp`, 'https://relay.example.org/mcp', 'copies it, with everything else', 'It shows the connector address']) {
           expect([...at, s, html.includes(s)]).toEqual([...at, s, false]);
         }
+        // Nor anything that assumes the connector is there: adding it, asking it, what it may do, the chat route under Map a
+        // process, or a heading that repeats the sentence saying it isn't set up.
+        for (const s of ['Add the Interego connector', 'Things you can ask it', 'What stays in the Work Redesign app', 'Here’s the message from Map a process',
+          'Optional: connect Claude or ChatGPT', 'Copy the message for my assistant', 'Work where you already work', 'Use it from Claude or ChatGPT',
+          'Claude or ChatGPT with the Interego connector', 'Not set up on this workspace yet', 'Set up in two minutes']) {
+          expect([...at, s, html.includes(s)]).toEqual([...at, s, false]);
+        }
         expect([...at, html.includes('{{')]).toEqual([...at, false]);
       }
+      // One column: the examples card is gone, so the text does not sit in half of a two-column grid.
+      const landing = await (await fetch(`${l.base}/`, { headers: { accept: BROWSER } })).text();
+      expect([what, landing.includes('<div class="container assistants">'), landing.includes('<div class="prose-wide">')]).toEqual([what, true, true]);
     }
     expect(relayCalls).toEqual([]);
   });
@@ -373,7 +399,14 @@ describe('work-redesign customer site', () => {
         expect([path, dom.window.getComputedStyle(li!).minWidth]).toEqual([path, '0']);
         const cs = dom.window.getComputedStyle(code);
         expect([path, code.textContent, cs.maxWidth, cs.whiteSpace, cs.overflowWrap]).toEqual([path, code.textContent, '100%', 'normal', 'anywhere']);
+        // On a line of its own, filling it before going on to the next (so a break never lands at a hyphen by preference,
+        // to read as a word split for the line), with no full stop or word of the sentence hanging off it.
+        expect([path, code.textContent, cs.display, cs.wordBreak]).toEqual([path, code.textContent, 'block', 'break-all']);
+        const after = code.nextSibling?.textContent ?? '';
+        expect([path, code.textContent, /^\s*[.,;:]/.test(after)]).toEqual([path, code.textContent, false]);
       }
+      expect([path, html.includes('</code>. In the app')]).toEqual([path, false]);
+      expect([path, codes[1]?.nextSibling?.textContent?.trim().startsWith('In the app,')]).toEqual([path, true]);
       dom.window.close();
     }
     expect(relayCalls).toEqual([]);
@@ -608,6 +641,94 @@ describe('work-redesign customer site', () => {
     page.click('Cancel');
     await page.until(() => !page.doc.getElementById('panel-title'), 'the panel closed');
     expect(page.log.slice(before).filter((r) => r.method === 'POST')).toEqual([]);
+    expect(page.errors).toEqual([]);
+  }, 60_000);
+
+  it('gives focus back to the very button that opened a panel, row by row; keeps a form open on Escape so nothing typed is lost; and closes "Exactly what you\'re signing" back to the form it was opened from, as it was', async () => {
+    const l = await minimalDemo({ withBo: true });
+    const page = await openUi(l.base);
+    const d = page.doc;
+    const w = page.window;
+    await page.until(() => page.text().includes('Match invoices'), 'the demo');
+    const panelTitle = (): string | null => d.getElementById('panel-title')?.textContent ?? null;
+    const escape = (el: Element | null, what: string): boolean => {
+      const e = new w.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true });
+      must(el, what).dispatchEvent(e);
+      return e.defaultPrevented;
+    };
+    const type = (el: Element | null, value: string, what: string): void => {
+      const f = must(el, what) as HTMLInputElement;
+      f.value = value;
+      f.dispatchEvent(new w.Event('input', { bubbles: true }));
+    };
+    // As a keyboard user opens a panel: the button has focus, then is pressed.
+    const open = async (b: HTMLButtonElement, title: string): Promise<void> => { b.focus(); b.click(); await page.until(() => panelTitle() === title, title); };
+    const closeByButton = async (): Promise<void> => { (must(d.querySelector('.panel button[aria-label="Close"]'), 'Close') as HTMLButtonElement).click(); };
+    const rowOf = (el: Element | null): string | null => el?.closest('tr')?.querySelector('.table__primary')?.textContent ?? null;
+    const rowButton = (row: string, label: string): HTMLButtonElement => {
+      const tr = [...d.querySelectorAll('main tr')].find((x) => x.querySelector('.table__primary')?.textContent === row);
+      return must([...(tr?.querySelectorAll('button') ?? [])].find((b) => b.textContent === label), `${row}'s ${label}`) as HTMLButtonElement;
+    };
+    const focused = (): [string | null | undefined, string | null] => [d.activeElement?.textContent, rowOf(d.activeElement)];
+
+    page.select('#persona', 'admin');
+    page.click('People & roles');
+    await page.until(() => [...d.querySelectorAll('main button')].filter((b) => b.textContent === 'Edit' && !(b as HTMLButtonElement).disabled).length === 2, 'two people the admin can change');
+    // Ana's row comes first, and Bo's buttons read the same as hers; each carries its own key (what it acts on, and how).
+    expect([...d.querySelectorAll('main tr .table__primary')].slice(0, 2).map((x) => x.textContent)).toEqual(['Ana', 'Bo']);
+    const keys = [...d.querySelectorAll('main [data-return]')].map((x) => x.getAttribute('data-return'));
+    expect(keys.length).toBeGreaterThanOrEqual(4);
+    expect(new Set(keys).size).toBe(keys.length);
+
+    // A form (Bo's Edit): Escape in it does nothing, so what was typed stays; Close gives focus back to Bo's Edit, not Ana's.
+    await open(rowButton('Bo', 'Edit'), 'Change Bo');
+    const name = d.querySelector('.panel input.input');
+    type(name, 'Bo Typed', 'the name field');
+    expect(escape(name, 'the name field')).toBe(false);
+    expect([panelTitle(), (d.querySelector('.panel input.input') as HTMLInputElement).value]).toEqual(['Change Bo', 'Bo Typed']);
+    await closeByButton();
+    await page.until(() => panelTitle() === null, 'the form closed');
+    expect(focused()).toEqual(['Edit', 'Bo']);
+    // A confirmation (Bo's Remove) holds nothing to type in: Escape closes it, as Cancel does, each back to Bo's Remove.
+    await open(rowButton('Bo', 'Remove'), 'Remove Bo?');
+    expect(escape(d.getElementById('panel-title'), 'the title')).toBe(true);
+    await page.until(() => panelTitle() === null, 'the confirmation closed by Escape');
+    expect(focused()).toEqual(['Remove', 'Bo']);
+    await open(rowButton('Bo', 'Remove'), 'Remove Bo?');
+    page.click('Cancel');
+    await page.until(() => panelTitle() === null, 'the confirmation cancelled');
+    expect(focused()).toEqual(['Remove', 'Bo']);
+    // Where what opened a panel is gone, focus goes to the view's heading.
+    (w.eval('refocus') as (to: unknown) => void)({ key: 'no such button', text: 'Edit', nth: -1 });
+    expect([d.activeElement?.tagName, d.activeElement?.textContent]).toEqual(['H1', 'People & roles']);
+
+    // A process lead sorts a task: Escape in the form keeps the answers; "Exactly what you're signing", opened from it, closes
+    // back to it with the answers and the note as they were and focus on its button; the form closes back to the row's button.
+    page.select('#persona', 'ana');
+    page.click('Processes');
+    await page.until(() => [...d.querySelectorAll('main button')].some((b) => b.textContent === 'Sort by predictability'), 'the task to sort');
+    const sortTitle = 'Sort "Match invoices" by predictability';
+    await open(must([...d.querySelectorAll('main button')].find((b) => b.textContent === 'Sort by predictability'), 'Sort by predictability') as HTMLButtonElement, sortTitle);
+    const first = must(d.querySelector('.panel select'), 'the first question') as HTMLSelectElement;
+    const answer = must([...first.options].map((o) => o.value).find((v) => v !== first.value), 'another answer');
+    first.value = answer;
+    first.dispatchEvent(new w.Event('change', { bubbles: true }));
+    type(d.querySelector('.panel textarea'), 'Checked with the clerks.', 'the note');
+    expect(escape(d.querySelector('.panel textarea'), 'the note')).toBe(false);
+    expect(panelTitle()).toBe(sortTitle);
+    // A redraw while the form is open (a refresh landing, say) leaves focus where it was, in the note.
+    const noteBox = must(d.querySelector('.panel textarea'), 'the note') as HTMLTextAreaElement;
+    noteBox.focus();
+    (w.eval('render') as () => void)();
+    expect([d.activeElement, noteBox.value]).toEqual([noteBox, 'Checked with the clerks.']);
+    await open(must([...d.querySelectorAll('.panel button')].find((b) => b.textContent === 'See exactly what you\'re signing'), 'the signing preview button') as HTMLButtonElement, 'Exactly what you\'re signing');
+    expect(escape(d.getElementById('panel-title'), 'the title')).toBe(true);
+    await page.until(() => panelTitle() === sortTitle, 'the form again');
+    expect([(d.querySelector('.panel select') as HTMLSelectElement).value, (d.querySelector('.panel textarea') as HTMLTextAreaElement).value]).toEqual([answer, 'Checked with the clerks.']);
+    expect(d.activeElement?.textContent).toBe('See exactly what you\'re signing');
+    await closeByButton();
+    await page.until(() => panelTitle() === null, 'the form closed');
+    expect([d.activeElement?.textContent, d.activeElement?.getAttribute('data-return')?.endsWith(' sort')]).toEqual(['Sort by predictability', true]);
     expect(page.errors).toEqual([]);
   }, 60_000);
 
