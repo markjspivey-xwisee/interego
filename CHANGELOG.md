@@ -1,5 +1,39 @@
 # Changelog
 
+## 2026-11-07 — Ask connects verified learners to their own SCORM Cloud registrations
+
+`933da17c` adds a human learning-account connection independent of the AI driving
+Ask. Interego OAuth uses a server-held read-only grant and a secure opaque
+browser cookie. Relay account reads recheck the backing native identity token
+and session epoch. Institution connectors, their credentials and learner
+associations are selected at runtime and stored in a sole-service-recipient
+encrypted Native CAS checkpoint; no account or learner is a deployment default.
+
+An administrator matches a verified Interego account to an actual Cloud
+registration, then the learner activates the association. Students see only the
+linked learner's registered courses and own observed progress. Private questions
+recheck human identity, policy, exact course/version and enrollment before source
+retrieval, model dispatch and delivery. Authorization receipts remain outside
+model messages; revoked authority clears queued and partial results. Selected
+native course files are read in request memory without a ZIP export or retained
+course text, graph or progress. Cloud scores retain their 0–100 percent units.
+
+Signed LTI launches discover pending account-link requests only; platform
+subjects are never guessed to be Cloud learner IDs. Embedded Cloud launches
+offer a bounded one-use new-tab handoff before first-party sign-in and explicit
+claim. Optional helper setup and removal retain uncertain cleanup state for a
+retry. Prerequisites and curriculum remain unavailable without an authoritative
+provider. The owner content-management path is separately labeled.
+
+Validation: 291 focused tests across 12 modules passed with the normal compiler
+and run-integrity gates; relay production/test compilation and five account HTTP
+tests passed. Browser adapter checks and actual rendered synthetic two-account
+controls verified selection, consent, progress and private-history clearing.
+The native app rebuild reused previously verified unchanged graph artifacts.
+These fixtures do not establish live student enrollment: no real institution
+connector, credential storage or learner association was created by this work.
+See `applications/foxxi-content-intelligence/i2idlx/LEARNING-CONNECTIONS.md`.
+
 ## 2026-11-07 — First-party clients: an explicit Hosted Terms agreement where a person opens an account, an operator's version where a service does
 
 Since #778 hosted identity opens a NEW account only when the sign-in carries the current Hosted Interego Terms version and signs the agreement statement identity returns for it; any other first sign-in is HTTP 428 `hosted_terms_required`. Returning accounts are not gated. The relay's browser authorize page already asks, and #788 gave `openAgentSession` an operator opt-in. This entry covers the other first-party clients that can open an account.
