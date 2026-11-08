@@ -1,6 +1,6 @@
 import { inputRequired, PROTOCOL_VERSION_META_KEY, CLIENT_CAPABILITIES_META_KEY, type Server, type ServerContext, type ClientCapabilities } from '@modelcontextprotocol/server';
 import { resourceActionResponse } from './resource-compositions.js';
-import { relayToolResult } from './tool-result.js';
+import { relayToolResult, type RelayResultOptions } from './tool-result.js';
 
 const watchers = new WeakMap<Server, Map<string, ReturnType<typeof setTimeout>>>();
 
@@ -14,10 +14,13 @@ const LAUNCH_HANDLE_FIELDS = ['schema', 'id', 'status', 'descriptorUrl', 'expire
 /**
  * Launch secrets belong to the app, never to model-visible tool text or context.
  *
- * `toolName` labels the one-line summary the shared builder adds after the JSON block; see
- * tool-result.ts for the shape every relay tool result now has.
+ * `toolName` labels the one-line summary the shared builder adds after the JSON block, and
+ * `options` says whether this session's model reads structuredContent; see tool-result.ts for
+ * the shape every relay tool result now has.
  */
-export function clientInteractionToolResult(response: Record<string, unknown>, originalText?: string, toolName = 'act') {
+export function clientInteractionToolResult(
+  response: Record<string, unknown>, originalText?: string, toolName = 'act', options: RelayResultOptions = {},
+) {
   const wrapped = typeof response['status'] === 'number' && typeof response['body'] === 'string';
   let value: Record<string, unknown> = response;
   if (wrapped) {
@@ -28,14 +31,14 @@ export function clientInteractionToolResult(response: Record<string, unknown>, o
     try { url = new URL(value['signingUrl']); } catch { /* not a launch result */ }
   }
   if (!url || !/^#launch=[a-zA-Z0-9_-]{43}$/.test(url.hash)) {
-    return relayToolResult(toolName, originalText ?? JSON.stringify(response), response);
+    return relayToolResult(toolName, originalText ?? JSON.stringify(response), response, options);
   }
   const launch: Record<string, unknown> = {};
   for (const field of LAUNCH_HANDLE_FIELDS) if (value[field] !== undefined) launch[field] = value[field];
   url.hash = '';
   const visible = { ...value, signingUrl: url.href };
   const safeResponse = wrapped ? { ...response, body: JSON.stringify(visible) } : visible;
-  return { ...relayToolResult(toolName, JSON.stringify(safeResponse), safeResponse),
+  return { ...relayToolResult(toolName, JSON.stringify(safeResponse), safeResponse, options),
     _meta: { 'interego/browser-signing': launch } };
 }
 
@@ -89,6 +92,7 @@ export async function clientInteractionMcpResult(
   lifecycle: { status: () => Promise<Record<string, unknown>>; cancel: () => Promise<Record<string, unknown>>;
     open?: () => Promise<Record<string, unknown>> },
   invocation?: { reference: string; action: string },
+  options: RelayResultOptions = {},
 ) {
   const id = String(initial['id']);
   const pending = (value: Record<string, unknown>) => ['pending', 'reviewing', 'submitting'].includes(String(value['status']));
@@ -97,7 +101,7 @@ export async function clientInteractionMcpResult(
     // its JSON body on EVERY return path, including reconnect and cancellation.
     const response = invocation ? { ...resourceActionResponse(invocation.reference, invocation.action, value, 'write'),
       ...(pending(value) ? { status: 202, statusText: 'Accepted' } : {}) } : value;
-    return { ...relayToolResult(invocation ? 'invoke_affordance' : 'act', JSON.stringify(response), response),
+    return { ...relayToolResult(invocation ? 'invoke_affordance' : 'act', JSON.stringify(response), response, options),
       ...(value['status'] === 'failed' ? { isError: true } : {}) };
   };
   if (!pending(initial)) return textResult(initial);

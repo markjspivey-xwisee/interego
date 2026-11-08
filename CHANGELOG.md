@@ -1,6 +1,39 @@
 # Changelog
 
-## 2026-11-08 — Relay: each tool result once for the model, and read_inbox in pages
+## 2026-11-08 — Relay: ChatGPT gets each result once, and read_inbox reads any sender's notification
+
+The previous entry's title claimed one copy of each result for the model. That
+held only for clients that show their model `content` alone, and those already
+had one copy. ChatGPT, the client that reported the size, shows its model
+`structuredContent` as well as `content`, as OpenAI's Apps SDK documents, so it
+still read every result twice, now with a summary line too. For a session whose
+OAuth client registered as ChatGPT (the same name-to-surface mapping identity
+uses for its agents), `content` now holds only the one-line summary and
+`structuredContent` holds the result. Its model and its widget each read the
+result once: `act` on the fixture fell from 12,296 to 5,859 bytes on the wire.
+Every other client keeps the JSON result first in `content`. An error summary
+names the tool once instead of twice.
+
+`read_inbox` declared its item fields as strings, but passed through whatever a
+sender had stored. A notification with an `actor` object or a `type` array made
+a client that checks results against the declared schema reject the whole page,
+including with `include_content: false`. Items are now read through one helper:
+an embedded actor or object reference becomes its id, a type array its first
+type, a JSON-LD value object its value, and anything else that is not a string
+is left out. The suite reads such an inbox through the MCP SDK client, which
+checks the schema the way strict clients do. Newest first now compares the
+instants `published` names rather than their spelling, so offsets no longer
+reorder a page.
+
+A `limit` that is not a whole number, and a `before` or `since` that is not a
+string, are refused with the argument named. Before, a fraction came back as a
+`limitRequested` the schema calls an integer, and the others were dropped,
+which answered with the first, unfiltered page. An empty or null argument still
+counts as absent. The workspace and agent inbox readers now take the relay's
+`hasMore` as saturated, so a limit above 50 is no longer read as the whole
+inbox.
+
+## 2026-11-08 — Relay: a summary line after each tool result, a smaller signing _meta, and read_inbox in pages
 
 A chat assistant using the relay as a connector reported `act` results that
 looked like the same body several times over, and `read_inbox` answers its

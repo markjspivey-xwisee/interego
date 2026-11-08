@@ -25,7 +25,15 @@
  *   2. read_inbox pages: a bounded default, a ceiling that equals the largest limit any caller
  *      in this repository passes, total / hasMore / nextCursor that walk the whole inbox once
  *      with no repeats, bodies that can be left out, `since`, and refusals for a malformed
- *      cursor or flag — on /mcp and on the REST /tool route that shares the handler.
+ *      cursor, flag, fraction or non-string argument — on /mcp and on the REST /tool route that
+ *      shares the handler.
+ *   3. Notifications the relay did not write — an `actor` object, a `type` array, an object body,
+ *      a number for `published` — are read as strings or left out, so a STRICT client (the MCP
+ *      SDK Client, which checks structuredContent against the declared outputSchema and throws
+ *      on a mismatch) can read every page of an inbox that holds them.
+ *   4. A session whose OAuth client registered as ChatGPT, whose model reads structuredContent as
+ *      well as content, gets the summary line alone in content: one copy of the result for its
+ *      model. A session from any other client keeps the JSON first.
  *
  * Set RELAY_RESULT_SIZES_OUT=<file> to write the measured sizes as JSON.
  *
@@ -33,6 +41,7 @@
  */
 import express from 'express';
 import { spawn } from 'node:child_process';
+import { createHash, randomBytes } from 'node:crypto';
 import { rmSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:net';
 import type { AddressInfo } from 'node:net';
@@ -40,6 +49,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { AjvJsonSchemaValidator } from '@modelcontextprotocol/server/validators/ajv';
+import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client';
 import { listenLoopback } from './listen-loopback.js';
 import { INBOX_DEFAULT_LIMIT, INBOX_MAX_LIMIT } from '../agent-mesh.js';
 import { SUMMARY_MAX_CHARS } from '../tool-result.js';
@@ -194,6 +204,15 @@ async function main(): Promise<void> {
     if (token !== IDENTITY_BEARER) { s.json({ valid: false }); return; }
     s.json({ valid: true, userId: USER_ID, agentId: `mcp-client-${USER_ID}`, scope: 'ReadWrite' });
   });
+  // The OAuth sign-in (/oauth/verify) hands the proof to identity, which answers who signed in.
+  // This fixture answers for USER_ID whatever the proof: the flow under test is what the relay
+  // does with the session afterwards, not proof checking (authorize-page-did-challenge covers it).
+  let identityBase = '';
+  let podForIdentity = '';
+  identityApp.post('/auth/did', (_q, s) => {
+    s.json({ userId: USER_ID, token: IDENTITY_BEARER, webId: `${identityBase}/users/${USER_ID}/profile#me`,
+      podUrl: podForIdentity, agentId: `oauth-${USER_ID}` });
+  });
   identityApp.use((_q, s) => { s.status(404).json({ error: 'not part of this fixture' }); });
 
   // A pod that stores what it is given, lists containers, and answers one action endpoint.
@@ -237,6 +256,8 @@ async function main(): Promise<void> {
   const identity = await listenLoopback(identityApp);
   const pod = await listenLoopback(podApp);
   podBase = pod.base;
+  identityBase = identity.base;
+  podForIdentity = `${pod.base}/${USER_ID}/`;
   const inbox = `${pod.base}/${USER_ID}/inbox/`;
   for (let i = 0; i < INBOX_ITEMS; i++) {
     stored.set(`/${USER_ID}/inbox/n-${String(i).padStart(3, '0')}.jsonld`,
@@ -280,16 +301,64 @@ async function main(): Promise<void> {
     return { status: res.status, bytes: Buffer.byteLength(body ? JSON.stringify(body) : raw), body, raw };
   };
   let rpcId = 0;
-  const rpc = async (method: string, params: Record<string, unknown>): Promise<Rpc> => unwrap(await fetch(`${base}/mcp`, {
+  const rpc = async (method: string, params: Record<string, unknown>, bearer = API_KEY): Promise<Rpc> => unwrap(await fetch(`${base}/mcp`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json', Accept: 'application/json, text/event-stream',
-      Authorization: `Bearer ${API_KEY}`, 'MCP-Protocol-Version': '2025-06-18',
+      Authorization: `Bearer ${bearer}`, 'MCP-Protocol-Version': '2025-06-18',
     },
     body: JSON.stringify({ jsonrpc: '2.0', id: ++rpcId, method, params }),
     signal: AbortSignal.timeout(60_000),
   }));
-  const call = (name: string, args: Record<string, unknown>) => rpc('tools/call', { name, arguments: args });
+  const call = (name: string, args: Record<string, unknown>, bearer = API_KEY) => rpc('tools/call', { name, arguments: args }, bearer);
+  /**
+   * The MCP SDK Client: it checks every structuredContent against the tool's outputSchema and
+   * throws on a mismatch. It checks against the schemas it has LISTED, so it lists them first,
+   * as a client that offers the tools to a model does; without that it checks nothing.
+   */
+  const strictClient = async (bearer = API_KEY): Promise<Client> => {
+    const client = new Client({ name: 'strict-output-schema-check', version: '1.0.0' });
+    await client.connect(new StreamableHTTPClientTransport(new URL(`${base}/mcp`), {
+      requestInit: { headers: { Authorization: `Bearer ${bearer}` } },
+    }));
+    const listed = await client.listTools();
+    if (!listed.tools.some(t => t.name === 'read_inbox' && t.outputSchema)) throw new Error('the strict client listed no read_inbox outputSchema');
+    return client;
+  };
+  /**
+   * A relay access token issued through the real authorization-code flow to a client that
+   * registered under `clientName`: /register, /authorize (PKCE), /oauth/verify, /token.
+   */
+  const oauthBearer = async (clientName: string): Promise<string> => {
+    const redirect = 'http://127.0.0.1:9/callback';
+    const registered = await (await fetch(`${base}/register`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ client_name: clientName, redirect_uris: [redirect], token_endpoint_auth_method: 'none',
+        grant_types: ['authorization_code', 'refresh_token'], response_types: ['code'] }),
+    })).json() as { client_id?: string };
+    if (!registered.client_id) throw new Error(`register refused: ${JSON.stringify(registered)}`);
+    const verifier = randomBytes(32).toString('base64url');
+    const challenge = createHash('sha256').update(verifier).digest('base64url');
+    const page = await (await fetch(`${base}/authorize?${new URLSearchParams({
+      response_type: 'code', client_id: registered.client_id, redirect_uri: redirect, scope: 'mcp',
+      code_challenge: challenge, code_challenge_method: 'S256', state: 'size-suite',
+    })}`, { redirect: 'manual' })).text();
+    const pendingId = /const PENDING_ID = "([0-9a-f]+)"/.exec(page)?.[1];
+    if (!pendingId) throw new Error(`no pending authorization in the sign-in page: ${page.slice(0, 200)}`);
+    const verified = await (await fetch(`${base}/oauth/verify`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ pending_id: pendingId, method: 'did', did: `did:web:${USER_ID}.example`, signature: 'fixture' }),
+    })).json() as { redirect?: string; error?: string };
+    const code = verified.redirect ? new URL(verified.redirect).searchParams.get('code') : null;
+    if (!code) throw new Error(`verify gave no code: ${JSON.stringify(verified)}`);
+    const token = await (await fetch(`${base}/token`, {
+      method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({ grant_type: 'authorization_code', code, code_verifier: verifier,
+        client_id: registered.client_id, redirect_uri: redirect }),
+    })).json() as { access_token?: string };
+    if (!token.access_token) throw new Error(`token refused: ${JSON.stringify(token)}`);
+    return token.access_token;
+  };
   const callMessages = async (name: string, args: Record<string, unknown>): Promise<Rpc> => unwrap(await fetch(`${base}/messages`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${IDENTITY_BEARER}` },
@@ -443,6 +512,31 @@ async function main(): Promise<void> {
       ok(/include_content must be true or false/.test(String(sc(flag)['error'] ?? '')), 'an unreadable include_content is refused');
       const when = await call('read_inbox', { since: 'yesterday' });
       ok(/since must be an ISO-8601/.test(String(sc(when)['error'] ?? '')), 'an unparseable since is refused');
+      // The summary line names the tool once: relay errors already begin with it.
+      const line = String(bad.body?.result?.content?.[1]?.text ?? '');
+      ok(line === 'read_inbox did not complete — before must be a nextCursor value from an earlier read_inbox page',
+        'the error summary does not repeat the tool name', line);
+    }
+
+    {
+      // A present argument the relay cannot read is refused by name, never dropped: a dropped
+      // cursor or date answers with the first, unfiltered page, which reads as a right answer.
+      const refusals: Array<[Record<string, unknown>, RegExp, string]> = [
+        [{ limit: 7.5 }, /read_inbox: limit must be a whole number/, 'a fractional limit'],
+        [{ limit: 'ten' }, /read_inbox: limit must be a whole number/, 'a limit that is not a number'],
+        [{ before: 42 }, /read_inbox: before must be a nextCursor/, 'a numeric before'],
+        [{ before: {} }, /read_inbox: before must be a nextCursor/, 'an object before'],
+        [{ since: 1_762_000_000 }, /read_inbox: since must be an ISO-8601/, 'an epoch-number since'],
+      ];
+      for (const [args, expected, what] of refusals) {
+        const r = await call('read_inbox', args);
+        const p = sc(r);
+        ok(expected.test(String(p['error'] ?? '')) && p['items'] === undefined, `${what} is refused, not answered with a page`, JSON.stringify(p).slice(0, 200));
+        const verdict = new AjvJsonSchemaValidator().getValidator(schemas.get('read_inbox') ?? {})(p);
+        ok(verdict.valid, `…and the refusal still conforms to the declared outputSchema`, JSON.stringify(verdict));
+      }
+      const whole = sc(await call('read_inbox', { limit: '7' }));
+      ok(whole['count'] === 7 && whole['limitRequested'] === undefined, 'a limit sent as a digit string is still read');
     }
 
     // ── 3. THE OTHER TRANSPORTS ─────────────────────────────────────────────
@@ -460,6 +554,104 @@ async function main(): Promise<void> {
         'POST /tool/read_inbox accepts the paging arguments, string-typed as REST callers send them', JSON.stringify(page1).slice(0, 300));
       const page2 = await callRest('read_inbox', { limit: 2, before: page1['nextCursor'] });
       ok(page2['items']?.[0]?.published === publishedAt(47), '…and its nextCursor continues on the same route');
+    }
+
+    // ── 4. NOTIFICATIONS THE RELAY DID NOT WRITE, THROUGH A STRICT CLIENT ───
+    console.log('\n4. a strict client reads an inbox holding notifications other senders wrote');
+    {
+      // Delivered straight to the store, as a sender posting to the inbox does (stored
+      // application/json under a UUID name). The two newest sort onto the first page.
+      const foreign = (n: number, doc: Record<string, unknown>): void => {
+        stored.set(`/${USER_ID}/inbox/0000000${n}-aaaa-4bbb-8ccc-dddddddddddd`, { type: 'application/json', body: JSON.stringify(doc) });
+      };
+      foreign(1, { '@context': 'https://www.w3.org/ns/activitystreams', type: 'Create', published: publishedAt(120),
+        actor: { id: 'https://sender.example/people/ada', type: 'Person', name: 'Ada' }, summary: 'An object actor',
+        object: { type: 'Note', content: 'Hello from a sender that embeds the actor.' } });
+      foreign(2, { '@context': 'https://www.w3.org/ns/activitystreams', type: ['Offer', 'https://vocab.example/ns#Invitation'],
+        published: publishedAt(121), actor: 'https://sender.example/people/bo', summary: 'An array type',
+        object: { type: 'Note', content: { '@value': 'A body given as a value object.', '@language': 'en' } } });
+      foreign(3, { '@context': 'https://www.w3.org/ns/activitystreams', type: 'Note', published: 1_762_000_000_000,
+        actor: 'https://sender.example/people/cy', summary: ['not', 'one', 'string'], content: { html: '<p>an object body</p>' } });
+      const totalNow = INBOX_ITEMS + 3;
+
+      const client = await strictClient();
+      try {
+        for (const args of [{}, { limit: 50 }, { include_content: false }] as Array<Record<string, unknown>>) {
+          let result: Awaited<ReturnType<Client['callTool']>> | undefined;
+          let thrown = '';
+          try { result = await client.callTool({ name: 'read_inbox', arguments: args }); } catch (err) { thrown = (err as Error).message; }
+          const p = (result?.structuredContent ?? {}) as Payload;
+          ok(!thrown && p['total'] === totalNow, `the SDK Client accepts read_inbox ${JSON.stringify(args)}`, thrown || JSON.stringify(p).slice(0, 200));
+        }
+        const first = (await client.callTool({ name: 'read_inbox', arguments: { limit: 2 } })).structuredContent as Payload;
+        const [b, a] = (first.items ?? []) as unknown as Array<Record<string, unknown>>;
+        ok(a?.['actor'] === 'https://sender.example/people/ada' && a?.['type'] === 'Create',
+          'an embedded actor is reported by its id', JSON.stringify(a));
+        ok(b?.['type'] === 'Offer' && b?.['content'] === 'A body given as a value object.',
+          'a type array is reported by its ActivityStreams type, and a value object by its value', JSON.stringify(b));
+        // Every page, through the strict client, including the undated one at the end.
+        const walked: Array<Record<string, unknown>> = [];
+        let cursor: string | undefined;
+        let pages = 0;
+        do {
+          const p = (await client.callTool({ name: 'read_inbox', arguments: { limit: 50, include_content: false, ...(cursor ? { before: cursor } : {}) } }))
+            .structuredContent as Payload;
+          walked.push(...((p.items ?? []) as unknown as Array<Record<string, unknown>>));
+          cursor = p['hasMore'] === true ? p['nextCursor'] : undefined;
+          pages++;
+        } while (cursor && pages < 5);
+        const odd = walked.find(i => String(i['url']).includes('00000003-'));
+        ok(walked.length === totalNow && !!odd && odd['published'] === undefined && odd['summary'] === undefined && odd['contentLength'] === undefined,
+          'values that are not strings are left out, and the item is still listed', JSON.stringify(odd));
+        ok(walked.every(i => Object.entries(i).every(([k, v]) => (k === 'contentLength' ? typeof v === 'number' : typeof v === 'string'))),
+          'every item field the relay returns is a string (contentLength a number)');
+      } finally {
+        await client.close();
+      }
+      for (const n of [1, 2, 3]) stored.delete(`/${USER_ID}/inbox/0000000${n}-aaaa-4bbb-8ccc-dddddddddddd`);
+    }
+
+    // ── 5. A CHATGPT SESSION GETS THE RESULT ONCE ───────────────────────────
+    console.log('\n5. a session the relay identifies as ChatGPT gets one copy of each result');
+    {
+      const chatgpt = await oauthBearer('ChatGPT');
+      const other = await oauthBearer('Claude');
+      const actArgs = { target: `${pod.base}/${USER_ID}/actions/judge`, action: 'urn:example:action:judge', method: 'POST', payload: { attempt: 'urn:example:attempt:1' } };
+      for (const [tool, args, marker] of [
+        ['act', actArgs, ACT_MARKER],
+        ['read_inbox', {}, BODY_MARKER(49)],
+        ['discover_context', {}, published[0]],
+      ] as Array<[string, Record<string, unknown>, string | undefined]>) {
+        const r = await call(tool, args, chatgpt);
+        const result = r.body?.result;
+        const content = result?.content ?? [];
+        const structured = result?.structuredContent;
+        ok(r.status === 200 && !!structured && result?.isError !== true, `ChatGPT ${tool}: the call succeeds`, r.raw.slice(0, 300));
+        ok(content.length === 1 && parsed(content[0]?.text) === undefined && (content[0]?.text ?? '').length <= SUMMARY_MAX_CHARS,
+          `ChatGPT ${tool}: content is the summary line alone`, JSON.stringify(content).slice(0, 300));
+        ok(!marker || (!JSON.stringify(content).includes(marker) && JSON.stringify(structured).includes(marker)),
+          `ChatGPT ${tool}: the result is in structuredContent and nowhere else the model reads`);
+        const verdict = new AjvJsonSchemaValidator().getValidator(schemas.get(tool) ?? {})(structured);
+        ok(verdict.valid, `ChatGPT ${tool}: structuredContent conforms to the declared outputSchema`, JSON.stringify(verdict));
+        if (tool === 'act') {
+          sizes['act_chatgpt'] = measure(r);
+          ok(sizes['act_chatgpt']!.wireBytes < sizes['act']!.wireBytes - sizes['act']!.structuredContentBytes / 2,
+            'ChatGPT act: the wire carries one copy of the result, not two',
+            `${sizes['act_chatgpt']!.wireBytes} vs ${sizes['act']!.wireBytes}`);
+        }
+      }
+      const otherAct = await call('act', actArgs, other);
+      const otherContent = otherAct.body?.result?.content ?? [];
+      ok(otherContent.length === 2 && sameJson(parsed(otherContent[0]?.text), otherAct.body?.result?.structuredContent),
+        'any other client keeps the JSON result first in content', JSON.stringify(otherContent.map(c => (c.text ?? '').slice(0, 60))));
+      const client = await strictClient(chatgpt);
+      try {
+        let thrown = '';
+        try { await client.callTool({ name: 'act', arguments: actArgs }); } catch (err) { thrown = (err as Error).message; }
+        ok(!thrown, 'the SDK Client accepts the ChatGPT-shaped act result', thrown);
+      } finally {
+        await client.close();
+      }
     }
 
     for (const [k, v] of Object.entries(sizes)) console.log(`  ${k.padEnd(26)} ${JSON.stringify(v)}`);

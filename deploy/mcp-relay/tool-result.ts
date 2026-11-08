@@ -13,6 +13,17 @@
  *   _meta              only what a widget needs and the model must not see. Nothing here
  *                      puts a copy of the result in it.
  *
+ * ── ★ HOW MANY COPIES A MODEL READS DEPENDS ON THE CLIENT ────────────────────
+ *
+ * The layout above gives a client that shows its model only `content` exactly one copy. It
+ * gives ChatGPT TWO: OpenAI's Apps SDK documents both `structuredContent` and `content` as
+ * "surfaced to the model", and `_meta` as the only field hidden from it. ChatGPT is the client
+ * whose report started this, so for a session the relay identifies as ChatGPT (the OAuth
+ * client's registered name, mapped to the same surface slug identity mints agents under)
+ * {@link relayToolResult} leaves the JSON copy out of `content` and sends the summary line
+ * alone. structuredContent is unchanged, so ChatGPT's model and its widget (`toolOutput`)
+ * still read the whole result, once. Every other client keeps the JSON first.
+ *
  * ── WHY THIS FILE EXISTS ─────────────────────────────────────────────────────
  *
  * The /mcp dispatcher and the legacy /messages dispatcher each built this envelope by hand,
@@ -46,16 +57,38 @@ function clip(text: string, max = SUMMARY_MAX_CHARS): string {
 const plural = (n: number, word: string): string => `${n} ${word}${n === 1 ? '' : 's'}`;
 
 /**
+ * How a session's client presents a result to its model. Decided per session by the relay
+ * (server.ts) and handed to {@link relayToolResult}; absent means the MCP default layout.
+ */
+export interface RelayResultOptions {
+  /**
+   * The client shows its model `structuredContent` as well as `content` (ChatGPT). `content`
+   * then carries the summary line only, so the model reads the result once.
+   */
+  readonly modelReadsStructuredContent?: boolean;
+}
+
+/** Surface slugs (server.ts `surfaceAgentFromClient`) whose model reads structuredContent. */
+export const SURFACES_WHOSE_MODEL_READS_STRUCTURED_CONTENT: ReadonlySet<string> = new Set(['chatgpt']);
+
+/**
  * One line describing a result without restating it. Deterministic, so the same result always
  * summarises the same way, and blind to body text: it reports sizes and counts, never values a
  * caller supplied, except an error message the result already carries.
+ *
+ * `options` says where the full result is, so the line points at it: after the JSON block
+ * (the default), or in structuredContent when that is the only copy.
  */
-export function summarizeToolResult(name: string, structured: Record<string, unknown>): string {
+export function summarizeToolResult(name: string, structured: Record<string, unknown>, options: RelayResultOptions = {}): string {
   const label = name || 'result';
+  const inStructured = options.modelReadsStructuredContent === true;
   const error = structured['error'];
   if (typeof error === 'string' && error) {
+    // Relay errors already begin with the tool name ("read_inbox: forbidden …"); say it once.
+    const own = `${label}:`;
+    const text = error.startsWith(own) ? error.slice(own.length).trimStart() : error;
     const message = typeof structured['message'] === 'string' ? `: ${structured['message']}` : '';
-    return clip(`${label} did not complete — ${error}${message}`);
+    return clip(`${label} did not complete — ${text || error}${message}`);
   }
   // A followed affordance: report the exchange, not the response body.
   const status = structured['status'];
@@ -66,7 +99,7 @@ export function summarizeToolResult(name: string, structured: Record<string, unk
     const method = typeof affordance['method'] === 'string' ? `${affordance['method']} ` : '';
     const target = typeof affordance['target'] === 'string' ? affordance['target'] : 'the target';
     return clip(`${label}: ${method}${target} answered ${status}${structured['statusText'] ? ` ${structured['statusText']}` : ''}; `
-      + `the ${bytes.toLocaleString('en-US')}-byte ${type} response is the body field of the JSON result.`);
+      + `the ${bytes.toLocaleString('en-US')}-byte ${type} response is the body field of ${inStructured ? 'structuredContent' : 'the JSON result'}.`);
   }
   // A paged list (read_inbox): say how much is here and whether there is more.
   if (Array.isArray(structured['items']) && typeof structured['total'] === 'number') {
@@ -76,26 +109,31 @@ export function summarizeToolResult(name: string, structured: Record<string, unk
     return clip(`${label}: ${shown} of ${plural(structured['total'] as number, noun)}, newest first.${more}`);
   }
   if (typeof structured['result'] === 'string') {
-    return clip(`${label}: text result of ${(structured['result'] as string).length.toLocaleString('en-US')} characters (above).`);
+    const length = (structured['result'] as string).length.toLocaleString('en-US');
+    return clip(inStructured
+      ? `${label}: text result of ${length} characters, in the result field of structuredContent.`
+      : `${label}: text result of ${length} characters (above).`);
   }
   const arrays = Object.entries(structured)
     .filter(([key, value]) => Array.isArray(value) && !key.startsWith('@') && key !== 'affordances')
     .map(([key, value]) => `${key}: ${(value as unknown[]).length}`);
   const fields = Object.keys(structured).filter(key => !key.startsWith('@')).length;
-  return clip(`${label}: JSON result above with ${plural(fields, 'field')}${arrays.length ? ` (list sizes ${arrays.slice(0, 3).join(', ')})` : ''}.`);
+  return clip(`${label}: JSON result ${inStructured ? 'in structuredContent' : 'above'} with ${plural(fields, 'field')}`
+    + `${arrays.length ? ` (list sizes ${arrays.slice(0, 3).join(', ')})` : ''}.`);
 }
 
 /**
  * Build the envelope from a handler's output. `text` is kept VERBATIM as the back-compat copy
  * (handlers that emit human-readable text keep it); structuredContent is its parsed, null-free
- * object form via the core helper every Interego MCP surface shares.
+ * object form via the core helper every Interego MCP surface shares. With
+ * `modelReadsStructuredContent`, `text` is not sent: structuredContent is the one copy.
  */
-export function relayToolResult(name: string, text: string, structured: Record<string, unknown> = toStructuredContent(text)): RelayToolResult {
+export function relayToolResult(
+  name: string, text: string, structured: Record<string, unknown> = toStructuredContent(text), options: RelayResultOptions = {},
+): RelayToolResult {
+  const summary: Text = { type: 'text', text: summarizeToolResult(name, structured, options) };
   return {
-    content: [
-      { type: 'text', text },
-      { type: 'text', text: summarizeToolResult(name, structured) },
-    ],
+    content: options.modelReadsStructuredContent === true ? [summary] : [{ type: 'text', text }, summary],
     structuredContent: structured,
   };
 }

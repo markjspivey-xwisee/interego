@@ -221,6 +221,13 @@ async function listInbox(podUrl: string, fetchFn: FetchFn): Promise<string[]> {
   } catch { return []; }
 }
 
+/**
+ * One inbox notification as the relay reports it. Every field is a string, and that is a
+ * guarantee, not a hope: {@link inboxItemFrom} is the only place an item is made, and it drops
+ * any value it cannot read as a string. `read_inbox` declares these fields as strings in its
+ * outputSchema, and a client that checks results against that schema rejects the WHOLE page
+ * for one notification whose `actor` is an object.
+ */
 export interface InboxItem {
   url: string;
   id?: string;
@@ -230,6 +237,80 @@ export interface InboxItem {
   content?: string;
   about?: string;
   published?: string;
+}
+
+// ── Reading a stored notification ──────────────────────────────────────────
+//
+// ★ A NOTIFICATION IS WRITTEN BY ITS SENDER, NOT BY THIS RELAY. `notify_agent` writes the
+// relay's own flat shape, but the inbox also holds what other senders deliver straight to the
+// store (see listInbox) and what `act` stores. ActivityStreams lets `actor` be an object
+// ({id, type, name}), `type` an array (["Create", "<extension IRI>"]), and JSON-LD lets any
+// literal be a value object ({"@value": …}). These read each such field as one string, or
+// leave it out.
+
+/** A literal: a string, or the string inside a JSON-LD value object. */
+function textOf(value: unknown): string | undefined {
+  if (typeof value === 'string') return value;
+  if (value && typeof value === 'object' && !Array.isArray(value)) {
+    const inner = (value as Record<string, unknown>)['@value'];
+    if (typeof inner === 'string') return inner;
+  }
+  return undefined;
+}
+
+/** A reference: a string, or the `id` / `@id` of an embedded object. */
+function referenceOf(value: unknown): string | undefined {
+  if (typeof value === 'string') return value;
+  if (value && typeof value === 'object' && !Array.isArray(value)) {
+    const v = value as Record<string, unknown>;
+    if (typeof v['id'] === 'string') return v['id'];
+    if (typeof v['@id'] === 'string') return v['@id'];
+  }
+  return undefined;
+}
+
+/**
+ * An activity type. For an array, the first plain string in it: senders list the
+ * ActivityStreams type first and extension types after it, and callers compare the type with
+ * `=== 'Offer'`, which a joined string would never satisfy.
+ */
+function typeOf(value: unknown): string | undefined {
+  if (typeof value === 'string') return value;
+  if (Array.isArray(value)) return value.find((entry): entry is string => typeof entry === 'string');
+  return undefined;
+}
+
+/** The first candidate that reads as a string. */
+function first(read: (value: unknown) => string | undefined, ...candidates: unknown[]): string | undefined {
+  for (const candidate of candidates) {
+    const value = read(candidate);
+    if (value !== undefined) return value;
+  }
+  return undefined;
+}
+
+/**
+ * The one way an inbox item is made from a stored notification. Every field is a string or is
+ * absent. Exported so the field rules are tested without a pod.
+ */
+export function inboxItemFrom(url: string, stored: unknown): InboxItem | null {
+  if (!stored || typeof stored !== 'object' || Array.isArray(stored)) return null;
+  const d = stored as Record<string, unknown>;
+  const obj = d['object'] && typeof d['object'] === 'object' && !Array.isArray(d['object'])
+    ? d['object'] as Record<string, unknown> : {};
+  const item: InboxItem = { url };
+  const fields: Array<[Exclude<keyof InboxItem, 'url'>, string | undefined]> = [
+    ['id', first(referenceOf, d['id'], d['@id'])],
+    ['type', first(typeOf, d['type'], d['@type'])],
+    ['actor', first(referenceOf, d['actor'])],
+    ['summary', first(textOf, d['summary'], obj['summary'])],
+    ['content', first(textOf, obj['content'], d['content'])],
+    ['about', first(referenceOf, obj['iep:about'], obj[`${IEP_NS}about`], obj['interego:about'],
+      obj['https://interego-emergent.example/ns/mcp-relay#about'], d['iep:about'], d['interego:about'], d['about'])],
+    ['published', first(textOf, d['published'])],
+  ];
+  for (const [key, value] of fields) if (value !== undefined) item[key] = value;
+  return item;
 }
 
 /**
@@ -259,18 +340,8 @@ export async function readAllInboxItems(podUrl: string, fetchFn: FetchFn = defau
       let d: any = JSON.parse(await r.text());
       if (typeof d === 'string') { try { d = JSON.parse(d); } catch { /* keep as-is */ } }
       if (Array.isArray(d)) d = d.find((x: any) => x && typeof x === 'object' && (x.type || x.summary || x.object)) ?? d[0] ?? {};
-      if (!d || typeof d !== 'object') return;
-      const obj = (d.object ?? {}) as Record<string, any>;
-      items.push({
-        url,
-        id: d.id,
-        type: d.type,
-        actor: d.actor,
-        summary: d.summary ?? obj.summary,
-        content: obj.content ?? d.content,
-        about: obj['iep:about'] ?? obj[`${IEP_NS}about`] ?? obj['interego:about'] ?? obj['https://interego-emergent.example/ns/mcp-relay#about'] ?? d['iep:about'] ?? d['interego:about'] ?? d.about,
-        published: d.published,
-      });
+      const item = inboxItemFrom(url, d);
+      if (item) items.push(item);
     } catch { /* skip */ }
   }));
   items.sort(compareInboxItems);
@@ -297,12 +368,25 @@ export const INBOX_DEFAULT_LIMIT = 20;
 export const INBOX_MAX_LIMIT = 50;
 
 /**
- * Newest first by `published`; an item with no `published` sorts after every dated one; ties
- * break on `url`, descending, so the order is total and a cursor names exactly one position.
+ * Newest first by the INSTANT `published` names, not by its spelling: `2026-01-02T00:00:00+02:00`
+ * is earlier than `2026-01-01T23:00:00-01:00`, though it sorts after it as a string, and `since`
+ * already compares instants. Then, in order: a `published` that is not a date, newest-first as
+ * text; no `published` at all, last. Ties break on the `published` text and then on `url`,
+ * descending, so the order is total and a cursor (which carries `published` and `url`, the
+ * whole key) names exactly one position.
  */
 export function compareInboxItems(a: InboxItem, b: InboxItem): number {
-  const byTime = (b.published ?? '').localeCompare(a.published ?? '');
-  return byTime !== 0 ? byTime : b.url.localeCompare(a.url);
+  const rank = (item: InboxItem): [number, number] => {
+    if (item.published === undefined) return [2, 0];
+    const time = Date.parse(item.published);
+    return Number.isFinite(time) ? [0, time] : [1, 0];
+  };
+  const [rankA, timeA] = rank(a);
+  const [rankB, timeB] = rank(b);
+  if (rankA !== rankB) return rankA - rankB;
+  if (timeA !== timeB) return timeB - timeA;
+  const byText = (b.published ?? '').localeCompare(a.published ?? '');
+  return byText !== 0 ? byText : b.url.localeCompare(a.url);
 }
 
 /** An opaque position: the sort key of the last item a page returned. */
@@ -343,6 +427,53 @@ export interface InboxPage {
 }
 
 export class InboxPageError extends Error {}
+
+/**
+ * The paging arguments of one `read_inbox` call, read from what a caller sent.
+ *
+ * They arrive typed on /mcp and as JSON on /tool and /messages, where a REST caller may send a
+ * number or a boolean as a string, so both spellings are read. ★ Anything else that is PRESENT
+ * is refused with the argument named, never dropped: a dropped `before` or `since` answers with
+ * the first, unfiltered page, which reads exactly like a correct answer to the question asked.
+ * Absent means undefined, null or the empty string, because clients fill optional fields they
+ * were not asked about with those.
+ */
+export function parseInboxPageArgs(args: Readonly<Record<string, unknown>>):
+  { readonly ok: true; readonly options: InboxPageOptions; readonly requestedLimit?: number }
+  | { readonly ok: false; readonly error: string } {
+  const absent = (v: unknown): boolean => v === undefined || v === null || v === '';
+  let requestedLimit: number | undefined;
+  if (!absent(args['limit'])) {
+    const raw = args['limit'];
+    const value = typeof raw === 'number' ? raw
+      : typeof raw === 'string' && /^\s*-?\d+\s*$/.test(raw) ? Number(raw) : Number.NaN;
+    // A fraction is refused rather than rounded: `limitRequested` is declared an integer, and a
+    // page size the caller did not ask for is not one to guess at.
+    if (!Number.isInteger(value)) {
+      return { ok: false, error: `limit must be a whole number from 1 to ${INBOX_MAX_LIMIT}` };
+    }
+    requestedLimit = value;
+  }
+  const flag = args['include_content'];
+  const includeContent = absent(flag) ? true
+    : flag === false || flag === 'false' ? false
+    : flag === true || flag === 'true' ? true : undefined;
+  if (includeContent === undefined) return { ok: false, error: 'include_content must be true or false' };
+  const text = (name: 'before' | 'since'): string | undefined | null =>
+    absent(args[name]) ? undefined : typeof args[name] === 'string' ? args[name] as string : null;
+  const before = text('before');
+  if (before === null) return { ok: false, error: 'before must be a nextCursor value from an earlier read_inbox page' };
+  const since = text('since');
+  if (since === null) return { ok: false, error: 'since must be an ISO-8601 date-time' };
+  return {
+    ok: true,
+    options: {
+      ...(requestedLimit !== undefined ? { limit: requestedLimit } : {}),
+      ...(before !== undefined ? { before } : {}), ...(since !== undefined ? { since } : {}), includeContent,
+    },
+    ...(requestedLimit !== undefined ? { requestedLimit } : {}),
+  };
+}
 
 /**
  * One page of an already-read inbox. Pure, so the paging arithmetic is tested without a pod.
