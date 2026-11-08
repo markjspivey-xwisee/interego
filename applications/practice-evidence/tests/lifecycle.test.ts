@@ -2829,6 +2829,9 @@ describe('Interego sign-in: a request the relay signed acts as the person whose 
     refused(await ract(RH, 'pev.record_turns', AG.ben, { action: web(PEV_ACTION.counterpartPacket), turnIndex: 1, ...line }), 400, 'envelope-for-another-action');
     refused(await ract(RH, 'pev.record_turns', AG.ben, { action: web(PEV_ACTION.recordTurns).replace('/pev/', '/wrd/'), turnIndex: 1, ...line }), 400, 'envelope-for-another-action');
     refused(await ract(RH, 'pev.record_turns', AG.ben, { action: 'urn:iep:action:wrd:record-turns', turnIndex: 1, ...line }), 400, 'envelope-for-another-action');
+    // Neither form at all: the bare verb, or the path under another scheme, is not this act, though its tail matches.
+    refused(await ract(RH, 'pev.record_turns', AG.ben, { action: 'pev/record-turns', turnIndex: 1, ...line }), 400, 'envelope-for-another-action');
+    refused(await ract(RH, 'pev.record_turns', AG.ben, { action: web(PEV_ACTION.recordTurns).replace(/^https:/, 'ftp:'), turnIndex: 1, ...line }), 400, 'envelope-for-another-action');
     expect(rsnap()).toBe(before);
     const saved = ok(await ract(RH, 'pev.record_turns', AG.ben, { action: web(PEV_ACTION.recordTurns), turnIndex: 1, ...line }));
     expect([saved['nextTurnIndex'], saved['state']]).toEqual([3, 'in-conversation']);

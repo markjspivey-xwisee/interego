@@ -588,12 +588,6 @@ function readKey(action, fields) {
   return `${signerKey()}|${S.pod}|${canonicalJson({ v: 1, action, podUrl: S.pod, ...fields })}`;
 }
 
-/** True when this signer already holds a signed read for this act, young enough to send again without asking anyone. */
-function hasFreshRead(action, fields) {
-  const hit = S.readEnvelopes.get(readKey(action, fields));
-  return Boolean(hit && Date.now() - hit.at < READ_ENVELOPE_MS);
-}
-
 async function sign(action, fields, read) {
   if (!S.pod) throw new Error(NEED_STORAGE);
   if (S.mode === 'paste' && !S.manual) throw new NeedsSignIn();
@@ -1313,7 +1307,7 @@ function accountActions() {
 function byokHint(b) {
   const replies = !b || b.counterpartRoute !== 'none';
   const assessments = !b || b.judgeRoute !== 'none';
-  if (!replies && !assessments) return 'Used only for Draft with AI when you write a scenario. Sent with each draft, used once, never stored.';
+  if (!replies && !assessments) return 'Used only for Draft with my Anthropic key when you write a scenario. Sent with each draft, used once, never stored.';
   const steps = [replies ? 'replies' : null, assessments ? 'assessments' : null, 'drafts'].filter(Boolean);
   return `AI steps this workspace offers: ${steps.length === 3 ? 'replies, assessments and drafts' : steps.join(' and ')}. Sent with each one, used once, never stored.`;
 }
@@ -1740,8 +1734,8 @@ const CHECKLISTS = {
     { member: true, title: 'Copy your Member ID and send it to your admin', text: 'Your admin uses this to give you a role.' },
     { practice: true, title: 'Pick a scenario', text: "Read what you're practicing and open the rubric.", scroll: '#scenarios', label: 'See scenarios' },
     { practice: true, title: 'Start', text: 'Say whether anyone helped you prepare, then press Start practice.' },
-    { practice: true, title: 'Have the conversation', text: 'On the session page, copy the start-up message into Claude or ChatGPT and talk it through there, or use copy and paste one line at a time. Finish when you are ready.', connect: true },
-    { title: 'Get your feedback', text: 'Choose Send to your judge and send the message to your appointed judge. Not sure who that is? Ask your admin.' },
+    { practice: true, title: 'Have the conversation', text: () => conversationStepText(), connect: true },
+    { title: 'Get your feedback', text: () => feedbackStepText() },
     { title: 'After review', text: 'Download your record, request another review, or share it as a learning record.' },
     { title: 'Practice again', text: 'Start again from the session page whenever you like.', href: '#/mine', label: 'My practice' },
   ],
@@ -1780,6 +1774,28 @@ const CHECKLISTS = {
     { title: "Assess a session you've been given", text: "Paste the message a learner sends you into a chat with the Interego connector on. Your assistant proposes levels and waits for your go-ahead. You can't assess your own practice, and a reviewer has the final say." },
   ],
 };
+
+/**
+ * The learner's "Have the conversation" step, as the session page offers it to this person here:
+ * Send on a workspace with an AI of its own; the start-up message for Claude or ChatGPT for a
+ * person signed in with Interego on one that offers it; otherwise copy and paste one line at a time.
+ */
+function conversationStepText() {
+  const b = S.bridge;
+  if (!b) return 'Talk it through with your own AI assistant, as the session page shows. Finish when you are ready.';
+  if (b.counterpartRoute !== 'none') return 'Type your line and press Send, or let your own AI play the other person. Finish when you are ready.';
+  if (chatReady()) return 'On the session page, copy the start-up message into Claude or ChatGPT and talk it through there, or use copy and paste one line at a time. Finish when you are ready.';
+  return 'On the session page, copy each line into your own AI assistant and paste its reply back. Finish when you are ready.';
+}
+
+/** The learner's "Get your feedback" step, named as the finished session's own buttons are named here. */
+function feedbackStepText() {
+  const b = S.bridge;
+  if (!b) return 'Send it to your judge, or press Get AI assessment where it is offered. Not sure who your judge is? Ask your admin.';
+  if (b.judgeRoute !== 'none') return 'Press Get AI assessment on the finished session.';
+  if (chatOffered()) return 'Choose Send to your judge and send the message to your appointed judge. Not sure who that is? Ask your admin.';
+  return 'Choose Get the hand-off and send it to your appointed judge. Not sure who that is? Ask your admin.';
+}
 
 function checklistVisible() { return S.mode !== 'paste' && recall(CHECKLIST_HIDDEN_KEY) !== '1'; }
 
@@ -1842,7 +1858,7 @@ function paintChecklist(slot) {
     return h('li', { class: 'checklist__item', 'data-state': state },
       h('span', { class: 'checklist__mark' }, d ? icon('check') : null),
       h('p', { class: 'checklist__title-item' }, h('span', { class: 'visually-hidden', text: d ? 'Done: ' : i === current ? 'Next step: ' : '' }), s.title),
-      h('p', { class: 'checklist__text', text: s.member && memberText ? memberText : s.text }),
+      h('p', { class: 'checklist__text', text: s.member && memberText ? memberText : typeof s.text === 'function' ? s.text() : s.text }),
       action ? h('div', { class: 'checklist__action' }, action) : null);
   };
   const limit = S.checklistAll || current < 0 ? steps.length : current + 3;
@@ -1884,9 +1900,11 @@ async function viewPractice(root) {
   renderHeader();
   if (r.bridge && r.bridge.counterpartRoute === 'none') {
     root.append(callout({ tone: 'info', title: 'Practice with your own AI assistant', extraClass: 'own-ai',
-      body: chatOffered()
+      body: chatReady()
         ? 'Claude or ChatGPT can play the other person and save each exchange to your session. Set it up once with the Interego connector. No API key.'
-        : 'Your own AI assistant plays the other person: copy each line into any chat app and paste the reply back. No API key.',
+        : chatOffered()
+          ? 'Signed in with Interego, Claude or ChatGPT can play the other person and save each exchange to your session. Otherwise, copy each line into any chat app and paste the reply back. No API key.'
+          : 'Your own AI assistant plays the other person: copy each line into any chat app and paste the reply back. No API key.',
       actions: [chatOffered() ? connectButton('Connect your AI', 'btn--secondary btn--sm') : null, linkButton('ui/help#claude-chatgpt', 'How it works', 'btn--ghost btn--sm')] }));
   }
   // A scenario this bridge cannot open (sealed to another record key, or not read) is never shown as absent.
@@ -2325,8 +2343,10 @@ function watchLine(v, cur, chat, subtitle, dirty) {
   const watch = { attemptIri: v.attemptIri, busy: false, check: null };
   watch.check = async (how) => {
     if (watch.busy || !line.isConnected) return;
-    // Coming back to the tab re-reads only with a signed read this page already holds: it never asks anyone to sign.
-    if (how === 'auto' && !(chatReady() && hasFreshRead(ACT.getAttempt, { attemptIri: v.attemptIri }))) return;
+    // Coming back to the tab re-reads only for a person signed in with Interego: the read is one this
+    // page already holds or one the relay signs through this bridge, so no person is asked to sign.
+    // A wallet or a pasted signature never re-reads on its own, nor does a sign-in past its expiry.
+    if (how === 'auto' && !(chatReady() && S.interego && Date.now() < S.interego.expiresAt)) return;
     watch.busy = true;
     btn.disabled = true;
     clear(problem);

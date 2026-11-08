@@ -865,6 +865,13 @@ describe('the web UI works, driven in a DOM against the real handlers', () => {
     expect(p.text('#view')).not.toMatch(/built-in AI/);
     p.q('#connect-wallet')!.click();
     await p.until(() => p.text('#acting-as').startsWith('Signed in with wallet'), 'the connected wallet');
+    // Getting started words the learner's steps as this workspace offers them: copy and paste, and the judge hand-off.
+    (await p.until(() => p.all('.checklist button').find((b) => (b.textContent ?? '').startsWith('Show all')), 'Getting started')).click();
+    await p.until(() => p.all('.checklist__item').length === 8, 'every learner step');
+    const steps = p.all('.checklist__text').map((x) => x.textContent).join('\n');
+    expect(steps).toContain('On the session page, copy each line into your own AI assistant and paste its reply back.');
+    expect(steps).toContain('Choose Get the hand-off and send it to your appointed judge.');
+    expect(steps).not.toMatch(/start-up message|Send to your judge/);
 
     // Connect your AI, on a workspace without Interego sign-in: copy and paste only, and no connector address to set up in vain.
     p.click('#connect-ai-button');

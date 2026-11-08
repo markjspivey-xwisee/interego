@@ -1204,6 +1204,15 @@ async function signedInPage(l: TestListener, extra?: (w: JSDOM['window']) => voi
   return Object.assign(p, { copied, intervals });
 }
 
+/** Every learner step of Getting started, as the page words them for this person on this workspace. */
+async function learnerSteps(p: Page): Promise<string> {
+  await p.until(() => p.q('.checklist'), 'Getting started');
+  p.all('.checklist button').find((b) => b.textContent === 'Show steps')?.click();
+  p.all('.checklist button').find((b) => (b.textContent ?? '').startsWith('Show all'))?.click();
+  await p.until(() => p.all('.checklist__item').length === 8, 'every learner step');
+  return p.all('.checklist__text').map((x) => x.textContent).join('\n');
+}
+
 /** One act a chat agent of the person's (Claude, through the relay) takes on its own, as the connector's act would post it. */
 async function fromChat(h: Handlers, tool: string, action: string, fields: Out): Promise<Out> {
   const slug = `claude-${USER}`;
@@ -1220,6 +1229,10 @@ describe('your own AI assistant: connect Claude or ChatGPT, or copy and paste; n
     const p = await signedInPage(nm);
     await p.until(() => p.q('article.scenario'), 'the scenarios');
     expect(p.text('#view .own-ai')).toContain('Claude or ChatGPT can play the other person and save each exchange to your session.');
+    // Getting started names the chat route this person has here, and the judge message.
+    const steps = await learnerSteps(p);
+    expect(steps).toContain('On the session page, copy the start-up message into Claude or ChatGPT and talk it through there');
+    expect(steps).toContain('Choose Send to your judge and send the message to your appointed judge.');
     p.q('#connect-ai-button')!.click();
     const d = await p.until(() => p.q('#connect-ai[open]'), 'the Connect dialog');
     expect(d.querySelector('#connect-title')?.textContent).toBe('Use your own AI assistant');
@@ -1274,6 +1287,11 @@ describe('your own AI assistant: connect Claude or ChatGPT, or copy and paste; n
     out.q('#connect-ai .modal__footer .btn--primary')!.click();
     out.q('#connect-wallet')!.click();
     await out.until(() => out.text('#acting-as').startsWith('Signed in with wallet'), 'the wallet');
+    // Getting started and the practice callout promise a wallet learner no start-up message: that takes Interego sign-in.
+    const walletSteps = await learnerSteps(out);
+    expect(walletSteps).toContain('On the session page, copy each line into your own AI assistant and paste its reply back.');
+    expect(walletSteps).not.toContain('start-up message');
+    expect(out.text('#view .own-ai')).toContain('Signed in with Interego, Claude or ChatGPT can play the other person and save each exchange to your session. Otherwise, copy each line');
     out.q('#connect-ai-button')!.click();
     await out.until(() => out.q('#connect-ai[open]'), 'the Connect dialog');
     expect([out.q('#connect-ai #connector-address'), out.q('#connect-ai #copy-workspace-details')]).toEqual([null, null]);
@@ -1353,6 +1371,38 @@ describe('your own AI assistant: connect Claude or ChatGPT, or copy and paste; n
     expect(judge).not.toContain('The feed was late again');
     plain('the finished session', `${shownText(p.q('#bar'))} ${shownText(p.q('#view'))}`);
     // Nothing ran on a timer: every read above came from the person coming back, or asking.
+    expect(p.intervals).toEqual([]);
+    expect(p.errors).toEqual([]);
+  }, SLOW);
+
+  it('coming back to the tab after the page\'s signed read is old still shows lines saved from the chat: the relay signs a new read, and no person is asked', async () => {
+    const p = await signedInPage(nm);
+    const card = await p.until(() => p.q('article.scenario'), 'the scenarios');
+    card.querySelector<HTMLInputElement>('input[type=radio][value=no]')!.checked = true;
+    card.querySelector<HTMLElement>(`button[data-action="${PEV_ACTION.startAttempt}"]`)!.click();
+    await p.until(() => p.q('#view .chat-handoff'), 'the chat hand-off');
+    const attemptIri = decodeURIComponent(p.w.location.hash.slice('#/attempt/'.length));
+    expect(p.text('#view .watch')).toContain('This page checks again when you come back to it.');
+    // A chat lasts longer than a signed read is kept: ten minutes on, on the page's clock, the read it drew the session with is too old to send again.
+    const realNow = p.w.Date.now.bind(p.w.Date);
+    p.w.Date.now = (): number => realNow() + 10 * 60_000;
+    const signs = (): number => p.asked.filter((x) => x === 'POST /ui/relay/sign').length;
+    const reads = (): number => p.asked.filter((x) => x === 'POST /pev/get_attempt').length;
+    const [signs0, reads0] = [signs(), reads()];
+    ok(await fromChat(noModelHandlers, 'pev.record_turns', PEV_ACTION.recordTurns, { attemptIri, turnIndex: 1, learnerText: 'Thanks for coming in. The report was due Thursday.', counterpartText: 'Yes. The feed was late again.', counterpartDisclosure: { provider: 'Anthropic', model: 'not shown' } }));
+    p.w.document.dispatchEvent(new p.w.Event('visibilitychange'));
+    await p.until(() => p.all('.bubble').length === 3, 'the lines saved from the chat');
+    // One read, which the relay signed for this sign-in through the bridge: the person was asked nothing.
+    expect([reads() - reads0, signs() - signs0]).toEqual([1, 1]);
+    // That read is kept: coming back again at once reads with it and signs nothing more.
+    p.w.dispatchEvent(new p.w.Event('focus'));
+    await p.until(() => reads() - reads0 === 2, 'the second check');
+    expect(signs() - signs0).toBe(1);
+    // A sign-in past its expiry does not re-read on its own.
+    p.w.Date.now = (): number => realNow() + 2 * 3_600_000;
+    p.w.document.dispatchEvent(new p.w.Event('visibilitychange'));
+    await new Promise((r) => setTimeout(r, 200));
+    expect([reads() - reads0, signs() - signs0]).toEqual([2, 1]);
     expect(p.intervals).toEqual([]);
     expect(p.errors).toEqual([]);
   }, SLOW);
