@@ -17,8 +17,11 @@
  *                               workspace's address on it
  *   GET  /ui/favicon.svg        the mark
  *
- * Their "Contact" links go to the guide's contact section, or to the operator's own contact page
- * when server.ts passes one (PEV_CONTACT_URL, https only: no page carries an email address).
+ * Their "Contact" links go to the guide's contact section, or to the operator's own contact link
+ * when server.ts passes one (PEV_CONTACT_URL: an https page, or a mailto: link to one address,
+ * checked by the shared contactHrefOf). The only email address a page can carry is that
+ * operator-set mailto, and only inside the Contact links' href; it comes from the environment,
+ * never from a file in this repository.
  *
  * Interego sign-in (`attachUi(app, { interego })`, on when the operator sets PEV_RELAY_URL and
  * trusts a relay): a person with no key of their own signs in with their Interego account on the
@@ -72,6 +75,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import type { Express, NextFunction, Request, Response } from 'express';
 import { guardedFetchFn } from '@interego/core';
+import { contactHrefOf } from '../../_shared/contact-link/index.js';
 import { designSystemCss } from '../../_shared/design-system/index.js';
 import { refuse } from '../../_shared/vertical-bridge/refusal.js';
 import { openRelayDelegated, type RelayDelegationPolicy } from '../src/relay-delegated.js';
@@ -885,29 +889,27 @@ export function wantsLandingPage(req: Request): boolean {
 }
 
 /**
- * The operator's contact page (PEV_CONTACT_URL), as the pages may link it: an https URL with no
- * user name, password or `@` anywhere (no page carries an email address, so no mailto: and no
- * address in a query either), normalised. Null for anything else, which leaves the default links.
+ * The operator's contact link (PEV_CONTACT_URL), as the pages may link it: the shared
+ * contactHrefOf rule (applications/_shared/contact-link), which work-redesign applies too. An
+ * https page with no user name, password or `@` anywhere, normalised; or a mailto: link to exactly
+ * one address with nothing after it (no query, fragment, escape, comma or space), rebuilt with the
+ * domain lower-cased. Null for anything else, which leaves the default links.
  */
 export function contactUrlOf(raw: string): string | null {
-  if (raw.includes('@') || raw.length > 500) return null;
-  let u: URL;
-  try { u = new URL(raw); } catch { return null; }
-  if (u.protocol !== 'https:' || u.username !== '' || u.password !== '' || u.hostname === '') return null;
-  return u.href;
+  return contactHrefOf(raw);
 }
 
 const attr = (s: string): string => s.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 
 /**
- * The landing page and the guide, with the operator's contact page when it set one: every
+ * The landing page and the guide, with the operator's contact link when it set one: every
  * "Contact" link on the landing page and the guide's own "Contact us" go there, and the guide's
  * contact section links it. Without one, both pages are the files as they are.
  */
 export function contactPages(contactUrl?: string): { readonly landing: string; readonly help: string } {
   if (contactUrl === undefined) return { landing: LANDING_HTML, help: HELP_HTML };
   const url = contactUrlOf(contactUrl);
-  if (url === null) throw new Error('contactPages: the contact URL must be https, with no @ in it.');
+  if (url === null) throw new Error('contactPages: the contact link must be an https page or a mailto: link with one address and nothing after it.');
   if (!LANDING_HTML.includes(LANDING_CONTACT_HREF) || !HELP_HTML.includes(HELP_CONTACT_LINK) || !HELP_CONTACT_DEFAULT.test(HELP_HTML)) {
     throw new Error('contactPages: the landing page or the guide no longer has the contact links this replaces.');
   }
@@ -922,7 +924,8 @@ export function contactPages(contactUrl?: string): { readonly landing: string; r
 /**
  * Mount the landing page at / (browsers only), GET /ui, /ui/app.js, /ui/app.css, the guide at
  * /ui/help, its script and the favicon, and the Interego sign-in routes (or their refusals).
- * `contactUrl` (PEV_CONTACT_URL, checked with contactUrlOf) is where the pages' Contact links go.
+ * `contactUrl` (PEV_CONTACT_URL, checked with contactUrlOf: an https page or one mailto: address) is
+ * where the pages' Contact links go.
  */
 export function attachUi(app: Express, o: { readonly interego?: InteregoUiOptions; readonly contactUrl?: string } = {}): void {
   const pages = contactPages(o.contactUrl);
