@@ -510,16 +510,17 @@ describe('work-redesign customer site', () => {
   it('serves no page with an inline script, an inline style or an event handler; every script and stylesheet is its own, and every link leaving it goes somewhere named', async () => {
     const l = await production();
     const external = new Set([SIBLING.url, INTEREGO_DEFAULTS.identityUrl, `${new URL(INTEREGO_DEFAULTS.relayUrl).origin}/.well-known/security.txt`]);
-    const pages: Array<readonly [string, number]> = [['/', 0], ['/ui', 1], ['/ui/oauth/callback', 1], ['/ui/help', 0]];
-    for (const [path, scripts] of pages) {
+    // The app's pages load the app; the landing page and the guide load only site.js (their menu closes once a link is chosen).
+    const pages: Array<readonly [string, string]> = [['/', '/ui/site.js'], ['/ui', '/ui/app.js'], ['/ui/oauth/callback', '/ui/app.js'], ['/ui/help', '/ui/site.js']];
+    for (const [path, script] of pages) {
       const html = await (await fetch(`${l.base}${path}`, { headers: { accept: BROWSER } })).text();
       expect([path, /<style/i.test(html)]).toEqual([path, false]);
       expect([path, /\sstyle=/i.test(html)]).toEqual([path, false]);
       expect([path, /\son[a-z]+=/i.test(html)]).toEqual([path, false]);
       expect([path, /javascript:/i.test(html)]).toEqual([path, false]);
       const tags = html.match(/<script[^>]*>[\s\S]*?<\/script>/gi) ?? [];
-      expect([path, html.match(/<script/gi)?.length ?? 0]).toEqual([path, scripts]);
-      for (const t of tags) expect([path, t]).toEqual([path, '<script type="module" src="/ui/app.js"></script>']);
+      expect([path, html.match(/<script/gi)?.length ?? 0]).toEqual([path, 1]);
+      for (const t of tags) expect([path, t]).toEqual([path, `<script type="module" src="${script}"></script>`]);
       for (const link of html.match(/<link rel="stylesheet"[^>]*>/gi) ?? []) expect([path, link]).toEqual([path, expect.stringContaining('href="/ui/app.css"')]);
       // Everything the page loads comes from this bridge.
       const loads = [...html.matchAll(/\ssrc="([^"]*)"/gi), ...html.matchAll(/<link[^>]*\shref="([^"]*)"/gi)].map((m) => m[1] ?? '');
@@ -577,6 +578,36 @@ describe('work-redesign customer site', () => {
         expect([what, path, nav.filter((x) => !links('#site-menu').includes(x))]).toEqual([what, path, []]);
         expect([what, path, d.querySelector('.site-menu-button')?.getAttribute('popovertarget')]).toEqual([what, path, 'site-menu']);
       }
+    }
+  });
+
+  it('closes the site pages\' menu once one of its links is chosen, so it does not cover the section it went to; a link opened elsewhere, or one outside it, leaves it as it is', async () => {
+    const l = await production({ signIn: trusted() });
+    const served = await fetch(`${l.base}/ui/site.js`);
+    expect([served.status, served.headers.get('content-type'), served.headers.get('content-security-policy')]).toEqual([200, 'text/javascript; charset=utf-8', UI_CSP]);
+    const siteJs = await served.text();
+    for (const [path, section] of [['/', '#faq'], ['/ui/help', '#glossary']] as const) {
+      const html = await (await fetch(`${l.base}${path}`, { headers: { accept: BROWSER } })).text();
+      expect([path, html.includes('<script type="module" src="/ui/site.js"></script>')]).toEqual([path, true]);
+      const errors: string[] = [];
+      const vc = new VirtualConsole();
+      vc.on('jsdomError', (e: Error) => errors.push(`jsdomError: ${e.message}`));
+      const w = new JSDOM(html, { url: `${l.base}${path}`, runScripts: 'outside-only', virtualConsole: vc }).window;
+      // jsdom has no popovers: the menu's hidePopover is noted instead.
+      const hidden: string[] = [];
+      (w.HTMLElement.prototype as unknown as { hidePopover: (this: HTMLElement) => void }).hidePopover = function (this: HTMLElement) { hidden.push(this.id); };
+      w.eval(siteJs);
+      const d = w.document;
+      const inMenu = must(d.querySelector(`#site-menu a[href="${section}"]`), `the menu's ${section}`) as HTMLAnchorElement;
+      const inHeader = must(d.querySelector(`.top-nav a[href="${section}"]`), `the header's ${section}`) as HTMLAnchorElement;
+      const click = (a: Element, o: MouseEventInit = {}): void => { a.dispatchEvent(new w.MouseEvent('click', { bubbles: true, cancelable: true, button: 0, ...o })); };
+      click(inMenu, { ctrlKey: true });
+      click(inMenu, { button: 1 });
+      click(inHeader);
+      expect([path, hidden]).toEqual([path, []]);
+      // A click, a tap, or Enter on the link (each a click with the main button).
+      click(inMenu);
+      expect([path, hidden, errors]).toEqual([path, ['site-menu'], []]);
     }
   });
 

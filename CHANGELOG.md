@@ -50,7 +50,9 @@ limits, and the footers keep their connector sentences, recording a map from a
 chat and its length limit among them, to where one is named. Below 64em the
 site pages' section links move from the header into its menu, which holds every
 one of them, so the header no longer runs past the screen's edge at 768 to
-930 px. With the
+930 px. Choosing a link in that menu, by mouse, tap or key, now closes it, so
+it no longer covers the section it went to (the pages' one script,
+`/ui/site.js`, served by the bridge under the same policy as the app's). With the
 deployed bridge's 44-character address the set-up no longer widens either page on a phone: each step may
 shrink, and each address sits on a line of its own, filling it before going
 on, with no full stop hanging off it. The panel is titled "Use your AI
@@ -82,6 +84,23 @@ message for my AI" keeps keyboard focus through the redraw copying makes,
 where focus is still on it when the copy lands. A person who went on while its
 message was being fetched keeps their place: focus stays in a panel they
 opened, and a page they scrolled on is not pulled back to the button.
+
+Any redraw of the same view now gives focus back to what had it, built again:
+the same button, or the same field with what was typed in it and the caret
+and selection where they were, and it stays where it was on the screen
+(another view, a task or signing in still starts afresh). So pressing "Copy
+the message for my AI" twice, with a double click, Enter twice or Enter held
+down, no longer leaves focus on nothing; a person who went into "Your AI's
+answer" and typed while the message was on its way stays there, and their next
+keys go in; and a menu or field that redraws when changed keeps focus too.
+A press while a copy is on its way, the second click of a double click and
+Enter's repeats add no copy and no toast; a later press copies again, as does
+a press once a copy has waited 10 seconds for its message. The
+copy no longer moves the button 90 to 115 px down the screen: the browser's
+scroll anchoring, which had nothing to hold on to once the view was rebuilt and
+moved the page anyway, is off in the app, and a redraw keeps what has focus,
+or else what is on the screen, in its place, except while the page is still
+scrolling.
 
 ## 2026-11-08 — Shared helpers for connecting your own chat assistant
 

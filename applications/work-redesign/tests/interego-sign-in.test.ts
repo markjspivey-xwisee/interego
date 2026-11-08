@@ -1503,6 +1503,123 @@ describe('work-redesign web UI: sign in with your Interego account', () => {
     expect(page.errors).toEqual([]);
   }, 60_000);
 
+  /**
+   * A signed-in lead on Map a process, from a document, with its title and text filled in, the clipboard taking every copy,
+   * and the packet held back until released (as a slow network holds it): the first press of a document always asks for one.
+   */
+  async function heldPacketCapture(text: string) {
+    const w = await world({ lead: true });
+    const page = await openPage(w.bridge, '/ui', { [SESSION_KEY]: JSON.stringify({ token: w.relay.mint(), expiresAt: new Date(Date.now() + 3600_000).toISOString() }) });
+    await page.until(() => page.text().includes(`Signed in as ${PERSON} via ${agentOf('work-redesign')}`) && page.text().includes('Map and change your process'), 'the signed-in lead');
+    const win = page.window;
+    const d = win.document;
+    const copied: string[] = [];
+    Object.defineProperty(win.navigator, 'clipboard', { value: { writeText: async (s: string) => { copied.push(s); } }, configurable: true });
+    const held: Array<() => void> = [];
+    const hold = { on: true };
+    const inner = win.fetch;
+    win.fetch = (async (input: unknown, init?: RequestInit) => {
+      if (hold.on && new URL(String(input), win.location.href).pathname === '/wrd/task_map_packet') await new Promise<void>((r) => { held.push(r); });
+      return inner(input as string, init);
+    }) as typeof win.fetch;
+    const scrolledTo: Element[] = [];
+    (win.Element.prototype as unknown as { scrollIntoView: (this: Element) => void }).scrollIntoView = function (this: Element) { scrolledTo.push(this); };
+    page.click('Map a process');
+    await page.until(() => d.querySelectorAll('input[name="capture-mode"]').length === 2, 'the capture view');
+    (d.querySelectorAll('input[name="capture-mode"]')[1] as HTMLInputElement).click();
+    await page.until(() => page.text().includes('Have your AI draft the map'), 'the document route');
+    page.fill(must(d.querySelector('[data-path="document.title"]'), 'the title field'), 'AP-SOP-014');
+    page.fill(must(d.querySelector('[data-path="document.text"]'), 'the text field'), text);
+    const cardB = (): HTMLButtonElement => must([...d.querySelectorAll('.route-card button')].find((b) => b.textContent === 'Copy the message for my AI'), 'Card B\'s button') as HTMLButtonElement;
+    const answer = (): HTMLTextAreaElement => {
+      const label = must([...d.querySelectorAll('label')].find((l) => l.textContent === 'Your AI\'s answer'), 'the answer\'s label') as HTMLLabelElement;
+      return must(d.getElementById(label.htmlFor), 'the answer box') as HTMLTextAreaElement;
+    };
+    const toasts = (): number => d.querySelectorAll('#toasts .toast').length;
+    /** Let every held packet through, and every later one at once. */
+    const release = (): void => { hold.on = false; while (held.length) must(held.pop(), 'a held packet')(); };
+    return { page, win, d, copied, held, hold, release, scrolledTo, cardB, answer, toasts };
+  }
+
+  it('presses copy and paste\'s button twice (a double click, Enter twice) while its packet is on its way: one copy, one toast, and focus stays on the button, as on a later deliberate press; a copy stalled for 10 s no longer holds the button', async () => {
+    const text = 'Supplier invoices arrive by email. The clerk matches each invoice to its purchase order.';
+    const { page, d, win, copied, held, hold, release, scrolledTo, cardB, toasts } = await heldPacketCapture(text);
+    const pressed = cardB();
+    pressed.focus();
+    pressed.click();
+    await page.until(() => held.length === 1, 'the packet asked for');
+    // The second press: while the copy is on its way, the button pressed is still there, and still focused.
+    pressed.click();
+    await new Promise((r) => setTimeout(r, 200));
+    release();
+    await page.until(() => copied.length >= 1 && cardB() !== pressed, 'the message copied and the view drawn again');
+    await new Promise((r) => setTimeout(r, 400));
+    // One copy and one toast; focus on the button the redraw built (before, a second copy's redraw left it on nothing).
+    expect([copied.length, toasts(), pressed.isConnected, d.activeElement === cardB(), scrolledTo]).toEqual([1, 1, false, true, []]);
+    expect(copied[0]).toContain(`----- DOCUMENT: AP-SOP-014 -----\n${text}\n----- END OF DOCUMENT -----`);
+
+    // The second click of a double click adds nothing; Enter held down presses once (its repeats are refused); a later
+    // press is a press of its own: a second copy, with focus still on the button.
+    const again = cardB();
+    again.dispatchEvent(new win.MouseEvent('click', { bubbles: true, cancelable: true, detail: 2 }));
+    const repeat = new win.KeyboardEvent('keydown', { key: 'Enter', repeat: true, bubbles: true, cancelable: true });
+    const first = new win.KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true });
+    again.dispatchEvent(repeat);
+    again.dispatchEvent(first);
+    await new Promise((r) => setTimeout(r, 200));
+    expect([copied.length, repeat.defaultPrevented, first.defaultPrevented]).toEqual([1, true, false]);
+    again.click();
+    await page.until(() => copied.length === 2 && cardB() !== again, 'the message copied again');
+    await new Promise((r) => setTimeout(r, 200));
+    expect([copied.length, toasts(), d.activeElement === cardB(), scrolledTo]).toEqual([2, 2, true, []]);
+
+    // A copy whose packet is still not there after 10 s no longer holds the button: a press then asks again.
+    page.fill(must(d.querySelector('[data-path="document.text"]'), 'the text field'), `${text} Then it is filed.`);
+    const stalled = cardB();
+    const asked = page.log.filter((l) => l.path === '/wrd/task_map_packet').length;
+    hold.on = true;
+    stalled.focus();
+    stalled.click();
+    await page.until(() => held.length === 1, 'the new packet asked for');
+    stalled.click();
+    await new Promise((r) => setTimeout(r, 200));
+    expect(held.length).toBe(1);
+    const realNow = win.Date.now.bind(win.Date);
+    win.Date.now = () => realNow() + 11_000;
+    stalled.click();
+    await page.until(() => held.length === 2, 'the packet asked for again once 10 s have gone');
+    win.Date.now = realNow;
+    release();
+    await page.until(() => copied.length === 4 && page.log.filter((l) => l.path === '/wrd/task_map_packet').length === asked + 2, 'both copies made');
+    await new Promise((r) => setTimeout(r, 200));
+    expect([d.activeElement === cardB(), copied.at(-1)]).toEqual([true, expect.stringContaining('Then it is filed.')]);
+    expect(page.errors).toEqual([]);
+  }, 60_000);
+
+  it('leaves a person who went on into a field while copy and paste\'s packet was on its way in that field when the copy lands, with what they typed and their caret', async () => {
+    const text = 'Supplier invoices arrive by email. The clerk matches each one, then files it.';
+    const { page, d, copied, held, release, scrolledTo, cardB, answer } = await heldPacketCapture(text);
+    const pressed = cardB();
+    pressed.focus();
+    pressed.click();
+    await page.until(() => held.length === 1, 'the packet asked for');
+    // Tab on into step 3's box and type there, the caret left inside what was typed.
+    const box = answer();
+    box.focus();
+    page.fill(box, 'xyz');
+    box.setSelectionRange(1, 2, 'backward');
+    release();
+    await page.until(() => copied.length === 1 && cardB() !== pressed, 'the message copied and the view drawn again');
+    await new Promise((r) => setTimeout(r, 200));
+    const now = answer();
+    // The box was built again (the waiting note above it went with the typing), and focus is in the new one: the text is
+    // there, the caret where it was, and the page did not go back to the button.
+    expect([box.isConnected, d.activeElement === now, now.value, now.selectionStart, now.selectionEnd, now.selectionDirection, scrolledTo])
+      .toEqual([false, true, 'xyz', 1, 2, 'backward', []]);
+    expect(page.text()).not.toContain('Waiting for your AI\'s answer');
+    expect(page.errors).toEqual([]);
+  }, 60_000);
+
   it('where the operator lets chat agents decide too, the panel says so, and the workspace details ask the assistant to check with the person first instead of sending them to the app', async () => {
     const w = await world({ lead: true, chatAgentsDecide: true });
     const page = await openPage(w.bridge, '/ui', { [SESSION_KEY]: JSON.stringify({ token: w.relay.mint(), expiresAt: new Date(Date.now() + 3600_000).toISOString() }) });

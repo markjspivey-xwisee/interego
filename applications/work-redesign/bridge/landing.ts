@@ -1,8 +1,9 @@
 /**
  * The customer-facing pages the bridge serves to browsers: the landing page at / (content-negotiated;
  * agents keep the factory's JSON-LD / HMD) and the guide at /ui/help. Both are static HTML files filled
- * once at attach time: no script, no style element or attribute, same-origin assets only, so they render
- * without JavaScript under UI_CSP. No environment reads: bridge/server.ts passes everything through attachUi.
+ * once at attach time: no inline script, no style element or attribute, same-origin assets only, so they
+ * render without JavaScript under UI_CSP. Their one script, /ui/site.js, only closes the header's menu once
+ * a link in it is chosen. No environment reads: bridge/server.ts passes everything through attachUi.
  */
 import type { Request } from 'express';
 import type { UiSignIn } from './ui.js';   // type-only import: no runtime cycle

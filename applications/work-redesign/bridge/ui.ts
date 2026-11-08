@@ -11,7 +11,9 @@
  *                         applications/_shared/chat-agent) followed by ./ui/app.js, as ONE module
  *                         text, so the shell keeps its single script and app.js imports nothing
  *   GET /ui/app.css       the design system plus bridge/ui/app.css, including the print layout for one decision
- *   GET /ui/help          the guide (./ui/help.html): how to use Work Redesign, by role; no script
+ *   GET /ui/help          the guide (./ui/help.html): how to use Work Redesign, by role
+ *   GET /ui/site.js       the landing page's and the guide's one script (./ui/site.js): their menu closes
+ *                         once a link in it is chosen; nothing else on them needs it
  *   GET /ui/favicon.svg   the Interego mark
  *
  * The UI adds no data endpoint. The client reads the affordance manifest
@@ -145,7 +147,8 @@ export type UiReads = 'signed' | 'public';
 
 /**
  * Mount the web pages and the sign-in routes (attachInteregoSignIn): GET /ui (the app), /ui/app.js,
- * /ui/app.css (the design system plus bridge/ui/app.css), /ui/help (the guide), /ui/favicon.svg,
+ * /ui/app.css (the design system plus bridge/ui/app.css), /ui/help (the guide), /ui/site.js (the
+ * landing page's and the guide's menu), /ui/favicon.svg,
  * and GET / for a browser (the landing page; an agent's request falls through to the factory's
  * entry point). `base` is the bridge's public base URL; `signIn`, the relay a person signs in
  * through (absent: every sign-in route says it is not set up, and the page offers no sign-in);
@@ -157,6 +160,8 @@ export function attachUi(app: Express, opts: { readonly base: string; readonly s
   // One module text: the shared helpers declare one name (InteregoChatAgent), which app.js uses and never redeclares.
   const appJs = `${chatAgentJs()}\n${readFileSync(new URL('./ui/app.js', import.meta.url), 'utf8')}`;
   const appCss = `${designSystemCss()}\n${readFileSync(new URL('./ui/app.css', import.meta.url), 'utf8')}`;
+  // The landing page's and the guide's one script: their menu closes once one of its links is chosen.
+  const siteJs = readFileSync(new URL('./ui/site.js', import.meta.url), 'utf8');
   const base = opts.base.replace(/\/$/, '');
   const values = siteValues({ base, ...(opts.signIn ? { signIn: opts.signIn } : {}), ...(opts.landing ? { landing: opts.landing } : {}) });
   const siblingUrl = values['sibling_url'] ?? SIBLING.url;
@@ -166,6 +171,7 @@ export function attachUi(app: Express, opts: { readonly base: string; readonly s
   app.get('/ui', (_req, res) => { secure(res); res.type('text/html; charset=utf-8').send(html); });
   app.get('/ui/app.js', (_req, res) => { secure(res); res.type('text/javascript; charset=utf-8').send(appJs); });
   app.get('/ui/app.css', (_req, res) => { secure(res); res.type('text/css; charset=utf-8').send(appCss); });
+  app.get('/ui/site.js', (_req, res) => { secure(res); res.type('text/javascript; charset=utf-8').send(siteJs); });
   app.get('/ui/help', (_req, res) => { secure(res); res.type('text/html; charset=utf-8').send(helpPage); });
   app.get('/ui/favicon.svg', (_req, res) => { secure(res); res.type('image/svg+xml; charset=utf-8').send(FAVICON_SVG); });
   // The landing page, for a browser only: ?format= and every agent's Accept fall through to the factory's entry point.

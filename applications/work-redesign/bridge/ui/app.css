@@ -3,6 +3,11 @@
 /* A static page's callout carries its icon first, without the callout__icon class: it goes in the icon column too. */
 .callout > .icon:first-child { grid-column: 1; grid-row: 1 / span 4; color: var(--c-fg); margin-top: 0.0625rem; }
 
+/* The app draws each view anew (app.js render()), so the browser's scroll anchoring has nothing it held on to left and
+   moved the page anyway: in Chromium, a copy from Map a process took it 65 px up. render() keeps what has focus in its
+   place on the screen instead. */
+.app { overflow-anchor: none; }
+
 /* App shell: navigation items are buttons (tests click them by exact text); counts are drawn, not typed. */
 button.side-nav__link { border: 0; background: none; font: inherit; cursor: pointer; text-align: left; }
 @media (min-width: 48em) { button.side-nav__link { width: 100%; } }
@@ -327,9 +332,10 @@ details.card[open] > summary { border-bottom: 1px solid var(--border); }
 .health__plain { padding-left: var(--space-3); border-left: 3px solid var(--warning); font-size: var(--text-sm); color: var(--text); }
 .health__plain--danger { border-left-color: var(--danger); }
 
-/* Site pages' menu below a wide screen: the header's section links, in a popover (no script). The links themselves sit in the
-   header only from 64em: below it, with the product switch and the button beside them, they ran past the screen's edge (to
-   930 px on the landing page, and Sign in with them). The menu holds every one of them, so it takes their place. */
+/* Site pages' menu below a wide screen: the header's section links, in a popover that opens with no script (site.js only
+   closes it once a link in it is chosen). The links themselves sit in the header only from 64em: below it, with the
+   product switch and the button beside them, they ran past the screen's edge (to 930 px on the landing page, and Sign in
+   with them). The menu holds every one of them, so it takes their place. */
 .site-menu-button { display: inline-flex; anchor-name: --site-menu; }
 @media (min-width: 64em) { .site-menu-button { display: none; } }
 @media (max-width: 63.99em) { .top-nav { display: none; } }

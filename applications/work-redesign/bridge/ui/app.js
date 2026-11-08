@@ -518,6 +518,7 @@ const S = {
   openKinds: false,             // People & roles opens its "Add a type of task" form once
   invalid: new Map(),           // fields to fix, by payload path: found before signing, or named by the bridge's refusal
   scrollToResult: false,        // the answer to the person's last action is brought into view (and focused) when drawn
+  pasteCopying: 0,              // when Map a process's "Copy the message for my AI" began the copy still on its way (0: none)
 };
 
 // ── Who is who, from the read model ─────────────────────────────────────────────────────
@@ -1076,26 +1077,54 @@ async function signOut() {
 
 // ── Screens and the app frame ─────────────────────────────────────────────────────────────
 
+/** The screen render() drew last (screenOf): a redraw of the same screen keeps focus and the page's place, a new one does not. */
+let drawnScreen = '';
+/** The screen the state shows: the workspace unreachable, one more step, the welcome, a task, or a tab. */
+function screenOf() {
+  if (S.bootError) return 'unreachable';
+  if (!S.data && S.readRefused && actor()) return 'not-added';
+  if (!S.data) return 'welcome';
+  const iri = taskFromHash();
+  return iri ? `task ${iri}` : `tab ${S.tab}`;
+}
+
 /** Draw exactly one screen into #app: the workspace unreachable, one more step, the welcome, or the app. */
 function render() {
   const root = document.getElementById('app');
   if (!root) return;
   // A panel's own node is drawn again, not rebuilt: what had focus in it keeps it through a redraw (a refresh landing while
   // a field is typed in, or while a button in it waits for its answer), which moving the node would otherwise take away.
-  // Taken before the new frame is built, since building it already moves the node out of the page.
+  // Everything else is built again, so on a redraw of the same screen focus goes to the rebuilt twin of what had it
+  // (focusMark): the same button, or the same field with its caret and selection, as typing never waits for a redraw; and
+  // the page keeps its place (viewAnchor, where what has focus is not on the screen). A new screen (another tab, a task,
+  // signing in) starts afresh, as whatever drew it decides. All of it is taken before the new frame is built, since
+  // building it already moves the panel's node out of the page.
   const focused = document.activeElement;
+  const screen = screenOf();
+  const same = screen === drawnScreen;
+  const mark = same ? focusMark(focused, root) : null;
+  const anchor = same && mark?.top == null ? viewAnchor(root) : null;
+  drawnScreen = screen;
   let nodes;
   let title;
-  if (S.bootError) { nodes = unreachableView(); title = 'Workspace unreachable'; }
-  else if (!S.data && S.readRefused && actor()) { nodes = notAddedView(); title = 'One more step'; }
-  else if (!S.data) { nodes = welcomeView(); title = 'Sign in'; }
+  if (screen === 'unreachable') { nodes = unreachableView(); title = 'Workspace unreachable'; }
+  else if (screen === 'not-added') { nodes = notAddedView(); title = 'One more step'; }
+  else if (screen === 'welcome') { nodes = welcomeView(); title = 'Sign in'; }
   else {
     const iri = taskFromHash();
     nodes = appFrame(iri ? taskView(iri) : view());
     title = iri ? taskBy(iri)?.name ?? 'Task' : TITLES[S.tab] ?? 'Home';
   }
   root.replaceChildren(...nodes.flat(Infinity).filter(Boolean));
-  if (focused && focused !== document.body && focused.isConnected && document.activeElement !== focused) focused.focus({ preventScroll: true });
+  const kept = focused && focused !== document.body && focused.isConnected ? focused : null;
+  if (kept && document.activeElement !== kept) kept.focus({ preventScroll: true });
+  const placed = kept ?? refocusTwin(mark, root);
+  if (placed && mark) restoreCaret(placed, mark);
+  // What has focus stays where it was on the screen, else what the person was looking at (the browser's scroll anchoring
+  // is off in #app, app.css: it has nothing to hold on to once every node is new). Whatever a caller scrolls to afterwards
+  // (the top of a new view, a panel, an answer) still goes there.
+  if (placed && mark?.top != null) holdPlace(placed, mark.top);
+  else if (anchor) holdPlace(twinOf(anchor, root), anchor.top);
   document.title = `${title} · Work Redesign`;
   if (S.panel?.focus) { S.panel.focus = false; document.getElementById('panel-title')?.focus(); }
   // The answer to an action shows at the top of the view, often above the button pressed: bring it into view, and focus it once it is in.
@@ -1441,12 +1470,13 @@ function viewHeading() {
   return title;
 }
 /**
- * Whether the person does anything from now until stop(): a key, a click or tap, the wheel, or a swipe. Something that
- * finishes later (a copy waiting on its packet) uses it so as not to pull the page back to what they have moved on from.
+ * Whether the person does anything from now until stop(): a key, a click or tap, the wheel, or a swipe, but not what
+ * `same` says is the same press again. Something that finishes later (a copy waiting on its packet) uses it so as not to
+ * pull the page back to what they have moved on from.
  */
-function watchMovingOn() {
+function watchMovingOn(same = () => false) {
   let moved = false;
-  const on = () => { moved = true; };
+  const on = (e) => { if (!same(e)) moved = true; };
   const kinds = ['keydown', 'pointerdown', 'wheel', 'touchmove'];
   for (const k of kinds) window.addEventListener(k, on, { capture: true, passive: true });
   return { moved: () => moved, stop: () => { for (const k of kinds) window.removeEventListener(k, on, { capture: true }); } };
@@ -1464,6 +1494,112 @@ function refocus(to, fallback = null) {
   // the page away from what is focused here: stop it where it is first, so focusing brings the target into view.
   try { window.scrollTo({ top: window.scrollY, behavior: 'instant' }); } catch { /* a browser without instant scrolling */ }
   target?.focus();
+}
+/**
+ * An element's lasting name across redraws, '' where it has none: its data-return key (returnKey), the id the page gives it
+ * (not a field's numbered one, which each redraw makes anew), its payload path, or else what a person reads on it: a box's
+ * label, a button's or a link's text.
+ */
+function focusKey(el) {
+  const attr = (n) => el.getAttribute(n) ?? '';
+  if (attr('data-return')) return `return ${attr('data-return')}`;
+  if (el.id && !/^f-\d+$/.test(el.id)) return `id ${el.id}`;
+  if (attr('data-path')) return `path ${attr('data-path')}`;
+  const box = /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName);
+  const read = (attr('aria-label') || (box ? (el.labels?.[0] ?? el.closest('label'))?.textContent : el.textContent) || '').trim();
+  return read ? `${el.type ?? ''} ${el.name ?? ''} ${read}` : '';
+}
+/** The elements in `root` like `el`: its tag and classes, and its name (focusKey, `key`). The classes go first, as they cost nothing to compare. */
+const twinsOf = (el, key, root) => [...root.getElementsByTagName(el.tagName)].filter((x) => x.className === el.className && focusKey(x) === key);
+/**
+ * What render() needs to give focus back to an element it builds again (refocusTwin): its name (focusKey), and whether
+ * it was the only one so named; where it was on the screen (null when it was off the screen); in a text box, its caret,
+ * selection and scroll.
+ */
+function focusMark(el, root) {
+  if (!el || el === document.body || !root.contains(el)) return null;
+  const r = el.getBoundingClientRect();
+  const key = focusKey(el);
+  // The account menu floats over the page, so where its items are says nothing of where the page is.
+  const menu = !!el.closest('#account-menu');
+  const mark = {
+    el, key, only: key !== '' && twinsOf(el, key, root).length === 1,
+    top: !menu && r.bottom > 0 && r.top < window.innerHeight ? r.top : null,
+    tabindex: el.getAttribute('tabindex'), open: el.tagName === 'SUMMARY' ? el.parentElement?.open ?? null : null,
+    menu, caret: null,
+  };
+  try {
+    if (typeof el.selectionStart === 'number') mark.caret = { start: el.selectionStart, end: el.selectionEnd, dir: el.selectionDirection, top: el.scrollTop, left: el.scrollLeft };
+  } catch { /* a box with no caret */ }
+  return mark;
+}
+/**
+ * After a redraw, focus the rebuilt twin of what had focus (`mark`, from focusMark), where exactly one bears its name, and
+ * return it: a heading or an answer focused by script stays focusable, and a disclosure it sits in stays open. The account
+ * menu closes when it is drawn again, so focus goes to its button. Null when there is no such twin, or it takes no focus.
+ */
+function refocusTwin(mark, root) {
+  if (!mark || mark.el.isConnected) return null;
+  let twin = null;
+  if (mark.menu) twin = root.querySelector('.user-button');
+  else if (mark.only) {
+    const found = twinsOf(mark.el, mark.key, root);
+    twin = found.length === 1 ? found[0] : null;
+  }
+  if (!twin) return null;
+  if (mark.tabindex !== null && !twin.hasAttribute('tabindex')) twin.setAttribute('tabindex', mark.tabindex);
+  for (let d = (twin.tagName === 'SUMMARY' ? twin.parentElement : twin)?.parentElement?.closest('details'); d; d = d.parentElement?.closest('details')) d.open = true;
+  if (mark.open !== null && twin.tagName === 'SUMMARY' && twin.parentElement) twin.parentElement.open = mark.open;
+  twin.focus({ preventScroll: true });
+  return document.activeElement === twin ? twin : null;
+}
+/** Put a text box's caret, selection and scroll back as `mark` (focusMark) took them; text typed since stays, as the state holds it. */
+function restoreCaret(el, mark) {
+  const c = mark.caret;
+  if (!c || typeof el.setSelectionRange !== 'function') return;
+  try {
+    const n = String(el.value ?? '').length;
+    el.setSelectionRange(Math.min(c.start, n), Math.min(c.end, n), c.dir ?? 'none');
+    el.scrollTop = c.top;
+    el.scrollLeft = c.left;
+  } catch { /* a box with no caret */ }
+}
+/**
+ * What the person is looking at in the view: the first heading, field or button on the screen, from the top, that a redraw
+ * builds again by a name no other bears (focusKey), with where it is on the screen. The header and the navigation stay
+ * where they are, so they are not it.
+ */
+function viewAnchor(root) {
+  const main = root.querySelector('.app-main');
+  if (!main) return null;
+  for (const el of main.querySelectorAll('h1, h2, h3, [data-path], [data-return], button, summary')) {
+    const r = el.getBoundingClientRect();
+    if (r.height === 0 || r.bottom <= 0) continue;
+    if (r.top >= window.innerHeight) break;
+    const key = focusKey(el);
+    if (key && twinsOf(el, key, root).length === 1) return { el, key, top: r.top };
+  }
+  return null;
+}
+/** The one element in `root` like `anchor` (viewAnchor): the anchor itself where a redraw kept it, else its rebuilt twin. */
+function twinOf(anchor, root) {
+  if (anchor.el.isConnected) return anchor.el;
+  const found = twinsOf(anchor.el, anchor.key, root);
+  return found.length === 1 ? found[0] : null;
+}
+/** When the page last scrolled: a redraw does not cut short a scroll still under way (holdPlace). */
+let scrolledAt = -Infinity;
+window.addEventListener('scroll', () => { scrolledAt = performance.now(); }, { passive: true });
+/**
+ * After a redraw, keep `el` at `top`, where it was on the screen before: what the redraw added or took away above it (a
+ * hint, a waiting note) no longer moves it. Not while the page is still scrolling (the wheel, a swipe, a key, the browser
+ * bringing a focused button into view): stopping that scroll where it is would cut it short.
+ */
+function holdPlace(el, top) {
+  if (!el || performance.now() - scrolledAt < 200) return;
+  const by = el.getBoundingClientRect().top - top;
+  if (!Number.isFinite(by) || Math.abs(by) < 1) return;
+  try { window.scrollTo({ top: window.scrollY + by, behavior: 'instant' }); } catch { /* a browser without instant scrolling */ }
 }
 /**
  * Open a panel over the view, remembering what opened it (openerOf), so closing it puts focus back there. `back`: a panel
@@ -2766,40 +2902,50 @@ function captureView() {
   };
   /** Card B's Copy button's lasting name (returnKey), so focus finds it again after the redraw copying it makes. */
   const PASTE_COPY = ['document', 'copy-paste-message'];
-  const copyPasteMessage = async () => {
+  /** Whether `el` is Card B's Copy button (or in it), the one pressed or the one a redraw built again: by its name, not its node. */
+  const isPasteCopy = (el) => el?.closest?.('[data-return]')?.getAttribute('data-return') === PASTE_COPY.join(' ');
+  const copyPasteMessage = async (e) => {
+    // One press, one copy and one toast: the second click of a double click, and a press while a copy is still on its way,
+    // add none (and the button's keydown takes no repeat of Enter held down). A copy still waiting after 10 s no longer
+    // holds the button: a press then tries again, as a person whose request stalled would.
+    if ((S.pasteCopying && Date.now() - S.pasteCopying < 10_000) || e?.detail > 1) return;
     if (formProblems(docProblems())) return;
-    // The first press always fetches a packet, and a person may go on while it comes: scroll on toward step 3, or open the
-    // AI assistant's set-up and Tab into it. What had focus when they pressed, and whether they did anything since, decide
-    // below whether focus and the page come back to this button.
-    const pressed = document.activeElement;
-    const person = watchMovingOn();
+    const began = Date.now();
+    S.pasteCopying = began;
+    // The first press always fetches a packet, and a person may go on while it comes: scroll on toward step 3, open the
+    // AI assistant's set-up, or Tab into a field and type. Whether they did anything since (pressing this button again is
+    // not going on) decides below whether the page comes back to this button.
+    const person = watchMovingOn((ev) => isPasteCopy(ev.target) && (ev.type === 'pointerdown' || ev.key === 'Enter' || ev.key === ' '));
     try {
       const p = await packetNow();
       if (!p) return;
       const shown = S.panel;
       await copyText(pasteMessage(p), 'The message for your AI. Paste it into your chat app.');
-      // The redraw adds "Show the message", and builds this button again, so the one pressed is gone: focus goes to the new
-      // one (PASTE_COPY), and a keyboard or screen-reader user carries on from where they were. Where the browser refused
-      // the clipboard, "Copy this" has opened instead: focus stays on its title, and closing it comes back here by the same key.
+      // Where the browser refused the clipboard, "Copy this" has opened instead: focus goes to its title, and closing it
+      // comes back here by this button's name (PASTE_COPY).
       const refused = S.panel && S.panel !== shown;
       if (refused) S.panel.focus = true;
-      // Only where focus is still where the press left it. A person who has gone on (into a panel they opened, or a field)
-      // keeps their place: the redraw leaves focus where it is, and the page where it is.
-      const stillOnIt = !refused && document.activeElement === pressed;
+      // The redraw adds "Show the message" and builds this button again. It gives focus back to whatever had it, built
+      // again: this button (the one pressed, or the one an earlier copy's redraw built), or a field the person went on to
+      // and typed in, with its caret; a panel they opened keeps it. And it keeps that where it was on the screen.
+      const onIt = !refused && isPasteCopy(document.activeElement);
       render();
-      if (!stillOnIt) return;
-      const again = [...document.querySelectorAll('#app [data-return]')].find((b) => b.getAttribute('data-return') === PASTE_COPY.join(' ')) ?? viewHeading();
-      again?.focus({ preventScroll: true });
-      // Focused without scrolling, then brought into view only where it is off the screen and the person has done nothing
-      // since the press: Enter pressed just after Tab reached the button, while the browser was still scrolling to it, is
-      // stopped by the redraw, and refocus's way (stop any scroll, then focus) left the focused button off the screen in
-      // Chromium. Where it is in view, as when the person pressed it, nothing moves; and a person who scrolled on, or used a
-      // key, meanwhile is left where they went (a mouse click focuses the button too, so focus alone can't tell).
+      if (!onIt) return;
+      const again = isPasteCopy(document.activeElement) ? document.activeElement
+        : [...document.querySelectorAll('#app [data-return]')].find((b) => isPasteCopy(b)) ?? viewHeading();
+      if (document.activeElement !== again) again?.focus({ preventScroll: true });
+      // Brought into view only where it is off the screen and the person has done nothing since the press (Enter pressed
+      // just after Tab reached the button, while the browser was still scrolling to it), and at once: in Chromium a smooth
+      // scroll begun here was seen cut short after one frame, and refocus's way (stop any scroll, then focus) left the
+      // button off the screen. A person who scrolled on, or used a key, meanwhile is left where they went (a mouse click
+      // focuses the button too, so focus alone can't tell).
       if (person.moved()) return;
       const at = again?.getBoundingClientRect();
-      if (at && (at.top < 0 || at.bottom > window.innerHeight)) again.scrollIntoView?.({ block: 'center' });
+      if (!at || (at.top >= 0 && at.bottom <= window.innerHeight)) return;
+      try { again.scrollIntoView?.({ block: 'center', behavior: 'instant' }); } catch { again.scrollIntoView?.({ block: 'center' }); }
     } finally {
       person.stop();
+      if (S.pasteCopying === began) S.pasteCopying = 0;
     }
   };
   const copyChatMessage = () => {
@@ -2890,6 +3036,9 @@ function captureView() {
   const closed = data().bridge?.reads === 'signed';
   // The chat route (Card A) only where it works: signed in with Interego on a workspace that names a connector.
   const chat = chatReady();
+  // Card B's button. Enter held down would press it again and again, a copy and a toast each time: it presses once.
+  const pasteButton = btn('Copy the message for my AI', { variant: chat ? 'secondary' : 'primary', icon: 'clipboard', on: copyPasteMessage, attrs: returnKey(...PASTE_COPY) });
+  pasteButton.addEventListener('keydown', (e) => { if (e.repeat && e.key === 'Enter') e.preventDefault(); });
   // Card B's "Show the message" holds the message made from the title and text as they were. Once either changes it is out
   // of date, so it goes (and the held packet with it): Copy makes the message again from what is there now.
   let preview = S.packet ? disclosure('Show the message', h('pre', { class: 'chat-preview', text: pasteMessage(S.packet) })) : null;
@@ -2945,7 +3094,7 @@ function captureView() {
           h('section', { class: 'card route-card', 'aria-labelledby': 'route-paste-title' }, h('div', { class: 'card__body stack stack--sm' },
             h('h3', { class: 'card__title', id: 'route-paste-title', text: 'Copy and paste' }),
             h('p', { class: 'text-secondary', text: 'Works with any chat app. Copy the message, paste it into your AI assistant, then paste its whole answer in step 3.' }),
-            h('div', null, btn('Copy the message for my AI', { variant: chat ? 'secondary' : 'primary', icon: 'clipboard', on: copyPasteMessage, attrs: returnKey(...PASTE_COPY) })),
+            h('div', null, pasteButton),
             preview)))),
       step(3, 'Paste your AI\'s answer',
         chat ? hint('Only for Copy and paste. From Claude or ChatGPT with the connector, your assistant records the map itself.') : null,
