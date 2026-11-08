@@ -29,7 +29,7 @@ import { designSystemCss } from '../../_shared/design-system/index.js';
 import { SIBLING, INTEREGO_DEFAULTS, connectorUrlOf, renderSitePage, siteValues, type LandingOptions } from '../bridge/landing.js';
 import { demoClock, memoryPod, DEMO_POD, DEMO_RECORD_KEY } from '../demo/run.js';
 // The plain-words guard (JARGON, ALLOWED = [], visibleText), shared with every other DOM test of the UI.
-import { ALLOWED, jargonIn, visibleText } from './plain-words.js';
+import { ALLOWED, jargonIn, urnsRunningIntoPunctuation, visibleText } from './plain-words.js';
 
 /** /ui/app.js as the bridge serves it: the shared chat-agent helpers, then the app (bridge/ui.ts). */
 const APP_JS = `${chatAgentJs()}\n${readFileSync(new URL('../bridge/ui/app.js', import.meta.url), 'utf8')}`;
@@ -320,6 +320,11 @@ describe('work-redesign customer site', () => {
     expect(relayCalls).toEqual([]);
     expect(landing).toContain('<h3 class="feature__title">Teams without an AI assistant</h3>');
     expect(landing).toContain('Three things to know.');
+    // Where the connector works, the navigation names the apps, and the FAQ, the data section and the footers say what it passes.
+    for (const s of ['<a href="#assistants">Claude &amp; ChatGPT</a>', '<a class="menu__item" href="#assistants">Claude &amp; ChatGPT</a>', 'The same account connects Claude or ChatGPT.',
+      'Third, if you connect Claude or ChatGPT, the Interego connector passes everything your assistant reads and writes here']) expect(landing, s).toContain(s);
+    for (const s of ['<li><a href="#assistants">Claude or ChatGPT</a></li>', '<h2 id="assistants-title">Using Claude or ChatGPT</h2>',
+      'If you connect Claude or ChatGPT, the Interego connector passes everything your assistant reads and writes here']) expect(help, s).toContain(s);
     expect(help).toContain('<dt>Message for your AI</dt>');
     expect(help).toContain('Someone added only by wallet address can’t work from Claude or ChatGPT');
     expect(help).not.toContain('Get instructions for your AI');
@@ -348,16 +353,49 @@ describe('work-redesign customer site', () => {
         // process, or a heading that repeats the sentence saying it isn't set up.
         for (const s of ['Add the Interego connector', 'Things you can ask it', 'What stays in the Work Redesign app', 'Here’s the message from Map a process',
           'Optional: connect Claude or ChatGPT', 'Copy the message for my assistant', 'Work where you already work', 'Use it from Claude or ChatGPT',
-          'Claude or ChatGPT with the Interego connector', 'Not set up on this workspace yet', 'Set up in two minutes']) {
+          'Claude or ChatGPT with the Interego connector', 'Not set up on this workspace yet', 'Set up in two minutes',
+          // Nor in the navigation, the FAQ, the data section or the footers (the nav and the guide's heading named the apps as if
+          // they worked here; the FAQ, data and footer sentences assumed the connector).
+          'Claude &amp; ChatGPT', 'Claude or ChatGPT</a>', 'Using Claude or ChatGPT', 'connects Claude or ChatGPT', 'connect Claude or ChatGPT,',
+          'Claude and ChatGPT use the Interego connector', 'can’t work from Claude or ChatGPT']) {
           expect([...at, s, html.includes(s)]).toEqual([...at, s, false]);
         }
         expect([...at, html.includes('{{')]).toEqual([...at, false]);
+        // What they say instead: the section's own name in the navigation, and the developers' endpoint with no connector clause.
+        for (const s of ['<a href="#assistants">Your own AI assistant</a>', '<span class="mono">http://127.0.0.1/mcp</span>&nbsp;(for developers’ tools that sign their own requests)</li>']) {
+          expect([...at, s, html.includes(s)]).toEqual([...at, s, true]);
+        }
+        // Claude and ChatGPT are named once, in the sentence that says the workspace isn't set up for them.
+        const words = html.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ');
+        expect([...at, words.split('This workspace isn’t set up for connecting Claude or ChatGPT yet.').length - 1]).toEqual([...at, 1]);
+        const rest = words.replace('This workspace isn’t set up for connecting Claude or ChatGPT yet.', ' ');
+        expect([...at, [...rest.matchAll(/Claude|ChatGPT/g)].map((m) => rest.slice(Math.max(0, (m.index ?? 0) - 60), (m.index ?? 0) + 40))]).toEqual([...at, []]);
       }
+      const notReady = { landing: await (await fetch(`${l.base}/`, { headers: { accept: BROWSER } })).text(), help: await (await fetch(`${l.base}/ui/help`)).text() };
+      for (const s of ['<a class="menu__item" href="#assistants">Your own AI assistant</a>', 'Three things to know.',
+        'Third, when you paste a document into your AI assistant, the company behind your assistant sees it too.</p>']) expect([what, notReady.landing], s).toEqual([what, expect.stringContaining(s)]);
+      for (const s of ['<h2 id="assistants-title">Using your own AI assistant</h2>',
+        'Use separate workspaces for teams that must not see each other’s records. When you paste a document into your AI assistant, the company behind your assistant sees it too.</p>']) expect([what, notReady.help], s).toEqual([what, expect.stringContaining(s)]);
       // One column: the examples card is gone, so the text does not sit in half of a two-column grid.
       const landing = await (await fetch(`${l.base}/`, { headers: { accept: BROWSER } })).text();
       expect([what, landing.includes('<div class="container assistants">'), landing.includes('<div class="prose-wide">')]).toEqual([what, true, true]);
     }
     expect(relayCalls).toEqual([]);
+  });
+
+  it('writes no action straight before a punctuation mark in the app\'s own text, where it would read as part of the action\'s name', () => {
+    // The texts a person copies are built from these strings (the DOM tests check each copied text as copied, too). A string's
+    // quote ends a URN here, as a space or a line's end does in the copied text. The app's own file: the shared chat helpers
+    // served before it hold code about URNs (/^urn:/), not text naming one.
+    const own = readFileSync(new URL('../bridge/ui/app.js', import.meta.url), 'utf8');
+    expect(APP_JS.endsWith(own)).toBe(true);
+    expect(own).toContain('urn:iep:action:wrd:');
+    expect(urnsRunningIntoPunctuation(own)).toEqual([]);
+    // The check itself: the wordings this replaced are caught.
+    expect(urnsRunningIntoPunctuation('Leave out urn:iep:action:wrd:envelope-template, urn:iep:action:wrd:list-records and urn:iep:action:wrd:calibration: act passes them no arguments.'))
+      .toEqual(['urn:iep:action:wrd:envelope-template,', 'urn:iep:action:wrd:calibration:']);
+    expect(urnsRunningIntoPunctuation('fields from urn:iep:action:wrd:read-envelope-template.')).toEqual(['urn:iep:action:wrd:read-envelope-template.']);
+    expect(urnsRunningIntoPunctuation('action_iri: "urn:iep:action:wrd:read-records"\n  - instead of urn:a:b use urn:a:c\nurn:a:d')).toEqual([]);
   });
 
   it('fills a page\'s sections from one flag: {{#name}} where it is set, {{^name}} where it is not; an unknown, nested or unclosed section fails the boot', () => {
@@ -427,10 +465,15 @@ describe('work-redesign customer site', () => {
       'You can still draft a process map with copy and paste, in any chat app: choose From a procedure document, then Copy and paste.']) expect(seen, s).toContain(s);
     // It doesn't ask to connect once just above "can't work here", and gives no reason (a plan's) that isn't the reason here.
     for (const s of ['Set it up once', 'Connect Claude or ChatGPT once', 'Some Claude and ChatGPT plans can\'t add connectors.']) expect(seen, s).not.toContain(s);
-    expect(page.doc.querySelector('.chat-panel input')).toBeNull();
+    expect(page.doc.querySelector('.chat-panel input, .chat-panel textarea')).toBeNull();
     expect(jargonIn(seen)).toEqual([]);
-    page.click('Draft a map with copy and paste');
+    const route = must([...page.doc.querySelectorAll('.chat-panel button')].find((b) => b.textContent === 'Draft a map with copy and paste'), 'the copy-and-paste route') as HTMLButtonElement;
+    route.focus();
+    route.click();
     await page.until(() => page.text().includes('Have your AI draft the map'), 'the document route');
+    // The button pressed went with the panel: focus is on Map a process's heading, not left on the page's body.
+    const at = page.doc.activeElement;
+    expect([at?.tagName, at?.className, at?.textContent, page.doc.getElementById('panel-title')]).toEqual(['H1', 'page-title', 'Map a process', null]);
     expect(page.doc.querySelector('.route-card--chat')).toBeNull();
     expect(page.text()).toContain('Copy the message for my AI');
     expect(jargonIn(page.visible())).toEqual([]);

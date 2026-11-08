@@ -2484,12 +2484,16 @@ function chatWhyNot(mode = S.mode) {
 }
 const chatAgentsDecide = () => data().bridge?.relayDelegation?.chatAgentsDecide === true;
 
-/** A readonly address with a Copy button: its value is never part of the page's text. */
+/**
+ * A readonly address with a Copy button: its value is never part of the page's text. The box wraps it and grows to its
+ * lines (app.css .copy-address), so a phone shows all of it with nothing to scroll inside the box; Copy takes it whole.
+ */
 function copyField(label, value, what) {
   fieldSeq += 1;
   const id = `f-${fieldSeq}`;
   return h('div', { class: 'field' }, h('label', { class: 'label', for: id, text: label }),
-    h('div', { class: 'input-group' }, h('input', { id, class: 'input input--mono', readOnly: true, value }),
+    h('div', { class: 'input-group' },
+      h('div', { class: 'copy-address', 'data-value': value }, h('textarea', { id, class: 'input input--mono copy-address__box', readOnly: true, rows: 1, value })),
       btn('Copy', { on: () => copyText(value, what), attrs: { 'aria-label': `Copy the ${label.toLowerCase()}` } })));
 }
 /** Map a process, from a document: where a map is drafted with the person's own AI. */
@@ -2498,6 +2502,9 @@ function openDocumentMode() {
   st.mode = 'document';
   store.set(CAPTURE_KEY, st);
   goTab('capture');
+  // The panel's button that brought the person here went with the panel: focus goes to Map a process's heading, so a
+  // keyboard or screen reader carries on from the top of the view rather than from the start of the page.
+  viewHeading()?.focus({ preventScroll: true });
 }
 
 /** The workspace details a person copies into a chat once: where its actions are, how to call them, and how to read the workspace. */
@@ -2513,9 +2520,14 @@ function workspaceDetails() {
       { say: 'For the exact fields of any other step, ask for its template, with that step\'s intent under template:', actionIri: 'urn:iep:action:wrd:read-envelope-template', signed: true,
         payload: { intent: 'wrd:read-records', podUrl: pod, template: { intent: '<the step\'s intent, for example wrd:ratify-task>' } } },
     ],
+    // No action is followed straight by punctuation: an action is colon-separated, so "…:calibration:" or "…-task," reads
+    // as part of its name. Each one ends a line, or a word or a space comes after it.
     rules: [
-      'Leave out urn:iep:action:wrd:envelope-template, urn:iep:action:wrd:list-records and urn:iep:action:wrd:calibration: act passes them no arguments. Use urn:iep:action:wrd:read-envelope-template, urn:iep:action:wrd:read-records and urn:iep:action:wrd:read-calibration instead.',
-      'Every other action here is signed (sign_payload true), except urn:iep:action:wrd:task-map-packet, which takes plain arguments (sign_payload false).',
+      ['Leave out three actions, because act passes them no arguments, and use their signed reads instead:',
+        '  - instead of urn:iep:action:wrd:envelope-template use urn:iep:action:wrd:read-envelope-template',
+        '  - instead of urn:iep:action:wrd:list-records use urn:iep:action:wrd:read-records',
+        '  - instead of urn:iep:action:wrd:calibration use urn:iep:action:wrd:read-calibration'].join('\n'),
+      'Every other action here is signed (sign_payload true), except one that takes plain arguments (sign_payload false): urn:iep:action:wrd:task-map-packet',
       'A signed payload\'s intent is the action\'s last part after "wrd:": urn:iep:action:wrd:ratify-task takes "intent": "wrd:ratify-task". Two exceptions: the three reads (read-records, read-envelope-template, read-calibration) all take "intent": "wrd:read-records", and a review you sign for urn:iep:action:wrd:log-agent-run takes "intent": "wrd:review-agent-run". Every signed payload also carries podUrl and a nonce, and no issuedAt.',
       'Never invent people, AI agents, types of task, answers or numbers: ask me. Show me what you will record, and record it only once I agree.',
       chatAgentsDecide() ? 'Ask me before any action that approves or declines a decision, changes people and roles, records results, or grants or withdraws an AI permission.'
@@ -2528,7 +2540,7 @@ function workspaceDetails() {
 function chatStarters() {
   return [
     ['Check the tasks that name me', 'Show me the tasks in my Work Redesign workspace that name me. For each one, read me its description and ask me whether it\'s right. Confirm or dispute it only as I say, with my own note, and show me what you\'ll record first.'],
-    ['Go through the seven questions with me', 'Help me sort a task in Work Redesign by predictability. Ask me each of the seven questions one at a time with its answer options, never answer for me, read my answers back, and only then record them with urn:iep:action:wrd:classify-task, getting the exact fields from urn:iep:action:wrd:read-envelope-template.'],
+    ['Go through the seven questions with me', 'Help me sort a task in Work Redesign by predictability. Ask me each of the seven questions one at a time with its answer options, never answer for me, and read my answers back. Only then record them: get the exact fields from urn:iep:action:wrd:read-envelope-template first, then record with urn:iep:action:wrd:classify-task as the action.'],
     ['Propose and price a plan', 'Help me propose a plan in Work Redesign for who does each task next, then build its business case. Use only numbers I give you, and record each one\'s source exactly as I say (measured, document, performer-reported, estimate or not applicable). Show me the plan and every number before you record anything.'],
     ['Submit a plan for approval', 'Submit my Work Redesign plan for approval. Show me which plan and what it changes first, and submit it only once I agree.'],
   ];
@@ -2639,7 +2651,7 @@ function taskMapChatMessage(st) {
       'Show me the draft. For each task, ask me who does it today, which person or AI agent does it, and its type of task, choosing only from what step 2 lists. Never invent them.',
       `currentLevel is one of: ${levels}. Leave out personAddress or agentAddress when the level doesn't need it.`,
       'Record only after I say the draft is right. document.storeText is true: recording from a chat stores the document\'s text with the map.',
-      'If you are unsure of a field, ask for the template: urn:iep:action:wrd:read-envelope-template, sign_payload true, payload {"intent": "wrd:read-records", "podUrl": the storage address above, "nonce": a new one, "template": {"intent": "wrd:record-task-map"}}.',
+      'If you are unsure of a field, ask for the template with urn:iep:action:wrd:read-envelope-template as the action, sign_payload true, and payload {"intent": "wrd:read-records", "podUrl": the storage address above, "nonce": a new one, "template": {"intent": "wrd:record-task-map"}}.',
     ],
     outro: 'When the map is recorded, tell me, and I will check it under Processes in Work Redesign.',
   });
@@ -2741,12 +2753,29 @@ function captureView() {
     S.packet = r.body;
     return r.body;
   };
+  /** Card B's Copy button's lasting name (returnKey), so focus finds it again after the redraw copying it makes. */
+  const PASTE_COPY = ['document', 'copy-paste-message'];
   const copyPasteMessage = async () => {
     if (formProblems(docProblems())) return;
     const p = await packetNow();
     if (!p) return;
+    const shown = S.panel;
     await copyText(pasteMessage(p), 'The message for your AI. Paste it into your chat app.');
+    // The redraw adds "Show the message", and builds this button again, so the one pressed is gone: focus goes to the new
+    // one (PASTE_COPY), and a keyboard or screen-reader user carries on from where they were. Where the browser refused the
+    // clipboard, "Copy this" has opened instead: focus stays on its title, and closing it comes back here by the same key.
+    const refused = S.panel && S.panel !== shown;
+    if (refused) S.panel.focus = true;
     render();
+    if (refused) return;
+    // Focused without scrolling, then brought into view only where it is off the screen: Enter pressed just after Tab reached
+    // the button, while the browser was still scrolling to it, is stopped by the redraw, and refocus's way (stop any scroll,
+    // then focus) left the focused button off the screen in Chromium. Where it is in view, as when the person pressed it,
+    // nothing moves.
+    const again = [...document.querySelectorAll('#app [data-return]')].find((b) => b.getAttribute('data-return') === PASTE_COPY.join(' ')) ?? viewHeading();
+    again?.focus({ preventScroll: true });
+    const at = again?.getBoundingClientRect();
+    if (at && (at.top < 0 || at.bottom > window.innerHeight)) again.scrollIntoView?.({ block: 'center' });
   };
   const copyChatMessage = () => {
     if (!op) return;
@@ -2891,7 +2920,7 @@ function captureView() {
           h('section', { class: 'card route-card', 'aria-labelledby': 'route-paste-title' }, h('div', { class: 'card__body stack stack--sm' },
             h('h3', { class: 'card__title', id: 'route-paste-title', text: 'Copy and paste' }),
             h('p', { class: 'text-secondary', text: 'Works with any chat app. Copy the message, paste it into your AI assistant, then paste its whole answer in step 3.' }),
-            h('div', null, btn('Copy the message for my AI', { variant: chat ? 'secondary' : 'primary', icon: 'clipboard', on: copyPasteMessage })),
+            h('div', null, btn('Copy the message for my AI', { variant: chat ? 'secondary' : 'primary', icon: 'clipboard', on: copyPasteMessage, attrs: returnKey(...PASTE_COPY) })),
             preview)))),
       step(3, 'Paste your AI\'s answer',
         chat ? hint('Only for Copy and paste. From Claude or ChatGPT with the connector, your assistant records the map itself.') : null,

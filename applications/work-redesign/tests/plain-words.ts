@@ -33,3 +33,11 @@ export const visibleText = (d: Document): string => {
   for (const n of [...root.querySelectorAll('[hidden], pre, textarea')]) n.remove();
   return root.textContent ?? '';
 };
+
+/**
+ * Each URN in a text a person copies that a punctuation mark follows straight away. A URN is colon-separated and may
+ * hold most punctuation, so "urn:iep:action:wrd:calibration:" or "…:classify-task," reads as an action that isn't
+ * there. A URN in copied text ends at a space, a line's end or a quote. Empty: every URN ends cleanly.
+ */
+export const urnsRunningIntoPunctuation = (text: string): string[] =>
+  [...text.matchAll(/urn:[^\s"'<>`]+/g)].map((m) => m[0]).filter((u) => /[.,;:!?)\]}]$/.test(u));

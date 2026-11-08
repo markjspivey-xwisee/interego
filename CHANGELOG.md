@@ -5,11 +5,14 @@
 Work Redesign still runs no model and asks for no key; the web app now lets
 people bring their own assistant. The account menu has "Use your AI
 assistant": how to add the Interego connector in Claude or in ChatGPT (the
-address in a readonly field with Copy), this workspace's details to copy into
+address in a read-only box that wraps and grows to its lines, so a phone shows
+all of it, with Copy), this workspace's details to copy into
 a chat once, and copy-only starters for the seven questions and for plans,
 which tell the assistant never to answer for the person and to use only the
 person's own numbers. The workspace details name the actions the connector
-cannot pass arguments to and point to their signed reads, name the intents
+cannot pass arguments to and the signed read to use for each, one per line, and
+no copied text puts a comma, colon or full stop straight after an action, where
+it would read as part of its name; they name the intents
 that differ from an action's own name, and, where the operator lets chat
 agents decide, ask the assistant to check with the person before a decisive
 act instead of sending them to the app. It is offered only to someone signed in with their
@@ -41,8 +44,10 @@ the connector (adding it, the things to ask it, what stays in the app, the
 guide's optional step and the chat route under Map a process), open with the
 panel's own words (Work Redesign runs no AI; your own assistant drafts), say
 once that the workspace isn't set up for it, point to copy and paste, and say
-what pasting a document shares. With the deployed bridge's 44-character
-address the set-up no longer widens either page on a phone: each step may
+what pasting a document shares; the navigation names the section "Your own AI
+assistant" rather than the apps, and the FAQ, the guide's data section and the
+footers keep their connector sentences to where one is named. With the
+deployed bridge's 44-character address the set-up no longer widens either page on a phone: each step may
 shrink, and each address sits on a line of its own, filling it before going
 on, with no full stop hanging off it. The panel is titled "Use your AI
 assistant", like every way into it; its two set-ups are tabs the arrow keys,
@@ -51,7 +56,8 @@ set-up, "Copy this", "Exactly what you're signing"), and does nothing in a
 form, so nothing typed is lost. Closing a panel puts focus back on the button
 that opened it, not just one with the same label: a row's "Edit" or "Remove"
 is that row's, a button in a disclosure opens it again, and where the button
-is gone, the view's heading. Where the browser refuses the clipboard, the
+is gone, the view's heading; the panel's own way to Map a process gives focus
+to that view's heading. Where the browser refuses the clipboard, the
 text to copy opens over the panel, says to select and copy it, and closes
 back to it and to the Copy button pressed; "Exactly what you're signing",
 opened from a form, closes back to the form as it was, and a redraw while a
@@ -66,7 +72,9 @@ steps), the copy-and-paste
 preview goes as soon as the title or text changes, the copied message leaves
 out the packet's note to programs, "not-declared" from an assistant is taken
 as no model, switching who drafted the map keeps what was typed, and the
-route cards are spaced by their own gap.
+route cards are spaced by their own gap. Their buttons' labels wrap inside the
+card, so none runs past it or off a 320 to 375 px screen, and "Copy the
+message for my AI" keeps keyboard focus through the redraw copying makes.
 
 ## 2026-11-08 — Shared helpers for connecting your own chat assistant
 

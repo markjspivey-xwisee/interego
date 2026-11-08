@@ -117,6 +117,9 @@ details.card[open] > summary { border-bottom: 1px solid var(--border); }
 /* Step 2's two routes: your assistant through the connector, or copy and paste; side by side when there is room. */
 .capture-routes { gap: var(--space-4); }
 .route-card { min-width: 0; }
+/* A button keeps its label on one line (.btn's nowrap), so on a phone "Copy the message for my assistant" would run past its
+   card and off the screen: in a route card a label wraps, and the button is never wider than the card's body. */
+.route-card .btn { white-space: normal; max-width: 100%; text-align: left; }
 /* A route card's parts are spaced by its stack's gap alone: not also by the card body's sibling margin or a paragraph's own. */
 .route-card > .card__body > * { margin-top: 0; margin-bottom: 0; }
 .route-card--chat { border-color: var(--accent-border); }
@@ -130,6 +133,17 @@ details.card[open] > summary { border-bottom: 1px solid var(--border); }
 .chat-panel .tabs { margin-bottom: var(--space-3); }
 .chat-steps { display: grid; gap: var(--space-3); margin: 0; padding-left: 1.25rem; }
 .chat-steps .field { margin-top: var(--space-2); }
+/* The panel's addresses (the connector's, the workspace's): a read-only box as tall as its lines, so the whole address shows,
+   breaking between any two characters on a phone, with nothing to scroll inside the box; Copy takes it whole. The box's
+   unseen twin (::after, the same address from data-value, with the box's font, padding and border) sizes the grid cell
+   both share, so the box grows with no script measuring it, and the address stays out of the page's text. */
+.copy-address { display: grid; flex: 1 1 14rem; min-width: 0; }
+.copy-address > .copy-address__box, .copy-address::after { grid-area: 1 / 1; min-width: 0; white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-all; }
+.copy-address > .copy-address__box { align-self: stretch; height: auto; resize: none; overflow: hidden; }
+.copy-address::after {
+  content: attr(data-value) " "; visibility: hidden; padding: 0.5625rem 0.875rem; border: 1px solid transparent;
+  font-family: var(--font-mono); font-size: var(--text-sm); line-height: 1.4;
+}
 .chat-starters { border: 1px solid var(--border); border-radius: var(--radius-md); }
 .chat-starter { display: grid; gap: var(--space-1); padding: var(--space-3) var(--space-4); border-top: 1px solid var(--border); }
 .chat-starter:first-child { border-top: 0; }

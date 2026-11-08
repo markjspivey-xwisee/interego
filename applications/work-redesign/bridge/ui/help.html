@@ -41,7 +41,7 @@
     <nav class="toc" aria-label="On this page"><p class="toc__title">On this page</p><ol>
       <li><a href="#start">Getting started</a></li><li><a href="#team">Team members</a></li><li><a href="#leads">Process leads</a></li>
       <li><a href="#approvers">Approvers</a></li><li><a href="#admins">Admins</a></li><li><a href="#owners">AI agent owners</a></li>
-      <li><a href="#assistants">Claude or ChatGPT</a></li><li><a href="#data">Your data and trust</a></li><li><a href="#limits">Limits to know</a></li>
+      <li><a href="#assistants">{{#chat_ready}}Claude or ChatGPT{{/chat_ready}}{{^chat_ready}}Your own AI assistant{{/chat_ready}}</a></li><li><a href="#data">Your data and trust</a></li><li><a href="#limits">Limits to know</a></li>
       <li><a href="#glossary">Glossary</a></li><li><a href="#contact">Contact us</a></li></ol></nav>
     <div class="prose-wide">
 
@@ -136,7 +136,7 @@
         <h2 id="admins-title">Admins</h2>
         <p>You set up the workspace under <strong>People &amp; roles</strong>.</p>
         <ul>
-          <li><strong>Adding people.</strong> Use their Interego ID (it looks like <code>did:web:…:users:…</code>) or their wallet address (it starts with <code>0x</code>), their roles, and a Person ID that links one person’s different sign-ins. Someone added only by wallet address can’t work from Claude or ChatGPT: their assistant acts as their Interego account.</li>
+          <li><strong>Adding people.</strong> Use their Interego ID (it looks like <code>did:web:…:users:…</code>) or their wallet address (it starts with <code>0x</code>), their roles, and a Person ID that links one person’s different sign-ins.{{#chat_ready}} Someone added only by wallet address can’t work from Claude or ChatGPT: their assistant acts as their Interego account.{{/chat_ready}}</li>
           <li><strong>Adding AI agents.</strong> Give each its accountable owner and the AI model it runs on. Update the model when it changes: permission must then be earned again.</li>
           <li><strong>Types of task.</strong> A name, a short ID and a one-sentence definition. Retire the ones you no longer use.</li>
           <li><strong>Stricter rules.</strong> You can make the standard rules for earning AI permission stricter, never looser.</li>
@@ -158,7 +158,7 @@
       </div>
 
       <section class="help-section" id="assistants" aria-labelledby="assistants-title">
-        <h2 id="assistants-title">Using Claude or ChatGPT</h2>
+        <h2 id="assistants-title">{{#chat_ready}}Using Claude or ChatGPT{{/chat_ready}}{{^chat_ready}}Using your own AI assistant{{/chat_ready}}</h2>
         {{#chat_ready}}<p>Add the Interego connector once, and your assistant can work in Work Redesign for you. There’s no API key and nothing to install. Your admin adds you by your Interego ID: your assistant acts as your Interego account, never as a wallet.</p>
         <ol class="steps steps--compact">
           <li class="step"><p class="step__text">In Claude, open <strong>Settings → Connectors → Add custom connector</strong>. In ChatGPT, open <strong>Settings → Connectors → Add</strong>, on a plan that allows custom connectors.</p></li>
@@ -195,7 +195,7 @@
         <h3>Signing in with Interego, or with a wallet</h3>
         <p>When you sign in with your Interego account, Interego signs each action for you. Your sign-in stays valid for about an hour, and it passes through this Work Redesign service each time you sign. While it’s valid, it could be used to act on your Interego account for up to a day, even after you sign out here. Signing out on this page doesn’t cancel it. “Sign out everywhere” on your Interego dashboard ends the day-long part; the hour-long part runs out on its own. If you need signatures only you can make, use a crypto wallet.</p>
         <h3>Who sees what</h3>
-        <p>Everyone in a workspace can read all of its records, including dispute notes and valuations. Use separate workspaces for teams that must not see each other’s records. If you connect Claude or ChatGPT, the Interego connector passes everything your assistant reads and writes here, and the company behind your assistant sees it too.</p>
+        <p>Everyone in a workspace can read all of its records, including dispute notes and valuations. Use separate workspaces for teams that must not see each other’s records.{{#chat_ready}} If you connect Claude or ChatGPT, the Interego connector passes everything your assistant reads and writes here, and the company behind your assistant sees it too.{{/chat_ready}}{{^chat_ready}} When you paste a document into your AI assistant, the company behind your assistant sees it too.{{/chat_ready}}</p>
       </section>
 
       <section class="help-section" id="limits" aria-labelledby="limits-title">
@@ -288,7 +288,7 @@
       <div><p class="site-footer__heading">For developers</p><ul class="site-footer__links">
         <li><a href="/affordances">Agent manifest</a></li><li><a href="/ns/wrd">Vocabulary</a></li>
         <li><a href="{{security_txt}}">Security contact</a></li>
-        <li><span class="mono">{{base}}/mcp</span>&nbsp;(for developers’ tools that sign their own requests; Claude and ChatGPT use the Interego connector)</li></ul></div>
+        <li><span class="mono">{{base}}/mcp</span>&nbsp;(for developers’ tools that sign their own requests{{#chat_ready}}; Claude and ChatGPT use the Interego connector{{/chat_ready}})</li></ul></div>
     </div>
     <div class="site-footer__bottom"><span>Work Redesign is built on Interego. Work Redesign runs no AI model; drafting is done by your own AI assistant.</span><span>© {{year}} {{legal_name}}</span></div>
   </div>

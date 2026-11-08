@@ -51,7 +51,7 @@ import { runDemo, memoryPod, demoClock, DEMO_REFUSALS, DEMO_POD, DEMO_HOLDER_POD
 import { h16, entityIriKey, iriKeyFingerprint } from '../src/records.js';
 import { walkManifest } from '../bridge/pod-helpers.js';
 import { parseRelaySignIn, cappedDidDocumentGet, didDocumentFetcher, DID_DOCUMENT_MAX_BYTES } from '../bridge/relay-sign-in.js';
-import { jargonIn, visibleText } from './plain-words.js';
+import { jargonIn, urnsRunningIntoPunctuation, visibleText } from './plain-words.js';
 
 const read = (rel: string): string => readFileSync(new URL(rel, import.meta.url), 'utf8').split('\r\n').join('\n');
 /** /ui/app.js as the bridge serves it: the shared chat-agent helpers, then the app (bridge/ui.ts). */
@@ -971,6 +971,7 @@ describe('work-redesign offline demo and web UI', () => {
       `----- DOCUMENT: AP-SOP-014 -----\n${docText}\n----- END OF DOCUMENT -----`]) expect(message, s).toContain(s);
     // The packet's note to programs about what this bridge did not do is not words for a person's chat (changed: it was copied before).
     for (const s of ['sampled no model and wrote nothing', 'capture table', 'sampling_performed']) expect(message, s).not.toContain(s);
+    expect(urnsRunningIntoPunctuation(message)).toEqual([]);
     // The same document again reuses the packet; the message is offered as a closed preview.
     page.click('Copy the message for my AI');
     await page.until(() => copied.length === 2, 'the message copied again');

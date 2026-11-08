@@ -46,7 +46,7 @@ import { createWrdHandlers } from '../bridge/handlers.js';
 import { attachUi, parseEveryQueryPair, SIGN_IN_CLIENT_NAME, UI_CSP, type RelayLimits, type UiSignIn } from '../bridge/ui.js';
 import { memoryPod, demoClock, DEMO_POD, DEMO_RECORD_KEY } from '../demo/run.js';
 import type { RelayDelegationPolicy } from '../src/relay-delegated.js';
-import { jargonIn, visibleText } from './plain-words.js';
+import { jargonIn, urnsRunningIntoPunctuation, visibleText } from './plain-words.js';
 
 /** /ui/app.js as the bridge serves it: the shared chat-agent helpers, then the app (bridge/ui.ts). */
 const APP_JS = `${chatAgentJs()}\n${readFileSync(new URL('../bridge/ui/app.js', import.meta.url), 'utf8')}`;
@@ -1122,9 +1122,14 @@ describe('work-redesign web UI: sign in with your Interego account', () => {
     await page.until(panelShown, 'the panel');
     const panel = must(d.querySelector('.chat-panel'), 'the panel body');
     // The connector address and the workspace address are field values (never words on screen), each with its own Copy.
-    const values = [...panel.querySelectorAll('input')].map((i) => (i as HTMLInputElement).value);
-    expect(values).toEqual([`${w.relay.base}/mcp`, `${w.relay.base}/mcp`, DEPLOYED]);
-    expect([...panel.querySelectorAll('input')].every((i) => (i as HTMLInputElement).readOnly)).toBe(true);
+    // Changed: each is a read-only box that wraps and grows to its lines (not a one-line input that cut the address off on a
+    // phone), and its unseen twin, which sizes the box, holds the same address as an attribute, not as text.
+    const boxes = [...panel.querySelectorAll('textarea')] as HTMLTextAreaElement[];
+    expect(boxes.map((b) => b.value)).toEqual([`${w.relay.base}/mcp`, `${w.relay.base}/mcp`, DEPLOYED]);
+    expect(boxes.map((b) => [b.readOnly, b.className, b.parentElement?.className, b.parentElement?.getAttribute('data-value')]))
+      .toEqual(boxes.map((b) => [true, 'input input--mono copy-address__box', 'copy-address', b.value]));
+    expect(panel.querySelector('input')).toBeNull();
+    for (const b of boxes) expect(d.querySelector(`label[for="${b.id}"]`)?.textContent).toMatch(/^(Connector|Workspace) address$/);
     // Two set-ups, one per app: Claude's shown, ChatGPT's hidden until its tab is chosen.
     const tabs = [...panel.querySelectorAll('[role="tab"]')];
     expect(tabs.map((t) => [t.textContent, t.getAttribute('aria-selected')])).toEqual([['In Claude', 'true'], ['In ChatGPT', 'false']]);
@@ -1146,9 +1151,15 @@ describe('work-redesign web UI: sign in with your Interego account', () => {
     await page.until(() => copied.length === 2, 'the workspace details copied');
     const details = String(copied[1]);
     for (const s of [`My Work Redesign workspace: ${DEPLOYED}`, `descriptor_url: "${DEPLOYED}/affordances"`, `My storage address (pod_url): "${DEMO_POD}"`, `"podUrl":"${DEMO_POD}"`, 'urn:iep:action:wrd:read-records', 'urn:iep:action:wrd:read-envelope-template',
-      'except urn:iep:action:wrd:task-map-packet, which takes plain arguments (sign_payload false)', 'nonce = the step name', 'done in the Work Redesign app, not from a chat',
-      // The actions act can't pass arguments to, and the intents that are not the action's own name.
-      'Leave out urn:iep:action:wrd:envelope-template, urn:iep:action:wrd:list-records and urn:iep:action:wrd:calibration', 'all take "intent": "wrd:read-records"', '"intent": "wrd:review-agent-run"']) expect(details, s).toContain(s);
+      'except one that takes plain arguments (sign_payload false): urn:iep:action:wrd:task-map-packet\n', 'nonce = the step name', 'done in the Work Redesign app, not from a chat',
+      // The actions act can't pass arguments to, each with the signed read to use instead (changed: one per line, so no
+      // action is followed straight by a comma or a colon, which would read as part of its name), and the intents that
+      // are not the action's own name.
+      'Leave out three actions, because act passes them no arguments, and use their signed reads instead:\n',
+      '  - instead of urn:iep:action:wrd:envelope-template use urn:iep:action:wrd:read-envelope-template\n',
+      '  - instead of urn:iep:action:wrd:list-records use urn:iep:action:wrd:read-records\n',
+      '  - instead of urn:iep:action:wrd:calibration use urn:iep:action:wrd:read-calibration\n',
+      'all take "intent": "wrd:read-records"', '"intent": "wrd:review-agent-run"']) expect(details, s).toContain(s);
     expect(details).not.toContain('Every action here is signed');
     // Each starter is copied whole; its text is previewed only inside a closed disclosure.
     byLabel('Copy: Go through the seven questions with me').click();
@@ -1161,13 +1172,24 @@ describe('work-redesign web UI: sign in with your Interego account', () => {
     // Every action a copied text names is one this workspace declares.
     const declared = new Set(wrdAffordances.map((a) => String(a.action)));
     expect([...copied.join('\n').matchAll(/urn:iep:action:wrd:[a-z-]+/g)].map((m) => m[0]).filter((a) => !declared.has(a))).toEqual([]);
+    // Every text the panel copies, the starters not copied above included: no action is followed straight by punctuation.
+    const panelCopies: string[] = [...copied];
+    for (const label of ['Check the tasks that name me', 'Submit a plan for approval']) {
+      const before = copied.length;
+      byLabel(`Copy: ${label}`).click();
+      await page.until(() => copied.length === before + 1, `the starter "${label}" copied`);
+      panelCopies.push(String(copied.pop()));
+    }
+    expect(panelCopies).toHaveLength(6);
+    expect(panelCopies.flatMap(urnsRunningIntoPunctuation)).toEqual([]);
+    expect([...panelCopies.join('\n').matchAll(/urn:iep:action:wrd:[a-z-]+/g)].map((m) => m[0]).filter((a) => !declared.has(a))).toEqual([]);
 
     // A wallet signer or the read-only page gets no chat set-up: an assistant acts as the Interego account.
     const panelFor = page.window.eval('chatPanel') as (mode: string) => HTMLElement;
     for (const mode of ['wallet', 'readonly']) {
       const other = panelFor(mode);
       expect([mode, other.textContent]).toEqual([mode, expect.stringContaining('Your AI assistant acts as your Interego account, not your wallet.')]);
-      expect([mode, other.querySelector('input'), other.textContent?.includes('Set it up once')]).toEqual([mode, null, false]);
+      expect([mode, other.querySelector('input, textarea'), other.textContent?.includes('Set it up once')]).toEqual([mode, null, false]);
       expect([mode, other.textContent]).toEqual([mode, expect.stringContaining('Draft a map with copy and paste')]);
       // No "connect once" above "can't work here", and no plan reason that isn't the reason.
       expect([mode, other.textContent?.includes('Connect Claude or ChatGPT once'), other.textContent?.includes('Some Claude and ChatGPT plans can\'t add connectors.')]).toEqual([mode, false, false]);
@@ -1193,6 +1215,19 @@ describe('work-redesign web UI: sign in with your Interego account', () => {
       const none = (v: string): boolean => /^(0px|0|)$/.test(v);
       expect([...card.children].map((el) => [el.tagName, none(cs(el).marginTop), none(cs(el).marginBottom)])).toEqual([...card.children].map((el) => [el.tagName, true, true]));
     }
+    // A route card's buttons stay inside the card on a phone: a button keeps its label on one line by default (.btn's
+    // nowrap), so "Copy the message for my assistant" ran 22 px past its card at 360 px and off the screen at 320. In a route
+    // card the label wraps and the button is never wider than its block, a child of the card's body. Real Chromium at
+    // 320 to 390 px is the QA's check.
+    const routeButtons = [...d.querySelectorAll('.route-card button.btn')] as HTMLButtonElement[];
+    expect(routeButtons.map((b) => b.textContent)).toEqual(['Copy the message for my assistant', 'Open Processes', 'Use your AI assistant', 'Copy the message for my AI']);
+    expect(cs(routeButtons[0]!).whiteSpace).toBe('normal');
+    for (const b of routeButtons) {
+      expect([b.textContent, cs(b).whiteSpace, cs(b).maxWidth, cs(b).textAlign]).toEqual([b.textContent, 'normal', '100%', 'left']);
+      expect([b.textContent, b.closest('.route-card > .card__body')?.contains(b), cs(b.parentElement!).display]).toEqual([b.textContent, true, 'block']);
+    }
+    // Elsewhere a button keeps its one line: the rule is the route cards' own.
+    expect(cs(must([...d.querySelectorAll('button.btn')].find((b) => b.textContent === 'Fill the tasks from the answer'), 'a step button')).whiteSpace).toBe('nowrap');
     css.remove();
     const docText = 'Supplier invoices arrive by email. The clerk matches each invoice to its purchase order and the goods receipt before approval.';
     page.fill(must(d.querySelector('[data-path="document.title"]'), 'the title field'), 'AP-SOP-014');
@@ -1209,6 +1244,7 @@ describe('work-redesign web UI: sign in with your Interego account', () => {
     expect([...message.matchAll(/urn:iep:action:wrd:[a-z-]+/g)].map((m) => m[0]).filter((a) => !declared.has(a))).toEqual([]);
     // Copying it signed nothing and sent nothing.
     expect(page.log.filter((r) => r.path === '/wrd/record_task_map' || r.path === '/wrd/task_map_packet')).toEqual([]);
+    expect(urnsRunningIntoPunctuation(message)).toEqual([]);
     expect(jargonIn(visibleText(d))).toEqual([]);
 
     // A document longer than a chat can record is held back as it is typed, with the reason, and copy and paste stays.
@@ -1239,6 +1275,11 @@ describe('work-redesign web UI: sign in with your Interego account', () => {
     page.click('Copy the message for my assistant');
     await page.until(() => copied.length === 6, 'the chat message copied after shortening');
     expect(String(copied[5])).toContain(`----- DOCUMENT: AP-SOP-014 -----\n${docText}\n----- END OF DOCUMENT -----`);
+    // Copy and paste's message too: of every text this page copies, no action runs into punctuation.
+    page.click('Copy the message for my AI');
+    await page.until(() => copied.length === 7, 'the copy-and-paste message copied');
+    expect(String(copied[6])).toContain(`----- DOCUMENT: AP-SOP-014 -----\n${docText}\n----- END OF DOCUMENT -----`);
+    expect(copied.flatMap(urnsRunningIntoPunctuation)).toEqual([]);
     expect(page.errors).toEqual([]);
   }, 90_000);
 
@@ -1284,7 +1325,7 @@ describe('work-redesign web UI: sign in with your Interego account', () => {
     expect(press('ArrowDown')).toBe(false);
     expect(shown()).toEqual({ selected: ['chatgpt'], tabindex: ['-1', '0'], visible: ['chatgpt'], focused: 'chat-tab-chatgpt' });
     // Keys pressed elsewhere in the panel move no tab.
-    must(d.querySelector('.chat-panel input'), 'a field').dispatchEvent(new page.window.KeyboardEvent('keydown', { key: 'Home', bubbles: true, cancelable: true }));
+    must(d.querySelector('.chat-panel textarea'), 'a field').dispatchEvent(new page.window.KeyboardEvent('keydown', { key: 'Home', bubbles: true, cancelable: true }));
     expect(shown()).toMatchObject({ selected: ['chatgpt'], visible: ['chatgpt'] });
 
     // A browser that refuses the clipboard: the text to copy opens over the panel, says how to copy it by hand, and closes back to
@@ -1345,6 +1386,47 @@ describe('work-redesign web UI: sign in with your Interego account', () => {
     await page.until(() => d.getElementById('panel-title') === null, 'the panel closed from Map a process');
     const reopened = d.activeElement?.closest('details');
     expect([d.activeElement?.textContent, reopened?.querySelector('summary')?.textContent, (reopened as HTMLDetailsElement | null | undefined)?.open]).toEqual(['Use your AI assistant', 'Not connected yet?', true]);
+
+    // The panel's own ways to Map a process close it by switching the view, and the button pressed goes with it: focus goes
+    // to the view's heading, not to the page's body (where the next Tab would start again from the top of the page).
+    const goTab = page.window.eval('goTab') as (id: string) => void;
+    const heading = (): unknown => [d.activeElement?.tagName, d.activeElement?.className, d.activeElement?.textContent, d.activeElement?.getAttribute('tabindex')];
+    for (const [route, inDisclosure] of [['Map a process from a document', ''], ['Draft a map with copy and paste', 'No connector?']] as const) {
+      goTab('tasks');
+      (d.querySelectorAll('#account-menu button') as NodeListOf<HTMLButtonElement>).forEach((b) => { if (b.textContent === 'Use your AI assistant') b.click(); });
+      await page.until(() => panelTitle() === 'Use your AI assistant', `the panel for "${route}"`);
+      if (inDisclosure) (must([...d.querySelectorAll('.chat-panel details')].find((x) => x.querySelector('summary')?.textContent === inDisclosure), inDisclosure) as HTMLDetailsElement).open = true;
+      const go = must([...d.querySelectorAll('.chat-panel button')].find((b) => b.textContent === route), route) as HTMLButtonElement;
+      go.focus();
+      go.click();
+      await page.until(() => d.getElementById('panel-title') === null && page.text().includes('Have your AI draft the map'), `Map a process from "${route}"`);
+      expect([route, heading()]).toEqual([route, ['H1', 'page-title', 'Map a process', '-1']]);
+    }
+
+    // Copy and paste's "Copy the message for my AI" redraws the view (to add "Show the message"), which builds the button
+    // again: focus goes to the new one, so a keyboard user carries on from it. Where the browser refuses the clipboard (as
+    // here, still), the text to copy opens with focus on its title, and closing it comes back to the button.
+    const cardB = (): HTMLButtonElement => must([...d.querySelectorAll('.route-card button')].find((b) => b.textContent === 'Copy the message for my AI'), 'Card B\'s button') as HTMLButtonElement;
+    expect(cardB().getAttribute('data-return')).toBe('document copy-paste-message');
+    page.fill(must(d.querySelector('[data-path="document.title"]'), 'the title field'), 'AP-SOP-014');
+    page.fill(must(d.querySelector('[data-path="document.text"]'), 'the text field'), 'Supplier invoices arrive by email. The clerk matches each invoice to its purchase order.');
+    cardB().focus();
+    cardB().click();
+    await page.until(() => panelTitle() === 'Copy this', 'the message to copy by hand');
+    await page.until(() => d.activeElement?.id === 'panel-title', 'focus on its title');
+    must(d.getElementById('panel-title'), 'the title').dispatchEvent(new page.window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+    await page.until(() => d.getElementById('panel-title') === null, 'the text to copy closed');
+    expect(d.activeElement).toBe(cardB());
+    const copiedB: string[] = [];
+    Object.defineProperty(page.window.navigator, 'clipboard', { value: { writeText: async (s: string) => { copiedB.push(s); } }, configurable: true });
+    for (const press of [1, 2]) {
+      const pressed = cardB();
+      pressed.focus();
+      pressed.click();
+      await page.until(() => copiedB.length === press && cardB() !== pressed, `the message copied (${press})`);
+      await page.until(() => d.activeElement !== d.body, `focus after copying (${press})`);
+      expect([press, pressed.isConnected, d.activeElement === cardB(), [...d.querySelectorAll('summary')].some((x) => x.textContent === 'Show the message')]).toEqual([press, false, true, true]);
+    }
     expect(page.errors).toEqual([]);
   }, 60_000);
 
@@ -1366,6 +1448,7 @@ describe('work-redesign web UI: sign in with your Interego account', () => {
     await page.until(() => copied.length === 1, 'the workspace details copied');
     expect(copied[0]).toContain('Ask me before any action that approves or declines a decision, changes people and roles, records results, or grants or withdraws an AI permission.');
     expect(copied[0]).not.toContain('done in the Work Redesign app, not from a chat');
+    expect(urnsRunningIntoPunctuation(String(copied[0]))).toEqual([]);
     expect(page.errors).toEqual([]);
   }, 60_000);
 });
