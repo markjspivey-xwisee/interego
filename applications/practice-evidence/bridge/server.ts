@@ -309,10 +309,9 @@ async function main(): Promise<void> {
   // The web UI's "Sign in with your Interego account": on when there is a relay to sign in through
   // and the route trusts it. Its relay calls follow no redirect, are capped and timed, and go through
   // the SSRF guard unless the operator's relay is on loopback (a local relay, which the guard refuses).
+  // The landing page, the guide and the web app's Connect dialog all follow it (attachUi): the
+  // connector through this relay when it is on, copy and paste when it is off.
   const uiSignIn = relayUrl !== undefined && relayAddresses.length > 0 && identityHost !== undefined;
-  // What the landing page and the guide offer a chat assistant: the Interego connector wherever the
-  // route trusts a relay (with its address when PEV_RELAY_URL names it), copy and paste otherwise.
-  const chatConnector = relayAddresses.length > 0 && identityHost !== undefined ? (relayUrl !== undefined ? { relayUrl } : {}) : null;
   const relayIsLoopback = relayUrl !== undefined && ((): boolean => { try { return LOOPBACK.has(new URL(relayUrl).hostname); } catch { return false; } })();
 
   const llmKey = env('PEV_LLM_API_KEY') ?? env('ANTHROPIC_API_KEY');
@@ -403,8 +402,8 @@ async function main(): Promise<void> {
         ontologyTurtle: readOntologyTurtle, shapesTurtle: readShapesTurtle,
       });
       attachUi(a, uiSignIn && relayUrl !== undefined
-        ? { interego: { relayUrl, deploymentUrl: base, relayFetch: relayCallFetch(baseFetch, { privateRelay: relayIsLoopback }), ...(relayDelegation !== undefined ? { relayDelegation } : {}) }, connector: chatConnector, ...contact }
-        : { connector: chatConnector, ...contact });
+        ? { interego: { relayUrl, deploymentUrl: base, relayFetch: relayCallFetch(baseFetch, { privateRelay: relayIsLoopback }), ...(relayDelegation !== undefined ? { relayDelegation } : {}) }, ...contact }
+        : contact);
     },
   });
 
@@ -434,7 +433,7 @@ async function main(): Promise<void> {
   if (relayAddresses.length > 0) {
     say(uiSignIn
       ? `  web UI sign-in: ON, through ${relayUrl ?? ''}, as the OAuth client "Practice Evidence" (${base.startsWith('https://') ? `its Client ID Metadata Document is ${base}/ui/oauth/client.json, if the relay takes one; otherwise it registers dynamically` : 'registered dynamically: the deployment URL is not https, so the relay cannot read a Client ID Metadata Document'}). The relay's access token a person signs in with (it lasts an hour) passes through this bridge on every act it signs and is never logged or kept`
-      : '  web UI sign-in: off (PEV_RELAY_URL is not set): people sign in through Claude, ChatGPT or another relay client only');
+      : '  web UI sign-in: off (PEV_RELAY_URL is not set): an act the relay signs is accepted, but the web app, the landing page and the guide offer no Interego sign-in and no connector, only copy and paste. Set PEV_RELAY_URL to the relay\'s URL to offer them');
   }
   if (uiSignIn) {
     say(proxyHops > 0

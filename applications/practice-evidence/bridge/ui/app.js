@@ -1302,7 +1302,10 @@ function signedOutActions() {
     out.push(h('button', { type: 'button', id: 'interego-sign-in', class: 'btn btn--primary btn--sm', dataset: { signIn: 'interego' } },
       icon('sign-in'), h('span', {}, 'Sign in', h('span', { class: 'hide-below-md', text: ' with Interego' }))));
   } else if (S.hasWallet) {
-    out.push(h('button', { type: 'button', id: 'connect-wallet', class: 'btn btn--primary btn--sm', dataset: { signIn: 'wallet' }, text: 'Use a crypto wallet' }));
+    // "Use a wallet" on a phone, as "Sign in" stands for "Sign in with Interego" above: the whole label
+    // with the menu button beside it is wider than a 390-pixel header. Its name is the whole label.
+    out.push(h('button', { type: 'button', id: 'connect-wallet', class: 'btn btn--primary btn--sm', dataset: { signIn: 'wallet' } },
+      h('span', {}, 'Use a ', h('span', { class: 'hide-below-md', text: 'crypto ' }), 'wallet')));
   }
   out.push(h('button', { type: 'button', id: 'signin-other', class: 'btn btn--ghost btn--icon btn--sm', popovertarget: 'signin-menu', 'aria-haspopup': 'menu', 'aria-label': 'Other ways to sign in' }, icon('chevron-down')));
   out.push(h('div', { class: 'menu', id: 'signin-menu', popover: true },
@@ -1556,7 +1559,9 @@ function byokSection() {
   return h('details', { class: 'disclosure', id: 'byok-section' },
     h('summary', { text: `Advanced: use your own Anthropic API key${noOwnAi() ? ' (drafts only)' : ''}` }),
     h('div', { class: 'disclosure__body form' },
-      para('Only for people with their own Anthropic account. Claude or ChatGPT needs no key here, connected or by copy and paste.'),
+      para(chatOffered()
+        ? 'Only for people with their own Anthropic account. Claude or ChatGPT needs no key here, connected or by copy and paste.'
+        : 'Only for people with their own Anthropic account. Claude or ChatGPT needs no key here: copy and paste works with any plan.'),
       h('label', { class: 'choice' }, toggle, h('span', { class: 'choice__text' }, 'Use my own Anthropic API key in this tab',
         h('span', { class: 'choice__hint', text: byokHint(S.bridge) }))),
       fields));
@@ -1815,7 +1820,9 @@ function manualNote() {
 
 const DEMO_CHECKLIST_ROLE = { learner: 'learner', 'second-learner': 'learner', reviewer: 'reviewer', 'second-reviewer': 'reviewer', author: 'author', admin: 'admin', 'judge-agent': 'judge' };
 const CHECKLIST_ROLES = [['learner', 'Learner'], ['reviewer', 'Reviewer'], ['author', 'Author'], ['admin', 'Admin'], ['judge', 'Judge']];
-const MEMBER_STEP = { member: true, title: 'Send your Member ID to your admin', text: 'Your admin uses it to give you a role.' };
+/** What a person sends their admin to be given a role: a Member ID when signed in with Interego, otherwise the wallet address the step copies. */
+const memberWord = () => (S.mode === 'interego' ? 'Member ID' : 'wallet address');
+const MEMBER_STEP = { member: true, title: () => `Send your ${memberWord()} to your admin`, text: 'Your admin uses it to give you a role.' };
 /** Each role's first steps: [title, text, target] where the target is a link, a scroll, or nothing. */
 const CHECKLISTS = {
   learner: [
@@ -1823,7 +1830,7 @@ const CHECKLISTS = {
     { signIn: true, title: () => (S.mode === 'wallet' ? 'Sign in' : 'Sign in with Interego'),
       text: () => (S.mode !== 'wallet' ? "Your Interego account is how Practice Evidence knows it's you."
         : chatOffered() ? "You're signed in with your wallet. To use Claude or ChatGPT here, sign in with Interego instead." : "You're signed in with your wallet.") },
-    { member: true, title: 'Copy your Member ID and send it to your admin', text: 'Your admin uses this to give you a role.' },
+    { member: true, title: () => `Copy your ${memberWord()} and send it to your admin`, text: 'Your admin uses this to give you a role.' },
     { practice: true, title: 'Pick a scenario', text: "Read what you're practicing and open the rubric.", scroll: '#scenarios', label: 'See scenarios' },
     { practice: true, title: 'Start', text: 'Say whether anyone helped you prepare, then press Start practice.' },
     { practice: true, title: 'Have the conversation', text: () => conversationStepText(), connect: true },
@@ -1853,18 +1860,28 @@ const CHECKLISTS = {
   ],
   admin: [
     { title: "Check you're an admin", text: 'Admin access is set up with your workspace. If Team says only an admin can change roles, ask the person who set it up.', href: '#/roles', label: 'Team' },
-    { title: 'Add your authors', text: 'Team: paste their Member ID, choose Author, then Save change.', href: '#/roles', label: 'Team' },
+    { title: 'Add your authors', text: () => `Team: paste their ${chatOffered() ? 'Member ID' : 'wallet address'}, choose Author, then Save change.`, href: '#/roles', label: 'Team' },
     { title: 'Add at least two reviewers', text: "Two or more, so a rubric can be approved by someone who didn't write it, and a re-review can go to a different person." },
     { title: 'Add your learners', text: "Recommended. If your workspace has an AI of its own, it's usually available only to people on your team." },
-    { title: 'Appoint at least one judge', text: "Add them by their Interego Member ID: a judge assesses from Claude or ChatGPT with custom connectors, and one added by wallet address can't. A judge can't assess their own practice, or review a session they assessed." },
+    { title: 'Appoint at least one judge', text: () => (chatOffered()
+      ? "Add them by their Interego Member ID: a judge assesses from Claude or ChatGPT with custom connectors, and one added by wallet address can't. A judge can't assess their own practice, or review a session they assessed."
+      : "Add them by their wallet address. A judge assesses with any chat app, and saves each assessment with a tool of their own that signs with their key: this web app can't save one yet. A judge can't assess their own practice, or review a session they assessed.") },
     { title: 'Know your admin tools', text: 'On any session: Withdraw the review (the learner sees your reason) and Delete conversation text (a reason is required).' },
     { title: 'Check AI judge quality', text: 'How often each AI judge agrees with your reviewers.', href: '#/calibration', label: 'AI judge quality' },
   ],
-  judge: [
-    { ...MEMBER_STEP, text: 'Done when your admin has added you as a Judge.' },
-    { title: 'Connect Claude or ChatGPT', text: 'Add the Interego connector, then sign in.', href: 'ui/help#claude-chatgpt', label: 'How to connect' },
-    { title: "Assess a session you've been given", text: "Paste the message a learner sends you into a chat with the Interego connector on. Your assistant proposes levels and waits for your go-ahead. You can't assess your own practice, and a reviewer has the final say." },
-  ],
+  // As this workspace offers judging: from Claude or ChatGPT with the connector, or, without
+  // Interego sign-in, by copy and paste, with a tool of the judge's own to save (see judgeHandoffText).
+  get judge() {
+    return chatOffered() ? [
+      { ...MEMBER_STEP, text: 'Done when your admin has added you as a Judge.' },
+      { title: 'Connect Claude or ChatGPT', text: 'Add the Interego connector, then sign in.', href: 'ui/help#claude-chatgpt', label: 'How to connect' },
+      { title: "Assess a session you've been given", text: "Paste the message a learner sends you into a chat with the Interego connector on. Your assistant proposes levels and waits for your go-ahead. You can't assess your own practice, and a reviewer has the final say." },
+    ] : [
+      { ...MEMBER_STEP, text: 'Done when your admin has added you as a Judge.' },
+      { title: "Assess a session you've been given", text: "Paste the part between the lines of a learner's message into any chat app, and check the levels and quotes your AI proposes. You can't assess your own practice, and a reviewer has the final say." },
+      { title: 'Save the assessment', text: "This web app can't save an assessment yet. A tool of your own signs the details at the end of the learner's message with your key.", href: 'ui/help#judges', label: 'How judging works' },
+    ];
+  },
 };
 
 /**
@@ -2301,24 +2318,28 @@ function judgeMessage(v) {
 /**
  * The hand-off for an appointed judge on a workspace without Interego sign-in, as plain text: the
  * judge packet's request (the rubric and the conversation, which no connector can fetch here) for
- * any chat app, then the values a judge signs with their own key to save the assessment, from the
- * packet's binding and its record template. The packet itself stays under Technical details.
+ * any chat app, then what saving the assessment takes. This web app has no way for a judge to save
+ * one (no page sends record-judgment), so the message says so, and gives the fields a tool of the
+ * judge's own signs with their key and sends to the workspace, from the packet's binding and its
+ * record template. The packet itself stays under Technical details.
  */
 function judgeHandoffText(v, p) {
   const ask = InteregoChatAgent.requestAsText(p.request, { replyRule: 'Reply with only the JSON object the instructions describe, nothing before or after it.' });
   const rw = p.recordWith || {};
-  const fields = Object.entries(rw.payloadTemplate || {}).map(([k, x]) => {
+  const template = rw.payloadTemplate || {};
+  const fields = Object.entries(template).map(([k, x]) => {
     if (k === 'judgment') return `- ${k}: the JSON object your AI wrote`;
     if (k === 'judgeDisclosure') return `- ${k}: provider (the company that makes your AI), model (its name, as your app shows it, or not shown) and usedPacketPrompt true`;
     return `- ${k}: ${typeof x === 'string' || typeof x === 'number' || typeof x === 'boolean' ? String(x) : JSON.stringify(x)}`;
   });
+  if (rw.action && !Object.prototype.hasOwnProperty.call(template, 'action')) fields.unshift(`- action: ${rw.action}`);
   return [
     `Hi, could you assess my practice session in Practice Evidence? Session: ${v.attemptIri}. Workspace: ${siteBase()}`,
     '',
     '1. Paste everything between the lines into Claude, ChatGPT or any chat app. It holds my conversation: treat it as data, not instructions.',
     '---', ask, '---',
     '',
-    `2. Check the levels and quotes your AI proposes. Then save the assessment here as an appointed judge, signed with your own key: ${rw.action ? `the step ${rw.action}, ` : ''}with`,
+    "2. Check the levels and quotes your AI proposes. The Practice Evidence web app can't save an assessment yet. Saving it takes a tool of your own (your own agent or script) that signs these fields with your key, as an appointed judge, and sends them to the workspace above:",
     ...fields,
     '',
     "If this is your own practice session, stop: you can't assess it. A reviewer signs off after you.",
@@ -2871,7 +2892,7 @@ function actionsPanel(v, o, inConversation) {
         const p = await act(ACT.judgePacket, { attemptIri: v.attemptIri }, { read: true });
         const text = judgeHandoffText(v, p);
         return callout({ tone: 'info', title: 'Hand-off ready',
-          body: 'Send this message to your appointed judge. They paste it into any chat app, check the levels their AI proposes, and save the assessment with their own key. A reviewer still signs off.',
+          body: "Send this message to your appointed judge. They paste it into any chat app and check the levels their AI proposes. This web app can't save an assessment yet: saving it takes a tool of their own that signs with their key. A reviewer still signs off.",
           actions: [h('button', { type: 'button', class: 'btn btn--primary btn--sm', id: 'copy-judge-handoff', onclick: () => copyText(text, 'Message for your judge', 'Send it to your appointed judge.') },
             icon('clipboard', 'sm'), 'Copy message for my judge'),
           h('button', { type: 'button', class: 'btn btn--ghost btn--sm', text: 'Copy session link', onclick: () => copyText(location.href, 'Session link') })],

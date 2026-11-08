@@ -324,6 +324,10 @@ describe('the web UI is served under a strict content policy', () => {
     for (const s of ['On this workspace: copy and paste', 'This workspace doesn\'t offer Interego sign-in, so a chat assistant can\'t connect to it.',
       'Sign in with a crypto wallet, or sign each step with your own key.']) expect(html).toContain(s);
     for (const s of ['/mcp', 'Set it up in four steps', 'Connect your AI', 'with a passkey', 'No connector?']) expect(html).not.toContain(s);
+    // Its security answer and its limits name no sign-in service and no connector it does not offer.
+    for (const s of ['Interego sign-in service', 'holds your sign-in for up to an hour', 'the Interego connector passes', 'Claude or ChatGPT with the Interego connector, or any chat app']) expect(html).not.toContain(s);
+    for (const s of ['When you copy a step into Claude, ChatGPT or another chat app, it sees what you paste', 'Claude, ChatGPT or any chat app, with copy and paste.']) expect(html).toContain(s);
+    for (const s of ['Interego sign-in service', 'the Interego connector passes', 'Claude or ChatGPT with the Interego connector, or any chat app']) expect(connected).toContain(s);
     // With it: the four steps, the relay this workspace signs in through, and nothing about not offering it.
     for (const s of ['Set it up in four steps', '<code>https://relay.example.test/mcp</code>', 'Connect your AI', 'with a passkey', 'No connector? Copy and paste.']) expect(connected).toContain(s);
     for (const s of [DEFAULT_CONNECTOR_ADDRESS, 'doesn\'t offer Interego sign-in', 'On this workspace: copy and paste']) expect(connected).not.toContain(s);
@@ -359,8 +363,10 @@ describe('the web UI is served under a strict content policy', () => {
     // As the landing page: this bridge offers no Interego sign-in, so the guide's chat section is copy and paste.
     expect(html).toBe(connectorPages(contactPages(), null).help);
     const connected = connectorPages(contactPages(), { relayUrl: 'https://relay.example.test/' }).help;
-    // A workspace that trusts a relay without naming it shows the live relay's address, as written in the file.
-    expect(connectorPages(contactPages(), {}).help).toContain(`<code>${DEFAULT_CONNECTOR_ADDRESS}</code>`);
+    // The address in the files is a placeholder: every one is the workspace's own relay once filled in.
+    // (A workspace that trusts a relay without naming it signs no one in, so it gets the null pages.)
+    expect(connected.split('<code>https://relay.example.test/mcp</code>').length).toBe(read('bridge/ui/help.html').split(`<code>${DEFAULT_CONNECTOR_ADDRESS}</code>`).length);
+    expect(connected.split('<code>https://relay.example.test/mcp</code>').length).toBeGreaterThan(1);
     const section = (page: string, id: string): string => page.slice(page.indexOf(`<section id="${id}"`), page.indexOf('</section>', page.indexOf(`<section id="${id}"`)));
     for (const page of [html, connected]) {
       expect(page).not.toMatch(NO_INLINE_SCRIPT);
@@ -382,11 +388,25 @@ describe('the web UI is served under a strict content policy', () => {
     const chat = section(html, 'claude-chatgpt');
     expect(chat).toContain('This workspace doesn\'t offer Interego sign-in, so Claude or ChatGPT can\'t connect to it.');
     for (const s of ['/mcp', 'Add custom connector', 'Connect your AI', 'id="workspace-address"']) expect(chat).not.toContain(s);
-    for (const s of ['Get the hand-off', 'by their wallet address', 'save each assessment with your own key']) expect(html).toContain(s);
+    for (const s of ['Get the hand-off', 'by their wallet address']) expect(html).toContain(s);
     for (const s of ['your plan must allow custom connectors', 'Appoint at least one judge, by their Interego Member ID', 'with a passkey']) expect(html).not.toContain(s);
+    // A judge here assesses with any chat app, and the guide says plainly that this web app can't save the
+    // assessment: it takes a tool of the judge's own, never an ordinary step on a page.
+    expect(section(html, 'judges')).toContain('This web app can\'t save an assessment yet: saving one takes a tool of your own (your own agent or script) that signs it with your key.');
+    expect(section(html, 'admins')).toContain('This web app can\'t save an assessment yet, so each judge needs a tool of their own that signs it with their key.');
+    expect(chat).toContain('Saving the assessment takes a tool of your own that signs it with your key: this web app can\'t save it yet');
+    expect(html).not.toMatch(/save (?:each|the) assessment with (?:your|their) own key/);
+    // Nothing else on the page directs a person to Interego sign-in, a Member ID or the connector.
+    for (const s of ['Copy your Member ID from the account menu', 'Sign in with Interego (or another way', 'What the Interego sign-in service sees', '<dt>Interego connector</dt>',
+      '<dt>Your sign-in has ended</dt>', '<dt>Please do this in the web app</dt>', 'add and remove people by Member ID', 'Use <strong>Connect your AI</strong>']) expect(html).not.toContain(s);
+    for (const s of ['Send your wallet address to your admin (Getting started → Copy my wallet address).', 'Sign in with your crypto wallet (or sign manually, from the sign-in menu)',
+      'add and remove people by wallet address']) expect(html).toContain(s);
     // With it, the connector's steps and this workspace's relay, as its Connect dialog shows it.
     for (const s of ['<code>https://relay.example.test/mcp</code>', 'In each new chat, turn on Interego from the chat\'s tools menu (+).', 'id="workspace-address"',
-      'Appoint at least one judge, by their Interego Member ID', 'your plan must allow custom connectors', 'under <strong>Send to your judge</strong>']) expect(connected).toContain(s);
+      'Appoint at least one judge, by their Interego Member ID', 'your plan must allow custom connectors', 'under <strong>Send to your judge</strong>',
+      'Copy your Member ID from the account menu', 'Sign in with Interego (or another way', 'What the Interego sign-in service sees', '<dt>Interego connector</dt>',
+      '<dt>Your sign-in has ended</dt>', 'add and remove people by Member ID']) expect(connected).toContain(s);
+    for (const s of ['can\'t save an assessment yet', 'Send your wallet address to your admin', 'Sign in with your crypto wallet']) expect(connected).not.toContain(s);
     for (const s of [DEFAULT_CONNECTOR_ADDRESS, 'doesn\'t offer Interego sign-in']) expect(connected).not.toContain(s);
     // The pages and the code that fills them change together: a page without its blocks, an unclosed
     // block or a connector address left outside a block stops the bridge, and so does a relay that is no web address.
@@ -928,6 +948,9 @@ describe('the web UI works, driven in a DOM against the real handlers', () => {
     expect(p.text('#workspace-settings')).toContain('An appointed judge, with their own AI assistant');
     expect(p.text('#view .own-ai')).toContain('Practice with your own AI assistant');
     expect(p.text('#view')).not.toMatch(/built-in AI/);
+    // The header's wallet button keeps its whole name, and drops "crypto" below the md breakpoint (as
+    // "Sign in" stands for "Sign in with Interego"), so it and the menu button fit a 390-pixel header.
+    expect([p.text('.app-header #connect-wallet'), p.q('.app-header #connect-wallet .hide-below-md')?.textContent]).toEqual(['Use a crypto wallet', 'crypto ']);
     p.q('#connect-wallet')!.click();
     await p.until(() => p.text('#acting-as').startsWith('Signed in with wallet'), 'the connected wallet');
     // Getting started words the learner's steps as this workspace offers them: copy and paste, and the judge hand-off.
@@ -957,6 +980,9 @@ describe('the web UI works, driven in a DOM against the real handlers', () => {
     // The key of your own is there, closed, as Advanced, and Anthropic's.
     const byok = dialog.querySelector('#byok-section') as HTMLDetailsElement;
     expect([byok.open, byok.querySelector('summary')?.textContent]).toEqual([false, 'Advanced: use your own Anthropic API key (drafts only)']);
+    // Nothing can connect here, so the sentence under it says copy and paste, not "connected".
+    expect(byok.textContent).toContain('Claude or ChatGPT needs no key here: copy and paste works with any plan.');
+    expect(byok.textContent).not.toMatch(/\bconnected\b/);
     const JARGON = /\b(pod|bridge|affordance|envelope|nonce|hypothetical|ratif\w*|countersign\w*|relay)\b/i;
     const CODES = /\b(EIP-191|IRI|DID)\b|HTTP \d{3}|urn:/;
     expect([visibleText(dialog).match(JARGON)?.[0] ?? null, visibleText(dialog).match(CODES)?.[0] ?? null]).toEqual([null, null]);
@@ -1011,6 +1037,9 @@ describe('the web UI works, driven in a DOM against the real handlers', () => {
     p.click(button(PEV_ACTION.judgePacket));
     const handoff = await p.until(() => p.q('#copy-judge-handoff')?.closest('.callout') ?? p.q('#view .actions .refusal'), 'the hand-off');
     expect(visibleText(handoff)).not.toMatch(/JSON|@context|\{/);
+    // It says plainly that this web app can't save the judge's assessment: a tool of the judge's own does.
+    expect(visibleText(handoff)).toContain('This web app can\'t save an assessment yet: saving it takes a tool of their own that signs with their key.');
+    expect(visibleText(handoff)).not.toContain('save the assessment with their own key');
     const tech = [...handoff.querySelectorAll('details')].find((x) => x.querySelector('summary')?.textContent === 'Technical details') as HTMLDetailsElement;
     expect([tech.open, tech.querySelector('pre.json')?.textContent?.includes('"@context"')]).toEqual([false, true]);
     p.click('#copy-judge-handoff');
@@ -1020,7 +1049,11 @@ describe('the web UI works, driven in a DOM against the real handlers', () => {
     expect(typeof ended['transcriptHash']).toBe('string');
     expect(judge.startsWith('Hi, could you assess my practice session in Practice Evidence?')).toBe(true);
     for (const says of [attemptIri, 'Paste everything between the lines into Claude, ChatGPT or any chat app.', line, 'Reply with only the JSON object the instructions describe',
-      PEV_ACTION.recordJudgment, `- transcriptHash: ${String(ended['transcriptHash'])}`, '- judgment: the JSON object your AI wrote', 'usedPacketPrompt true', 'signed with your own key']) expect(judge, says).toContain(says);
+      PEV_ACTION.recordJudgment, `- transcriptHash: ${String(ended['transcriptHash'])}`, '- judgment: the JSON object your AI wrote', 'usedPacketPrompt true',
+      "The Practice Evidence web app can't save an assessment yet. Saving it takes a tool of your own (your own agent or script) that signs these fields with your key, as an appointed judge, and sends them to the workspace above:"]) expect(judge, says).toContain(says);
+    // Never as an ordinary step "here": the action is named once, as a field the judge's tool signs.
+    expect(judge).not.toMatch(/save the assessment here|the step urn:/);
+    expect(judge.split(PEV_ACTION.recordJudgment).length - 1).toBe(1);
     // Plain text: no JSON-LD wrapper, no escaped line breaks or quotes.
     expect(judge).not.toMatch(/"@context"|"@type"|\\n|\\"|"messages"|"recordWith"/);
     copied.splice(1);
@@ -1190,9 +1223,11 @@ describe('server.ts composes and listens; every other file keeps to its rules', 
     expect(server).toMatch(/if \(loopback\) a\.use\(hostAllowlistGuard\(allowedHosts\)\);/);
     // The UI, with Interego sign-in when there is a relay to sign in through and the route trusts it.
     expect(server).toContain('attachUi(a, uiSignIn && relayUrl !== undefined');
-    // The landing page and the guide offer the connector wherever the route trusts a relay, and copy and paste otherwise.
-    expect(server).toContain('const chatConnector = relayAddresses.length > 0 && identityHost !== undefined ? (relayUrl !== undefined ? { relayUrl } : {}) : null;');
-    expect(server.match(/connector: chatConnector/g)).toHaveLength(2);
+    // The landing page and the guide follow that sign-in and nothing else, as the web app's Connect dialog does:
+    // no separate connector option, so a relay trusted without PEV_RELAY_URL gets copy and paste on all three.
+    expect(server).not.toMatch(/chatConnector|connector:/);
+    expect(server).toMatch(/\.\.\.\(relayDelegation !== undefined \? \{ relayDelegation \} : \{\}\) \}, \.\.\.contact \}\n\s*: contact\);/);
+    expect(server).toContain("but the web app, the landing page and the guide offer no Interego sign-in and no connector, only copy and paste. Set PEV_RELAY_URL");
     expect(server).toContain("const uiSignIn = relayUrl !== undefined && relayAddresses.length > 0 && identityHost !== undefined;");
     expect(server).toContain('relayFetch: relayCallFetch(baseFetch, { privateRelay: relayIsLoopback })');
     expect(server).toContain("{ label: 'Web UI', href: `${base}/ui`, rel: 'alternate', type: 'text/html' }");

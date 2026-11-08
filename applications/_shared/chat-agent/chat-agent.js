@@ -27,8 +27,10 @@ const InteregoChatAgent = (() => {
    * and '-', which every Interego vertical's nonce check accepts.
    *
    * The example names a step the prompt really has (its first signed step), so an assistant is
-   * never shown a step name the site does not offer. With no signed step to name, as in workspace
-   * details, it is said in words (NONCE_RULE, also published as nonceRule).
+   * never shown a step name the site does not offer, and that step's own turn: a turn number when
+   * its payload carries a turnIndex, 0 when it carries none, as the rule says, so an assistant
+   * copying the example copies the right one. With no signed step to name, as in workspace details,
+   * it is said in words (NONCE_RULE, also published as nonceRule).
    */
   const NONCE_HOW = 'nonce = the step name, the turn number (or 0), then 16 random letters or digits, joined by "-", never reused. ';
   const NONCE_EXAMPLE_TURN = 4;
@@ -36,10 +38,14 @@ const InteregoChatAgent = (() => {
   const NONCE_RULE = `${NONCE_HOW}For example, at turn ${NONCE_EXAMPLE_TURN} a step's nonce is that step's own name, then ${NONCE_EXAMPLE_TURN}, `
     + `then 16 letters or digits such as ${NONCE_EXAMPLE_LETTERS}, but make up new random letters for every call.`;
 
-  /** The nonce rule with an example made from one step's own name (stepNameOf), or in words when there is none. */
-  function nonceRuleFor(stepName) {
+  /**
+   * The nonce rule with an example made from one step's own name (stepNameOf) and turn (`hasTurn`:
+   * NONCE_EXAMPLE_TURN when the step has a turn number, 0 when it has none), or in words when there
+   * is no step.
+   */
+  function nonceRuleFor(stepName, hasTurn) {
     if (!stepName) return NONCE_RULE;
-    return `${NONCE_HOW}For example ${stepName}-${NONCE_EXAMPLE_TURN}-${NONCE_EXAMPLE_LETTERS}, but make up new random letters for every call.`;
+    return `${NONCE_HOW}For example ${stepName}-${hasTurn ? NONCE_EXAMPLE_TURN : 0}-${NONCE_EXAMPLE_LETTERS}, but make up new random letters for every call.`;
   }
 
   /** A step name longer than this is cut, so step + turn + 16 letters stays inside 64 characters. */
@@ -105,8 +111,9 @@ const InteregoChatAgent = (() => {
   /**
    * A paste-ready prompt that tells a chat assistant how to do each step with the Interego
    * connector's act tool: the call shape (descriptor_url, action_iri, sign_payload, payload), the
-   * nonce rule (its example made from the first signed step's own name, or said in words when no
-   * step is signed), and per step whether it is signed or plain and which exact action it names.
+   * nonce rule (its example made from the first signed step's own name, at turn 0 unless that step's
+   * payload has a turnIndex, or said in words when no step is signed), and per step whether it is
+   * signed or plain and which exact action it names.
    *
    * spec: { intro?, affordancesUrl, podUrl?, steps?: [{ say, actionIri, signed, payload }],
    *         rules?: string[], outro? }. Throws TypeError on a malformed spec: that is a bug in the
@@ -136,7 +143,8 @@ const InteregoChatAgent = (() => {
       '- payload: the JSON object the step shows, with every <...> replaced by the real value',
     ];
     if (podUrl) how.push(`My storage address (pod_url): "${podUrl}"`);
-    how.push(`Every signed payload carries a nonce: ${nonceRuleFor(firstSigned ? stepNameOf(textOf(firstSigned.actionIri)) : '')}`);
+    const firstHasTurn = Boolean(firstSigned && isPlainObject(firstSigned.payload) && Object.prototype.hasOwnProperty.call(firstSigned.payload, 'turnIndex'));
+    how.push(`Every signed payload carries a nonce: ${nonceRuleFor(firstSigned ? stepNameOf(textOf(firstSigned.actionIri)) : '', firstHasTurn)}`);
     parts.push(how.join('\n'));
     if (steps.length > 0) parts.push(['Steps:', ...steps.map((s, i) => stepText(s, i + 1))].join('\n'));
     const ruleLines = rules.map(textOf).filter((r) => r.length > 0).concat([REFUSAL_RULE]);

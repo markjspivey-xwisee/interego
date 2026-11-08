@@ -25,13 +25,24 @@ sign-in, for a person signed in with it. Wallet sessions and workspaces
 without sign-in get copy and paste, which now copies plain text, not JSON:
 without sign-in, "Get the hand-off" copies a message for the judge with the
 request as text (the rubric and the conversation, which no connector can
-fetch there) and the fields the judge signs with their own key, and keeps
-the packet's JSON under Technical details. A wallet or manual signer is
-offered Sign in with Interego in the Connect dialog and the account menu, and
-Getting started no longer marks Interego sign-in done for a wallet. The
-landing page and the guide say what each workspace offers: copy and paste
-where no relay is trusted, and elsewhere the connector address of the relay
-the workspace signs in through (the live relay's when none is named).
+fetch there), and keeps the packet's JSON under Technical details. The web
+app has no way for a judge to save an assessment, so the message, the
+hand-off note, the guide and Getting started say so plainly: saving takes a
+tool of the judge's own that signs the listed fields with their key. A
+wallet or manual signer is offered Sign in with Interego in the Connect
+dialog and the account menu, and Getting started no longer marks Interego
+sign-in done for a wallet. The landing page and the guide follow the same
+rule as the web app's Connect dialog: the connector steps, with the address
+of the relay the web app signs people in through, only where it offers
+Interego sign-in, and copy and paste everywhere else. That includes a
+workspace that trusts a relay but names none (no `PEV_RELAY_URL`): it still
+accepts acts the relay signs, but its pages, its sign-in screen and its
+Connect dialog now all say copy and paste, and the bridge says so at
+startup. On such workspaces the guide's troubleshooting, glossary and
+privacy entries, the landing page's security answer and its limits, the
+admin's and judge's Getting started steps and the dialog's Advanced note
+no longer point to a Member ID, Interego sign-in or a connector, and the
+header's wallet button reads "Use a wallet" on a phone so it fits.
 It reads a pasted draft even with prose or code fences around it, and asks
 which AI wrote each reply. A person's own Anthropic key stays available,
 closed under the dialog's Advanced section; it is gone from the header and
@@ -46,7 +57,7 @@ quotes and the schema once; the other person's brief never doubles a full
 stop (the template, and so its hash, is unchanged); a line saved from a chat
 reads "Anthropic, model not shown", as declared; one saved version is "1
 saved version"; and each copied message's nonce example names one of its own
-steps. `/ui/app.js` is now the shared chat-agent helpers followed by the
+steps, at turn 0 when that step has no turn. `/ui/app.js` is now the shared chat-agent helpers followed by the
 app, and a test parses it as the module a browser loads. The landing page
 and guide now describe this, and the README documents the exact act
 sequence and records a live Claude run of it (no ChatGPT run yet). The

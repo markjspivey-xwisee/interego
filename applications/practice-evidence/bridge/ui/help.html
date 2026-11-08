@@ -140,9 +140,9 @@
     <section id="admins" aria-labelledby="admins-title">
       <h2 id="admins-title">For admins</h2>
       <ol class="steps help-steps">
-        <li class="step"><p class="step__text"><strong>Team</strong>: add and remove people by Member ID, and choose their roles. Have at least two reviewers, so a rubric can be approved by someone who didn't write it and a re-review can go to a different person.</p></li>
+        <li class="step"><p class="step__text"><strong>Team</strong>: add and remove people by <!--connector-->Member ID<!--/connector--><!--no-connector-->wallet address<!--/no-connector-->, and choose their roles. Have at least two reviewers, so a rubric can be approved by someone who didn't write it and a re-review can go to a different person.</p></li>
         <!--connector--><li class="step"><p class="step__text">Appoint at least one judge, by their Interego Member ID, who uses Claude or ChatGPT with custom connectors. A judge added by wallet address can't assess from Claude or ChatGPT. Until a judge is appointed, sessions can't be assessed.</p></li><!--/connector-->
-        <!--no-connector--><li class="step"><p class="step__text">Appoint at least one judge, by their wallet address. They assess with any chat app and save each assessment with their own key. Until a judge is appointed, sessions can't be assessed.</p></li><!--/no-connector-->
+        <!--no-connector--><li class="step"><p class="step__text">Appoint at least one judge, by their wallet address. They assess with any chat app. This web app can't save an assessment yet, so each judge needs a tool of their own that signs it with their key. Until a judge is appointed, sessions can't be assessed.</p></li><!--/no-connector-->
         <li class="step"><p class="step__text">Withdraw a review for cause (the learner sees your reason), or delete a session's conversation text (a reason is required). Both are done in the web app, from the session page.</p></li>
         <li class="step"><p class="step__text">Monitor <strong>AI judge quality</strong>.</p></li>
       </ol>
@@ -158,10 +158,10 @@
         <li class="step"><p class="step__text">You can't assess your own practice. Every quote is checked, and a reviewer has the final say.</p></li>
       </ol>
       <!--/connector--><!--no-connector-->
-      <p>On this workspace you judge with any chat app and save each assessment with your own key.</p>
+      <p>On this workspace you judge with any chat app. This web app can't save an assessment yet: saving one takes a tool of your own (your own agent or script) that signs it with your key.</p>
       <ol class="steps help-steps">
         <li class="step"><p class="step__text">Paste the part between the lines of a learner's message into Claude, ChatGPT or any chat app. It holds the session and the rubric, and your AI proposes levels with exact quotes.</p></li>
-        <li class="step"><p class="step__text">Check the levels and quotes. Then save the assessment with your own key, with the details at the end of the message.</p></li>
+        <li class="step"><p class="step__text">Check the levels and quotes. Then have your own tool sign the details at the end of the message with your key and send them to the workspace. The web app can't do this step for you yet.</p></li>
         <li class="step"><p class="step__text">You can't assess your own practice. Every quote is checked, and a reviewer has the final say.</p></li>
       </ol>
       <!--/no-connector-->
@@ -197,7 +197,7 @@
       <ul>
         <li>Learners: copy each line's message on the session page, and paste the other person's reply back.</li>
         <li>Authors: under <strong>Copy and paste a draft</strong>, get the message, paste it into your chat app, and load its answer.</li>
-        <li>Appointed judges: paste the message a learner sends you into your chat app, then save the assessment with your own key.</li>
+        <li>Appointed judges: paste the message a learner sends you into your chat app. Saving the assessment takes a tool of your own that signs it with your key: this web app can't save it yet (see <a href="#judges">For appointed judges</a>).</li>
       </ul>
       <p>To use the Interego connector instead, ask your admin about a workspace with Interego sign-in.</p>
       <!--/no-connector-->
@@ -218,26 +218,26 @@
       <p>On a session page, open <strong>What you can do next</strong> and choose <strong>Download my record</strong>. The file holds every saved version with its signature, and explains how to check each one on your own.</p>
       <h3>Deleting conversation text</h3>
       <p><strong>Delete conversation text</strong> removes the words from the workspace. Levels and fingerprints stay, so a copy you downloaded still checks out. It can't be undone, so download your record first.</p>
-      <h3>What the Interego sign-in service sees</h3>
-      <p>When you sign in with Interego, the Interego sign-in service confirms each step for you, and it sees what it signs, including the text of your lines. Practice Evidence never sees your passkey.</p>
+      <!--connector--><h3>What the Interego sign-in service sees</h3>
+      <p>When you sign in with Interego, the Interego sign-in service confirms each step for you, and it sees what it signs, including the text of your lines. Practice Evidence never sees your passkey.</p><!--/connector-->
       <h3>When you use Claude or ChatGPT</h3>
       <!--connector--><p>The Interego connector passes everything your assistant reads and writes here, including conversation text, transcripts it fetches for a judge, and scenario drafts. The company behind your assistant sees it too, under your own account's terms. With copy and paste, the chat app sees what you paste into it.</p><!--/connector-->
       <!--no-connector--><p>With copy and paste, the chat app sees what you paste into it, including conversation text and, for a judge, the whole session. The company behind it sees it too, under your own account's terms.</p><!--/no-connector-->
-      <h3>How long you stay signed in</h3>
-      <p>A sign-in lasts up to an hour. Signing out clears this browser tab. Your Interego sign-in itself stays valid until it expires, within that hour. Your practice is saved either way.</p>
+      <!--connector--><h3>How long you stay signed in</h3>
+      <p>A sign-in lasts up to an hour. Signing out clears this browser tab. Your Interego sign-in itself stays valid until it expires, within that hour. Your practice is saved either way.</p><!--/connector-->
     </section>
 
     <section id="troubleshooting" aria-labelledby="troubleshooting-title">
       <h2 id="troubleshooting-title">Troubleshooting</h2>
       <p>Each message in the app says what happened and what to do. The most common ones:</p>
       <dl class="kv">
-        <dt>Please sign in to continue</dt><dd>Sign in with Interego (or another way from the sign-in menu), then try the step again.</dd>
-        <dt>Your sign-in has ended</dt><dd>Sign-ins last up to an hour. Sign in again; your practice is saved.</dd>
+        <dt>Please sign in to continue</dt><dd><!--connector-->Sign in with Interego (or another way from the sign-in menu), then try the step again.<!--/connector--><!--no-connector-->Sign in with your crypto wallet (or sign manually, from the sign-in menu), then try the step again.<!--/no-connector--></dd>
+        <!--connector--><dt>Your sign-in has ended</dt><dd>Sign-ins last up to an hour. Sign in again; your practice is saved.</dd><!--/connector-->
         <dt>That took a little too long</dt><dd>Each step has to be confirmed within a few minutes. Try again.</dd>
-        <dt>You don't have access to this</dt><dd>Your role doesn't include this step. Copy your Member ID from the account menu and send it to your admin.</dd>
-        <dt>Please do this in the web app</dt><dd>Approving rubrics, signing off reviews, changing roles and withdrawing reviews happen in the web app, not from a chat assistant.</dd>
+        <dt>You don't have access to this</dt><dd>Your role doesn't include this step. <!--connector-->Copy your Member ID from the account menu and send it to your admin.<!--/connector--><!--no-connector-->Send your wallet address to your admin (Getting started → Copy my wallet address).<!--/no-connector--></dd>
+        <!--connector--><dt>Please do this in the web app</dt><dd>Approving rubrics, signing off reviews, changing roles and withdrawing reviews happen in the web app, not from a chat assistant.</dd><!--/connector-->
         <dt>Someone else needs to do this</dt><dd>Reviews and approvals must come from someone other than the learner, the author or whoever assessed the session. Ask a colleague who can.</dd>
-        <dt>This step needs your AI assistant</dt><dd>Practice Evidence has no AI of its own. Use <strong>Connect your AI</strong>, or <strong>Copy for my AI</strong> on that step.</dd>
+        <dt>This step needs your AI assistant</dt><dd>Practice Evidence has no AI of its own. <!--connector-->Use <strong>Connect your AI</strong>, or <strong>Copy for my AI</strong> on that step.<!--/connector--><!--no-connector-->Use <strong>Copy for my AI</strong> on that step.<!--/no-connector--></dd>
         <dt>Waiting for a judge</dt><dd>Your workspace's appointed judge assesses your session. If you don't have one yet, ask your admin. Your session is saved and can be assessed later.</dd>
         <dt>Please wait a moment</dt><dd>You've reached an hourly limit, or many people are signing in at once. Wait for the time shown, then try again.</dd>
         <dt>This page is out of date</dt><dd>Something changed since you opened the page. Press <strong>Refresh</strong>, check, and try again. Your unsent line is kept.</dd>
@@ -268,7 +268,7 @@
         <dt>Storage</dt><dd>Where this workspace keeps its records. Interego calls this a pod: a data store your organization chooses.</dd>
         <dt>AI agent (not a person)</dt><dd>Marks a member as software. Software can never approve a rubric or sign off a review.</dd>
         <dt>Your AI assistant</dt><dd>Claude, ChatGPT or another chat app you use, on your own subscription. Practice Evidence has no AI of its own.</dd>
-        <dt>Interego connector</dt><dd>What you add to Claude or ChatGPT so your assistant can act here as you, through your Interego account.</dd>
+        <!--connector--><dt>Interego connector</dt><dd>What you add to Claude or ChatGPT so your assistant can act here as you, through your Interego account.</dd><!--/connector-->
         <dt>AI judge</dt><dd>An appointed judge's AI assistant: it proposes a level for each criterion, quoting the learner. It never calculates the score and never has the final say.</dd>
         <dt>AI judge quality</dt><dd>How often each AI judge's levels match what reviewers decided, by criterion. This measures agreement, not accuracy: reviewers usually see the AI's levels first.</dd>
         <dt>Confidence score (Brier)</dt><dd>How well the AI's stated confidence matched outcomes. Lower is better.</dd>

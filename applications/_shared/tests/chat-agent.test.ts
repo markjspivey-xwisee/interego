@@ -222,7 +222,8 @@ describe('actPrompt', () => {
     expect(prompt).toContain('- action_iri: the action the step names, exactly as written');
     expect(prompt).toContain('- sign_payload: true or false, exactly as the step says');
     expect(prompt).toContain(`My storage address (pod_url): "${podUrl}"`);
-    // The nonce rule's example is made from this prompt's own first signed step, never another name.
+    // The nonce rule's example is made from this prompt's own first signed step, never another name,
+    // and that step has a turn (its payload carries turnIndex), so the example has a turn number.
     expect(prompt).toContain('Every signed payload carries a nonce: nonce = the step name, the turn number (or 0), then 16 random letters or digits');
     expect(prompt).toContain('For example save-lines-4-q8Xr2mVp7LkA9dTz, but make up new random letters for every call.');
     expect(prompt).not.toContain('read-items');
@@ -317,12 +318,24 @@ describe('the nonce rule', () => {
 
   it("a prompt's example nonce is made from its own first signed step, and passes both sites' checks", () => {
     const affordancesUrl = 'https://s.example/affordances';
+    // A step with no turn (its payload has no turnIndex) is shown at turn 0, as the rule says
+    // ("the turn number, or 0"), so an assistant copying the example never copies a turn it lacks.
     const p = A.actPrompt({ affordancesUrl, steps: [
       { actionIri: 'urn:example:action:read-brief', signed: false },
       { actionIri: 'urn:example:action:save-lines', signed: true },
       { actionIri: 'urn:example:action:end-talk', signed: true },
     ] });
-    expect(exampleNonceIn(p)).toBe('save-lines-4-q8Xr2mVp7LkA9dTz');
+    expect(exampleNonceIn(p)).toBe('save-lines-0-q8Xr2mVp7LkA9dTz');
+    for (const payload of [{ v: 1, action: 'x' }, { turn: 3 }]) {
+      expect(exampleNonceIn(A.actPrompt({ affordancesUrl, steps: [{ actionIri: 'urn:example:action:judge-packet', signed: true, payload }] }))).toBe('judge-packet-0-q8Xr2mVp7LkA9dTz');
+    }
+    // A step whose payload carries a turnIndex (any value, a placeholder included) is shown at a turn number.
+    for (const turnIndex of ['<T, a number>', 0, 7]) {
+      expect(exampleNonceIn(A.actPrompt({ affordancesUrl, steps: [
+        { actionIri: 'urn:example:action:read-brief', signed: false, payload: { turnIndex: 1 } },
+        { actionIri: 'urn:example:action:save-lines', signed: true, payload: { v: 1, turnIndex } },
+      ] }))).toBe('save-lines-4-q8Xr2mVp7LkA9dTz');
+    }
     for (const actionIri of NONCE_IRIS) {
       const example = exampleNonceIn(A.actPrompt({ affordancesUrl, steps: [{ actionIri, signed: true }] })) ?? '';
       expect(example, actionIri).toMatch(/^[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?-\d+-[A-Za-z0-9]{16}$/);
