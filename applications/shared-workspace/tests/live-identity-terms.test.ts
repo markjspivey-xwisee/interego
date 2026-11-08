@@ -33,8 +33,9 @@ import {
   type Signer,
 } from '../tools/live-identity.js';
 // The live demo's headless `DEMO_YOU_WALLET` sign-in: a key the demo is handed, signed in through
-// plain `mintBearer`. Importing it loads no server; `lib/relay.ts` only defines.
-import { walletSignIn } from '../../../demos/live/lib/relay.js';
+// plain `mintBearer`. Importing it loads no server and reads no environment: it has its own module
+// because `lib/relay.ts` reads `INTEREGO_RELAY` when it loads.
+import { walletSignIn } from '../../../demos/live/lib/wallet-sign-in.js';
 
 const RELAY = 'https://relay.example';
 const IDENTITY = 'https://identity.example';
@@ -377,8 +378,9 @@ describe('the live demo\'s headless DEMO_YOU_WALLET sign-in, a key the demo is h
    * the accounts a driver run creates. So it is plain `mintBearer`: with that variable set and a
    * statement on offer, a wallet that holds an account signs the ordinary statement, and one that
    * holds none is refused once and told how to enrol, without the drivers' variable being suggested.
+   * A sign-in that fails for any other reason is not relabelled as a key with no account.
    */
-  it('asks for no version with the drivers\' variable set, and a key with no account is told how to enrol it', async () => {
+  it('asks for no version with the drivers\' variable set, and a key with no account is told how to enrol it; any other failure passes unchanged', async () => {
     const known = Wallet.createRandom();
     const fresh = Wallet.createRandom();
     const f = fleet({ known: [known.address] });
@@ -396,6 +398,19 @@ describe('the live demo\'s headless DEMO_YOU_WALLET sign-in, a key the demo is h
       expect(f.challengeBodies).toEqual([{ purpose: 'siwe' }, { purpose: 'siwe' }]);
       expect(f.signedStatements).toEqual(['Sign in to Interego', 'Sign in to Interego']);
       expect(f.accounts.has(fresh.address.toLowerCase())).toBe(false);
+
+      // Only a 428 gets the enrol text. Any other refusal, or a relay that was never reached, comes
+      // out exactly as it came in: told "the key has no account yet", a person would enrol a key
+      // whose sign-in failed for some other reason.
+      const expired = (async (input: RequestInfo | URL, init?: RequestInit) => String(input) === `${RELAY}/oauth/verify`
+        ? json(401, { error: 'Unknown or expired nonce' })
+        : f.impl(input, init)) as typeof fetch;
+      const notHosted = await walletSignIn(RELAY, IDENTITY, fresh, expired).then(() => null, (e: Error) => e);
+      expect(notHosted?.message).toBe('SIWE verify answered HTTP 401: Unknown or expired nonce');
+      const down = new TypeError('fetch failed');
+      const unreached = await walletSignIn(RELAY, IDENTITY, fresh, (async () => { throw down; }) as typeof fetch)
+        .then(() => null, (e: unknown) => e);
+      expect(unreached).toBe(down);
     } finally {
       if (before === undefined) delete process.env[ACCEPT_HOSTED_TERMS_ENV];
       else process.env[ACCEPT_HOSTED_TERMS_ENV] = before;

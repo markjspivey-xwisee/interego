@@ -380,4 +380,38 @@ describe('★★ re-minting the bot\'s own session', () => {
     }
     expect(fleet.minted()).toBe(3);
   });
+
+  /**
+   * ★ THE OTHER RE-MINT CARRIES THE AGREEMENT TOO. A relay redeploy 401s the bearer mid-call, and
+   * the transport's reauthorizer mints a fresh one without going through `open()`. Discord
+   * `DEPLOY.md` Part B says that, with the bot's variable left set, each re-mint signs the same
+   * agreement for the same account; this holds that path to it, and to the bot's client name.
+   */
+  it('a re-mint after the relay rejects the token signs in as the first one did, agreement included', async () => {
+    const key = Wallet.createRandom().privateKey;
+    const f = hostedFleet();
+    let rejectNext = false;
+    const registered: Array<string | undefined> = [];
+    const impl = (async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+      const url = String(input);
+      if (url === RELAY + '/register') registered.push((JSON.parse(String(init?.body)) as { client_name?: string }).client_name);
+      if (url === RELAY + '/mcp' && rejectNext) {
+        rejectNext = false;
+        return new Response(JSON.stringify({ error: 'invalid_token' }), { status: 401, headers: { 'Content-Type': 'application/json' } });
+      }
+      return f.impl(input, init);
+    }) as typeof fetch;
+    const session = new BotSession(RELAY, IDENTITY, key, impl, { acceptHostedTermsVersion: CURRENT });
+    await session.open();
+    const client = session.current.client;
+
+    rejectNext = true;
+    await session.call((c) => c.podStatus());
+
+    // The transport's reauthorizer answered the 401, not `call()`'s fallback to `open()`.
+    expect(session.current.client).toBe(client);
+    expect(f.challengeBodies).toEqual([{ purpose: 'siwe', termsVersion: CURRENT }, { purpose: 'siwe', termsVersion: CURRENT }]);
+    expect(f.statements).toEqual([TERMS_STATEMENT, TERMS_STATEMENT]);
+    expect(registered).toEqual([DISCORD_CLIENT_NAME, DISCORD_CLIENT_NAME]);
+  });
 });
