@@ -1,5 +1,39 @@
 # Changelog
 
+## 2026-11-08 — Practice Evidence: signing without sign_payload, ChatGPT's own setup steps, and who may judge
+
+A chat app can show the connector's act tool without its sign_payload option
+(an app can keep an old copy of the tool list), so a person's assistant had no
+way to do a signed step from the text Practice Evidence gave it. Every copied
+prompt that can lead to a signed step (the start-up message, the judge's
+message, drafting a scenario and the workspace details) now says how to do one
+in two calls: the connector's sign_request tool with the step's payload, then
+act with the two fields it returned, unchanged, which is what sign_payload does
+inside the connector. A prompt whose every step is plain leaves that out. The
+shared chat-agent helpers add it, so it reads the same wherever they are used.
+
+The ChatGPT setup steps follow OpenAI's own guide to custom MCP servers,
+checked today, and link to it: Plugins, then Add custom MCP server, its Server
+URL and OAuth, create it as a plugin and install it, then choose it with @ in a
+chat. The Connect dialog adds that ChatGPT asks before each write unless told
+to remember the choice for that chat, and that refreshing the app from its
+settings page fetches new tools. No page claims which plans allow custom
+connectors any more: whether a person can add one depends on their plan or
+workspace settings.
+
+The guide and the Connect dialog now say plainly that a judge is a different
+person, with their own Interego account, appointed by Member ID, and that a
+learner's own assistant cannot assess their session in a new chat or told to
+act as a judge, since it still acts as the learner. The guide also says that an
+assessment is tied to the exact session, conversation and rubric the judge's
+assistant fetched. The start-up message no longer retries a refused save at the
+next turn number, which could save the same reply twice: after a refusal for a
+turn out of order, a step already used, a stale step or a session that moved
+on, or after losing track, the assistant reads the conversation again and
+reconciles before it writes or saves another reply. The judge's message has it
+judge a new copy of the session when a save is refused because the session
+changed.
+
 ## 2026-11-08 — Ask: enrolled quiz review and owner learning maps
 
 Ask guides administrators and learners through separate connection and account

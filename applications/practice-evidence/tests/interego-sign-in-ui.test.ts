@@ -1202,6 +1202,10 @@ function shownText(root: Element | null): string {
 }
 const JARGON = /\b(pod|bridge|affordance|envelope|nonce|hypothetical|ratif\w*|countersign\w*|relay|payload|sign_payload)\b/i;
 const CODES = /\b(EIP-191|IRI|DID)\b|HTTP \d{3}|urn:|https?:\/\//;
+/** What every copied prompt that can lead to a signed step says, for a chat app whose act tool shows no sign_payload. */
+const SIGN_FALLBACK = 'If your act tool has no sign_payload option, do a signed step in two calls: call the connector\'s sign_request tool '
+  + 'with payload set to the step\'s payload, then call act with the same descriptor_url and action_iri and with payload set to exactly '
+  + 'the _signature and _signed_payload it returned, unchanged. A plain step is the same act call without sign_payload.';
 const plain = (where: string, text: string): void => {
   expect([text.match(JARGON)?.[0] ?? null, text.match(CODES)?.[0] ?? null], where).toEqual([null, null]);
 };
@@ -1269,11 +1273,30 @@ describe('your own AI assistant: connect Claude or ChatGPT, or copy and paste; n
     const tabs = [...d.querySelectorAll('[role="tab"]')];
     expect(tabs.map((t) => [t.textContent, t.getAttribute('aria-selected')])).toEqual([['In Claude', 'true'], ['In ChatGPT', 'false']]);
     expect(shownText(d)).toContain('In Claude, open Settings, then Connectors, then Add custom connector.');
-    expect(shownText(d)).not.toContain('In ChatGPT, open Settings');
-    (tabs[1] as HTMLElement).click();
-    expect(shownText(d)).toContain('In ChatGPT, open Settings, then Connectors, then Add.');
-    expect(shownText(d)).toContain("ChatGPT needs a plan that allows custom connectors. If you don't see the option, use Copy for my AI on each step instead.");
     expect(shownText(d)).toContain("In each new chat, turn on Interego from the chat's tools menu (+).");
+    expect(shownText(d)).toContain("Whether you can add a connector depends on your plan or workspace settings. If you don't see the option, use Copy for my AI on each step instead.");
+    expect(shownText(d)).not.toContain('In ChatGPT on the web');
+    (tabs[1] as HTMLElement).click();
+    // ChatGPT's own steps, as OpenAI's guide to custom MCP servers gives them, in order, and the guide itself one link away.
+    expect([...d.querySelectorAll('#connect-panel-chatgpt .connect-steps li')].map((li) => li.textContent)).toEqual([
+      'In ChatGPT on the web, open Plugins, select +, then Add custom MCP server.',
+      'Name it Interego, paste the address above as its Server URL, and choose OAuth.',
+      'Accept the warning, select Create as a plugin, then install it.',
+      'When it asks, sign in with the same Interego account you use here.',
+      'In a chat, type @ and choose Interego.',
+    ]);
+    expect(shownText(d)).toContain("Your workspace's settings decide whether you can add one. If you don't see the option, use Copy for my AI on each step instead.");
+    expect(shownText(d)).toContain("ChatGPT asks before each write unless you let it remember your choice for that chat. If Interego's tools look out of date, refresh it from its page in your app settings.");
+    const guide = [...d.querySelectorAll('#connect-panel-chatgpt a')];
+    expect(guide.map((a) => [a.textContent, a.getAttribute('href'), a.getAttribute('rel'), a.getAttribute('target')]))
+      .toEqual([["OpenAI's guide to custom MCP servers", 'https://developers.openai.com/api/docs/guides/custom-mcp-server', 'noopener', null]]);
+    expect(shownText(d)).not.toContain("turn on Interego from the chat's tools menu");
+    // No claim about which plans offer custom connectors, in either tab.
+    for (const tab of ['claude', 'chatgpt']) {
+      expect(d.querySelector(`#connect-panel-${tab}`)?.textContent, tab).not.toMatch(/\bplans? (that|which) allows?\b|needs a plan|plan must|plans don't|Some \w+ plans|Plus|Pro\b|Business|Enterprise|Team plan/);
+    }
+    // Who judges, in plain words: a different person, with their own account, appointed by Member ID; never your assistant, in any chat or role.
+    expect(d.querySelector('#connect-judge')?.textContent).toBe("It can't assess your own practice, even in a new chat or told to act as a judge: it still acts as you. A judge is a different person, with their own Interego account, whom your admin appoints by Member ID.");
     // What it can and can't do: this workspace keeps the decisions in the web app, and says who sees what.
     (d.querySelector('#connect-limits') as HTMLDetailsElement).open = true;
     expect(d.querySelector('#connect-decisions')?.textContent).toBe('Approving rubrics, signing off reviews and changing roles happen here in the web app, not from a chat assistant.');
@@ -1287,7 +1310,10 @@ describe('your own AI assistant: connect Claude or ChatGPT, or copy and paste; n
     await p.until(() => p.copied.length === 1, 'the copied workspace details');
     const details = p.copied[0]!;
     for (const says of [`My Practice Evidence workspace: ${nm.base}/`, `descriptor_url: "${nm.base}/affordances"`, `"${DEMO_POD}"`, 'sign_payload',
-      `except ${PEV_ACTION.listScenarios} and ${PEV_ACTION.draftScenarioPacket}`, 'nonce = the step name']) expect(details).toContain(says);
+      `except ${PEV_ACTION.listScenarios} and ${PEV_ACTION.draftScenarioPacket}`, 'nonce = the step name',
+      // A chat app whose act tool shows no sign_payload signs in two calls, and the signing rule says so.
+      SIGN_FALLBACK, 'Sign every step (sign_payload true, or the two calls above) except']) expect(details).toContain(says);
+    expect(details.split(SIGN_FALLBACK)).toHaveLength(2);
     // With no step of its own, its nonce example names no step at all: never one this workspace does not have.
     expect(details).not.toMatch(/For example [A-Za-z0-9-]+-4-|read-items/);
     // The confirmation is in the open dialog, where the person pressed Copy: the button says so and the
@@ -1378,8 +1404,18 @@ describe('your own AI assistant: connect Claude or ChatGPT, or copy and paste; n
     const startup = p.copied[0]!;
     for (const says of [attemptIri, PEV_ACTION.counterpartPacket, PEV_ACTION.recordTurns, PEV_ACTION.endConversation, 'sign_payload: true', `descriptor_url: "${nm.base}/affordances"`,
       `"pod_url":"${DEMO_POD}"`, 'T starts at 1.', 'nextTurnIndex', 'turn-out-of-order', '"ended": true', 'payload.action is exactly this urn', 'Never change my words.',
-      "Sam Okafor's last line was: \"You wanted to see me?", 'For example counterpart-packet-4-q8Xr2mVp7LkA9dTz,']) expect(startup, says).toContain(says);
+      "Sam Okafor's last line was: \"You wanted to see me?", 'For example counterpart-packet-4-q8Xr2mVp7LkA9dTz,', SIGN_FALLBACK]) expect(startup, says).toContain(says);
     expect(startup).not.toContain('read-items');
+    // A refused or lost step is reconciled from what is saved, with the read step, before any reply is written or saved again.
+    expect(startup).toContain('again only if we carry on in a new chat or a rule below says so');
+    expect(startup).toContain('- If a step is refused with turn-out-of-order, envelope-already-used, envelope-expired or chain-moved (the session moved on, perhaps in another app), or you lose track of the conversation: '
+      + 'do step 1 again, with the nextTurnIndex the refusal gives if it gives one, and read what is saved before you write or save anything. '
+      + 'If my line is already saved with a reply, show me that reply. Otherwise write a new reply to the conversation as saved. Never re-send a reply under another turn number.');
+    // The old rule retried the same reply at the next turn number: a duplicate when the first save had gone through.
+    expect(startup).not.toContain('try once more');
+    // Every refusal code it names is one the bridge really sends.
+    const handlerSource = readFileSync(fileURLToPath(new URL('../bridge/handlers.ts', import.meta.url)), 'utf8') + readFileSync(fileURLToPath(new URL('../src/records.ts', import.meta.url)), 'utf8');
+    for (const code of ['turn-out-of-order', 'envelope-already-used', 'envelope-expired', 'chain-moved', 'binding-mismatch']) expect(handlerSource, code).toContain(`'${code}'`);
     expect(startup).not.toMatch(/llm_api_key|api key/i);
 
     // Claude, connected as this person, saves an exchange: the page shows it when the person comes back to the tab.
@@ -1432,7 +1468,11 @@ describe('your own AI assistant: connect Claude or ChatGPT, or copy and paste; n
     const judge = p.copied[2]!;
     // Its nonce example is its own first signed step, at turn 0: judging has no turn, and the rule says "or 0".
     for (const says of [attemptIri, PEV_ACTION.judgePacket, PEV_ACTION.recordJudgment, 'usedPacketPrompt', 'wait for my go-ahead', `Workspace: ${nm.base}/`,
-      'For example judge-packet-0-q8Xr2mVp7LkA9dTz,']) expect(judge, says).toContain(says);
+      'For example judge-packet-0-q8Xr2mVp7LkA9dTz,', SIGN_FALLBACK,
+      // A save refused because the session moved on is judged again from a new packet, never resent.
+      '- If saving is refused with binding-mismatch or chain-moved (the session changed after the first step), envelope-already-used or envelope-expired, or you lose track: '
+        + 'do the first step again and assess what it returns, never an earlier assessment, and show me before you save.',
+      "If this is my own practice session, stop: I can't assess it, in any chat or role."]) expect(judge, says).toContain(says);
     expect(judge).not.toMatch(/For example [A-Za-z0-9-]+-4-/);
     expect(judge).not.toContain('The report was due Thursday');
     expect(judge).not.toContain('The feed was late again');
@@ -1487,7 +1527,9 @@ describe('your own AI assistant: connect Claude or ChatGPT, or copy and paste; n
     p.q('#copy-draft-message')!.click();
     await p.until(() => p.copied.length === 1, 'the drafting message');
     const msg = p.copied[0]!;
-    for (const says of [PEV_ACTION.draftScenarioPacket, PEV_ACTION.authorScenario, 'sign_payload: false', '"status":"draft"', '"by":"own-agent"', '"assessmentUse": "feedback-only"', 'workRegime', brief, 'Include drafts']) {
+    for (const says of [PEV_ACTION.draftScenarioPacket, PEV_ACTION.authorScenario, 'sign_payload: false', '"status":"draft"', '"by":"own-agent"', '"assessmentUse": "feedback-only"', 'workRegime', brief, 'Include drafts',
+      // Saving the draft is signed, so the two-call way is there too.
+      SIGN_FALLBACK]) {
       expect(msg, says).toContain(says);
     }
     // The AI never sees a weight or a pass mark: the message names neither.

@@ -151,11 +151,12 @@
     <section id="judges" aria-labelledby="judges-title">
       <h2 id="judges-title">For appointed judges</h2>
       <!--connector-->
-      <p>Judging needs Claude or ChatGPT with the Interego connector, so your plan must allow custom connectors.</p>
+      <p>A judge is a different person from the learner, with their own Interego account, whom an admin appoints by Member ID. Judging needs Claude or ChatGPT with the Interego connector; whether you can add one depends on your plan or workspace settings.</p>
       <ol class="steps help-steps">
         <li class="step"><p class="step__text">Connect Claude or ChatGPT (see <a href="#claude-chatgpt">Use from Claude or ChatGPT</a>).</p></li>
         <li class="step"><p class="step__text">Paste the message a learner sends you into that chat. Your assistant fetches the session, proposes levels with exact quotes, and waits for your go-ahead before saving.</p></li>
-        <li class="step"><p class="step__text">You can't assess your own practice. Every quote is checked, and a reviewer has the final say.</p></li>
+        <li class="step"><p class="step__text">An assessment is tied to the exact session, conversation and rubric your assistant fetched. If the session changed since, saving is refused, and your assistant fetches it again and assesses that.</p></li>
+        <li class="step"><p class="step__text">You can't assess your own practice. Neither can the learner's own assistant, even in a new chat or told to act as a judge: it acts as the learner's account. Every quote is checked, and a reviewer has the final say.</p></li>
       </ol>
       <!--/connector--><!--no-connector-->
       <p>On this workspace you judge with any chat app. This web app can't save an assessment yet: saving one takes a tool of your own (your own agent or script) that signs it with your key.</p>
@@ -172,13 +173,13 @@
       <!--connector-->
       <p>Practice Evidence runs no AI of its own. Add the Interego connector to Claude or ChatGPT and sign in once with your Interego account: your assistant can then play the other person, draft scenarios and help judges assess, on your own subscription. You're the same person in the chat app and in the web app.</p>
       <ol class="steps help-steps">
-        <li class="step"><p class="step__text">In Claude, open Settings, then Connectors, then Add custom connector. In ChatGPT, open Settings, then Connectors, then Add. ChatGPT needs a plan that allows custom connectors; if you don't see the option, use <strong>Copy for my AI</strong> on each step instead.</p></li>
-        <li class="step"><p class="step__text">Name it Interego and paste the connector address: <code>https://relay.interego.xwisee.com/mcp</code></p></li>
+        <li class="step"><p class="step__text">In Claude, open Settings, then Connectors, then Add custom connector. In ChatGPT on the web, open Plugins → + → Add custom MCP server, create it as a plugin and install it (see <a href="https://developers.openai.com/api/docs/guides/custom-mcp-server" rel="noopener">OpenAI's guide to custom MCP servers</a>). Whether you can add a connector depends on your plan or workspace settings; if you don't see the option, use <strong>Copy for my AI</strong> on each step instead.</p></li>
+        <li class="step"><p class="step__text">Name it Interego and paste the connector address (in ChatGPT, as its Server URL, with OAuth): <code>https://relay.interego.xwisee.com/mcp</code></p></li>
         <li class="step"><p class="step__text">Sign in with your Interego account when asked.</p></li>
-        <li class="step"><p class="step__text">In each new chat, turn on Interego from the chat's tools menu (+).</p></li>
+        <li class="step"><p class="step__text">In each new chat, turn on Interego from the chat's tools menu (+). In ChatGPT, type @ in a chat and choose Interego; it asks before each write unless you let it remember your choice for that chat.</p></li>
         <li class="step"><p class="step__text">In Practice Evidence, choose <strong>Connect your AI</strong> and copy your workspace's details into the chat, or give your assistant your workspace's address (below). Then tell it what you want to do.</p></li>
       </ol>
-      <p>Your assistant acts as your Interego account. A session you started with a crypto wallet belongs to your wallet, so finish it in the web app with copy and paste.</p>
+      <p>Your assistant acts as your Interego account, so it can't assess your own practice, in a new chat or in any role. A session you started with a crypto wallet belongs to your wallet, so finish it in the web app with copy and paste.</p>
       <div class="card workspace-address"><div class="card__body">
         <p class="label">Your workspace's address</p>
         <div class="input-group"><code id="workspace-address">the address of this site, up to (not including) /ui/help</code><button id="copy-workspace-address" class="btn btn--secondary btn--sm" type="button" hidden>Copy</button></div>

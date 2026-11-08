@@ -51,6 +51,19 @@ const InteregoChatAgent = (() => {
   /** A step name longer than this is cut, so step + turn + 16 letters stays inside 64 characters. */
   const STEP_NAME_MAX = 32;
 
+  /**
+   * How to do a signed step when the person's chat app shows an act tool with no sign_payload option
+   * (an app can keep a stale copy of the connector's tools). sign_payload: true is the connector
+   * signing the payload with its sign_request tool and acting with the result, so the same two calls,
+   * made by the assistant, send the same request.
+   */
+  const SIGN_FALLBACK = 'If your act tool has no sign_payload option, do a signed step in two calls: call the connector\'s sign_request tool '
+    + 'with payload set to the step\'s payload, then call act with the same descriptor_url and action_iri and with payload set to exactly '
+    + 'the _signature and _signed_payload it returned, unchanged. A plain step is the same act call without sign_payload.';
+
+  /** A rule that speaks of signing, so a prompt that carries it needs the two-call way too. */
+  const SIGNING_WORDS = /\bsign_payload\b|\bsigned\b/i;
+
   /** What every prompt says about refusals after the app's own rules, which come first and win. */
   const REFUSAL_RULE = 'Unless a rule above says otherwise: if a call is refused because a field or its format is wrong, '
     + 'fix it once from the refusal message and try again. For any other refusal, tell me what it said in plain words and stop.';
@@ -113,7 +126,10 @@ const InteregoChatAgent = (() => {
    * connector's act tool: the call shape (descriptor_url, action_iri, sign_payload, payload), the
    * nonce rule (its example made from the first signed step's own name, at turn 0 unless that step's
    * payload has a turnIndex, or said in words when no step is signed), and per step whether it is
-   * signed or plain and which exact action it names.
+   * signed or plain and which exact action it names. Whenever the prompt can lead to a signed step (a
+   * step is signed, a rule speaks of signing, or there are no steps, so the assistant picks the
+   * actions itself), it also says how to sign one with sign_request where the act tool has no
+   * sign_payload option; a prompt whose every step is plain leaves that out.
    *
    * spec: { intro?, affordancesUrl, podUrl?, steps?: [{ say, actionIri, signed, payload }],
    *         rules?: string[], outro? }. Throws TypeError on a malformed spec: that is a bug in the
@@ -145,9 +161,11 @@ const InteregoChatAgent = (() => {
     if (podUrl) how.push(`My storage address (pod_url): "${podUrl}"`);
     const firstHasTurn = Boolean(firstSigned && isPlainObject(firstSigned.payload) && Object.prototype.hasOwnProperty.call(firstSigned.payload, 'turnIndex'));
     how.push(`Every signed payload carries a nonce: ${nonceRuleFor(firstSigned ? stepNameOf(textOf(firstSigned.actionIri)) : '', firstHasTurn)}`);
+    const appRules = rules.map(textOf).filter((r) => r.length > 0);
+    if (steps.length === 0 || firstSigned || appRules.some((r) => SIGNING_WORDS.test(r))) how.push(SIGN_FALLBACK);
     parts.push(how.join('\n'));
     if (steps.length > 0) parts.push(['Steps:', ...steps.map((s, i) => stepText(s, i + 1))].join('\n'));
-    const ruleLines = rules.map(textOf).filter((r) => r.length > 0).concat([REFUSAL_RULE]);
+    const ruleLines = appRules.concat([REFUSAL_RULE]);
     parts.push(['Rules:', ...ruleLines.map((r) => `- ${r}`)].join('\n'));
     const outro = textOf(o.outro);
     if (outro) parts.push(outro);

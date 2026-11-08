@@ -294,6 +294,10 @@ describe('the web UI is served under a strict content policy', () => {
    */
   const EXAMPLE_CONNECTOR_HTML = 'https://<wbr>relay<wbr>.example<wbr>.test<wbr>/mcp';
   const ASSET_ELSEWHERE = /(?:src|<link[^>]+href)="(?:https?:)?\/\//i;
+  /** OpenAI's own setup guide, which the ChatGPT steps follow and link to. */
+  const OPENAI_GUIDE = 'https://developers.openai.com/api/docs/guides/custom-mcp-server';
+  /** A claim about which plans offer custom connectors: each company's to say, and it changes, so no page makes one. */
+  const PLAN_CLAIM = /plans? (?:that|which) allows?|needs a plan|plan must|plans? (?:can't|don't|without)|Some \w+ plans|\b(?:Plus|Pro|Business|Enterprise|Team) plan/i;
 
   it('serves the landing page to a browser at / as a constant, under the UI policy, in customer words', async () => {
     const r = await fetch(`${demo.base}/`, { headers: { accept: BROWSER } });
@@ -335,7 +339,13 @@ describe('the web UI is served under a strict content policy', () => {
     for (const s of ['When you copy a step into Claude, ChatGPT or another chat app, it sees what you paste', 'Claude, ChatGPT or any chat app, with copy and paste.']) expect(html).toContain(s);
     for (const s of ['Interego sign-in service', 'the Interego connector passes', 'Claude or ChatGPT with the Interego connector, or any chat app']) expect(connected).toContain(s);
     // With it: the four steps, the relay this workspace signs in through, and nothing about not offering it.
-    for (const s of ['Set it up in four steps', `<code>${EXAMPLE_CONNECTOR_HTML}</code>`, 'Connect your AI', 'with a passkey', 'No connector? Copy and paste.']) expect(connected).toContain(s);
+    for (const s of ['Set it up in four steps', `<code>${EXAMPLE_CONNECTOR_HTML}</code>`, 'Connect your AI', 'with a passkey', 'No connector? Copy and paste.',
+      'In ChatGPT on the web, open Plugins → + → Add custom MCP server, create it as a plugin and install it', `<a href="${OPENAI_GUIDE}" rel="noopener">OpenAI's guide to custom MCP servers</a>`,
+      'Whether you can add a connector depends on your plan or workspace settings.', 'A judge your admin appoints, a different person with their own Interego account, assesses it',
+      'neither can your assistant, even in a new chat']) expect(connected).toContain(s);
+    expect(html).toContain('A judge your admin appoints assesses it with their own AI assistant.');
+    expect(html).not.toContain('developers.openai.com');
+    for (const page of [html, connected]) expect(page).not.toMatch(PLAN_CLAIM);
     for (const s of [DEFAULT_CONNECTOR_ADDRESS, 'doesn\'t offer Interego sign-in', 'On this workspace: copy and paste']) expect(connected).not.toContain(s);
   });
 
@@ -397,7 +407,7 @@ describe('the web UI is served under a strict content policy', () => {
     expect(chat).toContain('This workspace doesn\'t offer Interego sign-in, so Claude or ChatGPT can\'t connect to it.');
     for (const s of ['/mcp', 'Add custom connector', 'Connect your AI', 'id="workspace-address"']) expect(chat).not.toContain(s);
     for (const s of ['Get the hand-off', 'by their wallet address']) expect(html).toContain(s);
-    for (const s of ['your plan must allow custom connectors', 'Appoint at least one judge, by their Interego Member ID', 'with a passkey']) expect(html).not.toContain(s);
+    for (const s of ['Appoint at least one judge, by their Interego Member ID', 'with a passkey', 'Add custom MCP server', 'developers.openai.com']) expect(html).not.toContain(s);
     // A judge here assesses with any chat app, and the guide says plainly that this web app can't save the
     // assessment: it takes a tool of the judge's own, never an ordinary step on a page.
     expect(section(html, 'judges')).toContain('This web app can\'t save an assessment yet: saving one takes a tool of your own (your own agent or script) that signs it with your key.');
@@ -416,11 +426,21 @@ describe('the web UI is served under a strict content policy', () => {
     expect(section(connected, 'glossary')).not.toContain('<dt>Wallet address</dt>');
     // With it, the connector's steps and this workspace's relay, as its Connect dialog shows it.
     for (const s of [`<code>${EXAMPLE_CONNECTOR_HTML}</code>`, 'In each new chat, turn on Interego from the chat\'s tools menu (+).', 'id="workspace-address"',
-      'Appoint at least one judge, by their Interego Member ID', 'your plan must allow custom connectors', 'under <strong>Send to your judge</strong>',
+      'Appoint at least one judge, by their Interego Member ID', 'under <strong>Send to your judge</strong>',
+      // ChatGPT's steps as OpenAI's guide gives them, and the guide one link away; what decides whether a connector can be added, naming no plan.
+      'In ChatGPT on the web, open Plugins → + → Add custom MCP server, create it as a plugin and install it',
+      `<a href="${OPENAI_GUIDE}" rel="noopener">OpenAI's guide to custom MCP servers</a>`, '(in ChatGPT, as its Server URL, with OAuth)', 'In ChatGPT, type @ in a chat and choose Interego',
+      'Judging needs Claude or ChatGPT with the Interego connector; whether you can add one depends on your plan or workspace settings.',
+      // Who judges: a different person with their own account, appointed by Member ID; never the learner or the learner's assistant.
+      'A judge is a different person from the learner, with their own Interego account, whom an admin appoints by Member ID.',
+      'Neither can the learner\'s own assistant, even in a new chat or told to act as a judge: it acts as the learner\'s account.',
+      'An assessment is tied to the exact session, conversation and rubric your assistant fetched. If the session changed since, saving is refused, and your assistant fetches it again and assesses that.',
+      'Your assistant acts as your Interego account, so it can\'t assess your own practice, in a new chat or in any role.',
       'Send your admin your Member ID (account menu → Your Member ID → Copy) or, signed in with a wallet, your wallet address (Getting started → Copy my wallet address).', 'Sign in with Interego (or another way', 'What the Interego sign-in service sees', '<dt>Interego connector</dt>',
       '<dt>Your sign-in has ended</dt>', 'add and remove people by Member ID',
       'Signed in with a wallet, send your wallet address instead (Getting started → Copy my wallet address); a judge needs a Member ID to assess from Claude or ChatGPT.']) expect(connected).toContain(s);
     for (const s of ['can\'t save an assessment yet', 'Send your wallet address to your admin', 'Sign in with your crypto wallet']) expect(connected).not.toContain(s);
+    for (const page of [html, connected]) expect(page).not.toMatch(PLAN_CLAIM);
     for (const s of [DEFAULT_CONNECTOR_ADDRESS, 'doesn\'t offer Interego sign-in']) expect(connected).not.toContain(s);
     // The pages and the code that fills them change together: a page without its blocks, an unclosed
     // block or a connector address left outside a block stops the bridge, and so does a relay that is no web address.

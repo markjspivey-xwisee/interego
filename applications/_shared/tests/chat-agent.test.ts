@@ -20,8 +20,14 @@ import vm from 'node:vm';
 import ts from 'typescript';
 import { JSDOM } from 'jsdom';
 import { chatAgentJs } from '../chat-agent/index.js';
+import { signedActPayload } from '../../../deploy/mcp-relay/signed-act.js';
 
 const JS = readFileSync(new URL('../chat-agent/chat-agent.js', import.meta.url), 'utf8');
+
+/** The rule for an act tool that shows no sign_payload option, word for word as a prompt carries it. */
+const SIGN_FALLBACK = 'If your act tool has no sign_payload option, do a signed step in two calls: call the connector\'s sign_request tool '
+  + 'with payload set to the step\'s payload, then call act with the same descriptor_url and action_iri and with payload set to exactly '
+  + 'the _signature and _signed_payload it returned, unchanged. A plain step is the same act call without sign_payload.';
 const EXPORTS = ['actPrompt', 'agentAppName', 'extractJsonObject', 'nonceRule', 'requestAsText'];
 
 type Extracted = { readonly ok: true; readonly value: Record<string, unknown> } | { readonly ok: false; readonly why: string };
@@ -272,6 +278,57 @@ describe('actPrompt', () => {
     expect(details).not.toContain('pod_url):');
     expect(details.startsWith('How to do each step:')).toBe(true);
     expect(details).toContain('- Sign every step except the plain ones.');
+  });
+
+  it('says how to do a signed step where the act tool has no sign_payload option, once, in the call shape', () => {
+    const how = prompt.slice(0, prompt.indexOf('\n\nSteps:'));
+    expect(how).toContain(`\n${SIGN_FALLBACK}`);
+    expect(prompt.split(SIGN_FALLBACK)).toHaveLength(2);
+    // After the nonce rule: the payload it signs is the step's whole payload, nonce included.
+    expect(how.indexOf(SIGN_FALLBACK)).toBeGreaterThan(how.indexOf('Every signed payload carries a nonce'));
+  });
+
+  it('leaves the two-call way out of a prompt whose every step is plain, and puts it in wherever signing can come up', () => {
+    const plainStep = { say: 'Read the brief.', actionIri: 'urn:example:action:read-brief', signed: false, payload: { brief: 'x' } };
+    const onlyPlain = A.actPrompt({ affordancesUrl, steps: [plainStep, { ...plainStep, actionIri: 'urn:example:action:list-items' }], rules: ['Never change my words.'] });
+    expect(onlyPlain).not.toContain('sign_request');
+    expect(onlyPlain).not.toContain('two calls');
+    // A plain step still says how it is plain.
+    expect(onlyPlain).toContain('   sign_payload: false (plain: nothing is signed, and the arguments go at the top level of payload)');
+    const withFallback = [
+      // A signed step among plain ones.
+      A.actPrompt({ affordancesUrl, steps: [plainStep, { actionIri: 'urn:example:action:save-lines', signed: true }] }),
+      // Only plain steps, but a rule that speaks of signing.
+      A.actPrompt({ affordancesUrl, steps: [plainStep], rules: ['Sign every step (sign_payload true) you add yourself.'] }),
+      A.actPrompt({ affordancesUrl, steps: [plainStep], rules: ['Every signed payload has "v": 1.'] }),
+      // No steps at all (workspace details): the assistant chooses the actions, and any may be signed.
+      A.actPrompt({ affordancesUrl }),
+      A.actPrompt({ affordancesUrl, podUrl, rules: ['Never assess my own practice.'] }),
+    ];
+    for (const p of withFallback) expect(p.split(SIGN_FALLBACK)).toHaveLength(2);
+    // "signs off" is not about signing a payload.
+    expect(A.actPrompt({ affordancesUrl, steps: [plainStep], rules: ['A reviewer signs off after me.'] })).not.toContain('sign_request');
+  });
+
+  it("the two calls send what act's sign_payload: true sends: sign_request's two fields, unchanged, as the payload", async () => {
+    const payload = { v: 1, action: 'urn:example:action:save-lines', pod_url: podUrl, nonce: 'save-lines-4-q8Xr2mVp7LkA9dTz', turnIndex: 4 };
+    const signs: Record<string, unknown>[] = [];
+    // The connector's sign_request, as the relay answers it: the envelope and fields beside it that act must not pass on.
+    const signRequest = async (args: Record<string, unknown>): Promise<string> => {
+      signs.push(args);
+      return JSON.stringify({ _signature: '0xsig', _signed_payload: JSON.stringify({ ...(args['payload'] as object), agent_id: 'did:web:id.example:agents:chatgpt-u-pk-1' }), signed_as: 'did:web:id.example:agents:chatgpt-u-pk-1', hint: 'x' });
+    };
+    const descriptorUrl = affordancesUrl;
+    // sign_payload: true, as the relay composes it.
+    const composed = await signedActPayload({ descriptor_url: descriptorUrl, action_iri: payload.action, sign_payload: true }, payload, signRequest);
+    // The two calls the prompt describes: sign_request with payload set to the step's payload, then
+    // act's payload set to exactly the _signature and _signed_payload it returned.
+    const returned = JSON.parse(await signRequest({ payload })) as Record<string, unknown>;
+    const byHand = { _signature: returned['_signature'], _signed_payload: returned['_signed_payload'] };
+    expect(byHand).toEqual(composed);
+    expect(signs).toEqual([{ payload }, { payload }]);
+    // A payload already signed is refused by sign_payload: true, so the two ways are never mixed on one call.
+    await expect(signedActPayload({ descriptor_url: descriptorUrl, action_iri: payload.action, sign_payload: true }, byHand, signRequest)).rejects.toThrow(/already signed/);
   });
 
   it('a non-urn action is stated exactly, without calling it a urn', () => {
