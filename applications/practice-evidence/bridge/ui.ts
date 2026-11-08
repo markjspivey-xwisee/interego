@@ -950,11 +950,22 @@ const CONNECTOR_MARK = /<!--\/?(?:no-)?connector-->/;
 export interface ConnectorOption { readonly relayUrl: string }
 
 /**
+ * An escaped address as page text that wraps between its parts, never inside one: a break point
+ * (`<wbr>`) after `//` and before every other `/` and every `.`, so on a narrow screen
+ * `https://relay.example.test/mcp` breaks as `…example.test` and `/mcp`, not as `…/mc` and `p`.
+ * The text itself (what a person selects and copies) is unchanged.
+ */
+function wrappable(escaped: string): string {
+  return escaped.replace(/\/\/|[./]/g, (m) => (m === '//' ? '//<wbr>' : `<wbr>${m}`));
+}
+
+/**
  * The landing page and the guide for this workspace's chat route. With `connector` null, every
  * `connector` block goes and every `no-connector` block stays: copy and paste, and no connector
- * address. Otherwise the reverse, with `<relayUrl>/mcp` as the connector address. Throws when a
- * page has no such block, leaves a mark unclosed, or keeps an address it should not (the files and
- * this function changed apart), and when the relay is no http(s) address.
+ * address. Otherwise the reverse, with `<relayUrl>/mcp` as the connector address, written to break
+ * only between its parts on a narrow screen (wrappable). Throws when a page has no such block,
+ * leaves a mark unclosed, or keeps an address it should not (the files and this function changed
+ * apart), and when the relay is no http(s) address.
  */
 export function connectorPages(pages: { readonly landing: string; readonly help: string }, connector: ConnectorOption | null): { readonly landing: string; readonly help: string } {
   let address = '';
@@ -976,7 +987,7 @@ export function connectorPages(pages: { readonly landing: string; readonly help:
       if (out.split(DEFAULT_CONNECTOR_ADDRESS).length > 1) throw new Error(`connectorPages: the ${what} shows a connector address outside a connector block.`);
       return out;
     }
-    return out.split(DEFAULT_CONNECTOR_ADDRESS).join(attr(address));
+    return out.split(DEFAULT_CONNECTOR_ADDRESS).join(wrappable(attr(address)));
   };
   return { landing: one(pages.landing, 'landing page'), help: one(pages.help, 'guide') };
 }

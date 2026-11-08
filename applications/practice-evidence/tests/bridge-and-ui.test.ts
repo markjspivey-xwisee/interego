@@ -287,6 +287,12 @@ describe('the web UI is served under a strict content policy', () => {
   const BROWSER = 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8';
   const NO_INLINE_SCRIPT = /<script(?![^>]*\ssrc=)[^>]*>/i;
   const NO_INLINE_STYLE = /\sstyle=|<style/i;
+  /**
+   * The connector address of relay.example.test as the pages write it: the same text, with a break
+   * point after `//` and before each other `/` and each `.`, so on a phone it wraps between its
+   * parts and `/mcp` stays whole (it once broke as `…/mc` and `p`).
+   */
+  const EXAMPLE_CONNECTOR_HTML = 'https://<wbr>relay<wbr>.example<wbr>.test<wbr>/mcp';
   const ASSET_ELSEWHERE = /(?:src|<link[^>]+href)="(?:https?:)?\/\//i;
 
   it('serves the landing page to a browser at / as a constant, under the UI policy, in customer words', async () => {
@@ -329,7 +335,7 @@ describe('the web UI is served under a strict content policy', () => {
     for (const s of ['When you copy a step into Claude, ChatGPT or another chat app, it sees what you paste', 'Claude, ChatGPT or any chat app, with copy and paste.']) expect(html).toContain(s);
     for (const s of ['Interego sign-in service', 'the Interego connector passes', 'Claude or ChatGPT with the Interego connector, or any chat app']) expect(connected).toContain(s);
     // With it: the four steps, the relay this workspace signs in through, and nothing about not offering it.
-    for (const s of ['Set it up in four steps', '<code>https://relay.example.test/mcp</code>', 'Connect your AI', 'with a passkey', 'No connector? Copy and paste.']) expect(connected).toContain(s);
+    for (const s of ['Set it up in four steps', `<code>${EXAMPLE_CONNECTOR_HTML}</code>`, 'Connect your AI', 'with a passkey', 'No connector? Copy and paste.']) expect(connected).toContain(s);
     for (const s of [DEFAULT_CONNECTOR_ADDRESS, 'doesn\'t offer Interego sign-in', 'On this workspace: copy and paste']) expect(connected).not.toContain(s);
   });
 
@@ -365,8 +371,10 @@ describe('the web UI is served under a strict content policy', () => {
     const connected = connectorPages(contactPages(), { relayUrl: 'https://relay.example.test/' }).help;
     // The address in the files is a placeholder: every one is the workspace's own relay once filled in.
     // (A workspace that trusts a relay without naming it signs no one in, so it gets the null pages.)
-    expect(connected.split('<code>https://relay.example.test/mcp</code>').length).toBe(read('bridge/ui/help.html').split(`<code>${DEFAULT_CONNECTOR_ADDRESS}</code>`).length);
-    expect(connected.split('<code>https://relay.example.test/mcp</code>').length).toBeGreaterThan(1);
+    expect(connected.split(`<code>${EXAMPLE_CONNECTOR_HTML}</code>`).length).toBe(read('bridge/ui/help.html').split(`<code>${DEFAULT_CONNECTOR_ADDRESS}</code>`).length);
+    expect(connected.split(`<code>${EXAMPLE_CONNECTOR_HTML}</code>`).length).toBeGreaterThan(1);
+    // The break points are the only tags in it: what a person reads, selects and copies is the address.
+    expect(EXAMPLE_CONNECTOR_HTML.replace(/<wbr>/g, '')).toBe('https://relay.example.test/mcp');
     const section = (page: string, id: string): string => page.slice(page.indexOf(`<section id="${id}"`), page.indexOf('</section>', page.indexOf(`<section id="${id}"`)));
     for (const page of [html, connected]) {
       expect(page).not.toMatch(NO_INLINE_SCRIPT);
@@ -401,8 +409,13 @@ describe('the web UI is served under a strict content policy', () => {
       '<dt>Your sign-in has ended</dt>', '<dt>Please do this in the web app</dt>', 'add and remove people by Member ID', 'Use <strong>Connect your AI</strong>']) expect(html).not.toContain(s);
     for (const s of ['Send your wallet address to your admin (Getting started → Copy my wallet address).', 'Sign in with your crypto wallet (or sign manually, from the sign-in menu)',
       'add and remove people by wallet address']) expect(html).toContain(s);
+    // No one here has a Member ID: the glossary explains the wallet address the page asks for instead.
+    expect(html).not.toContain('Member ID');
+    expect(section(html, 'glossary')).toContain('<dt>Wallet address</dt><dd>The address your crypto wallet signs with: 0x followed by 40 letters and digits. Send it to your admin so they can give you a role.</dd>');
+    expect(section(connected, 'glossary')).toContain('<dt>Member ID</dt><dd>Your unique ID in Interego. Send it to your admin so they can give you a role.</dd>');
+    expect(section(connected, 'glossary')).not.toContain('<dt>Wallet address</dt>');
     // With it, the connector's steps and this workspace's relay, as its Connect dialog shows it.
-    for (const s of ['<code>https://relay.example.test/mcp</code>', 'In each new chat, turn on Interego from the chat\'s tools menu (+).', 'id="workspace-address"',
+    for (const s of [`<code>${EXAMPLE_CONNECTOR_HTML}</code>`, 'In each new chat, turn on Interego from the chat\'s tools menu (+).', 'id="workspace-address"',
       'Appoint at least one judge, by their Interego Member ID', 'your plan must allow custom connectors', 'under <strong>Send to your judge</strong>',
       'Copy your Member ID from the account menu', 'Sign in with Interego (or another way', 'What the Interego sign-in service sees', '<dt>Interego connector</dt>',
       '<dt>Your sign-in has ended</dt>', 'add and remove people by Member ID']) expect(connected).toContain(s);
@@ -415,8 +428,9 @@ describe('the web UI is served under a strict content policy', () => {
     expect(() => connectorPages({ ...fine, landing: `${fine.landing}<!--connector-->` }, null)).toThrow(/landing page has no connector blocks, or one that is not closed/);
     expect(() => connectorPages({ ...fine, help: `${fine.help}<p>${DEFAULT_CONNECTOR_ADDRESS}</p>` }, null)).toThrow(/connector address outside a connector block/);
     expect(() => connectorPages(fine, { relayUrl: 'javascript:alert(1)' })).toThrow(/http\(s\) address/);
-    // The address is written into the page as text: markup in it stays text.
-    expect(connectorPages(fine, { relayUrl: 'https://relay.example.test/a"b<c>' }).help).toContain('<code>https://relay.example.test/a&quot;b&lt;c&gt;/mcp</code>');
+    // The address is written into the page as text: markup in it stays text, and only the break points are tags.
+    expect(connectorPages(fine, { relayUrl: 'https://relay.example.test/a"b<c>' }).help)
+      .toContain('<code>https://<wbr>relay<wbr>.example<wbr>.test<wbr>/a&quot;b&lt;c&gt;<wbr>/mcp</code>');
     const slash = await fetch(`${demo.base}/ui/help/`, { redirect: 'manual' });
     expect([slash.status, slash.headers.get('location')]).toEqual([301, '../help']);
     const js = await fetch(`${demo.base}/ui/help.js`);
@@ -741,6 +755,9 @@ describe('the web UI works, driven in a DOM against the real handlers', () => {
     clean('the access message');
     const refusal = visibleText(p.q('#view .refusal'));
     expect(refusal).toContain('Reviewing is for reviewers.');
+    // No Interego sign-in here: what the person sends their admin is a wallet address, never a Member ID.
+    expect(refusal).toContain('Ask your admin to add you, and share your wallet address with them.');
+    expect(refusal).not.toContain('Member ID');
     expect(refusal).not.toContain('Refused');
     expect(p.errors).toEqual([]);
   }, SLOW);
@@ -840,13 +857,14 @@ describe('the web UI works, driven in a DOM against the real handlers', () => {
     await p.until(() => p.q('#view .outcome table') ?? p.q('#view .refusal'), 'the registry');
     expect(p.all('#view .outcome tr').some((tr) => (tr.textContent ?? '').includes(W['judge-agent'].address) && (tr.textContent ?? '').includes('agent'))).toBe(true);
     // A member can be a person's Interego DID, for someone who signs in with their Interego account.
+    // This workspace offers no Interego sign-in, so its form asks for a wallet address (and a DID typed in still works).
     const person = `did:web:${IDH}:users:u-pk-00000000aa01`;
     p.set(p.q('#member-id'), person);
     p.set(p.q('#member-role'), 'reviewer');
     p.click(button(PEV_ACTION.registerRole));
     await p.until(() => p.all('#view .outcome tr').some((tr) => (tr.textContent ?? '').includes(person)) || p.q('#view .refusal'), 'the registry with the DID');
     expect(p.all('#view .outcome tr').some((tr) => (tr.textContent ?? '').includes(person) && (tr.textContent ?? '').includes('Reviewer'))).toBe(true);
-    expect((p.q('#member-id') as HTMLInputElement).placeholder).toContain('did:web:');
+    expect((p.q('#member-id') as HTMLInputElement).placeholder).toBe('0x…');
 
     await asRole(p, 'second-learner');
     p.w.location.hash = '#/practice';
@@ -1102,7 +1120,7 @@ describe('the web UI works, driven in a DOM against the real handlers', () => {
     expect(p.errors).toEqual([]);
   }, SLOW);
 
-  it('Team says what is wrong with a mistyped or empty Member ID under the field, and sends nothing for an empty one', async () => {
+  it('Team says what is wrong with a mistyped or empty wallet address under the field, and sends nothing for an empty one', async () => {
     const asked: string[] = [];
     const p = await openUi(demo, (w) => {
       const f = w['fetch'] as (input: unknown, init?: RequestInit) => Promise<Response>;
@@ -1112,17 +1130,23 @@ describe('the web UI works, driven in a DOM against the real handlers', () => {
     await asRole(p, 'admin');
     p.w.location.hash = '#/roles';
     await p.until(() => p.q(button(PEV_ACTION.registerRole)), 'the roles form');
+    // This workspace offers no Interego sign-in, so no one here has a Member ID: Team asks for the
+    // wallet address Getting started copies, as the guide and the admin's steps say.
+    expect(p.text('#view .page-header')).toContain('Add people by their wallet address and choose their role.');
+    expect([p.text('label[for="member-id"]'), (p.q('#member-id') as HTMLInputElement).placeholder]).toEqual(['Wallet address', '0x…']);
+    expect(p.text('#view .card')).toContain('Ask the person to copy it from Getting started (Copy my wallet address).');
     const sent = (): number => asked.filter((x) => x.endsWith('/pev/register_role')).length;
     const before = sent();
     p.set(p.q('#member-id'), '   ');
     p.click(button(PEV_ACTION.registerRole));
     await p.until(() => p.q('#member-id-error'), 'the empty-field message');
-    expect([p.text('#member-id-error'), p.q('#member-id')!.getAttribute('aria-invalid'), sent()]).toEqual(['Enter their Member ID or wallet address.', 'true', before]);
+    expect([p.text('#member-id-error'), p.q('#member-id')!.getAttribute('aria-invalid'), sent()]).toEqual(['Enter their wallet address.', 'true', before]);
     p.set(p.q('#member-id'), 'bob@example');
     expect(p.q('#member-id-error')).toBeNull();
     p.click(button(PEV_ACTION.registerRole));
     await p.until(() => p.q('#member-id-error') ?? p.q('#view .refusal'), 'the format message');
-    expect(p.text('#member-id-error')).toContain('That isn\'t a Member ID or a wallet address.');
+    expect(p.text('#member-id-error')).toBe('That isn\'t a wallet address. It should be 0x followed by 40 letters and digits.');
+    expect(p.text('#view')).not.toContain('Member ID');
     expect([p.q('#view .refusal'), sent()]).toEqual([null, before + 1]);
     expect(p.q('#member-id')!.getAttribute('aria-describedby')).toContain('member-id-error');
     expect(p.errors).toEqual([]);

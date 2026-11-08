@@ -1045,6 +1045,9 @@ describe('the web UI signs a person in with their Interego account and has the r
     relay.state.answerAs = 'sse';
     p2.w.location.hash = '#/roles';
     await p2.until(() => p2.q(`button[data-action="${PEV_ACTION.registerRole}"]`), 'the roles form');
+    // This workspace signs people in with Interego, so Team asks for a Member ID (or a wallet address).
+    expect(p2.text('#view .page-header')).toContain('Add people by their Member ID and choose their role.');
+    expect(p2.text('label[for="member-id"]')).toBe('Member ID or wallet address');
     const field = p2.q('#member-id') as HTMLInputElement;
     field.value = OTHER;
     p2.q(`button[data-action="${PEV_ACTION.registerRole}"]`)!.click();
@@ -1230,7 +1233,8 @@ describe('your own AI assistant: connect Claude or ChatGPT, or copy and paste; n
     const help = await (await fetch(`${nm.base}/ui/help`)).text();
     const landing = await (await fetch(`${nm.base}/`, { headers: { accept: 'text/html' } })).text();
     for (const page of [help, landing]) {
-      expect(page).toContain(`<code>${RELAY}/mcp</code>`);
+      // Written to break only between its parts on a phone (`/mcp` whole), the address itself unchanged.
+      expect(page).toContain('<code>https://<wbr>relay<wbr>.ui<wbr>.test<wbr>/mcp</code>');
       expect(page).not.toContain('relay.interego.xwisee.com');
       expect(page).not.toContain('doesn\'t offer Interego sign-in');
     }
@@ -1520,6 +1524,68 @@ describe('your own AI assistant: connect Claude or ChatGPT, or copy and paste; n
     expect(p.errors).toEqual([]);
   }, SLOW);
 
+  it('Getting started tells a judge to send a Member ID, and someone signed in with a wallet to sign in with Interego first: a wallet address can\'t assess from Claude or ChatGPT', async () => {
+    /** Getting started, showing the Judge steps; resolves to the first of them. */
+    const judgeSteps = async (q: Page): Promise<Element> => {
+      await q.until(() => q.q('.checklist'), 'Getting started');
+      q.all('.checklist button').find((b) => b.textContent === 'Show steps')?.click();
+      q.all('.checklist [aria-pressed]').find((b) => b.textContent === 'Judge')!.click();
+      return q.until(() => (q.all('.checklist__title-item').some((x) => (x.textContent ?? '').includes('Connect Claude or ChatGPT')) ? q.q('.checklist__item') : null), 'the judge steps');
+    };
+    const said = (item: Element): (string | null | undefined)[] => [item.querySelector('.checklist__title-item')?.textContent, item.querySelector('.checklist__text')?.textContent];
+
+    // Signed in with Interego: the Member ID is what the admin adds, and copying it ticks the step.
+    const p = await signedInPage(nm);
+    const first = await judgeSteps(p);
+    expect([...said(first), first.querySelector('.checklist__action button')?.textContent]).toEqual(['Next step: Send your Member ID to your admin', 'Done when your admin has added you as a Judge.', 'Copy my Member ID']);
+    (first.querySelector('.checklist__action button') as HTMLElement).click();
+    await p.until(() => p.q('.checklist__item')?.getAttribute('data-state') === 'done', 'the judge\'s first step done');
+    expect([p.copied, p.text('.checklist__item .checklist__title-item')]).toEqual([[PRINCIPAL], 'Done: Send your Member ID to your admin']);
+
+    // Signed in with a wallet: the way is Interego sign-in first, and a copied wallet address ticks
+    // the learner's step (a wallet will do there) but never the judge's.
+    const copied: string[] = [];
+    const who = W['second-learner'];
+    const w = await openPage(nm, '/ui', {}, (win) => {
+      Object.defineProperty(win.navigator, 'clipboard', { configurable: true, value: { writeText: async (t: string): Promise<void> => { copied.push(t); } } });
+      win['ethereum'] = {
+        request: async ({ method, params }: { method: string; params?: string[] }): Promise<unknown> => {
+          if (method === 'eth_requestAccounts') return [who.address];
+          if (method === 'personal_sign') return signMessageRaw(who, Buffer.from(String(params?.[0]).slice(2), 'hex').toString('utf8'));
+          throw new Error(`unsupported ${method}`);
+        },
+      };
+    });
+    await w.until(() => w.q('article.scenario'), 'the scenarios');
+    w.q('#connect-wallet')!.click();
+    await w.until(() => w.text('#acting-as').startsWith('Signed in with wallet'), 'the wallet');
+    // Refused a step, the person is told to send the wallet address they signed in with, and offered it to copy.
+    w.w.location.hash = '#/review';
+    const refusal = await w.until(() => w.q('#view .refusal'), 'the access message');
+    expect(refusal.textContent).toContain('Reviewing is for reviewers. Ask your admin to add you, and share your wallet address with them.');
+    expect([...refusal.querySelectorAll('button')].map((b) => b.textContent)).toContain('Copy my wallet address');
+    w.w.location.hash = '#/practice';
+    await w.until(() => w.q('article.scenario'), 'the scenarios again');
+    await w.until(() => w.q('.checklist'), 'Getting started');
+    w.all('.checklist button').find((b) => b.textContent === 'Show steps')?.click();
+    const copyWallet = await w.until(() => w.all('.checklist__action button').find((b) => b.textContent === 'Copy my wallet address'), 'the learner\'s wallet address to copy');
+    copyWallet.click();
+    await w.until(() => copied.length === 1 && w.all('.checklist__item')[1]?.getAttribute('data-state') === 'done', 'the learner\'s step done');
+    expect(copied).toEqual([who.address]);
+    const judge = await judgeSteps(w);
+    expect(said(judge)).toEqual(['Next step: Sign in with Interego, then send your Member ID to your admin',
+      'Claude or ChatGPT act as your Interego account, so a judge is added by Member ID. A judge added by wallet address can\'t assess from them.']);
+    const signIn = judge.querySelector('.checklist__action [data-sign-in]');
+    expect([signIn?.getAttribute('data-sign-in'), signIn?.textContent]).toEqual(['interego', 'Sign in with Interego']);
+    expect(w.text('.checklist')).not.toContain('Copy my wallet address');
+    // It starts the same sign-in as the header's button: the page leaves for the relay.
+    (signIn as HTMLElement).click();
+    await w.until(() => w.q('#interego-continue') ?? w.q('#signing .refusal'), 'the way to Interego');
+    expect(w.q('#interego-continue')?.getAttribute('href')?.startsWith(`${RELAY}/authorize?`)).toBe(true);
+    await w.until(() => w.errors.includes(NAVIGATION), 'the navigation to the relay');
+    expect([...p.errors, ...w.errors.filter((e) => e !== NAVIGATION)]).toEqual([]);
+  }, SLOW);
+
   it('one rule for the pages and the web app: the guide, the landing page and the Connect dialog offer the connector on a workspace that signs people in with Interego, and none of them does on one that trusts a relay but names none (no PEV_RELAY_URL)', async () => {
     // As server.ts composes a workspace whose route trusts a relay while PEV_RELAY_URL is unset: the
     // handlers take the relay's signatures, and uiSignIn is off, so attachUi gets no interego.
@@ -1533,7 +1599,8 @@ describe('your own AI assistant: connect Claude or ChatGPT, or copy and paste; n
     const nu = await serve(undefined, { handlers: noUrl });
 
     const sectionOf = (page: string, id: string): string => { const at = page.indexOf(`<section id="${id}"`); return page.slice(at, page.indexOf('</section>', at)); };
-    const words = (html: string): string => html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ');
+    // A break point (<wbr>) is no space: the address reads whole.
+    const words = (html: string): string => html.replace(/<wbr>/g, '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ');
     /** What a workspace's guide, landing page and Connect dialog (for a person signed in with a wallet) offer a chat assistant. */
     async function offered(l: TestListener): Promise<{ guide: boolean; landing: boolean; dialog: boolean; guideChat: string; dialogText: string; p: Page }> {
       const help = await (await fetch(`${l.base}/ui/help`)).text();

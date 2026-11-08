@@ -87,7 +87,8 @@ const S = {
   author: null,
   seq: 0,
   lastRoute: '',
-  copiedMemberId: false,        // memory only: ticks the checklist's Member ID step
+  copiedMemberId: false,        // memory only: a Member ID was copied (ticks the checklist's step to send it)
+  copiedWallet: false,          // memory only: a wallet address was copied (ticks that step where a wallet address will do)
   sessions: null,               // memory only: { any, own } from the last attempt list read as this person; null until one is read
   checklistOpen: null,          // memory only: the person opened (true) or collapsed (false) Getting started; null: the default
   queueCount: null,             // memory only: the To review count in the navigation
@@ -1072,10 +1073,12 @@ function waitWords(s) {
   return `${m} ${m === 1 ? 'minute' : 'minutes'}`;
 }
 
+/** Copy what this person sends their admin to be given a role (see memberWord): a Member ID, or a wallet address. */
 function memberIdButton() {
   const principal = S.interego && S.interego.principal;
-  if (!principal) return null;
-  return h('button', { type: 'button', class: 'btn btn--secondary btn--sm', text: 'Copy my Member ID', onclick: () => { S.copiedMemberId = true; copyText(principal, 'Member ID'); } });
+  if (principal) return h('button', { type: 'button', class: 'btn btn--secondary btn--sm', text: 'Copy my Member ID', onclick: () => { S.copiedMemberId = true; copyText(principal, 'Member ID'); } });
+  if (S.mode === 'wallet' && S.account) return h('button', { type: 'button', class: 'btn btn--secondary btn--sm', text: 'Copy my wallet address', onclick: () => { S.copiedWallet = true; copyText(S.account, 'Wallet address'); } });
+  return null;
 }
 
 function retryButton(o, label) {
@@ -1094,7 +1097,12 @@ const FORM_CHECKS = {
   'why-too-short': 'Please add a reason (at least 10 characters).', 'override-why-missing': 'Please add a reason (at least 10 characters).',
   'levels-differ-from-judge': "Your levels differ from the AI's, so this is \"Sign off my levels\" with reasons.",
   'override-changes-nothing': "Your levels match the AI's: use Confirm all levels.",
-  'address-format': "That isn't a Member ID or a wallet address. Ask the person to copy their Member ID from their account menu (it starts with did:web: and contains :users:), or paste a wallet address (0x followed by 40 letters and digits).",
+  // As Team asks for it here: without Interego sign-in no one has a Member ID to copy.
+  get 'address-format'() {
+    return chatOffered()
+      ? "That isn't a Member ID or a wallet address. Ask the person to copy their Member ID from their account menu (it starts with did:web: and contains :users:), or paste a wallet address (0x followed by 40 letters and digits)."
+      : "That isn't a wallet address. It should be 0x followed by 40 letters and digits.";
+  },
 };
 
 /** A refusal's plain title, message and the one action that resolves it. */
@@ -1113,7 +1121,7 @@ function friendly(err, o) {
     return { tone: 'warning', title: 'That took a little too long', message: 'For your security, each step has to be confirmed within a few minutes. Please try again.', actions: [retryButton(o)] };
   }
   if (ACCESS[code]) {
-    return { tone: 'neutral', title: "You don't have access to this", message: `${ACCESS[code]} Ask your admin to add you, and share your Member ID with them.`, actions: [memberIdButton()] };
+    return { tone: 'neutral', title: "You don't have access to this", message: `${ACCESS[code]} Ask your admin to add you, and share your ${memberWord()} with them.`, actions: [memberIdButton()] };
   }
   if (code === 'chat-agent-may-not-decide') {
     return { tone: 'neutral', title: 'Please do this in the web app',
@@ -1823,6 +1831,15 @@ const CHECKLIST_ROLES = [['learner', 'Learner'], ['reviewer', 'Reviewer'], ['aut
 /** What a person sends their admin to be given a role: a Member ID when signed in with Interego, otherwise the wallet address the step copies. */
 const memberWord = () => (S.mode === 'interego' ? 'Member ID' : 'wallet address');
 const MEMBER_STEP = { member: true, title: () => `Send your ${memberWord()} to your admin`, text: 'Your admin uses it to give you a role.' };
+/**
+ * A judge's first step where judging is from Claude or ChatGPT: those act as an Interego account,
+ * so the admin needs a Member ID, and a wallet address sent instead could never assess. Anyone
+ * not signed in with Interego is asked to sign in first; only a copied Member ID ticks it.
+ */
+const JUDGE_MEMBER_STEP = { member: true, interegoOnly: true,
+  title: () => (S.mode === 'interego' ? 'Send your Member ID to your admin' : 'Sign in with Interego, then send your Member ID to your admin'),
+  text: () => (S.mode === 'interego' ? 'Done when your admin has added you as a Judge.'
+    : "Claude or ChatGPT act as your Interego account, so a judge is added by Member ID. A judge added by wallet address can't assess from them.") };
 /** Each role's first steps: [title, text, target] where the target is a link, a scroll, or nothing. */
 const CHECKLISTS = {
   learner: [
@@ -1873,7 +1890,7 @@ const CHECKLISTS = {
   // Interego sign-in, by copy and paste, with a tool of the judge's own to save (see judgeHandoffText).
   get judge() {
     return chatOffered() ? [
-      { ...MEMBER_STEP, text: 'Done when your admin has added you as a Judge.' },
+      JUDGE_MEMBER_STEP,
       { title: 'Connect Claude or ChatGPT', text: 'Add the Interego connector, then sign in.', href: 'ui/help#claude-chatgpt', label: 'How to connect' },
       { title: "Assess a session you've been given", text: "Paste the message a learner sends you into a chat with the Interego connector on. Your assistant proposes levels and waits for your go-ahead. You can't assess your own practice, and a reviewer has the final say." },
     ] : [
@@ -1945,7 +1962,8 @@ function paintChecklist(slot) {
     return;
   }
   const steps = CHECKLISTS[role];
-  const isDone = (s) => (s.signIn && S.mode !== 'paste') || (s.member && (S.copiedMemberId || S.mode === 'demo' || (role === 'learner' && practiced)))
+  const copied = (s) => (s.interegoOnly ? S.mode === 'interego' && S.copiedMemberId : S.copiedMemberId || S.copiedWallet);
+  const isDone = (s) => (s.signIn && S.mode !== 'paste') || (s.member && (copied(s) || S.mode === 'demo' || (role === 'learner' && practiced)))
     || (s.practice && practiced);
   const current = steps.findIndex((s) => !isDone(s));
   const picker = h('div', { class: 'segmented', role: 'group', 'aria-label': 'Show steps for' }, CHECKLIST_ROLES.map(([k, label]) => h('button', {
@@ -1959,8 +1977,9 @@ function paintChecklist(slot) {
     let action = null;
     if (!d && s.member) {
       const principal = S.interego && S.interego.principal;
-      const value = principal || S.account;
-      if (value) action = h('button', { type: 'button', class: cls, text: principal ? 'Copy my Member ID' : 'Copy my wallet address', onclick: () => { S.copiedMemberId = true; copyText(value, principal ? 'Member ID' : 'Wallet address'); repaint(); } });
+      if (s.interegoOnly && S.mode !== 'interego') action = signInButton('interego', 'Sign in with Interego', 'sm', state === 'current' ? 'btn--primary' : 'btn--secondary');
+      else if (principal) action = h('button', { type: 'button', class: cls, text: 'Copy my Member ID', onclick: () => { S.copiedMemberId = true; copyText(principal, 'Member ID'); repaint(); } });
+      else if (S.account && !s.interegoOnly) action = h('button', { type: 'button', class: cls, text: 'Copy my wallet address', onclick: () => { S.copiedWallet = true; copyText(S.account, 'Wallet address'); repaint(); } });
     } else if (s.connect && !d) action = connectButton('Connect your AI', cls);
     else if (s.href) action = h('a', { class: cls, href: s.href, text: s.label });
     else if (s.scroll && !d) action = h('button', { type: 'button', class: cls, text: s.label, onclick: () => scrollToEl(s.scroll) });
@@ -3622,16 +3641,19 @@ function authorForm(A, paint) {
 // ════════════════════════════════════════════════════════════════════════════════════════════
 
 function viewRoles(root) {
-  root.append(pageHeader({ title: 'Team', lede: 'Add people by their Member ID and choose their role. Only admins can make changes, and every change is recorded.' }));
+  // Without Interego sign-in no one here has a Member ID: people are added by wallet address.
+  const ids = chatOffered();
+  root.append(pageHeader({ title: 'Team', lede: `Add people by their ${ids ? 'Member ID' : 'wallet address'} and choose their role. Only admins can make changes, and every change is recorded.` }));
   if (S.mode === 'paste' && !S.manual) { root.append(signInGate('roles')); return; }
-  const address = h('input', { type: 'text', id: 'member-id', class: 'input input--mono', placeholder: 'did:web:identity.interego.xwisee.com:users:u-pk-… or 0x…' });
+  const address = h('input', { type: 'text', id: 'member-id', class: 'input input--mono', placeholder: ids ? 'did:web:identity.interego.xwisee.com:users:u-pk-… or 0x…' : '0x…' });
   const role = h('select', { id: 'member-role', class: 'select', onchange: (e) => { const hint = $('#member-role-hint'); if (hint) hint.textContent = ROLE_HINTS[e.target.value] || ''; } },
     ['reviewer', 'author', 'judge', 'agent', 'learner'].map((r) => h('option', { value: r, text: ROLE_WORDS[r] })));
   const change = h('select', { id: 'member-change', class: 'select' }, h('option', { value: 'add', text: 'Add this role' }), h('option', { value: 'remove', text: 'Remove this role' }));
   const out = h('div', { class: 'outcome' });
   const form = h('div', { class: 'card__body form' },
     h('div', { class: 'form-row' },
-      formField({ label: 'Member ID or wallet address', control: address, hint: 'Ask the person to copy it from their account menu.' }),
+      formField({ label: ids ? 'Member ID or wallet address' : 'Wallet address', control: address,
+        hint: ids ? 'Ask the person to copy it from their account menu.' : 'Ask the person to copy it from Getting started (Copy my wallet address).' }),
       formField({ label: 'Role', control: role, hint: ROLE_HINTS.reviewer })),
     h('div', { class: 'form-row' }, formField({ label: 'Change', control: change })));
   if (S.mode === 'demo') {
@@ -3643,7 +3665,7 @@ function viewRoles(root) {
   const btn = h('button', { type: 'button', class: 'btn btn--primary', text: 'Save change', dataset: { action: ACT.registerRole }, onclick: () => busy(btn, out, async () => {
     const value = address.value.trim();
     // Checked here first, so an empty field is never signed and sent.
-    if (!value) { fieldError(address, 'Enter their Member ID or wallet address.'); return null; }
+    if (!value) { fieldError(address, ids ? 'Enter their Member ID or wallet address.' : 'Enter their wallet address.'); return null; }
     fieldError(address, null);
     let r;
     try {

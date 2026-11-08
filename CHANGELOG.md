@@ -38,11 +38,17 @@ Interego sign-in, and copy and paste everywhere else. That includes a
 workspace that trusts a relay but names none (no `PEV_RELAY_URL`): it still
 accepts acts the relay signs, but its pages, its sign-in screen and its
 Connect dialog now all say copy and paste, and the bridge says so at
-startup. On such workspaces the guide's troubleshooting, glossary and
-privacy entries, the landing page's security answer and its limits, the
-admin's and judge's Getting started steps and the dialog's Advanced note
-no longer point to a Member ID, Interego sign-in or a connector, and the
-header's wallet button reads "Use a wallet" on a phone so it fits.
+startup. On such workspaces the guide's troubleshooting, glossary (which
+now explains a wallet address instead) and privacy entries, the landing
+page's security answer and its limits, the admin's and judge's Getting
+started steps, the Team page with its field and its messages, the "You
+don't have access to this" message and the dialog's Advanced note no
+longer point to a Member ID, Interego sign-in or a connector, and the
+header's wallet button reads "Use a wallet" on a phone so it fits. Where
+Interego sign-in is offered, a judge's first Getting started step asks
+for a Member ID: someone signed in with a wallet is asked to sign in with
+Interego first, since a judge added by wallet address can't assess from
+Claude or ChatGPT, and a copied wallet address no longer ticks that step.
 It reads a pasted draft even with prose or code fences around it, and asks
 which AI wrote each reply. A person's own Anthropic key stays available,
 closed under the dialog's Advanced section; it is gone from the header and
@@ -50,7 +56,9 @@ settings. The learner's Getting started steps, and the guide, name the buttons t
 session page offers that person on that workspace. The Connect dialog
 confirms a copy on the button pressed, never with a toast under its
 backdrop; on a phone its description scrolls away with the body, and the
-connector address wraps to show whole. The Feedback card says "Not assessed
+connector address wraps to show whole. The landing page and the guide
+show that address on a line of its own and break it only between its
+parts, so `/mcp` is never split. The Feedback card says "Not assessed
 yet" until a judge has assessed; the author's paste route shows its message
 above the answer box it points to; the drafting messages carry no escaped
 quotes and the schema once; the other person's brief never doubles a full
