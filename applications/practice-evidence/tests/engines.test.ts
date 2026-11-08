@@ -672,6 +672,19 @@ describe('conversation', () => {
     expect(proposed.messages[proposed.messages.length - 2]!.content).toBe(`That works for me. Tuesday at ten.\n${END_SIGNAL}`);
   });
 
+  it('never doubles a full stop: a field that already ends its sentence takes the place of the template\'s own', () => {
+    const base = missedDeadlineInput();
+    const spec = specOf({ ...base, situation: 'A Thursday afternoon', counterpart: { ...(base['counterpart'] as object),
+      profile: 'A senior analyst on your team.', wants: 'To avoid blame.', knows: 'Is it over?', reactions: 'Says "fine."' } });
+    const sys = counterpartRequest(spec, ATTEMPT1, 'x').system;
+    for (const s of [': A senior analyst on your team. What they want: To avoid blame. What they know: Is it over? How they react: Says "fine." The situation: A Thursday afternoon.']) {
+      expect(sys).toContain(s);
+    }
+    expect(sys).not.toMatch(/[.?!]["”)]*\.(\s|$)/);
+    // The template itself is unchanged, so its hash in every record still names it.
+    expect(COUNTERPART_PROMPT_TEMPLATE).toContain('What they want: {{wants}}. What they know: {{knows}}.');
+  });
+
   it('a value containing a template slot is not expanded twice', () => {
     const tricky = specOf({ ...missedDeadlineInput(), counterpart: { ...(missedDeadlineInput()['counterpart'] as object), profile: 'Writes {{endsWhen}} in notes.' } });
     expect(counterpartRequest(tricky, ATTEMPT1, 'x').system).toContain('Writes {{endsWhen}} in notes.');

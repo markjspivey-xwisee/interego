@@ -6,6 +6,8 @@ import { resolve, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createServer } from 'node:http';
 import { Script } from 'node:vm';
+import assert from 'node:assert/strict';
+import { JSDOM, VirtualConsole } from 'jsdom';
 const app=resolve(dirname(fileURLToPath(import.meta.url)),'..'),repo=resolve(app,'../../../..');
 const assets=resolve(process.env.I2IDLX_UI_ASSETS||join(app,'../.cache/ui-oracle-assets'));
 const output=resolve(repo,'.local/learning-ui-fixture');
@@ -39,6 +41,8 @@ const entry=[
   '<button onClick={()=>window.__fixtureSetAgent({state:"disconnected"})}>Fixture: remove AI connection</button>',
   '<button onClick={()=>window.__scenario("block-popup")}>Fixture: block next course popup</button><button onClick={()=>window.__scenario("delay-launch")}>Fixture: delay next course launch</button><button onClick={()=>window.__scenario("release-launch")}>Fixture: release delayed launch</button>',
   '<button onClick={()=>window.__scenario("expire-location")}>Fixture: expire next lesson reference</button><button onClick={()=>window.__scenario("managed")}>Fixture: add managed connection</button>',
+  '<button onClick={()=>window.__scenario("release-review")}>Fixture: release completed own review</button><button onClick={()=>window.__scenario("unreadable")}>Fixture: mark content unreadable</button>',
+  '<button onClick={()=>window.__scenario("permit-notifications")}>Fixture: permit progress signals</button><button onClick={()=>window.__scenario("signal")}>Fixture: receive progress signal</button>',
   '<button onClick={()=>engine.sendGlossary("A glossary question",[])}>Fixture: glossary shortcut</button></section>',
   '<p role="status" data-testid="fixture-scope">{course.blocked?"Private context blocked":"Ask available"} · Selected: {course.selected?.title||"none"} · Model calls: {window.__fixture.calls.length}</p>',
   '{course.panel}<label>Fixture question<input aria-label="Fixture question" value={draft} onChange={e=>setDraft(e.target.value)}/></label>',
@@ -56,7 +60,7 @@ const result=await build({stdin:{contents:entry,resolveDir:app,sourcefile:'learn
   }}]
 });
 const bootstrap=`(()=>{
-  const expires="2099-01-01T00:00:00.000Z",state=window.__fixture={human:null,calls:[],owner:false,grant:null,delay:false,waiting:[],modelRevoked:false,denySource:false,connectors:[],launches:0,navigations:0,blockPopup:false,delayLaunch:false,launchWaiting:[],expireLocation:false,targeted:false};
+  const expires="2099-01-01T00:00:00.000Z",state=window.__fixture={human:null,calls:[],owner:false,grant:null,delay:false,waiting:[],modelRevoked:false,denySource:false,connectors:[],launches:0,navigations:0,blockPopup:false,delayLaunch:false,launchWaiting:[],expireLocation:false,targeted:false,reviewPolicy:false,reviewReleased:false,unreadable:false,notificationPolicy:false,notificationEnabled:false,signalAt:null,maps:{},mapRevision:0};
   const browserOpen=window.open.bind(window);
   window.open=(url,target,...features)=>{
     if(state.blockPopup&&url==="about:blank"){state.blockPopup=false;return null;}
@@ -73,14 +77,24 @@ const bootstrap=`(()=>{
   const account=()=>({id:"did:web:fixture.invalid:users:"+state.human,userId:state.human,webId:"https://fixture.invalid/users/"+state.human});
   const link=()=>({id:(state.human==="alice"?"a":"b").repeat(32),connector_id:"c".repeat(32),provider_label:"Fixture learning provider",status:"active"});
   const course=()=>({id:state.human==="alice"?"alice-course":"bob-course",title:state.human==="alice"?"Alice enrolled safety":"Bob enrolled safety",version:3});
+  const mapKey=args=>JSON.stringify([args.connector_id,args.course_id,args.version]);
+  const fixtureMap=()=>({schema_version:1,course_id:course().id,version:3,release_quiz_review:true,
+    instructional_locations:[{id:"safety",label:"Safety code",source_file:"lesson-a.html"}],
+    review_items:[{activity_id:"quiz",interaction_id:"safety-code",question_label:"Which safety code did you record?",response_labels:[{response:"B",label:"AMBER14"}],location_ids:["safety"]}],
+    objectives:[{id:"record-code",label:"Record the published safety code",competency_iris:[],location_ids:["safety"]}],prerequisites:[]});
+  const reviewStatus=()=>!state.reviewPolicy?{status:"not-authorized",count:0,reason:"The connection owner has not permitted AI review."}:!state.reviewReleased?{status:"not-released",count:0,reason:"No owner-released question map is available."}:{status:"available",count:1};
+  const ownReview=()=>({...reviewStatus(),observed_at:new Date().toISOString(),records:reviewStatus().status==="available"?[{citation_id:"QR1",activity_id:"quiz",interaction_id:"safety-code",question_label:"Which safety code did you record?",learner_response:"B",learner_response_label:"AMBER14",result:"incorrect",submission:"completed",observed_at:new Date().toISOString(),locations:[{id:"safety",label:"Safety code",source_file:"lesson-a.html"}]}]:[]});
+  const notificationStatus=()=>({available:state.notificationPolicy,enabled:state.notificationPolicy&&state.notificationEnabled,notice:"Synthetic signal status only. Refresh reads current provider facts; no AI request is made.",...(state.signalAt?{last_received_at:state.signalAt}:{})});
+  const snapshot=(args,map)=>({map,provenance:{kind:"connector-owner-authored",owner:account().id,connector_id:args.connector_id,saved_at:new Date().toISOString(),revision:(++state.mapRevision).toString(16).padStart(32,"0"),sha256:"6".repeat(64)}});
+  const mapProjection=()=>state.reviewReleased?{status:"owner-supplied",revision:"1".repeat(32),sha256:"6".repeat(64),saved_at:new Date().toISOString(),provider_prerequisites:"unavailable",objectives:fixtureMap().objectives,prerequisites:[]}:{status:"unavailable",provider_prerequisites:"unavailable",objectives:[],prerequisites:[]};
   const fail=(code,status=403)=>Object.assign(new Error(code),{code,status});
   const packet=(args,owner=false)=>{
     const title=owner?"Owner inspection course":course().title,body=owner?"OWNER37":state.human==="alice"?"BLUE27":"GREEN18";
     return {source:{provider:"scorm-cloud",course_id:args.course_id,title,version:args.version,source_version:"course-version:"+args.version,projection_sha256:"d".repeat(64),fingerprint_scope:"selected-instructional-projection"},
-      access:{link_id:args.link_id,sharing:{content:args.share_content,progress:args.share_progress}},
-      interventionContext:{kind:"instructional-source-reference",source_context:{source:"package",id:args.course_id,version:"course-version:"+args.version,sections:[{citation_id:"SC1",title:"Safety code",body}]}},
-      citations:[{id:"SC1",title:"Safety code",body}],missing_context:[],authorization_ticket:"e".repeat(64),
-      navigation:{course:{kind:"course"},locations:[{citation_id:"SC1",source_file:"lesson-a.html",precision:"published-file",target_kind:state.targeted?"activity":"course",...(state.targeted?{location_ref:"4".repeat(64),title:"Beacon fault lesson"}:{})}]}};
+      access:{link_id:args.link_id,sharing:{content:args.share_content,progress:args.share_progress,review:args.share_review===true}},
+      interventionContext:{kind:"instructional-source-reference",source_context:{source:"package",id:args.course_id,version:"course-version:"+args.version,sections:args.share_content?[{citation_id:"SC1",title:"Safety code",body}]:[]},learning_map:mapProjection(),...(args.share_review?{quiz_review:ownReview()}:{}),...(args.share_progress?{learning_progress:{records:[{completion:"COMPLETED",success:"PASSED",score:73,observed_at:new Date().toISOString()}]}}:{})},
+      citations:args.share_content?[{id:"SC1",title:"Safety code",body}]:[],missing_context:[],authorization_ticket:"e".repeat(64),
+      navigation:{course:{kind:"course"},locations:args.share_content?[{citation_id:"SC1",source_file:"lesson-a.html",precision:"published-file",target_kind:state.targeted?"activity":"course",...(state.targeted?{location_ref:"4".repeat(64),title:"Beacon fault lesson"}:{})}]:[]}};
   };
   const reply=value=>Promise.resolve(new Response(JSON.stringify(value),{headers:{"Content-Type":"application/json"}}));
   window.fetch=async(input,init={})=>{
@@ -101,8 +115,29 @@ const bootstrap=`(()=>{
     const args=JSON.parse(init.body||"{}");if(!state.human)return new Response(JSON.stringify({code:"learning_sign_in_required"}),{status:401});
     if(args.operation==="my-links")return reply({links:[link()]});
     if(args.operation==="courses")return reply({link_id:args.link_id,courses:[course()],prerequisites:{status:"unavailable"},curriculum:{status:"unavailable"}});
-    if(args.operation==="progress")return reply({link_id:args.link_id,as_of:expires,records:[{course_id:course().id,title:course().title,version:3,completion:"COMPLETED",success:"PASSED",score:73,total_seconds:90,source:"SCORM Cloud",observed_at:expires}]});
+    if(args.operation==="progress")return reply({link_id:args.link_id,as_of:new Date().toISOString(),records:[{course_id:course().id,title:course().title,version:3,completion:"COMPLETED",success:"PASSED",score:73,total_seconds:90,source:"SCORM Cloud",observed_at:new Date().toISOString(),quiz_review:reviewStatus()}]});
+    if(args.operation==="course-readiness")return reply({link_id:args.link_id,course_id:args.course_id,version:args.version,readiness:{course_id:args.course_id,version:args.version,checked_at:new Date().toISOString(),enrollment:{status:"verified",observed_at:new Date().toISOString()},content:{status:state.unreadable?"unavailable":"readable",...(state.unreadable?{reason:"This synthetic course has no readable published instructional files."}:{})},quiz_review:reviewStatus(),launch:{kind:state.targeted?"lesson":"course",reason:state.targeted?"Exact published activity mapping is permitted.":"The owner has not enabled targeted lesson launches."},learning_map:mapProjection(),retention:{mode:"virtual",cached_bytes:0,course_text_retained:false}}});
+    if(args.operation==="quiz-review")return reply({link_id:args.link_id,course_id:args.course_id,version:args.version,quiz_review:ownReview()});
+    if(["progress-notification-status","enable-progress-notifications","disable-progress-notifications"].includes(args.operation)){
+      if(args.operation==="enable-progress-notifications")state.notificationEnabled=true;
+      if(args.operation==="disable-progress-notifications")state.notificationEnabled=false;
+      return reply({link_id:args.link_id,course_id:args.course_id,version:args.version,notifications:notificationStatus()});
+    }
     if(args.operation==="owned-connectors")return reply({connectors:state.connectors});
+    if(args.operation==="owned-courses")return reply({courses:[course(),{id:"preparation",title:"Preparation",version:1}]});
+    if(args.operation==="get-course-map")return reply({course_map:state.maps[mapKey(args)]||null});
+    if(args.operation==="preview-course-map")return reply({valid:true,sha256:"6".repeat(64),map:args.map});
+    if(args.operation==="save-course-map"){
+      const saved=snapshot(args,args.map);state.maps[mapKey(args)]=saved;state.reviewReleased=args.map.release_quiz_review;
+      return reply({course_map:saved});
+    }
+    if(args.operation==="delete-course-map"){delete state.maps[mapKey(args)];state.reviewReleased=false;return reply({course_map:null,deleted:true});}
+    if(args.operation==="set-review-policy"||args.operation==="set-notification-policy"){
+      const name=args.operation==="set-review-policy"?"allowAiReview":"allowProgressNotifications";
+      if(name==="allowAiReview")state.reviewPolicy=args[name];else{state.notificationPolicy=args[name];if(!state.notificationPolicy)state.notificationEnabled=false;}
+      state.connectors=state.connectors.map(connector=>connector.id===args.connector_id?{...connector,policy:{...connector.policy,[name]:args[name]}}:connector);
+      return reply({connector:state.connectors.find(connector=>connector.id===args.connector_id)});
+    }
     if(args.operation==="set-targeted-launch-policy"){
       state.targeted=args.allowTargetedLaunch;state.connectors=state.connectors.map(connector=>connector.id===args.connector_id?{...connector,policy:{...connector.policy,allowTargetedLaunch:state.targeted}}:connector);
       return reply({connector:state.connectors.find(connector=>connector.id===args.connector_id)});
@@ -118,6 +153,8 @@ const bootstrap=`(()=>{
     if(!state.human)throw fail("learning_sign_in_required",401);
     if(state.denySource){state.denySource=false;state.human=null;throw fail("learning_sign_in_required",401);}
     if(args.link_id!==link().id||args.course_id!==course().id)throw fail("learning_link_not_found",404);
+    if(args.share_content&&state.unreadable)throw fail("learning_content_unavailable",422);
+    if(args.share_review&&reviewStatus().status!=="available")throw fail("learning_review_not_allowed");
     const result=packet(args);if(state.delay){state.delay=false;await new Promise(resolve=>state.waiting.push(resolve));}return result;
   };
   window.__fixtureOwner=async args=>{
@@ -133,7 +170,7 @@ const bootstrap=`(()=>{
   const sample=async(messages,options={})=>{
     state.calls.push({messages,hasTicket:!!options.learningAuthorization,ticketInMessages:JSON.stringify(messages).includes("e".repeat(64))});
     if(options.learningAuthorization&&state.modelRevoked){state.modelRevoked=false;throw fail("learning_access_revoked");}
-    const text=JSON.stringify(messages).includes("BLUE27")?"Answer grounded in BLUE27 [SC1].":JSON.stringify(messages).includes("GREEN18")?"Answer grounded in GREEN18 [SC1].":JSON.stringify(messages).includes("OWNER37")?"Owner answer OWNER37 [SC1].":"Glossary fixture answer.";
+    const text=JSON.stringify(messages).includes("AMBER14")?"Your released record says AMBER14 was marked incorrect [QR1]. Review the Safety code section; no answer key was supplied.":JSON.stringify(messages).includes("BLUE27")?"Answer grounded in BLUE27 [SC1].":JSON.stringify(messages).includes("GREEN18")?"Answer grounded in GREEN18 [SC1].":JSON.stringify(messages).includes("OWNER37")?"Owner answer OWNER37 [SC1].":"Glossary fixture answer.";
     options.onText?.({text});return {text};
   };
   sample.limits=async()=>({tools:false});sample.contextKey="fixture-recipient";window.__fixtureCaps={sample,tools:false,allNotes:[]};
@@ -143,7 +180,11 @@ const bootstrap=`(()=>{
     if(kind==="delay")state.delay=true;if(kind==="release")state.waiting.splice(0).forEach(resolve=>resolve());
     if(kind==="block-popup")state.blockPopup=true;if(kind==="delay-launch")state.delayLaunch=true;if(kind==="release-launch")state.launchWaiting.splice(0).forEach(resolve=>resolve());
     if(kind==="expire-location")state.expireLocation=true;
-    if(kind==="managed")state.connectors=[{id:"f".repeat(32),label:"Synthetic managed connection",status:"active",created_at:expires,join_code:"9".repeat(48),policy:{allowAiContent:true,allowAiProgress:true,allowTargetedLaunch:state.targeted}}];
+    if(kind==="managed")state.connectors=[{id:"f".repeat(32),label:"Synthetic managed connection",status:"active",created_at:expires,join_code:"9".repeat(48),policy:{allowAiContent:true,allowAiProgress:true,allowAiReview:state.reviewPolicy,allowProgressNotifications:state.notificationPolicy,allowTargetedLaunch:state.targeted}}];
+    if(kind==="release-review"){state.reviewPolicy=true;state.reviewReleased=true;}
+    if(kind==="unreadable")state.unreadable=true;
+    if(kind==="permit-notifications")state.notificationPolicy=true;
+    if(kind==="signal")state.signalAt=new Date().toISOString();
     document.getElementById("scenario-status").textContent="Fixture provider state: "+(state.human||"signed out")+"; "+kind;
   };
 })();`;
@@ -157,6 +198,20 @@ const html='<!doctype html><meta charset="utf-8"><title>Learning hook fixture</t
   '<script>'+bootstrap.replaceAll('</script','<\\/script')+'</script><script>'+result.outputFiles[0].text.replaceAll('</script','<\\/script')+'</script>';
 await mkdir(output,{recursive:true});await writeFile(join(output,'index.html'),html);
 process.stdout.write('Prepared actual-hook developer fixture: '+join(output,'index.html')+'\n');
+// Mount the actual production React bundle with an ordinary signed-out session.
+// This catches lifecycle/render errors that a small hook implementation can miss.
+const mountErrors=[],virtualConsole=new VirtualConsole();virtualConsole.on('jsdomError',error=>mountErrors.push(error.message));
+const mounted=new JSDOM(html,{runScripts:'dangerously',url:'http://127.0.0.1:43811/',virtualConsole,beforeParse(window){
+  window.BroadcastChannel=class {postMessage(){}close(){}};
+  window.Response=Response;window.AbortController=AbortController;window.TextEncoder=TextEncoder;
+}});
+try {
+  for(let count=0;count<30&&!Array.from(mounted.window.document.querySelectorAll('button')).some(button=>button.textContent==='Connect your Interego learning account');count++)await new Promise(resolve=>setTimeout(resolve,10));
+  assert.deepEqual(mountErrors,[],'Actual React fixture must mount without uncaught errors.');
+  assert.ok(Array.from(mounted.window.document.querySelectorAll('button')).some(button=>button.textContent==='Connect your Interego learning account'),'Signed-out actual React fixture must offer ordinary learning sign-in.');
+  assert.equal(mounted.window.__fixture.calls.length,0,'Mounting must not call the model.');
+  process.stdout.write('PASS actual React signed-out mount with null account; no model request\n');
+} finally {mounted.window.close();}
 if(process.argv.includes('--serve')){
   const server=createServer((req,res)=>{
     if(req.url==='/favicon.ico'){res.writeHead(204);res.end();return;}

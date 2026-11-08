@@ -63,7 +63,8 @@ RUN npm ci
 # Only what this bridge needs:
 #   packages/                    the @interego/* substrate it imports
 #   docs/ns/pgsl-lexicon.ttl     read by @interego/pgsl at runtime (see Dockerfile.wsp-bridge)
-#   applications/_shared/        vertical-bridge, ontology-serve, judgment-kit
+#   applications/_shared/        vertical-bridge, ontology-serve, judgment-kit, design-system,
+#                                chat-agent (served in front of the web client as /ui/app.js)
 #   applications/practice-evidence/  the vertical, including bridge/ui/ and ontology/
 COPY packages/ ./packages/
 COPY docs/ns/pgsl-lexicon.ttl ./docs/ns/pgsl-lexicon.ttl
@@ -100,7 +101,8 @@ ENV BRIDGE_DEPLOYMENT_URL=
 ENV PEV_DEFAULT_POD_URL=https://gate.interego.xwisee.com/practice-evidence/
 
 # Pilot budgets, "<per signer>,<total>" per hour. The bridge's own defaults (120,2000 and 20,500)
-# are sized for a team; a first deployment spends the operator's model key, so it starts lower.
+# are sized for a team; a first deployment starts lower. The model budget counts only the bridge's
+# own model route, which the hosted service never has (see "NO OPERATOR MODEL KEY" below).
 ENV PEV_MODEL_CALLS_PER_HOUR=60,300
 ENV PEV_ATTEMPTS_PER_HOUR=5,50
 
@@ -136,9 +138,15 @@ ENV PEV_RELAY_URL=https://relay.interego.xwisee.com
 #                                   did:web:identity.interego.xwisee.com:users:<id>, comma-separated
 #   PEV_TRUSTED_PLATFORM_ADDRESSES  earlier platform keys whose records stay trusted
 #   PEV_POD_WRITE_SECRET            the operator pod's bearer, sent under that pod's path only
-#   PEV_LLM_API_KEY, PEV_LLM_MODEL  the bridge's own model route; a key without a model is no
-#                                   route, because this bridge never picks a model. Without
-#                                   either, only the packet routes (a client's own model) work.
+#   PEV_LLM_API_KEY, PEV_LLM_MODEL  ★ NO OPERATOR MODEL KEY. Leave both unset on the hosted
+#   (and ANTHROPIC_API_KEY)         service: it never holds a model key. People bring their own
+#                                   chat assistant (Claude, ChatGPT…) through the Interego
+#                                   connector, or copy and paste. The server reads PEV_LLM_API_KEY,
+#                                   falling back to ANTHROPIC_API_KEY, only for self-hosters and API
+#                                   tests of the bridge's own model route; a key without a model is
+#                                   no route, because this bridge never picks a model. The
+#                                   provisioning workflow never writes either. Check by variable
+#                                   NAME that the service has none of the three.
 #   PEV_CONTACT_URL                 where the pages' Contact links go: an https page or a mailto:
 #                                   link to one address. Set on the service, never baked here.
 # Never set PEV_DEMO_ROLES on a deployment: it holds demo role keys and refuses a non-loopback

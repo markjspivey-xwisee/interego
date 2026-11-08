@@ -25,9 +25,28 @@ const InteregoChatAgent = (() => {
    * language models reuse example values, and a repeated nonce from the same person is refused
    * as a replay partway through a session. The result is 16 to 64 characters of letters, digits
    * and '-', which every Interego vertical's nonce check accepts.
+   *
+   * The example names a step the prompt really has (its first signed step), so an assistant is
+   * never shown a step name the site does not offer, and that step's own turn: a turn number when
+   * its payload carries a turnIndex, 0 when it carries none, as the rule says, so an assistant
+   * copying the example copies the right one. With no signed step to name, as in workspace details,
+   * it is said in words (NONCE_RULE, also published as nonceRule).
    */
-  const NONCE_RULE = 'nonce = the step name, the turn number (or 0), then 16 random letters or digits, joined by "-", never reused. '
-    + 'For example read-items-4-q8Xr2mVp7LkA9dTz, but make up new random letters for every call.';
+  const NONCE_HOW = 'nonce = the step name, the turn number (or 0), then 16 random letters or digits, joined by "-", never reused. ';
+  const NONCE_EXAMPLE_TURN = 4;
+  const NONCE_EXAMPLE_LETTERS = 'q8Xr2mVp7LkA9dTz';
+  const NONCE_RULE = `${NONCE_HOW}For example, at turn ${NONCE_EXAMPLE_TURN} a step's nonce is that step's own name, then ${NONCE_EXAMPLE_TURN}, `
+    + `then 16 letters or digits such as ${NONCE_EXAMPLE_LETTERS}, but make up new random letters for every call.`;
+
+  /**
+   * The nonce rule with an example made from one step's own name (stepNameOf) and turn (`hasTurn`:
+   * NONCE_EXAMPLE_TURN when the step has a turn number, 0 when it has none), or in words when there
+   * is no step.
+   */
+  function nonceRuleFor(stepName, hasTurn) {
+    if (!stepName) return NONCE_RULE;
+    return `${NONCE_HOW}For example ${stepName}-${hasTurn ? NONCE_EXAMPLE_TURN : 0}-${NONCE_EXAMPLE_LETTERS}, but make up new random letters for every call.`;
+  }
 
   /** A step name longer than this is cut, so step + turn + 16 letters stays inside 64 characters. */
   const STEP_NAME_MAX = 32;
@@ -92,7 +111,9 @@ const InteregoChatAgent = (() => {
   /**
    * A paste-ready prompt that tells a chat assistant how to do each step with the Interego
    * connector's act tool: the call shape (descriptor_url, action_iri, sign_payload, payload), the
-   * nonce rule, and per step whether it is signed or plain and which exact action it names.
+   * nonce rule (its example made from the first signed step's own name, at turn 0 unless that step's
+   * payload has a turnIndex, or said in words when no step is signed), and per step whether it is
+   * signed or plain and which exact action it names.
    *
    * spec: { intro?, affordancesUrl, podUrl?, steps?: [{ say, actionIri, signed, payload }],
    *         rules?: string[], outro? }. Throws TypeError on a malformed spec: that is a bug in the
@@ -107,6 +128,9 @@ const InteregoChatAgent = (() => {
     const rules = o.rules === undefined ? [] : o.rules;
     if (!Array.isArray(rules)) throw new TypeError('actPrompt: rules must be an array');
     const podUrl = textOf(o.podUrl);
+    // The nonce example names the first signed step this prompt really has (a malformed step is
+    // refused below, when its text is built).
+    const firstSigned = steps.find((s) => isPlainObject(s) && s.signed === true && textOf(s.actionIri));
 
     const parts = [];
     const intro = textOf(o.intro);
@@ -119,7 +143,8 @@ const InteregoChatAgent = (() => {
       '- payload: the JSON object the step shows, with every <...> replaced by the real value',
     ];
     if (podUrl) how.push(`My storage address (pod_url): "${podUrl}"`);
-    how.push(`Every signed payload carries a nonce: ${NONCE_RULE}`);
+    const firstHasTurn = Boolean(firstSigned && isPlainObject(firstSigned.payload) && Object.prototype.hasOwnProperty.call(firstSigned.payload, 'turnIndex'));
+    how.push(`Every signed payload carries a nonce: ${nonceRuleFor(firstSigned ? stepNameOf(textOf(firstSigned.actionIri)) : '', firstHasTurn)}`);
     parts.push(how.join('\n'));
     if (steps.length > 0) parts.push(['Steps:', ...steps.map((s, i) => stepText(s, i + 1))].join('\n'));
     const ruleLines = rules.map(textOf).filter((r) => r.length > 0).concat([REFUSAL_RULE]);

@@ -29,6 +29,5 @@ jobs:
       - name: Provision the keys (values never printed)
         env:
           RAILWAY_PROJECT_TOKEN: ${{ secrets.RAILWAY_PROJECT_TOKEN }}
-          PEV_LLM_API_KEY: ${{ secrets.PEV_LLM_API_KEY }}
           APPLY: ${{ inputs.apply }}
         run: node tools/vertical-bridges-provision.mjs

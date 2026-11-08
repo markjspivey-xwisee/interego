@@ -2,7 +2,10 @@
  * The web UI and the browser-facing protection of a practice-evidence bridge.
  *
  * `attachUi` serves a static HTML shell at /ui, the client at /ui/app.js and its styles at
- * /ui/app.css (the shared Interego design system, then this product's own rules). The client is a
+ * /ui/app.css (the shared Interego design system, then this product's own rules). /ui/app.js is
+ * the shared chat-agent helpers (applications/_shared/chat-agent, one name: InteregoChatAgent)
+ * followed by this product's ui/app.js, one text, so the shell keeps a single module script. The
+ * helpers build the text a person copies into their own chat assistant; no model runs here. The client is a
  * Path-A client: it reads this bridge's affordance manifest and invokes every act at the target the
  * manifest names. It holds no key (demo role keys stay in the bridge; wallet keys stay in the
  * wallet) and computes nothing the record does not already say.
@@ -16,6 +19,12 @@
  *   GET  /ui/help               the guide, and /ui/help.js, the few lines that show this
  *                               workspace's address on it
  *   GET  /ui/favicon.svg        the mark
+ *
+ * Both say what this workspace's web app offers a chat assistant (connectorPages), by the one rule
+ * the web app's Connect dialog follows: the Interego connector's steps, with the address of the
+ * relay the web UI signs people in through, where the web UI offers Interego sign-in; copy and
+ * paste only where it does not (no relay is trusted, or PEV_RELAY_URL names none). So neither page
+ * promises a connector, a passkey or a step the web app on the same workspace says it cannot offer.
  *
  * Their "Contact" links go to the guide's contact section, or to the operator's own contact link
  * when server.ts passes one (PEV_CONTACT_URL: an https page, or a mailto: link to one address,
@@ -75,6 +84,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import type { Express, NextFunction, Request, Response } from 'express';
 import { guardedFetchFn } from '@interego/core';
+import { chatAgentJs } from '../../_shared/chat-agent/index.js';
 import { contactHrefOf } from '../../_shared/contact-link/index.js';
 import { designSystemCss } from '../../_shared/design-system/index.js';
 import { refuse } from '../../_shared/vertical-bridge/refusal.js';
@@ -84,7 +94,8 @@ import { cappedFetch } from './pod-helpers.js';
 export const UI_CSP = "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' data:; form-action 'self'; base-uri 'none'; frame-ancestors 'none'";
 
 const readUiFile = (name: string): string => readFileSync(new URL(`./ui/${name}`, import.meta.url), 'utf8');
-const APP_JS = readUiFile('app.js');
+/** The shared chat-agent helpers, then this product's client: served as one script (see the header). */
+const APP_JS = `${chatAgentJs()}\n${readUiFile('app.js')}`;
 /** The Interego design system (shared with work-redesign), then this product's own rules. */
 const APP_CSS = `${designSystemCss()}\n${readUiFile('app.css')}`;
 const LANDING_HTML = readUiFile('landing.html');
@@ -923,13 +934,76 @@ export function contactPages(contactUrl?: string): { readonly landing: string; r
 }
 
 /**
+ * The connector address the page files are written with (the live relay's). A page never shows it
+ * as it is: connectorPages puts the workspace's own relay in its place, or drops the block it is in.
+ */
+export const DEFAULT_CONNECTOR_ADDRESS = 'https://relay.interego.xwisee.com/mcp';
+/** A block the pages keep only where a chat assistant can connect (`connector`), or only where none can (`no-connector`). */
+const CONNECTOR_BLOCK = /<!--(no-)?connector-->([\s\S]*?)<!--\/\1connector-->/g;
+const CONNECTOR_MARK = /<!--\/?(?:no-)?connector-->/;
+
+/**
+ * What this workspace's web app offers a chat assistant, as the pages a person reads before signing
+ * in say it: the relay the web UI signs people in through (PEV_RELAY_URL), or null where the web UI
+ * offers no Interego sign-in.
+ */
+export interface ConnectorOption { readonly relayUrl: string }
+
+/**
+ * An escaped address as page text that wraps between its parts, never inside one: a break point
+ * (`<wbr>`) after `//` and before every other `/` and every `.`, so on a narrow screen
+ * `https://relay.example.test/mcp` breaks as `…example.test` and `/mcp`, not as `…/mc` and `p`.
+ * The text itself (what a person selects and copies) is unchanged.
+ */
+function wrappable(escaped: string): string {
+  return escaped.replace(/\/\/|[./]/g, (m) => (m === '//' ? '//<wbr>' : `<wbr>${m}`));
+}
+
+/**
+ * The landing page and the guide for this workspace's chat route. With `connector` null, every
+ * `connector` block goes and every `no-connector` block stays: copy and paste, and no connector
+ * address. Otherwise the reverse, with `<relayUrl>/mcp` as the connector address, written to break
+ * only between its parts on a narrow screen (wrappable). Throws when a page has no such block,
+ * leaves a mark unclosed, or keeps an address it should not (the files and this function changed
+ * apart), and when the relay is no http(s) address.
+ */
+export function connectorPages(pages: { readonly landing: string; readonly help: string }, connector: ConnectorOption | null): { readonly landing: string; readonly help: string } {
+  let address = '';
+  if (connector !== null) {
+    const u = new URL(connector.relayUrl);
+    if (u.protocol !== 'https:' && u.protocol !== 'http:') throw new Error('connectorPages: the relay is an http(s) address.');
+    // As the web app's Connect dialog writes it (connectorAddress in ui/app.js), so the two agree.
+    address = `${connector.relayUrl.replace(/\/+$/, '')}/mcp`;
+  }
+  const one = (html: string, what: string): string => {
+    let blocks = 0;
+    const out = html.replace(CONNECTOR_BLOCK, (_whole, no: string | undefined, body: string) => {
+      blocks += 1;
+      return (no === undefined) === (connector !== null) ? body : '';
+    });
+    if (blocks === 0 || CONNECTOR_MARK.test(out)) throw new Error(`connectorPages: the ${what} has no connector blocks, or one that is not closed.`);
+    if (connector === null) {
+      // A count of the static address's occurrences in page text, not a URL check (split, as below).
+      if (out.split(DEFAULT_CONNECTOR_ADDRESS).length > 1) throw new Error(`connectorPages: the ${what} shows a connector address outside a connector block.`);
+      return out;
+    }
+    return out.split(DEFAULT_CONNECTOR_ADDRESS).join(wrappable(attr(address)));
+  };
+  return { landing: one(pages.landing, 'landing page'), help: one(pages.help, 'guide') };
+}
+
+/**
  * Mount the landing page at / (browsers only), GET /ui, /ui/app.js, /ui/app.css, the guide at
  * /ui/help, its script and the favicon, and the Interego sign-in routes (or their refusals).
  * `contactUrl` (PEV_CONTACT_URL, checked with contactUrlOf: an https page or one mailto: address) is
- * where the pages' Contact links go.
+ * where the pages' Contact links go. What the pages offer a chat assistant (see connectorPages)
+ * follows `interego` and nothing else, as the web app's Connect dialog does: the connector, through
+ * the relay the web UI signs people in with, when it is set, and copy and paste only when it is
+ * not. A workspace that trusts a relay without naming it (no PEV_RELAY_URL) signs no one in here,
+ * so its pages, like its web app, offer copy and paste.
  */
 export function attachUi(app: Express, o: { readonly interego?: InteregoUiOptions; readonly contactUrl?: string } = {}): void {
-  const pages = contactPages(o.contactUrl);
+  const pages = connectorPages(contactPages(o.contactUrl), o.interego !== undefined ? { relayUrl: o.interego.relayUrl } : null);
   // First, so it runs before the factory's own GET / (registered after this hook); anything but a
   // browser's page request falls through to it unchanged.
   app.get('/', (req: Request, res: Response, next: NextFunction) => {

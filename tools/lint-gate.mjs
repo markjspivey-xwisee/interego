@@ -296,11 +296,10 @@ const UNLINTED_FRONTIER = {
   //    the pod-desktop Workspaces vertical (#741: workspace-service, workspace-types,
   //    workspaces-renderer, discord-workspaces, workspace-smoke and their five test modules) with
   //    #762's agent-note-scope adds 11 more, past the 1078 ceiling. All 11 lint clean.
-  //    1084 -> 1140 files, errors not raised: the Work Redesign chat-agent branch had grown the
-  //    root to 1139 inside the slack, and work-redesign's bridge/ui/site.js (the landing page's
-  //    and the guide's one script: their menu closes once a link in it is chosen) took it one
-  //    past. It lints clean.
-  applications: { errors: 1452, files: 1140 },
+  //    1084 -> 1146: current master plus the enrolled learning review/map/notification
+  //    modules cross the measured file-count slack. New modules lint clean; the
+  //    error ceiling and all lint targets remain unchanged.
+  applications: { errors: 1452, files: 1146 },
   // The controller comparison adds two lint-clean audit modules; the census is 46.
   // Re-pin the file floor to that measured count without raising the error ceiling.
   benchmarks: { errors: 193, files: 46 },

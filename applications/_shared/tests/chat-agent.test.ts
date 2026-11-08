@@ -222,7 +222,11 @@ describe('actPrompt', () => {
     expect(prompt).toContain('- action_iri: the action the step names, exactly as written');
     expect(prompt).toContain('- sign_payload: true or false, exactly as the step says');
     expect(prompt).toContain(`My storage address (pod_url): "${podUrl}"`);
-    expect(prompt).toContain(`Every signed payload carries a nonce: ${A.nonceRule}`);
+    // The nonce rule's example is made from this prompt's own first signed step, never another name,
+    // and that step has a turn (its payload carries turnIndex), so the example has a turn number.
+    expect(prompt).toContain('Every signed payload carries a nonce: nonce = the step name, the turn number (or 0), then 16 random letters or digits');
+    expect(prompt).toContain('For example save-lines-4-q8Xr2mVp7LkA9dTz, but make up new random letters for every call.');
+    expect(prompt).not.toContain('read-items');
   });
 
   it('says per step whether it is plain (arguments at top level, no nonce) or signed', () => {
@@ -288,13 +292,60 @@ describe('actPrompt', () => {
   });
 });
 
+/** Action IRIs of every shape a step name is made from: hyphens, slashes, a trailing slash, odd characters, a fragment, too long, none at all. */
+const NONCE_IRIS = [
+  'urn:example:action:a',
+  'urn:example:action:draft-something-long-packet',
+  'https://relay.example/ns/x/action/demo/counterpart-packet',
+  'https://relay.example/ns/x/action/demo/counterpart-packet/',
+  'urn:example:action:Record Turns!!',
+  'urn:example:action#fragment-step',
+  `urn:example:action:${'very-long-step-name-'.repeat(8)}`,
+  'urn:example:---',
+];
+
+/** The example nonce a prompt shows, when it shows one made from a step name. */
+const exampleNonceIn = (prompt: string): string | null => /For example ([A-Za-z0-9-]+), but make up/.exec(prompt)?.[1] ?? null;
+
 describe('the nonce rule', () => {
   it('composes step name, turn number and 16 random letters or digits with "-", never reused', () => {
     expect(A.nonceRule).toContain('nonce = the step name, the turn number (or 0), then 16 random letters or digits, joined by "-", never reused');
     expect(A.nonceRule).toContain('make up new random letters for every call');
-    const example = /For example ([A-Za-z0-9-]+),/.exec(A.nonceRule)?.[1] ?? '';
-    expect(example).toMatch(/^[a-z-]+-\d+-[A-Za-z0-9]{16}$/);
-    for (const re of SITE_NONCES) expect(example).toMatch(re);
+    // Published on its own, it names no step at all: the example is said in words.
+    expect(exampleNonceIn(A.nonceRule)).toBeNull();
+    expect(A.nonceRule).toContain("at turn 4 a step's nonce is that step's own name, then 4, then 16 letters or digits such as q8Xr2mVp7LkA9dTz");
+  });
+
+  it("a prompt's example nonce is made from its own first signed step, and passes both sites' checks", () => {
+    const affordancesUrl = 'https://s.example/affordances';
+    // A step with no turn (its payload has no turnIndex) is shown at turn 0, as the rule says
+    // ("the turn number, or 0"), so an assistant copying the example never copies a turn it lacks.
+    const p = A.actPrompt({ affordancesUrl, steps: [
+      { actionIri: 'urn:example:action:read-brief', signed: false },
+      { actionIri: 'urn:example:action:save-lines', signed: true },
+      { actionIri: 'urn:example:action:end-talk', signed: true },
+    ] });
+    expect(exampleNonceIn(p)).toBe('save-lines-0-q8Xr2mVp7LkA9dTz');
+    for (const payload of [{ v: 1, action: 'x' }, { turn: 3 }]) {
+      expect(exampleNonceIn(A.actPrompt({ affordancesUrl, steps: [{ actionIri: 'urn:example:action:judge-packet', signed: true, payload }] }))).toBe('judge-packet-0-q8Xr2mVp7LkA9dTz');
+    }
+    // A step whose payload carries a turnIndex (any value, a placeholder included) is shown at a turn number.
+    for (const turnIndex of ['<T, a number>', 0, 7]) {
+      expect(exampleNonceIn(A.actPrompt({ affordancesUrl, steps: [
+        { actionIri: 'urn:example:action:read-brief', signed: false, payload: { turnIndex: 1 } },
+        { actionIri: 'urn:example:action:save-lines', signed: true, payload: { v: 1, turnIndex } },
+      ] }))).toBe('save-lines-4-q8Xr2mVp7LkA9dTz');
+    }
+    for (const actionIri of NONCE_IRIS) {
+      const example = exampleNonceIn(A.actPrompt({ affordancesUrl, steps: [{ actionIri, signed: true }] })) ?? '';
+      expect(example, actionIri).toMatch(/^[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?-\d+-[A-Za-z0-9]{16}$/);
+      for (const re of SITE_NONCES) expect(example, actionIri).toMatch(re);
+    }
+    // No signed step, or no step at all (workspace details): the rule in words, naming no step.
+    for (const q of [A.actPrompt({ affordancesUrl, steps: [{ actionIri: 'urn:example:action:read-brief', signed: false }] }), A.actPrompt({ affordancesUrl })]) {
+      expect(q).toContain(`Every signed payload carries a nonce: ${A.nonceRule}`);
+      expect(exampleNonceIn(q)).toBeNull();
+    }
   });
 
   it('read both sites\' nonce checks', () => {
@@ -302,17 +353,7 @@ describe('the nonce rule', () => {
   });
 
   it('every nonce made from a step\'s template passes both sites\' checks, whatever the step name or turn', () => {
-    const iris = [
-      'urn:example:action:a',
-      'urn:example:action:draft-something-long-packet',
-      'https://relay.example/ns/x/action/demo/counterpart-packet',
-      'https://relay.example/ns/x/action/demo/counterpart-packet/',
-      'urn:example:action:Record Turns!!',
-      'urn:example:action#fragment-step',
-      `urn:example:action:${'very-long-step-name-'.repeat(8)}`,
-      'urn:example:---',
-    ];
-    for (const actionIri of iris) {
+    for (const actionIri of NONCE_IRIS) {
       const [payload] = payloadsOf(A.actPrompt({ affordancesUrl: 'https://s.example/affordances', steps: [{ actionIri, signed: true }] }));
       const template = String(payload?.nonce);
       const step = template.slice(0, template.indexOf('-<turn number'));

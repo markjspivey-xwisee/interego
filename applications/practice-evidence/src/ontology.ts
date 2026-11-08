@@ -9,9 +9,12 @@
  * PEV_ACTION is the one table of action IRIs. affordances.ts declares each affordance with
  * `action: PEV_ACTION.<key>`, and the handlers check every envelope's `payload.action` against the
  * same constant, so a person signs for exactly one act and an envelope cannot be replayed at
- * another.
+ * another. An action's web-address form (https://…/ns/iep/action/pev/<verb>, the form a published
+ * manifest may advertise) names the same act as its urn: both are read with the core's
+ * `sameAction`, so an agent that signs the form it read from the manifest is not refused for it.
  */
 import { readFileSync } from 'node:fs';
+import { actionUrn, isActionIri } from '@interego/core';
 
 export const PEV_NS = 'https://markjspivey-xwisee.github.io/interego/applications/practice-evidence/pev#';
 export const PEV_ONTOLOGY_IRI = 'https://markjspivey-xwisee.github.io/interego/applications/practice-evidence/pev';
@@ -66,9 +69,13 @@ export function toolNameOf(action: string): string | null {
   return `pev.${tail.split('-').join('_')}`;
 }
 
-/** True for an IRI in the pev action family (used to refuse signing anything else). */
+/**
+ * True for an IRI in the pev action family, in its urn form or its web-address form (used to
+ * refuse signing anything else). The two forms are the core's action identity
+ * (packages/core/src/kernel/action-identity.ts): `actionUrn` maps either to the urn.
+ */
 export function isPevAction(action: unknown): action is string {
-  return typeof action === 'string' && toolNameOf(action) !== null;
+  return typeof action === 'string' && isActionIri(action) && toolNameOf(actionUrn(action)) !== null;
 }
 
 /** Read a canonical Turtle artifact from the sibling ontology/ directory, from source or a build. */

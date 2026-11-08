@@ -8,6 +8,9 @@ import { LearningProviderError } from './i2idlx-learning-provider.js';
 import { LearningContextService, LearningContextError } from './i2idlx-learning-context.js';
 import { LearningLtiManager, LearningLtiError } from './i2idlx-learning-lti.js';
 import { LearningLaunchService, LearningLaunchError } from './i2idlx-learning-launch.js';
+import { LearningMapError } from './i2idlx-learning-map.js';
+import { LearningJourneyService } from './i2idlx-learning-journey.js';
+import { LearningProgressNotifications, LearningNotificationsError } from './i2idlx-learning-notifications.js';
 import type { AgentSessionStore } from './i2idlx-agent-sessions.js';
 import type { ClientTaskConfig } from './i2idlx-client-tasks.js';
 
@@ -22,7 +25,7 @@ export interface LearningRoutesConfig extends LearningAccountAuthConfig {
 const object = (v: unknown): v is Row => !!v && typeof v === 'object' && !Array.isArray(v);
 function fail(res: Response, cause: unknown): void {
   const known = cause instanceof LearningAuthError || cause instanceof LearningConnectionsError || cause instanceof LearningRepositoryError
-    || cause instanceof LearningProviderError || cause instanceof LearningContextError || cause instanceof LearningLtiError || cause instanceof LearningLaunchError;
+    || cause instanceof LearningProviderError || cause instanceof LearningContextError || cause instanceof LearningLtiError || cause instanceof LearningLaunchError || cause instanceof LearningMapError || cause instanceof LearningNotificationsError;
   const code = known ? cause.code : 'learning_operation_unavailable';
   res.status(known ? cause.status : 503).set('Cache-Control', 'no-store').set('X-Content-Type-Options', 'nosniff').json({ error: code, code });
 }
@@ -38,7 +41,10 @@ export function attachLearningRoutes(app: Express, config: LearningRoutesConfig)
   const launch = new LearningLaunchService({ baseUrl: config.baseUrl, auth, connections, fetch: config.fetch, now: config.now });
   const context = new LearningContextService({ auth, connections, sessions: config.sessions, taskConfig: config.taskConfig, fetch: config.fetch, now: config.now, navigation: launch });
   const lti = new LearningLtiManager({ baseUrl: config.baseUrl, store: connections, auth, fetch: config.fetch, now: config.now });
+  const journey = new LearningJourneyService({ auth, connections, navigation: launch, fetch: config.fetch, now: config.now });
+  const notifications = new LearningProgressNotifications({ baseUrl: config.baseUrl, auth, connections, fetch: config.fetch, now: config.now });
   attachLearningAccountRoutes(app, auth); lti.attachRoutes(app);
+  notifications.attachRoutes(app);
   let active = 0;
   const enter = () => { if (active >= 16) throw new LearningConnectionsError(429, 'learning_busy'); active++; };
   const reply = (res: Response, value: unknown) => res.set('Cache-Control', 'no-store').set('X-Content-Type-Options', 'nosniff').json(value);
@@ -48,6 +54,21 @@ export function attachLearningRoutes(app: Express, config: LearningRoutesConfig)
       enter(); admitted = true;
       const principal = await auth.resolve(req); auth.assertMutation(req, principal);
       const body = argumentsOf(req), operation = body.operation;
+      if (operation === 'course-readiness' || operation === 'quiz-review') { reply(res, await journey.request(principal, body)); return; }
+      if (['enable-progress-notifications', 'disable-progress-notifications', 'progress-notification-status'].includes(String(operation))) {
+        const result = await notifications.request(principal, body);
+        if (operation !== 'progress-notification-status' && typeof body.link_id === 'string') { context.invalidateLink(body.link_id); launch.invalidateLink(body.link_id); }
+        reply(res, result); return;
+      }
+      if (operation === 'revoke-link' && typeof body.link_id === 'string') {
+        if (Object.keys(body).some(key => !['operation', 'link_id'].includes(key))) throw new LearningConnectionsError(400, 'learning_request_invalid');
+        if ((await connections.readLink(body.link_id))?.notifications) await notifications.cleanupLink(principal, body.link_id);
+      }
+      if ((operation === 'revoke-connector' || operation === 'set-notification-policy' && body.allowProgressNotifications === false) && typeof body.connector_id === 'string') {
+        const allowed = operation === 'revoke-connector' ? ['operation', 'connector_id'] : ['operation', 'connector_id', 'allowProgressNotifications', 'confirmed'];
+        if (Object.keys(body).some(key => !allowed.includes(key)) || operation === 'set-notification-policy' && body.confirmed !== true) throw new LearningConnectionsError(400, 'learning_request_invalid');
+        if ((await connections.readConnectorLinks(body.connector_id)).some(link => link.notifications)) await notifications.cleanupConnector(principal, body.connector_id);
+      }
       if (['prepare-lti', 'install-lti', 'remove-lti'].includes(String(operation))) {
         if (Object.keys(body).some(k => !['operation', 'connector_id'].includes(k)) || typeof body.connector_id !== 'string') throw new LearningConnectionsError(400, 'learning_request_invalid');
         const value = operation === 'prepare-lti' ? await lti.prepare(principal, body.connector_id)
@@ -61,8 +82,8 @@ export function attachLearningRoutes(app: Express, config: LearningRoutesConfig)
         if (removed.state !== 'removed') throw new LearningLtiError(409, 'learning_lti_cleanup_required');
       }
       const result = await connections.request(principal, body);
-      if (operation === 'revoke-link' && typeof body.link_id === 'string') { context.invalidateLink(body.link_id); launch.invalidateLink(body.link_id); }
-      if (['revoke-connector', 'set-targeted-launch-policy'].includes(String(operation)) && typeof body.connector_id === 'string') { context.invalidateConnector(body.connector_id); launch.invalidateConnector(body.connector_id); }
+      if (operation === 'revoke-link' && typeof body.link_id === 'string') { context.invalidateLink(body.link_id); launch.invalidateLink(body.link_id); notifications.invalidateLink(body.link_id); }
+      if (['revoke-connector', 'set-targeted-launch-policy', 'set-review-policy', 'set-notification-policy', 'save-course-map', 'delete-course-map'].includes(String(operation)) && typeof body.connector_id === 'string') { context.invalidateConnector(body.connector_id); launch.invalidateConnector(body.connector_id); notifications.invalidateConnector(body.connector_id); }
       if (operation === 'owned-connectors' && object(result) && Array.isArray(result.connectors)) {
         for (const connector of result.connectors) if (object(connector) && typeof connector.id === 'string') {
           connector.lti = connector.status === 'active' ? await lti.status(principal, connector.id) : null;
