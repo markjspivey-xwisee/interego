@@ -7,7 +7,9 @@
  *                         (./ui/landing.html, filled by landing.ts, prefersHtml); everyone else falls
  *                         through to the factory's JSON-LD / HMD entry point, unchanged
  *   GET /ui               the HTML shell of the app — no inline script, no inline style, no style attribute
- *   GET /ui/app.js        the browser client (./ui/app.js)
+ *   GET /ui/app.js        the browser client: the shared chat-agent helpers (chatAgentJs(), from
+ *                         applications/_shared/chat-agent) followed by ./ui/app.js, as ONE module
+ *                         text, so the shell keeps its single script and app.js imports nothing
  *   GET /ui/app.css       the design system plus bridge/ui/app.css, including the print layout for one decision
  *   GET /ui/help          the guide (./ui/help.html): how to use Work Redesign, by role; no script
  *   GET /ui/favicon.svg   the Interego mark
@@ -84,6 +86,7 @@ import { isEnvelopeIntent } from '../src/payloads.js';
 import { openRelayDelegated, relayEnvelopeOf, type RelayDelegationPolicy } from '../src/relay-delegated.js';
 import { cappedText, type CappedAnswer } from './relay-sign-in.js';
 import { designSystemCss } from '../../_shared/design-system/index.js';
+import { chatAgentJs } from '../../_shared/chat-agent/index.js';
 import { FAVICON_SVG, prefersHtml, renderSitePage, siteValues, SIBLING, type LandingOptions } from './landing.js';
 
 export const UI_CSP = "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' data:; form-action 'self'; base-uri 'none'; frame-ancestors 'none'";
@@ -91,7 +94,19 @@ export const UI_CSP = "default-src 'none'; script-src 'self'; style-src 'self'; 
 /** HTML-safe text for an attribute or element body (the shell interpolates the base URL, its loading line and the sibling's address). */
 const htmlText = (s: string): string => s.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
 
-function shell(base: string, loading = 'Loading Work Redesign…', siblingUrl: string = SIBLING.url, reads?: UiReads): string {
+/**
+ * The address a person adds to Claude or ChatGPT as the Interego connector (the relay's MCP endpoint),
+ * which the app's "Use your AI assistant" panel shows: only when this bridge takes the acts that relay
+ * signs (a relay URL, and a relay trusted). Otherwise undefined, the shell names no connector, and the
+ * panel offers copy and paste only: a connector set up then could never act here.
+ */
+export function connectorUrlOf(signIn?: UiSignIn): string | undefined {
+  if (!signIn || signIn.policy === null) return undefined;
+  const relay = signIn.relayUrl.replace(/\/$/, '');
+  return relay === '' ? undefined : `${relay}/mcp`;
+}
+
+function shell(base: string, loading = 'Loading Work Redesign…', siblingUrl: string = SIBLING.url, reads?: UiReads, connector?: string): string {
   const b = htmlText(base);
   return [
     '<!doctype html>',
@@ -106,6 +121,8 @@ function shell(base: string, loading = 'Loading Work Redesign…', siblingUrl: s
     `<meta name="wrd-sibling-url" content="${htmlText(siblingUrl)}">`,
     // Told how this bridge answers reads, the page asks for no unsigned read it knows is refused (401).
     reads ? `<meta name="wrd-reads" content="${reads}">` : null,
+    // The Interego connector's address, for the app's "Use your AI assistant" panel (connectorUrlOf): absent, it offers copy and paste only.
+    connector ? `<meta name="wrd-connector" content="${htmlText(connector)}">` : null,
     '<link rel="icon" href="/ui/favicon.svg" type="image/svg+xml">',
     '<link rel="stylesheet" href="/ui/app.css">',
     `<link rel="alternate" type="text/turtle" href="${b}/affordances" title="Action manifest for AI agents">`,
@@ -142,17 +159,19 @@ export type UiReads = 'signed' | 'public';
  * entry point). `base` is the bridge's public base URL; `signIn`, the relay a person signs in
  * through (absent: every sign-in route says it is not set up, and the page offers no sign-in);
  * `landing`, the contact link, legal name, sibling address and record sealing the pages show (defaults
- * in landing.ts); `reads`, how the bridge answers reads (absent: the page asks, as before).
+ * in landing.ts); `reads`, how the bridge answers reads (absent: the page asks, as before). The shell
+ * names the Interego connector (connectorUrlOf) only when `signIn` has a relay this bridge trusts.
  */
 export function attachUi(app: Express, opts: { readonly base: string; readonly signIn?: UiSignIn; readonly landing?: LandingOptions; readonly reads?: UiReads }): void {
-  const appJs = readFileSync(new URL('./ui/app.js', import.meta.url), 'utf8');
+  // One module text: the shared helpers declare one name (InteregoChatAgent), which app.js uses and never redeclares.
+  const appJs = `${chatAgentJs()}\n${readFileSync(new URL('./ui/app.js', import.meta.url), 'utf8')}`;
   const appCss = `${designSystemCss()}\n${readFileSync(new URL('./ui/app.css', import.meta.url), 'utf8')}`;
   const base = opts.base.replace(/\/$/, '');
   const values = siteValues({ base, ...(opts.signIn ? { signIn: opts.signIn } : {}), ...(opts.landing ? { landing: opts.landing } : {}) });
   const siblingUrl = values['sibling_url'] ?? SIBLING.url;
   const landingPage = renderSitePage(readFileSync(new URL('./ui/landing.html', import.meta.url), 'utf8'), values);
   const helpPage = renderSitePage(readFileSync(new URL('./ui/help.html', import.meta.url), 'utf8'), values);
-  const html = shell(base, undefined, siblingUrl, opts.reads);
+  const html = shell(base, undefined, siblingUrl, opts.reads, connectorUrlOf(opts.signIn));
   app.get('/ui', (_req, res) => { secure(res); res.type('text/html; charset=utf-8').send(html); });
   app.get('/ui/app.js', (_req, res) => { secure(res); res.type('text/javascript; charset=utf-8').send(appJs); });
   app.get('/ui/app.css', (_req, res) => { secure(res); res.type('text/css; charset=utf-8').send(appCss); });
@@ -519,7 +538,7 @@ export function attachInteregoSignIn(app: Express, opts: { readonly base: string
   let baseHost = '';
   try { baseHost = new URL(base).host.toLowerCase(); } catch { baseHost = ''; }
   const callbackUrl = `${base}${SIGN_IN_PATHS.callback}`;
-  const callbackHtml = shell(base, 'Finishing sign-in with your Interego account…', opts.siblingUrl ?? SIBLING.url, opts.reads);
+  const callbackHtml = shell(base, 'Finishing sign-in with your Interego account…', opts.siblingUrl ?? SIBLING.url, opts.reads, connectorUrlOf(opts.signIn));
   app.get(SIGN_IN_PATHS.callback, (_req, res) => { secure(res); res.type('text/html; charset=utf-8').send(callbackHtml); });
 
   const signIn = opts.signIn;

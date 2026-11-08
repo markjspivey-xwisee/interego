@@ -37,16 +37,19 @@ import { createHash, randomBytes } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import express from 'express';
 import { JSDOM, VirtualConsole } from 'jsdom';
-import { importWallet, sha256Hex, signMessageRaw } from '@interego/core';
+import { canonicalJson, importWallet, sha256Hex, signMessageRaw } from '@interego/core';
 import { createVerticalBridge } from '../../_shared/vertical-bridge/index.js';
+import { chatAgentJs } from '../../_shared/chat-agent/index.js';
 import { listenLoopback, type TestListener } from '../../_shared/vertical-bridge/listen-loopback.js';
 import { wrdAffordances } from '../affordances.js';
 import { createWrdHandlers } from '../bridge/handlers.js';
 import { attachUi, parseEveryQueryPair, SIGN_IN_CLIENT_NAME, UI_CSP, type RelayLimits, type UiSignIn } from '../bridge/ui.js';
 import { memoryPod, demoClock, DEMO_POD, DEMO_RECORD_KEY } from '../demo/run.js';
 import type { RelayDelegationPolicy } from '../src/relay-delegated.js';
+import { jargonIn, visibleText } from './plain-words.js';
 
-const APP_JS = readFileSync(new URL('../bridge/ui/app.js', import.meta.url), 'utf8');
+/** /ui/app.js as the bridge serves it: the shared chat-agent helpers, then the app (bridge/ui.ts). */
+const APP_JS = `${chatAgentJs()}\n${readFileSync(new URL('../bridge/ui/app.js', import.meta.url), 'utf8')}`;
 const listeners: TestListener[] = [];
 const windows: Array<{ close(): void }> = [];
 afterAll(async () => {
@@ -58,6 +61,7 @@ afterAll(async () => {
 type Obj = Record<string, unknown>;
 const isObj = (v: unknown): v is Obj => typeof v === 'object' && v !== null && !Array.isArray(v);
 const objOf = (v: unknown): Obj => (isObj(v) ? v : {});
+const must = <T>(v: T | null | undefined, what: string): T => { if (v === null || v === undefined) throw new Error(`missing ${what}`); return v; };
 const hex = (n: number): string => randomBytes(n).toString('hex');
 const b64urlSha256 = (s: string): string => createHash('sha256').update(s, 'utf8').digest('base64url');
 
@@ -275,6 +279,8 @@ interface World {
 /** A bridge on loopback whose UI signs in through a stub relay; the person is an admin by their user DID. */
 async function world(o: {
   readonly deployed?: string; readonly cimd?: boolean; readonly signIn?: 'on' | 'no-relay-trusted' | 'off'; readonly admin?: boolean;
+  /** Register the person, by their user DID, as a process lead and a team member, with one type of task (signed by a key admin, before the page opens). */
+  readonly lead?: boolean;
   /** The sign-in routes' relay limits and their clock, and whether the app trusts one proxy hop (as server.ts does off loopback), so X-Forwarded-For names the client. */
   readonly limits?: Partial<RelayLimits>; readonly now?: () => number; readonly trustProxy?: boolean;
 } = {}): Promise<World> {
@@ -288,11 +294,22 @@ async function world(o: {
   const signIn: UiSignIn | undefined = o.signIn === 'off' ? undefined : {
     relayUrl: relay.base, policy: o.signIn === 'no-relay-trusted' ? null : policy, ...(o.limits ? { limits: o.limits } : {}), ...(o.now ? { now: o.now } : {}),
   };
+  const keyAdmin = importWallet(`0x${sha256Hex('wrd-sign-in-test:key-admin')}`, 'human', 'key-admin');
   const handlers = createWrdHandlers({
     fetchFn: pod.fetchFn, defaultPodUrl: DEMO_POD, now: () => clock.now(), recordKey: DEMO_RECORD_KEY,
     platform: { wallet: importWallet(`0x${sha256Hex('wrd-sign-in-test:platform')}`, 'agent', 'wrd-platform'), keyKind: 'demo' },
     adminDids: o.admin === false ? [] : [PERSON], relayDelegation: { ...policy, chatAgentsDecide: false, relayUrl: relay.base },
+    ...(o.lead === true ? { adminAddresses: [keyAdmin.address] } : {}),
   });
+  if (o.lead === true) {
+    const registry = {
+      intent: 'wrd:update-registry', podUrl: DEMO_POD, issuedAt: clock.now().toISOString(), nonce: 'sign-in-lead-registry-1',
+      entries: [{ address: PERSON, roles: ['operator', 'worker'], label: 'Pat', softwareAgent: false, personRef: 'p-pat' }],
+      taskKinds: [{ slug: 'invoice-matching', label: 'Invoice matching', definition: 'Match an invoice to its purchase order.' }],
+    };
+    const r = objOf(await handlers['wrd.update_registry']!({ envelope: { payload: registry, signature: await signMessageRaw(keyAdmin, canonicalJson(registry)) } }));
+    expect(r['status']).toBe('registered');
+  }
   const l = await listenLoopback(createVerticalBridge({
     verticalName: 'work-redesign', affordances: wrdAffordances, handlers, deploymentUrl: deployed,
     middleware: (a) => {
@@ -1067,4 +1084,116 @@ describe('work-redesign web UI: sign in with your Interego account', () => {
     expect(page.text()).not.toContain(SIGN_IN);
     expect(page.errors).toEqual([]);
   }, 60_000);
+
+  it('names the Interego connector in the shell only where a chat assistant\'s acts are taken: the relay\'s /mcp when it is trusted, nothing with no relay URL or no relay trusted', async () => {
+    const on = await world();
+    for (const path of ['/ui', '/ui/oauth/callback']) {
+      const shell = await (await fetch(`${on.bridge}${path}`)).text();
+      expect([path, shell.match(/<meta name="wrd-connector"[^>]*>/g)]).toEqual([path, [`<meta name="wrd-connector" content="${on.relay.base}/mcp">`]]);
+      expect(shell.match(/<script/g)).toHaveLength(1);
+    }
+    for (const signIn of ['off', 'no-relay-trusted'] as const) {
+      const w = await world({ signIn });
+      for (const path of ['/ui', '/ui/oauth/callback']) expect([signIn, path, (await (await fetch(`${w.bridge}${path}`)).text()).includes('wrd-connector')]).toEqual([signIn, path, false]);
+    }
+  }, 60_000);
+
+  it('a process lead signed in with Interego connects their own AI assistant: the panel shows the connector and copies the workspace details, the document route copies one message that records the map from the chat, a document too long for a chat is held back, and nothing on screen is protocol words', async () => {
+    const w = await world({ lead: true });
+    const page = await openPage(w.bridge, '/ui', { [SESSION_KEY]: JSON.stringify({ token: w.relay.mint(), expiresAt: new Date(Date.now() + 3600_000).toISOString() }) });
+    await page.until(() => page.text().includes(`Signed in as ${PERSON} via ${agentOf('work-redesign')}`) && page.text().includes('Map and change your process'), 'the signed-in lead');
+    const copied: string[] = [];
+    Object.defineProperty(page.window.navigator, 'clipboard', { value: { writeText: async (s: string) => { copied.push(s); } }, configurable: true });
+    const d = page.window.document;
+    const panelShown = (): boolean => d.getElementById('panel-title')?.textContent === 'Use your own AI assistant';
+    const byLabel = (label: string): HTMLButtonElement => {
+      const b = [...d.querySelectorAll('button')].find((x) => x.getAttribute('aria-label') === label);
+      if (!b) throw new Error(`no button labelled "${label}"`);
+      return b as HTMLButtonElement;
+    };
+
+    // Home offers it as an optional step; the account menu has it too. Either opens the same panel.
+    expect([...d.querySelectorAll('.checklist__item')].some((li) => li.textContent?.includes('Connect Claude or ChatGPT'))).toBe(true);
+    expect([...d.querySelectorAll('#account-menu button')].some((b) => b.textContent === 'Use your AI assistant')).toBe(true);
+    page.click('Use your AI assistant');
+    await page.until(panelShown, 'the panel');
+    const panel = must(d.querySelector('.chat-panel'), 'the panel body');
+    // The connector address and the workspace address are field values (never words on screen), each with its own Copy.
+    const values = [...panel.querySelectorAll('input')].map((i) => (i as HTMLInputElement).value);
+    expect(values).toEqual([`${w.relay.base}/mcp`, `${w.relay.base}/mcp`, DEPLOYED]);
+    expect([...panel.querySelectorAll('input')].every((i) => (i as HTMLInputElement).readOnly)).toBe(true);
+    // Two set-ups, one per app: Claude's shown, ChatGPT's hidden until its tab is chosen.
+    const tabs = [...panel.querySelectorAll('[role="tab"]')];
+    expect(tabs.map((t) => [t.textContent, t.getAttribute('aria-selected')])).toEqual([['In Claude', 'true'], ['In ChatGPT', 'false']]);
+    expect((d.getElementById('chat-setup-chatgpt') as HTMLElement).hidden).toBe(true);
+    (tabs[1] as HTMLButtonElement).click();
+    expect((d.getElementById('chat-setup-chatgpt') as HTMLElement).hidden).toBe(false);
+    expect((d.getElementById('chat-setup-claude') as HTMLElement).hidden).toBe(true);
+    expect(d.getElementById('chat-setup-chatgpt')?.textContent).toContain('If you don\'t see the option, use copy and paste instead');
+    const seen = visibleText(d);
+    for (const s of ['Work Redesign runs no AI of its own and never asks for an API key', 'the company behind your assistant sees it too', 'What stays in the Work Redesign app', 'Your assistant asks; you answer.', 'Add people by their Interego ID']) expect(seen, s).toContain(s);
+    expect(jargonIn(seen)).toEqual([]);
+
+    byLabel('Copy the connector address').click();
+    await page.until(() => copied.length === 1, 'the connector address copied');
+    expect(copied[0]).toBe(`${w.relay.base}/mcp`);
+    page.click('Copy workspace details');
+    await page.until(() => copied.length === 2, 'the workspace details copied');
+    const details = String(copied[1]);
+    for (const s of [`My Work Redesign workspace: ${DEPLOYED}`, `descriptor_url: "${DEPLOYED}/affordances"`, `My storage address (pod_url): "${DEMO_POD}"`, `"podUrl":"${DEMO_POD}"`, 'urn:iep:action:wrd:read-records', 'urn:iep:action:wrd:read-envelope-template',
+      'except urn:iep:action:wrd:task-map-packet, which takes plain arguments (sign_payload false)', 'nonce = the step name', 'done in the Work Redesign app, not from a chat']) expect(details, s).toContain(s);
+    // Each starter is copied whole; its text is previewed only inside a closed disclosure.
+    byLabel('Copy: Go through the seven questions with me').click();
+    await page.until(() => copied.length === 3, 'the starter copied');
+    expect(copied[2]).toContain('never answer for me');
+    expect(copied[2]).toContain('urn:iep:action:wrd:classify-task');
+    byLabel('Copy: Propose and price a plan').click();
+    await page.until(() => copied.length === 4, 'the second starter copied');
+    expect(copied[3]).toContain('Use only numbers I give you');
+    // Every action a copied text names is one this workspace declares.
+    const declared = new Set(wrdAffordances.map((a) => String(a.action)));
+    expect([...copied.join('\n').matchAll(/urn:iep:action:wrd:[a-z-]+/g)].map((m) => m[0]).filter((a) => !declared.has(a))).toEqual([]);
+
+    // A wallet signer or the read-only page gets no chat set-up: an assistant acts as the Interego account.
+    const panelFor = page.window.eval('chatPanel') as (mode: string) => HTMLElement;
+    for (const mode of ['wallet', 'readonly']) {
+      const other = panelFor(mode);
+      expect([mode, other.textContent]).toEqual([mode, expect.stringContaining('Your AI assistant acts as your Interego account, not your wallet.')]);
+      expect([mode, other.querySelector('input'), other.textContent?.includes('Set it up once')]).toEqual([mode, null, false]);
+      expect([mode, other.textContent]).toEqual([mode, expect.stringContaining('Draft a map with copy and paste')]);
+    }
+
+    // Map a process from a document: the chat route copies ONE message that carries the steps and the document itself.
+    page.click('Map a process');
+    await page.until(() => d.querySelector('input[name="capture-mode"]'), 'the capture view');
+    (d.querySelectorAll('input[name="capture-mode"]')[1] as HTMLInputElement).click();
+    await page.until(() => page.text().includes('Have your AI draft the map'), 'the document route');
+    expect(page.text()).toContain('In Claude or ChatGPT (recommended)');
+    const docText = 'Supplier invoices arrive by email. The clerk matches each invoice to its purchase order and the goods receipt before approval.';
+    page.fill(must(d.querySelector('[data-path="document.title"]'), 'the title field'), 'AP-SOP-014');
+    page.fill(must(d.querySelector('[data-path="document.text"]'), 'the text field'), docText);
+    page.click('Copy the message for my assistant');
+    await page.until(() => copied.length === 5, 'the chat message copied');
+    const message = String(copied[4]);
+    for (const s of ['urn:iep:action:wrd:task-map-packet', 'urn:iep:action:wrd:read-records', 'urn:iep:action:wrd:record-task-map', 'sign_payload: false', 'sign_payload: true',
+      '"storeText":true', 'request.documentSha256', 'Ignore their note about pasting the draft into the capture table', '"document_title":"AP-SOP-014"', `"pod_url":"${DEMO_POD}"`,
+      `----- DOCUMENT: AP-SOP-014 -----\n${docText}\n----- END OF DOCUMENT -----`]) expect(message, s).toContain(s);
+    // Each level the map may name, exactly as the bridge takes it.
+    for (const level of ['"person"', '"person-with-agent-assist"', '"agent-drafts-person-decides"', '"agent-acts-person-audits"']) expect(message, level).toContain(level);
+    expect(message).not.toContain('agent-acts-within-grant');
+    expect([...message.matchAll(/urn:iep:action:wrd:[a-z-]+/g)].map((m) => m[0]).filter((a) => !declared.has(a))).toEqual([]);
+    // Copying it signed nothing and sent nothing.
+    expect(page.log.filter((r) => r.path === '/wrd/record_task_map' || r.path === '/wrd/task_map_packet')).toEqual([]);
+    expect(jargonIn(visibleText(d))).toEqual([]);
+
+    // A document longer than a chat can record is held back, with the reason, and copy and paste stays.
+    page.fill(must(d.querySelector('[data-path="document.text"]'), 'the text field'), 'x'.repeat(20_001));
+    page.click('Copy the message for my assistant');
+    await page.until(() => page.text().includes('This document is too long to record from a chat. Use Copy and paste.'), 'the length note');
+    expect(copied).toHaveLength(5);
+    const chatButton = [...d.querySelectorAll('button')].find((b) => b.textContent === 'Copy the message for my assistant') as HTMLButtonElement;
+    expect(chatButton.disabled).toBe(true);
+    expect([...d.querySelectorAll('button')].some((b) => b.textContent === 'Copy the message for my AI' && !(b as HTMLButtonElement).disabled)).toBe(true);
+    expect(page.errors).toEqual([]);
+  }, 90_000);
 });

@@ -1,5 +1,32 @@
 # Changelog
 
+## 2026-11-08 — Work Redesign: use your own Claude or ChatGPT, or copy and paste
+
+Work Redesign still runs no model and asks for no key; the web app now lets
+people bring their own assistant. The account menu has "Use your AI
+assistant": how to add the Interego connector in Claude or in ChatGPT (the
+address in a readonly field with Copy), this workspace's details to copy into
+a chat once, and copy-only starters for the seven questions and for plans,
+which tell the assistant never to answer for the person and to use only the
+person's own numbers. It is offered only to someone signed in with their
+Interego account on a bridge that trusts a relay; the shell names the
+connector only then. A wallet signer, the read-only page, a bridge with
+sign-in off and the demo are told why and offered copy and paste.
+
+Mapping a process from a document now has two routes. In Claude or ChatGPT,
+one copied message carries the document and the exact steps: get the
+drafting instructions (plain), read who is registered (signed), confirm the
+draft with the person, then record the map (signed, storing the document's
+text). The app offers it only to process leads and only for documents up to
+20,000 characters, since the signed payload has a size cap. Copy and paste now
+copies plain text with a one-object reply rule instead of the packet's JSON,
+reads the pasted answer through code fences and surrounding words, and lets
+the person say who drafted the map, which is signed as chosen. `/ui/app.js` is
+served as the shared chat-agent helpers followed by the app, as one module.
+The landing page, guide and README say what the assistant's provider and the
+connector see, add the "Teams without an AI assistant" limit, and mark the
+bridge's own `/mcp` as a developer endpoint, not the connector.
+
 ## 2026-11-08 — Shared helpers for connecting your own chat assistant
 
 New `applications/_shared/chat-agent/`: the text helpers Practice Evidence and

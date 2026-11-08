@@ -32,15 +32,17 @@
  * still offered their copy, and a line cut by a platform key no longer trusted is named in the health callout.
  */
 import { describe, it, expect, afterAll } from 'vitest';
-import { spawn } from 'node:child_process';
-import { readFileSync, readdirSync } from 'node:fs';
+import { spawn, spawnSync } from 'node:child_process';
+import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { request } from 'node:http';
+import { tmpdir } from 'node:os';
 import { join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { NextFunction, Request, Response } from 'express';
 import { JSDOM, VirtualConsole } from 'jsdom';
 import { importWallet, sha256Hex, signMessageRaw, canonicalJson, parseTrig, followAffordance } from '@interego/core';
 import { createVerticalBridge } from '../../_shared/vertical-bridge/index.js';
+import { chatAgentJs } from '../../_shared/chat-agent/index.js';
 import { listenLoopback, type TestListener } from '../../_shared/vertical-bridge/listen-loopback.js';
 import { wrdAffordances, wrdDemoAffordances } from '../affordances.js';
 import { createWrdHandlers } from '../bridge/handlers.js';
@@ -49,9 +51,11 @@ import { runDemo, memoryPod, demoClock, DEMO_REFUSALS, DEMO_POD, DEMO_HOLDER_POD
 import { h16, entityIriKey, iriKeyFingerprint } from '../src/records.js';
 import { walkManifest } from '../bridge/pod-helpers.js';
 import { parseRelaySignIn, cappedDidDocumentGet, didDocumentFetcher, DID_DOCUMENT_MAX_BYTES } from '../bridge/relay-sign-in.js';
+import { jargonIn, visibleText } from './plain-words.js';
 
 const read = (rel: string): string => readFileSync(new URL(rel, import.meta.url), 'utf8').split('\r\n').join('\n');
-const APP_JS = readFileSync(new URL('../bridge/ui/app.js', import.meta.url), 'utf8');
+/** /ui/app.js as the bridge serves it: the shared chat-agent helpers, then the app (bridge/ui.ts). */
+const APP_JS = `${chatAgentJs()}\n${readFileSync(new URL('../bridge/ui/app.js', import.meta.url), 'utf8')}`;
 const listeners: TestListener[] = [];
 afterAll(async () => { for (const l of listeners) await l.close(); });
 
@@ -102,6 +106,7 @@ function hostRequest(port: number, method: 'GET' | 'POST', path: string, host: s
 }
 
 interface UiPage {
+  readonly window: JSDOM['window'];
   readonly log: Array<{ method: string; path: string; query: string; status: number; body: Record<string, unknown> }>;
   readonly errors: string[];
   /** The files the page handed the browser to save (URL.createObjectURL), in order. */
@@ -145,7 +150,7 @@ async function openUi(base: string): Promise<UiPage> {
   w.eval(APP_JS);
   const d = w.document;
   return {
-    log, errors, saved,
+    window: w, log, errors, saved,
     readSaved: (i) => new Promise<string>((resolve, reject) => {
       const blob = saved[i];
       if (!blob) { reject(new Error(`no saved file ${i}`)); return; }
@@ -536,6 +541,18 @@ describe('work-redesign offline demo and web UI', () => {
     expect(shell.match(/<script/g)).toHaveLength(1);   // the one external module, nothing inline
 
     expect(bodies['/ui/app.js']).toBe(APP_JS);
+    // One module text: the shared chat-agent helpers first, then the app, which never redeclares their one name.
+    expect(APP_JS.startsWith(`${chatAgentJs()}\n`)).toBe(true);
+    expect(readFileSync(new URL('../bridge/ui/app.js', import.meta.url), 'utf8')).not.toMatch(/\b(?:const|let|var|function|class)\s+InteregoChatAgent\b|^\s*(?:import|export)\b/m);
+    // Parsed as the browser parses it, a module (a duplicate top-level name is an early error there that the classic-script harnesses cannot see).
+    const dir = mkdtempSync(join(tmpdir(), 'wrd-app-js-'));
+    try {
+      writeFileSync(join(dir, 'app.mjs'), bodies['/ui/app.js'] ?? '');
+      const checked = spawnSync(process.execPath, ['--check', join(dir, 'app.mjs')], { encoding: 'utf8' });
+      expect([checked.status, checked.stderr]).toEqual([0, '']);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
     for (const banned of ["setAttribute('style'", 'setAttribute("style"', '.innerHTML', '.outerHTML', 'insertAdjacentHTML', 'document.write', 'eval(', 'new Function']) {
       expect(APP_JS.includes(banned), banned).toBe(false);
     }
@@ -860,6 +877,114 @@ describe('work-redesign offline demo and web UI', () => {
     expect(bare.text()).toContain('No wallet: this browser has no EIP-191 wallet');
     expect(bare.errors).toEqual([]);
   }, 60_000);
+
+  it('maps a process from a document by copy and paste: the message for any chat app is plain text carrying the document, the answer is read through code fences and words around it, who drafted it is the person\'s own choice and is signed as chosen, and the demo offers no chat route', async () => {
+    const pod = memoryPod();
+    const clock = demoClock();
+    const seed = (id: string) => importWallet(`0x${sha256Hex(`wrd-ui-paste:${id}`)}`, 'human', id);
+    const admin = seed('admin');
+    const ana = seed('ana');
+    const handlers = createWrdHandlers({
+      fetchFn: pod.fetchFn, defaultPodUrl: DEMO_POD, now: () => clock.now(), platform: { wallet: seed('platform'), keyKind: 'demo' }, adminAddresses: [admin.address],
+      recordKey: DEMO_RECORD_KEY, demoPersonas: new Map([['ana', { id: 'ana', label: 'Ana (demo)', wallet: ana }]]),
+    });
+    const registry = {
+      intent: 'wrd:update-registry', podUrl: DEMO_POD, issuedAt: clock.now().toISOString(), nonce: 'ui-paste-registry-001',
+      entries: [{ address: ana.address, roles: ['operator', 'worker'], label: 'Ana', softwareAgent: false, personRef: 'p-ana' }],
+      taskKinds: [{ slug: 'invoice-matching', label: 'Invoice matching', definition: 'Match an invoice to its purchase order.' }],
+    };
+    expect(objOf(await handlers['wrd.update_registry']!({ envelope: { payload: registry, signature: await signMessageRaw(admin, canonicalJson(registry)) } }))['status']).toBe('registered');
+    const l = await listenLoopback(createVerticalBridge({
+      verticalName: 'work-redesign', affordances: [...wrdAffordances, ...wrdDemoAffordances], handlers, deploymentUrl: 'http://127.0.0.1', middleware: (a) => { attachUi(a, { base: 'http://127.0.0.1' }); parseEveryQueryPair(a); },
+    }));
+    listeners.push(l);
+    const page = await openUi(l.base);
+    const w = page.window;
+    const d = w.document;
+    // jsdom has no SubtleCrypto, no TextEncoder and no clipboard: the page hashes the document with Node's (the same algorithm), and what it copies is kept here.
+    Object.defineProperty(w.crypto, 'subtle', { value: globalThis.crypto.subtle, configurable: true });
+    (w as unknown as { TextEncoder: typeof TextEncoder }).TextEncoder = TextEncoder;
+    const copied: string[] = [];
+    Object.defineProperty(w.navigator, 'clipboard', { value: { writeText: async (t: string) => { copied.push(t); } }, configurable: true });
+    const fill = (el: Element | null, value: string, what: string): void => {
+      const f = must(el, what) as HTMLInputElement;
+      f.value = value;
+      f.dispatchEvent(new w.Event('input', { bubbles: true }));
+    };
+    const byLabel = (text: string): Element | null => {
+      const label = [...d.querySelectorAll('label')].find((x) => x.textContent?.startsWith(text));
+      return label ? d.getElementById(label.htmlFor) : null;
+    };
+    await page.until(() => page.text().includes('Platform signer'), 'the records');
+
+    page.click('Map a process');
+    await page.until(() => page.all('input[name="capture-mode"]').length === 2, 'the capture view');
+    (page.all('input[name="capture-mode"]')[1] as HTMLInputElement).click();
+    await page.until(() => page.text().includes('Have your AI draft the map'), 'the document route');
+    // The demo has no Interego sign-in, so no chat route: copy and paste only.
+    expect(page.text()).not.toContain('In Claude or ChatGPT (recommended)');
+    expect(page.text()).not.toContain('Copy the message for my assistant');
+    expect(jargonIn(visibleText(d))).toEqual([]);
+
+    const docText = 'Supplier invoices arrive by email.\nThe clerk matches each invoice to its purchase order and the goods receipt before approval.';
+    fill(page.q('[data-path="document.title"]'), 'AP-SOP-014', 'the title');
+    fill(page.q('[data-path="document.text"]'), docText, 'the text');
+    page.click('Copy the message for my AI');
+    await page.until(() => copied.length === 1, 'the message copied');
+    const message = String(copied[0]);
+    // Plain text for a person to paste, not the packet's JSON: the instructions, the one-object rule, the draft's shape, then the document.
+    expect(() => JSON.parse(message)).toThrow();
+    for (const s of ['sampled no model and wrote nothing', 'Reply with only one JSON object shaped like this, and nothing else', '"draftedBy"', 'case-sensitive',
+      `----- DOCUMENT: AP-SOP-014 -----\n${docText}\n----- END OF DOCUMENT -----`]) expect(message, s).toContain(s);
+    expect(message).not.toContain('sampling_performed');
+    // The same document again reuses the packet; the message is offered as a closed preview.
+    page.click('Copy the message for my AI');
+    await page.until(() => copied.length === 2, 'the message copied again');
+    expect(copied[1]).toBe(message);
+    expect(page.log.filter((r) => r.path === '/wrd/task_map_packet').map((r) => `${r.method} ${r.status}`)).toEqual(['POST 200']);
+    expect(page.all('details summary').some((x) => x.textContent === 'Show the message')).toBe(true);
+
+    // An answer with no draft in it says so in plain words.
+    const answerBox = (): Element | null => byLabel('Your AI\'s answer');
+    fill(answerBox(), 'Sorry, I can\'t open that document.', 'the answer box');
+    page.click('Fill the tasks from the answer');
+    await page.until(() => page.text().includes('We couldn\'t find a draft in that answer'), 'the no-draft note');
+    expect(page.text()).toContain('It should include a part that starts with { and ends with }.');
+    expect(jargonIn(visibleText(d))).toEqual([]);
+
+    // The whole answer as a chat app gives it: words, a fenced draft, more words. The draft's own placeholders are not taken as names.
+    const draft = {
+      workflow: { title: 'Supplier invoices', unitLabel: '' },
+      tasks: [{ name: 'Match each invoice to its purchase order', description: 'Three-way match before approval.', sourceQuotes: ['matches each invoice to its purchase order'] }],
+      draftedBy: { kind: 'agent', agent: '<fill>', model: '<fill, or not-declared>' },
+    };
+    const answer = `Here is the draft:\n\`\`\`json\n${JSON.stringify(draft, null, 2)}\n\`\`\`\nDone! Tell me if you want changes.`;
+    fill(answerBox(), answer, 'the answer box');
+    page.click('Fill the tasks from the answer');
+    await page.until(() => (page.q('[data-path="tasks[0].name"]') as HTMLInputElement | null)?.value === 'Match each invoice to its purchase order', 'the filled task');
+    const radios = page.all('input[name="drafted-by"]') as HTMLInputElement[];
+    expect(radios.map((r) => r.checked)).toEqual([true, false, false]);
+    expect((byLabel('Which assistant') as HTMLInputElement).value).toBe('');
+    expect(page.text()).toContain('Work Redesign records what you choose but can\'t check it.');
+    expect(jargonIn(visibleText(d))).toEqual([]);
+    // The person says which assistant and model; Work Redesign records what they chose.
+    fill(byLabel('Which assistant'), 'ChatGPT', 'the assistant field');
+    fill(byLabel('Model, as your chat app names it'), 'Example model 1', 'the model field');
+    fill(page.q('[data-path="workflow.unitLabel"]'), 'invoice', 'the unit');
+    page.select('[data-path="tasks[0].personAddress"]', ana.address.toLowerCase());
+    page.select('[data-path="tasks[0].taskKind"]', 'invoice-matching');
+    page.click('Sign and record the process map');
+    await page.until(() => page.log.some((r) => r.path === '/wrd/record_task_map'), 'the recorded map');
+    expect(page.log.filter((r) => r.path === '/wrd/record_task_map').map((r) => r.status)).toEqual([200]);
+    const signedFor = page.log.filter((r) => r.path === '/wrd/demo_envelope').map((r) => objOf(r.body['payload'])).find((p) => p['intent'] === 'wrd:record-task-map');
+    expect(must(signedFor, 'the signed map')['draftedBy']).toEqual({ kind: 'agent', agent: 'ChatGPT', model: 'Example model 1' });
+    expect(must(signedFor, 'the signed map')['draftSha256']).toBe(sha256Hex(answer));
+    expect(page.log.find((r) => r.path === '/wrd/record_task_map')?.body['document_text']).toBe(docText);
+    // Read back on the process: who drafted it, as declared.
+    page.click('Processes');
+    await page.until(() => page.text().includes('an AI — ChatGPT, Example model 1'), 'who drafted it, read back');
+    expect(page.errors).toEqual([]);
+  }, 90_000);
 
   it('the web UI never shows a chain cut short as whole: with a decision\'s and a grant\'s first versions gone, the decision card and its printed summary head the chain as incomplete with why in a danger note beside the heading, the grant\'s row says why, and the health callout counts both cuts; a whole chain is headed as every version', async () => {
     // The walked pod, copied, so the versions removed here are removed from this test's pod alone.

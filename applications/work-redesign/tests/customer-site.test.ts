@@ -20,14 +20,18 @@ import type { NextFunction, Request, Response } from 'express';
 import { JSDOM, VirtualConsole } from 'jsdom';
 import { importWallet, sha256Hex, signMessageRaw, canonicalJson } from '@interego/core';
 import { createVerticalBridge } from '../../_shared/vertical-bridge/index.js';
+import { chatAgentJs } from '../../_shared/chat-agent/index.js';
 import { listenLoopback, type TestListener } from '../../_shared/vertical-bridge/listen-loopback.js';
 import { wrdAffordances, wrdDemoAffordances } from '../affordances.js';
 import { createWrdHandlers } from '../bridge/handlers.js';
 import { attachUi, hostAllowlistGuard, parseEveryQueryPair, servedHostNames, UI_CSP, type UiReads } from '../bridge/ui.js';
 import { SIBLING, INTEREGO_DEFAULTS, type LandingOptions } from '../bridge/landing.js';
 import { demoClock, memoryPod, DEMO_POD, DEMO_RECORD_KEY } from '../demo/run.js';
+// The plain-words guard (JARGON, ALLOWED = [], visibleText), shared with every other DOM test of the UI.
+import { ALLOWED, jargonIn, visibleText } from './plain-words.js';
 
-const APP_JS = readFileSync(new URL('../bridge/ui/app.js', import.meta.url), 'utf8');
+/** /ui/app.js as the bridge serves it: the shared chat-agent helpers, then the app (bridge/ui.ts). */
+const APP_JS = `${chatAgentJs()}\n${readFileSync(new URL('../bridge/ui/app.js', import.meta.url), 'utf8')}`;
 const must = <T>(v: T | null | undefined, what: string): T => { if (v === null || v === undefined) throw new Error(`missing ${what}`); return v; };
 const BROWSER = 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8';
 const listeners: TestListener[] = [];
@@ -97,14 +101,6 @@ function hostRequest(port: number, path: string, host: string): Promise<{ status
   });
 }
 
-/** What a person can see: closed details' contents, hidden elements, pre blocks and text areas left out. */
-const visibleText = (d: Document): string => {
-  const root = d.getElementById('app')!.cloneNode(true) as HTMLElement;
-  for (const det of [...root.querySelectorAll('details')]) if (!det.hasAttribute('open')) for (const c of [...det.children]) if (c.tagName !== 'SUMMARY') c.remove();
-  for (const n of [...root.querySelectorAll('[hidden], pre, textarea')]) n.remove();
-  return root.textContent ?? '';
-};
-
 interface Page {
   readonly window: JSDOM['window'];
   readonly doc: Document;
@@ -171,22 +167,6 @@ async function openUi(base: string, hash = ''): Promise<Page> {
     },
   };
 }
-
-/** Words of the protocol and the plumbing that a person should never have to read on screen. */
-const JARGON = /\b(pod|affordance|envelope|payload|ratif\w*|regime|Hypothetical|Asserted|Counterfactual|P(10|50|90)|Brier|IRI|descriptor|sha256|relay|bridge|countersign\w*|Refused)\b|HTTP \d{3}|WRD_[A-Z_]+|EIP-191|personal_sign|did:web:|urn:wrd:/i;
-/** Matches the guard allows, each with why. Empty: nothing on screen needs one. */
-const ALLOWED: ReadonlyArray<readonly [RegExp, string]> = [];
-const jargonIn = (text: string): string[] => {
-  let rest = text;
-  for (const [re] of ALLOWED) rest = rest.replace(new RegExp(re.source, `${re.flags.replace('g', '')}g`), ' ');
-  const hits: string[] = [];
-  const g = new RegExp(JARGON.source, 'gi');
-  for (const m of rest.matchAll(g)) {
-    const at = m.index ?? 0;
-    hits.push(`"${m[0]}" in …${rest.slice(Math.max(0, at - 60), at + 60).replace(/\s+/g, ' ')}…`);
-  }
-  return hits;
-};
 
 describe('work-redesign customer site', () => {
   it('answers a browser at / with the landing page and the UI headers, varying on Accept', async () => {
@@ -265,6 +245,55 @@ describe('work-redesign customer site', () => {
       expect(html).not.toMatch(/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[a-z]{2,}/);
     }
   });
+
+  it('tells a visitor how to use Claude or ChatGPT: the workspace address in the set-up, the app\'s panel, what the assistant\'s provider sees, the honest limit, the one chat document limit the app enforces, and that /mcp is not the connector', async () => {
+    const l = await production();
+    const landing = await (await fetch(`${l.base}/`, { headers: { accept: BROWSER } })).text();
+    const help = await (await fetch(`${l.base}/ui/help`)).text();
+    // The limit the app enforces (app.js CHAT_DOC_MAX) is the one every page and the README state.
+    const max = Number(/^const CHAT_DOC_MAX = (\d+);$/m.exec(APP_JS)?.[1]);
+    expect(max).toBe(20_000);
+    const limit = `${max.toLocaleString('en-US')} characters`;
+    for (const [page, html] of [['landing', landing], ['help', help]] as const) {
+      for (const s of [
+        'this workspace’s address: <code class="connector-url">http://127.0.0.1</code>', '<strong>Use your AI assistant</strong> copies it',
+        'In each new chat, turn on Interego from the chat’s tools menu (+).', 'the company behind your assistant sees it too', limit,
+        '<span class="mono">http://127.0.0.1/mcp</span>&nbsp;(for developers’ tools that sign their own requests; Claude and ChatGPT use the Interego connector)',
+      ]) expect([page, html], s).toEqual([page, expect.stringContaining(s)]);
+      expect([page, html.includes('(MCP endpoint)'), html.includes('{{')]).toEqual([page, false, false]);
+    }
+    expect(landing).toContain('<h3 class="feature__title">Teams without an AI assistant</h3>');
+    expect(landing).toContain('Three things to know.');
+    expect(help).toContain('<dt>Message for your AI</dt>');
+    expect(help).toContain('Someone added only by wallet address can’t work from Claude or ChatGPT');
+    expect(help).not.toContain('Get instructions for your AI');
+    const readme = readFileSync(new URL('../README.md', import.meta.url), 'utf8');
+    expect(readme).toContain('`CHAT_DOC_MAX`');
+    expect(readme).toContain(limit);
+  });
+
+  it('offers only copy and paste where a chat assistant cannot act: the demo names no connector, its panel says why, and a map from a document shows no chat route, all in plain words', async () => {
+    const l = await minimalDemo();
+    expect(await (await fetch(`${l.base}/ui`)).text()).not.toContain('wrd-connector');
+    const page = await openUi(l.base);
+    await page.until(() => page.text().includes('Match invoices'), 'the demo');
+    // A process lead's Home offers no "Connect Claude or ChatGPT" step where it cannot work.
+    expect(page.text()).not.toContain('Connect Claude or ChatGPT');
+    page.click('Use your AI assistant');
+    await page.until(() => page.doc.getElementById('panel-title')?.textContent === 'Use your own AI assistant', 'the panel');
+    const seen = page.visible();
+    for (const s of ['Work Redesign runs no AI of its own and never asks for an API key', 'The demo has no Interego sign-in, so Claude and ChatGPT can\'t work in it.', 'Some Claude and ChatGPT plans can\'t add connectors.']) expect(seen, s).toContain(s);
+    expect(seen).not.toContain('Set it up once');
+    expect(page.doc.querySelector('.chat-panel input')).toBeNull();
+    expect(jargonIn(seen)).toEqual([]);
+    page.click('Draft a map with copy and paste');
+    await page.until(() => page.text().includes('Have your AI draft the map'), 'the document route');
+    expect(page.doc.querySelector('.route-card--chat')).toBeNull();
+    expect(page.text()).toContain('Copy the message for my AI');
+    expect(jargonIn(page.visible())).toEqual([]);
+    expect(ALLOWED).toEqual([]);
+    expect(page.errors).toEqual([]);
+  }, 60_000);
 
   it('serves the guide and the favicon with the UI headers', async () => {
     const l = await production();
