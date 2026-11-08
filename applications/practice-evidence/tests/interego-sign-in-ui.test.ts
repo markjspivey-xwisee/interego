@@ -1233,13 +1233,33 @@ async function learnerSteps(p: Page): Promise<string> {
   return p.all('.checklist__text').map((x) => x.textContent).join('\n');
 }
 
-/** One act a chat agent of the person's (Claude, through the relay) takes on its own, as the connector's act would post it. */
-async function fromChat(h: Handlers, tool: string, action: string, fields: Out): Promise<Out> {
-  const slug = `claude-${USER}`;
-  agentDocs.set(`https://${IDH}/agents/${slug}/did.json`, { '@context': ['https://www.w3.org/ns/did/v1'], id: `did:web:${IDH}:agents:${slug}`, controller: PRINCIPAL });
-  const sp = JSON.stringify({ v: 1, action, nonce: `chat-${nonce()}`, pod_url: DEMO_POD, ...fields, agent_id: `did:web:${IDH}:agents:${slug}`, subject_pod_url: `https://pods.ui.test/${USER}/`, timestamp: new Date().toISOString() });
+/** One act a chat agent of a person's (Claude, through the relay) takes on its own, as the connector's act would post it: by default the signed-in person's. */
+async function fromChat(h: Handlers, tool: string, action: string, fields: Out, user = USER): Promise<Out> {
+  const slug = `claude-${user}`;
+  agentDocs.set(`https://${IDH}/agents/${slug}/did.json`, { '@context': ['https://www.w3.org/ns/did/v1'], id: `did:web:${IDH}:agents:${slug}`, controller: `did:web:${IDH}:users:${user}` });
+  const sp = JSON.stringify({ v: 1, action, nonce: `chat-${nonce()}`, pod_url: DEMO_POD, ...fields, agent_id: `did:web:${IDH}:agents:${slug}`, subject_pod_url: `https://pods.ui.test/${user}/`, timestamp: new Date().toISOString() });
   return (await h[tool]!({ _signed_payload: sp, _signature: await signMessageRaw(RELAY_KEY, `sha256:${sha256Hex(sp)}`) })) as Out;
 }
+
+/** The numbered steps of a copied prompt, as actPrompt writes them: each step's action and payload template. */
+function promptSteps(text: string): { readonly n: number; readonly say: string; readonly actionIri: string; readonly signed: boolean; readonly payload: Out }[] {
+  const lines = text.split('\n');
+  const out: { n: number; say: string; actionIri: string; signed: boolean; payload: Out }[] = [];
+  for (let i = 0; i < lines.length; i += 1) {
+    const head = /^(\d+)\. (.*)$/.exec(lines[i]!);
+    if (!head || !/^ {3}action_iri: "/.test(lines[i + 1] ?? '')) continue;
+    out.push({
+      n: Number(head[1]), say: head[2]!,
+      actionIri: /^ {3}action_iri: "([^"]+)"$/.exec(lines[i + 1]!)![1]!,
+      signed: (lines[i + 2] ?? '').startsWith('   sign_payload: true'),
+      payload: JSON.parse((lines[i + 3] ?? '').replace(/^ {3}payload: /, '')) as Out,
+    });
+  }
+  return out;
+}
+
+/** A refusal's code and status, from a handler's answer. */
+const refusalOf = (r: Out): readonly [unknown, unknown] => [r['iep:refusalStatus'] ?? null, r['iep:refusalReason'] ?? null];
 
 describe('your own AI assistant: connect Claude or ChatGPT, or copy and paste; never a key of ours', () => {
   let nm: TestListener;
@@ -1475,20 +1495,75 @@ describe('your own AI assistant: connect Claude or ChatGPT, or copy and paste; n
     for (const says of [attemptIri, PEV_ACTION.judgePacket, PEV_ACTION.recordJudgment, 'usedPacketPrompt', 'wait for my go-ahead', `Workspace: ${nm.base}/`,
       'For example judge-packet-0-q8Xr2mVp7LkA9dTz,', SIGN_FALLBACK,
       "If this is my own practice session, stop: I can't assess it, in any chat or role."]) expect(judge, says).toContain(says);
-    // A save that may already have gone through is never assessed and saved again: the first step
-    // shows no earlier assessment, so going back to it would save a second one of this session.
+    // Whether a save was kept is asked of the workspace, never judged from what the chat saw: the first
+    // step shows no earlier assessment, so going back to it after a save that was kept saves a second
+    // one, and a save the chat app answered with an error, or not at all, may have been kept. The
+    // third step reads the session, which a judge may do once an assessment of theirs is on it.
     const judgeRules = judge.split('\n').filter((line) => line.startsWith('- '));
-    expect(judgeRules.filter((r) => r.includes('envelope-already-used'))).toEqual([
-      "- If saving is refused with envelope-already-used, or you lose track after sending a save (or can't tell whether you sent one): "
-        + "don't assess or save again. Tell me the assessment may already be saved, and stop.",
+    const steps = promptSteps(judge);
+    expect(steps.map((x) => [x.n, x.actionIri, x.signed])).toEqual([
+      [1, PEV_ACTION.judgePacket, true], [2, PEV_ACTION.recordJudgment, true], [3, PEV_ACTION.getAttempt, true],
     ]);
-    // Only a save refused because the session changed goes back to the first step, and only while no save of it has been accepted in that chat.
+    expect(steps[2]!.say).toBe('Only when a rule below says to check whether my assessment is saved: read the session. My assessment is saved if one of its judgments has a judge.signer equal to signedAs.principal in the answer. '
+      + 'If none has, or this is refused with not-entitled, nothing of mine is saved.');
+    expect(steps[2]!.payload).toMatchObject({ v: 1, attemptIri, action: PEV_ACTION.getAttempt });
+    // Every way a save may have been kept, the common one (an error, or no answer) named, checks first; when nothing is saved,
+    // one resend of the same assessment, bound to the head the first save would have moved.
+    expect(judgeRules.filter((r) => r.includes('envelope-already-used'))).toEqual([
+      "- If a save is refused with envelope-already-used, comes back with an error that names no refusal code, or gets no answer, or you lose track after sending a save (or can't tell whether you sent one): "
+        + "don't assess or save again until you have checked with the third step. If my assessment is saved, tell me so, and stop. "
+        + 'If nothing of mine is saved, send the same assessment once more with a new nonce; if you already sent it again, or no longer have it, tell me it is not saved, and stop.',
+    ]);
+    // The one rule that goes back to the first step checks first, whatever this chat saw: it is keyed on what the workspace holds.
     const again = judgeRules.filter((r) => /first step again|step 1 again|again from the first step/.test(r));
     expect(again).toEqual([
-      '- If saving is refused with binding-mismatch or chain-moved (the session changed after the first step), and no save of this session has been accepted in this chat: '
-        + 'do the first step again and assess what it returns, never an earlier assessment, and show me before you save. If one has been accepted, tell me and stop.',
+      '- If a save is refused with binding-mismatch or chain-moved (the session changed after the first step): check with the third step before anything else. '
+        + 'If my assessment is saved, tell me so, and stop. If nothing of mine is saved, do the first step again and assess what it returns, never an earlier assessment, and show me before you save.',
     ]);
-    for (const maySaved of ['envelope-already-used', 'envelope-expired', 'lose track']) expect(again[0], maySaved).not.toContain(maySaved);
+    expect(again[0]!.indexOf('check with the third step')).toBeLessThan(again[0]!.indexOf('do the first step again'));
+    for (const r of judgeRules) expect(r).not.toMatch(/accepted in this chat|has been accepted/);
+    // Only a check that cannot be made leaves the judge with "may already be saved".
+    expect(judgeRules.filter((r) => r.includes('may already be saved'))).toEqual([
+      "- If the third step is refused with anything but not-entitled, or gets no answer, don't save again: tell me my assessment may already be saved, and stop.",
+    ]);
+
+    // The check, run as the judge's own assistant would run it from the message, against this workspace.
+    // A judge, appointed by Member ID, whose chat app answers the first save with an error although it was kept.
+    const judgeUser = 'u-pk-0000000000f9';
+    const judgeDid = `did:web:${IDH}:users:${judgeUser}`;
+    expect((await direct('pev.register_role', W.admin, PEV_ACTION.registerRole, { address: judgeDid, role: 'judge', change: 'add' }))['changed']).toBe(true);
+    const toolOf = (actionIri: string): string => pevAffordances.find((x) => x.action === actionIri)!.toolName!;
+    const asJudge = async (step: (typeof steps)[number], fields: Out = {}): Promise<Out> => {
+      const filled: Out = { ...step.payload, ...fields };
+      filled['nonce'] = `${String(step.payload['nonce']).split('-<')[0]}-0-${randomBytes(8).toString('hex')}`;
+      return fromChat(noModelHandlers, toolOf(step.actionIri), step.actionIri, filled, judgeUser);
+    };
+    const check = async (): Promise<'saved' | 'nothing saved' | 'cannot tell'> => {
+      const r = await asJudge(steps[2]!);
+      if (r['kind'] !== undefined) return refusalOf(r)[1] === 'not-entitled' ? 'nothing saved' : 'cannot tell';
+      const me = (r['signedAs'] as Out)['principal'];
+      return (r['judgments'] as { judge: { signer?: string } }[]).some((j) => j.judge.signer === me) ? 'saved' : 'nothing saved';
+    };
+    // Before any save, the check says nothing of the judge's is there.
+    expect(await check()).toBe('nothing saved');
+    const judgePacket = ok(await asJudge(steps[0]!));
+    const head = await readHead(DEMO_POD, attemptIri, TRUSTED, pod.fetchFn);
+    const rubric = (head.head!.body as Extract<PevRecordBody, { kind: 'attempt' }>).scenarioSpec.rubric;
+    const assessment: Out = {
+      ...(judgePacket['binding'] as Out),
+      judgment: { criteria: rubric.criteria.map((c) => ({ criterionId: c.id, level: c.levels[0]!.id, quotes: [{ text: 'The report was due Thursday.', turnIndex: 1 }], rationale: 'States the missed deadline.' })) },
+      judgeDisclosure: { provider: 'Anthropic', model: 'not shown', usedPacketPrompt: true },
+    };
+    ok(await asJudge(steps[1]!, assessment));
+    // The chat app said it failed. The rule: check before anything else, and the check finds it saved.
+    expect(await check()).toBe('saved');
+    // Had the judge asked to try again anyway: the same assessment, with a new nonce, is refused, since the
+    // first save moved the session on; and the rule for that refusal checks again before fetching the session.
+    expect(refusalOf(await asJudge(steps[1]!, assessment))).toEqual([409, 'binding-mismatch']);
+    expect(await check()).toBe('saved');
+    // One assessment by this judge, however the chat went.
+    const after = await readHead(DEMO_POD, attemptIri, TRUSTED, pod.fetchFn);
+    expect((after.head!.body as Extract<PevRecordBody, { kind: 'attempt' }>).judgments.filter((j) => j.judge.signer === judgeDid).length).toBe(1);
     expect(judge).not.toMatch(/For example [A-Za-z0-9-]+-4-/);
     expect(judge).not.toContain('The report was due Thursday');
     expect(judge).not.toContain('The feed was late again');

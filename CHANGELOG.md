@@ -1,5 +1,43 @@
 # Changelog
 
+## 2026-11-08 — Practice Evidence: a judge's assistant asks the workspace whether a save went through
+
+The judge's message still let one assessment be saved twice. If a save was
+kept but the chat app showed an error, the assistant stopped; if the judge then
+asked it to try again, the new save was refused because the session had
+changed (the first save changed it), and the message sent the assistant back to
+fetch the session, which shows no earlier assessment, so it saved a second one.
+The message decided this from what the assistant had seen accepted in that
+chat, and an error is not an acceptance. It also told the judge only that an
+assessment "may already be saved", with no way to find out, including when the
+workspace had refused a one-time code the assistant reused, when nothing was
+saved.
+
+Now the message has a third step that reads the session, which a judge may do
+once an assessment of theirs is saved on it. Before the assistant fetches the
+session again after a save refused because the session changed, and whenever a
+save is refused as already used, comes back with an error that names no reason
+code, gets no answer, or the assistant loses track, it reads the session. If an
+assessment signed as the judge is there, it says so and stops. If the read is
+refused as not allowed, nothing of the judge's was saved: it sends the same
+assessment once more (which the workspace refuses, as the session having
+changed, if the first one had been kept after all), or fetches the session
+again and assesses that if the session changed. Only when it cannot read the
+session does it say the assessment may already be saved, and the guide tells
+the judge to ask the learner whether the session page shows it before pasting
+the message into a new chat. The README says the same.
+
+The guide's and the landing page's ChatGPT steps are now in ChatGPT's own
+order, as in the Connect dialog: add the custom MCP server, give its Server URL
+and OAuth, then accept the warning, create it as a plugin and install it. The
+guide and the landing page no longer say outright that a person cannot assess
+their own session: the workspace refuses an assessment from the account or
+wallet that started the session, and the pages now say that.
+
+The relay test showing that sign_request called alone signs what act signs now
+also fails if the relay's tool call handling changes the arguments after the
+part the test runs and before the tool itself is called.
+
 ## 2026-11-08 — Practice Evidence: a judge's assistant never saves the same assessment twice
 
 The judge's message sent the assistant back to fetch the session and assess it

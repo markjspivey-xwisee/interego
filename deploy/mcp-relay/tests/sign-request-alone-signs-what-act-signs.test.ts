@@ -38,8 +38,10 @@
  * imported as it ships. What the slices reach elsewhere is supplied as the smallest stand-ins:
  * the identity server's `/me` (which answers, the ordinary case), the relay's delegation signer
  * (which records the message it signs) and the store's two spellings. §0 checks the wiring the
- * slices stand for: the tool table maps each name to the handler sliced here, and `act` composes
- * `signedActPayload` over them exactly as §2 does.
+ * slices stand for: the tool table maps each name to the handler sliced here, `act` composes
+ * `signedActPayload` over them exactly as §2 does, and nothing between the end of the injection
+ * slice and the tool's handler call writes to `args`, so what the slice hands `sign_request` is
+ * what the shipped dispatcher hands it.
  *
  * ── THE RESIDUAL, STATED PLAINLY ─────────────────────────────────────────────
  *
@@ -198,6 +200,27 @@ console.log('\n0. the shipped tool table and act composition are the ones sliced
     actBody.includes('signedActPayload(args, normalizeActPayload(rawPayload ?? {}), handleSignRequest)')
       && actBody.includes("const rawPayload = args['payload'];"),
     actBody.slice(0, 120));
+  // The injection slice stops at the federation auto-registration, and the handler runs after the
+  // lazy pod-init block and the act / invoke_affordance plumbing. A field written to `args` in that
+  // gap would be signed by sign_request called alone and never reach this file, so §2 would still
+  // pass: nothing there may assign to, delete from or Object.assign onto `args`.
+  const gapFrom = code.indexOf(INJECTION_END, code.indexOf('async function callWithSession('));
+  const gapTo = gapFrom < 0 ? -1 : code.indexOf('await tool.handler(args)', gapFrom);
+  const gap = gapFrom < 0 || gapTo < 0 ? '' : code.slice(gapFrom + INJECTION_END.length, gapTo);
+  const ARGS_WRITE = /\bargs\s*(?:\.\s*[A-Za-z_$][\w$]*|\[[^\]]*\])\s*(?:\*\*|<<|>>>?|&&|\|\||\?\?|[-+*/%&|^])?=(?![=>])|\bdelete\s+args\b|\bObject\.(?:assign|defineProperty|defineProperties)\(\s*args\b/g;
+  const writes = gap.match(ARGS_WRITE) ?? [];
+  check('§0 nothing between the end of the injection slice and the tool handler call writes to args',
+    gap.includes('autoRegisterAgentCard(') && gap.includes('ensurePodInitialized(') && writes.length === 0,
+    gap === '' ? `gap not found (from=${gapFrom}, to=${gapTo})` : writes.join(' | '));
+  // The pattern itself, on the spellings it must catch and the reads it must not.
+  for (const [src, isWrite] of [
+    ["args.injected_late = 'x';", true], ["args['x'] = 1;", true], ['args.x ??= 1;', true], ['delete args.x;', true],
+    ['Object.assign(args, extra);', true], ['args.x += 1;', true],
+    ['const p = normalizeActPayload(args.payload ?? {});', false], ["if (args.x === 'y' || args.y >= 2 || args.z != 1 || args.w == null) {}", false],
+    ['const id = (args._session_agent_id as string | undefined) ?? \'\';', false],
+  ] as const) {
+    check(`§0 the args-write pattern reads ${JSON.stringify(src)} as ${isWrite ? 'a write' : 'no write'}`, (src.match(ARGS_WRITE) ?? []).length > 0 === isWrite);
+  }
 }
 
 // ── §1 THE DISPATCHER REALLY HANDS sign_request ITS OWN DEFAULTS ─────────────

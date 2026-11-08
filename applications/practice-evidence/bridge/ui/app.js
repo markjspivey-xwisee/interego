@@ -2346,16 +2346,25 @@ function judgeMessage(v) {
         actionIri: ACT.recordJudgment, signed: true,
         payload: { ...bound, action: ACT.recordJudgment, attemptHeadUrl: '<from the binding>', transcriptHash: '<from the binding>', rubricHash: '<from the binding>',
           judgment: { criteria: '<as the outputSchema describes>' }, judgeDisclosure: { provider: '<the company that makes you>', model: '<your model name>', usedPacketPrompt: true } } },
+      // What the bridge itself says about whether a save was kept: get-attempt lets a judge read an
+      // attempt only once they have a judgment on it (handlers.ts getAttempt, judgeSignersOf), and
+      // each judgment names its signer, which for a relay-delegated judge is signedAs.principal.
+      { say: 'Only when a rule below says to check whether my assessment is saved: read the session. My assessment is saved if one of its judgments has a judge.signer equal to signedAs.principal in the answer. '
+          + 'If none has, or this is refused with not-entitled, nothing of mine is saved.',
+        actionIri: ACT.getAttempt, signed: true, payload: { ...bound, action: ACT.getAttempt } },
     ],
     rules: [
-      'Between the two steps, follow the request the first step returns. For every criterion give a level, quotes copied exactly from the learner\'s own lines, and a short rationale. Show me the levels and quotes in plain words and wait for my go-ahead before you save.',
-      // A save refused as already used, or one sent before the assistant lost track, may have gone
-      // through, and the first step shows no earlier assessment: assessing again would save a
-      // second one. Only a save refused because the session changed was certainly not kept.
-      "If saving is refused with envelope-already-used, or you lose track after sending a save (or can't tell whether you sent one): "
-        + "don't assess or save again. Tell me the assessment may already be saved, and stop.",
-      'If saving is refused with binding-mismatch or chain-moved (the session changed after the first step), and no save of this session has been accepted in this chat: '
-        + 'do the first step again and assess what it returns, never an earlier assessment, and show me before you save. If one has been accepted, tell me and stop.',
+      'Between the first two steps, follow the request the first step returns. For every criterion give a level, quotes copied exactly from the learner\'s own lines, and a short rationale. Show me the levels and quotes in plain words and wait for my go-ahead before you save.',
+      // Whether a save was kept is read from the bridge, never from what this chat saw: the first
+      // step shows no earlier assessment, so assessing again after a save that was kept saves a
+      // second one. A resend of the same assessment is safe, since it carries the binding the
+      // first save moved on from: if that one was kept, the resend is refused as binding-mismatch.
+      "If a save is refused with envelope-already-used, comes back with an error that names no refusal code, or gets no answer, or you lose track after sending a save (or can't tell whether you sent one): "
+        + "don't assess or save again until you have checked with the third step. If my assessment is saved, tell me so, and stop. "
+        + 'If nothing of mine is saved, send the same assessment once more with a new nonce; if you already sent it again, or no longer have it, tell me it is not saved, and stop.',
+      'If a save is refused with binding-mismatch or chain-moved (the session changed after the first step): check with the third step before anything else. '
+        + 'If my assessment is saved, tell me so, and stop. If nothing of mine is saved, do the first step again and assess what it returns, never an earlier assessment, and show me before you save.',
+      "If the third step is refused with anything but not-entitled, or gets no answer, don't save again: tell me my assessment may already be saved, and stop.",
       "If this is my own practice session, stop: I can't assess it, in any chat or role. A reviewer signs off after me.",
     ],
   });
