@@ -327,9 +327,12 @@ details.card[open] > summary { border-bottom: 1px solid var(--border); }
 .health__plain { padding-left: var(--space-3); border-left: 3px solid var(--warning); font-size: var(--text-sm); color: var(--text); }
 .health__plain--danger { border-left-color: var(--danger); }
 
-/* Site pages' menu on phones: the header's section links, in a popover (no script). */
+/* Site pages' menu below a wide screen: the header's section links, in a popover (no script). The links themselves sit in the
+   header only from 64em: below it, with the product switch and the button beside them, they ran past the screen's edge (to
+   930 px on the landing page, and Sign in with them). The menu holds every one of them, so it takes their place. */
 .site-menu-button { display: inline-flex; anchor-name: --site-menu; }
-@media (min-width: 48em) { .site-menu-button { display: none; } }
+@media (min-width: 64em) { .site-menu-button { display: none; } }
+@media (max-width: 63.99em) { .top-nav { display: none; } }
 /* On the narrowest phones the guide's header keeps the brand and the menu; the menu opens the app. */
 @media (max-width: 23.99em) { .site-header-cta { display: none; } }
 @supports (anchor-name: --a) { .site-menu { position-anchor: --site-menu; } }

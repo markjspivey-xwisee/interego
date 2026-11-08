@@ -45,8 +45,12 @@ guide's optional step and the chat route under Map a process), open with the
 panel's own words (Work Redesign runs no AI; your own assistant drafts), say
 once that the workspace isn't set up for it, point to copy and paste, and say
 what pasting a document shares; the navigation names the section "Your own AI
-assistant" rather than the apps, and the FAQ, the guide's data section and the
-footers keep their connector sentences to where one is named. With the
+assistant" rather than the apps, and the FAQ, the guide's data section and
+limits, and the footers keep their connector sentences, recording a map from a
+chat and its length limit among them, to where one is named. Below 64em the
+site pages' section links move from the header into its menu, which holds every
+one of them, so the header no longer runs past the screen's edge at 768 to
+930 px. With the
 deployed bridge's 44-character address the set-up no longer widens either page on a phone: each step may
 shrink, and each address sits on a line of its own, filling it before going
 on, with no full stop hanging off it. The panel is titled "Use your AI
@@ -74,7 +78,10 @@ out the packet's note to programs, "not-declared" from an assistant is taken
 as no model, switching who drafted the map keeps what was typed, and the
 route cards are spaced by their own gap. Their buttons' labels wrap inside the
 card, so none runs past it or off a 320 to 375 px screen, and "Copy the
-message for my AI" keeps keyboard focus through the redraw copying makes.
+message for my AI" keeps keyboard focus through the redraw copying makes,
+where focus is still on it when the copy lands. A person who went on while its
+message was being fetched keeps their place: focus stays in a panel they
+opened, and a page they scrolled on is not pulled back to the button.
 
 ## 2026-11-08 — Shared helpers for connecting your own chat assistant
 

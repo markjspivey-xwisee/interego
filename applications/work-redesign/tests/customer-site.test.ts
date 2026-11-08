@@ -327,6 +327,9 @@ describe('work-redesign customer site', () => {
       'If you connect Claude or ChatGPT, the Interego connector passes everything your assistant reads and writes here']) expect(help, s).toContain(s);
     expect(help).toContain('<dt>Message for your AI</dt>');
     expect(help).toContain('Someone added only by wallet address can’t work from Claude or ChatGPT');
+    // Recording a map from a chat, and its limit, where a connector is named.
+    expect(landing).toContain('Your document’s text is stored with the record only if you choose to store it, or if you record the map from a chat assistant. Recording a map from a chat works for documents up to 20,000 characters; a longer one goes by copy and paste.</p>');
+    expect(help).toContain('<li>Recording a process map from a chat works for documents up to 20,000 characters; a longer one goes by copy and paste.</li>');
     expect(help).not.toContain('Get instructions for your AI');
     const readme = readFileSync(new URL('../README.md', import.meta.url), 'utf8');
     expect(readme).toContain('`CHAT_DOC_MAX`');
@@ -357,7 +360,10 @@ describe('work-redesign customer site', () => {
           // Nor in the navigation, the FAQ, the data section or the footers (the nav and the guide's heading named the apps as if
           // they worked here; the FAQ, data and footer sentences assumed the connector).
           'Claude &amp; ChatGPT', 'Claude or ChatGPT</a>', 'Using Claude or ChatGPT', 'connects Claude or ChatGPT', 'connect Claude or ChatGPT,',
-          'Claude and ChatGPT use the Interego connector', 'can’t work from Claude or ChatGPT']) {
+          'Claude and ChatGPT use the Interego connector', 'can’t work from Claude or ChatGPT',
+          // Nor recording a map from a chat, or the length a chat can record (the FAQ and the guide's limits said both, next to
+          // the sentence saying the connector isn't set up).
+          'from a chat', 'from chat', '20,000 characters']) {
           expect([...at, s, html.includes(s)]).toEqual([...at, s, false]);
         }
         expect([...at, html.includes('{{')]).toEqual([...at, false]);
@@ -373,9 +379,12 @@ describe('work-redesign customer site', () => {
       }
       const notReady = { landing: await (await fetch(`${l.base}/`, { headers: { accept: BROWSER } })).text(), help: await (await fetch(`${l.base}/ui/help`)).text() };
       for (const s of ['<a class="menu__item" href="#assistants">Your own AI assistant</a>', 'Three things to know.',
+        'If you want help drafting a process map, it gives you instructions to pass to your own AI assistant, which then works under your own agreement with that provider. Work Redesign checks every quote the draft relies on against your document. Your document’s text is stored with the record only if you choose to store it.</p>',
         'Third, when you paste a document into your AI assistant, the company behind your assistant sees it too.</p>']) expect([what, notReady.landing], s).toEqual([what, expect.stringContaining(s)]);
       for (const s of ['<h2 id="assistants-title">Using your own AI assistant</h2>',
         'Use separate workspaces for teams that must not see each other’s records. When you paste a document into your AI assistant, the company behind your assistant sees it too.</p>']) expect([what, notReady.help], s).toEqual([what, expect.stringContaining(s)]);
+      // The guide's limits go straight from the plain-text one to the next, with no chat limit between them.
+      expect([what, notReady.help.replace(/\s+/g, ' ')]).toEqual([what, expect.stringContaining('<li>Procedure documents are read as plain text or Markdown only.</li> <li>Results are entered by people, not measured automatically.</li>')]);
       // One column: the examples card is gone, so the text does not sit in half of a two-column grid.
       const landing = await (await fetch(`${l.base}/`, { headers: { accept: BROWSER } })).text();
       expect([what, landing.includes('<div class="container assistants">'), landing.includes('<div class="prose-wide">')]).toEqual([what, true, true]);
@@ -549,6 +558,26 @@ describe('work-redesign customer site', () => {
     const rules = css.replace(/\/\*[\s\S]*?\*\//g, '');
     expect(rules).not.toContain('@import');
     expect(rules).not.toContain('url(');
+  });
+
+  it('keeps the site pages\' header inside the screen below a wide one: the section links sit in the header from 64em, and below it in the menu, which holds every one of them', async () => {
+    // From 48em the header's section links, the product switch and Sign in ran past the screen's edge up to 910 px (930 where
+    // the connector isn't named, its link reading "Your own AI assistant"). jsdom applies no media query, so the rules are
+    // read as written; real Chromium from 300 to 1400 px is the QA's check.
+    for (const [what, o] of [['connector named', { signIn: trusted() }], ['not set up', {}]] as const) {
+      const l = await production(o);
+      const rules = (await (await fetch(`${l.base}/ui/app.css`)).text()).replace(/\/\*[\s\S]*?\*\//g, '');
+      for (const s of ['@media (max-width: 63.99em) { .top-nav { display: none; } }', '@media (min-width: 64em) { .site-menu-button { display: none; } }']) expect([what, rules], s).toEqual([what, expect.stringContaining(s)]);
+      expect([what, rules.includes('@media (min-width: 48em) { .site-menu-button { display: none; } }')]).toEqual([what, false]);
+      for (const path of ['/', '/ui/help']) {
+        const d = new JSDOM(await (await fetch(`${l.base}${path}`, { headers: { accept: BROWSER } })).text()).window.document;
+        const links = (sel: string): string[] => [...d.querySelectorAll(`${sel} a`)].map((a) => `${a.getAttribute('href')} ${a.textContent}`);
+        const nav = links('.top-nav');
+        expect([what, path, nav.length]).toEqual([what, path, 4]);
+        expect([what, path, nav.filter((x) => !links('#site-menu').includes(x))]).toEqual([what, path, []]);
+        expect([what, path, d.querySelector('.site-menu-button')?.getAttribute('popovertarget')]).toEqual([what, path, 'site-menu']);
+      }
+    }
   });
 
   it('welcomes a signed-out visitor instead of showing an error, with the raw answer kept in Technical details', async () => {

@@ -1430,6 +1430,79 @@ describe('work-redesign web UI: sign in with your Interego account', () => {
     expect(page.errors).toEqual([]);
   }, 60_000);
 
+  it('copy and paste\'s message, copied once its packet comes, leaves a person who moved on meanwhile where they went: focus stays in a panel they opened, and the page is not pulled back to the button', async () => {
+    const w = await world({ lead: true });
+    const page = await openPage(w.bridge, '/ui', { [SESSION_KEY]: JSON.stringify({ token: w.relay.mint(), expiresAt: new Date(Date.now() + 3600_000).toISOString() }) });
+    await page.until(() => page.text().includes(`Signed in as ${PERSON} via ${agentOf('work-redesign')}`) && page.text().includes('Map and change your process'), 'the signed-in lead');
+    const win = page.window;
+    const d = win.document;
+    const copied: string[] = [];
+    Object.defineProperty(win.navigator, 'clipboard', { value: { writeText: async (s: string) => { copied.push(s); } }, configurable: true });
+    // The packet is held back until released, as a slow network holds it: the first press of a document always asks for one.
+    const held: Array<() => void> = [];
+    const inner = win.fetch;
+    win.fetch = (async (input: unknown, init?: RequestInit) => {
+      if (new URL(String(input), win.location.href).pathname === '/wrd/task_map_packet') await new Promise<void>((r) => { held.push(r); });
+      return inner(input as string, init);
+    }) as typeof win.fetch;
+    // jsdom lays nothing out and scrolls nothing: Card B's button reports itself below the screen, and each scroll to it is noted.
+    const KEY = 'document copy-paste-message';
+    const box = win.HTMLElement.prototype.getBoundingClientRect;
+    win.HTMLElement.prototype.getBoundingClientRect = function (this: HTMLElement) {
+      return this.getAttribute('data-return') === KEY ? { top: 2400, bottom: 2444, left: 16, right: 300, width: 284, height: 44, x: 16, y: 2400, toJSON: () => ({}) } as DOMRect : box.call(this);
+    };
+    const scrolledTo: Element[] = [];
+    (win.Element.prototype as unknown as { scrollIntoView: (this: Element) => void }).scrollIntoView = function (this: Element) { scrolledTo.push(this); };
+    const panelTitle = (): string | null => d.getElementById('panel-title')?.textContent ?? null;
+    const cardB = (): HTMLButtonElement => must([...d.querySelectorAll('.route-card button')].find((b) => b.textContent === 'Copy the message for my AI'), 'Card B\'s button') as HTMLButtonElement;
+    page.click('Map a process');
+    await page.until(() => d.querySelectorAll('input[name="capture-mode"]').length === 2, 'the capture view');
+    (d.querySelectorAll('input[name="capture-mode"]')[1] as HTMLInputElement).click();
+    await page.until(() => page.text().includes('Have your AI draft the map'), 'the document route');
+    page.fill(must(d.querySelector('[data-path="document.title"]'), 'the title field'), 'AP-SOP-014');
+    /** Press Card B with a new document text (so a new packet is asked for), do `meanwhile` while it is held, then let it come. */
+    const pressThen = async (text: string, meanwhile: () => Promise<void> | void): Promise<HTMLButtonElement> => {
+      page.fill(must(d.querySelector('[data-path="document.text"]'), 'the text field'), text);
+      const pressed = cardB();
+      const before = copied.length;
+      pressed.focus();
+      pressed.click();
+      await page.until(() => held.length === 1, 'the packet asked for');
+      await meanwhile();
+      must(held.pop(), 'the held packet')();
+      await page.until(() => copied.length === before + 1 && cardB() !== pressed, `"${text}" copied and the view drawn again`);
+      expect(copied.at(-1)).toContain(`----- DOCUMENT: AP-SOP-014 -----\n${text}\n----- END OF DOCUMENT -----`);
+      return pressed;
+    };
+
+    // (1) While it is on its way, the person opens "Use your AI assistant" from the account menu and goes to the connector
+    // address in it. The copy lands: focus stays on that address in the open panel, and nothing scrolls to Card B behind it.
+    const inPanel: { address?: HTMLTextAreaElement } = {};
+    await pressThen('Supplier invoices arrive by email. The clerk matches each invoice to its purchase order.', async () => {
+      (d.querySelectorAll('#account-menu button') as NodeListOf<HTMLButtonElement>).forEach((b) => { if (b.textContent === 'Use your AI assistant') b.click(); });
+      await page.until(() => panelTitle() === 'Use your AI assistant', 'the panel opened while the packet is on its way');
+      inPanel.address = must(d.querySelector('.chat-panel textarea'), 'the connector address') as HTMLTextAreaElement;
+      inPanel.address.focus();
+    });
+    const address = must(inPanel.address, 'the address focused in the panel');
+    expect([panelTitle(), d.activeElement === address, address.isConnected, d.activeElement === cardB(), scrolledTo]).toEqual(['Use your AI assistant', true, true, false, []]);
+    must(d.getElementById('panel-title'), 'the title').dispatchEvent(new win.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+    await page.until(() => d.getElementById('panel-title') === null, 'the panel closed');
+
+    // (2) The person scrolls on with the wheel while it is on its way, focus still on the button (a mouse click focuses it):
+    // focus goes to the new button, but the page stays where they scrolled it.
+    await pressThen('Supplier invoices arrive by email. The clerk matches each one, then files it.', () => {
+      d.body.dispatchEvent(new win.WheelEvent('wheel', { deltaY: 600, bubbles: true, cancelable: true }));
+    });
+    expect([d.activeElement === cardB(), scrolledTo]).toEqual([true, []]);
+
+    // (3) Unchanged where the person did nothing meanwhile: focus goes to the new button, brought into view as it is off the
+    // screen (Enter pressed while Tab's scroll was still under way). The watch for moving on is each press's own.
+    await pressThen('Supplier invoices arrive by email. The clerk matches each one and approves it.', () => undefined);
+    expect([d.activeElement === cardB(), scrolledTo.length, scrolledTo[0] === cardB()]).toEqual([true, 1, true]);
+    expect(page.errors).toEqual([]);
+  }, 60_000);
+
   it('where the operator lets chat agents decide too, the panel says so, and the workspace details ask the assistant to check with the person first instead of sending them to the app', async () => {
     const w = await world({ lead: true, chatAgentsDecide: true });
     const page = await openPage(w.bridge, '/ui', { [SESSION_KEY]: JSON.stringify({ token: w.relay.mint(), expiresAt: new Date(Date.now() + 3600_000).toISOString() }) });

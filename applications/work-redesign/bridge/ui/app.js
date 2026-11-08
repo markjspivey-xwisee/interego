@@ -1440,6 +1440,17 @@ function viewHeading() {
   title?.setAttribute('tabindex', '-1');
   return title;
 }
+/**
+ * Whether the person does anything from now until stop(): a key, a click or tap, the wheel, or a swipe. Something that
+ * finishes later (a copy waiting on its packet) uses it so as not to pull the page back to what they have moved on from.
+ */
+function watchMovingOn() {
+  let moved = false;
+  const on = () => { moved = true; };
+  const kinds = ['keydown', 'pointerdown', 'wheel', 'touchmove'];
+  for (const k of kinds) window.addEventListener(k, on, { capture: true, passive: true });
+  return { moved: () => moved, stop: () => { for (const k of kinds) window.removeEventListener(k, on, { capture: true }); } };
+}
 /** Focus what opened a panel (openerOf), opening any disclosure it sits in; when it is gone or disabled, `fallback`, else the view's heading. */
 function refocus(to, fallback = null) {
   let target = null;
@@ -2757,25 +2768,39 @@ function captureView() {
   const PASTE_COPY = ['document', 'copy-paste-message'];
   const copyPasteMessage = async () => {
     if (formProblems(docProblems())) return;
-    const p = await packetNow();
-    if (!p) return;
-    const shown = S.panel;
-    await copyText(pasteMessage(p), 'The message for your AI. Paste it into your chat app.');
-    // The redraw adds "Show the message", and builds this button again, so the one pressed is gone: focus goes to the new
-    // one (PASTE_COPY), and a keyboard or screen-reader user carries on from where they were. Where the browser refused the
-    // clipboard, "Copy this" has opened instead: focus stays on its title, and closing it comes back here by the same key.
-    const refused = S.panel && S.panel !== shown;
-    if (refused) S.panel.focus = true;
-    render();
-    if (refused) return;
-    // Focused without scrolling, then brought into view only where it is off the screen: Enter pressed just after Tab reached
-    // the button, while the browser was still scrolling to it, is stopped by the redraw, and refocus's way (stop any scroll,
-    // then focus) left the focused button off the screen in Chromium. Where it is in view, as when the person pressed it,
-    // nothing moves.
-    const again = [...document.querySelectorAll('#app [data-return]')].find((b) => b.getAttribute('data-return') === PASTE_COPY.join(' ')) ?? viewHeading();
-    again?.focus({ preventScroll: true });
-    const at = again?.getBoundingClientRect();
-    if (at && (at.top < 0 || at.bottom > window.innerHeight)) again.scrollIntoView?.({ block: 'center' });
+    // The first press always fetches a packet, and a person may go on while it comes: scroll on toward step 3, or open the
+    // AI assistant's set-up and Tab into it. What had focus when they pressed, and whether they did anything since, decide
+    // below whether focus and the page come back to this button.
+    const pressed = document.activeElement;
+    const person = watchMovingOn();
+    try {
+      const p = await packetNow();
+      if (!p) return;
+      const shown = S.panel;
+      await copyText(pasteMessage(p), 'The message for your AI. Paste it into your chat app.');
+      // The redraw adds "Show the message", and builds this button again, so the one pressed is gone: focus goes to the new
+      // one (PASTE_COPY), and a keyboard or screen-reader user carries on from where they were. Where the browser refused
+      // the clipboard, "Copy this" has opened instead: focus stays on its title, and closing it comes back here by the same key.
+      const refused = S.panel && S.panel !== shown;
+      if (refused) S.panel.focus = true;
+      // Only where focus is still where the press left it. A person who has gone on (into a panel they opened, or a field)
+      // keeps their place: the redraw leaves focus where it is, and the page where it is.
+      const stillOnIt = !refused && document.activeElement === pressed;
+      render();
+      if (!stillOnIt) return;
+      const again = [...document.querySelectorAll('#app [data-return]')].find((b) => b.getAttribute('data-return') === PASTE_COPY.join(' ')) ?? viewHeading();
+      again?.focus({ preventScroll: true });
+      // Focused without scrolling, then brought into view only where it is off the screen and the person has done nothing
+      // since the press: Enter pressed just after Tab reached the button, while the browser was still scrolling to it, is
+      // stopped by the redraw, and refocus's way (stop any scroll, then focus) left the focused button off the screen in
+      // Chromium. Where it is in view, as when the person pressed it, nothing moves; and a person who scrolled on, or used a
+      // key, meanwhile is left where they went (a mouse click focuses the button too, so focus alone can't tell).
+      if (person.moved()) return;
+      const at = again?.getBoundingClientRect();
+      if (at && (at.top < 0 || at.bottom > window.innerHeight)) again.scrollIntoView?.({ block: 'center' });
+    } finally {
+      person.stop();
+    }
   };
   const copyChatMessage = () => {
     if (!op) return;
