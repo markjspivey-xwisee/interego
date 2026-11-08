@@ -4,8 +4,9 @@
  * The value comes only from the operator's environment and ends up inside an href on every
  * public page, so it is checked here, on the server, before any page is built. Two shapes pass:
  *
- *   - an https page: no user name or password, a host, and no `@` anywhere; returned as the URL
- *     parser's normalised href;
+ *   - an https page: no user name or password, a host, and no `@` anywhere, written or escaped
+ *     (`%40`, so no address in a query either); returned as the URL parser's normalised href,
+ *     which must itself be at most 500 characters (escaping can make it longer than the value);
  *   - a mailto: link to exactly ONE address and nothing else: no query (`?subject=`, `?cc=`), no
  *     fragment, no percent-escape (so no encoded line break or second header), no comma (so no
  *     second recipient), no space and no second `@`. The local part is 1 to 64 of
@@ -18,10 +19,13 @@
  * with headers or two addresses, an empty value) is null, and the caller keeps its default link.
  * The value is trimmed first; one over 500 characters is null.
  *
+ * Whatever this returns, it returns again when given its own output (the second pass in
+ * pev's contactPages and in contactForLog relies on that).
+ *
  * No environment reads, no I/O: the caller decides what an unusable value means.
  */
 
-/** The longest value read at all, before any other check. */
+/** The longest value read at all, before any other check, and the longest https href returned. */
 export const CONTACT_RAW_MAX = 500;
 /** The longest address a mailto: link may carry. */
 const ADDRESS_MAX = 254;
@@ -46,6 +50,9 @@ export function contactHrefOf(raw: string): string | null {
   let u: URL;
   try { u = new URL(value); } catch { return null; }
   if (u.protocol !== 'https:' || u.username !== '' || u.password !== '' || u.hostname === '') return null;
+  // Checked on the href too: the parser drops tabs and line breaks, so an escape split by one
+  // (`%4<tab>0`) only reads as `%40` there, and percent-escaping can push the href past the cap.
+  if (/@|%40/i.test(u.href) || u.href.length > CONTACT_RAW_MAX) return null;
   return u.href;
 }
 
@@ -58,6 +65,7 @@ export function contactForLog(raw: string): string {
   const href = contactHrefOf(raw);
   if (href !== null && href.startsWith('mailto:')) return `a mailto: link to one address at ${href.slice(href.indexOf('@') + 1)} (the address itself is not printed)`;
   if (href !== null) return href;
-  if (/@|%40/i.test(raw)) return 'a value with an @ in it (not printed)';
+  // Tabs and line breaks dropped first, as the URL parser drops them, so `%4<tab>0` counts too.
+  if (/@|%40/i.test(raw.replace(/[\t\n\r]/g, ''))) return 'a value with an @ in it (not printed)';
   return JSON.stringify(raw.trim().slice(0, 120));
 }

@@ -8,36 +8,58 @@
 import { describe, it, expect } from 'vitest';
 import { CONTACT_RAW_MAX, contactForLog, contactHrefOf } from '../contact-link/index.js';
 
+/** Accepted https values and the href each becomes. */
+const ACCEPTED_HTTPS: ReadonlyArray<readonly [string, string]> = [
+  ['https://example.org/book', 'https://example.org/book'],
+  ['https://example.org', 'https://example.org/'],
+  ['HTTPS://Example.ORG/Contact?from=pev#top', 'https://example.org/Contact?from=pev#top'],
+  ['  https://example.org/book \n', 'https://example.org/book'],
+  ['https://example.org/a"b<c>', 'https://example.org/a%22b%3Cc%3E'],
+  // The URL parser drops a tab or line break anywhere in the value.
+  ['https://exa\tmple.org/x', 'https://example.org/x'],
+  ['https://exa\nmple.org/x', 'https://example.org/x'],
+];
+
+/** Accepted mailto: values and the link each becomes. */
+const ACCEPTED_MAILTO: ReadonlyArray<readonly [string, string]> = [
+  ['mailto:operator@example.org', 'mailto:operator@example.org'],
+  ['MAILTO:Operator@Example.ORG', 'mailto:Operator@example.org'],
+  ['MailTo:first.last+pev@mail.example.org', 'mailto:first.last+pev@mail.example.org'],
+  ['  mailto:operator@example.org\t', 'mailto:operator@example.org'],
+  ['mailto:a_b-c@sub-domain.example.co', 'mailto:a_b-c@sub-domain.example.co'],
+];
+
 describe('contactHrefOf', () => {
   it('accepts an https page with no credentials and no @, as the URL parser normalises it', () => {
-    const accepted: ReadonlyArray<readonly [string, string]> = [
-      ['https://example.org/book', 'https://example.org/book'],
-      ['https://example.org', 'https://example.org/'],
-      ['HTTPS://Example.ORG/Contact?from=pev#top', 'https://example.org/Contact?from=pev#top'],
-      ['  https://example.org/book \n', 'https://example.org/book'],
-      ['https://example.org/a"b<c>', 'https://example.org/a%22b%3Cc%3E'],
-    ];
-    for (const [raw, href] of accepted) expect([raw, contactHrefOf(raw)]).toEqual([raw, href]);
+    for (const [raw, href] of ACCEPTED_HTTPS) expect([raw, contactHrefOf(raw)]).toEqual([raw, href]);
   });
 
   it('accepts a mailto: link to one address in any case, rebuilt with the domain lower-cased', () => {
-    const accepted: ReadonlyArray<readonly [string, string]> = [
-      ['mailto:operator@example.org', 'mailto:operator@example.org'],
-      ['MAILTO:Operator@Example.ORG', 'mailto:Operator@example.org'],
-      ['MailTo:first.last+pev@mail.example.org', 'mailto:first.last+pev@mail.example.org'],
-      ['  mailto:operator@example.org\t', 'mailto:operator@example.org'],
-      ['mailto:a_b-c@sub-domain.example.co', 'mailto:a_b-c@sub-domain.example.co'],
-    ];
-    for (const [raw, href] of accepted) expect([raw, contactHrefOf(raw)]).toEqual([raw, href]);
+    for (const [raw, href] of ACCEPTED_MAILTO) expect([raw, contactHrefOf(raw)]).toEqual([raw, href]);
+  });
+
+  it('returns, for its own output, that output again, so a second check never refuses what the first took', () => {
+    for (const [raw, href] of [...ACCEPTED_HTTPS, ...ACCEPTED_MAILTO]) {
+      expect([raw, contactHrefOf(href)]).toEqual([raw, href]);
+      expect([raw, contactHrefOf(contactHrefOf(raw) ?? '')]).toEqual([raw, contactHrefOf(raw)]);
+    }
+    // Under the cap as written, over it once escaped: refused here rather than by the second pass.
+    const escaped: readonly string[] = [`https://example.org/${'\u00e9'.repeat(100)}`, `https://example.org/${'"'.repeat(170)}`];
+    for (const raw of escaped) {
+      expect(raw.length).toBeLessThanOrEqual(CONTACT_RAW_MAX);
+      expect(new URL(raw).href.length).toBeGreaterThan(CONTACT_RAW_MAX);
+      expect([raw, contactHrefOf(raw)]).toEqual([raw, null]);
+    }
   });
 
   it('refuses every other scheme, credentials, an @ in an https page, and a mailto: with anything but one address', () => {
     const refused: readonly string[] = [
       // Other schemes and non-URLs.
       'javascript:alert(1)', 'JavaScript:alert(1)', 'data:text/html,x', 'data:text/html;base64,PHA+eDwvcD4=', 'http://example.org/contact',
-      'ftp://example.org/', 'vbscript:x', 'file:///etc/passwd', '/ui/help#contact', 'example.org/book', 'not a url', '', '   ',
-      // An https page with credentials, or an @ anywhere in it.
-      'https://user:pass@example.org/', 'https://user@example.org/', 'https://example.org/team/@operator', 'https://example.org/?to=operator@example.org',
+      'ftp://example.org/', 'vbscript:x', 'file:///etc/passwd', '/ui/help#contact', 'example.org/book', '//example.org/', 'not a url', '', '   ',
+      // An https page with credentials, or an @ anywhere in it, written or escaped (also when a tab splits the escape).
+      'https://user:pass@example.org/', 'https://user@example.org/', 'https://@example.org/', 'https://example.org/team/@operator', 'https://example.org/?to=operator@example.org',
+      'https://example.org/?to=operator%40example.org', 'https://example.org/team/%40operator', 'https://example.org/?to=operator%4\t0example.org',
       // A mailto: with headers, a fragment, an escape, a second address, spaces, or not exactly one address.
       'mailto:', 'mailto:operator', 'mailto:@example.org', 'mailto:operator@', 'mailto:operator@example', 'mailto:operator@example.',
       'mailto:operator@.example.org', 'mailto:operator@example..org',
@@ -70,7 +92,8 @@ describe('contactHrefOf', () => {
     const mailto = contactForLog('MAILTO:Operator@Example.ORG');
     expect(mailto).toBe('a mailto: link to one address at example.org (the address itself is not printed)');
     expect(mailto).not.toContain('Operator');
-    for (const raw of ['mailto:operator@example.org?subject=x', 'https://user@example.org/', 'operator@example.org', 'mailto:operator%40example.org']) {
+    for (const raw of ['mailto:operator@example.org?subject=x', 'https://user@example.org/', 'operator@example.org', 'mailto:operator%40example.org',
+      'https://example.org/?to=operator%40example.org', 'https://example.org/?to=operator%4\t0example.org']) {
       expect([raw, contactForLog(raw)]).toEqual([raw, 'a value with an @ in it (not printed)']);
     }
     expect(contactForLog('javascript:alert(1)')).toBe('"javascript:alert(1)"');

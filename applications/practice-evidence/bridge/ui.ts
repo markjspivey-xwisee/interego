@@ -891,9 +891,10 @@ export function wantsLandingPage(req: Request): boolean {
 /**
  * The operator's contact link (PEV_CONTACT_URL), as the pages may link it: the shared
  * contactHrefOf rule (applications/_shared/contact-link), which work-redesign applies too. An
- * https page with no user name, password or `@` anywhere, normalised; or a mailto: link to exactly
- * one address with nothing after it (no query, fragment, escape, comma or space), rebuilt with the
- * domain lower-cased. Null for anything else, which leaves the default links.
+ * https page with no user name, password or `@` anywhere (nor `%40`), normalised and at most 500
+ * characters; or a mailto: link to exactly one address with nothing after it (no query, fragment,
+ * escape, comma or space), rebuilt with the domain lower-cased. Null for anything else, which
+ * leaves the default links. Its output passes it again, as contactPages' second check expects.
  */
 export function contactUrlOf(raw: string): string | null {
   return contactHrefOf(raw);

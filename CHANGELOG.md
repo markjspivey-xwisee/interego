@@ -4,10 +4,14 @@
 
 Both sites now take their operator-set "Contact" link through one shared check,
 `applications/_shared/contact-link` (`contactHrefOf`): an https page with no
-user name, password or `@` in it, or a `mailto:` link to exactly one address
-with nothing after it (no `?subject=`, fragment, `%` escape, comma, space or
-second `@`; the scheme in any case, the domain lower-cased, the link rebuilt
-from the matched parts). Everything else is refused.
+user name, password or `@` in it (written or escaped as `%40`, so no address
+in a query either) whose normalised link is at most 500 characters, or a
+`mailto:` link to exactly one address with nothing after it (no `?subject=`,
+fragment, `%` escape, comma, space or second `@`; the scheme in any case, the
+domain lower-cased, the link rebuilt from the matched parts). Everything else
+is refused. The check gives back, for its own output, that output again, so a
+page value that escaping makes longer than the cap is refused at the first
+check rather than stopping the Practice Evidence bridge at the second.
 
 Practice Evidence (`PEV_CONTACT_URL`) used to refuse every value with an `@`,
 so an operator could not give a mail address; it now accepts one mailto
