@@ -438,13 +438,19 @@ export class LearningProgressNotifications {
     const parser = express.json({ limit: LEARNING_NOTIFICATION_LIMITS.payloadBytes, strict: true });
     app.post(CALLBACK + ':linkId', (req, res, next) => {
       res.set('Cache-Control', 'no-store').set('Pragma', 'no-cache').set('Referrer-Policy', 'no-referrer').set('X-Content-Type-Options', 'nosniff');
-      const invalid = (status: number, reason: LearningNotificationPayloadReason): void => {
-        res.status(status).json({ error: 'learning_notifications_payload_invalid', reason, ...payloadDiagnostics(req.body, req.get('Content-Type')) });
+      const invalid = (status: number, reason: LearningNotificationPayloadReason, parsed = true): void => {
+        res.status(status).json({ error: 'learning_notifications_payload_invalid', reason, ...payloadDiagnostics(parsed ? req.body : undefined, req.get('Content-Type')) });
       };
       if (Object.keys(req.query).length) { invalid(400, 'query'); return; }
       if (!req.is('application/json')) { invalid(400, 'content_type'); return; }
       const length = req.get('Content-Length'); if (length && (!/^\d+$/.test(length) || Number(length) > LEARNING_NOTIFICATION_LIMITS.payloadBytes)) { invalid(413, 'content_length'); return; }
-      parser(req, res, error => { if (error) invalid(400, 'json_parse'); else next(); });
+      // The shared bridge uses Express 5's parser while this workspace uses
+      // Express 4's. Their private parsed-body flags differ; attempting to read
+      // the already-consumed stream again fails with stream.not.readable.
+      // Reuse only an existing body whose stream emitted end. The authenticated
+      // receiver still applies the same byte/structure/identifier checks below.
+      if (req.readableEnded && req.body !== undefined) { next(); return; }
+      parser(req, res, error => { if (error) invalid(400, 'json_parse', false); else next(); });
     }, async (req, res) => {
       const cancelled = new AbortController(), close = () => { if (!res.writableEnded) cancelled.abort(); }; res.on('close', close);
       try { const value = await this.receive(String(req.params.linkId), req.get('Authorization'), req.body, cancelled.signal); if (!cancelled.signal.aborted) res.json(value); }

@@ -376,10 +376,12 @@ describe('optional authenticated per-link Cloud progress refresh notifications',
   });
   it('accepts documented Cloud JSON behind the real bridge factory parser and Foxxi request metadata', async () => {
     const f = fixture(); await f.request('enable-progress-notifications');
+    let lastContentLength: string | undefined;
     const app = createVerticalBridge({ verticalName: 'notification-callback-fixture', affordances: [], handlers: {}, middleware(a) {
       // Same ordering and object decoration as the live Foxxi bridge: the
       // factory has already parsed JSON, and Basic never becomes a caller token.
       a.use((req, _res, next) => {
+        lastContentLength = req.get('Content-Length');
         const header = req.headers.authorization, token = typeof header === 'string' && /^Bearer\s+(.+)$/i.exec(header);
         if (req.body && typeof req.body === 'object') {
           const body = req.body as Row; body.__client_ip = req.ip ?? 'unknown';
@@ -395,13 +397,48 @@ describe('optional authenticated per-link Cloud progress refresh notifications',
     const endpoint = 'http://127.0.0.1:' + address.port + '/i2idlx/learning/progress-notifications/' + LINK;
     for (const contentType of ['application/json; charset=UTF-8', 'Application/JSON; charset=UTF-8']) {
       const response = await fetch(endpoint, { method: 'POST', headers: { 'Content-Type': contentType, Authorization: f.header() }, body: JSON.stringify(f.registration) });
-      expect(response.status).toBe(200);
-      expect(await response.json()).toEqual({ received: true, refresh_required: true, received_at: new Date(NOW).toISOString() });
+      const result = await response.json() as Row;
+      expect(response.status, JSON.stringify(result)).toBe(200);
+      expect(result).toEqual({ received: true, refresh_required: true, received_at: new Date(NOW).toISOString() });
     }
     const wrapper = await fetch(endpoint, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: f.header() }, body: JSON.stringify({ data: f.registration }) });
     expect(wrapper.status).toBe(400);
     expect(await wrapper.json()).toMatchObject({ error: 'learning_notifications_payload_invalid', reason: 'registration_id_missing', media_type: 'application_json', parsed_type: 'object', known_fields: { id: 'missing', data: 'object' } });
+    const invalid = await fetch(endpoint, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: f.header() }, body: '[1,2]' });
+    expect(invalid.status).toBe(400); expect(await invalid.json()).toMatchObject({ reason: 'body_shape' });
+    const structure = await fetch(endpoint, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: f.header() }, body: '{"id":"registration-one","constructor":{}}' });
+    expect(structure.status).toBe(400); expect(await structure.json()).toMatchObject({ reason: 'body_structure' });
+    const unauthorized = await fetch(endpoint, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Basic invalid' }, body: JSON.stringify(f.registration) });
+    expect(unauthorized.status).toBe(401); expect(await unauthorized.json()).toEqual({ error: 'learning_notifications_authentication_failed' });
+    const oversizedBody = JSON.stringify({ id: 'registration-one', ignored: 'x'.repeat(LEARNING_NOTIFICATION_LIMITS.payloadBytes) });
+    const oversized = await fetch(endpoint, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: f.header() }, body: oversizedBody });
+    expect(oversized.status).toBe(413); expect(await oversized.json()).toMatchObject({ reason: 'content_length' });
+    const chunked = await fetch(endpoint, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: f.header() },
+      body: new ReadableStream<Uint8Array>({ start(controller) { controller.enqueue(new TextEncoder().encode(oversizedBody)); controller.close(); } }), duplex: 'half' } as RequestInit & { duplex: 'half' });
+    expect(lastContentLength).toBeUndefined();
+    expect(chunked.status).toBe(400); expect(await chunked.json()).toMatchObject({ reason: 'body_size' });
     expect(f.receipts).toHaveLength(2);
     expect(JSON.stringify(f.receipts)).not.toMatch(/__client_ip|__caller_token|Not exposed|private@example/);
+  });
+  it('does not trust a middleware-injected body while the request stream remains unread', async () => {
+    const f = fixture(); await f.request('enable-progress-notifications'); const app = express();
+    app.use((req, _res, next) => { expect(req.readableEnded).toBe(false); req.body = { id: 'registration-one' }; next(); });
+    f.service.attachRoutes(app);
+    const server = app.listen(0, '127.0.0.1'); await once(server, 'listening');
+    cleanups.push(async () => { await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve())); });
+    const address = server.address(); if (!address || typeof address === 'string') throw Error('Missing local test server');
+    const endpoint = 'http://127.0.0.1:' + address.port + '/i2idlx/learning/progress-notifications/' + LINK;
+    const cases = [
+      { body: '{"id":"unselected-registration"}', status: 403, error: 'learning_enrollment_required' },
+      { body: '{"registrationId":"registration-one"}', status: 400, error: 'learning_notifications_payload_invalid', reason: 'registration_id_missing' },
+      { body: '{"id":', status: 400, error: 'learning_notifications_payload_invalid', reason: 'json_parse' },
+    ];
+    for (const item of cases) {
+      const response = await fetch(endpoint, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: f.header() }, body: item.body });
+      expect(response.status).toBe(item.status); expect(await response.json()).toMatchObject({ error: item.error, ...(item.reason ? { reason: item.reason } : {}) });
+    }
+    expect(f.receipts).toHaveLength(0);
+    const valid = await fetch(endpoint, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: f.header() }, body: '{"id":"registration-one"}' });
+    expect(valid.status).toBe(200); expect(f.receipts).toHaveLength(1);
   });
 });

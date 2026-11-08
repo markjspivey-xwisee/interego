@@ -1,5 +1,14 @@
 # Changelog
 
+## 2026-11-08 — Ask: accept Cloud updates after the shared JSON parser
+
+The Cloud notification receiver reuses an existing parsed body only after the
+request stream has ended. This avoids asking the connector's Express 4 parser
+to read the stream already consumed by the shared Express 5 parser. Unread
+requests still go through the receiver's parser. Authentication, payload bounds,
+registration matching and fresh provider verification remain required; incoming
+score or completion fields still cannot set learning results.
+
 ## 2026-11-08 — Ask: preserve owner-supplied course sequence labels
 
 Course readiness keeps the owner's optional curriculum item labels, including
