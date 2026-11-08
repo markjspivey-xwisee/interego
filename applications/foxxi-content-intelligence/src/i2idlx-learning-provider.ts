@@ -6,6 +6,8 @@
 export interface LearningRegistration {
   id: string;
   learnerId: string;
+  /** Private provider instance counter for current-attempt revalidation. */
+  instance?: number;
   course: { id: string; title: string; version: number };
   progress: {
     completion: 'UNKNOWN' | 'COMPLETED' | 'INCOMPLETE';
@@ -26,6 +28,32 @@ export interface LearningCourseActivity {
 export interface LearningCourseStructure {
   id: string; title: string; version: number; rootActivity?: LearningCourseActivity;
 }
+export interface LearningOwnedCourse { id: string; title: string; version: number; }
+export interface LearningReviewInteraction {
+  id: string;
+  /** Provider observation, not a grade recomputed by this reader. */
+  result: string;
+  learnerResponse?: string;
+  /** An explicitly zoned provider timestamp; local/time-only values are not inferred. */
+  timestamp?: string;
+}
+export interface LearningReviewActivity {
+  id: string; title?: string;
+  completion: 'UNKNOWN' | 'COMPLETED' | 'INCOMPLETE';
+  success: 'UNKNOWN' | 'PASSED' | 'FAILED';
+  /** Provider activity-attempt count, not a reconstructed response history. */
+  attempts?: number;
+  submission: 'completed' | 'terminal-lesson-status';
+  interactions: LearningReviewInteraction[];
+}
+/** Internal identity envelope. The caller must project private identifiers out of model/browser DTOs. */
+export interface LearningCompletedReview {
+  registrationId: string; learnerId: string;
+  course: { id: string; title: string; version: number };
+  instance?: number; observedAt: string;
+  activities: LearningReviewActivity[];
+  omittedInProgressActivities: number;
+}
 export class LearningProviderError extends Error {
   constructor(message: string, readonly status = 502, readonly code = 'learning_provider_unavailable') { super(message); }
 }
@@ -37,7 +65,11 @@ export interface ScormCloudLearningProviderConfig {
 }
 export const LEARNING_PROVIDER_LIMITS = Object.freeze({
   pageBytes: 256 * 1024, totalBytes: 2 * 1024 * 1024,
-  pageEntries: 100, registrations: 1000, pages: 100, timeoutMs: 20_000,
+  pageEntries: 100, registrations: 1000, courses: 1000, pages: 100, timeoutMs: 20_000,
+});
+export const LEARNING_REVIEW_LIMITS = Object.freeze({
+  responseBytes: 1024 * 1024, activities: 256, depth: 24,
+  interactions: 500, interactionsPerActivity: 200, responseTextBytes: 4096,
 });
 export const SCORM_CLOUD_LEARNING_CAPABILITIES = Object.freeze({
   enrollments: true, progress: true, prerequisites: false, curriculum: false,
@@ -80,7 +112,9 @@ function normalize(raw: unknown, observedAt: string): LearningRegistration {
     if (raw.score.scaled !== undefined && raw.score.scaled !== null) progress.score = { scaled: number(raw.score.scaled, 100) };
   }
   const courseId = text(raw.course.id, 256);
+  const instance = reviewInstance(raw);
   return { id: text(raw.id, 256), learnerId: text(raw.learner.id, 256),
+    ...(instance === undefined ? {} : { instance }),
     course: { id: courseId, title: raw.course.title === undefined || raw.course.title === null ? courseId : text(raw.course.title, 400), version: version(raw.course.version) },
     progress, observedAt };
 }
@@ -102,6 +136,88 @@ function course(raw: unknown, id: string, expectedVersion?: number): LearningCou
   }
   if (raw.rootActivity !== undefined && raw.rootActivity !== null) result.rootActivity = activity(raw.rootActivity, 0);
   return result;
+}
+function reviewInstance(raw: unknown): number | undefined {
+  if (!object(raw) || raw.instance === undefined || raw.instance === null) return undefined;
+  if (!Number.isSafeInteger(raw.instance) || Number(raw.instance) < 0 || Number(raw.instance) > 2_147_483_647) fail('SCORM Cloud returned an invalid registration instance.');
+  return raw.instance as number;
+}
+function reviewActivities(raw: unknown): Pick<LearningCompletedReview, 'activities' | 'omittedInProgressActivities'> {
+  const activities: LearningReviewActivity[] = [];
+  let visited = 0, interactions = 0, omittedInProgressActivities = 0;
+  const state = (value: unknown, values: readonly string[]): string => {
+    if (value === undefined || value === null) return 'UNKNOWN';
+    if (typeof value !== 'string' || !values.includes(value)) fail('SCORM Cloud returned unsupported activity review status.');
+    return value;
+  };
+  const response = (value: unknown): string => {
+    if (typeof value !== 'string' || Buffer.byteLength(value) > LEARNING_REVIEW_LIMITS.responseTextBytes ||
+      /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/.test(value) || Buffer.from(value).toString('utf8') !== value) {
+      fail('SCORM Cloud returned an unsupported learner response.');
+    }
+    return value;
+  };
+  function visit(value: unknown, depth: number): void {
+    if (!object(value) || ++visited > LEARNING_REVIEW_LIMITS.activities || depth > LEARNING_REVIEW_LIMITS.depth) {
+      fail('The activity review exceeds reader capacity.', 413, 'learning_provider_capacity_exceeded');
+    }
+    if (value.children !== undefined && value.children !== null && !Array.isArray(value.children) ||
+      value.runtime !== undefined && value.runtime !== null && !object(value.runtime)) fail('SCORM Cloud returned an unsupported activity review.');
+    const runtime = object(value.runtime) ? value.runtime : undefined, items = runtime?.runtimeInteractions;
+    if (items !== undefined && items !== null && !Array.isArray(items)) fail('SCORM Cloud returned unsupported interaction results.');
+    if (Array.isArray(items)) {
+      interactions += items.length;
+      if (items.length > LEARNING_REVIEW_LIMITS.interactionsPerActivity || interactions > LEARNING_REVIEW_LIMITS.interactions) {
+        fail('The interaction review exceeds reader capacity.', 413, 'learning_provider_capacity_exceeded');
+      }
+      if (items.length) {
+        const completion = state(value.activityCompletion, ['UNKNOWN', 'COMPLETED', 'INCOMPLETE']) as LearningReviewActivity['completion'];
+        const success = state(value.activitySuccess, ['UNKNOWN', 'PASSED', 'FAILED']) as LearningReviewActivity['success'];
+        const lessonStatus = typeof runtime?.completionStatus === 'string' ? runtime.completionStatus.toLowerCase() : '';
+        // SCORM 1.2 has a combined lesson status: failed/passed can be a submitted
+        // terminal result even when Cloud's separate completion remains incomplete.
+        const terminalLesson = lessonStatus === 'failed' && success !== 'PASSED' || lessonStatus === 'passed' && success !== 'FAILED';
+        const inProgress = ['incomplete', 'not attempted', 'not_attempted', 'not-attempted'].includes(lessonStatus);
+        if (inProgress || completion !== 'COMPLETED' && !terminalLesson) omittedInProgressActivities++;
+        else {
+          const projected: LearningReviewActivity = { id: text(value.id, 256),
+            ...(value.title === undefined || value.title === null || value.title === '' ? {} : { title: text(value.title, 400) }),
+            completion, success, submission: completion === 'COMPLETED' ? 'completed' : 'terminal-lesson-status', interactions: [] };
+          if (value.attempts !== undefined && value.attempts !== null) {
+            if (!Number.isSafeInteger(value.attempts) || Number(value.attempts) < 0) fail('SCORM Cloud returned an invalid activity attempt count.');
+            projected.attempts = value.attempts as number;
+          }
+          // Keep source order, including repeated identifiers. Do not invent a
+          // latest attempt by sorting timestamps or collapsing the provider journal.
+          for (const item of items) {
+            if (!object(item)) fail('SCORM Cloud returned an unsupported interaction result.');
+            const result = text(item.result, 64), numeric = /^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?$/.test(result) && Number.isFinite(Number(result));
+            if (!['correct', 'incorrect', 'wrong', 'unanticipated', 'neutral'].includes(result.toLowerCase()) && !numeric) {
+              fail('SCORM Cloud returned an unsupported interaction judgment.');
+            }
+            const interaction: LearningReviewInteraction = { id: text(item.id, 256), result,
+              ...(item.learnerResponse === undefined || item.learnerResponse === null ? {} : { learnerResponse: response(item.learnerResponse) }) };
+            const zonedTimestamp = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/;
+            const stamp = item.timestampUtc !== undefined && item.timestampUtc !== null && item.timestampUtc !== '' ? item.timestampUtc
+              : typeof item.timestamp === 'string' && zonedTimestamp.test(item.timestamp) ? item.timestamp : undefined;
+            if (stamp !== undefined) {
+              const timestamp = text(stamp, 128);
+              if (!zonedTimestamp.test(timestamp) || !Number.isFinite(Date.parse(timestamp))) {
+                fail('SCORM Cloud returned an invalid interaction timestamp.');
+              }
+              interaction.timestamp = timestamp;
+            }
+            projected.interactions.push(interaction);
+          }
+          activities.push(projected);
+        }
+      }
+    }
+    for (const child of value.children as unknown[] | undefined ?? []) visit(child, depth + 1);
+  }
+  if (!object(raw)) fail('SCORM Cloud returned an unsupported registration review.');
+  if (raw.activityDetails !== undefined && raw.activityDetails !== null) visit(raw.activityDetails, 0);
+  return { activities, omittedInProgressActivities };
 }
 function checkAbort(signal: AbortSignal, caller?: AbortSignal): void {
   if (signal.aborted) fail(caller?.aborted ? 'The learning request was cancelled.' : 'SCORM Cloud did not answer before the request expired.',
@@ -128,7 +244,8 @@ export class ScormCloudLearningProvider {
       return fail('SCORM Cloud could not verify the requested learning records.', 502, 'learning_provider_unavailable');
     }
   }
-  private async read(path: string, signal: AbortSignal, budget: { bytes: number }, body?: Row): Promise<unknown> {
+  private async read(path: string, signal: AbortSignal, budget: { bytes: number }, body?: Row,
+    responseLimit = LEARNING_PROVIDER_LIMITS.pageBytes): Promise<unknown> {
     checkAbort(signal);
     const target = CLOUD + path;
     const response = await this.fetcher(target, { method: body ? 'POST' : 'GET', redirect: 'error', signal,
@@ -149,7 +266,7 @@ export class ScormCloudLearningProvider {
       await response.body?.cancel(); fail('SCORM Cloud returned an unsupported registration response.');
     }
     const length = response.headers.get('content-length');
-    if (length !== null && (!/^\d+$/.test(length) || Number(length) > LEARNING_PROVIDER_LIMITS.pageBytes)) {
+    if (length !== null && (!/^\d+$/.test(length) || Number(length) > responseLimit)) {
       await response.body?.cancel(); fail('The registration response exceeds reader capacity.', 413, 'learning_provider_capacity_exceeded');
     }
     if (!response.body) fail('SCORM Cloud returned an empty registration response.');
@@ -163,7 +280,7 @@ export class ScormCloudLearningProvider {
         const result = await Promise.race([reader.read(), aborted]); checkAbort(signal);
         if (result.done) break;
         size += result.value.byteLength; budget.bytes += result.value.byteLength;
-        if (size > LEARNING_PROVIDER_LIMITS.pageBytes || budget.bytes > LEARNING_PROVIDER_LIMITS.totalBytes) {
+        if (size > responseLimit || budget.bytes > LEARNING_PROVIDER_LIMITS.totalBytes) {
           fail('The registration response exceeds reader capacity.', 413, 'learning_provider_capacity_exceeded');
         }
         chunks.push(result.value);
@@ -219,6 +336,31 @@ export class ScormCloudLearningProvider {
     learnerId = text(learnerId, 256, true);
     return this.operation(signal, active => this.own(learnerId, active, { bytes: 0 }));
   }
+  /** Administrative catalog only. The server must independently establish connector ownership. */
+  async listOwnedCourses(signal?: AbortSignal): Promise<LearningOwnedCourse[]> {
+    return this.operation(signal, async active => {
+      const budget = { bytes: 0 }, courses: LearningOwnedCourse[] = [], ids = new Set<string>(), cursors = new Set<string>();
+      let more: string | undefined;
+      for (let page = 0; page < LEARNING_PROVIDER_LIMITS.pages; page++) {
+        const raw = await this.read('/courses' + (more === undefined ? '' : '?' + new URLSearchParams({ more })), active, budget);
+        if (!object(raw) || !Array.isArray(raw.courses)) fail('SCORM Cloud returned an unsupported course catalog.');
+        if (raw.courses.length > LEARNING_PROVIDER_LIMITS.pageEntries || courses.length + raw.courses.length > LEARNING_PROVIDER_LIMITS.courses) {
+          fail('The course catalog exceeds reader capacity.', 413, 'learning_provider_capacity_exceeded');
+        }
+        for (const entry of raw.courses) {
+          if (!object(entry)) fail('SCORM Cloud returned an unsupported course entry.');
+          const id = text(entry.id, 256);
+          if (ids.has(id)) fail('SCORM Cloud returned duplicate course identifiers.');
+          ids.add(id); courses.push({ id, title: entry.title === undefined || entry.title === null ? id : text(entry.title, 400), version: version(entry.version) });
+        }
+        if (raw.more === undefined || raw.more === null || raw.more === '') return courses;
+        more = text(raw.more, 4096);
+        if (cursors.has(more)) fail('SCORM Cloud returned a repeated course page.');
+        cursors.add(more);
+      }
+      return fail('The course catalog exceeds reader capacity.', 413, 'learning_provider_capacity_exceeded');
+    });
+  }
   async authorizeCourse(learnerId: string, courseId: string, courseVersion: number, signal?: AbortSignal): Promise<LearningRegistration[]> {
     learnerId = text(learnerId, 256, true); courseId = text(courseId, 256, true); courseVersion = version(courseVersion, true);
     return this.operation(signal, async active => {
@@ -234,6 +376,29 @@ export class ScormCloudLearningProvider {
         current.push(registration);
       }
       return current;
+    });
+  }
+  /** Explicit read only after owner review release and learner opt-in. No registration creation or grading. */
+  async readOwnReview(learnerId: string, courseId: string, courseVersion: number, registrationId: string,
+    signal?: AbortSignal): Promise<LearningCompletedReview> {
+    learnerId = text(learnerId, 256, true); courseId = text(courseId, 256, true);
+    courseVersion = version(courseVersion, true); registrationId = text(registrationId, 256, true);
+    return this.operation(signal, async active => {
+      const budget = { bytes: 0 }, path = '/registrations/' + encodeURIComponent(registrationId);
+      const summaryRaw = await this.read(path, active, budget), summary = normalize(summaryRaw, this.observedAt());
+      if (summary.id !== registrationId || summary.learnerId !== learnerId || summary.course.id !== courseId || summary.course.version !== courseVersion) {
+        fail('A current registration for this learner and exact course version is required.', 403, 'learning_enrollment_required');
+      }
+      const instance = reviewInstance(summaryRaw);
+      const detailRaw = await this.read(path + '?includeChildResults=true&includeInteractionsAndObjectives=true&includeRuntime=true', active, budget,
+        undefined, LEARNING_REVIEW_LIMITS.responseBytes);
+      const detail = normalize(detailRaw, this.observedAt());
+      if (detail.id !== summary.id || detail.learnerId !== summary.learnerId || detail.course.id !== summary.course.id || detail.course.version !== summary.course.version) {
+        fail('The registration changed while its review was being read.', 403, 'learning_enrollment_required');
+      }
+      if (reviewInstance(detailRaw) !== instance) fail('The registration instance changed while its review was being read.', 409, 'learning_review_changed');
+      return { registrationId: detail.id, learnerId: detail.learnerId, course: detail.course,
+        ...(instance === undefined ? {} : { instance }), observedAt: detail.observedAt, ...reviewActivities(detailRaw) };
     });
   }
   async getCourseStructure(courseId: string, courseVersion: number, signal?: AbortSignal): Promise<LearningCourseStructure> {

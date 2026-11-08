@@ -46,6 +46,7 @@ function fixture() {
     const url = new URL(String(input)); calls.push({ path: url.pathname + url.search, init });
     if (hook) await hook(url.pathname + url.search);
     if (url.pathname === '/api/v2/courses') return json({ courses: [{ id: 'course-a', title: 'Incident response', version: 2 }] });
+    if (url.pathname === '/api/v2/courses/course-a/versions/2') return json({ id: 'course-a', title: 'Incident response', version: 2 });
     if (url.pathname === '/api/v2/registrations') return json({ registrations: [...registrations.values()].filter(r => r.learner.id === url.searchParams.get('learnerId')) });
     const id = decodeURIComponent(url.pathname.slice('/api/v2/registrations/'.length));
     return registrations.has(id) ? json(registrations.get(id)) : json({ error: 'private missing registration' }, 404);
@@ -76,6 +77,54 @@ function gate() {
 }
 
 describe('human-owned learning connector and learner-link authority', () => {
+  const mapInput = () => ({ schema_version: 1, course_id: 'course-a', version: 2, release_quiz_review: true,
+    instructional_locations: [{ id: 'incident', label: 'Incident procedure', source_file: 'incident.html' }],
+    review_items: [{ activity_id: 'quiz', interaction_id: 'incident-code', question_label: 'Which code did you record?', location_ids: ['incident'] }],
+    prerequisites: [{ course_id: 'intro', relation: 'required' }, { course_id: 'practice', relation: 'recommended' }] });
+  it('saves owner maps with compare-and-swap, exact course-version authority and revocable release', async () => {
+    const f = fixture(), { connector, link } = await f.setup({ allowAiContent: true, allowAiProgress: true, allowAiReview: true });
+    const binding = { connector_id: connector.id, course_id: 'course-a', version: 2 };
+    const writes = f.repository.writes;
+    const preview = await f.store.request(f.owner.value, { operation: 'preview-course-map', ...binding, map: mapInput() });
+    expect(preview).toMatchObject({ valid: true, map: { release_quiz_review: true } }); expect(f.repository.writes).toBe(writes);
+    await refuses(f.store.request(f.student.value, { operation: 'get-course-map', ...binding }), 404);
+    await refuses(f.store.request(f.other.value, { operation: 'save-course-map', ...binding, map: mapInput(), confirmed: true, expected_revision: null }), 404);
+    const saved = record((await f.store.request(f.owner.value, { operation: 'save-course-map', ...binding, map: mapInput(), confirmed: true, expected_revision: null })).course_map);
+    expect(saved.provenance).toMatchObject({ kind: 'connector-owner-authored', owner: f.owner.value.subject, connector_id: connector.id, sha256: expect.stringMatching(/^[a-f0-9]{64}$/) });
+    const access = await f.store.access(f.student.value, String(link.id), 'course-a', 2, { content: false, progress: false, review: true });
+    expect(access.learningMap?.map.prerequisites.map(value => value.relation)).toEqual(['required', 'recommended']);
+    await refuses(f.store.request(f.owner.value, { operation: 'save-course-map', ...binding, map: mapInput(), confirmed: true, expected_revision: null }), 409, 'learning_map_revision_conflict');
+    const previous = access.revision;
+    await f.store.request(f.owner.value, { operation: 'delete-course-map', ...binding, confirmed: true, expected_revision: record(saved.provenance).revision });
+    const ended = await f.store.access(f.student.value, String(link.id), 'course-a', 2, { content: false, progress: false });
+    expect(ended.learningMap).toBeNull(); expect(ended.revision).not.toBe(previous);
+    expect(JSON.stringify(await f.store.request(f.student.value, { operation: 'courses', link_id: link.id }))).not.toMatch(/private-secret|authorization|Which code/);
+  });
+  it('defaults review off, restricts policy changes to the owner, and erases maps on connector revocation', async () => {
+    const f = fixture(), { connector, link } = await f.setup();
+    await refuses(f.store.access(f.student.value, String(link.id), 'course-a', 2, { content: false, progress: false, review: true }), 403, 'learning_review_not_allowed');
+    await refuses(f.store.request(f.student.value, { operation: 'set-review-policy', connector_id: connector.id, allowAiReview: true, confirmed: true }), 404);
+    await f.store.request(f.owner.value, { operation: 'set-review-policy', connector_id: connector.id, allowAiReview: true, confirmed: true });
+    await f.store.request(f.owner.value, { operation: 'save-course-map', connector_id: connector.id, course_id: 'course-a', version: 2, map: mapInput(), confirmed: true, expected_revision: null });
+    await f.store.request(f.owner.value, { operation: 'revoke-connector', connector_id: connector.id });
+    const stored = f.repository.value.state.connectors[0]!;
+    expect(stored.authorization).toBeNull(); expect(stored.learningMaps).toBeUndefined();
+  });
+  it('stores callback secrets privately, binds targets to active own links and rejects stale receipt writes', async () => {
+    const f = fixture(), { connector, link } = await f.setup({ allowAiContent: true, allowAiProgress: true, allowProgressNotifications: true });
+    const before = (await f.store.readLink(String(link.id)))!;
+    const config = { secret: 'a'.repeat(48), registrations: [{ registrationId: 'registration-private-1', courseId: 'course-a', version: 2 }] };
+    const changed = await f.store.updateLinkNotifications(f.student.value, before.id, before.revision, config);
+    await refuses(f.store.updateLinkNotifications(f.other.value, before.id, changed.revision, config), 404);
+    expect(JSON.stringify(await f.store.request(f.student.value, { operation: 'my-links' }))).not.toContain(config.secret);
+    expect(await f.store.recordNotificationReceipt(changed.id, before.revision, 'registration-private-1', new Date(NOW).toISOString())).toBe(false);
+    expect(await f.store.recordNotificationReceipt(changed.id, changed.revision, 'registration-private-1', new Date(NOW).toISOString())).toBe(true);
+    const receipt = await f.store.readLink(changed.id); expect(receipt?.revision).toBe(changed.revision);
+    await f.store.request(f.owner.value, { operation: 'revoke-link', link_id: changed.id });
+    expect((await f.store.readLink(changed.id))?.notifications).toBeUndefined();
+    expect(await f.store.recordNotificationReceipt(changed.id, changed.revision, 'registration-private-1', new Date(NOW).toISOString())).toBe(false);
+    expect(connector.id).toBe(changed.connectorId);
+  });
   it('requires administrator approval and separate target-human confirmation before reading enrolled courses', async () => {
     const f = fixture(), connector = await f.create(), link = await f.requestLink(connector);
     expect(link.status).toBe('pending-admin');

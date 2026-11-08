@@ -1,6 +1,6 @@
 // Meaningful deterministic checks: private transport, identity changes, DTO scope and model boundary.
 import assert from 'node:assert/strict';
-import { createLearningClient, createLearningLauncher, learningSession, learningSignInUrl, learningResponse, learningLaunch, learningLaunchUrl, learningNavigation, selectedLearningPacket } from '../src/learning-client.js';
+import { createLearningClient, createLearningLauncher, learningSession, learningSignInUrl, learningResponse, learningLaunch, learningLaunchUrl, learningNavigation, selectedLearningPacket, learningReadiness, learningQuizReview, learningMapSnapshot } from '../src/learning-client.js';
 import { createAgentSessionClient } from '../src/agent-session.js';
 
 const ORIGIN = 'https://workbench.example', EXPIRES = '2099-01-01T00:00:00.000Z';
@@ -266,6 +266,70 @@ await test('targeted launch policy is false by default and requires an explicit 
   assert.equal(changed.connector.policy.allowTargetedLaunch, true);
   assert.deepEqual(calls.at(-1).body, { operation: 'set-targeted-launch-policy', connector_id: 'managed', allowTargetedLaunch: true, confirmed: true });
   assert.throws(() => learningResponse('set-targeted-launch-policy', { connector: { ...connector, policy: { ...connector.policy, allowTargetedLaunch: true } } }, { connector_id: 'other', allowTargetedLaunch: true }));
+});
+
+await test('readiness binds the exact enrolled source and distinguishes unavailable content from released result evidence', () => {
+  const expected = { link_id: 'own-link', course_id: 'course-a', version: 3 };
+  const readiness = { course_id: 'course-a', version: 3, checked_at: EXPIRES,
+    enrollment: { status: 'verified', observed_at: EXPIRES }, content: { status: 'unavailable', reason: 'Published text could not be read.' },
+    quiz_review: { status: 'not-released', reason: 'No owner release.', count: 0 }, launch: { kind: 'course', reason: 'Course launch only.' },
+    learning_map: { status: 'unavailable', objectives: [], prerequisites: [], provider_prerequisites: 'unavailable' },
+    retention: { mode: 'virtual', cached_bytes: 0, course_text_retained: false } };
+  assert.equal(learningReadiness(readiness, expected).content.status, 'unavailable');
+  assert.throws(() => learningReadiness({ ...readiness, course_id: 'other-course' }, expected));
+  assert.throws(() => learningReadiness({ ...readiness, quiz_review: { status: 'available', count: 0 } }, expected));
+  assert.throws(() => learningReadiness({ ...readiness, retention: { ...readiness.retention, cached_bytes: 12 } }, expected));
+  assert.throws(() => learningResponse('course-readiness', { ...expected, link_id: 'other-link', readiness }, expected));
+});
+
+await test('released own quiz review requires its separate matching opt-in and actual nonempty records', () => {
+  const review = { status: 'available', count: 1, observed_at: EXPIRES, records: [{ citation_id: 'review-one',
+    activity_id: 'quiz', interaction_id: 'question-one', question_label: 'Which code should be recorded?', learner_response: 'B',
+    learner_response_label: 'GREEN-12', result: 'incorrect', observed_at: EXPIRES,
+    locations: [{ id: 'incident', label: 'Incident procedure', source_file: 'incident.html' }] }] };
+  assert.equal(learningQuizReview(review).records[0].learner_response, 'B');
+  const raw = { source: { provider: 'scorm-cloud', course_id: 'course-a', version: 3, source_version: 'course-version:3' },
+    access: { link_id: 'own-link', sharing: { content: false, progress: false, review: true } },
+    interventionContext: { source_context: { sections: [] } }, citations: [], missing_context: [],
+    authorization_ticket: 'e'.repeat(64), quiz_review: review };
+  const expected = { link_id: 'own-link', course: { id: 'course-a', version: 3 }, share_content: false, share_progress: false, share_review: true };
+  assert.equal(selectedLearningPacket(raw, expected).quiz_review.records[0].result, 'incorrect');
+  assert.throws(() => selectedLearningPacket(raw, { ...expected, share_review: false }));
+  assert.throws(() => selectedLearningPacket({ ...raw, quiz_review: undefined }, expected));
+  assert.throws(() => learningQuizReview({ ...review, count: 2 }));
+  assert.throws(() => learningQuizReview({ ...review, status: 'not-released' }));
+  assert.throws(() => learningQuizReview({ ...review, records: [{ ...review.records[0], locations: [{ id: 'bad', label: 'Bad', source_file: 'https://attacker.example/file' }] }] }));
+});
+
+await test('owner map snapshots bind source and revision; mutations require an explicit current revision', async () => {
+  const expected = { connector_id: 'c'.repeat(32), course_id: 'course-a', version: 3 };
+  const map = { schema_version: 1, course_id: 'course-a', version: 3, release_quiz_review: false,
+    instructional_locations: [], review_items: [], objectives: [], prerequisites: [] };
+  const snapshot = { map, provenance: { kind: 'connector-owner-authored', owner: 'did:example:owner', connector_id: expected.connector_id,
+    saved_at: EXPIRES, revision: 'b'.repeat(32), sha256: 'a'.repeat(64) } };
+  assert.equal(learningMapSnapshot(snapshot, expected).provenance.kind, 'connector-owner-authored');
+  assert.throws(() => learningMapSnapshot(snapshot, { ...expected, course_id: 'another-course' }));
+  assert.throws(() => learningMapSnapshot(snapshot, { ...expected, connector_id: 'd'.repeat(32) }));
+  assert.throws(() => learningResponse('preview-course-map', { map, valid: false, sha256: 'a'.repeat(64) }, expected));
+  const { client, calls } = fixture(); await client.refresh(); const before = calls.length;
+  await assert.rejects(client.request('save-course-map', { ...expected, map, confirmed: false, expected_revision: null }), { code: 'learning_confirmation_required' });
+  await assert.rejects(client.request('delete-course-map', { ...expected, confirmed: true, expected_revision: 'invented' }), { code: 'learning_confirmation_required' });
+  await assert.rejects(client.request('set-review-policy', { connector_id: expected.connector_id, allowAiReview: true, confirmed: false }), { code: 'learning_confirmation_required' });
+  assert.equal(calls.length, before);
+});
+
+await test('progress notification DTOs expose verified availability without callback secrets and mutations require confirmation', async () => {
+  const expected = { link_id: 'own-link', course_id: 'course-a', version: 3 };
+  const raw = { ...expected, notifications: { available: true, enabled: true, last_received_at: EXPIRES, notice: 'An authenticated update signal was received.',
+    callback_secret: 'PRIVATE-CALLBACK-SECRET', callback_url: 'https://private.example/callback' } };
+  const result = learningResponse('progress-notification-status', raw, expected);
+  assert.equal(result.notifications.enabled, true); assert.ok(!JSON.stringify(result).includes('PRIVATE-CALLBACK'));
+  assert.throws(() => learningResponse('progress-notification-status', raw, { ...expected, course_id: 'another-course' }));
+  assert.throws(() => learningResponse('progress-notification-status', { ...raw, notifications: { ...raw.notifications, available: false } }, expected));
+  const { client, calls } = fixture(); await client.refresh(); const before = calls.length;
+  await assert.rejects(client.request('enable-progress-notifications', { ...expected, confirmed: false }), { code: 'learning_confirmation_required' });
+  await assert.rejects(client.request('set-notification-policy', { connector_id: 'c'.repeat(32), allowProgressNotifications: true, confirmed: false }), { code: 'learning_confirmation_required' });
+  assert.equal(calls.length, before);
 });
 
 process.stdout.write(`PASS ${count} learning account adapter checks\n`);

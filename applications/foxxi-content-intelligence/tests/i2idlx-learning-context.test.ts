@@ -318,6 +318,51 @@ describe('private learning task authorization receipts', () => {
 });
 
 describe('actual agent broker with enrolled learning authorization', () => {
+  async function reviewedFixture() {
+    const f = await fixture({ allowAiContent: true, allowAiProgress: true, allowAiReview: true, allowTargetedLaunch: true });
+    f.registrations.set('PRIVATE-REG-A', { ...f.registrations.get('PRIVATE-REG-A'), instance: 0, registrationCompletion: 'INCOMPLETE', registrationSuccess: 'UNKNOWN', score: { scaled: 50 },
+      activityDetails: { id: 'root', activityCompletion: 'INCOMPLETE', activitySuccess: 'UNKNOWN', children: [{ id: 'quiz', title: 'Practice quiz', activityCompletion: 'COMPLETED', activitySuccess: 'FAILED',
+        runtime: { suspendData: 'HIDDEN-ASSESSMENT-STATE', runtimeInteractions: [{ id: 'incident-code', result: 'incorrect', learnerResponse: 'B', description: 'HIDDEN-UNRELEASED-PROMPT', correctResponses: ['HIDDEN-ASSESSMENT-KEY'] }] } }] } });
+    const saved = await f.connections.request(f.owner.principal, { operation: 'save-course-map', connector_id: f.connector.id, course_id: 'course-a', version: 2, confirmed: true, expected_revision: null,
+      map: { schema_version: 1, course_id: 'course-a', version: 2, release_quiz_review: true,
+        instructional_locations: [{ id: 'incident', label: 'Incident procedure', source_file: 'incident.html' }],
+        review_items: [{ activity_id: 'quiz', interaction_id: 'incident-code', question_label: 'Which incident code did you record?', response_labels: [{ response: 'B', label: 'GREEN-12' }], location_ids: ['incident'] }],
+        prerequisites: [{ course_id: 'orientation', relation: 'required', label: 'Owner-stated orientation' }, { course_id: 'practice', relation: 'recommended' }],
+        curriculum: { label: 'Owner suggested study sequence', sequence: [{ course_id: 'orientation' }, { course_id: 'course-a', version: 2 }] } } });
+    return { ...f, saved };
+  }
+  it('delivers only explicitly shared released own-review and mapped instructional evidence through the actual broker', async () => {
+    const f = await reviewedFixture(), result = await f.source({ share_review: true }), packet = row(result.interventionContext);
+    expect(packet.quiz_review).toMatchObject({ status: 'available', records: [{ question_label: 'Which incident code did you record?', learner_response: 'B', learner_response_label: 'GREEN-12', result: 'incorrect', locations: [{ source_file: 'incident.html' }] }] });
+    expect(packet.learning_map).toMatchObject({ status: 'owner-supplied', prerequisites: [{ relation: 'required' }, { relation: 'recommended' }] });
+    expect(row(packet.learning_progress).records).toMatchObject([{ completion: 'INCOMPLETE', success: 'UNKNOWN', score: { value: 50 } }]);
+    expect(JSON.stringify(packet)).toContain('BLUE-27');
+    expect(JSON.stringify(packet)).not.toMatch(/HIDDEN-|PRIVATE-|private@example|"correctResponses"\s*:|"suspendData"\s*:/);
+    expect(f.calls.some(call => call.path.includes('includeInteractionsAndObjectives=true'))).toBe(true);
+    expect(f.calls.some(call => /quiz\/answers|\.zip/.test(call.path))).toBe(false);
+    const queued = await f.enqueue(result), next = await f.driver('next'); expect(next.turn_id).toBe(queued.turn_id);
+    expect(JSON.stringify(next.task)).toContain('GREEN-12');
+    expect(JSON.stringify(next.task)).not.toMatch(/HIDDEN-|PRIVATE-/);
+    const finished = await f.driver('finish', { turn_id: next.turn_id, lease_id: next.lease_id, revision: next.revision, text: 'Your recorded response was incorrect. Review the incident procedure source.' });
+    expect(finished.state).toBe('completed');
+  });
+  it('does not fetch or expose released question labels without the learner choosing review sharing', async () => {
+    const f = await reviewedFixture(), before = f.calls.length, result = await f.source();
+    expect(row(result.interventionContext).quiz_review).toBeUndefined();
+    expect(JSON.stringify(result.interventionContext)).not.toMatch(/Which incident code did you record|GREEN-12/);
+    expect(f.calls.slice(before).some(call => call.path.includes('includeInteractionsAndObjectives'))).toBe(false);
+  });
+  it('rejects a reviewed registration replaced under otherwise unchanged same-learner enrollment before dispatch', async () => {
+    const f = await reviewedFixture(), result = await f.source({ share_review: true });
+    const old = f.registrations.get('PRIVATE-REG-A')!; f.registrations.delete('PRIVATE-REG-A'); f.registrations.set('PRIVATE-REG-REPLACEMENT', { ...old, id: 'PRIVATE-REG-REPLACEMENT' });
+    await refuses(f.enqueue(result), 403, 'learning_access_revoked');
+    expect((await f.driver('next')).state).toBe('idle');
+  });
+  it('rejects a changed attempt instance before queued quiz context can reach the agent', async () => {
+    const f = await reviewedFixture(), result = await f.source({ share_review: true });
+    f.registrations.get('PRIVATE-REG-A')!.instance = 1;
+    await refuses(f.enqueue(result), 403, 'learning_access_revoked');
+  });
   it('delivers cited course context through the real broker and keeps the receipt outside the task', async () => {
     const f = await fixture(), result = await f.source(), queued = await f.enqueue(result), next = await f.driver('next');
     expect(next).toMatchObject({ turn_id: queued.turn_id, state: 'running' });

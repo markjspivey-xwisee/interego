@@ -1,5 +1,25 @@
 # Changelog
 
+## 2026-11-08 — Ask: enrolled quiz review and owner learning maps
+
+Ask guides administrators and learners through separate connection and account
+linking steps, checks actual course reading and released-review readiness, and
+shows the freshness and retention of the selected evidence. Connection policy,
+course-version release and per-question learner sharing independently control
+quiz review. Only matched submitted activities and owner-released question
+labels enter the AI context; answer banks, grading keys and in-progress items
+remain excluded. Incorrect results can retrieve the mapped instructional files
+and their existing verified lesson-launch controls.
+
+Owners can preview, save, replace and delete bounded versioned learning maps
+with objectives, competency references, required prerequisites and recommended
+curriculum. Maps carry owner attribution and revision/hash checks; they do not
+become provider assertions, enrollment grants or learner achievements. Optional
+authenticated registration-only progress notifications retain receipt metadata
+and re-read Cloud rather than treating incoming payloads as learning evidence.
+Credentials, map metadata and notification configuration remain dynamically
+scoped to each managed connection and verified learner link.
+
 ## 2026-11-08 — Practice Evidence: use your own Claude or ChatGPT, never our key
 
 Practice Evidence runs no AI of its own and never asks for an API key. The
