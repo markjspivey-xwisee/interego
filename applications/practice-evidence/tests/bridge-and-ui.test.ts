@@ -343,13 +343,15 @@ describe('the web UI is served under a strict content policy', () => {
       // ChatGPT's steps in the order its dialog asks, as the Connect dialog's ChatGPT tab gives them: the server, then its URL and OAuth,
       // then the risk warning (a step of its own in OpenAI's guide), creating the plugin and installing it.
       '<li class="step"><p class="step__text">In Claude, open Settings, then Connectors, then Add custom connector. In ChatGPT on the web, open Plugins → + → Add custom MCP server (<a', `<a href="${OPENAI_GUIDE}" rel="noopener">OpenAI's guide to custom MCP servers</a>`,
-      '<li class="step"><p class="step__text">In ChatGPT, accept the warning, create it as a plugin and install it. Then sign in with your Interego account when asked.</p></li>',
+      // Signing in is every app's step, so the step that holds it says so rather than reading as ChatGPT's alone.
+      '<li class="step"><p class="step__text">In ChatGPT, accept the warning, create it as a plugin and install it. In either app, sign in with your Interego account when asked.</p></li>',
       'Whether you can add a connector depends on your plan or workspace settings.', 'A judge your admin appoints, a different person with their own Interego account, assesses it',
       // The bridge refuses a judgment from the principal that started the session, so each claim names the account or wallet it was started with.
       'You can\'t assess a session with the account or wallet you started it with, and neither can your assistant on a session you started with your Interego account, even in a new chat.']) expect(connected).toContain(s);
     expect(connected.indexOf('as its Server URL, with OAuth')).toBeLessThan(connected.indexOf('accept the warning'));
     expect(connected.indexOf('accept the warning')).toBeLessThan(connected.indexOf('sign in with your Interego account when asked'));
     expect(connected).not.toMatch(/Add custom MCP server, accept the warning/);
+    expect(connected).not.toContain('Then sign in with your Interego account');
     expect(html).toContain('You can\'t assess a session with the wallet you started it with, and neither can your assistant. A judge your admin appoints assesses it with their own AI assistant.');
     for (const page of [html, connected]) expect(page).not.toContain('You can\'t assess your own session');
     expect(html).not.toContain('developers.openai.com');
@@ -438,7 +440,7 @@ describe('the web UI is served under a strict content policy', () => {
       // ChatGPT's steps as OpenAI's guide gives them, and the guide one link away; what decides whether a connector can be added, naming no plan.
       'In ChatGPT on the web, open Plugins → + → Add custom MCP server (see <a',
       `<a href="${OPENAI_GUIDE}" rel="noopener">OpenAI's guide to custom MCP servers</a>`, '(in ChatGPT, as its Server URL, with OAuth)',
-      'In ChatGPT, accept the warning, create it as a plugin and install it. Then sign in with your Interego account when asked.',
+      'In ChatGPT, accept the warning, create it as a plugin and install it. In either app, sign in with your Interego account when asked.',
       'In ChatGPT, type @ in a chat and choose Interego; it asks before each write unless you let it remember your choice for that tool in that chat.',
       'Judging needs Claude or ChatGPT with the Interego connector; whether you can add one depends on your plan or workspace settings.',
       // Who judges: a different person with their own account, appointed by Member ID; never the learner or the learner's assistant.
@@ -446,11 +448,14 @@ describe('the web UI is served under a strict content policy', () => {
       // The bridge refuses a judgment by account: a session started with a wallet belongs to the wallet, so each claim names the account.
       'You can\'t assess a session you started with your Interego account. Nor can a learner\'s own assistant assess a session the learner started with their Interego account, even in a new chat or told to act as a judge: it acts as that account.',
       'Your assistant acts as your Interego account, so it can\'t assess a session you started with that account, in a new chat or in any role.',
-      // Whether a save was kept is asked of the workspace, never judged from what the chat saw; and when the assistant can't tell,
-      // the judge is told how to find out before a new chat, which knows nothing of an earlier one, saves a second assessment.
-      'An assessment is tied to the exact session, conversation and rubric your assistant fetched. If the session changed since, saving is refused: your assistant first checks whether an assessment of yours is already saved, '
-        + 'and only if none is, fetches the session again and assesses that. If a save goes wrong another way (an error, no answer, or it loses track), it checks the same way instead of saving twice, and tells you whether your assessment is saved. '
-        + 'If it can\'t tell, ask the learner whether their session page shows your assessment before you paste the message into a new chat: a new chat doesn\'t know what an earlier one saved.',
+      // Whether a save was kept is asked of the workspace, never judged from what the chat saw, and asked before the session is
+      // fetched, so the message pasted again, in the same chat or a new one, stops at an assessment already saved; and when the
+      // assistant can't tell, the judge is told how to find out.
+      'An assessment is tied to the exact session, conversation and rubric your assistant fetched. Before it fetches the session, your assistant checks whether an assessment of yours is already saved, '
+        + 'and if one is, tells you so and stops: the same message pasted again, in this chat or a new one, never saves a second one. '
+        + 'If the session changed since it was fetched, saving is refused: your assistant checks again, and only if none of yours is saved, fetches the session again and assesses that. '
+        + 'If a save goes wrong another way (an error, no answer, or it loses track), it checks the same way instead of saving twice, and tells you whether your assessment is saved. '
+        + 'If it can\'t tell, ask the learner whether their session page shows your assessment.',
       'Send your admin your Member ID (account menu → Your Member ID → Copy) or, signed in with a wallet, your wallet address (Getting started → Copy my wallet address).', 'Sign in with Interego (or another way', 'What the Interego sign-in service sees', '<dt>Interego connector</dt>',
       '<dt>Your sign-in has ended</dt>', 'add and remove people by Member ID',
       'Signed in with a wallet, send your wallet address instead (Getting started → Copy my wallet address); a judge needs a Member ID to assess from Claude or ChatGPT.']) expect(connected).toContain(s);
@@ -459,6 +464,7 @@ describe('the web UI is served under a strict content policy', () => {
     const chatSection = section(connected, 'claude-chatgpt');
     expect(chatSection.indexOf('as its Server URL, with OAuth')).toBeLessThan(chatSection.indexOf('accept the warning'));
     expect(connected).not.toMatch(/Add custom MCP server, accept the warning/);
+    expect(connected).not.toContain('Then sign in with your Interego account');
     // No page claims the bridge refuses more than it does: it refuses an assessment from the account or key that started the session.
     for (const page of [html, connected]) expect(section(page, 'judges')).not.toContain('You can\'t assess your own practice');
     expect(section(html, 'judges')).toContain('You can\'t assess a session you started with the key you sign with.');

@@ -203,23 +203,51 @@ console.log('\n0. the shipped tool table and act composition are the ones sliced
   // The injection slice stops at the federation auto-registration, and the handler runs after the
   // lazy pod-init block and the act / invoke_affordance plumbing. A field written to `args` in that
   // gap would be signed by sign_request called alone and never reach this file, so §2 would still
-  // pass: nothing there may assign to, delete from or Object.assign onto `args`.
+  // pass: nothing there may assign to, delete from or Object.assign onto `args`. A write can be
+  // spelled more ways than a pattern lists (a cast of `args` itself, `args!`, an alias, Reflect.set,
+  // a property of a property, ++ or --), so every mention of `args` there must also be one of the
+  // read forms the gap uses: a property read cast with `as`, defaulted with `??` or compared, or
+  // `args` itself handed to a call that is not Reflect's or Object's; and nothing later in its
+  // statement may assign, so `(args.x as T) = …` is reported too. A call `args` is handed to is
+  // not followed here.
   const gapFrom = code.indexOf(INJECTION_END, code.indexOf('async function callWithSession('));
   const gapTo = gapFrom < 0 ? -1 : code.indexOf('await tool.handler(args)', gapFrom);
   const gap = gapFrom < 0 || gapTo < 0 ? '' : code.slice(gapFrom + INJECTION_END.length, gapTo);
   const ARGS_WRITE = /\bargs\s*(?:\.\s*[A-Za-z_$][\w$]*|\[[^\]]*\])\s*(?:\*\*|<<|>>>?|&&|\|\||\?\?|[-+*/%&|^])?=(?![=>])|\bdelete\s+args\b|\bObject\.(?:assign|defineProperty|defineProperties)\(\s*args\b/g;
-  const writes = gap.match(ARGS_WRITE) ?? [];
-  check('§0 nothing between the end of the injection slice and the tool handler call writes to args',
+  const ARGS_READ = /^(?:args\s*\.\s*[A-Za-z_$][\w$]*\s*(?:as\s|\?\?(?!=)|[!=]==?(?!=)|[<>]=)|args\s*[,)])/;
+  const MUTATOR_BEFORE = /\b(?:Reflect|Object)\s*\.\s*[A-Za-z]+\s*\(\s*$/;
+  const ASSIGN_LATER = /(?<![=!<>])=(?![=>])|\+\+|--/;
+  const argsWritesIn = (text: string): string[] => {
+    const found = [...(text.match(ARGS_WRITE) ?? [])];
+    for (const m of text.matchAll(/(?<![\w$.])args\b/g)) {
+      const at = m.index ?? 0;
+      const end = text.slice(at).search(/[;\n]/);
+      const statement = end < 0 ? text.slice(at) : text.slice(at, at + end);
+      const before = text.slice(Math.max(0, at - 60), at);
+      const read = ARGS_READ.exec(statement)?.[0];
+      const handedOn = read !== undefined && /^args\s*[,)]/.test(read);
+      const fine = read !== undefined && !ASSIGN_LATER.test(statement)
+        && (!handedOn || (/[(,]\s*$/.test(before) && !MUTATOR_BEFORE.test(before)));
+      if (!fine) found.push(statement.slice(0, 80));
+    }
+    return found;
+  };
+  const writes = argsWritesIn(gap);
+  check('§0 nothing between the end of the injection slice and the tool handler call writes to args, and args appears there only in read forms',
     gap.includes('autoRegisterAgentCard(') && gap.includes('ensurePodInitialized(') && writes.length === 0,
     gap === '' ? `gap not found (from=${gapFrom}, to=${gapTo})` : writes.join(' | '));
-  // The pattern itself, on the spellings it must catch and the reads it must not.
+  // The check itself, on the spellings it must catch and the reads it must not.
   for (const [src, isWrite] of [
     ["args.injected_late = 'x';", true], ["args['x'] = 1;", true], ['args.x ??= 1;', true], ['delete args.x;', true],
     ['Object.assign(args, extra);', true], ['args.x += 1;', true],
+    ["(args as Record<string, unknown>).x = 'x';", true], ["Reflect.set(args, 'x', 1);", true], ["const a = args; a.x = 'x';", true],
+    ["args.payload.x = 'x';", true], ['args.x++;', true], ['--args.x;', true], ["args!.x = 'x';", true], ["(args.x as string) = 'x';", true],
     ['const p = normalizeActPayload(args.payload ?? {});', false], ["if (args.x === 'y' || args.y >= 2 || args.z != 1 || args.w == null) {}", false],
     ['const id = (args._session_agent_id as string | undefined) ?? \'\';', false],
+    ['if (!isReadOnlyResourceCall(name, args) && !isDelegationRepairRequest(name, args) && ctx) {}', false],
+    ["const op = resourceInvocation(args, name === 'act');", false], ['await callProvisionalTool(name, args, ctx, () => tool.handler(args));', false],
   ] as const) {
-    check(`§0 the args-write pattern reads ${JSON.stringify(src)} as ${isWrite ? 'a write' : 'no write'}`, (src.match(ARGS_WRITE) ?? []).length > 0 === isWrite);
+    check(`§0 the args-write check reads ${JSON.stringify(src)} as ${isWrite ? 'a write' : 'no write'}`, argsWritesIn(src).length > 0 === isWrite);
   }
 }
 

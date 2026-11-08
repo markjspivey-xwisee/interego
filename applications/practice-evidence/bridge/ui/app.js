@@ -2348,12 +2348,23 @@ function judgeMessage(v) {
           judgment: { criteria: '<as the outputSchema describes>' }, judgeDisclosure: { provider: '<the company that makes you>', model: '<your model name>', usedPacketPrompt: true } } },
       // What the bridge itself says about whether a save was kept: get-attempt lets a judge read an
       // attempt only once they have a judgment on it (handlers.ts getAttempt, judgeSignersOf), and
-      // each judgment names its signer, which for a relay-delegated judge is signedAs.principal.
-      { say: 'Only when a rule below says to check whether my assessment is saved: read the session. My assessment is saved if one of its judgments has a judge.signer equal to signedAs.principal in the answer. '
-          + 'If none has, or this is refused with not-entitled, nothing of mine is saved.',
+      // each judgment names its signer, which for a relay-delegated judge is signedAs.principal. A
+      // contest or a withdrawn review reopens judging and keeps the judgments made before it, so
+      // only one made after the last reopening counts. A judge who is also a reviewer or admin may
+      // read it with no judgment, and the answer carries everyone's judgments and reviews: it is
+      // read for the judge's own judgment only. signedAs is the answer's last field, so an answer
+      // cut short reads as no answer rather than as nothing saved.
+      { say: 'At the start, and whenever a rule below says to check whether my assessment is saved: read the session. '
+          + 'Use its answer only to look for an assessment of mine: set aside the rest of it (the conversation, other judgments, reviews and their reasons), and never assess from it. '
+          + 'My assessment is saved if one of its judgments has a judge.signer equal to signedAs.principal in the answer and, if reopenings lists any, a judgedAt later than the at of the last one. '
+          + 'If none has, or this is refused with not-entitled, nothing of mine is saved. An answer with no signedAs.principal or no judgments list counts as no answer.',
         actionIri: ACT.getAttempt, signed: true, payload: { ...bound, action: ACT.getAttempt } },
     ],
     rules: [
+      // Checked before the first step, not only after a save that went wrong: a new chat, or the
+      // learner sending this message again, knows nothing of what an earlier chat saved.
+      'At the start, before the first step: check with the third step. If my assessment is saved, tell me so, and stop: I have already assessed this session, in this chat or another. '
+        + 'If nothing of mine is saved, go on to the first step.',
       'Between the first two steps, follow the request the first step returns. For every criterion give a level, quotes copied exactly from the learner\'s own lines, and a short rationale. Show me the levels and quotes in plain words and wait for my go-ahead before you save.',
       // Whether a save was kept is read from the bridge, never from what this chat saw: the first
       // step shows no earlier assessment, so assessing again after a save that was kept saves a
@@ -2364,7 +2375,8 @@ function judgeMessage(v) {
         + 'If nothing of mine is saved, send the same assessment once more with a new nonce; if you already sent it again, or no longer have it, tell me it is not saved, and stop.',
       'If a save is refused with binding-mismatch or chain-moved (the session changed after the first step): check with the third step before anything else. '
         + 'If my assessment is saved, tell me so, and stop. If nothing of mine is saved, do the first step again and assess what it returns, never an earlier assessment, and show me before you save.',
-      "If the third step is refused with anything but not-entitled, or gets no answer, don't save again: tell me my assessment may already be saved, and stop.",
+      'If the third step is refused because a field or its format is wrong, fix it once from the refusal message and check again. '
+        + "Otherwise, if it is refused with anything but not-entitled, or gets no answer, don't assess or save: tell me what it said, that my assessment may already be saved, and stop.",
       "If this is my own practice session, stop: I can't assess it, in any chat or role. A reviewer signs off after me.",
     ],
   });

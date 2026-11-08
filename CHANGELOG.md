@@ -1,5 +1,38 @@
 # Changelog
 
+## 2026-11-08 — Practice Evidence: a judge's assistant checks for a saved assessment before it starts
+
+A judge could still save two assessments of the same session by pasting the
+judge's message into a new chat. The check for a saved assessment ran only
+after a save went wrong in the same chat. When the chat app failed and the
+judge started a new chat, or when the learner sent the message again (the
+Send to your judge button stays after a session is assessed), the new chat
+fetched the session, which shows no earlier assessment, and the save went
+through. The second assessment was marked as a repeat, but it still counted in
+the agreement figures.
+
+Now the assistant reads the session first, before it fetches anything to
+assess. If an assessment by the judge is saved there, it says so and stops. An
+assessment made before the session was last reopened (a learner contested the
+review, or an admin withdrew it) does not count, so the judge can still assess
+a reopened session once. Before, a judge whose new assessment of a contested
+session failed to save could be told it was saved, because their earlier
+assessment was found. The assistant uses what it reads only to look for the
+judge's own assessment, and sets aside the conversation, other judges'
+assessments and reviews. An answer missing the fields it checks, as a long
+answer cut short by a chat app would be, counts as no answer. A wrong field in
+the check is fixed once, as for any other step, rather than ending the chat. The
+guide and the README say the same, and a test runs the check as the message
+describes it against the workspace, through a contest and a second assessment.
+
+In the guide's and the landing page's setup steps, the step that starts with
+ChatGPT's warning now says that signing in is a step in either app.
+
+The relay test showing that sign_request called alone signs what act signs now
+also catches a change to the tool arguments written as a cast, an alias,
+Reflect.set, a nested property, `++` or `--`: every use of the arguments in that
+part of the relay must be a known kind of read.
+
 ## 2026-11-08 — Practice Evidence: a judge's assistant asks the workspace whether a save went through
 
 The judge's message still let one assessment be saved twice. If a save was
