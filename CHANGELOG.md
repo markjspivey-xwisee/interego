@@ -102,6 +102,23 @@ moved the page anyway, is off in the app, and a redraw keeps what has focus,
 or else what is on the screen, in its place, except while the page is still
 scrolling.
 
+A redraw while the browser is still scrolling to a button that Tab just reached
+(Tab, then Enter at once on "Add a task" below the screen) now brings the
+rebuilt button to the middle of the screen, instead of leaving focus on a
+button the new task pushed off it. Someone who has scrolled, clicked or used
+another key since is left where they are. "Skip to content" now works in the
+app: focus moves to the screen's main area, so the next Tab starts there, and
+the address is left as it is, so a task page stays on its task. Only opening or
+leaving a task link draws the page again and goes to its top; `#main` typed
+into the address does neither. The main area takes focus by script only and
+shows no outline, and below 768 px it no longer stops with its first line under
+the navigation strip. Dismissing an answer from the keyboard now moves focus to
+the view's heading (or to an open panel's title) instead of the top of the
+page. In People & roles, "Add a type of task" keeps what was typed, and stays
+open, through redraws and through a refusal, so a refused ID can be corrected.
+It empties and closes only once the type is added, and its button is off while
+the change is being signed.
+
 ## 2026-11-08 — Shared helpers for connecting your own chat assistant
 
 New `applications/_shared/chat-agent/`: the text helpers Practice Evidence and

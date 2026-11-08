@@ -500,6 +500,9 @@ function toast(title, text, tone = 'success') {
 
 // ── State ────────────────────────────────────────────────────────────────────────────────
 
+/** "Add a type of task" as it starts, and as it goes back once a type is added: empty and closed. */
+function blankKindDraft() { return { label: '', slug: '', definition: '', open: false }; }
+
 const S = {
   tools: new Map(), data: null, cal: null, calFailed: false, mode: 'readonly', persona: '', personas: [], account: '', tab: 'home',
   workflow: '', plan: '', result: null, panel: null, busy: false, planForm: {}, packet: null, decisionOpen: '', decisionFilter: 'all',
@@ -515,7 +518,7 @@ const S = {
   signInTimer: null,            // forgets the access token when it ends
   demoNow: '',                  // the demo server's clock, once moved here
   showSubmit: false,            // the Decisions view's submit form is open
-  openKinds: false,             // People & roles opens its "Add a type of task" form once
+  kindDraft: blankKindDraft(),  // People & roles' "Add a type of task": what is typed in it and whether it is open, kept until a type is added
   invalid: new Map(),           // fields to fix, by payload path: found before signing, or named by the bridge's refusal
   scrollToResult: false,        // the answer to the person's last action is brought into view (and focused) when drawn
   pasteCopying: 0,              // when Map a process's "Copy the message for my AI" began the copy still on its way (0: none)
@@ -880,7 +883,23 @@ async function refresh(quiet = false) {
   render();
 }
 
+/**
+ * The shell's "Skip to content" (a link to #main): focus moves to the screen's main area (tabindex -1), so the next Tab
+ * starts in it, scrolled to only where it is off the screen. The address is left as it is: a task page lives in it
+ * (#task=…), and following the link would have taken the page off its task. A click meant for a new tab or window is the
+ * browser's.
+ */
+function skipToContent(e) {
+  if (e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+  if (!e.target?.closest?.('a.skip-link')) return;
+  const main = document.getElementById('main');
+  if (!main) return;
+  e.preventDefault();
+  main.focus();
+}
+
 async function boot() {
+  document.addEventListener('click', skipToContent);
   // The relay's answer leaves the address bar (and this tab's sign-in flow leaves sessionStorage)
   // before this page sends any request, even the manifest's read, so a failure below leaves neither.
   const callback = takeCallback();
@@ -911,8 +930,16 @@ async function boot() {
     S.interego = keptSignIn();
     if (S.interego) { S.mode = 'interego'; forgetAtExpiry(); } else if (window.ethereum) S.mode = 'wallet';
   }
-  // A task link opened from the page (or the address bar) shows the task from its top.
-  window.addEventListener('hashchange', () => { render(); window.scrollTo({ top: 0 }); });
+  // A task link opened from the page (or the address bar) shows the task from its top, and leaving it shows the view again.
+  // Any other address in the page (#main, typed or from an old link) is the browser's to follow: drawing everything again
+  // would take away the focus it moves there, and going to the top would undo it.
+  window.addEventListener('hashchange', (e) => {
+    let before = '';
+    try { before = taskFromHash(new URL(e.oldURL).hash); } catch { before = ''; }
+    if (taskFromHash() === before) return;
+    render();
+    window.scrollTo({ top: 0 });
+  });
   // A sign-in that did not finish (or ended) stays on screen: the first read, refused or not, does not replace it.
   await refresh(S.result !== null);
 }
@@ -1104,6 +1131,7 @@ function render() {
   const same = screen === drawnScreen;
   const mark = same ? focusMark(focused, root) : null;
   const anchor = same && mark?.top == null ? viewAnchor(root) : null;
+  const tabbing = mark !== null && tabScrolling();
   drawnScreen = screen;
   let nodes;
   let title;
@@ -1125,6 +1153,12 @@ function render() {
   // (the top of a new view, a panel, an answer) still goes there.
   if (placed && mark?.top != null) holdPlace(placed, mark.top);
   else if (anchor) holdPlace(twinOf(anchor, root), anchor.top);
+  // Where the browser may still be bringing into view what Tab reached (Tab, then Enter at once on a button below the
+  // screen), its scroll heads for where the old element was: the rebuilt one is shown instead, so focus is not left on a
+  // button the redraw pushed off the screen. A person who has scrolled, clicked or typed since is left where they are, as
+  // is a page this redraw takes elsewhere (a panel opening, an answer to bring into view).
+  const elsewhere = Boolean(S.panel?.focus) || Boolean(S.scrollToResult && S.result);
+  if (placed && placed !== kept && tabbing && !elsewhere) keepInView(placed);
   document.title = `${title} · Work Redesign`;
   if (S.panel?.focus) { S.panel.focus = false; document.getElementById('panel-title')?.focus(); }
   // The answer to an action shows at the top of the view, often above the button pressed: bring it into view, and focus it once it is in.
@@ -1145,7 +1179,7 @@ function appFrame(content) {
     appHeader(),
     h('div', { class: 'app-shell' },
       sideNav(),
-      h('main', { class: 'app-main', id: 'main' }, health(), resultNode(), panelNode(), content, appFooter())),
+      h('main', { class: 'app-main', id: 'main', tabindex: '-1' }, health(), resultNode(), panelNode(), content, appFooter())),
   ];
 }
 
@@ -1337,7 +1371,7 @@ function podPicker() {
 
 /** Screen 1: the manifest could not be read. Nothing else is asked of the bridge. */
 function unreachableView() {
-  return [h('main', { class: 'auth', id: 'main' }, h('div', { class: 'auth__card' }, brandMark(),
+  return [h('main', { class: 'auth', id: 'main', tabindex: '-1' }, h('div', { class: 'auth__card' }, brandMark(),
     h('h1', { class: 'auth__title', text: 'We can\'t reach this workspace right now' }),
     h('p', { class: 'auth__text', text: 'Please try again in a minute. If it keeps happening, contact your admin.' }),
     h('div', { class: 'auth__actions' }, btn('Try again', { variant: 'primary', on: () => location.reload() })),
@@ -1368,7 +1402,7 @@ function welcomeView() {
     ];
   return [
     header,
-    h('main', { class: 'auth', id: 'main' }, h('div', null,
+    h('main', { class: 'auth', id: 'main', tabindex: '-1' }, h('div', null,
       h('div', { class: 'auth__card auth__card--welcome' },
         brandMark(),
         h('h1', { class: 'auth__title', text: 'Welcome to Work Redesign' }),
@@ -1408,7 +1442,7 @@ function notAddedView() {
   return [
     envBanner(),
     header,
-    h('main', { class: 'auth', id: 'main' }, h('div', { class: 'auth__card auth__card--wide' },
+    h('main', { class: 'auth', id: 'main', tabindex: '-1' }, h('div', { class: 'auth__card auth__card--wide' },
       brandMark(),
       h('h1', { class: 'auth__title', text: 'You\'re signed in. One more step.' }),
       r && !readRefusal ? resultNode() : null,
@@ -1600,6 +1634,41 @@ function holdPlace(el, top) {
   const by = el.getBoundingClientRect().top - top;
   if (!Number.isFinite(by) || Math.abs(by) < 1) return;
   try { window.scrollTo({ top: window.scrollY + by, behavior: 'instant' }); } catch { /* a browser without instant scrolling */ }
+}
+/**
+ * When the person last pressed Tab, unless they have since used another key, clicked or tapped, turned the wheel or
+ * swiped (-Infinity then). A press of what has focus (Enter on it, or Space on a control: on a link or the page, Space
+ * scrolls) and a modifier key on its own are none of these: Tab to a button and then Enter is still the browser bringing
+ * that button into view.
+ */
+let tabbedAt = -Infinity;
+const MODIFIER_KEYS = new Set(['Shift', 'Control', 'Alt', 'Meta', 'AltGraph', 'CapsLock']);
+const SPACE_PRESSES = 'button, summary, input, textarea, select, [role="button"], [role="tab"], [role="checkbox"], [role="switch"], [contenteditable]';
+const pressOfFocused = (e) => (e.key === 'Enter' ? e.target !== document.body && e.target !== document.documentElement
+  : e.key === ' ' && Boolean(e.target?.closest?.(SPACE_PRESSES)));
+// These stay on the document for the page's life; watchMovingOn's, on the window, last one press each.
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Tab') tabbedAt = performance.now();
+  else if (!MODIFIER_KEYS.has(e.key) && !pressOfFocused(e)) tabbedAt = -Infinity;
+}, { capture: true, passive: true });
+for (const k of ['pointerdown', 'wheel', 'touchmove']) document.addEventListener(k, () => { tabbedAt = -Infinity; }, { capture: true, passive: true });
+/**
+ * Whether the browser may still be bringing into view what Tab reached: html scrolls smoothly (the design system), and in
+ * Chromium that took up to about 600 ms. A redraw then builds that element again, so the browser's scroll ends where the
+ * old one would have been (a task added above it pushes it further down) and holdPlace, which leaves a scroll under way
+ * alone, does not move it.
+ */
+const tabScrolling = () => performance.now() - tabbedAt < 1000;
+/**
+ * Show `el` whole: stop any scroll still under way (the browser's, toward where `el`'s old self was), then, where `el` is
+ * not all on the screen, bring it to the middle at once, as the browser shows what Tab reaches (a smooth scroll begun
+ * here was seen cut short in Chromium).
+ */
+function keepInView(el) {
+  try { window.scrollTo({ top: window.scrollY, behavior: 'instant' }); } catch { /* a browser without instant scrolling */ }
+  const r = el.getBoundingClientRect();
+  if (r.top >= 0 && r.bottom <= window.innerHeight) return;
+  try { el.scrollIntoView?.({ block: 'center', behavior: 'instant' }); } catch { el.scrollIntoView?.({ block: 'center' }); }
 }
 /**
  * Open a panel over the view, remembering what opened it (openerOf), so closing it puts focus back there. `back`: a panel
@@ -1953,7 +2022,17 @@ function refusalTech(r) {
 function resultNode() {
   const r = S.result;
   if (!r) return null;
-  const dismiss = () => { S.result = null; render(); };
+  // Focus on the answer or on its Dismiss button would go with it, back to the top of the page: it goes to what comes next
+  // instead, an open panel's title, else the view's heading.
+  const dismiss = () => {
+    const inIt = Boolean(document.activeElement?.closest?.('.result'));
+    S.result = null;
+    render();
+    if (!inIt) return;
+    const next = document.getElementById('panel-title') ?? viewHeading();
+    next?.focus({ preventScroll: true });
+    if (next && document.activeElement === next) keepInView(next);
+  };
   if (r.pending) {
     return h('div', { class: 'callout callout--neutral result', role: 'status' }, h('span', { class: 'spinner callout__icon', 'aria-hidden': 'true' }),
       h('p', { class: 'callout__title', text: `Signing and sending: ${ACTION_NAMES[r.tool] ?? 'your action'}…` }));
@@ -2095,7 +2174,7 @@ function homeChecklists() {
     out.push(checklist('setup', 'Set up your workspace', [
       { title: 'Add your team', text: 'Add people with their roles and a Person ID.', done: people().length > 0, action: ['Add people', () => { goTab('roles'); memberPanel(null); }] },
       { title: 'Add your AI agents', text: 'Give each one an accountable owner and the AI model it runs on.', done: agentsList().length > 0, action: ['Add an AI agent', () => { goTab('roles'); memberPanel(null, 'agent'); }] },
-      { title: 'Define your types of task', text: 'For example "Invoice matching".', done: kindsList(false).length > 0, action: ['Define types of task', () => { S.openKinds = true; goTab('roles'); }] },
+      { title: 'Define your types of task', text: 'For example "Invoice matching".', done: kindsList(false).length > 0, action: ['Define types of task', () => { S.kindDraft.open = true; goTab('roles'); }] },
       { title: 'Make the AI permission rules stricter', text: 'Only if your organisation needs a higher bar than the standard one.', optional: true, done: Boolean(d.vocabulary?.podPolicy), action: ['Review the rules', () => goTab('roles')] },
       { title: 'Invite people', text: 'Copy the invitation, which asks each person to sign in and send you their Interego ID.', done: people().length >= 2,
         action: ['Copy the invitation', () => copyText(`Join our Work Redesign workspace: sign in at ${location.origin}/ui and send me the Interego ID it shows you.`, 'The invitation')] },
@@ -2339,8 +2418,9 @@ function tasksView() {
 
 // ── The task page (#task=…): the link people named on a task receive ───────────────────────
 
-function taskFromHash() {
-  const m = /^#task=(.+)$/.exec(location.hash);
+/** The task an address's fragment opens (#task=…), '' for none: the address bar's unless another fragment is given. */
+function taskFromHash(hash = location.hash) {
+  const m = /^#task=(.+)$/.exec(hash);
   return m ? decodeURIComponent(m[1]) : '';
 }
 
@@ -4041,16 +4121,23 @@ function confirmPanel(title, text, label, onConfirm) {
 }
 
 function kindForm(admin) {
-  const st = { slug: '', label: '', definition: '' };
-  const open = Boolean(S.openKinds);
-  S.openKinds = false;
-  return h('details', { class: 'card kind-form', open: open || undefined }, h('summary', { text: 'Add a type of task' }),
+  // The form's fields and whether it is open live in the state (S.kindDraft), not in this drawing of it: every redraw (the
+  // answer to adding a type among them) builds the form again, and a refused type comes back as it was typed, to fix.
+  const st = S.kindDraft;
+  const add = async () => {
+    const done = await act('wrd.update_registry', 'wrd:update-registry', { taskKinds: [{ slug: st.slug.trim(), label: st.label, definition: st.definition }] });
+    // Only once the type is added does the form empty and close.
+    if (!done || S.kindDraft !== st) return;
+    S.kindDraft = blankKindDraft();
+    render();
+  };
+  return h('details', { class: 'card kind-form', open: st.open || undefined, on: { toggle: (e) => { st.open = e.target.open; } } }, h('summary', { text: 'Add a type of task' }),
     h('div', { class: 'card__body stack' },
       h('div', { class: 'form-row' },
-        field('Name', input('', (e) => { st.label = e.target.value; }), { hint: 'For example "Invoice matching".' }),
-        field('Short ID', input('', (e) => { st.slug = e.target.value.trim(); }), { hint: 'Lowercase letters, digits and hyphens, for example invoice-matching.' })),
-      field('Definition', input('', (e) => { st.definition = e.target.value; }), { hint: 'One sentence.' }),
-      h('div', null, btn('Add type of task', { variant: 'primary', on: () => act('wrd.update_registry', 'wrd:update-registry', { taskKinds: [{ ...st }] }), disabled: !admin, why: 'Only an admin can add a type of task.' })),
+        field('Name', input(st.label, (e) => { st.label = e.target.value; }), { hint: 'For example "Invoice matching".' }),
+        field('Short ID', input(st.slug, (e) => { st.slug = e.target.value; }), { hint: 'Lowercase letters, digits and hyphens, for example invoice-matching.' })),
+      field('Definition', input(st.definition, (e) => { st.definition = e.target.value; }), { hint: 'One sentence.' }),
+      h('div', null, btn('Add type of task', { variant: 'primary', on: add, disabled: !admin || S.busy, why: admin ? '' : 'Only an admin can add a type of task.' })),
       admin ? null : whyNot('Only an admin can add a type of task.')));
 }
 

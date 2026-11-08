@@ -1620,6 +1620,136 @@ describe('work-redesign web UI: sign in with your Interego account', () => {
     expect(page.errors).toEqual([]);
   }, 60_000);
 
+  /** A signed-in lead (and admin) on Home. */
+  async function signedInLead() {
+    const w = await world({ lead: true });
+    const page = await openPage(w.bridge, '/ui', { [SESSION_KEY]: JSON.stringify({ token: w.relay.mint(), expiresAt: new Date(Date.now() + 3600_000).toISOString() }) });
+    await page.until(() => page.text().includes(`Signed in as ${PERSON} via ${agentOf('work-redesign')}`) && page.text().includes('Map and change your process'), 'the signed-in lead');
+    return { w, page, win: page.window, d: page.window.document };
+  }
+
+  it('shows the button Tab reached when a redraw builds it again while the browser is still bringing it into view, and leaves the page alone once the person scrolled, clicked or used another key', async () => {
+    const { page, win, d } = await signedInLead();
+    // jsdom lays nothing out and scrolls nothing: "Add a task" reports itself below the screen, and each scroll to an element is noted.
+    const box = win.HTMLElement.prototype.getBoundingClientRect;
+    win.HTMLElement.prototype.getBoundingClientRect = function (this: HTMLElement) {
+      return this.tagName === 'BUTTON' && this.textContent === 'Add a task' ? { top: 2400, bottom: 2444, left: 16, right: 200, width: 184, height: 44, x: 16, y: 2400, toJSON: () => ({}) } as DOMRect : box.call(this);
+    };
+    const scrolledTo: Array<readonly [Element, unknown]> = [];
+    (win.Element.prototype as unknown as { scrollIntoView: (this: Element, o: unknown) => void }).scrollIntoView = function (this: Element, o: unknown) { scrolledTo.push([this, o]); };
+    page.click('Map a process');
+    await page.until(() => d.querySelector('[data-path="workflow.title"]'), 'Map a process, by hand');
+    const addTask = (): HTMLButtonElement => must([...d.querySelectorAll('.app-main button')].find((b) => b.textContent === 'Add a task'), '"Add a task"') as HTMLButtonElement;
+    const tasks = (): number => d.querySelectorAll('[data-path$=".name"]').length;
+    const key = (at: EventTarget, k: string): boolean => at.dispatchEvent(new win.KeyboardEvent('keydown', { key: k, bubbles: true, cancelable: true }));
+    /** Tab reaches "Add a task" (Tab's keydown goes to what focus leaves), the person does `meanwhile`, then Enter presses it: a task is added above it. */
+    const tabThenEnter = (meanwhile: (b: HTMLButtonElement) => void): void => {
+      const n = tasks();
+      key(d.body, 'Tab');
+      const b = addTask();
+      b.focus();
+      meanwhile(b);
+      key(b, 'Shift');
+      key(b, 'Enter');
+      b.click();
+      expect([tasks(), b.isConnected, d.activeElement === addTask()]).toEqual([n + 1, false, true]);
+    };
+    // Enter at once: the browser was still scrolling to the button, toward where the one the redraw replaced was. The
+    // rebuilt button, pushed down by the new task, is brought to the middle of the screen, focus on it.
+    tabThenEnter(() => undefined);
+    expect(scrolledTo).toEqual([[addTask(), { block: 'center', behavior: 'instant' }]]);
+    // The person turned the wheel, clicked, swiped or used another key after Tab: the page is theirs, and stays where it is.
+    for (const meanwhile of [
+      (b: HTMLButtonElement) => b.dispatchEvent(new win.WheelEvent('wheel', { deltaY: 300, bubbles: true, cancelable: true })),
+      (b: HTMLButtonElement) => b.dispatchEvent(new win.MouseEvent('pointerdown', { bubbles: true, cancelable: true })),
+      (b: HTMLButtonElement) => b.dispatchEvent(new win.Event('touchmove', { bubbles: true })),
+      (b: HTMLButtonElement) => key(b, 'PageDown'),
+      (b: HTMLButtonElement) => key(d.body, ' '),
+    ]) {
+      scrolledTo.length = 0;
+      tabThenEnter(meanwhile);
+      expect(scrolledTo).toEqual([]);
+    }
+    // Long after Tab, the browser has finished its scroll: nothing more to do.
+    scrolledTo.length = 0;
+    tabThenEnter(() => { const t0 = Date.now(); while (Date.now() - t0 < 1100) { /* the second the browser's scroll may take goes by */ } });
+    expect(scrolledTo).toEqual([]);
+    expect(page.errors).toEqual([]);
+  }, 60_000);
+
+  it('"Skip to content" moves focus into the screen, which is not drawn again or taken back to its top, and leaves the address (and so a task page) as it is; #main typed in the address draws nothing again; a task link still opens its task, and leaving it draws the view again', async () => {
+    const { page, win, d } = await signedInLead();
+    const tops: unknown[] = [];
+    (win as unknown as { scrollTo: (o: unknown) => void }).scrollTo = (o) => { tops.push(o); };
+    const changes: string[] = [];
+    win.addEventListener('hashchange', () => changes.push(win.location.hash));
+    const skip = must(d.querySelector('a.skip-link'), 'the skip link') as HTMLAnchorElement;
+    const settle = (): Promise<void> => new Promise((r) => setTimeout(r, 100));
+    const main = must(d.getElementById('main'), 'the main element');
+    // Focusable by script only, so it takes focus from the skip link and the next Tab starts inside it.
+    expect([main.tagName, main.getAttribute('tabindex')]).toEqual(['MAIN', '-1']);
+    skip.click();
+    await settle();
+    expect([win.location.hash, changes, d.getElementById('main') === main, d.activeElement === main, tops]).toEqual(['', [], true, true, []]);
+    // #main in the address (typed, or an old link) is the browser's: nothing is drawn again, and the page stays where it is.
+    main.blur();
+    win.location.hash = '#main';
+    await page.until(() => changes.length === 1, 'the address changed');
+    main.focus();
+    await settle();
+    expect([d.getElementById('main') === main, d.activeElement === main, tops]).toEqual([true, true, []]);
+    // A task link opens the task from its top. The skip link there keeps the task on the screen.
+    win.location.hash = `#task=${encodeURIComponent('urn:wrd:task:not-here')}`;
+    await page.until(() => page.text().includes('We couldn\'t find this task'), 'the task page');
+    expect([d.getElementById('main') === main, tops]).toEqual([false, [{ top: 0 }]]);
+    const onTask = must(d.getElementById('main'), 'the task page\'s main element');
+    skip.click();
+    await settle();
+    expect([win.location.hash.startsWith('#task='), page.text().includes('We couldn\'t find this task'), d.getElementById('main') === onTask, d.activeElement === onTask, tops.length])
+      .toEqual([true, true, true, true, 1]);
+    // Leaving it shows the view again, from its top.
+    win.location.hash = '';
+    await page.until(() => page.text().includes('Map and change your process'), 'Home again');
+    expect(tops).toEqual([{ top: 0 }, { top: 0 }]);
+    expect(page.errors).toEqual([]);
+  }, 60_000);
+
+  it('"Add a type of task" keeps what was typed and stays open through a refusal, empties and closes once the type is added, and its button is off while signing; Dismiss on the answer, from the keyboard, gives focus to the view\'s heading', async () => {
+    const { w, page, d } = await signedInLead();
+    page.click('People & roles');
+    await page.until(() => page.text().includes('Add a type of task'), 'People & roles');
+    const form = (): HTMLDetailsElement => must(d.querySelector('details.kind-form'), 'the form') as HTMLDetailsElement;
+    const fields = (): HTMLInputElement[] => [...form().querySelectorAll('input')] as HTMLInputElement[];
+    const addButton = (): HTMLButtonElement => must([...form().querySelectorAll('button')].find((b) => b.textContent === 'Add type of task'), 'its button') as HTMLButtonElement;
+    const answer = (): string => d.querySelector('#app .result .callout__title')?.textContent ?? '';
+    must(form().querySelector('summary'), 'its summary').click();
+    await page.until(() => form().open, 'the form open');
+    const typed = ['Credit check', 'Not A Slug!', 'Check a customer\'s credit before an order ships.'];
+    fields().forEach((f, i) => page.fill(f, typed[i] ?? ''));
+    // While the relay is signing, the button is off (and a redraw then builds the form again, as typed).
+    const release = w.relay.hold();
+    addButton().focus();
+    addButton().click();
+    await page.until(() => w.relay.held() === 1, 'the signature asked for');
+    expect([addButton().disabled, form().open, fields().map((f) => f.value)]).toEqual([true, true, typed]);
+    release();
+    // The bridge refuses the ID: the form is still open, with everything as it was typed, to fix.
+    await page.until(() => !page.text().includes('Signing and sending') && answer() !== '', 'the refusal');
+    expect([answer(), form().open, fields().map((f) => f.value), addButton().disabled]).toEqual(['Something in this form isn\'t right', true, typed, false]);
+    page.fill(must(fields()[1], 'the Short ID'), 'credit-check');
+    addButton().click();
+    await page.until(() => answer() === 'People and roles updated' && page.text().includes('credit-check'), 'the type added');
+    await page.until(() => !form().open, 'the form closed');
+    expect(fields().map((f) => f.value)).toEqual(['', '', '']);
+    // Dismiss, pressed from the keyboard: the answer goes, and focus goes to the view's heading, not back to the top of the page.
+    const dismiss = must(d.querySelector('#app .result button[aria-label="Dismiss"]'), 'Dismiss') as HTMLButtonElement;
+    dismiss.focus();
+    dismiss.click();
+    const heading = d.activeElement;
+    expect([d.querySelector('#app .result'), heading?.tagName, heading?.textContent, heading?.getAttribute('tabindex')]).toEqual([null, 'H1', 'People & roles', '-1']);
+    expect(page.errors).toEqual([]);
+  }, 60_000);
+
   it('where the operator lets chat agents decide too, the panel says so, and the workspace details ask the assistant to check with the person first instead of sending them to the app', async () => {
     const w = await world({ lead: true, chatAgentsDecide: true });
     const page = await openPage(w.bridge, '/ui', { [SESSION_KEY]: JSON.stringify({ token: w.relay.mint(), expiresAt: new Date(Date.now() + 3600_000).toISOString() }) });
