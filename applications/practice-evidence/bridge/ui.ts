@@ -972,7 +972,8 @@ export function connectorPages(pages: { readonly landing: string; readonly help:
     });
     if (blocks === 0 || CONNECTOR_MARK.test(out)) throw new Error(`connectorPages: the ${what} has no connector blocks, or one that is not closed.`);
     if (connector === null) {
-      if (out.includes(DEFAULT_CONNECTOR_ADDRESS)) throw new Error(`connectorPages: the ${what} shows a connector address outside a connector block.`);
+      // A count of the static address's occurrences in page text, not a URL check (split, as below).
+      if (out.split(DEFAULT_CONNECTOR_ADDRESS).length > 1) throw new Error(`connectorPages: the ${what} shows a connector address outside a connector block.`);
       return out;
     }
     return out.split(DEFAULT_CONNECTOR_ADDRESS).join(attr(address));

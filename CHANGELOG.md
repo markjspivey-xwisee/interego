@@ -69,7 +69,9 @@ manifest may advertise) wherever it accepted the urn, using the core's
 `sameAction`; any other action, and anything in neither form, is still
 refused. The provisioning workflow
 no longer copies a model key to the service, and its test fails if one is
-ever written. Nothing was added to the relay, the MCP server or any
+ever written. The server-side page check that no connector address is
+left on a no-connector page counts occurrences rather than calling
+`includes`. Nothing was added to the relay, the MCP server or any
 ontology.
 
 ## 2026-11-08 — Shared helpers for connecting your own chat assistant
