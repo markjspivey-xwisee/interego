@@ -120,6 +120,47 @@ returns summaries without bodies, and `since` limits the read by date. A cursor
 or date the relay cannot read is refused rather than treated as the first page.
 `POST /tool/read_inbox` shares the handler and accepts the same arguments.
 
+## 2026-11-08 — Ask: accept Cloud updates after the shared JSON parser
+
+The Cloud notification receiver reuses an existing parsed body only after the
+request stream has ended. This avoids asking the connector's Express 4 parser
+to read the stream already consumed by the shared Express 5 parser. Unread
+requests still go through the receiver's parser. Authentication, payload bounds,
+registration matching and fresh provider verification remain required; incoming
+score or completion fields still cannot set learning results.
+
+## 2026-11-08 — Ask: preserve owner-supplied course sequence labels
+
+Course readiness keeps the owner's optional curriculum item labels, including
+references outside the learner's enrolled course list. Catalog title fallback
+requires the same course and version. Showing an owner label does not add an
+enrollment, grant a launch or establish prerequisite completion; the existing
+owner-attribution notice remains visible.
+
+## 2026-11-08 — Ask: bounded Cloud callback diagnostics
+
+Rejected progress callbacks now report a fixed rejection reason and bounded
+media, body and known-field type labels. These diagnostics expose no supplied
+values, arbitrary field names, raw headers or credentials. Authentication,
+accepted payloads, enrollment checks and fresh provider reads keep their
+existing requirements. The change helps diagnose the live Cloud format
+mismatch; it does not claim that notification delivery has passed.
+
+## 2026-11-08 — Ask: real Cloud callback configuration and review handoff
+
+Live student verification exposed Cloud responses that omit explicit setting
+values and default a newly configured callback to legacy XML. Progress updates
+now verify the effective registration settings, explicitly configure JSON, and
+track the feature's JSON-override intent without treating intent alone as
+ownership. Removal deletes matching credentials before the callback URL and
+never sends the empty setting values Cloud rejects. Unrelated or ambiguous
+settings remain untouched for owner review.
+
+Course questions now validate released review in the same model-bound context
+the server returns. The browser passes that original packet through unchanged;
+an integration regression carries the real server response through the public
+browser adapter and broker rather than a parallel mock DTO.
+
 ## 2026-11-08 — Ask: enrolled quiz review and owner learning maps
 
 Ask guides administrators and learners through separate connection and account

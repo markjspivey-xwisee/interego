@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { once } from 'node:events';
 import express from 'express';
+import { createVerticalBridge } from '../../_shared/vertical-bridge/index.js';
 import type { LearningPrincipal } from '../src/i2idlx-learning-auth.js';
 import type { LearningAccess, LearningConnector } from '../src/i2idlx-learning-connections.js';
 import { LEARNING_NOTIFICATION_LIMITS, LearningProgressNotifications, type LearningNotificationLink,
@@ -10,8 +11,8 @@ const BASE = 'https://workbench.example.test', LINK = 'a'.repeat(32), CONNECTOR 
 const SUBJECT = 'did:web:identity.example.test:users:student', OWNER = 'did:web:identity.example.test:users:admin';
 const NOW = Date.parse('2026-11-08T20:00:00.000Z'), AUTH = 'Basic synthetic-private-credential';
 const URL_SETTING = 'ApiRollupRegistrationPostBackUrl', TYPE = 'ApiRollupRegistrationAuthType', USER = 'ApiRollupRegistrationAuthUser';
-const PASSWORD = 'ApiRollupRegistrationAuthPassword', FORMAT = 'ApiRollupRegistrationFormat';
-const SETTING_IDS = [URL_SETTING, TYPE, USER, PASSWORD, FORMAT];
+const PASSWORD = 'ApiRollupRegistrationAuthPassword', FORMAT = 'ApiRollupRegistrationFormat', IS_JSON = 'ApiRollupRegistrationIsJson';
+const SETTING_IDS = [URL_SETTING, TYPE, USER, PASSWORD, FORMAT, IS_JSON];
 type Row = Record<string, unknown>;
 const clone = <T>(value: T): T => structuredClone(value);
 const json = (value: unknown, status = 200) => Response.json(value, { status });
@@ -30,9 +31,13 @@ function fixture() {
   const registration = { id: 'registration-one', learner: { id: 'private-learner', firstName: 'Not exposed', email: 'private@example.test' },
     course: { id: 'course-one', title: 'Fictional course', version: 0 }, registrationCompletion: 'INCOMPLETE', registrationSuccess: 'UNKNOWN', totalSecondsTracked: 20 };
   const explicit = new Map<string, Map<string, string>>([['registration-one', new Map()]]);
-  const inherited = new Map<string, string>([[URL_SETTING, ''], [TYPE, 'form'], [USER, ''], [PASSWORD, ''], [FORMAT, 'activity'], ['ApiRollupRegistrationIsJson', 'true']]);
+  // Matches the live Cloud shape: registration-source effective values omit
+  // explicitValue, and inherited JSON defaults to false despite the old guide.
+  const inherited = new Map<string, string>([[URL_SETTING, ''], [TYPE, 'form'], [USER, ''], [PASSWORD, ''], [FORMAT, 'activity'], [IS_JSON, 'false'], ['ApiRollupRegistrationDuringSession', 'true']]);
   const calls: Array<{ url: string; method: string; body?: unknown }> = [], receipts: Array<{ link: string; revision: string; registration: string; at: string }> = [];
-  let failNextPost = false, failNextDelete = false, configurationRace: (() => void) | undefined, readRace: (() => void) | undefined;
+  const configurationResponses: Array<{ settingItems: Array<Record<string, unknown>> }> = [];
+  let includeExplicitValue = false, explicitConflict = false;
+  let failNextPost = false, failNextDelete = false, failDeleteSetting: string | undefined, configurationRace: (() => void) | undefined, readRace: (() => void) | undefined;
   let providerWait: Promise<void> | undefined, onProviderWait: (() => void) | undefined;
   const store: LearningNotificationStore = {
     async readLink(id) { return id === link.id ? clone(link) : null; },
@@ -70,18 +75,20 @@ function fixture() {
     const settings = explicit.get(decodeURIComponent(match[1]!)); if (!settings) return json({}, 404);
     if (method === 'GET') {
       const value = { settingItems: [...inherited].map(([id, fallback]) => settings.has(id)
-        ? { id, effectiveValue: settings.get(id), explicitValue: settings.get(id), effectiveValueSource: 'registration' }
+        ? { id, effectiveValue: settings.get(id), ...(includeExplicitValue ? { explicitValue: explicitConflict && id === PASSWORD ? 'contradictory-value' : settings.get(id) } : {}), effectiveValueSource: 'registration' }
         : { id, effectiveValue: fallback, effectiveValueSource: 'default' }) };
+      configurationResponses.push(clone(value));
       configurationRace?.(); configurationRace = undefined; return json(value);
     }
     if (method === 'POST') {
       if (failNextPost) { failNextPost = false; return json({}, 500); }
       const body = JSON.parse(String(init.body)) as { settings: Array<{ settingId: string; value: string; explicit: boolean }> };
+      if (body.settings.some(item => item.value === '')) return json({ error: 'The [settingId] and [value] fields of the provided SettingsIndividualSchema object are required.' }, 400);
       for (const item of body.settings) { expect(SETTING_IDS).toContain(item.settingId); expect(item.explicit).toBe(true); settings.set(item.settingId, item.value); }
       return new Response(null, { status: 204 });
     }
     if (method === 'DELETE') {
-      if (failNextDelete) { failNextDelete = false; return json({}, 500); }
+      if (failNextDelete && (!failDeleteSetting || failDeleteSetting === match[2])) { failNextDelete = false; return json({}, 500); }
       expect(SETTING_IDS).toContain(match[2]); settings.delete(match[2]!); return new Response(null, { status: 204 });
     }
     throw Error('Unexpected method');
@@ -92,10 +99,11 @@ function fixture() {
   const request = (operation: string, extra: Row = {}) => service.request(principal, { operation, link_id: LINK, course_id: 'course-one', version: 0,
     ...(operation === 'progress-notification-status' ? {} : { confirmed: true }), ...extra });
   const header = () => 'Basic ' + Buffer.from(LINK + ':' + link.notifications!.secret).toString('base64');
-  return { service, store, principal, admin, lifetime, request, header, calls, receipts, explicit, inherited, registration,
+  return { service, store, principal, admin, lifetime, request, header, calls, receipts, explicit, inherited, registration, configurationResponses,
     getLink: () => clone(link), getConnector: () => clone(connector), mutateLink: (change: Partial<LearningNotificationLink>) => { link = { ...link, ...change }; },
     mutateConnector: (change: Partial<LearningConnector>) => { connector = { ...connector, ...change }; },
-    revokeSession: () => { authorized = false; }, failPost: () => { failNextPost = true; }, failDelete: () => { failNextDelete = true; },
+    revokeSession: () => { authorized = false; }, failPost: () => { failNextPost = true; }, failDelete: (settingId?: string) => { failNextDelete = true; failDeleteSetting = settingId; },
+    explicitValues: (conflict = false) => { includeExplicitValue = true; explicitConflict = conflict; },
     raceConfiguration: (run: () => void) => { configurationRace = run; }, raceProviderRead: (run: () => void) => { readRace = run; },
     waitProvider: (promise: Promise<void>, observed?: () => void) => { providerWait = promise; onProviderWait = observed; } };
 }
@@ -112,12 +120,13 @@ describe('optional authenticated per-link Cloud progress refresh notifications',
     expect(enabled).toMatchObject({ notifications: { available: true, enabled: true } });
     const stored = f.getLink().notifications!;
     expect(stored.secret).toMatch(/^[a-f0-9]{48}$/);
-    expect(stored.registrations).toEqual([{ registrationId: 'registration-one', courseId: 'course-one', version: 0 }]);
+    expect(stored.registrations).toEqual([{ registrationId: 'registration-one', courseId: 'course-one', version: 0, jsonOverride: true }]);
     const writes = f.calls.filter(call => call.method !== 'GET'); expect(writes).toHaveLength(1);
     expect(writes[0]).toEqual({ url: 'https://cloud.scorm.com/api/v2/registrations/registration-one/configuration', method: 'POST', body: { settings: [
       { settingId: URL_SETTING, value: BASE + '/i2idlx/learning/progress-notifications/' + LINK, explicit: true },
       { settingId: TYPE, value: 'httpbasic', explicit: true }, { settingId: USER, value: LINK, explicit: true },
       { settingId: PASSWORD, value: stored.secret, explicit: true }, { settingId: FORMAT, value: 'course', explicit: true },
+      { settingId: IS_JSON, value: 'true', explicit: true },
     ] } });
     expect(JSON.stringify(enabled)).not.toContain(stored.secret);
     expect(f.calls.every(call => !/applications|courses|launch|registration.*\/progress/.test(call.url))).toBe(true);
@@ -140,12 +149,41 @@ describe('optional authenticated per-link Cloud progress refresh notifications',
     await expect(f.request('enable-progress-notifications')).rejects.toMatchObject({ status: 409, code: 'learning_notifications_existing_callback' });
     expect(f.calls.some(call => call.method !== 'GET')).toBe(false); expect(f.getLink().notifications).toBeUndefined();
   });
-  it('refuses an inherited application callback and XML postback mode', async () => {
-    let f = fixture(); f.inherited.set(URL_SETTING, 'https://existing.example.test/progress');
+  it('refuses an inherited application callback without changing any registration setting', async () => {
+    const f = fixture(); f.inherited.set(URL_SETTING, 'https://existing.example.test/progress');
     await expect(f.request('enable-progress-notifications')).rejects.toMatchObject({ code: 'learning_notifications_existing_callback' });
     expect(f.calls.filter(call => call.method !== 'GET')).toHaveLength(0);
-    f = fixture(); f.inherited.set('ApiRollupRegistrationIsJson', 'false');
-    await expect(f.request('enable-progress-notifications')).rejects.toMatchObject({ code: 'learning_notifications_existing_callback' });
+  });
+  it('sets explicit registration JSON mode and accepts observed effective/source readback without explicitValue', async () => {
+    const f = fixture(); expect(f.inherited.get(IS_JSON)).toBe('false');
+    await f.request('enable-progress-notifications');
+    const rows = f.configurationResponses.at(-1)!.settingItems;
+    expect(rows.filter(row => row.effectiveValueSource === 'registration')).toHaveLength(6);
+    expect(rows.every(row => !Object.hasOwn(row, 'explicitValue'))).toBe(true);
+    expect(rows.find(row => row.id === IS_JSON)).toEqual({ id: IS_JSON, effectiveValue: 'true', effectiveValueSource: 'registration' });
+    expect(await f.request('progress-notification-status')).toMatchObject({ notifications: { enabled: true } });
+  });
+  it('supports agreeing explicitValue metadata but refuses contradictory effective/explicit evidence', async () => {
+    const f = fixture(); f.explicitValues(); await f.request('enable-progress-notifications');
+    expect(await f.request('progress-notification-status')).toMatchObject({ notifications: { enabled: true } });
+    f.explicitValues(true);
+    await expect(f.request('progress-notification-status')).rejects.toMatchObject({ status: 502, code: 'learning_notifications_provider_invalid' });
+  });
+  it.each(['true', 'false'])('does not overwrite an existing administrator registration JSON override %s', async value => {
+    const f = fixture(); f.explicit.get('registration-one')!.set(IS_JSON, value);
+    await expect(f.request('enable-progress-notifications')).rejects.toMatchObject({ status: 409, code: 'learning_notifications_existing_callback' });
+    expect(f.calls.some(call => call.method !== 'GET')).toBe(false); expect(f.getLink().notifications).toBeUndefined();
+  });
+  it('upgrades the observed legacy five-setting pending target while retaining the exact private link secret', async () => {
+    const f = fixture(), secret = 'd'.repeat(48), settings = f.explicit.get('registration-one')!;
+    f.mutateLink({ notifications: { secret, registrations: [{ registrationId: 'registration-one', courseId: 'course-one', version: 0 }] } });
+    for (const [id, value] of [[URL_SETTING, BASE + '/i2idlx/learning/progress-notifications/' + LINK], [TYPE, 'httpbasic'], [USER, LINK], [PASSWORD, secret], [FORMAT, 'course']]) settings.set(id!, value!);
+    expect(await f.request('progress-notification-status')).toMatchObject({ notifications: { enabled: false } });
+    expect(await f.request('enable-progress-notifications')).toMatchObject({ notifications: { enabled: true } });
+    expect(f.getLink().notifications!.secret).toBe(secret); expect(f.getLink().notifications!.registrations[0]!.jsonOverride).toBe(true);
+    expect(settings.get(IS_JSON)).toBe('true');
+    await f.request('disable-progress-notifications');
+    expect(settings.size).toBe(0); expect(f.inherited.get(IS_JSON)).toBe('false');
   });
   it('retains private setup state for retry after provider write failure, while reporting no enabled subscription', async () => {
     const f = fixture(); f.failPost();
@@ -159,15 +197,58 @@ describe('optional authenticated per-link Cloud progress refresh notifications',
     expect(await f.request('disable-progress-notifications')).toMatchObject({ notifications: { enabled: false } });
     expect(f.getLink().notifications).toBeUndefined(); expect(f.explicit.get('registration-one')!.size).toBe(0);
     const changes = f.calls.filter(call => call.method !== 'GET');
-    expect(changes[1]).toMatchObject({ method: 'POST', body: { settings: [{ settingId: URL_SETTING, value: '', explicit: true }] } });
-    expect(changes.slice(2).map(call => call.url.split('/').at(-1))).toEqual([PASSWORD, USER, TYPE, FORMAT, URL_SETTING]);
+    expect(changes.slice(1).every(call => call.method === 'DELETE')).toBe(true);
+    expect(changes.slice(1).map(call => call.url.split('/').at(-1))).toEqual([PASSWORD, USER, TYPE, FORMAT, IS_JSON, URL_SETTING]);
   });
-  it('resumes safe partial cleanup and keeps the callback URL disabled until its Basic credentials are removed', async () => {
-    const f = fixture(); await f.request('enable-progress-notifications'); f.failDelete();
+  it('leaves unrelated JSON registration metadata untouched when removing an unmarked legacy five-setting setup', async () => {
+    const f = fixture(), secret = 'd'.repeat(48), settings = f.explicit.get('registration-one')!;
+    f.mutateLink({ notifications: { secret, registrations: [{ registrationId: 'registration-one', courseId: 'course-one', version: 0 }] } });
+    for (const [id, value] of [[URL_SETTING, BASE + '/i2idlx/learning/progress-notifications/' + LINK], [TYPE, 'httpbasic'], [USER, LINK], [PASSWORD, secret], [FORMAT, 'course'], [IS_JSON, 'true']]) settings.set(id!, value!);
+    await expect(f.request('enable-progress-notifications')).rejects.toMatchObject({ code: 'learning_notifications_existing_callback' });
+    await f.request('disable-progress-notifications');
+    expect([...settings]).toEqual([[IS_JSON, 'true']]); expect(f.getLink().notifications).toBeUndefined();
+    expect(f.calls.some(call => call.method === 'DELETE' && call.url.endsWith('/' + IS_JSON))).toBe(false);
+  });
+  it('refuses ambiguous JSON-only partial installation rather than treating saved intent as ownership', async () => {
+    const f = fixture(); f.failPost(); await expect(f.request('enable-progress-notifications')).rejects.toMatchObject({ status: 502 });
+    const settings = f.explicit.get('registration-one')!; settings.set(IS_JSON, 'true');
+    expect(f.getLink().notifications!.registrations[0]!.jsonOverride).toBe(true);
+    const before = f.calls.length, pending = f.getLink();
+    await expect(f.request('enable-progress-notifications')).rejects.toMatchObject({ code: 'learning_notifications_existing_callback' });
+    await expect(f.request('disable-progress-notifications')).rejects.toMatchObject({ code: 'learning_notifications_cleanup_required' });
+    expect(f.calls.slice(before).every(call => call.method === 'GET')).toBe(true);
+    expect([...settings]).toEqual([[IS_JSON, 'true']]); expect(f.getLink()).toEqual(pending);
+  });
+  it('preserves an administrator JSON override added after our failed write with the same observable JSON-only state', async () => {
+    const f = fixture(); f.failPost(); await expect(f.request('enable-progress-notifications')).rejects.toMatchObject({ status: 502 });
+    // The provider rejected the POST without applying any settings. An
+    // independent administrator then chooses JSON on this registration.
+    const settings = f.explicit.get('registration-one')!; expect(settings.size).toBe(0); settings.set(IS_JSON, 'true');
+    const before = f.calls.length, pending = f.getLink();
+    await expect(f.service.cleanupLink(f.admin, LINK)).rejects.toMatchObject({ status: 409, code: 'learning_notifications_cleanup_required' });
+    await expect(f.request('enable-progress-notifications')).rejects.toMatchObject({ status: 409, code: 'learning_notifications_existing_callback' });
+    expect(f.calls.slice(before).every(call => call.method === 'GET')).toBe(true);
+    expect(settings.get(IS_JSON)).toBe('true'); expect(f.getLink()).toEqual(pending);
+  });
+  it('preserves an administrator replacement of the feature-marked JSON override', async () => {
+    const f = fixture(); await f.request('enable-progress-notifications'); const settings = f.explicit.get('registration-one')!;
+    settings.set(IS_JSON, 'false'); const before = f.calls.length;
+    await expect(f.request('disable-progress-notifications')).rejects.toMatchObject({ code: 'learning_notifications_cleanup_required' });
+    expect(f.calls.slice(before).some(call => call.method !== 'GET')).toBe(false); expect(settings.get(IS_JSON)).toBe('false');
+    expect(f.getLink().notifications).toBeDefined();
+  });
+  it('resumes partial cleanup with its own destination retained until all matching Basic credentials are removed', async () => {
+    const f = fixture(); await f.request('enable-progress-notifications'); f.failDelete(TYPE);
     await expect(f.request('disable-progress-notifications')).rejects.toMatchObject({ status: 502 });
-    expect(f.explicit.get('registration-one')!.get(URL_SETTING)).toBe(''); expect(f.getLink().notifications).toBeDefined();
+    expect(f.explicit.get('registration-one')!.get(URL_SETTING)).toBe(BASE + '/i2idlx/learning/progress-notifications/' + LINK); expect(f.getLink().notifications).toBeDefined();
+    expect(f.explicit.get('registration-one')!.has(PASSWORD)).toBe(false); expect(f.explicit.get('registration-one')!.has(USER)).toBe(false);
     await f.request('disable-progress-notifications');
     expect(f.getLink().notifications).toBeUndefined(); expect(f.explicit.get('registration-one')!.size).toBe(0);
+  });
+  it('never sends an empty setting value that the observed Cloud API refuses with HTTP400', async () => {
+    const f = fixture(); await f.request('enable-progress-notifications'); await f.request('disable-progress-notifications');
+    const posted = f.calls.filter(call => call.method === 'POST').flatMap(call => (call.body as { settings: Array<{ value: string }> }).settings);
+    expect(posted).toHaveLength(6); expect(posted.every(item => item.value !== '')).toBe(true);
   });
   it('refuses to remove an administrator replacement callback and preserves private credentials for explicit retry', async () => {
     const f = fixture(); await f.request('enable-progress-notifications'); const count = f.calls.length;
@@ -238,9 +319,9 @@ describe('optional authenticated per-link Cloud progress refresh notifications',
   it('rejects expired/cancelled human sessions and malformed or oversized callback bodies', async () => {
     const f = fixture(); f.lifetime.abort(); await expect(f.request('enable-progress-notifications')).rejects.toMatchObject({ status: 403 });
     const next = fixture(); await next.request('enable-progress-notifications');
-    await expect(next.service.receive(LINK, next.header(), { id: 'registration-one', raw: 'x'.repeat(LEARNING_NOTIFICATION_LIMITS.payloadBytes) })).rejects.toMatchObject({ status: 400 });
-    await expect(next.service.receive(LINK, next.header(), { registrationId: 'registration-one' })).rejects.toMatchObject({ status: 400 });
-    await expect(next.service.receive(LINK, next.header(), JSON.parse('{"id":"registration-one","__proto__":{"polluted":true}}'))).rejects.toMatchObject({ status: 400 });
+    await expect(next.service.receive(LINK, next.header(), { id: 'registration-one', raw: 'x'.repeat(LEARNING_NOTIFICATION_LIMITS.payloadBytes) })).rejects.toMatchObject({ status: 400, reason: 'body_size' });
+    await expect(next.service.receive(LINK, next.header(), { registrationId: 'registration-one' })).rejects.toMatchObject({ status: 400, reason: 'registration_id_missing' });
+    await expect(next.service.receive(LINK, next.header(), JSON.parse('{"id":"registration-one","__proto__":{"polluted":true}}'))).rejects.toMatchObject({ status: 400, reason: 'body_structure' });
     expect(next.receipts).toHaveLength(0);
   });
   it('bounds callback admission per link and never returns private source or progress records', async () => {
@@ -261,5 +342,103 @@ describe('optional authenticated per-link Cloud progress refresh notifications',
     expect(await result.json()).toEqual({ received: true, refresh_required: true, received_at: new Date(NOW).toISOString() });
     const invalid = await fetch(endpoint + '?extra=1', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: f.header() }, body: '{}' }); expect(invalid.status).toBe(400);
     const oversized = await fetch(endpoint, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: f.header() }, body: JSON.stringify({ id: 'registration-one', blob: 'x'.repeat(LEARNING_NOTIFICATION_LIMITS.payloadBytes) }) }); expect(oversized.status).toBe(413);
+  });
+  it('diagnoses rejected callback formats with finite labels and never echoes supplied values or arbitrary keys', async () => {
+    const f = fixture(); await f.request('enable-progress-notifications'); const app = express(); f.service.attachRoutes(app);
+    const server = app.listen(0, '127.0.0.1'); await once(server, 'listening');
+    cleanups.push(async () => { await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve())); });
+    const address = server.address(); if (!address || typeof address === 'string') throw Error('Missing local test server');
+    const endpoint = 'http://127.0.0.1:' + address.port + '/i2idlx/learning/progress-notifications/' + LINK;
+    const unknown = 'PRIVATE_CALLBACK_KEY', secret = 'PRIVATE_CALLBACK_SENTINEL';
+    const cases = [
+      { type: 'application/json', query: '?PRIVATE_QUERY=' + secret, body: '{}', status: 400, reason: 'query', media: 'application_json', parsed: 'undefined' },
+      { type: 'application/x-www-form-urlencoded', body: 'data=' + secret, status: 400, reason: 'content_type', media: 'form', parsed: 'undefined' },
+      { type: 'text/xml', body: '<data>' + secret + '</data>', status: 400, reason: 'content_type', media: 'xml', parsed: 'undefined' },
+      { type: 'text/json', body: '{}', status: 400, reason: 'content_type', media: 'text_json', parsed: 'undefined' },
+      { type: 'application/private-' + secret, body: '{}', status: 400, reason: 'content_type', media: 'other', parsed: 'undefined' },
+      { type: 'application/json', body: '{"' + unknown + '":', status: 400, reason: 'json_parse', media: 'application_json', parsed: 'undefined' },
+      { type: 'application/json', body: '[]', status: 400, reason: 'body_shape', media: 'application_json', parsed: 'array' },
+      { type: 'application/json', body: JSON.stringify({ registrationId: secret, registrationid: secret, registration: {}, data: {}, registrationReport: [], [unknown]: secret }),
+        status: 400, reason: 'registration_id_missing', media: 'application_json', parsed: 'object' },
+      { type: 'application/json', body: JSON.stringify({ id: { [unknown]: secret } }), status: 400, reason: 'registration_id_invalid', media: 'application_json', parsed: 'object' },
+      { type: 'application/json', body: '{"id":"' + secret + '","constructor":{}}', status: 400, reason: 'body_structure', media: 'application_json', parsed: 'object' },
+      { type: 'application/json', body: JSON.stringify({ id: secret, data: 'x'.repeat(LEARNING_NOTIFICATION_LIMITS.payloadBytes) }), status: 413, reason: 'content_length', media: 'application_json', parsed: 'undefined' },
+    ];
+    for (const item of cases) {
+      const response = await fetch(endpoint + (item.query ?? ''), { method: 'POST', headers: { 'Content-Type': item.type, Authorization: f.header() }, body: item.body });
+      expect(response.status).toBe(item.status);
+      const result = await response.json() as Row;
+      expect(result).toMatchObject({ error: 'learning_notifications_payload_invalid', reason: item.reason, media_type: item.media, parsed_type: item.parsed });
+      expect(JSON.stringify(result)).not.toMatch(/PRIVATE_CALLBACK|PRIVATE_QUERY|registration-one|private-learner/);
+      if (item.reason === 'registration_id_missing') expect(result.known_fields).toEqual({ id: 'missing', registrationId: 'string', registrationid: 'string', registration: 'object', data: 'object', registrationReport: 'array' });
+    }
+    expect(f.receipts).toHaveLength(0);
+  });
+  it('accepts documented Cloud JSON behind the real bridge factory parser and Foxxi request metadata', async () => {
+    const f = fixture(); await f.request('enable-progress-notifications');
+    let lastContentLength: string | undefined;
+    const app = createVerticalBridge({ verticalName: 'notification-callback-fixture', affordances: [], handlers: {}, middleware(a) {
+      // Same ordering and object decoration as the live Foxxi bridge: the
+      // factory has already parsed JSON, and Basic never becomes a caller token.
+      a.use((req, _res, next) => {
+        lastContentLength = req.get('Content-Length');
+        const header = req.headers.authorization, token = typeof header === 'string' && /^Bearer\s+(.+)$/i.exec(header);
+        if (req.body && typeof req.body === 'object') {
+          const body = req.body as Row; body.__client_ip = req.ip ?? 'unknown';
+          if (token) body.__caller_token = token[1]!.trim();
+        }
+        next();
+      });
+    } });
+    f.service.attachRoutes(app);
+    const server = app.listen(0, '127.0.0.1'); await once(server, 'listening');
+    cleanups.push(async () => { await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve())); });
+    const address = server.address(); if (!address || typeof address === 'string') throw Error('Missing local test server');
+    const endpoint = 'http://127.0.0.1:' + address.port + '/i2idlx/learning/progress-notifications/' + LINK;
+    for (const contentType of ['application/json; charset=UTF-8', 'Application/JSON; charset=UTF-8']) {
+      const response = await fetch(endpoint, { method: 'POST', headers: { 'Content-Type': contentType, Authorization: f.header() }, body: JSON.stringify(f.registration) });
+      const result = await response.json() as Row;
+      expect(response.status, JSON.stringify(result)).toBe(200);
+      expect(result).toEqual({ received: true, refresh_required: true, received_at: new Date(NOW).toISOString() });
+    }
+    const wrapper = await fetch(endpoint, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: f.header() }, body: JSON.stringify({ data: f.registration }) });
+    expect(wrapper.status).toBe(400);
+    expect(await wrapper.json()).toMatchObject({ error: 'learning_notifications_payload_invalid', reason: 'registration_id_missing', media_type: 'application_json', parsed_type: 'object', known_fields: { id: 'missing', data: 'object' } });
+    const invalid = await fetch(endpoint, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: f.header() }, body: '[1,2]' });
+    expect(invalid.status).toBe(400); expect(await invalid.json()).toMatchObject({ reason: 'body_shape' });
+    const structure = await fetch(endpoint, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: f.header() }, body: '{"id":"registration-one","constructor":{}}' });
+    expect(structure.status).toBe(400); expect(await structure.json()).toMatchObject({ reason: 'body_structure' });
+    const unauthorized = await fetch(endpoint, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Basic invalid' }, body: JSON.stringify(f.registration) });
+    expect(unauthorized.status).toBe(401); expect(await unauthorized.json()).toEqual({ error: 'learning_notifications_authentication_failed' });
+    const oversizedBody = JSON.stringify({ id: 'registration-one', ignored: 'x'.repeat(LEARNING_NOTIFICATION_LIMITS.payloadBytes) });
+    const oversized = await fetch(endpoint, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: f.header() }, body: oversizedBody });
+    expect(oversized.status).toBe(413); expect(await oversized.json()).toMatchObject({ reason: 'content_length' });
+    const chunked = await fetch(endpoint, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: f.header() },
+      body: new ReadableStream<Uint8Array>({ start(controller) { controller.enqueue(new TextEncoder().encode(oversizedBody)); controller.close(); } }), duplex: 'half' } as RequestInit & { duplex: 'half' });
+    expect(lastContentLength).toBeUndefined();
+    expect(chunked.status).toBe(400); expect(await chunked.json()).toMatchObject({ reason: 'body_size' });
+    expect(f.receipts).toHaveLength(2);
+    expect(JSON.stringify(f.receipts)).not.toMatch(/__client_ip|__caller_token|Not exposed|private@example/);
+  });
+  it('does not trust a middleware-injected body while the request stream remains unread', async () => {
+    const f = fixture(); await f.request('enable-progress-notifications'); const app = express();
+    app.use((req, _res, next) => { expect(req.readableEnded).toBe(false); req.body = { id: 'registration-one' }; next(); });
+    f.service.attachRoutes(app);
+    const server = app.listen(0, '127.0.0.1'); await once(server, 'listening');
+    cleanups.push(async () => { await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve())); });
+    const address = server.address(); if (!address || typeof address === 'string') throw Error('Missing local test server');
+    const endpoint = 'http://127.0.0.1:' + address.port + '/i2idlx/learning/progress-notifications/' + LINK;
+    const cases = [
+      { body: '{"id":"unselected-registration"}', status: 403, error: 'learning_enrollment_required' },
+      { body: '{"registrationId":"registration-one"}', status: 400, error: 'learning_notifications_payload_invalid', reason: 'registration_id_missing' },
+      { body: '{"id":', status: 400, error: 'learning_notifications_payload_invalid', reason: 'json_parse' },
+    ];
+    for (const item of cases) {
+      const response = await fetch(endpoint, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: f.header() }, body: item.body });
+      expect(response.status).toBe(item.status); expect(await response.json()).toMatchObject({ error: item.error, ...(item.reason ? { reason: item.reason } : {}) });
+    }
+    expect(f.receipts).toHaveLength(0);
+    const valid = await fetch(endpoint, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: f.header() }, body: '{"id":"registration-one"}' });
+    expect(valid.status).toBe(200); expect(f.receipts).toHaveLength(1);
   });
 });

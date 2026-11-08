@@ -106,6 +106,8 @@ history. Review is question-specific context, not a separate assessment service.
 When a released item maps to an instructional file, retrieval prioritizes that
 safe listed file while retaining existing file limits and assessment exclusions.
 Only actually returned instructional citations receive navigation references.
+The browser validates released review from that same model-bound context and
+passes the original context unchanged, preserving its authorization receipt.
 The AI can explain supplied results and teach from those passages; it cannot
 recover hidden grading logic or claim eligibility, mastery or passing.
 
@@ -133,6 +135,13 @@ them for a selected existing registration. Configuration is registration-only;
 no application defaults, other learners or deployments are hardcoded or changed.
 An existing unrelated postback configuration is refused rather than overwritten.
 Callbacks use a private per-link secret and a fixed HTTPS Foxxi endpoint.
+Setup explicitly selects JSON on that registration and verifies the effective
+setting values and their registration source, including Cloud responses that
+omit a separate explicit-value field. Saved JSON-override intent alone does not
+prove ownership of an otherwise unrelated JSON setting. Ambiguous settings stay
+unchanged for owner review. Cleanup keeps this feature's matched URL in place
+until its matching credentials and format settings are removed, then removes
+the URL last; it never submits the empty values Cloud rejects.
 
 An authenticated callback is a refresh signal. The receiver independently reads
 Cloud and verifies the current linked learner, course and version before saving
