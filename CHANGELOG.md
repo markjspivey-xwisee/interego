@@ -1,5 +1,13 @@
 # Changelog
 
+## 2026-11-08 — Ask: preserve owner-supplied course sequence labels
+
+Course readiness keeps the owner's optional curriculum item labels, including
+references outside the learner's enrolled course list. Catalog title fallback
+requires the same course and version. Showing an owner label does not add an
+enrollment, grant a launch or establish prerequisite completion; the existing
+owner-attribution notice remains visible.
+
 ## 2026-11-08 — Ask: bounded Cloud callback diagnostics
 
 Rejected progress callbacks now report a fixed rejection reason and bounded
