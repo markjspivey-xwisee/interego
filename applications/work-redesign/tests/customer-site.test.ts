@@ -24,8 +24,9 @@ import { chatAgentJs } from '../../_shared/chat-agent/index.js';
 import { listenLoopback, type TestListener } from '../../_shared/vertical-bridge/listen-loopback.js';
 import { wrdAffordances, wrdDemoAffordances } from '../affordances.js';
 import { createWrdHandlers } from '../bridge/handlers.js';
-import { attachUi, hostAllowlistGuard, parseEveryQueryPair, servedHostNames, UI_CSP, type UiReads } from '../bridge/ui.js';
-import { SIBLING, INTEREGO_DEFAULTS, type LandingOptions } from '../bridge/landing.js';
+import { attachUi, hostAllowlistGuard, parseEveryQueryPair, servedHostNames, UI_CSP, type UiReads, type UiSignIn } from '../bridge/ui.js';
+import { designSystemCss } from '../../_shared/design-system/index.js';
+import { SIBLING, INTEREGO_DEFAULTS, connectorUrlOf, renderSitePage, siteValues, type LandingOptions } from '../bridge/landing.js';
 import { demoClock, memoryPod, DEMO_POD, DEMO_RECORD_KEY } from '../demo/run.js';
 // The plain-words guard (JARGON, ALLOWED = [], visibleText), shared with every other DOM test of the UI.
 import { ALLOWED, jargonIn, visibleText } from './plain-words.js';
@@ -37,16 +38,37 @@ const BROWSER = 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avi
 const listeners: TestListener[] = [];
 afterAll(async () => { for (const l of listeners) await l.close(); });
 
-/** A production composition, as bridge/server.ts composes it (its entry point names the pod it serves): no demo signer, no sign-in. */
-async function production(o: { readonly landing?: LandingOptions; readonly reads?: UiReads } = {}): Promise<TestListener> {
+/**
+ * A production composition, as bridge/server.ts composes it (its entry point names the pod it serves): no demo signer,
+ * and no sign-in unless `signIn` is given. `base`: the public address the pages name (default http://127.0.0.1).
+ */
+async function production(o: { readonly landing?: LandingOptions; readonly reads?: UiReads; readonly signIn?: UiSignIn; readonly base?: string } = {}): Promise<TestListener> {
+  const { base = 'http://127.0.0.1', ...rest } = o;
   const l = await listenLoopback(createVerticalBridge({
-    verticalName: 'work-redesign', affordances: wrdAffordances, deploymentUrl: 'http://127.0.0.1', defaultPodUrl: DEMO_POD,
+    verticalName: 'work-redesign', affordances: wrdAffordances, deploymentUrl: base, defaultPodUrl: DEMO_POD,
     handlers: createWrdHandlers({ defaultPodUrl: DEMO_POD }),
-    middleware: (a) => { attachUi(a, { base: 'http://127.0.0.1', ...o }); parseEveryQueryPair(a); },
+    middleware: (a) => { attachUi(a, { base, ...rest }); parseEveryQueryPair(a); },
   }));
   listeners.push(l);
   return l;
 }
+
+/** Every call a sign-in below would make to its relay or the identity host: none is made, since only pages are read. */
+const relayCalls: string[] = [];
+/**
+ * A sign-in whose relay this bridge trusts, as bridge/server.ts builds it from WRD_RELAY_URL and WRD_TRUSTED_RELAY_ADDRESSES:
+ * the pages then name the Interego connector. Example hosts only, and never reached: each would-be call is recorded and refused.
+ */
+const trusted = (policy: 'trusted' | 'none' = 'trusted'): UiSignIn => ({
+  relayUrl: 'https://relay.example.org',
+  policy: policy === 'none' ? null : {
+    relayAddresses: [`0x${'1'.repeat(40)}`], identityHost: 'identity.example.org',
+    fetchDidDocument: async (url) => { relayCalls.push(url); throw new Error('not reached in this test'); },
+  },
+  fetchFn: async (url) => { relayCalls.push(url); throw new Error('not reached in this test'); },
+});
+/** The deployed bridge's address is 44 characters (https://wrd-bridge-production.up. and its host's 12): this has the same length, on a reserved example domain. */
+const PRODUCTION_LENGTH_BASE = 'https://wrd-bridge-production.up.example.org';
 
 /** The demo composition of the UI's DOM test: Ana a process lead and team member named on one unsorted task, Zed in no role, and the admin. */
 async function minimalDemo(): Promise<TestListener> {
@@ -258,7 +280,7 @@ describe('work-redesign customer site', () => {
   });
 
   it('tells a visitor how to use Claude or ChatGPT: the workspace address in the set-up, the app\'s panel, what the assistant\'s provider sees, the honest limit, the one chat document limit the app enforces, and that /mcp is not the connector', async () => {
-    const l = await production();
+    const l = await production({ signIn: trusted() });
     const landing = await (await fetch(`${l.base}/`, { headers: { accept: BROWSER } })).text();
     const help = await (await fetch(`${l.base}/ui/help`)).text();
     // The limit the app enforces (app.js CHAT_DOC_MAX) is the one every page and the README state.
@@ -268,11 +290,21 @@ describe('work-redesign customer site', () => {
     for (const [page, html] of [['landing', landing], ['help', help]] as const) {
       for (const s of [
         'this workspace’s address: <code class="connector-url">http://127.0.0.1</code>', '<strong>Use your AI assistant</strong> copies it',
+        'paste <code class="connector-url">https://relay.example.org/mcp</code>',
         'In each new chat, turn on Interego from the chat’s tools menu (+).', 'the company behind your assistant sees it too', limit,
         '<span class="mono">http://127.0.0.1/mcp</span>&nbsp;(for developers’ tools that sign their own requests; Claude and ChatGPT use the Interego connector)',
+        // One sentence for signing in to the connector, the same as the app's panel says it.
+        'Connect, and when it asks, sign in with the same Interego account you use for Work Redesign.',
+        // Drafting a map from a chat starts from the message Map a process copies (it carries the document and its limit), not a bare ask.
+        'Here’s the message from Map a process in Work Redesign. Draft the map, and record it once I’ve checked it.',
       ]) expect([page, html], s).toEqual([page, expect.stringContaining(s)]);
-      expect([page, html.includes('(MCP endpoint)'), html.includes('{{')]).toEqual([page, false, false]);
+      expect([page, html.includes('(MCP endpoint)'), html.includes('{{'), html.includes('passkey when asked'), html.includes('Draft a process map from this procedure document')]).toEqual([page, false, false, false, false]);
+      expect([page, html.includes('isn’t set up for connecting Claude or ChatGPT')]).toEqual([page, false]);
     }
+    expect(APP_JS).toContain('\'Connect, and when it asks, sign in with the same Interego account you use for Work Redesign.\'');
+    // The guide's note after the steps is spaced from them as the landing page's is.
+    expect(help).toContain('</ol>\n        <p class="assistants__note">In each new chat, turn on Interego');
+    expect(relayCalls).toEqual([]);
     expect(landing).toContain('<h3 class="feature__title">Teams without an AI assistant</h3>');
     expect(landing).toContain('Three things to know.');
     expect(help).toContain('<dt>Message for your AI</dt>');
@@ -283,6 +315,70 @@ describe('work-redesign customer site', () => {
     expect(readme).toContain(limit);
   });
 
+  it('walks no one through adding a connector that could never act here: with no sign-in, or no relay trusted, the pages say the workspace is not set up and offer copy and paste, as the app\'s panel does', async () => {
+    for (const [what, o] of [['no sign-in', {}], ['no relay trusted', { signIn: trusted('none') }]] as const) {
+      const l = await production(o);
+      expect([what, (await (await fetch(`${l.base}/ui`)).text()).includes('wrd-connector')]).toEqual([what, false]);
+      for (const path of ['/', '/ui/help']) {
+        const html = await (await fetch(`${l.base}${path}`, { headers: { accept: BROWSER } })).text();
+        const at = [what, path];
+        for (const s of ['This workspace isn’t set up for connecting Claude or ChatGPT yet. Ask your workspace provider.', 'You can still draft a process map with copy and paste, in any chat app:',
+          'the company behind your assistant sees it too']) expect([...at, html], s).toEqual([...at, expect.stringContaining(s)]);
+        // No set-up steps, no connector address (the relay's, or the default one), and no promise of the app's set-up panel.
+        for (const s of ['class="steps steps--compact"', 'connector-url', '/mcp</code>', `${INTEREGO_DEFAULTS.relayUrl}/mcp`, 'https://relay.example.org/mcp', 'copies it, with everything else', 'It shows the connector address']) {
+          expect([...at, s, html.includes(s)]).toEqual([...at, s, false]);
+        }
+        expect([...at, html.includes('{{')]).toEqual([...at, false]);
+      }
+    }
+    expect(relayCalls).toEqual([]);
+  });
+
+  it('fills a page\'s sections from one flag: {{#name}} where it is set, {{^name}} where it is not; an unknown, nested or unclosed section fails the boot', () => {
+    const page = '<p>{{#chat_ready}}set up: {{connector_url}}{{/chat_ready}}{{^chat_ready}}not set up{{/chat_ready}}</p>';
+    expect(renderSitePage(page, { chat_ready: 'yes', connector_url: 'https://relay.example.org/mcp' })).toBe('<p>set up: https://relay.example.org/mcp</p>');
+    expect(renderSitePage(page, { chat_ready: '', connector_url: '' })).toBe('<p>not set up</p>');
+    expect(() => renderSitePage('{{#nothing}}x{{/nothing}}', {})).toThrow(/unknown section/);
+    expect(() => renderSitePage('{{#a}}{{^a}}x{{/a}}{{/a}}', { a: 'yes' })).toThrow();
+    expect(() => renderSitePage('{{#a}}x', { a: 'yes' })).toThrow();
+    // The flag is set exactly where the shell names a connector.
+    for (const [signIn, ready] of [[undefined, ''], [trusted('none'), ''], [trusted(), 'yes'], [{ ...trusted(), relayUrl: '' }, '']] as const) {
+      const v = siteValues({ base: 'http://127.0.0.1', ...(signIn ? { signIn } : {}) });
+      expect([v['chat_ready'], v['connector_url']]).toEqual([ready, connectorUrlOf(signIn) ?? '']);
+    }
+  });
+
+  it('keeps the landing page and the guide inside a phone\'s screen with the production address in the set-up: each address sits in a step that may shrink, and wraps instead of widening the list', async () => {
+    expect(PRODUCTION_LENGTH_BASE).toHaveLength(44);
+    const l = await production({ base: PRODUCTION_LENGTH_BASE, signIn: trusted() });
+    const css = await (await fetch(`${l.base}/ui/app.css`)).text();
+    expect(css.startsWith(designSystemCss())).toBe(true);
+    for (const path of ['/', '/ui/help']) {
+      const html = await (await fetch(`${l.base}${path}`, { headers: { accept: BROWSER } })).text();
+      // jsdom lays nothing out, so the rules that keep it inside the screen are checked as the page would apply them:
+      // the page with its own stylesheet, and each address's computed style. Real Chromium at 390 px is the check the QA runs.
+      const dom = new JSDOM(html, { url: `${PRODUCTION_LENGTH_BASE}${path}` });
+      const d = dom.window.document;
+      expect([path, d.querySelectorAll('link[rel="stylesheet"][href="/ui/app.css"]').length]).toEqual([path, 1]);
+      const style = d.createElement('style');
+      style.textContent = css;
+      d.head.append(style);
+      const codes = [...d.querySelectorAll('#assistants code.connector-url')] as HTMLElement[];
+      expect([path, codes.map((c) => c.textContent)]).toEqual([path, ['https://relay.example.org/mcp', PRODUCTION_LENGTH_BASE]]);
+      for (const code of codes) {
+        const li = code.closest('li');
+        // Inside a step of the compact list, in its text: the step is a grid item whose automatic minimum would be the address's width.
+        expect([path, li?.className, li?.parentElement?.className, code.parentElement?.className]).toEqual([path, 'step', 'steps steps--compact', 'step__text']);
+        expect([path, dom.window.getComputedStyle(li!.parentElement!).display]).toEqual([path, 'grid']);
+        expect([path, dom.window.getComputedStyle(li!).minWidth]).toEqual([path, '0']);
+        const cs = dom.window.getComputedStyle(code);
+        expect([path, code.textContent, cs.maxWidth, cs.whiteSpace, cs.overflowWrap]).toEqual([path, code.textContent, '100%', 'normal', 'anywhere']);
+      }
+      dom.window.close();
+    }
+    expect(relayCalls).toEqual([]);
+  });
+
   it('offers only copy and paste where a chat assistant cannot act: the demo names no connector, its panel says why, and a map from a document shows no chat route, all in plain words', async () => {
     const l = await minimalDemo();
     expect(await (await fetch(`${l.base}/ui`)).text()).not.toContain('wrd-connector');
@@ -291,10 +387,13 @@ describe('work-redesign customer site', () => {
     // A process lead's Home offers no "Connect Claude or ChatGPT" step where it cannot work.
     expect(page.text()).not.toContain('Connect Claude or ChatGPT');
     page.click('Use your AI assistant');
-    await page.until(() => page.doc.getElementById('panel-title')?.textContent === 'Use your own AI assistant', 'the panel');
+    // The panel is named as every way into it is.
+    await page.until(() => page.doc.getElementById('panel-title')?.textContent === 'Use your AI assistant', 'the panel');
     const seen = page.visible();
-    for (const s of ['Work Redesign runs no AI of its own and never asks for an API key', 'The demo has no Interego sign-in, so Claude and ChatGPT can\'t work in it.', 'Some Claude and ChatGPT plans can\'t add connectors.']) expect(seen, s).toContain(s);
-    expect(seen).not.toContain('Set it up once');
+    for (const s of ['Work Redesign runs no AI of its own and never asks for an API key', 'The demo has no Interego sign-in, so Claude and ChatGPT can\'t work in it.',
+      'You can still draft a process map with copy and paste, in any chat app: choose From a procedure document, then Copy and paste.']) expect(seen, s).toContain(s);
+    // It doesn't ask to connect once just above "can't work here", and gives no reason (a plan's) that isn't the reason here.
+    for (const s of ['Set it up once', 'Connect Claude or ChatGPT once', 'Some Claude and ChatGPT plans can\'t add connectors.']) expect(seen, s).not.toContain(s);
     expect(page.doc.querySelector('.chat-panel input')).toBeNull();
     expect(jargonIn(seen)).toEqual([]);
     page.click('Draft a map with copy and paste');

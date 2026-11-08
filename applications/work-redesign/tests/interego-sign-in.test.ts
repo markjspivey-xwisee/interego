@@ -1107,7 +1107,8 @@ describe('work-redesign web UI: sign in with your Interego account', () => {
     const copied: string[] = [];
     Object.defineProperty(page.window.navigator, 'clipboard', { value: { writeText: async (s: string) => { copied.push(s); } }, configurable: true });
     const d = page.window.document;
-    const panelShown = (): boolean => d.getElementById('panel-title')?.textContent === 'Use your own AI assistant';
+    // The panel is named as every way into it is (the account menu, Home's step, the map's "Not connected yet?").
+    const panelShown = (): boolean => d.getElementById('panel-title')?.textContent === 'Use your AI assistant';
     const byLabel = (label: string): HTMLButtonElement => {
       const b = [...d.querySelectorAll('button')].find((x) => x.getAttribute('aria-label') === label);
       if (!b) throw new Error(`no button labelled "${label}"`);
@@ -1132,6 +1133,8 @@ describe('work-redesign web UI: sign in with your Interego account', () => {
     expect((d.getElementById('chat-setup-chatgpt') as HTMLElement).hidden).toBe(false);
     expect((d.getElementById('chat-setup-claude') as HTMLElement).hidden).toBe(true);
     expect(d.getElementById('chat-setup-chatgpt')?.textContent).toContain('If you don\'t see the option, use copy and paste instead');
+    // Signing in to the connector is said in the same sentence as on the landing page and the guide.
+    for (const id of ['chat-setup-claude', 'chat-setup-chatgpt']) expect(d.getElementById(id)?.textContent).toContain('Connect, and when it asks, sign in with the same Interego account you use for Work Redesign.');
     const seen = visibleText(d);
     for (const s of ['Work Redesign runs no AI of its own and never asks for an API key', 'the company behind your assistant sees it too', 'What stays in the Work Redesign app', 'Your assistant asks; you answer.', 'Add people by their Interego ID']) expect(seen, s).toContain(s);
     expect(jargonIn(seen)).toEqual([]);
@@ -1166,6 +1169,9 @@ describe('work-redesign web UI: sign in with your Interego account', () => {
       expect([mode, other.textContent]).toEqual([mode, expect.stringContaining('Your AI assistant acts as your Interego account, not your wallet.')]);
       expect([mode, other.querySelector('input'), other.textContent?.includes('Set it up once')]).toEqual([mode, null, false]);
       expect([mode, other.textContent]).toEqual([mode, expect.stringContaining('Draft a map with copy and paste')]);
+      // No "connect once" above "can't work here", and no plan reason that isn't the reason.
+      expect([mode, other.textContent?.includes('Connect Claude or ChatGPT once'), other.textContent?.includes('Some Claude and ChatGPT plans can\'t add connectors.')]).toEqual([mode, false, false]);
+      expect([mode, other.textContent]).toEqual([mode, expect.stringContaining('You can still draft a process map with copy and paste, in any chat app')]);
     }
 
     // Map a process from a document: the chat route copies ONE message that carries the steps and the document itself.
@@ -1174,6 +1180,20 @@ describe('work-redesign web UI: sign in with your Interego account', () => {
     (d.querySelectorAll('input[name="capture-mode"]')[1] as HTMLInputElement).click();
     await page.until(() => page.text().includes('Have your AI draft the map'), 'the document route');
     expect(page.text()).toContain('In Claude or ChatGPT (recommended)');
+    // Spacing: each step's body spaces its own parts; the two route cards inside step 2 are spaced by their own stack gap
+    // alone (no step, card-body or paragraph margins inside them), checked as the page's stylesheet applies (jsdom lays nothing out).
+    const css = d.createElement('style');
+    css.textContent = await (await fetch(`${w.bridge}/ui/app.css`)).text();
+    d.head.append(css);
+    const cs = (el: Element): CSSStyleDeclaration => page.window.getComputedStyle(el);
+    const stepBody = must(d.querySelector('.capture-step > .card__body'), 'a step body');
+    expect([...stepBody.children].slice(1).map((el) => cs(el).marginTop)).toEqual([...stepBody.children].slice(1).map(() => 'var(--space-4)'));
+    for (const card of d.querySelectorAll('.route-card > .card__body')) {
+      expect(cs(card).gap).toBe('var(--space-2)');
+      const none = (v: string): boolean => /^(0px|0|)$/.test(v);
+      expect([...card.children].map((el) => [el.tagName, none(cs(el).marginTop), none(cs(el).marginBottom)])).toEqual([...card.children].map((el) => [el.tagName, true, true]));
+    }
+    css.remove();
     const docText = 'Supplier invoices arrive by email. The clerk matches each invoice to its purchase order and the goods receipt before approval.';
     page.fill(must(d.querySelector('[data-path="document.title"]'), 'the title field'), 'AP-SOP-014');
     page.fill(must(d.querySelector('[data-path="document.text"]'), 'the text field'), docText);
@@ -1195,9 +1215,15 @@ describe('work-redesign web UI: sign in with your Interego account', () => {
     const TOO_LONG = 'This document is too long to record from a chat. Use Copy and paste.';
     const chatButton = (): HTMLButtonElement => [...d.querySelectorAll('button')].find((b) => b.textContent === 'Copy the message for my assistant') as HTMLButtonElement;
     const textField = must(d.querySelector('[data-path="document.text"]'), 'the text field');
+    const countHint = (): string => textField.closest('.field')?.querySelector('.hint')?.textContent ?? '';
+    // The note's live region shares the button's block, so while it is empty it adds no gap to the card.
+    expect(chatButton().parentElement?.querySelector('.route-card__gate[aria-live="polite"]')?.parentElement).toBe(chatButton().parentElement);
     expect([chatButton().disabled, visibleText(d).includes(TOO_LONG)]).toEqual([false, false]);
+    expect(countHint()).toBe(`${docText.length} of the 20,000 characters a chat can record.`);
     page.fill(textField, 'x'.repeat(20_001));
     expect([chatButton().disabled, visibleText(d).includes(TOO_LONG)]).toEqual([true, true]);
+    // The count follows the text as it is typed, so it never contradicts the note.
+    expect(countHint()).toBe('20,001 characters, more than the 20,000 a chat can record.');
     expect(chatButton().title).toBe(TOO_LONG);
     chatButton().click();
     expect(copied).toHaveLength(5);
@@ -1208,12 +1234,92 @@ describe('work-redesign web UI: sign in with your Interego account', () => {
     // Exactly the limit is still a chat's to record.
     page.fill(textField, 'y'.repeat(20_000));
     expect([chatButton().disabled, visibleText(d).includes(TOO_LONG)]).toEqual([false, false]);
+    expect(countHint()).toBe('20,000 of the 20,000 characters a chat can record.');
     page.fill(textField, docText);
     page.click('Copy the message for my assistant');
     await page.until(() => copied.length === 6, 'the chat message copied after shortening');
     expect(String(copied[5])).toContain(`----- DOCUMENT: AP-SOP-014 -----\n${docText}\n----- END OF DOCUMENT -----`);
     expect(page.errors).toEqual([]);
   }, 90_000);
+
+  it('the panel works from the keyboard: its two set-ups are tabs the arrow keys, Home and End move between, Escape closes it back to what opened it, and where the browser refuses the clipboard the text to copy opens over it and closes back to it', async () => {
+    const w = await world({ lead: true });
+    const page = await openPage(w.bridge, '/ui', { [SESSION_KEY]: JSON.stringify({ token: w.relay.mint(), expiresAt: new Date(Date.now() + 3600_000).toISOString() }) });
+    await page.until(() => page.text().includes(`Signed in as ${PERSON} via ${agentOf('work-redesign')}`) && page.text().includes('Map and change your process'), 'the signed-in lead');
+    const d = page.window.document;
+    const panelTitle = (): string | null => d.getElementById('panel-title')?.textContent ?? null;
+    // Opened from the account menu, with focus there, as a keyboard user opens it.
+    const item = must([...d.querySelectorAll('#account-menu button')].find((b) => b.textContent === 'Use your AI assistant') as HTMLButtonElement | undefined, 'the menu item');
+    item.focus();
+    item.click();
+    await page.until(() => panelTitle() === 'Use your AI assistant', 'the panel');
+    const tab = (id: string): HTMLButtonElement => must(d.getElementById(`chat-tab-${id}`), `the ${id} tab`) as HTMLButtonElement;
+    const shown = (): unknown => ({
+      selected: ['claude', 'chatgpt'].filter((id) => tab(id).getAttribute('aria-selected') === 'true'),
+      tabindex: ['claude', 'chatgpt'].map((id) => tab(id).getAttribute('tabindex')),
+      visible: ['claude', 'chatgpt'].filter((id) => !(d.getElementById(`chat-setup-${id}`) as HTMLElement).hidden),
+      focused: d.activeElement?.id,
+    });
+    const press = (key: string): boolean => {
+      const e = new page.window.KeyboardEvent('keydown', { key, bubbles: true, cancelable: true });
+      (d.activeElement ?? d.body).dispatchEvent(e);
+      return e.defaultPrevented;
+    };
+    // Only the chosen tab is in the Tab order (a roving tabindex), so the keys reach the other one.
+    tab('claude').focus();
+    expect(shown()).toEqual({ selected: ['claude'], tabindex: ['0', '-1'], visible: ['claude'], focused: 'chat-tab-claude' });
+    expect(press('ArrowRight')).toBe(true);
+    expect(shown()).toEqual({ selected: ['chatgpt'], tabindex: ['-1', '0'], visible: ['chatgpt'], focused: 'chat-tab-chatgpt' });
+    expect(d.getElementById('chat-setup-chatgpt')?.textContent).toContain('In ChatGPT, open Settings, then Connectors, then Add.');
+    expect(press('ArrowRight')).toBe(true);   // wraps
+    expect(shown()).toEqual({ selected: ['claude'], tabindex: ['0', '-1'], visible: ['claude'], focused: 'chat-tab-claude' });
+    expect(press('ArrowLeft')).toBe(true);    // wraps the other way
+    expect(shown()).toEqual({ selected: ['chatgpt'], tabindex: ['-1', '0'], visible: ['chatgpt'], focused: 'chat-tab-chatgpt' });
+    expect(press('Home')).toBe(true);
+    expect(shown()).toEqual({ selected: ['claude'], tabindex: ['0', '-1'], visible: ['claude'], focused: 'chat-tab-claude' });
+    expect(press('End')).toBe(true);
+    expect(shown()).toEqual({ selected: ['chatgpt'], tabindex: ['-1', '0'], visible: ['chatgpt'], focused: 'chat-tab-chatgpt' });
+    // Any other key is the browser's (Enter and Space press the focused tab, which is already chosen).
+    expect(press('Enter')).toBe(false);
+    expect(press('ArrowDown')).toBe(false);
+    expect(shown()).toEqual({ selected: ['chatgpt'], tabindex: ['-1', '0'], visible: ['chatgpt'], focused: 'chat-tab-chatgpt' });
+    // Keys pressed elsewhere in the panel move no tab.
+    must(d.querySelector('.chat-panel input'), 'a field').dispatchEvent(new page.window.KeyboardEvent('keydown', { key: 'Home', bubbles: true, cancelable: true }));
+    expect(shown()).toMatchObject({ selected: ['chatgpt'], visible: ['chatgpt'] });
+
+    // A browser that refuses the clipboard: the text to copy opens over the panel, says how to copy it by hand, and closes back to
+    // the panel as it was (ChatGPT's set-up still chosen).
+    Object.defineProperty(page.window.navigator, 'clipboard', { value: { writeText: async () => { throw new Error('denied'); } }, configurable: true });
+    page.click('Copy workspace details');
+    await page.until(() => panelTitle() === 'Copy this', 'the text to copy by hand');
+    expect(page.text()).toContain('Select all of the text below and copy it yourself.');
+    const box = must(d.querySelector('#app textarea[readonly]'), 'the text to copy') as HTMLTextAreaElement;
+    expect(box.value).toContain('My Work Redesign workspace:');
+    expect(d.querySelector('.chat-panel')).toBeNull();
+    must(d.querySelector('button[aria-label="Close"]'), 'Close').dispatchEvent(new page.window.MouseEvent('click', { bubbles: true }));
+    await page.until(() => panelTitle() === 'Use your AI assistant', 'the panel again');
+    expect(shown()).toMatchObject({ selected: ['chatgpt'], visible: ['chatgpt'] });
+    // Escape in the text to copy goes back the same way.
+    page.click('Copy workspace details');
+    await page.until(() => panelTitle() === 'Copy this', 'the text to copy by hand again');
+    must(d.querySelector('#app textarea[readonly]'), 'the text to copy').dispatchEvent(new page.window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+    await page.until(() => panelTitle() === 'Use your AI assistant', 'the panel after Escape');
+
+    // Escape closes the panel, and focus goes back to the account menu's button, which opened it.
+    tab('chatgpt').focus();
+    expect(press('Escape')).toBe(true);
+    await page.until(() => d.getElementById('panel-title') === null, 'the panel closed');
+    expect(d.activeElement?.classList.contains('user-button')).toBe(true);
+    // Opened from a button in the view, it goes back to that button.
+    const homeStep = must([...d.querySelectorAll('#app button')].find((b) => b.textContent === 'Use your AI assistant' && !b.closest('#account-menu')) as HTMLButtonElement | undefined, 'Home\'s step');
+    homeStep.focus();
+    homeStep.click();
+    await page.until(() => panelTitle() === 'Use your AI assistant', 'the panel from Home');
+    must(d.getElementById('panel-title'), 'the title').dispatchEvent(new page.window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+    await page.until(() => d.getElementById('panel-title') === null, 'the panel closed again');
+    expect([d.activeElement?.textContent, d.activeElement?.closest('#account-menu')]).toEqual(['Use your AI assistant', null]);
+    expect(page.errors).toEqual([]);
+  }, 60_000);
 
   it('where the operator lets chat agents decide too, the panel says so, and the workspace details ask the assistant to check with the person first instead of sending them to the app', async () => {
     const w = await world({ lead: true, chatAgentsDecide: true });
@@ -1223,7 +1329,7 @@ describe('work-redesign web UI: sign in with your Interego account', () => {
     Object.defineProperty(page.window.navigator, 'clipboard', { value: { writeText: async (s: string) => { copied.push(s); } }, configurable: true });
     const d = page.window.document;
     page.click('Use your AI assistant');
-    await page.until(() => d.getElementById('panel-title')?.textContent === 'Use your own AI assistant', 'the panel');
+    await page.until(() => d.getElementById('panel-title')?.textContent === 'Use your AI assistant', 'the panel');
     const seen = visibleText(d);
     expect(seen).toContain('Your assistant can take every action here');
     expect(seen).toContain('Your workspace provider lets chat assistants take every action here too, including approving or declining decisions');

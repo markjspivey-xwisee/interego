@@ -102,18 +102,23 @@ details.card[open] > summary { border-bottom: 1px solid var(--border); }
 .plan-card .card__body > * + * { margin-top: var(--space-4); }
 
 /* Map a process */
-.capture-step .card__title { display: flex; align-items: center; gap: var(--space-3); margin-bottom: var(--space-4); }
+/* Each step's own title and body only: the two route cards inside step 2 keep their own stack gap. */
+.capture-step > .card__body > .card__title { display: flex; align-items: center; gap: var(--space-3); margin-bottom: var(--space-4); }
 .capture-step__n { display: inline-grid; place-items: center; flex: none; width: 1.75rem; height: 1.75rem; border-radius: 50%; background: var(--accent); color: var(--on-accent); font-size: var(--text-sm); font-weight: var(--weight-bold); }
-.capture-step .card__body > * + * { margin-top: var(--space-4); }
+.capture-step > .card__body > * + * { margin-top: var(--space-4); }
 .capture-modes { margin-top: var(--space-2); }
 .capture-actions { display: grid; gap: var(--space-3); justify-items: start; margin-top: var(--space-6); }
 /* Step 2's two routes: your assistant through the connector, or copy and paste; side by side when there is room. */
 .capture-routes { gap: var(--space-4); }
 .route-card { min-width: 0; }
+/* A route card's parts are spaced by its stack's gap alone: not also by the card body's sibling margin or a paragraph's own. */
+.route-card > .card__body > * { margin-top: 0; margin-bottom: 0; }
 .route-card--chat { border-color: var(--accent-border); }
+/* Card A's length note sits in the button's own block, so its live region adds no gap while it is empty. */
+.route-card__gate > .note { margin-bottom: var(--space-2); }
 .drafted-by__agent { margin: var(--space-1) 0 var(--space-3) 2rem; }
 
-/* Use your own AI assistant: set-up, workspace details and starters (the panel over a view) */
+/* Use your AI assistant: set-up, workspace details and starters (the panel over a view) */
 .chat-panel { max-width: 48rem; }
 .chat-panel__title { margin-top: var(--space-4); font-size: var(--text-md); }
 .chat-panel .tabs { margin-bottom: var(--space-3); }
@@ -244,6 +249,9 @@ details.card[open] > summary { border-bottom: 1px solid var(--border); }
 }
 .step__extra { margin-top: var(--space-3); }
 .steps--compact { gap: var(--space-4); margin-top: var(--space-4); }
+/* min-width 0: a grid item's automatic minimum is its widest word, so a long address in a step would
+   widen the list past a phone's screen; at 0 the address's own max-width and scroller take effect. */
+.steps--compact > .step { min-width: 0; }
 .steps--compact .step { min-height: 2rem; padding-left: 2.75rem; }
 .steps--compact .step::before { width: 2rem; height: 2rem; font-size: var(--text-xs); }
 .steps--compact .step:not(:last-child)::after { display: none; }
@@ -251,8 +259,10 @@ details.card[open] > summary { border-bottom: 1px solid var(--border); }
 .assistants { align-items: start; }
 .assistants__subtitle { margin-top: var(--space-8); font-size: var(--text-lg); }
 .assistants__note { margin-top: var(--space-4); }
-/* The connector address stays whole: on a narrow screen it scrolls sideways instead of breaking inside a word. */
-.connector-url { display: inline-block; max-width: 100%; margin-top: var(--space-1); overflow-x: auto; white-space: nowrap; vertical-align: bottom; user-select: all; }
+/* An address on the site pages (the connector's, the workspace's) is always wholly on screen: where the line is too
+   narrow it wraps at its own hyphens and slashes, and inside a part only when one part is wider than the line. A tap
+   selects all of it, and a copy takes it whole. Its step's min-width 0 (above) keeps the list inside the screen. */
+.connector-url { display: inline-block; max-width: 100%; margin-top: var(--space-1); white-space: normal; overflow-wrap: anywhere; vertical-align: bottom; user-select: all; }
 .trust-signin { margin-top: var(--space-6); }
 .site-footer__links li > .mono { display: inline-block; margin-top: var(--space-2); }
 .trust-signin > .icon { grid-row: 1 / span 2; color: var(--text-secondary); }

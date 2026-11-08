@@ -87,24 +87,15 @@ import { openRelayDelegated, relayEnvelopeOf, type RelayDelegationPolicy } from 
 import { cappedText, type CappedAnswer } from './relay-sign-in.js';
 import { designSystemCss } from '../../_shared/design-system/index.js';
 import { chatAgentJs } from '../../_shared/chat-agent/index.js';
-import { FAVICON_SVG, prefersHtml, renderSitePage, siteValues, SIBLING, type LandingOptions } from './landing.js';
+import { connectorUrlOf, FAVICON_SVG, prefersHtml, renderSitePage, siteValues, SIBLING, type LandingOptions } from './landing.js';
 
 export const UI_CSP = "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' data:; form-action 'self'; base-uri 'none'; frame-ancestors 'none'";
 
 /** HTML-safe text for an attribute or element body (the shell interpolates the base URL, its loading line and the sibling's address). */
 const htmlText = (s: string): string => s.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
 
-/**
- * The address a person adds to Claude or ChatGPT as the Interego connector (the relay's MCP endpoint),
- * which the app's "Use your AI assistant" panel shows: only when this bridge takes the acts that relay
- * signs (a relay URL, and a relay trusted). Otherwise undefined, the shell names no connector, and the
- * panel offers copy and paste only: a connector set up then could never act here.
- */
-export function connectorUrlOf(signIn?: UiSignIn): string | undefined {
-  if (!signIn || signIn.policy === null) return undefined;
-  const relay = signIn.relayUrl.replace(/\/$/, '');
-  return relay === '' ? undefined : `${relay}/mcp`;
-}
+// connectorUrlOf lives in landing.ts (the pages' set-up and the shell decide by the same rule); it is exported from here too.
+export { connectorUrlOf };
 
 function shell(base: string, loading = 'Loading Work Redesign…', siblingUrl: string = SIBLING.url, reads?: UiReads, connector?: string): string {
   const b = htmlText(base);

@@ -160,19 +160,20 @@
       <section class="help-section" id="assistants" aria-labelledby="assistants-title">
         <h2 id="assistants-title">Using Claude or ChatGPT</h2>
         <p>Add the Interego connector once, and your assistant can work in Work Redesign for you. There’s no API key and nothing to install. Your admin adds you by your Interego ID: your assistant acts as your Interego account, never as a wallet.</p>
-        <ol class="steps steps--compact">
+        {{#chat_ready}}<ol class="steps steps--compact">
           <li class="step"><p class="step__text">In Claude, open <strong>Settings → Connectors → Add custom connector</strong>. In ChatGPT, open <strong>Settings → Connectors → Add</strong>, on a plan that allows custom connectors.</p></li>
           <li class="step"><p class="step__text">Name it <strong>Interego</strong> and paste <code class="connector-url">{{connector_url}}</code></p></li>
-          <li class="step"><p class="step__text">Connect, then sign in with your passkey when asked.</p></li>
+          <li class="step"><p class="step__text">Connect, and when it asks, sign in with the same Interego account you use for Work Redesign.</p></li>
           <li class="step"><p class="step__text">Tell your assistant this workspace’s address: <code class="connector-url">{{base}}</code>. In the app, <strong>Use your AI assistant</strong> copies it, with everything else your assistant needs.</p></li>
         </ol>
-        <p>In each new chat, turn on Interego from the chat’s tools menu (+). No connector option on your plan? You can still draft a process map with copy and paste: in <strong>Map a process</strong>, choose <strong>From a procedure document</strong>, then <strong>Copy and paste</strong>.</p>
+        <p class="assistants__note">In each new chat, turn on Interego from the chat’s tools menu (+). No connector option on your plan? You can still draft a process map with copy and paste: in <strong>Map a process</strong>, choose <strong>From a procedure document</strong>, then <strong>Copy and paste</strong>.</p>
         <h3>From the app</h3>
-        <p>Open your account menu and choose <strong>Use your AI assistant</strong>. It shows the connector address, copies this workspace’s details for your assistant, and has messages to start from. To draft a process map, use <strong>Map a process › From a procedure document › Copy the message for my assistant</strong>: the message carries the document and every step. Your answers to the seven questions and every number in a plan must be yours: your assistant asks, you answer.</p>
+        <p>Open your account menu and choose <strong>Use your AI assistant</strong>. It shows the connector address, copies this workspace’s details for your assistant, and has messages to start from. To draft a process map, use <strong>Map a process › From a procedure document › Copy the message for my assistant</strong>: the message carries the document and every step. Your answers to the seven questions and every number in a plan must be yours: your assistant asks, you answer.</p>{{/chat_ready}}
+        {{^chat_ready}}<p class="assistants__note">This workspace isn’t set up for connecting Claude or ChatGPT yet. Ask your workspace provider. You can still draft a process map with copy and paste, in any chat app: in <strong>Map a process</strong>, choose <strong>From a procedure document</strong>, then <strong>Copy and paste</strong>.</p>{{/chat_ready}}
         <p>The Interego connector passes everything your assistant reads and writes here, including your documents, and the company behind your assistant sees it too, under your own account’s terms.</p>
         <h3>Things you can ask it</h3>
         <ul>
-          <li>“Draft a process map from this procedure document and record it in Work Redesign.”</li>
+          <li>“Here’s the message from Map a process in Work Redesign. Draft the map, and record it once I’ve checked it.”</li>
           <li>“Show me the tasks that name me, and confirm the description of the invoice-matching task.”</li>
           <li>“Answer the seven questions for the GL coding task with me.”</li>
           <li>“Propose a plan where an agent drafts the coding and Dee decides, then price it.”</li>

@@ -116,13 +116,16 @@ const CHAIN_CUT_PRINT = 'Incomplete history.';
  */
 const CHAT_DOC_MAX = 20000;
 const CHAT_DOC_MAX_TEXT = CHAT_DOC_MAX.toLocaleString('en-US');
-const CHAT_PANEL_TITLE = 'Use your own AI assistant';
+const CHAT_PANEL_TITLE = 'Use your AI assistant';
 const CHAT_LEDE = 'Work Redesign runs no AI of its own and never asks for an API key. Connect Claude or ChatGPT once, and your assistant can draft process maps from your documents, walk you through the seven questions and help you fill in plans, on your own subscription. Work Redesign checks everything your assistant records.';
 const CHAT_PRIVACY = 'The Interego connector passes everything your assistant reads and writes here, including your documents, and the company behind your assistant sees it too, under your own account\'s terms.';
 const CHAT_YOURS = 'Your answers to the seven questions and every number in a plan must be yours. Your assistant asks; you answer.';
 const CHAT_STAYS = 'For safety, the actions that change who may do what can be taken only in the Work Redesign app, not from a chat assistant: approving or declining a decision, changing people and roles, recording results, and granting or withdrawing AI permissions.';
 const CHAT_DECIDES = 'Your workspace provider lets chat assistants take every action here too, including approving or declining decisions, changing people and roles, recording results, and granting or withdrawing AI permissions. Check what you ask for before your assistant records it.';
 const CHAT_NO_CONNECTOR = 'Some Claude and ChatGPT plans can\'t add connectors. You can still draft a process map with copy and paste: choose From a procedure document, then Copy and paste.';
+// Where the chat route is not offered (chatWhyNot says why): no "connect once", and no plan reason that isn't the reason.
+const CHAT_LEDE_OFF = 'Work Redesign runs no AI of its own and never asks for an API key. Your own AI assistant does any drafting, on your own subscription, and Work Redesign checks everything it records.';
+const CHAT_PASTE_ANYWAY = 'You can still draft a process map with copy and paste, in any chat app: choose From a procedure document, then Copy and paste.';
 const CHAT_NOT_INTEREGO = 'Your AI assistant acts as your Interego account, not your wallet. To use Claude or ChatGPT here, sign in with your Interego account, and ask your admin to add your Interego ID to this workspace.';
 const CHAT_NOT_SET_UP = 'This workspace isn\'t set up for connecting Claude or ChatGPT yet. Ask your workspace provider.';
 const CHAT_DEMO = 'The demo has no Interego sign-in, so Claude and ChatGPT can\'t work in it.';
@@ -1392,15 +1395,37 @@ function notAddedView() {
   ];
 }
 
-/** A form opened over the view (it stays until closed or its action succeeds). */
+/** A form opened over the view (it stays until closed or its action succeeds). Escape closes it, as its Close button does. */
 function panelNode() {
   if (!S.panel) return null;
-  return h('section', { class: 'card card--highlight panel', 'aria-labelledby': 'panel-title' },
+  return h('section', { class: 'card card--highlight panel', 'aria-labelledby': 'panel-title', on: { keydown: (e) => { if (e.key === 'Escape') { e.preventDefault(); closePanel(); } } } },
     h('div', { class: 'card__header' }, h('h2', { class: 'card__title', id: 'panel-title', tabindex: '-1', text: S.panel.title }),
-      h('button', { type: 'button', class: 'btn btn--ghost btn--icon btn--sm', 'aria-label': 'Close', on: { click: () => { S.panel = null; render(); } } }, icon('close', 'sm'))),
+      h('button', { type: 'button', class: 'btn btn--ghost btn--icon btn--sm', 'aria-label': 'Close', on: { click: closePanel } }, icon('close', 'sm'))),
     h('div', { class: 'card__body' }, S.panel.node));
 }
-function openPanel(title, node) { S.panel = { title, node, focus: true }; render(); window.scrollTo({ top: 0 }); }
+/**
+ * Open a panel over the view, remembering what opened it (a button's text; the account menu's button for one of its items),
+ * so closing it puts focus back there. `back`: a panel to reopen when this one closes (copyText's "Copy this").
+ */
+function openPanel(title, node, back = null) {
+  const from = document.activeElement;
+  const returnTo = from && from !== document.body && from.closest?.('#app') ? { text: from.textContent ?? '', menu: Boolean(from.closest('#account-menu')) } : null;
+  S.panel = { title, node, focus: true, returnTo: back ? back.returnTo : returnTo, back };
+  render();
+  window.scrollTo({ top: 0 });
+}
+/** Close the panel: back to the panel it was opened over, if any, else to the view, with focus on what opened it. */
+function closePanel() {
+  const p = S.panel;
+  if (!p) return;
+  if (p.back) { S.panel = { ...p.back, focus: true }; render(); return; }
+  S.panel = null;
+  render();
+  const to = p.returnTo;
+  const target = !to ? null : to.menu ? document.querySelector('.user-button')
+    : [...document.querySelectorAll('#app button')].find((b) => b.textContent === to.text && !b.closest('#account-menu'));
+  target?.focus();
+}
 
 function goTab(id) {
   S.tab = id;
@@ -1428,10 +1453,17 @@ function view() {
   }
 }
 
-/** Copy to the clipboard and say so; where the browser will not, show the text to copy by hand. */
+const COPY_BY_HAND = 'This browser didn\'t let the page copy it. Select all of the text below and copy it yourself.';
+/**
+ * Copy to the clipboard and say so; where the browser will not, show the text to copy by hand, in a panel that, closed,
+ * goes back to the panel it was opened from (the AI assistant's set-up keeps its place).
+ */
 async function copyText(s, what = 'Copied to your clipboard') {
   try { await navigator.clipboard.writeText(s); toast('Copied', what); }
-  catch { openPanel('Copy this', h('textarea', { value: s, readOnly: true, class: 'textarea textarea--tall' })); }
+  catch {
+    const from = S.panel && !S.panel.back ? { title: S.panel.title, node: S.panel.node, returnTo: S.panel.returnTo, back: null } : S.panel?.back ?? null;
+    openPanel('Copy this', [hint(COPY_BY_HAND), h('textarea', { value: s, readOnly: true, class: 'textarea textarea--tall', 'aria-label': 'The text to copy' })], from);
+  }
 }
 
 // ── Results, refusals and errors ──────────────────────────────────────────────────────────
@@ -1978,12 +2010,22 @@ const draftedByText = (by) => {
   if (v.kind === 'agent') return `an AI${v.agent || v.model ? ` — ${[v.agent, v.model].filter(Boolean).join(', ')}` : ''}`;
   return 'not stated';
 };
+/**
+ * An assistant's name or model as given, trimmed and at most 120 characters; '' when it names nothing: blank,
+ * a template's own placeholder ("<fill…>"), or "not-declared", the word the drafting instructions offer
+ * for a model the assistant can't name, which is the same fact as a blank and is recorded the same way.
+ */
+const declaredName = (x) => {
+  const v = String(x ?? '').trim().slice(0, 120);
+  return v.startsWith('<fill') || /^not[-\s]?declared$/i.test(v) ? '' : v;
+};
 /** draftedBy as a map's payload carries it: an assistant's name and model only when given (each 1 to 120 characters), else just the kind. */
 function draftedByOut(by) {
   const v = by && ['person', 'agent', 'not-declared'].includes(by.kind) ? by : { kind: 'not-declared' };
   if (v.kind !== 'agent') return { kind: v.kind };
-  const t = (x) => String(x ?? '').trim().slice(0, 120);
-  return { kind: 'agent', ...(t(v.agent) ? { agent: t(v.agent) } : {}), ...(t(v.model) ? { model: t(v.model) } : {}) };
+  const agent = declaredName(v.agent);
+  const model = declaredName(v.model);
+  return { kind: 'agent', ...(agent ? { agent } : {}), ...(model ? { model } : {}) };
 }
 const isNamed = (t, me = actor()) => t.namedParties.some((p) => p.address === me);
 const isOwed = (t, me = actor()) => (t.owedRatification ?? []).some((p) => p.address === me);
@@ -2362,7 +2404,7 @@ function triOut(t) {
 // in front of this file) and goes to the clipboard; on screen there are only plain words, readonly
 // fields and closed previews.
 
-/** The Interego connector's address, from the shell (bridge/ui.ts connectorUrlOf): '' when this workspace takes no act a chat assistant signs. */
+/** The Interego connector's address, from the shell (bridge/landing.ts connectorUrlOf): '' when this workspace takes no act a chat assistant signs. */
 function connectorUrl() {
   const v = document.querySelector('meta[name="wrd-connector"]')?.getAttribute('content') ?? '';
   return /^https?:\/\/[^\s"'<>]+$/.test(v) ? v : '';
@@ -2438,16 +2480,16 @@ function chatStarters() {
   ];
 }
 
-/** The "Use your own AI assistant" panel: set-up, workspace details and starters where the chat route works here; copy and paste always. `mode`: how the person signs (S.mode). */
+/** The "Use your AI assistant" panel: set-up, workspace details and starters where the chat route works here; copy and paste always. `mode`: how the person signs (S.mode). */
 function chatPanel(mode = S.mode) {
   const ready = chatReady(mode);
   const connector = connectorUrl();
-  const noConnector = [h('p', { text: CHAT_NO_CONNECTOR }), h('div', null, btn('Draft a map with copy and paste', { on: openDocumentMode }))];
+  const pasteRoute = (text) => [h('p', { text }), h('div', null, btn('Draft a map with copy and paste', { on: openDocumentMode }))];
   if (!ready) {
     return h('div', { class: 'stack chat-panel' },
-      h('p', { class: 'text-secondary', text: CHAT_LEDE }),
+      h('p', { class: 'text-secondary', text: CHAT_LEDE_OFF }),
       callout({ tone: 'neutral', title: 'Claude and ChatGPT can\'t work here yet', body: chatWhyNot(mode) }),
-      h('h3', { class: 'chat-panel__title', text: 'Copy and paste instead' }), noConnector);
+      h('h3', { class: 'chat-panel__title', text: 'Copy and paste instead' }), pasteRoute(CHAT_PASTE_ANYWAY));
   }
   // Two set-ups, one per app, as tabs; switching shows one and hides the other (no re-render, so nothing typed is lost).
   const apps = [
@@ -2459,14 +2501,27 @@ function chatPanel(mode = S.mode) {
     h('ol', { class: 'chat-steps' },
       h('li', { text: first }),
       h('li', null, 'Name it Interego and paste this address:', copyField('Connector address', connector, 'The connector address')),
-      h('li', { text: 'When it asks, sign in with the same Interego account you use here.' }),
+      h('li', { text: 'Connect, and when it asks, sign in with the same Interego account you use for Work Redesign.' }),
       h('li', { text: 'In each new chat, turn on Interego from the chat\'s tools menu (+).' })),
     plan ? hint(plan) : null));
-  tabs.forEach((t, i) => t.addEventListener('click', () => tabs.forEach((u, j) => {
+  const pick = (i, focus) => tabs.forEach((u, j) => {
     u.setAttribute('aria-selected', i === j ? 'true' : 'false');
     u.tabIndex = i === j ? 0 : -1;
     panels[j].hidden = i !== j;
-  })));
+    if (i === j && focus) u.focus();
+  });
+  tabs.forEach((t, i) => t.addEventListener('click', () => pick(i, false)));
+  // The ARIA tabs pattern: only the chosen tab is in the Tab order, so the keys move between them. Left and right
+  // go to the other app (wrapping), Home and End to the first and last; the tab moved to is chosen and focused.
+  const tablist = h('div', { class: 'tabs', role: 'tablist', 'aria-label': 'Your chat app' }, tabs);
+  tablist.addEventListener('keydown', (e) => {
+    const at = tabs.indexOf(e.target);
+    const n = tabs.length;
+    const to = at < 0 ? -1 : e.key === 'ArrowRight' ? (at + 1) % n : e.key === 'ArrowLeft' ? (at + n - 1) % n : e.key === 'Home' ? 0 : e.key === 'End' ? n - 1 : -1;
+    if (to < 0) return;
+    e.preventDefault();
+    pick(to, true);
+  });
   const starters = chatStarters().map(([label, text]) => h('li', { class: 'chat-starter' },
     h('div', { class: 'split' }, h('span', { text: label }), btn('Copy', { size: 'sm', icon: 'clipboard', on: () => copyText(text, 'Paste it into your chat'), attrs: { 'aria-label': `Copy: ${label}` } })),
     disclosure('Preview', h('pre', { class: 'chat-preview', text: text }))));
@@ -2474,7 +2529,7 @@ function chatPanel(mode = S.mode) {
     h('p', { class: 'text-secondary', text: CHAT_LEDE }),
     note(CHAT_PRIVACY, 'info'),
     h('h3', { class: 'chat-panel__title', text: 'Set it up once' }),
-    h('div', { class: 'tabs', role: 'tablist', 'aria-label': 'Your chat app' }, tabs), panels,
+    tablist, panels,
     h('h3', { class: 'chat-panel__title', text: 'Then, in the chat' }),
     h('p', { text: 'Copy this workspace\'s details into the chat once, then ask for what you need.' }),
     copyField('Workspace address', workspaceBase(), 'The workspace address'),
@@ -2487,7 +2542,7 @@ function chatPanel(mode = S.mode) {
     callout({ tone: 'neutral', iconName: 'shield', title: chatAgentsDecide() ? 'Your assistant can take every action here' : 'What stays in the Work Redesign app', body: chatAgentsDecide() ? CHAT_DECIDES : CHAT_STAYS }),
     note(CHAT_YOURS, 'info'),
     isAdmin() ? hint(CHAT_BY_ID) : null,
-    h('details', { class: 'disclosure' }, h('summary', { text: 'No connector?' }), h('div', { class: 'disclosure__body stack stack--sm' }, noConnector)));
+    h('details', { class: 'disclosure' }, h('summary', { text: 'No connector?' }), h('div', { class: 'disclosure__body stack stack--sm' }, pasteRoute(CHAT_NO_CONNECTOR))));
 }
 function openChatPanel() { openPanel(CHAT_PANEL_TITLE, chatPanel()); }
 
@@ -2544,9 +2599,12 @@ function taskMapChatMessage(st) {
 function pasteMessage(packet) {
   const q = packet?.quoteRule ?? {};
   const doc = packet?.context?.document ?? {};
+  // The packet's first line tells a program what this bridge did not do ("sampled no model … capture table"): not words for a
+  // person's chat, so it is left out; every drafting rule after it is kept as the bridge wrote it.
+  const instructions = String(packet?.instructions ?? '').split('\n').filter((line) => !/^This bridge sampled no model\b/.test(line)).join('\n');
   return [
     'Please draft a process map from the procedure document at the end of this message, between the two marker lines.',
-    String(packet?.instructions ?? ''),
+    instructions,
     `How each quote is checked: ${(q.normalisation ?? []).join(', ')}; at least ${q.minChars ?? 12} characters; ${q.caseSensitive === false ? 'not case-sensitive' : 'case-sensitive'}.`,
     'I paste your answer into Work Redesign, and fill in there who does each task and its type of task.',
     'Reply with only one JSON object shaped like this, and nothing else: no code fences, no text before or after it.',
@@ -2589,7 +2647,7 @@ function captureView() {
     const f = e.target.files?.[0];
     if (!f) return;
     const reader = new FileReader();
-    reader.onload = () => { st.doc.text = String(reader.result ?? ''); if (!st.doc.title) st.doc.title = f.name; rerender(); };
+    reader.onload = () => { st.doc.text = String(reader.result ?? ''); st.doc.file = f.name; if (!st.doc.title) st.doc.title = f.name; docChanged(); rerender(); };
     reader.readAsText(f);
   };
   const fillFromDraft = () => {
@@ -2606,8 +2664,10 @@ function captureView() {
     });
     if (st.tasks.length === 0) st.tasks.push(blankTask());
     const by = draft.draftedBy;
+    const agent = by && typeof by === 'object' ? declaredName(by.agent) : '';
+    const model = by && typeof by === 'object' ? declaredName(by.model) : '';
     st.draftedBy = by && typeof by === 'object' && ['person', 'agent', 'not-declared'].includes(by.kind)
-      ? { kind: by.kind, ...(by.agent && by.agent !== '<fill>' ? { agent: String(by.agent).slice(0, 120) } : {}), ...(by.model && !String(by.model).startsWith('<fill') ? { model: String(by.model).slice(0, 120) } : {}) }
+      ? { kind: by.kind, ...(agent ? { agent } : {}), ...(model ? { model } : {}) }
       : { kind: 'not-declared' };
     rerender();
   };
@@ -2655,16 +2715,18 @@ function captureView() {
   gateChat();
   /** Who drafted the map, as the person says: prefilled from a pasted draft, always theirs to change. */
   const by = st.draftedBy && ['person', 'agent', 'not-declared'].includes(st.draftedBy.kind) ? st.draftedBy : { kind: 'not-declared' };
-  const setBy = (next) => { st.draftedBy = next; rerender(); };
-  const byText = (key) => (e) => { st.draftedBy = { ...(st.draftedBy?.kind === 'agent' ? st.draftedBy : { kind: 'agent' }), [key]: e.target.value }; save(); };
+  // The assistant and model stay in the draft whichever kind is chosen (only "My AI assistant" signs them), so choosing
+  // "A person" and then "My AI assistant" again brings back what was typed or prefilled.
+  const setBy = (kind) => { st.draftedBy = { ...(st.draftedBy ?? {}), kind }; rerender(); };
+  const byText = (key) => (e) => { st.draftedBy = { ...(st.draftedBy ?? {}), kind: 'agent', [key]: e.target.value }; save(); };
   const draftedByNode = h('fieldset', { class: 'fieldset' }, h('legend', { class: 'legend', text: 'Who drafted this map?' }),
     h('div', { class: 'choice-group' },
-      choice('radio', 'drafted-by', 'My AI assistant', { checked: by.kind === 'agent', on: () => setBy({ kind: 'agent', ...(by.agent ? { agent: by.agent } : {}), ...(by.model ? { model: by.model } : {}) }) }),
+      choice('radio', 'drafted-by', 'My AI assistant', { checked: by.kind === 'agent', on: () => setBy('agent') }),
       by.kind === 'agent' ? h('div', { class: 'form-row drafted-by__agent' },
         field('Which assistant', input(by.agent ?? '', byText('agent'), { maxLength: 120, placeholder: 'For example Claude or ChatGPT' }), { optional: true }),
         field('Model, as your chat app names it', input(by.model ?? '', byText('model'), { maxLength: 120 }), { optional: true, hint: 'The name in its model picker. Leave it blank if your app doesn\'t say.' })) : null,
-      choice('radio', 'drafted-by', 'A person', { checked: by.kind === 'person', on: () => setBy({ kind: 'person' }) }),
-      choice('radio', 'drafted-by', 'Not stated', { checked: by.kind === 'not-declared', on: () => setBy({ kind: 'not-declared' }) })),
+      choice('radio', 'drafted-by', 'A person', { checked: by.kind === 'person', on: () => setBy('person') }),
+      choice('radio', 'drafted-by', 'Not stated', { checked: by.kind === 'not-declared', on: () => setBy('not-declared') })),
     hint(DRAFTED_BY_HINT));
   // What the bridge would refuse, found before anything is signed: each field named as the form labels it.
   const problems = () => {
@@ -2720,6 +2782,29 @@ function captureView() {
   const closed = data().bridge?.reads === 'signed';
   // The chat route (Card A) only where it works: signed in with Interego on a workspace that names a connector.
   const chat = chatReady();
+  // Card B's "Show the message" holds the message made from the title and text as they were. Once either changes it is out
+  // of date, so it goes (and the held packet with it): Copy makes the message again from what is there now.
+  let preview = S.packet ? disclosure('Show the message', h('pre', { class: 'chat-preview', text: pasteMessage(S.packet) })) : null;
+  function docChanged() { if (!S.packet) return; S.packet = null; preview?.remove(); preview = null; }
+  // Step 1's count, kept up to date as the text is typed (typing redraws nothing): how long the document is, "Loaded"
+  // only while the text is the file's, and, where a chat can record the map, how much of a chat's limit it takes.
+  const docCount = () => {
+    const n = String(st.doc.text ?? '').length;
+    const many = n.toLocaleString('en-US');
+    const from = st.doc.file ? `Loaded from ${st.doc.file}: ` : '';
+    if (!chat) return n ? `${from}${many} character${n === 1 ? '' : 's'}.` : 'Plain text or Markdown.';
+    if (!n) return `A chat can record a document of up to ${CHAT_DOC_MAX_TEXT} characters; copy and paste takes any length.`;
+    return n > CHAT_DOC_MAX ? `${from}${many} characters, more than the ${CHAT_DOC_MAX_TEXT} a chat can record.` : `${from}${many} of the ${CHAT_DOC_MAX_TEXT} characters a chat can record.`;
+  };
+  const textField = field('Or paste the text', textarea(st.doc.text, (e) => {
+    st.doc.text = e.target.value;
+    st.doc.file = '';
+    save();
+    gateChat();
+    docChanged();
+    const count = textField.querySelector('.hint');
+    if (count) count.textContent = docCount();
+  }, { class: 'textarea textarea--tall' }), { path: 'document.text', hint: docCount() });
   const step =(n, title, ...kids) => h('li', { class: 'card capture-step' }, h('div', { class: 'card__body' },
     h('h2', { class: 'card__title' }, h('span', { class: 'capture-step__n', 'aria-hidden': 'true', text: String(n) }), title), kids));
   return [
@@ -2731,10 +2816,10 @@ function captureView() {
         choice('radio', 'capture-mode', 'From a procedure document', { checked: docMode, card: true, help: 'Your own AI drafts the map; we check every quote', on: () => { st.mode = 'document'; rerender(); } }))),
     docMode ? h('ol', { class: 'capture-steps' },
       step(1, 'Add the document',
-        field('Document title', input(st.doc.title, (e) => { st.doc.title = e.target.value; save(); }), { path: 'document.title' }),
+        field('Document title', input(st.doc.title, (e) => { st.doc.title = e.target.value; save(); docChanged(); }), { path: 'document.title' }),
         field('Load a .txt or .md file', h('input', { type: 'file', class: 'input input--file', accept: '.txt,.md,text/plain,text/markdown', on: { change: loadFile } }),
-          { hint: st.doc.text ? `Loaded: ${plural(st.doc.text.length, 'character')}. Loading another file replaces it.` : '' }),
-        field('Or paste the text', textarea(st.doc.text, (e) => { st.doc.text = e.target.value; save(); gateChat(); }, { class: 'textarea textarea--tall' }), { path: 'document.text' })),
+          { hint: st.doc.text ? 'Loading another file replaces the text below.' : '' }),
+        textField),
       step(2, 'Have your AI draft the map',
         h('p', { class: 'text-secondary', text: 'Work Redesign doesn\'t draft anything itself: your own AI assistant does, and Work Redesign checks every quote against the document.' }),
         h('div', { class: `capture-routes${chat ? ' grid-2' : ''}` },
@@ -2742,8 +2827,8 @@ function captureView() {
             h('h3', { class: 'card__title', id: 'route-chat-title', text: 'In Claude or ChatGPT (recommended)' }),
             h('p', { class: 'text-secondary', text: CARD_A_BODY }),
             // A live region, so the note is read out when typing makes the document too long (gateChat shows and hides it).
-            h('div', { 'aria-live': 'polite' }, tooLongNote),
-            h('div', null, chatButton),
+            // It shares the button's block, so while it is empty it adds no gap to the card.
+            h('div', null, h('div', { class: 'route-card__gate', 'aria-live': 'polite' }, tooLongNote), chatButton),
             hint(CARD_A_AFTER),
             h('div', null, btn('Open Processes', { size: 'sm', on: async () => { await refresh(); goTab('tasks'); } })),
             h('details', { class: 'disclosure' }, h('summary', { text: 'Not connected yet?' }), h('div', { class: 'disclosure__body' },
@@ -2753,7 +2838,7 @@ function captureView() {
             h('h3', { class: 'card__title', id: 'route-paste-title', text: 'Copy and paste' }),
             h('p', { class: 'text-secondary', text: 'Works with any chat app. Copy the message, paste it into your AI assistant, then paste its whole answer in step 3.' }),
             h('div', null, btn('Copy the message for my AI', { variant: chat ? 'secondary' : 'primary', icon: 'clipboard', on: copyPasteMessage })),
-            S.packet ? disclosure('Show the message', h('pre', { class: 'chat-preview', text: pasteMessage(S.packet) })) : null)))),
+            preview)))),
       step(3, 'Paste your AI\'s answer',
         chat ? hint('Only for Copy and paste. From Claude or ChatGPT with the connector, your assistant records the map itself.') : null,
         st.draftText ? null : emptyState({ icon: 'sparkle', title: 'Waiting for your AI\'s answer', text: 'Copy the message for your AI, paste it into your chat app, then paste its whole answer here.', plain: true }),

@@ -156,21 +156,23 @@
         <span class="eyebrow">Use it from Claude or ChatGPT</span>
         <h2 class="section__title" id="assistants-title">Work where you already work: in Claude or ChatGPT</h2>
         <p class="section__lede">Add the Interego connector to Claude or ChatGPT once, and your assistant can work in Work Redesign for you. There’s no API key and nothing to install. Your assistant can do the drafting on your own subscription; Work Redesign checks what it records.</p>
-        <h3 class="assistants__subtitle">Set up in two minutes</h3>
+        {{#chat_ready}}<h3 class="assistants__subtitle">Set up in two minutes</h3>
         <ol class="steps steps--compact">
           <li class="step"><p class="step__text">In Claude, open <strong>Settings → Connectors → Add custom connector</strong>. In ChatGPT, open <strong>Settings → Connectors → Add</strong>, on a plan that allows custom connectors.</p></li>
           <li class="step"><p class="step__text">Name it <strong>Interego</strong> and paste <code class="connector-url">{{connector_url}}</code></p></li>
-          <li class="step"><p class="step__text">Connect, then sign in with your passkey when asked.</p></li>
+          <li class="step"><p class="step__text">Connect, and when it asks, sign in with the same Interego account you use for Work Redesign.</p></li>
           <li class="step"><p class="step__text">Tell your assistant this workspace’s address: <code class="connector-url">{{base}}</code>. In the app, <strong>Use your AI assistant</strong> copies it, with everything else your assistant needs.</p></li>
         </ol>
-        <p class="text-sm text-secondary assistants__note">In each new chat, turn on Interego from the chat’s tools menu (+). No connector option on your plan? You can still draft a process map with copy and paste, in any chat app.</p>
+        <p class="text-sm text-secondary assistants__note">In each new chat, turn on Interego from the chat’s tools menu (+). No connector option on your plan? You can still draft a process map with copy and paste, in any chat app.</p>{{/chat_ready}}
+        {{^chat_ready}}<h3 class="assistants__subtitle">Not set up on this workspace yet</h3>
+        <p class="assistants__note">This workspace isn’t set up for connecting Claude or ChatGPT yet. Ask your workspace provider. You can still draft a process map with copy and paste, in any chat app: in <strong>Map a process</strong>, choose <strong>From a procedure document</strong>, then <strong>Copy and paste</strong>.</p>{{/chat_ready}}
         <p class="text-sm text-secondary assistants__note">The Interego connector passes everything your assistant reads and writes here, including your documents, and the company behind your assistant sees it too, under your own account’s terms.</p>
       </div>
       <div class="card">
         <div class="card__header"><p class="card__title">Things you can ask it</p></div>
         <div class="card__body">
           <div class="chat">
-            <div class="chat__msg chat__msg--me"><div class="chat__bubble">Draft a process map from this procedure document and record it in Work Redesign.</div></div>
+            <div class="chat__msg chat__msg--me"><div class="chat__bubble">Here’s the message from Map a process in Work Redesign. Draft the map, and record it once I’ve checked it.</div></div>
             <div class="chat__msg chat__msg--me"><div class="chat__bubble">Show me the tasks that name me, and confirm the description of the invoice-matching task.</div></div>
             <div class="chat__msg chat__msg--me"><div class="chat__bubble">Answer the seven questions for the GL coding task with me.</div></div>
             <div class="chat__msg chat__msg--me"><div class="chat__bubble">Propose a plan where an agent drafts the coding and Dee decides, then price it.</div></div>

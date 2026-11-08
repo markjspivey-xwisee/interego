@@ -33,6 +33,28 @@ The landing page, guide and README say what the assistant's provider and the
 connector see, add the "Teams without an AI assistant" limit, and mark the
 bridge's own `/mcp` as a developer endpoint, not the connector.
 
+The pages' connector set-up follows the same rule as the app: it is shown only
+where the shell names a connector (`connectorUrlOf`, now in
+`bridge/landing.ts`, through `{{#chat_ready}}` sections the page renderer
+fills); elsewhere the landing page and the guide say the workspace isn't set
+up for it and point to copy and paste. With the deployed bridge's
+44-character address the set-up no longer widens either page on a phone: each
+step may shrink, and an address wraps at its hyphens and slashes instead. The
+panel is titled "Use your AI assistant", like every way into it; its two
+set-ups are tabs the arrow keys, Home and End move between; Escape closes it,
+with focus back on what opened it; and where the browser refuses the
+clipboard, the text to copy opens over the panel, says to select and copy it,
+and closes back to it. Where the chat route is not offered, the panel no
+longer asks to connect once or blames a plan. The pages and the panel say the
+connector's sign-in in one sentence, and the first thing to ask an assistant
+starts from the Map a process message. In Map a process, step 1 counts the
+text as it is typed (against a chat's 20,000 characters where that route is
+offered, "Loaded" only while the text is a file's), the copy-and-paste
+preview goes as soon as the title or text changes, the copied message leaves
+out the packet's note to programs, "not-declared" from an assistant is taken
+as no model, switching who drafted the map keeps what was typed, and the
+route cards are spaced by their own gap.
+
 ## 2026-11-08 — Shared helpers for connecting your own chat assistant
 
 New `applications/_shared/chat-agent/`: the text helpers Practice Evidence and
