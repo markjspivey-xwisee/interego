@@ -1,5 +1,120 @@
 # Changelog
 
+## 2026-11-08 — Practice Evidence: use your own Claude or ChatGPT, never our key
+
+Practice Evidence runs no AI of its own and never asks for an API key. The
+web app now hands each AI step to the person's own assistant. A new "Connect
+your AI" dialog (header and account menu) gives setup steps for Claude and
+for ChatGPT, the Interego connector address to copy, and "Copy workspace
+details". It also says what an assistant can and can't do here, including
+that the connector and the assistant's company see what it reads and writes.
+On the session page, "Copy the start-up message" lets Claude or ChatGPT play
+the other person. It reads the character brief once per chat, then makes one
+signed save per exchange, and takes the next turn from each answer. The page
+shows saved lines when the person comes back to the tab or presses "Check
+for new lines": nothing polls, a reply typed into the copy-and-paste form is
+never drawn over, and coming back still re-reads after the page's last signed
+read is nine minutes old, because the relay signs that read and no person is
+asked. "Send to your judge" copies the session's ID and a
+judge prompt, never the conversation. "Draft it in Claude or ChatGPT" asks
+the author only the two decisions an AI must never make, and saves a
+feedback-only draft, so no assistant sees a pass mark.
+
+The chat route appears only where it can work: on a workspace with Interego
+sign-in, for a person signed in with it. Wallet sessions and workspaces
+without sign-in get copy and paste, which now copies plain text, not JSON:
+without sign-in, "Get the hand-off" copies a message for the judge with the
+request as text (the rubric and the conversation, which no connector can
+fetch there), and keeps the packet's JSON under Technical details. The web
+app has no way for a judge to save an assessment, so the message, the
+hand-off note, the guide and Getting started say so plainly: saving takes a
+tool of the judge's own that signs the listed fields with their key. A
+wallet or manual signer is offered Sign in with Interego in the Connect
+dialog and the account menu, and Getting started no longer marks Interego
+sign-in done for a wallet. The landing page and the guide follow the same
+rule as the web app's Connect dialog: the connector steps, with the address
+of the relay the web app signs people in through, only where it offers
+Interego sign-in, and copy and paste everywhere else. That includes a
+workspace that trusts a relay but names none (no `PEV_RELAY_URL`): it still
+accepts acts the relay signs, but its pages, its sign-in screen and its
+Connect dialog now all say copy and paste, and the bridge says so at
+startup. On such workspaces the guide's troubleshooting, glossary (which
+now explains a wallet address instead) and privacy entries, the landing
+page's security answer and its limits, the admin's and judge's Getting
+started steps, the Team page with its field and its messages, the "You
+don't have access to this" message and the dialog's Advanced note no
+longer point to a Member ID, Interego sign-in or a connector, and the
+header's wallet button reads "Use a wallet" on a phone so it fits. Where
+Interego sign-in is offered, a judge's first Getting started step asks
+for a Member ID: someone signed in with a wallet is asked to sign in with
+Interego first, since a judge added by wallet address can't assess from
+Claude or ChatGPT, and a copied wallet address no longer ticks that step.
+There, the guide's "Before you start" and "You don't have access to
+this" entries also give the way for someone signed in with a wallet
+(Getting started → Copy my wallet address). A sign-in that can't start says
+why at the top of the page and moves the page and focus there, since its
+button may be far down Getting started.
+It reads a pasted draft even with prose or code fences around it, and asks
+which AI wrote each reply. A person's own Anthropic key stays available,
+closed under the dialog's Advanced section; it is gone from the header and
+settings. The learner's Getting started steps, and the guide, name the buttons the
+session page offers that person on that workspace. The Connect dialog
+confirms a copy on the button pressed, never with a toast under its
+backdrop; on a phone its description scrolls away with the body, and the
+connector address wraps to show whole. The landing page and the guide
+show that address on a line of its own and break it only between its
+parts, so `/mcp` is never split. The Feedback card says "Not assessed
+yet" until a judge has assessed; the author's paste route shows its message
+above the answer box it points to; the drafting messages carry no escaped
+quotes and the schema once; the other person's brief never doubles a full
+stop (the template, and so its hash, is unchanged); a line saved from a chat
+reads "Anthropic, model not shown", as declared; one saved version is "1
+saved version"; and each copied message's nonce example names one of its own
+steps, at turn 0 when that step has no turn. `/ui/app.js` is now the shared chat-agent helpers followed by the
+app, and a test parses it as the module a browser loads. The landing page
+and guide now describe this, and the README documents the exact act
+sequence and records a live Claude run of it (no ChatGPT run yet). The
+wallet case of its test waits for the practice callout, which the page adds
+only after the scenario list answers.
+
+The bridge accepts an action's web-address form (the form a published
+manifest may advertise) wherever it accepted the urn, using the core's
+`sameAction`; any other action, and anything in neither form, is still
+refused. The provisioning workflow
+no longer copies a model key to the service, and its test fails if one is
+ever written. The server-side page check that no connector address is
+left on a no-connector page counts occurrences rather than calling
+`includes`. Nothing was added to the relay, the MCP server or any
+ontology.
+
+## 2026-11-08 — Shared helpers for connecting your own chat assistant
+
+New `applications/_shared/chat-agent/`: the text helpers Practice Evidence and
+Work Redesign will use to let people do AI steps in their own Claude or
+ChatGPT through the Interego connector. There is no operator model and no key.
+`actPrompt` builds a paste-ready prompt that states how to call the
+connector's `act` tool, says per step whether it is signed or plain, names
+the exact action each payload carries, and gives one nonce rule: step name,
+turn number, then 16 random letters or digits. Its example is made from the
+prompt's own first signed step (in words when no step is signed), so a
+prompt never names a step its site does not have. Both sites' nonce checks
+accept the result. `requestAsText` turns a packet's model request into a
+prompt to paste into any chat app, and renders a synthetic opening line as a
+stage direction rather than as the person's own words. `extractJsonObject`
+reads a draft from a pasted answer: it tries fenced blocks first and matches
+braces only outside JSON strings. It never answers with part of a cut-off or
+broken object. `agentAppName` names the app a record came through, and reads
+any other OpenAI client as "ChatGPT or another OpenAI app".
+
+The sites will serve it by concatenation, `chatAgentJs()` followed by their
+own app.js, so each page keeps one module script. The file therefore declares
+exactly one top-level name, has no import or export, and touches no DOM or
+network. Its test runs the file both as a classic script, the way every jsdom
+harness runs /ui/app.js, and as a real ES module ahead of an app that
+redeclares every internal name. The test makes its sample nonces with
+`randomInt`, so every letter is equally likely. No site uses it yet; the
+Practice Evidence and Work Redesign changes follow separately.
+
 ## 2026-11-08 — Clear stale enrolled-course controls when a learning link ends
 
 Refreshing a missing or inactive learning account link now removes its cached

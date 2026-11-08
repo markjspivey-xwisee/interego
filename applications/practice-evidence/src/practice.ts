@@ -462,9 +462,19 @@ export const TURN_TEXT_MAX = 4000;
 export const MAX_JUDGMENTS = 5;
 export const MAX_CONTESTS = 2;
 
-/** Fill `{{name}}` slots in one pass, so a value containing `{{…}}` is never expanded again. */
+/**
+ * Fill `{{name}}` slots in one pass, so a value containing `{{…}}` is never expanded again. Where
+ * the template puts a full stop right after a slot and the value already ends its sentence (with
+ * `.`, `!` or `?`, perhaps inside a closing quote or bracket), the template's full stop is left
+ * out, so an author's "To avoid blame." never reads "To avoid blame.." in the prompt. The
+ * template, and so its hash, is unchanged.
+ */
 function fill(template: string, values: Readonly<Record<string, string>>): string {
-  return template.replace(/\{\{([A-Za-z]+)\}\}/g, (whole, k: string) => values[k] ?? whole);
+  return template.replace(/\{\{([A-Za-z]+)\}\}(\.?)/g, (whole, k: string, stop: string) => {
+    const v = values[k];
+    if (v === undefined) return whole;
+    return stop !== '' && /[.!?]["'”’)\]]*\s*$/.test(v) ? v.trimEnd() : `${v}${stop}`;
+  });
 }
 
 export const COUNTERPART_PROMPT_TEMPLATE = [

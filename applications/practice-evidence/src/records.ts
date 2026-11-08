@@ -36,7 +36,7 @@
 import { createHmac, randomBytes } from 'node:crypto';
 import {
   canonicalJson, sha256, sha256Hex, escapeTurtleLiteral, turtleIriRef, recoverMessageSigner, signMessageRaw,
-  parseTrig, readStringValue, ContextDescriptor,
+  parseTrig, readStringValue, ContextDescriptor, isActionIri, sameAction,
   type ContextDescriptorData, type IRI, type Wallet,
 } from '@interego/core';
 import type { InferenceDisclosure, InferenceRoute, LlmKeySource } from './model.js';
@@ -462,7 +462,12 @@ function payloadChecks(
   read: { issuedRaw: unknown; podRaw: unknown; noIssued: string; noPod: string },
 ): { readonly ok: true; readonly podUrl: string } | EnvelopeNo {
   if (payload['v'] !== 1) return no(400, 'envelope-version', 'This bridge reads envelope payloads with v: 1.');
-  if (payload['action'] !== expectedAction) {
+  // The urn and the web-address form of an action are one act (the core's sameAction): an agent
+  // that signs the form a published manifest advertises is read as it meant. Anything that is not
+  // an action in one of those two forms (isActionIri, as ontology.ts isPevAction reads it), and any
+  // other action, is refused, so an envelope still acts only where it was signed to.
+  const action = payload['action'];
+  if (typeof action !== 'string' || !isActionIri(action) || !sameAction(action, expectedAction)) {
     return no(400, 'envelope-for-another-action', `This envelope was signed for ${String(payload['action'])}, not for ${expectedAction}.`);
   }
   const issued = typeof read.issuedRaw === 'string' ? Date.parse(read.issuedRaw) : Number.NaN;

@@ -16,7 +16,7 @@ import { fileURLToPath } from 'node:url';
 import ts from 'typescript';
 import nacl from 'tweetnacl';
 import {
-  canonicalGraphDigest, ContextDescriptor, deriveEncryptionKeyPair, generateContentKey, importWallet, makeWalletDelegationVerifier, sha256, sha256Hex, signMessageRaw,
+  actionUrl, canonicalGraphDigest, ContextDescriptor, deriveEncryptionKeyPair, generateContentKey, importWallet, makeWalletDelegationVerifier, sha256, sha256Hex, signMessageRaw,
   validateAgainstShape, verifySignedAuthorship, wrapKeyForRecipient, type IRI, type Wallet,
 } from '@interego/core';
 import { digestedGraphRegion, discover, parseAuthorshipProofFromDescriptorTurtle } from '@interego/solid';
@@ -1172,6 +1172,10 @@ describe('records come from the pod, and the pod plumbing holds', () => {
     const list = ok((await demo['pev.sign_as_demo_role']!({})) as Out);
     expect((list['roles'] as Out[])[0]?.['address']).toBe(demoAdmin.address);
     refused((await demo['pev.sign_as_demo_role']!({ role: 'admin', payload: { action: 'urn:iep:action:other:thing' } })) as Out, 400, 'not-a-pev-action');
+    // A pev action's web-address form is a pev action; another vertical's, or a page that is no action, is not.
+    refused((await demo['pev.sign_as_demo_role']!({ role: 'admin', payload: { action: actionUrl('urn:iep:action:other:thing') } })) as Out, 400, 'not-a-pev-action');
+    refused((await demo['pev.sign_as_demo_role']!({ role: 'admin', payload: { action: 'https://pod.example.test/pev/register-role' } })) as Out, 400, 'not-a-pev-action');
+    expect(ok((await demo['pev.sign_as_demo_role']!({ role: 'admin', payload: { action: actionUrl(PEV_ACTION.getAttempt) } })) as Out)['envelope']).toBeDefined();
     refused((await demo['pev.sign_as_demo_role']!({ role: 'nobody', payload: { action: PEV_ACTION.registerRole } })) as Out, 400, 'role-unknown');
     const signed = ok((await demo['pev.sign_as_demo_role']!({ role: 'admin', payload: { action: PEV_ACTION.registerRole, address: W.stranger.address, role: 'judge', change: 'add' } })) as Out);
     const r = ok((await demo['pev.register_role']!({ envelope: signed['envelope'] })) as Out);
@@ -2809,6 +2813,42 @@ describe('Interego sign-in: a request the relay signed acts as the person whose 
     const skipped = refused(await act(off, 'pev.project_attempt', W.admin, { attemptIri: X['a'], format: 'xapi' }, {}, { pod: RPOD }), 409, 'countersign-not-verifiable');
     expect(skipped['skipAudit']).toBeDefined();
     expect(((ok((await off['pev.list_scenarios']!({})) as Out))['bridge'] as Out)['interegoSignIn']).toBeNull();
+  }, SLOW);
+
+  it('an action signed in its web-address form, as a published manifest may name it, acts as its urn: start, lines, end, a review that verifies; any other action in either form is refused', async () => {
+    // What a chat agent signs when it copies the action from the manifest rather than the urn.
+    const web = (a: string): string => actionUrl(a);
+    expect(web(PEV_ACTION.recordTurns)).toMatch(/^https:\/\/[^/]+\/ns\/iep\/action\/pev\/record-turns$/);
+    const start = ok(await ract(RH, 'pev.start_attempt', AG.ben, { action: web(PEV_ACTION.startAttempt), scenarioIri: X['sc'], scenarioVersion: 1, coached: false }));
+    const iri = String(start['attemptIri']);
+    const line = { attemptIri: iri, learnerText: DEMO_LINES.ana[0], counterpartText: 'Go on.', counterpartDisclosure: { provider: 'Anthropic', model: 'not shown' } };
+    const packet = ok(await ract(RH, 'pev.counterpart_packet', AG.ben, { action: web(PEV_ACTION.counterpartPacket), attemptIri: iri, turnIndex: 1, learnerText: DEMO_LINES.ana[0] }));
+    expect((packet['expected'] as Out)['turnIndex']).toBe(1);
+    // Signed for another act (here, the packet), or for the same verb of another vertical: refused, in either form, before anything is written.
+    const before = rsnap();
+    refused(await ract(RH, 'pev.record_turns', AG.ben, { action: web(PEV_ACTION.counterpartPacket), turnIndex: 1, ...line }), 400, 'envelope-for-another-action');
+    refused(await ract(RH, 'pev.record_turns', AG.ben, { action: web(PEV_ACTION.recordTurns).replace('/pev/', '/wrd/'), turnIndex: 1, ...line }), 400, 'envelope-for-another-action');
+    refused(await ract(RH, 'pev.record_turns', AG.ben, { action: 'urn:iep:action:wrd:record-turns', turnIndex: 1, ...line }), 400, 'envelope-for-another-action');
+    // Neither form at all: the bare verb, or the path under another scheme, is not this act, though its tail matches.
+    refused(await ract(RH, 'pev.record_turns', AG.ben, { action: 'pev/record-turns', turnIndex: 1, ...line }), 400, 'envelope-for-another-action');
+    refused(await ract(RH, 'pev.record_turns', AG.ben, { action: web(PEV_ACTION.recordTurns).replace(/^https:/, 'ftp:'), turnIndex: 1, ...line }), 400, 'envelope-for-another-action');
+    expect(rsnap()).toBe(before);
+    const saved = ok(await ract(RH, 'pev.record_turns', AG.ben, { action: web(PEV_ACTION.recordTurns), turnIndex: 1, ...line }));
+    expect([saved['nextTurnIndex'], saved['state']]).toEqual([3, 'in-conversation']);
+    ok(await ract(RH, 'pev.end_conversation', AG.ben, { action: web(PEV_ACTION.endConversation), attemptIri: iri, turnIndex: 3 }));
+    ok(await ract(RH, 'pev.judge_attempt', AG.ben, { attemptIri: iri }));
+    // A review signed in the web-address form still verifies when the attempt is projected.
+    const view = ok(await ract(RH, 'pev.get_attempt', AG.reviewerUi, { action: web(PEV_ACTION.getAttempt), attemptIri: iri }));
+    const judged = (view['judgments'] as JudgmentResult[])[0]!;
+    const lv = (view['rubric'] as ScenarioSpec['rubric']).criteria.map((c, i) => {
+      const was = judged.criteria.find((x) => x.criterionId === c.id)!.levelId;
+      return { criterionId: c.id, levelId: i === 0 ? c.levels.find((l) => l.id !== was)!.id : was, why: 'Set by the reviewer, who read the whole transcript.' };
+    });
+    const o = ok(await ract(RH, 'pev.override_attempt', AG.reviewerUi, { action: web(PEV_ACTION.overrideAttempt), attemptIri: iri, target: view['currentTarget'], levels: lv, sawJudgeLevelsFirst: true }));
+    expect([o['state'], o['projectable']]).toEqual(['overridden', true]);
+    ok(await ract(RH, 'pev.project_attempt', AG.ben, { action: web(PEV_ACTION.projectAttempt), attemptIri: iri, format: 'xapi' }));
+    // A key-held envelope in that form is read the same way.
+    expect(Array.isArray(ok(await act(RH, 'pev.get_attempt', W.ana, { action: web(PEV_ACTION.getAttempt) }, {}, { pod: RPOD }))['attempts'])).toBe(true);
   }, SLOW);
 
   it('refuses an untrusted signer, an agent off the identity host, a document naming another id or no user, a stale timestamp, and a replay by principal', async () => {
