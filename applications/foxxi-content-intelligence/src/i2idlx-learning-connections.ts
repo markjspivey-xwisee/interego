@@ -4,10 +4,16 @@
 import { createHash, randomBytes } from 'node:crypto';
 import type { LearningPrincipal } from './i2idlx-learning-auth.js';
 import { ScormCloudLearningProvider, type LearningRegistration } from './i2idlx-learning-provider.js';
+import { createLearningCourseMapSnapshot, validateLearningCourseMap, validateLearningCourseMapSnapshot, type LearningCourseMapSnapshot } from './i2idlx-learning-map.js';
+import type { LearningLinkNotifications } from './i2idlx-learning-notifications.js';
 
 type Row = Record<string, unknown>;
 export interface LearningPolicy {
   allowAiContent: boolean; allowAiProgress: boolean;
+  /** Separate explicit permission; existing connectors do not release quiz review. */
+  allowAiReview?: boolean;
+  /** Opt-in registration-only provider callbacks; absent means off. */
+  allowProgressNotifications?: boolean;
   /** Absent on existing connectors means false; startSco can override sequencing. */
   allowTargetedLaunch?: boolean;
 }
@@ -17,6 +23,7 @@ export interface LearningConnector {
   revision: string; status: 'active' | 'revoked'; createdAt: string;
   /** Trusted program-only private configuration, including LTI key material. */
   lti?: Row;
+  learningMaps?: LearningCourseMapSnapshot[];
 }
 export interface LearningLink {
   id: string; connectorId: string; subject: string; webId: string;
@@ -24,6 +31,7 @@ export interface LearningLink {
   learnerId?: string; registrationId?: string; approvedAt?: string; confirmedAt?: string;
   /** Evidence is already verified by the caller's LTI receiver, never client JSON. */
   lti?: Row;
+  notifications?: LearningLinkNotifications;
 }
 export interface LearningCreateRequest { owner: string; requestId: string; connectorId: string; digest: string; }
 export interface LearningState { version: 1; connectors: LearningConnector[]; links: LearningLink[]; requests: LearningCreateRequest[]; }
@@ -39,6 +47,7 @@ export interface LearningAccess {
   connectorId: string; linkId: string; revision: string; policy: LearningPolicy;
   /** Private administrator-confirmed association; never a public learner DTO. */
   associatedRegistrationId: string;
+  learningMap: LearningCourseMapSnapshot | null;
 }
 export class LearningConnectionsError extends Error {
   constructor(readonly status: number, readonly code: string) { super(code); }
@@ -76,7 +85,16 @@ function text(v: unknown, max: number): v is string {
   return typeof v === 'string' && !!v && v === v.trim() && Buffer.byteLength(v) <= max && !/[\u0000-\u001f\u007f]/.test(v) && Buffer.from(v).toString('utf8') === v;
 }
 const date = (v: unknown) => typeof v === 'string' && /^\d{4}-\d\d-\d\dT/.test(v) && Number.isFinite(Date.parse(v));
-const policy = (v: unknown): v is LearningPolicy => plain(v) && exact(v, ['allowAiContent', 'allowAiProgress', 'allowTargetedLaunch']) && typeof v.allowAiContent === 'boolean' && typeof v.allowAiProgress === 'boolean' && (v.allowTargetedLaunch === undefined || typeof v.allowTargetedLaunch === 'boolean');
+const policy = (v: unknown): v is LearningPolicy => plain(v) && exact(v, ['allowAiContent', 'allowAiProgress', 'allowTargetedLaunch', 'allowAiReview', 'allowProgressNotifications']) && typeof v.allowAiContent === 'boolean' && typeof v.allowAiProgress === 'boolean' && (v.allowTargetedLaunch === undefined || typeof v.allowTargetedLaunch === 'boolean') && (v.allowAiReview === undefined || typeof v.allowAiReview === 'boolean') && (v.allowProgressNotifications === undefined || typeof v.allowProgressNotifications === 'boolean');
+function notifications(value: unknown): value is LearningLinkNotifications {
+  if (!plain(value) || !exact(value, ['secret', 'registrations']) || !text(value.secret, 48) || !JOIN.test(value.secret) || !Array.isArray(value.registrations) || value.registrations.length > 16) return false;
+  const ids = new Set<string>();
+  for (const target of value.registrations) {
+    if (!plain(target) || !exact(target, ['registrationId', 'courseId', 'version', 'lastReceiptAt']) || !text(target.registrationId, 256) || ids.has(target.registrationId) || !text(target.courseId, 256) || !Number.isSafeInteger(target.version) || Number(target.version) < 0 || target.lastReceiptAt !== undefined && !date(target.lastReceiptAt)) return false;
+    ids.add(target.registrationId);
+  }
+  return true;
+}
 const jsonRecord = (v: unknown) => plain(v) && finiteJson(v) && Buffer.byteLength(JSON.stringify(v)) <= LEARNING_STATE_LIMITS.ltiBytes;
 async function interrupted<T>(work: Promise<T>, signal: AbortSignal): Promise<T> {
   if (signal.aborted) fail(504, 'learning_provider_timeout');
@@ -101,22 +119,32 @@ export function validateLearningState(value: unknown): LearningState {
   const ids = new Set<string>(), joins = new Set<string>(), linkIds = new Set<string>(), requestIds = new Set<string>();
   const connectors = new Map<string, LearningConnector>();
   for (const raw of value.connectors) {
-    if (!plain(raw) || !exact(raw, ['id', 'owner', 'label', 'provider', 'authorization', 'joinCode', 'policy', 'revision', 'status', 'createdAt', 'lti']) ||
+    if (!plain(raw) || !exact(raw, ['id', 'owner', 'label', 'provider', 'authorization', 'joinCode', 'policy', 'revision', 'status', 'createdAt', 'lti', 'learningMaps']) ||
       !text(raw.id, 32) || !HEX.test(raw.id) || ids.has(raw.id) || !text(raw.owner, 500) || !HUMAN.test(raw.owner) ||
       !text(raw.label, 200) || raw.provider !== 'scorm-cloud' || !policy(raw.policy) || !text(raw.revision, 32) || !HEX.test(raw.revision) ||
       !['active', 'revoked'].includes(raw.status as string) || !date(raw.createdAt) || raw.lti !== undefined && !jsonRecord(raw.lti)) return invalid();
     if (raw.status === 'active') {
       if (!text(raw.authorization, 8192) || !/^(?:Basic|Bearer) [\x21-\x7e]+$/.test(raw.authorization) || !text(raw.joinCode, 48) || !JOIN.test(raw.joinCode) || joins.has(raw.joinCode)) return invalid();
       joins.add(raw.joinCode);
-    } else if (raw.authorization !== null || raw.joinCode !== null || raw.lti !== undefined) return invalid();
+    } else if (raw.authorization !== null || raw.joinCode !== null || raw.lti !== undefined || raw.learningMaps !== undefined) return invalid();
+    if (raw.learningMaps !== undefined) {
+      if (!Array.isArray(raw.learningMaps) || raw.learningMaps.length > 16) return invalid();
+      const mapKeys = new Set<string>();
+      for (const item of raw.learningMaps) {
+        let map: LearningCourseMapSnapshot;
+        try { map = validateLearningCourseMapSnapshot(item, { owner: raw.owner as string, connector_id: raw.id as string }); } catch { return invalid(); }
+        const key = JSON.stringify([map.map.course_id, map.map.version]); if (mapKeys.has(key)) return invalid(); mapKeys.add(key);
+      }
+    }
     ids.add(raw.id); connectors.set(raw.id, raw as unknown as LearningConnector);
   }
   const associations = new Set<string>();
   for (const raw of value.links) {
-    if (!plain(raw) || !exact(raw, ['id', 'connectorId', 'subject', 'webId', 'status', 'revision', 'createdAt', 'learnerId', 'registrationId', 'approvedAt', 'confirmedAt', 'lti']) ||
+    if (!plain(raw) || !exact(raw, ['id', 'connectorId', 'subject', 'webId', 'status', 'revision', 'createdAt', 'learnerId', 'registrationId', 'approvedAt', 'confirmedAt', 'lti', 'notifications']) ||
       !text(raw.id, 32) || !HEX.test(raw.id) || linkIds.has(raw.id) || !text(raw.connectorId, 32) || !connectors.has(raw.connectorId) ||
       !text(raw.subject, 500) || !HUMAN.test(raw.subject) || !https(raw.webId) || !['pending-admin', 'approved', 'active', 'revoked'].includes(raw.status as string) ||
       !text(raw.revision, 32) || !HEX.test(raw.revision) || !date(raw.createdAt) || raw.lti !== undefined && !jsonRecord(raw.lti)) return invalid();
+    if (raw.notifications !== undefined && (raw.status !== 'active' || !notifications(raw.notifications))) return invalid();
     const connector = connectors.get(raw.connectorId)!;
     if (connector.owner === raw.subject || connector.status === 'revoked' && raw.status !== 'revoked') return invalid();
     if (raw.status === 'approved' || raw.status === 'active') {
@@ -197,28 +225,30 @@ export class LearningConnectionsStore {
   private linkDto(link: LearningLink, connector: LearningConnector): Row {
     return { id: link.id, connector_id: link.connectorId, provider_label: connector.label, status: link.status, ...(link.lti ? { lti_discovered: true } : {}) };
   }
-  private usable(state: LearningState, principal: LearningPrincipal, linkId: unknown, requirements: { content: boolean; progress: boolean }) {
+  private usable(state: LearningState, principal: LearningPrincipal, linkId: unknown, requirements: { content: boolean; progress: boolean; review?: boolean }) {
     const link = this.link(state, linkId);
     if (link.subject !== principal.subject) fail(404, 'learning_link_not_found');
     const connector = this.connector(state, link.connectorId);
     if (link.status !== 'active' || !link.learnerId || connector.status !== 'active' || !connector.authorization) fail(403, 'learning_link_inactive');
     if (requirements.content && !connector.policy.allowAiContent) fail(403, 'learning_content_not_allowed');
     if (requirements.progress && !connector.policy.allowAiProgress) fail(403, 'learning_progress_not_allowed');
+    if (requirements.review && connector.policy.allowAiReview !== true) fail(403, 'learning_review_not_allowed');
     return { link, connector, revision: connector.revision + ':' + link.revision };
   }
-  private async revalidate(principal: LearningPrincipal, prior: ReturnType<LearningConnectionsStore['usable']>, requirements: { content: boolean; progress: boolean }, signal?: AbortSignal) {
+  private async revalidate(principal: LearningPrincipal, prior: ReturnType<LearningConnectionsStore['usable']>, requirements: { content: boolean; progress: boolean; review?: boolean }, signal?: AbortSignal) {
     const current = this.usable(await this.state(principal, signal), principal, prior.link.id, requirements);
     if (current.revision !== prior.revision) fail(409, 'learning_authority_changed'); return current;
   }
   async access(principal: LearningPrincipal, linkId: string, courseId: string, courseVersion: number,
-    requirements: { content: boolean; progress: boolean }, signal?: AbortSignal): Promise<LearningAccess> {
-    if (!plain(requirements) || !exact(requirements, ['content', 'progress']) || typeof requirements.content !== 'boolean' || typeof requirements.progress !== 'boolean') fail(400, 'learning_request_invalid');
+    requirements: { content: boolean; progress: boolean; review?: boolean }, signal?: AbortSignal): Promise<LearningAccess> {
+    if (!plain(requirements) || !exact(requirements, ['content', 'progress', 'review']) || typeof requirements.content !== 'boolean' || typeof requirements.progress !== 'boolean' || requirements.review !== undefined && typeof requirements.review !== 'boolean') fail(400, 'learning_request_invalid');
     const initial = this.usable(await this.state(principal, signal), principal, linkId, requirements);
     const active = signal ? AbortSignal.any([principal.signal, signal]) : principal.signal;
     const registrations = await this.provider(initial.connector).authorizeCourse(initial.link.learnerId!, courseId, courseVersion, active);
     const current = await this.revalidate(principal, initial, requirements, signal);
     return { authorization: current.connector.authorization!, learnerId: current.link.learnerId!, registrations,
-      connectorId: current.connector.id, linkId: current.link.id, revision: current.revision, policy: copy(current.connector.policy), associatedRegistrationId: current.link.registrationId! };
+      connectorId: current.connector.id, linkId: current.link.id, revision: current.revision, policy: copy(current.connector.policy), associatedRegistrationId: current.link.registrationId!,
+      learningMap: copy(current.connector.learningMaps?.find(item => item.map.course_id === courseId && item.map.version === courseVersion) ?? null) };
   }
   /** Trusted receiver use only. Standard request JSON cannot supply verified evidence. */
   async requestLink(principal: LearningPrincipal, joinCode: string, verifiedLti?: Row): Promise<Row> {
@@ -240,6 +270,43 @@ export class LearningConnectionsStore {
   /** Private program adapter for LTI setup; not an HTTP operation. */
   async readConnector(id: string): Promise<LearningConnector | null> {
     const state = (await this.snapshot()).state; return copy(state.connectors.find(c => c.id === id) ?? null);
+  }
+  /** Private callback adapters only. Secrets never enter HTTP account DTOs. */
+  async readLink(id: string): Promise<LearningLink | null> {
+    const state = (await this.snapshot()).state; return copy(state.links.find(value => value.id === id) ?? null);
+  }
+  async readConnectorLinks(id: string): Promise<LearningLink[]> {
+    return copy((await this.snapshot()).state.links.filter(value => value.connectorId === id));
+  }
+  async updateLinkNotifications(principal: LearningPrincipal, id: string, expectedRevision: string, config: LearningLinkNotifications | null): Promise<LearningLink> {
+    if (config !== null && !notifications(config)) fail(400, 'learning_request_invalid');
+    return this.mutate(principal, state => {
+      const link = this.link(state, id), connector = this.connector(state, link.connectorId);
+      if (link.subject !== principal.subject && (connector.owner !== principal.subject || config !== null)) fail(404, 'learning_link_not_found');
+      if (link.revision !== expectedRevision || link.status !== 'active' || connector.status !== 'active') fail(409, 'learning_authority_changed');
+      if (config !== null && connector.policy.allowProgressNotifications !== true) fail(403, 'learning_notifications_not_allowed');
+      if (config === null) delete link.notifications; else {
+        const next = copy(config);
+        if (link.notifications?.secret === next.secret) for (const target of next.registrations) {
+          const old = link.notifications.registrations.find(value => value.registrationId === target.registrationId && value.courseId === target.courseId && value.version === target.version);
+          if (old?.lastReceiptAt && (!target.lastReceiptAt || old.lastReceiptAt > target.lastReceiptAt)) target.lastReceiptAt = old.lastReceiptAt;
+        }
+        link.notifications = next;
+      }
+      link.revision = opaque(); return link;
+    });
+  }
+  async recordNotificationReceipt(id: string, expectedRevision: string, registrationId: string, receivedAt: string): Promise<boolean> {
+    if (!date(receivedAt)) return false;
+    const before = await this.snapshot(), link = before.state.links.find(value => value.id === id);
+    const connector = link && before.state.connectors.find(value => value.id === link.connectorId);
+    const target = link?.notifications?.registrations.find(value => value.registrationId === registrationId);
+    if (!link || link.revision !== expectedRevision || link.status !== 'active' || connector?.status !== 'active' || connector.policy.allowProgressNotifications !== true || !target) return false;
+    target.lastReceiptAt = receivedAt;
+    const state = validateLearningState(before.state);
+    try { await this.repository.write(before.revision, state); } catch { return false; }
+    const after = await this.snapshot();
+    return after.revision !== before.revision && digest(after.state) === digest(state);
   }
   /** Only private LTI configuration may change through this narrow program hook. */
   async updateConnector(principal: LearningPrincipal, id: string, mutator: (connector: LearningConnector) => void): Promise<LearningConnector> {
@@ -314,11 +381,11 @@ export class LearningConnectionsStore {
   }
   private revoked(link: LearningLink): void {
     link.status = 'revoked'; link.revision = opaque(); delete link.learnerId; delete link.registrationId;
-    delete link.approvedAt; delete link.confirmedAt; delete link.lti;
+    delete link.approvedAt; delete link.confirmedAt; delete link.lti; delete link.notifications;
   }
   async request(principal: LearningPrincipal, raw: unknown): Promise<Row> {
     this.active(principal);
-    if (!finiteJson(raw) || !plain(raw) || Buffer.byteLength(JSON.stringify(raw)) > 16_384 || typeof raw.operation !== 'string') fail(400, 'learning_request_invalid');
+    if (!finiteJson(raw) || !plain(raw) || Buffer.byteLength(JSON.stringify(raw)) > 65_536 || typeof raw.operation !== 'string') fail(400, 'learning_request_invalid');
     const args = copy(raw), operation = args.operation;
     const fields: Record<string, string[]> = {
       'create-connector': ['label', 'credentials', 'policy', 'intent', 'request_id'], 'owned-connectors': [], 'my-links': [],
@@ -326,6 +393,13 @@ export class LearningConnectionsStore {
       'approve-link': ['link_id', 'registration_id', 'confirmed'], 'confirm-link': ['link_id'], 'revoke-link': ['link_id'],
       'revoke-connector': ['connector_id'], courses: ['link_id'], progress: ['link_id', 'course_id', 'version'],
       'set-targeted-launch-policy': ['connector_id', 'allowTargetedLaunch', 'confirmed'],
+      'set-review-policy': ['connector_id', 'allowAiReview', 'confirmed'],
+      'set-notification-policy': ['connector_id', 'allowProgressNotifications', 'confirmed'],
+      'owned-courses': ['connector_id'],
+      'get-course-map': ['connector_id', 'course_id', 'version'],
+      'preview-course-map': ['connector_id', 'course_id', 'version', 'map'],
+      'save-course-map': ['connector_id', 'course_id', 'version', 'map', 'confirmed', 'expected_revision'],
+      'delete-course-map': ['connector_id', 'course_id', 'version', 'confirmed', 'expected_revision'],
     };
     if (!Object.hasOwn(fields, operation as string) || !exact(args, ['operation', ...fields[operation as string]!])) fail(400, 'learning_request_invalid');
     if (operation === 'create-connector') return this.create(principal, args);
@@ -334,6 +408,68 @@ export class LearningConnectionsStore {
     if (operation === 'owned-connectors') return { connectors: state.connectors.filter(c => c.owner === principal.subject).map(c => this.connectorDto(c, true)) };
     if (operation === 'my-links') return { links: state.links.filter(l => l.subject === principal.subject).map(l => this.linkDto(l, this.connector(state, l.connectorId))) };
     if (operation === 'discover') return { connection: this.connectionDto(this.joined(state, args.join_code)) };
+    if (operation === 'owned-courses') {
+      const connector = this.owner(state, principal, args.connector_id);
+      const courses = await this.provider(connector).listOwnedCourses(principal.signal);
+      const fresh = this.owner(await this.state(principal), principal, connector.id);
+      if (fresh.revision !== connector.revision || fresh.status !== 'active') fail(409, 'learning_authority_changed');
+      return { courses };
+    }
+    if (['get-course-map', 'preview-course-map', 'save-course-map', 'delete-course-map'].includes(String(operation))) {
+      if (!text(args.course_id, 256) || !Number.isSafeInteger(args.version) || Number(args.version) < 0) fail(400, 'learning_request_invalid');
+      const connector = this.owner(state, principal, args.connector_id);
+      if (connector.status !== 'active') fail(403, 'learning_connection_revoked');
+      const existing = connector.learningMaps?.find(item => item.map.course_id === args.course_id && item.map.version === args.version) ?? null;
+      if (operation === 'get-course-map') return { course_map: copy(existing) };
+      if (operation === 'delete-course-map') {
+        if (args.confirmed !== true || args.expected_revision !== (existing?.provenance.revision ?? null)) fail(409, 'learning_map_revision_conflict');
+        return this.mutate(principal, current => {
+          const fresh = this.owner(current, principal, connector.id);
+          const found = fresh.learningMaps?.find(item => item.map.course_id === args.course_id && item.map.version === args.version) ?? null;
+          if (fresh.status !== 'active' || found?.provenance.revision !== existing?.provenance.revision) fail(409, 'learning_map_revision_conflict');
+          fresh.learningMaps = (fresh.learningMaps ?? []).filter(item => item.map.course_id !== args.course_id || item.map.version !== args.version);
+          fresh.revision = opaque(); return { course_map: null, deleted: true, notice: 'The owner-supplied map and future quiz-review release were removed. Earlier AI-client copies are outside this deletion.' };
+        });
+      }
+      const normalized = validateLearningCourseMap(args.map, { course_id: args.course_id, version: args.version as number });
+      await this.provider(connector).getCourseStructure(args.course_id, args.version as number, principal.signal);
+      if (operation === 'preview-course-map') {
+        const fresh = this.owner(await this.state(principal), principal, connector.id);
+        if (fresh.revision !== connector.revision || fresh.status !== 'active') fail(409, 'learning_authority_changed');
+        return { map: normalized, sha256: digest(normalized), valid: true };
+      }
+      if (args.confirmed !== true || args.expected_revision !== (existing?.provenance.revision ?? null)) fail(409, 'learning_map_revision_conflict');
+      return this.mutate(principal, current => {
+        const fresh = this.owner(current, principal, connector.id);
+        const found = fresh.learningMaps?.find(item => item.map.course_id === args.course_id && item.map.version === args.version) ?? null;
+        if (fresh.status !== 'active' || fresh.revision !== connector.revision || found?.provenance.revision !== existing?.provenance.revision) fail(409, 'learning_map_revision_conflict');
+        const retained = (fresh.learningMaps ?? []).filter(item => item.map.course_id !== args.course_id || item.map.version !== args.version);
+        if (retained.length >= 16) fail(413, 'learning_capacity_exceeded');
+        const saved = createLearningCourseMapSnapshot(normalized, { owner: principal.subject, connector_id: connector.id, saved_at: new Date(this.now()).toISOString(), revision: opaque() });
+        fresh.learningMaps = [...retained, saved]; fresh.revision = opaque();
+        if (Buffer.byteLength(JSON.stringify(current)) > LEARNING_STATE_LIMITS.bytes) fail(413, 'learning_capacity_exceeded');
+        return { course_map: saved };
+      });
+    }
+    if (operation === 'set-review-policy') {
+      if (typeof args.allowAiReview !== 'boolean' || args.confirmed !== true) fail(400, 'learning_request_invalid');
+      return this.mutate(principal, current => {
+        const connector = this.owner(current, principal, args.connector_id);
+        if (connector.status !== 'active') fail(403, 'learning_connection_revoked');
+        connector.policy.allowAiReview = args.allowAiReview as boolean; connector.revision = opaque();
+        return { connector: this.connectorDto(connector, true) };
+      });
+    }
+    if (operation === 'set-notification-policy') {
+      if (typeof args.allowProgressNotifications !== 'boolean' || args.confirmed !== true) fail(400, 'learning_request_invalid');
+      return this.mutate(principal, current => {
+        const connector = this.owner(current, principal, args.connector_id);
+        if (connector.status !== 'active') fail(403, 'learning_connection_revoked');
+        if (!args.allowProgressNotifications && current.links.some(link => link.connectorId === connector.id && link.notifications?.registrations.length)) fail(409, 'learning_notifications_cleanup_required');
+        connector.policy.allowProgressNotifications = args.allowProgressNotifications as boolean; connector.revision = opaque();
+        return { connector: this.connectorDto(connector, true) };
+      });
+    }
     if (operation === 'set-targeted-launch-policy') {
       if (typeof args.allowTargetedLaunch !== 'boolean' || args.confirmed !== true) fail(400, 'learning_request_invalid');
       return this.mutate(principal, current => {
@@ -376,7 +512,7 @@ export class LearningConnectionsStore {
     if (operation === 'revoke-connector') return this.mutate(principal, current => {
       const connector = this.owner(current, principal, args.connector_id);
       // The HTTP adapter completes/reports remote LTI cleanup BEFORE invoking this.
-      connector.status = 'revoked'; connector.authorization = null; connector.joinCode = null; delete connector.lti; connector.revision = opaque();
+      connector.status = 'revoked'; connector.authorization = null; connector.joinCode = null; delete connector.lti; delete connector.learningMaps; connector.revision = opaque();
       for (const link of current.links) if (link.connectorId === connector.id) this.revoked(link);
       return { connector: this.connectorDto(connector, true) };
     });

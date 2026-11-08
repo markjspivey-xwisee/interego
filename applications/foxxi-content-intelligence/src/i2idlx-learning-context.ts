@@ -11,6 +11,7 @@ import type { ClientTaskConfig } from './i2idlx-client-tasks.js';
 import { executeInterventionTask } from './i2idlx-intervention-tasks.js';
 import { readScormSource, ScormSourceError, type ScormSourceResult } from './i2idlx-scorm-source.js';
 import type { CourseMaterial } from './i2idlx-course-cache.js';
+import { assertLearningReviewBinding, learningMapProjection, readReleasedQuizReview, reviewInstructionPaths, type ReleasedQuizReview, type LearningReviewBinding } from './i2idlx-learning-journey.js';
 
 type Row = Record<string, unknown>;
 type Message = { role: string; content: string };
@@ -47,10 +48,11 @@ function text(v: unknown, max: number): v is string {
 }
 interface Receipt {
   principal: LearningPrincipal; paired: AgentBrowserIdentity; linkId: string; connectorId: string; revision: string;
-  courseId: string; version: number; sharing: { content: boolean; progress: boolean };
+  courseId: string; version: number; sharing: { content: boolean; progress: boolean; review: boolean };
   packetHash: string; questionHash: string; expires: number; uses: number; baseCount?: number; baseHash?: string;
   controller: AbortController; timer: ReturnType<typeof setTimeout>; removeListeners: () => void;
   lastCheck: number; checking?: Promise<void>;
+  reviewBindingHash?: string;
 }
 async function interrupted<T>(work: Promise<T>, signal: AbortSignal): Promise<T> {
   if (signal.aborted) fail(409, 'learning_request_cancelled');
@@ -151,7 +153,7 @@ export class LearningContextService {
     }));
   }
   private remember(principal: LearningPrincipal, paired: AgentBrowserIdentity, access: LearningAccess, courseId: string, version: number,
-    sharing: { content: boolean; progress: boolean }, packet: Row, question: string): string {
+    sharing: { content: boolean; progress: boolean; review: boolean }, packet: Row, question: string, reviewBinding?: LearningReviewBinding): string {
     this.sweep(); this.live(principal, paired);
     if (this.receipts.size >= LEARNING_CONTEXT_LIMITS.receipts || [...this.receipts.values()].filter(r => r.principal.sessionId === principal.sessionId).length >= LEARNING_CONTEXT_LIMITS.receiptsPerSession) fail(429, 'learning_context_busy');
     const key = randomBytes(32).toString('hex'), expires = Math.min(principal.expiresAt, paired.expires_at, this.now() + LEARNING_CONTEXT_LIMITS.receiptMs);
@@ -160,17 +162,18 @@ export class LearningContextService {
     const timer = setTimeout(stop, Math.max(1, expires - this.now())); timer.unref();
     this.receipts.set(key, { principal: { ...principal }, paired: { ...paired }, linkId: access.linkId, connectorId: access.connectorId, revision: access.revision,
       courseId, version, sharing: { ...sharing }, packetHash: jsonHash(packet), questionHash: hash(question), expires, uses: 0, controller, timer, lastCheck: 0,
+      ...(reviewBinding ? { reviewBindingHash: jsonHash([principal.sessionId, paired.session_id, access.linkId, reviewBinding.registrationId, reviewBinding.instance ?? null]) } : {}),
       removeListeners: () => { principal.signal.removeEventListener('abort', stop); paired.signal.removeEventListener('abort', stop); } });
     return key;
   }
   async source(principal: LearningPrincipal, raw: unknown, browserCapability: unknown, signal?: AbortSignal): Promise<Row> {
-    if (!plainFields(raw) || Object.keys(raw).some(k => !['session_id', 'link_id', 'course_id', 'version', 'question', 'share_content', 'share_progress', 'scope'].includes(k)) ||
+    if (!plainFields(raw) || Object.keys(raw).some(k => !['session_id', 'link_id', 'course_id', 'version', 'question', 'share_content', 'share_progress', 'share_review', 'scope'].includes(k)) ||
       !text(raw.session_id, 256) || !text(raw.link_id, 256) || !text(raw.course_id, 256) || !Number.isSafeInteger(raw.version) || Number(raw.version) < 0 ||
-      !text(raw.question, 4000) || typeof raw.share_content !== 'boolean' || typeof raw.share_progress !== 'boolean' ||
+      !text(raw.question, 4000) || typeof raw.share_content !== 'boolean' || typeof raw.share_progress !== 'boolean' || raw.share_review !== undefined && typeof raw.share_review !== 'boolean' ||
       raw.scope !== undefined && raw.scope !== 'course' || Buffer.byteLength(JSON.stringify(raw)) > 10_000) fail(400, 'learning_request_invalid');
-    if (!raw.share_content && !raw.share_progress) fail(400, 'learning_sharing_required');
+    if (!raw.share_content && !raw.share_progress && !raw.share_review) fail(400, 'learning_sharing_required');
     const sessionId = raw.session_id, linkId = raw.link_id, courseId = raw.course_id, version = raw.version as number, question = raw.question.trim();
-    const sharing = { content: raw.share_content, progress: raw.share_progress };
+    const sharing = { content: raw.share_content, progress: raw.share_progress, review: raw.share_review === true };
     this.admit(principal);
     let timeout: ReturnType<typeof setTimeout> | undefined;
     let expired = false;
@@ -186,33 +189,45 @@ export class LearningContextService {
       this.live(currentHuman, paired);
       const scope = hash(JSON.stringify(['learning-source/1', currentHuman.sessionId, paired.session_id, linkId]));
       const title = before.registrations[0]!.course.title;
+      let review: ReleasedQuizReview | undefined;
+      let reviewBinding: LearningReviewBinding | undefined;
+      if (sharing.review) {
+        review = await interrupted(readReleasedQuizReview(before, courseId, version, scope, { fetch: this.fetcher, now: this.clock, onBinding: value => { reviewBinding = value; } }, active), active);
+        if (review.status !== 'available') fail(409, 'learning_review_unavailable');
+      }
       let content: ScormSourceResult | undefined;
       if (sharing.content) content = await readScormSource({ sourceScope: scope, courseId, version, title, question, signal: active,
+        preferredPaths: reviewInstructionPaths(review, question),
         request: (path, limit, abort) => this.asset(path, limit, before.authorization, abort) });
       currentHuman = await interrupted(this.human(currentHuman, paired), active);
       if (!samePair(this.config.sessions.authorizeBrowser(sessionId, browserCapability), paired)) fail(403, 'learning_access_revoked');
       const after = await interrupted(this.config.connections.access(currentHuman, linkId, courseId, version, sharing, active), active);
       if (after.revision !== before.revision || after.connectorId !== before.connectorId) fail(403, 'learning_access_revoked');
+      assertLearningReviewBinding(after, reviewBinding);
       const progress = sharing.progress ? this.progress(after, scope) : [];
-      const missing = ['SCORM Cloud does not supply cross-course prerequisites or curriculum through this connector.'];
+      const map = learningMapProjection(after);
+      const missing = ['SCORM Cloud does not supply cross-course prerequisites or curriculum through this connector. Owner-supplied learning-map statements, when present, are separately attributed and do not establish learner achievement or enrollment.'];
       if (sharing.progress && after.registrations.length > progress.length) missing.push('Only the first ' + progress.length + ' current registration observations are included; further observations were omitted.');
-      if (!sharing.content) missing.push('Course content was not shared; only the explicitly authorized progress observations are supplied.');
+      if (!sharing.content) missing.push('Instructional course content was not shared; only explicitly authorized progress or released own-attempt review observations and owner learning-map metadata are supplied.');
       const material: CourseMaterial = content?.material ?? { id: hash(scope + '\n' + courseId + '\n' + version), title,
-        kind: 'SCORM Cloud registration progress observations', source_uri: 'urn:learning-progress:' + scope, version: 'course-version:' + version,
-        sections: progress.map(record => ({ id: String(record.citation_id), title: 'Registration progress observation', body: JSON.stringify(record) })), missing_context: missing };
+        kind: 'SCORM Cloud registration progress and released review observations', source_uri: 'urn:learning-progress:' + scope, version: 'course-version:' + version,
+        sections: [...progress.map(record => ({ id: String(record.citation_id), title: 'Registration progress observation', body: JSON.stringify(record) })),
+          ...(review?.records.map(record => ({ id: record.citation_id, title: 'Released own-attempt review observation', body: JSON.stringify(record) })) ?? [])], missing_context: missing };
       const packet = await interrupted(executeInterventionTask({ ...this.config.taskConfig, readIntervention: async () => material },
         { source: 'package', intervention_id: material.id, question, lens: 'analyze' }), active);
       const access = { link_id: linkId, sharing: { ...sharing }, mode: 'virtual', cache: { present: false, hit: false, bytes: 0 },
         policy: { ...after.policy }, enrollment: { verified: true, source: 'SCORM Cloud registrations', observed_at: after.registrations[0]!.observedAt },
         provisioning: 'administrator-approved account link; confirmed by the learner',
-        copied_content: sharing.content ? 'Bounded selected native files read in request memory; no ZIP export or retained course text/graph.' : 'Authorized progress observations only; no course files read.',
+        copied_content: sharing.content ? 'Bounded selected native files read in request memory; no ZIP export or retained source bodies/graph. Explicit owner-authored map labels are separate encrypted metadata. Deletion removes the map from active use; older encrypted storage versions can remain.' : 'Only authorized observations and owner-authored map metadata; no course files read.',
         client_retention: 'Selected passages and observations shared with the connected AI client follow that client\'s retention; revocation does not erase earlier client copies.' };
       packet.course_access = access;
+      packet.learning_map = map;
+      if (review) packet.quiz_review = review;
       if (sharing.progress) packet.learning_progress = { records: progress, total_matching_registrations: after.registrations.length, truncated: after.registrations.length > progress.length,
         provenance: 'Provider observations for the linked learner and exact selected course version; not independently inferred achievement.',
         score_units: 'SCORM Cloud scaled score is a percentage from 0 to 100.' };
       packet.unavailable_learning_context = { prerequisites: 'not supplied by this provider', curriculum: 'not supplied by this provider' };
-      packet.instructions = String(packet.instructions) + '\nCurrent progress facts, when shared, are only learning_progress.records. Cite their citation_id and preserve provider observation times and 0–100 percentage score units. Do not infer progress from content or invent prerequisites/curriculum.';
+      packet.instructions = String(packet.instructions) + '\nCurrent progress facts, when shared, are only learning_progress.records. Cite their citation_id and preserve provider observation times and 0–100 percentage score units. Do not infer progress from content or invent prerequisites/curriculum. learning_map is separately owner-authored course-version metadata, not provider prerequisite evidence or a judgment about this learner. Distinguish required relationships from recommendations; do not infer the learner completed any other course. When quiz_review is supplied, its records are explicitly owner-released observations of this learner’s submitted activities. You may describe those supplied question labels, learner responses and recorded results and teach from retrieved instructional sections. Cite each review record citation_id and each actual instructional source. Review records do not expose an answer key or authorize retrieving hidden questions, correctResponses, grading logic or assessment files. Only call a response incorrect when the provider recorded that result; do not regrade numeric/unknown results. A failed or submitted quiz does not establish course completion, passing, competency or eligibility. Repeated interactions remain provider order, not a reconstructed history. Owner-mapped labels/locations are attributed references; a fragment does not prove an internal slide launch target.';
       const context = packet.source_context as Row;
       context.missing_context = [...new Set([...(context.missing_context as string[]), ...missing])];
       const { evidence, ...projection } = context;
@@ -220,6 +235,8 @@ export class LearningContextService {
       const citations = (context.sections as Row[]).map(section => ({ id: section.citation_id, title: section.title, body: section.body,
         ...(section.locator ? { locator: section.locator } : {}), ...(section.source_uri ? { source_uri: section.source_uri } : {}) }));
       if (sharing.progress) citations.push(...progress.map(record => ({ id: record.citation_id, title: 'Registration progress observation', body: JSON.stringify(record) })));
+      if (review) citations.push(...review.records.map(record => ({ id: record.citation_id, title: 'Released own-attempt review observation', body: JSON.stringify(record) })));
+      if (map.status === 'owner-supplied') citations.push({ id: map.citation_id, title: 'Owner-supplied course learning map', body: JSON.stringify(map) });
       currentHuman = await interrupted(this.human(currentHuman, paired), active);
       if (!samePair(this.config.sessions.authorizeBrowser(sessionId, browserCapability), paired)) fail(403, 'learning_access_revoked');
       const final = await interrupted(this.config.connections.access(currentHuman, linkId, courseId, version, sharing, active), active);
@@ -230,9 +247,10 @@ export class LearningContextService {
       if (!samePair(this.config.sessions.authorizeBrowser(sessionId, browserCapability), paired)) fail(403, 'learning_access_revoked');
       const navigationAccess = await interrupted(this.config.connections.access(currentHuman, linkId, courseId, version, sharing, active), active);
       if (navigationAccess.revision !== final.revision || navigationAccess.connectorId !== final.connectorId) fail(403, 'learning_access_revoked');
+      assertLearningReviewBinding(navigationAccess, reviewBinding);
       this.live(currentHuman, paired); if (active.aborted) fail(403, 'learning_access_revoked');
       if (Buffer.byteLength(JSON.stringify(packet)) > LEARNING_CONTEXT_LIMITS.contextBytes) fail(413, 'learning_context_too_large');
-      const authorizationTicket = this.remember(currentHuman, paired, final, courseId, version, sharing, packet, question);
+      const authorizationTicket = this.remember(currentHuman, paired, final, courseId, version, sharing, packet, question, reviewBinding);
       return { source: { provider: 'scorm-cloud', course_id: courseId, title, version, source_version: material.version,
         ...(content ? { projection_sha256: content.projectionSha256, fingerprint_scope: 'selected-instructional-projection', retrieval: content.retrieval } : {}) },
         access, interventionContext: packet, citations, missing_context: context.missing_context, authorization_ticket: authorizationTicket, navigation };
@@ -291,6 +309,7 @@ export class LearningContextService {
             const access = await this.config.connections.access(human, receipt.linkId, receipt.courseId, receipt.version, receipt.sharing, receipt.controller.signal);
             this.receiptLive(key, receipt);
             if (access.revision !== receipt.revision || access.connectorId !== receipt.connectorId) fail(403, 'learning_access_revoked');
+            if (receipt.reviewBindingHash && !access.registrations.some(registration => jsonHash([receipt.principal.sessionId, receipt.paired.session_id, receipt.linkId, registration.id, registration.instance ?? null]) === receipt.reviewBindingHash)) fail(403, 'learning_access_revoked');
             receipt.lastCheck = this.now();
           } finally { this.active--; }
         })();

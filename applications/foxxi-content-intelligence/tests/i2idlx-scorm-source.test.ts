@@ -30,6 +30,19 @@ function fixture(values: Page[] = pages, extras: Record<string, Buffer> = {}) {
 }
 
 describe('SCORM Cloud native source reader', () => {
+  it('honors ordered review locations when later lessons compete for the bounded file budget', async () => {
+    const many = Array.from({ length: 24 }, (_, index) => ({ path: 'page-' + index + '.html', title: 'Section ' + index, body: '<p>Instructional section ' + index + '</p>' }));
+    const f = fixture(many), preferred = Array.from({ length: 16 }, (_, index) => 'page-' + (23 - index) + '.html');
+    const result = await readScormSource(f.input('Help me review.', { preferredPaths: preferred }));
+    expect(result.retrieval.fetched_files.map(value => value.path)).toEqual(['imsmanifest.xml', ...preferred.slice(0, SCORM_SOURCE_LIMITS.files - 1)]);
+    expect(result.retrieval.fetched_files.some(value => value.path === 'page-0.html')).toBe(false);
+    expect(result.material.sections.some(value => value.locator === 'page-23.html')).toBe(true);
+  });
+  it('never turns a preferred reference into permission to read excluded assessment material', async () => {
+    const f = fixture(), result = await readScormSource(f.input('Help me review.', { preferredPaths: ['quiz/lesson-c.html'] }));
+    expect(result.retrieval.fetched_files.some(value => value.path.startsWith('quiz/'))).toBe(false);
+    expect(JSON.stringify(result)).not.toContain('SECRET-ANSWER');
+  });
   it('reads only the versioned manifest and question-matched lesson, without package or media export', async () => {
     const f = fixture(pages, { 'movie.mp4': Buffer.alloc(300_000) });
     const result = await readScormSource(f.input());
