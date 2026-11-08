@@ -1,5 +1,27 @@
 # Changelog
 
+## 2026-11-07 — Open registered courses from Ask and identify supported lesson destinations
+
+Ask adds deliberate course-launch controls tied to the signed-in learner's
+current account link and SCORM Cloud registration. Fresh provider links stay
+outside model context and saved conversations. Course launches use normal
+tracking; enrollment and authority are rechecked around link creation, with no
+new registration or preview fallback.
+
+Source references identify the published file. Optional lesson destinations
+require explicit connection-owner policy and a provider-verified launchable
+activity mapping. A file path is not treated as a player URL or slide bookmark.
+Cloud's registration migration and sequencing remain provider constraints;
+an exact historical version or internal slide is not promised.
+
+Validation: 206 focused backend tests passed with the normal compiler and
+run-integrity gates; 22 browser-adapter checks and targeted lint passed. Actual
+rendered synthetic controls verified course launch without AI or content
+sharing, blocked-popup refusal, cancellation, owner-enabled lesson links and
+expired-reference recovery. The native app rebuild reused proven unchanged
+graph artifacts. These fixtures do not establish a live student's enrollment
+or a live Cloud lesson launch.
+
 ## 2026-11-07 — Ask connects verified learners to their own SCORM Cloud registrations
 
 `933da17c` adds a human learning-account connection independent of the AI driving

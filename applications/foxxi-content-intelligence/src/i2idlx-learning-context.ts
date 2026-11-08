@@ -5,6 +5,7 @@ import { createHash, randomBytes } from 'node:crypto';
 import { LearningAuthError, type LearningAccountAuth, type LearningPrincipal } from './i2idlx-learning-auth.js';
 import { LearningConnectionsError, type LearningConnectionsStore, type LearningAccess } from './i2idlx-learning-connections.js';
 import { LearningProviderError } from './i2idlx-learning-provider.js';
+import { LearningLaunchError, type LearningLaunchService } from './i2idlx-learning-launch.js';
 import type { AgentBrowserIdentity, AgentSessionStore } from './i2idlx-agent-sessions.js';
 import type { ClientTaskConfig } from './i2idlx-client-tasks.js';
 import { executeInterventionTask } from './i2idlx-intervention-tasks.js';
@@ -16,6 +17,7 @@ type Message = { role: string; content: string };
 export interface LearningContextConfig {
   auth: Pick<LearningAccountAuth, 'revalidate'>;
   connections: LearningConnectionsStore;
+  navigation?: Pick<LearningLaunchService, 'prepareNavigation'>;
   sessions: Pick<AgentSessionStore, 'authorizeBrowser'>;
   taskConfig: ClientTaskConfig; fetch?: typeof fetch; now?: () => number;
 }
@@ -111,7 +113,7 @@ export class LearningContextService {
   }
   private normalize(error: unknown): never {
     if (error instanceof LearningContextError) throw error;
-    if (error instanceof LearningAuthError || error instanceof LearningConnectionsError || error instanceof LearningProviderError) {
+    if (error instanceof LearningAuthError || error instanceof LearningConnectionsError || error instanceof LearningProviderError || error instanceof LearningLaunchError) {
       if (/^learning_[a-z_]{1,80}$/.test(error.code)) fail(error.status, error.code);
     }
     if (error instanceof ScormSourceError) fail(error.status, 'learning_content_unavailable');
@@ -222,12 +224,18 @@ export class LearningContextService {
       if (!samePair(this.config.sessions.authorizeBrowser(sessionId, browserCapability), paired)) fail(403, 'learning_access_revoked');
       const final = await interrupted(this.config.connections.access(currentHuman, linkId, courseId, version, sharing, active), active);
       if (final.revision !== after.revision || final.connectorId !== after.connectorId) fail(403, 'learning_access_revoked');
+      const navigation = this.config.navigation ? await interrupted(this.config.navigation.prepareNavigation(currentHuman, final, courseId, version, citations, active), active)
+        : { course: { kind: 'course' }, locations: [] };
+      currentHuman = await interrupted(this.human(currentHuman, paired), active);
+      if (!samePair(this.config.sessions.authorizeBrowser(sessionId, browserCapability), paired)) fail(403, 'learning_access_revoked');
+      const navigationAccess = await interrupted(this.config.connections.access(currentHuman, linkId, courseId, version, sharing, active), active);
+      if (navigationAccess.revision !== final.revision || navigationAccess.connectorId !== final.connectorId) fail(403, 'learning_access_revoked');
       this.live(currentHuman, paired); if (active.aborted) fail(403, 'learning_access_revoked');
       if (Buffer.byteLength(JSON.stringify(packet)) > LEARNING_CONTEXT_LIMITS.contextBytes) fail(413, 'learning_context_too_large');
       const authorizationTicket = this.remember(currentHuman, paired, final, courseId, version, sharing, packet, question);
       return { source: { provider: 'scorm-cloud', course_id: courseId, title, version, source_version: material.version,
         ...(content ? { projection_sha256: content.projectionSha256, fingerprint_scope: 'selected-instructional-projection', retrieval: content.retrieval } : {}) },
-        access, interventionContext: packet, citations, missing_context: context.missing_context, authorization_ticket: authorizationTicket };
+        access, interventionContext: packet, citations, missing_context: context.missing_context, authorization_ticket: authorizationTicket, navigation };
     } catch (error) {
       if (principal.signal.aborted) fail(403, 'learning_access_revoked');
       if (signal?.aborted) fail(409, 'learning_request_cancelled');

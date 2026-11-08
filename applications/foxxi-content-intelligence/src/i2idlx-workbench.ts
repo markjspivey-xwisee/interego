@@ -382,8 +382,11 @@ export function attachWorkbenchRoutes(app: Express, config: WorkbenchConfig): vo
       learning: {
         href: base + '/i2idlx/api/learning', method: 'POST', provider: 'scorm-cloud',
         session: base + '/i2idlx/learning/session', authentication: 'Independent Interego human OAuth session and same-origin CSRF. The paired AI is not the learner identity.',
-        operations: ['owned-connectors', 'create-connector', 'my-links', 'discover', 'request-link', 'pending-links', 'approve-link', 'confirm-link', 'revoke-link', 'revoke-connector', 'courses', 'progress', 'prepare-lti', 'install-lti', 'remove-lti'],
+        operations: ['owned-connectors', 'create-connector', 'my-links', 'discover', 'request-link', 'pending-links', 'approve-link', 'confirm-link', 'revoke-link', 'revoke-connector', 'courses', 'progress', 'set-targeted-launch-policy', 'prepare-lti', 'install-lti', 'remove-lti'],
         source: { href: base + '/i2idlx/api/learning/context', method: 'POST', authentication: 'Human session plus explicitly paired browser capability; unavailable to the AI driver.' },
+        launch: { href: base + '/i2idlx/api/learning/launch', method: 'POST', authentication: 'Human session and same-origin CSRF; independent of AI pairing.',
+          scope: 'Existing learner registration only. Explicit click with normal provider tracking. Short-lived capability is excluded from model context and persisted state.',
+          location: 'Course, or owner-enabled verified activity in a multi-SCO course with stable registration version policy. No inferred slide or paragraph anchors.' },
         enrollment: 'Administrator-approved canonical provider learner link, activated by the learner. Fresh provider enrollment is required before every private course read and model dispatch/delivery.',
         lti: 'Verified LTI launch discovers an institution connection. Platform subject is private evidence; it is not guessed to be a Cloud learner ID and grants no enrollment or content rights.',
         progress: 'Own SCORM Cloud registration observations only; normalized completion, success, score percent and time where available. Prerequisites and curriculum are unavailable without an authoritative provider.',

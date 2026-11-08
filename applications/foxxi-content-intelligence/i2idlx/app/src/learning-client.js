@@ -48,9 +48,10 @@ export function learningLti(value) {
 
 export function learningConnector(value) {
   if (!object(value) || !bounded(value.label, 200) || !['active', 'revoked'].includes(value.status) ||
-      !object(value.policy) || typeof value.policy.allowAiContent !== 'boolean' || typeof value.policy.allowAiProgress !== 'boolean') invalid();
+      !object(value.policy) || typeof value.policy.allowAiContent !== 'boolean' || typeof value.policy.allowAiProgress !== 'boolean' ||
+      value.policy.allowTargetedLaunch !== undefined && typeof value.policy.allowTargetedLaunch !== 'boolean') invalid();
   return { id: id(value.id), label: value.label, status: value.status, policy: {
-    allowAiContent: value.policy.allowAiContent, allowAiProgress: value.policy.allowAiProgress },
+    allowAiContent: value.policy.allowAiContent, allowAiProgress: value.policy.allowAiProgress, allowTargetedLaunch: value.policy.allowTargetedLaunch === true },
     ...(date(value.created_at) ? { created_at: value.created_at } : {}),
     ...(bounded(value.join_code, 512) ? { join_code: value.join_code } : {}), lti: learningLti(value.lti) };
 }
@@ -85,7 +86,11 @@ export function learningResponse(operation, value, expected = {}) {
     return { link };
   }
   if (operation === 'create-connector') return { connector: learningConnector(value.connector) };
-  if (operation === 'revoke-connector') return { connector: learningConnector(value.connector) };
+  if (operation === 'revoke-connector' || operation === 'set-targeted-launch-policy') {
+    const connector = learningConnector(value.connector);
+    if (expected.connector_id && connector.id !== expected.connector_id || operation === 'set-targeted-launch-policy' && connector.policy.allowTargetedLaunch !== expected.allowTargetedLaunch) invalid();
+    return { connector };
+  }
   if (['prepare-lti', 'install-lti', 'remove-lti'].includes(operation)) return { lti: learningLti(value.lti) };
   if (operation === 'courses') {
     if (value.link_id !== expected.link_id || value.prerequisites?.status !== 'unavailable' || value.curriculum?.status !== 'unavailable') invalid();
@@ -114,17 +119,19 @@ const ARGUMENTS = {
   'owned-connectors': [], 'my-links': [], discover: ['join_code'], 'request-link': ['join_code'],
   'pending-links': ['connector_id'], 'approve-link': ['link_id', 'registration_id', 'confirmed'], 'confirm-link': ['link_id'], 'revoke-link': ['link_id'],
   'create-connector': ['label', 'credentials', 'policy', 'intent', 'request_id'], 'revoke-connector': ['connector_id'],
+  'set-targeted-launch-policy': ['connector_id', 'allowTargetedLaunch', 'confirmed'],
   courses: ['link_id'], progress: ['link_id', 'course_id', 'version'], 'prepare-lti': ['connector_id'], 'install-lti': ['connector_id'], 'remove-lti': ['connector_id'],
 };
 function learningArguments(operation, args) {
   if (!Object.hasOwn(ARGUMENTS, operation) || !object(args) || Object.keys(args).some(key => !ARGUMENTS[operation].includes(key))) throw fail('Unsupported learning operation.', 'learning_invalid_request');
   for (const key of ARGUMENTS[operation]) {
     if (operation === 'progress' && ['course_id', 'version'].includes(key) && args[key] === undefined) continue;
-    if (['credentials', 'policy', 'confirmed', 'version'].includes(key)) continue;
+    if (['credentials', 'policy', 'confirmed', 'version', 'allowTargetedLaunch'].includes(key)) continue;
     if (!bounded(args[key], key === 'label' ? 200 : 512)) throw fail('The learning request is incomplete.', 'learning_invalid_request');
   }
   if (operation === 'progress' && (args.course_id === undefined) !== (args.version === undefined) || args.version !== undefined && !validVersion(args.version)) throw fail('Select one exact enrolled course version.', 'learning_invalid_request');
   if (operation === 'approve-link' && args.confirmed !== true) throw fail('Confirm the registration against institutional records first.', 'learning_confirmation_required');
+  if (operation === 'set-targeted-launch-policy' && (typeof args.allowTargetedLaunch !== 'boolean' || args.confirmed !== true)) throw fail('Explicitly confirm this lesson-launch permission change.', 'learning_confirmation_required');
   if (operation === 'create-connector' && (!object(args.credentials) || Object.keys(args.credentials).some(key => !['app_id', 'secret'].includes(key)) ||
       !bounded(args.credentials.app_id) || !bounded(args.credentials.secret, 8192) || !object(args.policy) ||
       Object.keys(args.policy).some(key => !['allowAiContent', 'allowAiProgress'].includes(key)) ||
@@ -164,7 +171,7 @@ export function createLearningClient(options = {}) {
       return value;
     } finally { requests.delete(controller); signal?.removeEventListener('abort', stop); }
   }
-  return {
+  const client = {
     snapshot: () => session,
     subscribe(listener) { listeners.add(listener); return () => listeners.delete(listener); },
     async refresh(signal) {
@@ -184,6 +191,20 @@ export function createLearningClient(options = {}) {
       return learningResponse(operation, await transport('/i2idlx/api/learning', { method: 'POST',
         headers: { Accept: 'application/json', 'Content-Type': 'application/json', 'X-I2IDLX-Learning-CSRF': csrf }, body: JSON.stringify(body) }, signal, run), args);
     },
+    async launch(args, signal) {
+      if (!object(args) || Object.keys(args).some(key => !['link_id', 'course_id', 'version', 'location_ref'].includes(key)) ||
+          !bounded(args.link_id) || !bounded(args.course_id) || !Number.isSafeInteger(args.version) || args.version < 0 ||
+          args.location_ref !== undefined && (typeof args.location_ref !== 'string' || !/^[a-f0-9]{64}$/.test(args.location_ref))) throw fail('Select one verified enrolled course to open.', 'learning_invalid_request');
+      const identity = session?.authenticated ? session.account.id : null;
+      if (!identity) throw fail('Sign in to your learning account first.', 'learning_sign_in_required');
+      // A deliberate launch gets current human authorization and CSRF, independently of AI pairing.
+      const current = await client.refresh(signal);
+      if (!current.authenticated || current.account.id !== identity) throw fail('Your learning account changed. Select your enrolled course again.', 'learning_sign_in_required');
+      const run = generation;
+      return learningLaunch(await transport('/i2idlx/api/learning/launch', { method: 'POST',
+        headers: { Accept: 'application/json', 'Content-Type': 'application/json', 'X-I2IDLX-Learning-CSRF': csrf },
+        body: JSON.stringify(args) }, signal, run), { targeted: args.location_ref !== undefined, now: now() });
+    },
     async signOut(signal) {
       const token = csrf; clear(); refreshing = false;
       if (token) await transport('/i2idlx/learning/sign-out', { method: 'POST', headers: { Accept: 'application/json', 'X-I2IDLX-Learning-CSRF': token } }, signal, generation);
@@ -191,6 +212,82 @@ export function createLearningClient(options = {}) {
     clear,
     dispose() { clear(); listeners.clear(); },
   };
+  return client;
+}
+
+export function learningLaunchUrl(raw) {
+  let url;
+  try { url = new URL(raw); } catch { invalid(); }
+  const prefix = '/api/cloud/registration/launch/';
+  if (!bounded(raw, 8192) || url.protocol !== 'https:' || url.hostname !== 'cloud.scorm.com' || url.username || url.password ||
+      url.port && url.port !== '443' || url.hash || !url.pathname.startsWith(prefix) || url.pathname.length <= prefix.length) invalid();
+  return url.href;
+}
+
+export function learningLaunch(value, { targeted = false, now = Date.now() } = {}) {
+  if (!object(value) || !date(value.expires_at) || Date.parse(value.expires_at) <= now || Date.parse(value.expires_at) > now + 301_000 ||
+      value.tracking !== true || !bounded(value.notice, 2000) || !object(value.destination) ||
+      value.destination.kind !== (targeted ? 'activity' : 'course') || !bounded(value.destination.title, 400)) invalid();
+  const destination = { kind: value.destination.kind, title: value.destination.title };
+  if (value.destination.source_file !== undefined) destination.source_file = sourceFile(value.destination.source_file);
+  return { launch_url: learningLaunchUrl(value.launch_url), expires_at: value.expires_at, destination, tracking: true, notice: value.notice };
+}
+
+// Only the pending blank window is retained. Successful course navigation is handed to
+// the learner; later local revocation cannot revoke Cloud's already opened session.
+export function createLearningLauncher(client, { open = (...args) => globalThis.window.open(...args) } = {}) {
+  let pending = null;
+  const close = opened => { try { opened?.close(); } catch {} };
+  const cancel = () => { const old = pending; pending = null; if (old) { old.controller.abort(); close(old.opened); } };
+  return {
+    cancel,
+    async open(args, { signal, current = () => true } = {}) {
+      cancel();
+      if (signal?.aborted || !current()) throw fail('Cancelled.', 'cancelled');
+      let opened;
+      try { opened = open('about:blank', '_blank'); } catch { /* A browser may refuse a new window. */ }
+      if (!opened) throw fail('Allow a new course window, then choose Open course again.', 'learning_popup_blocked');
+      const controller = new AbortController(), task = { opened, controller }; pending = task;
+      const stop = () => { if (pending === task) cancel(); };
+      signal?.addEventListener('abort', stop, { once: true });
+      try {
+        opened.opener = null;
+        const referrer = opened.document.createElement('meta');
+        referrer.name = 'referrer'; referrer.content = 'no-referrer'; opened.document.head.appendChild(referrer);
+        if (signal?.aborted) stop();
+        const value = await client.launch(args, controller.signal);
+        if (pending !== task || controller.signal.aborted || !current()) throw fail('Cancelled.', 'cancelled');
+        if (opened.closed) throw fail('The course window was closed. Choose Open course to try again.', 'learning_popup_closed');
+        opened.location.replace(value.launch_url);
+        pending = null;
+        // Never return the capability URL to React state, conversation history or model context.
+        const { expires_at, destination, tracking, notice } = value;
+        return { expires_at, destination, tracking, notice };
+      } catch (error) {
+        if (pending === task) { pending = null; controller.abort(); close(opened); }
+        throw error;
+      } finally { signal?.removeEventListener('abort', stop); }
+    },
+  };
+}
+
+function sourceFile(value) {
+  if (!bounded(value, 1024) || /[\\%?#:]/.test(value) || value.startsWith('/') || value.split('/').some(part => !part || part === '.' || part === '..')) invalid();
+  return value;
+}
+
+export function learningNavigation(value, citations) {
+  if (value === undefined) return undefined;
+  if (!object(value) || !object(value.course) || value.course.kind !== 'course') invalid();
+  const seen = new Set(), cited = new Set(citations.map(citation => citation.id));
+  return { course: { kind: 'course' }, locations: list(value.locations, 100).map(location => {
+    if (!object(location) || !bounded(location.citation_id, 200) || !cited.has(location.citation_id) || seen.has(location.citation_id) ||
+        location.precision !== 'published-file' || !['course', 'activity'].includes(location.target_kind) ||
+        location.target_kind === 'activity' && (typeof location.location_ref !== 'string' || !/^[a-f0-9]{64}$/.test(location.location_ref)) || location.target_kind === 'course' && location.location_ref !== undefined) invalid();
+    seen.add(location.citation_id);
+    return { citation_id: location.citation_id, source_file: sourceFile(location.source_file), precision: 'published-file', target_kind: location.target_kind,
+      ...(location.target_kind === 'activity' ? { location_ref: location.location_ref } : {}), ...(bounded(location.title, 400) ? { title: location.title } : {}) };
+  }) };
 }
 
 export function selectedLearningPacket(value, { link_id, course, share_content, share_progress }) {
@@ -200,9 +297,11 @@ export function selectedLearningPacket(value, { link_id, course, share_content, 
       !object(value.interventionContext) || !object(value.interventionContext.source_context) || !Array.isArray(value.citations) || value.citations.length > 100 || !Array.isArray(value.missing_context) ||
       typeof value.authorization_ticket !== 'string' || !/^[a-f0-9]{64}$/.test(value.authorization_ticket)) invalid();
   if (!share_content && !share_progress || value.authorization_ticket && JSON.stringify(value.interventionContext).includes(value.authorization_ticket)) invalid();
+  const citations = value.citations.map(citation => { if (!object(citation) || !bounded(citation.id, 200)) invalid(); return { id: citation.id, ...(bounded(citation.title, 400) ? { title: citation.title } : {}) }; });
+  const navigation = learningNavigation(value.navigation, citations);
   return { source: { provider: value.source.provider, course_id: course.id, version: course.version, source_version: value.source.source_version },
     access: { link_id, sharing: { content: share_content, progress: share_progress } }, interventionContext: value.interventionContext,
-    citations: value.citations.map(citation => { if (!object(citation) || !bounded(citation.id, 200)) invalid(); return { id: citation.id, ...(bounded(citation.title, 400) ? { title: citation.title } : {}) }; }),
+    citations, ...(navigation ? { navigation } : {}),
     missing_context: value.missing_context.filter(item => bounded(item, 2000)).slice(0, 30),
     ...(value.authorization_ticket ? { authorization_ticket: value.authorization_ticket } : {}) };
 }

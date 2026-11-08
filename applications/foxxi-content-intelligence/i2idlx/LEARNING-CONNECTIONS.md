@@ -26,6 +26,11 @@ cookie is not shared with separately hosted static copies of the workbench.
 5. The student chooses **Show my enrolled courses**, selects a course, and can
    inspect their own progress without an AI. To ask a private question, pair an
    AI and explicitly choose which context may be shared.
+6. **Open course** launches an existing registration after checking the current
+   learning account and enrollment again. Source references also identify the
+   published file. **Open lesson in course** appears only where the provider
+   verifies a supported activity destination and its owner has enabled lesson
+   links. A lesson destination does not establish an exact slide or paragraph.
 
 Course, learner, account, version, institution, sharing or AI-recipient changes
 clear the private conversation. Failure to confirm access leaves the selected
@@ -64,6 +69,46 @@ retention governs earlier copies. Ending a learner link or removing a connector
 revokes future access; it cannot erase an already delivered client transcript.
 Connector removal first confirms cleanup of its generated LTI resources. Failed
 remote cleanup keeps the credential for an explicit retry.
+
+## Course and source-location launch links
+
+Launches are deliberate learner actions, separate from sharing context with an
+AI. They work without AI pairing or permission to share course passages or
+progress with AI. The server uses the current linked learner's existing Cloud
+registration; it does not create a registration or substitute a course preview.
+Ambiguous registrations require a known approved registration match or a clear
+choice-required response rather than selecting an arbitrary attempt.
+
+The browser sends course/version and an optional opaque location reference,
+never a learner ID, registration ID, launch URL or SCORM activity identifier.
+The server rechecks human identity, connector/link revisions and current
+registration before and after obtaining a short-lived provider launch link.
+The link is returned only for immediate navigation from a user click, outside
+model context, transcripts and persisted connector state. A blocked popup does
+not cause the app to obtain a launch link in the background.
+
+Normal course launches use the provider's normal tracking and course order;
+they may record learner activity. The launch-link expiry governs use of the
+link, not the lifetime of the opened content session. Ending an account link
+blocks future launch requests; already issued provider links and content
+sessions remain subject to SCORM Cloud's authorization and expiry rules.
+
+Optional lesson links require the connection owner's explicit
+`allowTargetedLaunch` policy, off when absent. Cloud's `startSco` is a manifest
+item identifier, not an asset URL, resource identifier or slide bookmark. Only
+an authoritative, unambiguous mapping of an actually cited source file to a
+launchable activity can produce a lesson reference. Targeting requires multiple
+verified SCOs and the selected registration's effective
+`WhenToRestartRegistration=NEVER` setting. These links can override normal course
+order; owner policy and provider sequencing rules still apply.
+File locators and parser fragments are displayed as reference information and
+are never converted into guessed player URLs or slide anchors. Where verified
+targeting is unavailable, **Open course** remains the supported destination.
+
+Cloud registration launches do not accept a fixed course-version selector.
+Owner-configured registration migration can change the played version at
+launch. Citation versions remain source evidence, not a promise that Cloud will
+play an immutable historical version.
 
 ## What SCORM Cloud and LTI supply
 

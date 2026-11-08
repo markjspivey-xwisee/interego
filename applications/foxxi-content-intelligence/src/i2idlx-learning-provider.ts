@@ -1,4 +1,4 @@
-/** Read-only, per-connector SCORM Cloud registration access. Learner identifiers
+/** Per-connector SCORM Cloud registration access. Learner identifiers
  * come from an independently verified server-held account link, never LTI sub
  * parsing, an email match, or a student-selected request field.
  * Protocol: https://cloud.scorm.com/docs/swagger.json */
@@ -17,6 +17,15 @@ export interface LearningRegistration {
   };
   observedAt: string;
 }
+/** Published provider activity metadata, not a runtime bookmark or source URL. */
+export interface LearningCourseActivity {
+  itemIdentifier?: string; resourceIdentifier?: string; href?: string; title?: string;
+  activityType: 'UNKNOWN' | 'AGGREGATION' | 'SCO' | 'ASSET' | 'OBJECTIVE';
+  children: LearningCourseActivity[];
+}
+export interface LearningCourseStructure {
+  id: string; title: string; version: number; rootActivity?: LearningCourseActivity;
+}
 export class LearningProviderError extends Error {
   constructor(message: string, readonly status = 502, readonly code = 'learning_provider_unavailable') { super(message); }
 }
@@ -32,7 +41,7 @@ export const LEARNING_PROVIDER_LIMITS = Object.freeze({
 });
 export const SCORM_CLOUD_LEARNING_CAPABILITIES = Object.freeze({
   enrollments: true, progress: true, prerequisites: false, curriculum: false,
-  access: 'read-only' as const,
+  registrationLaunch: true, access: 'registration-read-and-explicit-launch' as const,
 });
 type Row = Record<string, unknown>;
 const CLOUD = 'https://cloud.scorm.com/api/v2';
@@ -75,6 +84,25 @@ function normalize(raw: unknown, observedAt: string): LearningRegistration {
     course: { id: courseId, title: raw.course.title === undefined || raw.course.title === null ? courseId : text(raw.course.title, 400), version: version(raw.course.version) },
     progress, observedAt };
 }
+function course(raw: unknown, id: string, expectedVersion?: number): LearningCourseStructure {
+  if (!object(raw) || raw.id !== id) fail('SCORM Cloud returned a different course.');
+  const result: LearningCourseStructure = { id, title: raw.title === undefined || raw.title === null ? id : text(raw.title, 400), version: version(raw.version) };
+  if (expectedVersion !== undefined && result.version !== expectedVersion) fail('SCORM Cloud returned a different course version.');
+  let count = 0;
+  function activity(value: unknown, depth: number): LearningCourseActivity {
+    if (!object(value) || ++count > 2000 || depth > 32) fail('SCORM Cloud returned unsupported course activity metadata.');
+    const type = value.activityType ?? 'UNKNOWN';
+    if (!['UNKNOWN', 'AGGREGATION', 'SCO', 'ASSET', 'OBJECTIVE'].includes(type as string) || value.children !== undefined && !Array.isArray(value.children)) fail('SCORM Cloud returned unsupported course activity metadata.');
+    return { activityType: type as LearningCourseActivity['activityType'],
+      ...(value.itemIdentifier === undefined || value.itemIdentifier === null || value.itemIdentifier === '' ? {} : { itemIdentifier: text(value.itemIdentifier, 256) }),
+      ...(value.resourceIdentifier === undefined || value.resourceIdentifier === null || value.resourceIdentifier === '' ? {} : { resourceIdentifier: text(value.resourceIdentifier, 256) }),
+      ...(value.href === undefined || value.href === null || value.href === '' ? {} : { href: text(value.href, 2048) }),
+      ...(value.title === undefined || value.title === null || value.title === '' ? {} : { title: text(value.title, 400) }),
+      children: (value.children as unknown[] | undefined ?? []).map(child => activity(child, depth + 1)) };
+  }
+  if (raw.rootActivity !== undefined && raw.rootActivity !== null) result.rootActivity = activity(raw.rootActivity, 0);
+  return result;
+}
 function checkAbort(signal: AbortSignal, caller?: AbortSignal): void {
   if (signal.aborted) fail(caller?.aborted ? 'The learning request was cancelled.' : 'SCORM Cloud did not answer before the request expired.',
     caller?.aborted ? 499 : 504, caller?.aborted ? 'learning_request_cancelled' : 'learning_provider_timeout');
@@ -100,11 +128,12 @@ export class ScormCloudLearningProvider {
       return fail('SCORM Cloud could not verify the requested learning records.', 502, 'learning_provider_unavailable');
     }
   }
-  private async read(path: string, signal: AbortSignal, budget: { bytes: number }): Promise<unknown> {
+  private async read(path: string, signal: AbortSignal, budget: { bytes: number }, body?: Row): Promise<unknown> {
     checkAbort(signal);
     const target = CLOUD + path;
-    const response = await this.fetcher(target, { method: 'GET', redirect: 'error', signal,
-      headers: { Authorization: this.#authorization, Accept: 'application/json' } });
+    const response = await this.fetcher(target, { method: body ? 'POST' : 'GET', redirect: 'error', signal,
+      headers: { Authorization: this.#authorization, Accept: 'application/json', 'Cache-Control': 'no-store', ...(body ? { 'Content-Type': 'application/json' } : {}) },
+      ...(body ? { body: JSON.stringify(body) } : {}) });
     if (signal.aborted) await response.body?.cancel().catch(() => undefined);
     checkAbort(signal);
     if (response.redirected || response.url && response.url !== target) { await response.body?.cancel(); fail('SCORM Cloud returned an unexpected response location.'); }
@@ -205,6 +234,36 @@ export class ScormCloudLearningProvider {
         current.push(registration);
       }
       return current;
+    });
+  }
+  async getCourseStructure(courseId: string, courseVersion: number, signal?: AbortSignal): Promise<LearningCourseStructure> {
+    courseId = text(courseId, 256, true); courseVersion = version(courseVersion, true);
+    return this.operation(signal, async active => course(await this.read('/courses/' + encodeURIComponent(courseId) + '/versions/' + courseVersion, active, { bytes: 0 }), courseId, courseVersion));
+  }
+  async permitsStableRegistrationVersion(registrationId: string, signal?: AbortSignal): Promise<boolean> {
+    registrationId = text(registrationId, 256, true);
+    return this.operation(signal, async active => {
+      // This is the bottom-most effective configuration actually used at launch,
+      // including inherited values; course-level defaults alone are insufficient.
+      const raw = await this.read('/registrations/' + encodeURIComponent(registrationId) + '/configuration', active, { bytes: 0 });
+      if (!object(raw) || !Array.isArray(raw.settingItems) || raw.settingItems.length > 2000) fail('SCORM Cloud returned unsupported launch configuration.');
+      const values = raw.settingItems.filter(value => object(value) && value.id === 'WhenToRestartRegistration');
+      return values.length === 1 && object(values[0]) && values[0].effectiveValue === 'NEVER';
+    });
+  }
+  /** Existing registration only. The caller must independently authorize this human. */
+  async createLaunchLink(registrationId: string, options: { redirectOnExitUrl: string; expiry: number; startSco?: string }, signal?: AbortSignal): Promise<string> {
+    registrationId = text(registrationId, 256, true);
+    if (options.expiry !== 120) fail('A short-lived launch request is required.', 400, 'learning_request_invalid');
+    let redirect: URL;
+    try { redirect = new URL(options.redirectOnExitUrl); } catch { return fail('A fixed secure return address is required.', 400, 'learning_request_invalid'); }
+    if (redirect.protocol !== 'https:' || redirect.username || redirect.password) fail('A fixed secure return address is required.', 400, 'learning_request_invalid');
+    const body: Row = { redirectOnExitUrl: redirect.href, expiry: 120, tracking: true };
+    if (options.startSco !== undefined) body.startSco = text(options.startSco, 256, true);
+    return this.operation(signal, async active => {
+      const raw = await this.read('/registrations/' + encodeURIComponent(registrationId) + '/launchLink', active, { bytes: 0 }, body);
+      if (!object(raw)) return fail('SCORM Cloud returned an unsupported launch response.');
+      return text(raw.launchLink, 8192);
     });
   }
 }

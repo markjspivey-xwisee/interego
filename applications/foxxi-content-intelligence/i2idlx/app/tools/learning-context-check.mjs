@@ -1,6 +1,6 @@
 // Meaningful deterministic checks: private transport, identity changes, DTO scope and model boundary.
 import assert from 'node:assert/strict';
-import { createLearningClient, learningSession, learningSignInUrl, learningResponse, selectedLearningPacket } from '../src/learning-client.js';
+import { createLearningClient, createLearningLauncher, learningSession, learningSignInUrl, learningResponse, learningLaunch, learningLaunchUrl, learningNavigation, selectedLearningPacket } from '../src/learning-client.js';
 import { createAgentSessionClient } from '../src/agent-session.js';
 
 const ORIGIN = 'https://workbench.example', EXPIRES = '2099-01-01T00:00:00.000Z';
@@ -148,6 +148,124 @@ await test('paired learning source uses the human cookie and CSRF while model ti
   await assert.rejects(client.requestLearningContext({ link_id: 'link' }), { code: 'learning_sign_in_required' });
   assert.equal(calls.filter(call => call.url === '/i2idlx/api/learning/context').length, before);
   await client.disconnect();
+});
+
+const launchNow = Date.parse('2026-11-08T12:00:00.000Z');
+const launchResult = (targeted = false) => ({ launch_url: 'https://cloud.scorm.com/api/cloud/registration/launch/12345678-abcd-1234-abcd-123456789abc',
+  expires_at: new Date(launchNow + 120_000).toISOString(), destination: { kind: targeted ? 'activity' : 'course', title: 'Safety course' }, tracking: true,
+  notice: 'SCORM Cloud tracks this launch normally and controls course resume and version changes.' });
+const launchArgs = { link_id: 'own-link', course_id: 'own-course', version: 3 };
+function launchFixture(handler = () => response(launchResult())) {
+  const calls = []; let who = 'alice', csrf = 0;
+  const client = createLearningClient({ origin: () => ORIGIN, now: () => launchNow, fetch: async (path, init) => {
+    calls.push({ path, init, body: init.body ? JSON.parse(init.body) : null });
+    return path === '/i2idlx/learning/session' ? response({ ...session(who), csrf: 'fresh-' + ++csrf }) : handler(calls.at(-1));
+  } });
+  return { client, calls, changeAccount: id => { who = id; } };
+}
+function popupFixture(client, { blocked = false } = {}) {
+  const events = [], opened = { closed: false, opener: 'parent', close() { events.push('close'); this.closed = true; },
+    document: { createElement: name => ({ tag: name }), head: { appendChild(element) { events.push({ referrer: element.content }); assert.equal(element.tag, 'meta'); assert.equal(element.name, 'referrer'); } } },
+    location: { replace(value) { events.push({ navigate: value }); } } };
+  const launcher = createLearningLauncher(client, { open: (url, target) => { events.push({ open: url, target }); return blocked ? null : opened; } });
+  return { launcher, events, opened };
+}
+
+await test('course launch fetches fresh human CSRF and uses a private same-origin endpoint without AI authority', async () => {
+  const { client, calls } = launchFixture(); await client.refresh();
+  const result = await client.launch(launchArgs);
+  assert.equal(calls.filter(call => call.path === '/i2idlx/learning/session').length, 2);
+  const call = calls.at(-1); assert.equal(call.path, '/i2idlx/api/learning/launch'); assert.deepEqual(call.body, launchArgs);
+  assert.equal(call.init.method, 'POST'); assert.equal(call.init.credentials, 'same-origin'); assert.equal(call.init.redirect, 'error'); assert.equal(call.init.cache, 'no-store');
+  assert.equal(call.init.headers['X-I2IDLX-Learning-CSRF'], 'fresh-2'); assert(!call.init.headers.Authorization);
+  assert.equal(result.destination.kind, 'course'); assert(!JSON.stringify(client.snapshot()).includes('launch_url'));
+});
+
+await test('launch refuses arbitrary identities, forged targets and nonnumeric versions before any request', async () => {
+  const { client, calls } = launchFixture(); await client.refresh(); const before = calls.length;
+  for (const args of [{ ...launchArgs, learner_id: 'victim' }, { ...launchArgs, registration_id: 'victim' }, { ...launchArgs, version: '3' },
+    { ...launchArgs, location_ref: 'slide#3' }, { ...launchArgs, launch_url: launchResult().launch_url }]) await assert.rejects(client.launch(args), { code: 'learning_invalid_request' });
+  assert.equal(calls.length, before);
+});
+
+await test('launch cannot carry an old human course selection across a fresh-account switch', async () => {
+  const { client, calls, changeAccount } = launchFixture(); await client.refresh(); changeAccount('bob');
+  await assert.rejects(client.launch(launchArgs), { code: 'learning_sign_in_required' });
+  assert.equal(client.snapshot().account.id, 'did:example:bob'); assert(!calls.some(call => call.path === '/i2idlx/api/learning/launch'));
+});
+
+await test('launch accepts only a short-lived tracked Cloud registration capability and an expected destination', () => {
+  assert.equal(learningLaunch(launchResult(), { now: launchNow }).tracking, true);
+  assert.equal(learningLaunchUrl('https://cloud.scorm.com/api/cloud/registration/launch/opaque?provider-token=opaque%2Fvalue'), 'https://cloud.scorm.com/api/cloud/registration/launch/opaque?provider-token=opaque%2Fvalue');
+  assert.equal(learningLaunch(launchResult(true), { now: launchNow, targeted: true }).destination.kind, 'activity');
+  for (const change of [{ tracking: false }, { expires_at: new Date(launchNow - 1).toISOString() }, { expires_at: EXPIRES },
+    { destination: { kind: 'activity', title: 'Unexpected target' } }, { launch_url: 'https://cloud.scorm.com/asset/secret' }]) assert.throws(() => learningLaunch({ ...launchResult(), ...change }, { now: launchNow }));
+  for (const url of ['http://cloud.scorm.com/api/cloud/registration/launch/1234567812345678',
+    'https://cloud.scorm.com.attacker.test/api/cloud/registration/launch/1234567812345678',
+    'https://user:pass@cloud.scorm.com/api/cloud/registration/launch/1234567812345678',
+    'https://cloud.scorm.com:8443/api/cloud/registration/launch/1234567812345678',
+    'https://cloud.scorm.com/api/cloud/registration/launch/', launchResult().launch_url + '#slide',
+    'https://cloud.scorm.com/api/cloud/registration/launch/%2e%2e', 'javascript:alert(1)']) assert.throws(() => learningLaunchUrl(url));
+});
+
+await test('a blocked popup never mints a launch link', async () => {
+  let minted = 0; const { launcher, events } = popupFixture({ launch() { minted++; return Promise.resolve(launchResult()); } }, { blocked: true });
+  await assert.rejects(launcher.open(launchArgs), { code: 'learning_popup_blocked' });
+  assert.equal(minted, 0); assert.deepEqual(events, [{ open: 'about:blank', target: '_blank' }]);
+});
+
+await test('a deliberate launch opens synchronously, hands off once and returns no capability to UI state', async () => {
+  const events = []; let release;
+  const { launcher, opened, events: popupEvents } = popupFixture({ launch: () => { events.push('mint'); return new Promise(resolve => { release = resolve; }); } });
+  const promise = launcher.open(launchArgs);
+  assert.deepEqual(popupEvents, [{ open: 'about:blank', target: '_blank' }, { referrer: 'no-referrer' }]); assert.deepEqual(events, ['mint']); assert.equal(opened.opener, null);
+  release(launchResult()); const safe = await promise;
+  assert(!JSON.stringify(safe).includes('launch_url')); assert(!JSON.stringify(safe).includes('/registration/launch/'));
+  assert.equal(popupEvents.at(-1).navigate, launchResult().launch_url);
+  launcher.cancel(); assert.equal(opened.closed, false, 'Local cancellation must not close the learner’s already opened course.');
+});
+
+await test('authority or course cancellation closes only a pending blank and ignores a late launch response', async () => {
+  let release; const { launcher, events, opened } = popupFixture({ launch: () => new Promise(resolve => { release = resolve; }) });
+  const pending = launcher.open(launchArgs); launcher.cancel(); release(launchResult());
+  await assert.rejects(pending, { code: 'cancelled' }); assert.equal(opened.closed, true); assert(!events.some(event => event.navigate));
+  let releaseSignal; const next = popupFixture({ launch: () => new Promise(resolve => { releaseSignal = resolve; }) }); const controller = new AbortController();
+  const second = next.launcher.open(launchArgs, { signal: controller.signal }); controller.abort(); releaseSignal(launchResult());
+  await assert.rejects(second, { code: 'cancelled' }); assert.equal(next.opened.closed, true); assert(!next.events.some(event => event.navigate));
+});
+
+await test('launch request failure, closed windows and stale selection never navigate', async () => {
+  const failed = popupFixture({ launch: async () => { throw Object.assign(new Error('Denied'), { code: 'learning_enrollment_required' }); } });
+  await assert.rejects(failed.launcher.open(launchArgs), { code: 'learning_enrollment_required' }); assert.equal(failed.opened.closed, true);
+  let release, current = true; const stale = popupFixture({ launch: () => new Promise(resolve => { release = resolve; }) });
+  const pending = stale.launcher.open(launchArgs, { current: () => current }); current = false; release(launchResult());
+  await assert.rejects(pending, { code: 'cancelled' }); assert.equal(stale.opened.closed, true); assert(!stale.events.some(event => event.navigate));
+  const closed = popupFixture({ launch: async () => { closed.opened.closed = true; return launchResult(); } });
+  await assert.rejects(closed.launcher.open(launchArgs), { code: 'learning_popup_closed' }); assert(!closed.events.some(event => event.navigate));
+});
+
+await test('navigation accepts only cited published files and opaque verified activity references', () => {
+  const citations = [{ id: 'SC1' }], base = { citation_id: 'SC1', source_file: 'lessons/beacon fault.html', precision: 'published-file', target_kind: 'course' };
+  const navigation = locations => ({ course: { kind: 'course' }, locations });
+  assert.equal(learningNavigation(navigation([base]), citations).locations[0].target_kind, 'course');
+  assert.equal(learningNavigation(navigation([{ ...base, target_kind: 'activity', location_ref: 'a'.repeat(64) }]), citations).locations[0].location_ref, 'a'.repeat(64));
+  for (const changed of [{ citation_id: 'not-cited' }, { source_file: 'https://cloud.scorm.com/private' }, { source_file: 'data.js#slide' }, { source_file: '../private' },
+    { precision: 'slide' }, { target_kind: 'activity', location_ref: 'resource-id' }, { location_ref: 'a'.repeat(64) }]) assert.throws(() => learningNavigation(navigation([{ ...base, ...changed }]), citations));
+  assert.throws(() => learningNavigation(navigation([base, base]), citations));
+});
+
+await test('targeted launch policy is false by default and requires an explicit owner confirmation', async () => {
+  const connector = { id: 'managed', label: 'Provider', status: 'active', policy: { allowAiContent: false, allowAiProgress: false } };
+  assert.equal(learningResponse('owned-connectors', { connectors: [connector] }).connectors[0].policy.allowTargetedLaunch, false);
+  assert.throws(() => learningResponse('owned-connectors', { connectors: [{ ...connector, policy: { ...connector.policy, allowTargetedLaunch: 'true' } }] }));
+  const { client, calls } = fixture(call => response({ connector: { ...connector, policy: { ...connector.policy, allowTargetedLaunch: call.body.allowTargetedLaunch } } }));
+  await client.refresh(); const before = calls.length;
+  await assert.rejects(client.request('set-targeted-launch-policy', { connector_id: 'managed', allowTargetedLaunch: true, confirmed: false }), { code: 'learning_confirmation_required' });
+  assert.equal(calls.length, before);
+  const changed = await client.request('set-targeted-launch-policy', { connector_id: 'managed', allowTargetedLaunch: true, confirmed: true });
+  assert.equal(changed.connector.policy.allowTargetedLaunch, true);
+  assert.deepEqual(calls.at(-1).body, { operation: 'set-targeted-launch-policy', connector_id: 'managed', allowTargetedLaunch: true, confirmed: true });
+  assert.throws(() => learningResponse('set-targeted-launch-policy', { connector: { ...connector, policy: { ...connector.policy, allowTargetedLaunch: true } } }, { connector_id: 'other', allowTargetedLaunch: true }));
 });
 
 process.stdout.write(`PASS ${count} learning account adapter checks\n`);
