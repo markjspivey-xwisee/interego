@@ -1,5 +1,14 @@
 # Changelog
 
+## 2026-11-08 — Ask: bounded Cloud callback diagnostics
+
+Rejected progress callbacks now report a fixed rejection reason and bounded
+media, body and known-field type labels. These diagnostics expose no supplied
+values, arbitrary field names, raw headers or credentials. Authentication,
+accepted payloads, enrollment checks and fresh provider reads keep their
+existing requirements. The change helps diagnose the live Cloud format
+mismatch; it does not claim that notification delivery has passed.
+
 ## 2026-11-08 — Ask: real Cloud callback configuration and review handoff
 
 Live student verification exposed Cloud responses that omit explicit setting
