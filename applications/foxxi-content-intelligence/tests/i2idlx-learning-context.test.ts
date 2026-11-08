@@ -4,7 +4,8 @@ import { dirname, join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { AgentSessionStore } from '../src/i2idlx-agent-sessions.js';
 import { LearningAuthError, type LearningPrincipal } from '../src/i2idlx-learning-auth.js';
-import { emptyLearningState, LearningConnectionsStore, type LearningRepository, type LearningSnapshot, type LearningState } from '../src/i2idlx-learning-connections.js';
+import { emptyLearningState, LearningConnectionsStore, type LearningPolicy, type LearningRepository, type LearningSnapshot, type LearningState } from '../src/i2idlx-learning-connections.js';
+import { LearningLaunchService } from '../src/i2idlx-learning-launch.js';
 import { LearningContextError, LearningContextService, LEARNING_CONTEXT_LIMITS, LEARNING_CONTEXT_MARKER } from '../src/i2idlx-learning-context.js';
 
 type Row = Record<string, unknown>;
@@ -30,7 +31,7 @@ function gate() {
   const wait = new Promise<void>(resolve => { release = resolve; }), started = new Promise<void>(resolve => { start = resolve; });
   return { release, started, pause: async () => { start(); await wait; } };
 }
-async function fixture(policy = { allowAiContent: true, allowAiProgress: true }) {
+async function fixture(policy: LearningPolicy = { allowAiContent: true, allowAiProgress: true }) {
   const folder = await mkdtemp(join(tmpdir(), 'learning-context-'));
   cleanup.push(async () => { const target = await realpath(folder); expect(dirname(target)).toBe(await realpath(tmpdir())); await rm(target, { recursive: true, force: true }); });
   const glossary = join(folder, 'glossary.json');
@@ -79,10 +80,15 @@ async function fixture(policy = { allowAiContent: true, allowAiProgress: true })
     if (hook) await hook(path);
     if (url.pathname === '/api/v2/courses') return json({ courses: [original] });
     if (url.pathname === '/api/v2/registrations') return json({ registrations: [...registrations.values()].filter(r => row(r.learner).id === url.searchParams.get('learnerId')) });
+    if (path === '/registrations/PRIVATE-REG-A/configuration') return json({ settingItems: [{ id: 'WhenToRestartRegistration', effectiveValue: 'NEVER' }] });
     if (url.pathname.startsWith('/api/v2/registrations/')) {
       const id = decodeURIComponent(url.pathname.slice('/api/v2/registrations/'.length)); return registrations.has(id) ? json(registrations.get(id)) : json({}, 404);
     }
     if (path === '/courses/course-a/versions/2/asset/list') return json({ files: [...files].map(([path, bytes]) => ({ path, size: bytes.length })) });
+    if (path === '/courses/course-a/versions/2') return json({ ...original, rootActivity: { activityType: 'AGGREGATION', children: [
+      { activityType: 'SCO', itemIdentifier: 'incident', resourceIdentifier: 'incident-resource', href: 'incident.html', title: 'Incident procedure' },
+      { activityType: 'SCO', itemIdentifier: 'resume', resourceIdentifier: 'resume-resource', href: 'resume.html', title: 'Resume exercise' },
+    ] } });
     if (url.pathname === '/api/v2/courses/course-a/versions/2/asset') {
       if (controls.fileError) throw new Error('PRIVATE-SECRET PRIVATE-LEARNER-A private@example.test');
       const file = files.get(url.searchParams.get('relativePath')!); return file ? new Response(new Uint8Array(file)) : json({}, 404);
@@ -100,7 +106,8 @@ async function fixture(policy = { allowAiContent: true, allowAiProgress: true })
   const link = row((await connections.request(student.principal, { operation: 'request-link', join_code: connector.join_code })).link);
   await connections.request(owner.principal, { operation: 'approve-link', link_id: link.id, registration_id: 'PRIVATE-REG-A', confirmed: true });
   await connections.request(student.principal, { operation: 'confirm-link', link_id: link.id });
-  const service = context = new LearningContextService({ auth, connections, sessions, taskConfig: { baseUrl: BASE, appDataFile: glossary }, fetch: fetcher, now: () => clock.value });
+  const launch = new LearningLaunchService({ baseUrl: BASE, auth, connections, fetch: fetcher, now: () => clock.value }); cleanup.push(() => launch.dispose());
+  const service = context = new LearningContextService({ auth, connections, sessions, taskConfig: { baseUrl: BASE, appDataFile: glossary }, fetch: fetcher, now: () => clock.value, navigation: launch });
   cleanup.push(() => service.dispose());
   const input = (extra: Row = {}) => ({ session_id: browser.session_id, link_id: link.id, course_id: original.id, version: original.version,
     question: 'What should I record and whom should I notify?', share_content: true, share_progress: true, ...extra });
@@ -121,6 +128,17 @@ async function fixture(policy = { allowAiContent: true, allowAiProgress: true })
 async function refuses(promise: Promise<unknown>, status: number, code?: string) { await expect(promise).rejects.toMatchObject({ status, ...(code ? { code } : {}) }); }
 
 describe('enrolled learner virtual course context', () => {
+  it('offers metadata-only activity references for actually cited provider SCOs outside the model packet', async () => {
+    const f = await fixture({ allowAiContent: true, allowAiProgress: true, allowTargetedLaunch: true }), result = await f.source();
+    const locations = row(result.navigation).locations as Row[];
+    const target = locations.find(value => value.source_file === 'incident.html');
+    expect(target).toMatchObject({ precision: 'published-file', target_kind: 'activity', location_ref: expect.stringMatching(/^[a-f0-9]{64}$/) });
+    expect(JSON.stringify(result.interventionContext)).not.toContain(String(target!.location_ref));
+    expect(JSON.stringify(result.interventionContext)).not.toContain('location_ref');
+    expect(locations.every(value => (result.citations as Row[]).some(citation => citation.id === value.citation_id && citation.locator === value.source_file))).toBe(true);
+    expect(JSON.stringify(result.navigation)).not.toMatch(/BLUE-27|Orion|PRIVATE-|launch_url|https:/);
+    expect(f.calls.every(call => call.method === 'GET')).toBe(true);
+  });
   it('retrieves real cited native passages and authorized progress with explicit units and provenance', async () => {
     const f = await fixture(), result = await f.source(), packet = row(result.interventionContext);
     expect(result).toMatchObject({ source: { provider: 'scorm-cloud', course_id: 'course-a', title: 'Incident response', version: 2, source_version: 'course-version:2',
@@ -191,6 +209,13 @@ describe('enrolled learner virtual course context', () => {
     f.hook(async path => { if (path.includes('/asset?')) await wait.pause(); });
     const pending = f.source(), denied = refuses(pending, 409); await wait.started;
     f.sessions.browser({ session_id: f.browser.session_id, operation: 'invite' }, f.browser.browser_token); wait.release(); await denied;
+  });
+  it('delivers no source packet or ticket after pairing loss during authoritative navigation metadata lookup', async () => {
+    const f = await fixture({ allowAiContent: true, allowAiProgress: true, allowTargetedLaunch: true }), wait = gate();
+    f.hook(async path => { if (path === '/courses/course-a/versions/2') await wait.pause(); });
+    const pending = f.source(), denied = refuses(pending, 409); await wait.started;
+    f.sessions.browser({ session_id: f.browser.session_id, operation: 'invite' }, f.browser.browser_token); wait.release(); await denied;
+    expect((f.service as unknown as { receipts: Map<string, unknown> }).receipts.size).toBe(0);
   });
   it('sanitizes source-reader failures', async () => {
     const f = await fixture(); f.controls.fileError = true;

@@ -21,7 +21,7 @@ const row = (v: unknown): Row => { assert.ok(v && typeof v === 'object' && !Arra
 const registration = (learner = 'private-learner-a', course = 'course-a', id = 'private-registration-a') => ({ id,
   learner: { id: learner, email: 'NEVER-RELEASE@example.test' }, course: { id: course, title: 'Course ' + course, version: 0 },
   registrationCompletion: 'COMPLETED', registrationSuccess: 'PASSED', score: { scaled: 87 }, totalSecondsTracked: 120 });
-async function fixture() {
+async function fixture(launchRequestsPerMinute?: number) {
   const folder = await mkdtemp(join(tmpdir(), 'learning-routes-')), glossary = join(folder, 'glossary.json');
   await writeFile(glossary, JSON.stringify({ meta: { release: 'v0.0.93', commit: 'b'.repeat(40), scheme: { title: 'Fixture glossary', rights: 'CC BY 4.0' } },
     concepts: [{ id: 'learning-record', l: 'Learning record', d: 'An informational record.', a: [], b: [], n: [], r: [], ev: [] }],
@@ -34,7 +34,7 @@ async function fixture() {
     ['imsmanifest.xml', '<manifest identifier="source"><organizations default="org"><organization identifier="org"><title>Course A</title><item identifier="procedure" identifierref="procedure-resource"><title>Safety procedure</title></item></organization></organizations><resources><resource identifier="procedure-resource" type="webcontent" href="procedure.html"><file href="procedure.html"/></resource></resources></manifest>'],
     ['procedure.html', '<html><head><title>Safety procedure</title></head><body><h1>Safety procedure</h1><p>Record BLUE-27 and notify the Orion desk.</p></body></html>'],
   ]);
-  const providerPaths: string[] = [];
+  const providerPaths: string[] = [], providerWrites: string[] = [];
   const repository: LearningRepository = {
     async read() { return structuredClone(snapshot); },
     async write(expected, state) { assert.equal(expected, snapshot.revision); snapshot = { revision: String(++serial), state: structuredClone(state) }; },
@@ -58,6 +58,11 @@ async function fixture() {
     }
     assert.equal(u.origin, 'https://cloud.scorm.com'); cloudReads++; providerPaths.push(u.pathname + u.search);
     assert.equal(new Headers(init.headers).get('Authorization'), 'Basic ' + Buffer.from('dynamic-app:private-cloud-secret').toString('base64'));
+    if (u.pathname === '/api/v2/registrations/private-registration-a/launchLink') {
+      assert.equal(init.method, 'POST'); providerWrites.push(u.pathname);
+      assert.deepEqual(JSON.parse(String(init.body)), { redirectOnExitUrl: BASE + '/i2idlx/#ask', expiry: 120, tracking: true });
+      return json({ launchLink: 'https://cloud.scorm.com/api/cloud/registration/launch/synthetic-route-capability?opaque=synthetic' });
+    }
     assert.equal(init.method, 'GET');
     if (u.pathname === '/api/v2/courses') return json({ courses: [{ id: 'course-a', title: 'Course course-a', version: 0 }] });
     if (u.pathname === '/api/v2/registrations') return json({ registrations: [...registrations.values()].filter(r => r.learner.id === u.searchParams.get('learnerId')) });
@@ -75,7 +80,7 @@ async function fixture() {
     openLearningAccess: (receipt, identity, messages) => learning.context.openTaskAccess(receipt, identity, messages),
     verifyCaller: async body => ({ ok: true, callerDid: 'did:example:paired-agent', payload: row(body) }) });
   const learning: ReturnType<typeof attachLearningRoutes> = attachLearningRoutes(app, { baseUrl: BASE, relayOrigin: RELAY, identityOrigin: IDENTITY, podOrigin: POD,
-    fetch: transport, repository, sessions, taskConfig: { baseUrl: BASE, appDataFile: glossary } });
+    fetch: transport, repository, sessions, taskConfig: { baseUrl: BASE, appDataFile: glossary }, launchRequestsPerMinute });
   const server = app.listen(0, '127.0.0.1'); await once(server, 'listening'); const address = server.address(); assert.ok(address && typeof address !== 'string');
   const physical = `http://127.0.0.1:${address.port}`;
   const request = (path: string, headers: Record<string, string> = {}, body?: unknown) => fetch(physical + path, { redirect: 'manual',
@@ -104,10 +109,35 @@ async function fixture() {
     expect((await call(f.admin, 'approve-link', { link_id: f.link.id, registration_id: 'private-registration-a', confirmed: true })).status).toBe(200);
     expect((await call(f.student, 'confirm-link', { link_id: f.link.id })).status).toBe(200);
   }
-  cleanups.push(async () => { learning.context.dispose(); learning.auth.dispose(); sessions.dispose(); server.closeAllConnections(); await new Promise<void>(done => server.close(() => done())); });
-  return { request, login, call, setup, activate, registrations, tokens, providerPaths, get cloudReads() { return cloudReads; } };
+  cleanups.push(async () => { learning.launch.dispose(); learning.context.dispose(); learning.auth.dispose(); sessions.dispose(); server.closeAllConnections(); await new Promise<void>(done => server.close(() => done())); });
+  return { request, login, call, setup, activate, registrations, tokens, providerPaths, providerWrites, get cloudReads() { return cloudReads; } };
 }
 describe('learning HTTP composition', () => {
+  it('mints only the enrolled human course launch after cookie and CSRF validation', async () => {
+    const f = await fixture(), state = await f.setup(); await f.activate(state);
+    const body = { link_id: state.link.id, course_id: 'course-a', version: 0 };
+    const anonymous = await f.request(API + '/launch', { Origin: BASE }, body); expect(anonymous.status).toBe(401);
+    const csrf = await f.request(API + '/launch', { Cookie: state.student.Cookie, Origin: BASE }, body); expect(csrf.status).toBe(403);
+    const foreign = await f.request(API + '/launch', state.other, body); expect(foreign.status).toBe(404);
+    const stale = await f.request(API + '/launch', state.student, { ...body, version: 1 }); expect(stale.status).toBe(403);
+    const forged = await f.request(API + '/launch', state.student, { ...body, registration_id: 'private-registration-b' }); expect(forged.status).toBe(400);
+    expect(f.providerWrites).toEqual([]);
+    const response = await f.request(API + '/launch', state.student, body); expect(response.status).toBe(200);
+    expect(response.headers.get('cache-control')).toBe('no-store'); expect(response.headers.get('referrer-policy')).toBe('no-referrer');
+    const result = row(await response.json()); expect(result).toMatchObject({ tracking: true, destination: { kind: 'course', title: 'Course course-a' } });
+    expect(String(result.launch_url)).toContain('/api/cloud/registration/launch/');
+    expect(JSON.stringify({ ...result, launch_url: undefined })).not.toMatch(/private-registration|private-learner|private-cloud-secret/);
+    expect(f.providerWrites).toEqual(['/api/v2/registrations/private-registration-a/launchLink']);
+    await f.call(state.admin, 'revoke-link', { link_id: state.link.id });
+    expect((await f.request(API + '/launch', state.student, body)).status).toBe(403); expect(f.providerWrites).toHaveLength(1);
+  });
+  it('limits unauthenticated launch attempts before resolving human authority', async () => {
+    const f = await fixture(2), body = { link_id: 'unknown', course_id: 'unknown', version: 0 };
+    expect((await f.request(API + '/launch', { Origin: BASE }, body)).status).toBe(401);
+    expect((await f.request(API + '/launch', { Origin: BASE }, body)).status).toBe(401);
+    const response = await f.request(API + '/launch', { Origin: BASE }, body); expect(response.status).toBe(429);
+    expect(await response.json()).toMatchObject({ code: 'learning_launch_busy' }); expect(f.cloudReads).toBe(0);
+  });
   it('joins verified humans to canonical Cloud enrollments and never trusts an agent or body learner identity', async () => {
     const f = await fixture(), state = await f.setup();
     expect((await f.call(state.student, 'courses', { link_id: state.link.id })).status).toBe(403);

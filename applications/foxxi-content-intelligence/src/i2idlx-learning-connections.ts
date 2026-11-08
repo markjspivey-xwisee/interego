@@ -6,7 +6,11 @@ import type { LearningPrincipal } from './i2idlx-learning-auth.js';
 import { ScormCloudLearningProvider, type LearningRegistration } from './i2idlx-learning-provider.js';
 
 type Row = Record<string, unknown>;
-export interface LearningPolicy { allowAiContent: boolean; allowAiProgress: boolean; }
+export interface LearningPolicy {
+  allowAiContent: boolean; allowAiProgress: boolean;
+  /** Absent on existing connectors means false; startSco can override sequencing. */
+  allowTargetedLaunch?: boolean;
+}
 export interface LearningConnector {
   id: string; owner: string; label: string; provider: 'scorm-cloud';
   authorization: string | null; joinCode: string | null; policy: LearningPolicy;
@@ -33,6 +37,8 @@ export interface LearningConnectionsConfig { repository: LearningRepository; fet
 export interface LearningAccess {
   authorization: string; learnerId: string; registrations: LearningRegistration[];
   connectorId: string; linkId: string; revision: string; policy: LearningPolicy;
+  /** Private administrator-confirmed association; never a public learner DTO. */
+  associatedRegistrationId: string;
 }
 export class LearningConnectionsError extends Error {
   constructor(readonly status: number, readonly code: string) { super(code); }
@@ -70,7 +76,7 @@ function text(v: unknown, max: number): v is string {
   return typeof v === 'string' && !!v && v === v.trim() && Buffer.byteLength(v) <= max && !/[\u0000-\u001f\u007f]/.test(v) && Buffer.from(v).toString('utf8') === v;
 }
 const date = (v: unknown) => typeof v === 'string' && /^\d{4}-\d\d-\d\dT/.test(v) && Number.isFinite(Date.parse(v));
-const policy = (v: unknown): v is LearningPolicy => plain(v) && exact(v, ['allowAiContent', 'allowAiProgress']) && typeof v.allowAiContent === 'boolean' && typeof v.allowAiProgress === 'boolean';
+const policy = (v: unknown): v is LearningPolicy => plain(v) && exact(v, ['allowAiContent', 'allowAiProgress', 'allowTargetedLaunch']) && typeof v.allowAiContent === 'boolean' && typeof v.allowAiProgress === 'boolean' && (v.allowTargetedLaunch === undefined || typeof v.allowTargetedLaunch === 'boolean');
 const jsonRecord = (v: unknown) => plain(v) && finiteJson(v) && Buffer.byteLength(JSON.stringify(v)) <= LEARNING_STATE_LIMITS.ltiBytes;
 async function interrupted<T>(work: Promise<T>, signal: AbortSignal): Promise<T> {
   if (signal.aborted) fail(504, 'learning_provider_timeout');
@@ -212,7 +218,7 @@ export class LearningConnectionsStore {
     const registrations = await this.provider(initial.connector).authorizeCourse(initial.link.learnerId!, courseId, courseVersion, active);
     const current = await this.revalidate(principal, initial, requirements, signal);
     return { authorization: current.connector.authorization!, learnerId: current.link.learnerId!, registrations,
-      connectorId: current.connector.id, linkId: current.link.id, revision: current.revision, policy: copy(current.connector.policy) };
+      connectorId: current.connector.id, linkId: current.link.id, revision: current.revision, policy: copy(current.connector.policy), associatedRegistrationId: current.link.registrationId! };
   }
   /** Trusted receiver use only. Standard request JSON cannot supply verified evidence. */
   async requestLink(principal: LearningPrincipal, joinCode: string, verifiedLti?: Row): Promise<Row> {
@@ -319,6 +325,7 @@ export class LearningConnectionsStore {
       discover: ['join_code'], 'request-link': ['join_code'], 'pending-links': ['connector_id'],
       'approve-link': ['link_id', 'registration_id', 'confirmed'], 'confirm-link': ['link_id'], 'revoke-link': ['link_id'],
       'revoke-connector': ['connector_id'], courses: ['link_id'], progress: ['link_id', 'course_id', 'version'],
+      'set-targeted-launch-policy': ['connector_id', 'allowTargetedLaunch', 'confirmed'],
     };
     if (!Object.hasOwn(fields, operation as string) || !exact(args, ['operation', ...fields[operation as string]!])) fail(400, 'learning_request_invalid');
     if (operation === 'create-connector') return this.create(principal, args);
@@ -327,6 +334,15 @@ export class LearningConnectionsStore {
     if (operation === 'owned-connectors') return { connectors: state.connectors.filter(c => c.owner === principal.subject).map(c => this.connectorDto(c, true)) };
     if (operation === 'my-links') return { links: state.links.filter(l => l.subject === principal.subject).map(l => this.linkDto(l, this.connector(state, l.connectorId))) };
     if (operation === 'discover') return { connection: this.connectionDto(this.joined(state, args.join_code)) };
+    if (operation === 'set-targeted-launch-policy') {
+      if (typeof args.allowTargetedLaunch !== 'boolean' || args.confirmed !== true) fail(400, 'learning_request_invalid');
+      return this.mutate(principal, current => {
+        const connector = this.owner(current, principal, args.connector_id);
+        if (connector.status !== 'active') fail(403, 'learning_link_inactive');
+        connector.policy.allowTargetedLaunch = args.allowTargetedLaunch as boolean; connector.revision = opaque();
+        return { connector: this.connectorDto(connector, true) };
+      });
+    }
     if (operation === 'pending-links') {
       const connector = this.owner(state, principal, args.connector_id);
       return { links: state.links.filter(l => l.connectorId === connector.id && ['pending-admin', 'approved'].includes(l.status)).map(l => ({ id: l.id,

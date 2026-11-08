@@ -1,4 +1,4 @@
-import { createLearningClient, selectedLearningPacket } from './learning-client.js';
+import { createLearningClient, createLearningLauncher, selectedLearningPacket } from './learning-client.js';
 import { learningContextRequest, userCourseSample, subscribeAgentSession, workbenchConnectionStatus } from './interego-caps.js';
 
 const { useState, useEffect, useRef } = React;
@@ -12,6 +12,8 @@ const linkLabel = status => ({ 'pending-admin': 'Waiting for your learning admin
 export function useLearningContext(engine, { onActivate } = {}) {
   const client = useRef(null);
   if (!client.current) client.current = createLearningClient();
+  const launcher = useRef(null);
+  if (!launcher.current) launcher.current = createLearningLauncher(client.current);
   const [session, setSession] = useState(null), [agent, setAgent] = useState(() => workbenchConnectionStatus().agent);
   const [links, setLinks] = useState([]), [connectors, setConnectors] = useState([]), [pending, setPending] = useState({});
   const [link, setLink] = useState(null), [courses, setCourses] = useState([]), [selected, setSelected] = useState(null);
@@ -19,27 +21,30 @@ export function useLearningContext(engine, { onActivate } = {}) {
   const [shareContent, setShareContent] = useState(false), [shareProgress, setShareProgress] = useState(false);
   const [storageAccepted, setStorageAccepted] = useState(false), [allowContent, setAllowContent] = useState(false), [allowProgress, setAllowProgress] = useState(false);
   const [confirmations, setConfirmations] = useState({}), [loading, setLoading] = useState(false), [error, setError] = useState(''), [notice, setNotice] = useState('');
+  const [targetedConfirmations, setTargetedConfirmations] = useState({});
   const [active, setActive] = useState(false), activeRef = useRef(false), mounted = useRef(true), generation = useRef(0), request = useRef(null);
   const account = useRef(null), recipient = useRef(null), popup = useRef(null), createId = useRef(null);
   const joinCode = useRef(null), label = useRef(null), appId = useRef(null), secret = useRef(null), registrations = useRef(new Map());
   const paired = ready(agent), authenticated = !!session?.authenticated;
-  const invalidate = () => { generation.current++; request.current?.abort(); request.current = null; setLoading(false); };
+  const invalidate = () => { generation.current++; request.current?.abort(); request.current = null; launcher.current.cancel(); setLoading(false); };
   const clearCredentials = () => { for (const field of [appId, secret]) if (field.current) field.current.value = ''; };
   const clearPrivate = (cancel = true) => {
+    launcher.current.cancel();
     if (cancel) invalidate(); setSelected(null); setProgress(null); setPacket(null); setShareContent(false); setShareProgress(false); if (activeRef.current) engine.reset();
   };
   const clear = () => { clearPrivate(); activeRef.current = false; setActive(false); setError(''); };
   const clearAccount = (cancel = true) => {
     clearPrivate(cancel); setLink(null); setLinks([]); setCourses([]); setConnectors([]); setPending({}); setDiscovery(null); setConfirmations({});
-    setStorageAccepted(false); setAllowContent(false); setAllowProgress(false); clearCredentials(); registrations.current.clear(); createId.current = null;
+    setStorageAccepted(false); setAllowContent(false); setAllowProgress(false); setTargetedConfirmations({}); clearCredentials(); registrations.current.clear(); createId.current = null;
     if (joinCode.current) joinCode.current.value = '';
   };
   const current = run => mounted.current && generation.current === run;
   function begin() { invalidate(); const controller = new AbortController(); request.current = controller; setLoading(true); setError(''); setNotice(''); return { run: generation.current, controller }; }
   function failed(cause, run, controller) {
     if (!current(run) || controller.signal.aborted || cause?.code === 'cancelled') return;
+    const locationOnly = ['learning_launch_location_expired', 'learning_targeted_launch_not_allowed', 'learning_launch_location_unavailable'].includes(cause?.code);
     if (['learning_sign_in_required', 'learning_session_expired', 'learning_account_invalid', 'learning_csrf_refused'].includes(cause?.code)) { clearAccount(); client.current.clear(); setSession(null); }
-    else if (cause?.status === 401 || cause?.status === 403 || ['learning_access_revoked', 'learning_authority_changed', 'learning_connection_not_found', 'learning_connection_revoked', 'learning_content_not_allowed', 'learning_progress_not_allowed', 'learning_link_inactive', 'learning_link_not_found', 'learning_link_required', 'learning_link_revoked', 'learning_enrollment_required', 'learning_permission_required', 'learning_context_revoked', 'learning_authorization_expired', 'session_expired', 'session_unauthorized'].includes(cause?.code)) clearPrivate();
+    else if (!locationOnly && (cause?.status === 401 || cause?.status === 403 || ['learning_access_revoked', 'learning_authority_changed', 'learning_connection_not_found', 'learning_connection_revoked', 'learning_content_not_allowed', 'learning_progress_not_allowed', 'learning_link_inactive', 'learning_link_not_found', 'learning_link_required', 'learning_link_revoked', 'learning_enrollment_required', 'learning_permission_required', 'learning_context_revoked', 'learning_authorization_expired', 'session_expired', 'session_unauthorized'].includes(cause?.code))) clearPrivate();
     const messages = {
       learning_sign_in_required: 'Sign in to your learning account again.', learning_session_expired: 'Your learning sign-in expired. Sign in again.',
       learning_link_inactive: 'This learning account link is no longer active. Refresh your connections.', learning_link_not_found: 'This learning account link could not be confirmed. Refresh your connections.',
@@ -47,6 +52,16 @@ export function useLearningContext(engine, { onActivate } = {}) {
       learning_content_not_allowed: 'This learning connection has not authorized course passages to be shared with AI.', learning_progress_not_allowed: 'This learning connection has not authorized access to your progress.',
       learning_enrollment_required: 'Your enrollment could not be confirmed. Refresh your enrolled courses.', learning_self_approval_forbidden: 'A separate learning administrator must verify your registration match.',
       learning_access_revoked: 'Your learning access changed. The private conversation was cleared. Refresh your enrolled courses before asking again.',
+      learning_popup_blocked: 'Allow a new course window, then choose Open course again. No launch link was created.',
+      learning_popup_closed: 'The course window was closed. Choose Open course to try again.',
+      learning_launch_unavailable: 'The course could not be opened. Refresh your enrolled courses before trying again.',
+      learning_launch_location_expired: 'This lesson reference expired. Ask your question again for a fresh source reference, or choose Open course.',
+      learning_targeted_launch_not_allowed: 'Your learning administrator has not enabled lesson links. Choose Open course to continue normally.',
+      learning_launch_location_unavailable: 'This lesson can no longer be targeted reliably. Ask again for fresh sources, or choose Open course.',
+      learning_launch_registration_ambiguous: 'More than one registration matches this course. Your learning administrator must resolve the enrollment before it can be opened here.',
+      learning_launch_busy: 'The course launch service is busy. Try again shortly.',
+      learning_launch_timeout: 'SCORM Cloud did not finish creating the launch link. Choose Open course to try again.',
+      learning_launch_expired: 'The new course link expired before it could open. Choose Open course to create another.',
     };
     setError(messages[cause?.code] || 'The learning operation could not be completed. Refresh its status before trying again.');
   }
@@ -75,7 +90,7 @@ export function useLearningContext(engine, { onActivate } = {}) {
       setSession(value);
     });
     refreshAccount();
-    return () => { mounted.current = false; generation.current++; request.current?.abort(); clearCredentials(); unsubscribe(); client.current.dispose(); try { popup.current?.close(); } catch {} };
+    return () => { mounted.current = false; generation.current++; request.current?.abort(); launcher.current.cancel(); clearCredentials(); unsubscribe(); client.current.dispose(); try { popup.current?.close(); } catch {} };
   }, []);
   useEffect(() => subscribeAgentSession(setAgent), []);
   useEffect(() => {
@@ -178,6 +193,27 @@ export function useLearningContext(engine, { onActivate } = {}) {
   function ltiAction(connector, operation) {
     perform(operation, { connector_id: connector.id }, value => setConnectors(old => old.map(item => item.id === connector.id ? { ...item, lti: value.lti } : item)));
   }
+  function setTargetedLaunch(connector, allow) {
+    if (allow && targetedConfirmations[connector.id] !== true) return;
+    clearPrivate();
+    perform('set-targeted-launch-policy', { connector_id: connector.id, allowTargetedLaunch: allow, confirmed: true }, value => {
+      setConnectors(old => old.map(item => item.id === connector.id ? value.connector : item));
+      setTargetedConfirmations(old => ({ ...old, [connector.id]: false }));
+      setNotice(allow ? 'Verified lesson links are enabled for enrolled learners. Course rules may still limit which lesson can open.' : 'Lesson links are off. Enrolled learners can still open the course normally.');
+    });
+  }
+  async function openCourse(location) {
+    if (loading || engine.busy || !authenticated || !link || link.status !== 'active' || !selected) return;
+    const { run, controller } = begin();
+    try {
+      // The blank window opens synchronously inside this deliberate click before authorization is fetched.
+      const value = await launcher.current.open({ link_id: link.id, course_id: selected.id, version: selected.version,
+        ...(location?.target_kind === 'activity' ? { location_ref: location.location_ref } : {}) },
+        { signal: controller.signal, current: () => current(run) });
+      if (current(run)) setNotice(value.notice);
+    } catch (cause) { failed(cause, run, controller); }
+    finally { if (current(run)) setLoading(false); }
+  }
   async function send(text, ids = engine.ctx) {
     const question = (text || '').trim();
     if (!question || loading || engine.busy) return;
@@ -229,6 +265,7 @@ export function useLearningContext(engine, { onActivate } = {}) {
           <b>Your enrolled courses · {link.provider_label}</b>
           <label className="stack">Course<select className="input" aria-label="Your enrolled course" value={selected ? keyOf(selected) : ''} disabled={disabled} onChange={event => chooseCourse(event.target.value)}><option value="">Choose one of your enrolled courses…</option>{courses.map(course => <option key={keyOf(course)} value={keyOf(course)}>{course.title} · Version {course.version}</option>)}</select></label>
           {!courses.length ? <p>No current enrollments were confirmed for this account link.</p> : null}
+          {selected ? <div className="stack" style={{ gap: 6 }} data-testid="learner-course-launch"><button className="btn sm" disabled={disabled} onClick={() => openCourse()}>Open course</button><span>Opens your enrolled course in SCORM Cloud. Your normal registration tracking applies; Cloud controls resume position and course-version changes.</span></div> : null}
           <button className="btn sm" disabled={disabled} onClick={() => perform('progress', { link_id: link.id }, setProgress)}>Check my progress</button>
           {progress ? <div className="stack" data-testid="learner-progress"><b>Your progress · SCORM Cloud</b><span>Checked {dateLabel(progress.as_of)}</span>{progress.records.length ? progress.records.map((record, index) => <div key={record.course_id + ':' + index} className="note stack" style={{ alignItems: 'stretch' }}><b>{record.title || 'Enrolled course'} · Version {record.version}</b><span>Completion: {record.completion} · Success: {record.success}</span><span>Score: {record.score === undefined ? 'Unreported' : record.score + ' / 100'} · Time: {record.total_seconds === undefined ? 'Unreported' : record.total_seconds + ' seconds'}</span><span>Source: SCORM Cloud · Checked {dateLabel(record.observed_at)}</span></div>) : <span>No progress records were supplied.</span>}</div> : null}
           <p>Prerequisites: SCORM Cloud has not supplied authoritative prerequisite requirements for this connection.</p>
@@ -241,7 +278,10 @@ export function useLearningContext(engine, { onActivate } = {}) {
             <p>Each question rechecks the account link, enrollment and allowed sharing. A failed private question does not fall back to another catalog or the glossary.</p>
             <button className="btn sm" disabled={loading} onClick={clear}>Leave this learning context</button>
           </div> : null}
-          {packet ? <details><summary>Sources for the latest learning question</summary><p>{packet.source.provider} · Course version {packet.source.version} · Source {packet.source.source_version}</p>{packet.citations.map(citation => <p key={citation.id}>{citation.id}{citation.title ? ': ' + citation.title : ''}</p>)}{packet.missing_context.map((item, index) => <p key={index}>{item}</p>)}</details> : null}
+          {packet ? <details data-testid="learner-citations"><summary>Sources for the latest learning question</summary><p>{packet.source.provider} · Course version {packet.source.version} · Source {packet.source.source_version}</p>{packet.navigation ? <p>Source links open the course or a verified published lesson. Exact slide or section navigation is unavailable.</p> : null}{packet.citations.map(citation => {
+            const location = packet.navigation?.locations.find(item => item.citation_id === citation.id);
+            return <div className="stack" style={{ gap: 5, marginBottom: 10 }} key={citation.id}><b>{citation.title || location?.title || 'Course source'}</b>{location ? <><span style={{ overflowWrap: 'anywhere' }}>Published source file: {location.source_file}</span><button className="btn sm" disabled={disabled} onClick={() => openCourse(location)}>{location.target_kind === 'activity' ? 'Open lesson in course' : 'Open course'}</button></> : null}<details><summary>Source reference</summary><code style={{ overflowWrap: 'anywhere' }}>{citation.id}</code></details></div>;
+          })}{packet.missing_context.map((item, index) => <p key={index}>{item}</p>)}</details> : null}
         </div> : null}
         <details data-testid="learning-admin"><summary>Manage learning connections</summary><div className="stack" style={{ gap: 12, marginTop: 12 }}>
           <p>For course owners and learning administrators. Create a connection you manage, authorize enrolled-learner sharing, and match verified accounts to actual SCORM Cloud registrations.</p>
@@ -258,6 +298,7 @@ export function useLearningContext(engine, { onActivate } = {}) {
             {connector.join_code && connector.status === 'active' ? <span>Connection code: <code>{connector.join_code}</code></span> : null}
             <span>Enrolled-learner sharing: course passages {connector.policy.allowAiContent ? 'allowed' : 'off'}; own progress {connector.policy.allowAiProgress ? 'allowed' : 'off'}.</span>
             {connector.status === 'active' ? <>
+              <div className="stack" style={{ gap: 6 }} data-testid="managed-targeted-launch-policy"><span>Lesson launch links: {connector.policy.allowTargetedLaunch ? 'enabled' : 'off'}.</span>{connector.policy.allowTargetedLaunch ? <button className="btn sm" disabled={disabled} onClick={() => setTargetedLaunch(connector, false)}>Turn off lesson launch links</button> : <><label><input type="checkbox" aria-label={'Authorize lesson launch links ' + connector.id} checked={targetedConfirmations[connector.id] === true} disabled={disabled} onChange={event => setTargetedConfirmations(old => ({ ...old, [connector.id]: event.target.checked }))} /> I authorize enrolled learners to open verified lessons directly. These links can override normal course order, and normal registration tracking applies.</label><button className="btn sm" disabled={disabled || targetedConfirmations[connector.id] !== true} onClick={() => setTargetedLaunch(connector, true)}>Enable lesson launch links</button></>}</div>
               <div className="row wrap"><button className="btn sm" disabled={disabled} onClick={() => inspectPending(connector)}>Check pending account links</button><button className="btn sm" disabled={disabled} onClick={() => perform('revoke-connector', { connector_id: connector.id }, value => { clearPrivate(); setConnectors(old => old.map(item => item.id === connector.id ? value.connector : item)); })}>Revoke this managed connection</button></div>
               {(pending[connector.id] || []).map(value => <div className="stack" key={value.id}>
                 <span>Verified Interego account: <span style={{ overflowWrap: 'anywhere' }}>{value.account.display_name || value.account.webId}</span></span>

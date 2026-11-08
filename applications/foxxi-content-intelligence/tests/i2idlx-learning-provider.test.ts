@@ -39,7 +39,7 @@ describe('per-connector SCORM Cloud learner registrations', () => {
       init: { method: 'GET', redirect: 'error', headers: { Authorization: AUTH, Accept: 'application/json' } } });
     expect(JSON.stringify(result)).not.toMatch(/Private|email|learnerResponse|secret|custom|private-program/);
     expect(JSON.stringify(f.provider)).not.toContain(AUTH);
-    expect(f.provider.capabilities).toEqual({ enrollments: true, progress: true, prerequisites: false, curriculum: false, access: 'read-only' });
+    expect(f.provider.capabilities).toEqual({ enrollments: true, progress: true, prerequisites: false, curriculum: false, registrationLaunch: true, access: 'registration-read-and-explicit-launch' });
     expect(Object.isFrozen(f.provider.capabilities)).toBe(true);
   });
   it('keeps the original learner boundary through opaque pagination without appending filters to more', async () => {

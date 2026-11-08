@@ -5,6 +5,7 @@ import { readFile, writeFile, mkdir } from 'node:fs/promises';
 import { resolve, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createServer } from 'node:http';
+import { Script } from 'node:vm';
 const app=resolve(dirname(fileURLToPath(import.meta.url)),'..'),repo=resolve(app,'../../../..');
 const assets=resolve(process.env.I2IDLX_UI_ASSETS||join(app,'../.cache/ui-oracle-assets'));
 const output=resolve(repo,'.local/learning-ui-fixture');
@@ -28,13 +29,16 @@ const entry=[
   'import {useAskEngine} from '+JSON.stringify(join(app,'src/views/ask.jsx'))+';',
   'import {useCourseContext} from '+JSON.stringify(join(app,'src/course-context.jsx'))+';',
   'function Fixture(){const engine=useAskEngine(),course=useCourseContext(engine),[draft,setDraft]=React.useState("What is the safety code?");',
-  'window.__fixtureState=()=>({blocked:course.blocked,selected:course.selected?.title||null,turns:engine.turns.map(x=>({role:x.role,content:x.content})),modelCalls:window.__fixture.calls.length});',
+  'window.__fixtureState=()=>({blocked:course.blocked,selected:course.selected?.title||null,turns:engine.turns.map(x=>({role:x.role,content:x.content})),modelCalls:window.__fixture.calls.length,launches:window.__fixture.launches,navigations:window.__fixture.navigations});',
   'return <main><h1>Learning account developer fixture</h1><p>Synthetic accounts, registrations, courses and model. No live services.</p>',
   '<section aria-label="Fixture scenario controls" className="scenarios"><b>Controlled provider scenarios</b>',
   '<button onClick={()=>window.__scenario("alice")}>Fixture: use Alice account</button><button onClick={()=>window.__scenario("bob")}>Fixture: use Bob account</button><button onClick={()=>window.__scenario("anonymous")}>Fixture: expire human sign-in</button>',
   '<button onClick={()=>window.__scenario("revoke-model")}>Fixture: revoke before model reply</button><button onClick={()=>window.__scenario("deny-source")}>Fixture: deny next private retrieval</button>',
   '<button onClick={()=>window.__scenario("delay")}>Fixture: delay next source</button><button onClick={()=>window.__scenario("release")}>Fixture: release delayed source</button>',
   '<button onClick={()=>window.__fixtureSetAgent({state:"connected",connectionId:"fixture-agent-two",monitoring:"ready"})}>Fixture: replace AI recipient</button>',
+  '<button onClick={()=>window.__fixtureSetAgent({state:"disconnected"})}>Fixture: remove AI connection</button>',
+  '<button onClick={()=>window.__scenario("block-popup")}>Fixture: block next course popup</button><button onClick={()=>window.__scenario("delay-launch")}>Fixture: delay next course launch</button><button onClick={()=>window.__scenario("release-launch")}>Fixture: release delayed launch</button>',
+  '<button onClick={()=>window.__scenario("expire-location")}>Fixture: expire next lesson reference</button><button onClick={()=>window.__scenario("managed")}>Fixture: add managed connection</button>',
   '<button onClick={()=>engine.sendGlossary("A glossary question",[])}>Fixture: glossary shortcut</button></section>',
   '<p role="status" data-testid="fixture-scope">{course.blocked?"Private context blocked":"Ask available"} · Selected: {course.selected?.title||"none"} · Model calls: {window.__fixture.calls.length}</p>',
   '{course.panel}<label>Fixture question<input aria-label="Fixture question" value={draft} onChange={e=>setDraft(e.target.value)}/></label>',
@@ -52,7 +56,17 @@ const result=await build({stdin:{contents:entry,resolveDir:app,sourcefile:'learn
   }}]
 });
 const bootstrap=`(()=>{
-  const expires="2099-01-01T00:00:00.000Z",state=window.__fixture={human:null,calls:[],owner:false,grant:null,delay:false,waiting:[],modelRevoked:false,denySource:false,connectors:[]};
+  const expires="2099-01-01T00:00:00.000Z",state=window.__fixture={human:null,calls:[],owner:false,grant:null,delay:false,waiting:[],modelRevoked:false,denySource:false,connectors:[],launches:0,navigations:0,blockPopup:false,delayLaunch:false,launchWaiting:[],expireLocation:false,targeted:false};
+  const browserOpen=window.open.bind(window);
+  window.open=(url,target,...features)=>{
+    if(state.blockPopup&&url==="about:blank"){state.blockPopup=false;return null;}
+    const opened=browserOpen(url,target,...features);if(!opened||url!=="about:blank")return opened;
+    return {get closed(){return opened.closed;},set opener(value){opened.opener=value;},get document(){return opened.document;},close(){opened.close();},location:{replace(destination){
+      const target=new URL(destination,location.origin);
+      if(target.origin==="https://cloud.scorm.com"&&target.pathname.startsWith("/api/cloud/registration/launch/")){state.navigations++;document.getElementById("launch-status").textContent="Synthetic course launches requested: "+state.launches+"; opened: "+state.navigations;opened.location.replace("/fixture-course");}
+      else opened.location.replace(destination);
+    }}};
+  };
   const channel=new BroadcastChannel("i2idlx-learning-developer-fixture");
   channel.onmessage=event=>{if(event.data?.kind==="fixture-sign-in"&&["alice","bob"].includes(event.data.human))state.human=event.data.human;};
   window.__fixtureAgent={state:"connected",connectionId:"fixture-agent-one",monitoring:"ready"};
@@ -65,19 +79,34 @@ const bootstrap=`(()=>{
     return {source:{provider:"scorm-cloud",course_id:args.course_id,title,version:args.version,source_version:"course-version:"+args.version,projection_sha256:"d".repeat(64),fingerprint_scope:"selected-instructional-projection"},
       access:{link_id:args.link_id,sharing:{content:args.share_content,progress:args.share_progress}},
       interventionContext:{kind:"instructional-source-reference",source_context:{source:"package",id:args.course_id,version:"course-version:"+args.version,sections:[{citation_id:"SC1",title:"Safety code",body}]}},
-      citations:[{id:"SC1",title:"Safety code",body}],missing_context:[],authorization_ticket:"e".repeat(64)};
+      citations:[{id:"SC1",title:"Safety code",body}],missing_context:[],authorization_ticket:"e".repeat(64),
+      navigation:{course:{kind:"course"},locations:[{citation_id:"SC1",source_file:"lesson-a.html",precision:"published-file",target_kind:state.targeted?"activity":"course",...(state.targeted?{location_ref:"4".repeat(64),title:"Beacon fault lesson"}:{})}]}};
   };
   const reply=value=>Promise.resolve(new Response(JSON.stringify(value),{headers:{"Content-Type":"application/json"}}));
   window.fetch=async(input,init={})=>{
     const path=new URL(typeof input==="string"?input:input.url,location.origin).pathname;
     if(path==="/i2idlx/learning/session")return reply({enabled:true,authenticated:!!state.human,account:state.human?account():null,csrf:state.human?"c".repeat(64):null,expires_at:state.human?expires:null,sign_in_url:"/i2idlx/learning/oauth/start"});
     if(path==="/i2idlx/learning/sign-out"){state.human=null;return reply({signed_out:true});}
+    if(path==="/i2idlx/api/learning/launch"){
+      const args=JSON.parse(init.body||"{}");if(!state.human)return new Response(JSON.stringify({code:"learning_sign_in_required"}),{status:401});
+      if(args.link_id!==link().id||args.course_id!==course().id||args.version!==course().version)return new Response(JSON.stringify({code:"learning_enrollment_required"}),{status:403});
+      if(args.location_ref&&state.expireLocation){state.expireLocation=false;return new Response(JSON.stringify({code:"learning_launch_location_expired"}),{status:403});}
+      if(args.location_ref&&!state.targeted)return new Response(JSON.stringify({code:"learning_targeted_launch_not_allowed"}),{status:403});
+      state.launches++;document.getElementById("launch-status").textContent="Synthetic course launches requested: "+state.launches+"; opened: "+state.navigations;
+      if(state.delayLaunch){state.delayLaunch=false;await new Promise(resolve=>state.launchWaiting.push(resolve));}
+      return reply({launch_url:"https://cloud.scorm.com/api/cloud/registration/launch/12345678-abcd-1234-abcd-123456789abc",expires_at:new Date(Date.now()+120000).toISOString(),
+        destination:{kind:args.location_ref?"activity":"course",title:args.location_ref?"Beacon fault lesson":course().title,...(args.location_ref?{source_file:"lesson-a.html"}:{})},tracking:true,notice:"Synthetic launch only. Normal SCORM Cloud launches track your registration; Cloud controls resume position and version changes."});
+    }
     if(path!=="/i2idlx/api/learning")throw Error("Fixture refuses an unmocked network request.");
     const args=JSON.parse(init.body||"{}");if(!state.human)return new Response(JSON.stringify({code:"learning_sign_in_required"}),{status:401});
     if(args.operation==="my-links")return reply({links:[link()]});
     if(args.operation==="courses")return reply({link_id:args.link_id,courses:[course()],prerequisites:{status:"unavailable"},curriculum:{status:"unavailable"}});
     if(args.operation==="progress")return reply({link_id:args.link_id,as_of:expires,records:[{course_id:course().id,title:course().title,version:3,completion:"COMPLETED",success:"PASSED",score:73,total_seconds:90,source:"SCORM Cloud",observed_at:expires}]});
     if(args.operation==="owned-connectors")return reply({connectors:state.connectors});
+    if(args.operation==="set-targeted-launch-policy"){
+      state.targeted=args.allowTargetedLaunch;state.connectors=state.connectors.map(connector=>connector.id===args.connector_id?{...connector,policy:{...connector.policy,allowTargetedLaunch:state.targeted}}:connector);
+      return reply({connector:state.connectors.find(connector=>connector.id===args.connector_id)});
+    }
     if(args.operation==="create-connector"){
       const connector={id:"f".repeat(32),label:args.label,status:"active",created_at:expires,join_code:"9".repeat(48),policy:args.policy,lti:{state:"installing",settings:null}};
       state.connectors=[connector];return reply({connector});
@@ -112,14 +141,18 @@ const bootstrap=`(()=>{
     if(kind==="alice"||kind==="bob")state.human=kind;if(kind==="anonymous")state.human=null;
     if(kind==="revoke-model")state.modelRevoked=true;if(kind==="deny-source")state.denySource=true;
     if(kind==="delay")state.delay=true;if(kind==="release")state.waiting.splice(0).forEach(resolve=>resolve());
+    if(kind==="block-popup")state.blockPopup=true;if(kind==="delay-launch")state.delayLaunch=true;if(kind==="release-launch")state.launchWaiting.splice(0).forEach(resolve=>resolve());
+    if(kind==="expire-location")state.expireLocation=true;
+    if(kind==="managed")state.connectors=[{id:"f".repeat(32),label:"Synthetic managed connection",status:"active",created_at:expires,join_code:"9".repeat(48),policy:{allowAiContent:true,allowAiProgress:true,allowTargetedLaunch:state.targeted}}];
     document.getElementById("scenario-status").textContent="Fixture provider state: "+(state.human||"signed out")+"; "+kind;
   };
 })();`;
+new Script(bootstrap, { filename: 'learning-fixture-bootstrap.js' });
 const scripts=await Promise.all([
   readFile(join(assets,'cdnjs.cloudflare.com_ajax_libs_react_18.3.1_umd_react.production.min.js'),'utf8'),
   readFile(join(assets,'cdnjs.cloudflare.com_ajax_libs_react-dom_18.3.1_umd_react-dom.production.min.js'),'utf8')
 ]);
-const html='<!doctype html><meta charset="utf-8"><title>Learning hook fixture</title><style>body{font:15px system-ui;color:#142434;margin:24px auto;max-width:980px}button,input,select{font:inherit;margin:4px;padding:7px}label{display:block}.stack{display:flex;flex-direction:column;gap:8px}.row{display:flex;gap:8px}.note,details{border:1px solid #b5c6d2;border-radius:7px;padding:12px;margin:10px 0}.small{font-size:14px}.warn{color:#8a210b}.scenarios{border:2px dashed #75879b;padding:12px}.scenarios button{font-size:12px}pre{white-space:pre-wrap}</style><p id="scenario-status">Fixture provider state: signed out</p><div id="root"></div>'+
+const html='<!doctype html><meta charset="utf-8"><title>Learning hook fixture</title><style>body{font:15px system-ui;color:#142434;margin:24px auto;max-width:980px}button,input,select{font:inherit;margin:4px;padding:7px}label{display:block}.stack{display:flex;flex-direction:column;gap:8px}.row{display:flex;gap:8px}.note,details{border:1px solid #b5c6d2;border-radius:7px;padding:12px;margin:10px 0}.small{font-size:14px}.warn{color:#8a210b}.scenarios{border:2px dashed #75879b;padding:12px}.scenarios button{font-size:12px}pre{white-space:pre-wrap}</style><p id="scenario-status">Fixture provider state: signed out</p><p id="launch-status">Synthetic course launches requested: 0; opened: 0</p><div id="root"></div>'+
   scripts.map(script=>'<script>'+script.replaceAll('</script','<\\/script')+'</script>').join('')+
   '<script>'+bootstrap.replaceAll('</script','<\\/script')+'</script><script>'+result.outputFiles[0].text.replaceAll('</script','<\\/script')+'</script>';
 await mkdir(output,{recursive:true});await writeFile(join(output,'index.html'),html);
@@ -127,6 +160,7 @@ process.stdout.write('Prepared actual-hook developer fixture: '+join(output,'ind
 if(process.argv.includes('--serve')){
   const server=createServer((req,res)=>{
     if(req.url==='/favicon.ico'){res.writeHead(204);res.end();return;}
+    if(req.url==='/fixture-course'){res.writeHead(200,{'Content-Type':'text/html; charset=utf-8','Cache-Control':'no-store','Referrer-Policy':'no-referrer'});res.end('<!doctype html><title>Synthetic course launch</title><h1>Synthetic course opened</h1><p>No SCORM Cloud request was made. The fixture replaced the test capability with this local page.</p>');return;}
     if(req.url==='/i2idlx/learning/oauth/start'){
       res.writeHead(200,{'Content-Type':'text/html; charset=utf-8','Cache-Control':'no-store'});
       res.end('<!doctype html><title>Synthetic Interego sign-in</title><h1>Fixture sign-in</h1><p>These are synthetic test accounts. No credentials are requested.</p><button onclick="complete(\'alice\')">Complete fixture sign-in as Alice</button><button onclick="complete(\'bob\')">Complete fixture sign-in as Bob</button><script>const channel=new BroadcastChannel("i2idlx-learning-developer-fixture");function complete(human){channel.postMessage({kind:"fixture-sign-in",human});setTimeout(()=>window.close(),100);}</script>');return;
