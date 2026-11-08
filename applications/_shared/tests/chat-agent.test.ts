@@ -15,7 +15,7 @@ import { readFileSync, mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { randomBytes } from 'node:crypto';
+import { randomInt } from 'node:crypto';
 import vm from 'node:vm';
 import ts from 'typescript';
 import { JSDOM } from 'jsdom';
@@ -181,7 +181,8 @@ function payloadsOf(prompt: string): Record<string, unknown>[] {
 
 function random16(): string {
   const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
-  return [...randomBytes(16)].map((b) => alphabet[b % alphabet.length]).join('');
+  // randomInt is uniform over the alphabet; a byte taken modulo 62 is not.
+  return Array.from({ length: 16 }, () => alphabet[randomInt(alphabet.length)]).join('');
 }
 
 /** A nonce made the way the prompt tells an assistant to make one. */

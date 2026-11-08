@@ -62,8 +62,9 @@ own app.js, so each page keeps one module script. The file therefore declares
 exactly one top-level name, has no import or export, and touches no DOM or
 network. Its test runs the file both as a classic script, the way every jsdom
 harness runs /ui/app.js, and as a real ES module ahead of an app that
-redeclares every internal name. No site uses it yet; the Practice Evidence
-and Work Redesign changes follow separately.
+redeclares every internal name. The test makes its sample nonces with
+`randomInt`, so every letter is equally likely. No site uses it yet; the
+Practice Evidence and Work Redesign changes follow separately.
 
 ## 2026-11-07 — Verify Cloud LTI helpers through native sandbox launches
 
