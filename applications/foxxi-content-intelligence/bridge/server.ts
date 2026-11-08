@@ -479,6 +479,7 @@ import { glossaryLoader } from '../src/i2idl-glossary.js';
 import { askCourse } from '../src/course-ask.js';
 import { attachDecorationRoutes } from '../src/decorations/routes.js';
 import { attachWorkbenchRoutes, workbenchEncryptionKeypair, workbenchOwnerAnchors } from '../src/i2idlx-workbench.js';
+import { createLearningRepository, unavailableLearningRepository } from '../src/i2idlx-learning-repository.js';
 import { attachI2idlxMcpApp } from '../src/i2idlx-mcp-app.js';
 import { InterventionTaskError } from '../src/i2idlx-intervention-tasks.js';
 import { publicAuthoredIntervention, publicPackageIntervention } from '../src/i2idlx-intervention-sources.js';
@@ -12688,6 +12689,16 @@ attachWorkbenchRoutes(app, {
   canonicalPod: canonicalPublicPodUrl,
   fetch: guardedFetchFn(globalThis.fetch) as typeof fetch,
   encryptionKeypair: () => workbenchEncryptionKeypair(process.env.FOXXI_BRIDGE_PRIVATE_KEY),
+  learning: {
+    relayOrigin: process.env.INTEREGO_RELAY_URL ?? 'https://relay.interego.xwisee.com',
+    identityOrigin: process.env.INTEREGO_IDENTITY_URL ?? 'https://identity.interego.xwisee.com',
+    podOrigin: (() => { try { return new URL(tenantPodUrl).origin; } catch { return ''; } })(),
+    repository: (() => {
+      try { return createLearningRepository({ baseUrl: bridgeBaseUrl, podUrl: tenantPodUrl,
+        privateKey: process.env.FOXXI_BRIDGE_PRIVATE_KEY ?? '', fetch: guardedFetchFn(globalThis.fetch) as typeof fetch }); }
+      catch { return unavailableLearningRepository; }
+    })(),
+  },
   siteDirectory: process.env.FOXXI_I2IDLX_SITE_DIR || undefined,
   distDirectory: process.env.FOXXI_I2IDLX_DIST_DIR || undefined,
   appDataFile: process.env.FOXXI_I2IDLX_APP_DATA_FILE || undefined,

@@ -16,7 +16,7 @@ type TurnState = 'queued' | 'running' | 'completed' | 'failed' | 'cancelled';
 type Turn = {
   id: string; revision: number; state: TurnState; text: string; created: number;
   task: Task | null; lease: string | null; leaseExpires: number;
-  tool_calls?: ToolCall[]; truncated?: boolean; error?: string; error_code?: 'request_timeout';
+  tool_calls?: ToolCall[]; truncated?: boolean; error?: string; error_code?: 'request_timeout' | 'learning_access_revoked';
   wake?: { hash: string; deadline: number };
 };
 type Routine = { state: 'starting' | 'ready' | 'unavailable'; hash: string | null; deadline: number };
@@ -67,6 +67,13 @@ export interface AgentSessionConfig {
   leaseTtlMs?: number;
   requestTtlMs?: number;
   maxSessions?: number;
+  openLearningAccess?: (receipt: string, identity: AgentBrowserIdentity, messages: readonly Message[]) => AgentLearningAccess | Promise<AgentLearningAccess>;
+}
+export type AgentLearningPhase = 'enqueue' | 'dispatch' | 'stream' | 'finish' | 'read';
+export interface AgentLearningAccess {
+  signal: AbortSignal;
+  assertCurrent(phase: AgentLearningPhase): void | Promise<void>;
+  dispose?(): void;
 }
 /** Server-internal identity for a private capability used by its owning browser. */
 export interface AgentBrowserIdentity {
@@ -77,7 +84,7 @@ export interface AgentBrowserIdentity {
 }
 export class AgentSessionError extends Error {
   readonly status: number;
-  constructor(message: string, status = 400) { super(message); this.status = status; }
+  constructor(message: string, status = 400, readonly code?: string) { super(message); this.status = status; }
 }
 export const AGENT_SESSION_ACTION = 'urn:foxxi:i2idlx:agent-session';
 export const AGENT_SESSION_PATH = '/i2idlx/api/agent-sessions';
@@ -153,6 +160,8 @@ export class AgentSessionStore {
   private readonly requestTtl: number;
   private readonly maxSessions: number;
   private readonly routineFactory?: AgentSessionConfig['routine'];
+  private readonly openLearningAccess?: AgentSessionConfig['openLearningAccess'];
+  private readonly learning = new Map<string, { access: AgentLearningAccess; release: () => void }>();
   private sweepTimer: ReturnType<typeof setInterval> | null = null;
   constructor(config: AgentSessionConfig) {
     const base = new URL(config.baseUrl);
@@ -160,6 +169,7 @@ export class AgentSessionStore {
     this.base = config.baseUrl.replace(/\/+$/, '');
     this.clock = config.now ?? Date.now;
     this.routineFactory = config.routine;
+    this.openLearningAccess = config.openLearningAccess;
     this.sessionTtl = Math.min(config.sessionTtlMs ?? 30 * 60_000, 30 * 60_000);
     this.inviteTtl = Math.min(config.inviteTtlMs ?? 5 * 60_000, 5 * 60_000);
     this.leaseTtl = Math.min(config.leaseTtlMs ?? 60_000, 60_000);
@@ -172,7 +182,7 @@ export class AgentSessionStore {
     // Keep only the capability tombstone until the next creation so holders get an explicit 410.
     for (const [ip, bucket] of this.creations) if (bucket.reset <= now) this.creations.delete(ip);
     for (const s of this.sessions.values()) {
-      if (s.expires <= now) { s.lifetime.abort(); s.turn = null; s.driver = null; s.driverHash = null; s.inviteHash = null; s.routine = undefined; s.routineSender = undefined; continue; }
+      if (s.expires <= now) { this.releaseLearning(s); s.lifetime.abort(); s.turn = null; s.driver = null; s.driverHash = null; s.inviteHash = null; s.routine = undefined; s.routineSender = undefined; continue; }
       if (s.routine?.state === 'starting' && s.routine.deadline <= now) this.stopStartup(s.routine);
       if (s.turn && active(s.turn) && s.turn.created + this.requestTtl <= now) {
         s.turn.state = 'failed'; s.turn.error = 'The agent request expired.'; s.turn.error_code = 'request_timeout'; s.turn.revision++;
@@ -192,7 +202,7 @@ export class AgentSessionStore {
   }
   dispose(): void {
     if (this.sweepTimer) clearInterval(this.sweepTimer);
-    for (const s of this.sessions.values()) s.lifetime.abort();
+    for (const s of this.sessions.values()) { this.releaseLearning(s); s.lifetime.abort(); }
     this.sweepTimer = null; this.sessions.clear(); this.creations.clear();
   }
   private memoryReplacing(session: Session, replacement: Turn): void {
@@ -257,6 +267,7 @@ export class AgentSessionStore {
       links: { driver: { href: driver, method: 'POST', action: AGENT_SESSION_ACTION, authentication: 'existing Interego signed caller' } } };
   }
   private invitation(s: Session): Row {
+    if (s.turn && this.learning.has(this.learningKey(s))) this.revokeLearning(s, s.turn.id);
     s.lifetime.abort();
     s.lifetime = new AbortController();
     if (s.turn && active(s.turn)) this.cancel(s.turn, 'The agent connection changed.');
@@ -307,10 +318,85 @@ export class AgentSessionStore {
     if (!s.driver) reject('Connect a verified Interego agent before attaching private course content.', 409);
     return { session_id: s.id, actor: s.driver, expires_at: s.expires, signal: s.lifetime.signal };
   }
+  private learningKey(s: Session, turnId = s.turn?.id): string { return s.id + ':' + (turnId ?? ''); }
+  private releaseLearning(s: Session, turnId = s.turn?.id): void {
+    const key = this.learningKey(s, turnId), entry = this.learning.get(key);
+    if (!entry) return;
+    this.learning.delete(key); entry.release();
+    try { entry.access.dispose?.(); } catch { /* Cleanup cannot restore revoked authority. */ }
+  }
+  private revokeLearning(s: Session, turnId: string): void {
+    const turn = s.turn;
+    if (turn?.id === turnId) {
+      turn.state = 'failed'; turn.revision++; turn.task = null; turn.text = ''; turn.lease = null; turn.wake = undefined;
+      delete turn.tool_calls; delete turn.truncated;
+      turn.error = 'Your learning access ended. Refresh the account link and enrollment before asking again.';
+      turn.error_code = 'learning_access_revoked';
+    }
+    this.releaseLearning(s, turnId);
+  }
+  private learningRefused(): never { throw new AgentSessionError('Current learning authorization is required for this private turn.', 403, 'learning_access_revoked'); }
+  private bindLearning(s: Session, turn: Turn, access: AgentLearningAccess): void {
+    const aborted = () => this.revokeLearning(s, turn.id);
+    this.learning.set(this.learningKey(s, turn.id), { access, release: () => access.signal.removeEventListener('abort', aborted) });
+    access.signal.addEventListener('abort', aborted, { once: true });
+    if (access.signal.aborted) aborted();
+  }
+  private async checkLearning(s: Session, turn: Turn, phase: AgentLearningPhase): Promise<void> {
+    const key = this.learningKey(s, turn.id), entry = this.learning.get(key);
+    if (!entry) { if (turn.error_code === 'learning_access_revoked') this.learningRefused(); return; }
+    try {
+      if (entry.access.signal.aborted) this.learningRefused();
+      await entry.access.assertCurrent(phase);
+      if (entry.access.signal.aborted || this.learning.get(key) !== entry) this.learningRefused();
+    } catch { this.revokeLearning(s, turn.id); this.learningRefused(); }
+    // Never apply an authorization obtained for a replaced session or turn.
+    this.session(s.id); this.live(s);
+    if (this.sessions.get(s.id) !== s || s.turn !== turn) throw new AgentSessionError('The agent turn changed during learning authorization.', 409);
+  }
+  async browserAuthorized(raw: unknown, capability: unknown): Promise<Row> {
+    const body = jsonCopy(record(raw)), s = this.session(body.session_id);
+    if (!tokenMatches(capability, s.browserHash)) reject('Agent session not found.', 404);
+    this.live(s);
+    if (body.operation === 'request' && body.learning_authorization !== undefined) {
+      exact(body, ['session_id', 'operation', 'messages', 'tools', 'modelTier', 'learning_authorization']);
+      const receipt = string(body.learning_authorization, 16 * KiB, 'Learning authorization');
+      const clean = { ...body }; delete clean.learning_authorization;
+      const task = taskOf(clean), identity = this.authorizeBrowser(s.id, capability), previous = s.turn;
+      if (previous && active(previous)) reject('An agent request is already pending.', 409);
+      if (!this.openLearningAccess) reject('Verified learner access is unavailable.', 503);
+      let access: AgentLearningAccess | undefined, bound = false;
+      try {
+        access = await this.openLearningAccess(receipt, identity, jsonCopy(task.messages));
+        if (!access?.signal || typeof access.assertCurrent !== 'function' || access.signal.aborted) this.learningRefused();
+        await access.assertCurrent('enqueue');
+        this.session(s.id); this.live(s);
+        if (identity.signal.aborted || access.signal.aborted || this.sessions.get(s.id) !== s || s.turn !== previous || s.driver !== identity.actor) this.learningRefused();
+        const result = this.browserCore(clean, capability, true), turn = s.turn;
+        if (!turn || turn.id !== result.turn_id) this.learningRefused();
+        this.bindLearning(s, turn, access); bound = true;
+        if (access.signal.aborted) this.learningRefused();
+        return result;
+      } catch (error) {
+        if (error instanceof AgentSessionError) throw error;
+        this.learningRefused();
+      } finally { if (!bound) { try { access?.dispose?.(); } catch { /* No queued authority survives failure. */ } } }
+    }
+    if (s.turn && ['status', 'poll'].includes(String(body.operation)) && this.learning.has(this.learningKey(s))) {
+      const turn = s.turn;
+      try { await this.checkLearning(s, turn, 'read'); }
+      catch (error) { if (s.turn?.id === turn.id && s.turn.error_code === 'learning_access_revoked') return body.operation === 'status' ? this.status(s) : this.snapshot(s.turn); throw error; }
+    }
+    return this.browserCore(body, capability, true);
+  }
   browser(raw: unknown, capability: unknown): Row {
+    return this.browserCore(raw, capability, false);
+  }
+  private browserCore(raw: unknown, capability: unknown, learningAuthorized: boolean): Row {
     const body = record(raw), s = this.session(body.session_id);
     if (!tokenMatches(capability, s.browserHash)) reject('Agent session not found.', 404);
     this.live(s);
+    if (body.learning_authorization !== undefined || !learningAuthorized && s.turn && ['status', 'poll'].includes(String(body.operation)) && this.learning.has(this.learningKey(s))) this.learningRefused();
     switch (body.operation) {
       case 'status': exact(body, ['session_id', 'operation']); return this.status(s);
       case 'invite': exact(body, ['session_id', 'operation']); return this.invitation(s);
@@ -331,7 +417,7 @@ export class AgentSessionStore {
         const turn: Turn = { id: id(), revision: 0, state: 'queued', text: '', created: this.clock(), task, lease: null, leaseExpires: 0 };
         const wakeId = s.routine ? opaque() : null;
         if (wakeId) turn.wake = { hash: digest(wakeId), deadline: turn.created + ROUTINE_PICKUP_MS };
-        this.memoryReplacing(s, turn); s.turn = turn; s.turnCount++;
+        this.memoryReplacing(s, turn); this.releaseLearning(s); s.turn = turn; s.turnCount++;
         if (wakeId) this.dispatchWake(s, wakeId, () => s.turn === turn && turn.state === 'queued',
           () => this.failRoutineTurn(turn, 'The background agent could not be started for this request. Try again.'));
         return this.snapshot(turn);
@@ -341,9 +427,14 @@ export class AgentSessionStore {
         if (body.after_revision !== undefined && (!Number.isInteger(body.after_revision) || Number(body.after_revision) < 0)) reject('Invalid revision.');
         const t = this.turn(s, body.turn_id); return this.snapshot(t);
       }
-      case 'cancel': exact(body, ['session_id', 'operation', 'turn_id']); return this.cancel(this.turn(s, body.turn_id), 'Stopped by the browser.');
+      case 'cancel': {
+        exact(body, ['session_id', 'operation', 'turn_id']); const turn = this.turn(s, body.turn_id);
+        if (this.learning.has(this.learningKey(s, turn.id))) { this.revokeLearning(s, turn.id); return this.snapshot(turn); }
+        return this.cancel(turn, 'Stopped by the browser.');
+      }
       case 'disconnect': {
         exact(body, ['session_id', 'operation']);
+        this.releaseLearning(s);
         if (s.turn && active(s.turn)) this.cancel(s.turn, 'The browser disconnected.');
         s.driver = null; s.driverHash = null; s.inviteHash = null; s.turn = null; s.routine = undefined; s.routineSender = undefined; s.expires = this.clock();
         s.lifetime.abort();
@@ -362,10 +453,36 @@ export class AgentSessionStore {
   }
   /** Called ONLY with the authoritative payload and identity returned by verifyCaller. */
   driver(raw: unknown, actor: string): Row {
+    return this.driverCore(raw, actor, false);
+  }
+  private driverAuthorization(raw: unknown, actor: string): { body: Row; s: Session } {
     const body = record(raw);
     exact(body, ['i2idlx_operation', 'bridge_audience', 'agent_id', 'timestamp', 'subject_pod_url', 'session_id', 'operation', 'invite_token', 'start_monitoring', 'driver_token', 'wake_id', 'turn_id', 'lease_id', 'revision', 'text', 'tool_calls', 'truncated', 'error']);
     if (body.i2idlx_operation !== 'agent-session' || body.bridge_audience !== this.base || !actor.trim()) reject('Agent request is not bound to this operation and workbench.', 403);
     const s = this.session(body.session_id); this.live(s);
+    if (body.operation !== 'claim') {
+      if (s.driver !== actor) reject('This agent is not attached to the session.', 403);
+      const turn = s.turn;
+      if (body.wake_id !== undefined) {
+        if (body.driver_token !== undefined || !s.routine) reject('Invalid background agent credential.', 403);
+        const startup = body.operation === 'next' && s.routine.state === 'starting' && tokenMatches(body.wake_id, s.routine.hash);
+        if (!startup && (!turn?.wake || !tokenMatches(body.wake_id, turn.wake.hash))) reject('This background agent request is absent or revoked.', 403);
+        if (!startup && body.operation === 'next' && turn?.state !== 'queued') reject('This background agent request has already been picked up.', 409);
+      } else if (!tokenMatches(body.driver_token, s.driverHash)) reject('This agent-session driver credential is absent or revoked.', 403);
+    }
+    return { body, s };
+  }
+  async driverAuthorized(raw: unknown, actor: string): Promise<Row> {
+    // Verify actor AND per-session driver/wake credentials before a source recheck.
+    const { body, s } = this.driverAuthorization(jsonCopy(record(raw)), actor), turn = s.turn;
+    if (body.operation !== 'claim' && turn && ['next', 'emit', 'finish'].includes(String(body.operation))) {
+      const phase = body.operation === 'next' ? 'dispatch' : body.operation === 'emit' ? 'stream' : 'finish';
+      await this.checkLearning(s, turn, phase);
+    }
+    return this.driverCore(body, actor, true);
+  }
+  private driverCore(raw: unknown, actor: string, learningAuthorized: boolean): Row {
+    const { body, s } = this.driverAuthorization(raw, actor);
     if (body.operation === 'claim') {
       if (s.driver || s.inviteExpires <= this.clock() || !tokenMatches(body.invite_token, s.inviteHash)) reject('The agent invitation is expired, invalid or already used.', 403);
       if (body.start_monitoring !== undefined && typeof body.start_monitoring !== 'boolean') reject('Invalid monitoring preference.');
@@ -395,6 +512,7 @@ export class AgentSessionStore {
     } else if (!tokenMatches(body.driver_token, s.driverHash)) {
       reject('This agent-session driver credential is absent or revoked.', 403);
     }
+    if (!learningAuthorized && t && this.learning.has(this.learningKey(s, t.id))) this.learningRefused();
     if (body.operation === 'next') {
       if (!t || !active(t)) return { session_id: s.id, state: 'idle', expires_at: iso(s.expires), ephemeral: true };
       if (t.state === 'queued' || t.leaseExpires <= this.clock()) {
@@ -450,7 +568,8 @@ function respond(res: Response, value: Row): void {
 function fail(res: Response, e: unknown): void {
   // A verifier's internal exception may contain private inputs: never echo it.
   const status = e instanceof AgentSessionError ? e.status : 500;
-  res.set('Cache-Control', 'no-store').status(status).json({ error: e instanceof AgentSessionError ? e.message : 'Agent-session operation failed.' });
+  res.set('Cache-Control', 'no-store').status(status).json({ error: e instanceof AgentSessionError ? e.message : 'Agent-session operation failed.',
+    ...(e instanceof AgentSessionError && e.code ? { code: e.code } : {}) });
 }
 /** Foxxi adds these two transport fields before routing. They carry no session
  * authority: browser credentials come only from the Authorization header and
@@ -481,7 +600,7 @@ export function attachAgentSessionRoutes(app: Express, config: AgentSessionConfi
     try { browserOrigin(req); exact(browserArguments(req.body), []); respond(res, store.create(req.ip ?? req.socket.remoteAddress ?? 'unknown')); }
     catch (e) { fail(res, e); }
   });
-  app.post(AGENT_SESSION_PATH + '/browser', (req, res) => {
+  app.post(AGENT_SESSION_PATH + '/browser', async (req, res) => {
     try {
       browserOrigin(req);
       const body = browserArguments(req.body);
@@ -489,7 +608,7 @@ export function attachAgentSessionRoutes(app: Express, config: AgentSessionConfi
         reject('Use the standalone HTTPS workbench to configure background monitoring.', 403);
       }
       const auth = req.get('Authorization');
-      respond(res, store.browser(body, auth?.startsWith('Bearer ') ? auth.slice(7) : null));
+      respond(res, await store.browserAuthorized(body, auth?.startsWith('Bearer ') ? auth.slice(7) : null));
     }
     catch (e) { fail(res, e); }
   });
@@ -500,7 +619,7 @@ export function attachAgentSessionRoutes(app: Express, config: AgentSessionConfi
       if (!config.verifyCaller) reject('Authenticated agent-session driving is not available on this deployment.', 503);
       const auth = await config.verifyCaller(req.body, true);
       if (!auth.ok) reject('A verified, delegated Interego agent is required.', auth.status);
-      respond(res, store.driver(auth.payload, auth.callerDid));
+      respond(res, await store.driverAuthorized(auth.payload, auth.callerDid));
     } catch (e) { fail(res, e); }
   });
   return store;

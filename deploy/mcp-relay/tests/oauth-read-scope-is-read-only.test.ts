@@ -23,6 +23,11 @@
  * assertion meaningful: it compares the two lists AS WRITTEN, and a set that stopped matching
  * the registered tools is exactly the drift being guarded.
  */
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { once } from 'node:events';
+import express from 'express';
+import { oauthAccountHandler, nativeBackingIdentityValidator, type OAuthAccountGrant } from '../oauth-account.js';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
@@ -106,3 +111,138 @@ if (failures) {
   process.exit(1);
 }
 console.log('All checks passed — the read-only grant is read-only.');
+
+// The own-account HTTP projection is also bounded by the read-only grant.
+{
+const identity = 'https://identity.example', pod = 'https://pods.example';
+const alice = 'u-pk-aaaaaaaaaaaa', bob = 'u-pk-bbbbbbbbbbbb';
+const now = 1_800_000_000_000;
+function grant(id = alice): OAuthAccountGrant {
+  return { valid: true, userId: id, ownerWebId: `${identity}/users/${id}/profile#me`,
+    podUrl: `http://css.internal/${id}/`, agentId: `did:web:identity.example:agents:learning-${id}`,
+    clientId: 'https://workbench.example/client.json', scope: ['mcp:read'], expiresAt: now / 1000 + 3600 };
+}
+test('account is a read-only, own-bearer projection with no token or credential disclosure', async () => {
+  const grants = new Map([['test-alice', grant()], ['test-bob', grant(bob)]]);
+  const app = express();
+  app.get('/oauth/account', oauthAccountHandler({ identityOrigin: identity, podOrigin: pod, validateBackingIdentity: async () => true, now: () => now,
+    introspect: token => grants.get(token) ?? null,
+    publicPod: raw => raw.startsWith('http://css.internal/') ? raw.replace('http://css.internal', pod) : undefined }));
+  const server = app.listen(0, '127.0.0.1'); await once(server, 'listening');
+  const address = server.address(); assert.ok(address && typeof address !== 'string');
+  const endpoint = `http://127.0.0.1:${address.port}/oauth/account`;
+  const read = (token?: string, query = '') => fetch(endpoint + query, { headers: token ? { Authorization: 'Bearer ' + token } : {} });
+  try {
+    for (const token of [undefined, 'unknown']) { const r = await read(token); assert.equal(r.status, 401); await r.text(); }
+    for (const [token, id] of [['test-alice', alice], ['test-bob', bob]]) {
+      const r = await read(token); assert.equal(r.status, 200); assert.equal(r.headers.get('cache-control'), 'no-store');
+      const a = await r.json(); assert.deepEqual(Object.keys(a).sort(), ['agentId', 'clientId', 'expiresAt', 'ownerDid', 'podUrl', 'scope', 'userId', 'webId']);
+      assert.equal(a.ownerDid, `did:web:identity.example:users:${id}`); assert.equal(a.podUrl, `${pod}/${id}/`);
+      assert.equal(a.scope, 'mcp:read'); assert.equal(a.userId, id);
+      assert.ok(!JSON.stringify(a).includes(token!)); assert.ok(!JSON.stringify(a).includes('css.internal'));
+    }
+    const query = await read('test-alice', '?userId=' + bob); assert.equal(query.status, 400); await query.text();
+    for (const change of [
+      { scope: ['mcp'] }, { scope: ['mcp:write'] }, { expiresAt: now / 1000 }, { expiresAt: 0 },
+      { provisionalPlay: {} }, { ownerWebId: `${identity}/users/${bob}/profile#me` },
+      { ownerDid: `did:web:identity.example:users:${bob}` }, { podUrl: `http://css.internal/${bob}/` },
+      { agentId: `did:web:other.example:agents:learning-${alice}` }, { agentId: `did:web:identity.example:agents:learning-${bob}` },
+      { userId: '../victim' },
+    ]) {
+      grants.set('test-invalid', { ...grant(), ...change });
+      const r = await read('test-invalid'); assert.ok([401, 403].includes(r.status)); await r.text();
+    }
+    grants.set('test-valid-did', { ...grant(), ownerDid: `did:web:identity.example:users:${alice}` });
+    const r = await read('test-valid-did'); assert.equal(r.status, 200); await r.text();
+  } finally { server.closeAllConnections(); await new Promise<void>((resolve, reject) => server.close(e => e ? reject(e) : resolve())); }
+});
+test('the real relay advertises and mounts the same custom account endpoint', () => {
+  const source = readFileSync(new URL('../server.ts', import.meta.url), 'utf8');
+  assert.ok(source.includes('interego_account_endpoint: `${issuerHref}/oauth/account`'));
+  assert.ok(source.includes("app.get('/oauth/account', oauthAccountHandler({"));
+  assert.ok(source.includes('introspect: token => oauthProvider.introspectAccessToken(token)'));
+  assert.ok(source.includes('publicPod: asPublicPodUrl'));
+});
+test('verified people have separate bounded budgets behind one IP; invalid tokens cannot grow unlimited state', async () => {
+  let clock = now;
+  const grants = new Map([['test-alice', grant()], ['test-alice-two', grant()], ['test-bob', grant(bob)]]);
+  const app = express(); app.set('trust proxy', 1);
+  app.get('/oauth/account', oauthAccountHandler({ identityOrigin: identity, podOrigin: pod, validateBackingIdentity: async () => true, now: () => clock,
+    introspect: token => grants.get(token) ?? null, publicPod: raw => raw.replace('http://css.internal', pod),
+    limits: { perAccount: 2, accountEntries: 2, invalidPerIp: 2, invalidGlobal: 6, invalidIpEntries: 2 } }));
+  const server = app.listen(0, '127.0.0.1'); await once(server, 'listening'); const address = server.address(); assert.ok(address && typeof address !== 'string');
+  const url = `http://127.0.0.1:${address.port}/oauth/account`;
+  const read = async (token: string, expected: number, ip = '192.0.2.1') => {
+    const r = await fetch(url, { headers: { Authorization: 'Bearer ' + token, 'X-Forwarded-For': ip } });
+    assert.equal(r.status, expected); if (expected === 429) assert.equal(r.headers.get('retry-after'), '60'); await r.text();
+  };
+  try {
+    await read('test-alice', 200); await read('test-alice-two', 200); await read('test-alice', 429);
+    await read('test-bob', 200); // Same IP, different verified person.
+    await read('unknown-one', 401); await read('unknown-two', 401); await read('unknown-three', 429);
+    await read('unknown-four', 401, '192.0.2.2'); await read('unknown-five', 429, '192.0.2.3'); // capped invalid-IP map
+    await read('unknown-six', 401, '192.0.2.2'); await read('unknown-seven', 429, '192.0.2.2'); // global cap
+    await read('test-bob', 200); // Anonymous abuse spends no verified person's budget.
+    const third = 'u-pk-cccccccccccc'; grants.set('test-third', grant(third));
+    await read('test-third', 429); // valid-account map also has a hard bound.
+    clock += 60_001;
+    await read('test-third', 200); await read('test-alice', 200); await read('new-unknown', 401, '192.0.2.3');
+    clock += 3_600_000;
+    await read('test-third', 401); // An expired grant cannot refresh a verified budget.
+  } finally { server.closeAllConnections(); await new Promise<void>((resolve, reject) => server.close(e => e ? reject(e) : resolve())); }
+});
+test('own-account reads require fresh native identity proof and recheck a cached OAuth grant after awaiting it', async () => {
+  const grants = new Map([['test-alice', grant()]]);
+  let release!: () => void, entered!: () => void;
+  const blocked = new Promise<boolean>(resolve => { release = () => resolve(true); }), started = new Promise<void>(resolve => { entered = resolve; });
+  const common = { identityOrigin: identity, podOrigin: pod, now: () => now, introspect: (token: string) => grants.get(token) ?? null,
+    publicPod: (raw: string) => raw.replace('http://css.internal', pod) };
+  const app = express();
+  app.get('/accepted', oauthAccountHandler({ ...common, validateBackingIdentity: async () => true }));
+  app.get('/rejected', oauthAccountHandler({ ...common, validateBackingIdentity: async () => false }));
+  app.get('/unavailable', oauthAccountHandler({ ...common, validateBackingIdentity: async () => { throw Error('test-native'); } }));
+  app.get('/missing', oauthAccountHandler(common));
+  app.get('/held', oauthAccountHandler({ ...common, validateBackingIdentity: async bound => { assert.ok(Object.isFrozen(bound)); entered(); return blocked; } }));
+  const server = app.listen(0, '127.0.0.1'); await once(server, 'listening'); const address = server.address(); assert.ok(address && typeof address !== 'string');
+  const endpoint = `http://127.0.0.1:${address.port}`;
+  const read = (path: string) => fetch(endpoint + path, { headers: { Authorization: 'Bearer test-alice' } });
+  try {
+    for (const [path, expected] of [['/accepted', 200], ['/rejected', 401], ['/unavailable', 503], ['/missing', 503]] as const) {
+      const r = await read(path); assert.equal(r.status, expected); const body = await r.text(); assert.ok(!body.includes('test-native')); assert.ok(!body.includes('test-alice'));
+    }
+    const pending = read('/held'); await started; grants.delete('test-alice'); release();
+    const revoked = await pending; assert.equal(revoked.status, 401); assert.ok(!(await revoked.text()).includes(alice));
+  } finally { release(); server.closeAllConnections(); await new Promise<void>((resolve, reject) => server.close(e => e ? reject(e) : resolve())); }
+});
+test('native backing verification binds the live subject, session agent and pod without returning native credentials', async () => {
+  const rawGrant = grant(); let backing = { ...rawGrant, identityToken: 'test-native' };
+  const nativeAccount = () => ({ valid: true, userId: alice, ownerDid: `did:web:identity.example:users:${alice}`, webId: rawGrant.ownerWebId,
+    agentId: 'learning-' + alice, podUrl: rawGrant.podUrl, expiresAt: new Date(now + 3_600_000).toISOString() });
+  let response: Record<string, unknown> = nativeAccount(), status = 200, calls = 0;
+  const app = express(); app.use(express.json()); app.post('/tokens/verify', (req, res) => {
+    calls++; assert.equal(req.get('Authorization'), 'Bearer test-secret'); assert.deepEqual(req.body, { token: 'test-native' }); res.status(status).json(response);
+  });
+  const server = app.listen(0, '127.0.0.1'); await once(server, 'listening'); const address = server.address(); assert.ok(address && typeof address !== 'string');
+  const publicPod = (raw: string) => raw.startsWith('http://css.internal/') ? raw.replace('http://css.internal', pod) : raw.startsWith(pod + '/') ? raw : undefined;
+  const options = { identityUrl: `http://127.0.0.1:${address.port}`, introspectionSecret: () => 'test-secret', now: () => now,
+    lookupOAuth: async (token: string) => token === 'test-alice' ? backing : null, publicPod };
+  const validator = nativeBackingIdentityValidator(options), signal = new AbortController().signal;
+  try {
+    assert.equal(await validator(rawGrant, 'test-alice', signal), true); assert.equal(calls, 1);
+    response = { valid: false }; assert.equal(await validator(rawGrant, 'test-alice', signal), false);
+    response = { valid: false, unreadable: true }; await assert.rejects(() => validator(rawGrant, 'test-alice', signal));
+    for (const patch of [{ userId: bob }, { ownerDid: `did:web:identity.example:users:${bob}` }, { webId: `${identity}/users/${bob}/profile#me` },
+      { agentId: 'learning-' + bob }, { podUrl: 'http://css.internal/' + bob + '/' }, { expiresAt: new Date(now - 1).toISOString() }, { provisionalPlay: {} }]) {
+      response = { ...nativeAccount(), ...patch }; assert.equal(await validator(rawGrant, 'test-alice', signal), false);
+    }
+    response = nativeAccount(); status = 401; assert.equal(await validator(rawGrant, 'test-alice', signal), false);
+    status = 404; await assert.rejects(() => validator(rawGrant, 'test-alice', signal)); status = 503; await assert.rejects(() => validator(rawGrant, 'test-alice', signal)); status = 200;
+    const before = calls; backing = { ...grant(bob), identityToken: 'test-native' };
+    assert.equal(await validator(rawGrant, 'test-alice', signal), false); assert.equal(calls, before);
+    backing = { ...rawGrant, identityToken: 'test-native' };
+    await assert.rejects(() => nativeBackingIdentityValidator({ ...options, introspectionSecret: () => undefined })(rawGrant, 'test-alice', signal));
+    const aborted = new AbortController(); aborted.abort(); await assert.rejects(() => validator(rawGrant, 'test-alice', aborted.signal));
+    assert.equal(calls, before);
+  } finally { server.closeAllConnections(); await new Promise<void>((resolve, reject) => server.close(e => e ? reject(e) : resolve())); }
+});
+}

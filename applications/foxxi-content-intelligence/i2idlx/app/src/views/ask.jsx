@@ -128,7 +128,7 @@ export function useAskEngine() {
     },
   ], [caps.allNotes, sample]);
 
-  const send = useCallback(async (text, ids = ctx, interventionContext = null, executor = sample, sourceIdentity = null) => {
+  const send = useCallback(async (text, ids = ctx, interventionContext = null, executor = sample, sourceIdentity = null, transport = {}) => {
     const q = (text || "").trim();
     if (!q || !executor) return;
     if (!interventionContext && (scope.current?.kind === 'reference' || courseControl.current?.active())) {
@@ -169,6 +169,7 @@ export function useAskEngine() {
       const input = [{ role: "user", content: lead }, ...history, userTurn];
       const signal = controller.signal;
       const opts = { signal, modelTier: tier, onText: ({ text: t }) => { if (current() && !signal.aborted) writeTurns((all) => all.map((x, i) => (i === all.length - 1 ? { ...x, content: t, pending: false } : x))); } };
+      if (typeof transport.learningAuthorization === 'string') opts.learningAuthorization = transport.learningAuthorization;
       if (useTools) opts.tools = tools(trace, executor).slice(0, maxTools); else opts.cache = false;
       const res = await executor(input, opts);
       if (!current()) return;
@@ -177,6 +178,12 @@ export function useAskEngine() {
     } catch (e) {
       if (!current()) return;
       const code = e && e.code;
+      if (transport.learningAuthorization && code !== 'cancelled') {
+        // The learner controller keeps this source intent blocked until the
+        // user refreshes access or explicitly switches back to the glossary.
+        writeTurns([]); scope.current = null;
+        throw e;
+      }
       const msg = code === "cancelled" ? null
         : code === "not_granted" || code === "sampling_disabled" || code === "not_declared" || code === "capability_disabled" ? "A model isn't connected on this page for your account."
         : code === "rate_limited" ? "Too many requests right now. Try again in a little while."

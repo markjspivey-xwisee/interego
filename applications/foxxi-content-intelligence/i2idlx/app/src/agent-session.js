@@ -88,9 +88,9 @@ export function createAgentSessionClient(config = {}) {
     if (signal?.aborted || captured !== generation || !session) throw failure('Cancelled.', 'cancelled');
     if (now() >= Date.parse(session.expires_at)) { expire(); throw failure(EXPIRED, 'session_expired'); }
   };
-  async function post(path, data, token, signal, root = ROOT) {
+  async function post(path, data, token, signal, root = ROOT, credentials = 'omit', extraHeaders = {}) {
     const captured = generation;
-    const response = await fetcher(url(root + path), { method: 'POST', cache: 'no-store', credentials: 'omit', headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: 'Bearer ' + token } : {}) }, body: boundedJSON(data), signal });
+    const response = await fetcher(url(root + path), { method: 'POST', cache: 'no-store', credentials, headers: { 'Content-Type': 'application/json', ...extraHeaders, ...(token ? { Authorization: 'Bearer ' + token } : {}) }, body: boundedJSON(data), signal });
     let reply; try { reply = await response.json(); } catch { throw failure('The agent connection returned no readable response.'); }
     if (!response.ok) {
       const expired = response.status === 410 && (root === ROOT || reply?.code === 'session_expired');
@@ -109,6 +109,19 @@ export function createAgentSessionClient(config = {}) {
     const captured = generation;
     check(captured, signal);
     const result = await post('', { ...args, session_id: session.session_id }, session.browser_token, signal, '/i2idlx/api/user-courses');
+    check(captured, signal);
+    return result;
+  }
+  async function requestLearningContext(args, signal) {
+    requireSample();
+    const captured = generation;
+    check(captured, signal);
+    const accountResponse = await fetcher(url('/i2idlx/learning/session'), { cache: 'no-store', credentials: 'same-origin', signal });
+    const account = await accountResponse.json();
+    check(captured, signal);
+    if (!accountResponse.ok || account?.authenticated !== true || typeof account.csrf !== 'string') throw failure('Sign in to your learning account again.', 'learning_sign_in_required');
+    const result = await post('', { ...args, session_id: session.session_id }, session.browser_token, signal,
+      '/i2idlx/api/learning/context', 'same-origin', { 'X-I2IDLX-Learning-CSRF': account.csrf });
     check(captured, signal);
     return result;
   }
@@ -234,7 +247,8 @@ export function createAgentSessionClient(config = {}) {
       for (let round = 0; round < 12; round++) {
         check(captured, signal);
         requireSample();
-        const request = { messages, tools: descriptions, ...(options.modelTier ? { modelTier: options.modelTier } : {}) };
+        const request = { messages, tools: descriptions, ...(options.modelTier ? { modelTier: options.modelTier } : {}),
+          ...(options.learningAuthorization ? { learning_authorization: options.learningAuthorization } : {}) };
         boundedJSON(request);
         let snapshot = await browser('request', request, signal);
         currentTurn = snapshot.turn_id;
@@ -244,6 +258,10 @@ export function createAgentSessionClient(config = {}) {
         while (true) {
           check(captured, signal);
           if (now() >= cutoff) throw failure('The agent did not finish before this request expired. Keep the agent session active and try again.', 'request_timeout');
+          if (snapshot.turn_id === currentTurn && snapshot.state === 'failed' && snapshot.error_code === 'learning_access_revoked') {
+            options.onText?.({ text: '' });
+            throw failure('Your learning access changed. Refresh your enrolled courses before asking again.', 'learning_access_revoked');
+          }
           if (snapshot.turn_id !== currentTurn || !Number.isSafeInteger(snapshot.revision) || snapshot.revision < revision || typeof snapshot.text !== 'string' || bytes(snapshot.text) > MAX_TEXT || !snapshot.text.startsWith(text) || snapshot.revision === revision && snapshot.text !== text) throw failure('The agent returned a stale or invalid response.');
           if (bytes(previousText + snapshot.text) > MAX_TEXT) throw failure('The agent response exceeds this connection limit. Ask a smaller question.', 'prompt_too_large');
           if (snapshot.revision > revision) { revision = snapshot.revision; if (snapshot.text !== text) { text = snapshot.text; options.onText?.({ text: previousText + text }); } }
@@ -315,7 +333,7 @@ export function createAgentSessionClient(config = {}) {
     return bound;
   }
   return {
-    connect, renewInvitation, disconnect, refresh, requestUserCourses, getUserCourseSample,
+    connect, renewInvitation, disconnect, refresh, requestUserCourses, requestLearningContext, getUserCourseSample,
     status,
     getSample: () => canSample() ? sample : null,
     subscribe(listener) { listeners.add(listener); listener(status()); return () => listeners.delete(listener); },

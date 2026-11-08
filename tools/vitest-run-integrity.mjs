@@ -289,7 +289,9 @@ const REPO_ROOT = fileURLToPath(new URL('..', import.meta.url));
 // Foxxi's lti-platform-readiness, lti-platform-publication and lti-platform-rate-limit
 // regression modules consumed the remaining headroom. Pin the expanded tree;
 // no modules were removed, excluded or skipped to meet the floor.
-export const MIN_TEST_MODULES = 620;
+// Enrolled-learning security modules bring the measured tree to 658. Retain
+// the expanded suite; no include, assertion or module was removed to pass.
+export const MIN_TEST_MODULES = 658;
 
 /**
  * How far below the real module count MIN_TEST_MODULES may sit before that is itself a
