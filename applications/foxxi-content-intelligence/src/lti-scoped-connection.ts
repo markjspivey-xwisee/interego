@@ -1,4 +1,4 @@
-import express, { type Express } from 'express';
+import express, { type Express, type Router } from 'express';
 import { createPublicKey, generateKeyPairSync, randomBytes } from 'node:crypto';
 import { LtiPlatform, attachLtiPlatformRoutes, type LaunchCourse, type ToolRegistration } from './lti-platform.js';
 import { jwsVerifyRs256OrEs256 } from './lti13.js';
@@ -77,7 +77,7 @@ function parseLease(raw: string, now: number): Lease {
 export class ScopedLtiConnection {
   private readonly subject = randomBytes(24).toString('base64url');
   private readonly expiry: ReturnType<typeof setTimeout>;
-  private current?: { platform: LtiPlatform; routes: Express };
+  private current?: { platform: LtiPlatform; routes: Router };
   readonly course: LaunchCourse;
   readonly scoreRoutePath: string;
   private readonly issuerPath: string;
@@ -104,7 +104,8 @@ export class ScopedLtiConnection {
       privateKeyPem,
       verifyJwt: (jwt) => jwsVerifyRs256OrEs256(jwt, lease.keys),
     });
-    const routes = express();
+    // Use middleware so the parent app's request prototype keeps its query parser.
+    const routes = express.Router();
     attachLtiPlatformRoutes(routes, platform);
     this.current = { platform, routes };
     this.scoreRoutePath = platform.scoreRoutePath;
