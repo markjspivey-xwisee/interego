@@ -213,7 +213,7 @@ export const pevAffordances: ReadonlyArray<Affordance> = [
     targetTemplate: '{base}/pev/record_judgment',
     annotations: hints('Record a judgment', false, false, false, true),
     inputs: [...ENVELOPE],
-    outputs: out('The recorded judgment and the provisional result.', ['attemptIri', 'state', 'descriptorUrl']),
+    outputs: out('That the judgment was saved, and how the platform checked each criterion\'s level and quotes. Never the provisional result, the scoring the packet leaves out, or another judgment.', ['attemptIri', 'state', 'descriptorUrl']),
   },
   {
     action: PEV_ACTION.reviewQueue as IRI,

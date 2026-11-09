@@ -452,7 +452,8 @@ describe('the web UI is served under a strict content policy', () => {
       // answers it, so the message pasted again, in the same chat or a new one, stops at an assessment already saved; and when
       // the assistant can't tell, the judge is told how to find out.
       'An assessment is tied to the exact session, conversation and rubric your assistant fetched. When your assistant fetches the session, the workspace also tells it whether an assessment of yours is already saved, '
-        + 'and if one is, your assistant tells you so and stops: the same message pasted again, in this chat or a new one, never saves a second one. '
+        + 'and if one is, your assistant tells you so and stops: the same message pasted again, in this chat or a new one, never saves a second one, '
+        + 'unless the learner contested the review or it was withdrawn, which asks for a new assessment. '
         + 'If the session changed since it was fetched, saving is refused: your assistant fetches it again, and assesses it again only if none of yours is saved. '
         + 'If a save goes wrong another way (an error, no answer, or it loses track), it fetches the session again to check instead of saving twice, and tells you whether your assessment is saved. '
         + 'If it can\'t tell, ask the learner whether their session page shows your assessment.',

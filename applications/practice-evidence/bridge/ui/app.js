@@ -2366,7 +2366,10 @@ function judgeMessage(v) {
         + "don't assess or save again before you do the first step again. If nothing of mine is saved, send the same assessment once more, with a new nonce and the same binding as that save; "
         + 'if you already sent it again, or no longer have it, tell me it is not saved, and stop.',
       'If a save is refused with binding-mismatch or chain-moved (the session changed after the first step): do the first step again, and if nothing of mine is saved, assess what it returns, never an earlier assessment, and show me before you save.',
-      "If the first step is refused, other than for a wrong field or its format, or gets no answer: don't assess or save. Tell me what it said and that my assessment may already be saved, and stop.",
+      // "May already be saved" only where a save could be: the first step is also the first call of every chat, and a
+      // judge refused it before any save (not registered yet, the session not ended) has nothing saved to look for.
+      "If the first step is refused, other than for a wrong field or its format, or gets no answer: don't assess or save. "
+        + "Tell me what it said and, if you sent a save in this chat or can't tell whether you did, that my assessment may already be saved; then stop.",
       "If this is my own practice session, stop: I can't assess it, in any chat or role. A reviewer signs off after me.",
     ],
   });

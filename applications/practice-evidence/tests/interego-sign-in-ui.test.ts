@@ -1523,10 +1523,13 @@ describe('your own AI assistant: connect Claude or ChatGPT, or copy and paste; n
         + 'assess what it returns, never an earlier assessment, and show me before you save.',
     ]);
     for (const r of judgeRules) expect(r).not.toMatch(/accepted in this chat|has been accepted/);
-    // Only a first step that cannot answer leaves the judge with "may already be saved"; a wrong field in it, which the first
-    // call of every chat can have, is fixed once, as the closing rule says for any call.
+    // Only a first step that cannot answer leaves the judge with "may already be saved", and only once a save was sent in
+    // that chat: the first step is also the first call of every chat, and a judge it refuses before any save (not
+    // registered yet, the session not ended) has nothing saved to ask the learner about. A wrong field in it, which the
+    // first call of every chat can have, is fixed once, as the closing rule says for any call.
     expect(judgeRules.filter((r) => r.includes('may already be saved'))).toEqual([
-      "- If the first step is refused, other than for a wrong field or its format, or gets no answer: don't assess or save. Tell me what it said and that my assessment may already be saved, and stop.",
+      "- If the first step is refused, other than for a wrong field or its format, or gets no answer: don't assess or save. "
+        + "Tell me what it said and, if you sent a save in this chat or can't tell whether you did, that my assessment may already be saved; then stop.",
     ]);
     expect(judgeRules.at(-1)).toContain('if a call is refused because a field or its format is wrong, fix it once from the refusal message and try again.');
 
@@ -1541,8 +1544,10 @@ describe('your own AI assistant: connect Claude or ChatGPT, or copy and paste; n
       filled['nonce'] = `${String(step.payload['nonce']).split('-<')[0]}-0-${randomBytes(8).toString('hex')}`;
       return fromChat(noModelHandlers, toolOf(step.actionIri), step.actionIri, filled, judgeUser);
     };
+    // Neither step's answer carries the stakes the packet's rubric leaves out, or another judgment's levels.
+    const STAKES = /weight|"value"|passRule|minPercent|requiredLevels|meetsPassRule|percent|"points"|unmet|provisional|agreement|nextSteps/i;
     // The first step as the message reads it: null goes on with the packet, anything else is saved, and a refusal or an
-    // answer without the field ends the chat with "may already be saved". Whatever it says, it never carries the stakes.
+    // answer without the field ends the chat. Whatever it says, it never carries the stakes.
     const firstStep = async (): Promise<Out | 'saved' | 'cannot tell'> => {
       const r = await asJudge(steps[0]!);
       if (r['kind'] !== undefined || !Object.prototype.hasOwnProperty.call(r, 'yourAssessment')) return 'cannot tell';
@@ -1565,7 +1570,14 @@ describe('your own AI assistant: connect Claude or ChatGPT, or copy and paste; n
     // The first step is a read: the same nonce, sent twice, is answered twice, so doing it again never spends anything.
     const sameNonce = { ...steps[0]!.payload, nonce: `judge-packet-0-${randomBytes(8).toString('hex')}` };
     for (let i = 0; i < 2; i += 1) expect(ok(await fromChat(noModelHandlers, toolOf(PEV_ACTION.judgePacket), PEV_ACTION.judgePacket, sameNonce, judgeUser))['yourAssessment']).toBeNull();
-    const saved = ok(await asJudge(steps[1]!, assessment));
+    // The second step: the save, whose answer says it was kept and how the judge's own quotes were checked, and nothing more.
+    const save = async (fields: Out): Promise<Out> => {
+      const r = ok(await asJudge(steps[1]!, fields));
+      expect(JSON.stringify(r)).not.toMatch(STAKES);
+      expect(Object.keys(r)).toEqual(['attemptIri', 'descriptorUrl', 'state', 'judgmentCount', 'judgment', 'currentTarget', 'recorded']);
+      return r;
+    };
+    const saved = await save(assessment);
     // The chat app said it failed. The rule: the first step again before anything else, and it finds the assessment saved.
     expect(await firstStep()).toBe('saved');
     expect(ok(await asJudge(steps[0]!))['yourAssessment']).toEqual({ saved: true, judgedAt: (saved['judgment'] as Out)['judgedAt'] });
@@ -1591,7 +1603,7 @@ describe('your own AI assistant: connect Claude or ChatGPT, or copy and paste; n
     ok(await fromChat(noModelHandlers, 'pev.contest_review', PEV_ACTION.contestReview, { attemptIri, target: reviewed['currentTarget'], why: 'The deadline I named was the one we agreed on.' }));
     const reopened = await firstStep();
     if (typeof reopened === 'string') throw new Error(`the chat after the contest stopped at the first step: ${reopened}`);
-    const resaved = ok(await asJudge(steps[1]!, { ...assessment, ...(reopened['binding'] as Out) }));
+    const resaved = await save({ ...assessment, ...(reopened['binding'] as Out) });
     expect(ok(await asJudge(steps[0]!))['yourAssessment']).toEqual({ saved: true, judgedAt: (resaved['judgment'] as Out)['judgedAt'] });
     expect(await firstStep()).toBe('saved');
     expect((await judgmentsOf()).map((j) => j.repeatOf)).toEqual([null, 0]);

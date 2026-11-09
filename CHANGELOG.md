@@ -1,5 +1,38 @@
 # Changelog
 
+## 2026-11-09 — Practice Evidence: saving an assessment no longer shows the judge's assistant the scoring
+
+The entry below said the judge's assistant no longer reads the scoring. It
+still did, one step later. When it saved an assessment, the answer included
+the full provisional result for a scored scenario (how much each criterion
+counts, the points for each level, the percent, the pass mark and the levels
+a pass needs), the first assessment's result, which is often another
+judge's, and every judge's levels side by side. If the same chat then
+assessed again, the session once it was reopened or another learner's
+session of the same scenario, the assistant had already read all of it.
+
+Now a judge's save answers with only what the judge needs: that it was
+saved, where, how many assessments the session has, and for each criterion
+the level given and whether each quote checked out. The result, the other
+judgments and the advice for the next level stay in the record, and the
+learner and the reviewers still see them in the web app. When the web app
+asks for an assessment, the answer is unchanged.
+
+Three smaller fixes. A judge's assistant whose first step is refused before
+anything was saved (the judge is not registered yet, or the session has not
+ended) no longer tells the judge their assessment may already be saved; it
+says so only when it sent a save in that chat or can't tell whether it did.
+Whether a judge's assessment came after the session was last reopened is now
+decided by the order things were written in, not by comparing clock times,
+so one written in the same instant as the reopening still counts. And the
+guide now says that after a contest or a withdrawn review, the same message
+pasted again does ask for a new assessment.
+
+The README now lists the packet's yourAssessment field among the additions
+to the interface, and says what the save answer leaves out. Tests check the
+save answer for a first judge, a second judge and a judge assessing again
+after a contest, with no scoring in any of them.
+
 ## 2026-11-09 — Practice Evidence: a judge's assistant checks for a saved assessment without reading the scoring
 
 The judge's message checked whether the judge's assessment was saved by

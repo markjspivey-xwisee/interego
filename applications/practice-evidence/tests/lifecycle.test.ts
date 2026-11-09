@@ -518,13 +518,17 @@ describe('judging: the platform checks every quote and computes the result; judg
       ...pay, judgment: { criteria: judgment.criteria.map((c) => ({ ...c, rationale: '' })) },
     }), 400, 'judgment-shape');
     const rec = ok(await act(H, 'pev.record_judgment', W.judgeAgent, pay));
-    const ja = rec['judgment'] as JudgmentResult;
+    // The judge is told how their own quotes were checked; the rest of the judgment is in the record.
+    expect([(rec['judgment'] as Out)['index'], ((rec['judgment'] as Out)['judge'] as Out)['kind'], (rec['judgment'] as Out)['unverifiedCriteria']]).toEqual([0, 'agent', []]);
+    const recorded = async (): Promise<JudgmentResult[]> => ok(await act(H, 'pev.get_attempt', W.reviewer, { attemptIri: S['b2'] }))['judgments'] as JudgmentResult[];
+    const ja = (await recorded())[0]!;
     expect([ja.judge.kind, ja.chosenBy, ja.promptTemplateHash, ja.route, ja.unverifiedCriteria.length]).toEqual(['agent', 'judge-registry', JUDGE_PROMPT_TEMPLATE_HASH, 'client-packet', 0]);
     const pk2 = ok(await act(H, 'pev.judge_packet', W.judgePerson, { attemptIri: S['b2'] }));
     const rec2 = ok(await act(H, 'pev.record_judgment', W.judgePerson, {
       ...pay, ...(pk2['binding'] as Out), judgeDisclosure: { provider: 'acme', model: 'judge-7', usedPacketPrompt: false },
     }));
-    const jp = rec2['judgment'] as JudgmentResult;
+    expect((rec2['judgment'] as Out)['index']).toBe(1);
+    const jp = (await recorded())[1]!;
     expect([jp.judge.kind, jp.promptTemplateHash, jp.repeatOf]).toEqual(['person', 'own-prompt', null]);
   }, SLOW);
 });
@@ -1252,6 +1256,7 @@ describe('the judge packet says whether the caller\'s own assessment is saved an
     // A pass gate: its rubric has weights, level values and a pass rule, and no packet carries any of them.
     const spec = specOf(demoScenarioInput('missed-deadline', 2));
     expect([spec.assessmentUse, spec.rubric.passRule?.minPercent, spec.rubric.criteria.map((c) => c.weight)]).toEqual(['pass-gate', 70, [2, 2, 2]]);
+    const STAKES = /weight|"value"|passRule|minPercent|requiredLevels|meetsPassRule|percent|"points"|unmet|provisional|agreement|nextSteps/i;
     const packet = async (w: Wallet, h: Handlers = H): Promise<Out> => {
       const p = ok(await act(h, 'pev.judge_packet', w, { attemptIri: iri }));
       expect(JSON.stringify(p)).not.toMatch(/weight|"value"|passRule|minPercent|requiredLevels|meetsPassRule|percent/i);
@@ -1277,17 +1282,31 @@ describe('the judge packet says whether the caller\'s own assessment is saved an
         { criterionId: 'agrees-next-step', level: 'none', quotes: [], rationale: 'No next step is agreed.' },
       ],
     };
-    const record = async (w: Wallet): Promise<JudgmentResult> => {
-      const pk = await packet(w);
-      return ok(await act(H, 'pev.record_judgment', w, {
+    // What the judge's own assistant reads once it saved: that it was saved and how its own quotes were checked. Never a
+    // judgment's provisional result (weights, level values, percent, pass mark, the levels a pass needs), the agreement
+    // (every judgment's levels), the first judgment's result, often another judge's, or what the next level asks for: the
+    // same chat may assess again, this attempt once it is reopened or another learner's attempt of this scenario.
+    const saved = (r: Out): Out => {
+      expect(JSON.stringify(r)).not.toMatch(STAKES);
+      expect(Object.keys(r)).toEqual(['attemptIri', 'descriptorUrl', 'state', 'judgmentCount', 'judgment', 'currentTarget', 'recorded']);
+      const j = r['judgment'] as Out;
+      expect(Object.keys(j)).toEqual(['index', 'judgedAt', 'judge', 'criteria', 'unverifiedCriteria']);
+      expect((j['criteria'] as Out[]).map((c) => [c['criterionId'], c['levelId'], c['status'], (c['quotes'] as Out[]).map((q) => q['verified'])]))
+        .toEqual(judgment.criteria.map((c) => [c.criterionId, c.level, c.quotes.length > 0 ? 'verified' : 'no-quote-needed', c.quotes.map(() => true)]));
+      return j;
+    };
+    const record = async (w: Wallet, h: Handlers = H, o: { issuedAt?: string } = {}): Promise<Out> => {
+      const pk = ok(await act(h, 'pev.judge_packet', w, { attemptIri: iri }, {}, o));
+      return saved(ok(await act(h, 'pev.record_judgment', w, {
         attemptIri: iri, ...(pk['binding'] as Out), judgment, judgeDisclosure: { provider: 'scripted', model: 'demo-judge-agent', usedPacketPrompt: true },
-      }))['judgment'] as JudgmentResult;
+      }, {}, o)));
     };
     // One judge's judgment is theirs alone: the other judges still have none.
     const first = await record(W.judgeAgent);
-    expect(await yoursFor()).toEqual([{ saved: true, judgedAt: first.judgedAt }, null, null]);
+    expect(await yoursFor()).toEqual([{ saved: true, judgedAt: first['judgedAt'] }, null, null]);
+    // The second judge's answer says nothing of the first judge's judgment.
     const second = await record(W.judgePerson);
-    expect(await yoursFor()).toEqual([{ saved: true, judgedAt: first.judgedAt }, { saved: true, judgedAt: second.judgedAt }, null]);
+    expect(await yoursFor()).toEqual([{ saved: true, judgedAt: first['judgedAt'] }, { saved: true, judgedAt: second['judgedAt'] }, null]);
     expect((await packet(W.ben))['yourAssessment']).toBeNull();
     // A reviewer signs off: judging is closed, and the packet is refused, as before.
     const head = ok(await act(H, 'pev.get_attempt', W.reviewer3, { attemptIri: iri }));
@@ -1296,12 +1315,20 @@ describe('the judge packet says whether the caller\'s own assessment is saved an
     }));
     refused(await act(H, 'pev.judge_packet', W.judgeAgent, { attemptIri: iri }), 409, 'attempt-already-reviewed');
     // The learner contests: judging reopens and keeps the judgments made before it, and none of them counts any more.
-    ok(await act(H, 'pev.contest_review', W.ben, { attemptIri: iri, target: reviewed['currentTarget'], why: 'The deadline I named was the one we had agreed on.' }));
+    // This bridge's clock stands still from here, so the contest and the judgment after it carry the same time: what
+    // decides whether a judgment came after the reopening is the order they were written in, not their times.
+    const still = { t: clock.t + 1000 };
+    const stopped = make({ model: scriptedPracticeModel(), now: () => new Date(still.t) });
+    const at = { issuedAt: new Date(still.t).toISOString() };
+    const contested = ok(await act(stopped, 'pev.contest_review', W.ben, { attemptIri: iri, target: reviewed['currentTarget'], why: 'The deadline I named was the one we had agreed on.' }, {}, at));
     expect(await yoursFor()).toEqual([null, null, null]);
     // A judge assesses the reopened session once: that one counts, and only for them.
-    const third = await record(W.judgeAgent);
-    expect(third.repeatOf).toBe(0);
-    expect(await yoursFor()).toEqual([{ saved: true, judgedAt: third.judgedAt }, null, null]);
+    const third = await record(W.judgeAgent, stopped, at);
+    const stored = (ok(await act(H, 'pev.get_attempt', W.reviewer3, { attemptIri: iri }))['judgments'] as JudgmentResult[]).at(-1)!;
+    expect([stored.index, stored.repeatOf, stored.judgedAt]).toEqual([third['index'], 0, third['judgedAt']]);
+    expect((await act(H, 'pev.get_attempt', W.reviewer3, { attemptIri: iri }))['reopenings']).toMatchObject([{ at: third['judgedAt'] }]);
+    expect(contested['state']).toBe('contested');
+    expect(await yoursFor()).toEqual([{ saved: true, judgedAt: third['judgedAt'] }, null, null]);
     expect((await packet(W.ben))['yourAssessment']).toBeNull();
   }, SLOW);
 });
