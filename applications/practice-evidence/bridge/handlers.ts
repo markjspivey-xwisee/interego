@@ -65,7 +65,7 @@ import {
 import {
   actorOf, applyRoleChange, attemptIri as attemptIriOf, attemptIriSecret, attemptKey, buildRecordDescriptor, checkEnvelope, checkRelayPayload, conflictedReviewersOf,
   didOf, freshNonce, graphIriOf, iriKeyFingerprint, isAddress, isPrincipal, isWellFormedText, judgeSignersOf, modalFor, modelAgentIri, nextActionsFor, nextActionView,
-  NonceLedger, podBase, principalDid, principalKey, projectionIri, recordGraphTurtle, recordIdFor, recordLocal, recordSalt, redactBody, registryIri,
+  NonceLedger, podBase, principalDid, principalKey, principalOfDid, projectionIri, recordGraphTurtle, recordIdFor, recordLocal, recordSalt, redactBody, registryIri,
   relayDelegatedEnvelope, reverifyStoredEnvelope, rubricIriOf, samePrincipal, scenarioIri as scenarioIriOf, signDraftReceipt, signEnvelope,
   signedRequestOf, signedRequestSigner, slugFor, standingReview, toWellFormedText, verifyDraftReceipt,
   EXPORT_VERIFY_STEPS, REDACTION_NOTE, ROLES,
@@ -1848,20 +1848,56 @@ function repeatOf(a: AttemptBody, judgeId: string, promptTemplateHash: string): 
   return earlier ? earlier.index : null;
 }
 
-/** Write a judgment. `roles` are the signer's, read before: nothing after the write can refuse. */
+/** Write a judgment: the attempt with it added, published as the next record of its chain. */
+async function writeJudgment(call: Call, s: Signed, h: AttemptHead, j: JudgmentResult, key: PevActionKey, disclosure?: InferenceDisclosure): Promise<{ readonly body: AttemptBody; readonly w: Written }> {
+  const a = h.body;
+  const body: AttemptBody = { ...a, at: j.judgedAt, state: a.state === 'ended' ? 'judged' : a.state, judgments: [...a.judgments, j], acts: [...a.acts, actOf(s, key)] };
+  const w = await writeRecord(call, { pod: s.pod, body, seq: h.seq, prev: h.rec, nonce: s.nonce, ...(disclosure ? { disclosure } : {}) });
+  return { body, w };
+}
+
+/**
+ * Write a judgment by this bridge's model and answer with all of it, for the learner or reviewer
+ * who asked, who reads it in the web UI: the judgment with its provisional result, every
+ * judgment's levels side by side, and what the next level asks for. `roles` are the signer's,
+ * read before: nothing after the write can refuse.
+ */
 async function recordJudgmentOn(call: Call, s: Signed, h: AttemptHead, j: JudgmentResult, key: PevActionKey, roles: ReadonlySet<Role>, disclosure?: InferenceDisclosure): Promise<Out> {
   const { ctx } = call;
-  const a = h.body;
-  const judgments = [...a.judgments, j];
-  const body: AttemptBody = { ...a, at: j.judgedAt, state: a.state === 'ended' ? 'judged' : a.state, judgments, acts: [...a.acts, actOf(s, key)] };
-  const w = await writeRecord(call, { pod: s.pod, body, seq: h.seq, prev: h.rec, nonce: s.nonce, ...(disclosure ? { disclosure } : {}) });
-  const primary = judgments[0]!;
+  const { body, w } = await writeJudgment(call, s, h, j, key, disclosure);
+  const primary = body.judgments[0]!;
   return {
-    attemptIri: a.attemptIri, descriptorUrl: w.descriptorUrl, state: body.state, modalStatus: modalFor(body), judgment: j,
-    judgmentCount: judgments.length, agreement: agreementOf(a.scenarioSpec, judgments), provisional: primary.provisional,
+    attemptIri: body.attemptIri, descriptorUrl: w.descriptorUrl, state: body.state, modalStatus: modalFor(body), judgment: j,
+    judgmentCount: body.judgments.length, agreement: agreementOf(body.scenarioSpec, body.judgments), provisional: primary.provisional,
     provisionalLabel: PROVISIONAL_LABEL, unverifiedCriteria: primary.unverifiedCriteria, nextSteps: nextStepsOf(body),
     currentTarget: { recordId: w.recordId, descriptorUrl: w.descriptorUrl, graphDigest: w.graphDigest },
     nextActions: nextFor(ctx, body, s.signer, roles, false), recorded: true,
+  };
+}
+
+/**
+ * What a judge's own assistant is told once it saved from the packet: that the save was kept,
+ * where, and how the platform checked the levels and quotes it sent. Nothing else. Not the
+ * judgment's provisional result, which holds the stakes the packet's rubric leaves out (each
+ * criterion's weight and level value, the percent, the pass mark and the levels a pass needs);
+ * not another judge's levels (the agreement, or the first judgment's result); not what the next
+ * level asks for. That assistant may assess again in the same chat (this attempt once a contest
+ * or a withdrawn review reopens it, or another learner's attempt of the same scenario), and what
+ * it has read stays in what it reads next.
+ */
+function judgmentSavedOut(body: AttemptBody, w: Written, j: JudgmentResult): Out {
+  return {
+    attemptIri: body.attemptIri, descriptorUrl: w.descriptorUrl, state: body.state, judgmentCount: body.judgments.length,
+    judgment: {
+      index: j.index, judgedAt: j.judgedAt, judge: { kind: j.judge.kind },
+      criteria: j.criteria.map((c) => ({
+        criterionId: c.criterionId, levelId: c.levelId, status: c.status, ...(c.why !== undefined ? { why: c.why } : {}),
+        quotes: c.quotes.map((q) => ({ text: q.text, verified: q.verified, ...(q.why !== undefined ? { why: q.why } : {}) })),
+      })),
+      unverifiedCriteria: j.unverifiedCriteria,
+    },
+    currentTarget: { recordId: w.recordId, descriptorUrl: w.descriptorUrl, graphDigest: w.graphDigest },
+    recorded: true,
   };
 }
 
@@ -1901,6 +1937,32 @@ async function judgeAttempt(call: Call, args: Record<string, unknown>): Promise<
   });
 }
 
+/**
+ * Whether the caller has a saved assessment of this attempt that still counts: a judgment they
+ * signed (`judge.signer`, compared as a principal), made after the attempt was last reopened, when
+ * it was (a contest or a withdrawn review keeps the judgments made before it, and judging starts
+ * again). It says that, and when the latest such judgment was made, and nothing else: no level,
+ * quote or rationale, no other judge's judgment, no review, and none of the stakes the packet's
+ * rubric leaves out (weights, level values, the pass rule). A judge's assistant can then tell from
+ * the packet it judges from whether a save went through, without reading the attempt.
+ *
+ * "After" is the order of the attempt's acts, one per write: each judging act added one judgment
+ * and each reopening act one reopening, so the judgments that stand are those added after the last
+ * reopening act. Clock times would not do: a judgment written in the same millisecond as the
+ * reopening, or after the clock stepped back, would not count, and the judge would assess twice.
+ */
+function yourAssessmentOf(a: AttemptBody, caller: string): { readonly saved: true; readonly judgedAt: string } | null {
+  let judged = 0;
+  let firstStanding = 0;
+  for (const x of a.acts) {
+    if (x.action === A.judgeAttempt || x.action === A.recordJudgment) judged += 1;
+    else if (x.action === A.contestReview || x.action === A.retractReview) firstStanding = judged;
+  }
+  const mine = a.judgments.filter((j) => j.index >= firstStanding && j.judge.signer !== undefined && samePrincipal(principalOfDid(j.judge.signer), caller));
+  const latest = mine[mine.length - 1];
+  return latest === undefined ? null : { saved: true, judgedAt: latest.judgedAt };
+}
+
 async function judgePacketAct(call: Call, args: Record<string, unknown>): Promise<Out> {
   const s = await signedAct(call, args, 'judgePacket', { checks: (p) => { needAttemptIri(p); } });
   const iri = needAttemptIri(s.payload);
@@ -1915,6 +1977,8 @@ async function judgePacketAct(call: Call, args: Record<string, unknown>): Promis
       podUrl: s.pod, attemptIri: iri, attemptHeadUrl: h.rec.descriptorUrl,
       transcriptHash: h.body.transcriptHash ?? transcriptHash(h.body.turns), rubricHash: h.body.scenario.rubricHash,
     }),
+    // Last, so an answer a chat app cut short has none, and reads as no answer rather than as nothing saved.
+    yourAssessment: yourAssessmentOf(h.body, s.signer),
   };
 }
 
@@ -1959,7 +2023,8 @@ async function recordJudgment(call: Call, args: Record<string, unknown>): Promis
       chosenBy: 'judge-registry', requestedBy: { did: s.signerDid, role: 'judge' },
       repeatOf: repeatOf(a, judge.id, promptTemplateHash), rubricHash: a.scenario.rubricHash, transcriptHash: tHash,
     });
-    return recordJudgmentOn(call, s, h, j, 'recordJudgment', roles);
+    const { body, w } = await writeJudgment(call, s, h, j, 'recordJudgment');
+    return judgmentSavedOut(body, w, j);
   });
 }
 
