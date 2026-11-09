@@ -863,6 +863,8 @@ describe('work-redesign web UI: sign in with your Interego account', () => {
       [{ ...payload, intent: 'wrd:agent-run' }, /wrd:agent-run is never relay-signed/],
       [{ ...payload, intent: 'foxxi:review-record' }, /payload\.intent must be one of this bridge's intents/],
       [{ ...payload, agent_id: 'did:web:elsewhere' }, /payload holds "agent_id", which the relay sets itself or drops/],
+      // The relay signs its session's own OAuth client as client_id and drops a caller's.
+      [{ ...payload, client_id: 'https://elsewhere.example/ui/oauth/client.json' }, /payload holds "client_id", which the relay sets itself or drops/],
       [{ ...payload, _session_agent_did: 'x' }, /payload holds "_session_agent_did"/],
       ['not an object', /send \{payload\}/],
     ] as const) {

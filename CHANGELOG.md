@@ -1,5 +1,42 @@
 # Changelog
 
+## 2026-11-09 — Relay: a signed request says which OAuth client asked
+
+When the relay signs a request for someone (`sign_request`, or `act` with
+`sign_payload: true`), the signed payload now carries `client_id`: the id of
+the OAuth client whose access token made the call. For a web app that signs in
+with a Client ID Metadata Document that is the URL of its `client.json`; for a
+dynamically registered client it is the id the relay gave it. Until now a site
+could only read the agent's name, which comes from the name a client chose for
+itself, so any app could register under a site's own name and look like it.
+The id cannot be chosen that way. A caller cannot set `client_id` either: one
+it sends, at the top level or inside `payload`, is dropped, and the session
+field it comes from is stripped on every transport.
+
+The field is left out when no OAuth client is known: the REST `/tool` and
+`/messages` routes (an identity-server bearer or a wallet signature), the
+legacy API key, and a follow-up act a deployment-installed observer makes. It
+names the client whose token was used; it does not prove that a person, or the
+site's own page, made the request. No vertical reads it yet; the Practice
+Evidence bridge is the first that will.
+
+Verticals that refused any field they did not list now accept `client_id` as
+the relay's, like `subject_pod_url`: Foxxi's directory actions, workbench agent
+sessions, own-LTI reconciliation and telemetry settings and queries, and the
+private performance routes, which also keep it out of a plan's retry identity.
+Without this every chat agent's signed request there would have been refused.
+Work Redesign's web page refuses a payload holding `client_id`, as it does the
+relay's other fields. A repo-wide test now fails if a list of the relay's
+fields leaves `client_id` out.
+
+The `sign_request` result's hint no longer tells an assistant to prefer the
+URL form of an action over the one a site gave it: `act` takes the
+`urn:iep:action:…` form and the URL form alike, and the hint now says to use
+the action as the site or the descriptor gives it.
+
+Not covered: `act` still fetches a target's whole affordance manifest on every
+call; caching it is left for later.
+
 ## 2026-11-09 — Foxxi keeps finalized LTI grades during retakes
 
 A scored LTI retake marked NotReady appears separately in the learner's

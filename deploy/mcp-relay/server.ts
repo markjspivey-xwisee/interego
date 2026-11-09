@@ -6960,6 +6960,10 @@ const RESERVED_WIRE_FIELDS = [
   '_session_agent_did', '_session_agent_id', '_session_user_id',
   '_session_owner_webid',
   '_session_provisional_play', '_session_native_lifecycle',
+  // The OAuth client the session's access token was issued to. sign_request signs it as
+  // `client_id`, and a vertical may read that as "which app asked", so a caller that could
+  // set it could name another app.
+  '_session_client_id',
   // The pod-selector provenance markers. A dispatcher sets these when IT supplied
   // `pod_url` / `pod_name`, so a handler can tell "the caller named no pod" from "the
   // caller named this pod" — see pod-selector.ts. A forged marker is not an escalation
@@ -9199,6 +9203,39 @@ async function handleSignRequest(args: ToolArgs): Promise<string> {
     return JSON.stringify({ error: 'sign_request: no authenticated session identity — sign_request signs only for the bound caller (authenticate first).' });
   }
   /**
+   * ── `client_id`: WHICH OAuth CLIENT ASKED ────────────────────────────────────────────────
+   *
+   * The agent in `agent_id` is named `<surface>-<userId>`, and the surface comes from the name
+   * an OAuth client chose for itself when it registered. Any client may choose any name, so a
+   * vertical that reads the agent slug as "this request came from our own web app" can be
+   * answered by some other app that registered under the same name.
+   *
+   * The client's id cannot be chosen that way. A Client ID Metadata Document client's id is
+   * the https URL of its metadata document (the relay fetched it and checked it names that
+   * same URL), and a dynamically registered client's id is one the relay generated. So the
+   * relay signs, as `client_id`, the id of the client its session's access token was issued
+   * to. The contract, for every reader of a relay-signed payload:
+   *
+   *   - present only when the call came through `/mcp` with a relay OAuth access token: the
+   *     token's own client_id, verbatim (for a web app signing in by CIMD, the URL of its
+   *     client.json; for a DCR client, its registered id);
+   *   - ABSENT when no OAuth client is known: the REST `/tool` and `/messages` routes (an
+   *     identity-server bearer or a wallet signature carry no OAuth client), the legacy API key,
+   *     and a follow-up act a deployment-installed observer makes in the session's name (the
+   *     client did not ask for that one). Absent means the relay does not say which client
+   *     asked; it never means "the same client as last time";
+   *   - never the caller's: `client_id` is reserved below, so a caller's own `client_id` at the
+   *     top level or under `payload` (as an object or as JSON text) is dropped, and the
+   *     session field it comes from is a reserved wire field every transport strips.
+   *
+   * What it does NOT prove: that a person, or the page itself, made the request. It names the
+   * OAuth client whose access token was presented, so whoever holds that client's token signs
+   * as that client. A reader still checks the signature, `agent_id` and its own policy.
+   */
+  const sessionClientId = typeof args._session_client_id === 'string' && args._session_client_id
+    ? args._session_client_id
+    : undefined;
+  /**
    * ★★ THE STAMPED POD IS AN IDENTIFIER IN SOMEBODY ELSE'S DOCUMENT, so it is spelled PUBLICLY.
    *
    * `selfPodUrl` composes against `CSS_URL`, which in production is
@@ -9225,7 +9262,7 @@ async function handleSignRequest(args: ToolArgs): Promise<string> {
   // server-injected session fields — those are set from the session, not the wire,
   // so the caller cannot claim a different agent_id, pod, or replay window.
   const reserved = new Set([
-    'agent_id', 'timestamp', '_signature', '_signed_payload', 'subject_pod_url', 'payload',
+    'agent_id', 'timestamp', '_signature', '_signed_payload', 'subject_pod_url', 'payload', 'client_id',
     '_session_agent_id', '_session_agent_did', '_identity_token', 'pod_name', 'owner_webid', 'owner_name',
   ]);
   const safe: Record<string, unknown> = {};
@@ -9302,6 +9339,7 @@ async function handleSignRequest(args: ToolArgs): Promise<string> {
     ...safe,
     agent_id: agentId,
     ...(podUrl ? { subject_pod_url: podUrl } : {}),
+    ...(sessionClientId ? { client_id: sessionClientId } : {}),
     timestamp: new Date().toISOString(),
   };
   const signedPayload = JSON.stringify(signedObj);
@@ -9341,11 +9379,19 @@ async function handleSignRequest(args: ToolArgs): Promise<string> {
        * that takes a signed request declares the envelope's two fields, `_signed_payload` and
        * `_signature`, as its inputs, which is what a delegate can actually look for in whatever
        * descriptor it holds.
+       *
+       * ★ AND IT DOES NOT TALK A DELEGATE OUT OF THE ACTION A SITE GAVE IT. It used to say to read
+       * the action "(a URL)" from the descriptor "rather than composing an identifier by hand".
+       * Sites hand a person's assistant the `urn:iep:action:<vertical>:<verb>` form to paste, and
+       * `act` matches either form against the descriptor (`sameAction`), so that copied urn was
+       * right; the wording made it look like something composed by hand. The hint now says to use
+       * the action as the site or the descriptor gives it, in either form, and still not to build
+       * one.
        */
       hint: 'Pass this object as the `payload` of `act` on a rev-196 signed-request affordance: '
-        + 'one whose declared inputs are `_signed_payload` and `_signature`. Dereference the '
-        + 'descriptor that declares it and read the affordance\'s iep:action (a URL) from there '
-        + 'rather than composing an identifier by hand. '
+        + 'one whose declared inputs are `_signed_payload` and `_signature`. Use the action_iri the '
+        + 'site\'s instructions or the affordance\'s descriptor give you, as given (act takes the '
+        + 'urn:iep:action:… form and the URL form alike); do not compose one by hand. '
         + 'The endpoint verifies your delegation on your own pod — no key material leaves the relay.',
     });
   } catch (err) {
@@ -13108,6 +13154,8 @@ function buildMcpServer(authContext: { agentId: string; ownerWebId?: string; own
         principal: sessionAuth.agentId, tool: req.params.name,
         ...(typeof reference === 'string' ? { selector: { reference, ...(typeof action === 'string' ? { action } : {}) } } : {}),
         now: () => new Date().toISOString(),
+        // No `_session_client_id` here, on purpose: this act is the observer's, not the
+        // client's, so what it signs names no client (see handleSignRequest's `client_id`).
         follow: (descriptor: string, selectedAction: string, payload: Record<string, unknown>) => handleKernelAct({
           descriptor_url: descriptor, action_iri: selectedAction, sign_payload: true, payload,
           _session_agent_did: sessionAuth.agentId, _session_agent_id: sessionAuth.agentId.split(':').at(-1),
@@ -13232,6 +13280,11 @@ function buildMcpServer(authContext: { agentId: string; ownerWebId?: string; own
       // Reserved + server-injected (stripped from wire input above), so a caller
       // cannot forge either. Bearer is attached ONLY to a same-origin /amep POST.
       if (authContext.accessToken) args._session_bearer = authContext.accessToken;
+      // The client_id of the OAuth client this access token was issued to: a Client ID
+      // Metadata Document URL, or the id dynamic registration gave it. sign_request signs it
+      // as `client_id`. Reserved + server-injected like the fields around it, and set only
+      // when the token names a client (the legacy API-key path names none).
+      if (authContext.clientId) args._session_client_id = authContext.clientId;
       // The IRI form of the identity (agent DID / WebID), NOT the bare userId slug
       // — amep needs an IRI actor. Same principalIri() amep's introspect uses, so
       // the stamped act.actor === principal.id.
@@ -17259,7 +17312,8 @@ function resolveAuthContext(ctx: { authInfo?: AuthInfo; requestInfo?: Request })
       ...(reqAuth.token ? { accessToken: reqAuth.token } : {}),
       // The OAuth client this token was issued to. Its registered name and redirect URIs say
       // whether ChatGPT is calling, which decides how a tool result is laid out for its model
-      // (resultOptionsForClient). Never an authorization input.
+      // (resultOptionsForClient), and sign_request signs it as `client_id` so a vertical can tell
+      // which client asked. Never an authorization input on this relay.
       ...(typeof reqAuth.clientId === 'string' && reqAuth.clientId ? { clientId: reqAuth.clientId } : {}),
     };
   }

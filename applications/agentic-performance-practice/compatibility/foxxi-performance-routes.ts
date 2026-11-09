@@ -655,7 +655,8 @@ export function attachPerformanceRoutes(app: Express, config: {
           if (p.private_evidence !== undefined) {
             if (p.private_review !== undefined) throw new EvidenceError('Choose private_evidence or private_review, not both.');
             const context = privateEvidenceContext(p.private_evidence);
-            const logicalInput = Object.fromEntries(Object.entries(p).filter(([k]) => !['agent_id', 'timestamp', 'subject_pod_url', 'private_evidence'].includes(k)));
+            // The relay's own fields (subject_pod_url, client_id) are not part of the plan a retry must repeat.
+            const logicalInput = Object.fromEntries(Object.entries(p).filter(([k]) => !['agent_id', 'timestamp', 'subject_pod_url', 'client_id', 'private_evidence'].includes(k)));
             const saved = await service.store.savePlan(auth.callerDid, context, logicalInput, diagnosis, plan);
             diagnosis = saved.diagnosis; plan = saved.plan;
             calibration = calibrate(diagnosis, plan, profile.profile);

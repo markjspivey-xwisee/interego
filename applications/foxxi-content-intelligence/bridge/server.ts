@@ -9869,7 +9869,7 @@ const signedXapiHandler = (operation: 'read' | 'write' | 'telemetry-ingest' | 't
         return;
       }
       if (operation === 'telemetry-capture-read' || operation === 'telemetry-capture-update') {
-        const { agent_id: _agent, subject_pod_url: _pod, timestamp: _time, ...settings } = bound.payload;
+        const { agent_id: _agent, subject_pod_url: _pod, client_id: _client, timestamp: _time, ...settings } = bound.payload;
         const preferences = operation === 'telemetry-capture-read'
           ? await readCapturePreferences(bound.callerDid, captureStore)
           : await updateCapturePreferences(bound.callerDid, settings, captureStore);
@@ -9941,9 +9941,9 @@ const signedXapiHandler = (operation: 'read' | 'write' | 'telemetry-ingest' | 't
         } else if (operation === 'telemetry-query') {
           let query;
           try {
-            // The signature binder adds identity/time fields; only the query options
-            // supplied by the caller are passed to its closed schema.
-            const { agent_id: _agent, subject_pod_url: _pod, timestamp: _time, ...options } = bound.payload;
+            // The signature binder adds identity/time fields (and the relay its client_id); only the
+            // query options supplied by the caller are passed to its closed schema.
+            const { agent_id: _agent, subject_pod_url: _pod, client_id: _client, timestamp: _time, ...options } = bound.payload;
             query = normalizeQuery(options.query ?? options);
           } catch (error) { res.status(400).json({ error: (error as Error).message }); return; }
           const report = telemetryReport(bound.callerDid, await deps.snapshot(), query, deps.now());

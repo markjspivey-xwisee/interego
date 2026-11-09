@@ -170,7 +170,8 @@ export class DirectoryActions {
       const proof = proofOf(envelope);
       const auth = await this.config.authorize(action, envelope);
       iri(auth.actor, 'authenticated actor');
-      const common = ['agent_id', 'timestamp', 'action', 'bridge_audience', 'tenant_pod_url', 'subject_pod_url', 'owner_encryption_key', 'federation_share_with', 'recipient_encryption_keys'];
+      // subject_pod_url and client_id are set by the relay when it signs for a delegated agent.
+      const common = ['agent_id', 'timestamp', 'action', 'bridge_audience', 'tenant_pod_url', 'subject_pod_url', 'client_id', 'owner_encryption_key', 'federation_share_with', 'recipient_encryption_keys'];
       const fields: Record<DirectoryAction, readonly string[]> = {
         consume_lesson: ['course_iri', 'learner_did', 'mode', 'advanced_slide_ids', 'lrs_endpoint', 'lrs_auth_header'],
         connect_lms: ['connector_id', 'product', 'instance', 'auth_method', 'sync_frequency'],

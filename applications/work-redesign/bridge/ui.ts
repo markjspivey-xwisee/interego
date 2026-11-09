@@ -383,7 +383,7 @@ const MAX_TOKEN_SECONDS = 24 * 3600;
 /** The relay's access token lifetime when its token answer says none (deploy/mcp-relay: tokenTtlSec, 3600). */
 const DEFAULT_TOKEN_SECONDS = 3600;
 /** Keys the relay sets itself or drops from what it signs (handleSignRequest): a payload holding one would not be signed as sent. */
-const RELAY_SETS = new Set(['agent_id', 'timestamp', 'subject_pod_url', 'payload', 'pod_name', 'owner_webid', 'owner_name']);
+const RELAY_SETS = new Set(['agent_id', 'timestamp', 'subject_pod_url', 'client_id', 'payload', 'pod_name', 'owner_webid', 'owner_name']);
 
 const NOT_SET_UP = 'This bridge is not set up for signing in with an Interego account.';
 const RELAY_DOWN = 'The Interego relay could not be reached for sign-in.';
