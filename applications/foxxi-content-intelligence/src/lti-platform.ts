@@ -30,8 +30,8 @@
 
 import express, { type Express, type Request, type Response, type RequestHandler } from 'express';
 import { rateLimit } from 'express-rate-limit';
-import { createHash, randomBytes } from 'node:crypto';
-import { AGS_SCOPE, LTI_CLAIMS, es256Keys, jwsSignEs256, jwsVerifyRs256OrEs256, type Es256Keys, type PlatformRegistration } from './lti13.js';
+import { createHash, createPrivateKey, createPublicKey, randomBytes, sign } from 'node:crypto';
+import { AGS_SCOPE, LTI_CLAIMS, es256Keys, jwsSignEs256, jwsVerifyRs256OrEs256, type PlatformRegistration } from './lti13.js';
 import { sendServerError } from './http-errors.js';
 
 const LEARNER_ROLE = 'http://purl.imsglobal.org/vocab/lis/v2/membership#Learner';
@@ -84,7 +84,7 @@ export interface LtiPlatformConfig {
   readonly selfBaseUrl: string;
   /** The Tool this Platform launches: the bridge's own when absent. */
   readonly tool?: ToolRegistration;
-  /** The Platform's signing key as PEM. A fresh key per process when absent; the JWKS names it. */
+  /** The Platform's P-256 or RSA signing key as PEM. Defaults to a fresh P-256 key. */
   readonly privateKeyPem?: string;
   /** Called after the gradebook changes, so the bridge can keep it. */
   readonly onChange?: () => void;
@@ -179,6 +179,27 @@ export function selfTool(selfBaseUrl: string): ToolRegistration {
   };
 }
 
+function launchSigner(issuer: string, pem?: string) {
+  const key = pem ? createPrivateKey(pem) : undefined;
+  if (key?.asymmetricKeyType === 'rsa') {
+    if ((key.asymmetricKeyDetails?.modulusLength ?? 0) < 2048) throw new Error('LTI RSA keys require at least 2048 bits.');
+    const publicKey = createPublicKey(key).export({ format: 'jwk' });
+    const kid = `foxxi-lms-${digest(`${issuer}:${publicKey.n}:${publicKey.e}`).slice(0, 16)}`;
+    const jwk = { ...publicKey, use: 'sig', alg: 'RS256', kid };
+    return { jwk, sign: (claims: Record<string, unknown>) => {
+      const header = Buffer.from(JSON.stringify({ alg: jwk.alg, typ: 'JWT', kid })).toString('base64url');
+      const payload = Buffer.from(JSON.stringify(claims)).toString('base64url');
+      const input = `${header}.${payload}`;
+      return `${input}.${sign('RSA-SHA256', Buffer.from(input), key).toString('base64url')}`;
+    } };
+  }
+  if (key && (key.asymmetricKeyType !== 'ec' || key.asymmetricKeyDetails?.namedCurve !== 'prime256v1')) {
+    throw new Error('LTI launch signing requires a P-256 or RSA private key.');
+  }
+  const keys = es256Keys('foxxi-lms', issuer, pem);
+  return { jwk: keys.jwk, sign: (claims: Record<string, unknown>) => jwsSignEs256({}, claims, keys) };
+}
+
 export class LtiPlatform {
   /** The issuer, and the root every Platform endpoint hangs off. */
   readonly issuer: string;
@@ -189,7 +210,7 @@ export class LtiPlatform {
     title: 'Foxxi open courses',
     type: [COURSE_OFFERING],
   };
-  private readonly keys: Es256Keys;
+  private readonly launchSigning: ReturnType<typeof launchSigner>;
   private readonly onChange: () => void;
   private readonly readiness: () => Promise<boolean>;
   private readonly verifyJwt: NonNullable<LtiPlatformConfig['verifyJwt']>;
@@ -204,7 +225,7 @@ export class LtiPlatform {
   constructor(config: LtiPlatformConfig) {
     this.issuer = `${trimSlash(config.selfBaseUrl)}/lti/platform`;
     this.tool = config.tool ?? selfTool(config.selfBaseUrl);
-    this.keys = es256Keys('foxxi-lms', this.issuer, config.privateKeyPem);
+    this.launchSigning = launchSigner(this.issuer, config.privateKeyPem);
     this.onChange = config.onChange ?? (() => undefined);
     this.readiness = config.ensureReady ?? (() => Promise.resolve(true));
     this.verifyJwt = config.verifyJwt ?? jwsVerifyRs256OrEs256;
@@ -233,7 +254,7 @@ export class LtiPlatform {
     };
   }
 
-  jwks(): { keys: Array<Record<string, unknown>> } { return { keys: [{ ...this.keys.jwk }] }; }
+  jwks(): { keys: Array<Record<string, unknown>> } { return { keys: [{ ...this.launchSigning.jwk }] }; }
 
   /** OpenID Provider metadata with the LTI platform configuration, as LTI Dynamic Registration reads it. */
   configuration(): Record<string, unknown> {
@@ -244,7 +265,7 @@ export class LtiPlatform {
       jwks_uri: this.jwksUrl,
       token_endpoint_auth_methods_supported: ['private_key_jwt'],
       token_endpoint_auth_signing_alg_values_supported: ['RS256', 'ES256'],
-      id_token_signing_alg_values_supported: ['ES256'],
+      id_token_signing_alg_values_supported: [this.launchSigning.jwk.alg],
       response_types_supported: ['id_token'],
       response_modes_supported: ['form_post'],
       subject_types_supported: ['public'],
@@ -344,7 +365,7 @@ export class LtiPlatform {
       [LTI_CLAIMS.ags]: { scope: LAUNCH_SCOPES, lineitems: this.lineItemsUrl, lineitem: this.lineItemUrl(item.id) },
       [LAUNCH_PRESENTATION]: { document_target: 'window' },
     };
-    const fields: Record<string, string> = { id_token: jwsSignEs256({}, claims, this.keys) };
+    const fields: Record<string, string> = { id_token: this.launchSigning.sign(claims) };
     if (typeof params.state === 'string' && params.state) fields.state = params.state;
     return { ok: true, action: redirectUri, fields };
   }
