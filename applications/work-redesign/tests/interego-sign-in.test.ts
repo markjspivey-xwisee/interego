@@ -43,7 +43,7 @@ import { chatAgentJs } from '../../_shared/chat-agent/index.js';
 import { listenLoopback, type TestListener } from '../../_shared/vertical-bridge/listen-loopback.js';
 import { wrdAffordances } from '../affordances.js';
 import { createWrdHandlers } from '../bridge/handlers.js';
-import { attachUi, parseEveryQueryPair, SIGN_IN_CLIENT_NAME, UI_CSP, type RelayLimits, type UiSignIn } from '../bridge/ui.js';
+import { attachUi, parseEveryQueryPair, SIGN_IN_CLIENT_NAME, UI_CSP, type RelayLimits, type UiReads, type UiSignIn } from '../bridge/ui.js';
 import { memoryPod, demoClock, DEMO_POD, DEMO_RECORD_KEY } from '../demo/run.js';
 import { RELAY_SIGNING } from '../src/payloads.js';
 import type { RelayDelegationPolicy } from '../src/relay-delegated.js';
@@ -63,6 +63,13 @@ type Obj = Record<string, unknown>;
 const isObj = (v: unknown): v is Obj => typeof v === 'object' && v !== null && !Array.isArray(v);
 const objOf = (v: unknown): Obj => (isObj(v) ? v : {});
 const must = <T>(v: T | null | undefined, what: string): T => { if (v === null || v === undefined) throw new Error(`missing ${what}`); return v; };
+/**
+ * The stylesheet as a screen `px` wide applies it, for jsdom, which lays nothing out and applies an `@media screen` rule but
+ * no width query: each min-width or max-width query (every one this stylesheet has is in em, alone) is kept, as `screen`,
+ * where that width meets it, and set aside, as `print`, where it does not. Real Chromium from 300 px up is the QA's check.
+ */
+const atWidth = (css: string, px: number): string =>
+  css.replace(/@media \((min|max)-width: ([\d.]+)em\)/g, (_m, k: string, em: string) => `@media ${(k === 'min' ? px >= Number(em) * 16 : px <= Number(em) * 16) ? 'screen' : 'print'}`);
 const hex = (n: number): string => randomBytes(n).toString('hex');
 const b64urlSha256 = (s: string): string => createHash('sha256').update(s, 'utf8').digest('base64url');
 
@@ -324,6 +331,8 @@ async function world(o: {
   readonly limits?: Partial<RelayLimits>; readonly now?: () => number; readonly trustProxy?: boolean;
   /** Whether the operator lets chat agents take decisive acts too (WRD_CHAT_AGENTS_DECIDE=1); off unless set. */
   readonly chatAgentsDecide?: boolean;
+  /** How the bridge answers reads: signed only (the default), or open to anyone (WRD_PUBLIC_READS=1). */
+  readonly reads?: UiReads;
 } = {}): Promise<World> {
   const clock = demoClock();
   const pod = memoryPod();
@@ -340,6 +349,7 @@ async function world(o: {
     fetchFn: pod.fetchFn, defaultPodUrl: DEMO_POD, now: () => clock.now(), recordKey: DEMO_RECORD_KEY,
     platform: { wallet: importWallet(`0x${sha256Hex('wrd-sign-in-test:platform')}`, 'agent', 'wrd-platform'), keyKind: 'demo' },
     adminDids: o.admin === false ? [] : [PERSON], relayDelegation: { ...policy, chatAgentsDecide: o.chatAgentsDecide === true, relayUrl: relay.base },
+    ...(o.reads === 'public' ? { publicReads: true } : {}),
     ...(o.lead === true ? { adminAddresses: [keyAdmin.address] } : {}),
   });
   if (o.lead === true) {
@@ -355,7 +365,7 @@ async function world(o: {
     verticalName: 'work-redesign', affordances: wrdAffordances, handlers, deploymentUrl: deployed,
     middleware: (a) => {
       if (o.trustProxy === true) a.set('trust proxy', 1);
-      attachUi(a, { base: deployed, ...(signIn ? { signIn } : {}) });
+      attachUi(a, { base: deployed, ...(signIn ? { signIn } : {}), ...(o.reads ? { reads: o.reads } : {}) });
       parseEveryQueryPair(a);
     },
   }));
@@ -379,8 +389,11 @@ interface Page {
   session(): Record<string, string>;
   until<T>(fn: () => T | null | undefined | false, what: string, ms?: number): Promise<T>;
 }
-/** The shipped shell at `path` and app.js in a jsdom window, its sessionStorage seeded with `session` (the tab's, across the relay's page); a request to `failPath` fails as a network error does. */
-async function openPage(bridge: string, path: string, session: Record<string, string> = {}, failPath?: string): Promise<Page> {
+/**
+ * The shipped shell at `path` and app.js in a jsdom window, its sessionStorage seeded with `session` (the tab's, across the
+ * relay's page); a request to `failPath` fails as a network error does; `setup` runs before the client (a wallet in the browser).
+ */
+async function openPage(bridge: string, path: string, session: Record<string, string> = {}, failPath?: string, setup?: (w: JSDOM['window']) => void): Promise<Page> {
   const errors: string[] = [];
   const vc = new VirtualConsole();
   vc.on('jsdomError', (e: Error) => errors.push(`jsdomError: ${e.message}`));
@@ -409,6 +422,7 @@ async function openPage(bridge: string, path: string, session: Record<string, st
     log.push({ origin: url.origin, method: init?.method ?? 'GET', path: url.pathname, query: url.search, status: r.status, body, answer, authorization: new Headers(init?.headers).get('authorization') });
     return r;
   };
+  setup?.(w);
   w.eval(APP_JS);
   const d = w.document;
   return {
@@ -1125,6 +1139,39 @@ describe('work-redesign web UI: sign in with your Interego account', () => {
     expect(page.text()).not.toContain(SIGN_IN);
     expect(page.errors).toEqual([]);
   }, 60_000);
+
+  it('keeps the header of a workspace open to read inside a phone\'s screen: the small Sign in says "Sign in" alone where its words would not fit, its text still the whole label, and beside Connect wallet the buttons take a line of their own under the brand', async () => {
+    // With reads open, a visitor not signed in sees the app, "Sign in with your Interego account" in its header: it ran 215 px
+    // past a 320 px screen and 38 past 768; with a wallet in the browser, Connect wallet beside it, 351 and 173.
+    const w = await world({ reads: 'public' });
+    const css = await (await fetch(`${w.bridge}/ui/app.css`)).text();
+    for (const wallet of [false, true]) {
+      const page = await openPage(w.bridge, '/ui', {}, undefined, wallet ? (win) => { (win as unknown as { ethereum: unknown }).ethereum = { request: async () => [] }; } : undefined);
+      const d = page.window.document;
+      const header = await page.until(() => [...d.querySelectorAll('.app-header')].find((x) => [...x.querySelectorAll('button')].some((b) => b.textContent === SIGN_IN)), 'the header\'s Sign in');
+      const signIn = must([...header.querySelectorAll('button')].find((b) => b.textContent === SIGN_IN), 'Sign in');
+      const note = must([...d.querySelectorAll('.callout button')].find((b) => b.textContent === SIGN_IN), 'the note\'s Sign in');
+      expect([wallet, [...header.querySelectorAll('.app-header__actions > button')].map((b) => b.textContent)]).toEqual([wallet, wallet ? ['Refresh', 'Connect wallet', SIGN_IN] : ['Refresh', SIGN_IN]]);
+      expect([wallet, header.classList.contains('app-header--two-ways'), signIn.querySelector('.sign-in__more')?.textContent]).toEqual([wallet, wallet, ' with your Interego account']);
+      const sheet = d.createElement('style');
+      d.head.append(sheet);
+      const cs = (el: Element): CSSStyleDeclaration => page.window.getComputedStyle(el);
+      const inner = must(header.querySelector('.app-header__inner'), 'the header\'s line');
+      const actions = must(header.querySelector('.app-header__actions'), 'its buttons');
+      for (const px of [1280, 768, 300]) {
+        sheet.textContent = atWidth(css, px);
+        // In the header "Sign in" alone below 64em; in the note below 30em. Either way its text is SIGN_IN, which a test clicks.
+        const shown = (el: Element | null): boolean => cs(must(el, 'its other words')).display !== 'none';
+        expect([wallet, px, shown(signIn.querySelector('.sign-in__more')), shown(note.querySelector('.sign-in__more'))]).toEqual([wallet, px, px >= 1024, px >= 480]);
+        // Two ways to sign in take a line of their own on a phone, and the navigation's place under the header moves down to match.
+        const twoLines = wallet && px < 768;
+        expect([wallet, px, cs(inner).flexWrap, cs(actions).flexBasis, cs(actions).minHeight, cs(d.documentElement).getPropertyValue('--header-h')])
+          .toEqual([wallet, px, twoLines ? 'wrap' : '', twoLines ? '100%' : '', twoLines ? 'var(--target)' : '', twoLines ? '7rem' : '4rem']);
+      }
+      sheet.remove();
+      expect(page.errors).toEqual([]);
+    }
+  });
 
   it('names the Interego connector in the shell only where a chat assistant\'s acts are taken: the relay\'s /mcp when it is trusted, nothing with no relay URL or no relay trusted', async () => {
     const on = await world();

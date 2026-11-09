@@ -7,6 +7,18 @@
 @media (min-width: 48em) { .hide-below-md { display: inline; } .side-nav .side-nav__mobile-only { display: none; } }
 @media (max-width: 63.99em) { .top-nav { display: none; } }
 @supports (anchor-name: --a) { #signin-other { anchor-name: --user-button; } }
+/* A header keeps to the screen down to 300 px, on every page: the brand gives way first, its name breaking between its words
+   (Practice / Evidence) when the buttons need the room, and only then; then a badge; a button's label wraps only once
+   those can give no more (their weight, 10000 to 1, leaves a button no share of the room they still have to give, not
+   even the fraction of a pixel that would break "Sign in" over two lines); a round button (Other ways to sign in, your
+   account) keeps its full size. With room to spare nothing here changes anything. */
+.app-header .brand { flex-shrink: 10000; }
+.app-header .brand__name { white-space: normal; }
+.app-header__actions > .badge { flex-shrink: 10000; }
+.app-header__actions .btn { white-space: normal; }
+.app-header__actions > .btn--icon, .app-header__actions > .user-button { flex-shrink: 0; }
+/* Below 360 px "Sign in" is its words alone, without its icon. */
+@media (max-width: 22.49em) { #interego-sign-in > .icon { display: none; } }
 
 .status-line { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2) var(--space-4); padding: var(--space-2) var(--gutter); font-size: var(--text-sm); color: var(--info-text); background: var(--info-subtle); border-bottom: 1px solid var(--info-border); }
 .status-line--warning { color: var(--warning-text); background: var(--warning-subtle); border-color: var(--warning-border); }
@@ -200,11 +212,36 @@
    the Connect dialog, the session's chat hand-off and the copied-message previews. */
 .hide-below-sm { display: none; }
 @media (min-width: 30em) { .hide-below-sm { display: inline; } }
+/* Signing manually adds a badge to the header. Where another way to sign in is offered, its button (the primary one
+   after #acting-as.badge) stays beside it: more than a header holds in one line below 64em. There the buttons say less (each
+   keeps its whole name for a screen reader: Connect your AI by its label, the other two as on a phone), and below 48em
+   they take a line of their own under the brand, with the navigation's place under the header (--header-h) moved down to
+   match. Signing manually as the only way fits one line down to 360 px, and below it takes that second line too. */
+@media (max-width: 63.99em) { .app-header:has(#acting-as.badge + .btn--primary) #connect-ai-button > .hide-below-sm, .app-header:has(#acting-as.badge + .btn--primary) .hide-below-md { display: none; } }
+@media (max-width: 47.99em) {
+  .app-header:has(#acting-as.badge + .btn--primary) .app-header__inner { flex-wrap: wrap; row-gap: var(--space-2); padding-block: var(--space-2); }
+  .app-header:has(#acting-as.badge + .btn--primary) .app-header__actions { flex: 1 0 100%; justify-content: flex-end; min-height: var(--target); }
+  :root:has(.app-header #acting-as.badge + .btn--primary) { --header-h: 7rem; }
+}
+@media (max-width: 22.49em) {
+  .app-header:has(#acting-as.badge) .app-header__inner { flex-wrap: wrap; row-gap: var(--space-2); padding-block: var(--space-2); }
+  .app-header:has(#acting-as.badge) .app-header__actions { flex: 1 0 100%; justify-content: flex-end; min-height: var(--target); }
+  :root:has(.app-header #acting-as.badge) { --header-h: 7rem; }
+}
 .connect-tabs .tabs { margin-bottom: var(--space-3); }
 .connect-steps, .handoff-steps { display: grid; gap: var(--space-2); margin: 0; padding-left: 1.25rem; }
 .connect-roles { display: grid; gap: var(--space-2); margin: 0; padding-left: 1.25rem; color: var(--text-secondary); }
 .connect-roles strong { color: var(--text); }
 .connect .disclosure + .disclosure { margin-top: var(--space-2); }
+/* On a phone the session page's steps keep to the screen: "Copy the start-up message" wraps in its step instead of widening
+   the list, and a status too long for its line ("Signature verified: unchanged since it was signed") wraps inside itself,
+   as a badge does. */
+.handoff-steps > li { min-width: 0; }
+.handoff-steps .btn { white-space: normal; max-width: 100%; text-align: left; }
+.status { max-width: 100%; white-space: normal; }
+/* So does a callout's button whose label is longer than the line ("Copy the message for my AI" in Write a scenario ran
+   19 px past a 300 px screen); with room, it keeps its one line. */
+.callout__actions .btn { white-space: normal; max-width: 100%; }
 .chat-handoff > * + * { margin-top: var(--space-2); }
 .chat-handoff .disclosure { margin-top: var(--space-3); }
 .handoff-steps .btn { margin-top: var(--space-1); }

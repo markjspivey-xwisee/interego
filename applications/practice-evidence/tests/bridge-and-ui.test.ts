@@ -45,6 +45,13 @@ const HERE = fileURLToPath(new URL('.', import.meta.url));
 const VERTICAL = join(HERE, '..');
 const REPO = join(VERTICAL, '..', '..');
 const read = (p: string): string => readFileSync(join(VERTICAL, p), 'utf8');
+/**
+ * The stylesheet as a screen `px` wide applies it, for jsdom, which lays nothing out and applies an `@media screen` rule but
+ * no width query: each min-width or max-width query (every one this stylesheet has is in em, alone) is kept, as `screen`,
+ * where that width meets it, and set aside, as `print`, where it does not. Real Chromium from 300 px up is the QA's check.
+ */
+const atWidth = (css: string, px: number): string =>
+  css.replace(/@media \((min|max)-width: ([\d.]+)em\)/g, (_m, k: string, em: string) => `@media ${(k === 'min' ? px >= Number(em) * 16 : px <= Number(em) * 16) ? 'screen' : 'print'}`);
 
 // ═════════════════════════════════════════════════════════════════════════════════════════════
 //  The world: one pod, demo role wallets, three bridges
@@ -1024,6 +1031,27 @@ describe('the web UI works, driven in a DOM against the real handlers', () => {
     await paste.until(() => paste.q('#line') ?? paste.q('#view .refusal'), 'the conversation');
     expect(paste.q('#line')).not.toBeNull();
     expect(paste.errors).toEqual([]);
+  }, SLOW);
+
+  it('signing manually as the only way keeps its header on one line down to 360 px, saying what it said, and below takes a second line under the brand', async () => {
+    // No Interego sign-in and no wallet: Connect your AI, the "Signing manually" badge and Other ways to sign in. At 300 px they
+    // ran 87 px past the screen (13 at 375); from 360 px the brand and the badge give way instead, and nothing else changes.
+    const p = await openUi(plain);
+    await p.until(() => p.q('.app-header #acting-as.badge') && p.q('article.scenario'), 'the header, signing manually');
+    expect(p.all('.app-header__actions > :not(.menu)').map((el) => el.id || el.className)).toEqual(['product-switch', 'connect-ai-button', 'acting-as', 'signin-other']);
+    const css = await (await fetch(`${plain.base}/ui/app.css`)).text();
+    const sheet = p.d.createElement('style');
+    p.d.head.append(sheet);
+    const cs = (sel: string): CSSStyleDeclaration => p.w.getComputedStyle(p.q(sel) ?? p.d.querySelector(sel)!);
+    for (const px of [1280, 768, 600, 360, 344, 300]) {
+      sheet.textContent = atWidth(css, px);
+      const two = px < 360;
+      expect([px, cs('.app-header__inner').flexWrap, cs('.app-header__actions').flexBasis, cs('html').getPropertyValue('--header-h')]).toEqual([px, two ? 'wrap' : '', two ? '100%' : '', two ? '7rem' : '4rem']);
+      // Connect your AI says so from 30em, as it always did: shortening it is only for a header holding another way to sign in too.
+      expect([px, cs('#connect-ai-button > .hide-below-sm').display === 'none', cs('#acting-as').flexShrink, cs('.app-header .brand').flexShrink]).toEqual([px, px < 480, '10000', '10000']);
+    }
+    sheet.remove();
+    expect(p.errors).toEqual([]);
   }, SLOW);
 
   it('a workspace with no AI of its own and no Interego sign-in: copy and paste in plain words, no chat hand-off, no connector address, and no key outside Advanced', async () => {

@@ -1,5 +1,45 @@
 # Changelog
 
+## 2026-11-09 — Work Redesign and Practice Evidence: nothing runs past a narrow phone's screen
+
+On phones from 300 to 414 px wide, parts of both sites were wider than the
+screen, so the whole page could be dragged sideways. Measured in Chromium,
+signed in and out, with Interego sign-in on and off, in light and dark:
+
+- Work Redesign's app header was 28 px too wide at 320 px and 48 px at 300 px.
+  At 300 px the squeezed Refresh button covered the account button, so a tap
+  on it pressed Refresh. The landing page's header was 16 px too wide
+  at 300 px. After a process map was signed, each task's "Copy link for the
+  people named" ran up to 145 px past the screen (32 px at 414 px).
+- On a workspace open to read (WRD_PUBLIC_READS=1), "Sign in with your
+  Interego account" in the header ran 215 px past a 320 px screen and 38 px
+  past a 768 px one. With a wallet in the browser, Connect wallet beside it,
+  351 and 173 px.
+- Practice Evidence's header was 15 px too wide signed in at 320 px and 47 to
+  67 px signed out; the guide's "Open the app" 12 px. Signing manually where
+  another way to sign in is offered put four things in the header: up to
+  203 px too wide at 300 px and 88 px at 768 px. On the session page,
+  "Signature verified: unchanged since it was signed" ran 37 px past a 320 px
+  screen. At 300 px "Copy the start-up message", "Copy the message for my AI"
+  in Write a scenario and Work Redesign's "Draft a map with copy and paste"
+  did too.
+
+Now, in every header, the product name breaks onto two lines when the buttons
+need the room, and only then. A badge gives way next, then a button's label,
+and round buttons keep their full size (44 px on a touch screen). Work
+Redesign's Refresh shows an icon below 480 px, and "Refresh" is still its name
+for a screen reader. The small Sign in button says "Sign in" alone where its
+whole label does not fit. Two ways to sign in, or signing manually beside
+another way, put the header's buttons on a line of their own under the brand
+below 768 px, and the navigation below moves down to match; signing manually
+as the only way does so below 360 px. Beside another way, signing manually
+also shortens the header's button labels below 1024 px, as on a phone. The
+other long buttons and statuses wrap inside their space. At 768 and 1280 px
+nothing moves except what was too wide there: the headers above, and at 768 px
+a recorded task's link, which ran into its row's edge and now sits under its
+badge. New tests check each rule as the stylesheet applies it at a phone's
+width, and each fails with its rule taken out.
+
 ## 2026-11-09 — Foxxi scoped LTI grade passback
 
 Foxxi can launch an external LTI tool under an expiring connection for one
