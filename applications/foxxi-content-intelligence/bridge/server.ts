@@ -12582,7 +12582,7 @@ app.post('/agent/lti/gradebook', async (req, res) => {
   } catch (err) { sendServerError(res, err, 'lti-gradebook-signed'); }
 });
 
-app.post('/agent/lti/scoped-connection/revoke', async (req, res) => {
+app.post('/lti/connections/revoke', async (req, res) => {
   if (!scopedLti) { res.sendStatus(404); return; }
   try {
     const auth = await verifyDelegatedCaller(req.body);
