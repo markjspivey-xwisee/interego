@@ -2922,9 +2922,13 @@ describe('Interego sign-in: a request the relay signed acts as the person whose 
     const p = ok(await ract(RH, 'pev.project_attempt', agentOf('practice-evidence-u-pk-0000000000d4', P.ana), { attemptIri: X['a'], format: 'xapi' }));
     expect(((p['statement'] as Out)['actor'] as Out)['account']).toMatchObject({ name: P.ana });
     refused(await ract(RH, 'pev.project_attempt', AG.ana, { attemptIri: X['a'], format: 'xapi' }), 403, 'stakes-not-in-chat');
-    const ex = ok(await ract(RH, 'pev.export_record', AG.ana, { attemptIri: X['a'] }));
+    // Her record from the web UI agent holds the graphs, and how to re-verify an envelope the relay signed; from her chat
+    // agent, the descriptors alone, and it says so (chat-stakes.test.ts).
+    const ex = ok(await ract(RH, 'pev.export_record', agentOf('practice-evidence-u-pk-0000000000d4', P.ana), { attemptIri: X['a'] }));
     expect([ex['relayAddresses'], ex['identityHost']]).toEqual([[RELAY.address.toLowerCase()], IDH]);
     expect((ex['verify'] as string[]).some((x) => x.includes('relay-delegated'))).toBe(true);
+    const fromChat = ok(await ract(RH, 'pev.export_record', AG.ana, { attemptIri: X['a'] }));
+    expect([(fromChat['graphsLeftOut'] as Out)['remedy'], (fromChat['versions'] as Out[]).every((v) => v['graphTrig'] === null)]).toEqual(['web-app', true]);
     // A bridge that no longer lists the relay: the route is off, and the review it attested does
     // not re-verify, so the attempt cannot leave as evidence there (a skip audit says so).
     const off = createPevHandlers(relayDeps({ relayDelegation: { relayAddresses: [], identityHost: IDH, fetchDidDocument } })) as Handlers;

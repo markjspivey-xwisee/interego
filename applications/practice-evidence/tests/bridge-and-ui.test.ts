@@ -405,7 +405,11 @@ describe('the web UI is served under a strict content policy', () => {
     expect(section(off.help, 'authors')).not.toContain('Your AI assistant can edit a scored scenario');
     // A scored session's signed record and statement carry the score, so a chat is not sent to fetch them.
     expect(section(on.help, 'claude-chatgpt')).not.toContain('Download my signed record');
+    // Nor does the landing page suggest asking a chat for it: from a chat, a scored session's download holds no content.
+    expect(on.landing).not.toContain('Download my signed record');
     expect(section(on.help, 'claude-chatgpt')).toContain('To download your signed record, copy it to your own storage or create a learning record from a scored session, use the web app,');
+    // A wallet that holds no role cannot do those for a scored session, and the guide says so rather than send it to the web app it is in.
+    expect(section(on.help, 'claude-chatgpt')).toContain('use the web app, signed in with Interego or with an address your admin registered. A crypto wallet that holds no role in the workspace can\'t do these for a scored session, and its download holds the signatures without the session\'s content, so ask your admin to register its address.');
     expect(on.help).not.toContain('into that chat');
   });
 
@@ -820,6 +824,49 @@ describe('the web UI works, driven in a DOM against the real handlers', () => {
     expect(p.errors).toEqual([]);
   }, SLOW);
 
+  it('a wallet that holds no role, on its own reviewed scored session: why its learning record cannot be made here, and a download that says what it left out', async () => {
+    const attemptIri = S['attempt'];
+    expect(attemptIri, 'the first driven test leaves a judged and reviewed attempt').toBeTruthy();
+    // The same learner's key, on a bridge that holds no demo keys: a wallet nobody registered, as open enrolment leaves it.
+    const ana = W.learner;
+    const saved: string[] = [];
+    const p = await openUi(plain, (w) => {
+      w['TextEncoder'] = TextEncoder;
+      // A browser that saves files: the download's link is clicked, and jsdom, which navigates nowhere, is not asked to follow it.
+      Object.assign(w.URL, { createObjectURL: (): string => 'blob:pev-test', revokeObjectURL: (): void => undefined });
+      w.HTMLAnchorElement.prototype.click = function click(this: HTMLAnchorElement): void { saved.push(this.download); };
+      w['ethereum'] = {
+        request: async ({ method, params }: { method: string; params?: string[] }): Promise<unknown> => {
+          if (method === 'eth_requestAccounts') return [ana.address];
+          if (method === 'personal_sign') return signMessageRaw(ana, Buffer.from(String(params?.[0]).slice(2), 'hex').toString('utf8'));
+          throw new Error(`unsupported ${method}`);
+        },
+      };
+    });
+    await p.until(() => p.q('article.scenario'), 'the scenarios');
+    p.q('#connect-wallet')!.click();
+    await p.until(() => p.text('#acting-as').startsWith('Signed in with wallet'), 'the connected wallet');
+    p.w.location.hash = `#/attempt/${encodeURIComponent(attemptIri!)}`;
+    const panel = await p.until(() => p.q('section.projections'), 'the learning-record panel');
+    // The levels, and on this, the person's own session, only the way that works for it: register the address.
+    expect(p.text('#assessment')).toContain("aren't shown to an address that holds no role in this workspace. Ask your admin to register this address to see them.");
+    expect(p.text('#assessment')).not.toContain('Sign in with Interego');
+    // The panel says why its buttons are off, and on the buttons too.
+    const needsRole = "Its learning record carries the score and whether it met the pass mark, which aren't shown to an address that holds no role in this workspace, so you can't create one here, copy this session to your own storage, or download its content. Ask your admin to register this address.";
+    expect(panel.querySelector('.record-needs-role')?.textContent).toBe(needsRole);
+    expect(panel.textContent).not.toContain('so this can be shared as practice evidence');
+    const made = p.all(button(PEV_ACTION.projectAttempt)) as HTMLButtonElement[];
+    expect(made.map((b) => [b.disabled, b.title])).toEqual([[true, needsRole], [true, needsRole]]);
+    expect(p.q(button(PEV_ACTION.holderCopy))).toBeNull();
+    // The download is not called the record: it says it holds the signatures, and why its content was left out.
+    p.click(button(PEV_ACTION.exportRecord));
+    const got = await p.until(() => p.all('#view .callout').find((c) => (c.textContent ?? '').includes('Downloaded')) ?? p.q('#view .actions .refusal'), 'the download');
+    expect(got.querySelector('.callout__title')?.textContent ?? got.textContent).toMatch(/^Downloaded the signatures of \d+ saved versions, without their content\.$/);
+    expect(got.textContent).toContain("A scored session's content holds the score and the pass mark, which aren't shown to an address that holds no role in this workspace, so the download leaves it out. Ask your admin to register this address, then download it again for the whole record.");
+    expect(saved).toHaveLength(1);
+    expect(p.errors).toEqual([]);
+  }, SLOW);
+
   it('the main screens speak to customers: no protocol words, codes or statuses outside Technical details', async () => {
     const attemptIri = S['attempt'];
     expect(attemptIri, 'the first driven test leaves a judged and reviewed attempt').toBeTruthy();
@@ -1129,7 +1176,8 @@ describe('the web UI works, driven in a DOM against the real handlers', () => {
     // This wallet holds no role here (enrolment is open, and anything can make a key, an AI assistant too), so the signed
     // read still leaves the stakes out, and the page says how to see them instead of offering the same button again.
     const noRole = await p.until(() => p.all('article.scenario .stakes-note').find((n) => (n.textContent ?? '').includes('no role')), 'the no-role note');
-    expect(noRole.textContent).toBe("How much each criterion counts, the points for each level and the pass mark aren't shown to an address that holds no role in this workspace. Sign in with Interego to see them, or ask your admin to register your address.");
+    // This workspace offers no Interego sign-in, so the note does not suggest one: registering the address is the way.
+    expect(noRole.textContent).toBe("How much each criterion counts, the points for each level and the pass mark aren't shown to an address that holds no role in this workspace. Ask your admin to register this address to see them.");
     expect([noRole.querySelector('button'), p.all('article.scenario').some((a) => /Weight \d|Pass mark: at least/.test(a.textContent ?? ''))]).toEqual([null, false]);
     expect(signs.slice(signedBefore).map((t) => (JSON.parse(t) as Out)['action'])).toEqual([PEV_ACTION.listScenarios]);
     expect(Object.keys(JSON.parse(signs[signs.length - 1]!) as Out).sort()).toEqual(['action', 'issuedAt', 'nonce', 'podUrl', 'v']);

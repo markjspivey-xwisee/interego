@@ -607,9 +607,17 @@ class NeedsSignIn extends Error { constructor() { super('Sign in to continue.');
 /**
  * What a person signed with a key that holds no role here reads where a scored scenario's stakes
  * would be. Practice Evidence shows them only to its own Interego sign-in and to an address an admin
- * registered: anything can make a key and sign with it, an AI assistant included.
+ * registered: anything can make a key and sign with it, an AI assistant included. Interego sign-in
+ * is offered only where this workspace offers it, and never on the person's own session: signed in
+ * with Interego they are another person here, whose sessions are not this address's
+ * (`ownSession`). There, registering the address is the one way.
  */
-const NO_ROLE_STAKES = "How much each criterion counts, the points for each level and the pass mark aren't shown to an address that holds no role in this workspace. Sign in with Interego to see them, or ask your admin to register your address.";
+function noRoleStakes(ownSession) {
+  const lead = "How much each criterion counts, the points for each level and the pass mark aren't shown to an address that holds no role in this workspace.";
+  return interegoOffered() && !ownSession
+    ? `${lead} Sign in with Interego to see them, or ask your admin to register this address.`
+    : `${lead} Ask your admin to register this address to see them.`;
+}
 
 async function loadManifest() {
   const r = await fetch('affordances?format=jsonld', { headers: { accept: 'application/ld+json' } });
@@ -1681,7 +1689,7 @@ function connectAiDialog() {
         h('li', { text: 'It acts as you, through your Interego account. Each record says which app made it, for example "via ChatGPT".' }),
         h('li', { id: 'connect-judge', text: "It can't assess a session you started with your Interego account, even in a new chat or told to act as a judge: it still acts as you. A judge is a different person, with their own Interego account, whom your admin appoints by Member ID." }),
         h('li', { text: 'It never decides a score. Practice Evidence works out every result, and a reviewer signs off.' }),
-        h('li', { id: 'connect-stakes', text: "It doesn't get the weights, the points for each level, the pass mark or any score: Practice Evidence leaves them out of what it sends to a chat assistant through the connector. You see them here. Give an AI tool your own signing key, though, and it reads what you read." }),
+        h('li', { id: 'connect-stakes', text: "It doesn't get the weights, the points for each level, the pass mark or any score: Practice Evidence leaves them out of what it sends to a chat assistant through the connector. You see them here, signed in with Interego or with an address your admin registered. Give an AI tool your own signing key, though, and it reads what you read." }),
         h('li', { id: 'connect-decisions', text: S.bridge.interegoSignIn.chatAgentsDecide === true
           ? 'This workspace also lets assistants approve rubrics, sign off reviews and change roles, so check what you ask for.'
           : 'Approving rubrics, signing off reviews and changing roles happen here in the web app, not from a chat assistant.' }),
@@ -2170,7 +2178,7 @@ function stakesNote() {
     return note;
   }
   if (S.stakesNoRole) {
-    note.append(para(NO_ROLE_STAKES, 'text-sm text-secondary'));
+    note.append(para(noRoleStakes(false), 'text-sm text-secondary'));
     return note;
   }
   const out = h('div', { class: 'outcome' });
@@ -2917,7 +2925,7 @@ function assessmentPanel(v) {
     // An answer without the stakes: the levels counted, no points, percent or pass result.
     body.append(h('p', { class: 'verdict', text: 'Scored: the levels below count toward a score.' }));
     body.append(h('ul', {}, (a.levels || []).map((l) => h('li', { text: `${criterionTitle(v.rubric, l.criterionId)}: ${levelLabel(v.rubric, l.criterionId, l.levelId)}` }))));
-    body.append(para(NO_ROLE_STAKES, 'text-sm text-secondary'));
+    body.append(para(noRoleStakes(true), 'text-sm text-secondary'));
   } else if (a.use === 'pass-gate') {
     body.append(h('p', { class: 'result-score' }, h('span', { class: 'nowrap', text: `${a.points} of ${a.maxPoints} points` }), ' · ', h('span', { class: 'nowrap', text: `${a.percent}%` })));
     const verdict = final
@@ -2970,16 +2978,25 @@ function reviewsPanel(v) {
   return h('section', { class: 'card reviews' }, h('div', { class: 'card__header' }, h('h2', { class: 'card__title', text: 'Reviews' })), body);
 }
 
+/**
+ * Why a scored session that could be shared is not offered here: its learning record carries the
+ * score and the pass mark, which this address does not read (`stakesWithheld`). Only a key
+ * reaches this (an Interego sign-in and a demo key read them), and that key needs registering.
+ */
+const RECORD_NEEDS_ROLE = "Its learning record carries the score and whether it met the pass mark, which aren't shown to an address that holds no role in this workspace, so you can't create one here, copy this session to your own storage, or download its content. Ask your admin to register this address.";
+
 function projectionsPanel(v) {
   const can = v.projectable && hasNext(v, 'projectAttempt');
   const body = h('div', { class: 'card__body' });
-  if (v.projectable) body.append(para('A reviewer signed off on an approved rubric, so this can be shared as practice evidence.'));
+  if (v.projectable && v.stakesWithheld) {
+    body.append(para('A reviewer signed off on an approved rubric, so this session could be shared as practice evidence.'), para(RECORD_NEEDS_ROLE, 'text-sm text-secondary record-needs-role'));
+  } else if (v.projectable) body.append(para('A reviewer signed off on an approved rubric, so this can be shared as practice evidence.'));
   else {
     body.append(callout({ tone: 'neutral', title: `Not ready to share yet: ${EVIDENCE_PLAIN[v.projectableWhy] || 'see the details'}.`, techLines: [v.projectableWhy] }));
   }
   const out = h('div', { class: 'outcome', id: 'projection' });
   const button = (format, label, cls) => {
-    const b = h('button', { type: 'button', class: `btn ${cls}`, text: label, disabled: !can, title: v.projectableWhy, dataset: { action: ACT.projectAttempt, format }, onclick: () => busy(b, out, async () => {
+    const b = h('button', { type: 'button', class: `btn ${cls}`, text: label, disabled: !can, title: v.projectable && v.stakesWithheld ? RECORD_NEEDS_ROLE : v.projectableWhy, dataset: { action: ACT.projectAttempt, format }, onclick: () => busy(b, out, async () => {
       const r = await act(ACT.projectAttempt, { attemptIri: v.attemptIri, format });
       const text = JSON.stringify(r.statement, null, 2);
       return h('div', { class: 'stack' },
@@ -3057,6 +3074,12 @@ function actionsPanel(v, o, inConversation) {
         const text = JSON.stringify(r, null, 2);
         const saved = download(`pev-record-${v.attemptIri.split(':').pop()}.json`, text, 'application/json');
         const n2 = r.versions.length;
+        if (r.graphsLeftOut) {
+          // Not the whole record: the signatures of each version, and none of its content.
+          return callout({ tone: 'warning', title: saved ? `Downloaded the signatures of ${savedVersions(n2)}, without their content.` : `Your record has ${savedVersions(n2)}, but this browser couldn't save the file.`,
+            body: "A scored session's content holds the score and the pass mark, which aren't shown to an address that holds no role in this workspace, so the download leaves it out. Ask your admin to register this address, then download it again for the whole record.",
+            techLines: [r.graphsLeftOut.why, ...r.verify] });
+        }
         return callout({ tone: 'success', title: saved ? `Downloaded ${savedVersions(n2)}.` : `Your record has ${savedVersions(n2)}, but this browser couldn't save the file.`, techLines: r.verify });
       }, 'btn--secondary', 'Preparing…', 'download'));
     } else if (n.action === ACT.holderCopy) {
@@ -3547,7 +3570,7 @@ async function viewAuthor(root, scenarioIri) {
       if (r.stakesWithheld && r.scenario.assessmentUse === 'pass-gate') {
         if (signedOut()) { S.author = null; throw new NeedsSignIn(); }
         r = await readScenarios({ scenario_iri: scenarioIri }, { sign: true });
-        if (r.stakesWithheld) { S.author = null; throw new Error(`${NO_ROLE_STAKES} Only an author edits a scenario.`); }
+        if (r.stakesWithheld) { S.author = null; throw new Error(`${noRoleStakes(false)} Only an author edits a scenario.`); }
       }
       S.author.model = modelFrom(r.scenario);
       S.author.basedOnVersion = r.scenario.version;

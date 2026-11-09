@@ -69,7 +69,7 @@ import {
   NonceLedger, podBase, principalDid, principalKey, principalOfDid, projectionIri, recordGraphTurtle, recordIdFor, recordLocal, recordSalt, redactBody, registryIri,
   relayDelegatedEnvelope, reverifyStoredEnvelope, rubricIriOf, samePrincipal, scenarioIri as scenarioIriOf, signDraftReceipt, signEnvelope,
   signedRequestOf, signedRequestSigner, slugFor, standingReview, toWellFormedText, verifyDraftReceipt,
-  EXPORT_VERIFY_STEPS, REDACTION_NOTE, ROLES,
+  EXPORT_VERIFY_STEPS, EXPORT_VERIFY_STEPS_WITHOUT_GRAPHS, REDACTION_NOTE, ROLES,
   type Actor, type AttemptAct, type AttemptBody, type DescriptorPlan, type DraftAssistance, type EnvelopeForm, type EnvelopeOk,
   type FinalLevel, type KeyKind, type NextAction, type PevRecordBody, type ProjectionAuditBody, type RecordTarget,
   type RecentEnvelope, type Redaction, type RelayAttestation, type Reopening, type ReviewResult, type Role, type RoleRegistryBody, type ScenarioBody,
@@ -375,6 +375,8 @@ interface Call {
    * scenario hash in the answer, a refusal included, is keyed before it leaves (see `run`).
    */
   stakesShown: boolean;
+  /** Why it does not, when it does not (`showsStakes`): what a refusal over the stakes tells the caller to do. */
+  stakesReading: StakesReading;
   /**
    * The scenario version this act's answer is about, when the answer does not name it beside each
    * hash (a judge packet, a judgment, a review), or `cells` for calibration: what every hash in it
@@ -663,15 +665,51 @@ function isChatAgent(ctx: Ctx, relay: RelayAttestation | undefined): boolean {
 async function showsStakes(call: Call, s: Signed | null): Promise<boolean> {
   const { ctx } = call;
   call.stakesShown = false;
-  let shown = false;
-  if (s !== null && s.relay !== undefined) shown = !isChatAgent(ctx, s.relay);
+  let reading: StakesReading = 'unsigned';
+  if (s !== null && s.relay !== undefined) reading = isChatAgent(ctx, s.relay) ? 'chat-agent' : 'reads';
   else if (s !== null) {
     const roles = (await rolesOn(call, s.pod)).of(s.signer);
-    shown = !roles.has('agent') && (isAdmin(ctx, s.signer) || isDemo(ctx, s.signer) || roles.size > 0);
+    if (roles.has('agent')) reading = 'agent-key';
+    else reading = isAdmin(ctx, s.signer) || isDemo(ctx, s.signer) || roles.size > 0 ? 'reads' : 'unregistered-key';
   }
-  call.stakesShown = shown;
-  return shown;
+  call.stakesReading = reading;
+  call.stakesShown = reading === 'reads';
+  return call.stakesShown;
 }
+
+/**
+ * Who reads a scored scenario's stakes (`showsStakes`): `reads`, or why not: a request nobody
+ * signed, a chat agent the relay signed for, a key no admin registered, or a key registered as an
+ * agent.
+ */
+type StakesReading = 'reads' | 'unsigned' | 'chat-agent' | 'unregistered-key' | 'agent-key';
+
+/**
+ * What a caller who does not read the stakes can do instead, by why not: a chat goes to the web
+ * app; a key no admin registered (a wallet in the web app, say) asks an admin to register it,
+ * since signing in with Interego there would be another person, whose sessions are not this
+ * key's; a key registered as an agent is not a person's.
+ */
+const STAKES_REMEDY: Record<Exclude<StakesReading, 'reads'>, { readonly remedy: string; readonly words: string }> = {
+  'chat-agent': {
+    remedy: 'web-app',
+    words: 'Practice Evidence leaves a scored scenario\'s weights, level points and pass mark out of what it sends a chat assistant, so this is done in the Practice Evidence web app, signed in with Interego.',
+  },
+  'unregistered-key': {
+    remedy: 'register-address',
+    words: 'This address holds no role on this workspace, and Practice Evidence sends a scored scenario\'s weights, level points and pass mark only to an address an admin registered (anything can make a key and sign with it), so ask your admin to register this address, then do it again.',
+  },
+  'agent-key': {
+    remedy: 'person-address',
+    words: 'This address is registered as an agent, and Practice Evidence sends a scored scenario\'s weights, level points and pass mark to no agent\'s key, so this is done with an address registered for a person.',
+  },
+  unsigned: {
+    remedy: 'sign',
+    words: 'Practice Evidence sends a scored scenario\'s weights, level points and pass mark only in answer to a signed request.',
+  },
+};
+const remedyFor = (call: Call): (typeof STAKES_REMEDY)[keyof typeof STAKES_REMEDY] =>
+  STAKES_REMEDY[call.stakesReading === 'reads' ? 'unsigned' : call.stakesReading];
 
 /**
  * The top-level mark of an answer that left a scored scenario's stakes out: only when it did, so
@@ -699,9 +737,9 @@ async function sameHash(call: Call, s: Signed, sent: unknown, stored: string, at
  * them (`showsStakes`): a learning record of a scored attempt, its graphs copied to a pod, or a
  * scored scenario's stakes replaced from a chat that cannot read them.
  */
-function stakesNotHere(what: string): Declined {
-  return decline(403, `${what} Practice Evidence leaves a scored scenario's weights, level points and pass mark out of what it sends to a chat assistant, to a key not registered on this workspace and to a request nobody signed, so this is done in the Practice Evidence web app, signed in.`,
-    'stakes-not-in-chat');
+function stakesNotHere(call: Call, what: string): Declined {
+  const r = remedyFor(call);
+  return decline(403, `${what} ${r.words}`, 'stakes-not-in-chat', undefined, { remedy: r.remedy });
 }
 
 /**
@@ -1553,18 +1591,18 @@ async function authorScenario(call: Call, args: Record<string, unknown>): Promis
       // Nothing scored to keep: a scenario made scored here names its stakes, as a new one does.
       if (!head || !scoredUse(head.scenario)) spec = coercedScenario(raw);
       else if (!sameRubricShape(raw, head.scenario.rubric)) {
-        throw stakesNotHere(`Its criteria or levels are not version ${head.version}'s, by id and in order, so that version's weights, level points and pass mark cannot be kept, and new ones cannot be sent from here, where they are not read.`);
+        throw stakesNotHere(call, `Its criteria or levels are not version ${head.version}'s, by id and in order, so that version's weights, level points and pass mark cannot be kept, and new ones cannot be sent from here, where they are not read.`);
       } else {
         spec = coercedScenario(withStakesOf(raw as Record<string, unknown>, head.scenario));
         kept = {
           stakesKept: {
             fromVersion: head.version,
-            note: `This scenario is scored. Its weights, level points and pass mark are version ${head.version}'s, kept as they were, because they are not read from here${head.scenario.passGateWhy !== null ? ', and so is the reason a pass mark fits unless one was sent' : ''}. Change them in the Practice Evidence web app.`,
+            note: `This scenario is scored. Its weights, level points and pass mark are version ${head.version}'s, kept as they were, because they are not read from here${head.scenario.passGateWhy !== null ? ', and so is the reason a pass mark fits unless one was sent' : ''}. ${call.stakesReading === 'chat-agent' ? 'Change them in the Practice Evidence web app.' : 'Change them with an address registered for a person, or in the Practice Evidence web app.'}`,
           },
         };
       }
     } else if (!stakes && head && scoredUse(head.scenario) && scoredUse(spec)) {
-      throw stakesNotHere(`Version ${head.version} is scored, and its weights, level points and pass mark are not read from here, so they cannot be replaced from here. Send the scenario without weights, level values and passRule to keep version ${head.version}'s.`);
+      throw stakesNotHere(call, `Version ${head.version} is scored, and its weights, level points and pass mark are not read from here, so they cannot be replaced from here. Send the scenario without weights, level values and passRule to keep version ${head.version}'s.`);
     }
     const hash = scenarioHash(spec);
     const sameContent = head !== null && head.scenarioHash === hash;
@@ -2692,7 +2730,7 @@ async function projectAttempt(call: Call, args: Record<string, unknown>): Promis
   // is written (a skip audit included), to a caller who does not read the stakes. A feedback-only
   // one carries levels alone.
   if (scoredUse(h.body.scenarioSpec) && !(await showsStakes(call, s))) {
-    throw stakesNotHere('A learning record of a scored session carries its score and whether it met the pass mark.');
+    throw stakesNotHere(call, 'A learning record of a scored session carries its score and whether it met the pass mark.');
   }
   const pIri = projectionIri(iri, fmt, s.nonce);
   const at = iso(ctx);
@@ -2764,7 +2802,7 @@ async function holderCopy(call: Call, args: Record<string, unknown>): Promise<Ou
   // Every version's graph, unsealed, goes to a pod the caller names, which the caller may then read:
   // a scored attempt's graphs hold the rubric's stakes and every result worked out from them.
   if (scored && !(await showsStakes(call, s))) {
-    throw stakesNotHere('A copy of a scored session holds its weights, level points and pass mark, unencrypted, on the pod it is copied to.');
+    throw stakesNotHere(call, 'A copy of a scored session holds its weights, level points and pass mark, unencrypted, on the pod it is copied to.');
   }
   const copies: Out[] = [];
   let prev: string | undefined;
@@ -2828,10 +2866,18 @@ async function exportRecord(call: Call, args: Record<string, unknown>): Promise<
   // version's descriptor, never its graph. A feedback-only attempt holds no stakes.
   const stakes = await showsStakes(call, s);
   const shown = stakes || !scoredUse(h.body.scenarioSpec);
+  const leftOut = shown ? 0 : chain.filter((v) => !isDeleted(v)).length;
   return {
     attemptIri: iri, exportedAt: iso(ctx), platformAddresses: [...ctx.trusted.addresses],
     // What an envelope with authority relay-delegated is re-verified against (see verify).
-    relayAddresses: ctx.relay?.relayAddresses ?? [], identityHost: ctx.identityHost, verify: EXPORT_VERIFY_STEPS,
+    relayAddresses: ctx.relay?.relayAddresses ?? [], identityHost: ctx.identityHost, verify: shown ? EXPORT_VERIFY_STEPS : EXPORT_VERIFY_STEPS_WITHOUT_GRAPHS,
+    // Not a whole record: every version's graph is left out, and it says so, and why, and what to do.
+    ...(leftOut > 0 ? {
+      graphsLeftOut: {
+        versions: leftOut, remedy: remedyFor(call).remedy,
+        why: `This export holds each version's signed descriptor and none of its content (graphTrig is null): a scored session's content holds its weights, level points and pass mark, and every result worked out from them. ${remedyFor(call).words}`,
+      },
+    } : {}),
     versions: chain.map((v, i) => (isDeleted(v)
       ? { seq: i + 1, recordId: v.recordId, state: null, modalStatus: null, sourceDescriptorUrl: v.descriptorUrl, descriptorTurtle: v.descriptorTurtle, graphTrig: null, contentDeleted: true }
       : {
@@ -3055,7 +3101,7 @@ export function createPevHandlers(deps: PevDeps): Record<string, AffordanceHandl
   // would confirm a guess at its weights, level values and pass rule offline.
   const run = (act: Act): AffordanceHandler => async (args: Record<string, unknown>) => {
     const budget = new ReadBudget(ctx.actReadBudgetBytes);
-    const call: Call = { ctx, cache: readCache(ctx.verified), budget, read: withReadBudget(ctx.fetchFn, budget), writesAtStart: ctx.writes.n, stakesShown: false, hashScope: null };
+    const call: Call = { ctx, cache: readCache(ctx.verified), budget, read: withReadBudget(ctx.fetchFn, budget), writesAtStart: ctx.writes.n, stakesShown: false, stakesReading: 'unsigned', hashScope: null };
     let out: Out;
     try {
       out = await act(call, args ?? {});

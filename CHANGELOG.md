@@ -1,6 +1,6 @@
 # Changelog
 
-## 2026-11-09 — Practice Evidence: fingerprints keyed per scenario version
+## 2026-11-09 — Practice Evidence: second review of keeping the stakes out of a chat
 
 A second review found that the keyed fingerprints could still check a guess at
 a scored scenario's weights and pass mark. Two rubrics with the same content
@@ -18,6 +18,25 @@ fingerprints its own way, so they match none shown elsewhere.
 Not covered: calibration still counts judgments of the same rubric together
 across scenarios, so once enough sessions on two scenarios have been judged,
 its table can show that their rubrics, stakes included, are the same.
+
+A wallet nobody registered, which is what open enrolment gives every learner
+who does not sign in with Interego, cannot download the content of a scored
+session of their own, copy it to their own storage, or build a learning record
+from it: those hold the score and the pass mark, which go only to an address
+an admin registered. The web app hid this. Now the learning-record panel says
+why its buttons are off and asks the person to have their admin register the
+address, and a download says it holds each version's signatures without the
+session's content, and why. A refusal tells a wallet to ask an admin to
+register its address, a chat to use the web app signed in with Interego, and
+an agent's key that it is not a person's, instead of sending someone already
+in the web app to the web app. The note where the weights would be offers
+Interego sign-in only where the workspace offers it, and never on the person's
+own session, where signing in with Interego would make them another person;
+there it asks for the address to be registered. The guide and the Connect
+dialog say the same.
+
+Not covered: such a learner cannot keep a whole copy of a scored session of
+their own until an admin registers their address.
 
 ## 2026-11-09 — Practice Evidence: closing the other ways the stakes reached a chat
 

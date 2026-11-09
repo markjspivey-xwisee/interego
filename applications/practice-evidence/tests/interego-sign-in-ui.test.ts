@@ -1354,6 +1354,8 @@ describe('your own AI assistant: connect Claude or ChatGPT, or copy and paste; n
     // What it can and can't do: this workspace keeps the decisions in the web app, and says who sees what.
     (d.querySelector('#connect-limits') as HTMLDetailsElement).open = true;
     expect(d.querySelector('#connect-decisions')?.textContent).toBe('Approving rubrics, signing off reviews and changing roles happen here in the web app, not from a chat assistant.');
+    // Where people see the stakes: signed in with Interego, or with an address the admin registered, not any address at all.
+    expect(d.querySelector('#connect-stakes')?.textContent).toBe("It doesn't get the weights, the points for each level, the pass mark or any score: Practice Evidence leaves them out of what it sends to a chat assistant through the connector. You see them here, signed in with Interego or with an address your admin registered. Give an AI tool your own signing key, though, and it reads what you read.");
     expect(shownText(d)).toContain('The Interego connector passes everything your assistant reads and writes here, including conversation text, and the company behind your assistant sees it too');
     const byok = d.querySelector('#byok-section') as HTMLDetailsElement;
     expect([byok.open, byok.querySelector('summary')?.textContent]).toEqual([false, 'Advanced: use your own Anthropic API key (drafts only)']);
@@ -1781,6 +1783,14 @@ describe('your own AI assistant: connect Claude or ChatGPT, or copy and paste; n
     await p.until(() => p.q('article.scenario'), 'the scenarios');
     p.q('#connect-wallet')!.click();
     await p.until(() => p.text('#acting-as').startsWith('Signed in with wallet'), 'the wallet');
+    // A wallet nobody registered asks for the weights and pass mark and gets none: where this workspace offers Interego
+    // sign-in, the note offers it beside registering the address; on the person's own session it is registering alone,
+    // since signed in with Interego they would be another person, whose sessions are not this address's.
+    const scored = await p.until(() => p.all('article.scenario').find((a) => (a.textContent ?? '').includes('Scored · pass mark')), 'a scored scenario');
+    scored.querySelector<HTMLElement>('.stakes-note button')!.click();
+    const noRole = await p.until(() => p.all('article.scenario .stakes-note').find((x) => (x.textContent ?? '').includes('no role')), 'the no-role note');
+    expect(noRole.textContent).toBe("How much each criterion counts, the points for each level and the pass mark aren't shown to an address that holds no role in this workspace. Sign in with Interego to see them, or ask your admin to register this address.");
+    expect(p.w.eval('noRoleStakes(true)')).toBe("How much each criterion counts, the points for each level and the pass mark aren't shown to an address that holds no role in this workspace. Ask your admin to register this address to see them.");
     const card = await p.until(() => p.q('article.scenario'), 'the scenarios, again');
     card.querySelector<HTMLInputElement>('input[type=radio][value=no]')!.checked = true;
     card.querySelector<HTMLElement>(`button[data-action="${PEV_ACTION.startAttempt}"]`)!.click();

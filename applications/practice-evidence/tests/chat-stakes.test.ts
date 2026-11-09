@@ -335,6 +335,20 @@ describe('answers to a chat assistant leave out the scoring stakes; the web app 
     const own = chatAnswer(await kact(H, 'pev.get_attempt', FRESH, { attemptIri: start['attemptIri'] }), 'its own attempt, read with a fresh key');
     expect([(own['rubric'] as Out)['criteria'], 'passRule' in (own['rubric'] as Out)]).toEqual([expect.any(Array), false]);
     chatAnswer(await kact(H, 'pev.get_attempt', FRESH), 'its own attempts listed with a fresh key');
+    // Its own record: the download says it is not the whole record, why, and what to do; nothing sends a web-app user to the web app.
+    const ex = chatAnswer(await kact(H, 'pev.export_record', FRESH, { attemptIri: start['attemptIri'] }), 'its own record, with a fresh key');
+    const versions = ex['versions'] as Out[];
+    expect(versions.every((v) => v['graphTrig'] === null)).toBe(true);
+    const left = ex['graphsLeftOut'] as Out;
+    expect([left['versions'], left['remedy']]).toEqual([versions.length, 'register-address']);
+    expect(String(left['why'])).toContain('ask your admin to register this address');
+    expect((ex['verify'] as string[]).join(' ')).not.toContain('graphContent: graphTrig');
+    const before = pod.store.size;
+    for (const [tool, fields] of [['pev.project_attempt', { attemptIri: start['attemptIri'], format: 'xapi' }], ['pev.holder_copy', { attemptIri: start['attemptIri'], targetPodUrl: 'https://open-pod.example.test/anyone/' }]] as const) {
+      const r = refused(await kact(H, tool, FRESH, fields), 'stakes-not-in-chat', `${tool} of its own scored session, with a fresh key`);
+      expect([r['remedy'], String(r['error']).includes('ask your admin to register this address'), String(r['error']).includes('web app')], tool).toEqual(['register-address', true, false]);
+    }
+    expect(pod.store.size).toBe(before);
     // The same, registered as a learner by an admin: the stakes, as the web app reads them.
     const regd = ok(await kact(H, 'pev.start_attempt', KEY_LEARNER, { scenarioIri: X['sc'], scenarioVersion: 1, coached: false }));
     webAnswer(await kact(H, 'pev.get_attempt', KEY_LEARNER, { attemptIri: regd['attemptIri'] }), 'its own attempt, read with a registered learner key');
@@ -446,9 +460,12 @@ describe('answers to a chat assistant leave out the scoring stakes; the web app 
       const before = pod.store.size;
       const st = refused(await ract(H, 'pev.project_attempt', chat, { attemptIri: X['a'], format: 'xapi' }), 'stakes-not-in-chat', `a statement from ${chat}`);
       expect([stakesIn(st), pod.store.size], `nothing written for ${chat}`).toEqual([[], before]);
+      // A chat is sent to the web app, signed in with Interego.
+      expect([st['remedy'], String(st['error']).includes('in the Practice Evidence web app, signed in with Interego')]).toEqual(['web-app', true]);
     }
     const kp = refused(await kact(H, 'pev.project_attempt', KEY_AGENT, { attemptIri: X['a'], format: 'xapi' }), 'stakes-not-in-chat', 'a statement for a key registered as an agent');
     expect(stakesIn(kp)).toEqual([]);
+    expect([kp['remedy'], String(kp['error']).includes('registered as an agent')]).toEqual(['person-address', true]);
     const fromChat = chatAnswer(await ract(H, 'pev.get_attempt', P.learner.claude, { attemptIri: X['a'] }), 'the reviewed attempt, for its next acts');
     expect(actionsOf(fromChat).filter((t) => t === 'pev.project_attempt' || t === 'pev.holder_copy')).toEqual([]);
     expect(actionsOf(fromChat)).toContain('pev.export_record');
