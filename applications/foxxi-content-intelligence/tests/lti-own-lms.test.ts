@@ -80,14 +80,12 @@ it('binds a temporary external tool to one learner and one line item and revokes
   if (!connected?.start.ok) throw new Error('The scoped launch did not start');
   const { platform: issuer, start } = connected;
   const init = new URL(start.initiationUrl).searchParams;
-  const auth = await fetch(`${issuer}/auth`, {
-    ...form({
-      scope: 'openid', response_type: 'id_token', response_mode: 'form_post',
-      client_id: scopedTool.clientId, redirect_uri: scopedTool.redirectUri, nonce: randomUUID(),
-      login_hint: init.get('login_hint')!, lti_message_hint: init.get('lti_message_hint')!,
-    }),
-    headers: { Accept: 'application/json', 'Content-Type': 'application/x-www-form-urlencoded' },
+  const query = new URLSearchParams({
+    scope: 'openid', response_type: 'id_token', response_mode: 'form_post',
+    client_id: scopedTool.clientId, redirect_uri: scopedTool.redirectUri, nonce: randomUUID(),
+    login_hint: init.get('login_hint')!, lti_message_hint: init.get('lti_message_hint')!,
   });
+  const auth = await fetch(`${issuer}/auth?${query}`, { headers: { Accept: 'application/json' } });
   expect(auth.status).toBe(200);
   const { form_post: handoff } = await auth.json() as { form_post: { action: string; fields: { id_token: string } } };
   const claims = decode(handoff.fields.id_token);

@@ -28,7 +28,7 @@
  * RFC 7523); OpenID Connect Core 1.0 (form_post response mode); JOSE (RFC 7515/7517/7519).
  */
 
-import express, { type Express, type Request, type Response, type RequestHandler } from 'express';
+import express, { type Router, type Request, type Response, type RequestHandler } from 'express';
 import { rateLimit } from 'express-rate-limit';
 import { createHash, createPrivateKey, createPublicKey, randomBytes, sign } from 'node:crypto';
 import { AGS_SCOPE, LTI_CLAIMS, es256Keys, jwsSignEs256, jwsVerifyRs256OrEs256, type PlatformRegistration } from './lti13.js';
@@ -594,7 +594,7 @@ function refuse(res: Response, r: Refused): void {
   res.status(r.status).json({ error: r.error, ...(r.description ? { error_description: r.description } : {}) });
 }
 
-export function attachLtiPlatformRoutes(app: Express, platform: LtiPlatform): void {
+export function attachLtiPlatformRoutes(app: Pick<Router, 'get' | 'post' | 'use'>, platform: LtiPlatform): void {
   const formBody = express.urlencoded({ extended: false, limit: '64kb' });
   // This route owns parsing for both media types so its decoded body limit applies to each.
   const scoreBody = express.json({ type: [MEDIA.score, 'application/json'], limit: '64kb' });

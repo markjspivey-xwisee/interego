@@ -8,6 +8,7 @@ post scores to that connection's line item. The learner can read the
 temporary grade in their Foxxi gradebook and revoke the connection.
 Revocation removes the temporary grade and closes its protocol endpoints.
 The open Foxxi gradebook retains its own credentials and storage.
+Scoped OIDC redirects keep their query parameters through the bridge's router.
 
 The gradebook accepts standard LTI score media and plain JSON. It keeps the
 tool's activity and grading statuses as submitted. The open gradebook's
