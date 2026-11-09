@@ -12,6 +12,19 @@ export interface PlatformLoadDiagnostics {
   counts: { lineItems: number; results: number; members: number };
 }
 
+function isPostedScore(value: unknown): value is Record<string, unknown> & { userId: string; timestamp: string } {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const r = value as Record<string, unknown>;
+  if (typeof r.userId !== 'string' || !r.userId
+    || !['Initialized', 'Started', 'InProgress', 'Submitted', 'Completed'].includes(String(r.activityProgress))
+    || !['FullyGraded', 'Pending', 'PendingManual', 'Failed', 'NotReady'].includes(String(r.gradingProgress))
+    || typeof r.timestamp !== 'string' || !Number.isFinite(Date.parse(r.timestamp))
+    || (r.comment !== undefined && typeof r.comment !== 'string')) return false;
+  return (r.scoreGiven === undefined && r.scoreMaximum === undefined)
+    || (typeof r.scoreGiven === 'number' && Number.isFinite(r.scoreGiven) && r.scoreGiven >= 0
+      && typeof r.scoreMaximum === 'number' && Number.isFinite(r.scoreMaximum) && r.scoreMaximum > 0);
+}
+
 /** Validate before restore: a wrong JSON type must not turn into a loaded empty gradebook. */
 export function isPlatformSnapshot(value: unknown): value is PlatformSnapshot {
   if (!value || typeof value !== 'object') return false;
@@ -36,17 +49,14 @@ export function isPlatformSnapshot(value: unknown): value is PlatformSnapshot {
       || resultItems.has(entry[0]) || !Array.isArray(entry[1]) || entry[1].length > 10_000) return false;
     resultItems.add(entry[0]);
     const users = new Set<string>();
-    for (const row of entry[1]) {
-      if (!row || typeof row !== 'object') return false;
-      const r = row as Record<string, unknown>;
-      if (!strings(r.userId) || !members.has(r.userId) || users.has(r.userId)
-        || !['Initialized', 'Started', 'InProgress', 'Submitted', 'Completed'].includes(String(r.activityProgress))
-        || !['FullyGraded', 'Pending', 'PendingManual', 'Failed', 'NotReady'].includes(String(r.gradingProgress))
-        || typeof r.timestamp !== 'string' || !Number.isFinite(Date.parse(r.timestamp))
-        || (r.comment !== undefined && typeof r.comment !== 'string')) return false;
-      if (r.scoreGiven !== undefined || r.scoreMaximum !== undefined) {
-        if (typeof r.scoreGiven !== 'number' || !Number.isFinite(r.scoreGiven) || r.scoreGiven < 0
-          || typeof r.scoreMaximum !== 'number' || !Number.isFinite(r.scoreMaximum) || r.scoreMaximum <= 0) return false;
+    for (const r of entry[1]) {
+      if (!isPostedScore(r) || !members.has(r.userId) || users.has(r.userId)) return false;
+      const final = r.lastFinalized;
+      if (final !== undefined) {
+        if (r.scoreGiven === undefined || r.gradingProgress === 'FullyGraded'
+          || !isPostedScore(final) || final.userId !== r.userId || final.gradingProgress !== 'FullyGraded'
+          || final.scoreGiven === undefined || final.lastFinalized !== undefined
+          || Date.parse(final.timestamp) >= Date.parse(r.timestamp)) return false;
       }
       users.add(r.userId);
     }

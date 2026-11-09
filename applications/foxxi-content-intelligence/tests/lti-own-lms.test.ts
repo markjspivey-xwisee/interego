@@ -12,6 +12,7 @@ import { createPublicKey, generateKeyPairSync, randomUUID, sign, verify, type Js
 import { gzipSync } from 'node:zlib';
 import { createVerticalBridge } from '../../_shared/vertical-bridge/index.js';
 import { LtiPlatform, attachLtiPlatformRoutes, autoPostForm, type ToolRegistration } from '../src/lti-platform.js';
+import { isPlatformSnapshot } from '../src/lti-platform-readiness.js';
 import { ScopedLtiConnection } from '../src/lti-scoped-connection.js';
 import { AGS_SCOPE, LTI_CLAIMS, attachLti13Routes, es256Keys, jwsSignEs256, type Lti13Tool, type VerifiedResourceLaunch } from '../src/lti13.js';
 
@@ -115,19 +116,24 @@ it('binds a temporary external tool to one learner and one line item and revokes
   expect(token.scope).toBe(AGS_SCOPE.score);
 
   const item = String(start.lineItem.id);
-  const score = { userId: claims.sub, scoreGiven: 100, scoreMaximum: 100,
-    activityProgress: 'Initialized', gradingProgress: 'NotReady', timestamp: new Date().toISOString() };
-  const postScore = (url: string, userId: unknown, media = 'application/vnd.ims.lis.v1.score+json') => fetch(`${url}/scores`, {
+  const finalized = { userId: claims.sub, scoreGiven: 100, scoreMaximum: 100,
+    activityProgress: 'Submitted', gradingProgress: 'FullyGraded', timestamp: new Date(Date.now() - 1000).toISOString() };
+  const postScore = (url: string, userId: unknown, media = 'application/vnd.ims.lis.v1.score+json', score = finalized) => fetch(`${url}/scores`, {
     method: 'POST', headers: { Authorization: `Bearer ${token.access_token}`, 'Content-Type': media },
     body: JSON.stringify({ ...score, userId }),
   });
   expect((await postScore(item, other)).status).toBe(400);
   expect((await postScore(`${issuer}/contexts/foxxi-open/lineitems/missing`, claims.sub)).status).toBe(404);
   expect((await postScore(platform.lineItemUrl('an-open-item'), claims.sub)).status).toBe(401);
-  expect((await postScore(item, claims.sub, 'application/json')).status).toBe(204);
+  expect((await postScore(item, claims.sub)).status).toBe(204);
+  const retake = { ...finalized, scoreGiven: 0, activityProgress: 'Initialized',
+    gradingProgress: 'NotReady', timestamp: new Date().toISOString() };
+  expect((await postScore(item, claims.sub, 'application/json', retake)).status).toBe(204);
   expect((await fetch(`${item}/results`, { headers: { Authorization: `Bearer ${token.access_token}` } })).status).toBe(403);
   expect(scoped.gradesFor(learner.sub)).toEqual([expect.objectContaining({
-    courseId: scoped.course.id, result: expect.objectContaining({ resultScore: 100, gradingProgress: 'NotReady' }),
+    courseId: scoped.course.id,
+    result: expect.objectContaining({ resultScore: 100, gradingProgress: 'FullyGraded', timestamp: finalized.timestamp }),
+    retake: expect.objectContaining({ resultScore: 0, gradingProgress: 'NotReady', timestamp: retake.timestamp }),
   })]);
   expect(scoped.gradesFor(other)).toEqual([]);
   expect(platform.gradebookFor(learner.sub).some((row) => row.courseId === scoped.course.id)).toBe(false);
@@ -304,7 +310,8 @@ describe('the Tool\'s token and the gradebook it posts to', () => {
       headers: { 'Content-Type': 'application/vnd.ims.lis.v1.score+json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
       body: JSON.stringify(body),
     });
-    const at = new Date(Date.now() - 60_000).toISOString();
+    const startTime = Date.now() - 60_000;
+    const at = new Date(startTime).toISOString();
     const score = { userId: 'learner-1', scoreGiven: 8, scoreMaximum: 10, activityProgress: 'Completed', gradingProgress: 'FullyGraded', timestamp: at, comment: 'Passed' };
     const unsigned = await post(null, score);
     expect(unsigned.status).toBe(401);
@@ -315,20 +322,33 @@ describe('the Tool\'s token and the gradebook it posts to', () => {
     expect((await post(scoring, { ...score, activityProgress: 'Finished' })).status).toBe(400);
     expect((await post(scoring, score)).status).toBe(204);
     expect((await post(scoring, { ...score, scoreGiven: 2, timestamp: new Date(Date.now() - 120_000).toISOString() })).status).toBe(409);
+    const retake = { ...score, scoreGiven: 0, gradingProgress: 'NotReady', activityProgress: 'Initialized',
+      timestamp: new Date(startTime + 2000).toISOString(), comment: 'Retake' };
+    expect((await post(scoring, retake)).status).toBe(204);
+    expect((await post(scoring, { ...score, timestamp: new Date(startTime + 1000).toISOString() })).status).toBe(409);
     const results = await fetch(`${String(start.lineItem.id)}/results`, { headers: { Authorization: `Bearer ${await tokenFor(AGS_SCOPE.result)}` } });
     expect(results.headers.get('content-type')).toMatch(/application\/vnd\.ims\.lis\.v2\.resultcontainer\+json/);
-    expect(await results.json()).toEqual([expect.objectContaining({ userId: 'learner-1', resultScore: 80, resultMaximum: 100, scoreOf: start.lineItem.id })]);
-    expect(second.gradebookFor('learner-1')).toEqual([expect.objectContaining({ courseId: course.id, result: expect.objectContaining({ resultScore: 80, gradingProgress: 'FullyGraded' }) })]);
+    expect(await results.json()).toEqual([{ id: expect.any(String), userId: 'learner-1', resultScore: 80,
+      resultMaximum: 100, scoreOf: start.lineItem.id, comment: 'Passed' }]);
+    expect(second.gradebookFor('learner-1')).toEqual([expect.objectContaining({ courseId: course.id,
+      result: expect.objectContaining({ resultScore: 80, gradingProgress: 'FullyGraded', timestamp: at }),
+      retake: expect.objectContaining({ resultScore: 0, gradingProgress: 'NotReady', timestamp: retake.timestamp }),
+    })]);
     expect(second.gradebookFor('someone-else')).toEqual([expect.objectContaining({ result: null })]);
     const lineItems = await fetch(second.lineItemsUrl, { headers: { Authorization: `Bearer ${await tokenFor(AGS_SCOPE.result)}` } });
     expect(lineItems.status).toBe(403);
   });
 
-  it('keeps the gradebook across a restart', () => {
-    const snap = JSON.parse(JSON.stringify(second.snapshot())) as ReturnType<LtiPlatform['snapshot']>;
+  it('keeps the final and retake across a restart and validates the stored learner binding', () => {
+    const snap: unknown = JSON.parse(JSON.stringify(second.snapshot()));
+    if (!isPlatformSnapshot(snap)) throw new Error('The gradebook snapshot is invalid');
     const restarted = new LtiPlatform({ selfBaseUrl: `${base}/second`, tool: second.tool });
     restarted.restore(snap);
     expect(restarted.gradebookFor('learner-1')).toEqual(second.gradebookFor('learner-1'));
+    const [id, [row]] = snap.results[0]!;
+    if (!row?.lastFinalized) throw new Error('The snapshot lost the final grade');
+    const wrongLearner = { ...row, lastFinalized: { ...row.lastFinalized, userId: 'another-learner' } };
+    expect(isPlatformSnapshot({ ...snap, results: [[id, [wrongLearner]]] })).toBe(false);
   });
 
   it('accepts plain JSON through the shared bridge and preserves the score parser limit', async () => {
@@ -375,4 +395,39 @@ describe('the Tool\'s token and the gradebook it posts to', () => {
     expect(page).not.toContain('<script>alert');
     expect(page).toContain('action="https://tool.example/launch?a=1&amp;b=&quot;2&quot;"');
   });
+});
+
+it('updates the separate retake until a new final and still honors omitted and null scores', () => {
+  const gradebook = new LtiPlatform({ selfBaseUrl: 'https://bridge.example' });
+  const start = gradebook.beginLaunch(learner, course);
+  if (!start.ok) throw new Error(start.error);
+  const item = String(start.lineItem.id).split('/').at(-1)!;
+  const now = Date.now();
+  const score = (scoreGiven: number | null | undefined, gradingProgress: string, sequence: number) =>
+    expect(gradebook.acceptScore(gradebook.context.id, item, {
+      userId: learner.sub, scoreGiven, scoreMaximum: 100, activityProgress: 'Submitted',
+      gradingProgress, timestamp: new Date(now + sequence).toISOString(),
+    }, now)).toEqual({ ok: true });
+  const row = () => gradebook.gradebookFor(learner.sub)[0]!;
+
+  score(100, 'FullyGraded', 0);
+  const final = row().result;
+  score(25, 'Pending', 1);
+  expect(row().result?.resultScore).toBe(25);
+  score(0, 'NotReady', 2);
+  expect(row()).toMatchObject({ result: final, retake: { resultScore: 0 } });
+  score(100, 'NotReady', 3);
+  expect(row()).toMatchObject({ result: final, retake: { resultScore: 100, gradingProgress: 'NotReady' } });
+  score(75, 'FullyGraded', 4);
+  expect(row().result).toMatchObject({ resultScore: 75, gradingProgress: 'FullyGraded' });
+  expect(row()).not.toHaveProperty('retake');
+  for (const [index, cleared] of [undefined, null].entries()) {
+    score(75, 'FullyGraded', 5 + 3 * index);
+    score(cleared, 'NotReady', 6 + 3 * index);
+    expect(row().result).not.toHaveProperty('resultScore');
+    expect(row()).not.toHaveProperty('retake');
+    score(0, 'NotReady', 7 + 3 * index);
+    expect(row().result).toMatchObject({ resultScore: 0, gradingProgress: 'NotReady' });
+    expect(row()).not.toHaveProperty('retake');
+  }
 });
