@@ -2819,7 +2819,9 @@ function workspaceDetails() {
         '  - instead of urn:iep:action:wrd:envelope-template use urn:iep:action:wrd:read-envelope-template',
         '  - instead of urn:iep:action:wrd:list-records use urn:iep:action:wrd:read-records',
         '  - instead of urn:iep:action:wrd:calibration use urn:iep:action:wrd:read-calibration'].join('\n'),
-      'Every other action here is signed (sign_payload true; where your act tool has no sign_payload option, first call the connector\'s sign_request tool with payload as its only argument, set to the step\'s payload, then call act with the same descriptor_url and action_iri and with payload set to exactly the _signature and _signed_payload it returned, unchanged), except one that takes plain arguments (sign_payload false): urn:iep:action:wrd:task-map-packet',
+      // Which actions are signed and which plain, and no more: what to do where the act tool has no sign_payload option is
+      // actPrompt's own sentence, at the end of How to do each step, said once for a plain and a signed step alike.
+      'Every other action here is signed (sign_payload true), except one that takes plain arguments (sign_payload false): urn:iep:action:wrd:task-map-packet',
       'A signed payload\'s intent is the action\'s last part after "wrd:": urn:iep:action:wrd:ratify-task takes "intent": "wrd:ratify-task". Two exceptions: the three reads (read-records, read-envelope-template, read-calibration) all take "intent": "wrd:read-records", and a review you sign for urn:iep:action:wrd:log-agent-run takes "intent": "wrd:review-agent-run". Every signed payload also carries podUrl and a nonce, and no issuedAt.',
       'Never invent people, AI agents, types of task, answers or numbers: ask me. Show me what you will record, and record it only once I agree.',
       chatAgentsDecide() ? 'Ask me before any action that approves or declines a decision, changes people and roles, records results, or grants or withdraws an AI permission.'

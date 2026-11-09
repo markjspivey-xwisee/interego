@@ -1,5 +1,22 @@
 # Changelog
 
+## 2026-11-09 — Work Redesign: the workspace details say once what to do without sign_payload
+
+The shared chat helper's prompts now end "How to do each step" with one
+sentence for an assistant whose act tool has no sign_payload option: leave
+sign_payload out of a plain step, and do a signed step in two calls, the
+connector's sign_request tool with the step's payload as its only argument,
+then act with what it returned. Work Redesign's workspace details already said
+the second part in their own rule about which actions are signed, in other
+words, so an assistant was told it twice. That rule now says only which
+actions are signed (sign_payload true) and which one takes plain arguments
+(sign_payload false), and the shared sentence says the rest, once. The message
+for mapping a process from a document already said it once and is unchanged.
+The texts an assistant reads straight from the workspace (the envelope
+template's signing rule, and each affordance's relay-signed inputs and
+descriptions) keep their own wording of the two calls, since neither copied
+message repeats them.
+
 ## 2026-11-08 — Work Redesign: ChatGPT labels in bold, sign_request text in whole sentences
 
 On the landing page and in the guide, the second set-up step now shows

@@ -89,6 +89,30 @@ const CHATGPT_STEPS = [
   'In a chat, type @ and choose Interego.',
 ];
 const CHATGPT_GUIDE = 'https://developers.openai.com/api/docs/guides/custom-mcp-server';
+/**
+ * What a copied prompt tells a chat app whose act tool shows no sign_payload option, word for word as the shared chat
+ * helper (applications/_shared/chat-agent) writes it, as the last line of How to do each step: leave sign_payload out of
+ * a plain step, and sign a signed step with sign_request first. Both copied prompts here can lead to both kinds of step.
+ */
+const NO_OPTION = 'no sign_payload option';
+const PLAIN_FALLBACK = 'leave sign_payload out of a plain step\'s call';
+const SIGN_REQUEST_FALLBACK = 'call the connector\'s sign_request tool';
+const FALLBACK_BOTH = `If your act tool has ${NO_OPTION}, ${PLAIN_FALLBACK} (do not sign it or wrap it), and do a signed step in two calls: ${SIGN_REQUEST_FALLBACK} `
+  + 'with payload as its only argument, set to the step\'s payload, then call act with the same descriptor_url and action_iri and with payload set to exactly '
+  + 'the _signature and _signed_payload it returned, unchanged.';
+/** How many times `part` occurs in `text`. */
+const timesIn = (text: string, part: string): number => text.split(part).length - 1;
+/**
+ * Each fallback is said once in a copied prompt, in the shared helper's sentence: Work Redesign's own rules say which
+ * actions are signed and which plain, and leave what to do without sign_payload to that sentence, so an assistant is not
+ * told the same thing twice in two wordings.
+ */
+function saysEachFallbackOnce(where: string, text: string): void {
+  expect([where, timesIn(text, NO_OPTION), timesIn(text, PLAIN_FALLBACK), timesIn(text, SIGN_REQUEST_FALLBACK), timesIn(text, 'sign_request'), timesIn(text, FALLBACK_BOTH)])
+    .toEqual([where, 1, 1, 1, 1, 1]);
+  const how = text.split('\n\n').find((part) => part.startsWith('How to do each step:')) ?? '';
+  expect([where, how.split('\n').at(-1)]).toEqual([where, FALLBACK_BOTH]);
+}
 /** What the callback page says to an answer that does not carry the state this tab stored. */
 const NOT_STARTED_HERE = 'This tab did not start this sign-in, so nothing in the answer was shown or exchanged.';
 
@@ -1184,9 +1208,9 @@ describe('work-redesign web UI: sign in with your Interego account', () => {
     const details = String(copied[1]);
     for (const s of [`My Work Redesign workspace: ${DEPLOYED}`, `descriptor_url: "${DEPLOYED}/affordances"`, `My storage address (pod_url): "${DEMO_POD}"`, `"podUrl":"${DEMO_POD}"`, 'urn:iep:action:wrd:read-records', 'urn:iep:action:wrd:read-envelope-template',
       'except one that takes plain arguments (sign_payload false): urn:iep:action:wrd:task-map-packet\n', 'nonce = the step name', 'done in the Work Redesign app, not from a chat',
-      // An act tool with no sign_payload option signs through the connector's sign_request, with the step's payload as its
-      // only argument (what is passed beside it is signed too), and passes act the pair unchanged.
-      'Every other action here is signed (sign_payload true; where your act tool has no sign_payload option, first call the connector\'s sign_request tool with payload as its only argument, set to the step\'s payload, then call act with the same descriptor_url and action_iri and with payload set to exactly the _signature and _signed_payload it returned, unchanged)',
+      // Which actions are signed and which plain, and nothing more: what to do where the act tool has no sign_payload option
+      // is the shared helper's sentence, said once (below). Changed: this rule no longer repeats the sign_request way.
+      'Every other action here is signed (sign_payload true), except one that takes plain arguments (sign_payload false): urn:iep:action:wrd:task-map-packet\n',
       // The actions act can't pass arguments to, each with the signed read to use instead (changed: one per line, so no
       // action is followed straight by a comma or a colon, which would read as part of its name), and the intents that
       // are not the action's own name.
@@ -1196,6 +1220,10 @@ describe('work-redesign web UI: sign in with your Interego account', () => {
       '  - instead of urn:iep:action:wrd:calibration use urn:iep:action:wrd:read-calibration\n',
       'all take "intent": "wrd:read-records"', '"intent": "wrd:review-agent-run"']) expect(details, s).toContain(s);
     expect(details).not.toContain('Every action here is signed');
+    // An act tool with no sign_payload option: a plain step leaves it out, and a signed step goes through the connector's
+    // sign_request with the step's payload as its only argument (what is passed beside it is signed too), then act with
+    // the pair unchanged. Each said once.
+    saysEachFallbackOnce('the workspace details', details);
     // Each starter is copied whole; its text is previewed only inside a closed disclosure.
     byLabel('Copy: Go through the seven questions with me').click();
     await page.until(() => copied.length === 3, 'the starter copied');
@@ -1275,6 +1303,8 @@ describe('work-redesign web UI: sign in with your Interego account', () => {
       // Its own rule names a signed step, not one way of signing it: the step text says how, sign_payload or sign_request.
       'If you are unsure of a field, ask for the template in a signed step, with urn:iep:action:wrd:read-envelope-template as the action and payload',
       `----- DOCUMENT: AP-SOP-014 -----\n${docText}\n----- END OF DOCUMENT -----`]) expect(message, s).toContain(s);
+    // Its plain first step and its signed steps alike: what to do without sign_payload is said once, for both kinds.
+    saysEachFallbackOnce('the map message', message);
     // Each level the map may name, exactly as the bridge takes it.
     for (const level of ['"person"', '"person-with-agent-assist"', '"agent-drafts-person-decides"', '"agent-acts-person-audits"']) expect(message, level).toContain(level);
     expect(message).not.toContain('agent-acts-within-grant');
