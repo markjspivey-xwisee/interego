@@ -1334,6 +1334,10 @@ export async function revokeGrant(
  * MEASURED against the live relay: `read_inbox` returns `{inbox, count, items}` and `count` is
  * the number RETURNED, not a total — asking for 2 gives count 2. So there is no field that says
  * "there are more", and the only honest signal is that the read came back exactly full.
+ *
+ * A relay that pages `read_inbox` now also answers `total` and `hasMore`, and serves at most 50
+ * per page, so a limit above 50 comes back short while more remain. `hasMore: true` is read as
+ * saturated; the full-page test stays for a relay that does not send it.
  */
 export const INBOX_LIMIT = 50;
 
@@ -1385,7 +1389,10 @@ export async function readInbox(client: WorkspaceClient, limit = INBOX_LIMIT): P
   const items = all.filter((it) => it && it['type'] === 'Offer' && it['about']);
   return {
     invitations: items.map((item) => ({ item, verdict: null, lead: null, state: 'unchecked' as const })),
-    saturated: all.length >= limit,
+    // ★ `hasMore` is the relay's own answer to "is there more than this page"; a page can be
+    // short of `limit` while there is (the relay serves at most 50 per page). A full page still
+    // counts as saturated, for a relay that predates hasMore.
+    saturated: p?.['hasMore'] === true || all.length >= limit,
     limit,
   };
 }

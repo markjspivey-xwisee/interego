@@ -3584,7 +3584,7 @@ var WSPC = (() => {
       summary: typeof item["summary"] === "string" ? item["summary"] : null,
       published: typeof item["published"] === "string" ? item["published"] : null
     }));
-    return { notices, saturated: all.length >= limit, limit, inbox };
+    return { notices, saturated: p?.["hasMore"] === true || all.length >= limit, limit, inbox };
   }
   async function agentInbox(port) {
     const p = await port.tool("read_inbox", { limit: 1 }, { cache: false });
@@ -5000,7 +5000,10 @@ var WSPC = (() => {
     const items = all.filter((it) => it && it["type"] === "Offer" && it["about"]);
     return {
       invitations: items.map((item) => ({ item, verdict: null, lead: null, state: "unchecked" })),
-      saturated: all.length >= limit,
+      // ★ `hasMore` is the relay's own answer to "is there more than this page"; a page can be
+      // short of `limit` while there is (the relay serves at most 50 per page). A full page still
+      // counts as saturated, for a relay that predates hasMore.
+      saturated: p?.["hasMore"] === true || all.length >= limit,
       limit
     };
   }

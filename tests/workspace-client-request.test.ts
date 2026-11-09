@@ -316,6 +316,20 @@ describe('reading the inbox', () => {
     expect(read.saturated).toBe(true);
   });
 
+  it('reads the relay\'s hasMore as saturated, even when the page is shorter than the limit asked for', async () => {
+    // The relay serves at most 50 per page: a caller asking for 80 gets a page of 50 and
+    // hasMore. "50 < 80, so that was everything" is the conclusion this must not draw.
+    const client = {
+      async tool(): Promise<unknown> {
+        return { items: [{ about: ABOUT, actor: BOT, type: 'Question', summary: 's' }], count: 1, total: 120, hasMore: true };
+      },
+    } as unknown as AgentPort;
+    expect((await readRequests(client, 80)).saturated).toBe(true);
+    // The control: a short page with hasMore false is the whole inbox.
+    const whole = { async tool(): Promise<unknown> { return { items: [], hasMore: false }; } } as unknown as AgentPort;
+    expect((await readRequests(whole, 80)).saturated).toBe(false);
+  });
+
   it('does not filter on the notification TYPE, which is the sender\'s own word', async () => {
     const client = {
       async tool(): Promise<unknown> { return { items: [{ about: ABOUT, actor: BOT, type: 'Announce', summary: 's' }] }; },

@@ -119,7 +119,13 @@ describe('MCP signing lifecycle on the actual SDK transport', () => {
         const result = clientInteractionToolResult(value);
         expect(JSON.stringify(result.structuredContent)).not.toContain(secret);
         expect(JSON.stringify(result.content)).not.toContain(secret);
-        expect(result._meta?.['interego/browser-signing']).toEqual(opened);
+        // _meta is the launch HANDLE the widget validates and opens, not a second copy of the
+        // result: the fields structuredContent already carries for the model stay out of it.
+        const handle = { schema: opened.schema, id: opened.id, status: opened.status, descriptorUrl: opened.descriptorUrl,
+          expiresAt: opened.expiresAt, signingUrl: opened.signingUrl };
+        expect(result._meta?.['interego/browser-signing']).toEqual(handle);
+        // The launch fragment reaches the app and nowhere else; the JSON result is in content ONCE.
+        expect(result.content.filter(block => block.text.includes(String(opened['id'])) && block.text.trimStart().startsWith('{'))).toHaveLength(1);
       }
       const status = await f.broker.status(f.id, f.owners['alice']!);
       expect(JSON.stringify(status)).not.toContain(secret);
