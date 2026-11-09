@@ -473,6 +473,7 @@ import { unwrapScormPackage } from '../../_shared/scorm/index.js';
 import { AGS_SCOPE, attachLti13Routes, type Lti13Tool, type VerifiedResourceLaunch } from '../src/lti13.js';
 import { LtiPlatform, attachLtiPlatformRoutes } from '../src/lti-platform.js';
 import { LtiPlatformReadiness, isPlatformSnapshot } from '../src/lti-platform-readiness.js';
+import { ScopedLtiConnection } from '../src/lti-scoped-connection.js';
 import { agsScore, answersFrom, renderGonePage, renderOutcomePage, renderScoPage, type GradePassback, type GradedView, type ScoView } from '../src/lti-player.js';
 import { attachScormDispatchRoutes, DispatchRegistry, perAddressLimiter, registryWriter, type DispatchEngine } from '../src/scorm-dispatch.js';
 import { glossaryLoader } from '../src/i2idl-glossary.js';
@@ -5899,6 +5900,7 @@ const ltiPlatform: LtiPlatform = new LtiPlatform({
   onChange: () => markBridgeDirty('lti-platform'),
   ensureReady: () => ltiPlatformReadiness.ensureReady(),
 });
+const scopedLti = ScopedLtiConnection.fromSetting(process.env.FOXXI_LTI_SCOPED_TOOL, bridgeBaseUrl);
 const ltiPlatformReadiness: LtiPlatformReadiness = new LtiPlatformReadiness({
   load: async () => {
     const result = await loadPrivateLtiGradebook({ validate: isPlatformSnapshot, approvedLegacyWitness: process.env.FOXXI_LTI_LEGACY_RECOVERY_WITNESS });
@@ -5920,7 +5922,7 @@ const app = createVerticalBridge({
   affordances: activeAffordances,
   handlers: instrumentedHandlers,
   defaultPodUrl: tenantPodUrl,
-  routeOwnedJsonPostPaths: [ltiPlatform.scoreRoutePath],
+  routeOwnedJsonPostPaths: [ltiPlatform.scoreRoutePath, ...(scopedLti ? [scopedLti.scoreRoutePath] : [])],
   hypermediaLinks: [
     { label: 'Courses', href: `${bridgeBaseUrl}/agent/scorm/courses?format=markdown`, rel: 'collection', type: 'text/markdown' },
     { label: 'Job aids', href: `${bridgeBaseUrl}/agent/memories?format=markdown`, rel: 'collection', type: 'text/markdown' },
@@ -6074,6 +6076,7 @@ const app = createVerticalBridge({
     });
     // Foxxi as its own LMS: the Platform that launches the Tool above.
     attachLtiPlatformRoutes(a, ltiPlatform);
+    scopedLti?.attach(a);
 
     // OneRoster 1.2 — SIS / HR roster sync. Both a producer (Foxxi
     // exposes its roster) and a consumer (`POST /oneroster/v1p2/import`
@@ -12540,20 +12543,26 @@ app.post('/agent/lti/launch', async (req, res) => {
     if (!rlL.ok) { res.status(429).json({ error: `rate limit — retry in ${rlL.retryAfterSeconds}s` }); return; }
     const courseId = typeof auth.payload.course_id === 'string' ? auth.payload.course_id.trim() : '';
     if (!courseId) { res.status(400).json({ error: 'course_id is required: a course this bridge\'s SCORM engine grades' }); return; }
-    const course = await resolveCourseForRead(courseId);
+    const connection = scopedLti?.course.id === courseId ? scopedLti : undefined;
+    const course = connection ? { courseId, title: connection.course.title } : await resolveCourseForRead(courseId);
     if (!course) { res.status(404).json({ error: `no course ${courseId} is played on this bridge's SCORM engine` }); return; }
     const learner = await signedLearner(auth);
     if (!await ltiPlatform.ensureReady()) { res.set('Retry-After', '1').status(503).json({ error: 'lti_gradebook_unavailable', readiness: ltiPlatformReadiness.diagnostics() }); return; }
-    const start = ltiPlatform.beginLaunch({ sub: learner.did, podUrl: learner.podUrl }, { id: course.courseId, title: course.title });
+    const external = connection?.launch(learner.did, courseId);
+    if (connection && !external) { res.status(404).json({ error: 'course_not_found' }); return; }
+    const start = external?.start ?? ltiPlatform.beginLaunch({ sub: learner.did, podUrl: learner.podUrl }, { id: course.courseId, title: course.title });
     if (!start.ok) { res.status(start.status).json({ error: start.error }); return; }
+    const issuer = external?.platform ?? ltiPlatform.issuer;
     res.json({
       kind: 'lti-launch', courseId: course.courseId, title: course.title,
       initiationUrl: start.initiationUrl, expiresAt: start.expiresAt,
-      platform: { issuer: ltiPlatform.issuer, configuration: `${ltiPlatform.issuer}/.well-known/openid-configuration` },
+      platform: { issuer, configuration: `${issuer}/.well-known/openid-configuration` },
       context: start.context, resourceLink: start.resourceLink, lineItem: start.lineItem,
       learner: learner.did, ...(learner.via ? { via: learner.via } : {}), learnerPodUrl: learner.podUrl,
       gradebook: { affordance: actionUrl('urn:iep:action:foxxi:lti-gradebook-signed'), target: `${bridgeBaseUrl}/agent/lti/gradebook` },
-      note: 'Open initiationUrl once, within five minutes. It is a standard LTI 1.3 launch: the Tool\'s login, this LMS\'s authorization, a signed id_token posted to the Tool, then the course. A client without a browser follows the redirects, asks the authorization step for JSON, posts the form it returns, and plays the course as JSON. When the attempt ends it is in your record, and the Tool posts your grade to this LMS\'s gradebook over AGS.',
+      note: external
+        ? 'Open initiationUrl once within five minutes to launch the external course. The provider can post a score for this connection to your Foxxi gradebook until the connection expires.'
+        : 'Open initiationUrl once, within five minutes. It is a standard LTI 1.3 launch: the Tool\'s login, this LMS\'s authorization, a signed id_token posted to the Tool, then the course. A client without a browser follows the redirects, asks the authorization step for JSON, posts the form it returns, and plays the course as JSON. When the attempt ends it is in your record, and the Tool posts your grade to this LMS\'s gradebook over AGS.',
     });
   } catch (err) { sendServerError(res, err, 'lti-launch-signed'); }
 });
@@ -12568,9 +12577,21 @@ app.post('/agent/lti/gradebook', async (req, res) => {
       kind: 'lti-gradebook', platform: ltiPlatform.issuer, context: ltiPlatform.context,
       readiness: ltiPlatformReadiness.diagnostics(),
       learner: learner.did, ...(learner.via ? { via: learner.via } : {}),
-      rows: ltiPlatform.gradebookFor(learner.did),
+      rows: [...ltiPlatform.gradebookFor(learner.did), ...(scopedLti?.gradesFor(learner.did) ?? [])],
     });
   } catch (err) { sendServerError(res, err, 'lti-gradebook-signed'); }
+});
+
+app.post('/agent/lti/scoped-connection/revoke', async (req, res) => {
+  if (!scopedLti) { res.sendStatus(404); return; }
+  try {
+    const auth = await verifyDelegatedCaller(req.body);
+    if (!auth.ok) { res.status(auth.status).json({ error: auth.error }); return; }
+    if (auth.payload.action !== 'revoke-scoped-lti-connection') { res.status(400).json({ error: 'invalid_action' }); return; }
+    const learner = await signedLearner(auth);
+    if (!scopedLti.revoke(learner.did, auth.payload.course_id)) { res.sendStatus(404); return; }
+    res.status(204).end();
+  } catch (err) { sendServerError(res, err, 'lti-scoped-revoke'); }
 });
 
 // PUSH path: a relay (or any observer) POSTs a single context-descriptor for

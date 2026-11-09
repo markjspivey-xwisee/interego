@@ -84,6 +84,8 @@ export interface LtiPlatformConfig {
   readonly selfBaseUrl: string;
   /** The Tool this Platform launches: the bridge's own when absent. */
   readonly tool?: ToolRegistration;
+  /** Offer only the named line item's score service, without local learner metadata. */
+  readonly scoreOnly?: boolean;
   /** The Platform's P-256 or RSA signing key as PEM. Defaults to a fresh P-256 key. */
   readonly privateKeyPem?: string;
   /** Called after the gradebook changes, so the bridge can keep it. */
@@ -215,6 +217,8 @@ export class LtiPlatform {
   private readonly readiness: () => Promise<boolean>;
   private readonly verifyJwt: NonNullable<LtiPlatformConfig['verifyJwt']>;
   private readonly maxLiveAssertions: number;
+  private readonly scoreOnly: boolean;
+  private readonly grantableScopes: ReadonlySet<string>;
   private readonly grants = new Map<string, Grant>();
   private readonly tokens = new Map<string, AccessToken>();
   private readonly seenJti = new Map<string, number>();
@@ -225,6 +229,8 @@ export class LtiPlatform {
   constructor(config: LtiPlatformConfig) {
     this.issuer = `${trimSlash(config.selfBaseUrl)}/lti/platform`;
     this.tool = config.tool ?? selfTool(config.selfBaseUrl);
+    this.scoreOnly = config.scoreOnly ?? false;
+    this.grantableScopes = this.scoreOnly ? new Set([AGS_SCOPE.score]) : GRANTABLE_SCOPES;
     this.launchSigning = launchSigner(this.issuer, config.privateKeyPem);
     this.onChange = config.onChange ?? (() => undefined);
     this.readiness = config.ensureReady ?? (() => Promise.resolve(true));
@@ -269,7 +275,7 @@ export class LtiPlatform {
       response_types_supported: ['id_token'],
       response_modes_supported: ['form_post'],
       subject_types_supported: ['public'],
-      scopes_supported: ['openid', ...GRANTABLE_SCOPES],
+      scopes_supported: ['openid', ...this.grantableScopes],
       claims_supported: ['iss', 'aud', 'sub', 'iat', 'exp', 'nonce', 'azp'],
       'https://purl.imsglobal.org/spec/lti-platform-configuration': {
         product_family_code: 'foxxi',
@@ -361,8 +367,10 @@ export class LtiPlatform {
       [LTI_CLAIMS.context]: this.context,
       [LTI_CLAIMS.toolPlatform]: { guid: digest(this.issuer).slice(0, 32), name: 'Foxxi LMS', product_family_code: 'foxxi', version: '1' },
       // Platform-substituted custom parameters: the course, and the pod the learner's record is on.
-      [LTI_CLAIMS.custom]: { foxxi_course_id: grant.courseId, foxxi_learner_pod: grant.podUrl },
-      [LTI_CLAIMS.ags]: { scope: LAUNCH_SCOPES, lineitems: this.lineItemsUrl, lineitem: this.lineItemUrl(item.id) },
+      ...(!this.scoreOnly ? { [LTI_CLAIMS.custom]: { foxxi_course_id: grant.courseId, foxxi_learner_pod: grant.podUrl } } : {}),
+      [LTI_CLAIMS.ags]: this.scoreOnly
+        ? { scope: [AGS_SCOPE.score], lineitem: this.lineItemUrl(item.id) }
+        : { scope: LAUNCH_SCOPES, lineitems: this.lineItemsUrl, lineitem: this.lineItemUrl(item.id) },
       [LAUNCH_PRESENTATION]: { document_target: 'window' },
     };
     const fields: Record<string, string> = { id_token: this.launchSigning.sign(claims) };
@@ -396,8 +404,8 @@ export class LtiPlatform {
     if (this.seenJti.size >= this.maxLiveAssertions) return { ok: false, status: 503, error: 'temporarily_unavailable', description: 'too many client assertions are still live; try again in a few minutes' };
     this.seenJti.set(jti, exp * 1000);
     const asked = str(form.scope).split(/\s+/).filter(Boolean);
-    const granted = asked.filter((s) => GRANTABLE_SCOPES.has(s));
-    if (granted.length === 0) return { ok: false, status: 400, error: 'invalid_scope', description: `none of the requested scopes is one this Platform grants: ${[...GRANTABLE_SCOPES].join(' ')}` };
+    const granted = asked.filter((s) => this.grantableScopes.has(s));
+    if (granted.length === 0) return { ok: false, status: 400, error: 'invalid_scope', description: `none of the requested scopes is one this Platform grants: ${[...this.grantableScopes].join(' ')}` };
     if (this.tokens.size >= MAX_TOKENS) { const oldest = this.tokens.keys().next().value; if (oldest !== undefined) this.tokens.delete(oldest); }
     const accessToken = randomBytes(32).toString('base64url');
     this.tokens.set(accessToken, { clientId: this.tool.clientId, scopes: new Set(granted), expiresAt: now + TOKEN_TTL_S * 1000 });
