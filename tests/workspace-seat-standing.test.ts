@@ -556,6 +556,15 @@ describe('★★ a read that established nothing, at the sites the class was sti
     expect(empty.saturated).toBe(false);
   });
 
+  it('readInbox reads the relay\'s hasMore as saturated, even on a page shorter than the limit asked for', async () => {
+    // The relay serves at most 50 per page, so a limit of 80 is answered with 50 and hasMore.
+    const fifty = Array.from({ length: 50 }, (_, i) => ({ url: `https://relay.example/inbox/n-${i}`, type: 'Create' }));
+    const paged = await readInbox(only('read_inbox', () => ({ inbox: 'x', count: 50, total: 90, hasMore: true, items: fifty })), 80);
+    expect(paged.saturated).toBe(true);
+    const whole = await readInbox(only('read_inbox', () => ({ inbox: 'x', count: 50, total: 50, hasMore: false, items: fifty })), 80);
+    expect(whole.saturated).toBe(false);
+  });
+
   it('★★ readWorkspaceRecord treats a head with a URL and an ERROR as unread, not as a record', async () => {
     /**
      * ── THE D2 DEFECT AT THE THIRD `currentHead` CALL IN THE FILE D2 NAMES ───

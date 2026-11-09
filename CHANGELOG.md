@@ -261,6 +261,126 @@ reconciles before it writes or saves another reply. The judge's message has it
 judge a new copy of the session when a save is refused because the session
 changed, unless a save of that session already went through in that chat.
 
+## 2026-11-08 — Relay: corrected notes on how ChatGPT is identified, and a client cache that could hang
+
+The next entry said that a client other than ChatGPT cannot finish sign-in
+with ChatGPT's redirect URIs. That is not so. The sign-in code reaches the
+redirect URI through the person's browser, so a client that drives the
+browser itself can read the code from the redirect, and the relay's own suite
+signs in that way. The entry and the comment above the code now say what is
+true: an ordinary client does not match by accident, and a client that
+captures its own redirect changes only how its own results are laid out,
+never what it may do. The entry also overstated the earlier behaviour: a
+name that matched nothing kept its own label, and only a name that could not
+be turned into a short label fell back to the default surface.
+
+The comment on the per-client cache said a failed client lookup is tried
+again. The relay's lookup does not report failures: a client it does not hold
+and a store read that failed look the same, so both are kept for a minute.
+The cache also looped forever on its first call if it was told to hold no
+clients. It now holds at least one. The relay uses the default of 1,024, so
+this did not happen in service. A check on the relay image no longer fails
+once the relay has no test-only devDependency left to strip.
+
+## 2026-11-08 — Relay: ChatGPT is identified by its redirect hosts, errors keep their JSON, and read_inbox pages past an empty date
+
+The previous entry gave the summary-only layout to any session whose OAuth
+client's registered name contained "chatgpt", or whose name matched nothing
+and could not be turned into a short label, on a relay whose default surface
+was set to chatgpt. A name is something a client says about itself, and the
+two mistakes are not alike: giving ChatGPT the default layout costs bytes,
+while giving the summary-only layout to a client whose model reads `content`
+alone loses the whole result without any sign. A session now gets that layout
+only when the client's name matches the ChatGPT pattern and every redirect URI
+it registered is on chatgpt.com or openai.com. A client that signs people in
+through their own browser cannot complete sign-in with those redirect URIs, so
+no ordinary client matches by accident. A client that captures its own
+redirect could, and that changes only how its own results are laid out, never
+what it may do. The default surface setting is no longer consulted. The relay
+suite signs in as a client named "my chatgpt bridge", as a client named
+ChatGPT with its own redirect, and under a name that matches nothing, and each
+keeps the JSON first.
+
+An error result keeps its JSON in `content` for ChatGPT too. A failed signed
+interaction carries its reason inside `result`, where the summary line said
+only how many fields there were, and a client that reports an error from
+`content` alone showed that line as the error. The layout is also remembered
+per client for a while, so a tool call no longer repeats a store read for a
+client that is no longer registered.
+
+The previous entry said ChatGPT's model reads the whole result once. It reads
+`structuredContent`, which leaves out fields whose value is null: a result such
+as `{ "meet": null, "message": "…" }` reaches the model as the message alone.
+
+`read_inbox`: a notification whose `published` was an empty string sorted
+among the ones with a date that cannot be read, but the page cursor wrote it
+back as having no date. A page that ended on one started the next page in the
+wrong place, and some notifications were never returned. An empty `published`
+is now treated as missing everywhere. Also: the published workspace page is
+rebuilt from its package, which the previous entry changed without rebuilding,
+and the relay image no longer installs the MCP SDK client that only its tests
+use.
+
+## 2026-11-08 — Relay: ChatGPT gets each result once, and read_inbox reads any sender's notification
+
+The previous entry's title claimed one copy of each result for the model. That
+held only for clients that show their model `content` alone, and those already
+had one copy. ChatGPT, the client that reported the size, shows its model
+`structuredContent` as well as `content`, as OpenAI's Apps SDK documents, so it
+still read every result twice, now with a summary line too. For a session whose
+OAuth client registered as ChatGPT (the same name-to-surface mapping identity
+uses for its agents), `content` now holds only the one-line summary and
+`structuredContent` holds the result. Its model and its widget each read the
+result once: `act` on the fixture fell from 12,296 to 5,859 bytes on the wire.
+Every other client keeps the JSON result first in `content`. An error summary
+names the tool once instead of twice.
+
+`read_inbox` declared its item fields as strings, but passed through whatever a
+sender had stored. A notification with an `actor` object or a `type` array made
+a client that checks results against the declared schema reject the whole page,
+including with `include_content: false`. Items are now read through one helper:
+an embedded actor or object reference becomes its id, a type array its first
+type, a JSON-LD value object its value, and anything else that is not a string
+is left out. The suite reads such an inbox through the MCP SDK client, which
+checks the schema the way strict clients do. Newest first now compares the
+instants `published` names rather than their spelling, so offsets no longer
+reorder a page.
+
+A `limit` that is not a whole number, and a `before` or `since` that is not a
+string, are refused with the argument named. Before, a fraction came back as a
+`limitRequested` the schema calls an integer, and the others were dropped,
+which answered with the first, unfiltered page. An empty or null argument still
+counts as absent. The workspace and agent inbox readers now take the relay's
+`hasMore` as saturated, so a limit above 50 is no longer read as the whole
+inbox.
+
+## 2026-11-08 — Relay: a summary line after each tool result, a smaller signing _meta, and read_inbox in pages
+
+A chat assistant using the relay as a connector reported `act` results that
+looked like the same body several times over, and `read_inbox` answers its
+client cut short. Measured on the relay booted against loopback fixtures, every
+tool result carried its payload exactly twice: as the first text block and as
+`structuredContent`, byte for byte. There was no markdown copy and no copy in
+`_meta`. The size came from what was copied: an inbox read with no bound, a
+target's response carried as a string, and the inline JSON-LD context.
+
+Every result on `/mcp` and on `/messages` is now built by one helper. The JSON
+result is the first text block, where existing readers parse it, and is the
+only full copy in `content`. A one-line summary follows it, naming what came
+back (for `act`, the target and status, never the body). `structuredContent`
+is unchanged and still matches the declared output schema. A signing launch now
+puts only the fields the viewer checks and opens into `_meta`, not a second
+copy of the result.
+
+`read_inbox` returns pages. With no arguments it returns the newest 20, where it
+used to return up to 50 with every body: 88,045 bytes per copy on a 50-item
+inbox fell to 35,748. `limit` accepts 1 to 50; 50 is the largest value any
+caller here passes, so those callers see no change. Each page reports `total`,
+`hasMore` and a `nextCursor` to pass back as `before`. `include_content: false`
+returns summaries without bodies, and `since` limits the read by date. A cursor
+or date the relay cannot read is refused rather than treated as the first page.
+`POST /tool/read_inbox` shares the handler and accepts the same arguments.
+
 ## 2026-11-08 — Ask: accept Cloud updates after the shared JSON parser
 
 The Cloud notification receiver reuses an existing parsed body only after the
