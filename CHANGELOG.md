@@ -1,5 +1,19 @@
 # Changelog
 
+## 2026-11-09 — Foxxi scoped LTI grade passback
+
+Foxxi can launch an external LTI tool under an expiring connection for one
+signed learner and one course. The tool sees a generated subject and can
+post scores to that connection's line item. The learner can read the
+temporary grade in their Foxxi gradebook and revoke the connection.
+Revocation removes the temporary grade and closes its protocol endpoints.
+The open Foxxi gradebook retains its own credentials and storage.
+
+The gradebook accepts standard LTI score media and plain JSON. It keeps the
+tool's activity and grading statuses as submitted. The open gradebook's
+snapshot is encrypted, and the platform can sign a launch with RSA for a
+tool that requires RS256.
+
 ## 2026-11-09 — Work Redesign: a new process name makes the copied AI message again
 
 Copy the message for my AI keeps the packet it fetched and reuses it while
