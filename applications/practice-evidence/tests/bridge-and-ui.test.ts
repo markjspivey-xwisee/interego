@@ -359,6 +359,42 @@ describe('the web UI is served under a strict content policy', () => {
     for (const s of [DEFAULT_CONNECTOR_ADDRESS, 'doesn\'t offer Interego sign-in', 'On this workspace: copy and paste']) expect(connected).not.toContain(s);
   });
 
+  it('says which AI steps leave out the weights and the pass mark, that an assistant asked to list scenarios reads them, and that a judge assesses in a new chat', async () => {
+    // What list-scenarios gives any assistant a person asks to list them: a scored scenario's whole rubric, its weights,
+    // level values and pass rule included, as the web app shows it. So no page says AI never sees them.
+    const listed = (await demoHandlers['pev.list_scenarios']!({})) as { scenarios: Out[] };
+    const md = listed.scenarios.find((s) => s['scenarioIri'] === S['md']);
+    const rubric = md?.['rubric'] as practice.Rubric;
+    expect([md?.['assessmentUse'], typeof rubric.passRule?.minPercent, rubric.criteria.every((c) => typeof c.weight === 'number' && c.levels.every((l) => typeof l.value === 'number'))])
+      .toEqual(['pass-gate', 'number', true]);
+    const off = connectorPages(contactPages(), null);
+    const on = connectorPages(contactPages(), { relayUrl: 'https://relay.example.test' });
+    const faq = (page: string): string => /<summary class="faq__q">How is AI used\?<\/summary><div class="faq__a"><p>(.*?)<\/p>/.exec(page)?.[1] ?? '';
+    const feature = (page: string): string => /<h3 class="feature__title">AI declared and checked<\/h3><p class="feature__text">(.*?)<\/p>/.exec(page)?.[1] ?? '';
+    const section = (page: string, id: string): string => page.slice(page.indexOf(`<section id="${id}"`), page.indexOf('</section>', page.indexOf(`<section id="${id}"`)));
+    // The three AI steps (drafting, playing the other person, proposing levels) never hand an assistant the stakes; the
+    // reads a person asks for do, and only where an assistant can connect is there one to ask.
+    const steps = 'AI never decides how a scenario is used, never calculates a score and never has the final say. None of those three steps gives an assistant the weights or the pass mark.';
+    const reads = ' An assistant you ask to list scenarios or show results does read them, as you would in the web app, so a judge\'s message asks for a new chat.';
+    expect(faq(on.landing).endsWith(steps + reads)).toBe(true);
+    expect(faq(off.landing).endsWith(steps)).toBe(true);
+    for (const page of [on.landing, off.landing]) {
+      expect(feature(page)).toBe('Every AI reply and every AI assessment shows which model produced it and who chose that model. The AI must quote the learner, and a quote that '
+        + 'doesn\'t match, word for word, doesn\'t count. Proposing levels never gives the judge\'s AI the weights or the pass mark, and no AI calculates the score.');
+    }
+    // Drafting saves feedback only, so it never gives the assistant a pass mark: the author sets one in the web app.
+    expect(section(on.help, 'authors')).toContain('The AI never chooses how the scenario is used or scored, and drafting never gives it a pass mark: you set any pass mark in the web app.');
+    for (const page of [on.landing, off.landing, on.help, off.help, read('bridge/ui/landing.html'), read('bridge/ui/help.html')]) {
+      expect(page).not.toMatch(/never sees? (?:the weights|a pass mark|the pass mark)/);
+    }
+    // A judge pastes the message into a new chat, never one that listed scenarios or read the review queue: those answers
+    // carry the weights and the pass rule, and the queue's every judgment's levels.
+    expect(section(on.help, 'judges')).toContain('<li class="step"><p class="step__text">Paste the message a learner sends you into a new chat with the Interego connector on, '
+      + 'not one where you reviewed sessions or listed scenarios: what your assistant read there includes the weights and the pass mark. Your assistant fetches the session,');
+    expect(section(on.help, 'claude-chatgpt')).toContain('<li>Paste the message a learner sent you into a new chat. Your assistant shows you the levels and quotes and waits for your go-ahead.</li>');
+    expect(on.help).not.toContain('into that chat');
+  });
+
   it('keeps the agent view at / for agents, for ?format= and for every Accept that is not a browser asking for a page', async () => {
     const agentView = (body: string, what: string): void => {
       const j = JSON.parse(body) as Out;

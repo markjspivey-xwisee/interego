@@ -1,5 +1,32 @@
 # Changelog
 
+## 2026-11-09 — Practice Evidence: the pages say when an assistant sees the weights and the pass mark
+
+The landing page said AI "never sees the weights or the pass mark". That is
+true of the three things an assistant does in Practice Evidence: drafting a
+scenario, playing the other person and proposing levels. It was not true of
+everything else a connected assistant can do. Asked to list the practice
+scenarios or show results, as the landing page and the guide suggest, an
+assistant reads each scored scenario's whole rubric: how much each criterion
+counts, the points for each level and the pass mark, as a person sees them in
+the web app. What's waiting for review also shows every assessment's levels
+side by side. The landing page, the guide and the README now say which steps
+leave the weights and the pass mark out, and that those reads do not.
+
+So the message a learner sends their judge now asks the judge to paste it into
+a new chat, not one where they reviewed sessions or listed scenarios, which
+has already seen the scoring. The guide, Getting started and the Connect
+dialog say the same.
+
+Three smaller fixes. The judge message says an assessment may already be
+saved only when that chat sent a save of this session, or can't tell whether
+it did: a save of another learner's session in the same chat no longer
+counts. The workspace details no longer say twice what to do when the act
+tool has no sign_payload option; their signing rule points to the last line
+of "How to do each step", which says it. And the README now says that a
+judge's save answers with the session's state and how many assessments it
+has, as well as how the judge's own levels and quotes were checked.
+
 ## 2026-11-09 — Practice Evidence: a prompt with plain steps says what to do without sign_payload
 
 The shared helpers that write the prompts people copy into Claude or ChatGPT

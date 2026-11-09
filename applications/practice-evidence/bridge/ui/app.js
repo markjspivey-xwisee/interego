@@ -1514,10 +1514,11 @@ function workspaceDetails() {
     affordancesUrl: actionsUrl(), podUrl: S.pod,
     rules: [
       // sign_payload true or false names the kind of step, not an argument every act tool has: the
-      // fallback above (actPrompt says it for both kinds here, having no steps) covers each one.
+      // fallback, the last line of the How block (actPrompt says it for both kinds here, having no
+      // steps), covers each one.
       `Sign every step except ${PLAIN_STEPS.join(' and ')}, which are plain: their arguments go at the top level of payload. `
-        + 'Here and in any example, sign_payload true or false says whether a step is signed or plain; if your act tool has no sign_payload option, '
-        + 'the rule above applies to every one of them (sign_request first for a signed step, no sign_payload for a plain one).',
+        + 'Here and in any example, sign_payload true or false says whether a step is signed or plain; '
+        + 'the last line of How to do each step says what to do with each kind when your act tool has no sign_payload option.',
       'Every signed payload has "v": 1, "action" (the step\'s urn, exactly as you pass it as action_iri), "pod_url" (my storage address) and a new nonce. Read a step\'s fields from the actions at descriptor_url before you guess one.',
       "Never assess my own practice and never decide a score: an appointed judge and a reviewer do that.",
     ],
@@ -1616,7 +1617,7 @@ function connectAiDialog() {
         h('ul', { class: 'connect-roles' },
           h('li', {}, h('strong', { text: 'Learners: ' }), 'start a session here, then choose Copy the start-up message on the session page.'),
           h('li', {}, h('strong', { text: 'Authors: ' }), 'in Write a scenario, choose Draft it in Claude or ChatGPT.'),
-          h('li', {}, h('strong', { text: 'Appointed judges: ' }), 'paste the message a learner sends you.'))));
+          h('li', {}, h('strong', { text: 'Appointed judges: ' }), 'paste the message a learner sends you into a new chat.'))));
   } else if (chatOffered()) {
     // Signed in another way (a wallet, a key of their own) or not yet: Interego sign-in, from here.
     // Signing in leaves the page for Interego and comes back signed in, no longer with the wallet.
@@ -1919,7 +1920,7 @@ const CHECKLISTS = {
     return chatOffered() ? [
       JUDGE_MEMBER_STEP,
       { title: 'Connect Claude or ChatGPT', text: 'Add the Interego connector, then sign in.', href: 'ui/help#claude-chatgpt', label: 'How to connect' },
-      { title: "Assess a session you've been given", text: "Paste the message a learner sends you into a chat with the Interego connector on. Your assistant proposes levels and waits for your go-ahead. You can't assess your own practice, and a reviewer has the final say." },
+      { title: "Assess a session you've been given", text: "Paste the message a learner sends you into a new chat with the Interego connector on. Your assistant proposes levels and waits for your go-ahead. You can't assess your own practice, and a reviewer has the final say." },
     ] : [
       { ...MEMBER_STEP, text: 'Done when your admin has added you as a Judge.' },
       { title: "Assess a session you've been given", text: "Paste the part between the lines of a learner's message into any chat app, and check the levels and quotes your AI proposes. You can't assess your own practice, and a reviewer has the final say." },
@@ -2370,16 +2371,20 @@ function judgeMessage(v) {
         + "don't assess or save again before you do the first step again. If nothing of mine is saved, send the same assessment once more, with a new nonce and the same binding as that save; "
         + 'if you already sent it again, or no longer have it, tell me it is not saved, and stop.',
       'If a save is refused with binding-mismatch or chain-moved (the session changed after the first step): do the first step again, and if nothing of mine is saved, assess what it returns, never an earlier assessment, and show me before you save.',
-      // "May already be saved" only where a save could be: the first step is also the first call of every chat, and a
-      // judge refused it before any save (not registered yet, the session not ended) has nothing saved to look for.
+      // "May already be saved" only where a save of this session could be: the first step is also the first call of every
+      // chat, and a judge refused it before any save (not registered yet, the session not ended) has nothing saved to look
+      // for. Nor does a save of another session in the same chat, which saved nothing of this one.
       "If the first step is refused, other than for a wrong field or its format, or gets no answer: don't assess or save. "
-        + "Tell me what it said and, if you sent a save in this chat or can't tell whether you did, that my assessment may already be saved; then stop.",
+        + "Tell me what it said and, if you sent a save of this session in this chat or can't tell whether you did, that my assessment may already be saved; then stop.",
       "If this is my own practice session, stop: I can't assess it, in any chat or role. A reviewer signs off after me.",
     ],
   });
   return [
     `Hi, could you assess my practice session in Practice Evidence? Session: ${v.attemptIri}. Workspace: ${siteBase()}`,
-    'Paste everything between the lines into Claude or ChatGPT, in a chat where the Interego connector is on:',
+    // A new chat: one that listed scenarios or read the review queue has read the rubric's weights and pass rule, and
+    // the queue's every judgment's levels, which neither step of the message shows the judging assistant.
+    "Don't reuse a chat where you reviewed sessions or listed scenarios: it has already seen the scoring. "
+      + 'Paste everything between the lines into a new chat in Claude or ChatGPT, with the Interego connector on:',
     '---', prompt, '---',
   ].join('\n');
 }
@@ -2418,7 +2423,7 @@ function judgeHandoffText(v, p) {
 /**
  * The message an author pastes into Claude or ChatGPT to draft a scenario. The assistant asks the
  * author the two decisions an AI never makes (how it is used, how clear-cut good work is) and saves
- * a draft that is feedback only: scoring is set in this app, so the AI never sees a pass mark.
+ * a draft that is feedback only: scoring is set in this app, so drafting never gives the AI a pass mark.
  */
 function authorPrompt(brief, source) {
   const b = brief.trim();
