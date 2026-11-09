@@ -510,7 +510,7 @@ export const foxxiAffordances: ReadonlyArray<Affordance> = [
     outputs: {
       description: 'Your gradebook rows. 401 on auth failure.',
       properties: {
-        rows: { type: 'array', description: 'One per course: its line item and your result, rescaled to the line item\'s maximum, or null.', items: { type: 'object', additionalProperties: true } },
+        rows: { type: 'array', description: 'One per course, with its line item and your result, rescaled to the line item\'s maximum, or null. If a scored retake arrives with NotReady after a finalized grade, result is the retained grade and retake is the latest provisional score and status.', items: { type: 'object', additionalProperties: true } },
         learner: { type: 'string', description: 'Whose rows these are: the LTI sub the LMS knows you by.' },
       },
     },

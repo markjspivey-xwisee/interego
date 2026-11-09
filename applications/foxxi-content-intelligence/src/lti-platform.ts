@@ -128,7 +128,7 @@ interface LineItem {
   readonly tag: string;
 }
 
-interface ResultRow {
+interface PostedScore {
   readonly userId: string;
   readonly scoreGiven?: number;
   readonly scoreMaximum?: number;
@@ -136,6 +136,10 @@ interface ResultRow {
   readonly gradingProgress: string;
   readonly timestamp: string;
   readonly comment?: string;
+}
+
+interface ResultRow extends PostedScore {
+  readonly lastFinalized?: PostedScore;
 }
 
 interface AccessToken { readonly clientId: string; readonly scopes: ReadonlySet<string>; readonly expiresAt: number }
@@ -157,11 +161,25 @@ export interface PlatformSnapshot {
   readonly members: readonly string[];
 }
 
+interface GradebookScore {
+  readonly resultScore?: number;
+  readonly resultMaximum: number;
+  readonly activityProgress: string;
+  readonly gradingProgress: string;
+  readonly timestamp: string;
+  readonly comment?: string;
+}
+
 /** One row of a learner's gradebook: a course's line item and where they stand in it. */
 export interface GradebookRow {
   readonly lineItem: Record<string, unknown>;
   readonly courseId: string;
-  readonly result: { readonly resultScore?: number; readonly resultMaximum: number; readonly activityProgress: string; readonly gradingProgress: string; readonly timestamp: string; readonly comment?: string } | null;
+  readonly result: GradebookScore | null;
+  readonly retake?: GradebookScore;
+}
+
+function retainedFinal(row: ResultRow): PostedScore | undefined {
+  return row.gradingProgress === 'NotReady' ? row.lastFinalized : undefined;
 }
 
 const trimSlash = (s: string): string => s.replace(/\/+$/, '');
@@ -441,21 +459,22 @@ export class LtiPlatform {
     if (!li) return null;
     const rows = [...(this.results.get(id)?.values() ?? [])].filter((r) => !userId || r.userId === userId);
     return rows.map((r) => {
-      const scored = this.rescaled(r, li);
+      const grade = retainedFinal(r) ?? r;
+      const scored = this.rescaled(grade, li);
       return {
         id: `${this.lineItemUrl(id)}/results/${digest(r.userId).slice(0, 24)}`,
         scoreOf: this.lineItemUrl(id),
         userId: r.userId,
         ...(scored !== undefined ? { resultScore: scored } : {}),
         resultMaximum: li.scoreMaximum,
-        ...(r.comment ? { comment: r.comment } : {}),
+        ...(grade.comment ? { comment: grade.comment } : {}),
       };
     });
   }
 
   /**
-   * An AGS Score (AGS 2.0 §3.4). Only for a learner this LMS launched, and never older than the
-   * score already on record: a Platform keeps the latest by timestamp, whatever order they arrive in.
+   * An AGS Score (AGS 2.0 §3.4). Only for a learner this LMS launched. Order updates by the
+   * latest post's timestamp, including when an earlier final grade is the reported result.
    */
   acceptScore(contextId: string, id: string, body: unknown, now = Date.now()): { ok: true } | Refused {
     const li = contextId === this.context.id ? this.lineItems.get(id) : undefined;
@@ -474,7 +493,7 @@ export class LtiPlatform {
     if (at > now + 5 * 60_000) return { ok: false, status: 400, error: 'invalid_request', description: 'timestamp is in the future' };
     let scoreGiven: number | undefined;
     let scoreMaximum: number | undefined;
-    if (s.scoreGiven !== undefined) {
+    if (s.scoreGiven !== undefined && s.scoreGiven !== null) {
       scoreGiven = Number(s.scoreGiven);
       scoreMaximum = Number(s.scoreMaximum);
       if (!Number.isFinite(scoreGiven) || scoreGiven < 0) return { ok: false, status: 400, error: 'invalid_request', description: 'scoreGiven must be a number of at least 0' };
@@ -486,10 +505,14 @@ export class LtiPlatform {
     if (!byUser) { byUser = new Map(); this.results.set(id, byUser); }
     if (!prior && byUser.size >= MAX_RESULTS_PER_ITEM) return { ok: false, status: 507, error: 'insufficient_storage', description: 'this line item holds no more results' };
     const comment = str(s.comment).slice(0, 1000);
+    // Keep the final through scored interim updates. An absent score clears it (AGS §3.4.4).
+    const lastFinalized = prior?.gradingProgress === 'FullyGraded' ? prior : prior?.lastFinalized;
+    const retainFinal = scoreGiven !== undefined && gradingProgress !== 'FullyGraded' && lastFinalized?.scoreGiven !== undefined;
     byUser.set(userId, {
       userId, activityProgress, gradingProgress, timestamp,
       ...(scoreGiven !== undefined && scoreMaximum !== undefined ? { scoreGiven, scoreMaximum } : {}),
       ...(comment ? { comment } : {}),
+      ...(retainFinal ? { lastFinalized } : {}),
     });
     this.onChange();
     return { ok: true };
@@ -499,18 +522,12 @@ export class LtiPlatform {
   gradebookFor(sub: string): GradebookRow[] {
     return [...this.lineItems.values()].map((li) => {
       const r = this.results.get(li.id)?.get(sub);
-      const scored = r ? this.rescaled(r, li) : undefined;
+      const final = r && retainedFinal(r);
       return {
         lineItem: this.publicLineItem(li),
         courseId: li.resourceId,
-        result: r ? {
-          ...(scored !== undefined ? { resultScore: scored } : {}),
-          resultMaximum: li.scoreMaximum,
-          activityProgress: r.activityProgress,
-          gradingProgress: r.gradingProgress,
-          timestamp: r.timestamp,
-          ...(r.comment ? { comment: r.comment } : {}),
-        } : null,
+        result: r ? this.gradebookScore(final ?? r, li) : null,
+        ...(r && final ? { retake: this.gradebookScore(r, li) } : {}),
       };
     });
   }
@@ -562,7 +579,19 @@ export class LtiPlatform {
     return { id: this.lineItemUrl(li.id), label: li.label, scoreMaximum: li.scoreMaximum, resourceLinkId: li.resourceLinkId, resourceId: li.resourceId, tag: li.tag };
   }
 
-  private rescaled(r: ResultRow, li: LineItem): number | undefined {
+  private gradebookScore(r: PostedScore, li: LineItem): GradebookScore {
+    const scored = this.rescaled(r, li);
+    return {
+      ...(scored !== undefined ? { resultScore: scored } : {}),
+      resultMaximum: li.scoreMaximum,
+      activityProgress: r.activityProgress,
+      gradingProgress: r.gradingProgress,
+      timestamp: r.timestamp,
+      ...(r.comment ? { comment: r.comment } : {}),
+    };
+  }
+
+  private rescaled(r: PostedScore, li: LineItem): number | undefined {
     if (r.scoreGiven === undefined || r.scoreMaximum === undefined) return undefined;
     return Math.round((r.scoreGiven / r.scoreMaximum) * li.scoreMaximum * 100) / 100;
   }

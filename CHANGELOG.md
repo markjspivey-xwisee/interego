@@ -86,6 +86,12 @@ a recorded task's link, which ran into its row's edge and now sits under its
 badge. New tests check each rule as the stylesheet applies it at a phone's
 width, and each fails with its rule taken out.
 
+## 2026-11-09 — Foxxi keeps finalized LTI grades during retakes
+
+A scored LTI retake marked NotReady appears separately in the learner's
+gradebook while the last finalized grade stays in place. A newer finalized
+grade replaces it. Score-clearing updates still clear the grade.
+
 ## 2026-11-09 — Foxxi scoped LTI grade passback
 
 Foxxi can launch an external LTI tool under an expiring connection for one
