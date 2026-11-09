@@ -12582,7 +12582,11 @@ app.post('/agent/lti/gradebook', async (req, res) => {
   } catch (err) { sendServerError(res, err, 'lti-gradebook-signed'); }
 });
 
-app.post('/agent/lti/scoped-connection/revoke', async (req, res) => {
+const scopedLtiRevokeLimit = rateLimit({
+  windowMs: 60_000, limit: 15, ipv6Subnet: 56, identifier: 'lti-connection-revoke',
+  standardHeaders: 'draft-8', legacyHeaders: false, message: { error: 'too_many_requests' },
+});
+app.post('/lti/connections/revoke', scopedLtiRevokeLimit, async (req, res) => {
   if (!scopedLti) { res.sendStatus(404); return; }
   try {
     const auth = await verifyDelegatedCaller(req.body);

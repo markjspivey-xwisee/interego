@@ -124,7 +124,10 @@ const UNRESOLVABLE_PIN = 78;
 // undocumented commits. The new entry describes private reclamation and manual-only
 // legacy recovery; it does not backfill that history. Keep the continuous marker fixed,
 // with ten commits of explicit headroom above the observed inherited backlog.
-const BACKLOG_CEILING = 408;
+// 408 -> 412 (2026-11-09). The scoped LTI follow-up measured 412 commits
+// on its first candidate before the release entry was added. Keep the
+// continuous marker fixed because the older entries are still missing.
+const BACKLOG_CEILING = 412;
 
 /**
  * `<!-- documented-through: <sha> -->` — the newest commit through which the file is
