@@ -219,7 +219,7 @@ import { sendServerError } from '../src/http-errors.js';
 import { runXapiConformance, runScormConformance, runCmi5Conformance, runCamConformance } from '../src/compliance-runner.js';
 import { recoverSignedRequest } from '../src/auth.js';
 import { acceptSessionKeys, sessionKeyPolicy, sessionKeyPolicyFor, SESSION_KEY_CHAIN_ID } from '../src/session-key.js';
-import { makeWalletDelegationVerifier, parseTrig, TENANT_ADMIN_CAPABILITY, pgslNodeKind, pgslNodeHash, actionUrl, ownPodSegment } from '@interego/core';
+import { deriveEncryptionKeyPair, makeWalletDelegationVerifier, parseTrig, TENANT_ADMIN_CAPABILITY, pgslNodeKind, pgslNodeHash, actionUrl, ownPodSegment } from '@interego/core';
 import { proveCompetency } from '../src/competency-proof.js';
 import { courseIri, courseIdOf } from '../src/course-identity.js';
 import { attachAgentScormArtifacts, scormArtifactLinks, scormArtifactManifest } from '../src/scorm-artifacts.js';
@@ -314,7 +314,7 @@ import {
   registerSnapshot as registerBridgeSnap,
   dirty as markBridgeDirty,
   loadLatestSnapshot as loadBridgeSnap,
-  loadLatestSnapshotStrict as loadBridgeSnapStrict,
+  loadPrivateLtiGradebook,
   readLegacySnapshotFailureWitness,
   seedLatestSnapshotHead,
   FOXXI_SNAPSHOT_TYPES as BRIDGE_SNAP_TYPES,
@@ -5888,7 +5888,11 @@ const instrumentedHandlers = Object.fromEntries(
 
 // Foxxi as its own LMS: the LTI 1.3 Platform that launches this bridge's own Tool over HTTP, the
 // way any LMS would, and keeps the gradebook the Tool posts grades to. The gradebook is kept on
-// the tenant pod like the Tool's line items. Its key is fresh per process unless one is set.
+// the tenant pod as ciphertext. Its separate OIDC signing key can be fresh per process.
+const gradebookSecret = process.env.FOXXI_BRIDGE_PRIVATE_KEY ?? '';
+const gradebookKey = /^(?:0x)?[a-f0-9]{64}$/i.test(gradebookSecret)
+  ? deriveEncryptionKeyPair(gradebookSecret, `urn:foxxi:lti-platform-gradebook:v1:${tenantPodUrl.replace(/\/?$/, '/')}`)
+  : undefined;
 const ltiPlatform: LtiPlatform = new LtiPlatform({
   selfBaseUrl: bridgeBaseUrl,
   ...(process.env.FOXXI_LTI_PLATFORM_PRIVATE_KEY_PEM ? { privateKeyPem: process.env.FOXXI_LTI_PLATFORM_PRIVATE_KEY_PEM.replace(/\\n/g, '\n') } : {}),
@@ -5897,7 +5901,7 @@ const ltiPlatform: LtiPlatform = new LtiPlatform({
 });
 const ltiPlatformReadiness: LtiPlatformReadiness = new LtiPlatformReadiness({
   load: async () => {
-    const result = await loadBridgeSnapStrict('lti-platform', { typeIri: BRIDGE_SNAP_TYPES.LtiPlatformGradebook, validate: isPlatformSnapshot, followLatestDescriptor: true });
+    const result = await loadPrivateLtiGradebook({ validate: isPlatformSnapshot, approvedLegacyWitness: process.env.FOXXI_LTI_LEGACY_RECOVERY_WITNESS });
     seedLatestSnapshotHead('lti-platform', result);
     return result;
   },
@@ -5905,7 +5909,8 @@ const ltiPlatformReadiness: LtiPlatformReadiness = new LtiPlatformReadiness({
   collect: () => ltiPlatform.snapshot(),
   onState: (state) => console.info('[lti-platform/readiness]', JSON.stringify(state)),
 });
-registerBridgeSnap({ surface: 'lti-platform', typeIri: BRIDGE_SNAP_TYPES.LtiPlatformGradebook, collect: () => ltiPlatformReadiness.snapshotForPublish(), immutableLatest: true });
+registerBridgeSnap({ surface: 'lti-platform', typeIri: BRIDGE_SNAP_TYPES.LtiPlatformGradebook,
+  collect: () => ltiPlatformReadiness.snapshotForPublish(), immutableLatest: true, encryptionKey: gradebookKey });
 void ltiPlatformReadiness.ensureReady();
 /** The Tool's side, once mounted: how a grade gets back to the platform that launched the course. */
 let ltiTool: Lti13Tool | undefined;

@@ -53,8 +53,9 @@ import type {
 import type {
   PGSLInstance,
 } from '@interego/pgsl';
-import { createHash, randomUUID } from 'node:crypto';
-import { parseTrig, readIriValue, readStringValue, canonicalJson } from '@interego/core';
+import { createHash, createHmac, randomUUID } from 'node:crypto';
+import { parseTrig, readIriValue, readStringValue, canonicalJson, envelopeFromJson, openEncryptedEnvelope, type EncryptionKeyPair } from '@interego/core';
+import { verifyMessage } from 'ethers';
 import { bridgeDid, signAsBridge, withPublishLock } from './bridge-signer.js';
 import { FOXXI_NS } from './foxxi-vocab.js';
 import { decodePodBundle } from './pod-kv-store.js';
@@ -87,6 +88,7 @@ interface SnapshotRegistration {
   scheduled: NodeJS.Timeout | null;
   version: number;
   immutableLatest: boolean;
+  encryptionKey?: EncryptionKeyPair;
   latestHead?: SnapshotLatestHead;
   headConflict: boolean;
   publicationTimeoutMs: number;
@@ -272,6 +274,8 @@ export function registerSnapshot(args: {
   debounceMs?: number;
   /** Opt-in head-CAS and immutable version artifacts; currently used only by the own-LMS gradebook. */
   immutableLatest?: boolean;
+  /** Seal immutable version graphs to this service. Public descriptors carry only metadata. */
+  encryptionKey?: EncryptionKeyPair;
   publicationTimeoutMs?: number;
   /** Explicit transport for an isolated consumer; omitted registrations keep the service environment configuration. */
   config?: SnapshotPodConfig | null;
@@ -288,6 +292,7 @@ export function registerSnapshot(args: {
     scheduled: null,
     version: existing?.version ?? 1,
     immutableLatest: args.immutableLatest ?? false,
+    encryptionKey: args.encryptionKey,
     latestHead: existing?.latestHead,
     headConflict: existing?.headConflict ?? false,
     publicationTimeoutMs: Math.max(1, Math.min(args.publicationTimeoutMs ?? 45_000, 45_000)),
@@ -367,9 +372,10 @@ export interface SnapshotLatestHead {
   etag: string | null;
   descriptorIri: IRI | null;
   payloadDigest: string | null;
+  encrypted?: true;
 }
 export type SnapshotUnavailableReason = 'not-configured' | 'transport' | 'http' | 'invalid-snapshot'
-  | 'invalid-head' | 'head-unversioned' | 'legacy-head-missing' | 'legacy-head-mismatch';
+  | 'invalid-head' | 'head-unversioned' | 'legacy-head-missing' | 'legacy-head-mismatch' | 'migration-unconfirmed';
 export type StrictSnapshotResult<T> =
   | { state: 'loaded'; snapshot: T; revision: { sha256: string; etag?: string; version?: number }; head?: SnapshotLatestHead }
   | { state: 'absent'; head?: SnapshotLatestHead }
@@ -381,7 +387,8 @@ export type StrictSnapshotResult<T> =
 export function seedLatestSnapshotHead(surface: string, result: StrictSnapshotResult<unknown>): void {
   const reg = registry.get(surface);
   if (!reg?.immutableLatest || reg.headConflict || (result.state !== 'loaded' && result.state !== 'absent') || !result.head) return;
-  if (result.state === 'loaded' && (!strongEtag(result.head.etag) || !result.head.descriptorIri || result.head.payloadDigest !== result.revision.sha256)) return;
+  if (result.state === 'loaded' && (!strongEtag(result.head.etag) || !result.head.descriptorIri
+    || result.head.payloadDigest !== result.revision.sha256 || Boolean(reg.encryptionKey) !== Boolean(result.head.encrypted))) return;
   if (result.state === 'absent' && (result.head.etag !== null || result.head.descriptorIri !== null || result.head.payloadDigest !== null)) return;
   reg.latestHead = { ...result.head };
   if (result.state === 'loaded' && result.revision.version !== undefined) reg.version = result.revision.version + 1;
@@ -394,9 +401,18 @@ const HYDRA = 'http://www.w3.org/ns/hydra/core#';
 const DCAT = 'http://www.w3.org/ns/dcat#';
 const strongEtag = (value: string | null): value is string => value !== null && /^"[^"\r\n]+"$/.test(value);
 const snapshotContainer = (config: SnapshotPodConfig): string => `${config.podUrl.replace(/\/?$/, '/')}foxxi/snapshots/`;
+const ENVELOPE_SUFFIX = '-graph.envelope.jose.json';
+const ENVELOPE_MEDIA = 'application/jose+json';
+const snapshotAccept = (url: string): string => url.endsWith(ENVELOPE_SUFFIX) ? ENVELOPE_MEDIA : 'application/trig, text/turtle';
+
+function snapshotGraphIdentity(digest: string, key?: EncryptionKeyPair): string {
+  if (!key) return `sha256:${digest}`;
+  const mac = createHmac('sha256', Buffer.from(key.secretKey, 'base64')).update(`foxxi-snapshot:${digest}`).digest('hex');
+  return `hmac-sha256:${mac}`;
+}
 
 function snapshotHeadLinks(turtle: string, surface: string, config: SnapshotPodConfig, typeIri: IRI): {
-  descriptorIri: IRI; graphIri: IRI; graphUrl: string;
+  descriptorIri: IRI; graphIri: IRI; graphUrl: string; encrypted: boolean;
 } | null {
   const doc = parseTrig(turtle);
   const descriptors = doc.subjects.filter((s) => readIriValue(s, RDF_TYPE) === `${IEP}ContextDescriptor`);
@@ -404,7 +420,10 @@ function snapshotHeadLinks(turtle: string, surface: string, config: SnapshotPodC
   const descriptor = descriptors[0]!;
   if (typeof descriptor.subject !== 'string' || readIriValue(descriptor, `${DCT}conformsTo` as IRI) !== typeIri) return null;
   const graphIri = readIriValue(descriptor, `${IEP}describes` as IRI);
-  const operations = doc.subjects.filter((s) => readIriValue(s, `${IEP}action` as IRI) === `${IEP}canFetchPayload`);
+  const operations = doc.subjects.filter((s) => {
+    const action = readIriValue(s, `${IEP}action` as IRI);
+    return action === `${IEP}canFetchPayload` || action === `${IEP}canDecrypt`;
+  });
   if (!graphIri || operations.length !== 1) return null;
   const operation = operations[0]!;
   const roots = doc.subjects.filter((s) => typeof s.subject === 'string'
@@ -415,20 +434,34 @@ function snapshotHeadLinks(turtle: string, surface: string, config: SnapshotPodC
     || (term.kind === 'iri' && term.iri === operation.subject)));
   if (!linked) return null;
   const graphUrl = readIriValue(operation, `${HYDRA}target` as IRI);
+  const flag = readStringValue(operation, `${IEP}encrypted` as IRI);
+  if (flag !== 'true' && flag !== 'false') return null;
+  const encrypted = flag === 'true';
   if (!graphUrl || graphUrl !== readIriValue(operation, `${DCAT}accessURL` as IRI)
+    || readIriValue(operation, `${IEP}action` as IRI) !== `${IEP}${encrypted ? 'canDecrypt' : 'canFetchPayload'}`
     || readStringValue(operation, `${HYDRA}method` as IRI) !== 'GET'
-    || readStringValue(operation, `${DCAT}mediaType` as IRI) !== 'application/trig'
-    || readStringValue(operation, `${IEP}encrypted` as IRI) !== 'false') return null;
+    || readStringValue(operation, `${DCAT}mediaType` as IRI) !== (encrypted ? ENVELOPE_MEDIA : 'application/trig')) return null;
   const prefix = `${snapshotContainer(config)}${surface}-snapshot-`;
-  if (graphUrl !== `${prefix}graph.trig`
-    && !(graphUrl.startsWith(prefix) && /^[a-f0-9]{64}-graph\.trig$/.test(graphUrl.slice(prefix.length)))) return null;
-  return { descriptorIri: descriptor.subject as IRI, graphIri, graphUrl };
+  const versionGraph = encrypted ? /^[a-f0-9]{64}-graph\.envelope\.jose\.json$/ : /^[a-f0-9]{64}-graph\.trig$/;
+  const legacyGraph = !encrypted && graphUrl === `${prefix}graph.trig`;
+  if (!legacyGraph && !(graphUrl.startsWith(prefix) && versionGraph.test(graphUrl.slice(prefix.length)))) return null;
+  return { descriptorIri: descriptor.subject as IRI, graphIri, graphUrl, encrypted };
 }
 
 function decodeStrictSnapshot<T>(turtle: string, options: {
   typeIri: IRI; validate: (value: unknown) => value is T; graphIri?: IRI; authoritativeSource?: IRI; surface?: string;
+  encryptionKey?: EncryptionKeyPair;
 }): StrictSnapshotResult<T> {
   try {
+    const key = options.encryptionKey;
+    if (key) {
+      if (Buffer.byteLength(turtle, 'utf8') > 12 * 1024 * 1024) return { state: 'unavailable', reason: 'invalid-snapshot' };
+      const envelope = envelopeFromJson(turtle);
+      const wrappedKeys = envelope.wrappedKeys.filter(w => w.senderPublicKey === key.publicKey && w.recipientPublicKey === key.publicKey);
+      const plain = wrappedKeys.length === 1 ? openEncryptedEnvelope({ ...envelope, wrappedKeys }, key) : null;
+      if (plain === null) return { state: 'unavailable', reason: 'invalid-snapshot' };
+      turtle = plain;
+    }
     if (Buffer.byteLength(turtle, 'utf8') > 8 * 1024 * 1024) return { state: 'unavailable', reason: 'invalid-snapshot' };
     const candidates = parseTrig(turtle).subjects.filter((s) => readStringValue(s, FOXXI_BUNDLE_JSON) !== undefined);
     if (candidates.length !== 1) return { state: 'unavailable', reason: 'invalid-snapshot' };
@@ -444,7 +477,7 @@ function decodeStrictSnapshot<T>(turtle: string, options: {
       const prefix = `urn:foxxi:${options.surface}-snapshot:`;
       if (!options.graphIri.startsWith(prefix)) return { state: 'unavailable', reason: 'invalid-snapshot' };
       const suffix = options.graphIri.slice(prefix.length);
-      if (suffix !== `sha256:${sha256}` && !/^v[1-9]\d*$/.test(suffix)) return { state: 'unavailable', reason: 'invalid-snapshot' };
+      if (suffix !== snapshotGraphIdentity(sha256, key) && (key || !/^v[1-9]\d*$/.test(suffix))) return { state: 'unavailable', reason: 'invalid-snapshot' };
     }
     const snapshot: unknown = JSON.parse(bytes.toString('utf8'));
     if (!options.validate(snapshot)) return { state: 'unavailable', reason: 'invalid-snapshot' };
@@ -454,7 +487,8 @@ function decodeStrictSnapshot<T>(turtle: string, options: {
   } catch { return { state: 'unavailable', reason: 'invalid-snapshot' }; }
 }
 
-async function publishImmutableLatest(reg: SnapshotRegistration, payload: unknown, config: SnapshotPodConfig): Promise<void> {
+async function publishImmutableLatest(reg: SnapshotRegistration, payload: unknown, config: SnapshotPodConfig,
+  checkSource?: (get: (url: string) => Promise<Response>) => Promise<void>): Promise<void> {
   const abort = new AbortController();
   let timer: ReturnType<typeof setTimeout> | undefined;
   const bounded: SnapshotPodConfig = { ...config, fetch: async (url, init) => {
@@ -471,7 +505,7 @@ async function publishImmutableLatest(reg: SnapshotRegistration, payload: unknow
       abort.signal.throwIfAborted();
       // Bound both time waiting for the shared lock and time holding it. An ignored abort
       // cannot retain the lock or let a late continuation commit a pointer.
-      return Promise.race([publishImmutableLatestWork(reg, payload, bounded, abort.signal), deadline]);
+      return Promise.race([publishImmutableLatestWork(reg, payload, bounded, abort.signal, checkSource), deadline]);
     });
     await Promise.race([queued, deadline]);
   } finally {
@@ -480,7 +514,8 @@ async function publishImmutableLatest(reg: SnapshotRegistration, payload: unknow
   }
 }
 
-async function publishImmutableLatestWork(reg: SnapshotRegistration, payload: unknown, config: SnapshotPodConfig, signal: AbortSignal): Promise<void> {
+async function publishImmutableLatestWork(reg: SnapshotRegistration, payload: unknown, config: SnapshotPodConfig, signal: AbortSignal,
+  checkSource?: (get: (url: string) => Promise<Response>) => Promise<void>): Promise<void> {
   const head = reg.latestHead;
   if (reg.headConflict) throw new Error('lti_snapshot_head_conflict');
   if (!head) throw new Error('lti_snapshot_head_unobserved');
@@ -491,7 +526,8 @@ async function publishImmutableLatestWork(reg: SnapshotRegistration, payload: un
   const slug = `${reg.surface}-snapshot`;
   const descriptorSlug = `${slug}-${randomUUID()}`;
   const descriptorIri = `${container}${descriptorSlug}.ttl` as IRI;
-  const graphIri = `urn:foxxi:${slug}:sha256:${payloadDigest}` as IRI;
+  const key = reg.encryptionKey;
+  const graphIri = `urn:foxxi:${slug}:${snapshotGraphIdentity(payloadDigest, key)}` as IRI;
   const signature = await signAsBridge(payload);
   const graphContent = snapshotGraph({ graphIri, typeIri: reg.typeIri, payloadAtom: mintAtom(pgsl(), payloadJson),
     authoritativeSource: config.authoritativeSource, payload, signedPayloadJson: payloadJson,
@@ -504,20 +540,24 @@ async function publishImmutableLatestWork(reg: SnapshotRegistration, payload: un
   try {
     published = await publish(descriptor, graphContent, config.podUrl, {
       containerPath: 'foxxi/snapshots/', descriptorSlug, graphSlug,
+      ...(key ? { encrypt: { senderKeyPair: key, recipients: [key.publicKey] } } : {}),
       fetch: async (url, init) => config.fetch(url, { ...init,
         headers: { ...init?.headers, ...(url === descriptorIri && init?.method === 'PUT' ? { 'If-None-Match': '*' } : {}) } }),
     });
   } catch { throw new Error('lti_snapshot_artifact_publish_unconfirmed'); }
-  const get = (url: string) => config.fetch(url, { headers: { Accept: 'application/trig, text/turtle', 'Cache-Control': 'no-cache' }, cache: 'no-store', redirect: 'manual' });
+  const get = (url: string) => config.fetch(url, { headers: { Accept: snapshotAccept(url), 'Cache-Control': 'no-cache' }, cache: 'no-store', redirect: 'manual' });
   const storedDescriptor = await get(published.descriptorUrl);
   if (!storedDescriptor.ok) throw new Error('lti_snapshot_artifact_readback_unconfirmed');
   const descriptorBody = await storedDescriptor.text();
   const links = snapshotHeadLinks(descriptorBody, reg.surface, config, reg.typeIri);
-  if (!links || links.descriptorIri !== descriptorIri || links.graphIri !== graphIri || links.graphUrl !== published.graphUrl) throw new Error('lti_snapshot_artifact_readback_mismatch');
+  if (!links || links.descriptorIri !== descriptorIri || links.graphIri !== graphIri || links.graphUrl !== published.graphUrl
+    || links.encrypted !== Boolean(key)) throw new Error('lti_snapshot_artifact_readback_mismatch');
   const storedGraph = await get(links.graphUrl);
   if (!storedGraph.ok) throw new Error('lti_snapshot_artifact_readback_unconfirmed');
-  const decoded = decodeStrictSnapshot(await storedGraph.text(), { typeIri: reg.typeIri, validate: (_): _ is unknown => true, graphIri, authoritativeSource: config.authoritativeSource, surface: reg.surface });
+  const decoded = decodeStrictSnapshot(await storedGraph.text(), { typeIri: reg.typeIri, validate: (_): _ is unknown => true,
+    graphIri, authoritativeSource: config.authoritativeSource, surface: reg.surface, encryptionKey: key });
   if (decoded.state !== 'loaded' || decoded.revision.sha256 !== payloadDigest) throw new Error('lti_snapshot_artifact_readback_mismatch');
+  await checkSource?.(get);
   const latestUrl = `${container}${slug}.ttl`;
   const committed = await config.fetch(latestUrl, { method: 'PUT', redirect: 'manual', headers: {
     'Content-Type': 'text/turtle', ...(head.etag === null ? { 'If-None-Match': '*' } : { 'If-Match': head.etag }),
@@ -527,7 +567,7 @@ async function publishImmutableLatestWork(reg: SnapshotRegistration, payload: un
   const readback = await get(latestUrl);
   if (!readback.ok || !strongEtag(readback.headers.get('etag')) || await readback.text() !== descriptorBody) throw new Error('lti_snapshot_head_readback_unconfirmed');
   signal.throwIfAborted();
-  reg.latestHead = { etag: readback.headers.get('etag'), descriptorIri, payloadDigest };
+  reg.latestHead = { etag: readback.headers.get('etag'), descriptorIri, payloadDigest, ...(key ? { encrypted: true } : {}) };
   reg.lastPublishedAt = Date.now();
   reg.lastPublishedDescriptorIri = descriptorIri;
   reg.version += 1;
@@ -543,6 +583,7 @@ export async function loadLatestSnapshotStrict<T>(surface: string, options: {
   validate: (value: unknown) => value is T;
   timeoutMs?: number;
   followLatestDescriptor?: boolean;
+  encryptionKey?: EncryptionKeyPair;
 }): Promise<StrictSnapshotResult<T>> {
   const config = options.config === undefined ? podConfig() : options.config;
   if (!config) return { state: 'unavailable', reason: 'not-configured' };
@@ -551,7 +592,7 @@ export async function loadLatestSnapshotStrict<T>(surface: string, options: {
   try {
     const read = async (): Promise<StrictSnapshotResult<T>> => {
       const get = (url: string) => config.fetch(url, {
-        headers: { Accept: 'application/trig, text/turtle', 'Cache-Control': 'no-cache' },
+        headers: { Accept: snapshotAccept(url), 'Cache-Control': 'no-cache' },
         cache: 'no-store', redirect: 'manual', signal: abort.signal,
       });
       const legacyGraphUrl = `${snapshotContainer(config)}${surface}-snapshot-graph.trig`;
@@ -573,7 +614,7 @@ export async function loadLatestSnapshotStrict<T>(surface: string, options: {
         if (Buffer.byteLength(body, 'utf8') > 1024 * 1024) return { state: 'unavailable', reason: 'invalid-head' };
         try { links = snapshotHeadLinks(body, surface, config, options.typeIri); }
         catch { return { state: 'unavailable', reason: 'invalid-head' }; }
-        if (!links) return { state: 'unavailable', reason: 'invalid-head' };
+        if (!links || links.encrypted && !options.encryptionKey) return { state: 'unavailable', reason: 'invalid-head' };
         graphUrl = links.graphUrl;
       }
       const response = await get(graphUrl);
@@ -581,10 +622,12 @@ export async function loadLatestSnapshotStrict<T>(surface: string, options: {
       if (response.status === 404) return { state: 'absent' };
       if (!response.ok) return { state: 'unavailable', reason: 'http', status: response.status };
       const turtle = await response.text();
-      const decoded = decodeStrictSnapshot(turtle, { ...options, ...(links ? { graphIri: links.graphIri, authoritativeSource: config.authoritativeSource, surface } : {}) });
+      const decoded = decodeStrictSnapshot(turtle, { ...options, encryptionKey: links?.encrypted ? options.encryptionKey : undefined,
+        ...(links ? { graphIri: links.graphIri, authoritativeSource: config.authoritativeSource, surface } : {}) });
       if (decoded.state !== 'loaded') return links && graphUrl === legacyGraphUrl ? { state: 'unavailable', reason: 'legacy-head-mismatch' } : decoded;
       return { ...decoded, revision: { ...decoded.revision, ...(response.headers.get('etag') ? { etag: response.headers.get('etag')! } : {}) },
-        ...(links ? { head: { etag: headEtag, descriptorIri: links.descriptorIri, payloadDigest: decoded.revision.sha256 } } : {}) };
+        ...(links ? { head: { etag: headEtag, descriptorIri: links.descriptorIri, payloadDigest: decoded.revision.sha256,
+          ...(links.encrypted ? { encrypted: true } : {}) } } : {}) };
     };
     return await Promise.race([read(), new Promise<StrictSnapshotResult<T>>((resolve) => {
       timer = setTimeout(() => { abort.abort(); resolve({ state: 'unavailable', reason: 'transport' }); }, options.timeoutMs ?? 8000);
@@ -613,13 +656,17 @@ export interface LegacySnapshotFailureWitness {
   observedAt: string;
 }
 
-export async function readLegacySnapshotFailureWitness<T>(surface: string, options: {
+interface LegacySnapshotWitnessOptions<T> {
   config: SnapshotPodConfig;
   typeIri: IRI;
   validate: (value: unknown) => value is T;
   now?: () => number;
   timeoutMs?: number;
-}): Promise<LegacySnapshotFailureWitness> {
+}
+
+async function observeLegacySnapshotFailure<T>(surface: string, options: LegacySnapshotWitnessOptions<T>): Promise<{
+  witness: LegacySnapshotFailureWitness; snapshot: T; signed: boolean;
+}> {
   if (surface !== 'lti-platform') throw new Error('Legacy recovery witness is restricted to LTI.');
   const { config } = options;
   const abort = new AbortController();
@@ -669,9 +716,89 @@ export async function readLegacySnapshotFailureWitness<T>(surface: string, optio
       expectedGraphIri: links.graphIri, actualGraphIri: actual, headRevision: head.revision, graphRevision: graph.revision };
     const at = options.now?.() ?? Date.now();
     if (!Number.isSafeInteger(at) || at < 0) throw new Error('Legacy witness clock unavailable.');
-    return { ...facts, witnessDigest: sha256Hex(canonicalJson(facts)), observedAt: new Date(at).toISOString() };
+    const witness = { ...facts, witnessDigest: sha256Hex(canonicalJson(facts)), observedAt: new Date(at).toISOString() };
+    const signer = readIriValue(candidates[0]!, 'http://www.w3.org/ns/prov#wasGeneratedBy' as IRI);
+    const address = /^did:key:(0x[a-f0-9]{40})(?:#bridge)?$/i.exec(signer ?? '')?.[1];
+    const signature = readStringValue(candidates[0]!, `${FOXXI}agentSignature` as IRI);
+    let signed = false;
+    if (address && signature) {
+      try { signed = verifyMessage(`sha256:${facts.payloadSha256}`, signature).toLowerCase() === address.toLowerCase(); }
+      catch { /* Recovery requires a valid signature. The witness alone still describes the failure. */ }
+    }
+    return { witness, snapshot: decoded.snapshot, signed };
   } catch { throw new Error('The existing LTI failure could not be independently witnessed.'); }
   finally { clearTimeout(timer); abort.abort(); }
+}
+
+export async function readLegacySnapshotFailureWitness<T>(surface: string, options: LegacySnapshotWitnessOptions<T>): Promise<LegacySnapshotFailureWitness> {
+  return (await observeLegacySnapshotFailure(surface, options)).witness;
+}
+
+/** Move the own-LMS head to ciphertext before the gradebook serves requests. The legacy graph
+ * remains intact. A mismatched head requires an operator-approved fingerprint of both resources.
+ */
+export async function loadPrivateLtiGradebook<T>(options: {
+  validate: (value: unknown) => value is T;
+  approvedLegacyWitness?: string;
+}): Promise<StrictSnapshotResult<T>> {
+  const surface = 'lti-platform';
+  const reg = registry.get(surface);
+  const config = reg?.config === undefined ? podConfig() : reg.config;
+  if (!reg?.immutableLatest || !reg.encryptionKey || !config) return { state: 'unavailable', reason: 'not-configured' };
+  const read = () => loadLatestSnapshotStrict(surface, { config, typeIri: reg.typeIri, validate: options.validate,
+    followLatestDescriptor: true, encryptionKey: reg.encryptionKey });
+  const original = await read();
+  if (original.state === 'absent' || (original.state === 'loaded' && original.head?.encrypted)) return original;
+  let snapshot: T, revision: string, version: number, approved: LegacySnapshotFailureWitness | undefined;
+  try {
+    if (original.state === 'loaded' && strongEtag(original.head?.etag ?? null)) {
+      snapshot = original.snapshot;
+      revision = original.head!.etag!;
+      version = original.revision.version ?? 1;
+    } else if (original.state === 'unavailable' && original.reason === 'legacy-head-mismatch'
+      && /^[a-f0-9]{64}$/.test(options.approvedLegacyWitness ?? '')) {
+      const { witness, signed, snapshot: retained } = await observeLegacySnapshotFailure(surface, {
+        config, typeIri: reg.typeIri, validate: options.validate,
+      });
+      version = Number(witness.expectedGraphIri.split(':v').at(-1));
+      const retainedVersion = Number(witness.actualGraphIri.split(':v').at(-1));
+      if (witness.witnessDigest !== options.approvedLegacyWitness || !signed
+        || !Number.isSafeInteger(retainedVersion) || retainedVersion >= version) return original;
+      snapshot = retained;
+      revision = witness.headRevision;
+      approved = witness;
+    } else return original;
+    if (!Number.isSafeInteger(version + 1) || version < 1) return { state: 'unavailable', reason: 'invalid-snapshot' };
+    const container = snapshotContainer(config);
+    const get = (url: string) => config.fetch(url, { headers: { Accept: snapshotAccept(url), 'Cache-Control': 'no-cache' },
+      cache: 'no-store', redirect: 'manual', signal: AbortSignal.timeout(8000) });
+    const head = await get(`${container}${surface}-snapshot.ttl`);
+    if (!head.ok || head.headers.get('etag') !== revision) throw new Error('Legacy gradebook head moved.');
+    const body = await head.text();
+    const headDigest = sha256Hex(body);
+    if (Buffer.byteLength(body, 'utf8') > 1024 * 1024 || approved && headDigest !== approved.descriptorSha256) {
+      throw new Error('Legacy gradebook head changed.');
+    }
+    const archive = `${container}${surface}-legacy-head-${headDigest}.ttl` as IRI;
+    const archived = await config.fetch(archive, { method: 'PUT', redirect: 'manual', signal: AbortSignal.timeout(8000),
+      headers: { 'Content-Type': 'text/turtle', 'If-None-Match': '*' }, body });
+    if (!archived.ok && archived.status !== 412) throw new Error('Legacy gradebook archive was not written.');
+    const proof = await get(archive);
+    if (!proof.ok || await proof.text() !== body) throw new Error('Legacy gradebook archive was not verified.');
+    const source = approved;
+    await publishImmutableLatest({ ...reg, headConflict: false, version: version + 1,
+      latestHead: { etag: revision, descriptorIri: archive, payloadDigest: null } }, snapshot, config, source && (async (getVersion) => {
+      const graph = await getVersion(`${container}${surface}-snapshot-graph.trig`);
+      if (!graph.ok || graph.headers.get('etag') !== source.graphRevision || sha256Hex(await graph.text()) !== source.graphSha256) {
+        throw new Error('The approved legacy gradebook payload changed.');
+      }
+    }));
+  } catch {
+    // A timed-out acknowledgement or an overlapping instance may have committed the same migration.
+    // The independent read below is the only way to adopt the new head.
+  }
+  const migrated = await read();
+  return migrated.state === 'loaded' && migrated.head?.encrypted ? migrated : { state: 'unavailable', reason: 'migration-unconfirmed' };
 }
 
 /** Foxxi-vocab IRIs for the snapshot types. */
