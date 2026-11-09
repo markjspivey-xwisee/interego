@@ -195,16 +195,15 @@ export function createVerticalBridge(opts: VerticalBridgeOptions): Express {
 
   // One bound for every byte count on this mount: the body parser here, and the SDK's own
   // reads below (see MAX_MCP_BODY_BYTES).
-  const jsonBody = express.json({ limit: MAX_MCP_BODY_BYTES });
   if (opts.routeOwnedJsonPostPaths?.length) {
     const bodyRouter = express.Router();
     for (const path of opts.routeOwnedJsonPostPaths) {
       bodyRouter.post(path, (_req, _res, next) => next('router'));
     }
-    bodyRouter.use(jsonBody);
+    bodyRouter.use(express.json({ limit: MAX_MCP_BODY_BYTES }));
     app.use(bodyRouter);
   } else {
-    app.use(jsonBody);
+    app.use(express.json({ limit: MAX_MCP_BODY_BYTES }));
   }
 
   // Build identity, mounted BEFORE opts.middleware so a vertical's own hook cannot end up

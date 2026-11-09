@@ -242,7 +242,9 @@ describe('the Tool\'s token and the gradebook it posts to', () => {
     const scoring = await tokenFor(AGS_SCOPE.score);
     const authorized = { ...headers, Authorization: `Bearer ${scoring}` };
     expect((await fetch(url, { method: 'POST', headers: authorized, body })).status).toBe(204);
-    expect((await fetch(url, { method: 'POST', headers: authorized, body: '{' })).status).toBe(400);
+    const malformed = await fetch(url, { method: 'POST', headers: authorized, body: '{' });
+    expect(malformed.status).toBe(400);
+    expect(malformed.headers.get('Strict-Transport-Security')).toBe('max-age=31536000');
 
     // An otherwise valid, newer score must be refused even when the HTTP wire length is small or absent.
     const largeBody = JSON.stringify({ ...score, scoreGiven: 2, timestamp: new Date(Date.now() + 1000).toISOString() }) + ' '.repeat(64 * 1024);
