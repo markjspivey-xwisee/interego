@@ -24,7 +24,7 @@ const arr = (v: unknown): unknown[] => (Array.isArray(v) ? v as unknown[] : []);
 
 /** The spec's step table (§16.3), by step id: the status and, for a refusal, the code. */
 const EXPECTED: readonly (readonly [string, number, string?])[] = [
-  ['1a', 200], ['1b', 200], ['1c', 200], ['1d', 200], ['1e', 200],
+  ['1a', 200], ['1b', 200], ['1c', 200], ['1d', 200], ['1e', 200], ['1f', 200], ['1g', 200],
   ['2', 403, 'not-an-admin'], ['3', 403, 'not-an-author'], ['4', 400, 'assessment-use-undeclared'],
   ['5', 200], ['6', 409, 'scenario-not-published'], ['7', 200], ['8', 200], ['9', 200],
   ['10', 403, 'ratifier-is-the-author'], ['11', 200], ['12', 200], ['13', 400, 'pass-gate-needs-knowable-work'], ['14', 200], ['15', 200],

@@ -181,6 +181,8 @@ describe('roles are changed by an admin envelope and kept as a signed registry r
       [W.author, 'author'], [W.coAuthor, 'author'], [W.coAuthor, 'reviewer'], [W.reviewer, 'reviewer'], [W.reviewer2, 'reviewer'],
       [W.reviewer3, 'reviewer'], [W.judgeAgent, 'judge'], [W.judgeAgent, 'agent'], [W.judgePerson, 'judge'], [W.judgePerson, 'reviewer'],
       [W.agentReviewer, 'reviewer'], [W.agentReviewer, 'agent'], [W.agentLearner, 'agent'],
+      // A key reads a scored scenario's stakes, its own results included, only once an admin registered it.
+      [W.ana, 'learner'],
     ];
     const formB = await signedRequestEnvelope(W.admin, {
       v: 1, action: PEV_ACTION.registerRole, timestamp: new Date(clock.t).toISOString(), nonce: nonce(), pod_url: POD,
@@ -1527,6 +1529,9 @@ describe('with a record key, operator-pod records are sealed to it, still verify
     const o = ok(await act(keyed, 'pev.override_attempt', W.reviewer2, { attemptIri: V['attempt'], target, levels: lv, sawJudgeLevelsFirst: true }, {}, on));
     expect([o['state'], o['modalStatus'], o['projectable']]).toEqual(['overridden', 'Asserted', true]);
     expect(vault.store.get(String(o['descriptorUrl']))).toMatch(/iep:modalStatus iep:Asserted/);
+    // A key builds a scored statement only once an admin registered it (chat-stakes.test.ts).
+    refused(await act(keyed, 'pev.project_attempt', W.ana, { attemptIri: V['attempt'], format: 'xapi' }, {}, on), 403, 'stakes-not-in-chat');
+    ok(await act(keyed, 'pev.register_role', W.admin, { address: W.ana.address, role: 'learner', change: 'add' }, {}, on));
     const x = ok(await act(keyed, 'pev.project_attempt', W.ana, { attemptIri: V['attempt'], format: 'xapi' }, {}, on));
     expect(statementProblems(x['statement'], 'xapi', 'pass-gate')).toEqual([]);
     V['audit'] = String(x['auditDescriptorUrl']);
@@ -1565,8 +1570,9 @@ describe('with a record key, operator-pod records are sealed to it, still verify
   }, SLOW);
 
   it('no public byte on the pod names a learner or links an attempt to one: role entry, contest and a declined projection included', async () => {
-    // Ana's role entry, her contest and a second request for a statement each write a record.
-    ok(await act(keyed, 'pev.register_role', W.admin, { address: W.ana.address, role: 'learner', change: 'add' }, {}, on));
+    // Ana's role entries (registered as a learner before, now as a judge too), her contest and a second request for a
+    // statement each write a record.
+    ok(await act(keyed, 'pev.register_role', W.admin, { address: W.ana.address, role: 'judge', change: 'add' }, {}, on));
     const v = ok(await act(keyed, 'pev.get_attempt', W.ana, { attemptIri: V['attempt'] }, {}, on));
     const c = ok(await act(keyed, 'pev.contest_review', W.ana, { attemptIri: V['attempt'], target: v['currentTarget'], why: 'Sam agreed the date with me; please read turn five again.' }, {}, on));
     expect(c['state']).toBe('contested');
@@ -1810,6 +1816,8 @@ describe('with a record key, operator-pod records are sealed to it, still verify
         vault.store.set(g, kept);
       }
     }
+    // Registered as a learner, Ben's key builds the scored statement (chat-stakes.test.ts).
+    ok(await act(fresh, 'pev.register_role', W.admin, { address: W.ben.address, role: 'learner', change: 'add' }, {}, on));
     expect(ok(await act(fresh, 'pev.project_attempt', W.ben, { attemptIri: bIri, format: 'xapi' }, {}, on))['practiceEvidence']).toBe(true);
   }, SLOW);
 
@@ -2360,6 +2368,7 @@ describe('with a record key, operator-pod records are sealed to it, still verify
     expect(stored()).toBe(before);
     // The bridge holding the key goes on: it reads the sealed head, finds version 1 ratified, and
     // projects; the queue still has Ben's attempt; the author tries the draft, keyed under its key.
+    ok(await act(keyedLate, 'pev.register_role', W.admin, { address: W.ana.address, role: 'learner', change: 'add' }, {}, onLate));
     const y = ok(await act(keyedLate, 'pev.project_attempt', W.ana, { attemptIri: ana, format: 'xapi' }, {}, onLate));
     expect(y['practiceEvidence']).toBe(true);
     expect(ok(await act(keyedLate, 'pev.review_queue', W.reviewer, {}, {}, onLate))['awaitingReview']).toBe(1);
@@ -2534,7 +2543,7 @@ describe('records read and found trusted are kept across acts, for a bounded tim
   const setup = async (): Promise<void> => {
     if (C['attempt']) return;
     const h = make(cdeps());
-    for (const [who, role] of [[W.author, 'author'], [W.reviewer, 'reviewer']] as const) {
+    for (const [who, role] of [[W.author, 'author'], [W.reviewer, 'reviewer'], [W.ana, 'learner']] as const) {
       ok(await act(h, 'pev.register_role', W.admin, { address: who.address, role, change: 'add' }, {}, on));
     }
     const p = ok(await act(h, 'pev.author_scenario', W.author, { scenario: demoScenarioInput('missed-deadline', 2), status: 'published', draftAssistance: { used: false } }, {}, on));
@@ -2909,11 +2918,10 @@ describe('Interego sign-in: a request the relay signed acts as the person whose 
     expect([o['state'], o['reviewer'], o['projectable']]).toEqual(['overridden', P.reviewer, true]);
     expect(rpod.store.get(String(o['descriptorUrl']))).toContain(P.reviewer);
     // From her web UI agent the statement names her DID; from her chat agent a scored statement, which carries the score,
-    // is recorded but not returned (chat-stakes.test.ts).
+    // is refused before anything is written (chat-stakes.test.ts).
     const p = ok(await ract(RH, 'pev.project_attempt', agentOf('practice-evidence-u-pk-0000000000d4', P.ana), { attemptIri: X['a'], format: 'xapi' }));
     expect(((p['statement'] as Out)['actor'] as Out)['account']).toMatchObject({ name: P.ana });
-    const fromChat = ok(await ract(RH, 'pev.project_attempt', AG.ana, { attemptIri: X['a'], format: 'xapi' }));
-    expect([fromChat['statement'], typeof fromChat['statementId'], typeof fromChat['stakesWithheld']]).toEqual([null, 'string', 'string']);
+    refused(await ract(RH, 'pev.project_attempt', AG.ana, { attemptIri: X['a'], format: 'xapi' }), 403, 'stakes-not-in-chat');
     const ex = ok(await ract(RH, 'pev.export_record', AG.ana, { attemptIri: X['a'] }));
     expect([ex['relayAddresses'], ex['identityHost']]).toEqual([[RELAY.address.toLowerCase()], IDH]);
     expect((ex['verify'] as string[]).some((x) => x.includes('relay-delegated'))).toBe(true);
@@ -2957,7 +2965,8 @@ describe('Interego sign-in: a request the relay signed acts as the person whose 
     });
     const o = ok(await ract(RH, 'pev.override_attempt', AG.reviewerUi, { action: web(PEV_ACTION.overrideAttempt), attemptIri: iri, target: view['currentTarget'], levels: lv, sawJudgeLevelsFirst: true }));
     expect([o['state'], o['projectable']]).toEqual(['overridden', true]);
-    ok(await ract(RH, 'pev.project_attempt', AG.ben, { action: web(PEV_ACTION.projectAttempt), attemptIri: iri, format: 'xapi' }));
+    // From his web UI agent: a scored statement is not built for a chat (chat-stakes.test.ts).
+    ok(await ract(RH, 'pev.project_attempt', agentOf('practice-evidence-u-pk-0000000000e5', P.ben), { action: web(PEV_ACTION.projectAttempt), attemptIri: iri, format: 'xapi' }));
     // A key-held envelope in that form is read the same way.
     expect(Array.isArray(ok(await act(RH, 'pev.get_attempt', W.ana, { action: web(PEV_ACTION.getAttempt) }, {}, { pod: RPOD }))['attempts'])).toBe(true);
   }, SLOW);

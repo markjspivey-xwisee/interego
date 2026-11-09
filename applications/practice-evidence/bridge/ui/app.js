@@ -78,6 +78,7 @@ const S = {
   hasWallet: false,
   byok: { on: false, key: '', model: '' },
   readEnvelopes: new Map(),     // signed read envelopes, reused for up to 9 minutes
+  stakesNoRole: false,          // a signed list read came back without the stakes: this key holds no role here
   unsent: new Map(),            // the learner's unsent line per attempt, kept across refusals
   judgmentShown: new Map(),     // attempt IRI → judgment index whose quotes are highlighted
   queueEntries: new Map(),      // attempt IRI → review queue entry (blindFirst and factors)
@@ -603,6 +604,13 @@ class Refused extends Error {
 /** A signed act asked of a visitor who has not signed in: nothing is signed and nothing is sent. */
 class NeedsSignIn extends Error { constructor() { super('Sign in to continue.'); } }
 
+/**
+ * What a person signed with a key that holds no role here reads where a scored scenario's stakes
+ * would be. Practice Evidence shows them only to its own Interego sign-in and to an address an admin
+ * registered: anything can make a key and sign with it, an AI assistant included.
+ */
+const NO_ROLE_STAKES = "How much each criterion counts, the points for each level and the pass mark aren't shown to an address that holds no role in this workspace. Sign in with Interego to see them, or ask your admin to register your address.";
+
 async function loadManifest() {
   const r = await fetch('affordances?format=jsonld', { headers: { accept: 'application/ld+json' } });
   if (!r.ok) throw new Error(`The affordance manifest answered HTTP ${r.status}.`);
@@ -701,7 +709,10 @@ async function readScenarios(args, o) {
     try {
       const envelope = await sign(ACT.listScenarios, {}, true);
       const signed = typeof envelope._signed_payload === 'string' ? { _signed_payload: envelope._signed_payload, _signature: envelope._signature } : { envelope };
-      return await invoke(ACT.listScenarios, { ...podArgs(args), ...signed });
+      const r = await invoke(ACT.listScenarios, { ...podArgs(args), ...signed });
+      // Signed and still without them: this key holds no role here (an Interego sign-in always reads them).
+      S.stakesNoRole = Boolean(r.stakesWithheld) && S.mode !== 'interego';
+      return r;
     } catch (e) {
       if (opts.sign === true) throw e;
     }
@@ -725,7 +736,7 @@ async function connectWallet() {
   if (!Array.isArray(accounts) || !accounts[0]) throw new Error('The wallet offered no account.');
   S.account = accounts[0];
   S.mode = 'wallet';
-  S.readEnvelopes.clear();
+  S.readEnvelopes.clear(); S.stakesNoRole = false;
   S.sessions = null;
 }
 
@@ -996,7 +1007,7 @@ function forgetInterego() {
   sessionDrop(PENDING_KEY);
   S.interego = null;
   if (S.mode === 'interego') S.mode = S.demoRoles.length ? 'demo' : S.account ? 'wallet' : 'paste';
-  S.readEnvelopes.clear();
+  S.readEnvelopes.clear(); S.stakesNoRole = false;
   S.sessions = null;
   S.checklistOpen = null;
 }
@@ -1065,7 +1076,7 @@ function onSignInClick(e) {
     connectWallet().then(() => { renderHeader(); route(); }, showSignInProblem);
   } else if (how === 'manual') {
     S.manual = true;
-    S.readEnvelopes.clear();
+    S.readEnvelopes.clear(); S.stakesNoRole = false;
     renderHeader();
     route();
   }
@@ -1335,7 +1346,7 @@ function menuLink(label, iconName, href) { return h('a', { class: 'menu__item', 
 function demoBanner() {
   const r = S.demoRoles.find((x) => x.role === S.role);
   const sel = h('select', { id: 'role', class: 'select', 'aria-label': 'Demo role', onchange: (e) => {
-    S.role = e.target.value; remember('pev.role', S.role); S.readEnvelopes.clear(); S.checklistRole = null; S.queueCount = null; S.sessions = null; S.checklistOpen = null;
+    S.role = e.target.value; remember('pev.role', S.role); S.readEnvelopes.clear(); S.stakesNoRole = false; S.checklistRole = null; S.queueCount = null; S.sessions = null; S.checklistOpen = null;
     renderHeader(); route();
   } }, S.demoRoles.map((x) => h('option', { value: x.role, text: demoLabel(x) })));
   sel.value = S.role;
@@ -1438,7 +1449,7 @@ function workspaceDialog() {
   const b = S.bridge;
   const podInput = h('input', { type: 'url', id: 'pod-url', class: 'input', value: S.pod, placeholder: 'https://storage.example/practice/' });
   const useStorage = h('button', { type: 'button', class: 'btn btn--secondary btn--sm', text: 'Use this storage', onclick: () => {
-    S.pod = podInput.value.trim(); S.needPod = !S.pod; S.readEnvelopes.clear();
+    S.pod = podInput.value.trim(); S.needPod = !S.pod; S.readEnvelopes.clear(); S.stakesNoRole = false;
     if (S.mode === 'interego' && S.interego && !S.interego.principal) confirmInteregoSignIn();
     closeDialog(d);
     route();
@@ -1670,7 +1681,7 @@ function connectAiDialog() {
         h('li', { text: 'It acts as you, through your Interego account. Each record says which app made it, for example "via ChatGPT".' }),
         h('li', { id: 'connect-judge', text: "It can't assess a session you started with your Interego account, even in a new chat or told to act as a judge: it still acts as you. A judge is a different person, with their own Interego account, whom your admin appoints by Member ID." }),
         h('li', { text: 'It never decides a score. Practice Evidence works out every result, and a reviewer signs off.' }),
-        h('li', { id: 'connect-stakes', text: 'It never receives the weights, the points for each level, the pass mark or any score: Practice Evidence leaves them out of every answer to a chat. You see them here.' }),
+        h('li', { id: 'connect-stakes', text: "It doesn't get the weights, the points for each level, the pass mark or any score: Practice Evidence leaves them out of what it sends to a chat assistant through the connector. You see them here. Give an AI tool your own signing key, though, and it reads what you read." }),
         h('li', { id: 'connect-decisions', text: S.bridge.interegoSignIn.chatAgentsDecide === true
           ? 'This workspace also lets assistants approve rubrics, sign off reviews and change roles, so check what you ask for.'
           : 'Approving rubrics, signing off reviews and changing roles happen here in the web app, not from a chat assistant.' }),
@@ -2147,8 +2158,10 @@ function rubricView(rubric, use) {
 
 /**
  * Where a scored rubric's weights, points and pass mark are when the answer left them out. They
- * are never sent to an AI assistant or to a read nobody signed, so a visitor signs in to see them,
- * and a wallet or manual signing confirms once (the signature is kept for a few minutes).
+ * are not sent to a chat assistant, to a read nobody signed, or to a key that holds no role on the
+ * workspace, so a visitor signs in to see them, and a wallet or manual signing confirms once (the
+ * signature is kept for a few minutes). A wallet that has confirmed and still gets none holds no
+ * role here (`S.stakesNoRole`, set when a signed list read came back without them).
  */
 function stakesNote() {
   const note = h('div', { class: 'stakes-note' });
@@ -2156,10 +2169,14 @@ function stakesNote() {
     note.append(para('Sign in to see how much each criterion counts, the points for each level and the pass mark.', 'text-sm text-secondary'));
     return note;
   }
+  if (S.stakesNoRole) {
+    note.append(para(NO_ROLE_STAKES, 'text-sm text-secondary'));
+    return note;
+  }
   const out = h('div', { class: 'outcome' });
   const btn = h('button', { type: 'button', class: 'btn btn--secondary btn--sm', text: 'Show the weights and pass mark', dataset: { action: ACT.listScenarios },
     onclick: () => busy(btn, out, async () => { await readScenarios({}, { sign: true }); setTimeout(route, 0); return null; }, { progress: 'Confirming…' }) });
-  note.append(para("How much each criterion counts, the points for each level and the pass mark are shown once you confirm it's you. They're never sent to an AI assistant.", 'text-sm text-secondary'), btn, out);
+  note.append(para("How much each criterion counts, the points for each level and the pass mark are shown once you confirm it's you. Practice Evidence leaves them out of what it sends to a chat assistant.", 'text-sm text-secondary'), btn, out);
   return note;
 }
 
@@ -2438,7 +2455,7 @@ function judgeMessage(v) {
     // No answer to a chat assistant carries the weights or the pass mark (handlers.ts showsStakes), so no chat has read
     // them from the workspace. A new chat is still asked for: one where the judge reviewed sessions has read other
     // assessments' levels (the review queue, a session), which neither step of the message shows the judging assistant.
-    'Practice Evidence never shows your assistant the weights or the pass mark. '
+    'Practice Evidence leaves the weights and the pass mark out of what it sends your assistant through the Interego connector. '
       + "Paste everything between the lines into a new chat in Claude or ChatGPT, with the Interego connector on, not one where you reviewed sessions: it has seen other assessments' levels.",
     '---', prompt, '---',
   ].join('\n');
@@ -2896,7 +2913,12 @@ function assessmentPanel(v) {
   if (!a) return null;
   const body = h('div', { class: 'card__body' },
     statusPill(final ? 'Final: a qualified reviewer signed off every level.' : 'Provisional: not yet reviewed', final ? 'success' : 'warning'));
-  if (a.use === 'pass-gate') {
+  if (a.use === 'pass-gate' && a.percent === undefined) {
+    // An answer without the stakes: the levels counted, no points, percent or pass result.
+    body.append(h('p', { class: 'verdict', text: 'Scored: the levels below count toward a score.' }));
+    body.append(h('ul', {}, (a.levels || []).map((l) => h('li', { text: `${criterionTitle(v.rubric, l.criterionId)}: ${levelLabel(v.rubric, l.criterionId, l.levelId)}` }))));
+    body.append(para(NO_ROLE_STAKES, 'text-sm text-secondary'));
+  } else if (a.use === 'pass-gate') {
     body.append(h('p', { class: 'result-score' }, h('span', { class: 'nowrap', text: `${a.points} of ${a.maxPoints} points` }), ' · ', h('span', { class: 'nowrap', text: `${a.percent}%` })));
     const verdict = final
       ? (a.meetsPassRule ? 'Meets the pass mark' : 'Below the pass mark')
@@ -2917,7 +2939,7 @@ function assessmentPanel(v) {
     body.append(h('ul', {}, a.levels.map((l) => h('li', { text: `${criterionTitle(v.rubric, l.criterionId)}: ${levelLabel(v.rubric, l.criterionId, l.levelId)}` }))));
   }
   body.append(para("The AI suggests levels only. Practice Evidence works out the result from the rubric. If a quote didn't match, that criterion counts at its lowest level until a reviewer sets it.", 'text-sm text-tertiary'));
-  if (final && v.provisional && v.provisional.use === 'pass-gate') body.append(para(`Before review, the provisional result was ${v.provisional.percent}%.`, 'text-sm text-tertiary'));
+  if (final && v.provisional && v.provisional.use === 'pass-gate' && v.provisional.percent !== undefined) body.append(para(`Before review, the provisional result was ${v.provisional.percent}%.`, 'text-sm text-tertiary'));
   return h('section', { class: 'card assessment', id: 'assessment' },
     h('div', { class: 'card__header' }, h('h2', { class: 'card__title', text: 'Result' }),
       badge('Calculated by Practice Evidence', 'accent', 'Practice Evidence works out the result from the rubric. The AI only suggests levels.')),
@@ -3519,9 +3541,14 @@ async function viewAuthor(root, scenarioIri) {
   if (!S.author || (scenarioIri && S.author.loadedFrom !== scenarioIri)) {
     S.author = { model: blankScenario(), basedOnVersion: null, receipt: null, receiptDisclosure: null, assistance: { choice: '', provider: '', model: '', note: '' }, saved: null, loadedFrom: null, lastSaved: null, pastedDraft: false };
     if (scenarioIri) {
-      // Editing a scored scenario needs its weights, points and pass mark, which come only to a signed read.
-      const r = await readScenarios({ scenario_iri: scenarioIri }, { sign: !signedOut() });
-      if (r.stakesWithheld && r.scenario.assessmentUse === 'pass-gate') { S.author = null; throw new NeedsSignIn(); }
+      // Editing a scored scenario needs its weights, points and pass mark, which come only to a signed read:
+      // read as the sign-in reads (a wallet or manual signing is not asked), then sign once only for a scored one.
+      let r = await readScenarios({ scenario_iri: scenarioIri });
+      if (r.stakesWithheld && r.scenario.assessmentUse === 'pass-gate') {
+        if (signedOut()) { S.author = null; throw new NeedsSignIn(); }
+        r = await readScenarios({ scenario_iri: scenarioIri }, { sign: true });
+        if (r.stakesWithheld) { S.author = null; throw new Error(`${NO_ROLE_STAKES} Only an author edits a scenario.`); }
+      }
       S.author.model = modelFrom(r.scenario);
       S.author.basedOnVersion = r.scenario.version;
       S.author.loadedFrom = scenarioIri;
@@ -3820,7 +3847,7 @@ async function viewMine(root) {
     // Text deleted: whatever result it had is kept on the session page, never shown here as a provisional one.
     if (a.state === 'redacted') return a.provisionalPercent !== undefined ? 'Result kept: open to see' : 'Open to see';
     if (a.provisionalPercent !== undefined) return `${a.provisionalPercent}% · provisional`;
-    if (['judged', 'countersigned', 'overridden', 'contested', 'review-retracted'].includes(a.state)) return 'Feedback only';
+    if (['judged', 'countersigned', 'overridden', 'contested', 'review-retracted'].includes(a.state)) return a.assessmentUse === 'pass-gate' ? 'Scored: open to see the levels' : 'Feedback only';
     return '—';
   };
   root.append(h('div', { class: 'table-wrap', role: 'region', 'aria-label': 'Practice sessions', tabindex: '0' }, h('table', { class: 'table table--stack mine' },

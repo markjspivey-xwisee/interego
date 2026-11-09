@@ -614,10 +614,12 @@ export async function runDemo(opts: DemoOptions = {}): Promise<DemoReport> {
     const grants: readonly (readonly [string, DemoRoleName, Role])[] = [
       ['author', 'author', 'author'], ['reviewer', 'reviewer', 'reviewer'], ['second reviewer', 'second-reviewer', 'reviewer'],
       ['judge agent as judge', 'judge-agent', 'judge'], ['judge agent as agent', 'judge-agent', 'agent'],
+      // A key reads a scored scenario's stakes (its own result included) only once an admin registered it.
+      ['first learner', 'learner', 'learner'], ['second learner', 'second-learner', 'learner'],
     ];
     for (const [i, [label, who, role]] of grants.entries()) {
       const fields = { address: W[who].address, role, change: 'add' };
-      await step(`1${'abcde'[i] ?? ''}`, `admin registers the ${label}${i === 0 ? ' (signed-request envelope form)' : ''}`, { status: 200 },
+      await step(`1${'abcdefg'[i] ?? ''}`, `admin registers the ${label}${i === 0 ? ' (signed-request envelope form)' : ''}`, { status: 200 },
         async () => (i === 0
           ? A(PEV_ACTION.registerRole, await signedRequestEnvelope(W.admin, { v: 1, action: PEV_ACTION.registerRole, issuedAt: clock.peek(), nonce: nextNonce(), podUrl: DEMO_POD, ...fields }))
           : act(A, W.admin, PEV_ACTION.registerRole, fields)),

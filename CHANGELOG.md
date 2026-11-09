@@ -1,5 +1,31 @@
 # Changelog
 
+## 2026-11-09 — Practice Evidence: closing the other ways the stakes reached a chat
+
+A review of the change below found that the weights and the pass mark still
+reached a chat assistant in four ways, and this closes them. A key anyone can
+make, a coding assistant's own included, read them: now a key reads them only
+once an admin has registered it, and not if it is registered as an agent. A
+wallet that holds no role sees the levels and is told how to see the rest.
+Every answer that leaves them out also hid the rubric's fingerprint in plain
+sha256, and with the rubric's words beside it a guess at the weights could be
+checked in under a minute: those fingerprints are now keyed, so they cannot
+be checked against a guess, and the judge's binding, the approval of a rubric
+and the calibration filter take them in that form. A chat could copy a
+scored record, unencrypted, to a pod it named and read it back, and could
+build its learning record: both are now refused to a chat and done in the
+web app. An author's chat that fixed one line of a scored scenario had to
+send weights it could not read, and a guess replaced the author's: now it
+sends the scenario without them and the new version keeps the old ones. The
+web app's own sign-in must also be exactly its own agent, so an app that
+names itself "Practice Evidence Helper" is a chat. An answer about
+feedback-only scenarios alone no longer says it left something out, and an
+author's wallet is asked to sign only to edit a scored scenario. The landing
+page, the guide and the Connect dialog now say what is enforced: what
+Practice Evidence sends a chat through the connector leaves the stakes out,
+and an AI tool given a person's own registered key reads what that person
+reads.
+
 ## 2026-11-09 — Practice Evidence: no chat assistant receives the weights or the pass mark
 
 Before, listing scenarios, reading a session and the review queue gave any
@@ -16,19 +42,19 @@ the stakes through the connector.
 The workspace tells a chat from its own web app by the agent the Interego
 relay signed for. The relay takes that agent from the signed-in session and
 drops any agent a caller names, so nothing a chat adds to a request changes
-it. The web app's own agent, and a key a person holds, still read the
+it. The web app's own agent, and a key an admin registered, still read the
 stakes; a request nobody signed does not. The scenario list is now a POST
 that may be signed: the web app signs one list read when Interego sign-in
 signs it without asking, and otherwise shows "Show the weights and pass mark",
 which a wallet or manual signing confirms once. Editing a scored scenario
 needs that signed read, or a sign-in. The queue a chat reads is ranked without
-closeness to the pass mark. A chat gets a scored session's statement id but
-not the statement, and its record's descriptors but not its graphs.
+closeness to the pass mark. A chat gets a scored record's descriptors but
+not its graphs.
 
 The landing page, the guide, the Connect dialog, the judge message and the
 README now say this, and what it does not cover: a record a person downloads
-or copies to their own storage holds everything, and a workspace without a
-record key keeps its records in plain text. The judge message still asks
+or copies to their own storage from the web app holds everything, and a
+workspace without a record key keeps its records in plain text. The judge message still asks
 for a new chat, because one used for reviewing has seen other assessments'
 levels. A new test asks every read from each role's chat assistants and web
 app agent, and tries claims that a request is the web app's.

@@ -1541,7 +1541,7 @@ describe('your own AI assistant: connect Claude or ChatGPT, or copy and paste; n
     // queue's every judgment), which neither step of the prompt shows the assistant.
     expect(judge.split('\n').slice(0, 3)).toEqual([
       `Hi, could you assess my practice session in Practice Evidence? Session: ${attemptIri}. Workspace: ${nm.base}/`,
-      'Practice Evidence never shows your assistant the weights or the pass mark. '
+      'Practice Evidence leaves the weights and the pass mark out of what it sends your assistant through the Interego connector. '
         + "Paste everything between the lines into a new chat in Claude or ChatGPT, with the Interego connector on, not one where you reviewed sessions: it has seen other assessments' levels.",
       '---',
     ]);

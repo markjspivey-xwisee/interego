@@ -39,8 +39,9 @@
  * status. Internally a decline travels as a thrown `Declined` and is turned back into the
  * returned refusal at the handler boundary; a thrown plain Error is a defect in this code.
  */
+import { createHash, randomBytes } from 'node:crypto';
 import {
-  assertSafeFetchTarget, canonicalGraphDigestResult, sameAction, sha256, validate,
+  assertSafeFetchTarget, canonicalGraphDigestResult, sameAction, sha256, signMessageRaw, validate,
   type EncryptionKeyPair, type ManifestEntry, type Wallet,
 } from '@interego/core';
 import { predictManifestUrl, PublishPreconditionFailedError, PublishShapeViolationError } from '@interego/solid';
@@ -52,7 +53,7 @@ import {
   type InferenceDisclosure, type TextModel, type TextModelRequest, type TextModelResult,
 } from '../src/model.js';
 import { isPevAction, PEV_ACTION, type PevActionKey } from '../src/ontology.js';
-import { agentSlugOf, isUserDid, openRelayDelegated, type RelayDelegationPolicy } from '../src/relay-delegated.js';
+import { agentSlugOf, isUserDid, openRelayDelegated, userIdOfUserDid, type RelayDelegationPolicy } from '../src/relay-delegated.js';
 import {
   agreementOf, assembleJudgment, assess, coerceJudgment, coerceScenario, counterpartControl, counterpartPacket,
   counterpartRequest, creditedLevels, criterionContentHash, draftComparableHash, draftPacket, draftRequest,
@@ -79,7 +80,10 @@ import {
   AUDIT_SAMPLE_RATE, CALIBRATION_SMALL_COUNT_RULE, METRIC_NOTE, RESULTS_K, STANDING_POLICY,
   type CalibrationCellView, type QueueCandidate,
 } from '../src/calibration.js';
-import { assessmentWithoutStakes, judgmentWithoutStakes, reviewWithoutStakes, rubricWithoutStakes, STAKES_WITHHELD } from '../src/stakes.js';
+import {
+  assessmentWithoutStakes, hashMask, judgmentWithoutStakes, maskAnswerHashes, reviewWithoutStakes, rubricWithoutStakes, sameRubricShape, scoredWithoutStakes,
+  withStakesOf, STAKES_WITHHELD, type HashMask,
+} from '../src/stakes.js';
 import { buildStatement, statementProblems, LOSSY, LRS_REQUEST_NOTE, PROJECTION_FORMATS, type ProjectionFormat } from '../src/projections.js';
 import {
   createGraphLocks, deleteResource, isDeleted, isTrusted, keyMarksOf, listEntries, normalPod, placementProblem, podEntries, publishPevRecord,
@@ -354,6 +358,8 @@ interface Ctx {
   readonly writes: { n: number };
   readonly actReadBudgetBytes: number;
   readonly assertPublicPod: (podUrl: string) => Promise<void>;
+  /** The keyed stand-ins for rubric and scenario hashes in an answer without the stakes (`answerHashKey`). */
+  readonly hashMask: () => Promise<HashMask>;
 }
 
 /**
@@ -364,6 +370,11 @@ interface Call {
   readonly ctx: Ctx; readonly cache: ReadCache; readonly budget: ReadBudget; readonly read: typeof fetch;
   /** `ctx.writes.n` when the act began: the records this handler set had written by then. */
   readonly writesAtStart: number;
+  /**
+   * Set by `showsStakes` when this act's signer reads the stakes. Unless it is, every rubric and
+   * scenario hash in the answer, a refusal included, is keyed before it leaves (see `run`).
+   */
+  stakesShown: boolean;
 }
 
 /**
@@ -430,7 +441,37 @@ function makeContext(deps: PevDeps): Ctx {
     writes: { n: 0 },
     actReadBudgetBytes: deps.actReadBudgetBytes ?? ACT_READ_BUDGET_BYTES,
     assertPublicPod: deps.assertPublicPod ?? assertSafeFetchTarget,
+    hashMask: ((): (() => Promise<HashMask>) => {
+      let kept: Promise<HashMask> | null = null;
+      return () => (kept ??= answerHashKey(deps.platformWallet, deps.recordKey).then(hashMask));
+    })(),
   };
+}
+
+/** Signed by the platform key to derive `answerHashKey`; never signed for anything else, never published. */
+const ANSWER_HASH_KEY_LABEL = 'Practice Evidence: the key this bridge keys rubric and scenario hashes with in answers. A secret: this signature is never published.';
+
+/**
+ * The key rubric and scenario hashes are keyed with in an answer without the stakes: a hash of the
+ * platform key's signature over a fixed label (deterministic, RFC 6979, so every replica of this
+ * bridge, and every restart, derives the same one, which only a holder of the platform key can) and
+ * of the record key when there is one. A platform signer that does not sign deterministically, or
+ * cannot sign here, gives this process a random key of its own instead: answers then key hashes
+ * differently on another replica or after a restart, and a keyed hash sent back is refused there
+ * as a mismatch, never accepted wrongly.
+ */
+async function answerHashKey(platform: Wallet, recordKey: EncryptionKeyPair | undefined): Promise<Buffer> {
+  const h = createHash('sha256').update('pev-answer-hash-key/v1\n', 'utf8');
+  let signed: string | null = null;
+  try {
+    const [a, b] = await Promise.all([signMessageRaw(platform, ANSWER_HASH_KEY_LABEL), signMessageRaw(platform, ANSWER_HASH_KEY_LABEL)]);
+    signed = a === b ? a : null;
+  } catch {
+    signed = null;
+  }
+  h.update(signed ?? randomBytes(32).toString('hex'), 'utf8');
+  if (recordKey) h.update(`\n${recordKey.secretKey}`, 'utf8');
+  return h.digest();
 }
 
 const iso = (ctx: Ctx): string => ctx.now().toISOString();
@@ -562,38 +603,93 @@ export const DECISIVE_ACTS: ReadonlySet<PevActionKey> = new Set<PevActionKey>(['
 export const DECISIVE_ON_ANOTHERS_ATTEMPT: ReadonlySet<PevActionKey> = new Set<PevActionKey>(['redactAttempt']);
 /**
  * The agent slug prefix of this bridge's own web UI: the relay names an OAuth client's agent
- * `<client name>-<userId>`, and the UI registers as `practice-evidence`. Any client can call
- * itself that, so this keeps a chat agent a person connected for other work from deciding here
- * unasked; it does not prove the page made the request.
+ * `<client name>-<userId>`, and the UI registers as `practice-evidence`, so its agent is exactly
+ * `practice-evidence-<the person's user id>` (`isWebAppAgent`). Another client can register under
+ * the same name, so this keeps a chat agent a person connected for other work from deciding here
+ * or reading the stakes unasked; it does not prove the page made the request.
  */
 export const WEB_UI_AGENT_PREFIX = 'practice-evidence-';
 
 /**
- * Whether the Interego relay signed this request for a chat agent: for any agent but this bridge's
- * own web UI (`WEB_UI_AGENT_PREFIX`), so for any agent it does not know, too. The agent is the
- * `agent_id` inside the payload the relay signed, which the relay takes from the signed-in session
- * (an `agent_id` a caller sends is dropped before it signs), and which `openRelayDelegated` checked
- * against that agent's DID document. Nothing a caller adds to a request, signed or not, changes it.
- * A key-held signer (a wallet, manual signing, a person's own script) is not a chat agent: the relay
- * signs for an assistant connected through it, which holds no key of its own.
+ * Whether the Interego relay signed this request for this bridge's own web UI: the agent is
+ * exactly `practice-evidence-<user id>`, the user id being the person's own (the controller the
+ * agent's DID document names, which `openRelayDelegated` checked). A longer slug that starts the
+ * same way (`practice-evidence-helper-<user id>`, a client registered as "Practice Evidence
+ * Helper") is another client's agent.
  */
-function isChatAgent(ctx: Ctx, relay: RelayAttestation | undefined): boolean {
-  if (relay === undefined || ctx.relay === null) return false;
-  return !(agentSlugOf(relay.agentId, ctx.relay.identityHost) ?? '').startsWith(WEB_UI_AGENT_PREFIX);
+function isWebAppAgent(ctx: Ctx, relay: RelayAttestation): boolean {
+  if (ctx.relay === null) return false;
+  const slug = agentSlugOf(relay.agentId, ctx.relay.identityHost);
+  const user = userIdOfUserDid(relay.principal, ctx.relay.identityHost);
+  return slug !== null && user !== null && slug === `${WEB_UI_AGENT_PREFIX}${user}`;
 }
 
 /**
- * Whether an answer may carry a scored scenario's stakes (src/stakes.ts): only to a signed request
- * that is not a chat agent's, so to this bridge's web app (its own agent, a wallet, manual signing,
- * a demo key) and to a person's own key. An unsigned request and every chat agent get the answer
- * without them, whatever role the person behind the chat holds.
+ * Whether the Interego relay signed this request for a chat agent: for any agent but this bridge's
+ * own web UI (`isWebAppAgent`), so for any agent it does not know, too. The agent is the `agent_id`
+ * inside the payload the relay signed, which the relay takes from the signed-in session (an
+ * `agent_id` a caller sends is dropped before it signs), and which `openRelayDelegated` checked
+ * against that agent's DID document. Nothing a caller adds to a request, signed or not, changes it.
  */
-function showsStakes(ctx: Ctx, s: Signed | null): boolean {
-  return s !== null && !isChatAgent(ctx, s.relay);
+function isChatAgent(ctx: Ctx, relay: RelayAttestation | undefined): boolean {
+  if (relay === undefined || ctx.relay === null) return false;
+  return !isWebAppAgent(ctx, relay);
 }
 
-/** The top-level mark of an answer that left the stakes out. */
-const withheldMark = (stakes: boolean): Out => (stakes ? {} : { stakesWithheld: STAKES_WITHHELD });
+/**
+ * Whether an answer may carry a scored scenario's stakes (src/stakes.ts), recorded on the call so
+ * the answer's rubric and scenario hashes are left unkeyed only then (`run`). Yes for this bridge's
+ * own web UI agent, and for a key registered on the workspace: an admin's, a demo key's, or one
+ * holding a role there, unless it is registered as an agent. No for a request nobody signed, for
+ * every chat agent the relay signs for, whatever role the person behind it holds, and for a key
+ * that holds no role: anything can make a key and sign with it, an AI assistant with a code tool
+ * as well, and start an attempt with it (enrolment is open), so a key counts only once an admin
+ * registered it. Whatever holds a registered key reads the stakes, a program its holder gives it to
+ * included. A role registry that cannot be read refuses the act, as it does any act that reads
+ * roles (the scenario list alone answers, without the stakes).
+ */
+async function showsStakes(call: Call, s: Signed | null): Promise<boolean> {
+  const { ctx } = call;
+  call.stakesShown = false;
+  let shown = false;
+  if (s !== null && s.relay !== undefined) shown = !isChatAgent(ctx, s.relay);
+  else if (s !== null) {
+    const roles = (await rolesOn(call, s.pod)).of(s.signer);
+    shown = !roles.has('agent') && (isAdmin(ctx, s.signer) || isDemo(ctx, s.signer) || roles.size > 0);
+  }
+  call.stakesShown = shown;
+  return shown;
+}
+
+/**
+ * The top-level mark of an answer that left a scored scenario's stakes out: only when it did, so
+ * not for a reader of the stakes, and not for an answer about feedback-only scenarios alone,
+ * which hold none.
+ */
+const withheldMark = (stakes: boolean, scored: boolean): Out => (stakes || !scored ? {} : { stakesWithheld: STAKES_WITHHELD });
+const scoredUse = (x: { readonly assessmentUse: string }): boolean => x.assessmentUse === 'pass-gate';
+
+/**
+ * Whether a rubric or scenario hash a caller sent back names `stored`: as an answer to this caller
+ * showed it. A caller who reads the stakes may send it bare or keyed; any other caller only keyed
+ * (`maskAnswerHashes`), the form every answer to it carries, so a request cannot be used to check a
+ * guessed rubric against the bare hash either.
+ */
+async function sameHash(call: Call, s: Signed, sent: unknown, stored: string): Promise<boolean> {
+  if (typeof sent !== 'string') return false;
+  if (sent === (await call.ctx.hashMask()).full(stored)) return true;
+  return sent === stored && (await showsStakes(call, s));
+}
+
+/**
+ * The refusal of an act that would hand a scored scenario's stakes to a caller who does not read
+ * them (`showsStakes`): a learning record of a scored attempt, its graphs copied to a pod, or a
+ * scored scenario's stakes replaced from a chat that cannot read them.
+ */
+function stakesNotHere(what: string): Declined {
+  return decline(403, `${what} Practice Evidence leaves a scored scenario's weights, level points and pass mark out of what it sends to a chat assistant, to a key not registered on this workspace and to a request nobody signed, so this is done in the Practice Evidence web app, signed in.`,
+    'stakes-not-in-chat');
+}
 
 /**
  * Refused when a chat agent the relay signed for takes a decisive act and the operator has not let
@@ -1240,10 +1336,17 @@ function nextStepsOf(a: AttemptBody): NextLevelGuidance[] {
   return primary ? nextLevelGuidance(a.scenarioSpec.rubric, creditedLevels(a.scenarioSpec, primary), 'provisional') : [];
 }
 
-function nextFor(ctx: Ctx, a: AttemptBody, caller: string, roles: ReadonlySet<Role>, eligible: boolean): NextAction[] {
-  return nextActionsFor(nextActionView(a, caller), roles, {
+/**
+ * The acts this caller may take next. `stakes` is whether the caller reads the stakes
+ * (`showsStakes`): one who does not is not offered a learning record of a scored attempt or a copy
+ * of its graphs, which hold them, and which `project_attempt` and `holder_copy` refuse it.
+ */
+function nextFor(ctx: Ctx, a: AttemptBody, caller: string, roles: ReadonlySet<Role>, eligible: boolean, stakes: boolean): NextAction[] {
+  const all = nextActionsFor(nextActionView(a, caller), roles, {
     bridgeHasModel: ctx.deps.model !== undefined, isLearner: samePrincipal(a.learner.address, caller), isAdmin: isAdmin(ctx, caller), eligible,
   });
+  if (stakes || !scoredUse(a.scenarioSpec)) return all;
+  return all.filter((x) => x.action !== A.projectAttempt && x.action !== A.holderCopy);
 }
 
 function bridgeRoute(ctx: Ctx): Out {
@@ -1394,6 +1497,16 @@ function declaredAssistance(ctx: Ctx, s: Signed, spec: ScenarioSpec): DraftAssis
   };
 }
 
+/**
+ * Save a scenario version. A chat agent reads a scored scenario without its stakes, so it sends one
+ * without them too: a scored scenario a chat sends naming no weight, level value or pass rule keeps
+ * the stakes of the version it is based on (and its reason a pass mark fits, unless it sends one),
+ * when its criteria and levels are that version's, by id and in order, and says so in
+ * `stakesKept`. A chat may not send stakes for a scenario whose latest version is scored: it cannot
+ * have read the ones it would replace, so a guess would silently stand for the author's
+ * (`stakes-not-in-chat`, refused whether or not the guess is right, so no answer says which). It
+ * may name them for a new scenario, or one made scored now: then it knows them.
+ */
 async function authorScenario(call: Call, args: Record<string, unknown>): Promise<Out> {
   const { ctx } = call;
   const s = await signedAct(call, args, 'authorScenario', { write: true });
@@ -1401,7 +1514,13 @@ async function authorScenario(call: Call, args: Record<string, unknown>): Promis
   if (!roles.of(s.signer).has('author')) throw decline(403, 'Only an address registered as an author may write scenarios on this pod.', 'not-an-author');
   const status = s.payload['status'];
   if (status !== 'draft' && status !== 'published') throw decline(400, 'Say whether to save a draft or publish: status draft or published.', 'status-undeclared');
-  const spec = coercedScenario(s.payload['scenario']);
+  // A caller who does not read the stakes (a chat agent, or an author's key registered as an agent too) cannot replace them.
+  const stakes = await showsStakes(call, s);
+  const raw = s.payload['scenario'];
+  // Sent by such a caller scored and without stakes: everything else is checked now, the stakes once the head is read.
+  const keepsHeadStakes = !stakes && scoredWithoutStakes(raw);
+  let spec = coercedScenario(keepsHeadStakes ? { ...(raw as Record<string, unknown>), assessmentUse: 'feedback-only', passGateWhy: undefined } : raw);
+  // The draft hash it is compared with leaves out the use, the work read and every stake.
   const assistance = declaredAssistance(ctx, s, spec);
   const basedOn = s.payload['basedOnVersion'];
   const iri = scenarioIriOf(s.pod, spec.scenarioKey);
@@ -1416,17 +1535,35 @@ async function authorScenario(call: Call, args: Record<string, unknown>): Promis
       throw decline(409, `This scenario is at version ${head.version}; read it again and send basedOnVersion ${head.version}.`, 'scenario-changed',
         undefined, { currentVersion: head.version });
     }
+    let kept: Out = {};
+    if (keepsHeadStakes) {
+      // Nothing scored to keep: a scenario made scored here names its stakes, as a new one does.
+      if (!head || !scoredUse(head.scenario)) spec = coercedScenario(raw);
+      else if (!sameRubricShape(raw, head.scenario.rubric)) {
+        throw stakesNotHere(`Its criteria or levels are not version ${head.version}'s, by id and in order, so that version's weights, level points and pass mark cannot be kept, and new ones cannot be sent from here, where they are not read.`);
+      } else {
+        spec = coercedScenario(withStakesOf(raw as Record<string, unknown>, head.scenario));
+        kept = {
+          stakesKept: {
+            fromVersion: head.version,
+            note: `This scenario is scored. Its weights, level points and pass mark are version ${head.version}'s, kept as they were, because they are not read from here${head.scenario.passGateWhy !== null ? ', and so is the reason a pass mark fits unless one was sent' : ''}. Change them in the Practice Evidence web app.`,
+          },
+        };
+      }
+    } else if (!stakes && head && scoredUse(head.scenario) && scoredUse(spec)) {
+      throw stakesNotHere(`Version ${head.version} is scored, and its weights, level points and pass mark are not read from here, so they cannot be replaced from here. Send the scenario without weights, level values and passRule to keep version ${head.version}'s.`);
+    }
     const hash = scenarioHash(spec);
     const sameContent = head !== null && head.scenarioHash === hash;
-    const stakes = showsStakes(ctx, s);
+    const mark = withheldMark(stakes, head !== null && scoredUse(head.scenario));
     if (head && sameContent && status === head.status) {
-      return { ...scenarioView(h.head!, head, stakes), modalStatus: modalFor(head), descriptorUrl: h.head!.descriptorUrl, rubricChanged: false, statusChanged: false, changed: false, ...withheldMark(stakes) };
+      return { ...scenarioView(h.head!, head, stakes), modalStatus: modalFor(head), descriptorUrl: h.head!.descriptorUrl, rubricChanged: false, statusChanged: false, changed: false, ...kept, ...mark };
     }
     if (head && sameContent && status === 'draft') {
       throw decline(409, `Version ${head.version} is already ${head.status}; a published version does not go back to draft. Change the content to start a new version.`, 'scenario-already-published');
     }
     if (head && sameContent && head.status === 'ratified') {
-      return { ...scenarioView(h.head!, head, stakes), modalStatus: modalFor(head), descriptorUrl: h.head!.descriptorUrl, rubricChanged: false, statusChanged: false, changed: false, ...withheldMark(stakes) };
+      return { ...scenarioView(h.head!, head, stakes), modalStatus: modalFor(head), descriptorUrl: h.head!.descriptorUrl, rubricChanged: false, statusChanged: false, changed: false, ...kept, ...mark };
     }
     const version = head ? (sameContent ? head.version : head.version + 1) : 1;
     const rh = rubricHash(spec.rubric);
@@ -1448,7 +1585,7 @@ async function authorScenario(call: Call, args: Record<string, unknown>): Promis
       descriptorUrl: w.descriptorUrl, ...(h.head ? { supersedes: h.head.descriptorUrl } : {}),
       rubricChanged: head !== null && head.rubricHash !== rh, statusChanged: head !== null && head.status !== status,
       draftAssistance: body.draftAssistance, assessmentUse: spec.assessmentUse, workRegime: spec.workRegime,
-      ratified: false, changed: true, recorded: true,
+      ratified: false, changed: true, recorded: true, ...kept,
     };
   });
 }
@@ -1516,7 +1653,7 @@ async function ratifyScenario(call: Call, args: Record<string, unknown>): Promis
     if (ctx.trusted.addresses.has(principalKey(s.signer))) throw decline(403, 'The platform key cannot ratify a rubric.', 'ratifier-is-the-platform');
     if (!roles.has('reviewer')) throw decline(403, 'Only an address registered as a reviewer may ratify a rubric.', 'not-a-reviewer');
     if (roles.has('agent')) throw decline(403, 'A person must ratify a rubric; this address is registered as an agent.', 'agent-cannot-ratify');
-    if (s.payload['version'] !== b.version || s.payload['scenarioHash'] !== b.scenarioHash) {
+    if (s.payload['version'] !== b.version || !(await sameHash(call, s, s.payload['scenarioHash'], b.scenarioHash))) {
       throw decline(409, `The scenario is at version ${b.version} with a different content hash; read it again.`, 'scenario-revised', undefined, { currentVersion: b.version });
     }
     if (b.status === 'draft') throw decline(409, 'A draft cannot be ratified; the author publishes it first.', 'scenario-not-published');
@@ -1559,7 +1696,15 @@ const carriesSignature = (args: Record<string, unknown>): boolean =>
 async function listScenarios(call: Call, args: Record<string, unknown>): Promise<Out> {
   const { ctx } = call;
   const s = carriesSignature(args) ? await signedAct(call, args, 'listScenarios', { answersOnKeyMismatch: true }) : null;
-  const stakes = showsStakes(ctx, s);
+  // The one read still answered on a pod whose records are under another key, so on one whose role
+  // registry this bridge cannot read: then without the stakes.
+  let stakes = false;
+  try {
+    stakes = await showsStakes(call, s);
+  } catch (e) {
+    if (e instanceof Declined || e instanceof RecordSealed || e instanceof RecordUnreadable || e instanceof GraphMissing || e instanceof ChainForked) stakes = false;
+    else throw e;
+  }
   const field = (...names: string[]): unknown => {
     for (const n of names) if (s && s.payload[n] !== undefined) return s.payload[n];
     for (const n of names) if (args[n] !== undefined) return args[n];
@@ -1587,7 +1732,7 @@ async function listScenarios(call: Call, args: Record<string, unknown>): Promise
       podUrl: pod,
       scenario: { ...scenarioView(h.rec, h.body, stakes), counterpart: h.body.scenario.counterpart, endsWhen: h.body.scenario.endsWhen },
       versions, ...(mismatch ? { recordKeyMismatch: keyMismatchMark(ctx, mismatch) } : {}), bridge: bridgeRoute(ctx),
-      ...withheldMark(stakes), ...(s ? { signedAs: signedAsOf(s) } : {}),
+      ...withheldMark(stakes, scoredUse(h.body.scenario)), ...(s ? { signedAs: signedAsOf(s) } : {}),
     };
   }
   const draftsAsked = field('includeDrafts', 'include_drafts');
@@ -1603,7 +1748,7 @@ async function listScenarios(call: Call, args: Record<string, unknown>): Promise
     ...readLimitMark(call, read.readLimitReached),
     ...(mismatch ? { recordKeyMismatch: keyMismatchMark(ctx, mismatch) } : {}),
     bridge: bridgeRoute(ctx),
-    ...withheldMark(stakes), ...(s ? { signedAs: signedAsOf(s) } : {}),
+    ...withheldMark(stakes, scenarios.some((x) => x['assessmentUse'] === 'pass-gate')), ...(s ? { signedAs: signedAsOf(s) } : {}),
   };
 }
 
@@ -1675,13 +1820,14 @@ async function startAttempt(call: Call, args: Record<string, unknown>): Promise<
       authorTest: isAuthor, startedAt: at, turns: [first], counterpartControlledBy: 'platform',
       judgments: [], reviews: [], reopenings: [], startEnvelope: s.stored, acts: [actOf(s, 'startAttempt')],
     };
+    const stakes = await showsStakes(call, s);
     const w = await writeRecord(call, { pod: s.pod, body, seq: 1, prev: null, nonce: s.nonce });
     return {
       attemptIri: iri, descriptorUrl: w.descriptorUrl, state: body.state, attemptNumber: n, coached: body.coached,
       authorTest: body.authorTest, learnerKind: body.learner.kind, assessmentUse: spec.assessmentUse,
       rubricRatified: sb.status === 'ratified', scenario: body.scenario, turns: body.turns, nextTurnIndex: 1, turnLimit: spec.turnLimit,
       routes: { bridgeModel: ctx.deps.model !== undefined, counterpartPacket: true },
-      nextActions: nextFor(ctx, body, s.signer, roles.of(s.signer), false), recorded: true,
+      nextActions: nextFor(ctx, body, s.signer, roles.of(s.signer), false, stakes), recorded: true,
     };
   });
 }
@@ -1742,7 +1888,7 @@ function withExchange(a: AttemptBody, learner: Turn, counterpart: Turn, endAfter
   } as AttemptBody;
 }
 
-function exchangeOut(ctx: Ctx, s: Signed, body: AttemptBody, w: Written, learner: Turn, counterpart: Turn, roles: ReadonlySet<Role>): Out {
+function exchangeOut(ctx: Ctx, s: Signed, body: AttemptBody, w: Written, learner: Turn, counterpart: Turn, roles: ReadonlySet<Role>, stakes: boolean): Out {
   const ended = body.state === 'ended';
   return {
     attemptIri: body.attemptIri, descriptorUrl: w.descriptorUrl, state: body.state,
@@ -1751,7 +1897,7 @@ function exchangeOut(ctx: Ctx, s: Signed, body: AttemptBody, w: Written, learner
     endProposed: body.endProposedAtTurn !== undefined, nextTurnIndex: body.turns.length, ended,
     ...(ended ? { endedBy: body.endedBy, transcriptHash: body.transcriptHash } : {}),
     counterpartControlledBy: body.counterpartControlledBy, currentTarget: { recordId: w.recordId, descriptorUrl: w.descriptorUrl, graphDigest: w.graphDigest },
-    nextActions: nextFor(ctx, body, s.signer, roles, false), recorded: true,
+    nextActions: nextFor(ctx, body, s.signer, roles, false, stakes), recorded: true,
   };
 }
 
@@ -1773,6 +1919,7 @@ async function say(call: Call, args: Record<string, unknown>): Promise<Out> {
   return locked(call, `${s.pod}|${iri}`, async () => {
     const h = await conversationHead(call, s, iri, turnIndex);
     const roles = (await rolesOn(call, s.pod)).of(s.signer);
+    const stakes = await showsStakes(call, s);
     const model = routeFor(call, args, { action: A.counterpartPacket, then: A.recordTurns }, { signer: s.signer, roles });
     const r = await callModel(model, counterpartRequest(h.body.scenarioSpec, h.body.turns, text), ctx.timeouts.counterpart);
     const disclosure = disclosureOf(model, r, COUNTERPART_PROMPT_TEMPLATE_HASH);
@@ -1788,7 +1935,7 @@ async function say(call: Call, args: Record<string, unknown>): Promise<Out> {
     };
     const body = withExchange(h.body, learner, counterpart, endAfter, actOf(s, 'say'), at);
     const w = await writeRecord(call, { pod: s.pod, body, seq: h.seq, prev: h.rec, nonce: s.nonce, disclosure });
-    return exchangeOut(ctx, s, body, w, learner, counterpart, roles);
+    return exchangeOut(ctx, s, body, w, learner, counterpart, roles, stakes);
   });
 }
 
@@ -1840,6 +1987,7 @@ async function recordTurns(call: Call, args: Record<string, unknown>): Promise<O
   return locked(call, `${s.pod}|${iri}`, async () => {
     const h = await conversationHead(call, s, iri, turnIndex);
     const roles = (await rolesOn(call, s.pod)).of(s.signer);
+    const stakes = await showsStakes(call, s);
     const learner: Turn = { index: turnIndex, speaker: 'learner', text: learnerText, textSha256: sha256(learnerText), at: s.at, source: 'learner-signed', envelope: s.stored };
     const disclosure: InferenceDisclosure = {
       provider: declared.provider, model: declared.model, keySource: 'mcp-client', route: 'client-packet', declaredBy: s.signerDid,
@@ -1850,7 +1998,7 @@ async function recordTurns(call: Call, args: Record<string, unknown>): Promise<O
     };
     const body = withExchange(h.body, learner, counterpart, endAfter, actOf(s, 'recordTurns'), iso(ctx));
     const w = await writeRecord(call, { pod: s.pod, body, seq: h.seq, prev: h.rec, nonce: s.nonce });
-    return exchangeOut(ctx, s, body, w, learner, counterpart, roles);
+    return exchangeOut(ctx, s, body, w, learner, counterpart, roles, stakes);
   });
 }
 
@@ -1868,6 +2016,7 @@ async function endConversation(call: Call, args: Record<string, unknown>): Promi
       throw decline(409, 'Say something first; an attempt with no learner line has nothing to judge.', 'no-learner-turns');
     }
     const roles = (await rolesOn(call, s.pod)).of(s.signer);
+    const stakes = await showsStakes(call, s);
     const last = h.body.turns[h.body.turns.length - 1];
     const endedBy = h.body.endProposedAtTurn !== undefined && last !== undefined && h.body.endProposedAtTurn === last.index
       ? 'learner-confirmed-counterpart-end' : 'learner';
@@ -1880,7 +2029,7 @@ async function endConversation(call: Call, args: Record<string, unknown>): Promi
     return {
       attemptIri: iri, descriptorUrl: w.descriptorUrl, state: 'ended', endedBy, transcriptHash: body.transcriptHash,
       currentTarget: { recordId: w.recordId, descriptorUrl: w.descriptorUrl, graphDigest: w.graphDigest },
-      nextActions: nextFor(ctx, body, s.signer, roles, false), recorded: true,
+      nextActions: nextFor(ctx, body, s.signer, roles, false, stakes), recorded: true,
     };
   });
 }
@@ -1921,9 +2070,9 @@ async function writeJudgment(call: Call, s: Signed, h: AttemptHead, j: JudgmentR
  */
 async function recordJudgmentOn(call: Call, s: Signed, h: AttemptHead, j: JudgmentResult, key: PevActionKey, roles: ReadonlySet<Role>, disclosure?: InferenceDisclosure): Promise<Out> {
   const { ctx } = call;
+  const stakes = await showsStakes(call, s);
   const { body, w } = await writeJudgment(call, s, h, j, key, disclosure);
   const primary = body.judgments[0]!;
-  const stakes = showsStakes(ctx, s);
   const rubric = body.scenarioSpec.rubric;
   return {
     attemptIri: body.attemptIri, descriptorUrl: w.descriptorUrl, state: body.state, modalStatus: modalFor(body),
@@ -1932,7 +2081,7 @@ async function recordJudgmentOn(call: Call, s: Signed, h: AttemptHead, j: Judgme
     provisional: stakes ? primary.provisional : assessmentWithoutStakes(primary.provisional, rubric),
     provisionalLabel: PROVISIONAL_LABEL, unverifiedCriteria: primary.unverifiedCriteria, nextSteps: nextStepsOf(body),
     currentTarget: { recordId: w.recordId, descriptorUrl: w.descriptorUrl, graphDigest: w.graphDigest },
-    nextActions: nextFor(ctx, body, s.signer, roles, false), recorded: true, ...withheldMark(stakes),
+    nextActions: nextFor(ctx, body, s.signer, roles, false, stakes), recorded: true, ...withheldMark(stakes, scoredUse(body.scenarioSpec)),
   };
 }
 
@@ -2068,7 +2217,7 @@ async function recordJudgment(call: Call, args: Record<string, unknown>): Promis
     judgeable(h.body);
     const a = h.body;
     const tHash = a.transcriptHash ?? transcriptHash(a.turns);
-    if (s.payload['attemptHeadUrl'] !== h.rec.descriptorUrl || s.payload['transcriptHash'] !== tHash || s.payload['rubricHash'] !== a.scenario.rubricHash) {
+    if (s.payload['attemptHeadUrl'] !== h.rec.descriptorUrl || s.payload['transcriptHash'] !== tHash || !(await sameHash(call, s, s.payload['rubricHash'], a.scenario.rubricHash))) {
       throw decline(409, 'This judgment is bound to a different version of the attempt; fetch a fresh judge packet.', 'binding-mismatch',
         undefined, { attemptHeadUrl: h.rec.descriptorUrl, transcriptHash: tHash, rubricHash: a.scenario.rubricHash });
     }
@@ -2159,7 +2308,7 @@ async function reviewQueueAct(call: Call, args: Record<string, unknown>): Promis
   const read = await attemptBodies(call, s.pod, 'the review queue (what awaits review)');
   // For a chat agent: each entry's rubric, judgments and provisional result without the stakes, and
   // a queue ranked without closeness to the pass mark, which is worked out from them.
-  const stakes = showsStakes(ctx, s);
+  const stakes = await showsStakes(call, s);
   const { cells } = cellsFor(ctx, s.pod, read.bodies, 'rubric-version');
   const candidates: QueueCandidate[] = read.heads.flatMap((r) => {
     const a = r.body as AttemptBody;
@@ -2191,7 +2340,7 @@ async function reviewQueueAct(call: Call, args: Record<string, unknown>): Promis
   return {
     podUrl: s.pod, entries, awaitingReview: q.awaitingReview, excludedAsConflicted: q.excludedAsConflicted, weights: stakes ? q.weights : otherWeights,
     computedAt: iso(ctx), attemptsRead: read.heads.length, untrustedRecordsSkipped: read.untrusted, complete: read.complete, ...read.limit,
-    ...withheldMark(stakes),
+    ...withheldMark(stakes, entries.some((e) => e.assessmentUse === 'pass-gate')),
   };
 }
 
@@ -2260,6 +2409,8 @@ async function writeReview(call: Call, s: Signed, h: AttemptHead, primary: Judgm
   const { ctx } = call;
   const a = h.body;
   const rat = await ratificationOf(call, s.pod, a);
+  // From a chat agent (only with PEV_CHAT_AGENTS_DECIDE=1): the levels the review set, no result.
+  const stakes = await showsStakes(call, s);
   const at = iso(ctx);
   const assessment = assess(a.scenarioSpec, Object.fromEntries(finalLevels.map((f) => [f.criterionId, f.levelId])), false);
   const review: ReviewResult = {
@@ -2269,17 +2420,15 @@ async function writeReview(call: Call, s: Signed, h: AttemptHead, primary: Judgm
   const body: AttemptBody = { ...a, at, state: outcome, reviews: [...a.reviews, review], acts: [...a.acts, actOf(s, key)] };
   const w = await writeRecord(call, { pod: s.pod, body, seq: h.seq, prev: h.rec, nonce: s.nonce });
   const nonRepeat = a.judgments.filter((j) => j.repeatOf === null).length;
-  // From a chat agent (only with PEV_CHAT_AGENTS_DECIDE=1): the levels the review set, no result.
-  const stakes = showsStakes(ctx, s);
   return {
     attemptIri: a.attemptIri, descriptorUrl: w.descriptorUrl, state: outcome, modalStatus: 'Asserted', supersedes: h.rec.descriptorUrl,
-    assessment: stakes ? assessment : assessmentWithoutStakes(assessment, a.scenarioSpec.rubric), ...withheldMark(stakes),
+    assessment: stakes ? assessment : assessmentWithoutStakes(assessment, a.scenarioSpec.rubric), ...withheldMark(stakes, scoredUse(a.scenarioSpec)),
     finalLevels, reviewer: s.signerDid, reviewIndex: review.index,
     primaryJudgeLevels: Object.fromEntries(primary.criteria.map((c) => [c.criterionId, c.levelId])),
     outcomesRecorded: a.scenarioSpec.rubric.criteria.length * nonRepeat,
     projectable: rat.ratified, projectableWhy: rat.ratified ? EVIDENCE_WHY.ready : EVIDENCE_WHY.notRatified,
     currentTarget: { recordId: w.recordId, descriptorUrl: w.descriptorUrl, graphDigest: w.graphDigest },
-    nextActions: nextFor(ctx, body, s.signer, roles, rat.ratified), recorded: true,
+    nextActions: nextFor(ctx, body, s.signer, roles, rat.ratified, stakes), recorded: true,
   };
 }
 
@@ -2365,6 +2514,7 @@ async function contestReview(call: Call, args: Record<string, unknown>): Promise
     notReplayed(a, s);
     checkTarget(needTarget(s.payload), h.rec);
     const roles = (await rolesOn(call, s.pod)).of(s.signer);
+    const stakes = await showsStakes(call, s);
     const at = iso(ctx);
     const reopening: Reopening = {
       index: a.reopenings.length, kind: 'contest', by: s.actor, role: 'learner', at, why: String(s.payload['why']),
@@ -2375,7 +2525,7 @@ async function contestReview(call: Call, args: Record<string, unknown>): Promise
     return {
       attemptIri: iri, descriptorUrl: w.descriptorUrl, state: 'contested', modalStatus: 'Hypothetical', reopening,
       currentTarget: { recordId: w.recordId, descriptorUrl: w.descriptorUrl, graphDigest: w.graphDigest },
-      nextActions: nextFor(ctx, body, s.signer, roles, false), recorded: true,
+      nextActions: nextFor(ctx, body, s.signer, roles, false, stakes), recorded: true,
     };
   });
 }
@@ -2436,9 +2586,13 @@ async function calibrationAct(call: Call, args: Record<string, unknown>): Promis
   }
   const read = await attemptBodies(call, pod, 'calibration');
   const { cells, outcomes } = cellsFor(ctx, pod, read.bodies, groupRaw);
+  // Unsigned, so its rubric hashes are keyed (see run) and the filter takes one as a cell shows it:
+  // a bare hash here would check a guessed rubric, stakes included, one request at a time.
   const rubricFilter = typeof args['rubric_hash'] === 'string' && args['rubric_hash'] !== '' ? args['rubric_hash'] : null;
   const judgeFilter = typeof args['judge'] === 'string' && args['judge'] !== '' ? args['judge'] : null;
-  const chosen = cells.filter((c) => (rubricFilter === null || c.rubricHash === rubricFilter) && (judgeFilter === null || c.judgeId === judgeFilter));
+  const mask = await ctx.hashMask();
+  const chosen = cells.filter((c) => (rubricFilter === null || (c.rubricHash !== null && mask.full(c.rubricHash) === rubricFilter))
+    && (judgeFilter === null || c.judgeId === judgeFilter));
   // A pooled cell is checked against every rubric-version cell it pools, which the same endpoint shows.
   const versionCells = groupRaw === 'criterion-content' ? cellsFor(ctx, pod, read.bodies, 'rubric-version').cells : cells;
   const shown = suppressSmallCells(chosen.filter((c) => c.judgeKind !== 'person'), ctx.resultsK, versionCells);
@@ -2478,11 +2632,11 @@ async function scenarioResultsAct(call: Call, args: Record<string, unknown>): Pr
   const view = scenarioResults({ scenarioIri: iri, spec: h.body.scenario, versions, attempts: mine, k: ctx.resultsK, detail });
   const { cells } = cellsFor(ctx, s.pod, mine, 'rubric-version');
   // For a chat agent the level counts stay; how many met the pass mark, beside them, would say where it lies.
-  const stakes = showsStakes(ctx, s);
+  const stakes = await showsStakes(call, s);
   const { meetsPassRule: _met, ...finalWithoutStakes } = view.final;
   return {
     ...view, ...(stakes ? {} : { final: finalWithoutStakes }), personJudgeCells: cells.filter((c) => c.judgeKind === 'person'),
-    attemptsRead: mine.length, untrustedRecordsSkipped: read.untrusted, complete: read.complete, ...read.limit, ...withheldMark(stakes),
+    attemptsRead: mine.length, untrustedRecordsSkipped: read.untrusted, complete: read.complete, ...read.limit, ...withheldMark(stakes, scoredUse(h.body.scenario)),
   };
 }
 
@@ -2512,6 +2666,12 @@ async function projectAttempt(call: Call, args: Record<string, unknown>): Promis
   }
   const fmt: ProjectionFormat = format;
   const e = await eligibility(call, s.pod, h);
+  // A scored statement carries the score and whether it met the pass mark: refused, before anything
+  // is written (a skip audit included), to a caller who does not read the stakes. A feedback-only
+  // one carries levels alone.
+  if (scoredUse(h.body.scenarioSpec) && !(await showsStakes(call, s))) {
+    throw stakesNotHere('A learning record of a scored session carries its score and whether it met the pass mark.');
+  }
   const pIri = projectionIri(iri, fmt, s.nonce);
   const at = iso(ctx);
   const audit = (o: Partial<ProjectionAuditBody> & Pick<ProjectionAuditBody, 'outcome'>): ProjectionAuditBody => ({
@@ -2534,12 +2694,9 @@ async function projectAttempt(call: Call, args: Record<string, unknown>): Promis
   const w = await writeRecord(call, {
     pod: s.pod, body: audit({ outcome: 'projected', statementId, statement, registryCheckedAt: e.registryCheckedAt }), seq: 1, prev: null, nonce: s.nonce,
   });
-  // A scored statement carries the score and whether it met the pass mark, so a chat agent gets its
-  // id and where it was recorded, not the statement; a feedback-only one carries levels alone.
-  const shown = showsStakes(ctx, s) || h.body.scenarioSpec.assessmentUse !== 'pass-gate';
   return {
-    attemptIri: iri, format: fmt, statementId, statement: shown ? statement : null, checks: { problems: [] }, lossy: LOSSY[fmt], lrsRequest: LRS_REQUEST_NOTE,
-    auditDescriptorUrl: w.descriptorUrl, practiceEvidence: true, recorded: true, ...withheldMark(shown),
+    attemptIri: iri, format: fmt, statementId, statement, checks: { problems: [] }, lossy: LOSSY[fmt], lrsRequest: LRS_REQUEST_NOTE,
+    auditDescriptorUrl: w.descriptorUrl, practiceEvidence: true, recorded: true,
   };
 }
 
@@ -2568,6 +2725,7 @@ async function holderCopy(call: Call, args: Record<string, unknown>): Promise<Ou
   const iri = needAttemptIri(s.payload);
   const h = await attemptHead(call, s.pod, iri);
   if (!samePrincipal(h.body.learner.address, s.signer)) throw decline(403, 'Only the learner of this attempt may copy it.', 'not-the-learner');
+  const scored = scoredUse(h.body.scenarioSpec);
   const notPublicTarget = (): Declined => decline(400, 'targetPodUrl must be a public http(s) pod address.', 'target-pod-not-public');
   const target = normalPod(String(s.payload['targetPodUrl']));
   if (target === null) throw notPublicTarget();
@@ -2581,6 +2739,11 @@ async function holderCopy(call: Call, args: Record<string, unknown>): Promise<Ou
     throw notPublicTarget();
   }
   const chain = await trustedChain(call, s.pod, iri);
+  // Every version's graph, unsealed, goes to a pod the caller names, which the caller may then read:
+  // a scored attempt's graphs hold the rubric's stakes and every result worked out from them.
+  if (scored && !(await showsStakes(call, s))) {
+    throw stakesNotHere('A copy of a scored session holds its weights, level points and pass mark, unencrypted, on the pod it is copied to.');
+  }
   const copies: Out[] = [];
   let prev: string | undefined;
   let skippedContentDeleted = 0;
@@ -2606,7 +2769,7 @@ async function holderCopy(call: Call, args: Record<string, unknown>): Promise<Ou
     }
   } catch (e) {
     if (e instanceof PodTransportFailed && e.refusedStatus !== null) {
-      throw decline(502, `The pod at ${e.podOrigin} refused this bridge's write (HTTP ${e.refusedStatus}). Download your record with export_record and write it with your own credentials.`,
+      throw decline(502, `The pod at ${e.podOrigin} refused this bridge's write (HTTP ${e.refusedStatus}). Download your record with export_record${scored ? ' in the Practice Evidence web app' : ''} and write it with your own credentials.`,
         'holder-pod-refused-write', { action: A.exportRecord }, { copied: copies });
     }
     if (e instanceof PodTransportFailed) {
@@ -2641,7 +2804,8 @@ async function exportRecord(call: Call, args: Record<string, unknown>): Promise<
   // A scored attempt's graph holds the rubric's stakes and every result worked out from them, and
   // its bytes cannot be cut without breaking the signature over them: a chat agent gets each
   // version's descriptor, never its graph. A feedback-only attempt holds no stakes.
-  const shown = showsStakes(ctx, s) || h.body.scenarioSpec.assessmentUse !== 'pass-gate';
+  const stakes = await showsStakes(call, s);
+  const shown = stakes || !scoredUse(h.body.scenarioSpec);
   return {
     attemptIri: iri, exportedAt: iso(ctx), platformAddresses: [...ctx.trusted.addresses],
     // What an envelope with authority relay-delegated is re-verified against (see verify).
@@ -2652,7 +2816,7 @@ async function exportRecord(call: Call, args: Record<string, unknown>): Promise<
         seq: i + 1, recordId: v.recordId, state: v.body.kind === 'attempt' ? v.body.state : null, modalStatus: v.modalStatus,
         sourceDescriptorUrl: v.descriptorUrl, descriptorTurtle: v.descriptorTurtle, graphTrig: shown ? v.graphContent : null, contentDeleted: false,
       })),
-    ...withheldMark(shown),
+    ...withheldMark(stakes, scoredUse(h.body.scenarioSpec)),
   };
 }
 
@@ -2743,14 +2907,15 @@ async function getAttempt(call: Call, args: Record<string, unknown>): Promise<Ou
   const roles = (await rolesOn(call, s.pod)).of(s.signer);
   const admin = isAdmin(ctx, s.signer);
   // For a chat agent, whatever the person's roles: levels, quotes, reasons and states, no stakes.
-  const stakes = showsStakes(ctx, s);
+  const stakes = await showsStakes(call, s);
   if (s.payload['attemptIri'] === undefined) {
     const wide = roles.has('reviewer') || admin;
     const read = await attemptBodies(call, s.pod, 'the list of attempts');
-    const list = read.bodies
+    const listed = read.bodies
       .filter((a) => samePrincipal(a.learner.address, s.signer) || (wide && !a.authorTest))
       .sort((x, y) => y.startedAt.localeCompare(x.startedAt))
-      .slice(0, 100)
+      .slice(0, 100);
+    const list = listed
       .map((a) => {
         const review = standingReview(a);
         // Deleting the text keeps the levels a reviewer signed, so a redacted attempt's standing review is still its result.
@@ -2760,13 +2925,16 @@ async function getAttempt(call: Call, args: Record<string, unknown>): Promise<Ou
         const fin = stakes && reviewed ? percentOf(review.assessment) : undefined;
         return {
           attemptIri: a.attemptIri, scenarioTitle: a.scenario.title, state: a.state, attemptNumber: a.attemptNumber, startedAt: a.startedAt,
-          authorTest: a.authorTest, learner: a.learner.did,
+          authorTest: a.authorTest, learner: a.learner.did, assessmentUse: a.scenarioSpec.assessmentUse,
           ...(prov !== undefined ? { provisionalPercent: prov } : {}),
           ...(fin !== undefined ? { finalPercent: fin } : {}),
           ...(stakes && reviewed && review.assessment.use === 'pass-gate' ? { finalMeetsPassRule: review.assessment.meetsPassRule } : {}),
         };
       });
-    return { podUrl: s.pod, attempts: list, untrustedRecordsSkipped: read.untrusted, complete: read.complete, ...read.limit, signedAs: signedAsOf(s), ...withheldMark(stakes) };
+    return {
+      podUrl: s.pod, attempts: list, untrustedRecordsSkipped: read.untrusted, complete: read.complete, ...read.limit, signedAs: signedAsOf(s),
+      ...withheldMark(stakes, listed.some((a) => scoredUse(a.scenarioSpec))),
+    };
   }
   const iri = needAttemptIri(s.payload);
   const h = await attemptHead(call, s.pod, iri);
@@ -2807,7 +2975,7 @@ async function getAttempt(call: Call, args: Record<string, unknown>): Promise<Ou
         provisional: a.judgments[0] ? assessmentWithoutStakes(a.judgments[0].provisional, r) : null,
         reviews: a.reviews.map((v) => reviewWithoutStakes(v, r)),
         ...(review ? { standingReview: reviewWithoutStakes(review, r), finalAssessment: assessmentWithoutStakes(review.assessment, r) } : {}),
-        stakesWithheld: STAKES_WITHHELD,
+        ...withheldMark(stakes, scoredUse(a.scenarioSpec)),
       }),
     reopenings: a.reopenings, ...(a.redaction ? { redaction: a.redaction } : {}),
     nextSteps: nextStepsOf(a),
@@ -2823,7 +2991,7 @@ async function getAttempt(call: Call, args: Record<string, unknown>): Promise<Ou
         ? { descriptorUrl: v.descriptorUrl, recordId: v.recordId, state: null, modalStatus: null, contentDeleted: false, trusted: false }
         : { descriptorUrl: v.descriptorUrl, recordId: v.recordId, state: v.body.kind === 'attempt' ? v.body.state : null, modalStatus: v.modalStatus, contentDeleted: false })),
     authorship: h.rec.authorship, keyKind: a.keyKind, evidenceKind: a.evidenceKind, label: PRACTICE_LABEL, provisionalLabel: PROVISIONAL_LABEL,
-    nextActions: nextFor(ctx, a, s.signer, roles, e.eligible),
+    nextActions: nextFor(ctx, a, s.signer, roles, e.eligible, stakes),
     signedAs: signedAsOf(s),
   };
 }
@@ -2860,14 +3028,19 @@ type Act = (call: Call, args: Record<string, unknown>) => Promise<Out>;
 /** The handlers, keyed by tool name: exactly one per affordance. */
 export function createPevHandlers(deps: PevDeps): Record<string, AffordanceHandler> {
   const ctx = makeContext(deps);
+  // Every answer, a refusal included, keys its rubric and scenario hashes unless the act found its
+  // signer reads the stakes (`showsStakes`): a hash over a rubric whose words the answer carries
+  // would confirm a guess at its weights, level values and pass rule offline.
   const run = (act: Act): AffordanceHandler => async (args: Record<string, unknown>) => {
     const budget = new ReadBudget(ctx.actReadBudgetBytes);
-    const call: Call = { ctx, cache: readCache(ctx.verified), budget, read: withReadBudget(ctx.fetchFn, budget), writesAtStart: ctx.writes.n };
+    const call: Call = { ctx, cache: readCache(ctx.verified), budget, read: withReadBudget(ctx.fetchFn, budget), writesAtStart: ctx.writes.n, stakesShown: false };
+    let out: Out;
     try {
-      return await act(call, args ?? {});
+      out = await act(call, args ?? {});
     } catch (e) {
-      return refusalFor(e);
+      out = refusalFor(e);
     }
+    return call.stakesShown ? out : maskAnswerHashes(out, await ctx.hashMask()) as Out;
   };
   return {
     'pev.register_role': run(registerRole),
