@@ -1,5 +1,19 @@
 # Changelog
 
+## 2026-11-09 — Work Redesign: a new process name makes the copied AI message again
+
+Copy the message for my AI keeps the packet it fetched and reuses it while
+the document's title and text are unchanged. The packet's draft template also
+names the process, so after a person copied the message, changed the Process
+name and copied again, the message still carried the old name, and an answer
+that followed it wrote the old name back over the new one when it was filled
+in. The held packet is now keyed on the process name as well, and editing the
+Process name drops it and its "Show the message" preview, as editing the
+document does. The demo test names the process, renames it and copies the
+message each time: each new name asks for a new packet and the message carries
+it, and the same name again reuses the packet. Found by the Codex review of
+the pull request.
+
 ## 2026-11-09 — Work Redesign: the workspace details say once what to do without sign_payload
 
 The shared chat helper's prompts now end "How to do each step" with one

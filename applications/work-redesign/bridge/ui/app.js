@@ -3042,15 +3042,21 @@ function captureView() {
     ...(String(st.doc.title ?? '').trim() ? [] : [['document.title', `${pathFieldLabel('document.title')} is required`]]),
     ...(String(st.doc.text ?? '').trim() ? [] : [['document.text', 'Add the document: load a file or paste its text']]),
   ];
-  /** The packet for the document as it stands now: the one held when it was made from this title and text, else a new one (null when refused). */
+  /**
+   * The packet for the document as it stands now: the one held when it was made from this title, text and process name,
+   * else a new one (null when refused). The process name is part of the key because the packet's draft template carries
+   * it, and a draft that follows the template writes it back over the name the person chose.
+   */
   const packetNow = async () => {
     let sha = '';
     try { sha = await sha256Hex(st.doc.text); } catch { sha = ''; }
+    const processName = String(st.workflow.title ?? '');
     const held = S.packet;
-    if (held && sha && held.request?.documentSha256 === sha && held.context?.document?.title === st.doc.title) return held;
-    const r = await call('wrd.task_map_packet', { document_title: st.doc.title, document_text: st.doc.text, workflow_title: st.workflow.title || undefined, pod_url: data().podUrl });
+    if (held && sha && held.request?.documentSha256 === sha && held.context?.document?.title === st.doc.title && S.packetProcessName === processName) return held;
+    const r = await call('wrd.task_map_packet', { document_title: st.doc.title, document_text: st.doc.text, workflow_title: processName || undefined, pod_url: data().podUrl });
     if (!r.ok) { showResult('wrd.task_map_packet', r); return null; }
     S.packet = r.body;
+    S.packetProcessName = processName;
     return r.body;
   };
   /** Card B's Copy button's lasting name (returnKey), so focus finds it again after the redraw copying it makes. */
@@ -3262,7 +3268,8 @@ function captureView() {
       h('div', { class: 'card__header' }, h('h2', { class: 'card__title', id: 'process-draft-title', text: 'The process' })),
       h('div', { class: 'card__body' },
         h('div', { class: 'form-row' },
-          field('Process name', input(st.workflow.title, (e) => { st.workflow.title = e.target.value; save(); }), { hint: 'For example "Supplier invoice processing".', path: 'workflow.title' }),
+          // The held packet's draft template names the process, so a new name makes it out of date, as an edited document does.
+          field('Process name', input(st.workflow.title, (e) => { st.workflow.title = e.target.value; save(); docChanged(); }), { hint: 'For example "Supplier invoice processing".', path: 'workflow.title' }),
           field('Unit of work', input(st.workflow.unitLabel, (e) => { st.workflow.unitLabel = e.target.value; save(); }), { hint: 'What one run handles, for example "invoice".', path: 'workflow.unitLabel' })),
         field('Description', textarea(st.workflow.description, (e) => { st.workflow.description = e.target.value; save(); }), { optional: true }))),
     h('h2', { class: 'view-section__title view-block', text: `Tasks (${st.tasks.length})` }),

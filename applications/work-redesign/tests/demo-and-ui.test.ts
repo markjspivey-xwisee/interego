@@ -1029,6 +1029,30 @@ describe('work-redesign offline demo and web UI', () => {
     await page.until(() => copied.length === 4, 'the message copied for the first document again');
     expect(copied[3]).toBe(message);
 
+    // The packet's draft template names the process, so a new process name makes the held message out of date, as an
+    // edited document does: the preview goes, and Copy asks for a packet that carries the new name.
+    const packets = (): number => page.log.filter((r) => r.path === '/wrd/task_map_packet').length;
+    const asked = packets();
+    fill(page.q('[data-path="workflow.title"]'), 'Supplier invoice processing', 'the process name');
+    expect(previewShown()).toBe(false);
+    page.click('Copy the message for my AI');
+    await page.until(() => copied.length === 5, 'the message for the named process copied');
+    expect(packets()).toBe(asked + 1);
+    expect(String(copied[4])).toContain('Supplier invoice processing');
+    fill(page.q('[data-path="workflow.title"]'), 'Invoice intake', 'the process name, changed');
+    expect(previewShown()).toBe(false);
+    page.click('Copy the message for my AI');
+    await page.until(() => copied.length === 6, 'the message for the renamed process copied');
+    expect(packets()).toBe(asked + 2);
+    expect(String(copied[5])).toContain('Invoice intake');
+    expect(String(copied[5])).not.toContain('Supplier invoice processing');
+    // The same name again reuses the packet made for it.
+    page.click('Copy the message for my AI');
+    await page.until(() => copied.length === 7, 'the message for the same name copied again');
+    expect(packets()).toBe(asked + 2);
+    expect(copied[6]).toBe(copied[5]);
+    fill(page.q('[data-path="workflow.title"]'), '', 'the process name, cleared');
+
     // An answer with no draft in it says so in plain words.
     const answerBox = (): Element | null => byLabel('Your AI\'s answer');
     fill(answerBox(), 'Sorry, I can\'t open that document.', 'the answer box');
