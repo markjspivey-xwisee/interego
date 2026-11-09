@@ -8,6 +8,7 @@
 <meta name="color-scheme" content="light dark">
 <link rel="icon" href="/ui/favicon.svg" type="image/svg+xml">
 <link rel="stylesheet" href="/ui/app.css">
+<script type="module" src="/ui/site.js"></script>
 <link rel="alternate" type="application/ld+json" href="/?format=jsonld" title="Entry point for AI agents">
 </head>
 <body class="product-wrd">
@@ -41,7 +42,7 @@
     <nav class="toc" aria-label="On this page"><p class="toc__title">On this page</p><ol>
       <li><a href="#start">Getting started</a></li><li><a href="#team">Team members</a></li><li><a href="#leads">Process leads</a></li>
       <li><a href="#approvers">Approvers</a></li><li><a href="#admins">Admins</a></li><li><a href="#owners">AI agent owners</a></li>
-      <li><a href="#assistants">Claude or ChatGPT</a></li><li><a href="#data">Your data and trust</a></li><li><a href="#limits">Limits to know</a></li>
+      <li><a href="#assistants">{{#chat_ready}}Claude or ChatGPT{{/chat_ready}}{{^chat_ready}}Your own AI assistant{{/chat_ready}}</a></li><li><a href="#data">Your data and trust</a></li><li><a href="#limits">Limits to know</a></li>
       <li><a href="#glossary">Glossary</a></li><li><a href="#contact">Contact us</a></li></ol></nav>
     <div class="prose-wide">
 
@@ -53,7 +54,7 @@
           <li class="step"><p class="step__text">Open your workspace link (the address your admin sent you) and press <strong>Sign in with your Interego account</strong>. You confirm with your passkey on Interego’s own page, then come straight back.</p></li>
           <li class="step"><p class="step__text">If you see <strong>One more step</strong>, copy your Interego ID and send it to your admin. Once they’ve added you, refresh the page.</p></li>
           <li class="step"><p class="step__text">Open <strong>Home</strong>. Your checklist shows what to do first for your role.</p></li>
-          <li class="step"><p class="step__text">Optional: connect Claude or ChatGPT (see <a href="#assistants">below</a>).</p></li>
+          {{#chat_ready}}<li class="step"><p class="step__text">Optional: connect Claude or ChatGPT (see <a href="#assistants">below</a>).</p></li>{{/chat_ready}}
         </ol>
         <div class="callout callout--info">{{icon:info}}<p class="callout__title">Got a link to a task?</p><p class="callout__body">Sign in from that link and we’ll open the task for you.</p></div>
       </section>
@@ -80,9 +81,8 @@
         <p>Open <strong>Map a process</strong>. Choose <strong>By hand</strong> and type each step people actually do, starting each with a verb. Or choose <strong>From a procedure document</strong>:</p>
         <ol>
           <li>Paste the document, or load a .txt or .md file.</li>
-          <li>Press <strong>Get instructions for your AI</strong>, and give the instructions and the document to your own AI assistant.</li>
-          <li>Paste its answer, and press <strong>Fill the tasks from the draft</strong>.</li>
-          <li>Check that every quote shows “Source checked”, then sign.</li>
+          <li>{{#chat_ready}}Under <strong>Have your AI draft the map</strong>, choose how. <strong>In Claude or ChatGPT</strong>, with the Interego connector: press <strong>Copy the message for my assistant</strong> and paste it into a chat. Your assistant drafts the map, asks you who does each task, and records it; then open <strong>Processes</strong> to check it. This works for documents up to 20,000 characters, and stores the document’s text with the map. Or <strong>Copy and paste</strong>, with any chat app: press{{/chat_ready}}{{^chat_ready}}Under <strong>Have your AI draft the map</strong>, with any chat app: press{{/chat_ready}} <strong>Copy the message for my AI</strong>, paste it into your AI assistant, then paste its whole answer under <strong>Paste your AI’s answer</strong> and press <strong>Fill the tasks from the answer</strong>.</li>
+          <li>Say who drafted the map, check that every quote shows “Source checked”, then sign.</li>
         </ol>
         <h3>2. Get confirmations</h3>
         <p>Send each person named on a task its link (<strong>Processes › Copy link</strong>). The Status column shows who hasn’t responded yet.</p>
@@ -137,7 +137,7 @@
         <h2 id="admins-title">Admins</h2>
         <p>You set up the workspace under <strong>People &amp; roles</strong>.</p>
         <ul>
-          <li><strong>Adding people.</strong> Use their Interego ID (it looks like <code>did:web:…:users:…</code>) or their wallet address (it starts with <code>0x</code>), their roles, and a Person ID that links one person’s different sign-ins.</li>
+          <li><strong>Adding people.</strong> Use their Interego ID (it looks like <code>did:web:…:users:…</code>) or their wallet address (it starts with <code>0x</code>), their roles, and a Person ID that links one person’s different sign-ins.{{#chat_ready}} Someone added only by wallet address can’t work from Claude or ChatGPT: their assistant acts as their Interego account.{{/chat_ready}}</li>
           <li><strong>Adding AI agents.</strong> Give each its accountable owner and the AI model it runs on. Update the model when it changes: permission must then be earned again.</li>
           <li><strong>Types of task.</strong> A name, a short ID and a one-sentence definition. Retire the ones you no longer use.</li>
           <li><strong>Stricter rules.</strong> You can make the standard rules for earning AI permission stricter, never looser.</li>
@@ -159,23 +159,31 @@
       </div>
 
       <section class="help-section" id="assistants" aria-labelledby="assistants-title">
-        <h2 id="assistants-title">Using Claude or ChatGPT</h2>
-        <p>Add the Interego connector once, and your assistant can work in Work Redesign for you. There’s no API key and nothing to install.</p>
+        <h2 id="assistants-title">{{#chat_ready}}Using Claude or ChatGPT{{/chat_ready}}{{^chat_ready}}Using your own AI assistant{{/chat_ready}}</h2>
+        {{#chat_ready}}<p>Add the Interego connector once, and your assistant can work in Work Redesign for you. There’s no API key and nothing to install. Your admin adds you by your Interego ID: your assistant acts as your Interego account, never as a wallet.</p>
         <ol class="steps steps--compact">
-          <li class="step"><p class="step__text">In Claude or ChatGPT, open <strong>Settings → Connectors → Add custom connector</strong>.</p></li>
-          <li class="step"><p class="step__text">Name it <strong>Interego</strong> and paste <code class="connector-url">{{connector_url}}</code></p></li>
-          <li class="step"><p class="step__text">Connect, then sign in with your passkey when asked.</p></li>
-          <li class="step"><p class="step__text">Tell your assistant the address of your Work Redesign workspace.</p></li>
+          <li class="step"><p class="step__text">In Claude, open <strong>Settings → Connectors → Add custom connector</strong>. In ChatGPT on the web, open <strong>Plugins → + → Add custom MCP server</strong>.</p></li>
+          <li class="step"><p class="step__text">Name it <strong>Interego</strong> and paste the connector address (in ChatGPT, as its <strong>Server URL</strong>, with <strong>OAuth</strong>): <code class="connector-url">{{connector_url}}</code> In ChatGPT, accept the warning, select <strong>Create as a plugin</strong>, then install it.</p></li>
+          <li class="step"><p class="step__text">Connect, and when it asks, sign in with the same Interego account you use for Work Redesign.</p></li>
+          <li class="step"><p class="step__text">Tell your assistant this workspace’s address: <code class="connector-url">{{base}}</code> In the app, <strong>Use your AI assistant</strong> copies it, with everything else your assistant needs.</p></li>
         </ol>
+        <p class="assistants__note">In Claude, turn on Interego in each new chat from the chat’s tools menu (+). In ChatGPT, type @ in a chat and choose Interego. ChatGPT asks before each write unless you let it remember your choice for that chat. If Interego’s tools look out of date, refresh it from its page in your app settings. More in <a href="https://developers.openai.com/api/docs/guides/custom-mcp-server" target="_blank" rel="noopener">OpenAI’s guide to custom MCP servers</a>.</p>
+        <p class="assistants__note">Whether you can add a connector depends on your plan or workspace settings. Without one, you can still draft a process map with copy and paste: in <strong>Map a process</strong>, choose <strong>From a procedure document</strong>, then <strong>Copy and paste</strong>.</p>
+        <h3>From the app</h3>
+        <p>Open your account menu and choose <strong>Use your AI assistant</strong>. It shows the connector address, copies this workspace’s details for your assistant, and has messages to start from. To draft a process map, use <strong>Map a process › From a procedure document › Copy the message for my assistant</strong>: the message carries the document and every step. Your answers to the seven questions and every number in a plan must be yours: your assistant asks, you answer.</p>
+        <p>The Interego connector passes everything your assistant reads and writes here, including your documents, and the company behind your assistant sees it too, under your own account’s terms.</p>
         <h3>Things you can ask it</h3>
         <ul>
-          <li>“Draft a process map from this procedure document and record it in Work Redesign.”</li>
+          <li>“Here’s the message from Map a process in Work Redesign. Draft the map, and record it once I’ve checked it.”</li>
           <li>“Show me the tasks that name me, and confirm the description of the invoice-matching task.”</li>
           <li>“Answer the seven questions for the GL coding task with me.”</li>
           <li>“Propose a plan where an agent drafts the coding and Dee decides, then price it.”</li>
           <li>“Submit the plan for approval.”</li>
         </ul>
-        <div class="callout callout--neutral">{{icon:shield}}<p class="callout__title">What stays in the Work Redesign app</p><p class="callout__body">For safety, the actions that change who may do what can be taken only in the Work Redesign app, not from a chat assistant: approving or declining a decision, changing people and roles, recording results, and granting or withdrawing AI permissions. Your workspace provider can change this setting. When your assistant records a process map from chat, the document’s text is stored with the record.</p></div>
+        <div class="callout callout--neutral">{{icon:shield}}<p class="callout__title">What stays in the Work Redesign app</p><p class="callout__body">For safety, the actions that change who may do what can be taken only in the Work Redesign app, not from a chat assistant: approving or declining a decision, changing people and roles, recording results, and granting or withdrawing AI permissions. Your workspace provider can change this setting. When your assistant records a process map from chat, the document’s text is stored with the record.</p></div>{{/chat_ready}}
+        {{^chat_ready}}<p>Work Redesign runs no AI of its own and never asks for an API key. Your own AI assistant does any drafting, on your own subscription, and Work Redesign checks everything it records.</p>
+        <p class="assistants__note">This workspace isn’t set up for connecting Claude or ChatGPT yet. Ask your workspace provider. You can still draft a process map with copy and paste, in any chat app: in <strong>Map a process</strong>, choose <strong>From a procedure document</strong>, then <strong>Copy and paste</strong>.</p>
+        <p>When you paste a document into your AI assistant, the company behind your assistant sees it too, under your own account’s terms.</p>{{/chat_ready}}
       </section>
 
       <section class="help-section" id="data" aria-labelledby="data-title">
@@ -189,7 +197,7 @@
         <h3>Signing in with Interego, or with a wallet</h3>
         <p>When you sign in with your Interego account, Interego signs each action for you. Your sign-in stays valid for about an hour, and it passes through this Work Redesign service each time you sign. While it’s valid, it could be used to act on your Interego account for up to a day, even after you sign out here. Signing out on this page doesn’t cancel it. “Sign out everywhere” on your Interego dashboard ends the day-long part; the hour-long part runs out on its own. If you need signatures only you can make, use a crypto wallet.</p>
         <h3>Who sees what</h3>
-        <p>Everyone in a workspace can read all of its records, including dispute notes and valuations. Use separate workspaces for teams that must not see each other’s records.</p>
+        <p>Everyone in a workspace can read all of its records, including dispute notes and valuations. Use separate workspaces for teams that must not see each other’s records.{{#chat_ready}} If you connect Claude or ChatGPT, the Interego connector passes everything your assistant reads and writes here, and the company behind your assistant sees it too.{{/chat_ready}}{{^chat_ready}} When you paste a document into your AI assistant, the company behind your assistant sees it too.{{/chat_ready}}</p>
       </section>
 
       <section class="help-section" id="limits" aria-labelledby="limits-title">
@@ -202,6 +210,7 @@
           <li><strong>Teams that must not see each other’s records.</strong> Use separate workspaces.</li>
           <li><strong>Not available yet:</strong> importing from an HR or learning system, reading PDF or Word files directly, structured interviews, or withdrawing a decision once it’s submitted (an approver declines it instead).</li>
           <li>Procedure documents are read as plain text or Markdown only.</li>
+          {{#chat_ready}}<li>Recording a process map from a chat works for documents up to 20,000 characters; a longer one goes by copy and paste.</li>{{/chat_ready}}
           <li>Results are entered by people, not measured automatically.</li>
           <li>AI costs are as the agent reports them, not metered.</li>
           <li>The business case treats its inputs as independent of each other.</li>
@@ -229,7 +238,7 @@
           <dt>Process</dt><dd>A piece of work your team runs again and again, such as supplier invoice processing, made of tasks.</dd>
           <dt>Process map</dt><dd>The recorded list of a process’s tasks: who does each one and how.</dd>
           <dt>Procedure document</dt><dd>Your written description of how the work is done, such as a standard operating procedure.</dd>
-          <dt>Instructions for your AI</dt><dd>What to give your own AI assistant, with the document, so it can draft a process map. Work Redesign doesn’t draft anything itself.</dd>
+          <dt>Message for your AI</dt><dd>What you paste into your own AI assistant so it can draft a process map from your document. Work Redesign doesn’t draft anything itself.</dd>
           <dt>Sources checked</dt><dd>Each quote is matched against the document, ignoring spacing and quote-mark style. A quote that doesn’t match is flagged, never corrected.</dd>
           <dt>Confirm / Dispute</dt><dd>Confirming signs that a description of your work is right. Disputing records why it isn’t, and blocks changes until it’s fixed.</dd>
           <dt>Predictability</dt><dd>Seven questions about a task decide how predictable it is, and so what kind of change is allowed.</dd>
@@ -273,7 +282,7 @@
       <div>{{brand}}<p class="site-footer__about">Decide which work to hand to AI, price it honestly, and keep a record your people can check.</p></div>
       <div><p class="site-footer__heading">Product</p><ul class="site-footer__links">
         <li><a href="/#how-it-works">How it works</a></li><li><a href="/#trust">Built for trust</a></li>
-        <li><a href="#assistants">Use it from Claude or ChatGPT</a></li><li><a href="#limits">When not to use it</a></li>
+        <li><a href="#assistants">{{#chat_ready}}Use it from Claude or ChatGPT{{/chat_ready}}{{^chat_ready}}Your own AI assistant{{/chat_ready}}</a></li><li><a href="#limits">When not to use it</a></li>
         <li><a href="{{sibling_url}}">Also from Interego: {{sibling_name}}</a></li></ul></div>
       <div><p class="site-footer__heading">Get started</p><ul class="site-footer__links">
         <li><a href="/ui">Sign in</a></li><li><a href="{{identity_url}}">Create an Interego account</a></li>
@@ -281,7 +290,7 @@
       <div><p class="site-footer__heading">For developers</p><ul class="site-footer__links">
         <li><a href="/affordances">Agent manifest</a></li><li><a href="/ns/wrd">Vocabulary</a></li>
         <li><a href="{{security_txt}}">Security contact</a></li>
-        <li><span class="mono">{{base}}/mcp</span>&nbsp;(MCP endpoint)</li></ul></div>
+        <li><span class="mono">{{base}}/mcp</span>&nbsp;(for developers’ tools that sign their own requests{{#chat_ready}}; Claude and ChatGPT use the Interego connector{{/chat_ready}})</li></ul></div>
     </div>
     <div class="site-footer__bottom"><span>Work Redesign is built on Interego. Work Redesign runs no AI model; drafting is done by your own AI assistant.</span><span>© {{year}} {{legal_name}}</span></div>
   </div>

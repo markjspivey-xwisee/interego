@@ -3,6 +3,17 @@
 /* A static page's callout carries its icon first, without the callout__icon class: it goes in the icon column too. */
 .callout > .icon:first-child { grid-column: 1; grid-row: 1 / span 4; color: var(--c-fg); margin-top: 0.0625rem; }
 
+/* The app draws each view anew (app.js render()), so the browser's scroll anchoring has nothing it held on to left and
+   moved the page anyway: in Chromium, a copy from Map a process took it 65 px up. render() keeps what has focus in its
+   place on the screen instead. */
+.app { overflow-anchor: none; }
+/* "Skip to content" moves focus to the screen's <main> (tabindex -1 until focus leaves it, app.js), so the next Tab
+   starts in it; the whole screen is not outlined as if it were one control. */
+main[tabindex="-1"]:focus { outline: none; }
+/* Below 48em the navigation is a sticky strip under the sticky header (126 px together, past the page's 80 px scroll
+   padding): the skip link's target stops below both, not with its first line under the strip. */
+@media (max-width: 47.99em) { .app-main { scroll-margin-top: 3rem; } }
+
 /* App shell: navigation items are buttons (tests click them by exact text); counts are drawn, not typed. */
 button.side-nav__link { border: 0; background: none; font: inherit; cursor: pointer; text-align: left; }
 @media (min-width: 48em) { button.side-nav__link { width: 100%; } }
@@ -33,6 +44,9 @@ button.side-nav__link { border: 0; background: none; font: inherit; cursor: poin
 .menu__id > span { grid-column: 1 / -1; }
 .menu__id > code { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .menu .disclosure { padding: 0 var(--space-3); }
+
+/* A hint can name something with no spaces, a file's name or an address: it breaks inside it rather than run off the screen. */
+.hint { overflow-wrap: anywhere; }
 
 /* Vertical rhythm in the app: every block in a view sits a step below the one before it. */
 .app-main > :where(*) + :where(*) { margin-top: var(--space-6); }
@@ -102,11 +116,50 @@ details.card[open] > summary { border-bottom: 1px solid var(--border); }
 .plan-card .card__body > * + * { margin-top: var(--space-4); }
 
 /* Map a process */
-.capture-step .card__title { display: flex; align-items: center; gap: var(--space-3); margin-bottom: var(--space-4); }
+/* Each step's own title and body only: the two route cards inside step 2 keep their own stack gap. */
+.capture-step > .card__body > .card__title { display: flex; align-items: center; gap: var(--space-3); margin-bottom: var(--space-4); }
 .capture-step__n { display: inline-grid; place-items: center; flex: none; width: 1.75rem; height: 1.75rem; border-radius: 50%; background: var(--accent); color: var(--on-accent); font-size: var(--text-sm); font-weight: var(--weight-bold); }
-.capture-step .card__body > * + * { margin-top: var(--space-4); }
+.capture-step > .card__body > * + * { margin-top: var(--space-4); }
+/* A step may shrink to the screen: a grid item's automatic minimum is its widest word, so a long one in a step (a loaded
+   file's name in step 1's hint) would widen every step past a phone's screen; at 0 the word breaks instead (.hint, below). */
+.capture-steps > .capture-step { min-width: 0; }
 .capture-modes { margin-top: var(--space-2); }
 .capture-actions { display: grid; gap: var(--space-3); justify-items: start; margin-top: var(--space-6); }
+/* Step 2's two routes: your assistant through the connector, or copy and paste; side by side when there is room. */
+.capture-routes { gap: var(--space-4); }
+.route-card { min-width: 0; }
+/* A button keeps its label on one line (.btn's nowrap), so on a phone "Copy the message for my assistant" would run past its
+   card and off the screen: in a route card a label wraps, and the button is never wider than the card's body. */
+.route-card .btn { white-space: normal; max-width: 100%; text-align: left; }
+/* A route card's parts are spaced by its stack's gap alone: not also by the card body's sibling margin or a paragraph's own. */
+.route-card > .card__body > * { margin-top: 0; margin-bottom: 0; }
+.route-card--chat { border-color: var(--accent-border); }
+/* Card A's length note sits in the button's own block, so its live region adds no gap while it is empty. */
+.route-card__gate > .note { margin-bottom: var(--space-2); }
+.drafted-by__agent { margin: var(--space-1) 0 var(--space-3) 2rem; }
+
+/* Use your AI assistant: set-up, workspace details and starters (the panel over a view) */
+.chat-panel { max-width: 48rem; }
+.chat-panel__title { margin-top: var(--space-4); font-size: var(--text-md); }
+.chat-panel .tabs { margin-bottom: var(--space-3); }
+.chat-steps { display: grid; gap: var(--space-3); margin: 0; padding-left: 1.25rem; }
+.chat-steps .field { margin-top: var(--space-2); }
+/* The panel's addresses (the connector's, the workspace's): a read-only box as tall as its lines, so the whole address shows,
+   breaking between any two characters on a phone, with nothing to scroll inside the box; Copy takes it whole. The box's
+   unseen twin (::after, the same address from data-value, with the box's font, padding and border) sizes the grid cell
+   both share, so the box grows with no script measuring it, and the address stays out of the page's text. */
+.copy-address { display: grid; flex: 1 1 14rem; min-width: 0; }
+.copy-address > .copy-address__box, .copy-address::after { grid-area: 1 / 1; min-width: 0; white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-all; }
+.copy-address > .copy-address__box { align-self: stretch; height: auto; resize: none; overflow: hidden; }
+.copy-address::after {
+  content: attr(data-value) " "; visibility: hidden; padding: 0.5625rem 0.875rem; border: 1px solid transparent;
+  font-family: var(--font-mono); font-size: var(--text-sm); line-height: 1.4;
+}
+.chat-starters { border: 1px solid var(--border); border-radius: var(--radius-md); }
+.chat-starter { display: grid; gap: var(--space-1); padding: var(--space-3) var(--space-4); border-top: 1px solid var(--border); }
+.chat-starter:first-child { border-top: 0; }
+/* A preview keeps every line of the message, and wraps a long one instead of widening the page. */
+.chat-preview { max-height: 20rem; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font-size: var(--text-xs); }
 /* The file picker reads as a secondary button with the chosen file's name beside it, not the browser's bare control. */
 .input--file { padding: 0.3125rem; color: var(--text-secondary); font-size: var(--text-sm); cursor: pointer; }
 .input--file::file-selector-button {
@@ -227,14 +280,21 @@ details.card[open] > summary { border-bottom: 1px solid var(--border); }
 }
 .step__extra { margin-top: var(--space-3); }
 .steps--compact { gap: var(--space-4); margin-top: var(--space-4); }
+/* min-width 0: a grid item's automatic minimum is its widest word, so a long address in a step would
+   widen the list past a phone's screen; at 0 the address's own max-width and scroller take effect. */
+.steps--compact > .step { min-width: 0; }
 .steps--compact .step { min-height: 2rem; padding-left: 2.75rem; }
 .steps--compact .step::before { width: 2rem; height: 2rem; font-size: var(--text-xs); }
 .steps--compact .step:not(:last-child)::after { display: none; }
 .steps--compact .step__text { padding-top: 0.25rem; }
 .assistants { align-items: start; }
 .assistants__subtitle { margin-top: var(--space-8); font-size: var(--text-lg); }
-/* The connector address stays whole: on a narrow screen it scrolls sideways instead of breaking inside a word. */
-.connector-url { display: inline-block; max-width: 100%; margin-top: var(--space-1); overflow-x: auto; white-space: nowrap; vertical-align: bottom; user-select: all; }
+.assistants__note { margin-top: var(--space-4); }
+/* An address on the site pages (the connector's, the workspace's) is on a line of its own, so no word or full stop of the
+   sentence hangs off it, and always wholly on screen: where the line is too narrow it fills the line and goes on at the
+   next one, breaking between any two characters rather than at a hyphen that would read as a word split for the line. A
+   tap selects all of it, and a copy takes it whole. Its step's min-width 0 (above) keeps the list inside the screen. */
+.connector-url { display: block; width: fit-content; max-width: 100%; margin-block: var(--space-1); white-space: normal; overflow-wrap: anywhere; word-break: break-all; user-select: all; }
 .trust-signin { margin-top: var(--space-6); }
 .site-footer__links li > .mono { display: inline-block; margin-top: var(--space-2); }
 .trust-signin > .icon { grid-row: 1 / span 2; color: var(--text-secondary); }
@@ -278,9 +338,13 @@ details.card[open] > summary { border-bottom: 1px solid var(--border); }
 .health__plain { padding-left: var(--space-3); border-left: 3px solid var(--warning); font-size: var(--text-sm); color: var(--text); }
 .health__plain--danger { border-left-color: var(--danger); }
 
-/* Site pages' menu on phones: the header's section links, in a popover (no script). */
+/* Site pages' menu below a wide screen: the header's section links, in a popover that opens with no script (site.js only
+   closes it once a link in it is chosen). The links themselves sit in the header only from 64em: below it, with the
+   product switch and the button beside them, they ran past the screen's edge (to 930 px on the landing page, and Sign in
+   with them). The menu holds every one of them, so it takes their place. */
 .site-menu-button { display: inline-flex; anchor-name: --site-menu; }
-@media (min-width: 48em) { .site-menu-button { display: none; } }
+@media (min-width: 64em) { .site-menu-button { display: none; } }
+@media (max-width: 63.99em) { .top-nav { display: none; } }
 /* On the narrowest phones the guide's header keeps the brand and the menu; the menu opens the app. */
 @media (max-width: 23.99em) { .site-header-cta { display: none; } }
 @supports (anchor-name: --a) { .site-menu { position-anchor: --site-menu; } }

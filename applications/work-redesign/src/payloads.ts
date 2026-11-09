@@ -228,7 +228,7 @@ export const ENVELOPE_INTENTS: readonly EnvelopeIntent[] = Object.keys(FIELDS) a
 export const isEnvelopeIntent = (v: unknown): v is EnvelopeIntent => typeof v === 'string' && (ENVELOPE_INTENTS as readonly string[]).includes(v);
 
 /** The other way to sign, for a person who signs in with their Interego account and holds no key. */
-export const RELAY_SIGNING = 'Or, signed in to Interego (Claude, ChatGPT, this bridge\'s web UI), ask the relay to sign it: act with sign_payload: true and this payload; the relay sends {_signed_payload, _signature}, carrying podUrl as pod_url and its own timestamp in place of issuedAt, and the person acting is the user the signed-in agent belongs to (relay-attested, not a key they hold).';
+export const RELAY_SIGNING = 'Or, signed in to Interego (Claude, ChatGPT, this bridge\'s web UI), ask the relay to sign it: act with sign_payload: true and this payload, or, where your act tool has no sign_payload option, call the connector\'s sign_request tool with payload as its only argument, set to this payload, then call act with the same descriptor_url and action_iri and with payload set to exactly the _signature and _signed_payload it returned, unchanged. Either way the act sends {_signed_payload, _signature}, carrying podUrl as pod_url and the relay\'s own timestamp in place of issuedAt, and the person acting is the user the signed-in agent belongs to (relay-attested, not a key they hold).';
 
 /** The JSON Schema of one intent's payload. */
 export function payloadSchema(intent: EnvelopeIntent): JsonSchema {

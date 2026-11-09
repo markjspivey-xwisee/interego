@@ -1,5 +1,253 @@
 # Changelog
 
+## 2026-11-09 — Work Redesign: a new process name makes the copied AI message again
+
+Copy the message for my AI keeps the packet it fetched and reuses it while
+the document's title and text are unchanged. The packet's draft template also
+names the process, so after a person copied the message, changed the Process
+name and copied again, the message still carried the old name, and an answer
+that followed it wrote the old name back over the new one when it was filled
+in. The held packet is now keyed on the process name as well, and editing the
+Process name drops it and its "Show the message" preview, as editing the
+document does. The demo test names the process, renames it and copies the
+message each time: each new name asks for a new packet and the message carries
+it, and the same name again reuses the packet. Found by the Codex review of
+the pull request.
+
+## 2026-11-09 — Work Redesign: the workspace details say once what to do without sign_payload
+
+The shared chat helper's prompts now end "How to do each step" with one
+sentence for an assistant whose act tool has no sign_payload option: leave
+sign_payload out of a plain step, and do a signed step in two calls, the
+connector's sign_request tool with the step's payload as its only argument,
+then act with what it returned. Work Redesign's workspace details already said
+the second part in their own rule about which actions are signed, in other
+words, so an assistant was told it twice. That rule now says only which
+actions are signed (sign_payload true) and which one takes plain arguments
+(sign_payload false), and the shared sentence says the rest, once. The message
+for mapping a process from a document already said it once and is unchanged.
+The texts an assistant reads straight from the workspace (the envelope
+template's signing rule, and each affordance's relay-signed inputs and
+descriptions) keep their own wording of the two calls, since neither copied
+message repeats them.
+
+## 2026-11-08 — Work Redesign: ChatGPT labels in bold, sign_request text in whole sentences
+
+On the landing page and in the guide, the second set-up step now shows
+ChatGPT's Server URL and OAuth labels in bold, as the steps already showed
+ChatGPT's other labels (Plugins, +, Add custom MCP server, Create as a plugin)
+and Claude's. "Accept the warning" stays plain words.
+
+The relay-signed input of each signed Work Redesign action described how to have a
+payload signed, then left "the same fields as the envelope payload, podUrl and
+a nonce included" after a semicolon with no verb. It now says it in whole
+sentences: call act with sign_payload: true or, where act has no sign_payload
+option, call the connector's sign_request tool with payload as its only
+argument; that payload has the same fields as the envelope payload, podUrl and
+a nonce included, and needs no issuedAt. Nothing else about signing changed.
+
+## 2026-11-08 — Work Redesign: Tab after a click, ChatGPT steps in order, sign_request on its own
+
+After "Skip to content" in the Work Redesign app, a click or tap on plain text
+in the main area now sets where the next Tab starts. Before, the main area kept
+focus through the click, so the next Tab jumped back to the first control at
+the top of the view. Now the main area gives up focus as soon as the person
+presses, and the browser starts Tab from where they pressed.
+
+The landing page and the guide now give ChatGPT's set-up in the order OpenAI's
+guide does: the first step only opens Plugins, then +, then Add custom MCP
+server; the second names it Interego and pastes the connector address as its
+Server URL with OAuth, and only then accepts the warning, selects Create as a
+plugin and installs it. Before, the first step said to create and install the
+plugin before the address it needs had been given. Claude's steps are
+unchanged.
+
+Where Work Redesign's own words tell an assistant without a sign_payload
+option to sign in two calls (the workspace details, the envelope template's
+signing rule, the relay-signed inputs and descriptions of each affordance, and
+the README), they now say to call sign_request with the payload as its only
+argument, then call act with the same descriptor_url and action_iri and with
+the returned signature and signed payload as its payload, unchanged. Anything
+passed to sign_request beside the payload is signed along with it, so the
+payload must be its only argument.
+
+## 2026-11-08 — Work Redesign: copied messages carry the shared helpers' newer nonce example
+
+The Work Redesign branch now carries master's shared chat helpers unchanged.
+The workspace details and the process-map message that Work Redesign copies
+for a person's assistant therefore show the nonce example the helpers now make
+from the message's own first signed step, read-records at turn 0, rather than a
+step name the site does not have. Nothing in Work Redesign itself had to change
+for it, and its tests pass against the shared helpers as master has them.
+
+## 2026-11-08 — Work Redesign: ChatGPT set-up as OpenAI's guide gives it, and no plan named
+
+Work Redesign's ChatGPT set-up now follows OpenAI's guide to custom MCP
+servers, checked on 2026-11-08: in ChatGPT on the web, open Plugins, select +,
+then Add custom MCP server; name it Interego, paste the connector address as
+its Server URL and choose OAuth; accept the warning, select Create as a plugin
+and install it; sign in with the same Interego account; then type @ in a chat
+and choose Interego. The app's "Use your AI assistant" panel shows the
+connector address first and these five steps after it, then says that a
+workspace's settings decide whether a person can add one, that ChatGPT asks
+before each write unless told to remember the choice for that chat, and how to
+pick up new tools, with a link to OpenAI's guide. The landing page and the
+guide give the same first step in one sentence, and the guide links OpenAI's
+guide too. Claude's steps are unchanged.
+
+No page claims any longer that a ChatGPT or Claude plan must allow custom
+connectors: whether a person can add one depends on their plan or workspace
+settings, and without one they can still draft a process map with copy and
+paste. Where Work Redesign's own words tell an assistant to sign (the workspace
+details, the map message, the envelope template's signing rule and the
+relay-signed inputs of each affordance), they now also say what to do when
+the assistant's act tool has no sign_payload option: sign the payload with the
+connector's sign_request tool, then pass act exactly the signature and signed
+payload it returned.
+
+## 2026-11-08 — Work Redesign: a click, quick presses and Dismiss keep the person's place
+
+In the Work Redesign app, the main area now takes focus only from "Skip to
+content", and only until focus leaves it. Before, it could take focus at any
+time, so a click on plain text focused it and the next Tab went back to its
+first control, taking the page to the top of the view. Now the next Tab goes on
+from where the person clicked. A redraw straight after the skip link still
+leaves focus in the main area.
+
+Pressing "Add a task" several times in quick succession now keeps the button
+where it is on the screen. The app's own scroll, which holds a pressed button
+in place through a redraw, was taken for the person scrolling, so a second
+redraw within a fifth of a second let the new task push the button off the
+screen. A button clicked straight after turning the mouse wheel now also stays
+under the pointer, while a page the person is still scrolling by other means is
+left to scroll.
+
+Dismissing an answer from the keyboard on the welcome screen or on "One more
+step" now moves focus to that screen's title, as it already did to a view's
+heading, instead of to the top of the page. While a new type of task is being
+signed, its "Add type of task" button only looks unavailable: it keeps focus,
+so the next Tab goes on from it, and a press is still ignored until the answer
+comes.
+
+## 2026-11-08 — Work Redesign: use your own Claude or ChatGPT, or copy and paste
+
+Work Redesign still runs no model and asks for no key; the web app now lets
+people bring their own assistant. The account menu has "Use your AI
+assistant": how to add the Interego connector in Claude or in ChatGPT (the
+address in a read-only box that wraps and grows to its lines, so a phone shows
+all of it, with Copy), this workspace's details to copy into
+a chat once, and copy-only starters for the seven questions and for plans,
+which tell the assistant never to answer for the person and to use only the
+person's own numbers. The workspace details name the actions the connector
+cannot pass arguments to and the signed read to use for each, one per line, and
+no copied text puts a comma, colon or full stop straight after an action, where
+it would read as part of its name; they name the intents
+that differ from an action's own name, and, where the operator lets chat
+agents decide, ask the assistant to check with the person before a decisive
+act instead of sending them to the app. It is offered only to someone signed in with their
+Interego account on a bridge that trusts a relay; the shell names the
+connector only then. A wallet signer, the read-only page, a bridge with
+sign-in off and the demo are told why and offered copy and paste.
+
+Mapping a process from a document now has two routes. In Claude or ChatGPT,
+one copied message carries the document and the exact steps: get the
+drafting instructions (plain), read who is registered (signed), confirm the
+draft with the person, then record the map (signed, storing the document's
+text). The app offers it only to process leads and only for documents up to
+20,000 characters, since the signed payload has a size cap; the button and
+its note follow the text as it is typed, so shortening a document turns the
+route back on. Copy and paste now
+copies plain text with a one-object reply rule instead of the packet's JSON,
+reads the pasted answer through code fences and surrounding words, and lets
+the person say who drafted the map, which is signed as chosen. `/ui/app.js` is
+served as the shared chat-agent helpers followed by the app, as one module.
+The landing page, guide and README say what the assistant's provider and the
+connector see, add the "Teams without an AI assistant" limit, and mark the
+bridge's own `/mcp` as a developer endpoint, not the connector.
+
+The pages' connector set-up follows the same rule as the app: it is shown only
+where the shell names a connector (`connectorUrlOf`, now in
+`bridge/landing.ts`, through `{{#chat_ready}}` sections the page renderer
+fills). Elsewhere the landing page and the guide drop everything that assumes
+the connector (adding it, the things to ask it, what stays in the app, the
+guide's optional step and the chat route under Map a process), open with the
+panel's own words (Work Redesign runs no AI; your own assistant drafts), say
+once that the workspace isn't set up for it, point to copy and paste, and say
+what pasting a document shares; the navigation names the section "Your own AI
+assistant" rather than the apps, and the FAQ, the guide's data section and
+limits, and the footers keep their connector sentences, recording a map from a
+chat and its length limit among them, to where one is named. Below 64em the
+site pages' section links move from the header into its menu, which holds every
+one of them, so the header no longer runs past the screen's edge at 768 to
+930 px. Choosing a link in that menu, by mouse, tap or key, now closes it, so
+it no longer covers the section it went to (the pages' one script,
+`/ui/site.js`, served by the bridge under the same policy as the app's). With the
+deployed bridge's 44-character address the set-up no longer widens either page on a phone: each step may
+shrink, and each address sits on a line of its own, filling it before going
+on, with no full stop hanging off it. The panel is titled "Use your AI
+assistant", like every way into it; its two set-ups are tabs the arrow keys,
+Home and End move between. Escape closes a panel with nothing to type in (the
+set-up, "Copy this", "Exactly what you're signing"), and does nothing in a
+form, so nothing typed is lost. Closing a panel puts focus back on the button
+that opened it, not just one with the same label: a row's "Edit" or "Remove"
+is that row's, a button in a disclosure opens it again, and where the button
+is gone, the view's heading; the panel's own way to Map a process gives focus
+to that view's heading. Where the browser refuses the clipboard, the
+text to copy opens over the panel, says to select and copy it, and closes
+back to it and to the Copy button pressed; "Exactly what you're signing",
+opened from a form, closes back to the form as it was, and a redraw while a
+panel is open keeps focus where it was. Where the chat route is not offered,
+the panel no longer asks to connect once or blames a plan. The pages and the panel say the
+connector's sign-in in one sentence, and the first thing to ask an assistant
+starts from the Map a process message. In Map a process, step 1 counts the
+text as it is typed (against a chat's 20,000 characters where that route is
+offered, "Loaded from" and the file's name only while the text is the
+file's, the name breaking inside itself on a phone rather than widening the
+steps), the copy-and-paste
+preview goes as soon as the title or text changes, the copied message leaves
+out the packet's note to programs, "not-declared" from an assistant is taken
+as no model, switching who drafted the map keeps what was typed, and the
+route cards are spaced by their own gap. Their buttons' labels wrap inside the
+card, so none runs past it or off a 320 to 375 px screen, and "Copy the
+message for my AI" keeps keyboard focus through the redraw copying makes,
+where focus is still on it when the copy lands. A person who went on while its
+message was being fetched keeps their place: focus stays in a panel they
+opened, and a page they scrolled on is not pulled back to the button.
+
+Any redraw of the same view now gives focus back to what had it, built again:
+the same button, or the same field with what was typed in it and the caret
+and selection where they were, and it stays where it was on the screen
+(another view, a task or signing in still starts afresh). So pressing "Copy
+the message for my AI" twice, with a double click, Enter twice or Enter held
+down, no longer leaves focus on nothing; a person who went into "Your AI's
+answer" and typed while the message was on its way stays there, and their next
+keys go in; and a menu or field that redraws when changed keeps focus too.
+A press while a copy is on its way, the second click of a double click and
+Enter's repeats add no copy and no toast; a later press copies again, as does
+a press once a copy has waited 10 seconds for its message. The
+copy no longer moves the button 90 to 115 px down the screen: the browser's
+scroll anchoring, which had nothing to hold on to once the view was rebuilt and
+moved the page anyway, is off in the app, and a redraw keeps what has focus,
+or else what is on the screen, in its place, except while the page is still
+scrolling.
+
+A redraw while the browser is still scrolling to a button that Tab just reached
+(Tab, then Enter at once on "Add a task" below the screen) now brings the
+rebuilt button to the middle of the screen, instead of leaving focus on a
+button the new task pushed off it. Someone who has scrolled, clicked or used
+another key since is left where they are. "Skip to content" now works in the
+app: focus moves to the screen's main area, so the next Tab starts there, and
+the address is left as it is, so a task page stays on its task. Only opening or
+leaving a task link draws the page again and goes to its top; `#main` typed
+into the address does neither. The main area takes focus by script only and
+shows no outline, and below 768 px it no longer stops with its first line under
+the navigation strip. Dismissing an answer from the keyboard now moves focus to
+the view's heading (or to an open panel's title) instead of the top of the
+page. In People & roles, "Add a type of task" keeps what was typed, and stays
+open, through redraws and through a refusal, so a refused ID can be corrected.
+It empties and closes only once the type is added, and its button is off while
+the change is being signed.
+
 ## 2026-11-09 — Foxxi encrypts stored LTI gradebooks
 
 Foxxi seals gradebook snapshots before serving or saving grades. Recovery of a

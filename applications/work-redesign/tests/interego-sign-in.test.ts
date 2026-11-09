@@ -37,16 +37,20 @@ import { createHash, randomBytes } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import express from 'express';
 import { JSDOM, VirtualConsole } from 'jsdom';
-import { importWallet, sha256Hex, signMessageRaw } from '@interego/core';
+import { canonicalJson, importWallet, sha256Hex, signMessageRaw } from '@interego/core';
 import { createVerticalBridge } from '../../_shared/vertical-bridge/index.js';
+import { chatAgentJs } from '../../_shared/chat-agent/index.js';
 import { listenLoopback, type TestListener } from '../../_shared/vertical-bridge/listen-loopback.js';
 import { wrdAffordances } from '../affordances.js';
 import { createWrdHandlers } from '../bridge/handlers.js';
 import { attachUi, parseEveryQueryPair, SIGN_IN_CLIENT_NAME, UI_CSP, type RelayLimits, type UiSignIn } from '../bridge/ui.js';
 import { memoryPod, demoClock, DEMO_POD, DEMO_RECORD_KEY } from '../demo/run.js';
+import { RELAY_SIGNING } from '../src/payloads.js';
 import type { RelayDelegationPolicy } from '../src/relay-delegated.js';
+import { jargonIn, urnsRunningIntoPunctuation, visibleText } from './plain-words.js';
 
-const APP_JS = readFileSync(new URL('../bridge/ui/app.js', import.meta.url), 'utf8');
+/** /ui/app.js as the bridge serves it: the shared chat-agent helpers, then the app (bridge/ui.ts). */
+const APP_JS = `${chatAgentJs()}\n${readFileSync(new URL('../bridge/ui/app.js', import.meta.url), 'utf8')}`;
 const listeners: TestListener[] = [];
 const windows: Array<{ close(): void }> = [];
 afterAll(async () => {
@@ -58,6 +62,7 @@ afterAll(async () => {
 type Obj = Record<string, unknown>;
 const isObj = (v: unknown): v is Obj => typeof v === 'object' && v !== null && !Array.isArray(v);
 const objOf = (v: unknown): Obj => (isObj(v) ? v : {});
+const must = <T>(v: T | null | undefined, what: string): T => { if (v === null || v === undefined) throw new Error(`missing ${what}`); return v; };
 const hex = (n: number): string => randomBytes(n).toString('hex');
 const b64urlSha256 = (s: string): string => createHash('sha256').update(s, 'utf8').digest('base64url');
 
@@ -70,6 +75,44 @@ const RELAY = importWallet(`0x${sha256Hex('wrd-sign-in-test:relay')}`, 'agent', 
 const SIGN_IN = 'Sign in with your Interego account';
 const SESSION_KEY = 'wrd.interego.session';
 const FLOW_KEY = 'wrd.interego.flow';
+/**
+ * A claim about which Claude or ChatGPT plans allow a connector. The pages name no plans: whether a person can add one is
+ * their plan's or workspace's setting, and that is all they say.
+ */
+const PLAN_CLAIM = /(Claude|ChatGPT) plans?\b|plans? that allows?|on a plan that|on your plan\?|plan must allow|plans can(?:'|’)?t/i;
+/** ChatGPT's set-up, step by step, as OpenAI's guide to custom MCP servers gives it (verified 2026-11-08). */
+const CHATGPT_STEPS = [
+  'In ChatGPT on the web, open Plugins, select +, then Add custom MCP server.',
+  'Name it Interego, paste the address above as its Server URL, and choose OAuth.',
+  'Accept the warning, select Create as a plugin, then install it.',
+  'When it asks, sign in with the same Interego account you use here.',
+  'In a chat, type @ and choose Interego.',
+];
+const CHATGPT_GUIDE = 'https://developers.openai.com/api/docs/guides/custom-mcp-server';
+/**
+ * What a copied prompt tells a chat app whose act tool shows no sign_payload option, word for word as the shared chat
+ * helper (applications/_shared/chat-agent) writes it, as the last line of How to do each step: leave sign_payload out of
+ * a plain step, and sign a signed step with sign_request first. Both copied prompts here can lead to both kinds of step.
+ */
+const NO_OPTION = 'no sign_payload option';
+const PLAIN_FALLBACK = 'leave sign_payload out of a plain step\'s call';
+const SIGN_REQUEST_FALLBACK = 'call the connector\'s sign_request tool';
+const FALLBACK_BOTH = `If your act tool has ${NO_OPTION}, ${PLAIN_FALLBACK} (do not sign it or wrap it), and do a signed step in two calls: ${SIGN_REQUEST_FALLBACK} `
+  + 'with payload as its only argument, set to the step\'s payload, then call act with the same descriptor_url and action_iri and with payload set to exactly '
+  + 'the _signature and _signed_payload it returned, unchanged.';
+/** How many times `part` occurs in `text`. */
+const timesIn = (text: string, part: string): number => text.split(part).length - 1;
+/**
+ * Each fallback is said once in a copied prompt, in the shared helper's sentence: Work Redesign's own rules say which
+ * actions are signed and which plain, and leave what to do without sign_payload to that sentence, so an assistant is not
+ * told the same thing twice in two wordings.
+ */
+function saysEachFallbackOnce(where: string, text: string): void {
+  expect([where, timesIn(text, NO_OPTION), timesIn(text, PLAIN_FALLBACK), timesIn(text, SIGN_REQUEST_FALLBACK), timesIn(text, 'sign_request'), timesIn(text, FALLBACK_BOTH)])
+    .toEqual([where, 1, 1, 1, 1, 1]);
+  const how = text.split('\n\n').find((part) => part.startsWith('How to do each step:')) ?? '';
+  expect([where, how.split('\n').at(-1)]).toEqual([where, FALLBACK_BOTH]);
+}
 /** What the callback page says to an answer that does not carry the state this tab stored. */
 const NOT_STARTED_HERE = 'This tab did not start this sign-in, so nothing in the answer was shown or exchanged.';
 
@@ -275,8 +318,12 @@ interface World {
 /** A bridge on loopback whose UI signs in through a stub relay; the person is an admin by their user DID. */
 async function world(o: {
   readonly deployed?: string; readonly cimd?: boolean; readonly signIn?: 'on' | 'no-relay-trusted' | 'off'; readonly admin?: boolean;
+  /** Register the person, by their user DID, as a process lead and a team member, with one type of task (signed by a key admin, before the page opens). */
+  readonly lead?: boolean;
   /** The sign-in routes' relay limits and their clock, and whether the app trusts one proxy hop (as server.ts does off loopback), so X-Forwarded-For names the client. */
   readonly limits?: Partial<RelayLimits>; readonly now?: () => number; readonly trustProxy?: boolean;
+  /** Whether the operator lets chat agents take decisive acts too (WRD_CHAT_AGENTS_DECIDE=1); off unless set. */
+  readonly chatAgentsDecide?: boolean;
 } = {}): Promise<World> {
   const clock = demoClock();
   const pod = memoryPod();
@@ -288,11 +335,22 @@ async function world(o: {
   const signIn: UiSignIn | undefined = o.signIn === 'off' ? undefined : {
     relayUrl: relay.base, policy: o.signIn === 'no-relay-trusted' ? null : policy, ...(o.limits ? { limits: o.limits } : {}), ...(o.now ? { now: o.now } : {}),
   };
+  const keyAdmin = importWallet(`0x${sha256Hex('wrd-sign-in-test:key-admin')}`, 'human', 'key-admin');
   const handlers = createWrdHandlers({
     fetchFn: pod.fetchFn, defaultPodUrl: DEMO_POD, now: () => clock.now(), recordKey: DEMO_RECORD_KEY,
     platform: { wallet: importWallet(`0x${sha256Hex('wrd-sign-in-test:platform')}`, 'agent', 'wrd-platform'), keyKind: 'demo' },
-    adminDids: o.admin === false ? [] : [PERSON], relayDelegation: { ...policy, chatAgentsDecide: false, relayUrl: relay.base },
+    adminDids: o.admin === false ? [] : [PERSON], relayDelegation: { ...policy, chatAgentsDecide: o.chatAgentsDecide === true, relayUrl: relay.base },
+    ...(o.lead === true ? { adminAddresses: [keyAdmin.address] } : {}),
   });
+  if (o.lead === true) {
+    const registry = {
+      intent: 'wrd:update-registry', podUrl: DEMO_POD, issuedAt: clock.now().toISOString(), nonce: 'sign-in-lead-registry-1',
+      entries: [{ address: PERSON, roles: ['operator', 'worker'], label: 'Pat', softwareAgent: false, personRef: 'p-pat' }],
+      taskKinds: [{ slug: 'invoice-matching', label: 'Invoice matching', definition: 'Match an invoice to its purchase order.' }],
+    };
+    const r = objOf(await handlers['wrd.update_registry']!({ envelope: { payload: registry, signature: await signMessageRaw(keyAdmin, canonicalJson(registry)) } }));
+    expect(r['status']).toBe('registered');
+  }
   const l = await listenLoopback(createVerticalBridge({
     verticalName: 'work-redesign', affordances: wrdAffordances, handlers, deploymentUrl: deployed,
     middleware: (a) => {
@@ -1065,6 +1123,864 @@ describe('work-redesign web UI: sign in with your Interego account', () => {
     const page = await openPage(off.bridge, '/ui');
     await page.until(() => page.text().includes('No wallet: this browser has no EIP-191 wallet'), 'the read-only note');
     expect(page.text()).not.toContain(SIGN_IN);
+    expect(page.errors).toEqual([]);
+  }, 60_000);
+
+  it('names the Interego connector in the shell only where a chat assistant\'s acts are taken: the relay\'s /mcp when it is trusted, nothing with no relay URL or no relay trusted', async () => {
+    const on = await world();
+    for (const path of ['/ui', '/ui/oauth/callback']) {
+      const shell = await (await fetch(`${on.bridge}${path}`)).text();
+      expect([path, shell.match(/<meta name="wrd-connector"[^>]*>/g)]).toEqual([path, [`<meta name="wrd-connector" content="${on.relay.base}/mcp">`]]);
+      expect(shell.match(/<script/g)).toHaveLength(1);
+    }
+    for (const signIn of ['off', 'no-relay-trusted'] as const) {
+      const w = await world({ signIn });
+      for (const path of ['/ui', '/ui/oauth/callback']) expect([signIn, path, (await (await fetch(`${w.bridge}${path}`)).text()).includes('wrd-connector')]).toEqual([signIn, path, false]);
+    }
+  }, 60_000);
+
+  it('a process lead signed in with Interego connects their own AI assistant: the panel shows the connector and copies the workspace details, the document route copies one message that records the map from the chat, a document too long for a chat is held back, and nothing on screen is protocol words', async () => {
+    const w = await world({ lead: true });
+    const page = await openPage(w.bridge, '/ui', { [SESSION_KEY]: JSON.stringify({ token: w.relay.mint(), expiresAt: new Date(Date.now() + 3600_000).toISOString() }) });
+    await page.until(() => page.text().includes(`Signed in as ${PERSON} via ${agentOf('work-redesign')}`) && page.text().includes('Map and change your process'), 'the signed-in lead');
+    const copied: string[] = [];
+    Object.defineProperty(page.window.navigator, 'clipboard', { value: { writeText: async (s: string) => { copied.push(s); } }, configurable: true });
+    const d = page.window.document;
+    // The panel is named as every way into it is (the account menu, Home's step, the map's "Not connected yet?").
+    const panelShown = (): boolean => d.getElementById('panel-title')?.textContent === 'Use your AI assistant';
+    const byLabel = (label: string): HTMLButtonElement => {
+      const b = [...d.querySelectorAll('button')].find((x) => x.getAttribute('aria-label') === label);
+      if (!b) throw new Error(`no button labelled "${label}"`);
+      return b as HTMLButtonElement;
+    };
+
+    // Home offers it as an optional step; the account menu has it too. Either opens the same panel.
+    expect([...d.querySelectorAll('.checklist__item')].some((li) => li.textContent?.includes('Connect Claude or ChatGPT'))).toBe(true);
+    expect([...d.querySelectorAll('#account-menu button')].some((b) => b.textContent === 'Use your AI assistant')).toBe(true);
+    page.click('Use your AI assistant');
+    await page.until(panelShown, 'the panel');
+    const panel = must(d.querySelector('.chat-panel'), 'the panel body');
+    // The connector address and the workspace address are field values (never words on screen), each with its own Copy.
+    // Changed: each is a read-only box that wraps and grows to its lines (not a one-line input that cut the address off on a
+    // phone), and its unseen twin, which sizes the box, holds the same address as an attribute, not as text.
+    const boxes = [...panel.querySelectorAll('textarea')] as HTMLTextAreaElement[];
+    expect(boxes.map((b) => b.value)).toEqual([`${w.relay.base}/mcp`, `${w.relay.base}/mcp`, DEPLOYED]);
+    expect(boxes.map((b) => [b.readOnly, b.className, b.parentElement?.className, b.parentElement?.getAttribute('data-value')]))
+      .toEqual(boxes.map((b) => [true, 'input input--mono copy-address__box', 'copy-address', b.value]));
+    expect(panel.querySelector('input')).toBeNull();
+    for (const b of boxes) expect(d.querySelector(`label[for="${b.id}"]`)?.textContent).toMatch(/^(Connector|Workspace) address$/);
+    // Two set-ups, one per app: Claude's shown, ChatGPT's hidden until its tab is chosen.
+    const tabs = [...panel.querySelectorAll('[role="tab"]')];
+    expect(tabs.map((t) => [t.textContent, t.getAttribute('aria-selected')])).toEqual([['In Claude', 'true'], ['In ChatGPT', 'false']]);
+    expect((d.getElementById('chat-setup-chatgpt') as HTMLElement).hidden).toBe(true);
+    (tabs[1] as HTMLButtonElement).click();
+    expect((d.getElementById('chat-setup-chatgpt') as HTMLElement).hidden).toBe(false);
+    expect((d.getElementById('chat-setup-claude') as HTMLElement).hidden).toBe(true);
+    // ChatGPT's set-up is OpenAI's own: the connector address first ("the address above"), then its five steps, then whose
+    // setting decides, what ChatGPT asks before a write, how to pick up new tools, and OpenAI's guide. No plan is named.
+    const chatgpt = must(d.getElementById('chat-setup-chatgpt'), 'ChatGPT\'s set-up');
+    expect([...chatgpt.querySelectorAll('ol.chat-steps > li')].map((li) => li.textContent)).toEqual(CHATGPT_STEPS);
+    expect([...chatgpt.children].map((c) => c.className)).toEqual(['field', 'chat-steps', 'hint', 'hint', 'hint']);
+    expect(chatgpt.querySelector('.field textarea')?.getAttribute('class')).toBe('input input--mono copy-address__box');
+    expect([...chatgpt.querySelectorAll('p.hint')].map((x) => x.textContent)).toEqual([
+      'Your workspace\'s settings decide whether you can add one. If you don\'t see the option, use copy and paste instead (below).',
+      'ChatGPT asks before each write unless you let it remember your choice for that chat. If Interego\'s tools look out of date, refresh it from its page in your app settings.',
+      'OpenAI\'s guide to custom MCP servers',
+    ]);
+    const guide = must(chatgpt.querySelector('a'), 'the guide link');
+    expect([guide.getAttribute('href'), guide.getAttribute('target'), guide.getAttribute('rel'), guide.textContent]).toEqual([CHATGPT_GUIDE, '_blank', 'noopener', 'OpenAI\'s guide to custom MCP servers']);
+    // Claude's set-up is as it was. Signing in to the connector is said in the same sentence as on the landing page and the guide.
+    expect([...must(d.getElementById('chat-setup-claude'), 'Claude\'s set-up').querySelectorAll('ol.chat-steps > li')].map((li) => li.firstChild?.textContent)).toEqual([
+      'In Claude, open Settings, then Connectors, then Add custom connector.', 'Name it Interego and paste this address:',
+      'Connect, and when it asks, sign in with the same Interego account you use for Work Redesign.', 'In each new chat, turn on Interego from the chat\'s tools menu (+).']);
+    // No claim about which plans allow a connector, anywhere in the panel: whose setting it is, and copy and paste without one.
+    expect(panel.textContent?.match(PLAN_CLAIM) ?? null).toBeNull();
+    expect(panel.textContent).toContain('Whether you can add a connector depends on your plan or workspace settings. Without one, you can still draft a process map with copy and paste');
+    const seen = visibleText(d);
+    for (const s of ['Work Redesign runs no AI of its own and never asks for an API key', 'the company behind your assistant sees it too', 'What stays in the Work Redesign app', 'Your assistant asks; you answer.', 'Add people by their Interego ID']) expect(seen, s).toContain(s);
+    expect(jargonIn(seen)).toEqual([]);
+
+    byLabel('Copy the connector address').click();
+    await page.until(() => copied.length === 1, 'the connector address copied');
+    expect(copied[0]).toBe(`${w.relay.base}/mcp`);
+    page.click('Copy workspace details');
+    await page.until(() => copied.length === 2, 'the workspace details copied');
+    const details = String(copied[1]);
+    for (const s of [`My Work Redesign workspace: ${DEPLOYED}`, `descriptor_url: "${DEPLOYED}/affordances"`, `My storage address (pod_url): "${DEMO_POD}"`, `"podUrl":"${DEMO_POD}"`, 'urn:iep:action:wrd:read-records', 'urn:iep:action:wrd:read-envelope-template',
+      'except one that takes plain arguments (sign_payload false): urn:iep:action:wrd:task-map-packet\n', 'nonce = the step name', 'done in the Work Redesign app, not from a chat',
+      // Which actions are signed and which plain, and nothing more: what to do where the act tool has no sign_payload option
+      // is the shared helper's sentence, said once (below). Changed: this rule no longer repeats the sign_request way.
+      'Every other action here is signed (sign_payload true), except one that takes plain arguments (sign_payload false): urn:iep:action:wrd:task-map-packet\n',
+      // The actions act can't pass arguments to, each with the signed read to use instead (changed: one per line, so no
+      // action is followed straight by a comma or a colon, which would read as part of its name), and the intents that
+      // are not the action's own name.
+      'Leave out three actions, because act passes them no arguments, and use their signed reads instead:\n',
+      '  - instead of urn:iep:action:wrd:envelope-template use urn:iep:action:wrd:read-envelope-template\n',
+      '  - instead of urn:iep:action:wrd:list-records use urn:iep:action:wrd:read-records\n',
+      '  - instead of urn:iep:action:wrd:calibration use urn:iep:action:wrd:read-calibration\n',
+      'all take "intent": "wrd:read-records"', '"intent": "wrd:review-agent-run"']) expect(details, s).toContain(s);
+    expect(details).not.toContain('Every action here is signed');
+    // An act tool with no sign_payload option: a plain step leaves it out, and a signed step goes through the connector's
+    // sign_request with the step's payload as its only argument (what is passed beside it is signed too), then act with
+    // the pair unchanged. Each said once.
+    saysEachFallbackOnce('the workspace details', details);
+    // Each starter is copied whole; its text is previewed only inside a closed disclosure.
+    byLabel('Copy: Go through the seven questions with me').click();
+    await page.until(() => copied.length === 3, 'the starter copied');
+    expect(copied[2]).toContain('never answer for me');
+    expect(copied[2]).toContain('urn:iep:action:wrd:classify-task');
+    byLabel('Copy: Propose and price a plan').click();
+    await page.until(() => copied.length === 4, 'the second starter copied');
+    expect(copied[3]).toContain('Use only numbers I give you');
+    // Every action a copied text names is one this workspace declares.
+    const declared = new Set(wrdAffordances.map((a) => String(a.action)));
+    expect([...copied.join('\n').matchAll(/urn:iep:action:wrd:[a-z-]+/g)].map((m) => m[0]).filter((a) => !declared.has(a))).toEqual([]);
+    // Every text the panel copies, the starters not copied above included: no action is followed straight by punctuation.
+    const panelCopies: string[] = [...copied];
+    for (const label of ['Check the tasks that name me', 'Submit a plan for approval']) {
+      const before = copied.length;
+      byLabel(`Copy: ${label}`).click();
+      await page.until(() => copied.length === before + 1, `the starter "${label}" copied`);
+      panelCopies.push(String(copied.pop()));
+    }
+    expect(panelCopies).toHaveLength(6);
+    expect(panelCopies.flatMap(urnsRunningIntoPunctuation)).toEqual([]);
+    expect([...panelCopies.join('\n').matchAll(/urn:iep:action:wrd:[a-z-]+/g)].map((m) => m[0]).filter((a) => !declared.has(a))).toEqual([]);
+
+    // A wallet signer or the read-only page gets no chat set-up: an assistant acts as the Interego account.
+    const panelFor = page.window.eval('chatPanel') as (mode: string) => HTMLElement;
+    for (const mode of ['wallet', 'readonly']) {
+      const other = panelFor(mode);
+      expect([mode, other.textContent]).toEqual([mode, expect.stringContaining('Your AI assistant acts as your Interego account, not your wallet.')]);
+      expect([mode, other.querySelector('input, textarea'), other.textContent?.includes('Set it up once')]).toEqual([mode, null, false]);
+      expect([mode, other.textContent]).toEqual([mode, expect.stringContaining('Draft a map with copy and paste')]);
+      // No "connect once" above "can't work here", and no plan reason that isn't the reason.
+      expect([mode, other.textContent?.includes('Connect Claude or ChatGPT once'), other.textContent?.match(PLAN_CLAIM) ?? null]).toEqual([mode, false, null]);
+      expect([mode, other.textContent]).toEqual([mode, expect.stringContaining('You can still draft a process map with copy and paste, in any chat app')]);
+    }
+
+    // Map a process from a document: the chat route copies ONE message that carries the steps and the document itself.
+    page.click('Map a process');
+    await page.until(() => d.querySelector('input[name="capture-mode"]'), 'the capture view');
+    (d.querySelectorAll('input[name="capture-mode"]')[1] as HTMLInputElement).click();
+    await page.until(() => page.text().includes('Have your AI draft the map'), 'the document route');
+    expect(page.text()).toContain('In Claude or ChatGPT (recommended)');
+    // Spacing: each step's body spaces its own parts; the two route cards inside step 2 are spaced by their own stack gap
+    // alone (no step, card-body or paragraph margins inside them), checked as the page's stylesheet applies (jsdom lays nothing out).
+    const css = d.createElement('style');
+    css.textContent = await (await fetch(`${w.bridge}/ui/app.css`)).text();
+    d.head.append(css);
+    const cs = (el: Element): CSSStyleDeclaration => page.window.getComputedStyle(el);
+    const stepBody = must(d.querySelector('.capture-step > .card__body'), 'a step body');
+    expect([...stepBody.children].slice(1).map((el) => cs(el).marginTop)).toEqual([...stepBody.children].slice(1).map(() => 'var(--space-4)'));
+    for (const card of d.querySelectorAll('.route-card > .card__body')) {
+      expect(cs(card).gap).toBe('var(--space-2)');
+      const none = (v: string): boolean => /^(0px|0|)$/.test(v);
+      expect([...card.children].map((el) => [el.tagName, none(cs(el).marginTop), none(cs(el).marginBottom)])).toEqual([...card.children].map((el) => [el.tagName, true, true]));
+    }
+    // A route card's buttons stay inside the card on a phone: a button keeps its label on one line by default (.btn's
+    // nowrap), so "Copy the message for my assistant" ran 22 px past its card at 360 px and off the screen at 320. In a route
+    // card the label wraps and the button is never wider than its block, a child of the card's body. Real Chromium at
+    // 320 to 390 px is the QA's check.
+    const routeButtons = [...d.querySelectorAll('.route-card button.btn')] as HTMLButtonElement[];
+    expect(routeButtons.map((b) => b.textContent)).toEqual(['Copy the message for my assistant', 'Open Processes', 'Use your AI assistant', 'Copy the message for my AI']);
+    expect(cs(routeButtons[0]!).whiteSpace).toBe('normal');
+    for (const b of routeButtons) {
+      expect([b.textContent, cs(b).whiteSpace, cs(b).maxWidth, cs(b).textAlign]).toEqual([b.textContent, 'normal', '100%', 'left']);
+      expect([b.textContent, b.closest('.route-card > .card__body')?.contains(b), cs(b.parentElement!).display]).toEqual([b.textContent, true, 'block']);
+    }
+    // Elsewhere a button keeps its one line: the rule is the route cards' own.
+    expect(cs(must([...d.querySelectorAll('button.btn')].find((b) => b.textContent === 'Fill the tasks from the answer'), 'a step button')).whiteSpace).toBe('nowrap');
+    css.remove();
+    const docText = 'Supplier invoices arrive by email. The clerk matches each invoice to its purchase order and the goods receipt before approval.';
+    page.fill(must(d.querySelector('[data-path="document.title"]'), 'the title field'), 'AP-SOP-014');
+    page.fill(must(d.querySelector('[data-path="document.text"]'), 'the text field'), docText);
+    page.click('Copy the message for my assistant');
+    await page.until(() => copied.length === 5, 'the chat message copied');
+    const message = String(copied[4]);
+    for (const s of ['urn:iep:action:wrd:task-map-packet', 'urn:iep:action:wrd:read-records', 'urn:iep:action:wrd:record-task-map', 'sign_payload: false', 'sign_payload: true',
+      '"storeText":true', 'request.documentSha256', 'Ignore their note about pasting the draft into the capture table', '"document_title":"AP-SOP-014"', `"pod_url":"${DEMO_POD}"`,
+      // Its own rule names a signed step, not one way of signing it: the step text says how, sign_payload or sign_request.
+      'If you are unsure of a field, ask for the template in a signed step, with urn:iep:action:wrd:read-envelope-template as the action and payload',
+      `----- DOCUMENT: AP-SOP-014 -----\n${docText}\n----- END OF DOCUMENT -----`]) expect(message, s).toContain(s);
+    // Its plain first step and its signed steps alike: what to do without sign_payload is said once, for both kinds.
+    saysEachFallbackOnce('the map message', message);
+    // Each level the map may name, exactly as the bridge takes it.
+    for (const level of ['"person"', '"person-with-agent-assist"', '"agent-drafts-person-decides"', '"agent-acts-person-audits"']) expect(message, level).toContain(level);
+    expect(message).not.toContain('agent-acts-within-grant');
+    expect([...message.matchAll(/urn:iep:action:wrd:[a-z-]+/g)].map((m) => m[0]).filter((a) => !declared.has(a))).toEqual([]);
+    // Copying it signed nothing and sent nothing.
+    expect(page.log.filter((r) => r.path === '/wrd/record_task_map' || r.path === '/wrd/task_map_packet')).toEqual([]);
+    expect(urnsRunningIntoPunctuation(message)).toEqual([]);
+    expect(jargonIn(visibleText(d))).toEqual([]);
+
+    // A document longer than a chat can record is held back as it is typed, with the reason, and copy and paste stays.
+    const TOO_LONG = 'This document is too long to record from a chat. Use Copy and paste.';
+    const chatButton = (): HTMLButtonElement => [...d.querySelectorAll('button')].find((b) => b.textContent === 'Copy the message for my assistant') as HTMLButtonElement;
+    const textField = must(d.querySelector('[data-path="document.text"]'), 'the text field');
+    const countHint = (): string => textField.closest('.field')?.querySelector('.hint')?.textContent ?? '';
+    // The note's live region shares the button's block, so while it is empty it adds no gap to the card.
+    expect(chatButton().parentElement?.querySelector('.route-card__gate[aria-live="polite"]')?.parentElement).toBe(chatButton().parentElement);
+    expect([chatButton().disabled, visibleText(d).includes(TOO_LONG)]).toEqual([false, false]);
+    expect(countHint()).toBe(`${docText.length} of the 20,000 characters a chat can record.`);
+    page.fill(textField, 'x'.repeat(20_001));
+    expect([chatButton().disabled, visibleText(d).includes(TOO_LONG)]).toEqual([true, true]);
+    // The count follows the text as it is typed, so it never contradicts the note.
+    expect(countHint()).toBe('20,001 characters, more than the 20,000 a chat can record.');
+    expect(chatButton().title).toBe(TOO_LONG);
+    chatButton().click();
+    expect(copied).toHaveLength(5);
+    expect([...d.querySelectorAll('button')].some((b) => b.textContent === 'Copy the message for my AI' && !(b as HTMLButtonElement).disabled)).toBe(true);
+    // Shortened again, with nothing redrawn in between, the chat route is back and the note is gone.
+    page.fill(textField, `${docText} `.repeat(20).slice(0, 2_000));
+    expect([chatButton().disabled, chatButton().hasAttribute('title'), visibleText(d).includes(TOO_LONG)]).toEqual([false, false, false]);
+    // Exactly the limit is still a chat's to record.
+    page.fill(textField, 'y'.repeat(20_000));
+    expect([chatButton().disabled, visibleText(d).includes(TOO_LONG)]).toEqual([false, false]);
+    expect(countHint()).toBe('20,000 of the 20,000 characters a chat can record.');
+    page.fill(textField, docText);
+    page.click('Copy the message for my assistant');
+    await page.until(() => copied.length === 6, 'the chat message copied after shortening');
+    expect(String(copied[5])).toContain(`----- DOCUMENT: AP-SOP-014 -----\n${docText}\n----- END OF DOCUMENT -----`);
+    // Copy and paste's message too: of every text this page copies, no action runs into punctuation.
+    page.click('Copy the message for my AI');
+    await page.until(() => copied.length === 7, 'the copy-and-paste message copied');
+    expect(String(copied[6])).toContain(`----- DOCUMENT: AP-SOP-014 -----\n${docText}\n----- END OF DOCUMENT -----`);
+    expect(copied.flatMap(urnsRunningIntoPunctuation)).toEqual([]);
+    expect(page.errors).toEqual([]);
+  }, 90_000);
+
+  it('tells an assistant whose act tool has no sign_payload option to sign through the connector\'s sign_request, with the payload as its only argument, and pass act the pair unchanged, wherever Work Redesign\'s own words say to sign: the envelope template\'s rule, every relay-signed input and each signed affordance\'s envelope', async () => {
+    const TWO_CALLS = 'where your act tool has no sign_payload option, call the connector\'s sign_request tool with payload as its only argument, set to this payload, then call act with the same descriptor_url and action_iri and with payload set to exactly the _signature and _signed_payload it returned, unchanged';
+    expect(RELAY_SIGNING).toContain(TWO_CALLS);
+    expect(RELAY_SIGNING).toContain('act with sign_payload: true and this payload');
+    // The template the bridge hands out carries it.
+    const w = await world({ lead: true });
+    const t = objOf(await (await fetch(`${w.bridge}/wrd/envelope_template?intent=${encodeURIComponent('wrd:ratify-task')}`)).json());
+    expect([t['status'], String(t['signing'])]).toEqual(['templated', expect.stringContaining(TWO_CALLS)]);
+    // Every relay-signed input: how to make it without sign_payload, and what act then sends.
+    const inputs = wrdAffordances.flatMap((a) => (a.inputs ?? []).map((i) => ({ action: String(a.action), name: i.name, description: String(i.description ?? '') })));
+    const signedPayload = inputs.filter((i) => i.name === '_signed_payload');
+    expect(signedPayload.length).toBeGreaterThan(0);
+    // In whole sentences: how to have the payload signed either way, then what that payload holds (no fragment after a
+    // semicolon), and no issuedAt, which the relay's own timestamp takes the place of.
+    for (const i of signedPayload) expect([i.action, i.description]).toEqual([i.action, expect.stringContaining('. To have the payload signed, call act with sign_payload: true, or, where act has no sign_payload option, call the connector\'s sign_request tool with payload as its only argument. That payload has the same fields as the envelope payload, podUrl and a nonce included, and needs no issuedAt. ')]);
+    // Where a description says what act sends (two inputs' and one affordance's own), it holds for either way of signing.
+    const texts = [...inputs, ...wrdAffordances.map((a) => ({ action: String(a.action), name: '(the affordance)', description: String(a.description ?? '') }))];
+    const pairOnly = texts.filter((i) => i.description.includes('sends only the signed pair'));
+    expect(pairOnly.length).toBeGreaterThanOrEqual(3);
+    for (const i of pairOnly) expect([i.action, i.name, i.description]).toEqual([i.action, i.name, expect.stringContaining('act sends only the signed pair, whether made with sign_payload: true or passed on as returned by sign_request with payload as its only argument')]);
+    expect(texts.filter((i) => i.description.includes('act … sign_payload: true sends only'))).toEqual([]);
+    // sign_request signs what it is given beside the payload too (descriptor_url or action_iri passed to it would be folded
+    // into what is signed), so every Work Redesign text that names it says the payload is its only argument.
+    const namingIt = [{ action: '(RELAY_SIGNING)', name: '', description: RELAY_SIGNING }, { action: '(the template)', name: 'signing', description: String(t['signing']) }, ...texts]
+      .filter((i) => i.description.includes('sign_request'));
+    expect(namingIt.length).toBeGreaterThanOrEqual(signedPayload.length + pairOnly.length + 2);
+    for (const i of namingIt) expect([i.action, i.name, i.description]).toEqual([i.action, i.name, expect.stringContaining('with payload as its only argument')]);
+  }, 60_000);
+
+  it('the panel works from the keyboard: its two set-ups are tabs the arrow keys, Home and End move between, Escape closes it back to what opened it, and where the browser refuses the clipboard the text to copy opens over it and closes back to it', async () => {
+    const w = await world({ lead: true });
+    const page = await openPage(w.bridge, '/ui', { [SESSION_KEY]: JSON.stringify({ token: w.relay.mint(), expiresAt: new Date(Date.now() + 3600_000).toISOString() }) });
+    await page.until(() => page.text().includes(`Signed in as ${PERSON} via ${agentOf('work-redesign')}`) && page.text().includes('Map and change your process'), 'the signed-in lead');
+    const d = page.window.document;
+    const panelTitle = (): string | null => d.getElementById('panel-title')?.textContent ?? null;
+    // Opened from the account menu, with focus there, as a keyboard user opens it.
+    const item = must([...d.querySelectorAll('#account-menu button')].find((b) => b.textContent === 'Use your AI assistant') as HTMLButtonElement | undefined, 'the menu item');
+    item.focus();
+    item.click();
+    await page.until(() => panelTitle() === 'Use your AI assistant', 'the panel');
+    const tab = (id: string): HTMLButtonElement => must(d.getElementById(`chat-tab-${id}`), `the ${id} tab`) as HTMLButtonElement;
+    const shown = (): unknown => ({
+      selected: ['claude', 'chatgpt'].filter((id) => tab(id).getAttribute('aria-selected') === 'true'),
+      tabindex: ['claude', 'chatgpt'].map((id) => tab(id).getAttribute('tabindex')),
+      visible: ['claude', 'chatgpt'].filter((id) => !(d.getElementById(`chat-setup-${id}`) as HTMLElement).hidden),
+      focused: d.activeElement?.id,
+    });
+    const press = (key: string): boolean => {
+      const e = new page.window.KeyboardEvent('keydown', { key, bubbles: true, cancelable: true });
+      (d.activeElement ?? d.body).dispatchEvent(e);
+      return e.defaultPrevented;
+    };
+    // Only the chosen tab is in the Tab order (a roving tabindex), so the keys reach the other one.
+    tab('claude').focus();
+    expect(shown()).toEqual({ selected: ['claude'], tabindex: ['0', '-1'], visible: ['claude'], focused: 'chat-tab-claude' });
+    expect(press('ArrowRight')).toBe(true);
+    expect(shown()).toEqual({ selected: ['chatgpt'], tabindex: ['-1', '0'], visible: ['chatgpt'], focused: 'chat-tab-chatgpt' });
+    expect(d.getElementById('chat-setup-chatgpt')?.textContent).toContain(CHATGPT_STEPS[0]);
+    expect(press('ArrowRight')).toBe(true);   // wraps
+    expect(shown()).toEqual({ selected: ['claude'], tabindex: ['0', '-1'], visible: ['claude'], focused: 'chat-tab-claude' });
+    expect(press('ArrowLeft')).toBe(true);    // wraps the other way
+    expect(shown()).toEqual({ selected: ['chatgpt'], tabindex: ['-1', '0'], visible: ['chatgpt'], focused: 'chat-tab-chatgpt' });
+    expect(press('Home')).toBe(true);
+    expect(shown()).toEqual({ selected: ['claude'], tabindex: ['0', '-1'], visible: ['claude'], focused: 'chat-tab-claude' });
+    expect(press('End')).toBe(true);
+    expect(shown()).toEqual({ selected: ['chatgpt'], tabindex: ['-1', '0'], visible: ['chatgpt'], focused: 'chat-tab-chatgpt' });
+    // Any other key is the browser's (Enter and Space press the focused tab, which is already chosen).
+    expect(press('Enter')).toBe(false);
+    expect(press('ArrowDown')).toBe(false);
+    expect(shown()).toEqual({ selected: ['chatgpt'], tabindex: ['-1', '0'], visible: ['chatgpt'], focused: 'chat-tab-chatgpt' });
+    // Keys pressed elsewhere in the panel move no tab.
+    must(d.querySelector('.chat-panel textarea'), 'a field').dispatchEvent(new page.window.KeyboardEvent('keydown', { key: 'Home', bubbles: true, cancelable: true }));
+    expect(shown()).toMatchObject({ selected: ['chatgpt'], visible: ['chatgpt'] });
+
+    // A browser that refuses the clipboard: the text to copy opens over the panel, says how to copy it by hand, and closes back to
+    // the panel as it was (ChatGPT's set-up still chosen), with focus on the Copy button that opened it.
+    Object.defineProperty(page.window.navigator, 'clipboard', { value: { writeText: async () => { throw new Error('denied'); } }, configurable: true });
+    const copyDetails = (): HTMLButtonElement => must([...d.querySelectorAll('.chat-panel button')].find((b) => b.textContent === 'Copy workspace details'), 'Copy workspace details') as HTMLButtonElement;
+    copyDetails().focus();
+    page.click('Copy workspace details');
+    await page.until(() => panelTitle() === 'Copy this', 'the text to copy by hand');
+    expect(page.text()).toContain('Select all of the text below and copy it yourself.');
+    const box = must(d.querySelector('#app textarea[readonly]'), 'the text to copy') as HTMLTextAreaElement;
+    expect(box.value).toContain('My Work Redesign workspace:');
+    expect(d.querySelector('.chat-panel')).toBeNull();
+    must(d.querySelector('button[aria-label="Close"]'), 'Close').dispatchEvent(new page.window.MouseEvent('click', { bubbles: true }));
+    await page.until(() => panelTitle() === 'Use your AI assistant', 'the panel again');
+    expect(shown()).toMatchObject({ selected: ['chatgpt'], visible: ['chatgpt'] });
+    expect(d.activeElement).toBe(copyDetails());
+    // Escape in the text to copy goes back the same way; from a starter's Copy, back to that one.
+    page.click('Copy workspace details');
+    await page.until(() => panelTitle() === 'Copy this', 'the text to copy by hand again');
+    must(d.querySelector('#app textarea[readonly]'), 'the text to copy').dispatchEvent(new page.window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+    await page.until(() => panelTitle() === 'Use your AI assistant', 'the panel after Escape');
+    expect(d.activeElement).toBe(copyDetails());
+    const starterCopy = must(d.querySelector('.chat-starters button[aria-label="Copy: Submit a plan for approval"]'), 'a starter\'s Copy') as HTMLButtonElement;
+    starterCopy.focus();
+    starterCopy.click();
+    await page.until(() => panelTitle() === 'Copy this', 'the starter to copy by hand');
+    must(d.getElementById('panel-title'), 'the title').dispatchEvent(new page.window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+    await page.until(() => panelTitle() === 'Use your AI assistant', 'the panel after the starter');
+    expect(d.activeElement).toBe(starterCopy);
+
+    // Escape closes the panel, and focus goes back to the account menu's button, which opened it.
+    tab('chatgpt').focus();
+    expect(press('Escape')).toBe(true);
+    await page.until(() => d.getElementById('panel-title') === null, 'the panel closed');
+    expect(d.activeElement?.classList.contains('user-button')).toBe(true);
+    // Opened from a button in the view, it goes back to that button.
+    const homeStep = must([...d.querySelectorAll('#app button')].find((b) => b.textContent === 'Use your AI assistant' && !b.closest('#account-menu')) as HTMLButtonElement | undefined, 'Home\'s step');
+    homeStep.focus();
+    homeStep.click();
+    await page.until(() => panelTitle() === 'Use your AI assistant', 'the panel from Home');
+    must(d.getElementById('panel-title'), 'the title').dispatchEvent(new page.window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+    await page.until(() => d.getElementById('panel-title') === null, 'the panel closed again');
+    expect([d.activeElement?.textContent, d.activeElement?.closest('#account-menu')]).toEqual(['Use your AI assistant', null]);
+    // Opened from Map a process's "Not connected yet?", inside a disclosure the view draws closed: the disclosure opens again,
+    // with focus on the button in it.
+    page.click('Map a process');
+    await page.until(() => d.querySelectorAll('input[name="capture-mode"]').length === 2, 'the capture view');
+    (d.querySelectorAll('input[name="capture-mode"]')[1] as HTMLInputElement).click();
+    await page.until(() => page.text().includes('Have your AI draft the map'), 'the document route');
+    const notConnected = must([...d.querySelectorAll('.route-card details')].find((x) => x.querySelector('summary')?.textContent === 'Not connected yet?'), 'Not connected yet?') as HTMLDetailsElement;
+    notConnected.open = true;
+    const cardButton = must([...notConnected.querySelectorAll('button')].find((b) => b.textContent === 'Use your AI assistant'), 'its button') as HTMLButtonElement;
+    cardButton.focus();
+    cardButton.click();
+    await page.until(() => panelTitle() === 'Use your AI assistant', 'the panel from Map a process');
+    must(d.getElementById('panel-title'), 'the title').dispatchEvent(new page.window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+    await page.until(() => d.getElementById('panel-title') === null, 'the panel closed from Map a process');
+    const reopened = d.activeElement?.closest('details');
+    expect([d.activeElement?.textContent, reopened?.querySelector('summary')?.textContent, (reopened as HTMLDetailsElement | null | undefined)?.open]).toEqual(['Use your AI assistant', 'Not connected yet?', true]);
+
+    // The panel's own ways to Map a process close it by switching the view, and the button pressed goes with it: focus goes
+    // to the view's heading, not to the page's body (where the next Tab would start again from the top of the page).
+    const goTab = page.window.eval('goTab') as (id: string) => void;
+    const heading = (): unknown => [d.activeElement?.tagName, d.activeElement?.className, d.activeElement?.textContent, d.activeElement?.getAttribute('tabindex')];
+    for (const [route, inDisclosure] of [['Map a process from a document', ''], ['Draft a map with copy and paste', 'No connector?']] as const) {
+      goTab('tasks');
+      (d.querySelectorAll('#account-menu button') as NodeListOf<HTMLButtonElement>).forEach((b) => { if (b.textContent === 'Use your AI assistant') b.click(); });
+      await page.until(() => panelTitle() === 'Use your AI assistant', `the panel for "${route}"`);
+      if (inDisclosure) (must([...d.querySelectorAll('.chat-panel details')].find((x) => x.querySelector('summary')?.textContent === inDisclosure), inDisclosure) as HTMLDetailsElement).open = true;
+      const go = must([...d.querySelectorAll('.chat-panel button')].find((b) => b.textContent === route), route) as HTMLButtonElement;
+      go.focus();
+      go.click();
+      await page.until(() => d.getElementById('panel-title') === null && page.text().includes('Have your AI draft the map'), `Map a process from "${route}"`);
+      expect([route, heading()]).toEqual([route, ['H1', 'page-title', 'Map a process', '-1']]);
+    }
+
+    // Copy and paste's "Copy the message for my AI" redraws the view (to add "Show the message"), which builds the button
+    // again: focus goes to the new one, so a keyboard user carries on from it. Where the browser refuses the clipboard (as
+    // here, still), the text to copy opens with focus on its title, and closing it comes back to the button.
+    const cardB = (): HTMLButtonElement => must([...d.querySelectorAll('.route-card button')].find((b) => b.textContent === 'Copy the message for my AI'), 'Card B\'s button') as HTMLButtonElement;
+    expect(cardB().getAttribute('data-return')).toBe('document copy-paste-message');
+    page.fill(must(d.querySelector('[data-path="document.title"]'), 'the title field'), 'AP-SOP-014');
+    page.fill(must(d.querySelector('[data-path="document.text"]'), 'the text field'), 'Supplier invoices arrive by email. The clerk matches each invoice to its purchase order.');
+    cardB().focus();
+    cardB().click();
+    await page.until(() => panelTitle() === 'Copy this', 'the message to copy by hand');
+    await page.until(() => d.activeElement?.id === 'panel-title', 'focus on its title');
+    must(d.getElementById('panel-title'), 'the title').dispatchEvent(new page.window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+    await page.until(() => d.getElementById('panel-title') === null, 'the text to copy closed');
+    expect(d.activeElement).toBe(cardB());
+    const copiedB: string[] = [];
+    Object.defineProperty(page.window.navigator, 'clipboard', { value: { writeText: async (s: string) => { copiedB.push(s); } }, configurable: true });
+    for (const press of [1, 2]) {
+      const pressed = cardB();
+      pressed.focus();
+      pressed.click();
+      await page.until(() => copiedB.length === press && cardB() !== pressed, `the message copied (${press})`);
+      await page.until(() => d.activeElement !== d.body, `focus after copying (${press})`);
+      expect([press, pressed.isConnected, d.activeElement === cardB(), [...d.querySelectorAll('summary')].some((x) => x.textContent === 'Show the message')]).toEqual([press, false, true, true]);
+    }
+    expect(page.errors).toEqual([]);
+  }, 60_000);
+
+  it('copy and paste\'s message, copied once its packet comes, leaves a person who moved on meanwhile where they went: focus stays in a panel they opened, and the page is not pulled back to the button', async () => {
+    const w = await world({ lead: true });
+    const page = await openPage(w.bridge, '/ui', { [SESSION_KEY]: JSON.stringify({ token: w.relay.mint(), expiresAt: new Date(Date.now() + 3600_000).toISOString() }) });
+    await page.until(() => page.text().includes(`Signed in as ${PERSON} via ${agentOf('work-redesign')}`) && page.text().includes('Map and change your process'), 'the signed-in lead');
+    const win = page.window;
+    const d = win.document;
+    const copied: string[] = [];
+    Object.defineProperty(win.navigator, 'clipboard', { value: { writeText: async (s: string) => { copied.push(s); } }, configurable: true });
+    // The packet is held back until released, as a slow network holds it: the first press of a document always asks for one.
+    const held: Array<() => void> = [];
+    const inner = win.fetch;
+    win.fetch = (async (input: unknown, init?: RequestInit) => {
+      if (new URL(String(input), win.location.href).pathname === '/wrd/task_map_packet') await new Promise<void>((r) => { held.push(r); });
+      return inner(input as string, init);
+    }) as typeof win.fetch;
+    // jsdom lays nothing out and scrolls nothing: Card B's button reports itself below the screen, and each scroll to it is noted.
+    const KEY = 'document copy-paste-message';
+    const box = win.HTMLElement.prototype.getBoundingClientRect;
+    win.HTMLElement.prototype.getBoundingClientRect = function (this: HTMLElement) {
+      return this.getAttribute('data-return') === KEY ? { top: 2400, bottom: 2444, left: 16, right: 300, width: 284, height: 44, x: 16, y: 2400, toJSON: () => ({}) } as DOMRect : box.call(this);
+    };
+    const scrolledTo: Element[] = [];
+    (win.Element.prototype as unknown as { scrollIntoView: (this: Element) => void }).scrollIntoView = function (this: Element) { scrolledTo.push(this); };
+    const panelTitle = (): string | null => d.getElementById('panel-title')?.textContent ?? null;
+    const cardB = (): HTMLButtonElement => must([...d.querySelectorAll('.route-card button')].find((b) => b.textContent === 'Copy the message for my AI'), 'Card B\'s button') as HTMLButtonElement;
+    page.click('Map a process');
+    await page.until(() => d.querySelectorAll('input[name="capture-mode"]').length === 2, 'the capture view');
+    (d.querySelectorAll('input[name="capture-mode"]')[1] as HTMLInputElement).click();
+    await page.until(() => page.text().includes('Have your AI draft the map'), 'the document route');
+    page.fill(must(d.querySelector('[data-path="document.title"]'), 'the title field'), 'AP-SOP-014');
+    /** Press Card B with a new document text (so a new packet is asked for), do `meanwhile` while it is held, then let it come. */
+    const pressThen = async (text: string, meanwhile: () => Promise<void> | void): Promise<HTMLButtonElement> => {
+      page.fill(must(d.querySelector('[data-path="document.text"]'), 'the text field'), text);
+      const pressed = cardB();
+      const before = copied.length;
+      pressed.focus();
+      pressed.click();
+      await page.until(() => held.length === 1, 'the packet asked for');
+      await meanwhile();
+      must(held.pop(), 'the held packet')();
+      await page.until(() => copied.length === before + 1 && cardB() !== pressed, `"${text}" copied and the view drawn again`);
+      expect(copied.at(-1)).toContain(`----- DOCUMENT: AP-SOP-014 -----\n${text}\n----- END OF DOCUMENT -----`);
+      return pressed;
+    };
+
+    // (1) While it is on its way, the person opens "Use your AI assistant" from the account menu and goes to the connector
+    // address in it. The copy lands: focus stays on that address in the open panel, and nothing scrolls to Card B behind it.
+    const inPanel: { address?: HTMLTextAreaElement } = {};
+    await pressThen('Supplier invoices arrive by email. The clerk matches each invoice to its purchase order.', async () => {
+      (d.querySelectorAll('#account-menu button') as NodeListOf<HTMLButtonElement>).forEach((b) => { if (b.textContent === 'Use your AI assistant') b.click(); });
+      await page.until(() => panelTitle() === 'Use your AI assistant', 'the panel opened while the packet is on its way');
+      inPanel.address = must(d.querySelector('.chat-panel textarea'), 'the connector address') as HTMLTextAreaElement;
+      inPanel.address.focus();
+    });
+    const address = must(inPanel.address, 'the address focused in the panel');
+    expect([panelTitle(), d.activeElement === address, address.isConnected, d.activeElement === cardB(), scrolledTo]).toEqual(['Use your AI assistant', true, true, false, []]);
+    must(d.getElementById('panel-title'), 'the title').dispatchEvent(new win.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+    await page.until(() => d.getElementById('panel-title') === null, 'the panel closed');
+
+    // (2) The person scrolls on with the wheel while it is on its way, focus still on the button (a mouse click focuses it):
+    // focus goes to the new button, but the page stays where they scrolled it.
+    await pressThen('Supplier invoices arrive by email. The clerk matches each one, then files it.', () => {
+      d.body.dispatchEvent(new win.WheelEvent('wheel', { deltaY: 600, bubbles: true, cancelable: true }));
+    });
+    expect([d.activeElement === cardB(), scrolledTo]).toEqual([true, []]);
+
+    // (3) Unchanged where the person did nothing meanwhile: focus goes to the new button, brought into view as it is off the
+    // screen (Enter pressed while Tab's scroll was still under way). The watch for moving on is each press's own.
+    await pressThen('Supplier invoices arrive by email. The clerk matches each one and approves it.', () => undefined);
+    expect([d.activeElement === cardB(), scrolledTo.length, scrolledTo[0] === cardB()]).toEqual([true, 1, true]);
+    expect(page.errors).toEqual([]);
+  }, 60_000);
+
+  /**
+   * A signed-in lead on Map a process, from a document, with its title and text filled in, the clipboard taking every copy,
+   * and the packet held back until released (as a slow network holds it): the first press of a document always asks for one.
+   */
+  async function heldPacketCapture(text: string) {
+    const w = await world({ lead: true });
+    const page = await openPage(w.bridge, '/ui', { [SESSION_KEY]: JSON.stringify({ token: w.relay.mint(), expiresAt: new Date(Date.now() + 3600_000).toISOString() }) });
+    await page.until(() => page.text().includes(`Signed in as ${PERSON} via ${agentOf('work-redesign')}`) && page.text().includes('Map and change your process'), 'the signed-in lead');
+    const win = page.window;
+    const d = win.document;
+    const copied: string[] = [];
+    Object.defineProperty(win.navigator, 'clipboard', { value: { writeText: async (s: string) => { copied.push(s); } }, configurable: true });
+    const held: Array<() => void> = [];
+    const hold = { on: true };
+    const inner = win.fetch;
+    win.fetch = (async (input: unknown, init?: RequestInit) => {
+      if (hold.on && new URL(String(input), win.location.href).pathname === '/wrd/task_map_packet') await new Promise<void>((r) => { held.push(r); });
+      return inner(input as string, init);
+    }) as typeof win.fetch;
+    const scrolledTo: Element[] = [];
+    (win.Element.prototype as unknown as { scrollIntoView: (this: Element) => void }).scrollIntoView = function (this: Element) { scrolledTo.push(this); };
+    page.click('Map a process');
+    await page.until(() => d.querySelectorAll('input[name="capture-mode"]').length === 2, 'the capture view');
+    (d.querySelectorAll('input[name="capture-mode"]')[1] as HTMLInputElement).click();
+    await page.until(() => page.text().includes('Have your AI draft the map'), 'the document route');
+    page.fill(must(d.querySelector('[data-path="document.title"]'), 'the title field'), 'AP-SOP-014');
+    page.fill(must(d.querySelector('[data-path="document.text"]'), 'the text field'), text);
+    const cardB = (): HTMLButtonElement => must([...d.querySelectorAll('.route-card button')].find((b) => b.textContent === 'Copy the message for my AI'), 'Card B\'s button') as HTMLButtonElement;
+    const answer = (): HTMLTextAreaElement => {
+      const label = must([...d.querySelectorAll('label')].find((l) => l.textContent === 'Your AI\'s answer'), 'the answer\'s label') as HTMLLabelElement;
+      return must(d.getElementById(label.htmlFor), 'the answer box') as HTMLTextAreaElement;
+    };
+    const toasts = (): number => d.querySelectorAll('#toasts .toast').length;
+    /** Let every held packet through, and every later one at once. */
+    const release = (): void => { hold.on = false; while (held.length) must(held.pop(), 'a held packet')(); };
+    return { page, win, d, copied, held, hold, release, scrolledTo, cardB, answer, toasts };
+  }
+
+  it('presses copy and paste\'s button twice (a double click, Enter twice) while its packet is on its way: one copy, one toast, and focus stays on the button, as on a later deliberate press; a copy stalled for 10 s no longer holds the button', async () => {
+    const text = 'Supplier invoices arrive by email. The clerk matches each invoice to its purchase order.';
+    const { page, d, win, copied, held, hold, release, scrolledTo, cardB, toasts } = await heldPacketCapture(text);
+    const pressed = cardB();
+    pressed.focus();
+    pressed.click();
+    await page.until(() => held.length === 1, 'the packet asked for');
+    // The second press: while the copy is on its way, the button pressed is still there, and still focused.
+    pressed.click();
+    await new Promise((r) => setTimeout(r, 200));
+    release();
+    await page.until(() => copied.length >= 1 && cardB() !== pressed, 'the message copied and the view drawn again');
+    await new Promise((r) => setTimeout(r, 400));
+    // One copy and one toast; focus on the button the redraw built (before, a second copy's redraw left it on nothing).
+    expect([copied.length, toasts(), pressed.isConnected, d.activeElement === cardB(), scrolledTo]).toEqual([1, 1, false, true, []]);
+    expect(copied[0]).toContain(`----- DOCUMENT: AP-SOP-014 -----\n${text}\n----- END OF DOCUMENT -----`);
+
+    // The second click of a double click adds nothing; Enter held down presses once (its repeats are refused); a later
+    // press is a press of its own: a second copy, with focus still on the button.
+    const again = cardB();
+    again.dispatchEvent(new win.MouseEvent('click', { bubbles: true, cancelable: true, detail: 2 }));
+    const repeat = new win.KeyboardEvent('keydown', { key: 'Enter', repeat: true, bubbles: true, cancelable: true });
+    const first = new win.KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true });
+    again.dispatchEvent(repeat);
+    again.dispatchEvent(first);
+    await new Promise((r) => setTimeout(r, 200));
+    expect([copied.length, repeat.defaultPrevented, first.defaultPrevented]).toEqual([1, true, false]);
+    again.click();
+    await page.until(() => copied.length === 2 && cardB() !== again, 'the message copied again');
+    await new Promise((r) => setTimeout(r, 200));
+    expect([copied.length, toasts(), d.activeElement === cardB(), scrolledTo]).toEqual([2, 2, true, []]);
+
+    // A copy whose packet is still not there after 10 s no longer holds the button: a press then asks again.
+    page.fill(must(d.querySelector('[data-path="document.text"]'), 'the text field'), `${text} Then it is filed.`);
+    const stalled = cardB();
+    const asked = page.log.filter((l) => l.path === '/wrd/task_map_packet').length;
+    hold.on = true;
+    stalled.focus();
+    stalled.click();
+    await page.until(() => held.length === 1, 'the new packet asked for');
+    stalled.click();
+    await new Promise((r) => setTimeout(r, 200));
+    expect(held.length).toBe(1);
+    const realNow = win.Date.now.bind(win.Date);
+    win.Date.now = () => realNow() + 11_000;
+    stalled.click();
+    await page.until(() => held.length === 2, 'the packet asked for again once 10 s have gone');
+    win.Date.now = realNow;
+    release();
+    await page.until(() => copied.length === 4 && page.log.filter((l) => l.path === '/wrd/task_map_packet').length === asked + 2, 'both copies made');
+    await new Promise((r) => setTimeout(r, 200));
+    expect([d.activeElement === cardB(), copied.at(-1)]).toEqual([true, expect.stringContaining('Then it is filed.')]);
+    expect(page.errors).toEqual([]);
+  }, 60_000);
+
+  it('leaves a person who went on into a field while copy and paste\'s packet was on its way in that field when the copy lands, with what they typed and their caret', async () => {
+    const text = 'Supplier invoices arrive by email. The clerk matches each one, then files it.';
+    const { page, d, copied, held, release, scrolledTo, cardB, answer } = await heldPacketCapture(text);
+    const pressed = cardB();
+    pressed.focus();
+    pressed.click();
+    await page.until(() => held.length === 1, 'the packet asked for');
+    // Tab on into step 3's box and type there, the caret left inside what was typed.
+    const box = answer();
+    box.focus();
+    page.fill(box, 'xyz');
+    box.setSelectionRange(1, 2, 'backward');
+    release();
+    await page.until(() => copied.length === 1 && cardB() !== pressed, 'the message copied and the view drawn again');
+    await new Promise((r) => setTimeout(r, 200));
+    const now = answer();
+    // The box was built again (the waiting note above it went with the typing), and focus is in the new one: the text is
+    // there, the caret where it was, and the page did not go back to the button.
+    expect([box.isConnected, d.activeElement === now, now.value, now.selectionStart, now.selectionEnd, now.selectionDirection, scrolledTo])
+      .toEqual([false, true, 'xyz', 1, 2, 'backward', []]);
+    expect(page.text()).not.toContain('Waiting for your AI\'s answer');
+    expect(page.errors).toEqual([]);
+  }, 60_000);
+
+  /** A signed-in lead (and admin) on Home. */
+  async function signedInLead() {
+    const w = await world({ lead: true });
+    const page = await openPage(w.bridge, '/ui', { [SESSION_KEY]: JSON.stringify({ token: w.relay.mint(), expiresAt: new Date(Date.now() + 3600_000).toISOString() }) });
+    await page.until(() => page.text().includes(`Signed in as ${PERSON} via ${agentOf('work-redesign')}`) && page.text().includes('Map and change your process'), 'the signed-in lead');
+    return { w, page, win: page.window, d: page.window.document };
+  }
+
+  it('shows the button Tab reached when a redraw builds it again while the browser is still bringing it into view, and leaves the page alone once the person scrolled, clicked or used another key', async () => {
+    const { page, win, d } = await signedInLead();
+    // jsdom lays nothing out and scrolls nothing: "Add a task" reports itself below the screen, and each scroll to an element is noted.
+    const box = win.HTMLElement.prototype.getBoundingClientRect;
+    win.HTMLElement.prototype.getBoundingClientRect = function (this: HTMLElement) {
+      return this.tagName === 'BUTTON' && this.textContent === 'Add a task' ? { top: 2400, bottom: 2444, left: 16, right: 200, width: 184, height: 44, x: 16, y: 2400, toJSON: () => ({}) } as DOMRect : box.call(this);
+    };
+    const scrolledTo: Array<readonly [Element, unknown]> = [];
+    (win.Element.prototype as unknown as { scrollIntoView: (this: Element, o: unknown) => void }).scrollIntoView = function (this: Element, o: unknown) { scrolledTo.push([this, o]); };
+    page.click('Map a process');
+    await page.until(() => d.querySelector('[data-path="workflow.title"]'), 'Map a process, by hand');
+    const addTask = (): HTMLButtonElement => must([...d.querySelectorAll('.app-main button')].find((b) => b.textContent === 'Add a task'), '"Add a task"') as HTMLButtonElement;
+    const tasks = (): number => d.querySelectorAll('[data-path$=".name"]').length;
+    const key = (at: EventTarget, k: string): boolean => at.dispatchEvent(new win.KeyboardEvent('keydown', { key: k, bubbles: true, cancelable: true }));
+    /** Tab reaches "Add a task" (Tab's keydown goes to what focus leaves), the person does `meanwhile`, then Enter presses it: a task is added above it. */
+    const tabThenEnter = (meanwhile: (b: HTMLButtonElement) => void): void => {
+      const n = tasks();
+      key(d.body, 'Tab');
+      const b = addTask();
+      b.focus();
+      meanwhile(b);
+      key(b, 'Shift');
+      key(b, 'Enter');
+      b.click();
+      expect([tasks(), b.isConnected, d.activeElement === addTask()]).toEqual([n + 1, false, true]);
+    };
+    // Enter at once: the browser was still scrolling to the button, toward where the one the redraw replaced was. The
+    // rebuilt button, pushed down by the new task, is brought to the middle of the screen, focus on it.
+    tabThenEnter(() => undefined);
+    expect(scrolledTo).toEqual([[addTask(), { block: 'center', behavior: 'instant' }]]);
+    // The person turned the wheel, clicked, swiped or used another key after Tab: the page is theirs, and stays where it is.
+    for (const meanwhile of [
+      (b: HTMLButtonElement) => b.dispatchEvent(new win.WheelEvent('wheel', { deltaY: 300, bubbles: true, cancelable: true })),
+      (b: HTMLButtonElement) => b.dispatchEvent(new win.MouseEvent('pointerdown', { bubbles: true, cancelable: true })),
+      (b: HTMLButtonElement) => b.dispatchEvent(new win.Event('touchmove', { bubbles: true })),
+      (b: HTMLButtonElement) => key(b, 'PageDown'),
+      (b: HTMLButtonElement) => key(d.body, ' '),
+    ]) {
+      scrolledTo.length = 0;
+      tabThenEnter(meanwhile);
+      expect(scrolledTo).toEqual([]);
+    }
+    // Long after Tab, the browser has finished its scroll: nothing more to do.
+    scrolledTo.length = 0;
+    tabThenEnter(() => { const t0 = Date.now(); while (Date.now() - t0 < 1100) { /* the second the browser's scroll may take goes by */ } });
+    expect(scrolledTo).toEqual([]);
+    expect(page.errors).toEqual([]);
+  }, 60_000);
+
+  it('keeps a pressed button where it was through redraws straight after one another, not taking the page\'s own scroll for the person\'s, and keeps a button clicked just after the wheel under the pointer', async () => {
+    const { page, win, d } = await signedInLead();
+    // jsdom lays nothing out and scrolls nothing. Here the page has a scroll position, scrollTo moves it and, as in a browser,
+    // the scroll event comes a moment later; "Add a task" is 400 px down the screen, 300 px further down for each task added
+    // above it.
+    let y = 0;
+    Object.defineProperty(win, 'scrollY', { get: () => y, configurable: true });
+    const moveTo = (to: number): void => {
+      if (to === y) return;
+      y = to;
+      setTimeout(() => win.dispatchEvent(new win.Event('scroll')), 16);
+    };
+    const scrolls: unknown[] = [];
+    (win as unknown as { scrollTo: (o: { top?: number }) => void }).scrollTo = (o) => { scrolls.push(o); if (typeof o?.top === 'number') moveTo(o.top); };
+    const wait = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
+    page.click('Map a process');
+    await page.until(() => d.querySelector('[data-path="workflow.title"]'), 'Map a process, by hand');
+    await wait(250);
+    scrolls.length = 0;
+    const tasks = (): number => d.querySelectorAll('[data-path$=".name"]').length;
+    const n0 = tasks();
+    const box = win.HTMLElement.prototype.getBoundingClientRect;
+    win.HTMLElement.prototype.getBoundingClientRect = function (this: HTMLElement) {
+      if (!(this.tagName === 'BUTTON' && this.textContent === 'Add a task')) return box.call(this);
+      const top = 400 + 300 * (tasks() - n0) - y;
+      return { top, bottom: top + 44, left: 16, right: 200, width: 184, height: 44, x: 16, y: top, toJSON: () => ({}) } as DOMRect;
+    };
+    const addTask = (): HTMLButtonElement => must([...d.querySelectorAll('.app-main button')].find((b) => b.textContent === 'Add a task'), '"Add a task"') as HTMLButtonElement;
+    const shownAt = (): number => Math.round(addTask().getBoundingClientRect().top);
+    const enter = (b: HTMLButtonElement): void => { b.dispatchEvent(new win.KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true })); b.click(); };
+    const wheel = async (b: HTMLButtonElement): Promise<void> => {
+      b.dispatchEvent(new win.WheelEvent('wheel', { deltaY: 100, bubbles: true, cancelable: true }));
+      moveTo(y + 100);
+      await wait(40);
+    };
+    // Enter three times, 60 ms apart, on a still page: each redraw keeps the button at 400 px, though the scroll event of the
+    // redraw before has only just come.
+    addTask().focus();
+    for (const press of [1, 2, 3]) {
+      enter(addTask());
+      expect([press, tasks(), d.activeElement === addTask(), shownAt()]).toEqual([press, n0 + press, true, 400]);
+      await wait(60);
+    }
+    expect(scrolls).toEqual([300, 600, 900].map((top) => ({ top, behavior: 'instant' })));
+    // The person turns the wheel, then at once clicks the button where it now is: it stays there, under the pointer.
+    scrolls.length = 0;
+    const clicked = addTask();
+    await wheel(clicked);
+    const before = shownAt();
+    clicked.dispatchEvent(new win.MouseEvent('pointerdown', { bubbles: true, cancelable: true }));
+    clicked.focus();
+    clicked.click();
+    expect([tasks(), d.activeElement === addTask(), before, shownAt(), scrolls]).toEqual([n0 + 4, true, 300, 300, [{ top: 1300, behavior: 'instant' }]]);
+    // Enter straight after the wheel, or a click followed by the wheel: the page is still scrolling, and it is left to scroll.
+    scrolls.length = 0;
+    await wheel(addTask());
+    enter(addTask());
+    addTask().dispatchEvent(new win.MouseEvent('pointerdown', { bubbles: true, cancelable: true }));
+    await wheel(addTask());
+    enter(addTask());
+    expect([tasks(), d.activeElement === addTask(), scrolls]).toEqual([n0 + 6, true, []]);
+    expect(page.errors).toEqual([]);
+  }, 60_000);
+
+  it('Dismiss, pressed from the keyboard on an answer on the welcome screen or on "One more step", gives focus to that screen\'s title, so the next Tab goes on from there and not from the top of the page', async () => {
+    const w = await world({ admin: false });
+    const dismissed = (page: Page): unknown => {
+      const d = page.window.document;
+      const x = must(d.querySelector('#app .result button[aria-label="Dismiss"]'), 'Dismiss') as HTMLButtonElement;
+      x.focus();
+      x.click();
+      const a = d.activeElement;
+      return [d.querySelector('#app .result'), a?.tagName, a?.className, a?.textContent, a?.getAttribute('tabindex')];
+    };
+    // The welcome screen, answering a sign-in this tab did not start.
+    const welcome = await openPage(w.bridge, `/ui/oauth/callback?code=${'c'.repeat(32)}&state=${'B'.repeat(32)}`);
+    await welcome.until(() => welcome.text().includes(NOT_STARTED_HERE), 'the answer on the welcome screen');
+    expect(dismissed(welcome)).toEqual([null, 'H1', 'auth__title', 'Welcome to Work Redesign', '-1']);
+    // One more step: signed in, not yet added, with an answer shown (as a refused copy of the record leaves one).
+    const step = await openPage(w.bridge, '/ui', { [SESSION_KEY]: JSON.stringify({ token: w.relay.mint(), expiresAt: new Date(Date.now() + 3600_000).toISOString() }) });
+    await step.until(() => step.text().includes('One more step'), 'one more step');
+    (step.window.eval('showResult') as (tool: string, r: unknown) => void)('wrd.holder_copy', { ok: false, status: 400, body: { kind: 'refusal', error: 'The copy was not made.' } });
+    await step.until(() => step.window.document.querySelector('#app .result button[aria-label="Dismiss"]'), 'the answer');
+    expect(dismissed(step)).toEqual([null, 'H1', 'auth__title', 'You\'re signed in. One more step.', '-1']);
+    expect([...welcome.errors, ...step.errors]).toEqual([]);
+  }, 60_000);
+
+  it('"Skip to content" moves focus into the screen, which is not drawn again or taken back to its top, and leaves the address (and so a task page) as it is; #main typed in the address draws nothing again; a task link still opens its task, and leaving it draws the view again', async () => {
+    const { page, win, d } = await signedInLead();
+    const tops: unknown[] = [];
+    (win as unknown as { scrollTo: (o: unknown) => void }).scrollTo = (o) => { tops.push(o); };
+    const changes: string[] = [];
+    win.addEventListener('hashchange', () => changes.push(win.location.hash));
+    const skip = must(d.querySelector('a.skip-link'), 'the skip link') as HTMLAnchorElement;
+    const settle = (): Promise<void> => new Promise((r) => setTimeout(r, 100));
+    const main = must(d.getElementById('main'), 'the main element');
+    // The main area takes focus only from the skip link. jsdom does not focus on a click, so the browser's rule is applied
+    // here by hand: a click focuses the nearest element around what it hits that can take focus, else none. Were the main
+    // area focusable all the time, a click on its plain text would focus it, and the next Tab would go back to its first
+    // control instead of on from where the person clicked.
+    const FOCUSABLE = 'a[href], button, input, textarea, select, summary, [tabindex]';
+    const clickFocuses = (el: Element): Element | null => el.closest(FOCUSABLE);
+    const text = must([...main.querySelectorAll('p')].find((x) => !x.closest(FOCUSABLE) && (x.textContent ?? '').trim() !== ''), 'plain text in the view');
+    expect([main.tagName, main.hasAttribute('tabindex'), clickFocuses(text)]).toEqual(['MAIN', false, null]);
+    skip.click();
+    await settle();
+    expect([win.location.hash, changes, d.getElementById('main') === main, d.activeElement === main, main.getAttribute('tabindex'), tops]).toEqual(['', [], true, true, '-1', []]);
+    // A redraw while it has focus builds it again, focusable, with focus on it, and does not move the page.
+    (page.window.eval('render') as () => void)();
+    const redrawn = must(d.getElementById('main'), 'the redrawn main element');
+    expect([redrawn === main, d.activeElement === redrawn, redrawn.getAttribute('tabindex'), tops]).toEqual([false, true, '-1', []]);
+    // Once focus moves on (Tab to the view's first control), it takes focus no more, and a click on its text focuses nothing.
+    must(redrawn.querySelector('button'), 'a control in the view').focus();
+    await settle();
+    expect([redrawn.hasAttribute('tabindex'), clickFocuses(must(redrawn.querySelector('p'), 'its text'))]).toEqual([false, null]);
+    // Back on it from the skip link, a press on its plain text: it takes focus no more before the press lands (a browser
+    // then gives focus to the page), so the press focuses nothing and the next Tab goes on from where the person pressed,
+    // not back to the view's first control at its top.
+    const pressed = must([...redrawn.querySelectorAll('p')].find((x) => !x.closest(FOCUSABLE) && (x.textContent ?? '').trim() !== ''), 'plain text in the view');
+    skip.click();
+    await settle();
+    expect([d.activeElement === redrawn, redrawn.getAttribute('tabindex'), clickFocuses(pressed) === redrawn]).toEqual([true, '-1', true]);
+    pressed.dispatchEvent(new page.window.MouseEvent('pointerdown', { bubbles: true, cancelable: true, button: 0 }));
+    expect([redrawn.hasAttribute('tabindex'), clickFocuses(pressed), tops]).toEqual([false, null, []]);
+    // #main in the address (typed, or an old link) is the browser's: nothing is drawn again, and the page stays where it is.
+    win.location.hash = '#main';
+    await page.until(() => changes.length === 1, 'the address changed');
+    await settle();
+    expect([d.getElementById('main') === redrawn, tops]).toEqual([true, []]);
+    // A task link opens the task from its top. The skip link there keeps the task on the screen.
+    win.location.hash = `#task=${encodeURIComponent('urn:wrd:task:not-here')}`;
+    await page.until(() => page.text().includes('We couldn\'t find this task'), 'the task page');
+    expect([d.getElementById('main') === main, tops]).toEqual([false, [{ top: 0 }]]);
+    const onTask = must(d.getElementById('main'), 'the task page\'s main element');
+    skip.click();
+    await settle();
+    expect([win.location.hash.startsWith('#task='), page.text().includes('We couldn\'t find this task'), d.getElementById('main') === onTask, d.activeElement === onTask, tops.length])
+      .toEqual([true, true, true, true, 1]);
+    // Leaving it shows the view again, from its top.
+    win.location.hash = '';
+    await page.until(() => page.text().includes('Map and change your process'), 'Home again');
+    expect(tops).toEqual([{ top: 0 }, { top: 0 }]);
+    expect(page.errors).toEqual([]);
+  }, 60_000);
+
+  it('"Add a type of task" keeps what was typed and stays open through a refusal, empties and closes once the type is added, and its button, pressed from the keyboard, keeps focus while signing and takes no second press; Dismiss on the answer, from the keyboard, gives focus to the view\'s heading', async () => {
+    const { w, page, d } = await signedInLead();
+    page.click('People & roles');
+    await page.until(() => page.text().includes('Add a type of task'), 'People & roles');
+    const form = (): HTMLDetailsElement => must(d.querySelector('details.kind-form'), 'the form') as HTMLDetailsElement;
+    const fields = (): HTMLInputElement[] => [...form().querySelectorAll('input')] as HTMLInputElement[];
+    const addButton = (): HTMLButtonElement => must([...form().querySelectorAll('button')].find((b) => b.textContent === 'Add type of task'), 'its button') as HTMLButtonElement;
+    const answer = (): string => d.querySelector('#app .result .callout__title')?.textContent ?? '';
+    must(form().querySelector('summary'), 'its summary').click();
+    await page.until(() => form().open, 'the form open');
+    const typed = ['Credit check', 'Not A Slug!', 'Check a customer\'s credit before an order ships.'];
+    fields().forEach((f, i) => page.fill(f, typed[i] ?? ''));
+    // While the relay is signing, the button only looks off: a redraw builds the form again, as typed, and focus stays on
+    // the rebuilt button, so the next Tab goes on from it. A press then sends nothing more.
+    const release = w.relay.hold();
+    const pressed = addButton();
+    pressed.focus();
+    pressed.click();
+    await page.until(() => w.relay.held() === 1, 'the signature asked for');
+    const signing = addButton();
+    expect([signing === pressed, signing.disabled, signing.getAttribute('aria-disabled'), d.activeElement === signing, form().open, fields().map((f) => f.value)])
+      .toEqual([false, false, 'true', true, true, typed]);
+    const sent = page.sent.length;
+    signing.click();
+    await new Promise((r) => setTimeout(r, 100));
+    expect([w.relay.held(), page.sent.slice(sent)]).toEqual([1, []]);
+    release();
+    // The bridge refuses the ID: the form is still open, with everything as it was typed, to fix.
+    await page.until(() => !page.text().includes('Signing and sending') && answer() !== '', 'the refusal');
+    expect([answer(), form().open, fields().map((f) => f.value), addButton().disabled, addButton().getAttribute('aria-disabled')]).toEqual(['Something in this form isn\'t right', true, typed, false, null]);
+    page.fill(must(fields()[1], 'the Short ID'), 'credit-check');
+    addButton().click();
+    await page.until(() => answer() === 'People and roles updated' && page.text().includes('credit-check'), 'the type added');
+    await page.until(() => !form().open, 'the form closed');
+    expect(fields().map((f) => f.value)).toEqual(['', '', '']);
+    // Dismiss, pressed from the keyboard: the answer goes, and focus goes to the view's heading, not back to the top of the page.
+    const dismiss = must(d.querySelector('#app .result button[aria-label="Dismiss"]'), 'Dismiss') as HTMLButtonElement;
+    dismiss.focus();
+    dismiss.click();
+    const heading = d.activeElement;
+    expect([d.querySelector('#app .result'), heading?.tagName, heading?.textContent, heading?.getAttribute('tabindex')]).toEqual([null, 'H1', 'People & roles', '-1']);
+    expect(page.errors).toEqual([]);
+  }, 60_000);
+
+  it('where the operator lets chat agents decide too, the panel says so, and the workspace details ask the assistant to check with the person first instead of sending them to the app', async () => {
+    const w = await world({ lead: true, chatAgentsDecide: true });
+    const page = await openPage(w.bridge, '/ui', { [SESSION_KEY]: JSON.stringify({ token: w.relay.mint(), expiresAt: new Date(Date.now() + 3600_000).toISOString() }) });
+    await page.until(() => page.text().includes(`Signed in as ${PERSON} via ${agentOf('work-redesign')}`) && page.text().includes('Map and change your process'), 'the signed-in lead');
+    const copied: string[] = [];
+    Object.defineProperty(page.window.navigator, 'clipboard', { value: { writeText: async (s: string) => { copied.push(s); } }, configurable: true });
+    const d = page.window.document;
+    page.click('Use your AI assistant');
+    await page.until(() => d.getElementById('panel-title')?.textContent === 'Use your AI assistant', 'the panel');
+    const seen = visibleText(d);
+    expect(seen).toContain('Your assistant can take every action here');
+    expect(seen).toContain('Your workspace provider lets chat assistants take every action here too, including approving or declining decisions');
+    expect(seen).not.toContain('What stays in the Work Redesign app');
+    expect(jargonIn(seen)).toEqual([]);
+    page.click('Copy workspace details');
+    await page.until(() => copied.length === 1, 'the workspace details copied');
+    expect(copied[0]).toContain('Ask me before any action that approves or declines a decision, changes people and roles, records results, or grants or withdraws an AI permission.');
+    expect(copied[0]).not.toContain('done in the Work Redesign app, not from a chat');
+    expect(urnsRunningIntoPunctuation(String(copied[0]))).toEqual([]);
     expect(page.errors).toEqual([]);
   }, 60_000);
 });
