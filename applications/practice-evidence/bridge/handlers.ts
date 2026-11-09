@@ -65,7 +65,7 @@ import {
 import {
   actorOf, applyRoleChange, attemptIri as attemptIriOf, attemptIriSecret, attemptKey, buildRecordDescriptor, checkEnvelope, checkRelayPayload, conflictedReviewersOf,
   didOf, freshNonce, graphIriOf, iriKeyFingerprint, isAddress, isPrincipal, isWellFormedText, judgeSignersOf, modalFor, modelAgentIri, nextActionsFor, nextActionView,
-  NonceLedger, podBase, principalDid, principalKey, projectionIri, recordGraphTurtle, recordIdFor, recordLocal, recordSalt, redactBody, registryIri,
+  NonceLedger, podBase, principalDid, principalKey, principalOfDid, projectionIri, recordGraphTurtle, recordIdFor, recordLocal, recordSalt, redactBody, registryIri,
   relayDelegatedEnvelope, reverifyStoredEnvelope, rubricIriOf, samePrincipal, scenarioIri as scenarioIriOf, signDraftReceipt, signEnvelope,
   signedRequestOf, signedRequestSigner, slugFor, standingReview, toWellFormedText, verifyDraftReceipt,
   EXPORT_VERIFY_STEPS, REDACTION_NOTE, ROLES,
@@ -1901,6 +1901,23 @@ async function judgeAttempt(call: Call, args: Record<string, unknown>): Promise<
   });
 }
 
+/**
+ * Whether the caller has a saved assessment of this attempt that still counts: a judgment they
+ * signed (`judge.signer`, compared as a principal), made after the attempt was last reopened, when
+ * it was (a contest or a withdrawn review keeps the judgments made before it, and judging starts
+ * again). It says that, and when the latest such judgment was made, and nothing else: no level,
+ * quote or rationale, no other judge's judgment, no review, and none of the stakes the packet's
+ * rubric leaves out (weights, level values, the pass rule). A judge's assistant can then tell from
+ * the packet it judges from whether a save went through, without reading the attempt.
+ */
+function yourAssessmentOf(a: AttemptBody, caller: string): { readonly saved: true; readonly judgedAt: string } | null {
+  const last = a.reopenings[a.reopenings.length - 1];
+  const since = last === undefined ? Number.NEGATIVE_INFINITY : Date.parse(last.at);
+  const mine = a.judgments.filter((j) => j.judge.signer !== undefined && samePrincipal(principalOfDid(j.judge.signer), caller) && Date.parse(j.judgedAt) > since);
+  const latest = mine[mine.length - 1];
+  return latest === undefined ? null : { saved: true, judgedAt: latest.judgedAt };
+}
+
 async function judgePacketAct(call: Call, args: Record<string, unknown>): Promise<Out> {
   const s = await signedAct(call, args, 'judgePacket', { checks: (p) => { needAttemptIri(p); } });
   const iri = needAttemptIri(s.payload);
@@ -1915,6 +1932,8 @@ async function judgePacketAct(call: Call, args: Record<string, unknown>): Promis
       podUrl: s.pod, attemptIri: iri, attemptHeadUrl: h.rec.descriptorUrl,
       transcriptHash: h.body.transcriptHash ?? transcriptHash(h.body.turns), rubricHash: h.body.scenario.rubricHash,
     }),
+    // Last, so an answer a chat app cut short has none, and reads as no answer rather than as nothing saved.
+    yourAssessment: yourAssessmentOf(h.body, s.signer),
   };
 }
 

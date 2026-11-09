@@ -448,13 +448,13 @@ describe('the web UI is served under a strict content policy', () => {
       // The bridge refuses a judgment by account: a session started with a wallet belongs to the wallet, so each claim names the account.
       'You can\'t assess a session you started with your Interego account. Nor can a learner\'s own assistant assess a session the learner started with their Interego account, even in a new chat or told to act as a judge: it acts as that account.',
       'Your assistant acts as your Interego account, so it can\'t assess a session you started with that account, in a new chat or in any role.',
-      // Whether a save was kept is asked of the workspace, never judged from what the chat saw, and asked before the session is
-      // fetched, so the message pasted again, in the same chat or a new one, stops at an assessment already saved; and when the
-      // assistant can't tell, the judge is told how to find out.
-      'An assessment is tied to the exact session, conversation and rubric your assistant fetched. Before it fetches the session, your assistant checks whether an assessment of yours is already saved, '
-        + 'and if one is, tells you so and stops: the same message pasted again, in this chat or a new one, never saves a second one. '
-        + 'If the session changed since it was fetched, saving is refused: your assistant checks again, and only if none of yours is saved, fetches the session again and assesses that. '
-        + 'If a save goes wrong another way (an error, no answer, or it loses track), it checks the same way instead of saving twice, and tells you whether your assessment is saved. '
+      // Whether a save was kept is asked of the workspace, never judged from what the chat saw, and the fetch of the session
+      // answers it, so the message pasted again, in the same chat or a new one, stops at an assessment already saved; and when
+      // the assistant can't tell, the judge is told how to find out.
+      'An assessment is tied to the exact session, conversation and rubric your assistant fetched. When your assistant fetches the session, the workspace also tells it whether an assessment of yours is already saved, '
+        + 'and if one is, your assistant tells you so and stops: the same message pasted again, in this chat or a new one, never saves a second one. '
+        + 'If the session changed since it was fetched, saving is refused: your assistant fetches it again, and assesses it again only if none of yours is saved. '
+        + 'If a save goes wrong another way (an error, no answer, or it loses track), it fetches the session again to check instead of saving twice, and tells you whether your assessment is saved. '
         + 'If it can\'t tell, ask the learner whether their session page shows your assessment.',
       'Send your admin your Member ID (account menu → Your Member ID → Copy) or, signed in with a wallet, your wallet address (Getting started → Copy my wallet address).', 'Sign in with Interego (or another way', 'What the Interego sign-in service sees', '<dt>Interego connector</dt>',
       '<dt>Your sign-in has ended</dt>', 'add and remove people by Member ID',

@@ -1234,6 +1234,79 @@ describe('a review is checked against the registry as it stood when it was signe
 });
 
 // ═════════════════════════════════════════════════════════════════════════════════════════════
+//  What the judge packet tells its caller about their own assessment
+// ═════════════════════════════════════════════════════════════════════════════════════════════
+
+describe('the judge packet says whether the caller\'s own assessment is saved and still counts, and nothing more', () => {
+  it('yourAssessment is null until the caller judges, set after, null again once the learner contests, never set by another judge; no packet carries the stakes, for a judge who is also a reviewer or an admin too', async () => {
+    const judgeAdmin = wallet('judge-admin');
+    ok(await act(H, 'pev.register_role', W.admin, { address: judgeAdmin.address, role: 'judge', change: 'add' }));
+    // The same pod and clock, on a bridge whose admins include that judge.
+    const asAdmin = make({ model: scriptedPracticeModel(), adminAddresses: [W.admin.address, judgeAdmin.address] });
+    const started = ok(await act(H, 'pev.start_attempt', W.ben, { scenarioIri: S['md'], scenarioVersion: 2, coached: false }));
+    const iri = String(started['attemptIri']);
+    ok(await act(H, 'pev.record_turns', W.ben, {
+      attemptIri: iri, turnIndex: 1, learnerText: DEMO_LINES.ana[0], counterpartText: DEMO_LINES.sam[0], endAfter: true,
+      counterpartDisclosure: { provider: 'scripted', model: 'demo-learner-agent' },
+    }));
+    // A pass gate: its rubric has weights, level values and a pass rule, and no packet carries any of them.
+    const spec = specOf(demoScenarioInput('missed-deadline', 2));
+    expect([spec.assessmentUse, spec.rubric.passRule?.minPercent, spec.rubric.criteria.map((c) => c.weight)]).toEqual(['pass-gate', 70, [2, 2, 2]]);
+    const packet = async (w: Wallet, h: Handlers = H): Promise<Out> => {
+      const p = ok(await act(h, 'pev.judge_packet', w, { attemptIri: iri }));
+      expect(JSON.stringify(p)).not.toMatch(/weight|"value"|passRule|minPercent|requiredLevels|meetsPassRule|percent/i);
+      // The field is the answer's last, so an answer cut short has none; when set it holds two keys and nothing else.
+      expect(Object.keys(p).at(-1)).toBe('yourAssessment');
+      const yours = p['yourAssessment'];
+      if (yours !== null) expect(Object.keys(yours as Out).sort()).toEqual(['judgedAt', 'saved']);
+      return p;
+    };
+    // A judge, a judge who is also a reviewer, and a judge who is also an admin.
+    const yoursFor = async (): Promise<unknown[]> => [
+      (await packet(W.judgeAgent))['yourAssessment'], (await packet(W.judgePerson))['yourAssessment'], (await packet(judgeAdmin, asAdmin))['yourAssessment'],
+    ];
+    expect(await yoursFor()).toEqual([null, null, null]);
+    expect((await packet(W.ben))['yourAssessment']).toBeNull();
+    // A read: the same signed envelope is answered twice, so fetching the packet again never spends a nonce.
+    const envelope = await envelopeFor(W.judgeAgent, 'pev.judge_packet', { attemptIri: iri });
+    for (let i = 0; i < 2; i += 1) expect(ok((await H['pev.judge_packet']!({ envelope })) as Out)['yourAssessment']).toBeNull();
+    const judgment = {
+      criteria: [
+        { criterionId: 'specific-observation', level: 'specific', quotes: [{ text: 'The quarterly report was due Thursday at noon', turnIndex: 1 }], rationale: 'Names the report and when it was due.' },
+        { criterionId: 'asks-their-view', level: 'no', quotes: [], rationale: 'Never asks for their side.' },
+        { criterionId: 'agrees-next-step', level: 'none', quotes: [], rationale: 'No next step is agreed.' },
+      ],
+    };
+    const record = async (w: Wallet): Promise<JudgmentResult> => {
+      const pk = await packet(w);
+      return ok(await act(H, 'pev.record_judgment', w, {
+        attemptIri: iri, ...(pk['binding'] as Out), judgment, judgeDisclosure: { provider: 'scripted', model: 'demo-judge-agent', usedPacketPrompt: true },
+      }))['judgment'] as JudgmentResult;
+    };
+    // One judge's judgment is theirs alone: the other judges still have none.
+    const first = await record(W.judgeAgent);
+    expect(await yoursFor()).toEqual([{ saved: true, judgedAt: first.judgedAt }, null, null]);
+    const second = await record(W.judgePerson);
+    expect(await yoursFor()).toEqual([{ saved: true, judgedAt: first.judgedAt }, { saved: true, judgedAt: second.judgedAt }, null]);
+    expect((await packet(W.ben))['yourAssessment']).toBeNull();
+    // A reviewer signs off: judging is closed, and the packet is refused, as before.
+    const head = ok(await act(H, 'pev.get_attempt', W.reviewer3, { attemptIri: iri }));
+    const reviewed = ok(await act(H, 'pev.countersign_attempt', W.reviewer3, {
+      attemptIri: iri, target: head['currentTarget'], levels: levels([['specific-observation', 'specific'], ['asks-their-view', 'no'], ['agrees-next-step', 'none']]), sawJudgeLevelsFirst: true,
+    }));
+    refused(await act(H, 'pev.judge_packet', W.judgeAgent, { attemptIri: iri }), 409, 'attempt-already-reviewed');
+    // The learner contests: judging reopens and keeps the judgments made before it, and none of them counts any more.
+    ok(await act(H, 'pev.contest_review', W.ben, { attemptIri: iri, target: reviewed['currentTarget'], why: 'The deadline I named was the one we had agreed on.' }));
+    expect(await yoursFor()).toEqual([null, null, null]);
+    // A judge assesses the reopened session once: that one counts, and only for them.
+    const third = await record(W.judgeAgent);
+    expect(third.repeatOf).toBe(0);
+    expect(await yoursFor()).toEqual([{ saved: true, judgedAt: third.judgedAt }, null, null]);
+    expect((await packet(W.ben))['yourAssessment']).toBeNull();
+  }, SLOW);
+});
+
+// ═════════════════════════════════════════════════════════════════════════════════════════════
 //  Replays, records out of place, spending limits, and who may confirm a judge they chose
 // ═════════════════════════════════════════════════════════════════════════════════════════════
 

@@ -1,5 +1,35 @@
 # Changelog
 
+## 2026-11-09 — Practice Evidence: a judge's assistant checks for a saved assessment without reading the scoring
+
+The judge's message checked whether the judge's assessment was saved by
+reading the whole session. That answer includes the full rubric: how much
+each criterion counts, the points for each level and what it takes to pass.
+The judge packet leaves those out on purpose, so the assistant proposing
+levels cannot aim for a pass. When a session the judge had assessed was
+reopened for a new assessment, or when the judge is also a reviewer or an
+admin, the assistant read all of that before it assessed. Telling it to set
+the answer aside did not take it out of what it had read.
+
+Now the judge packet itself says whether the judge already has a saved
+assessment of the session that still counts: its last field,
+`yourAssessment`, is empty, or says it is saved and when. It says nothing
+else, not a level, a quote, another judge's assessment, a review or anything
+about scoring. An assessment made before the session was last reopened (the
+learner contested the review, or an admin withdrew it) does not count. The
+judge's message no longer asks for the full session record. Its first step, fetching
+the packet, is also the check: if an assessment is saved, the assistant says
+so and stops. After a save that may have gone through (an error, no answer, a
+one-time code refused as already used, or the assistant losing track), it
+fetches the packet again, which is only a read, and if nothing is saved it
+sends the same assessment once more, tied to the same version of the session,
+so a first save that did go through makes the resend fail instead of saving
+twice. If the session changed, it fetches the packet again and assesses only
+if nothing of the judge's is saved. The message is about a fifth shorter. The
+guide, the README and the action's description say the same, and tests check
+the packet's new field for a judge, a judge who is also a reviewer or an
+admin, and the learner, before and after a judgment and a contest.
+
 ## 2026-11-08 — Practice Evidence: a judge's assistant checks for a saved assessment before it starts
 
 A judge could still save two assessments of the same session by pasting the

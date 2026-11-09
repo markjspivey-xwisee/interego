@@ -202,7 +202,7 @@ export const pevAffordances: ReadonlyArray<Affordance> = [
     targetTemplate: '{base}/pev/judge_packet',
     annotations: hints('Judge packet', true, false, true, true),
     inputs: [...ENVELOPE],
-    outputs: out('A client-required packet.', ['execution', 'promptTemplateHash']),
+    outputs: out('A client-required packet. Its last field, yourAssessment, is null, or {saved: true, judgedAt} when the caller signed a judgment of this attempt made since it was last reopened; it says nothing else about any judgment or review.', ['execution', 'promptTemplateHash']),
   },
   {
     action: PEV_ACTION.recordJudgment as IRI,
