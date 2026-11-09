@@ -143,6 +143,8 @@ export interface VerticalBridgeOptions {
   readonly hypermediaLinks?: readonly HypermediaLink[];
   /** Use the vertical's existing next-step guidance in action representations. */
   readonly guidance?: readonly GuidedAffordanceEntry[];
+  /** POST paths whose vertical handlers own JSON parsing and the body size limit. */
+  readonly routeOwnedJsonPostPaths?: readonly string[];
   /** Optional: additional Express middleware to install (e.g., auth). */
   readonly middleware?: (app: Express) => void;
 }
@@ -193,7 +195,17 @@ export function createVerticalBridge(opts: VerticalBridgeOptions): Express {
 
   // One bound for every byte count on this mount: the body parser here, and the SDK's own
   // reads below (see MAX_MCP_BODY_BYTES).
-  app.use(express.json({ limit: MAX_MCP_BODY_BYTES }));
+  const jsonBody = express.json({ limit: MAX_MCP_BODY_BYTES });
+  if (opts.routeOwnedJsonPostPaths?.length) {
+    const bodyRouter = express.Router();
+    for (const path of opts.routeOwnedJsonPostPaths) {
+      bodyRouter.post(path, (_req, _res, next) => next('router'));
+    }
+    bodyRouter.use(jsonBody);
+    app.use(bodyRouter);
+  } else {
+    app.use(jsonBody);
+  }
 
   // Build identity, mounted BEFORE opts.middleware so a vertical's own hook cannot end up
   // in front of it. tools/railway-redeploy.mjs polls exactly `j.build` and Railway calls a

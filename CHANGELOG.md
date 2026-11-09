@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-11-08 — Foxxi accepts plain JSON LTI scores
+
+The LTI gradebook parses plain JSON and standard LTI score submissions on the
+score route, where both are subject to the 64 KiB decoded body limit. Valid
+submissions continue to require a score token and a launched learner.
+
 ## 2026-11-08 — Relay: corrected notes on how ChatGPT is identified, and a client cache that could hang
 
 The next entry said that a client other than ChatGPT cannot finish sign-in
