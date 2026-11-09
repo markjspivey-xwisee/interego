@@ -24,10 +24,22 @@ import { signedActPayload } from '../../../deploy/mcp-relay/signed-act.js';
 
 const JS = readFileSync(new URL('../chat-agent/chat-agent.js', import.meta.url), 'utf8');
 
-/** The rule for an act tool that shows no sign_payload option, word for word as a prompt carries it. */
-const SIGN_FALLBACK = 'If your act tool has no sign_payload option, do a signed step in two calls: call the connector\'s sign_request tool '
+/**
+ * The rule for an act tool that shows no sign_payload option, word for word as a prompt carries it: what to
+ * do with a plain step, with a signed step, and with both, said in one sentence that names each once.
+ */
+const NO_OPTION = 'If your act tool has no sign_payload option, ';
+const PLAIN_RULE = 'leave sign_payload out of a plain step\'s call (do not sign it or wrap it)';
+const SIGNED_RULE = 'do a signed step in two calls: call the connector\'s sign_request tool '
   + 'with payload as its only argument, set to the step\'s payload, then call act with the same descriptor_url and action_iri and with payload set to exactly '
-  + 'the _signature and _signed_payload it returned, unchanged. A plain step is the same act call without sign_payload.';
+  + 'the _signature and _signed_payload it returned, unchanged';
+const FALLBACK = {
+  plain: `${NO_OPTION}${PLAIN_RULE}.`,
+  signed: `${NO_OPTION}${SIGNED_RULE}.`,
+  both: `${NO_OPTION}${PLAIN_RULE}, and ${SIGNED_RULE}.`,
+} as const;
+/** How many times `part` occurs in `text`. */
+const timesIn = (text: string, part: string): number => text.split(part).length - 1;
 const EXPORTS = ['actPrompt', 'agentAppName', 'extractJsonObject', 'nonceRule', 'requestAsText'];
 
 type Extracted = { readonly ok: true; readonly value: Record<string, unknown> } | { readonly ok: false; readonly why: string };
@@ -280,34 +292,58 @@ describe('actPrompt', () => {
     expect(details).toContain('- Sign every step except the plain ones.');
   });
 
-  it('says how to do a signed step where the act tool has no sign_payload option, once, in the call shape', () => {
+  it('says what to do where the act tool has no sign_payload option, once, in the call shape, for a plain and a signed step alike', () => {
     const how = prompt.slice(0, prompt.indexOf('\n\nSteps:'));
-    expect(how).toContain(`\n${SIGN_FALLBACK}`);
-    expect(prompt.split(SIGN_FALLBACK)).toHaveLength(2);
+    // This prompt has a plain step and a signed one: one sentence covers both, and says each part once.
+    expect(how).toContain(`\n${FALLBACK.both}`);
+    expect([timesIn(prompt, FALLBACK.both), timesIn(prompt, PLAIN_RULE), timesIn(prompt, SIGNED_RULE), timesIn(prompt, 'sign_request'), timesIn(prompt, NO_OPTION)]).toEqual([1, 1, 1, 1, 1]);
+    // The old closing sentence said the plain part a second time, after the two-call way.
+    expect(prompt).not.toContain('A plain step is the same act call');
     // After the nonce rule: the payload it signs is the step's whole payload, nonce included.
-    expect(how.indexOf(SIGN_FALLBACK)).toBeGreaterThan(how.indexOf('Every signed payload carries a nonce'));
+    expect(how.indexOf(FALLBACK.both)).toBeGreaterThan(how.indexOf('Every signed payload carries a nonce'));
   });
 
-  it('leaves the two-call way out of a prompt whose every step is plain, and puts it in wherever signing can come up', () => {
+  it('says to leave sign_payload out wherever a plain step can come up, and the two-call way wherever a signed one can, never one where it has no step', () => {
     const plainStep = { say: 'Read the brief.', actionIri: 'urn:example:action:read-brief', signed: false, payload: { brief: 'x' } };
+    const signedStep = { say: 'Save both lines.', actionIri: 'urn:example:action:save-lines', signed: true, payload: { v: 1 } };
+    const which = (p: string): string => {
+      const found = (Object.keys(FALLBACK) as (keyof typeof FALLBACK)[]).filter((k) => p.includes(FALLBACK[k]));
+      expect(found.length, p).toBeLessThanOrEqual(1);
+      expect(timesIn(p, NO_OPTION), p).toBe(found.length);
+      return found[0] ?? 'none';
+    };
+    // Every step plain: a host whose act tool has no sign_payload is told to leave it out, though each step and the
+    // call shape say "sign_payload: false". Nothing about sign_request: there is nothing to sign.
     const onlyPlain = A.actPrompt({ affordancesUrl, steps: [plainStep, { ...plainStep, actionIri: 'urn:example:action:list-items' }], rules: ['Never change my words.'] });
+    expect(which(onlyPlain)).toBe('plain');
     expect(onlyPlain).not.toContain('sign_request');
     expect(onlyPlain).not.toContain('two calls');
-    // A plain step still says how it is plain.
     expect(onlyPlain).toContain('   sign_payload: false (plain: nothing is signed, and the arguments go at the top level of payload)');
-    const withFallback = [
-      // A signed step among plain ones.
-      A.actPrompt({ affordancesUrl, steps: [plainStep, { actionIri: 'urn:example:action:save-lines', signed: true }] }),
+    // Every step signed: the two-call way, and nothing about leaving sign_payload out, which with no plain step to
+    // apply it to could only be read as leaving it off a signed one.
+    const onlySigned = A.actPrompt({ affordancesUrl, steps: [signedStep, { ...signedStep, actionIri: 'urn:example:action:end' }], rules: ['Show me my levels in plain words.'] });
+    expect(which(onlySigned)).toBe('signed');
+    expect(onlySigned).not.toContain(PLAIN_RULE);
+    expect(onlySigned).not.toContain('leave sign_payload out');
+    // A plain step and a signed one: both, in one sentence, each part once.
+    const mixed = A.actPrompt({ affordancesUrl, steps: [plainStep, signedStep] });
+    expect(which(mixed)).toBe('both');
+    expect([timesIn(mixed, PLAIN_RULE), timesIn(mixed, SIGNED_RULE), timesIn(mixed, 'sign_request')]).toEqual([1, 1, 1]);
+    // A rule can bring up the kind of step no step is: then the prompt says what to do with it too.
+    expect([
       // Only plain steps, but a rule that speaks of signing.
       A.actPrompt({ affordancesUrl, steps: [plainStep], rules: ['Sign every step (sign_payload true) you add yourself.'] }),
       A.actPrompt({ affordancesUrl, steps: [plainStep], rules: ['Every signed payload has "v": 1.'] }),
-      // No steps at all (workspace details): the assistant chooses the actions, and any may be signed.
+      // Only signed steps, but a rule that names a plain one.
+      A.actPrompt({ affordancesUrl, steps: [signedStep], rules: ['Listing the items is a plain step.'] }),
+      A.actPrompt({ affordancesUrl, steps: [signedStep], rules: ['Use sign_payload false to list the items.'] }),
+      // No steps at all (workspace details): the assistant chooses the actions, and any may be signed or plain.
       A.actPrompt({ affordancesUrl }),
       A.actPrompt({ affordancesUrl, podUrl, rules: ['Never assess my own practice.'] }),
-    ];
-    for (const p of withFallback) expect(p.split(SIGN_FALLBACK)).toHaveLength(2);
-    // "signs off" is not about signing a payload.
-    expect(A.actPrompt({ affordancesUrl, steps: [plainStep], rules: ['A reviewer signs off after me.'] })).not.toContain('sign_request');
+    ].map(which)).toEqual(['both', 'both', 'both', 'both', 'both', 'both']);
+    // "signs off" is not about signing a payload, and "in plain words" is not about a plain step.
+    expect(which(A.actPrompt({ affordancesUrl, steps: [plainStep], rules: ['A reviewer signs off after me.'] }))).toBe('plain');
+    expect(which(A.actPrompt({ affordancesUrl, steps: [signedStep], rules: ['Tell me in plain words.'] }))).toBe('signed');
   });
 
   // With one stub signer for both ways, this shows only that the pair passes through unchanged. Whether

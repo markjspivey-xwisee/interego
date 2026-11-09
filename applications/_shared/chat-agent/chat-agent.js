@@ -52,19 +52,37 @@ const InteregoChatAgent = (() => {
   const STEP_NAME_MAX = 32;
 
   /**
-   * How to do a signed step when the person's chat app shows an act tool with no sign_payload option
-   * (an app can keep a stale copy of the connector's tools). sign_payload: true is the connector
-   * signing the payload with its sign_request tool and acting with the result, so the same two calls,
-   * made by the assistant, send the same request. Payload is sign_request's only argument because it
-   * signs a caller's other top-level arguments too; deploy/mcp-relay/tests/
-   * sign-request-alone-signs-what-act-signs.test.ts shows the two ways sign the same fields.
+   * What to do when the person's chat app shows an act tool with no sign_payload option (an app can
+   * keep a stale copy of the connector's tools). Each prompt says it once, in one sentence that
+   * names only the kinds of step the prompt can lead to (fallbackFor):
+   *   - a plain step: leave sign_payload out. The steps and the call shape say "sign_payload: false",
+   *     and an assistant whose tool has no such argument must not pass it, sign the step, or wrap
+   *     its payload in a signature, since a plain step's arguments are read at the top level.
+   *   - a signed step: sign_payload: true is the connector signing the payload with its sign_request
+   *     tool and acting with the result, so the same two calls, made by the assistant, send the same
+   *     request. Payload is sign_request's only argument because it signs a caller's other top-level
+   *     arguments too; deploy/mcp-relay/tests/sign-request-alone-signs-what-act-signs.test.ts shows
+   *     the two ways sign the same fields.
    */
-  const SIGN_FALLBACK = 'If your act tool has no sign_payload option, do a signed step in two calls: call the connector\'s sign_request tool '
+  const NO_SIGN_OPTION = 'If your act tool has no sign_payload option';
+  const PLAIN_FALLBACK = 'leave sign_payload out of a plain step\'s call (do not sign it or wrap it)';
+  const SIGNED_FALLBACK = 'do a signed step in two calls: call the connector\'s sign_request tool '
     + 'with payload as its only argument, set to the step\'s payload, then call act with the same descriptor_url and action_iri and with payload set to exactly '
-    + 'the _signature and _signed_payload it returned, unchanged. A plain step is the same act call without sign_payload.';
+    + 'the _signature and _signed_payload it returned, unchanged';
+
+  /** The fallback sentence for a prompt that can lead to plain steps, signed steps, or both; '' for neither. */
+  function fallbackFor(plain, signed) {
+    const what = [plain ? PLAIN_FALLBACK : '', signed ? SIGNED_FALLBACK : ''].filter((x) => x.length > 0);
+    return what.length === 0 ? '' : `${NO_SIGN_OPTION}, ${what.join(', and ')}.`;
+  }
 
   /** A rule that speaks of signing, so a prompt that carries it needs the two-call way too. */
   const SIGNING_WORDS = /\bsign_payload\b|\bsigned\b/i;
+  /**
+   * A rule that names a plain step, so a prompt that carries it needs the plain rule too. Not the word
+   * "plain" alone: "in plain words" is not about a step.
+   */
+  const PLAIN_WORDS = /\bsign_payload:?\s*false\b|\bplain steps?\b/i;
 
   /** What every prompt says about refusals after the app's own rules, which come first and win. */
   const REFUSAL_RULE = 'Unless a rule above says otherwise: if a call is refused because a field or its format is wrong, '
@@ -128,10 +146,13 @@ const InteregoChatAgent = (() => {
    * connector's act tool: the call shape (descriptor_url, action_iri, sign_payload, payload), the
    * nonce rule (its example made from the first signed step's own name, at turn 0 unless that step's
    * payload has a turnIndex, or said in words when no step is signed), and per step whether it is
-   * signed or plain and which exact action it names. Whenever the prompt can lead to a signed step (a
-   * step is signed, a rule speaks of signing, or there are no steps, so the assistant picks the
-   * actions itself), it also says how to sign one with sign_request where the act tool has no
-   * sign_payload option; a prompt whose every step is plain leaves that out.
+   * signed or plain and which exact action it names. It also says, once, what to do where the act
+   * tool has no sign_payload option, for each kind of step the prompt can lead to: a plain step (a
+   * step is plain, a rule names a plain step or sign_payload false) leaves sign_payload out, and a
+   * signed step (a step is signed, or a rule speaks of signing) is signed with sign_request first.
+   * With no steps the assistant picks the actions itself, so both are said. A prompt whose every
+   * step is plain says nothing of sign_request; one whose every step is signed says nothing of
+   * leaving sign_payload out, since it has no plain step to leave it out of.
    *
    * spec: { intro?, affordancesUrl, podUrl?, steps?: [{ say, actionIri, signed, payload }],
    *         rules?: string[], outro? }. Throws TypeError on a malformed spec: that is a bug in the
@@ -164,7 +185,11 @@ const InteregoChatAgent = (() => {
     const firstHasTurn = Boolean(firstSigned && isPlainObject(firstSigned.payload) && Object.prototype.hasOwnProperty.call(firstSigned.payload, 'turnIndex'));
     how.push(`Every signed payload carries a nonce: ${nonceRuleFor(firstSigned ? stepNameOf(textOf(firstSigned.actionIri)) : '', firstHasTurn)}`);
     const appRules = rules.map(textOf).filter((r) => r.length > 0);
-    if (steps.length === 0 || firstSigned || appRules.some((r) => SIGNING_WORDS.test(r))) how.push(SIGN_FALLBACK);
+    // No steps (workspace details): the assistant picks the actions, so either kind may come up.
+    const canSign = steps.length === 0 || Boolean(firstSigned) || appRules.some((r) => SIGNING_WORDS.test(r));
+    const canPlain = steps.length === 0 || steps.some((st) => isPlainObject(st) && st.signed !== true) || appRules.some((r) => PLAIN_WORDS.test(r));
+    const fallback = fallbackFor(canPlain, canSign);
+    if (fallback) how.push(fallback);
     parts.push(how.join('\n'));
     if (steps.length > 0) parts.push(['Steps:', ...steps.map((s, i) => stepText(s, i + 1))].join('\n'));
     const ruleLines = appRules.concat([REFUSAL_RULE]);

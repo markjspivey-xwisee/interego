@@ -1513,7 +1513,11 @@ function workspaceDetails() {
     intro: `My Practice Evidence workspace: ${siteBase()}\nIts actions, for the Interego connector's act tool: ${actionsUrl()}`,
     affordancesUrl: actionsUrl(), podUrl: S.pod,
     rules: [
-      `Sign every step (sign_payload true, or the two calls above) except ${PLAIN_STEPS.join(' and ')}, which take plain arguments at the top level of payload with sign_payload false.`,
+      // sign_payload true or false names the kind of step, not an argument every act tool has: the
+      // fallback above (actPrompt says it for both kinds here, having no steps) covers each one.
+      `Sign every step except ${PLAIN_STEPS.join(' and ')}, which are plain: their arguments go at the top level of payload. `
+        + 'Here and in any example, sign_payload true or false says whether a step is signed or plain; if your act tool has no sign_payload option, '
+        + 'the rule above applies to every one of them (sign_request first for a signed step, no sign_payload for a plain one).',
       'Every signed payload has "v": 1, "action" (the step\'s urn, exactly as you pass it as action_iri), "pod_url" (my storage address) and a new nonce. Read a step\'s fields from the actions at descriptor_url before you guess one.',
       "Never assess my own practice and never decide a score: an appointed judge and a reviewer do that.",
     ],

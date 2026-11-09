@@ -1,5 +1,40 @@
 # Changelog
 
+## 2026-11-09 — Practice Evidence: a prompt with plain steps says what to do without sign_payload
+
+The shared helpers that write the prompts people copy into Claude or ChatGPT
+said what to do when a chat app's act tool has no sign_payload option only in
+a prompt that could lead to a signed step. A prompt whose steps were all plain
+still listed "sign_payload: false" for each step and never said to leave that
+argument out, which is what an assistant has to do in a chat app without the
+option, as in ChatGPT's current connection. No prompt Practice Evidence copies
+today has only plain steps, so none went out that way. Now every prompt with a
+plain step says to leave sign_payload out of it, without signing it or
+wrapping it. The sign_request way is given only in a prompt with a signed step.
+A prompt with both, such as drafting a scenario, says each once, in one
+sentence.
+
+The workspace details now say that sign_payload true or false, there and in
+any example, says whether a step is signed or plain, and that in a chat app
+without the option their rule for that case covers every step of either kind:
+sign_request first for a signed step, no sign_payload for a plain one.
+
+A new test runs two chats of the same judge that overlap. One fetches the
+judge packet; the other fetches it, assesses and saves; the first then saves
+what it assessed from its own packet. That save is refused because the
+session changed, the first chat fetches the packet again, finds the
+assessment saved and stops, and the session holds one assessment by that
+judge. The test also checks that one packet carries both what a save is tied
+to and whether the judge's assessment is saved, read from the same version of
+the session. The README now describes the signing rule as above and the two
+overlapping chats.
+
+A note on the relay change that sends ChatGPT each tool result once (#807):
+that layout, a one-line summary as the text and the result in structured
+form, is used on the /mcp endpoint only, where Claude and ChatGPT connect. The
+older /messages endpoint keeps the default layout for every client, the
+result's JSON text first and the summary after it.
+
 ## 2026-11-09 — Practice Evidence: saving an assessment no longer shows the judge's assistant the scoring
 
 The entry below said the judge's assistant no longer reads the scoring. It
