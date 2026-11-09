@@ -6,10 +6,11 @@
  * launched, and never older than the score on record.
  */
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import express from 'express';
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { randomUUID } from 'node:crypto';
+import { gzipSync } from 'node:zlib';
+import { createVerticalBridge } from '../../_shared/vertical-bridge/index.js';
 import { LtiPlatform, attachLtiPlatformRoutes, autoPostForm, type ToolRegistration } from '../src/lti-platform.js';
 import { AGS_SCOPE, LTI_CLAIMS, attachLti13Routes, es256Keys, jwsSignEs256, type Lti13Tool, type VerifiedResourceLaunch } from '../src/lti13.js';
 
@@ -32,20 +33,22 @@ beforeAll(async () => {
   server = createServer();
   await new Promise<void>((r) => server.listen(0, '127.0.0.1', () => r()));
   base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
-  const app = express();
-  app.use(express.json());
   platform = new LtiPlatform({ selfBaseUrl: base });
+  const testTool: ToolRegistration = {
+    clientId: 'test-tool', deploymentId: 'd-1', loginUrl: `${base}/test-tool/login`,
+    redirectUris: [`${base}/test-tool/launch`], targetLinkUri: `${base}/test-tool/launch`, jwksUrl: `${base}/test-tool/jwks.json`,
+  };
+  second = new LtiPlatform({ selfBaseUrl: `${base}/second`, tool: testTool });
+  const app = createVerticalBridge({
+    verticalName: 'lti-own-lms-test', affordances: [], handlers: {},
+    routeOwnedJsonPostPaths: [platform.scoreRoutePath, second.scoreRoutePath],
+  });
   tool = attachLti13Routes(app, {
     selfBaseUrl: base, tenantDid: 'did:web:test', keySeed: 'lti-own-lms-test', dashboardUrl: `${base}/dash`, platformsConfig: '',
     extraPlatforms: [platform.registration()],
     onResourceLaunch: async (l) => { launches.push(l); return { ok: true, redirect: `${base}/played` }; },
   });
   attachLtiPlatformRoutes(app, platform);
-  const testTool: ToolRegistration = {
-    clientId: 'test-tool', deploymentId: 'd-1', loginUrl: `${base}/test-tool/login`,
-    redirectUris: [`${base}/test-tool/launch`], targetLinkUri: `${base}/test-tool/launch`, jwksUrl: `${base}/test-tool/jwks.json`,
-  };
-  second = new LtiPlatform({ selfBaseUrl: `${base}/second`, tool: testTool });
   app.get('/test-tool/jwks.json', (_req, res) => { res.json({ keys: [toolKeys.jwk] }); });
   attachLtiPlatformRoutes(app, second);
   server.on('request', app);
@@ -225,6 +228,40 @@ describe('the Tool\'s token and the gradebook it posts to', () => {
     const restarted = new LtiPlatform({ selfBaseUrl: `${base}/second`, tool: second.tool });
     restarted.restore(snap);
     expect(restarted.gradebookFor('learner-1')).toEqual(second.gradebookFor('learner-1'));
+  });
+
+  it('accepts plain JSON through the shared bridge and preserves the score parser limit', async () => {
+    const start = second.beginLaunch({ sub: 'learner-json', podUrl: 'https://pod.example/learner-json/' }, course);
+    if (!start.ok) throw new Error(start.error);
+    const url = `${String(start.lineItem.id)}/SCORES/?source=test`;
+    const score = { userId: 'learner-json', scoreGiven: 7, scoreMaximum: 10, activityProgress: 'Completed', gradingProgress: 'FullyGraded', timestamp: new Date().toISOString() };
+    const body = JSON.stringify(score);
+    const headers = { 'Content-Type': 'application/json; charset=utf-8' };
+    expect((await fetch(url, { method: 'POST', headers, body })).status).toBe(401);
+
+    const scoring = await tokenFor(AGS_SCOPE.score);
+    const authorized = { ...headers, Authorization: `Bearer ${scoring}` };
+    expect((await fetch(url, { method: 'POST', headers: authorized, body })).status).toBe(204);
+    const malformed = await fetch(url, { method: 'POST', headers: authorized, body: '{' });
+    expect(malformed.status).toBe(400);
+    expect(malformed.headers.get('Strict-Transport-Security')).toBe('max-age=31536000');
+
+    // An otherwise valid, newer score must be refused even when the HTTP wire length is small or absent.
+    const largeBody = JSON.stringify({ ...score, scoreGiven: 2, timestamp: new Date(Date.now() + 1000).toISOString() }) + ' '.repeat(64 * 1024);
+    const compressed = new Uint8Array(gzipSync(largeBody));
+    expect((await fetch(url, { method: 'POST', headers: { ...authorized, 'Content-Encoding': 'gzip' }, body: compressed })).status).toBe(413);
+    const chunkedBody = new ReadableStream({ start(controller) {
+      controller.enqueue(new TextEncoder().encode(largeBody));
+      controller.close();
+    } });
+    const chunkedRequest = { method: 'POST', headers: authorized, body: chunkedBody, duplex: 'half' as const };
+    expect((await fetch(url, chunkedRequest)).status).toBe(413);
+
+    const results = await fetch(`${String(start.lineItem.id)}/results?user_id=learner-json`, {
+      headers: { Authorization: `Bearer ${await tokenFor(AGS_SCOPE.result)}` },
+    });
+    expect(results.status).toBe(200);
+    expect(await results.json()).toEqual([expect.objectContaining({ userId: 'learner-json', resultScore: 70, resultMaximum: 100 })]);
   });
 
   it('publishes its configuration and keys, and posts the id_token with nothing unescaped', async () => {
