@@ -82,7 +82,7 @@ import {
 } from '../src/calibration.js';
 import {
   assessmentWithoutStakes, hashMask, judgmentWithoutStakes, maskAnswerHashes, reviewWithoutStakes, rubricWithoutStakes, sameRubricShape, scoredWithoutStakes,
-  withStakesOf, STAKES_WITHHELD, type HashMask,
+  withStakesOf, STAKES_WITHHELD, type HashMask, type HashScope,
 } from '../src/stakes.js';
 import { buildStatement, statementProblems, LOSSY, LRS_REQUEST_NOTE, PROJECTION_FORMATS, type ProjectionFormat } from '../src/projections.js';
 import {
@@ -375,6 +375,18 @@ interface Call {
    * scenario hash in the answer, a refusal included, is keyed before it leaves (see `run`).
    */
   stakesShown: boolean;
+  /**
+   * The scenario version this act's answer is about, when the answer does not name it beside each
+   * hash (a judge packet, a judgment, a review), or `cells` for calibration: what every hash in it
+   * is keyed with (`maskAnswerHashes`). Set once the act has read what it is about, so a refusal
+   * after that is keyed the same way.
+   */
+  hashScope: HashScope;
+}
+
+/** Key this act's answer, a refusal included, for the scenario version of `a` (an attempt's `scenario`, or a scenario head). */
+function scopeTo(call: Call, a: { readonly scenarioIri: string; readonly version: number }): void {
+  call.hashScope = { scenarioIri: a.scenarioIri, version: a.version };
 }
 
 /**
@@ -670,14 +682,15 @@ const withheldMark = (stakes: boolean, scored: boolean): Out => (stakes || !scor
 const scoredUse = (x: { readonly assessmentUse: string }): boolean => x.assessmentUse === 'pass-gate';
 
 /**
- * Whether a rubric or scenario hash a caller sent back names `stored`: as an answer to this caller
- * showed it. A caller who reads the stakes may send it bare or keyed; any other caller only keyed
- * (`maskAnswerHashes`), the form every answer to it carries, so a request cannot be used to check a
- * guessed rubric against the bare hash either.
+ * Whether a rubric or scenario hash a caller sent back names `stored`, the hash of scenario version
+ * `at`: as an answer about that version showed it to this caller. A caller who reads the stakes may
+ * send it bare or keyed; any other caller only keyed for that version (`maskAnswerHashes`), the
+ * form every answer to it carries, so a request cannot be used to check a guessed rubric against
+ * the bare hash, or against another scenario's or version's keyed one.
  */
-async function sameHash(call: Call, s: Signed, sent: unknown, stored: string): Promise<boolean> {
+async function sameHash(call: Call, s: Signed, sent: unknown, stored: string, at: { readonly scenarioIri: string; readonly version: number }): Promise<boolean> {
   if (typeof sent !== 'string') return false;
-  if (sent === (await call.ctx.hashMask()).full(stored)) return true;
+  if (sent === (await call.ctx.hashMask()).version(at.scenarioIri, at.version).full(stored)) return true;
   return sent === stored && (await showsStakes(call, s));
 }
 
@@ -1653,7 +1666,8 @@ async function ratifyScenario(call: Call, args: Record<string, unknown>): Promis
     if (ctx.trusted.addresses.has(principalKey(s.signer))) throw decline(403, 'The platform key cannot ratify a rubric.', 'ratifier-is-the-platform');
     if (!roles.has('reviewer')) throw decline(403, 'Only an address registered as a reviewer may ratify a rubric.', 'not-a-reviewer');
     if (roles.has('agent')) throw decline(403, 'A person must ratify a rubric; this address is registered as an agent.', 'agent-cannot-ratify');
-    if (s.payload['version'] !== b.version || !(await sameHash(call, s, s.payload['scenarioHash'], b.scenarioHash))) {
+    scopeTo(call, b);
+    if (s.payload['version'] !== b.version || !(await sameHash(call, s, s.payload['scenarioHash'], b.scenarioHash, b))) {
       throw decline(409, `The scenario is at version ${b.version} with a different content hash; read it again.`, 'scenario-revised', undefined, { currentVersion: b.version });
     }
     if (b.status === 'draft') throw decline(409, 'A draft cannot be ratified; the author publishes it first.', 'scenario-not-published');
@@ -2070,6 +2084,7 @@ async function writeJudgment(call: Call, s: Signed, h: AttemptHead, j: JudgmentR
  */
 async function recordJudgmentOn(call: Call, s: Signed, h: AttemptHead, j: JudgmentResult, key: PevActionKey, roles: ReadonlySet<Role>, disclosure?: InferenceDisclosure): Promise<Out> {
   const { ctx } = call;
+  scopeTo(call, h.body.scenario);
   const stakes = await showsStakes(call, s);
   const { body, w } = await writeJudgment(call, s, h, j, key, disclosure);
   const primary = body.judgments[0]!;
@@ -2182,6 +2197,7 @@ async function judgePacketAct(call: Call, args: Record<string, unknown>): Promis
     throw decline(403, 'Only the learner, a reviewer or a registered judge may fetch the judge packet.', 'not-entitled');
   }
   judgeable(h.body);
+  scopeTo(call, h.body.scenario);
   return {
     ...judgePacket(h.body.scenarioSpec, h.body.turns, {
       podUrl: s.pod, attemptIri: iri, attemptHeadUrl: h.rec.descriptorUrl,
@@ -2217,7 +2233,8 @@ async function recordJudgment(call: Call, args: Record<string, unknown>): Promis
     judgeable(h.body);
     const a = h.body;
     const tHash = a.transcriptHash ?? transcriptHash(a.turns);
-    if (s.payload['attemptHeadUrl'] !== h.rec.descriptorUrl || s.payload['transcriptHash'] !== tHash || !(await sameHash(call, s, s.payload['rubricHash'], a.scenario.rubricHash))) {
+    scopeTo(call, a.scenario);
+    if (s.payload['attemptHeadUrl'] !== h.rec.descriptorUrl || s.payload['transcriptHash'] !== tHash || !(await sameHash(call, s, s.payload['rubricHash'], a.scenario.rubricHash, a.scenario))) {
       throw decline(409, 'This judgment is bound to a different version of the attempt; fetch a fresh judge packet.', 'binding-mismatch',
         undefined, { attemptHeadUrl: h.rec.descriptorUrl, transcriptHash: tHash, rubricHash: a.scenario.rubricHash });
     }
@@ -2323,16 +2340,18 @@ async function reviewQueueAct(call: Call, args: Record<string, unknown>): Promis
     }];
   });
   const q = reviewQueue(candidates, cells, { limit, reviewer: s.signer, stakes });
+  // Each entry names the scenario version it is on, which its rubric hash is keyed for (`maskAnswerHashes`).
+  const versionOf = new Map(read.bodies.map((a) => [a.attemptIri, { scenarioIri: a.scenario.scenarioIri, scenarioVersion: a.scenario.version }]));
   const entries = q.entries.map((e) => {
     const { scenarioSpec, ...rest } = e;
     const primary = e.judgments[0];
     const judges = e.judgments.map((j) => ({ index: j.index, judgeId: j.judge.id, kind: j.judge.kind, route: j.route, chosenBy: j.chosenBy, repeatOf: j.repeatOf }));
     const common = { scenarioTitle: scenarioSpec.title, assessmentUse: scenarioSpec.assessmentUse, judges, unverifiedCriteria: primary?.unverifiedCriteria ?? [], agreement: agreementOf(scenarioSpec, e.judgments) };
-    if (stakes) return { ...rest, ...common, provisional: primary?.provisional ?? null, rubric: scenarioSpec.rubric };
+    if (stakes) return { ...rest, ...versionOf.get(e.attemptIri), ...common, provisional: primary?.provisional ?? null, rubric: scenarioSpec.rubric };
     const r = scenarioSpec.rubric;
     const { nearThreshold: _near, ...why } = e.why;
     return {
-      ...rest, ...common, why, judgments: e.judgments.map((j) => judgmentWithoutStakes(j, r)),
+      ...rest, ...versionOf.get(e.attemptIri), ...common, why, judgments: e.judgments.map((j) => judgmentWithoutStakes(j, r)),
       provisional: primary ? assessmentWithoutStakes(primary.provisional, r) : null, rubric: rubricWithoutStakes(r),
     };
   });
@@ -2409,6 +2428,7 @@ async function writeReview(call: Call, s: Signed, h: AttemptHead, primary: Judgm
   const { ctx } = call;
   const a = h.body;
   const rat = await ratificationOf(call, s.pod, a);
+  scopeTo(call, a.scenario);
   // From a chat agent (only with PEV_CHAT_AGENTS_DECIDE=1): the levels the review set, no result.
   const stakes = await showsStakes(call, s);
   const at = iso(ctx);
@@ -2586,12 +2606,14 @@ async function calibrationAct(call: Call, args: Record<string, unknown>): Promis
   }
   const read = await attemptBodies(call, pod, 'calibration');
   const { cells, outcomes } = cellsFor(ctx, pod, read.bodies, groupRaw);
-  // Unsigned, so its rubric hashes are keyed (see run) and the filter takes one as a cell shows it:
-  // a bare hash here would check a guessed rubric, stakes included, one request at a time.
+  // Unsigned, so its rubric hashes are keyed (see run), for calibration cells, which group judgments
+  // by a rubric's content across scenarios (`HashMask.cells`): the filter takes one as a cell shows
+  // it. A bare hash here would check a guessed rubric, stakes included, one request at a time.
+  call.hashScope = 'cells';
   const rubricFilter = typeof args['rubric_hash'] === 'string' && args['rubric_hash'] !== '' ? args['rubric_hash'] : null;
   const judgeFilter = typeof args['judge'] === 'string' && args['judge'] !== '' ? args['judge'] : null;
   const mask = await ctx.hashMask();
-  const chosen = cells.filter((c) => (rubricFilter === null || (c.rubricHash !== null && mask.full(c.rubricHash) === rubricFilter))
+  const chosen = cells.filter((c) => (rubricFilter === null || (c.rubricHash !== null && mask.cells.full(c.rubricHash) === rubricFilter))
     && (judgeFilter === null || c.judgeId === judgeFilter));
   // A pooled cell is checked against every rubric-version cell it pools, which the same endpoint shows.
   const versionCells = groupRaw === 'criterion-content' ? cellsFor(ctx, pod, read.bodies, 'rubric-version').cells : cells;
@@ -3033,14 +3055,14 @@ export function createPevHandlers(deps: PevDeps): Record<string, AffordanceHandl
   // would confirm a guess at its weights, level values and pass rule offline.
   const run = (act: Act): AffordanceHandler => async (args: Record<string, unknown>) => {
     const budget = new ReadBudget(ctx.actReadBudgetBytes);
-    const call: Call = { ctx, cache: readCache(ctx.verified), budget, read: withReadBudget(ctx.fetchFn, budget), writesAtStart: ctx.writes.n, stakesShown: false };
+    const call: Call = { ctx, cache: readCache(ctx.verified), budget, read: withReadBudget(ctx.fetchFn, budget), writesAtStart: ctx.writes.n, stakesShown: false, hashScope: null };
     let out: Out;
     try {
       out = await act(call, args ?? {});
     } catch (e) {
       out = refusalFor(e);
     }
-    return call.stakesShown ? out : maskAnswerHashes(out, await ctx.hashMask()) as Out;
+    return call.stakesShown ? out : maskAnswerHashes(out, await ctx.hashMask(), call.hashScope) as Out;
   };
   return {
     'pev.register_role': run(registerRole),

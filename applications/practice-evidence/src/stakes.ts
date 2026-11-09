@@ -15,28 +15,60 @@
  * Such an answer also carries the rubric's and the scenario's hashes keyed (`maskAnswerHashes`):
  * each is a sha256 over the whole rubric, stakes included, and the rest of the rubric is in the
  * answer, so only a few small integers are unknown and a bare hash would confirm a guess offline.
+ * The key covers the scenario and the version a hash belongs to as well as the hash, so the same
+ * rubric keys differently in any other scenario or version: a scenario an author's chat saves with
+ * stakes it chose shows a keyed value no other scenario's matches, its right guess included.
  *
  * Pure: no I/O.
  */
-import { createHmac } from 'node:crypto';
+import { createHmac, randomBytes } from 'node:crypto';
 import type { Assessment, JudgmentResult, Rubric, ScenarioSpec } from './practice.js';
 import type { ReviewResult } from './records.js';
 
 /** What every answer that left a scored scenario's stakes out says, at its top level. */
 export const STAKES_WITHHELD = 'This answer leaves out a scored scenario\'s stakes: each criterion\'s weight, each level\'s points, the pass rule, '
-  + 'and any points, percent or pass result worked out from them; its rubric and scenario fingerprints are keyed, so they cannot be checked '
-  + 'against a guess. Practice Evidence leaves the stakes out of every answer to a chat assistant the Interego connector signs for, to a key '
+  + 'and any points, percent or pass result worked out from them; its rubric and scenario fingerprints are keyed to their own scenario version, '
+  + 'so they match no other scenario\'s or version\'s and cannot be checked against a guess. Practice Evidence leaves the stakes out of every answer to a chat assistant the Interego connector signs for, to a key '
   + 'no admin registered on this workspace (or registered as an agent), and to a request nobody signed; people see them in the Practice Evidence '
   + 'web app, signed in with Interego or with an address an admin registered.';
 
-/** The keyed stand-ins for a hash (`full`, 64 hex) and for a 16-hex prefix of one (`prefix`). */
-export interface HashMask { readonly full: (hex: string) => string; readonly prefix: (hex16: string) => string }
+/** The keyed stand-ins for a hash (`full`, 64 hex) and for a 16-hex prefix of one (`prefix`), in one scope. */
+export interface Keyer { readonly full: (hex: string) => string; readonly prefix: (hex16: string) => string }
 
-/** HMAC-SHA256 under a key only the bridge holds: equal hashes stay equal, and no guess can be checked against one. */
-export function hashMask(key: Buffer): HashMask {
-  const mac = (label: string, v: string): string => createHmac('sha256', key).update(`${label}\n${v}`, 'utf8').digest('hex');
-  return { full: (hex) => mac('hash', hex), prefix: (hex16) => mac('prefix', hex16).slice(0, 16) };
+/**
+ * The keyed stand-ins for rubric and scenario hashes. Each is an HMAC-SHA256 under a key only the
+ * bridge holds, over the hash and the scope it is shown in:
+ *   · `version`: one scenario version (its IRI and number), for every answer about a scenario, an
+ *     attempt or a judgment. The same rubric keys differently in any other scenario or version, so
+ *     no answer about a scenario a caller saved can be compared with one about another.
+ *   · `cells`: calibration cells, which group judgments by a rubric's content across scenarios;
+ *     no caller chooses what a cell shows, and its values match no scenario's.
+ *   · `loose()`: a salt of its own each time it is called, for a hash an answer does not tie to a
+ *     scenario version (none should): it is equal to nothing outside that one answer.
+ */
+export interface HashMask {
+  readonly version: (scenarioIri: string, version: number) => Keyer;
+  readonly cells: Keyer;
+  readonly loose: () => Keyer;
 }
+
+export function hashMask(key: Buffer): HashMask {
+  const keyer = (scope: readonly unknown[]): Keyer => {
+    const mac = (label: string, v: string): string =>
+      createHmac('sha256', key).update(JSON.stringify([label, ...scope, v]), 'utf8').digest('hex');
+    return { full: (hex) => mac('hash', hex), prefix: (hex16) => mac('prefix', hex16).slice(0, 16) };
+  };
+  return {
+    version: (scenarioIri, version) => keyer(['scenario-version', scenarioIri, version]),
+    cells: keyer(['calibration-cells']),
+    loose: () => keyer(['loose', randomBytes(16).toString('hex')]),
+  };
+}
+
+/** The scenario version an answer is about, or `cells` for calibration, or null when the answer names it itself. */
+export type HashScope = { readonly scenarioIri: string; readonly version: number } | 'cells' | null;
+
+function isRecord(v: unknown): v is Record<string, unknown> { return typeof v === 'object' && v !== null && !Array.isArray(v); }
 
 const HEX64 = /^[0-9a-f]{64}$/;
 /** Keys whose value is a rubric's or a scenario's hash. */
@@ -52,22 +84,65 @@ const RUBRIC_IRI = /urn:pev:rubric:([0-9a-f]{64})/g;
 /** A calibration decision kind, `pev/<first 16 hex of the rubric hash>/<criterion>`. */
 const KIND_PREFIX = /\bpev\/([0-9a-f]{16})\//g;
 
+type Version = { readonly scenarioIri: string; readonly version: number };
+const isVersionNumber = (v: unknown): v is number => typeof v === 'number' && Number.isInteger(v) && v >= 1;
+/** The scenario version an object names: `scenarioIri` with `version` (or `scenarioVersion`). */
+function namedVersion(o: unknown): Version | null {
+  if (!isRecord(o) || typeof o['scenarioIri'] !== 'string') return null;
+  const v = isVersionNumber(o['version']) ? o['version'] : o['scenarioVersion'];
+  return isVersionNumber(v) ? { scenarioIri: o['scenarioIri'], version: v } : null;
+}
+
+/**
+ * The scenario version the hashes in `o` belong to: the one it names, or the one its `scenario`
+ * names (an attempt view), or, for an object that holds a hash and its own `version` (a scenario's
+ * list of versions), the scenario it sits under at that version; otherwise the one it sits under.
+ */
+function versionIn(o: Record<string, unknown>, under: Version | null): Version | null {
+  const own = namedVersion(o) ?? namedVersion(o['scenario']);
+  if (own !== null) return own;
+  if (under !== null && isVersionNumber(o['version']) && [...HASH_KEYS].some((k) => k in o)) return { scenarioIri: under.scenarioIri, version: o['version'] };
+  return under;
+}
+
+/**
+ * A calibration cell (calibration.ts `CalibrationCellView`), wherever an answer holds one (the
+ * calibration read, a scenario's results): it groups judgments by a rubric's content across
+ * scenarios, so its hashes are keyed for cells (`HashMask.cells`), as calibration's are.
+ */
+const isCalibrationCell = (o: Record<string, unknown>): boolean =>
+  (o['grouping'] === 'rubric-version' || o['grouping'] === 'criterion-content') && typeof o['criterionContentHash'] === 'string' && typeof o['judgeId'] === 'string';
+
 /**
  * An answer with every rubric and scenario hash keyed: the value of a `rubricHash` or
  * `scenarioHash`, the hash inside a rubric IRI (`urn:pev:rubric:<hash>`, its criteria's and levels'
  * IRIs too), and the hash prefix inside a calibration kind (`pev/<16 hex>/`), wherever they sit,
- * apart from signed bytes (`SIGNED_KEYS`).
+ * apart from signed bytes (`SIGNED_KEYS`). Each is keyed for the scenario version it belongs to
+ * (`versionIn`, starting from `scope`), for calibration cells (`scope` `cells`, or inside a cell
+ * wherever it sits), or, where nothing names its version, with a salt of this answer's own
+ * (`loose`).
  */
-export function maskAnswerHashes(v: unknown, m: HashMask, key?: string): unknown {
-  if (typeof v === 'string') {
-    if (key !== undefined && HASH_KEYS.has(key) && HEX64.test(v)) return m.full(v);
-    return v.replace(RUBRIC_IRI, (_, h: string) => `urn:pev:rubric:${m.full(h)}`).replace(KIND_PREFIX, (_, p: string) => `pev/${m.prefix(p)}/`);
-  }
-  if (Array.isArray(v)) return v.map((x) => maskAnswerHashes(x, m));
-  if (v !== null && typeof v === 'object') {
-    return Object.fromEntries(Object.entries(v).map(([k, x]) => [k, SIGNED_KEYS.has(k) ? x : maskAnswerHashes(x, m, k)]));
-  }
-  return v;
+export function maskAnswerHashes(v: unknown, m: HashMask, scope: HashScope = null): unknown {
+  let loose: Keyer | null = null;
+  const keyerFor = (at: Version | 'cells' | null): Keyer => {
+    if (at === 'cells') return m.cells;
+    if (at !== null) return m.version(at.scenarioIri, at.version);
+    return (loose ??= m.loose());
+  };
+  const walk = (x: unknown, at: Version | 'cells' | null, key?: string): unknown => {
+    if (typeof x === 'string') {
+      if (key !== undefined && HASH_KEYS.has(key) && HEX64.test(x)) return keyerFor(at).full(x);
+      return x.replace(RUBRIC_IRI, (_, h: string) => `urn:pev:rubric:${keyerFor(at).full(h)}`)
+        .replace(KIND_PREFIX, (_, p: string) => `pev/${keyerFor(at).prefix(p)}/`);
+    }
+    if (Array.isArray(x)) return x.map((y) => walk(y, at));
+    if (isRecord(x)) {
+      const here = at === 'cells' || isCalibrationCell(x) ? 'cells' : versionIn(x, at);
+      return Object.fromEntries(Object.entries(x).map(([k, y]) => [k, SIGNED_KEYS.has(k) ? y : walk(y, here, k)]));
+    }
+    return x;
+  };
+  return walk(v, scope);
 }
 
 /** A rubric as an answer without the stakes carries it: criteria and levels, in words. */
@@ -127,7 +202,6 @@ export function reviewWithoutStakes(v: ReviewResult, r: Rubric): ReviewWithoutSt
 //  A scenario sent without its stakes
 // ═════════════════════════════════════════════════════════════════════════════════════════════
 
-const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
 const given = (v: unknown): boolean => v !== undefined && v !== null && !(typeof v === 'string' && v.trim() === '');
 
 /** True when a scenario as sent names any stake: a criterion's weight, a level's value, or a pass rule. */

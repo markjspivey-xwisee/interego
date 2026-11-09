@@ -543,6 +543,85 @@ describe('answers to a chat assistant leave out the scoring stakes; the web app 
     noBareHash(ratified, 'the approval');
   }, SLOW);
 
+  it('an author\'s chat that saves the scored rubric with stakes it chose reads a fingerprint matching no other scenario\'s or version\'s, its right guess included', async () => {
+    const listed = chatAnswer(await ract(H, 'pev.list_scenarios', P.author.claude, { scenarioIri: X['sc'] }), 'the scored scenario from the author\'s Claude');
+    const head = listed['scenario'] as Out;
+    // Every fingerprint of the scored rubric the chat has read: the head's, and every version's.
+    const read = new Set([String(head['rubricHash']), ...(listed['versions'] as Out[]).map((v) => String(v['rubricHash']))]);
+    const input = demoScenarioInput('missed-deadline', 2);
+    // A scratch scenario with the scored rubric and the stakes the chat guessed, which are the author's own: a draft, accepted.
+    const scratch = ok(await ract(H, 'pev.author_scenario', P.author.claude, {
+      scenario: { ...input, scenarioKey: 'scratch-copy-of-missed-deadline', title: 'A scratch copy' }, status: 'draft', draftAssistance: { used: false },
+    }));
+    const scratchWeb = ok(await ract(H, 'pev.list_scenarios', P.author.web, {}, { scenario_iri: scratch['scenarioIri'], include_drafts: true }));
+    // It is the same rubric, stakes and all, as the web app reads it ...
+    expect((scratchWeb['scenario'] as Out)['rubricHash']).toBe(RAW.rubric);
+    // ... and the chat's fingerprint of it matches none it read of the scored scenario, so it says nothing about the guess.
+    expect(read.has(String(scratch['rubricHash'])), 'a scratch scenario\'s fingerprint against the scored one\'s').toBe(false);
+    noBareHash(scratch, 'the scratch scenario saved from the chat');
+    // The scored scenario itself, made feedback-only and then scored again with the guessed stakes: a new version, keyed for it alone.
+    const v = Number(head['version']);
+    const sent = withoutStakes({ ...input, firstLine: head['firstLine'] });
+    const { passGateWhy: _why, ...plain } = sent;
+    ok(await ract(H, 'pev.author_scenario', P.author.claude, { scenario: { ...plain, assessmentUse: 'feedback-only' }, status: 'published', basedOnVersion: v, draftAssistance: { used: false } }));
+    const rescored = ok(await ract(H, 'pev.author_scenario', P.author.claude, {
+      scenario: { ...input, firstLine: head['firstLine'] }, status: 'published', basedOnVersion: v + 1, draftAssistance: { used: false },
+    }));
+    expect(rescored['version']).toBe(v + 2);
+    const rescoredWeb = ok(await ract(H, 'pev.list_scenarios', P.author.web, {}, { scenario_iri: X['sc'] }));
+    expect((rescoredWeb['scenario'] as Out)['rubricHash']).toBe(RAW.rubric);
+    expect(read.has(String(rescored['rubricHash'])), 'a new version\'s fingerprint against an earlier one\'s').toBe(false);
+    // Each version's fingerprint stays what the chat read for it: the list shows the earlier ones as they were, and the new one as saved.
+    const after = chatAnswer(await ract(H, 'pev.list_scenarios', P.author.claude, { scenarioIri: X['sc'] }), 'the rescored scenario from the author\'s Claude', true);
+    const byVersion = new Map((after['versions'] as Out[]).map((x) => [Number(x['version']), String(x['rubricHash'])]));
+    expect([byVersion.get(v), byVersion.get(v + 2)]).toEqual([String(head['rubricHash']), String(rescored['rubricHash'])]);
+  }, SLOW);
+
+  it('every chat read keys a fingerprint the same way each time it is read', async () => {
+    const fingerprints = (r: unknown): string[] => {
+      const out: string[] = [];
+      const walk = (x: unknown, key?: string): void => {
+        if (typeof x === 'string') {
+          if (key === 'rubricHash' || key === 'scenarioHash') out.push(`${key}=${x}`);
+          for (const m of x.matchAll(/urn:pev:rubric:([0-9a-f]{64})/g)) out.push(`iri=${m[1]}`);
+        } else if (Array.isArray(x)) x.forEach((y) => walk(y));
+        else if (x !== null && typeof x === 'object') for (const [k, y] of Object.entries(x)) walk(y, k);
+      };
+      walk(r);
+      return out;
+    };
+    // A judged attempt on the scenario's latest version, to read.
+    const head = ok(await ract(H, 'pev.list_scenarios', P.learner.claude, { scenarioIri: X['sc'] }))['scenario'] as Out;
+    const start = ok(await ract(H, 'pev.start_attempt', P.learner.claude, { scenarioIri: X['sc'], scenarioVersion: head['version'], coached: false }));
+    const attempt = String(start['attemptIri']);
+    let turn = 1;
+    for (const text of DEMO_LINES.ana) {
+      const said = ok(await ract(H, 'pev.say', P.learner.claude, { attemptIri: attempt, turnIndex: turn, text }));
+      turn = Number(said['nextTurnIndex']);
+      if (said['ended'] === true) break;
+    }
+    const view = ok(await ract(H, 'pev.get_attempt', P.learner.claude, { attemptIri: attempt }));
+    if (view['state'] === 'in-conversation') ok(await ract(H, 'pev.end_conversation', P.learner.claude, { attemptIri: attempt, turnIndex: turn }));
+    ok(await ract(H, 'pev.judge_attempt', P.learner.claude, { attemptIri: attempt }));
+    const reads: [string, () => Promise<Out>][] = [
+      ['the list', async () => ract(H, 'pev.list_scenarios', P.reviewer.claude)],
+      ['one scenario', async () => ract(H, 'pev.list_scenarios', P.reviewer.claude, { scenarioIri: X['sc'] })],
+      ['one attempt', async () => ract(H, 'pev.get_attempt', P.reviewer.claude, { attemptIri: attempt })],
+      ['the judge packet', async () => ract(H, 'pev.judge_packet', P.judge.claude, { attemptIri: attempt })],
+      ['the review queue', async () => ract(H, 'pev.review_queue', P.reviewer.claude)],
+      ['results', async () => ract(H, 'pev.scenario_results', P.reviewer.claude, { scenarioIri: X['sc'] })],
+      ['calibration', async () => (await H['pev.calibration']!({})) as Out],
+    ];
+    for (const [what, read] of reads) {
+      const once = fingerprints(ok(await read()));
+      expect(fingerprints(ok(await read())), what).toEqual(once);
+    }
+    // The packet's binding is keyed for the attempt's scenario version: the one the attempt view shows.
+    const packet = ok(await ract(H, 'pev.judge_packet', P.judge.claude, { attemptIri: attempt }));
+    const seen = ok(await ract(H, 'pev.get_attempt', P.reviewer.claude, { attemptIri: attempt }));
+    expect((packet['binding'] as Out)['rubricHash']).toBe((seen['scenario'] as Out)['rubricHash']);
+  }, SLOW);
+
   it('an answer about feedback-only scenarios alone says nothing was left out: there is nothing to leave out', async () => {
     const pub = ok(await ract(H, 'pev.author_scenario', P.author.web, { scenario: demoScenarioInput('renegotiate-scope'), status: 'published', draftAssistance: { used: false } }));
     const one = chatAnswer(await ract(H, 'pev.list_scenarios', P.learner.claude, { scenarioIri: pub['scenarioIri'] }), 'a feedback-only scenario from Claude', false);

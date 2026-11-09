@@ -1,5 +1,24 @@
 # Changelog
 
+## 2026-11-09 — Practice Evidence: fingerprints keyed per scenario version
+
+A second review found that the keyed fingerprints could still check a guess at
+a scored scenario's weights and pass mark. Two rubrics with the same content
+had the same keyed fingerprint everywhere, so an author's chat could save a
+scratch scenario holding a copy of the rubric with stakes it guessed, and
+compare the fingerprint the save answered with to the one the scenario list
+showed it. Each fingerprint is now keyed to its own scenario and version as
+well as to the rubric, so a scenario a chat saves, or a new version of the same
+scenario, never shows a fingerprint that matches another scenario's or
+version's, a right guess included. The judge's hand-off and the approval of a
+rubric take the fingerprint shown for that scenario version, and the review
+queue now names each entry's scenario version. Calibration's table keys its
+fingerprints its own way, so they match none shown elsewhere.
+
+Not covered: calibration still counts judgments of the same rubric together
+across scenarios, so once enough sessions on two scenarios have been judged,
+its table can show that their rubrics, stakes included, are the same.
+
 ## 2026-11-09 — Practice Evidence: closing the other ways the stakes reached a chat
 
 A review of the change below found that the weights and the pass mark still
