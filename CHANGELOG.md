@@ -1,5 +1,51 @@
 # Changelog
 
+## 2026-11-09 — Work Redesign and Practice Evidence: the narrow-phone fix, corrected
+
+A second look at the change below found that it moved things on wide screens that it
+said it left alone, and that a few places still ran past a narrow phone's screen.
+
+- Practice Evidence's status pills could wrap at every width, so in My practice
+  "Confirmed by a reviewer" and "Conversation text deleted" took two lines at 1280 px,
+  and from 768 px up the table's columns moved. A status now wraps only below 768 px,
+  where it is needed. From 768 px up, My practice and the session page are again
+  exactly as they were before either change.
+- Practice Evidence's sign-in page, and the sign-in card on a view that needs you to
+  sign in (My practice, for one), still ran 18 px past a 300 px screen: "Sign in with
+  Interego" needs 236 px and the card had 220. A button in that card now wraps its
+  label onto a second line when the line is too short for it.
+- In Work Redesign, on a workspace open to read (WRD_PUBLIC_READS=1) with a wallet in
+  the browser and Interego sign-in off, the round Refresh button was squeezed to 32 px
+  wide at 300 px and 38 px at 320 px. It keeps its 44 px now, and "Connect wallet"
+  wraps instead.
+- The offline demo's "Demo time ... weeks Skip ahead" ran 16 px past a 300 px screen,
+  and its weeks box was too narrow to show its number. That line now wraps between its
+  parts; the persona picker beside it is unchanged.
+- Signing manually in Practice Evidence with a wallet and no Interego sign-in: below
+  360 px "Use a wallet" took two lines, the header grew to 118 px, and the side
+  navigation slid 6 px under it when the page scrolled. Below 360 px the header now
+  always leaves room for that second line, and the navigation sits below it.
+- On a touch screen, Practice Evidence's "Connect your AI" button is at least 44 px
+  wide where it shows only its icon (it was 42 px).
+
+The header breakpoints stay at fixed widths, as designed. Between them, a header can
+take a second line, or use its shorter labels, where one line would just fit (for
+example from 480 to 767 px). Both sites use each device's own fonts, so how much room a
+header needs changes from one phone to the next, and the fixed widths leave room for
+that.
+
+New tests check that a status in a table cell stays on one line from 768 px, that the
+sign-in card's buttons wrap, that Refresh keeps its size, that the demo clock wraps,
+the header height below 360 px, the touch-screen width of "Connect your AI", and the
+left-aligned label of "Copy the start-up message". Each one fails when its rule is
+taken out, except one: jsdom does not rank selectors with :has() the way a browser
+does, so the second selector on the narrow header-height rule is checked in Chromium
+only.
+
+Measured again in Chromium against the master branch: 97 page states of both sites, at
+nine widths from 300 to 1280 px, in light and dark, with a mouse and with a touch
+screen. None of them scrolls sideways.
+
 ## 2026-11-09 — Work Redesign and Practice Evidence: nothing runs past a narrow phone's screen
 
 On phones from 300 to 414 px wide, parts of both sites were wider than the

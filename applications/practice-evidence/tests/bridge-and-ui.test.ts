@@ -1046,7 +1046,8 @@ describe('the web UI works, driven in a DOM against the real handlers', () => {
     for (const px of [1280, 768, 600, 360, 344, 300]) {
       sheet.textContent = atWidth(css, px);
       const two = px < 360;
-      expect([px, cs('.app-header__inner').flexWrap, cs('.app-header__actions').flexBasis, cs('html').getPropertyValue('--header-h')]).toEqual([px, two ? 'wrap' : '', two ? '100%' : '', two ? '7rem' : '4rem']);
+      // Below 360 px the second line keeps room for a label on two lines, so --header-h is the same whichever it is.
+      expect([px, cs('.app-header__inner').flexWrap, cs('.app-header__actions').flexBasis, cs('html').getPropertyValue('--header-h')]).toEqual([px, two ? 'wrap' : '', two ? '100%' : '', two ? '7.3125rem' : '4rem']);
       // Connect your AI says so from 30em, as it always did: shortening it is only for a header holding another way to sign in too.
       expect([px, cs('#connect-ai-button > .hide-below-sm').display === 'none', cs('#acting-as').flexShrink, cs('.app-header .brand').flexShrink]).toEqual([px, px < 480, '10000', '10000']);
     }

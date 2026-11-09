@@ -119,6 +119,9 @@
 
 .auth--inline { min-height: 0; padding-block: var(--space-8); }
 .auth__card > .brand__mark { display: block; }
+/* The sign-in card's buttons keep to it on the narrowest phones ("Sign in with Interego" needs 236 px, and at 300 px the card
+   has 220): a label too long for its line wraps; with room, each keeps its one line. */
+.auth__card .btn { white-space: normal; }
 
 .checklist__picker { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2) var(--space-3); font-size: var(--text-sm); color: var(--text-secondary); }
 
@@ -216,7 +219,11 @@
    after #acting-as.badge) stays beside it: more than a header holds in one line below 64em. There the buttons say less (each
    keeps its whole name for a screen reader: Connect your AI by its label, the other two as on a phone), and below 48em
    they take a line of their own under the brand, with the navigation's place under the header (--header-h) moved down to
-   match. Signing manually as the only way fits one line down to 360 px, and below it takes that second line too. */
+   match. Signing manually as the only way fits one line down to 360 px, and below it takes that second line too. Below
+   360 px that line keeps room for a button whose label takes two lines ("Use a wallet" beside the badge at 300 px), so
+   --header-h is the two rows' height whether it does or not (the header's height is at least --header-h). Where Connect
+   your AI is its icon alone, on a touch screen it is still 44 px wide. */
+@media (pointer: coarse) { #connect-ai-button { min-width: var(--target); } }
 @media (max-width: 63.99em) { .app-header:has(#acting-as.badge + .btn--primary) #connect-ai-button > .hide-below-sm, .app-header:has(#acting-as.badge + .btn--primary) .hide-below-md { display: none; } }
 @media (max-width: 47.99em) {
   .app-header:has(#acting-as.badge + .btn--primary) .app-header__inner { flex-wrap: wrap; row-gap: var(--space-2); padding-block: var(--space-2); }
@@ -226,7 +233,8 @@
 @media (max-width: 22.49em) {
   .app-header:has(#acting-as.badge) .app-header__inner { flex-wrap: wrap; row-gap: var(--space-2); padding-block: var(--space-2); }
   .app-header:has(#acting-as.badge) .app-header__actions { flex: 1 0 100%; justify-content: flex-end; min-height: var(--target); }
-  :root:has(.app-header #acting-as.badge) { --header-h: 7rem; }
+  /* Both selectors: beside another way, the 48em rule's (the more specific) would otherwise win here. */
+  :root:has(.app-header #acting-as.badge), :root:has(.app-header #acting-as.badge + .btn--primary) { --header-h: 7.3125rem; }
 }
 .connect-tabs .tabs { margin-bottom: var(--space-3); }
 .connect-steps, .handoff-steps { display: grid; gap: var(--space-2); margin: 0; padding-left: 1.25rem; }
@@ -235,10 +243,11 @@
 .connect .disclosure + .disclosure { margin-top: var(--space-2); }
 /* On a phone the session page's steps keep to the screen: "Copy the start-up message" wraps in its step instead of widening
    the list, and a status too long for its line ("Signature verified: unchanged since it was signed") wraps inside itself,
-   as a badge does. */
+   as a badge does. A status wraps only below 48em: from there a table's columns are sized by its statuses on one line
+   (My practice's "Confirmed by a reviewer"), and every status has the room it needs. */
 .handoff-steps > li { min-width: 0; }
 .handoff-steps .btn { white-space: normal; max-width: 100%; text-align: left; }
-.status { max-width: 100%; white-space: normal; }
+@media (max-width: 47.99em) { .status { max-width: 100%; white-space: normal; } }
 /* So does a callout's button whose label is longer than the line ("Copy the message for my AI" in Write a scenario ran
    19 px past a 300 px screen); with room, it keeps its one line. */
 .callout__actions .btn { white-space: normal; max-width: 100%; }

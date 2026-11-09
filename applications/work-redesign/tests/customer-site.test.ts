@@ -913,10 +913,16 @@ describe('work-redesign customer site', () => {
       // The brand gives way first, then a button's label; the round account button never does.
       expect([px, cs(must(header.querySelector('.brand'), 'the brand')).flexShrink, cs(must(header.querySelector('.brand__name'), 'its name')).whiteSpace]).toEqual([px, '10000', 'normal']);
       expect([px, cs(refresh).whiteSpace, cs(account).flexShrink]).toEqual([px, 'normal', '0']);
-      // Refresh is its word from 30em, as it was; below, its icon in a 44 px button, the word kept off the screen but still its name.
-      expect([px, cs(must(refresh.querySelector('.icon'), 'its icon')).display, cs(refresh).width, cs(label).position, cs(label).clipPath])
-        .toEqual(phone ? [px, 'inline-block', 'var(--target)', 'absolute', 'inset(50%)'] : [px, 'none', '', '', '']);
+      // Refresh is its word from 30em, as it was; below, its icon in a 44 px button that keeps its size (beside Connect wallet it
+      // was squeezed to 32 px at 300 px), the word kept off the screen but still its name.
+      expect([px, cs(must(refresh.querySelector('.icon'), 'its icon')).display, cs(refresh).width, cs(refresh).flexShrink, cs(label).position, cs(label).clipPath])
+        .toEqual(phone ? [px, 'inline-block', 'var(--target)', '0', 'absolute', 'inset(50%)'] : [px, 'none', '', '', '', '']);
     }
+    // The demo clock ("Demo time … weeks Skip ahead") wraps between its parts where its line is too short (its button ran 16 px
+    // past a 300 px screen); the persona picker beside it keeps to one line, as it did.
+    const clock = must(d.querySelector('.env-banner .env-banner__clock'), 'the demo clock');
+    expect([clock.classList.contains('env-banner__field'), clock.querySelector('button')?.textContent, cs(clock).flexWrap, cs(must(d.querySelector('.env-banner__field:not(.env-banner__clock)'), 'the persona picker')).flexWrap])
+      .toEqual([true, 'Skip ahead', 'wrap', '']);
     // Map a process, signed: each task the record holds, with its link to send, which wraps under the task's name on a phone.
     sheet.textContent = '';
     page.click('Map a process');

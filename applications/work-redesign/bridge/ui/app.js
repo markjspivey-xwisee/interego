@@ -1235,7 +1235,7 @@ function envBanner() {
     h('span', { text: DEMO_SENTENCE }),
     h('span', { class: 'env-banner__field' }, h('label', { for: 'persona', text: 'View as' }),
       h('select', { id: 'persona', class: 'select', on: { change: (e) => { S.persona = e.target.value; S.panel = null; S.result = null; S.invalid = new Map(); refresh(); } } }, personas().map(option))),
-    S.data && S.tools.has('wrd.demo_advance_clock') ? h('span', { class: 'env-banner__field' }, 'Demo time: ', h('strong', { text: S.demoNow ? day(S.demoNow) : 'as scripted' }), weeks,
+    S.data && S.tools.has('wrd.demo_advance_clock') ? h('span', { class: 'env-banner__field env-banner__clock' }, 'Demo time: ', h('strong', { text: S.demoNow ? day(S.demoNow) : 'as scripted' }), weeks,
       h('span', { text: 'weeks' }),
       btn('Skip ahead', { size: 'sm', on: async () => {
         const out = await send('wrd.demo_advance_clock', { weeks: Number(weeks.value) });
