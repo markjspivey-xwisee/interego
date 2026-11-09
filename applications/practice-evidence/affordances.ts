@@ -9,8 +9,9 @@
  *
  * Every signed affordance declares the `{_signed_payload, _signature}` inputs beside `envelope`,
  * so a person signed in with their Interego account reaches it from Claude or ChatGPT with the
- * relay's `act {descriptor_url, action_iri, payload, sign_payload: true}`: the relay signs the
- * payload for the session's agent and posts that pair as the body. The bridge then reads the
+ * relay's `act {descriptor_url, action_iri, payload, sign_payload: true}` (or `sign_request`, then
+ * `act` with the pair it returns, from a client whose `act` shows no `sign_payload`): the relay signs
+ * the payload for the session's agent and posts that pair as the body. The bridge then reads the
  * person as the agent's controller (relay-attested, not user-held; see the README).
  *
  * Reads that need identity are POST with readOnlyHint true, because the envelope travels in the
@@ -28,7 +29,7 @@ const ENVELOPE: readonly AffordanceInput[] = [
   },
   {
     name: '_signed_payload', type: 'string', required: false,
-    description: 'The signed-request form, at the top level: the signed JSON text. Signed by your own key, its agent_id names that key (did:ethr:<address>). Signed by the Interego relay (act with sign_payload: true, after you sign in with your Interego account), its agent_id is your session\'s agent, its timestamp is the relay\'s, and pod_url (podUrl in what you ask it to sign) is the pod you act on; you then act as that agent\'s controller, relay-attested rather than with a key you hold.',
+    description: 'The signed-request form, at the top level: the signed JSON text. Signed by your own key, its agent_id names that key (did:ethr:<address>). Signed by the Interego relay (act with sign_payload: true, or, where your act has no sign_payload, sign_request with your payload as its only argument and then act with the _signature and _signed_payload it returned, unchanged; after you sign in with your Interego account), its agent_id is your session\'s agent, its timestamp is the relay\'s, and pod_url (podUrl in what you ask it to sign) is the pod you act on; you then act as that agent\'s controller, relay-attested rather than with a key you hold.',
   },
   { name: '_signature', type: 'string', required: false, description: 'The signed-request form: the EIP-191 signature over sha256:<hex sha256 of _signed_payload>, by your own key or by the Interego relay\'s delegation key.' },
   { name: 'pod_url', type: 'string', required: false, description: 'The pod acted on. When given it must equal the payload\'s podUrl.' },
@@ -201,7 +202,7 @@ export const pevAffordances: ReadonlyArray<Affordance> = [
     targetTemplate: '{base}/pev/judge_packet',
     annotations: hints('Judge packet', true, false, true, true),
     inputs: [...ENVELOPE],
-    outputs: out('A client-required packet.', ['execution', 'promptTemplateHash']),
+    outputs: out('A client-required packet. Its last field, yourAssessment, is null, or {saved: true, judgedAt} when the caller signed a judgment of this attempt made since it was last reopened; it says nothing else about any judgment or review.', ['execution', 'promptTemplateHash']),
   },
   {
     action: PEV_ACTION.recordJudgment as IRI,
@@ -212,7 +213,7 @@ export const pevAffordances: ReadonlyArray<Affordance> = [
     targetTemplate: '{base}/pev/record_judgment',
     annotations: hints('Record a judgment', false, false, false, true),
     inputs: [...ENVELOPE],
-    outputs: out('The recorded judgment and the provisional result.', ['attemptIri', 'state', 'descriptorUrl']),
+    outputs: out('That the judgment was saved, and how the platform checked each criterion\'s level and quotes. Never the provisional result, the scoring the packet leaves out, or another judgment.', ['attemptIri', 'state', 'descriptorUrl']),
   },
   {
     action: PEV_ACTION.reviewQueue as IRI,

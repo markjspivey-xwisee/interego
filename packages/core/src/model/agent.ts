@@ -1254,7 +1254,10 @@ export async function readRequests(port: AgentPort, limit = REQUEST_INBOX_LIMIT)
       summary: typeof item['summary'] === 'string' ? item['summary'] : null,
       published: typeof item['published'] === 'string' ? item['published'] : null,
     }));
-  return { notices, saturated: all.length >= limit, limit, inbox };
+  // ★ The relay says whether more remain (`hasMore`), and a page can be short of `limit` while
+  // they do: the relay serves at most 50 per page, so a caller asking for more is answered with
+  // 50 and hasMore. A full page is still read as saturated, for a relay that predates hasMore.
+  return { notices, saturated: p?.['hasMore'] === true || all.length >= limit, limit, inbox };
 }
 
 /**

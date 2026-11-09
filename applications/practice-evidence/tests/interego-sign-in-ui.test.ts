@@ -425,8 +425,8 @@ async function pressSignIn(p: Page): Promise<URL> {
 
 let nonceN = 0;
 const nonce = (): string => `signin-ui-nonce-${String(++nonceN).padStart(8, '0')}`;
-async function direct(tool: string, w: Wallet, action: string, fields: Out = {}): Promise<Out> {
-  return (await handlers[tool]!({ envelope: await signEnvelope(w, { v: 1, action, issuedAt: new Date().toISOString(), nonce: nonce(), podUrl: DEMO_POD, ...fields }) })) as Out;
+async function direct(tool: string, w: Wallet, action: string, fields: Out = {}, h: Handlers = handlers): Promise<Out> {
+  return (await h[tool]!({ envelope: await signEnvelope(w, { v: 1, action, issuedAt: new Date().toISOString(), nonce: nonce(), podUrl: DEMO_POD, ...fields }) })) as Out;
 }
 
 /**
@@ -1202,6 +1202,17 @@ function shownText(root: Element | null): string {
 }
 const JARGON = /\b(pod|bridge|affordance|envelope|nonce|hypothetical|ratif\w*|countersign\w*|relay|payload|sign_payload)\b/i;
 const CODES = /\b(EIP-191|IRI|DID)\b|HTTP \d{3}|urn:|https?:\/\//;
+/**
+ * What a copied prompt says for a chat app whose act tool shows no sign_payload, for the kinds of step it can lead to:
+ * a prompt whose steps are all signed says how to sign one with sign_request, and one that can also lead to a plain
+ * step (drafting a scenario, the workspace details) says, in the same sentence, to leave sign_payload out of it.
+ */
+const NO_OPTION = 'If your act tool has no sign_payload option, ';
+const PLAIN_RULE = 'leave sign_payload out of a plain step\'s call (do not sign it or wrap it)';
+const SIGNED_RULE = 'do a signed step in two calls: call the connector\'s sign_request tool '
+  + 'with payload as its only argument, set to the step\'s payload, then call act with the same descriptor_url and action_iri and with payload set to exactly '
+  + 'the _signature and _signed_payload it returned, unchanged';
+const FALLBACK = { signed: `${NO_OPTION}${SIGNED_RULE}.`, both: `${NO_OPTION}${PLAIN_RULE}, and ${SIGNED_RULE}.` } as const;
 const plain = (where: string, text: string): void => {
   expect([text.match(JARGON)?.[0] ?? null, text.match(CODES)?.[0] ?? null], where).toEqual([null, null]);
 };
@@ -1229,13 +1240,36 @@ async function learnerSteps(p: Page): Promise<string> {
   return p.all('.checklist__text').map((x) => x.textContent).join('\n');
 }
 
-/** One act a chat agent of the person's (Claude, through the relay) takes on its own, as the connector's act would post it. */
-async function fromChat(h: Handlers, tool: string, action: string, fields: Out): Promise<Out> {
-  const slug = `claude-${USER}`;
-  agentDocs.set(`https://${IDH}/agents/${slug}/did.json`, { '@context': ['https://www.w3.org/ns/did/v1'], id: `did:web:${IDH}:agents:${slug}`, controller: PRINCIPAL });
-  const sp = JSON.stringify({ v: 1, action, nonce: `chat-${nonce()}`, pod_url: DEMO_POD, ...fields, agent_id: `did:web:${IDH}:agents:${slug}`, subject_pod_url: `https://pods.ui.test/${USER}/`, timestamp: new Date().toISOString() });
+/**
+ * One act a chat agent of a person's (Claude by default, through the relay) takes on its own, as the connector's act
+ * would post it: by default the signed-in person's. `surface` names the chat app, whose agent the relay names after it.
+ */
+async function fromChat(h: Handlers, tool: string, action: string, fields: Out, user = USER, surface = 'claude'): Promise<Out> {
+  const slug = `${surface}-${user}`;
+  agentDocs.set(`https://${IDH}/agents/${slug}/did.json`, { '@context': ['https://www.w3.org/ns/did/v1'], id: `did:web:${IDH}:agents:${slug}`, controller: `did:web:${IDH}:users:${user}` });
+  const sp = JSON.stringify({ v: 1, action, nonce: `chat-${nonce()}`, pod_url: DEMO_POD, ...fields, agent_id: `did:web:${IDH}:agents:${slug}`, subject_pod_url: `https://pods.ui.test/${user}/`, timestamp: new Date().toISOString() });
   return (await h[tool]!({ _signed_payload: sp, _signature: await signMessageRaw(RELAY_KEY, `sha256:${sha256Hex(sp)}`) })) as Out;
 }
+
+/** The numbered steps of a copied prompt, as actPrompt writes them: each step's action and payload template. */
+function promptSteps(text: string): { readonly n: number; readonly say: string; readonly actionIri: string; readonly signed: boolean; readonly payload: Out }[] {
+  const lines = text.split('\n');
+  const out: { n: number; say: string; actionIri: string; signed: boolean; payload: Out }[] = [];
+  for (let i = 0; i < lines.length; i += 1) {
+    const head = /^(\d+)\. (.*)$/.exec(lines[i]!);
+    if (!head || !/^ {3}action_iri: "/.test(lines[i + 1] ?? '')) continue;
+    out.push({
+      n: Number(head[1]), say: head[2]!,
+      actionIri: /^ {3}action_iri: "([^"]+)"$/.exec(lines[i + 1]!)![1]!,
+      signed: (lines[i + 2] ?? '').startsWith('   sign_payload: true'),
+      payload: JSON.parse((lines[i + 3] ?? '').replace(/^ {3}payload: /, '')) as Out,
+    });
+  }
+  return out;
+}
+
+/** A refusal's code and status, from a handler's answer. */
+const refusalOf = (r: Out): readonly [unknown, unknown] => [r['iep:refusalStatus'] ?? null, r['iep:refusalReason'] ?? null];
 
 describe('your own AI assistant: connect Claude or ChatGPT, or copy and paste; never a key of ours', () => {
   let nm: TestListener;
@@ -1269,11 +1303,35 @@ describe('your own AI assistant: connect Claude or ChatGPT, or copy and paste; n
     const tabs = [...d.querySelectorAll('[role="tab"]')];
     expect(tabs.map((t) => [t.textContent, t.getAttribute('aria-selected')])).toEqual([['In Claude', 'true'], ['In ChatGPT', 'false']]);
     expect(shownText(d)).toContain('In Claude, open Settings, then Connectors, then Add custom connector.');
-    expect(shownText(d)).not.toContain('In ChatGPT, open Settings');
-    (tabs[1] as HTMLElement).click();
-    expect(shownText(d)).toContain('In ChatGPT, open Settings, then Connectors, then Add.');
-    expect(shownText(d)).toContain("ChatGPT needs a plan that allows custom connectors. If you don't see the option, use Copy for my AI on each step instead.");
     expect(shownText(d)).toContain("In each new chat, turn on Interego from the chat's tools menu (+).");
+    expect(shownText(d)).toContain("Whether you can add a connector depends on your plan or workspace settings. If you don't see the option, use Copy for my AI on each step instead.");
+    expect(shownText(d)).not.toContain('In ChatGPT on the web');
+    (tabs[1] as HTMLElement).click();
+    // ChatGPT's own steps, as OpenAI's guide to custom MCP servers gives them, in order, and the guide itself one link away.
+    expect([...d.querySelectorAll('#connect-panel-chatgpt .connect-steps li')].map((li) => li.textContent)).toEqual([
+      'In ChatGPT on the web, open Plugins, select +, then Add custom MCP server.',
+      'Name it Interego, paste the address above as its Server URL, and choose OAuth.',
+      'Accept the warning, select Create as a plugin, then install it.',
+      'When it asks, sign in with the same Interego account you use here.',
+      'In a chat, type @ and choose Interego.',
+    ]);
+    // What decides whether a connector can be added, in the same words as the Claude tab: a personal account has no workspace to check.
+    expect([...d.querySelectorAll('#connect-panel-chatgpt .hint')].map((x) => x.textContent)).toContain("Whether you can add a connector depends on your plan or workspace settings. If you don't see the option, use Copy for my AI on each step instead.");
+    expect(shownText(d)).not.toContain("Your workspace's settings decide");
+    // A remembered approval covers one tool in one chat, as OpenAI's guide says, not the whole chat.
+    expect(shownText(d)).toContain("ChatGPT asks before each write unless you let it remember your choice for that tool in that chat. If Interego's tools look out of date, refresh it from its page in your app settings.");
+    const guide = [...d.querySelectorAll('#connect-panel-chatgpt a')];
+    expect(guide.map((a) => [a.textContent, a.getAttribute('href'), a.getAttribute('rel'), a.getAttribute('target')]))
+      .toEqual([["OpenAI's guide to custom MCP servers", 'https://developers.openai.com/api/docs/guides/custom-mcp-server', 'noopener', null]]);
+    expect(shownText(d)).not.toContain("turn on Interego from the chat's tools menu");
+    // No claim about which plans offer custom connectors, in either tab.
+    for (const tab of ['claude', 'chatgpt']) {
+      expect(d.querySelector(`#connect-panel-${tab}`)?.textContent, tab).not.toMatch(/\bplans? (that|which) allows?\b|needs a plan|plan must|plans don't|Some \w+ plans|Plus|Pro\b|Business|Enterprise|Team plan/);
+    }
+    // Who judges, in plain words: a different person, with their own account, appointed by Member ID; never your assistant on a
+    // session your Interego account started, in any chat or role. The bridge refuses by account, so the sentence names the account:
+    // a session started with a wallet belongs to the wallet.
+    expect(d.querySelector('#connect-judge')?.textContent).toBe("It can't assess a session you started with your Interego account, even in a new chat or told to act as a judge: it still acts as you. A judge is a different person, with their own Interego account, whom your admin appoints by Member ID.");
     // What it can and can't do: this workspace keeps the decisions in the web app, and says who sees what.
     (d.querySelector('#connect-limits') as HTMLDetailsElement).open = true;
     expect(d.querySelector('#connect-decisions')?.textContent).toBe('Approving rubrics, signing off reviews and changing roles happen here in the web app, not from a chat assistant.');
@@ -1283,11 +1341,28 @@ describe('your own AI assistant: connect Claude or ChatGPT, or copy and paste; n
     expect(byok.textContent).toContain('Claude or ChatGPT needs no key here, connected or by copy and paste.');
     (d.querySelector('#connect-paste') as HTMLDetailsElement).open = true;
     plain('the Connect dialog', shownText(d));
+    // A judge pastes a learner's message into a new chat, as the message itself asks.
+    expect(d.querySelector('.connect-roles')?.textContent).toContain('Appointed judges: paste the message a learner sends you into a new chat.');
     (d.querySelector('#copy-workspace-details') as HTMLElement).click();
     await p.until(() => p.copied.length === 1, 'the copied workspace details');
     const details = p.copied[0]!;
     for (const says of [`My Practice Evidence workspace: ${nm.base}/`, `descriptor_url: "${nm.base}/affordances"`, `"${DEMO_POD}"`, 'sign_payload',
-      `except ${PEV_ACTION.listScenarios} and ${PEV_ACTION.draftScenarioPacket}`, 'nonce = the step name']) expect(details).toContain(says);
+      `except ${PEV_ACTION.listScenarios} and ${PEV_ACTION.draftScenarioPacket}`, 'nonce = the step name',
+      // A chat app whose act tool shows no sign_payload signs a signed step in two calls and leaves sign_payload out of a plain one.
+      FALLBACK.both]) expect(details).toContain(says);
+    expect(details.split(FALLBACK.both)).toHaveLength(2);
+    // The signing rule says that sign_payload true or false names the kind of step, here and in any example, and points to
+    // where the prompt says what to do with each kind when the act tool has no such option: the last line of How to do
+    // each step, which is that fallback. The condition is said there and nowhere else.
+    expect(details.split('\n').filter((line) => line.startsWith('- Sign every step'))).toEqual([
+      `- Sign every step except ${PEV_ACTION.listScenarios} and ${PEV_ACTION.draftScenarioPacket}, which are plain: their arguments go at the top level of payload. `
+        + 'Here and in any example, sign_payload true or false says whether a step is signed or plain; '
+        + 'the last line of How to do each step says what to do with each kind when your act tool has no sign_payload option.',
+    ]);
+    const howBlock = details.split('\n\n').find((part) => part.startsWith('How to do each step:')) ?? '';
+    expect(howBlock.split('\n').at(-1)).toBe(FALLBACK.both);
+    expect(details.match(/if your act tool has no sign_payload option/gi)).toHaveLength(1);
+    expect(details).not.toContain('or the two calls above');
     // With no step of its own, its nonce example names no step at all: never one this workspace does not have.
     expect(details).not.toMatch(/For example [A-Za-z0-9-]+-4-|read-items/);
     // The confirmation is in the open dialog, where the person pressed Copy: the button says so and the
@@ -1378,8 +1453,20 @@ describe('your own AI assistant: connect Claude or ChatGPT, or copy and paste; n
     const startup = p.copied[0]!;
     for (const says of [attemptIri, PEV_ACTION.counterpartPacket, PEV_ACTION.recordTurns, PEV_ACTION.endConversation, 'sign_payload: true', `descriptor_url: "${nm.base}/affordances"`,
       `"pod_url":"${DEMO_POD}"`, 'T starts at 1.', 'nextTurnIndex', 'turn-out-of-order', '"ended": true', 'payload.action is exactly this urn', 'Never change my words.',
-      "Sam Okafor's last line was: \"You wanted to see me?", 'For example counterpart-packet-4-q8Xr2mVp7LkA9dTz,']) expect(startup, says).toContain(says);
+      "Sam Okafor's last line was: \"You wanted to see me?", 'For example counterpart-packet-4-q8Xr2mVp7LkA9dTz,', FALLBACK.signed]) expect(startup, says).toContain(says);
+    // Every step of it is signed: nothing about leaving sign_payload out.
+    expect(startup).not.toContain(PLAIN_RULE);
     expect(startup).not.toContain('read-items');
+    // A refused or lost step is reconciled from what is saved, with the read step, before any reply is written or saved again.
+    expect(startup).toContain('again only if we carry on in a new chat or a rule below says so');
+    expect(startup).toContain('- If a step is refused with turn-out-of-order, envelope-already-used, envelope-expired or chain-moved (the session moved on, perhaps in another app), or you lose track of the conversation: '
+      + 'do step 1 again, with the nextTurnIndex the refusal gives if it gives one, and read what is saved before you write or save anything. '
+      + 'If my line is already saved with a reply, show me that reply. Otherwise write a new reply to the conversation as saved. Never re-send a reply under another turn number.');
+    // The old rule retried the same reply at the next turn number: a duplicate when the first save had gone through.
+    expect(startup).not.toContain('try once more');
+    // Every refusal code it names is one the bridge really sends.
+    const handlerSource = readFileSync(fileURLToPath(new URL('../bridge/handlers.ts', import.meta.url)), 'utf8') + readFileSync(fileURLToPath(new URL('../src/records.ts', import.meta.url)), 'utf8');
+    for (const code of ['turn-out-of-order', 'envelope-already-used', 'envelope-expired', 'chain-moved', 'binding-mismatch']) expect(handlerSource, code).toContain(`'${code}'`);
     expect(startup).not.toMatch(/llm_api_key|api key/i);
 
     // Claude, connected as this person, saves an exchange: the page shows it when the person comes back to the tab.
@@ -1430,9 +1517,165 @@ describe('your own AI assistant: connect Claude or ChatGPT, or copy and paste; n
     send.click();
     await p.until(() => p.copied.length === 3, 'the message for the judge');
     const judge = p.copied[2]!;
+    // The judge pastes the prompt into a new chat, never one that listed scenarios or read the review queue: those answers
+    // carry the rubric's weights, level values and pass rule (and the queue's, every judgment's levels), which neither
+    // step of the prompt shows the assistant.
+    expect(judge.split('\n').slice(0, 3)).toEqual([
+      `Hi, could you assess my practice session in Practice Evidence? Session: ${attemptIri}. Workspace: ${nm.base}/`,
+      "Don't reuse a chat where you reviewed sessions or listed scenarios: it has already seen the scoring. "
+        + 'Paste everything between the lines into a new chat in Claude or ChatGPT, with the Interego connector on:',
+      '---',
+    ]);
     // Its nonce example is its own first signed step, at turn 0: judging has no turn, and the rule says "or 0".
     for (const says of [attemptIri, PEV_ACTION.judgePacket, PEV_ACTION.recordJudgment, 'usedPacketPrompt', 'wait for my go-ahead', `Workspace: ${nm.base}/`,
-      'For example judge-packet-0-q8Xr2mVp7LkA9dTz,']) expect(judge, says).toContain(says);
+      'For example judge-packet-0-q8Xr2mVp7LkA9dTz,', FALLBACK.signed,
+      "If this is my own practice session, stop: I can't assess it, in any chat or role."]) expect(judge, says).toContain(says);
+    expect(judge).not.toContain(PLAIN_RULE);
+    // Whether a save was kept is asked of the workspace, never judged from what the chat saw: assessing again after a save
+    // that was kept saves a second one, and a save the chat app answered with an error, or not at all, may have been kept.
+    // The first step asks it: the judge packet ends with yourAssessment, which says whether the caller has a saved
+    // assessment that still counts, and nothing more. There is no step that reads the session: that answer carries the
+    // rubric's weights, level values and pass rule, which the packet leaves out so the judging assistant never sees them.
+    const judgeRules = judge.split('\n').filter((line) => line.startsWith('- '));
+    const steps = promptSteps(judge);
+    expect(steps.map((x) => [x.n, x.actionIri, x.signed])).toEqual([[1, PEV_ACTION.judgePacket, true], [2, PEV_ACTION.recordJudgment, true]]);
+    for (const gone of [PEV_ACTION.getAttempt, 'get-attempt', 'signedAs', 'third step', 'read the session']) expect(judge, gone).not.toContain(gone);
+    expect(steps[0]!.say).toBe('Get the session, the rubric and the request to assess it with. Its yourAssessment is null if nothing of mine is saved; otherwise my assessment is saved. '
+      + 'An answer without yourAssessment counts as no answer.');
+    expect(steps[0]!.payload).toMatchObject({ v: 1, attemptIri, action: PEV_ACTION.judgePacket });
+    // The first rule stops the chat whenever the first step finds an assessment saved, at the start too: a new chat, or
+    // this message sent again, knows nothing of what an earlier chat saved.
+    expect(judge.split('\nRules:\n')[1]!.split('\n')[0]).toBe('- Whenever the first step shows my assessment is saved, tell me so, and stop: I have already assessed this session, in this chat or another.');
+    // Every way a save may have been kept does the first step again before anything else; when nothing is saved, one resend
+    // of the same assessment, bound to the head that save was bound to.
+    expect(judgeRules.filter((r) => r.includes('envelope-already-used'))).toEqual([
+      "- If a save is refused with envelope-already-used, comes back with an error that names no refusal code, or gets no answer, or you lose track after sending a save (or can't tell whether you sent one): "
+        + "don't assess or save again before you do the first step again. If nothing of mine is saved, send the same assessment once more, with a new nonce and the same binding as that save; "
+        + 'if you already sent it again, or no longer have it, tell me it is not saved, and stop.',
+    ]);
+    // A save refused because the session changed assesses again only when the first step, done again, shows nothing of the judge's saved.
+    expect(judgeRules.filter((r) => r.includes('binding-mismatch'))).toEqual([
+      '- If a save is refused with binding-mismatch or chain-moved (the session changed after the first step): do the first step again, and if nothing of mine is saved, '
+        + 'assess what it returns, never an earlier assessment, and show me before you save.',
+    ]);
+    for (const r of judgeRules) expect(r).not.toMatch(/accepted in this chat|has been accepted/);
+    // Only a first step that cannot answer leaves the judge with "may already be saved", and only once a save of this
+    // session was sent in that chat: the first step is also the first call of every chat, and a judge it refuses before
+    // any save (not registered yet, the session not ended) has nothing saved to ask the learner about. Nor does a chat
+    // that saved another learner's session and is then refused this one (attempt-already-reviewed, say). A wrong field in
+    // it, which the first call of every chat can have, is fixed once, as the closing rule says for any call.
+    expect(judgeRules.filter((r) => r.includes('may already be saved'))).toEqual([
+      "- If the first step is refused, other than for a wrong field or its format, or gets no answer: don't assess or save. "
+        + "Tell me what it said and, if you sent a save of this session in this chat or can't tell whether you did, that my assessment may already be saved; then stop.",
+    ]);
+    expect(judgeRules.at(-1)).toContain('if a call is refused because a field or its format is wrong, fix it once from the refusal message and try again.');
+
+    // The message's own steps, run as the judge's assistant would run them, against this workspace.
+    // A judge, appointed by Member ID, whose chat app answers the first save with an error although it was kept.
+    const judgeUser = 'u-pk-0000000000f9';
+    const judgeDid = `did:web:${IDH}:users:${judgeUser}`;
+    expect((await direct('pev.register_role', W.admin, PEV_ACTION.registerRole, { address: judgeDid, role: 'judge', change: 'add' }))['changed']).toBe(true);
+    const toolOf = (actionIri: string): string => pevAffordances.find((x) => x.action === actionIri)!.toolName!;
+    const asJudge = async (step: (typeof steps)[number], fields: Out = {}, surface = 'claude'): Promise<Out> => {
+      const filled: Out = { ...step.payload, ...fields };
+      filled['nonce'] = `${String(step.payload['nonce']).split('-<')[0]}-0-${randomBytes(8).toString('hex')}`;
+      return fromChat(noModelHandlers, toolOf(step.actionIri), step.actionIri, filled, judgeUser, surface);
+    };
+    // Neither step's answer carries the stakes the packet's rubric leaves out, or another judgment's levels.
+    const STAKES = /weight|"value"|passRule|minPercent|requiredLevels|meetsPassRule|percent|"points"|unmet|provisional|agreement|nextSteps/i;
+    // The first step as the message reads it: null goes on with the packet, anything else is saved, and a refusal or an
+    // answer without the field ends the chat. Whatever it says, it never carries the stakes.
+    const firstStep = async (surface = 'claude'): Promise<Out | 'saved' | 'cannot tell'> => {
+      const r = await asJudge(steps[0]!, {}, surface);
+      if (r['kind'] !== undefined || !Object.prototype.hasOwnProperty.call(r, 'yourAssessment')) return 'cannot tell';
+      expect(JSON.stringify(r)).not.toMatch(/weight|"value"|passRule|minPercent|requiredLevels|meetsPassRule|percent/i);
+      expect(Object.keys(r).at(-1)).toBe('yourAssessment');
+      if (r['yourAssessment'] === null) return r;
+      expect(Object.keys(r['yourAssessment'] as Out).sort()).toEqual(['judgedAt', 'saved']);
+      return 'saved';
+    };
+    const judgmentsOf = async (): Promise<readonly { readonly judge: { readonly signer?: string }; readonly repeatOf: number | null }[]> =>
+      ((await readHead(DEMO_POD, attemptIri, TRUSTED, pod.fetchFn)).head!.body as Extract<PevRecordBody, { kind: 'attempt' }>).judgments.filter((j) => j.judge.signer === judgeDid);
+    const head = await readHead(DEMO_POD, attemptIri, TRUSTED, pod.fetchFn);
+    const rubric = (head.head!.body as Extract<PevRecordBody, { kind: 'attempt' }>).scenarioSpec.rubric;
+    // Two chats of the same judge overlap: the judge pasted the message into a second chat app (chat B, ChatGPT) while the
+    // first (chat A, Claude) was still going, and B's first step comes first. Nothing is saved, so B goes on with the packet.
+    // One answer carries both the binding B will save with and yourAssessment, read together: the binding names the
+    // version of the session yourAssessment was read from, so no save can land between the two.
+    const chatB = await firstStep('chatgpt');
+    if (typeof chatB === 'string') throw new Error(`chat B stopped at the first step: ${chatB}`);
+    expect([(chatB['binding'] as Out)['attemptHeadUrl'], chatB['yourAssessment']]).toEqual([head.head!.descriptorUrl, null]);
+    // Chat A: before any save, the first step says nothing of the judge's is saved, and the chat goes on with the packet it returned.
+    const judgePacket = await firstStep();
+    if (typeof judgePacket === 'string') throw new Error(`the first chat stopped at the first step: ${judgePacket}`);
+    const assessment: Out = {
+      ...(judgePacket['binding'] as Out),
+      judgment: { criteria: rubric.criteria.map((c) => ({ criterionId: c.id, level: c.levels[0]!.id, quotes: [{ text: 'The report was due Thursday.', turnIndex: 1 }], rationale: 'States the missed deadline.' })) },
+      judgeDisclosure: { provider: 'Anthropic', model: 'not shown', usedPacketPrompt: true },
+    };
+    // The first step is a read: the same nonce, sent twice, is answered twice, so doing it again never spends anything.
+    const sameNonce = { ...steps[0]!.payload, nonce: `judge-packet-0-${randomBytes(8).toString('hex')}` };
+    for (let i = 0; i < 2; i += 1) expect(ok(await fromChat(noModelHandlers, toolOf(PEV_ACTION.judgePacket), PEV_ACTION.judgePacket, sameNonce, judgeUser))['yourAssessment']).toBeNull();
+    // The second step: the save, whose answer says it was kept and how the judge's own quotes were checked, and nothing more.
+    const save = async (fields: Out): Promise<Out> => {
+      const r = ok(await asJudge(steps[1]!, fields));
+      expect(JSON.stringify(r)).not.toMatch(STAKES);
+      expect(Object.keys(r)).toEqual(['attemptIri', 'descriptorUrl', 'state', 'judgmentCount', 'judgment', 'currentTarget', 'recorded']);
+      return r;
+    };
+    // The README says what that answer carries, every field of it: the count of judgments too, which tells the assistant
+    // whether others assessed the session, though never their levels. It also says why the message asks for a new chat,
+    // and when the message says the assessment may already be saved.
+    const readme = readFileSync(fileURLToPath(new URL('../README.md', import.meta.url)), 'utf8');
+    for (const says of [
+      "`record-judgment` tells the judge that the save was kept, the attempt's state and how many judgments it now has, and how their own levels and quotes were checked, but never",
+      'So the message asks for a new chat, not one used to review sessions or list scenarios, and the guide says the same.',
+      "says the assessment may already be saved only if it sent a save of this attempt in that chat or can't tell whether it did",
+    ]) expect(readme).toContain(says);
+    expect(readme).not.toContain('tells the judge only that the save was kept');
+    const saved = await save(assessment);
+    // Chat B saves its own assessment with the binding its first step returned. Chat A's save changed the session since,
+    // so it is refused as binding-mismatch rather than kept as a second assessment by the same judge.
+    const chatBAssessment: Out = {
+      ...(chatB['binding'] as Out),
+      judgment: { criteria: rubric.criteria.map((c) => ({ criterionId: c.id, level: c.levels[c.levels.length - 1]!.id, quotes: [{ text: 'Thanks for coming in.', turnIndex: 1 }], rationale: 'Opens politely.' })) },
+      judgeDisclosure: { provider: 'OpenAI', model: 'not shown', usedPacketPrompt: true },
+    };
+    expect(refusalOf(await asJudge(steps[1]!, chatBAssessment, 'chatgpt'))).toEqual([409, 'binding-mismatch']);
+    // The rule for that refusal does the first step again. Its one answer names the version chat A's save wrote and says
+    // the judge's assessment is saved, made then: chat B tells the judge so and stops, saving nothing more.
+    const chatBAgain = ok(await asJudge(steps[0]!, {}, 'chatgpt'));
+    expect([(chatBAgain['binding'] as Out)['attemptHeadUrl'], chatBAgain['yourAssessment']])
+      .toEqual([saved['descriptorUrl'], { saved: true, judgedAt: (saved['judgment'] as Out)['judgedAt'] }]);
+    expect(await firstStep('chatgpt')).toBe('saved');
+    expect((await judgmentsOf()).length).toBe(1);
+    // Chat A's app said its save failed. The rule: the first step again before anything else, and it finds the assessment saved.
+    expect(await firstStep()).toBe('saved');
+    expect(ok(await asJudge(steps[0]!))['yourAssessment']).toEqual({ saved: true, judgedAt: (saved['judgment'] as Out)['judgedAt'] });
+    // Had the first step been read before that save was written, the one resend, the same assessment with the same binding,
+    // is refused rather than saved twice, and the rule for that refusal does the first step again, which finds it saved.
+    expect(refusalOf(await asJudge(steps[1]!, assessment))).toEqual([409, 'binding-mismatch']);
+    expect(await firstStep()).toBe('saved');
+    // The learner sends the message again (Send to your judge stays after a judgment), or the judge pastes it into a new
+    // chat after the chat app failed: the first step finds the assessment, and the chat stops there.
+    expect(await firstStep()).toBe('saved');
+    // One assessment by this judge, however the chats went.
+    expect((await judgmentsOf()).length).toBe(1);
+    // Once a reviewer has signed off, judging is closed and the first step says so: the chat stops, saving nothing.
+    const target = ok(await direct('pev.get_attempt', W.reviewer, PEV_ACTION.getAttempt, { attemptIri }, noModelHandlers))['currentTarget'];
+    const reviewed = ok(await direct('pev.countersign_attempt', W.reviewer, PEV_ACTION.countersignAttempt,
+      { attemptIri, target, levels: rubric.criteria.map((c) => ({ criterionId: c.id, levelId: c.levels[0]!.id })), sawJudgeLevelsFirst: true }, noModelHandlers));
+    expect(refusalOf(await asJudge(steps[0]!))).toEqual([409, 'attempt-already-reviewed']);
+    expect(await firstStep()).toBe('cannot tell');
+    // A contest reopens judging and keeps the judgment made before it: that one no longer counts, so the first step says
+    // nothing of the judge's is saved, the judge assesses the reopened session once, and the first step then finds that one.
+    ok(await fromChat(noModelHandlers, 'pev.contest_review', PEV_ACTION.contestReview, { attemptIri, target: reviewed['currentTarget'], why: 'The deadline I named was the one we agreed on.' }));
+    const reopened = await firstStep();
+    if (typeof reopened === 'string') throw new Error(`the chat after the contest stopped at the first step: ${reopened}`);
+    const resaved = await save({ ...assessment, ...(reopened['binding'] as Out) });
+    expect(ok(await asJudge(steps[0]!))['yourAssessment']).toEqual({ saved: true, judgedAt: (resaved['judgment'] as Out)['judgedAt'] });
+    expect(await firstStep()).toBe('saved');
+    expect((await judgmentsOf()).map((j) => j.repeatOf)).toEqual([null, 0]);
     expect(judge).not.toMatch(/For example [A-Za-z0-9-]+-4-/);
     expect(judge).not.toContain('The report was due Thursday');
     expect(judge).not.toContain('The feed was late again');
@@ -1487,9 +1730,12 @@ describe('your own AI assistant: connect Claude or ChatGPT, or copy and paste; n
     p.q('#copy-draft-message')!.click();
     await p.until(() => p.copied.length === 1, 'the drafting message');
     const msg = p.copied[0]!;
-    for (const says of [PEV_ACTION.draftScenarioPacket, PEV_ACTION.authorScenario, 'sign_payload: false', '"status":"draft"', '"by":"own-agent"', '"assessmentUse": "feedback-only"', 'workRegime', brief, 'Include drafts']) {
+    for (const says of [PEV_ACTION.draftScenarioPacket, PEV_ACTION.authorScenario, 'sign_payload: false', '"status":"draft"', '"by":"own-agent"', '"assessmentUse": "feedback-only"', 'workRegime', brief, 'Include drafts',
+      // Getting the drafting request is plain and saving the draft is signed, so both ways are there, once each.
+      FALLBACK.both]) {
       expect(msg, says).toContain(says);
     }
+    expect([msg.split(PLAIN_RULE).length, msg.split(SIGNED_RULE).length]).toEqual([2, 2]);
     // The AI never sees a weight or a pass mark: the message names neither.
     expect(msg).not.toMatch(/weight|passRule|minPercent/i);
     // The draft's placeholder holds no quote marks, so its JSON line carries no escaped quotes; the nonce
@@ -1550,6 +1796,9 @@ describe('your own AI assistant: connect Claude or ChatGPT, or copy and paste; n
     // Signed in with Interego: the Member ID is what the admin adds, and copying it ticks the step.
     const p = await signedInPage(nm);
     const first = await judgeSteps(p);
+    // The step that assesses pastes the learner's message into a new chat, as the message itself asks.
+    expect(p.all('.checklist__item .checklist__text').map((x) => x.textContent)).toContain('Paste the message a learner sends you into a new chat with the Interego connector on. '
+      + 'Your assistant proposes levels and waits for your go-ahead. You can\'t assess your own practice, and a reviewer has the final say.');
     expect([...said(first), first.querySelector('.checklist__action button')?.textContent]).toEqual(['Next step: Send your Member ID to your admin', 'Done when your admin has added you as a Judge.', 'Copy my Member ID']);
     (first.querySelector('.checklist__action button') as HTMLElement).click();
     await p.until(() => p.q('.checklist__item')?.getAttribute('data-state') === 'done', 'the judge\'s first step done');

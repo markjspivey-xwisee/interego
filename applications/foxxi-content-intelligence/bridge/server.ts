@@ -5915,6 +5915,7 @@ const app = createVerticalBridge({
   affordances: activeAffordances,
   handlers: instrumentedHandlers,
   defaultPodUrl: tenantPodUrl,
+  routeOwnedJsonPostPaths: [ltiPlatform.scoreRoutePath],
   hypermediaLinks: [
     { label: 'Courses', href: `${bridgeBaseUrl}/agent/scorm/courses?format=markdown`, rel: 'collection', type: 'text/markdown' },
     { label: 'Job aids', href: `${bridgeBaseUrl}/agent/memories?format=markdown`, rel: 'collection', type: 'text/markdown' },

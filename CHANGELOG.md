@@ -217,6 +217,393 @@ open, through redraws and through a refusal, so a refused ID can be corrected.
 It empties and closes only once the type is added, and its button is off while
 the change is being signed.
 
+## 2026-11-09 — Practice Evidence: the pages say when an assistant sees the weights and the pass mark
+
+The landing page said AI "never sees the weights or the pass mark". That is
+true of the three things an assistant does in Practice Evidence: drafting a
+scenario, playing the other person and proposing levels. It was not true of
+everything else a connected assistant can do. Asked to list the practice
+scenarios or show results, as the landing page and the guide suggest, an
+assistant reads each scored scenario's whole rubric: how much each criterion
+counts, the points for each level and the pass mark, as a person sees them in
+the web app. What's waiting for review also shows every assessment's levels
+side by side. The landing page, the guide and the README now say which steps
+leave the weights and the pass mark out, and that those reads do not.
+
+So the message a learner sends their judge now asks the judge to paste it into
+a new chat, not one where they reviewed sessions or listed scenarios, which
+has already seen the scoring. The guide, Getting started and the Connect
+dialog say the same.
+
+Three smaller fixes. The judge message says an assessment may already be
+saved only when that chat sent a save of this session, or can't tell whether
+it did: a save of another learner's session in the same chat no longer
+counts. The workspace details no longer say twice what to do when the act
+tool has no sign_payload option; their signing rule points to the last line
+of "How to do each step", which says it. And the README now says that a
+judge's save answers with the session's state and how many assessments it
+has, as well as how the judge's own levels and quotes were checked.
+
+## 2026-11-09 — Practice Evidence: a prompt with plain steps says what to do without sign_payload
+
+The shared helpers that write the prompts people copy into Claude or ChatGPT
+said what to do when a chat app's act tool has no sign_payload option only in
+a prompt that could lead to a signed step. A prompt whose steps were all plain
+still listed "sign_payload: false" for each step and never said to leave that
+argument out, which is what an assistant has to do in a chat app without the
+option, as in ChatGPT's current connection. No prompt Practice Evidence copies
+today has only plain steps, so none went out that way. Now every prompt with a
+plain step says to leave sign_payload out of it, without signing it or
+wrapping it. The sign_request way is given only in a prompt with a signed step.
+A prompt with both, such as drafting a scenario, says each once, in one
+sentence.
+
+The workspace details now say that sign_payload true or false, there and in
+any example, says whether a step is signed or plain, and that in a chat app
+without the option their rule for that case covers every step of either kind:
+sign_request first for a signed step, no sign_payload for a plain one.
+
+A new test runs two chats of the same judge that overlap. One fetches the
+judge packet; the other fetches it, assesses and saves; the first then saves
+what it assessed from its own packet. That save is refused because the
+session changed, the first chat fetches the packet again, finds the
+assessment saved and stops, and the session holds one assessment by that
+judge. The test also checks that one packet carries both what a save is tied
+to and whether the judge's assessment is saved, read from the same version of
+the session. The README now describes the signing rule as above and the two
+overlapping chats.
+
+A note on the relay change that sends ChatGPT each tool result once (#807):
+that layout, a one-line summary as the text and the result in structured
+form, is used on the /mcp endpoint only, where Claude and ChatGPT connect. The
+older /messages endpoint keeps the default layout for every client, the
+result's JSON text first and the summary after it.
+
+## 2026-11-09 — Practice Evidence: saving an assessment no longer shows the judge's assistant the scoring
+
+The entry below said the judge's assistant no longer reads the scoring. It
+still did, one step later. When it saved an assessment, the answer included
+the full provisional result for a scored scenario (how much each criterion
+counts, the points for each level, the percent, the pass mark and the levels
+a pass needs), the first assessment's result, which is often another
+judge's, and every judge's levels side by side. If the same chat then
+assessed again, the session once it was reopened or another learner's
+session of the same scenario, the assistant had already read all of it.
+
+Now a judge's save answers with only what the judge needs: that it was
+saved, where, how many assessments the session has, and for each criterion
+the level given and whether each quote checked out. The result, the other
+judgments and the advice for the next level stay in the record, and the
+learner and the reviewers still see them in the web app. When the web app
+asks for an assessment, the answer is unchanged.
+
+Three smaller fixes. A judge's assistant whose first step is refused before
+anything was saved (the judge is not registered yet, or the session has not
+ended) no longer tells the judge their assessment may already be saved; it
+says so only when it sent a save in that chat or can't tell whether it did.
+Whether a judge's assessment came after the session was last reopened is now
+decided by the order things were written in, not by comparing clock times,
+so one written in the same instant as the reopening still counts. And the
+guide now says that after a contest or a withdrawn review, the same message
+pasted again does ask for a new assessment.
+
+The README now lists the packet's yourAssessment field among the additions
+to the interface, and says what the save answer leaves out. Tests check the
+save answer for a first judge, a second judge and a judge assessing again
+after a contest, with no scoring in any of them.
+
+## 2026-11-09 — Practice Evidence: a judge's assistant checks for a saved assessment without reading the scoring
+
+The judge's message checked whether the judge's assessment was saved by
+reading the whole session. That answer includes the full rubric: how much
+each criterion counts, the points for each level and what it takes to pass.
+The judge packet leaves those out on purpose, so the assistant proposing
+levels cannot aim for a pass. When a session the judge had assessed was
+reopened for a new assessment, or when the judge is also a reviewer or an
+admin, the assistant read all of that before it assessed. Telling it to set
+the answer aside did not take it out of what it had read.
+
+Now the judge packet itself says whether the judge already has a saved
+assessment of the session that still counts: its last field,
+`yourAssessment`, is empty, or says it is saved and when. It says nothing
+else, not a level, a quote, another judge's assessment, a review or anything
+about scoring. An assessment made before the session was last reopened (the
+learner contested the review, or an admin withdrew it) does not count. The
+judge's message no longer asks for the full session record. Its first step, fetching
+the packet, is also the check: if an assessment is saved, the assistant says
+so and stops. After a save that may have gone through (an error, no answer, a
+one-time code refused as already used, or the assistant losing track), it
+fetches the packet again, which is only a read, and if nothing is saved it
+sends the same assessment once more, tied to the same version of the session,
+so a first save that did go through makes the resend fail instead of saving
+twice. If the session changed, it fetches the packet again and assesses only
+if nothing of the judge's is saved. The message is about a fifth shorter. The
+guide, the README and the action's description say the same, and tests check
+the packet's new field for a judge, a judge who is also a reviewer or an
+admin, and the learner, before and after a judgment and a contest.
+
+## 2026-11-08 — Practice Evidence: a judge's assistant checks for a saved assessment before it starts
+
+A judge could still save two assessments of the same session by pasting the
+judge's message into a new chat. The check for a saved assessment ran only
+after a save went wrong in the same chat. When the chat app failed and the
+judge started a new chat, or when the learner sent the message again (the
+Send to your judge button stays after a session is assessed), the new chat
+fetched the session, which shows no earlier assessment, and the save went
+through. The second assessment was marked as a repeat, but it still counted in
+the agreement figures.
+
+Now the assistant reads the session first, before it fetches anything to
+assess. If an assessment by the judge is saved there, it says so and stops. An
+assessment made before the session was last reopened (a learner contested the
+review, or an admin withdrew it) does not count, so the judge can still assess
+a reopened session once. Before, a judge whose new assessment of a contested
+session failed to save could be told it was saved, because their earlier
+assessment was found. The assistant uses what it reads only to look for the
+judge's own assessment, and sets aside the conversation, other judges'
+assessments and reviews. An answer missing the fields it checks, as a long
+answer cut short by a chat app would be, counts as no answer. A wrong field in
+the check is fixed once, as for any other step, rather than ending the chat. The
+guide and the README say the same, and a test runs the check as the message
+describes it against the workspace, through a contest and a second assessment.
+
+In the guide's and the landing page's setup steps, the step that starts with
+ChatGPT's warning now says that signing in is a step in either app.
+
+The relay test showing that sign_request called alone signs what act signs now
+also catches a change to the tool arguments written as a cast, an alias,
+Reflect.set, a nested property, `++` or `--`: every use of the arguments in that
+part of the relay must be a known kind of read.
+
+## 2026-11-08 — Practice Evidence: a judge's assistant asks the workspace whether a save went through
+
+The judge's message still let one assessment be saved twice. If a save was
+kept but the chat app showed an error, the assistant stopped; if the judge then
+asked it to try again, the new save was refused because the session had
+changed (the first save changed it), and the message sent the assistant back to
+fetch the session, which shows no earlier assessment, so it saved a second one.
+The message decided this from what the assistant had seen accepted in that
+chat, and an error is not an acceptance. It also told the judge only that an
+assessment "may already be saved", with no way to find out, including when the
+workspace had refused a one-time code the assistant reused, when nothing was
+saved.
+
+Now the message has a third step that reads the session, which a judge may do
+once an assessment of theirs is saved on it. Before the assistant fetches the
+session again after a save refused because the session changed, and whenever a
+save is refused as already used, comes back with an error that names no reason
+code, gets no answer, or the assistant loses track, it reads the session. If an
+assessment signed as the judge is there, it says so and stops. If the read is
+refused as not allowed, nothing of the judge's was saved: it sends the same
+assessment once more (which the workspace refuses, as the session having
+changed, if the first one had been kept after all), or fetches the session
+again and assesses that if the session changed. Only when it cannot read the
+session does it say the assessment may already be saved, and the guide tells
+the judge to ask the learner whether the session page shows it before pasting
+the message into a new chat. The README says the same.
+
+The guide's and the landing page's ChatGPT steps are now in ChatGPT's own
+order, as in the Connect dialog: add the custom MCP server, give its Server URL
+and OAuth, then accept the warning, create it as a plugin and install it. The
+guide and the landing page no longer say outright that a person cannot assess
+their own session: the workspace refuses an assessment from the account or
+wallet that started the session, and the pages now say that.
+
+The relay test showing that sign_request called alone signs what act signs now
+also fails if the relay's tool call handling changes the arguments after the
+part the test runs and before the tool itself is called.
+
+## 2026-11-08 — Practice Evidence: a judge's assistant never saves the same assessment twice
+
+The judge's message sent the assistant back to fetch the session and assess it
+again when a save was refused as already used, or when it lost track. In both
+cases the first save may already have been kept, and fetching the session shows
+no earlier assessment, so following the message could record a second judgment
+of the same session by the same judge. Now a save refused as already used, or
+one the assistant lost track of after sending it, ends with the assistant
+telling the judge the assessment may already be saved, and stopping. Only a
+save refused because the session changed sends it back to fetch the session,
+and only while no save of that session has been accepted in that chat. The
+guide and the README say the same.
+
+The copied prompts now tell an assistant to call sign_request with the step's
+payload as its only argument, since it also signs any other argument it is
+given. A new relay test runs the relay's own code for both ways, through the
+argument handling a chat app's tool call reaches, and shows that sign_request
+called that way signs the same fields as act with sign_payload. The shared test
+could not show this, since it gave both ways one stand-in signer. While the
+identity service cannot be reached, the two can differ in the subject pod field
+alone, which no bridge reads as the pod an act targets.
+
+The ChatGPT tab of the Connect dialog now says what the Claude tab says about
+whether a connector can be added (it depends on plan or workspace settings),
+the guide and the landing page include accepting ChatGPT's warning, and a
+remembered approval is described as covering one tool in one chat. The Connect
+dialog, the guide and the landing page say a learner's own assistant cannot
+assess a session the learner started with their Interego account, which is
+what the bridge checks: a session started with a wallet belongs to the wallet.
+
+## 2026-11-08 — Practice Evidence: signing without sign_payload, ChatGPT's own setup steps, and who may judge
+
+A chat app can show the connector's act tool without its sign_payload option
+(an app can keep an old copy of the tool list), so a person's assistant had no
+way to do a signed step from the text Practice Evidence gave it. Every copied
+prompt that can lead to a signed step (the start-up message, the judge's
+message, drafting a scenario and the workspace details) now says how to do one
+in two calls: the connector's sign_request tool with the step's payload, then
+act with the two fields it returned, unchanged, which is what sign_payload does
+inside the connector. A prompt whose every step is plain leaves that out. The
+shared chat-agent helpers add it, so it reads the same wherever they are used.
+
+The ChatGPT setup steps follow OpenAI's own guide to custom MCP servers,
+checked today, and link to it: Plugins, then Add custom MCP server, its Server
+URL and OAuth, create it as a plugin and install it, then choose it with @ in a
+chat. The Connect dialog adds that ChatGPT asks before each write unless told
+to remember the choice for that tool in that chat, and that refreshing the app from its
+settings page fetches new tools. No page claims which plans allow custom
+connectors any more: whether a person can add one depends on their plan or
+workspace settings.
+
+The guide and the Connect dialog now say plainly that a judge is a different
+person, with their own Interego account, appointed by Member ID, and that a
+learner's own assistant cannot assess a session the learner started with their
+Interego account, in a new chat or told to act as a judge, since it still acts
+as that account. The guide also says that an
+assessment is tied to the exact session, conversation and rubric the judge's
+assistant fetched. The start-up message no longer retries a refused save at the
+next turn number, which could save the same reply twice: after a refusal for a
+turn out of order, a step already used, a stale step or a session that moved
+on, or after losing track, the assistant reads the conversation again and
+reconciles before it writes or saves another reply. The judge's message has it
+judge a new copy of the session when a save is refused because the session
+changed, unless a save of that session already went through in that chat.
+
+## 2026-11-08 — Foxxi accepts plain JSON LTI scores
+
+The LTI gradebook parses plain JSON and standard LTI score submissions on the
+score route, where both are subject to the 64 KiB decoded body limit. Valid
+submissions continue to require a score token and a launched learner.
+
+## 2026-11-08 — Relay: corrected notes on how ChatGPT is identified, and a client cache that could hang
+
+The next entry said that a client other than ChatGPT cannot finish sign-in
+with ChatGPT's redirect URIs. That is not so. The sign-in code reaches the
+redirect URI through the person's browser, so a client that drives the
+browser itself can read the code from the redirect, and the relay's own suite
+signs in that way. The entry and the comment above the code now say what is
+true: an ordinary client does not match by accident, and a client that
+captures its own redirect changes only how its own results are laid out,
+never what it may do. The entry also overstated the earlier behaviour: a
+name that matched nothing kept its own label, and only a name that could not
+be turned into a short label fell back to the default surface.
+
+The comment on the per-client cache said a failed client lookup is tried
+again. The relay's lookup does not report failures: a client it does not hold
+and a store read that failed look the same, so both are kept for a minute.
+The cache also looped forever on its first call if it was told to hold no
+clients. It now holds at least one. The relay uses the default of 1,024, so
+this did not happen in service. A check on the relay image no longer fails
+once the relay has no test-only devDependency left to strip.
+
+## 2026-11-08 — Relay: ChatGPT is identified by its redirect hosts, errors keep their JSON, and read_inbox pages past an empty date
+
+The previous entry gave the summary-only layout to any session whose OAuth
+client's registered name contained "chatgpt", or whose name matched nothing
+and could not be turned into a short label, on a relay whose default surface
+was set to chatgpt. A name is something a client says about itself, and the
+two mistakes are not alike: giving ChatGPT the default layout costs bytes,
+while giving the summary-only layout to a client whose model reads `content`
+alone loses the whole result without any sign. A session now gets that layout
+only when the client's name matches the ChatGPT pattern and every redirect URI
+it registered is on chatgpt.com or openai.com. A client that signs people in
+through their own browser cannot complete sign-in with those redirect URIs, so
+no ordinary client matches by accident. A client that captures its own
+redirect could, and that changes only how its own results are laid out, never
+what it may do. The default surface setting is no longer consulted. The relay
+suite signs in as a client named "my chatgpt bridge", as a client named
+ChatGPT with its own redirect, and under a name that matches nothing, and each
+keeps the JSON first.
+
+An error result keeps its JSON in `content` for ChatGPT too. A failed signed
+interaction carries its reason inside `result`, where the summary line said
+only how many fields there were, and a client that reports an error from
+`content` alone showed that line as the error. The layout is also remembered
+per client for a while, so a tool call no longer repeats a store read for a
+client that is no longer registered.
+
+The previous entry said ChatGPT's model reads the whole result once. It reads
+`structuredContent`, which leaves out fields whose value is null: a result such
+as `{ "meet": null, "message": "…" }` reaches the model as the message alone.
+
+`read_inbox`: a notification whose `published` was an empty string sorted
+among the ones with a date that cannot be read, but the page cursor wrote it
+back as having no date. A page that ended on one started the next page in the
+wrong place, and some notifications were never returned. An empty `published`
+is now treated as missing everywhere. Also: the published workspace page is
+rebuilt from its package, which the previous entry changed without rebuilding,
+and the relay image no longer installs the MCP SDK client that only its tests
+use.
+
+## 2026-11-08 — Relay: ChatGPT gets each result once, and read_inbox reads any sender's notification
+
+The previous entry's title claimed one copy of each result for the model. That
+held only for clients that show their model `content` alone, and those already
+had one copy. ChatGPT, the client that reported the size, shows its model
+`structuredContent` as well as `content`, as OpenAI's Apps SDK documents, so it
+still read every result twice, now with a summary line too. For a session whose
+OAuth client registered as ChatGPT (the same name-to-surface mapping identity
+uses for its agents), `content` now holds only the one-line summary and
+`structuredContent` holds the result. Its model and its widget each read the
+result once: `act` on the fixture fell from 12,296 to 5,859 bytes on the wire.
+Every other client keeps the JSON result first in `content`. An error summary
+names the tool once instead of twice.
+
+`read_inbox` declared its item fields as strings, but passed through whatever a
+sender had stored. A notification with an `actor` object or a `type` array made
+a client that checks results against the declared schema reject the whole page,
+including with `include_content: false`. Items are now read through one helper:
+an embedded actor or object reference becomes its id, a type array its first
+type, a JSON-LD value object its value, and anything else that is not a string
+is left out. The suite reads such an inbox through the MCP SDK client, which
+checks the schema the way strict clients do. Newest first now compares the
+instants `published` names rather than their spelling, so offsets no longer
+reorder a page.
+
+A `limit` that is not a whole number, and a `before` or `since` that is not a
+string, are refused with the argument named. Before, a fraction came back as a
+`limitRequested` the schema calls an integer, and the others were dropped,
+which answered with the first, unfiltered page. An empty or null argument still
+counts as absent. The workspace and agent inbox readers now take the relay's
+`hasMore` as saturated, so a limit above 50 is no longer read as the whole
+inbox.
+
+## 2026-11-08 — Relay: a summary line after each tool result, a smaller signing _meta, and read_inbox in pages
+
+A chat assistant using the relay as a connector reported `act` results that
+looked like the same body several times over, and `read_inbox` answers its
+client cut short. Measured on the relay booted against loopback fixtures, every
+tool result carried its payload exactly twice: as the first text block and as
+`structuredContent`, byte for byte. There was no markdown copy and no copy in
+`_meta`. The size came from what was copied: an inbox read with no bound, a
+target's response carried as a string, and the inline JSON-LD context.
+
+Every result on `/mcp` and on `/messages` is now built by one helper. The JSON
+result is the first text block, where existing readers parse it, and is the
+only full copy in `content`. A one-line summary follows it, naming what came
+back (for `act`, the target and status, never the body). `structuredContent`
+is unchanged and still matches the declared output schema. A signing launch now
+puts only the fields the viewer checks and opens into `_meta`, not a second
+copy of the result.
+
+`read_inbox` returns pages. With no arguments it returns the newest 20, where it
+used to return up to 50 with every body: 88,045 bytes per copy on a 50-item
+inbox fell to 35,748. `limit` accepts 1 to 50; 50 is the largest value any
+caller here passes, so those callers see no change. Each page reports `total`,
+`hasMore` and a `nextCursor` to pass back as `before`. `include_content: false`
+returns summaries without bodies, and `since` limits the read by date. A cursor
+or date the relay cannot read is refused rather than treated as the first page.
+`POST /tool/read_inbox` shares the handler and accepts the same arguments.
+
 ## 2026-11-08 — Ask: accept Cloud updates after the shared JSON parser
 
 The Cloud notification receiver reuses an existing parsed body only after the

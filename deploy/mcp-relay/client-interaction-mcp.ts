@@ -1,10 +1,26 @@
 import { inputRequired, PROTOCOL_VERSION_META_KEY, CLIENT_CAPABILITIES_META_KEY, type Server, type ServerContext, type ClientCapabilities } from '@modelcontextprotocol/server';
 import { resourceActionResponse } from './resource-compositions.js';
+import { relayToolResult, type RelayResultOptions } from './tool-result.js';
 
 const watchers = new WeakMap<Server, Map<string, ReturnType<typeof setTimeout>>>();
 
-/** Launch secrets belong to the app, never to model-visible tool text or context. */
-export function clientInteractionToolResult(response: Record<string, unknown>, originalText?: string) {
+/**
+ * The fields of a launch the widget reads, and nothing else. The widget validates the
+ * interaction identity and opens `signingUrl`; every other field of the result is already in
+ * structuredContent, so `_meta` carries the launch handle rather than a second copy of it.
+ */
+const LAUNCH_HANDLE_FIELDS = ['schema', 'id', 'status', 'descriptorUrl', 'expiresAt', 'signingUrl'] as const;
+
+/**
+ * Launch secrets belong to the app, never to model-visible tool text or context.
+ *
+ * `toolName` labels the one-line summary the shared builder adds after the JSON block, and
+ * `options` says whether this session's model reads structuredContent; see tool-result.ts for
+ * the shape every relay tool result now has.
+ */
+export function clientInteractionToolResult(
+  response: Record<string, unknown>, originalText?: string, toolName = 'act', options: RelayResultOptions = {},
+) {
   const wrapped = typeof response['status'] === 'number' && typeof response['body'] === 'string';
   let value: Record<string, unknown> = response;
   if (wrapped) {
@@ -15,13 +31,15 @@ export function clientInteractionToolResult(response: Record<string, unknown>, o
     try { url = new URL(value['signingUrl']); } catch { /* not a launch result */ }
   }
   if (!url || !/^#launch=[a-zA-Z0-9_-]{43}$/.test(url.hash)) {
-    return { content: [{ type: 'text' as const, text: originalText ?? JSON.stringify(response) }], structuredContent: response };
+    return relayToolResult(toolName, originalText ?? JSON.stringify(response), response, options);
   }
+  const launch: Record<string, unknown> = {};
+  for (const field of LAUNCH_HANDLE_FIELDS) if (value[field] !== undefined) launch[field] = value[field];
   url.hash = '';
   const visible = { ...value, signingUrl: url.href };
   const safeResponse = wrapped ? { ...response, body: JSON.stringify(visible) } : visible;
-  return { content: [{ type: 'text' as const, text: JSON.stringify(safeResponse) }], structuredContent: safeResponse,
-    _meta: { 'interego/browser-signing': value } };
+  return { ...relayToolResult(toolName, JSON.stringify(safeResponse), safeResponse, options),
+    _meta: { 'interego/browser-signing': launch } };
 }
 
 async function waitForCompletion(context: ServerContext, status: () => Promise<Record<string, unknown>>) {
@@ -74,6 +92,7 @@ export async function clientInteractionMcpResult(
   lifecycle: { status: () => Promise<Record<string, unknown>>; cancel: () => Promise<Record<string, unknown>>;
     open?: () => Promise<Record<string, unknown>> },
   invocation?: { reference: string; action: string },
+  options: RelayResultOptions = {},
 ) {
   const id = String(initial['id']);
   const pending = (value: Record<string, unknown>) => ['pending', 'reviewing', 'submitting'].includes(String(value['status']));
@@ -82,8 +101,13 @@ export async function clientInteractionMcpResult(
     // its JSON body on EVERY return path, including reconnect and cancellation.
     const response = invocation ? { ...resourceActionResponse(invocation.reference, invocation.action, value, 'write'),
       ...(pending(value) ? { status: 202, statusText: 'Accepted' } : {}) } : value;
-    return { content: [{ type: 'text' as const, text: JSON.stringify(response) }], structuredContent: response,
-      ...(value['status'] === 'failed' ? { isError: true } : {}) };
+    // A failed interaction is an isError result whose reason is nested (`result.error`), where
+    // the summary line cannot reach it. It keeps its JSON in content for every client, as a
+    // top-level error does (tool-result.ts): a client that reports isError from content alone
+    // would otherwise say only how many fields the result has.
+    const failed = value['status'] === 'failed';
+    return { ...relayToolResult(invocation ? 'invoke_affordance' : 'act', JSON.stringify(response), response, failed ? {} : options),
+      ...(failed ? { isError: true } : {}) };
   };
   if (!pending(initial)) return textResult(initial);
   const envelope = context.mcpReq.envelope as Record<string, unknown> | undefined;

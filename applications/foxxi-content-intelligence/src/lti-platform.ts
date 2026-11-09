@@ -218,6 +218,7 @@ export class LtiPlatform {
   get jwksUrl(): string { return `${this.issuer}/jwks.json`; }
   get contextUrl(): string { return `${this.issuer}/contexts/${this.context.id}`; }
   get lineItemsUrl(): string { return `${this.contextUrl}/lineitems`; }
+  get scoreRoutePath(): string { return `${new URL(this.issuer).pathname}/contexts/:context/lineitems/:id/scores`; }
   lineItemUrl(id: string): string { return `${this.lineItemsUrl}/${id}`; }
 
   /** This Platform as its Tool registers it: the row lti13 reads from FOXXI_LTI_PLATFORMS. */
@@ -566,7 +567,7 @@ function refuse(res: Response, r: Refused): void {
 
 export function attachLtiPlatformRoutes(app: Express, platform: LtiPlatform): void {
   const formBody = express.urlencoded({ extended: false, limit: '64kb' });
-  // A Score arrives as application/vnd.ims.lis.v1.score+json, which the bridge's JSON parser skips.
+  // This route owns parsing for both media types so its decoded body limit applies to each.
   const scoreBody = express.json({ type: [MEDIA.score, 'application/json'], limit: '64kb' });
   const base = new URL(platform.issuer).pathname;
 
@@ -645,7 +646,7 @@ export function attachLtiPlatformRoutes(app: Express, platform: LtiPlatform): vo
     res.type(MEDIA.results).send(JSON.stringify(rows));
   });
 
-  app.post(`${base}/contexts/:context/lineitems/:id/scores`, scoreBody, (req, res) => {
+  app.post(platform.scoreRoutePath, scoreBody, (req, res) => {
     const auth = platform.bearer(req.get('authorization'), [AGS_SCOPE.score]);
     if (!auth.ok) { refuse(res, auth); return; }
     const r = platform.acceptScore(String(req.params.context), String(req.params.id), req.body);
