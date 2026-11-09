@@ -680,6 +680,35 @@ async function act(action, fields, o) {
   return invoke(action, { ...signed, ...(opts.byok ? byokArgs() : {}) });
 }
 
+/** True for a visitor who has not signed in (and has not chosen manual signing). */
+function signedOut() { return S.mode === 'paste' && !S.manual; }
+
+/**
+ * The scenario list, or one scenario (`args`: scenario_iri, include_drafts). A scored scenario's
+ * weights, points and pass mark come only in an answer to a signed read, so this signs one when the
+ * sign-in signs without asking (Interego sign-in, a demo key), when a signature for it is still
+ * kept, or when `o.sign` says to (a wallet or manual signing then asks once). Otherwise it reads
+ * plain, and the answer says the stakes were left out (`stakesWithheld`). One signature, over the act
+ * and the storage alone, serves every list read while it is kept; what to list goes beside it. A
+ * signed read that fails (an expired sign-in, say) falls back to the plain one.
+ */
+async function readScenarios(args, o) {
+  const opts = o || {};
+  const kept = S.readEnvelopes.get(readKey(ACT.listScenarios, {}));
+  const signNow = opts.sign === true || (opts.sign !== false && Boolean(S.pod) && !signedOut()
+    && (S.mode === 'interego' || S.mode === 'demo' || Boolean(kept && Date.now() - kept.at < READ_ENVELOPE_MS)));
+  if (signNow) {
+    try {
+      const envelope = await sign(ACT.listScenarios, {}, true);
+      const signed = typeof envelope._signed_payload === 'string' ? { _signed_payload: envelope._signed_payload, _signature: envelope._signature } : { envelope };
+      return await invoke(ACT.listScenarios, { ...podArgs(args), ...signed });
+    } catch (e) {
+      if (opts.sign === true) throw e;
+    }
+  }
+  return invoke(ACT.listScenarios, podArgs(args));
+}
+
 function byokArgs() {
   if (!S.byok.on) return {};
   return { llm_api_key: S.byok.key, llm_model: S.byok.model };
@@ -1045,6 +1074,7 @@ function onSignInClick(e) {
 const GATE_TITLES = {
   mine: 'Sign in to see your practice sessions', review: 'Sign in to review sessions', results: 'Sign in to see results',
   attempt: 'Sign in to open this session', roles: 'Sign in to manage your team', signin: 'Sign in to Practice Evidence',
+  author: 'Sign in to edit this scored scenario',
 };
 
 /** The screen a signed-out visitor sees in place of a view that needs to know who they are. */
@@ -1640,6 +1670,7 @@ function connectAiDialog() {
         h('li', { text: 'It acts as you, through your Interego account. Each record says which app made it, for example "via ChatGPT".' }),
         h('li', { id: 'connect-judge', text: "It can't assess a session you started with your Interego account, even in a new chat or told to act as a judge: it still acts as you. A judge is a different person, with their own Interego account, whom your admin appoints by Member ID." }),
         h('li', { text: 'It never decides a score. Practice Evidence works out every result, and a reviewer signs off.' }),
+        h('li', { id: 'connect-stakes', text: 'It never receives the weights, the points for each level, the pass mark or any score: Practice Evidence leaves them out of every answer to a chat. You see them here.' }),
         h('li', { id: 'connect-decisions', text: S.bridge.interegoSignIn.chatAgentsDecide === true
           ? 'This workspace also lets assistants approve rubrics, sign off reviews and change roles, so check what you ask for.'
           : 'Approving rubrics, signing off reviews and changing roles happen here in the web app, not from a chat assistant.' }),
@@ -2050,7 +2081,7 @@ async function viewPractice(root) {
   if (S.mode === 'paste' && !S.manual) root.append(welcomeCard(), para("Browse the scenarios below. You'll need to sign in to start one."));
   else if (S.mode === 'paste') root.append(manualNote());
   else if (checklistVisible()) root.append(checklistSlot());
-  const r = await invoke(ACT.listScenarios, podArgs({ include_drafts: S.showDrafts ? 'true' : undefined }));
+  const r = await readScenarios({ include_drafts: S.showDrafts ? 'true' : undefined });
   S.pod = r.podUrl;
   S.bridge = r.bridge;
   renderHeader();
@@ -2093,6 +2124,11 @@ function coverageNotes(r) {
 /** True unless the answer says it is not the whole pod. */
 function whole(r) { return r.complete !== false; }
 
+/**
+ * A rubric, with each criterion's weight, each level's points and the pass mark when the answer it
+ * came in carries them. When it left them out (the read was not signed, or a wallet or manual
+ * signing has not been asked yet), a scored rubric says where they are instead (`stakesNote`).
+ */
 function rubricView(rubric, use) {
   const gate = use === 'pass-gate';
   const wrap = h('div', { class: 'rubric' });
@@ -2105,8 +2141,26 @@ function rubricView(rubric, use) {
   if (gate && rubric.passRule) {
     const req = Object.entries(rubric.passRule.requiredLevels || {});
     wrap.append(h('p', { class: 'label', text: `Pass mark: at least ${rubric.passRule.minPercent}%${req.length ? `, and ${req.map(([c, l]) => `${criterionTitle(rubric, c)} at least ${levelLabel(rubric, c, l)}`).join(', ')}` : ''}.` }));
-  }
+  } else if (gate) wrap.append(stakesNote());
   return wrap;
+}
+
+/**
+ * Where a scored rubric's weights, points and pass mark are when the answer left them out. They
+ * are never sent to an AI assistant or to a read nobody signed, so a visitor signs in to see them,
+ * and a wallet or manual signing confirms once (the signature is kept for a few minutes).
+ */
+function stakesNote() {
+  const note = h('div', { class: 'stakes-note' });
+  if (signedOut()) {
+    note.append(para('Sign in to see how much each criterion counts, the points for each level and the pass mark.', 'text-sm text-secondary'));
+    return note;
+  }
+  const out = h('div', { class: 'outcome' });
+  const btn = h('button', { type: 'button', class: 'btn btn--secondary btn--sm', text: 'Show the weights and pass mark', dataset: { action: ACT.listScenarios },
+    onclick: () => busy(btn, out, async () => { await readScenarios({}, { sign: true }); setTimeout(route, 0); return null; }, { progress: 'Confirming…' }) });
+  note.append(para("How much each criterion counts, the points for each level and the pass mark are shown once you confirm it's you. They're never sent to an AI assistant.", 'text-sm text-secondary'), btn, out);
+  return note;
 }
 
 /** "Did anyone help you prepare?", then Start. The radios are read when Start is pressed. */
@@ -2152,7 +2206,7 @@ function scenarioCard(s) {
     h('dt', { text: "You'll talk with" }), h('dd', { text: s.counterpart.name }),
     h('dt', { text: 'How they open' }), h('dd', { text: `“${s.firstLine}”` })));
   body.append(h('div', { class: 'cluster' },
-    gate ? badge(`Scored · pass mark ${s.rubric.passRule ? s.rubric.passRule.minPercent : '?'}%`, '', 'Only for scored scenarios: how much each criterion counts, and how many points each level is worth.') : badge('Feedback only (no score)'),
+    gate ? badge(s.rubric.passRule ? `Scored · pass mark ${s.rubric.passRule.minPercent}%` : 'Scored · pass mark', '', 'Only for scored scenarios: how much each criterion counts, and how many points each level is worth.') : badge('Feedback only (no score)'),
     badge(`Good performance is: ${regime[0]}`, '', regime[1] || "How clear-cut it is to say what good looks like here."),
     s.ratified ? badge('Rubric approved by a reviewer', 'success', 'A reviewer who did not write it approved the rubric, so results can count as evidence.', 'check')
       : badge("Rubric awaiting approval: results won't count as evidence yet", 'warning')));
@@ -2381,10 +2435,11 @@ function judgeMessage(v) {
   });
   return [
     `Hi, could you assess my practice session in Practice Evidence? Session: ${v.attemptIri}. Workspace: ${siteBase()}`,
-    // A new chat: one that listed scenarios or read the review queue has read the rubric's weights and pass rule, and
-    // the queue's every judgment's levels, which neither step of the message shows the judging assistant.
-    "Don't reuse a chat where you reviewed sessions or listed scenarios: it has already seen the scoring. "
-      + 'Paste everything between the lines into a new chat in Claude or ChatGPT, with the Interego connector on:',
+    // No answer to a chat assistant carries the weights or the pass mark (handlers.ts showsStakes), so no chat has read
+    // them from the workspace. A new chat is still asked for: one where the judge reviewed sessions has read other
+    // assessments' levels (the review queue, a session), which neither step of the message shows the judging assistant.
+    'Practice Evidence never shows your assistant the weights or the pass mark. '
+      + "Paste everything between the lines into a new chat in Claude or ChatGPT, with the Interego connector on, not one where you reviewed sessions: it has seen other assessments' levels.",
     '---', prompt, '---',
   ].join('\n');
 }
@@ -3464,7 +3519,9 @@ async function viewAuthor(root, scenarioIri) {
   if (!S.author || (scenarioIri && S.author.loadedFrom !== scenarioIri)) {
     S.author = { model: blankScenario(), basedOnVersion: null, receipt: null, receiptDisclosure: null, assistance: { choice: '', provider: '', model: '', note: '' }, saved: null, loadedFrom: null, lastSaved: null, pastedDraft: false };
     if (scenarioIri) {
-      const r = await invoke(ACT.listScenarios, podArgs({ scenario_iri: scenarioIri }));
+      // Editing a scored scenario needs its weights, points and pass mark, which come only to a signed read.
+      const r = await readScenarios({ scenario_iri: scenarioIri }, { sign: !signedOut() });
+      if (r.stakesWithheld && r.scenario.assessmentUse === 'pass-gate') { S.author = null; throw new NeedsSignIn(); }
       S.author.model = modelFrom(r.scenario);
       S.author.basedOnVersion = r.scenario.version;
       S.author.loadedFrom = scenarioIri;

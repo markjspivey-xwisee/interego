@@ -175,7 +175,8 @@ describe('the bridge over HTTP: one route and one tool per declared affordance, 
   });
 
   it('every signed affordance declares the relay\'s {_signed_payload, _signature} beside envelope, so act … sign_payload:true reaches it', () => {
-    const unsigned = new Set(['pev.list_scenarios', 'pev.calibration', 'pev.draft_scenario_packet', 'pev.sign_as_demo_role']);
+    // The scenario list is plain or signed (a signed read that is not a chat assistant's carries the stakes), so it declares them too.
+    const unsigned = new Set(['pev.calibration', 'pev.draft_scenario_packet', 'pev.sign_as_demo_role']);
     const signed = pevAffordances.filter((a) => !unsigned.has(a.toolName));
     expect(signed).toHaveLength(pevAffordances.length - unsigned.size);
     for (const a of signed) {
@@ -359,39 +360,46 @@ describe('the web UI is served under a strict content policy', () => {
     for (const s of [DEFAULT_CONNECTOR_ADDRESS, 'doesn\'t offer Interego sign-in', 'On this workspace: copy and paste']) expect(connected).not.toContain(s);
   });
 
-  it('says which AI steps leave out the weights and the pass mark, that an assistant asked to list scenarios reads them, and that a judge assesses in a new chat', async () => {
-    // What list-scenarios gives any assistant a person asks to list them: a scored scenario's whole rubric, its weights,
-    // level values and pass rule included, as the web app shows it. So no page says AI never sees them.
-    const listed = (await demoHandlers['pev.list_scenarios']!({})) as { scenarios: Out[] };
+  it('says no AI assistant receives the weights or the pass mark from Practice Evidence, which a scenario list read by nobody in particular bears out, and that a judge still assesses in a new chat', async () => {
+    // What list-scenarios gives an assistant a person asks to list them: a scored scenario's criteria and levels in words,
+    // and none of its weights, level values or pass rule (an answer to a chat is the same; see chat-stakes.test.ts).
+    const listed = (await demoHandlers['pev.list_scenarios']!({})) as { scenarios: Out[]; stakesWithheld?: string };
     const md = listed.scenarios.find((s) => s['scenarioIri'] === S['md']);
-    const rubric = md?.['rubric'] as practice.Rubric;
-    expect([md?.['assessmentUse'], typeof rubric.passRule?.minPercent, rubric.criteria.every((c) => typeof c.weight === 'number' && c.levels.every((l) => typeof l.value === 'number'))])
-      .toEqual(['pass-gate', 'number', true]);
+    const rubric = md?.['rubric'] as { criteria: Out[] } & Out;
+    expect([md?.['assessmentUse'], 'passRule' in rubric, rubric.criteria.every((c) => !('weight' in c) && (c['levels'] as Out[]).every((l) => !('value' in l))), typeof listed.stakesWithheld])
+      .toEqual(['pass-gate', false, true, 'string']);
     const off = connectorPages(contactPages(), null);
     const on = connectorPages(contactPages(), { relayUrl: 'https://relay.example.test' });
     const faq = (page: string): string => /<summary class="faq__q">How is AI used\?<\/summary><div class="faq__a"><p>(.*?)<\/p>/.exec(page)?.[1] ?? '';
     const feature = (page: string): string => /<h3 class="feature__title">AI declared and checked<\/h3><p class="feature__text">(.*?)<\/p>/.exec(page)?.[1] ?? '';
     const section = (page: string, id: string): string => page.slice(page.indexOf(`<section id="${id}"`), page.indexOf('</section>', page.indexOf(`<section id="${id}"`)));
-    // The three AI steps (drafting, playing the other person, proposing levels) never hand an assistant the stakes; the
-    // reads a person asks for do, and only where an assistant can connect is there one to ask.
-    const steps = 'AI never decides how a scenario is used, never calculates a score and never has the final say. None of those three steps gives an assistant the weights or the pass mark.';
-    const reads = ' An assistant you ask to list scenarios or show results does read them, as you would in the web app, so a judge\'s message asks for a new chat.';
-    expect(faq(on.landing).endsWith(steps + reads)).toBe(true);
-    expect(faq(off.landing).endsWith(steps)).toBe(true);
+    // The three AI steps never hand an assistant the stakes, and no answer to a chat does: where an assistant can connect,
+    // the page says the answers leave them out; either way the web app shows them to people.
+    const steps = 'AI never decides how a scenario is used, never calculates a score and never has the final say. No AI assistant ever receives the weights or the pass mark from Practice Evidence: ';
+    expect(faq(on.landing).endsWith(`${steps}its answers to a chat leave them out, and the web app shows them to people.`)).toBe(true);
+    expect(faq(off.landing).endsWith(`${steps}the web app shows them to people.`)).toBe(true);
     for (const page of [on.landing, off.landing]) {
       expect(feature(page)).toBe('Every AI reply and every AI assessment shows which model produced it and who chose that model. The AI must quote the learner, and a quote that '
-        + 'doesn\'t match, word for word, doesn\'t count. Proposing levels never gives the judge\'s AI the weights or the pass mark, and no AI calculates the score.');
+        + 'doesn\'t match, word for word, doesn\'t count. No AI assistant ever receives the weights or the pass mark from Practice Evidence, and no AI calculates the score.');
+      // A record a person downloads or copies holds everything: the page says so rather than claim more than the answers do.
+      expect(page).toContain('A record you download or copy to your own storage holds everything, the weights and the pass mark included');
     }
     // Drafting saves feedback only, so it never gives the assistant a pass mark: the author sets one in the web app.
     expect(section(on.help, 'authors')).toContain('The AI never chooses how the scenario is used or scored, and drafting never gives it a pass mark: you set any pass mark in the web app.');
+    // A claim about what an assistant sees would be one about what people paste: the pages speak of what Practice Evidence sends.
     for (const page of [on.landing, off.landing, on.help, off.help, read('bridge/ui/landing.html'), read('bridge/ui/help.html')]) {
       expect(page).not.toMatch(/never sees? (?:the weights|a pass mark|the pass mark)/);
+      expect(page).not.toContain('does read them');
     }
-    // A judge pastes the message into a new chat, never one that listed scenarios or read the review queue: those answers
-    // carry the weights and the pass rule, and the queue's every judgment's levels.
+    // A judge still pastes the message into a new chat, not one where they reviewed sessions: that chat has read other
+    // assessments' levels, which neither step of the message shows. The guide no longer says the weights are there.
     expect(section(on.help, 'judges')).toContain('<li class="step"><p class="step__text">Paste the message a learner sends you into a new chat with the Interego connector on, '
-      + 'not one where you reviewed sessions or listed scenarios: what your assistant read there includes the weights and the pass mark. Your assistant fetches the session,');
+      + 'not one where you reviewed sessions: your assistant saw other assessments\' levels there. It never receives the weights or the pass mark from Practice Evidence. Your assistant fetches the session,');
     expect(section(on.help, 'claude-chatgpt')).toContain('<li>Paste the message a learner sent you into a new chat. Your assistant shows you the levels and quotes and waits for your go-ahead.</li>');
+    expect(section(on.help, 'claude-chatgpt')).toContain('It never receives the weights, the points for each level, the pass mark, or any score or pass result: Practice Evidence leaves them out of every answer to a chat, and the web app shows them to you.');
+    // A scored session's signed record and statement carry the score, so a chat is not sent to fetch them.
+    expect(section(on.help, 'claude-chatgpt')).not.toContain('Download my signed record');
+    expect(section(on.help, 'claude-chatgpt')).toContain('To download your signed record or create a learning record from a scored session, use the web app.');
     expect(on.help).not.toContain('into that chat');
   });
 
@@ -1030,6 +1038,7 @@ describe('the web UI works, driven in a DOM against the real handlers', () => {
     const ana = W.learner;
     const asked: string[] = [];
     const copied: string[] = [];
+    const signs: string[] = [];
     const p = await openUi(noModel, (w) => {
       w['TextEncoder'] = TextEncoder;
       const f = w['fetch'] as (input: unknown, init?: RequestInit) => Promise<Response>;
@@ -1038,7 +1047,11 @@ describe('the web UI works, driven in a DOM against the real handlers', () => {
       w['ethereum'] = {
         request: async ({ method, params }: { method: string; params?: string[] }): Promise<unknown> => {
           if (method === 'eth_requestAccounts') return [ana.address];
-          if (method === 'personal_sign') return signMessageRaw(ana, Buffer.from(String(params?.[0]).slice(2), 'hex').toString('utf8'));
+          if (method === 'personal_sign') {
+            const text = Buffer.from(String(params?.[0]).slice(2), 'hex').toString('utf8');
+            signs.push(text);
+            return signMessageRaw(ana, text);
+          }
           throw new Error(`unsupported ${method}`);
         },
       };
@@ -1057,6 +1070,19 @@ describe('the web UI works, driven in a DOM against the real handlers', () => {
     expect([p.text('.app-header #connect-wallet'), p.q('.app-header #connect-wallet .hide-below-md')?.textContent]).toEqual(['Use a crypto wallet', 'crypto ']);
     p.q('#connect-wallet')!.click();
     await p.until(() => p.text('#acting-as').startsWith('Signed in with wallet'), 'the connected wallet');
+    // A scored scenario's weights and pass mark come only to a signed read. The wallet is asked for one when the person
+    // chooses to see them, not when the list loads, and that one signature (over the act and the storage alone) serves
+    // every list read while it is kept.
+    const scored = await p.until(() => p.all('article.scenario').find((a) => (a.textContent ?? '').includes('Scored · pass mark')), 'a scored scenario');
+    const signedBefore = signs.length;
+    expect([(scored.textContent ?? '').includes('Weight '), signs.some((t) => t.includes(PEV_ACTION.listScenarios))]).toEqual([false, false]);
+    const show = scored.querySelector<HTMLElement>('.stakes-note button')!;
+    expect(show.textContent).toBe('Show the weights and pass mark');
+    show.click();
+    await p.until(() => p.all('article.scenario').some((a) => (a.textContent ?? '').includes('Weight 2')), 'the weights');
+    expect(signs.slice(signedBefore).map((t) => (JSON.parse(t) as Out)['action'])).toEqual([PEV_ACTION.listScenarios]);
+    expect(Object.keys(JSON.parse(signs[signs.length - 1]!) as Out).sort()).toEqual(['action', 'issuedAt', 'nonce', 'podUrl', 'v']);
+    expect(p.all('article.scenario').some((a) => (a.textContent ?? '').includes('Pass mark: at least 70%'))).toBe(true);
     // Getting started words the learner's steps as this workspace offers them: copy and paste, and the judge hand-off.
     (await p.until(() => p.all('.checklist button').find((b) => (b.textContent ?? '').startsWith('Show all')), 'Getting started')).click();
     await p.until(() => p.all('.checklist__item').length === 8, 'every learner step');

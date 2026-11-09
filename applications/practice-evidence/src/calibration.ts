@@ -324,8 +324,12 @@ function cellNeedOf(cell: CalibrationCellView | undefined): number {
   return 0.25 * (1 - (cell.agreementRate ?? 0));
 }
 
-/** The factors for one candidate, each 0..1, returned so a reviewer can dispute the weights, not the arithmetic. */
-export function queueFactors(c: QueueCandidate, cells: readonly CalibrationCellView[]): QueueWhy {
+/**
+ * The factors for one candidate, each 0..1, returned so a reviewer can dispute the weights, not the
+ * arithmetic. `stakes: false` (a queue read for a chat assistant) leaves `nearThreshold` at 0: it is
+ * worked out from the percent and the pass mark, so its value, or a priority it is in, would carry them.
+ */
+export function queueFactors(c: QueueCandidate, cells: readonly CalibrationCellView[], o: { readonly stakes?: boolean } = {}): QueueWhy {
   const primary = c.judgments[0];
   if (!primary) {
     return { unverified: 0, notQuoted: 0, disagreement: 0, nearThreshold: 0, uncertainty: 0, uncertaintyDeclared: false, cellNeed: 1, learnerControlled: 0, auditSample: 0 };
@@ -333,7 +337,7 @@ export function queueFactors(c: QueueCandidate, cells: readonly CalibrationCellV
   const spreads = agreementOf(c.scenarioSpec, c.judgments).map((x) => x.normalisedSpread);
   const disagreement = c.judgments.length > 1 && spreads.length > 0 ? Math.max(...spreads) : 0;
   const p = primary.provisional;
-  const nearThreshold = p.use === 'pass-gate' ? Math.max(0, 1 - Math.abs(p.percentTenths / 10 - p.minPercent) / 10) : 0;
+  const nearThreshold = p.use === 'pass-gate' && o.stakes !== false ? Math.max(0, 1 - Math.abs(p.percentTenths / 10 - p.minPercent) / 10) : 0;
   const confidences = primary.criteria.map((x) => x.confidence);
   const uncertainty = confidences.length === 0 ? UNDECLARED_UNCERTAINTY
     : Math.max(...confidences.map((x) => (x === null ? UNDECLARED_UNCERTAINTY : 1 - x)));
@@ -368,10 +372,11 @@ export function priorityOf(w: QueueWhy): number {
 
 /**
  * The queue for one reviewer: judged attempts no person has reviewed, plus contested and retracted
- * ones (a person asked for another look). Reopened first, then priority, then oldest.
+ * ones (a person asked for another look). Reopened first, then priority, then oldest. With
+ * `stakes: false` closeness to the pass mark counts for nothing, in the priority and the order alike.
  */
 export function reviewQueue(
-  candidates: readonly QueueCandidate[], cells: readonly CalibrationCellView[], o: { limit: number; reviewer: string },
+  candidates: readonly QueueCandidate[], cells: readonly CalibrationCellView[], o: { limit: number; reviewer: string; stakes?: boolean },
 ): { readonly entries: readonly QueueEntry[]; readonly awaitingReview: number; readonly excludedAsConflicted: number; readonly weights: typeof QUEUE_WEIGHTS } {
   const reviewer = principalKey(o.reviewer);
   let excludedAsConflicted = 0;
@@ -389,7 +394,7 @@ export function reviewQueue(
       if (awaitingAPerson(loop, []).length === 0) continue;
     }
     if (c.excludedReviewers.some((x) => principalKey(x) === reviewer)) { excludedAsConflicted += 1; continue; }
-    const why = queueFactors(c, cells);
+    const why = queueFactors(c, cells, { stakes: o.stakes !== false });
     const primary = c.judgments[0];
     entries.push({
       ...c, priority: priorityOf(why), why, reopened: c.state !== 'judged', blindFirst: inAuditSample(c.attemptIri),

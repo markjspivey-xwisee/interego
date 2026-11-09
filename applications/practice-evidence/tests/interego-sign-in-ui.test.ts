@@ -940,13 +940,32 @@ describe('the web UI signs a person in with their Interego account and has the r
     expect(p.text('#view .welcome')).toContain('Welcome to Practice Evidence');
     expect(p.q('#view .welcome [data-sign-in="interego"]')).not.toBeNull();
     expect([p.q('#view .refusal'), p.text('#signing'), p.text('#acting-as')]).toEqual([null, '', 'Not signed in']);
-    const posted = (): string[] => p.asked.filter((x) => x.startsWith('POST /pev/') && x !== 'POST /pev/sign_as_demo_role');
+    // The scenario list is a plain read (a POST, since a signed one carries its envelope in the body), never a signed act.
+    const posted = (): string[] => p.asked.filter((x) => x.startsWith('POST /pev/') && x !== 'POST /pev/sign_as_demo_role' && x !== 'POST /pev/list_scenarios');
     expect([p.asked.filter((x) => x.includes('/ui/relay/sign')), posted()]).toEqual([[], []]);
     const card = p.q('article.scenario')!;
     card.querySelector<HTMLInputElement>('input[type=radio][value=no]')!.checked = true;
     card.querySelector<HTMLElement>(`button[data-action="${PEV_ACTION.startAttempt}"]`)!.click();
     await p.until(() => p.q('#view .signin-needed'), 'the sign-in callout');
     expect([p.q('#signing textarea[readonly]'), posted(), p.asked.filter((x) => x.includes('/ui/relay/sign'))]).toEqual([null, [], []]);
+    expect(p.errors).toEqual([]);
+  }, SLOW);
+
+  it('a scored scenario\'s weights and pass mark: a visitor gets the rubric in words and is told to sign in; a person signed in with Interego gets them, read signed', async () => {
+    const out = await openPage(bridge, '/ui');
+    const card = await out.until(() => out.q('article.scenario'), 'the scenarios');
+    expect(card.textContent).toContain('Scored · pass mark');
+    expect(card.textContent).not.toMatch(/pass mark \d+%|Weight \d|\(\d+ points\)|Pass mark: at least/);
+    expect(out.text('article.scenario .stakes-note')).toBe('Sign in to see how much each criterion counts, the points for each level and the pass mark.');
+    expect(out.asked.filter((x) => x.includes('/ui/relay/sign'))).toEqual([]);
+    const p = await signedInPage(bridge);
+    const signed = await p.until(() => (p.q('article.scenario')?.textContent ?? '').includes('Weight 2') && p.q('article.scenario'), 'the scenarios with their weights');
+    expect(signed.textContent).toContain('Scored · pass mark 70%');
+    expect(signed.textContent).toContain('Pass mark: at least 70%');
+    expect(signed.textContent).toMatch(/\(100 points\)/);
+    expect(p.q('article.scenario .stakes-note')).toBeNull();
+    // The relay signed the list read for the web app's own agent.
+    expect(p.asked.filter((x) => x.includes('/ui/relay/sign')).length).toBeGreaterThan(0);
     expect(p.errors).toEqual([]);
   }, SLOW);
 
@@ -1517,13 +1536,13 @@ describe('your own AI assistant: connect Claude or ChatGPT, or copy and paste; n
     send.click();
     await p.until(() => p.copied.length === 3, 'the message for the judge');
     const judge = p.copied[2]!;
-    // The judge pastes the prompt into a new chat, never one that listed scenarios or read the review queue: those answers
-    // carry the rubric's weights, level values and pass rule (and the queue's, every judgment's levels), which neither
-    // step of the prompt shows the assistant.
+    // No answer to a chat carries the weights or the pass mark (chat-stakes.test.ts), and the message says so. It still asks
+    // for a new chat, not one where the judge reviewed sessions: that chat has read other assessments' levels (the review
+    // queue's every judgment), which neither step of the prompt shows the assistant.
     expect(judge.split('\n').slice(0, 3)).toEqual([
       `Hi, could you assess my practice session in Practice Evidence? Session: ${attemptIri}. Workspace: ${nm.base}/`,
-      "Don't reuse a chat where you reviewed sessions or listed scenarios: it has already seen the scoring. "
-        + 'Paste everything between the lines into a new chat in Claude or ChatGPT, with the Interego connector on:',
+      'Practice Evidence never shows your assistant the weights or the pass mark. '
+        + "Paste everything between the lines into a new chat in Claude or ChatGPT, with the Interego connector on, not one where you reviewed sessions: it has seen other assessments' levels.",
       '---',
     ]);
     // Its nonce example is its own first signed step, at turn 0: judging has no turn, and the rule says "or 0".
@@ -1629,7 +1648,7 @@ describe('your own AI assistant: connect Claude or ChatGPT, or copy and paste; n
     const readme = readFileSync(fileURLToPath(new URL('../README.md', import.meta.url)), 'utf8');
     for (const says of [
       "`record-judgment` tells the judge that the save was kept, the attempt's state and how many judgments it now has, and how their own levels and quotes were checked, but never",
-      'So the message asks for a new chat, not one used to review sessions or list scenarios, and the guide says the same.',
+      'So the message still asks for a new chat, not one used to review sessions, and the guide says the same.',
       "says the assessment may already be saved only if it sent a save of this attempt in that chat or can't tell whether it did",
     ]) expect(readme).toContain(says);
     expect(readme).not.toContain('tells the judge only that the save was kept');

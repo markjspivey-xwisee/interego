@@ -79,6 +79,7 @@ import {
   AUDIT_SAMPLE_RATE, CALIBRATION_SMALL_COUNT_RULE, METRIC_NOTE, RESULTS_K, STANDING_POLICY,
   type CalibrationCellView, type QueueCandidate,
 } from '../src/calibration.js';
+import { assessmentWithoutStakes, judgmentWithoutStakes, reviewWithoutStakes, rubricWithoutStakes, STAKES_WITHHELD } from '../src/stakes.js';
 import { buildStatement, statementProblems, LOSSY, LRS_REQUEST_NOTE, PROJECTION_FORMATS, type ProjectionFormat } from '../src/projections.js';
 import {
   createGraphLocks, deleteResource, isDeleted, isTrusted, keyMarksOf, listEntries, normalPod, placementProblem, podEntries, publishPevRecord,
@@ -568,14 +569,39 @@ export const DECISIVE_ON_ANOTHERS_ATTEMPT: ReadonlySet<PevActionKey> = new Set<P
 export const WEB_UI_AGENT_PREFIX = 'practice-evidence-';
 
 /**
+ * Whether the Interego relay signed this request for a chat agent: for any agent but this bridge's
+ * own web UI (`WEB_UI_AGENT_PREFIX`), so for any agent it does not know, too. The agent is the
+ * `agent_id` inside the payload the relay signed, which the relay takes from the signed-in session
+ * (an `agent_id` a caller sends is dropped before it signs), and which `openRelayDelegated` checked
+ * against that agent's DID document. Nothing a caller adds to a request, signed or not, changes it.
+ * A key-held signer (a wallet, manual signing, a person's own script) is not a chat agent: the relay
+ * signs for an assistant connected through it, which holds no key of its own.
+ */
+function isChatAgent(ctx: Ctx, relay: RelayAttestation | undefined): boolean {
+  if (relay === undefined || ctx.relay === null) return false;
+  return !(agentSlugOf(relay.agentId, ctx.relay.identityHost) ?? '').startsWith(WEB_UI_AGENT_PREFIX);
+}
+
+/**
+ * Whether an answer may carry a scored scenario's stakes (src/stakes.ts): only to a signed request
+ * that is not a chat agent's, so to this bridge's web app (its own agent, a wallet, manual signing,
+ * a demo key) and to a person's own key. An unsigned request and every chat agent get the answer
+ * without them, whatever role the person behind the chat holds.
+ */
+function showsStakes(ctx: Ctx, s: Signed | null): boolean {
+  return s !== null && !isChatAgent(ctx, s.relay);
+}
+
+/** The top-level mark of an answer that left the stakes out. */
+const withheldMark = (stakes: boolean): Out => (stakes ? {} : { stakesWithheld: STAKES_WITHHELD });
+
+/**
  * Refused when a chat agent the relay signed for takes a decisive act and the operator has not let
  * chat agents decide: null when the act may go on (a key-held signer, this bridge's web UI, or
  * PEV_CHAT_AGENTS_DECIDE=1).
  */
 function chatAgentRefusal(ctx: Ctx, relay: RelayAttestation | undefined): Declined | null {
-  if (relay === undefined || ctx.relay === null || ctx.deps.chatAgentsDecide === true) return null;
-  const slug = agentSlugOf(relay.agentId, ctx.relay.identityHost) ?? '';
-  if (slug.startsWith(WEB_UI_AGENT_PREFIX)) return null;
+  if (relay === undefined || ctx.deps.chatAgentsDecide === true || !isChatAgent(ctx, relay)) return null;
   return decline(403,
     `This act is decisive here (it changes who may do what, puts a reviewer's name behind a rubric or an attempt, withdraws a review, or removes another learner's transcript), and the Interego relay signed it for ${relay.agentId}, a chat agent. Such acts are taken from this bridge's own web UI (an agent named ${WEB_UI_AGENT_PREFIX}…) unless the operator sets PEV_CHAT_AGENTS_DECIDE=1. Sign in on this bridge's web UI and take it there.`,
     'chat-agent-may-not-decide', { env: 'PEV_CHAT_AGENTS_DECIDE' }, { agentId: relay.agentId });
@@ -658,11 +684,12 @@ function notServed(ctx: Ctx): Declined {
  * any, when this bridge holds none: before the nonce is spent and before any record, the role
  * registry included, is read, so the refusal always names both keys rather than whichever sealed
  * record the act would have reached first (on a deployment, where the key seals every record, the
- * role registry).
+ * role registry). The scenario list (`answersOnKeyMismatch`) is the one read still answered on such a
+ * pod, signed or not, marked as it says.
  */
 async function signedAct(
   call: Call, args: Record<string, unknown>, key: PevActionKey,
-  o: { readonly write?: boolean; readonly nonce?: boolean; readonly checks?: (p: P) => void } = {},
+  o: { readonly write?: boolean; readonly nonce?: boolean; readonly checks?: (p: P) => void; readonly answersOnKeyMismatch?: boolean } = {},
 ): Promise<Signed> {
   const { ctx } = call;
   const now = ctx.now();
@@ -676,7 +703,7 @@ async function signedAct(
     throw decline(400, 'pod_url names a different pod than the one in the signed payload.', 'pod-url-differs');
   }
   const pod = await servedPublicPod(ctx, podUrl);
-  await refuseOnKeyMismatch(call, pod);
+  if (o.answersOnKeyMismatch !== true) await refuseOnKeyMismatch(call, pod);
   const nonce = String(env.payload['nonce']);
   // Spent per principal: a relay-delegated nonce is the person's, not the relay's (it signs for everyone).
   if ((o.nonce ?? o.write ?? false) && !ctx.ledger.consume(env.signer, nonce, now)) {
@@ -1184,14 +1211,20 @@ async function eligibility(call: Call, pod: string, h: AttemptHead): Promise<Eli
 //  Views
 // ═════════════════════════════════════════════════════════════════════════════════════════════
 
-function scenarioView(rec: ReadRecord, b: ScenarioBody): Out {
+/**
+ * A scenario as an answer shows it. Without the stakes (`stakes: false`) the rubric is its criteria
+ * and levels in words, and the author's reason a pass mark fits (`passGateWhy`), which may name it,
+ * is left out; whether the scenario is scored at all (`assessmentUse`) stays.
+ */
+function scenarioView(rec: ReadRecord, b: ScenarioBody, stakes: boolean): Out {
   const s = b.scenario;
   return {
     scenarioIri: b.scenarioIri, scenarioKey: s.scenarioKey, version: b.version, status: b.status, ratified: b.status === 'ratified',
     ...(b.ratification ? { ratifiedBy: b.ratification.reviewer.did } : {}),
     title: s.title, learnerGoal: s.learnerGoal, learnerPart: s.learnerPart, situation: s.situation,
     counterpart: { name: s.counterpart.name }, firstLine: s.firstLine, turnLimit: s.turnLimit, language: s.language,
-    assessmentUse: s.assessmentUse, workRegime: s.workRegime, passGateWhy: s.passGateWhy, rubric: s.rubric,
+    assessmentUse: s.assessmentUse, workRegime: s.workRegime,
+    ...(stakes ? { passGateWhy: s.passGateWhy, rubric: s.rubric } : { rubric: rubricWithoutStakes(s.rubric) }),
     rubricHash: b.rubricHash, scenarioHash: b.scenarioHash, descriptorUrl: rec.descriptorUrl, actor: b.actor.did,
     draftAssistance: b.draftAssistance, at: b.at,
     evidenceNote: b.status === 'ratified'
@@ -1385,14 +1418,15 @@ async function authorScenario(call: Call, args: Record<string, unknown>): Promis
     }
     const hash = scenarioHash(spec);
     const sameContent = head !== null && head.scenarioHash === hash;
+    const stakes = showsStakes(ctx, s);
     if (head && sameContent && status === head.status) {
-      return { ...scenarioView(h.head!, head), modalStatus: modalFor(head), descriptorUrl: h.head!.descriptorUrl, rubricChanged: false, statusChanged: false, changed: false };
+      return { ...scenarioView(h.head!, head, stakes), modalStatus: modalFor(head), descriptorUrl: h.head!.descriptorUrl, rubricChanged: false, statusChanged: false, changed: false, ...withheldMark(stakes) };
     }
     if (head && sameContent && status === 'draft') {
       throw decline(409, `Version ${head.version} is already ${head.status}; a published version does not go back to draft. Change the content to start a new version.`, 'scenario-already-published');
     }
     if (head && sameContent && head.status === 'ratified') {
-      return { ...scenarioView(h.head!, head), modalStatus: modalFor(head), descriptorUrl: h.head!.descriptorUrl, rubricChanged: false, statusChanged: false, changed: false };
+      return { ...scenarioView(h.head!, head, stakes), modalStatus: modalFor(head), descriptorUrl: h.head!.descriptorUrl, rubricChanged: false, statusChanged: false, changed: false, ...withheldMark(stakes) };
     }
     const version = head ? (sameContent ? head.version : head.version + 1) : 1;
     const rh = rubricHash(spec.rubric);
@@ -1511,10 +1545,29 @@ function sealedScenariosMark(n: number): Out {
   };
 }
 
+/** True when a request carries a signed act in any form a signed act is read in (`envelope`, or the relay's pair). */
+const carriesSignature = (args: Record<string, unknown>): boolean =>
+  (args['envelope'] !== undefined && args['envelope'] !== null) || args['_signed_payload'] !== undefined || args['_signature'] !== undefined;
+
+/**
+ * The scenario list, signed or not. Unsigned, or signed for a chat agent, it carries every rubric
+ * without its stakes. Signed by anyone else (this bridge's web app, a key a person holds) it carries
+ * them. A signature that does not check out is refused as any signed act's is, never read as
+ * unsigned. The filters (`scenario_iri`, `include_drafts`) are read from the signed payload when it
+ * names them, else from the request: they choose what is listed, not whom it is for.
+ */
 async function listScenarios(call: Call, args: Record<string, unknown>): Promise<Out> {
   const { ctx } = call;
-  const pod = await readPod(ctx, args);
-  const one = typeof args['scenario_iri'] === 'string' && args['scenario_iri'].trim() !== '' ? args['scenario_iri'].trim() : null;
+  const s = carriesSignature(args) ? await signedAct(call, args, 'listScenarios', { answersOnKeyMismatch: true }) : null;
+  const stakes = showsStakes(ctx, s);
+  const field = (...names: string[]): unknown => {
+    for (const n of names) if (s && s.payload[n] !== undefined) return s.payload[n];
+    for (const n of names) if (args[n] !== undefined) return args[n];
+    return undefined;
+  };
+  const pod = s ? s.pod : await readPod(ctx, args);
+  const asked = field('scenarioIri', 'scenario_iri');
+  const one = typeof asked === 'string' && asked.trim() !== '' ? asked.trim() : null;
   if (one) {
     const mismatch = keyMismatchIn(ctx, keyMarksOf(await podEntries(pod, call.read, call.cache), pod));
     let h: ScenarioHead | null;
@@ -1532,14 +1585,16 @@ async function listScenarios(call: Call, args: Record<string, unknown>): Promise
       ? [{ version: v.body.version, status: v.body.status, descriptorUrl: v.descriptorUrl, rubricHash: v.body.rubricHash, at: v.body.at }] : []));
     return {
       podUrl: pod,
-      scenario: { ...scenarioView(h.rec, h.body), counterpart: h.body.scenario.counterpart, endsWhen: h.body.scenario.endsWhen },
+      scenario: { ...scenarioView(h.rec, h.body, stakes), counterpart: h.body.scenario.counterpart, endsWhen: h.body.scenario.endsWhen },
       versions, ...(mismatch ? { recordKeyMismatch: keyMismatchMark(ctx, mismatch) } : {}), bridge: bridgeRoute(ctx),
+      ...withheldMark(stakes), ...(s ? { signedAs: signedAsOf(s) } : {}),
     };
   }
-  const drafts = args['include_drafts'] === true || args['include_drafts'] === 'true';
+  const draftsAsked = field('includeDrafts', 'include_drafts');
+  const drafts = draftsAsked === true || draftsAsked === 'true';
   const read = await readHeadsOfKind(pod, 'scenario', ctx.trusted, { max: 500, fetchFn: call.read, cache: call.cache });
   const scenarios = read.records
-    .flatMap((r) => (r.body.kind === 'scenario' && (drafts || r.body.status !== 'draft') ? [scenarioView(r, r.body)] : []))
+    .flatMap((r) => (r.body.kind === 'scenario' && (drafts || r.body.status !== 'draft') ? [scenarioView(r, r.body, stakes)] : []))
     .sort((x, y) => String(x['title']).localeCompare(String(y['title'])));
   const mismatch = keyMismatchIn(ctx, read.keyMarks);
   return {
@@ -1548,6 +1603,7 @@ async function listScenarios(call: Call, args: Record<string, unknown>): Promise
     ...readLimitMark(call, read.readLimitReached),
     ...(mismatch ? { recordKeyMismatch: keyMismatchMark(ctx, mismatch) } : {}),
     bridge: bridgeRoute(ctx),
+    ...withheldMark(stakes), ...(s ? { signedAs: signedAsOf(s) } : {}),
   };
 }
 
@@ -1859,19 +1915,24 @@ async function writeJudgment(call: Call, s: Signed, h: AttemptHead, j: JudgmentR
 /**
  * Write a judgment by this bridge's model and answer with all of it, for the learner or reviewer
  * who asked, who reads it in the web UI: the judgment with its provisional result, every
- * judgment's levels side by side, and what the next level asks for. `roles` are the signer's,
- * read before: nothing after the write can refuse.
+ * judgment's levels side by side, and what the next level asks for. Asked from a chat agent, the
+ * judgment and the provisional result are the levels alone (`showsStakes`). `roles` are the
+ * signer's, read before: nothing after the write can refuse.
  */
 async function recordJudgmentOn(call: Call, s: Signed, h: AttemptHead, j: JudgmentResult, key: PevActionKey, roles: ReadonlySet<Role>, disclosure?: InferenceDisclosure): Promise<Out> {
   const { ctx } = call;
   const { body, w } = await writeJudgment(call, s, h, j, key, disclosure);
   const primary = body.judgments[0]!;
+  const stakes = showsStakes(ctx, s);
+  const rubric = body.scenarioSpec.rubric;
   return {
-    attemptIri: body.attemptIri, descriptorUrl: w.descriptorUrl, state: body.state, modalStatus: modalFor(body), judgment: j,
-    judgmentCount: body.judgments.length, agreement: agreementOf(body.scenarioSpec, body.judgments), provisional: primary.provisional,
+    attemptIri: body.attemptIri, descriptorUrl: w.descriptorUrl, state: body.state, modalStatus: modalFor(body),
+    judgment: stakes ? j : judgmentWithoutStakes(j, rubric),
+    judgmentCount: body.judgments.length, agreement: agreementOf(body.scenarioSpec, body.judgments),
+    provisional: stakes ? primary.provisional : assessmentWithoutStakes(primary.provisional, rubric),
     provisionalLabel: PROVISIONAL_LABEL, unverifiedCriteria: primary.unverifiedCriteria, nextSteps: nextStepsOf(body),
     currentTarget: { recordId: w.recordId, descriptorUrl: w.descriptorUrl, graphDigest: w.graphDigest },
-    nextActions: nextFor(ctx, body, s.signer, roles, false), recorded: true,
+    nextActions: nextFor(ctx, body, s.signer, roles, false), recorded: true, ...withheldMark(stakes),
   };
 }
 
@@ -2096,6 +2157,9 @@ async function reviewQueueAct(call: Call, args: Record<string, unknown>): Promis
   const roles = (await rolesOn(call, s.pod)).of(s.signer);
   if (!roles.has('reviewer')) throw decline(403, 'Only an address registered as a reviewer may read the review queue.', 'not-a-reviewer');
   const read = await attemptBodies(call, s.pod, 'the review queue (what awaits review)');
+  // For a chat agent: each entry's rubric, judgments and provisional result without the stakes, and
+  // a queue ranked without closeness to the pass mark, which is worked out from them.
+  const stakes = showsStakes(ctx, s);
   const { cells } = cellsFor(ctx, s.pod, read.bodies, 'rubric-version');
   const candidates: QueueCandidate[] = read.heads.flatMap((r) => {
     const a = r.body as AttemptBody;
@@ -2109,20 +2173,25 @@ async function reviewQueueAct(call: Call, args: Record<string, unknown>): Promis
       currentTarget: targetOf(r), authorTest: a.authorTest,
     }];
   });
-  const q = reviewQueue(candidates, cells, { limit, reviewer: s.signer });
+  const q = reviewQueue(candidates, cells, { limit, reviewer: s.signer, stakes });
   const entries = q.entries.map((e) => {
     const { scenarioSpec, ...rest } = e;
     const primary = e.judgments[0];
+    const judges = e.judgments.map((j) => ({ index: j.index, judgeId: j.judge.id, kind: j.judge.kind, route: j.route, chosenBy: j.chosenBy, repeatOf: j.repeatOf }));
+    const common = { scenarioTitle: scenarioSpec.title, assessmentUse: scenarioSpec.assessmentUse, judges, unverifiedCriteria: primary?.unverifiedCriteria ?? [], agreement: agreementOf(scenarioSpec, e.judgments) };
+    if (stakes) return { ...rest, ...common, provisional: primary?.provisional ?? null, rubric: scenarioSpec.rubric };
+    const r = scenarioSpec.rubric;
+    const { nearThreshold: _near, ...why } = e.why;
     return {
-      ...rest, scenarioTitle: scenarioSpec.title, assessmentUse: scenarioSpec.assessmentUse,
-      judges: e.judgments.map((j) => ({ index: j.index, judgeId: j.judge.id, kind: j.judge.kind, route: j.route, chosenBy: j.chosenBy, repeatOf: j.repeatOf })),
-      provisional: primary?.provisional ?? null, unverifiedCriteria: primary?.unverifiedCriteria ?? [],
-      agreement: agreementOf(scenarioSpec, e.judgments), rubric: scenarioSpec.rubric,
+      ...rest, ...common, why, judgments: e.judgments.map((j) => judgmentWithoutStakes(j, r)),
+      provisional: primary ? assessmentWithoutStakes(primary.provisional, r) : null, rubric: rubricWithoutStakes(r),
     };
   });
+  const { nearThreshold: _w, ...otherWeights } = q.weights;
   return {
-    podUrl: s.pod, entries, awaitingReview: q.awaitingReview, excludedAsConflicted: q.excludedAsConflicted, weights: q.weights,
+    podUrl: s.pod, entries, awaitingReview: q.awaitingReview, excludedAsConflicted: q.excludedAsConflicted, weights: stakes ? q.weights : otherWeights,
     computedAt: iso(ctx), attemptsRead: read.heads.length, untrustedRecordsSkipped: read.untrusted, complete: read.complete, ...read.limit,
+    ...withheldMark(stakes),
   };
 }
 
@@ -2200,9 +2269,12 @@ async function writeReview(call: Call, s: Signed, h: AttemptHead, primary: Judgm
   const body: AttemptBody = { ...a, at, state: outcome, reviews: [...a.reviews, review], acts: [...a.acts, actOf(s, key)] };
   const w = await writeRecord(call, { pod: s.pod, body, seq: h.seq, prev: h.rec, nonce: s.nonce });
   const nonRepeat = a.judgments.filter((j) => j.repeatOf === null).length;
+  // From a chat agent (only with PEV_CHAT_AGENTS_DECIDE=1): the levels the review set, no result.
+  const stakes = showsStakes(ctx, s);
   return {
     attemptIri: a.attemptIri, descriptorUrl: w.descriptorUrl, state: outcome, modalStatus: 'Asserted', supersedes: h.rec.descriptorUrl,
-    assessment, finalLevels, reviewer: s.signerDid, reviewIndex: review.index,
+    assessment: stakes ? assessment : assessmentWithoutStakes(assessment, a.scenarioSpec.rubric), ...withheldMark(stakes),
+    finalLevels, reviewer: s.signerDid, reviewIndex: review.index,
     primaryJudgeLevels: Object.fromEntries(primary.criteria.map((c) => [c.criterionId, c.levelId])),
     outcomesRecorded: a.scenarioSpec.rubric.criteria.length * nonRepeat,
     projectable: rat.ratified, projectableWhy: rat.ratified ? EVIDENCE_WHY.ready : EVIDENCE_WHY.notRatified,
@@ -2405,9 +2477,12 @@ async function scenarioResultsAct(call: Call, args: Record<string, unknown>): Pr
   const mine = read.bodies.filter((a) => a.scenario.scenarioIri === iri && (versions.length === 0 || versions.includes(a.scenario.version)));
   const view = scenarioResults({ scenarioIri: iri, spec: h.body.scenario, versions, attempts: mine, k: ctx.resultsK, detail });
   const { cells } = cellsFor(ctx, s.pod, mine, 'rubric-version');
+  // For a chat agent the level counts stay; how many met the pass mark, beside them, would say where it lies.
+  const stakes = showsStakes(ctx, s);
+  const { meetsPassRule: _met, ...finalWithoutStakes } = view.final;
   return {
-    ...view, personJudgeCells: cells.filter((c) => c.judgeKind === 'person'),
-    attemptsRead: mine.length, untrustedRecordsSkipped: read.untrusted, complete: read.complete, ...read.limit,
+    ...view, ...(stakes ? {} : { final: finalWithoutStakes }), personJudgeCells: cells.filter((c) => c.judgeKind === 'person'),
+    attemptsRead: mine.length, untrustedRecordsSkipped: read.untrusted, complete: read.complete, ...read.limit, ...withheldMark(stakes),
   };
 }
 
@@ -2459,9 +2534,12 @@ async function projectAttempt(call: Call, args: Record<string, unknown>): Promis
   const w = await writeRecord(call, {
     pod: s.pod, body: audit({ outcome: 'projected', statementId, statement, registryCheckedAt: e.registryCheckedAt }), seq: 1, prev: null, nonce: s.nonce,
   });
+  // A scored statement carries the score and whether it met the pass mark, so a chat agent gets its
+  // id and where it was recorded, not the statement; a feedback-only one carries levels alone.
+  const shown = showsStakes(ctx, s) || h.body.scenarioSpec.assessmentUse !== 'pass-gate';
   return {
-    attemptIri: iri, format: fmt, statementId, statement, checks: { problems: [] }, lossy: LOSSY[fmt], lrsRequest: LRS_REQUEST_NOTE,
-    auditDescriptorUrl: w.descriptorUrl, practiceEvidence: true, recorded: true,
+    attemptIri: iri, format: fmt, statementId, statement: shown ? statement : null, checks: { problems: [] }, lossy: LOSSY[fmt], lrsRequest: LRS_REQUEST_NOTE,
+    auditDescriptorUrl: w.descriptorUrl, practiceEvidence: true, recorded: true, ...withheldMark(shown),
   };
 }
 
@@ -2560,6 +2638,10 @@ async function exportRecord(call: Call, args: Record<string, unknown>): Promise<
   if (!samePrincipal(h.body.learner.address, s.signer)) throw decline(403, 'Only the learner of this attempt may export it.', 'not-the-learner');
   // Every version's opened bytes go to the caller, so every version must be this attempt's own.
   const chain = await trustedChain(call, s.pod, iri);
+  // A scored attempt's graph holds the rubric's stakes and every result worked out from them, and
+  // its bytes cannot be cut without breaking the signature over them: a chat agent gets each
+  // version's descriptor, never its graph. A feedback-only attempt holds no stakes.
+  const shown = showsStakes(ctx, s) || h.body.scenarioSpec.assessmentUse !== 'pass-gate';
   return {
     attemptIri: iri, exportedAt: iso(ctx), platformAddresses: [...ctx.trusted.addresses],
     // What an envelope with authority relay-delegated is re-verified against (see verify).
@@ -2568,8 +2650,9 @@ async function exportRecord(call: Call, args: Record<string, unknown>): Promise<
       ? { seq: i + 1, recordId: v.recordId, state: null, modalStatus: null, sourceDescriptorUrl: v.descriptorUrl, descriptorTurtle: v.descriptorTurtle, graphTrig: null, contentDeleted: true }
       : {
         seq: i + 1, recordId: v.recordId, state: v.body.kind === 'attempt' ? v.body.state : null, modalStatus: v.modalStatus,
-        sourceDescriptorUrl: v.descriptorUrl, descriptorTurtle: v.descriptorTurtle, graphTrig: v.graphContent, contentDeleted: false,
+        sourceDescriptorUrl: v.descriptorUrl, descriptorTurtle: v.descriptorTurtle, graphTrig: shown ? v.graphContent : null, contentDeleted: false,
       })),
+    ...withheldMark(shown),
   };
 }
 
@@ -2659,6 +2742,8 @@ async function getAttempt(call: Call, args: Record<string, unknown>): Promise<Ou
   });
   const roles = (await rolesOn(call, s.pod)).of(s.signer);
   const admin = isAdmin(ctx, s.signer);
+  // For a chat agent, whatever the person's roles: levels, quotes, reasons and states, no stakes.
+  const stakes = showsStakes(ctx, s);
   if (s.payload['attemptIri'] === undefined) {
     const wide = roles.has('reviewer') || admin;
     const read = await attemptBodies(call, s.pod, 'the list of attempts');
@@ -2671,17 +2756,17 @@ async function getAttempt(call: Call, args: Record<string, unknown>): Promise<Ou
         // Deleting the text keeps the levels a reviewer signed, so a redacted attempt's standing review is still its result.
         const reviewed = (a.state === 'countersigned' || a.state === 'overridden' || a.state === 'redacted') && review !== null;
         const primary = a.judgments[0];
-        const prov = percentOf(primary?.provisional);
-        const fin = reviewed ? percentOf(review.assessment) : undefined;
+        const prov = stakes ? percentOf(primary?.provisional) : undefined;
+        const fin = stakes && reviewed ? percentOf(review.assessment) : undefined;
         return {
           attemptIri: a.attemptIri, scenarioTitle: a.scenario.title, state: a.state, attemptNumber: a.attemptNumber, startedAt: a.startedAt,
           authorTest: a.authorTest, learner: a.learner.did,
           ...(prov !== undefined ? { provisionalPercent: prov } : {}),
           ...(fin !== undefined ? { finalPercent: fin } : {}),
-          ...(reviewed && review.assessment.use === 'pass-gate' ? { finalMeetsPassRule: review.assessment.meetsPassRule } : {}),
+          ...(stakes && reviewed && review.assessment.use === 'pass-gate' ? { finalMeetsPassRule: review.assessment.meetsPassRule } : {}),
         };
       });
-    return { podUrl: s.pod, attempts: list, untrustedRecordsSkipped: read.untrusted, complete: read.complete, ...read.limit, signedAs: signedAsOf(s) };
+    return { podUrl: s.pod, attempts: list, untrustedRecordsSkipped: read.untrusted, complete: read.complete, ...read.limit, signedAs: signedAsOf(s), ...withheldMark(stakes) };
   }
   const iri = needAttemptIri(s.payload);
   const h = await attemptHead(call, s.pod, iri);
@@ -2695,10 +2780,11 @@ async function getAttempt(call: Call, args: Record<string, unknown>): Promise<Ou
   ]);
   const review = standingReview(a);
   const judged = a.judgments.length > 0;
+  const r = a.scenarioSpec.rubric;
   return {
     attemptIri: iri, podUrl: s.pod, state: a.state, modalStatus: h.rec.modalStatus, headDescriptorUrl: h.rec.descriptorUrl, recordId: h.rec.recordId,
     scenario: { ...a.scenario, rubricRatified: rat.ratified, ...(rat.ratifiedBy ? { ratifiedBy: rat.ratifiedBy } : {}) },
-    rubric: a.scenarioSpec.rubric, assessmentUse: a.scenarioSpec.assessmentUse, workRegime: a.scenarioSpec.workRegime,
+    rubric: stakes ? r : rubricWithoutStakes(r), assessmentUse: a.scenarioSpec.assessmentUse, workRegime: a.scenarioSpec.workRegime,
     counterpartName: a.scenarioSpec.counterpart.name, turnLimit: a.scenarioSpec.turnLimit,
     learner: { did: a.learner.did, kind: a.learner.kind }, attemptNumber: a.attemptNumber, coached: a.coached,
     ...(a.assistance !== undefined ? { assistance: a.assistance } : {}), authorTest: a.authorTest,
@@ -2711,8 +2797,18 @@ async function getAttempt(call: Call, args: Record<string, unknown>): Promise<Ou
       ...(t.disclosure ? { disclosure: t.disclosure } : {}), ...(t.endSignal ? { endSignal: true } : {}),
       ...(judged && t.speaker === 'learner' && t.text !== undefined ? { normalisedText: normaliseForQuote(t.text) } : {}),
     })),
-    judgments: a.judgments, agreement: agreementOf(a.scenarioSpec, a.judgments), provisional: a.judgments[0]?.provisional ?? null,
-    reviews: a.reviews, ...(review ? { standingReview: review, finalAssessment: review.assessment } : {}),
+    ...(stakes
+      ? {
+        judgments: a.judgments, agreement: agreementOf(a.scenarioSpec, a.judgments), provisional: a.judgments[0]?.provisional ?? null,
+        reviews: a.reviews, ...(review ? { standingReview: review, finalAssessment: review.assessment } : {}),
+      }
+      : {
+        judgments: a.judgments.map((j) => judgmentWithoutStakes(j, r)), agreement: agreementOf(a.scenarioSpec, a.judgments),
+        provisional: a.judgments[0] ? assessmentWithoutStakes(a.judgments[0].provisional, r) : null,
+        reviews: a.reviews.map((v) => reviewWithoutStakes(v, r)),
+        ...(review ? { standingReview: reviewWithoutStakes(review, r), finalAssessment: assessmentWithoutStakes(review.assessment, r) } : {}),
+        stakesWithheld: STAKES_WITHHELD,
+      }),
     reopenings: a.reopenings, ...(a.redaction ? { redaction: a.redaction } : {}),
     nextSteps: nextStepsOf(a),
     highlights: a.judgments.flatMap((j) => j.criteria.flatMap((c) => c.quotes.flatMap((q) => (

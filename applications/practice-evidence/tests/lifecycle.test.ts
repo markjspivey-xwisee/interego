@@ -258,12 +258,19 @@ describe('authoring: evidence-first declarations, versions, ratification, drafti
     S['oneTurn'] = String(oneTurn['scenarioIri']);
   }, SLOW);
 
-  it('lists published heads with their full rubric, hides drafts unless asked, and lists every version of one scenario', async () => {
+  it('lists published heads with their rubric (its stakes only to a signed read), hides drafts unless asked, and lists every version of one scenario', async () => {
     const list = ok((await H['pev.list_scenarios']!({})) as Out);
     const views = list['scenarios'] as Out[];
     const md = views.find((v) => v['scenarioIri'] === S['md'])!;
     expect([md['version'], md['status'], md['ratified']]).toEqual([2, 'published', false]);
-    expect(md['rubric']).toBeTruthy();
+    // Read by nobody in particular: the criteria and levels in words, and none of the weights, level values or pass rule.
+    const plainRubric = md['rubric'] as Out;
+    expect([md['assessmentUse'], 'passRule' in plainRubric, 'passGateWhy' in md, typeof list['stakesWithheld']]).toEqual(['pass-gate', false, false, 'string']);
+    expect((plainRubric['criteria'] as Out[]).every((c) => !('weight' in c) && (c['levels'] as Out[]).every((l) => !('value' in l) && typeof l['label'] === 'string'))).toBe(true);
+    // Signed with a key a person holds, as the web app signs for a wallet: the whole rubric.
+    const signed = ok(await act(H, 'pev.list_scenarios', W.ana, {}, { scenario_iri: S['md'] }));
+    const signedRubric = (signed['scenario'] as Out)['rubric'] as { passRule: { minPercent: number }; criteria: { weight: number }[] };
+    expect([typeof signedRubric.passRule.minPercent, signedRubric.criteria.every((c) => typeof c.weight === 'number'), signed['stakesWithheld']]).toEqual(['number', true, undefined]);
     expect(String(md['evidenceNote'])).toContain('once a reviewer ratifies it');
     expect(views.some((v) => v['scenarioIri'] === S['mdDraft'])).toBe(false);
     expect((list['bridge'] as Out)['counterpartRoute']).toBe('scripted');
@@ -2901,8 +2908,12 @@ describe('Interego sign-in: a request the relay signed acts as the person whose 
     const o = ok(await ract(RH, 'pev.override_attempt', AG.reviewerUi, { attemptIri: X['a'], target: view['currentTarget'], levels: lv, sawJudgeLevelsFirst: true }));
     expect([o['state'], o['reviewer'], o['projectable']]).toEqual(['overridden', P.reviewer, true]);
     expect(rpod.store.get(String(o['descriptorUrl']))).toContain(P.reviewer);
-    const p = ok(await ract(RH, 'pev.project_attempt', AG.ana, { attemptIri: X['a'], format: 'xapi' }));
+    // From her web UI agent the statement names her DID; from her chat agent a scored statement, which carries the score,
+    // is recorded but not returned (chat-stakes.test.ts).
+    const p = ok(await ract(RH, 'pev.project_attempt', agentOf('practice-evidence-u-pk-0000000000d4', P.ana), { attemptIri: X['a'], format: 'xapi' }));
     expect(((p['statement'] as Out)['actor'] as Out)['account']).toMatchObject({ name: P.ana });
+    const fromChat = ok(await ract(RH, 'pev.project_attempt', AG.ana, { attemptIri: X['a'], format: 'xapi' }));
+    expect([fromChat['statement'], typeof fromChat['statementId'], typeof fromChat['stakesWithheld']]).toEqual([null, 'string', 'string']);
     const ex = ok(await ract(RH, 'pev.export_record', AG.ana, { attemptIri: X['a'] }));
     expect([ex['relayAddresses'], ex['identityHost']]).toEqual([[RELAY.address.toLowerCase()], IDH]);
     expect((ex['verify'] as string[]).some((x) => x.includes('relay-delegated'))).toBe(true);

@@ -1,5 +1,38 @@
 # Changelog
 
+## 2026-11-09 — Practice Evidence: no chat assistant receives the weights or the pass mark
+
+Before, listing scenarios, reading a session and the review queue gave any
+signed-in person's chat assistant a scored scenario's weights, the points for
+each level and the pass mark, and the judge message could only ask for a new
+chat. Now no answer Practice Evidence gives a chat assistant carries them,
+whatever roles the person holds: not the weights, level points, pass rule or
+the author's reason for it, nor any points, percent, pass result, unmet
+requirement or closeness to the pass mark worked out from them. A chat still
+gets the criteria and levels in words, every level chosen, the quotes, the
+reasons, the states and the counts. A judge who reuses a chat has not read
+the stakes through the connector.
+
+The workspace tells a chat from its own web app by the agent the Interego
+relay signed for. The relay takes that agent from the signed-in session and
+drops any agent a caller names, so nothing a chat adds to a request changes
+it. The web app's own agent, and a key a person holds, still read the
+stakes; a request nobody signed does not. The scenario list is now a POST
+that may be signed: the web app signs one list read when Interego sign-in
+signs it without asking, and otherwise shows "Show the weights and pass mark",
+which a wallet or manual signing confirms once. Editing a scored scenario
+needs that signed read, or a sign-in. The queue a chat reads is ranked without
+closeness to the pass mark. A chat gets a scored session's statement id but
+not the statement, and its record's descriptors but not its graphs.
+
+The landing page, the guide, the Connect dialog, the judge message and the
+README now say this, and what it does not cover: a record a person downloads
+or copies to their own storage holds everything, and a workspace without a
+record key keeps its records in plain text. The judge message still asks
+for a new chat, because one used for reviewing has seen other assessments'
+levels. A new test asks every read from each role's chat assistants and web
+app agent, and tries claims that a request is the web app's.
+
 ## 2026-11-09 — Foxxi keeps finalized LTI grades during retakes
 
 A scored LTI retake marked NotReady appears separately in the learner's
