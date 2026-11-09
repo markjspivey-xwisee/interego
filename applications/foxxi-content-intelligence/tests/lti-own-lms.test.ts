@@ -8,7 +8,7 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { randomUUID } from 'node:crypto';
+import { createPublicKey, generateKeyPairSync, randomUUID, verify } from 'node:crypto';
 import { gzipSync } from 'node:zlib';
 import { createVerticalBridge } from '../../_shared/vertical-bridge/index.js';
 import { LtiPlatform, attachLtiPlatformRoutes, autoPostForm, type ToolRegistration } from '../src/lti-platform.js';
@@ -98,6 +98,25 @@ describe('a launch from Foxxi\'s own LMS reaches its Tool over HTTP', () => {
     const again = await fetch(authUrl, { headers: { Accept: 'application/json' } });
     expect(again.status).toBe(401);
     expect(await again.json()).toMatchObject({ error: 'login_required' });
+  });
+
+  it('advertises and signs an RS256 launch when configured with an RSA key', () => {
+    const pem = generateKeyPairSync('rsa', { modulusLength: 2048 }).privateKey.export({ format: 'pem', type: 'pkcs8' }).toString();
+    const rsa = new LtiPlatform({ selfBaseUrl: `${base}/rsa`, tool: second.tool, privateKeyPem: pem });
+    const launch = rsa.beginLaunch(learner, course);
+    if (!launch.ok) throw new Error(launch.error);
+    const hint = new URL(launch.initiationUrl).searchParams;
+    const reply = rsa.authorize({ scope: 'openid', response_type: 'id_token', client_id: second.tool.clientId,
+      redirect_uri: second.tool.redirectUris[0], nonce: 'rsa-launch', login_hint: hint.get('login_hint'), lti_message_hint: hint.get('lti_message_hint') });
+    if (!reply.ok) throw new Error(reply.error);
+    const token = reply.fields.id_token!;
+    const [header, payload, signature] = token.split('.') as [string, string, string];
+    const jwk = rsa.jwks().keys[0]!;
+    expect(rsa.configuration().id_token_signing_alg_values_supported).toEqual(['RS256']);
+    expect(jwk).toMatchObject({ kty: 'RSA', use: 'sig', alg: 'RS256' });
+    expect(JSON.parse(Buffer.from(header, 'base64url').toString('utf8'))).toMatchObject({ alg: 'RS256', kid: jwk.kid });
+    expect(verify('RSA-SHA256', Buffer.from(`${header}.${payload}`), createPublicKey({ key: jwk, format: 'jwk' }), Buffer.from(signature, 'base64url'))).toBe(true);
+    expect(decode(token)).toMatchObject({ iss: rsa.issuer, sub: learner.sub, aud: second.tool.clientId });
   });
 
   it('refuses an id_token altered on the way to the Tool', async () => {

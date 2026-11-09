@@ -1,5 +1,12 @@
 # Changelog
 
+## 2026-11-09 — Foxxi encrypts stored LTI gradebooks
+
+Foxxi seals gradebook snapshots before serving or saving grades. Recovery of a
+mismatched legacy pointer requires an approved fingerprint of the signed copy
+and preserves the original pointer and payload. A configured RSA key lets the
+platform sign launches with RS256 for tools that require it.
+
 ## 2026-11-09 — Practice Evidence: the pages say when an assistant sees the weights and the pass mark
 
 The landing page said AI "never sees the weights or the pass mark". That is
