@@ -17,7 +17,7 @@
 import { describe, it, expect, afterAll } from 'vitest';
 import {
   importWallet, signMessageRaw, canonicalJson, sha256Hex, canonicalGraphDigest, verifySignedAuthorship, makeWalletDelegationVerifier,
-  ContextDescriptor, validate, deriveEncryptionKeyPair, type FetchFn, type Wallet, type IRI,
+  ContextDescriptor, validate, deriveEncryptionKeyPair, parseHypermediaMarkdown, type FetchFn, type Wallet, type IRI,
 } from '@interego/core';
 import {
   publish, fetchAllManifestEntries, predictManifestUrl, parseAuthorshipProofFromDescriptorTurtle, digestedGraphRegion,
@@ -3455,6 +3455,66 @@ describe('work-redesign bridge', () => {
     const beside = ok(await http(w, 'POST', 'read_envelope_template', { ...(await relaySigned(w, 'claude', OLU, { intent: 'wrd:read-records', template: { intent: 'wrd:classify-task' } })), intent: 'wrd:capture-workflow' }));
     expect(obj(beside['template'])['intent']).toBe('wrd:capture-workflow');
     refused(await http(w, 'POST', 'read_envelope_template', await relaySigned(w, 'claude', OLU, { intent: 'wrd:read-records' })), 400, /Unknown intent/, /under template in the payload the relay signs/);
+  }, 120_000);
+
+  it('the task-map packet is answered as its JSON alone, and an assistant with only the packet records the map from a chat: its read, then its payload template filled in and relay-signed, document text inside', async () => {
+    const idh = identityHost([OLU]);
+    const w = await world(relayDeps(idh));
+    await register(w);
+    ok(await act(w, ADMIN, 'update_registry', { entries: [didPerson(OLU, ['operator'], 'p-olu', 'Olu')] }));
+    const args = { document_title: 'AP SOP', document_text: SOP, workflow_title: 'Supplier invoice processing', pod_url: POD };
+    const answer = await fetch(`${w.base}/wrd/task_map_packet`, { method: 'POST', headers: { 'content-type': 'application/json', accept: 'application/json' }, body: JSON.stringify(args) });
+    const text = await answer.text();
+    const packet = obj(JSON.parse(text));
+    expect(answer.status).toBe(200);
+    // No Markdown copy of the packet rides along: it offers no next-step control, and the packet is the answer. What the
+    // bridge adds is its JSON-LD envelope, a few hundred bytes plus the context, not a multiple of the packet.
+    expect(packet['https://schema.org/encoding']).toBeUndefined();
+    const { '@context': _ctx, '@type': _type, conformsToShape: _shape, affordances: _aff, ...own } = packet;
+    expect(Buffer.byteLength(text) - Buffer.byteLength(JSON.stringify(own))).toBeLessThan(3_500);
+    expect(Buffer.byteLength(text)).toBeLessThan(SOP.length + 9_000);
+    // Asked for as Markdown, the whole packet is still there: a lossless snapshot and a json block.
+    const md = await fetch(`${w.base}/wrd/task_map_packet`, { method: 'POST', headers: { 'content-type': 'application/json', accept: 'text/markdown' }, body: JSON.stringify(args) });
+    expect(md.headers.get('content-type')).toContain('text/markdown');
+    const mdText = await md.text();
+    const snapshot = obj(JSON.parse(String(must(parseHypermediaMarkdown(mdText).fields?.['schema:text'], 'the snapshot'))));
+    expect(snapshot['request']).toEqual(packet['request']);
+    expect(obj(snapshot['next'])).toEqual(obj(packet['next']));
+    expect(mdText).toContain('```json\n');
+
+    // The packet names both routes: the web app's review, and a chat's.
+    const next = obj(packet['next']);
+    expect(String(next['review'])).toMatch(/capture table/);
+    const chat = obj(next['relaySigned']);
+    const how = String(chat['instructions']);
+    for (const s of ['act sends only the signed pair, whether made with sign_payload: true or passed on as returned by sign_request with payload as its only argument',
+      'document_text goes inside the payload', 'request.documentSha256', 'document.storeText is true', 'only after the person confirms the draft', 'never invent them']) expect(how).toContain(s);
+    expect(String(packet['instructions']).split('\n')[0]).toMatch(/^This bridge sampled no model and wrote nothing\. .*next\.relaySigned/);
+    // First the read it names, relay-signed: who is registered.
+    const read = obj(chat['readRegistry']);
+    expect(read['action']).toBe('urn:iep:action:wrd:read-records');
+    const { podUrl: readPod, nonce: _readNonce, ...readFields } = obj(read['payload']);
+    expect(readPod).toBe(POD);
+    const registry = ok(await http(w, 'POST', 'read_records', await relaySigned(w, 'claude', OLU, readFields)), 'the registry read');
+    expect(JSON.stringify(registry)).toContain(addr(CY));
+    // Then the payload template, filled in as its placeholders say, and nothing else: the relay carries podUrl as
+    // pod_url and sets the nonce here. The document's title and hash and storeText come as the packet gave them.
+    const template = obj(chat['payloadTemplate']);
+    expect(Object.keys(template).sort()).toEqual(['document', 'document_text', 'draftedBy', 'intent', 'nonce', 'podUrl', 'tasks', 'workflow']);
+    expect(obj(template['document'])).toEqual({ title: 'AP SOP', sha256: sha256Hex(SOP), storeText: true });
+    const slot = must(arr(template['tasks'])[0], 'the task slot');
+    const drafted = must(AP_TASKS()[0], 'a drafted task');
+    const task = Object.fromEntries(Object.keys(slot).filter((k) => drafted[k] !== undefined).map((k) => [k, drafted[k]]));
+    expect(Object.keys(task).sort()).toEqual(Object.keys(drafted).sort());
+    const { podUrl: _pod, nonce: _nonce, ...fields } = template;
+    const recorded = ok(await http(w, 'POST', 'record_task_map', await relaySigned(w, 'claude', OLU, {
+      ...fields, workflow: { title: obj(template['workflow'])['title'], unitLabel: 'invoice' }, tasks: [task], document_text: SOP,
+      draftedBy: { kind: 'agent', agent: 'test fixture standing in for the client agent', model: 'not-declared' },
+    })), 'the map recorded from the packet alone');
+    const workflowIri = String(recorded['workflowIri']);
+    const row = must(arr((await list(w))['workflows']).find((x) => x['workflowIri'] === workflowIri), 'the recorded workflow');
+    expect(row['documentText']).toBe(SOP);
+    expect(JSON.stringify(row)).toContain('Supplier invoice processing');
   }, 120_000);
 
   it('answers 502, not 200, when the pod refuses a write with 403', async () => {

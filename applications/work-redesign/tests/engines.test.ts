@@ -414,6 +414,12 @@ describe('quotes', () => {
     // The template asks only for what the agent can draft; the person who signs adds level, parties and kind. draftedBy is required, or "not-declared".
     expect(packet.draftTemplate.tasks).toEqual([{ name: '', description: '', sourceQuotes: [] }]);
     expect(packet.instructions).toMatch(/The capture refuses a map without draftedBy; "not-declared" is recorded as "not declared"/);
+    // Two routes to record the reviewed draft: the web app's capture table, and a chat's relay-signed payload, which carries the text itself.
+    expect(packet.next.review).toMatch(/capture table/);
+    expect(packet.next.relaySigned.payloadTemplate).toMatchObject({ intent: 'wrd:record-task-map', document: { title: 'AP SOP', sha256: sha256Hex(SOP), storeText: true } });
+    expect(packet.next.relaySigned.payloadTemplate['document_text']).toEqual(expect.any(String));
+    expect(packet.next.relaySigned.instructions).toMatch(/document_text goes inside the payload/);
+    expect(JSON.stringify(packet.next.relaySigned)).not.toContain('agent-acts-within-grant');
     expect(coerceCapture({ workflow: { title: 'x', unitLabel: 'y' }, tasks: [{ name: 'a', description: 'b', currentLevel: 'person', taskKind: 'invoice-matching', sourceQuotes: ['Match each invoice to its'] }], document: { title: 'd', sha256: sha256Hex(SOP), storeText: false } }, 'document'))
       .toMatchObject({ ok: false, why: expect.stringMatching(/^draftedBy is required/) });
   });

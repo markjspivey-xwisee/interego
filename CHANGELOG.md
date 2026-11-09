@@ -1,5 +1,39 @@
 # Changelog
 
+## 2026-11-09 — Smaller action answers from the vertical bridges; the task-map packet names the chat route
+
+An action answer from a vertical bridge carried a Markdown copy of itself
+under schema:encoding, so that an MCP client that cannot ask for Markdown
+still got the typed next-step controls. That copy also held the whole answer
+twice more, escaped in its front matter and again in a json block, so answers
+came to about four times their content: a Work Redesign task-map packet, a
+Practice Evidence judge packet sent through the relay's act (past a chat
+client's tool-result limit), and even a one-sentence refusal, about 14 KB.
+A JSON answer now carries that Markdown only when it has a next-step control
+to offer, and then only the controls and their links, never the answer again.
+An answer with no next step is the JSON alone: every Work Redesign and
+Practice Evidence answer today, and every refusal. Measured on local bridges:
+the task-map packet for a 1,358-character document went from 25,479 to 6,221
+bytes (9,064 with the chat-route step below), a judge packet for three
+exchanges from 38,907 to 9,539 bytes, and a refusal from about 14,000 to about
+2,700. Asked for as Markdown (Accept: text/markdown or ?format=markdown), an
+answer is still one document holding all of it, as before.
+
+Work Redesign's task-map packet said only how the web app records a reviewed
+draft. It now also says how a chat does it (next.relaySigned), as the app's
+copied message already told assistants: read who is registered first, show the
+person the draft and ask who does each task, then fill in the payload template
+and have the relay sign it, with the document's text inside the signed payload
+and document.storeText true. The packet's first instruction points to both
+routes, and the action's description of what it returns says so too. The
+action manifest's comment now names the pod a bridge is configured to write to.
+
+Not covered: the relay's act still escapes an answer once more inside its own
+result; the envelope template's schema for a task map still says to send
+document_text beside the envelope and does not list it among the payload's
+fields; and the manifest names only a bridge's default pod, not every pod it
+serves.
+
 ## 2026-11-09 — Foxxi keeps finalized LTI grades during retakes
 
 A scored LTI retake marked NotReady appears separately in the learner's

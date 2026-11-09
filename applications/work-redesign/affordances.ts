@@ -151,7 +151,7 @@ export const wrdAffordances: ReadonlyArray<Affordance> = [
       POD_INPUT,
     ],
     outputs: {
-      description: 'execution "client-required", sampling_performed false, writes_performed false, the instructions, the quote rule, the document and a draft template.',
+      description: 'execution "client-required", sampling_performed false, writes_performed false, the instructions, the quote rule, the document, a draft template, and next: how the reviewed draft is recorded, from this bridge\'s web app (review) or from a chat with the Interego connector (relaySigned: the registry read to make first and the payload to have the relay sign, which carries document_text inside it with document.storeText true).',
       properties: { execution: { type: 'string' }, sampling_performed: { type: 'boolean' }, writes_performed: { type: 'boolean' }, instructions: { type: 'string' }, quoteRule: { type: 'object' }, draftTemplate: { type: 'object' }, next: { type: 'object' } },
       required: ['execution', 'instructions'],
     },
