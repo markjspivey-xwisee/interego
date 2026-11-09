@@ -81,6 +81,9 @@ P_SH_DESC = SHACL + "description"
 P_SH_IN = SHACL + "in"
 P_SH_MINI = SHACL + "minInclusive"
 P_SH_MAXI = SHACL + "maxInclusive"
+P_SH_NODE = SHACL + "node"
+P_SH_NODEKIND = SHACL + "nodeKind"
+RDF_JSON = RDF + "JSON"
 P_FIRST = RDF + "first"
 P_REST = RDF + "rest"
 P_NIL = RDF + "nil"
@@ -226,10 +229,12 @@ class Field:
     required: bool = False
     raw_body: bool = False
     variable: str | None = None
+    json_kind: str | None = None
 
     def to_public(self) -> dict[str, Any]:
         return {
             "name": self.name, "path": self.path, "datatype": self.datatype,
+            "jsonKind": self.json_kind,
             "minCount": self.min_count, "maxCount": self.max_count,
             "pattern": self.pattern, "defaultValue": self.default,
             "maxLength": self.max_length, "minLength": self.min_length,
@@ -502,19 +507,58 @@ def _field_name(name: str | None, path: str | None, variable: str | None) -> str
     return match.group(1) if match else raw
 
 
+def _schema_types(prop: dict[str, Any]) -> list[str]:
+    raw = prop.get("type")
+    types = raw if isinstance(raw, list) else ([raw] if raw else [])
+    return [str(item) for item in types if item and str(item) != "null"]
+
+
+def _schema_json_kind(types: list[str]) -> str | None:
+    structured = [item for item in types if item in {"object", "array"}]
+    others = [item for item in types if item not in {"object", "array"}]
+    if not structured or others:
+        return None
+    if "object" in structured and "array" in structured:
+        return "json"
+    return structured[0]
+
+
+def _schema_datatype(types: list[str]) -> str | None:
+    type_map = {
+        "string": XSD + "string", "integer": XSD + "integer",
+        "number": XSD + "decimal", "boolean": XSD + "boolean",
+    }
+    if len(types) == 1:
+        return type_map.get(types[0])
+    return None
+
+
+def _shacl_json_kind(index: NodeIndex, node: dict[str, Any], datatype: str | None, max_count: int | None) -> str | None:
+    dt = datatype or ""
+    if dt == RDF_JSON or dt.endswith("#JSON"):
+        return "json"
+    if dt:
+        return None
+    nested = index.get(node, P_SH_NODE)
+    node_kind = str(literal(index.get(node, P_SH_NODEKIND)) or "")
+    blank = node_kind == SHACL + "BlankNode" or node_kind.endswith("#BlankNode")
+    if nested is not None or blank:
+        return "array" if (max_count or 0) > 1 else "object"
+    return None
+
+
 def _shape_fields(index: NodeIndex, shape_ref: Any) -> list[Field]:
     fields: list[Field] = []
     if isinstance(shape_ref, dict) and "properties" in shape_ref and P_SH_PROP not in shape_ref:
         required = set(as_list(shape_ref.get("required") or []))
-        type_map = {
-            "string": XSD + "string", "integer": XSD + "integer",
-            "number": XSD + "decimal", "boolean": XSD + "boolean",
-        }
         for name, prop in (shape_ref.get("properties") or {}).items():
             prop = prop if isinstance(prop, dict) else {}
+            types = _schema_types(prop)
+            json_kind = _schema_json_kind(types)
             fields.append(Field(
                 name=str(name), path=str(name),
-                datatype=type_map.get(str(prop.get("type") or ""), XSD + "string"),
+                datatype=None if json_kind else (_schema_datatype(types) or XSD + "string"),
+                json_kind=json_kind,
                 min_count=1 if name in required else 0, max_count=1,
                 pattern=prop.get("pattern"), default=prop.get("default"),
                 max_length=_inty(prop.get("maxLength")), min_length=_inty(prop.get("minLength")),
@@ -556,11 +600,14 @@ def _shape_fields(index: NodeIndex, shape_ref: Any) -> list[Field]:
             else:
                 enum = literals(enum_raw)
         min_count = _inty(literal(index.get(node, P_SH_MIN)))
+        max_count = _inty(literal(index.get(node, P_SH_MAX)))
+        datatype = str(literal(index.get(node, P_SH_DT)) or "") or None
         fields.append(Field(
             name=_field_name(str(name) if name else None, path, None),
             path=path or None,
-            datatype=str(literal(index.get(node, P_SH_DT)) or "") or None,
-            min_count=min_count, max_count=_inty(literal(index.get(node, P_SH_MAX))),
+            datatype=datatype,
+            json_kind=_shacl_json_kind(index, node, datatype, max_count),
+            min_count=min_count, max_count=max_count,
             pattern=str(literal(index.get(node, P_SH_PAT)) or "") or None,
             default=literal(index.get(node, P_SH_DEF)),
             max_length=_inty(literal(index.get(node, P_SH_MAXLEN))),
@@ -913,39 +960,125 @@ def load_descriptor(url: str) -> Descriptor:
 
 
 
-def expand_uri_template(template: str, values: dict[str, Any]) -> str:
-    def replace(match: re.Match[str]) -> str:
-        expr = match.group(1)
-        op = ""
-        if expr and expr[0] in "+#./;?&":
-            op, expr = expr[0], expr[1:]
-        names = [part.split("*", 1)[0].split(":", 1)[0] for part in expr.split(",")]
-        pairs = [(n, str(values[n])) for n in names if n in values and values[n] not in (None, "")]
-        if not pairs:
-            return ""
-        if op == "":
-            return ",".join(urllib.parse.quote(val, safe="") for _, val in pairs)
-        if op == "+":
-            return ",".join(urllib.parse.quote(val, safe=":/?#[]@!$&'()*+,;=") for _, val in pairs)
-        if op == "#":
-            return "#" + ",".join(urllib.parse.quote(val, safe=":/?[]@!$&'()*+,;=") for _, val in pairs)
-        if op == "?":
-            return "?" + "&".join(f"{n}={urllib.parse.quote(v, safe='')}" for n, v in pairs)
-        if op == "&":
-            return "&" + "&".join(f"{n}={urllib.parse.quote(v, safe='')}" for n, v in pairs)
-        if op == "/":
-            return "/" + "/".join(urllib.parse.quote(v, safe="") for _, v in pairs)
-        if op == ".":
-            return "." + ".".join(urllib.parse.quote(v, safe="") for _, v in pairs)
-        if op == ";":
-            return "".join(f";{n}={urllib.parse.quote(v, safe='')}" for n, v in pairs)
+# RFC 6570. quote(..., safe="!*'()") matches encodeURIComponent, including
+# UTF-8 for non-ASCII (café -> caf%C3%A9). Reserved expansion (+) leaves
+# ASCII reserved characters unescaped and still percent-encodes UTF-8.
+_COMPONENT_SAFE = "!*'()"
+_RESERVED_SAFE = _COMPONENT_SAFE + ":/?#[]@!$&+,;="
+_FRAGMENT_SAFE = _COMPONENT_SAFE + ":/?[]@!$&+,;="
+
+
+def _template_defined(value: Any) -> bool:
+    if value is None or value == "":
+        return False
+    if isinstance(value, list):
+        return any(_template_defined(item) for item in value)
+    if isinstance(value, dict):
+        return any(_template_defined(item) for item in value.values())
+    return True
+
+
+def _template_scalar(value: Any) -> str:
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, (dict, list)):
+        return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+    return str(value)
+
+
+def _template_encode(value: Any, op: str) -> str:
+    safe = _RESERVED_SAFE if op == "+" else (_FRAGMENT_SAFE if op == "#" else _COMPONENT_SAFE)
+    return urllib.parse.quote(_template_scalar(value), safe=safe)
+
+
+def _template_specs(expr: str) -> list[tuple[str, bool]]:
+    specs = []
+    for part in expr.split(","):
+        explode = "*" in part
+        name = part.split("*", 1)[0].split(":", 1)[0]
+        specs.append((name, explode))
+    return specs
+
+
+def _form_parts(name: str, explode: bool, value: Any, enc_op: str) -> list[str]:
+    if isinstance(value, dict):
+        pairs = [(key, item) for key, item in value.items() if _template_defined(item)]
+        if explode:
+            return [f"{_template_encode(key, enc_op)}={_template_encode(item, enc_op)}" for key, item in pairs]
+        flat = [piece for key, item in pairs for piece in (_template_encode(key, enc_op), _template_encode(item, enc_op))]
+        return [f"{name}={','.join(flat)}"]
+    items = value if isinstance(value, list) else [value]
+    encoded = [_template_encode(item, enc_op) for item in items if item is not None and item != ""]
+    if explode:
+        return [f"{name}={item}" for item in encoded]
+    return [f"{name}={','.join(encoded)}"]
+
+
+def _path_value(explode: bool, value: Any, op: str, enc_op: str) -> str:
+    if isinstance(value, dict):
+        pairs = [(key, item) for key, item in value.items() if _template_defined(item)]
+        rendered = [
+            _template_encode(key, enc_op) + ("=" if explode else ",") + _template_encode(item, enc_op)
+            for key, item in pairs
+        ]
+        if explode and op == "/":
+            return "/".join(rendered)
+        if explode and op == ".":
+            return ".".join(rendered)
+        return ",".join(rendered)
+    items = value if isinstance(value, list) else [value]
+    encoded = [_template_encode(item, enc_op) for item in items if item is not None and item != ""]
+    if explode and op == "/":
+        return "/".join(encoded)
+    if explode and op == ".":
+        return ".".join(encoded)
+    return ",".join(encoded)
+
+
+def _expand_expr(expr: str, values: dict[str, Any]) -> str:
+    op = ""
+    if expr and expr[0] in "+#./;?&":
+        op, expr = expr[0], expr[1:]
+    specs = [(name, explode) for name, explode in _template_specs(expr) if _template_defined(values.get(name))]
+    if not specs:
         return ""
-    return re.sub(r"\{([^{}]+)\}", replace, template)
+    enc_op = op if op in {"+", "#"} else ""
+    if op in {"?", "&", ";"}:
+        parts: list[str] = []
+        for name, explode in specs:
+            parts.extend(_form_parts(name, explode, values[name], enc_op))
+        if op == ";":
+            return "".join(f";{part}" for part in parts)
+        return ("&" if op == "&" else "?") + "&".join(parts)
+    rendered = [_path_value(explode, values[name], op, enc_op) for name, explode in specs]
+    if op == "/":
+        return "/" + "/".join(rendered)
+    if op == ".":
+        return "." + ".".join(rendered)
+    if op == "#":
+        return "#" + ",".join(rendered)
+    return ",".join(rendered)
+
+
+def expand_uri_template(template: str, values: dict[str, Any]) -> str:
+    return re.sub(r"\{([^{}]+)\}", lambda match: _expand_expr(match.group(1), values), template)
 
 
 def coerce_value(fld: Field, value: Any) -> Any:
     if value is None or value == "":
         return None
+    if fld.json_kind:
+        parsed = value
+        if not isinstance(value, (dict, list)):
+            try:
+                parsed = json.loads(str(value))
+            except json.JSONDecodeError as exc:
+                raise ValueError(f"{fld.name} must be JSON") from exc
+        if fld.json_kind == "object" and not isinstance(parsed, dict):
+            raise ValueError(f"{fld.name} must be a JSON object")
+        if fld.json_kind == "array" and not isinstance(parsed, list):
+            raise ValueError(f"{fld.name} must be a JSON array")
+        return parsed
     dt = fld.datatype or ""
     if dt.endswith("#integer") or dt.endswith("#int"):
         return int(str(value))
@@ -987,26 +1120,28 @@ def validate_fields(control: Control, supplied: dict[str, Any]) -> tuple[dict[st
         except (TypeError, ValueError) as exc:
             errors.append(f"{fld.name}: {exc}")
             continue
-        text = "" if typed is None else str(typed)
-        if fld.min_length is not None and len(text) < fld.min_length:
+        structured = isinstance(typed, (dict, list))
+        text = found if isinstance(found, str) else ("" if typed is None else str(typed))
+        if not structured and fld.min_length is not None and len(text) < fld.min_length:
             errors.append(f"{fld.name}: shorter than minLength {fld.min_length}")
-        if fld.max_length is not None and len(text) > fld.max_length:
+        if not structured and fld.max_length is not None and len(text) > fld.max_length:
             errors.append(f"{fld.name}: longer than maxLength {fld.max_length}")
-        if fld.pattern:
+        if not structured and fld.pattern:
             try:
                 if not re.search(fld.pattern, text):
                     errors.append(f"{fld.name}: does not match pattern {fld.pattern}")
             except re.error as exc:
                 errors.append(f"{fld.name}: invalid pattern ({exc})")
-        if fld.enum and text not in {str(x) for x in fld.enum}:
+        if not structured and fld.enum and text not in {str(x) for x in fld.enum}:
             errors.append(f"{fld.name}: must be one of {sorted(str(x) for x in fld.enum)}")
-        try:
-            if fld.min_inclusive is not None and float(typed) < float(fld.min_inclusive):
-                errors.append(f"{fld.name}: below minInclusive {fld.min_inclusive}")
-            if fld.max_inclusive is not None and float(typed) > float(fld.max_inclusive):
-                errors.append(f"{fld.name}: above maxInclusive {fld.max_inclusive}")
-        except (TypeError, ValueError):
-            pass
+        if not structured:
+            try:
+                if fld.min_inclusive is not None and float(typed) < float(fld.min_inclusive):
+                    errors.append(f"{fld.name}: below minInclusive {fld.min_inclusive}")
+                if fld.max_inclusive is not None and float(typed) > float(fld.max_inclusive):
+                    errors.append(f"{fld.name}: above maxInclusive {fld.max_inclusive}")
+            except (TypeError, ValueError):
+                pass
         values[fld.name] = typed
         if used:
             incoming.pop(used, None)
@@ -1054,11 +1189,23 @@ def classify_transport(control: Control, descriptor_url: str) -> str:
 
 def add_query_params(url: str, params: dict[str, Any]) -> str:
     parts = urllib.parse.urlsplit(url)
-    current = dict(urllib.parse.parse_qsl(parts.query, keep_blank_values=True))
+    pairs = urllib.parse.parse_qsl(parts.query, keep_blank_values=True)
+    keep = []
+    for key, val in pairs:
+        if key not in params:
+            keep.append((key, val))
     for key, val in params.items():
-        if val not in (None, ""):
-            current[key] = str(val)
-    return urllib.parse.urlunsplit((parts.scheme, parts.netloc, parts.path, urllib.parse.urlencode(current), parts.fragment))
+        if val is None or val == "":
+            continue
+        if isinstance(val, list):
+            for item in val:
+                if item is not None and item != "":
+                    keep.append((key, _template_scalar(item)))
+        elif isinstance(val, dict):
+            keep.append((key, json.dumps(val, ensure_ascii=False, separators=(",", ":"))))
+        else:
+            keep.append((key, _template_scalar(val)))
+    return urllib.parse.urlunsplit((parts.scheme, parts.netloc, parts.path, urllib.parse.urlencode(keep), parts.fragment))
 
 
 def resolve_plan(control: Control, values: dict[str, Any], descriptor_url: str) -> RequestPlan:
@@ -1093,7 +1240,7 @@ def resolve_plan(control: Control, values: dict[str, Any], descriptor_url: str) 
             headers["Content-Type"] = control.media_type or "text/plain"
         elif method not in SAFE_METHODS:
             body = values
-            body_text = json.dumps(values, indent=2)
+            body_text = json.dumps(values, indent=2, ensure_ascii=False)
             headers["Content-Type"] = "application/json"
     elif transport == "mcp":
         notes.append("hydra:target is an Interego tool junction (or missing). Plain HTTP will not reach it; use the Interego relay MCP.")
@@ -1112,7 +1259,7 @@ def resolve_plan(control: Control, values: dict[str, Any], descriptor_url: str) 
         transport = "mcp"
     if url and method not in SAFE_METHODS and body is None and not raw_body_field and values:
         body = values
-        body_text = json.dumps(values, indent=2)
+        body_text = json.dumps(values, indent=2, ensure_ascii=False)
         headers.setdefault("Content-Type", "application/json")
     if raw_body_field and body_text is not None and url:
         headers["Content-Type"] = control.media_type or "application/sparql-query"

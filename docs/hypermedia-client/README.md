@@ -54,7 +54,11 @@ python3 proxy.py --port 8765
 # then open http://127.0.0.1:8765/
 ```
 
-`proxy.py` serves `index.html` and also exposes `GET/POST /proxy?url=...` with `Access-Control-Allow-Origin: *`. You do not need the proxy for the i2idlx catalog or `id.i2idl.org` reads — those hosts already send `Access-Control-Allow-Origin: *`. Use the proxy field in the UI (set it to `/proxy`) when some other descriptor host blocks the browser.
+`proxy.py` listens on `127.0.0.1` unless you pass `--bind`. It serves `index.html` and forwards `GET`, `HEAD`, `POST`, `PUT`, `PATCH`, `DELETE`, and explicit `OPTIONS` for `/proxy?url=...`, adding `Access-Control-Allow-Origin: *`. A browser CORS preflight (`OPTIONS` with `Access-Control-Request-Method`) is answered locally and is not forwarded.
+
+You do not need the proxy for the i2idlx catalog, `id.i2idl.org`, or `foxxi-bridge.interego.xwisee.com` — those hosts already send `Access-Control-Allow-Origin: *`. Use the proxy field in the UI (set it to `/proxy`) when some other descriptor host blocks the browser. Descriptor loads through the proxy ask for `?as=jsonld`, and the proxy also converts Turtle when `Accept` prefers JSON-LD, so a Turtle-only host loads when `rdflib` is installed next to `proxy.py`.
+
+The proxy forwards only `http` and `https`. After DNS resolution it refuses loopback, private, link-local, and metadata addresses (for example `127.0.0.1`, `10.0.0.0/8`, `169.254.169.254`, `metadata.google.internal`). Pass `--allow-private` only when you mean to proxy those. `--allow-host example.org` (repeatable) limits forwarding to the named hosts; a name on that list still has to pass the private-address check unless `--allow-private` is set. Redirects are checked again on each hop.
 
 You can also open `index.html` directly as a file, or point any static server at this directory.
 
@@ -81,6 +85,10 @@ The client therefore:
 The Interego `act` kernel verb was verified against `act-get-scheme`: given the catalog URL and that action IRI, it re-resolved `hydra:target` to `https://id.i2idl.org/scheme.ttl` and returned the same Turtle as a direct HTTP GET.
 
 SHACL `NodeShape` property constraints (name, datatype, minCount/maxCount, pattern, defaultValue, maxLength/minLength, description, `sh:in`, min/maxInclusive) become form fields. If `hydra:expects` is an inline JSON Schema object (as on the Foxxi affordance manifest), those properties are used instead. Hydra template variables are merged onto the same fields.
+
+JSON Schema `object` and `array` properties, SHACL properties with `sh:node` or `sh:nodeKind sh:BlankNode`, and `rdf:JSON` datatypes are parsed as JSON. A field such as Foxxi's `document` or `concept_ids` is sent as a real object or array in a JSON body, and a list is expanded as an RFC 6570 list when it fills a URI template. Other fields stay strings.
+
+URI templates use RFC 6570 percent-encoding of UTF-8 (`encodeURIComponent` semantics). `café` becomes `caf%C3%A9`. A `+` operator still leaves ASCII reserved characters unescaped.
 
 ## Safety
 

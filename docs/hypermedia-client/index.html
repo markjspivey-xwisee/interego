@@ -144,6 +144,7 @@ const P = {
   shMaxLen: SHACL + "maxLength", shMinLen: SHACL + "minLength",
   shDesc: SHACL + "description", shIn: SHACL + "in",
   shMinI: SHACL + "minInclusive", shMaxI: SHACL + "maxInclusive",
+  shNode: SHACL + "node", shNodeKind: SHACL + "nodeKind",
   first: RDF + "first", rest: RDF + "rest", nil: RDF + "nil"
 };
 const PREFIXES0 = { hydra: HYDRA, sh: SHACL, iep: IEP, ieh: IEH, hmd: HMD, dct: DCT, rdfs: RDFS, rdf: RDF, dcat: DCAT, xsd: XSD, schema: "https://schema.org/" };
@@ -323,16 +324,42 @@ function fieldName(name, path, variable) {
   return m ? m[1] : raw;
 }
 
+function schemaTypes(prop) {
+  return asList(prop && prop.type).map(t => String(t)).filter(t => t && t !== "null");
+}
+function schemaJsonKind(types) {
+  const structured = types.filter(t => t === "object" || t === "array");
+  const others = types.filter(t => t !== "object" && t !== "array");
+  if (!structured.length || others.length) return null;
+  if (structured.includes("object") && structured.includes("array")) return "json";
+  return structured[0];
+}
+function schemaDatatype(types) {
+  const typeMap = { string: XSD + "string", integer: XSD + "integer", number: XSD + "decimal", boolean: XSD + "boolean" };
+  return types.length === 1 ? (typeMap[types[0]] || null) : null;
+}
+function shaclJsonKind(index, node, datatype, maxCount) {
+  const dt = datatype || "";
+  if (dt === RDF + "JSON" || dt.endsWith("#JSON")) return "json";
+  if (dt) return null;
+  const nested = index.get(node, P.shNode);
+  const nodeKind = String(literal(index.get(node, P.shNodeKind)) || "");
+  const blank = nodeKind === SHACL + "BlankNode" || nodeKind.endsWith("#BlankNode");
+  if (nested != null || blank) return (maxCount || 0) > 1 ? "array" : "object";
+  return null;
+}
+
 function shapeFields(index, shapeRef) {
   const fields = [];
   if (shapeRef && typeof shapeRef === "object" && shapeRef.properties && !(P.shProp in shapeRef)) {
     const required = new Set(asList(shapeRef.required || []));
-    const typeMap = { string: XSD + "string", integer: XSD + "integer", number: XSD + "decimal", boolean: XSD + "boolean" };
     for (const [name, prop0] of Object.entries(shapeRef.properties || {})) {
       const prop = (prop0 && typeof prop0 === "object") ? prop0 : {};
+      const types = schemaTypes(prop);
+      const jsonKind = schemaJsonKind(types);
       fields.push({
-        name, path: name, datatype: typeMap[prop.type] || XSD + "string",
-        minCount: required.has(name) ? 1 : 0, maxCount: 1, pattern: prop.pattern || null,
+        name, path: name, datatype: jsonKind ? null : (schemaDatatype(types) || XSD + "string"),
+        jsonKind, minCount: required.has(name) ? 1 : 0, maxCount: 1, pattern: prop.pattern || null,
         defaultValue: prop.default, maxLength: inty(prop.maxLength), minLength: inty(prop.minLength),
         description: prop.description || "", enum: asList(prop.enum || []),
         minInclusive: prop.minimum, maxInclusive: prop.maximum, required: required.has(name), rawBody: false
@@ -369,10 +396,12 @@ function shapeFields(index, shapeRef) {
       enumVals = (typeof head === "string" && (head.startsWith("_:") || index.node(head))) ? index.rdfList(head) : literals(enumRaw);
     }
     const minCount = inty(literal(index.get(node, P.shMin)));
+    const maxCount = inty(literal(index.get(node, P.shMax)));
+    const datatype = String(literal(index.get(node, P.shDt)) || "") || null;
     fields.push({
       name: fieldName(name ? String(name) : null, path, null), path: path || null,
-      datatype: String(literal(index.get(node, P.shDt)) || "") || null,
-      minCount, maxCount: inty(literal(index.get(node, P.shMax))),
+      datatype, jsonKind: shaclJsonKind(index, node, datatype, maxCount),
+      minCount, maxCount,
       pattern: String(literal(index.get(node, P.shPat)) || "") || null,
       defaultValue: literal(index.get(node, P.shDef)),
       maxLength: inty(literal(index.get(node, P.shMaxLen))), minLength: inty(literal(index.get(node, P.shMinLen))),
@@ -572,14 +601,19 @@ function proxyBase() {
   const raw = document.getElementById("proxy").value.trim();
   return raw;
 }
-function viaProxy(url) {
+function viaProxy(url, extra) {
   const proxy = proxyBase();
   if (!proxy) return url;
   const join = proxy.includes("?") ? "&" : "?";
-  return proxy + join + "url=" + encodeURIComponent(url);
+  let out = proxy + join + "url=" + encodeURIComponent(url);
+  if (extra && extra.as) out += "&as=" + encodeURIComponent(extra.as);
+  return out;
 }
 async function fetchText(url, accept) {
-  const res = await fetch(viaProxy(url), { headers: { Accept: accept || "*/*" } });
+  // Descriptor loads ask for JSON-LD. When a proxy is in use, also ask it
+  // to convert a Turtle-only response (proxy.py ?as=jsonld, needs rdflib).
+  const extra = (proxyBase() && accept && accept.includes("ld+json")) ? { as: "jsonld" } : null;
+  const res = await fetch(viaProxy(url, extra), { headers: { Accept: accept || "*/*" } });
   const text = await res.text();
   const ct = res.headers.get("content-type") || "";
   return { ok: res.ok, status: res.status, contentType: ct, text, url };
@@ -594,11 +628,20 @@ async function fetchAuthority(url) {
     const kind = classifyPayload(res.text, res.contentType);
     return kind ? { ...res, kind, finalUrl: candidate } : null;
   };
+  const preferJsonLd = async (candidate, got) => {
+    if (!got || got.kind === "jsonld" || !proxyBase()) return got;
+    if (got.kind !== "turtle") return got;
+    try {
+      const alt = await attempt(withFormat(candidate, "jsonld"));
+      if (alt && alt.kind === "jsonld") return alt;
+    } catch {}
+    return got;
+  };
   if (hasFmt) {
-    const got = await attempt(url);
+    const got = await preferJsonLd(url, await attempt(url));
     if (got) return got;
   } else {
-    const got = await attempt(url);
+    const got = await preferJsonLd(url, await attempt(url));
     if (got) {
       if (got.kind !== "jsonld") {
         try {
@@ -609,7 +652,7 @@ async function fetchAuthority(url) {
       return got;
     }
     for (const fmt of ["jsonld", "turtle", "markdown"]) {
-      const alt = await attempt(withFormat(url, fmt));
+      const alt = await preferJsonLd(withFormat(url, fmt), await attempt(withFormat(url, fmt)));
       if (alt) return alt;
     }
   }
@@ -628,7 +671,7 @@ function parseDescriptor(text, contentType, url) {
     return { url, title, types, description, contentType, seeAlso, controls: extractControls(index, url) };
   }
   if (kind === "markdown") return parseMarkdown(text, url, contentType);
-  if (kind === "turtle") throw new Error("This host served Turtle. Request ?format=jsonld, or run proxy.py and retry — the proxy can convert Turtle when rdflib is installed.");
+  if (kind === "turtle") throw new Error("This host served Turtle. Request ?format=jsonld, or set the proxy field to proxy.py — it converts Turtle when the request asks for JSON-LD and rdflib is installed.");
   throw new Error("Unrecognized descriptor representation (" + contentType + ")");
 }
 function findControl(descriptor, rel) {
@@ -641,30 +684,101 @@ function findControl(descriptor, rel) {
       c.rel.endsWith("#" + rel) || c.rel.endsWith("/" + rel) || c.rel.toLowerCase().endsWith(":" + lowered);
   }) || null;
 }
-function expandUriTemplate(template, values) {
-  return template.replace(/\{([^{}]+)\}/g, (_, expr) => {
-    let op = "";
-    if ("+#./;?&".includes(expr[0])) { op = expr[0]; expr = expr.slice(1); }
-    const names = expr.split(",").map(p => p.split("*")[0].split(":")[0]);
-    const pairs = names.filter(n => values[n] != null && values[n] !== "").map(n => [n, String(values[n])]);
-    if (!pairs.length) return "";
-    const enc = (v, safe) => encodeURIComponent(v).replace(/%[0-9A-F]{2}/g, (m) => {
-      const ch = decodeURIComponent(m);
-      return (safe && safe.includes(ch)) ? ch : m;
-    });
-    if (op === "") return pairs.map(([, v]) => enc(v, "")).join(",");
-    if (op === "+") return pairs.map(([, v]) => enc(v, ":/?#[]@!$&'()*+,;=")).join(",");
-    if (op === "#") return "#" + pairs.map(([, v]) => enc(v, ":/?[]@!$&'()*+,;=")).join(",");
-    if (op === "?") return "?" + pairs.map(([n, v]) => n + "=" + enc(v, "")).join("&");
-    if (op === "&") return "&" + pairs.map(([n, v]) => n + "=" + enc(v, "")).join("&");
-    if (op === "/") return "/" + pairs.map(([, v]) => enc(v, "")).join("/");
-    if (op === ".") return "." + pairs.map(([, v]) => enc(v, "")).join(".");
-    if (op === ";") return pairs.map(([n, v]) => ";" + n + "=" + enc(v, "")).join("");
-    return "";
+// RFC 6570 percent-encoding. encodeURIComponent is the simple-expansion
+// encoding; bytes at or above 0x80 stay encoded so a character such as
+// "é" (%C3%A9) is not decoded one byte at a time. Reserved expansion (+)
+// additionally leaves ASCII reserved characters unescaped.
+function pctEncode(value, safe) {
+  return encodeURIComponent(String(value)).replace(/%[0-9A-F]{2}/gi, (hex) => {
+    const byte = parseInt(hex.slice(1), 16);
+    if (byte >= 0x80) return hex;
+    const ch = String.fromCharCode(byte);
+    return safe && safe.includes(ch) ? ch : hex;
   });
+}
+const RESERVED_SAFE = ":/?#[]@!$&'()*+,;=";
+const FRAGMENT_SAFE = ":/?[]@!$&'()*+,;=";
+function templateDefined(value) {
+  if (value == null || value === "") return false;
+  if (Array.isArray(value)) return value.some(templateDefined);
+  if (typeof value === "object") return Object.values(value).some(templateDefined);
+  return true;
+}
+function templateScalar(value) {
+  if (typeof value === "boolean") return value ? "true" : "false";
+  if (value != null && typeof value === "object") return JSON.stringify(value);
+  return String(value);
+}
+function templateEncode(value, op) {
+  const safe = op === "+" ? RESERVED_SAFE : (op === "#" ? FRAGMENT_SAFE : "");
+  return pctEncode(templateScalar(value), safe);
+}
+function expandUriTemplate(template, values) {
+  return template.replace(/\{([^{}]+)\}/g, (_, expr) => expandTemplateExpr(expr, values));
+}
+function expandTemplateExpr(expr, values) {
+  let op = "";
+  if ("+#./;?&".includes(expr[0])) { op = expr[0]; expr = expr.slice(1); }
+  const specs = expr.split(",").map((part) => {
+    const explode = part.includes("*");
+    const name = part.split("*")[0].split(":")[0];
+    return { name, explode };
+  }).filter((spec) => templateDefined(values[spec.name]));
+  if (!specs.length) return "";
+  const encOp = (op === "+" || op === "#") ? op : "";
+  if (op === "?" || op === "&" || op === ";") {
+    const parts = [];
+    for (const spec of specs) parts.push(...templateFormParts(spec, values[spec.name], encOp));
+    if (op === ";") return parts.map((part) => ";" + part).join("");
+    return (op === "&" ? "&" : "?") + parts.join("&");
+  }
+  const rendered = specs.map((spec) => templatePathValue(spec, values[spec.name], op, encOp));
+  if (op === "/") return "/" + rendered.join("/");
+  if (op === ".") return "." + rendered.join(".");
+  if (op === "#") return "#" + rendered.join(",");
+  return rendered.join(",");
+}
+function templateFormParts(spec, value, encOp) {
+  if (value != null && typeof value === "object" && !Array.isArray(value)) {
+    const pairs = Object.entries(value).filter(([, item]) => templateDefined(item));
+    if (spec.explode) return pairs.map(([key, item]) => templateEncode(key, encOp) + "=" + templateEncode(item, encOp));
+    const flat = pairs.flatMap(([key, item]) => [templateEncode(key, encOp), templateEncode(item, encOp)]);
+    return [spec.name + "=" + flat.join(",")];
+  }
+  const items = (Array.isArray(value) ? value : [value]).filter((item) => item != null && item !== "");
+  const encoded = items.map((item) => templateEncode(item, encOp));
+  if (spec.explode) return encoded.map((item) => spec.name + "=" + item);
+  return [spec.name + "=" + encoded.join(",")];
+}
+function templatePathValue(spec, value, op, encOp) {
+  if (value != null && typeof value === "object" && !Array.isArray(value)) {
+    const pairs = Object.entries(value).filter(([, item]) => templateDefined(item));
+    const rendered = pairs.map(([key, item]) => templateEncode(key, encOp) + (spec.explode ? "=" : ",") + templateEncode(item, encOp));
+    if (spec.explode && op === "/") return rendered.join("/");
+    if (spec.explode && op === ".") return rendered.join(".");
+    return rendered.join(",");
+  }
+  const items = (Array.isArray(value) ? value : [value]).filter((item) => item != null && item !== "");
+  const encoded = items.map((item) => templateEncode(item, encOp));
+  if (spec.explode && op === "/") return encoded.join("/");
+  if (spec.explode && op === ".") return encoded.join(".");
+  return encoded.join(",");
 }
 function coerceValue(field, value) {
   if (value == null || value === "") return null;
+  const kind = field.jsonKind || null;
+  if (kind) {
+    let parsed = value;
+    if (typeof value !== "object") {
+      try { parsed = JSON.parse(String(value)); }
+      catch { throw new Error(field.name + " must be JSON"); }
+    }
+    if (kind === "object" && (parsed == null || typeof parsed !== "object" || Array.isArray(parsed))) {
+      throw new Error(field.name + " must be a JSON object");
+    }
+    if (kind === "array" && !Array.isArray(parsed)) throw new Error(field.name + " must be a JSON array");
+    return parsed;
+  }
   const dt = field.datatype || "";
   if (dt.endsWith("#integer") || dt.endsWith("#int")) return parseInt(String(value), 10);
   if (dt.endsWith("#decimal") || dt.endsWith("#double") || dt.endsWith("#float")) return Number(value);
@@ -686,13 +800,14 @@ function validateFields(control, supplied) {
     if (found == null || found === "") { if (required) errors.push("missing required field '" + field.name + "'"); continue; }
     let typed;
     try { typed = coerceValue(field, found); } catch (err) { errors.push(String(err.message || err)); continue; }
-    const text = typed == null ? "" : String(typed);
-    if (field.minLength != null && text.length < field.minLength) errors.push(field.name + ": shorter than minLength " + field.minLength);
-    if (field.maxLength != null && text.length > field.maxLength) errors.push(field.name + ": longer than maxLength " + field.maxLength);
-    if (field.pattern) { try { if (!new RegExp(field.pattern).test(text)) errors.push(field.name + ": does not match pattern " + field.pattern); } catch (err) { errors.push(field.name + ": invalid pattern"); } }
-    if (field.enum && field.enum.length && !field.enum.map(String).includes(text)) errors.push(field.name + ": must be one of " + field.enum.join(", "));
-    if (field.minInclusive != null && Number(typed) < Number(field.minInclusive)) errors.push(field.name + ": below minInclusive");
-    if (field.maxInclusive != null && Number(typed) > Number(field.maxInclusive)) errors.push(field.name + ": above maxInclusive");
+    const structured = typed != null && typeof typed === "object";
+    const text = structured ? (typeof found === "string" ? found : JSON.stringify(typed)) : (typed == null ? "" : String(typed));
+    if (!structured && field.minLength != null && text.length < field.minLength) errors.push(field.name + ": shorter than minLength " + field.minLength);
+    if (!structured && field.maxLength != null && text.length > field.maxLength) errors.push(field.name + ": longer than maxLength " + field.maxLength);
+    if (!structured && field.pattern) { try { if (!new RegExp(field.pattern).test(text)) errors.push(field.name + ": does not match pattern " + field.pattern); } catch (err) { errors.push(field.name + ": invalid pattern"); } }
+    if (!structured && field.enum && field.enum.length && !field.enum.map(String).includes(text)) errors.push(field.name + ": must be one of " + field.enum.join(", "));
+    if (!structured && field.minInclusive != null && Number(typed) < Number(field.minInclusive)) errors.push(field.name + ": below minInclusive");
+    if (!structured && field.maxInclusive != null && Number(typed) > Number(field.maxInclusive)) errors.push(field.name + ": above maxInclusive");
     values[field.name] = typed;
   }
   return { values, errors };
@@ -725,7 +840,16 @@ function classifyTransport(control, descriptorUrl) {
 }
 function addQuery(url, params) {
   const u = new URL(url);
-  for (const [k, v] of Object.entries(params)) if (v != null && v !== "") u.searchParams.set(k, String(v));
+  for (const [k, v] of Object.entries(params)) {
+    if (v == null || v === "") continue;
+    if (Array.isArray(v)) {
+      for (const item of v) if (item != null && item !== "") u.searchParams.append(k, templateScalar(item));
+    } else if (typeof v === "object") {
+      u.searchParams.set(k, JSON.stringify(v));
+    } else {
+      u.searchParams.set(k, templateScalar(v));
+    }
+  }
   return u.toString();
 }
 function resolvePlan(control, values, descriptorUrl) {
@@ -783,10 +907,19 @@ const state = { descriptor: null, selected: null, history: [], lastResponse: nul
 function setStatus(msg) { document.getElementById("status").textContent = msg; }
 function esc(s) { return String(s ?? "").replace(/[&<>"']/g, c => ({ "&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;" }[c])); }
 function linkify(text) {
-  return esc(text).replace(/https?:\/\/[^\s<>"'`)\]},]+/g, (url) => {
-    const clean = url.replace(/[.,;]+$/, "");
-    return `<span class="iri" data-iri="${esc(clean)}">${esc(clean)}</span>`;
-  });
+  const src = String(text);
+  const re = /https?:\/\/[^\s<>"'`)\]},]+/g;
+  let html = "";
+  let last = 0;
+  for (const match of src.matchAll(re)) {
+    const raw = match[0];
+    const clean = raw.replace(/[.,;]+$/, "");
+    html += esc(src.slice(last, match.index));
+    html += `<span class="iri" data-iri="${esc(clean)}">${esc(clean)}</span>`;
+    html += esc(raw.slice(clean.length));
+    last = match.index + raw.length;
+  }
+  return html + esc(src.slice(last));
 }
 function renderMarkdown(src) {
   const parts = String(src).split(/```/);
@@ -851,20 +984,24 @@ function renderList() {
   list.innerHTML = `<div class="group"><h2>Safe reads (${safe.length})</h2>${safe.map(card).join("") || '<div class="empty">(none)</div>'}</div>
     <div class="group"><h2>Unsafe writes (${unsafe.length})</h2>${unsafe.map(card).join("") || '<div class="empty">(none)</div>'}</div>`;
 }
+function fieldDefaultText(field) {
+  if (field.defaultValue == null) return "";
+  return typeof field.defaultValue === "object" ? JSON.stringify(field.defaultValue) : String(field.defaultValue);
+}
 function fieldControl(field) {
   const req = field.required || (field.minCount || 0) >= 1;
-  const val = field.defaultValue != null ? esc(field.defaultValue) : "";
+  const val = esc(fieldDefaultText(field));
   let input;
-  if (field.enum && field.enum.length) {
+  if (field.enum && field.enum.length && !field.jsonKind) {
     input = `<select name="${esc(field.name)}"><option value=""></option>${field.enum.map(v => `<option ${String(v) === String(field.defaultValue) ? "selected" : ""}>${esc(v)}</option>`).join("")}</select>`;
-  } else if (field.rawBody || (field.maxLength && field.maxLength > 200) || /content|query|sparql|turtle|body/i.test(field.name + (field.description || ""))) {
+  } else if (field.rawBody || field.jsonKind || (field.maxLength && field.maxLength > 200) || /content|query|sparql|turtle|body/i.test(field.name + (field.description || ""))) {
     input = `<textarea name="${esc(field.name)}" ${req ? "required" : ""}>${val}</textarea>`;
   } else {
     const type = (field.datatype || "").endsWith("#integer") ? "number" : "text";
     input = `<input name="${esc(field.name)}" type="${type}" value="${val}" ${req ? "required" : ""} ${field.pattern ? `pattern="${esc(field.pattern)}"` : ""}>`;
   }
   return `<div class="field"><label>${esc(field.name)} ${req ? '<span class="req">*</span>' : ""}</label>${input}
-    <div class="hint">${esc([field.datatype && localName(field.datatype), field.pattern, field.description].filter(Boolean).join(" · "))}</div></div>`;
+    <div class="hint">${esc([field.jsonKind ? ("JSON " + field.jsonKind) : (field.datatype && localName(field.datatype)), field.pattern, field.description].filter(Boolean).join(" · "))}</div></div>`;
 }
 function renderDetail() {
   const el = document.getElementById("detail");
@@ -965,7 +1102,9 @@ async function loadDescriptorUrl(url, push = true) {
   setStatus("Fetching authority document…");
   document.documentElement.dataset.ready = "0";
   const fetched = await fetchAuthority(url);
-  if (fetched.kind === "turtle") throw new Error("Descriptor arrived as Turtle. Ask for ?format=jsonld.");
+  if (fetched.kind === "turtle") throw new Error(proxyBase()
+    ? "Descriptor arrived as Turtle. The proxy could not convert it — install rdflib next to proxy.py, or ask the host for ?format=jsonld."
+    : "Descriptor arrived as Turtle. Ask for ?format=jsonld, or set the proxy field so proxy.py can convert it.");
   const descriptor = parseDescriptor(fetched.text, fetched.contentType, stripFrag(url));
   if (push && state.descriptor) state.history.push(state.descriptor.url);
   state.descriptor = descriptor;
