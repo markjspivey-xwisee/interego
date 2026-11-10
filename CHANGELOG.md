@@ -17,6 +17,21 @@ person's own storage still says "My storage address".
 Not covered: nothing checks which storage a message names; each site says
 which it is when it builds the message.
 
+Two smaller mismatches from the same run. The learner's start-up message tells
+the assistant to stop when an answer says "ended": true, but ending the
+conversation answered with its state alone. Ending it now says "ended": true
+too, as a save that ends the conversation already did. And the practice and
+judging instructions an assistant fetches showed a save in a different form
+from the one its copied message showed (podUrl, issuedAt and any nonce, where
+the message says pod_url, no issuedAt and a nonce made of the step, the turn
+and 16 random characters). For a request the Interego relay signs, they now
+show the message's form; for someone who signs with their own key they show
+the form they need, as before. Practice Evidence takes both forms through the
+relay, as it did.
+
+Not covered: someone who signs with their own key still sends podUrl and
+issuedAt; the message's form is taken only through the relay.
+
 ## 2026-11-09 — Practice Evidence: second review of keeping the stakes out of a chat
 
 A second review found that the keyed fingerprints could still check a guess at

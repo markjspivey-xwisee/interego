@@ -166,7 +166,7 @@ export const pevAffordances: ReadonlyArray<Affordance> = [
     targetTemplate: '{base}/pev/counterpart_packet',
     annotations: hints('Other-person packet', true, false, true, true),
     inputs: [...ENVELOPE],
-    outputs: out('A client-required packet.', ['execution', 'promptTemplateHash']),
+    outputs: out('A client-required packet. Its recordWith.payloadTemplate is in the form the caller signs in: for a request the Interego relay signed, pod_url, no issuedAt and a nonce of the step name, the turn and 16 random letters or digits; otherwise podUrl, issuedAt and any nonce of 16 to 128 letters, digits, - or _. Through the relay either form is taken.', ['execution', 'promptTemplateHash']),
   },
   {
     action: PEV_ACTION.recordTurns as IRI,
@@ -188,7 +188,7 @@ export const pevAffordances: ReadonlyArray<Affordance> = [
     targetTemplate: '{base}/pev/end_conversation',
     annotations: hints('End the conversation', false, false, false, true),
     inputs: [...ENVELOPE],
-    outputs: out('The ended attempt and its transcript hash.', ['attemptIri', 'transcriptHash', 'descriptorUrl']),
+    outputs: out('The ended attempt and its transcript hash, with ended: true, as pev.record_turns and pev.say answer once a conversation is over.', ['attemptIri', 'transcriptHash', 'descriptorUrl']),
   },
   {
     action: PEV_ACTION.judgeAttempt as IRI,
@@ -210,7 +210,7 @@ export const pevAffordances: ReadonlyArray<Affordance> = [
     targetTemplate: '{base}/pev/judge_packet',
     annotations: hints('Judge packet', true, false, true, true),
     inputs: [...ENVELOPE],
-    outputs: out('A client-required packet. Its last field, yourAssessment, is null, or {saved: true, judgedAt} when the caller signed a judgment of this attempt made since it was last reopened; it says nothing else about any judgment or review.', ['execution', 'promptTemplateHash']),
+    outputs: out('A client-required packet, its record template in the form the caller signs in, as pev.counterpart_packet\'s is. Its last field, yourAssessment, is null, or {saved: true, judgedAt} when the caller signed a judgment of this attempt made since it was last reopened; it says nothing else about any judgment or review.', ['execution', 'promptTemplateHash']),
   },
   {
     action: PEV_ACTION.recordJudgment as IRI,

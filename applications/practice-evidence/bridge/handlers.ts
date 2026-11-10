@@ -2043,7 +2043,8 @@ async function counterpartPacketAct(call: Call, args: Record<string, unknown>): 
   });
   const iri = needAttemptIri(s.payload);
   const h = await conversationHead(call, s, iri, turnIndex);
-  return { ...counterpartPacket(h.body.scenarioSpec, h.body.turns, learnerText, { podUrl: s.pod, attemptIri: iri, turnIndex }) };
+  // The record template in the form this caller signs in: a chat's copied prompt sends pod_url and no issuedAt.
+  return { ...counterpartPacket(h.body.scenarioSpec, h.body.turns, learnerText, { podUrl: s.pod, attemptIri: iri, turnIndex, signing: s.relay ? 'relay-delegated' : 'key-held' }) };
 }
 
 async function recordTurns(call: Call, args: Record<string, unknown>): Promise<Out> {
@@ -2118,8 +2119,9 @@ async function endConversation(call: Call, args: Record<string, unknown>): Promi
       ...rest, at, state: 'ended', endedBy, endedAt: at, transcriptHash: transcriptHash(h.body.turns), acts: [...h.body.acts, actOf(s, 'endConversation')],
     };
     const w = await writeRecord(call, { pod: s.pod, body, seq: h.seq, prev: h.rec, nonce: s.nonce });
+    // ended: true, as record_turns and say answer once the conversation is over, which a chat's start-up message stops on.
     return {
-      attemptIri: iri, descriptorUrl: w.descriptorUrl, state: 'ended', endedBy, transcriptHash: body.transcriptHash,
+      attemptIri: iri, descriptorUrl: w.descriptorUrl, state: 'ended', ended: true, endedBy, transcriptHash: body.transcriptHash,
       currentTarget: { recordId: w.recordId, descriptorUrl: w.descriptorUrl, graphDigest: w.graphDigest },
       nextActions: nextFor(ctx, body, s.signer, roles, false, stakes), recorded: true,
     };
@@ -2280,6 +2282,7 @@ async function judgePacketAct(call: Call, args: Record<string, unknown>): Promis
     ...judgePacket(h.body.scenarioSpec, h.body.turns, {
       podUrl: s.pod, attemptIri: iri, attemptHeadUrl: h.rec.descriptorUrl,
       transcriptHash: h.body.transcriptHash ?? transcriptHash(h.body.turns), rubricHash: h.body.scenario.rubricHash,
+      signing: s.relay ? 'relay-delegated' : 'key-held',
     }),
     // Last, so an answer a chat app cut short has none, and reads as no answer rather than as nothing saved.
     yourAssessment: yourAssessmentOf(h.body, s.signer),
