@@ -2,7 +2,7 @@
 export const PRIVATE_PERFORMANCE_SCHEMA = {
   version: '1',
   planner: { path: '/agent/contextualize-and-plan', optIn: 'private_evidence', reviewOnly: 'private_review: true reads own empirical profile without a new plan or counted episode' },
-  transport: 'Use existing sign_request then act. agent_id/timestamp are required by signed transport. Automatically stamped subject_pod_url is accepted only when equivalent to the authenticated own pod, then excluded from logical plan identity.',
+  transport: 'Use existing sign_request then act. agent_id/timestamp are required by signed transport. Automatically stamped subject_pod_url is accepted only when equivalent to the authenticated own pod, then excluded from logical plan identity. client_id, which the relay may add (the OAuth client its session token was issued to), is accepted, not checked, and also excluded.',
   ref: { uri: 'HTTP(S) or URN immutable evidence identifier', version: 'nonempty version string', sha256: 'lowercase SHA-256 hex of evidence bytes; report uses canonical JSON below' },
   private_evidence: {
     episode_id: 'stable id for one learner/intervention episode', study_id: 'study id', learner_id: 'learner label (not an independently verified identity)',
@@ -21,7 +21,7 @@ export const PRIVATE_PERFORMANCE_SCHEMA = {
     post: 'measurement phase=post', fresh: 'optional additional measurement phase=fresh; omit if no additional follow-up occurred', assistance: 'post/fresh assistance description', observed_at: 'UTC time >= last assessment',
   },
   actionPayloads: {
-    record: '{agent_id,timestamp,subject_pod_url?,outcome}', read: '{agent_id,timestamp,subject_pod_url?,episode_id?}', calibration: '{agent_id,timestamp,subject_pod_url?}',
+    record: '{agent_id,timestamp,subject_pod_url?,client_id?,outcome}', read: '{agent_id,timestamp,subject_pod_url?,client_id?,episode_id?}', calibration: '{agent_id,timestamp,subject_pod_url?,client_id?}',
   },
   limits: '1000 plans and 1000 episodes, 4 MB encrypted snapshot per account. Private content is encrypted to owner+bridge; trusted bridge can decrypt. No public projection or shared-seed update.',
   verification: 'Arithmetic, submitted report content hashes and fixed evidence bindings are checked. Evidence URIs are not fetched. Server plans/outcomes carry a bridge-secret authentication tag. Assessor truth, independent sampling and causal learning are not verified.',

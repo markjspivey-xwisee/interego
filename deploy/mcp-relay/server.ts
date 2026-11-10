@@ -9189,6 +9189,26 @@ async function handleNotifyAgent(args: ToolArgs): Promise<string> {
 // same key), so NO key material is handed out and the relay can only sign for
 // agents it has actually been delegated to. Returns { _signature, _signed_payload }
 // — pass it verbatim as the `payload` of `act` on the target affordance.
+
+/**
+ * Whether `sign_request` signs `client_id` (see handleSignRequest). OFF unless the operator sets
+ * `RELAY_SIGN_CLIENT_ID=1`, because the field reaches readers this image does not ship with.
+ *
+ * Several verticals refuse a relay-signed payload holding a top-level field they do not list.
+ * The ones in this repository accept `client_id` from the same release, but they ship in their
+ * own images and are rolled out separately from the relay. A relay that signed the field the
+ * moment its image went live would have every chat agent's request to those routes refused for
+ * as long as an older vertical image serves, and for as long as a failed vertical rollout leaves
+ * one serving; a verifier outside this repository that closes its key set breaks the same way.
+ * So the field waits for the operator: turn it on once the verticals that read relay-signed
+ * payloads run a release that accepts it (the CHANGELOG entry names them).
+ * Read on every call, so turning it on or off takes effect without a restart of anything else;
+ * `/health` reports it as `signsClientId`.
+ */
+function relaySignsClientId(): boolean {
+  return process.env['RELAY_SIGN_CLIENT_ID'] === '1';
+}
+
 async function handleSignRequest(args: ToolArgs): Promise<string> {
   // Identity is SESSION-DERIVED (server-injected), never a caller argument.
   // Emit the CANONICAL did:web DID (what register_agent / publish_context
@@ -9216,23 +9236,35 @@ async function handleSignRequest(args: ToolArgs): Promise<string> {
    * relay signs, as `client_id`, the id of the client its session's access token was issued
    * to. The contract, for every reader of a relay-signed payload:
    *
-   *   - present only when the call came through `/mcp` with a relay OAuth access token: the
-   *     token's own client_id, verbatim (for a web app signing in by CIMD, the URL of its
-   *     client.json; for a DCR client, its registered id);
+   *   - present only when the operator has turned it on (`RELAY_SIGN_CLIENT_ID=1`, see
+   *     relaySignsClientId: until then it is absent everywhere) and the call came through `/mcp`
+   *     with a relay OAuth access token: the token's own client_id, verbatim (for a web app
+   *     signing in by CIMD, the URL of its client.json; for a DCR client, its registered id);
    *   - ABSENT when no OAuth client is known: the REST `/tool` and `/messages` routes (an
    *     identity-server bearer or a wallet signature carry no OAuth client), the legacy API key,
    *     and a follow-up act a deployment-installed observer makes in the session's name (the
    *     client did not ask for that one). Absent means the relay does not say which client
-   *     asked; it never means "the same client as last time";
+   *     asked; it never means "the same client as last time", and never "the web UI";
    *   - never the caller's: `client_id` is reserved below, so a caller's own `client_id` at the
    *     top level or under `payload` (as an object or as JSON text) is dropped, and the
-   *     session field it comes from is a reserved wire field every transport strips.
+   *     session field it comes from is a reserved wire field every transport strips. The drop
+   *     is not silent: the result says the caller's `client_id` was not signed (`notSigned`), so
+   *     a vertical whose own input happens to be called `client_id` finds the collision when it
+   *     first tries it, not from a wrong value later.
+   *
+   * For a bridge that compares it with its own client id: compare exact strings, and against
+   * every id the bridge has used within a token's lifetime (an hour), not only the one it uses
+   * now. A CIMD id is the bridge's own URL and the same after a restart, so prefer CIMD. A DCR id
+   * belongs to one registration: a bridge that registers again (after a restart, or when the
+   * relay stops offering CIMD) gets a new id while tokens issued to its earlier one are still
+   * live, so it keeps the ids it registered (or persists its registration) for at least that
+   * long, or it refuses its own people's sign-ins until those tokens expire.
    *
    * What it does NOT prove: that a person, or the page itself, made the request. It names the
    * OAuth client whose access token was presented, so whoever holds that client's token signs
    * as that client. A reader still checks the signature, `agent_id` and its own policy.
    */
-  const sessionClientId = typeof args._session_client_id === 'string' && args._session_client_id
+  const sessionClientId = relaySignsClientId() && typeof args._session_client_id === 'string' && args._session_client_id
     ? args._session_client_id
     : undefined;
   /**
@@ -9266,6 +9298,10 @@ async function handleSignRequest(args: ToolArgs): Promise<string> {
     '_session_agent_id', '_session_agent_did', '_identity_token', 'pod_name', 'owner_webid', 'owner_name',
   ]);
   const safe: Record<string, unknown> = {};
+  // Whether the caller sent a `client_id` of its own (dropped below, and said so in the result).
+  // The dispatcher never sets a top-level `client_id` (it sets `_session_client_id`), so one here,
+  // at the top level or under `payload`, is always the caller's.
+  let callerClientId = false;
   const collectOptions = (o: unknown): void => {
     // MCP clients vary: `payload` may arrive as an object OR a JSON-encoded
     // string. Parse strings so caller options (e.g. include_clr) are captured
@@ -9282,7 +9318,10 @@ async function handleSignRequest(args: ToolArgs): Promise<string> {
         // request got folded in and JSON.stringify threw on the socket cycle. Deny
         // the whole prefix: it fails closed for internals nobody has added yet, and
         // it keeps session state out of an artifact that leaves the relay.
-        if (k.startsWith('_') || reserved.has(k)) continue;
+        if (k.startsWith('_') || reserved.has(k)) {
+          if (k === 'client_id') callerClientId = true;
+          continue;
+        }
         safe[k] = v;
       }
     }
@@ -9354,6 +9393,14 @@ async function handleSignRequest(args: ToolArgs): Promise<string> {
       signatureAuthority: 'relay',
       signingNote: 'This is a relay-mediated signature, not an independently held client key. It cannot satisfy a client-signature requirement.',
       anchor: `did:ethr:${signerAddress}`,
+      // A caller's own `client_id` is dropped (the relay reserves the name, see `client_id` above),
+      // and saying so here is what lets a vertical whose input is called `client_id` notice in its
+      // first test instead of receiving the relay's value, or none, without a word.
+      ...(callerClientId ? {
+        notSigned: 'Your `client_id` was not signed: the relay reserves `client_id` in what it signs for the '
+          + 'OAuth client the session\'s access token was issued to, and signs that or nothing. An action '
+          + 'that needs a client_id of its own has to take it under another name.',
+      } : {}),
       /**
        * ── ★★ THE HINT NAMED AN IDENTIFIER THAT NO LONGER EXISTS ──────────────────
        *
@@ -13282,8 +13329,9 @@ function buildMcpServer(authContext: { agentId: string; ownerWebId?: string; own
       if (authContext.accessToken) args._session_bearer = authContext.accessToken;
       // The client_id of the OAuth client this access token was issued to: a Client ID
       // Metadata Document URL, or the id dynamic registration gave it. sign_request signs it
-      // as `client_id`. Reserved + server-injected like the fields around it, and set only
-      // when the token names a client (the legacy API-key path names none).
+      // as `client_id` when the operator has turned that on (relaySignsClientId). Reserved +
+      // server-injected like the fields around it, and set only when the token names a client
+      // (the legacy API-key path names none).
       if (authContext.clientId) args._session_client_id = authContext.clientId;
       // The IRI form of the identity (agent DID / WebID), NOT the bare userId slug
       // — amep needs an IRI actor. Same principalIri() amep's introspect uses, so
@@ -15063,6 +15111,9 @@ app.get('/health', (_req, res) => {
     x402: true,
     // Whether verifyBearerToken presents a bearer to identity's /tokens/verify; never the value.
     identityVerifyAuth: Boolean(process.env['IDENTITY_INTROSPECTION_SECRET']),
+    // Whether sign_request signs the session's OAuth client as `client_id` (RELAY_SIGN_CLIENT_ID=1).
+    // Off until the verticals that read relay-signed payloads accept the field; see relaySignsClientId.
+    signsClientId: relaySignsClientId(),
     build: process.env['INTEREGO_BUILD_SHA'] ?? 'unset',
     mcpServerVersion: MCP_SERVER_VERSION,
     toolSurfaceDigest: TOOL_SURFACE_DIGEST,
@@ -17312,8 +17363,9 @@ function resolveAuthContext(ctx: { authInfo?: AuthInfo; requestInfo?: Request })
       ...(reqAuth.token ? { accessToken: reqAuth.token } : {}),
       // The OAuth client this token was issued to. Its registered name and redirect URIs say
       // whether ChatGPT is calling, which decides how a tool result is laid out for its model
-      // (resultOptionsForClient), and sign_request signs it as `client_id` so a vertical can tell
-      // which client asked. Never an authorization input on this relay.
+      // (resultOptionsForClient), and sign_request signs it as `client_id` (once the operator turns
+      // that on, see relaySignsClientId) so a vertical can tell which client asked. Never an
+      // authorization input on this relay.
       ...(typeof reqAuth.clientId === 'string' && reqAuth.clientId ? { clientId: reqAuth.clientId } : {}),
     };
   }

@@ -22,8 +22,12 @@
  *   §3 with no OAuth client (the legacy API key, a token naming none, the REST transports) the field
  *      is absent, not invented;
  *   §4 the result's hint does not talk an assistant out of the urn form a site handed it;
+ *   §5 the operator's switch: nothing is signed as `client_id` until RELAY_SIGN_CLIENT_ID=1, because
+ *      the verticals that accept the field ship in other images and roll out on their own;
+ *   §6 a caller's dropped `client_id` is not dropped silently: the result says it was not signed;
  *   §0 the wiring the slices stand for: one writer of the session field, reserved on every
- *      transport, and absent from the REST injection and from an observer's follow-up act.
+ *      transport, and absent from the REST injection and from an observer's follow-up act; and the
+ *      contract tells a bridge that a DCR id is not stable across registrations.
  *
  * ── WITH WHICH INSTRUMENT ────────────────────────────────────────────────────
  *
@@ -113,6 +117,7 @@ const open = (injectionCode.match(/\{/g) ?? []).length - (injectionCode.match(/\
 check('the injection slice starts in callWithSession and stops inside exactly one open block', callAt > -1 && open === 1, `callAt=${callAt}, open=${open}`);
 
 const slices = [
+  between(SERVER, 'function relaySignsClientId(): boolean {', 'async function handleSignRequest(', 'relaySignsClientId'),
   between(SERVER, 'const RESERVED_WIRE_FIELDS = [', 'function unwrapSignedPayloadInto(', 'stripReservedWireFields'),
   between(SERVER, 'const asPublicPodUrl = (url: string | undefined): string | undefined =>', 'const IDENTITY_URL', 'asPublicPodUrl'),
   between(SERVER, 'async function selfPodUrl(args: ToolArgs): Promise<string | undefined> {', '// Build the per-call synthetic', 'selfPodUrl'),
@@ -174,6 +179,12 @@ async function byActSignPayload(payload: unknown, auth: Auth, extra: Record<stri
   const pair = await signedActPayload(args, mod.normalizeActPayload(args['payload'] ?? {}), mod.handleSignRequest) as Record<string, unknown>;
   return JSON.parse(String(pair['_signed_payload'])) as Record<string, unknown>;
 }
+/** The operator's switch (relaySignsClientId reads it on every call). */
+const SWITCH = 'RELAY_SIGN_CLIENT_ID';
+const switchAsFound = process.env[SWITCH];
+const setSwitch = (value: string | undefined): void => {
+  if (value === undefined) delete process.env[SWITCH]; else process.env[SWITCH] = value;
+};
 const withoutTimestamp = (o: Record<string, unknown>): string => {
   const { timestamp: _t, ...rest } = o;
   return JSON.stringify(Object.keys(rest).sort().map((k) => [k, rest[k]]));
@@ -198,7 +209,21 @@ console.log('\n0. one writer of the session client, reserved on every transport'
   check('§0 an observer\'s follow-up act names no client: the client did not ask for it', follow.includes('_session_agent_did') && !follow.includes('_session_client_id'));
   check('§0 signed-act.ts forwards the underscore session fields to sign_request (so act signs the client too)',
     /Object\.entries\(args\)\.filter\(\(\[k\]\) => k\.startsWith\('_'\)\)/.test(readFileSync(join(here, '..', 'signed-act.ts'), 'utf8')));
+  // The contract a bridge reads: a DCR id belongs to one registration, so an exact comparison with
+  // only the id a bridge holds now refuses tokens issued to its earlier one while they are live.
+  // As prose: the comment's line breaks and leading stars folded to single spaces.
+  const contract = between(SERVER, '── `client_id`: WHICH OAuth CLIENT ASKED', 'const sessionClientId', "handleSignRequest's client_id contract")
+    .replace(/\s*\n\s*\*\s?/g, ' ');
+  check('§0 the contract tells a bridge to compare against every id it used within a token\'s lifetime',
+    /every id the bridge has used within a token's lifetime/.test(contract), 'missing');
+  check('§0 …that a DCR id belongs to one registration and changes when the bridge registers again',
+    /A DCR id belongs to one registration/.test(contract) && /registers again/.test(contract), 'missing');
+  check('§0 …and to prefer CIMD, whose id is the same after a restart', /prefer CIMD/.test(contract), 'missing');
+  check('§0 …and that absent never means "the web UI"', /never "the web UI"/.test(contract), 'missing');
 }
+
+// Sections 1 to 4 and 6 are about what the relay signs once the operator has turned it on (§5).
+setSwitch('1');
 
 // ── §1 AN OAuth SESSION'S CLIENT IS SIGNED ───────────────────────────────────
 console.log('\n1. the session\'s client_id is signed, verbatim, both ways');
@@ -299,6 +324,60 @@ console.log('\n4. the hint keeps a site\'s urn form usable');
   check('§4 it still names the envelope inputs and the act payload', hint.includes('`_signed_payload`') && hint.includes('`_signature`') && hint.includes('`payload` of `act`'), hint);
   check('§4 it stays short (at most 450 characters)', hint.length <= 450, `${hint.length} characters`);
 }
+
+// ── §5 THE OPERATOR'S SWITCH ─────────────────────────────────────────────────
+console.log('\n5. nothing is signed as client_id until RELAY_SIGN_CLIENT_ID=1');
+for (const value of [undefined, '', '0', 'true', 'yes', ' 1']) {
+  setSwitch(value);
+  const label = value === undefined ? 'unset' : JSON.stringify(value);
+  for (const [kind, clientId] of [['CIMD', CIMD_CLIENT], ['DCR', DCR_CLIENT]] as const) {
+    const alone = await bySignRequest({ payload: PAYLOAD }, oauth(clientId));
+    check(`§5 switch ${label}, a ${kind} client: sign_request signs no client_id`, !('client_id' in alone.signed), JSON.stringify(alone.signed));
+    check(`§5 switch ${label}, a ${kind} client: …but signs everything else as before`,
+      alone.signed['agent_id'] === oauth(clientId).agentId && typeof alone.signed['timestamp'] === 'string' && alone.signed['pod_url'] === PAYLOAD.pod_url);
+    const composed = await byActSignPayload(PAYLOAD, oauth(clientId));
+    check(`§5 switch ${label}, a ${kind} client: act with sign_payload signs no client_id`, !('client_id' in composed), JSON.stringify(composed));
+  }
+  const forgedOff = await bySignRequest({ client_id: IMPOSTOR, payload: { ...PAYLOAD, client_id: IMPOSTOR } }, oauth(CIMD_CLIENT));
+  check(`§5 switch ${label}: a caller's client_id is still dropped, not signed in the relay's place`,
+    !('client_id' in forgedOff.signed) && !JSON.stringify(forgedOff.signed).includes(IMPOSTOR), JSON.stringify(forgedOff.signed));
+}
+setSwitch('1');
+{
+  const on = await bySignRequest({ payload: PAYLOAD }, oauth(CIMD_CLIENT));
+  check('§5 switch "1": the session\'s client is signed', on.signed['client_id'] === CIMD_CLIENT, JSON.stringify(on.signed));
+  const health = between(CODE, "app.get('/health', (_req, res) => {", '\n});', 'the /health handler');
+  check('§5 /health reports the switch as signsClientId', /signsClientId: relaySignsClientId\(\)/.test(health), 'missing');
+  check('§5 handleSignRequest reads the switch on every call, before it takes the session client',
+    /const sessionClientId = relaySignsClientId\(\) &&/.test(CODE), 'missing');
+}
+
+// ── §6 A DROPPED client_id IS NOT DROPPED SILENTLY ───────────────────────────
+console.log('\n6. a caller\'s client_id is reported as not signed');
+for (const [label, raw] of [
+  ['top-level client_id', { client_id: 'lti-platform-client-7', payload: PAYLOAD }],
+  ['client_id under payload (an object)', { payload: { ...PAYLOAD, client_id: 'lti-platform-client-7' } }],
+  ['client_id under payload (JSON text)', { payload: JSON.stringify({ ...PAYLOAD, client_id: 'lti-platform-client-7' }) }],
+] as const) {
+  for (const value of ['1', undefined]) {
+    setSwitch(value);
+    const { out, signed } = await bySignRequest(raw, oauth(CIMD_CLIENT));
+    const note = String(out['notSigned'] ?? '');
+    check(`§6 ${label} (switch ${value ?? 'unset'}): the result says the caller's client_id was not signed`,
+      /client_id/.test(note) && /not signed/.test(note) && /another name/.test(note), JSON.stringify(out));
+    check(`§6 ${label} (switch ${value ?? 'unset'}): and it was not`, !JSON.stringify(signed).includes('lti-platform-client-7'), JSON.stringify(signed));
+    check(`§6 ${label} (switch ${value ?? 'unset'}): the note is outside what is signed`, !('notSigned' in signed));
+  }
+}
+setSwitch('1');
+for (const [label, raw] of [
+  ['no client_id at all', { payload: PAYLOAD }],
+  ['only a forged _session_client_id', { _session_client_id: IMPOSTOR, payload: { ...PAYLOAD, _session_client_id: IMPOSTOR } }],
+] as const) {
+  const { out } = await bySignRequest(raw, oauth(CIMD_CLIENT));
+  check(`§6 ${label}: no notSigned note`, !('notSigned' in out), JSON.stringify(out));
+}
+setSwitch(switchAsFound);
 
 console.log(failures === 0 ? '\nPASS\n' : `\n${failures} FAILURE(S)\n`);
 process.exit(failures === 0 ? 0 : 1);

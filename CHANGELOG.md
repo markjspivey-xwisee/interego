@@ -1,33 +1,74 @@
 # Changelog
 
-## 2026-11-09 — Relay: a signed request says which OAuth client asked
+## 2026-11-09 — Relay: a signed request can say which OAuth client asked
 
 When the relay signs a request for someone (`sign_request`, or `act` with
-`sign_payload: true`), the signed payload now carries `client_id`: the id of
-the OAuth client whose access token made the call. For a web app that signs in
-with a Client ID Metadata Document that is the URL of its `client.json`; for a
-dynamically registered client it is the id the relay gave it. Until now a site
-could only read the agent's name, which comes from the name a client chose for
-itself, so any app could register under a site's own name and look like it.
-The id cannot be chosen that way. A caller cannot set `client_id` either: one
-it sends, at the top level or inside `payload`, is dropped, and the session
+`sign_payload: true`), it can now put `client_id` in the signed payload: the id
+of the OAuth client whose access token made the call. For a web app that signs
+in with a Client ID Metadata Document that is the URL of its `client.json`; for
+a dynamically registered client it is the id the relay gave it. Until now a
+site could only read the agent's name, which comes from the name a client chose
+for itself, so any app could register under a site's own name and look like
+it. The id cannot be chosen that way. A caller cannot set `client_id` either:
+one it sends, at the top level or inside `payload`, is dropped, and the session
 field it comes from is stripped on every transport.
+
+**It is off until the relay's operator turns it on** with
+`RELAY_SIGN_CLIENT_ID=1` (the relay's `/health` reports it as
+`signsClientId`). Several sites refuse a signed payload holding a field they do
+not list. The ones in this repository accept `client_id` from this release, but
+Foxxi (which also serves the Agentic Performance Practice routes) ships in its
+own image and rolls out separately from the relay. Had the relay signed the
+field as soon as its image went live, every chat agent's request to Foxxi's
+directory actions, workbench agent sessions, own-LTI reconciliation, telemetry
+settings and queries, and private performance routes would have been refused
+until the new Foxxi image was serving, and for as long as a failed Foxxi rollout
+kept the old one. Turn it on only after the Foxxi bridge runs this release.
+**If you verify relay-signed requests outside this repository and refuse fields
+you do not list, accept `client_id` before the relay enables it.**
 
 The field is left out when no OAuth client is known: the REST `/tool` and
 `/messages` routes (an identity-server bearer or a wallet signature), the
-legacy API key, and a follow-up act a deployment-installed observer makes. It
-names the client whose token was used; it does not prove that a person, or the
-site's own page, made the request. No vertical reads it yet; the Practice
-Evidence bridge is the first that will.
+legacy API key, and a follow-up act a deployment-installed observer makes. Left
+out means the relay does not say which client asked; it never means "the web
+UI". It names the client whose token was used; it does not prove that a person,
+or the site's own page, made the request. No site reads it yet; the Practice
+Evidence bridge is the first that will. A site that compares it with its own
+client id should accept every id it has used within a token's lifetime (an
+hour), not only its current one: an id from dynamic registration changes when
+the site registers again, after a restart for example, while tokens issued to
+the earlier id are still live. A Client ID Metadata Document id does not
+change, so prefer that, or keep the registration. The Practice Evidence page
+registers once per process today and keeps the id only in memory, so it must
+keep its ids or its registration before it starts checking the field.
 
-Verticals that refused any field they did not list now accept `client_id` as
-the relay's, like `subject_pod_url`: Foxxi's directory actions, workbench agent
+A caller's own `client_id` is still dropped, but no longer silently:
+`sign_request`'s result says it was not signed (`notSigned`), so a site whose
+own input happens to be called `client_id` finds out on its first try instead
+of quietly receiving the relay's value or none. Through `act` with
+`sign_payload: true` the drop is still silent, because `act` passes on only the
+signed pair.
+
+Sites that refused any field they did not list now accept `client_id` as the
+relay's, like `subject_pod_url`: Foxxi's directory actions, workbench agent
 sessions, own-LTI reconciliation and telemetry settings and queries, and the
 private performance routes, which also keep it out of a plan's retry identity.
-Without this every chat agent's signed request there would have been refused.
-Work Redesign's web page refuses a payload holding `client_id`, as it does the
-relay's other fields. A repo-wide test now fails if a list of the relay's
-fields leaves `client_id` out.
+Foxxi's telemetry settings and query routes now set the relay's fields aside
+through one shared list, with a test that sends them a relay-signed payload
+holding `client_id`. Work Redesign's web page refuses a payload holding
+`client_id`, as it does the relay's other fields. The descriptions of what the
+relay adds (Provisional Play, Foxxi's own-subject activity actions and README,
+and the payload shapes the private performance routes serve) now mention
+`client_id`.
+
+A repository-wide test reads every tracked JavaScript and TypeScript source
+file outside tests and build output that names `subject_pod_url`. It fails when
+an array or argument list naming `agent_id`, `timestamp` and `subject_pod_url`
+leaves `client_id` out (in any quote style, on one line or across several), when
+a destructuring sets `subject_pod_url` aside before a rest element without
+`client_id`, and when a sentence saying what the relay adds names the pod stamp
+without `client_id`. It does not see a list built from pieces, a chain of
+comparisons, source in other languages, or prose worded another way.
 
 The `sign_request` result's hint no longer tells an assistant to prefer the
 URL form of an action over the one a site gave it: `act` takes the
@@ -35,7 +76,8 @@ URL form of an action over the one a site gave it: `act` takes the
 the action as the site or the descriptor gives it.
 
 Not covered: `act` still fetches a target's whole affordance manifest on every
-call; caching it is left for later.
+call; caching it is left for later. Nothing turns `RELAY_SIGN_CLIENT_ID` on for
+the hosted deployment; that is an operator step once the Foxxi bridge is live.
 
 ## 2026-11-09 — Foxxi keeps finalized LTI grades during retakes
 
