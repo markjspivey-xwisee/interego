@@ -461,7 +461,7 @@ export class AgentSessionStore {
   }
   private driverAuthorization(raw: unknown, actor: string): { body: Row; s: Session } {
     const body = record(raw);
-    exact(body, ['i2idlx_operation', 'bridge_audience', 'agent_id', 'timestamp', 'subject_pod_url', 'session_id', 'operation', 'invite_token', 'start_monitoring', 'driver_token', 'wake_id', 'turn_id', 'lease_id', 'revision', 'text', 'tool_calls', 'truncated', 'error']);
+    exact(body, ['i2idlx_operation', 'bridge_audience', 'agent_id', 'timestamp', 'subject_pod_url', 'client_id', 'session_id', 'operation', 'invite_token', 'start_monitoring', 'driver_token', 'wake_id', 'turn_id', 'lease_id', 'revision', 'text', 'tool_calls', 'truncated', 'error']);
     if (body.i2idlx_operation !== 'agent-session' || body.bridge_audience !== this.base || !actor.trim()) reject('Agent request is not bound to this operation and workbench.', 403);
     const s = this.session(body.session_id); this.live(s);
     if (body.operation !== 'claim') {

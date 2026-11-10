@@ -698,6 +698,12 @@ function attachInteregoSignIn(app: Express, o: InteregoUiOptions | undefined): v
    * This client's id at the relay: the CIMD URL when the relay takes Client ID Metadata Documents
    * and the deployment URL is https; otherwise one registered by DCR, once per process (a failed
    * registration is tried again on the next sign-in).
+   *
+   * A DCR id is kept only in memory, so it changes when the process restarts, while access tokens
+   * issued to the earlier id stay live for up to an hour. Nothing here reads the `client_id` the
+   * relay can sign yet; before anything does, keep every id used within a token's lifetime (or
+   * persist the registration), or a restart refuses the people already signed in. See `client_id`
+   * in handleSignRequest, deploy/mcp-relay/server.ts.
    */
   async function clientIdFor(meta: RelayMetadata, caller: Caller): Promise<{ readonly clientId: string; readonly registration: StartConfig['registration'] }> {
     if (meta.cimd && cimdUsable) return { clientId: clientIdUrl, registration: 'client-id-metadata-document' };

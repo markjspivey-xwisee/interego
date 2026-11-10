@@ -11,7 +11,7 @@ import { affordanceToMcpToolSchema, type Affordance } from '../applications/_sha
 import { courseHmd, memoryHmd, collectionHmd } from '../applications/foxxi-content-intelligence/src/hypermedia.js';
 import { foxxiAffordances } from '../applications/foxxi-content-intelligence/affordances.js';
 import { agpAffordances } from '../applications/agentic-performance-practice/affordances.js';
-import { renderAffordanceManifestHmd } from '../applications/_shared/hypermedia/index.js';
+import { renderAffordanceManifestHmd, sendActionResult } from '../applications/_shared/hypermedia/index.js';
 import { withAmepSession } from '../deploy/mcp-relay/amep-session-bridge.js';
 import { createEgress } from '../deploy/mcp-relay/egress.js';
 import { renderOAuthGate, verifyRenderCaller, type RenderAuthDeps } from '../deploy/mcp-relay/render-auth.js';
@@ -102,7 +102,7 @@ describe('an HMD client can discover, invoke and continue without an endpoint re
     // The fetch implementation below maps the published origin to this isolated test server.
     const app = createVerticalBridge({ verticalName: 'conformance', deploymentUrl: base, affordances: [first, next],
       guidance: [{ action: first.action, toolName: first.toolName, guidance: { summary: 'Start here.', nextAffordances: [{ action: next.action, rel: 'then' }] } }],
-      handlers: { 'test.start': async args => { received = args; return { ok: true, value: args.value }; }, 'test.continue': async () => ({ ok: true }) },
+      handlers: { 'test.start': async args => { received = args; return args.value === 0 ? { kind: 'refusal', 'iep:refusalStatus': 403, 'iep:refusalReason': 'not-yours', error: 'Not yours to start.' } : { ok: true, value: args.value, ...(args.note === undefined ? {} : { note: args.note }) }; }, 'test.continue': async () => ({ ok: true }) },
       middleware: a => attachGuidanceServing(a, '/guidance', [{ action: first.action, toolName: first.toolName, guidance: { summary: 'Start here.', nextAffordances: [{ action: next.action, rel: 'then' }] } }], { base, affordances: [first, next] }),
     });
     await new Promise<void>(resolve => { server = app.listen(0, '127.0.0.1', () => resolve()); });
@@ -135,17 +135,92 @@ describe('an HMD client can discover, invoke and continue without an endpoint re
     expect(result.status).toBe(200);
     expect(received).toEqual({ value: 7 });
     const native = JSON.parse(result.body);
+    expect(native.value).toBe(7);
     const responseMd = native[`${schema}encoding`][`${schema}text`];
     const responseDoc = parseHypermediaMarkdown(responseMd);
     expect(responseDoc.controls.map(c => c.action)).toEqual([actionUrl(next.action)]);
-    const snapshot = JSON.parse(responseDoc.fields!['schema:text'] as string);
-    expect(snapshot.value).toBe(7);
-    expect(snapshot[`${schema}encoding`]).toBeUndefined(); // no recursive representations
+    // The JSON answer IS the payload: the Markdown riding along carries its next steps, not a copy of it.
+    expect(responseDoc.fields?.['schema:text']).toBeUndefined();
+    expect(responseMd).not.toContain('```json');
     expect((await followAffordance(responseDoc.descriptorUrl, responseDoc.controls[0]!.action, { value: 8 }, { fetch: localFetch })).status).toBe(200);
     const negotiated = await fetch(`${origin}/start`, { method: 'POST', headers: { 'Content-Type': 'application/json', Accept: 'text/markdown' }, body: JSON.stringify({ value: 9 }) });
     expect(negotiated.headers.get('cache-control')).toBe('no-store');
-    expect(parseHypermediaMarkdown(await negotiated.text()).controls[0]!.action).toBe(actionUrl(next.action));
+    // Asked for as Markdown, the one document still holds the lossless snapshot, a json block and the controls.
+    const negotiatedMd = await negotiated.text();
+    const negotiatedDoc = parseHypermediaMarkdown(negotiatedMd);
+    expect(negotiatedDoc.controls[0]!.action).toBe(actionUrl(next.action));
+    const snapshot = JSON.parse(negotiatedDoc.fields!['schema:text'] as string);
+    expect(snapshot.value).toBe(9);
+    expect(snapshot[`${schema}encoding`]).toBeUndefined(); // no recursive representations
+    expect(negotiatedMd).toContain('```json\n');
     expect((await fetch(`${origin}/affordances/unknown/input`)).status).toBe(404);
+  });
+
+  it('a JSON answer does not grow with a copy of its payload, and one with no next step carries no Markdown', async () => {
+    const big = 'a sentence long enough to measure. '.repeat(200);
+    const answer = async (path: string, body: unknown): Promise<{ status: number; text: string; json: Record<string, unknown> }> => {
+      const r = await fetch(`${origin}${path}`, { method: 'POST', headers: { 'Content-Type': 'application/json', Accept: 'application/json' }, body: JSON.stringify(body) });
+      const text = await r.text();
+      return { status: r.status, text, json: JSON.parse(text) as Record<string, unknown> };
+    };
+    const small = await answer('/start', { value: 1 });
+    const large = await answer('/start', { value: 1, note: big });
+    expect(received).toEqual({ value: 1, note: big });
+    // The handler echoes the note: the large answer's payload holds 7,000 characters more than the small one's,
+    // once, and the Markdown riding along is the same size for both and holds none of it.
+    expect(large.json.note).toBe(big);
+    expect(large.text.split('a sentence long enough to measure.').length - 1).toBe(200);
+    const twin = (j: Record<string, unknown>): string => (j[`${schema}encoding`] as Record<string, string>)[`${schema}text`]!;
+    expect(twin(large.json).length).toBe(twin(small.json).length);
+    expect(twin(large.json)).not.toContain('a sentence long enough to measure.');
+    const { [`${schema}encoding`]: _twin, ...payload } = small.json;
+    // A bounded overhead: the controls with their JSON-LD context, never a multiple of the payload.
+    expect(Buffer.byteLength(small.text) - Buffer.byteLength(JSON.stringify(payload))).toBeLessThan(6_000);
+    // `test.continue` has no next step: its answer is the payload and nothing else.
+    const last = await answer('/continue', { value: 2 });
+    expect(last.status).toBe(200);
+    expect(last.json[`${schema}encoding`]).toBeUndefined();
+    expect(last.json.ok).toBe(true);
+    // A refusal offers no next step either, though its action's guidance names one: a one-sentence 403 stays one sentence and its envelope.
+    const refused = await answer('/start', { value: 0 });
+    expect([refused.status, refused.json.error]).toEqual([403, 'Not yours to start.']);
+    expect(refused.json[`${schema}encoding`]).toBeUndefined();
+    expect(Buffer.byteLength(refused.text)).toBeLessThan(4_000);
+  });
+
+  it('a direct caller\'s answer with no next step and no affordances of its own keeps the links, and only the links', async () => {
+    // Foxxi calls sendActionResult without decorateShim: its JSON names no way on, so the Markdown is the only
+    // place the action manifest and the caller's own pages are named. A decorated payload names the manifest itself.
+    const webUi = { label: 'Web UI', href: `${base}/ui`, rel: 'related', type: 'text/html' };
+    const big = 'a finished play with plenty to say. '.repeat(300);
+    const app = express();
+    app.use(express.json());
+    app.post('/plain', (req, res) => sendActionResult(req, res, { ok: true, done: true, note: req.body.note }, base, 'Composition completed', [], [webUi]));
+    app.post('/decorated', (req, res) => sendActionResult(req, res, { ok: true, affordances: [{ action: 'urn:iep:action:discover-affordances', target: `${base}/affordances` }] }, base, 'Done', [], [webUi]));
+    const direct = await new Promise<Server>(resolve => { const s = createServer(app).listen(0, '127.0.0.1', () => resolve(s)); });
+    try {
+      const at = `http://127.0.0.1:${(direct.address() as { port: number }).port}`;
+      const post = async (path: string, body: unknown): Promise<{ text: string; json: Record<string, unknown> }> => {
+        const r = await fetch(`${at}${path}`, { method: 'POST', headers: { 'Content-Type': 'application/json', Accept: 'application/json' }, body: JSON.stringify(body) });
+        const text = await r.text();
+        return { text, json: JSON.parse(text) as Record<string, unknown> };
+      };
+      const short = await post('/plain', { note: 'short' });
+      const long = await post('/plain', { note: big });
+      const md = (j: Record<string, unknown>): string => (j[`${schema}encoding`] as Record<string, string> | undefined)?.[`${schema}text`] ?? '';
+      const doc = parseHypermediaMarkdown(md(long.json));
+      expect(doc.controls).toEqual([]);
+      expect(doc.links?.map(l => l.href)).toEqual([`${base}/affordances?format=markdown`, `${base}/ui`]);
+      expect(doc.fields?.['schema:text']).toBeUndefined();
+      expect(md(long.json)).not.toContain('a finished play with plenty to say.');
+      expect(md(long.json).length).toBe(md(short.json).length);
+      // A fixed overhead, the HMD context and two links, whatever the payload: about 4 KB, against the 10,800-character note here.
+      expect(Buffer.byteLength(long.text) - Buffer.byteLength(JSON.stringify({ ok: true, done: true, note: big }))).toBeLessThan(6_000);
+      // The decorated answer names the manifest as its own first step: no Markdown rides along.
+      expect((await post('/decorated', {})).json[`${schema}encoding`]).toBeUndefined();
+    } finally {
+      await new Promise<void>(resolve => direct.close(() => resolve()));
+    }
   });
 });
 

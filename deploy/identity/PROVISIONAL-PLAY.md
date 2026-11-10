@@ -18,7 +18,7 @@ The application first obtains a native `sign_request` envelope using its existin
 {"purpose":"interego-play-provisional-v1","audience":"https://play.example","publicKeyThumbprint":"<RFC7638 P-256 thumbprint>","challenge":"<20–128 base64url characters>","expiresAt":1800000060}
 ```
 
-The relay adds the authenticated `agent_id`, public `subject_pod_url`, and ISO timestamp. The grant expires within 120 seconds of that timestamp. Identity verifies the exact configured principal and pod through the fixed configured relay's `verify_agent`, including its live signing anchor and delegation, then recovers the signature over the relay's `sha256:<hex>` message. Caller-supplied URLs never select a verification server.
+The relay adds the authenticated `agent_id`, public `subject_pod_url`, and ISO timestamp. Once the relay's operator turns it on (`RELAY_SIGN_CLIENT_ID=1`), it may also add `client_id`, the OAuth client its session's access token was issued to; it is absent when the envelope was not asked for over an OAuth session. Identity does not read it and does not refuse it. The grant expires within 120 seconds of that timestamp. Identity verifies the exact configured principal and pod through the fixed configured relay's `verify_agent`, including its live signing anchor and delegation, then recovers the signature over the relay's `sha256:<hex>` message. Caller-supplied URLs never select a verification server.
 
 The browser stores a nonextractable P-256 private `CryptoKey` in IndexedDB and posts `{playGrant, publicKeyJwk, proof}` to `/play/provisional`. `playGrant` is `{_signed_payload,_signature}`. The signature uses WebCrypto ECDSA P-256/SHA-256 over these UTF-8 bytes, with actual newline separators:
 

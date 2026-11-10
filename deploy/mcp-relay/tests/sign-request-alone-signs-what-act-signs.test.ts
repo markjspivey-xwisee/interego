@@ -117,6 +117,10 @@ const open = (injectionCode.match(/\{/g) ?? []).length - (injectionCode.match(/\
 check('the injection slice starts in callWithSession and stops inside exactly one open block', callAt > -1 && open === 1, `callAt=${callAt}, open=${open}`);
 
 const slices = [
+  // The operator's switch for the signed `client_id`, which handleSignRequest reads. This file's
+  // sessions name no OAuth client, so it changes nothing here; sign-request-names-the-oauth-client
+  // .test.ts tests it.
+  between('function relaySignsClientId(): boolean {', 'async function handleSignRequest(', 'relaySignsClientId'),
   between('const RESERVED_WIRE_FIELDS = [', 'function unwrapSignedPayloadInto(', 'stripReservedWireFields'),
   between('const asPublicPodUrl = (url: string | undefined): string | undefined =>', 'const IDENTITY_URL', 'asPublicPodUrl'),
   between('async function selfPodUrl(args: ToolArgs): Promise<string | undefined> {', '// Build the per-call synthetic', 'selfPodUrl'),

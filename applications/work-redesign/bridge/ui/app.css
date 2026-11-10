@@ -26,9 +26,41 @@ button.side-nav__link { border: 0; background: none; font: inherit; cursor: poin
 .workspace-name { display: none; margin-left: var(--space-2); padding-left: var(--space-3); border-left: 1px solid var(--border); color: var(--text-secondary); font-size: var(--text-sm); font-weight: var(--weight-medium); white-space: nowrap; }
 @media (min-width: 48em) { .workspace-name { display: inline; } }
 .env-banner__field { display: inline-flex; align-items: center; gap: var(--space-2); min-width: 0; max-width: 100%; }
+/* The demo clock ("Demo time … weeks Skip ahead") wraps between its parts where the line is too short for it: at 300 px
+   its button ran 16 px past the screen, and its weeks box was squeezed too narrow to show its number. */
+.env-banner__clock { flex-wrap: wrap; justify-content: center; }
 .env-banner .select, .env-banner .input { width: auto; min-width: 0; max-width: 100%; min-height: 2.25rem; padding-block: 0.25rem; font-size: var(--text-sm); }
 .env-banner__field > .select { flex: 0 1 auto; }
 @media (max-width: 47.99em) { .app-header__actions > .badge { display: none; } }
+/* A header keeps to the screen down to 300 px, on every page: the brand gives way first, its name breaking between its words
+   (Work / Redesign) when the buttons need the room, and only then; a button's label wraps only once the brand can give no
+   more (its weight, 10000 to 1, leaves a button no share of the room the brand still has to give, not even the fraction of
+   a pixel that would break "Sign in" over two lines); a round button (the menu, your account) keeps its full size. With
+   room to spare nothing here changes anything. */
+.app-header .brand { flex-shrink: 10000; }
+.app-header .brand__name { white-space: normal; }
+.app-header__actions .btn { white-space: normal; }
+.app-header__actions > .btn--icon, .app-header__actions > .user-button { flex-shrink: 0; }
+/* Refresh is its word from 30em, as it was; below, its icon in a 44 px button that, like the round ones, keeps its size
+   (beside Connect wallet it was squeezed to 32 px at 300 px), the word still its name for a screen reader. */
+.header-refresh > .icon { display: none; }
+@media (max-width: 29.99em) {
+  .header-refresh { position: relative; flex-shrink: 0; width: var(--target); padding: 0; justify-content: center; }
+  .header-refresh > .icon { display: inline-block; }
+  .header-refresh__label { position: absolute; width: 1px; height: 1px; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); clip-path: inset(50%); white-space: nowrap; }
+}
+/* The small Sign in button (its text "Sign in with your Interego account") says "Sign in" alone in the header below 64em,
+   beside Refresh, the product switch and Connect wallet, and in a note below 30em. */
+@media (max-width: 63.99em) { .app-header .sign-in__more { display: none; } }
+@media (max-width: 29.99em) { .sign-in__more { display: none; } }
+/* A workspace open to read, seen with a wallet in the browser and Interego sign-in set up: two ways to sign in, more than
+   a phone's header holds beside the brand. There its buttons take a line of their own under the brand, and the navigation's
+   place under the header (--header-h) moves down to match. */
+@media (max-width: 47.99em) {
+  .app-header--two-ways .app-header__inner { flex-wrap: wrap; row-gap: var(--space-2); padding-block: var(--space-2); }
+  .app-header--two-ways .app-header__actions { flex: 1 0 100%; justify-content: flex-end; min-height: var(--target); }
+  :root:has(.app-header--two-ways) { --header-h: 7rem; }
+}
 /* Stacked tables on phones: the row label wraps instead of running into the value, and long pills wrap. */
 @media (max-width: 47.99em) {
   .table--stack td::before { white-space: normal; }
@@ -116,6 +148,10 @@ details.card[open] > summary { border-bottom: 1px solid var(--border); }
 .plan-card .card__body > * + * { margin-top: var(--space-4); }
 
 /* Map a process */
+/* What a capture recorded: each task's quotes badge and its "Copy link for the people named" go under the task's name on a
+   phone, and the button's label wraps there; .list__end neither shrank nor wrapped, so it ran up to 145 px past the screen. */
+.capture-result .list__end { flex: 0 1 auto; flex-wrap: wrap; min-width: 0; }
+.capture-result .list__end .btn { white-space: normal; max-width: 100%; text-align: left; }
 /* Each step's own title and body only: the two route cards inside step 2 keep their own stack gap. */
 .capture-step > .card__body > .card__title { display: flex; align-items: center; gap: var(--space-3); margin-bottom: var(--space-4); }
 .capture-step__n { display: inline-grid; place-items: center; flex: none; width: 1.75rem; height: 1.75rem; border-radius: 50%; background: var(--accent); color: var(--on-accent); font-size: var(--text-sm); font-weight: var(--weight-bold); }
@@ -140,6 +176,8 @@ details.card[open] > summary { border-bottom: 1px solid var(--border); }
 
 /* Use your AI assistant: set-up, workspace details and starters (the panel over a view) */
 .chat-panel { max-width: 48rem; }
+/* Its buttons keep to it on the narrowest phones ("Draft a map with copy and paste" ran past a 300 px screen); with room, one line. */
+.chat-panel .btn { white-space: normal; max-width: 100%; }
 .chat-panel__title { margin-top: var(--space-4); font-size: var(--text-md); }
 .chat-panel .tabs { margin-bottom: var(--space-3); }
 .chat-steps { display: grid; gap: var(--space-3); margin: 0; padding-left: 1.25rem; }

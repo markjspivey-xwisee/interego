@@ -17,7 +17,7 @@ import {
   ALLOCATION_LEVELS, COMPARISON_BASES, FREED_HOURS_DISPOSITIONS, INPUT_BASES, OUTCOME_DISPOSITIONS, OUTCOME_METRICS,
   PROBE_SIGNALS, REGISTRY_ROLES,
 } from './ontology.js';
-import { CLASSIFICATION_QUESTIONS, LIMITS } from './work.js';
+import { CHAT_DOCUMENT_MAX_CHARS, CLASSIFICATION_QUESTIONS, LIMITS } from './work.js';
 import { MAX_INPUT, RUN_ALTERNATIVES, STATE_FIELDS } from './valuation.js';
 import { ENTITY_IRI_PATTERN, USER_PRINCIPAL_PATTERN, type EnvelopeIntent } from './records.js';
 
@@ -224,15 +224,36 @@ const FIELDS: Readonly<Record<EnvelopeIntent, { readonly properties: Record<stri
   },
 };
 
+/**
+ * Where a relay-signed payload differs. The relay's act sends only {_signed_payload, _signature},
+ * so what an affordance takes beside the envelope goes inside the payload the relay signs: a task
+ * map's document_text, which the record then keeps (document.storeText true, or it is refused).
+ * The schema for that route says so, rather than "beside", for anyone who asks with a relay-signed read.
+ */
+const RELAY_SIGNED_FIELDS: Partial<Record<EnvelopeIntent, (typeof FIELDS)[EnvelopeIntent]>> = {
+  'wrd:record-task-map': {
+    description: `A registered operator or agent. Relay-signed, document_text goes inside this payload, the same text whose sha256 is document.sha256, and document.storeText is true: the record keeps the text the relay signed. A chat records a map for a document of up to ${CHAT_DOCUMENT_MAX_CHARS.toLocaleString('en-US')} characters; a longer one is recorded from this bridge's web app.`,
+    properties: {
+      ...FIELDS['wrd:record-task-map'].properties,
+      document: obj({
+        title: text('', LIMITS.documentTitle), sha256: { ...HEX64, description: 'sha256 of document_text' },
+        storeText: { type: 'boolean', const: true, description: 'true: a relay-signed document is kept with the record' },
+      }, ['title', 'sha256', 'storeText']),
+      document_text: text('the document, character for character, inside the payload the relay signs'),
+    },
+    required: [...FIELDS['wrd:record-task-map'].required, 'document_text'],
+  },
+};
+
 export const ENVELOPE_INTENTS: readonly EnvelopeIntent[] = Object.keys(FIELDS) as EnvelopeIntent[];
 export const isEnvelopeIntent = (v: unknown): v is EnvelopeIntent => typeof v === 'string' && (ENVELOPE_INTENTS as readonly string[]).includes(v);
 
 /** The other way to sign, for a person who signs in with their Interego account and holds no key. */
 export const RELAY_SIGNING = 'Or, signed in to Interego (Claude, ChatGPT, this bridge\'s web UI), ask the relay to sign it: act with sign_payload: true and this payload, or, where your act tool has no sign_payload option, call the connector\'s sign_request tool with payload as its only argument, set to this payload, then call act with the same descriptor_url and action_iri and with payload set to exactly the _signature and _signed_payload it returned, unchanged. Either way the act sends {_signed_payload, _signature}, carrying podUrl as pod_url and the relay\'s own timestamp in place of issuedAt, and the person acting is the user the signed-in agent belongs to (relay-attested, not a key they hold).';
 
-/** The JSON Schema of one intent's payload. */
-export function payloadSchema(intent: EnvelopeIntent): JsonSchema {
-  const f = FIELDS[intent];
+/** The JSON Schema of one intent's payload; `relaySigned` for the payload the relay signs, where that differs. */
+export function payloadSchema(intent: EnvelopeIntent, opts: { readonly relaySigned?: boolean } = {}): JsonSchema {
+  const f = (opts.relaySigned ? RELAY_SIGNED_FIELDS[intent] : undefined) ?? FIELDS[intent];
   return {
     $schema: 'https://json-schema.org/draft/2020-12/schema',
     title: `${intent} payload`,

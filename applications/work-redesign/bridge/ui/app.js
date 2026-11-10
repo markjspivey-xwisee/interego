@@ -371,6 +371,7 @@ const ICONS = {
   'arrow-right': ['M5 12h14', 'M13 6l6 6-6 6'],
   'external': ['M14 4h6v6', 'M20 4l-9 9', 'M18 14v4a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4'],
   'download': ['M12 4v11', 'M7 10l5 5 5-5', 'M4 19h16'],
+  'refresh': ['M20 12a8 8 0 1 1-2.34-5.66L20 8.5', 'M20 4v4.5h-4.5'],
   'chat': ['M20 12a8 8 0 0 1-11.8 7L4 20l1-4.2A8 8 0 1 1 20 12Z'],
   'clipboard': ['M9 3.5h6a1 1 0 0 1 1 1V6a1 1 0 0 1-1 1H9a1 1 0 0 1-1-1V4.5a1 1 0 0 1 1-1Z', 'M16 5h1a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2h1', 'M9 14l2 2 4-4'],
   'close': ['M6 6l12 12', 'M18 6 6 18'],
@@ -1234,7 +1235,7 @@ function envBanner() {
     h('span', { text: DEMO_SENTENCE }),
     h('span', { class: 'env-banner__field' }, h('label', { for: 'persona', text: 'View as' }),
       h('select', { id: 'persona', class: 'select', on: { change: (e) => { S.persona = e.target.value; S.panel = null; S.result = null; S.invalid = new Map(); refresh(); } } }, personas().map(option))),
-    S.data && S.tools.has('wrd.demo_advance_clock') ? h('span', { class: 'env-banner__field' }, 'Demo time: ', h('strong', { text: S.demoNow ? day(S.demoNow) : 'as scripted' }), weeks,
+    S.data && S.tools.has('wrd.demo_advance_clock') ? h('span', { class: 'env-banner__field env-banner__clock' }, 'Demo time: ', h('strong', { text: S.demoNow ? day(S.demoNow) : 'as scripted' }), weeks,
       h('span', { text: 'weeks' }),
       btn('Skip ahead', { size: 'sm', on: async () => {
         const out = await send('wrd.demo_advance_clock', { weeks: Number(weeks.value) });
@@ -1246,16 +1247,21 @@ function appHeader() {
   const d = data();
   const me = actor();
   const signedIn = (S.mode === 'interego' && S.interego) || (S.mode === 'demo' && me) || (S.mode === 'wallet' && S.account);
-  return h('header', { class: 'app-header' }, h('div', { class: 'app-header__inner' },
+  const wallet = !signedIn && S.mode === 'wallet' ? btn('Connect wallet', { size: 'sm', on: connectWallet }) : null;
+  const signIn = !signedIn && S.data ? signInButton('sm') : null;
+  // Two ways to sign in (a workspace open to read, a wallet in this browser) are more than a phone's header holds beside the
+  // brand: there they take a line of their own (app.css).
+  return h('header', { class: `app-header${wallet && signIn ? ' app-header--two-ways' : ''}` }, h('div', { class: 'app-header__inner' },
     brandLink(),
     d.podUrl ? h('span', { class: 'workspace-name', title: d.podUrl, text: workspaceLabel(d.podUrl) }) : null,
     h('div', { class: 'app-header__actions' },
       S.data && allDemo() ? badge('Sample data', 'demo') : null,
-      S.data ? btn('Refresh', { variant: 'ghost', size: 'sm', on: () => refresh() }) : null,
+      // Its word on a wider screen; on a phone its icon, the word still its name for a screen reader (app.css).
+      S.data ? h('button', { type: 'button', class: 'btn btn--ghost btn--sm header-refresh', on: { click: () => refresh() } }, icon('refresh', 'sm'), h('span', { class: 'header-refresh__label', text: 'Refresh' })) : null,
       productSwitch(),
       signedIn ? accountMenu() : null,
-      !signedIn && S.mode === 'wallet' ? btn('Connect wallet', { size: 'sm', on: connectWallet }) : null,
-      !signedIn && S.data ? signInButton('sm') : null)));
+      wallet,
+      signIn)));
 }
 
 /** Who you are, how your actions are signed, and the way out; the exact identity strings stay in Technical details. */
@@ -1390,7 +1396,16 @@ function appFooter() {
       h('a', { href: '/affordances', text: 'For developers: agent manifest' })));
 }
 
-const signInButton = (size = '') => (S.signIn?.enabled ? btn(SIGN_IN, { variant: 'primary', size, on: startSignIn, icon: size === 'lg' ? 'sign-in' : '', cls: size === 'lg' ? 'btn--block' : '' }) : null);
+/**
+ * The small one (in the header and the notes) says "Sign in" alone where its words would not fit (app.css): its text is still
+ * SIGN_IN, in one span, so the button's gap never falls between its words.
+ */
+const signInButton = (size = '') => {
+  if (!S.signIn?.enabled) return null;
+  if (size !== 'sm') return btn(SIGN_IN, { variant: 'primary', size, on: startSignIn, icon: size === 'lg' ? 'sign-in' : '', cls: size === 'lg' ? 'btn--block' : '' });
+  return h('button', { type: 'button', class: 'btn btn--primary btn--sm', on: { click: startSignIn } },
+    h('span', null, 'Sign in', h('span', { class: 'sign-in__more', text: SIGN_IN.slice('Sign in'.length) })));
+};
 
 /** Open another workspace: the choice lives in the page address (?pod=), not in storage. */
 function podPicker() {
