@@ -2931,12 +2931,18 @@ function openChatPanel() { openPanel(CHAT_PANEL_TITLE, chatPanel()); }
  * The message for the person's own assistant that drafts a map from the document in step 1 and records
  * it (Card A). The document goes in the message itself, between markers, so what the assistant sends
  * is exactly the text this page holds and measured. Steps: the drafting instructions (plain), the
- * people, agents and types of task (a signed read), then the map (signed), which keeps the document's
- * text: a chat-signed map is taken only with storeText true.
+ * people, agents and types of task (a signed read of the registry alone), then the map (signed), which
+ * keeps the document's text: a chat-signed map is taken only with storeText true.
+ *
+ * Every task needs a type of task the read lists, and a new workspace has none: the message says what
+ * to do then (tell the person, who adds them here), and, only where chat agents may change who may do
+ * what here and the person is an admin, adds a step for the assistant to add the types the person
+ * names, types of task only, once the person confirms them.
  */
 function taskMapChatMessage(st) {
   const pod = data().podUrl ?? '';
   const title = String(st.doc.title ?? '').trim();
+  const addKinds = chatAgentsDecide() && isAdmin();
   const levels = captureLevels().map(([l, name]) => {
     const r = levelRule(l);
     const needs = [r.requiresPerson !== false ? 'personAddress' : '', r.requiresAgent ? 'agentAddress' : ''].filter(Boolean);
@@ -2950,7 +2956,11 @@ function taskMapChatMessage(st) {
       { say: 'Get the drafting instructions for the document. Send its text exactly as it is between the markers, character for character.', actionIri: 'urn:iep:action:wrd:task-map-packet', signed: false,
         payload: { document_title: title, document_text: '<the document text, exactly as between the markers>', ...(st.workflow.title ? { workflow_title: st.workflow.title } : {}), pod_url: pod } },
       { say: 'Read who is registered in this workspace: its people, AI agents and types of task.', actionIri: 'urn:iep:action:wrd:read-records', signed: true,
-        payload: { intent: 'wrd:read-records', podUrl: pod } },
+        payload: { intent: 'wrd:read-records', podUrl: pod, kind: 'registry' } },
+      ...(addKinds ? [{
+        say: 'Only if I ask you to add types of task, and only once I have confirmed each one: add them. Types of task only, never people, roles or rules.', actionIri: 'urn:iep:action:wrd:update-registry', signed: true,
+        payload: { intent: 'wrd:update-registry', podUrl: pod, taskKinds: [{ slug: '<lowercase letters, digits and hyphens, from the name I gave>', label: '<the name I gave>', definition: '<one sentence on one line, as I agreed it>' }] },
+      }] : []),
       { say: 'Once I have confirmed the draft, record the map.', actionIri: 'urn:iep:action:wrd:record-task-map', signed: true,
         payload: {
           intent: 'wrd:record-task-map', podUrl: pod,
@@ -2964,9 +2974,10 @@ function taskMapChatMessage(st) {
     rules: [
       'Draft the tasks and their quotes as the instructions from step 1 say. Ignore their note about pasting the draft into the capture table: you record the map yourself, after I confirm it.',
       'Show me the draft. For each task, ask me who does it today, which person or AI agent does it, and its type of task, choosing only from what step 2 lists. Never invent them.',
+      `Every task needs a type of task that step 2 lists. If step 2 lists none, or none fits a task, tell me, and ask me to add the types in Work Redesign (People & roles, then Types of task, where an admin adds them), then do step 2 again. Never invent a type of task or its slug.${addKinds ? ' Or offer to add the types I name yourself, with step 3: show me each one\'s slug, label and definition first, and add them only once I confirm.' : ''}`,
       `currentLevel is one of: ${levels}. Leave out personAddress or agentAddress when the level doesn't need it.`,
       'Record only after I say the draft is right. document.storeText is true: recording from a chat stores the document\'s text with the map.',
-      'If you are unsure of a field, ask for the template in a signed step, with urn:iep:action:wrd:read-envelope-template as the action and payload {"intent": "wrd:read-records", "podUrl": the storage address above, "nonce": a new one, "template": {"intent": "wrd:record-task-map"}}.',
+      `If you are unsure of a field, ask for the template in a signed step, with urn:iep:action:wrd:read-envelope-template as the action and payload ${JSON.stringify({ intent: 'wrd:read-records', podUrl: pod, template: { intent: 'wrd:record-task-map' }, nonce: 'read-envelope-template-<turn number, or 0>-<16 new random letters or digits>' })}.`,
     ],
     outro: 'When the map is recorded, tell me, and I will check it under Processes in Work Redesign.',
   });

@@ -17,11 +17,16 @@ import {
   ALLOCATION_LEVELS, COMPARISON_BASES, FREED_HOURS_DISPOSITIONS, INPUT_BASES, OUTCOME_DISPOSITIONS, OUTCOME_METRICS,
   POD_POLICY_FIELDS, POD_POLICY_MAX_COUNT, PROBE_SIGNALS, REGISTRY_ROLES, type PodPolicy,
 } from './ontology.js';
-import { CHAT_DOCUMENT_MAX_CHARS, CLASSIFICATION_QUESTIONS, LIMITS, TASK_KIND_SLUG } from './work.js';
+import { CHAT_DOCUMENT_MAX_CHARS, CHAT_NONCE_RULE, CLASSIFICATION_QUESTIONS, LIMITS, TASK_KIND_SLUG } from './work.js';
 import { MAX_INPUT, RUN_ALTERNATIVES, STATE_FIELDS } from './valuation.js';
 import { ENTITY_IRI_PATTERN, PERSON_REF_PATTERN, USER_PRINCIPAL_PATTERN, type EnvelopeIntent } from './records.js';
 
 export type JsonSchema = Readonly<Record<string, unknown>>;
+
+/** The sections a read of the records answers, each of which `kind` may name alone. */
+export const READ_SECTIONS: readonly string[] = ['registry', 'workflows', 'tasks', 'plans', 'valuations', 'decisions', 'grants', 'runs'];
+/** The parts of a registry change, each of which a template may be asked for alone (template subject). */
+export const REGISTRY_PARTS: readonly string[] = ['entries', 'taskKinds', 'podPolicy'];
 
 const text = (description: string, maxLength?: number): JsonSchema => ({ type: 'string', description, ...(maxLength ? { maxLength } : {}) });
 const oneOf = (values: readonly string[], description: string): JsonSchema => ({ type: 'string', enum: [...values], description });
@@ -48,10 +53,20 @@ const HEAD = {
 const RECORD_ID = text('the head you read: its recordId, from wrd.read_records');
 const NOTE = text('free text', LIMITS.note);
 
+const NONCE_PATTERN = '^[A-Za-z0-9_-]{16,64}$';
 const COMMON: Record<string, JsonSchema> = {
   podUrl: text('the pod this call targets (normalised with a trailing slash); the signature binds it'),
   issuedAt: text('ISO-8601 date-time with seconds and a zone; accepted from 15 minutes before to 2 minutes after the bridge clock'),
-  nonce: { type: 'string', pattern: '^[A-Za-z0-9_-]{16,64}$', description: 'fresh for every envelope; a reused (signer, nonce) is refused' },
+  nonce: { type: 'string', pattern: NONCE_PATTERN, description: 'fresh for every envelope; a reused (signer, nonce) is refused' },
+};
+/**
+ * What every payload the relay signs for a chat carries: no issuedAt (the relay adds its own
+ * timestamp in its place, and an issuedAt the caller sends is dropped, not read), and a nonce made
+ * as the copied messages teach (CHAT_NONCE_RULE).
+ */
+const RELAY_COMMON: Record<string, JsonSchema> = {
+  podUrl: text('the pod this call targets; the relay signs it as pod_url'),
+  nonce: { type: 'string', pattern: NONCE_PATTERN, description: `fresh for every payload; a reused (person, nonce) is refused. ${CHAT_NONCE_RULE}` },
 };
 
 const TRI = (rate: boolean): JsonSchema => ({ title: rate ? 'Rate' : 'Tri', ...obj({
@@ -192,7 +207,7 @@ interface IntentFields {
 
 const FIELDS: Readonly<Record<EnvelopeIntent, IntentFields>> = {
   'wrd:update-registry': {
-    description: "Admin only. At least one of entries, taskKinds, podPolicy. Each entry is a PersonEntry, an AgentEntry or a RemovalEntry, with each address at most once in a change; an agent's principal must be a person the registry holds once the change is made.",
+    description: "Admin only. At least one of entries, taskKinds, podPolicy: send only the part you change, and a part left out stays as it is (a template for one part: subject entries, taskKinds or podPolicy). Each entry is a PersonEntry, an AgentEntry or a RemovalEntry, with each address at most once in a change; an agent's principal must be a person the registry holds once the change is made.",
     properties: {
       entries: list(REGISTRY_ENTRY, 0, 50, 'people and agents to add or change, and members to remove'),
       taskKinds: list(obj({
@@ -322,6 +337,20 @@ const FIELDS: Readonly<Record<EnvelopeIntent, IntentFields>> = {
  * The schema for that route says so, rather than "beside", for anyone who asks with a relay-signed read.
  */
 const RELAY_SIGNED_FIELDS: Partial<Record<EnvelopeIntent, IntentFields>> = {
+  // A chat's read: what wrd.read_records and wrd.read_envelope_template take beside a key-held read goes inside the payload the relay signs.
+  'wrd:read-records': {
+    description: 'A signed read: an admin or a person in the pod\'s registry. Relay-signed, what a read takes goes inside this payload, since act sends nothing beside it; a read changes nothing.',
+    properties: {
+      kind: oneOf(READ_SECTIONS, 'wrd.read_records only: just this section; registry is who is registered (people, AI agents and types of task)'),
+      subject: text('wrd.read_records only: just the records about this entity IRI'),
+      workflow: text('wrd.read_records only: just the records of this workflow IRI'),
+      fixedText: { type: 'boolean', description: 'wrd.read_records only: true adds readExposure and vocabulary, the text that is the same in every read, which a chat\'s read leaves out' },
+      template: {
+        type: 'object', description: 'wrd.read_envelope_template only: the template asked for, {intent, and the task_iri, workflow_iri, plan_iri, decision_iri, grant_iri or subject that intent takes}; for wrd:update-registry, subject entries, taskKinds or podPolicy names the one part you change',
+      },
+    },
+    required: [],
+  },
   'wrd:record-task-map': {
     description: `A registered operator or agent. Relay-signed, document_text goes inside this payload, the same text whose sha256 is document.sha256, and document.storeText is true: the record keeps the text the relay signed. A chat records a map for a document of up to ${CHAT_DOCUMENT_MAX_CHARS.toLocaleString('en-US')} characters; a longer one is recorded from this bridge's web app.`,
     properties: {
@@ -342,16 +371,25 @@ export const isEnvelopeIntent = (v: unknown): v is EnvelopeIntent => typeof v ==
 /** The other way to sign, for a person who signs in with their Interego account and holds no key. */
 export const RELAY_SIGNING = 'Or, signed in to Interego (Claude, ChatGPT, this bridge\'s web UI), ask the relay to sign it: act with sign_payload: true and this payload, or, where your act tool has no sign_payload option, call the connector\'s sign_request tool with payload as its only argument, set to this payload, then call act with the same descriptor_url and action_iri and with payload set to exactly the _signature and _signed_payload it returned, unchanged. Either way the act sends {_signed_payload, _signature}, carrying podUrl as pod_url and the relay\'s own timestamp in place of issuedAt, and the person acting is the user the signed-in agent belongs to (relay-attested, not a key they hold).';
 
-/** The JSON Schema of one intent's payload; `relaySigned` for the payload the relay signs, where that differs. */
+/** How a chat has its payload signed, for the schema of a payload the relay signs. */
+export const RELAY_SIGNED_HOW = 'The relay signs this payload for you: act with sign_payload: true and this payload, or, where your act tool has no sign_payload option, call the connector\'s sign_request tool with payload as its only argument, set to this payload, then call act with the same descriptor_url and action_iri and with payload set to exactly the _signature and _signed_payload it returned, unchanged. It carries no issuedAt: the relay adds its own time, and carries podUrl as pod_url. The person acting is the user the signed-in agent belongs to (relay-attested, not a key they hold).';
+
+/**
+ * The JSON Schema of one intent's payload. `relaySigned` is for the payload the relay signs for a
+ * chat: no issuedAt, the copied messages' nonce rule, and, where an intent's fields differ there,
+ * RELAY_SIGNED_FIELDS. The key-held schema is unchanged by it.
+ */
 export function payloadSchema(intent: EnvelopeIntent, opts: { readonly relaySigned?: boolean } = {}): JsonSchema {
-  const f = (opts.relaySigned ? RELAY_SIGNED_FIELDS[intent] : undefined) ?? FIELDS[intent];
+  const relay = opts.relaySigned === true;
+  const f = (relay ? RELAY_SIGNED_FIELDS[intent] : undefined) ?? FIELDS[intent];
   return {
     $schema: 'https://json-schema.org/draft/2020-12/schema',
     title: `${intent} payload`,
-    description: `${f.description} Sign EIP-191 personal_sign over canonicalJson(payload) (keys sorted recursively, arrays in order) and send {payload, signature}. ${RELAY_SIGNING}`,
+    description: relay ? `${f.description} ${RELAY_SIGNED_HOW}`
+      : `${f.description} Sign EIP-191 personal_sign over canonicalJson(payload) (keys sorted recursively, arrays in order) and send {payload, signature}. ${RELAY_SIGNING}`,
     type: 'object',
-    properties: { intent: { const: intent }, ...COMMON, ...f.properties },
-    required: ['intent', 'podUrl', 'issuedAt', 'nonce', ...f.required],
+    properties: { intent: { const: intent }, ...(relay ? RELAY_COMMON : COMMON), ...f.properties },
+    required: ['intent', 'podUrl', ...(relay ? [] : ['issuedAt']), 'nonce', ...f.required],
     additionalProperties: false,
     ...(f.atLeastOneOf ? { anyOf: f.atLeastOneOf.map((k) => ({ properties: { [k]: true }, required: [k] })) } : {}),
   };

@@ -3472,7 +3472,9 @@ describe('work-redesign bridge', () => {
     expect(packet['https://schema.org/encoding']).toBeUndefined();
     const { '@context': _ctx, '@type': _type, conformsToShape: _shape, affordances: _aff, ...own } = packet;
     expect(Buffer.byteLength(text) - Buffer.byteLength(JSON.stringify(own))).toBeLessThan(3_500);
-    expect(Buffer.byteLength(text)).toBeLessThan(SOP.length + 9_000);
+    // Changed from 9,000: the chat route now carries the copied messages' nonce rule and a step that adds types of task
+    // where the person may (about 1,300 bytes), which a live run through a chat assistant on 2026-11-10 showed it needs.
+    expect(Buffer.byteLength(text)).toBeLessThan(SOP.length + 10_000);
     // Asked for as Markdown, the whole packet is still there: a lossless snapshot and a json block.
     const md = await fetch(`${w.base}/wrd/task_map_packet`, { method: 'POST', headers: { 'content-type': 'application/json', accept: 'text/markdown' }, body: JSON.stringify(args) });
     expect(md.headers.get('content-type')).toContain('text/markdown');
@@ -3484,7 +3486,7 @@ describe('work-redesign bridge', () => {
 
     // The packet names both routes: the web app's review, and a chat's.
     const next = obj(packet['next']);
-    expect(String(next['review'])).toMatch(/capture table/);
+    expect(String(obj(next['review'])['instructions'])).toMatch(/capture table/);
     const chat = obj(next['relaySigned']);
     const how = String(chat['instructions']);
     for (const s of ['act sends only the signed pair, whether made with sign_payload: true or passed on as returned by sign_request with payload as its only argument',
@@ -3528,7 +3530,7 @@ describe('work-redesign bridge', () => {
     expect(long.length).toBeGreaterThan(CHAT_DOCUMENT_MAX_CHARS * 4);
     const packet = ok(await http(w, 'POST', 'task_map_packet', { document_title: 'AP SOP', document_text: long, workflow_title: 'Supplier invoice processing', pod_url: POD }));
     const next = obj(packet['next']);
-    expect(String(next['review'])).toMatch(/capture table/);
+    expect(String(obj(next['review'])['instructions'])).toMatch(/capture table/);
     const chat = obj(next['relaySigned']);
     expect(Object.keys(chat).sort()).toEqual(['instructions', 'maxDocumentChars']);
     expect(chat['maxDocumentChars']).toBe(CHAT_DOCUMENT_MAX_CHARS);

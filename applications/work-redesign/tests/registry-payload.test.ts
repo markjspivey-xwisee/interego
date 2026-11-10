@@ -38,7 +38,7 @@ const OLU = `did:web:${IDENTITY}:users:u-pk-0101a0b0c0d0`;
 const SCHEMA = payloadSchema('wrd:update-registry');
 
 /** A bridge with an admin key and an identity host (so a user DID can be registered), on an empty in-memory pod. */
-function bridge(): { readonly call: (fields: Obj) => Promise<Obj>; readonly payload: (fields: Obj) => Obj; readonly template: () => Promise<Obj> } {
+function bridge(): { readonly call: (fields: Obj) => Promise<Obj>; readonly payload: (fields: Obj) => Obj; readonly template: (subject?: string) => Promise<Obj> } {
   const pod = memoryPod();
   const clock = demoClock();
   const h = createWrdHandlers({
@@ -55,7 +55,7 @@ function bridge(): { readonly call: (fields: Obj) => Promise<Obj>; readonly payl
   return {
     payload,
     call: async (fields) => send(payload(fields)),
-    template: async () => obj(await h['wrd.envelope_template']!({ intent: 'wrd:update-registry' }), 'the template answer'),
+    template: async (subject) => obj(await h['wrd.envelope_template']!({ intent: 'wrd:update-registry', ...(subject ? { subject } : {}) }), 'the template answer'),
   };
 }
 
@@ -121,9 +121,9 @@ describe('wrd:update-registry payload schema', () => {
     await accepted(b2, { entries: [byKey, byDid, agent] }, 'a person by key, a person by user DID and their agent at once');
   });
 
-  it('the envelope template\'s entry, with every path in its fill filled, is a person\'s entry the schema and the handler take', async () => {
+  it('the envelope template\'s entry, asked for as the part changed (subject entries), with every path in its fill filled, is a person\'s entry the schema and the handler take', async () => {
     const b = bridge();
-    const t = await b.template();
+    const t = await b.template('entries');
     const tpl = obj(t['template'], 'template');
     expect(t['fill']).toEqual(['entries[0].address', 'entries[0].roles[0]', 'entries[0].label', 'entries[0].personRef']);
     // Each path the template leaves to the signer, filled in place, and nothing else touched.
@@ -138,6 +138,35 @@ describe('wrd:update-registry payload schema', () => {
     expect(schemaErrors(SCHEMA, tpl)).toEqual([]);
     const { intent: _i, podUrl: _p, issuedAt: _a, nonce: _n, ...fields } = tpl;
     await accepted(b, fields, 'the filled template');
+  });
+
+  it('the template fills no part of a change until one is named, so one filled in as it stands never changes people and roles by default; named, it is that part alone, which the schema and the handler take', async () => {
+    const b = bridge();
+    const parts = ['entries', 'taskKinds', 'podPolicy'];
+    // No part named: no entries row, no task kinds, no pod policy, and nothing to fill; its note says to send only the part changed.
+    const none = await b.template();
+    const bare = obj(none['template'], 'template');
+    expect(parts.filter((k) => k in bare)).toEqual([]);
+    expect(none['fill']).toEqual([]);
+    expect(String(none['note'])).toMatch(/^Send only the part you change, and leave the others out: entries \(people and AI agents; a change to people and roles\), taskKinds \(types of task\) or podPolicy .* Ask again with subject entries, taskKinds or podPolicy/);
+    // Types of task alone: a slug, a label and a definition to fill, nothing about people. Filled and sent, the people stay as they were.
+    await accepted(b, { entries: [{ address: ANA.address, roles: ['operator'], label: 'Ana', softwareAgent: false, personRef: 'p-ana' }] }, 'Ana');
+    const kinds = await b.template('taskKinds');
+    const tpl = obj(kinds['template'], 'template');
+    expect([parts.filter((k) => k in tpl), kinds['fill']]).toEqual([['taskKinds'], ['taskKinds[0].slug', 'taskKinds[0].label', 'taskKinds[0].definition']]);
+    const kind = obj((tpl['taskKinds'] as unknown[])[0], 'the template\'s type of task');
+    Object.assign(kind, { slug: 'invoice-intake', label: 'Invoice intake (fictional)', definition: 'Taking a supplier invoice in, up to the intake log.' });
+    expect(schemaErrors(SCHEMA, tpl)).toEqual([]);
+    const { intent: _i, podUrl: _p, issuedAt: _a, nonce: _n, ...fields } = tpl;
+    const r = await accepted(b, fields, 'the filled task-kinds template');
+    expect((r['members'] as Obj[]).map((m) => [m['address'], m['roles']])).toEqual([[ANA.address.toLowerCase(), ['operator']]]);
+    // The pod policy alone: the policy now on the pod (none yet), and a note: it replaces the whole policy, its fields, the published values.
+    const policy = await b.template('podPolicy');
+    expect([parts.filter((k) => k in obj(policy['template'], 'template')), obj(policy['template'], 'template')['podPolicy']]).toEqual([['podPolicy'], {}]);
+    expect(String(policy['note'])).toMatch(/^What you send replaces the whole pod policy.* Its fields: maxLevel, floor, minSamples, minHumanConfirmations, minDistinctConfirmers\. Published: floor 0\.\d+, minSamples \d+, minHumanConfirmations \d+, minDistinctConfirmers \d+\.$/);
+    // A part that is not one is refused.
+    const unknown = await b.template('everything');
+    expect([unknown['iep:refusalStatus'], unknown['error']]).toEqual([400, 'Unknown part of a registry change.']);
   });
 
   it('the schema refuses each entry the handler refuses for its shape alone, and a change that carries nothing', async () => {

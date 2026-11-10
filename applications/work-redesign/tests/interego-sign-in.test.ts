@@ -2032,4 +2032,38 @@ describe('work-redesign web UI: sign in with your Interego account', () => {
     expect(urnsRunningIntoPunctuation(String(copied[0]))).toEqual([]);
     expect(page.errors).toEqual([]);
   }, 60_000);
+
+  it('the map message says what to do when step 2 lists no type of task that fits, and offers a step that adds the types the person names, types of task only, only where chat agents decide here and the person is an admin', async () => {
+    const NO_KIND = 'Every task needs a type of task that step 2 lists. If step 2 lists none, or none fits a task, tell me, and ask me to add the types in Work Redesign (People & roles, then Types of task, where an admin adds them), then do step 2 again. Never invent a type of task or its slug.';
+    const OFFER = ' Or offer to add the types I name yourself, with step 3: show me each one\'s slug, label and definition first, and add them only once I confirm.';
+    const doc = { title: 'Fictional procedure', text: 'The clerk saves every new supplier invoice to the intake folder each morning.' };
+    for (const [decide, admin] of [[true, true], [false, true], [true, false]] as const) {
+      const w = await world({ lead: true, chatAgentsDecide: decide, admin });
+      const page = await openPage(w.bridge, '/ui', { [SESSION_KEY]: JSON.stringify({ token: w.relay.mint(), expiresAt: new Date(Date.now() + 3600_000).toISOString() }) });
+      await page.until(() => page.text().includes(`Signed in as ${PERSON} via ${agentOf('work-redesign')}`) && page.text().includes('Map and change your process'), 'the signed-in lead');
+      const message = String((page.window.eval('taskMapChatMessage') as (st: unknown) => string)({ doc, workflow: { title: '' } }));
+      const where = `chatAgentsDecide ${decide}, admin ${admin}`;
+      // Step 2 reads the registry alone: who is registered, nothing else.
+      expect([where, message]).toEqual([where, expect.stringContaining('"intent":"wrd:read-records","podUrl":"' + DEMO_POD + '","kind":"registry","nonce":"read-records-<turn number, or 0>-<16 new random letters or digits>"')]);
+      expect([where, message]).toEqual([where, expect.stringContaining(`- ${NO_KIND}`)]);
+      const offered = decide && admin;
+      expect([where, message.includes(OFFER), message.includes('urn:iep:action:wrd:update-registry')]).toEqual([where, offered, offered]);
+      if (offered) {
+        // Step 3 adds types of task only, with the copied messages' nonce; recording the map is step 4.
+        expect(message).toContain('3. Only if I ask you to add types of task, and only once I have confirmed each one: add them. Types of task only, never people, roles or rules.\n   action_iri: "urn:iep:action:wrd:update-registry"\n   sign_payload: true');
+        const line = must(message.split('\n').find((l) => l.startsWith('   payload: {"intent":"wrd:update-registry"')), 'step 3\'s payload');
+        const payload = objOf(JSON.parse(line.slice('   payload: '.length)));
+        expect(Object.keys(payload).sort()).toEqual(['intent', 'nonce', 'podUrl', 'taskKinds']);
+        expect(payload['nonce']).toBe('update-registry-<turn number, or 0>-<16 new random letters or digits>');
+        expect(message).toContain('4. Once I have confirmed the draft, record the map.');
+      } else {
+        expect(message).toContain('3. Once I have confirmed the draft, record the map.');
+      }
+      // The template rule's nonce is made as every other signed payload's.
+      expect(message).toContain('"nonce":"read-envelope-template-<turn number, or 0>-<16 new random letters or digits>"');
+      expect(message).not.toContain('"nonce": a new one');
+      expect(urnsRunningIntoPunctuation(message)).toEqual([]);
+      expect(page.errors).toEqual([]);
+    }
+  }, 120_000);
 });

@@ -1,5 +1,69 @@
 # Changelog
 
+## 2026-11-10 — Work Redesign: what a live run through a chat assistant found
+
+A live run through Claude, with the Interego connector, recorded a fictional
+process map on the live Work Redesign site from a chat. It passed, and showed
+five things to fix on the chat route.
+
+A new workspace has no types of task, and every task needs one, so a chat
+drafting a map had nothing to choose from and no word on what to do. The
+message the app copies for the assistant, and the drafting instructions the
+bridge hands back, now say: if the workspace lists no type of task, or none
+fits, tell the person and ask them to add the types in Work Redesign (People &
+roles, Types of task, where an admin adds them), then read again, and never
+make one up. Where the
+operator lets chat assistants take every action and the person is an admin,
+the message adds a step, and the instructions a ready payload, for the
+assistant to add the types the person names: types of task only, never people,
+roles or rules, each one shown to the person and added once they confirm.
+Elsewhere the bridge refuses that change from a chat, as before.
+
+A template a chat asked for still listed `issuedAt` as required and filled in
+a time and a nonce made by the bridge, while the copied message says a chat's
+payload has no `issuedAt` and teaches its own way of making a nonce. For a
+chat, every template now leaves `issuedAt` out of the template and the schema
+(the relay adds its own time), and shows the nonce as the copied message
+writes it, for example `record-task-map-<turn number, or 0>-<16 new random
+letters or digits>`. Templates for a key-held signature, and the web app's,
+are unchanged.
+
+The template for a registry change filled in one person's entry, so an
+assistant filling it in as told sent a change to people and roles when it only
+meant to add types of task. It now fills no part until one is named (`subject`
+entries, taskKinds or podPolicy), with a note to send only the part being
+changed; named, it is that part alone. A part that is not one is refused. The
+People & roles page builds its own changes and works as before.
+
+A chat's reads were large: each repeated about 8,500 characters of text that
+is the same in every read. A chat's read now leaves that text out unless it
+asks for it (`fixedText: true` in the payload the relay signs), and can ask for
+the registry alone (`kind: "registry"`, in the same payload, since the relay
+sends nothing beside it). The copied message and the drafting instructions
+read the registry alone. Measured on a test bridge without a record key: a
+read of one five-task map went from 20,033 characters to 13,696, and the
+registry read from 8,322 to 1,985. The web app's reads keep all of it.
+
+Smaller fixes: tasks come back in their process's order rather than the order
+of their identifiers; a recorded map's answer says which document text the
+record keeps, its length and whether the text is stored; the capture table's
+own fields in the drafting instructions are grouped under its route, apart
+from the chat's; and the instructions, the templates and the copied messages
+use one wording for making a nonce, the shared chat helper's, which a test
+holds equal. The drafting instructions grew by about 1,300 characters with the
+nonce rule and the step that adds types of task, and the size check on them
+was raised to match.
+
+New tests check each of these, and each fails with its fix taken out.
+
+Not covered: no second live run has been made with these changes. The chat
+route's 20,000-character limit is still unmeasured: the live run's document was
+734 characters. Read sizes were measured on a test bridge, not the live one. A
+chat's read names one section (`kind`) or takes them all; it cannot pick
+several. The bridge does not check that a type of task a
+chat adds was confirmed by the person; the message and the instructions ask
+the assistant to, and the bridge checks only who may make the change.
+
 ## 2026-11-10 — Work Redesign: the registry schema says what a registry change needs
 
 The published schema for a Work Redesign registry change (`wrd:update-registry`:
