@@ -104,7 +104,11 @@ const HASH_KEYS: ReadonlySet<string> = new Set(['rubricHash', 'scenarioHash']);
  * them carries no stake.
  */
 const SIGNED_KEYS: ReadonlySet<string> = new Set(['graphTrig', 'descriptorTurtle', 'statement']);
-const RUBRIC_IRI = /urn:pev:rubric:([0-9a-f]{64})/g;
+/**
+ * A rubric IRI, its hash as `hashIn` reads it: `urn:pev:rubric:`, 63 hex, and the hash's last digit, or the one letter
+ * NFC folded that digit and the combining marks after it into (`foldedDigit`).
+ */
+const RUBRIC_IRI = /urn:pev:rubric:([0-9a-f]{63}(?:[0-9a-f]|[\u0080-\uffff]))/g;
 /**
  * A calibration decision kind's hash prefix, `pev/<first 16 hex of the rubric hash>/`, wherever it sits,
  * whatever comes before it. No word boundary: `\b` reads only ASCII as word characters, and NFC folds
@@ -113,9 +117,59 @@ const RUBRIC_IRI = /urn:pev:rubric:([0-9a-f]{64})/g;
  * would be masked differently.
  */
 const KIND_PREFIX = /pev\/([0-9a-f]{16})\//g;
-/** A whole run of 64 hex, or of 16, with no hex digit on either side: a stand-in copied without its frame. */
-const HEX64_RUN = /(?<![0-9a-f])[0-9a-f]{64}(?![0-9a-f])/g;
-const HEX16_RUN = /(?<![0-9a-f])[0-9a-f]{16}(?![0-9a-f])/g;
+const HEX_DIGIT = /^[0-9a-f]$/;
+
+/**
+ * The hex digit a letter was folded from, and the combining marks folded with it: NFC writes a hex
+ * digit a mark follows as one letter where Unicode has one (`e` and U+0301 as `é`, `b` and U+0307 as
+ * `ḃ`), so `normaliseForQuote`, whose form the judge packet and an attempt's `normalisedText` show,
+ * writes a run of hex whose last digit a mark follows with one hex digit fewer. Null for any other
+ * character.
+ */
+function foldedDigit(c: string): { readonly digit: string; readonly marks: string } | null {
+  const d = c.normalize('NFD');
+  return d.length > 1 && HEX_DIGIT.test(d[0]!) ? { digit: d[0]!, marks: d.slice(1) } : null;
+}
+
+/**
+ * The hash in `run` (`n` - 1 hex and one more character, as `RUBRIC_IRI` and `HASH_OR_RUN` take it):
+ * its `n` hex, the last a digit or the letter it was folded into (`foldedDigit`), and the marks folded
+ * with it ('' when none were). Null when the last character is neither.
+ */
+function hashIn(run: string): { readonly hash: string; readonly marks: string } | null {
+  const last = run.slice(-1);
+  if (HEX_DIGIT.test(last)) return { hash: run, marks: '' };
+  const f = foldedDigit(last);
+  return f === null ? null : { hash: run.slice(0, -1) + f.digit, marks: f.marks };
+}
+
+/**
+ * The letter a stand-in's last digit is shown as where the hash's was folded with `marks`: that digit
+ * with those marks, when NFC folds them into one letter, so the normalised form of the masked line is
+ * the masked normalised form; otherwise a hex letter that takes them, chosen by the stand-in's digit.
+ * One character either way, so every offset keeps. Which letter tells nothing of the hash's own last
+ * digit beyond that it takes those marks, which a line and its normalised form shown side by side
+ * already tell.
+ */
+function refolded(digit: string, marks: string, was: string): string {
+  const own = `${digit}${marks}`.normalize('NFC');
+  if (own.length === 1) return own;
+  const takers = [...'abcdef'].map((b) => `${b}${marks}`.normalize('NFC')).filter((c) => c.length === 1);
+  return takers[parseInt(digit, 16) % takers.length] ?? was;
+}
+
+/**
+ * `run` (a hash as `hashIn` reads it) with its hash's stand-in in text for `k` in its place, the same
+ * length: the stand-in's hex, its last digit refolded where the hash's was folded (`refolded`). `run`
+ * as it is when it holds no hash.
+ */
+function standInFor(run: string, k: Keyer): string {
+  const at = hashIn(run);
+  if (at === null) return run;
+  const s = at.hash.length === 64 ? k.inText.full(at.hash) : k.inText.prefix(at.hash);
+  return at.marks === '' ? s : s.slice(0, -1) + refolded(s.slice(-1), at.marks, run.slice(-1));
+}
+
 /** A rubric IRI as this bridge writes it under `rubricIri` (`records.ts` `rubricIriOf`): that and nothing else. */
 const RUBRIC_IRI_FIELD = /^urn:pev:rubric:([0-9a-f]{64})$/;
 /** A calibration kind as `calibration.ts` writes it under a cell's `kind`: `pev/<16 hex>/<criterion id>`, and nothing else. */
@@ -126,16 +180,26 @@ const mayHoldHash = (s: string): boolean => s.includes('urn:pev:rubric:') || s.i
 /**
  * `s` with every rubric IRI's hash and every calibration-kind prefix inside it replaced by its
  * stand-in in text for scope `k` (`Keyer.inText`), each the same length as what it replaces, so an
- * offset into the stored text is the same offset into this one.
+ * offset into the stored text is the same offset into this one. A rubric IRI's hash is found in a
+ * line and in its normalised form alike: where a combining mark follows its last digit, NFC folds the
+ * two into one letter (`hashIn`), and the 63 hex before that letter are replaced as well, the letter
+ * refolded onto the stand-in's last digit (`standInFor`).
  */
 export function maskText(s: string, k: Keyer): string {
   if (!mayHoldHash(s)) return s;
-  return s.replace(RUBRIC_IRI, (_m, h: string) => `urn:pev:rubric:${k.inText.full(h)}`)
+  return s.replace(RUBRIC_IRI, (_m, run: string) => `urn:pev:rubric:${standInFor(run, k)}`)
     .replace(KIND_PREFIX, (_m, p: string) => `pev/${k.inText.prefix(p)}/`);
 }
 
-/** A rubric IRI's hash, a kind's prefix, or a whole run of 64 or 16 hex: one pass, so nothing is replaced twice. */
-const HASH_OR_RUN = /urn:pev:rubric:([0-9a-f]{64})|pev\/([0-9a-f]{16})\/|(?<![0-9a-f])([0-9a-f]{64})(?![0-9a-f])|(?<![0-9a-f])([0-9a-f]{16})(?![0-9a-f])/g;
+/**
+ * A rubric IRI's hash, a kind's prefix, or a whole run of 64 or 16 hex, each run's last digit possibly
+ * folded with the marks after it into one letter (`hashIn`): one pass, so nothing is replaced twice.
+ */
+const HASH_OR_RUN = new RegExp([
+  RUBRIC_IRI.source, KIND_PREFIX.source,
+  '(?<![0-9a-f])([0-9a-f]{63}(?:[0-9a-f](?![0-9a-f])|[\\u0080-\\uffff]))',
+  '(?<![0-9a-f])([0-9a-f]{15}(?:[0-9a-f](?![0-9a-f])|[\\u0080-\\uffff]))',
+].join('|'), 'g');
 
 /**
  * A quote that was read back (`QuoteCheck.readBack`) as an answer that masks text shows it when there
@@ -143,13 +207,15 @@ const HASH_OR_RUN = /urn:pev:rubric:([0-9a-f]{64})|pev\/([0-9a-f]{16})\/|(?<![0-
  * without its attempt's lines. `maskText`, and each whole run of 64 or 16 hex replaced with its
  * stand-in in text as well: a judge may have copied a stand-in's hex alone (`quoteAsStored`), so the
  * saved quote can hold a hash with no `urn:pev:rubric:` or `pev/` around it, and no hash read back
- * into it is shown bare. A run of hex the learner or the judge wrote bare is shown as a stand-in too.
+ * into it is shown bare. A run of hex the learner or the judge wrote bare is shown as a stand-in too,
+ * and a run whose last digit NFC folded with a mark after it (`hashIn`) as well, in `normalised` as
+ * in `text`.
  */
 export function maskReadBackQuote(s: string, k: Keyer): string {
   return s.replace(HASH_OR_RUN, (_m, iri?: string, kind?: string, run64?: string, run16?: string) => (
-    iri !== undefined ? `urn:pev:rubric:${k.inText.full(iri)}`
+    iri !== undefined ? `urn:pev:rubric:${standInFor(iri, k)}`
       : kind !== undefined ? `pev/${k.inText.prefix(kind)}/`
-        : run64 !== undefined ? k.inText.full(run64) : k.inText.prefix(run16!)));
+        : standInFor(run64 ?? run16!, k)));
 }
 
 /**
@@ -224,19 +290,23 @@ function readBackAsShown(q: Record<string, unknown>, k: Keyer, turns: readonly Q
  * back; it cuts a word of the line, which the quote rule refuses anyway.
  */
 export function quoteAsStored(k: Keyer, stored: readonly string[]): (quote: string) => string {
+  // Each stand-in as a view shows it, to the stored text it stands for: from a line and from its
+  // normalised form, which writes a hash a mark follows otherwise (`hashIn`) and is shown so.
   const full = new Map<string, string>();
   const prefix = new Map<string, string>();
   for (const t of stored) {
     if (!mayHoldHash(t)) continue;
-    for (const m of t.matchAll(RUBRIC_IRI)) full.set(k.inText.full(m[1]!), m[1]!);
-    for (const m of t.matchAll(KIND_PREFIX)) prefix.set(k.inText.prefix(m[1]!), m[1]!);
+    for (const form of [t, normaliseForQuote(t)]) {
+      for (const m of form.matchAll(RUBRIC_IRI)) if (hashIn(m[1]!) !== null) full.set(standInFor(m[1]!, k), m[1]!);
+      for (const m of form.matchAll(KIND_PREFIX)) prefix.set(k.inText.prefix(m[1]!), m[1]!);
+    }
   }
   if (full.size === 0 && prefix.size === 0) return (quote) => quote;
-  return (quote) => quote
-    .replace(RUBRIC_IRI, (m, h: string) => { const raw = full.get(h); return raw === undefined ? m : `urn:pev:rubric:${raw}`; })
-    .replace(KIND_PREFIX, (m, p: string) => { const raw = prefix.get(p); return raw === undefined ? m : `pev/${raw}/`; })
-    .replace(HEX64_RUN, (m) => full.get(m) ?? m)
-    .replace(HEX16_RUN, (m) => prefix.get(m) ?? m);
+  return (quote) => quote.replace(HASH_OR_RUN, (m, iri?: string, kind?: string, run64?: string, run16?: string) => {
+    if (iri !== undefined) { const raw = full.get(iri); return raw === undefined ? m : `urn:pev:rubric:${raw}`; }
+    if (kind !== undefined) { const raw = prefix.get(kind); return raw === undefined ? m : `pev/${raw}/`; }
+    return (run64 !== undefined ? full.get(run64) : prefix.get(run16!)) ?? m;
+  });
 }
 
 type Version = { readonly scenarioIri: string; readonly version: number };

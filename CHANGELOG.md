@@ -1,5 +1,33 @@
 # Changelog
 
+## 2026-11-10 — Practice Evidence: a fingerprint an accent follows is masked in the normalised form too
+
+A peer review, run on fictional data, found that a rubric fingerprint written
+into a learner's line as `urn:pev:rubric:` and its 64 hex digits, with a
+combining mark (an accent) right after the last digit, was masked in the line
+as stored but not in its normalised form. Normalising puts a hex letter and an
+accent after it together into one letter (`e` and an acute accent become `é`),
+so the normalised form held 63 hex digits and that letter, which was not taken
+for a fingerprint. The judge packet, an attempt's normalisedText and a quote's
+normalised form then showed the first 63 hex digits of the fingerprint as
+written. This needs someone who reads the stakes to have written a real
+fingerprint into a line, which the design already accepts, but a line and its
+normalised form are meant to be masked the same way.
+
+Now both forms are read alike: 63 hex digits and a letter made from a hex
+digit and the marks after it count as a fingerprint too. The 63 digits are
+replaced with the stand-in's, and the letter with the stand-in's last digit
+and the same marks where those make one letter, or otherwise with another hex
+letter that takes those marks, picked by the stand-in. Every view keeps its
+length, so a quote's place in a line still holds. A judge's quote copied from
+either form is read back and checks out. A read-back quote shown with no line
+to show it from masks such a run as well, of 64 hex digits or of 16.
+
+Not covered: the letter shown tells that the fingerprint's last digit takes
+those marks, which the line and its normalised form shown side by side already
+tell. A mark inside the run of hex digits, rather than after it, splits the
+run in both forms, so neither form takes it for a fingerprint, as before.
+
 ## 2026-11-10 — Practice Evidence: a judge's saved answer shows a quote from the turn it was found in
 
 A peer review, run on fictional data, found that a judge's own answer after
