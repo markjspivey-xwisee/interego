@@ -78,6 +78,7 @@ const S = {
   hasWallet: false,
   byok: { on: false, key: '', model: '' },
   readEnvelopes: new Map(),     // signed read envelopes, reused for up to 9 minutes
+  stakesNoRole: false,          // a signed list read came back without the stakes: this key holds no role here
   unsent: new Map(),            // the learner's unsent line per attempt, kept across refusals
   judgmentShown: new Map(),     // attempt IRI → judgment index whose quotes are highlighted
   queueEntries: new Map(),      // attempt IRI → review queue entry (blindFirst and factors)
@@ -603,6 +604,21 @@ class Refused extends Error {
 /** A signed act asked of a visitor who has not signed in: nothing is signed and nothing is sent. */
 class NeedsSignIn extends Error { constructor() { super('Sign in to continue.'); } }
 
+/**
+ * What a person signed with a key that holds no role here reads where a scored scenario's stakes
+ * would be. Practice Evidence shows them only to its own Interego sign-in and to an address an admin
+ * registered: anything can make a key and sign with it, an AI assistant included. Interego sign-in
+ * is offered only where this workspace offers it, and never on the person's own session: signed in
+ * with Interego they are another person here, whose sessions are not this address's
+ * (`ownSession`). There, registering the address is the one way.
+ */
+function noRoleStakes(ownSession) {
+  const lead = "How much each criterion counts, the points for each level and the pass mark aren't shown to an address that holds no role in this workspace.";
+  return interegoOffered() && !ownSession
+    ? `${lead} Sign in with Interego to see them, or ask your admin to register this address.`
+    : `${lead} Ask your admin to register this address to see them.`;
+}
+
 async function loadManifest() {
   const r = await fetch('affordances?format=jsonld', { headers: { accept: 'application/ld+json' } });
   if (!r.ok) throw new Error(`The affordance manifest answered HTTP ${r.status}.`);
@@ -680,6 +696,38 @@ async function act(action, fields, o) {
   return invoke(action, { ...signed, ...(opts.byok ? byokArgs() : {}) });
 }
 
+/** True for a visitor who has not signed in (and has not chosen manual signing). */
+function signedOut() { return S.mode === 'paste' && !S.manual; }
+
+/**
+ * The scenario list, or one scenario (`args`: scenario_iri, include_drafts). A scored scenario's
+ * weights, points and pass mark come only in an answer to a signed read, so this signs one when the
+ * sign-in signs without asking (Interego sign-in, a demo key), when a signature for it is still
+ * kept, or when `o.sign` says to (a wallet or manual signing then asks once). Otherwise it reads
+ * plain, and the answer says the stakes were left out (`stakesWithheld`). One signature, over the act
+ * and the storage alone, serves every list read while it is kept; what to list goes beside it. A
+ * signed read that fails (an expired sign-in, say) falls back to the plain one.
+ */
+async function readScenarios(args, o) {
+  const opts = o || {};
+  const kept = S.readEnvelopes.get(readKey(ACT.listScenarios, {}));
+  const signNow = opts.sign === true || (opts.sign !== false && Boolean(S.pod) && !signedOut()
+    && (S.mode === 'interego' || S.mode === 'demo' || Boolean(kept && Date.now() - kept.at < READ_ENVELOPE_MS)));
+  if (signNow) {
+    try {
+      const envelope = await sign(ACT.listScenarios, {}, true);
+      const signed = typeof envelope._signed_payload === 'string' ? { _signed_payload: envelope._signed_payload, _signature: envelope._signature } : { envelope };
+      const r = await invoke(ACT.listScenarios, { ...podArgs(args), ...signed });
+      // Signed and still without them: this key holds no role here (an Interego sign-in always reads them).
+      S.stakesNoRole = Boolean(r.stakesWithheld) && S.mode !== 'interego';
+      return r;
+    } catch (e) {
+      if (opts.sign === true) throw e;
+    }
+  }
+  return invoke(ACT.listScenarios, podArgs(args));
+}
+
 function byokArgs() {
   if (!S.byok.on) return {};
   return { llm_api_key: S.byok.key, llm_model: S.byok.model };
@@ -696,7 +744,7 @@ async function connectWallet() {
   if (!Array.isArray(accounts) || !accounts[0]) throw new Error('The wallet offered no account.');
   S.account = accounts[0];
   S.mode = 'wallet';
-  S.readEnvelopes.clear();
+  S.readEnvelopes.clear(); S.stakesNoRole = false;
   S.sessions = null;
 }
 
@@ -967,7 +1015,7 @@ function forgetInterego() {
   sessionDrop(PENDING_KEY);
   S.interego = null;
   if (S.mode === 'interego') S.mode = S.demoRoles.length ? 'demo' : S.account ? 'wallet' : 'paste';
-  S.readEnvelopes.clear();
+  S.readEnvelopes.clear(); S.stakesNoRole = false;
   S.sessions = null;
   S.checklistOpen = null;
 }
@@ -1036,7 +1084,7 @@ function onSignInClick(e) {
     connectWallet().then(() => { renderHeader(); route(); }, showSignInProblem);
   } else if (how === 'manual') {
     S.manual = true;
-    S.readEnvelopes.clear();
+    S.readEnvelopes.clear(); S.stakesNoRole = false;
     renderHeader();
     route();
   }
@@ -1045,6 +1093,7 @@ function onSignInClick(e) {
 const GATE_TITLES = {
   mine: 'Sign in to see your practice sessions', review: 'Sign in to review sessions', results: 'Sign in to see results',
   attempt: 'Sign in to open this session', roles: 'Sign in to manage your team', signin: 'Sign in to Practice Evidence',
+  author: 'Sign in to edit this scored scenario',
 };
 
 /** The screen a signed-out visitor sees in place of a view that needs to know who they are. */
@@ -1305,7 +1354,7 @@ function menuLink(label, iconName, href) { return h('a', { class: 'menu__item', 
 function demoBanner() {
   const r = S.demoRoles.find((x) => x.role === S.role);
   const sel = h('select', { id: 'role', class: 'select', 'aria-label': 'Demo role', onchange: (e) => {
-    S.role = e.target.value; remember('pev.role', S.role); S.readEnvelopes.clear(); S.checklistRole = null; S.queueCount = null; S.sessions = null; S.checklistOpen = null;
+    S.role = e.target.value; remember('pev.role', S.role); S.readEnvelopes.clear(); S.stakesNoRole = false; S.checklistRole = null; S.queueCount = null; S.sessions = null; S.checklistOpen = null;
     renderHeader(); route();
   } }, S.demoRoles.map((x) => h('option', { value: x.role, text: demoLabel(x) })));
   sel.value = S.role;
@@ -1408,7 +1457,7 @@ function workspaceDialog() {
   const b = S.bridge;
   const podInput = h('input', { type: 'url', id: 'pod-url', class: 'input', value: S.pod, placeholder: 'https://storage.example/practice/' });
   const useStorage = h('button', { type: 'button', class: 'btn btn--secondary btn--sm', text: 'Use this storage', onclick: () => {
-    S.pod = podInput.value.trim(); S.needPod = !S.pod; S.readEnvelopes.clear();
+    S.pod = podInput.value.trim(); S.needPod = !S.pod; S.readEnvelopes.clear(); S.stakesNoRole = false;
     if (S.mode === 'interego' && S.interego && !S.interego.principal) confirmInteregoSignIn();
     closeDialog(d);
     route();
@@ -1640,6 +1689,7 @@ function connectAiDialog() {
         h('li', { text: 'It acts as you, through your Interego account. Each record says which app made it, for example "via ChatGPT".' }),
         h('li', { id: 'connect-judge', text: "It can't assess a session you started with your Interego account, even in a new chat or told to act as a judge: it still acts as you. A judge is a different person, with their own Interego account, whom your admin appoints by Member ID." }),
         h('li', { text: 'It never decides a score. Practice Evidence works out every result, and a reviewer signs off.' }),
+        h('li', { id: 'connect-stakes', text: "It doesn't get the weights, the points for each level, the pass mark or any score: Practice Evidence leaves them out of what it sends to a chat assistant through the connector. You see them here, signed in with Interego or with an address your admin registered. Give an AI tool your own signing key, though, and it reads what you read." }),
         h('li', { id: 'connect-decisions', text: S.bridge.interegoSignIn.chatAgentsDecide === true
           ? 'This workspace also lets assistants approve rubrics, sign off reviews and change roles, so check what you ask for.'
           : 'Approving rubrics, signing off reviews and changing roles happen here in the web app, not from a chat assistant.' }),
@@ -2050,7 +2100,7 @@ async function viewPractice(root) {
   if (S.mode === 'paste' && !S.manual) root.append(welcomeCard(), para("Browse the scenarios below. You'll need to sign in to start one."));
   else if (S.mode === 'paste') root.append(manualNote());
   else if (checklistVisible()) root.append(checklistSlot());
-  const r = await invoke(ACT.listScenarios, podArgs({ include_drafts: S.showDrafts ? 'true' : undefined }));
+  const r = await readScenarios({ include_drafts: S.showDrafts ? 'true' : undefined });
   S.pod = r.podUrl;
   S.bridge = r.bridge;
   renderHeader();
@@ -2093,6 +2143,11 @@ function coverageNotes(r) {
 /** True unless the answer says it is not the whole pod. */
 function whole(r) { return r.complete !== false; }
 
+/**
+ * A rubric, with each criterion's weight, each level's points and the pass mark when the answer it
+ * came in carries them. When it left them out (the read was not signed, or a wallet or manual
+ * signing has not been asked yet), a scored rubric says where they are instead (`stakesNote`).
+ */
 function rubricView(rubric, use) {
   const gate = use === 'pass-gate';
   const wrap = h('div', { class: 'rubric' });
@@ -2105,8 +2160,32 @@ function rubricView(rubric, use) {
   if (gate && rubric.passRule) {
     const req = Object.entries(rubric.passRule.requiredLevels || {});
     wrap.append(h('p', { class: 'label', text: `Pass mark: at least ${rubric.passRule.minPercent}%${req.length ? `, and ${req.map(([c, l]) => `${criterionTitle(rubric, c)} at least ${levelLabel(rubric, c, l)}`).join(', ')}` : ''}.` }));
-  }
+  } else if (gate) wrap.append(stakesNote());
   return wrap;
+}
+
+/**
+ * Where a scored rubric's weights, points and pass mark are when the answer left them out. They
+ * are not sent to a chat assistant, to a read nobody signed, or to a key that holds no role on the
+ * workspace, so a visitor signs in to see them, and a wallet or manual signing confirms once (the
+ * signature is kept for a few minutes). A wallet that has confirmed and still gets none holds no
+ * role here (`S.stakesNoRole`, set when a signed list read came back without them).
+ */
+function stakesNote() {
+  const note = h('div', { class: 'stakes-note' });
+  if (signedOut()) {
+    note.append(para('Sign in to see how much each criterion counts, the points for each level and the pass mark.', 'text-sm text-secondary'));
+    return note;
+  }
+  if (S.stakesNoRole) {
+    note.append(para(noRoleStakes(false), 'text-sm text-secondary'));
+    return note;
+  }
+  const out = h('div', { class: 'outcome' });
+  const btn = h('button', { type: 'button', class: 'btn btn--secondary btn--sm', text: 'Show the weights and pass mark', dataset: { action: ACT.listScenarios },
+    onclick: () => busy(btn, out, async () => { await readScenarios({}, { sign: true }); setTimeout(route, 0); return null; }, { progress: 'Confirming…' }) });
+  note.append(para("How much each criterion counts, the points for each level and the pass mark are shown once you confirm it's you. Practice Evidence leaves them out of what it sends to a chat assistant.", 'text-sm text-secondary'), btn, out);
+  return note;
 }
 
 /** "Did anyone help you prepare?", then Start. The radios are read when Start is pressed. */
@@ -2152,7 +2231,7 @@ function scenarioCard(s) {
     h('dt', { text: "You'll talk with" }), h('dd', { text: s.counterpart.name }),
     h('dt', { text: 'How they open' }), h('dd', { text: `“${s.firstLine}”` })));
   body.append(h('div', { class: 'cluster' },
-    gate ? badge(`Scored · pass mark ${s.rubric.passRule ? s.rubric.passRule.minPercent : '?'}%`, '', 'Only for scored scenarios: how much each criterion counts, and how many points each level is worth.') : badge('Feedback only (no score)'),
+    gate ? badge(s.rubric.passRule ? `Scored · pass mark ${s.rubric.passRule.minPercent}%` : 'Scored · pass mark', '', 'Only for scored scenarios: how much each criterion counts, and how many points each level is worth.') : badge('Feedback only (no score)'),
     badge(`Good performance is: ${regime[0]}`, '', regime[1] || "How clear-cut it is to say what good looks like here."),
     s.ratified ? badge('Rubric approved by a reviewer', 'success', 'A reviewer who did not write it approved the rubric, so results can count as evidence.', 'check')
       : badge("Rubric awaiting approval: results won't count as evidence yet", 'warning')));
@@ -2381,10 +2460,11 @@ function judgeMessage(v) {
   });
   return [
     `Hi, could you assess my practice session in Practice Evidence? Session: ${v.attemptIri}. Workspace: ${siteBase()}`,
-    // A new chat: one that listed scenarios or read the review queue has read the rubric's weights and pass rule, and
-    // the queue's every judgment's levels, which neither step of the message shows the judging assistant.
-    "Don't reuse a chat where you reviewed sessions or listed scenarios: it has already seen the scoring. "
-      + 'Paste everything between the lines into a new chat in Claude or ChatGPT, with the Interego connector on:',
+    // No answer to a chat assistant carries the weights or the pass mark (handlers.ts showsStakes), so no chat has read
+    // them from the workspace. A new chat is still asked for: one where the judge reviewed sessions has read other
+    // assessments' levels (the review queue, a session), which neither step of the message shows the judging assistant.
+    'Practice Evidence leaves the weights and the pass mark out of what it sends your assistant through the Interego connector. '
+      + "Paste everything between the lines into a new chat in Claude or ChatGPT, with the Interego connector on, not one where you reviewed sessions: it has seen other assessments' levels.",
     '---', prompt, '---',
   ].join('\n');
 }
@@ -2841,7 +2921,12 @@ function assessmentPanel(v) {
   if (!a) return null;
   const body = h('div', { class: 'card__body' },
     statusPill(final ? 'Final: a qualified reviewer signed off every level.' : 'Provisional: not yet reviewed', final ? 'success' : 'warning'));
-  if (a.use === 'pass-gate') {
+  if (a.use === 'pass-gate' && a.percent === undefined) {
+    // An answer without the stakes: the levels counted, no points, percent or pass result.
+    body.append(h('p', { class: 'verdict', text: 'Scored: the levels below count toward a score.' }));
+    body.append(h('ul', {}, (a.levels || []).map((l) => h('li', { text: `${criterionTitle(v.rubric, l.criterionId)}: ${levelLabel(v.rubric, l.criterionId, l.levelId)}` }))));
+    body.append(para(noRoleStakes(true), 'text-sm text-secondary'));
+  } else if (a.use === 'pass-gate') {
     body.append(h('p', { class: 'result-score' }, h('span', { class: 'nowrap', text: `${a.points} of ${a.maxPoints} points` }), ' · ', h('span', { class: 'nowrap', text: `${a.percent}%` })));
     const verdict = final
       ? (a.meetsPassRule ? 'Meets the pass mark' : 'Below the pass mark')
@@ -2862,7 +2947,7 @@ function assessmentPanel(v) {
     body.append(h('ul', {}, a.levels.map((l) => h('li', { text: `${criterionTitle(v.rubric, l.criterionId)}: ${levelLabel(v.rubric, l.criterionId, l.levelId)}` }))));
   }
   body.append(para("The AI suggests levels only. Practice Evidence works out the result from the rubric. If a quote didn't match, that criterion counts at its lowest level until a reviewer sets it.", 'text-sm text-tertiary'));
-  if (final && v.provisional && v.provisional.use === 'pass-gate') body.append(para(`Before review, the provisional result was ${v.provisional.percent}%.`, 'text-sm text-tertiary'));
+  if (final && v.provisional && v.provisional.use === 'pass-gate' && v.provisional.percent !== undefined) body.append(para(`Before review, the provisional result was ${v.provisional.percent}%.`, 'text-sm text-tertiary'));
   return h('section', { class: 'card assessment', id: 'assessment' },
     h('div', { class: 'card__header' }, h('h2', { class: 'card__title', text: 'Result' }),
       badge('Calculated by Practice Evidence', 'accent', 'Practice Evidence works out the result from the rubric. The AI only suggests levels.')),
@@ -2893,16 +2978,25 @@ function reviewsPanel(v) {
   return h('section', { class: 'card reviews' }, h('div', { class: 'card__header' }, h('h2', { class: 'card__title', text: 'Reviews' })), body);
 }
 
+/**
+ * Why a scored session that could be shared is not offered here: its learning record carries the
+ * score and the pass mark, which this address does not read (`stakesWithheld`). Only a key
+ * reaches this (an Interego sign-in and a demo key read them), and that key needs registering.
+ */
+const RECORD_NEEDS_ROLE = "Its learning record carries the score and whether it met the pass mark, which aren't shown to an address that holds no role in this workspace, so you can't create one here, copy this session to your own storage, or download its content. Ask your admin to register this address.";
+
 function projectionsPanel(v) {
   const can = v.projectable && hasNext(v, 'projectAttempt');
   const body = h('div', { class: 'card__body' });
-  if (v.projectable) body.append(para('A reviewer signed off on an approved rubric, so this can be shared as practice evidence.'));
+  if (v.projectable && v.stakesWithheld) {
+    body.append(para('A reviewer signed off on an approved rubric, so this session could be shared as practice evidence.'), para(RECORD_NEEDS_ROLE, 'text-sm text-secondary record-needs-role'));
+  } else if (v.projectable) body.append(para('A reviewer signed off on an approved rubric, so this can be shared as practice evidence.'));
   else {
     body.append(callout({ tone: 'neutral', title: `Not ready to share yet: ${EVIDENCE_PLAIN[v.projectableWhy] || 'see the details'}.`, techLines: [v.projectableWhy] }));
   }
   const out = h('div', { class: 'outcome', id: 'projection' });
   const button = (format, label, cls) => {
-    const b = h('button', { type: 'button', class: `btn ${cls}`, text: label, disabled: !can, title: v.projectableWhy, dataset: { action: ACT.projectAttempt, format }, onclick: () => busy(b, out, async () => {
+    const b = h('button', { type: 'button', class: `btn ${cls}`, text: label, disabled: !can, title: v.projectable && v.stakesWithheld ? RECORD_NEEDS_ROLE : v.projectableWhy, dataset: { action: ACT.projectAttempt, format }, onclick: () => busy(b, out, async () => {
       const r = await act(ACT.projectAttempt, { attemptIri: v.attemptIri, format });
       const text = JSON.stringify(r.statement, null, 2);
       return h('div', { class: 'stack' },
@@ -2980,6 +3074,12 @@ function actionsPanel(v, o, inConversation) {
         const text = JSON.stringify(r, null, 2);
         const saved = download(`pev-record-${v.attemptIri.split(':').pop()}.json`, text, 'application/json');
         const n2 = r.versions.length;
+        if (r.graphsLeftOut) {
+          // Not the whole record: the signatures of each version, and none of its content.
+          return callout({ tone: 'warning', title: saved ? `Downloaded the signatures of ${savedVersions(n2)}, without their content.` : `Your record has ${savedVersions(n2)}, but this browser couldn't save the file.`,
+            body: "A scored session's content holds the score and the pass mark, which aren't shown to an address that holds no role in this workspace, so the download leaves it out. Ask your admin to register this address, then download it again for the whole record.",
+            techLines: [r.graphsLeftOut.why, ...r.verify] });
+        }
         return callout({ tone: 'success', title: saved ? `Downloaded ${savedVersions(n2)}.` : `Your record has ${savedVersions(n2)}, but this browser couldn't save the file.`, techLines: r.verify });
       }, 'btn--secondary', 'Preparing…', 'download'));
     } else if (n.action === ACT.holderCopy) {
@@ -3318,10 +3418,17 @@ async function viewResults(root, scenarioIri) {
     : `${t(x.criterionId)}: changed in ${x.changed} of ${x.reviewedAttempts} reviewed sessions` }))));
   root.append(resultCard('What reviewers changed', changes));
   root.append(h('details', { class: 'disclosure' }, h('summary', { text: 'How small numbers are protected' }), h('div', { class: 'disclosure__body', text: r.suppressionRule })));
-  if (r.personJudgeCells && r.personJudgeCells.length) {
-    root.append(resultCard('People who assessed sessions', [calibrationSimple(r.personJudgeCells),
-      h('details', { class: 'disclosure' }, h('summary', { text: 'All measures' }), calibrationTable(r.personJudgeCells))]));
-  }
+  if (r.personJudgeCells && r.personJudgeCells.length) root.append(personJudgeCard(r));
+}
+
+/**
+ * The results page's table of people who judged. Its rubric fingerprints are calibration's own only in
+ * an answer that left the stakes out; a reader of the stakes (every reviewer and admin here) is shown
+ * the plain fingerprint, the one a scenario shows, so the note is left off for them.
+ */
+function personJudgeCard(r) {
+  return resultCard('People who assessed sessions', [calibrationSimple(r.personJudgeCells),
+    h('details', { class: 'disclosure' }, h('summary', { text: 'All measures' }), r.stakesWithheld ? calibrationNote() : null, calibrationTable(r.personJudgeCells))]);
 }
 
 function calibrationSimple(cells) {
@@ -3339,6 +3446,11 @@ function calibrationSimple(cells) {
       td("Quote didn't match", rate(c.unverifiedRate), 'num'),
       td('Status', [c.status === 'Asserted' ? statusPill('Established', 'success') : h('span', { title: 'Early: fewer than 20 reviewed sessions' }, statusPill('Early', 'pending')),
         h('span', { class: 'table__secondary', text: `${c.status === 'Asserted' ? '' : 'Fewer than 20 reviewed sessions. '}Track record: ${c.standing && c.standing.evaluated ? (c.standing.clears ? 'meets the bar (for information only)' : 'not yet') : 'not evaluated'}` })]))))));
+}
+
+/** Beside a calibration table whose rubric fingerprints are keyed for calibration (the calibration page, a results answer without the stakes): they match none shown elsewhere. */
+function calibrationNote() {
+  return para("The rubric fingerprints in this table are calibration's own: they don't match the fingerprints shown with a scenario or a session.", 'text-sm text-secondary calibration-note');
 }
 
 function calibrationTable(cells) {
@@ -3368,7 +3480,7 @@ async function viewCalibration(root) {
     root.append(emptyState({ icon: 'chart', title: 'No data yet', text: "Once reviewers sign off on sessions, you'll see how often each AI judge's levels matched theirs." }));
   }
   root.append(para(r.metricNote, 'text-sm text-secondary'));
-  if (r.cells.length) root.append(h('details', { class: 'disclosure' }, h('summary', { text: 'All measures (technical)' }), calibrationTable(r.cells)));
+  if (r.cells.length) root.append(h('details', { class: 'disclosure' }, h('summary', { text: 'All measures (technical)' }), calibrationNote(), calibrationTable(r.cells)));
   root.append(h('details', { class: 'disclosure' }, h('summary', { text: 'How to read this' }), h('div', { class: 'disclosure__body' },
     h('p', { text: `Each row is one AI judge on one criterion. Agreement is how often the reviewer kept the AI's level. A row is Early until it rests on ${r.minSamplesForAsserted} reviewed sessions. The track record asks for agreement of at least ${pct(r.policy.floor)} over at least ${r.policy.minSamples} reviewed sessions, from at least ${r.policy.minDistinctHumanConfirmers} different reviewers. It is shown for information only and never lets an AI skip a human review.` }),
     h('p', { text: `Figures that rest on fewer than ${r.k} reviewed sessions are hidden, so no one review can be read back. ${r.attemptsRead} sessions were read for this page.` }),
@@ -3464,7 +3576,14 @@ async function viewAuthor(root, scenarioIri) {
   if (!S.author || (scenarioIri && S.author.loadedFrom !== scenarioIri)) {
     S.author = { model: blankScenario(), basedOnVersion: null, receipt: null, receiptDisclosure: null, assistance: { choice: '', provider: '', model: '', note: '' }, saved: null, loadedFrom: null, lastSaved: null, pastedDraft: false };
     if (scenarioIri) {
-      const r = await invoke(ACT.listScenarios, podArgs({ scenario_iri: scenarioIri }));
+      // Editing a scored scenario needs its weights, points and pass mark, which come only to a signed read:
+      // read as the sign-in reads (a wallet or manual signing is not asked), then sign once only for a scored one.
+      let r = await readScenarios({ scenario_iri: scenarioIri });
+      if (r.stakesWithheld && r.scenario.assessmentUse === 'pass-gate') {
+        if (signedOut()) { S.author = null; throw new NeedsSignIn(); }
+        r = await readScenarios({ scenario_iri: scenarioIri }, { sign: true });
+        if (r.stakesWithheld) { S.author = null; throw new Error(`${noRoleStakes(false)} Only an author edits a scenario.`); }
+      }
       S.author.model = modelFrom(r.scenario);
       S.author.basedOnVersion = r.scenario.version;
       S.author.loadedFrom = scenarioIri;
@@ -3763,7 +3882,7 @@ async function viewMine(root) {
     // Text deleted: whatever result it had is kept on the session page, never shown here as a provisional one.
     if (a.state === 'redacted') return a.provisionalPercent !== undefined ? 'Result kept: open to see' : 'Open to see';
     if (a.provisionalPercent !== undefined) return `${a.provisionalPercent}% · provisional`;
-    if (['judged', 'countersigned', 'overridden', 'contested', 'review-retracted'].includes(a.state)) return 'Feedback only';
+    if (['judged', 'countersigned', 'overridden', 'contested', 'review-retracted'].includes(a.state)) return a.assessmentUse === 'pass-gate' ? 'Scored: open to see the levels' : 'Feedback only';
     return '—';
   };
   root.append(h('div', { class: 'table-wrap', role: 'region', 'aria-label': 'Practice sessions', tabindex: '0' }, h('table', { class: 'table table--stack mine' },

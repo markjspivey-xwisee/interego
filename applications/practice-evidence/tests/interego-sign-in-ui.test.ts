@@ -35,7 +35,7 @@ import { listenLoopback, type TestListener } from '../../_shared/vertical-bridge
 import { pevAffordances } from '../affordances.js';
 import { createPevHandlers, DEMO_ROLE_NAMES, WEB_UI_AGENT_PREFIX, type DemoRoleName, type PevDeps } from '../bridge/handlers.js';
 import { didDocumentFetch, readHead, isTrusted } from '../bridge/pod-helpers.js';
-import { attachUi, hostAllowlistGuard, relayCallFetch, PEV_UI_CLIENT_NAME, UI_CSP, type InteregoUiOptions } from '../bridge/ui.js';
+import { attachUi, hostAllowlistGuard, relayCallFetch, webAppClients, PEV_UI_CLIENT_NAME, UI_CSP, type InteregoUiOptions } from '../bridge/ui.js';
 import { DEMO_POD, demoScenarioInput, demoWallet, inMemoryPod, scriptedPracticeModel } from '../demo/run.js';
 import { PEV_ACTION } from '../src/ontology.js';
 import { signEnvelope, type PevRecordBody } from '../src/records.js';
@@ -88,12 +88,16 @@ const fetchDidDocument = async (url: string): Promise<unknown> => {
   return agentDocs.get(url);
 };
 
-function stubRelay(o: { readonly cimd: boolean; readonly expiresIn?: number; readonly grantScope?: string; readonly tokenLimit?: number }) {
+/**
+ * `signsClientId`: the relay signs, as `client_id`, the id of the OAuth client a /mcp request's access token was issued to,
+ * as deploy/mcp-relay does since it reserved that field; without it, it signs none, as a relay before that change.
+ */
+function stubRelay(o: { readonly cimd: boolean; readonly expiresIn?: number; readonly grantScope?: string; readonly tokenLimit?: number; readonly signsClientId?: boolean }) {
   const calls: RelayCall[] = [];
   const registered = new Map<string, Out>();
   const codes = new Map<string, { clientId: string; redirectUri: string; challenge: string; resource: string; scope: string; slug: string; user: string }>();
   /** Access tokens the token endpoint issued, each with its agent, its person, its identity-server token and when it expires. */
-  const access = new Map<string, { slug: string; user: string; idToken: string; expiresAt: number }>();
+  const access = new Map<string, { slug: string; user: string; idToken: string; expiresAt: number; clientId?: string }>();
   const identity = new Map<string, { slug: string }>();
   const issued: string[] = [];
   const refreshIssued: string[] = [];
@@ -109,8 +113,8 @@ function stubRelay(o: { readonly cimd: boolean; readonly expiresIn?: number; rea
     new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json', ...headers } });
 
   /** sign_request as handleSignRequest runs it, for the session's agent, answered as the relay's tool text. */
-  async function signRequest(slug: string, args: Out, user = USER): Promise<string> {
-    const reserved = new Set(['agent_id', 'timestamp', '_signature', '_signed_payload', 'subject_pod_url', 'payload', 'pod_name', 'owner_webid', 'owner_name']);
+  async function signRequest(slug: string, args: Out, user = USER, clientId?: string): Promise<string> {
+    const reserved = new Set(['agent_id', 'timestamp', '_signature', '_signed_payload', 'subject_pod_url', 'payload', 'client_id', 'pod_name', 'owner_webid', 'owner_name']);
     const p = (args['payload'] ?? {}) as Out;
     const safe: Out = Object.fromEntries(Object.entries(p).filter(([k]) => !k.startsWith('_') && !reserved.has(k)));
     const asked = p['pod_url'] ?? p['podUrl'];
@@ -118,7 +122,8 @@ function stubRelay(o: { readonly cimd: boolean; readonly expiresIn?: number; rea
     delete safe['podUrl'];
     if (typeof asked === 'string') safe['pod_url'] = asked;
     const agentId = `did:web:${IDH}:agents:${slug}`;
-    const sp = JSON.stringify({ ...safe, agent_id: agentId, subject_pod_url: `https://pods.ui.test/${user}/`, timestamp: new Date().toISOString() });
+    const signsClient = o.signsClientId === true && clientId !== undefined;
+    const sp = JSON.stringify({ ...safe, agent_id: agentId, subject_pod_url: `https://pods.ui.test/${user}/`, ...(signsClient ? { client_id: clientId } : {}), timestamp: new Date().toISOString() });
     return JSON.stringify({
       _signature: await signMessageRaw(RELAY_KEY, `sha256:${sha256Hex(sp)}`), _signed_payload: sp, signed_as: agentId,
       signatureAuthority: 'relay', signingNote: 'This is a relay-mediated signature.', anchor: `did:ethr:${RELAY_KEY.address}`,
@@ -159,7 +164,7 @@ function stubRelay(o: { readonly cimd: boolean; readonly expiresIn?: number; rea
         const text = JSON.stringify({ error: 'sign_request: signing failed: the delegation key is not loaded' });
         message = { jsonrpc: '2.0', id, result: { content: [{ type: 'text', text }], structuredContent: JSON.parse(text) as Out } };
       } else {
-        const text = await signRequest(who.slug, args, who.user);
+        const text = await signRequest(who.slug, args, who.user, who.clientId);
         counts.signed += 1;
         message = { jsonrpc: '2.0', id: fault === 'other-id' ? `${String(id)}-not-this-one` : id, result: { content: [{ type: 'text', text }], structuredContent: JSON.parse(text) as Out } };
       }
@@ -214,7 +219,7 @@ function stubRelay(o: { readonly cimd: boolean; readonly expiresIn?: number; rea
         const token = randomBytes(32).toString('hex');
         const expiresIn = o.expiresIn ?? 3600;
         const idToken = `cg2_${b64url(Buffer.from(JSON.stringify({ userId: c.user, agentId: c.slug })))}.${b64url(randomBytes(32))}`;
-        access.set(token, { slug: c.slug, user: c.user, idToken, expiresAt: Date.now() + expiresIn * 1000 });
+        access.set(token, { slug: c.slug, user: c.user, idToken, expiresAt: Date.now() + expiresIn * 1000, clientId: c.clientId });
         identity.set(idToken, { slug: c.slug });
         issued.push(token);
         const refresh = randomBytes(32).toString('hex');
@@ -254,11 +259,11 @@ function stubRelay(o: { readonly cimd: boolean; readonly expiresIn?: number; rea
    * another is given) without this bridge: from the relay's own sign-in page for another client, as
    * any account holder can get one, an hour long, scope `mcp`.
    */
-  function mint(user: string, client = PEV_UI_CLIENT_NAME): string {
+  function mint(user: string, client = PEV_UI_CLIENT_NAME, clientId = randomBytes(16).toString('hex')): string {
     const slug = `${client.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '')}-${user}`;
     mintAgent(slug, user);
     const token = randomBytes(32).toString('hex');
-    access.set(token, { slug, user, idToken: `cg2_${b64url(randomBytes(32))}`, expiresAt: Date.now() + 3_600_000 });
+    access.set(token, { slug, user, idToken: `cg2_${b64url(randomBytes(32))}`, expiresAt: Date.now() + 3_600_000, clientId });
     return token;
   }
 
@@ -318,12 +323,13 @@ function stubRelay(o: { readonly cimd: boolean; readonly expiresIn?: number; rea
 
 /** The relay-delegation policy, as server.ts gives it to the handlers and to the web UI's sign-in alike. */
 const POLICY = { relayAddresses: [RELAY_KEY.address.toLowerCase()], identityHost: IDH, fetchDidDocument };
-const handlers = createPevHandlers({
+const handlerDeps = {
   platformWallet: PLATFORM, platformKeyKind: 'demo-fixture', adminAddresses: [W.admin.address], adminDids: [PRINCIPAL],
   fetchFn: pod.fetchFn, holderFetchFn: pod.fetchFn, defaultPodUrl: DEMO_POD, servedPods: [DEMO_POD], deploymentUrl: 'http://127.0.0.1:6110',
   relayDelegation: POLICY,
   relayUrl: RELAY, model: scriptedPracticeModel(),
-} satisfies PevDeps) as Handlers;
+} satisfies PevDeps;
+const handlers = createPevHandlers(handlerDeps) as Handlers;
 
 const listeners: TestListener[] = [];
 /** A bridge on a loopback port; its sign-in has the handlers' relay-delegation policy unless `interego` names another. */
@@ -947,13 +953,32 @@ describe('the web UI signs a person in with their Interego account and has the r
     expect(p.text('#view .welcome')).toContain('Welcome to Practice Evidence');
     expect(p.q('#view .welcome [data-sign-in="interego"]')).not.toBeNull();
     expect([p.q('#view .refusal'), p.text('#signing'), p.text('#acting-as')]).toEqual([null, '', 'Not signed in']);
-    const posted = (): string[] => p.asked.filter((x) => x.startsWith('POST /pev/') && x !== 'POST /pev/sign_as_demo_role');
+    // The scenario list is a plain read (a POST, since a signed one carries its envelope in the body), never a signed act.
+    const posted = (): string[] => p.asked.filter((x) => x.startsWith('POST /pev/') && x !== 'POST /pev/sign_as_demo_role' && x !== 'POST /pev/list_scenarios');
     expect([p.asked.filter((x) => x.includes('/ui/relay/sign')), posted()]).toEqual([[], []]);
     const card = p.q('article.scenario')!;
     card.querySelector<HTMLInputElement>('input[type=radio][value=no]')!.checked = true;
     card.querySelector<HTMLElement>(`button[data-action="${PEV_ACTION.startAttempt}"]`)!.click();
     await p.until(() => p.q('#view .signin-needed'), 'the sign-in callout');
     expect([p.q('#signing textarea[readonly]'), posted(), p.asked.filter((x) => x.includes('/ui/relay/sign'))]).toEqual([null, [], []]);
+    expect(p.errors).toEqual([]);
+  }, SLOW);
+
+  it('a scored scenario\'s weights and pass mark: a visitor gets the rubric in words and is told to sign in; a person signed in with Interego gets them, read signed', async () => {
+    const out = await openPage(bridge, '/ui');
+    const card = await out.until(() => out.q('article.scenario'), 'the scenarios');
+    expect(card.textContent).toContain('Scored · pass mark');
+    expect(card.textContent).not.toMatch(/pass mark \d+%|Weight \d|\(\d+ points\)|Pass mark: at least/);
+    expect(out.text('article.scenario .stakes-note')).toBe('Sign in to see how much each criterion counts, the points for each level and the pass mark.');
+    expect(out.asked.filter((x) => x.includes('/ui/relay/sign'))).toEqual([]);
+    const p = await signedInPage(bridge);
+    const signed = await p.until(() => (p.q('article.scenario')?.textContent ?? '').includes('Weight 2') && p.q('article.scenario'), 'the scenarios with their weights');
+    expect(signed.textContent).toContain('Scored · pass mark 70%');
+    expect(signed.textContent).toContain('Pass mark: at least 70%');
+    expect(signed.textContent).toMatch(/\(100 points\)/);
+    expect(p.q('article.scenario .stakes-note')).toBeNull();
+    // The relay signed the list read for the web app's own agent.
+    expect(p.asked.filter((x) => x.includes('/ui/relay/sign')).length).toBeGreaterThan(0);
     expect(p.errors).toEqual([]);
   }, SLOW);
 
@@ -1342,6 +1367,8 @@ describe('your own AI assistant: connect Claude or ChatGPT, or copy and paste; n
     // What it can and can't do: this workspace keeps the decisions in the web app, and says who sees what.
     (d.querySelector('#connect-limits') as HTMLDetailsElement).open = true;
     expect(d.querySelector('#connect-decisions')?.textContent).toBe('Approving rubrics, signing off reviews and changing roles happen here in the web app, not from a chat assistant.');
+    // Where people see the stakes: signed in with Interego, or with an address the admin registered, not any address at all.
+    expect(d.querySelector('#connect-stakes')?.textContent).toBe("It doesn't get the weights, the points for each level, the pass mark or any score: Practice Evidence leaves them out of what it sends to a chat assistant through the connector. You see them here, signed in with Interego or with an address your admin registered. Give an AI tool your own signing key, though, and it reads what you read.");
     expect(shownText(d)).toContain('The Interego connector passes everything your assistant reads and writes here, including conversation text, and the company behind your assistant sees it too');
     const byok = d.querySelector('#byok-section') as HTMLDetailsElement;
     expect([byok.open, byok.querySelector('summary')?.textContent]).toEqual([false, 'Advanced: use your own Anthropic API key (drafts only)']);
@@ -1524,13 +1551,13 @@ describe('your own AI assistant: connect Claude or ChatGPT, or copy and paste; n
     send.click();
     await p.until(() => p.copied.length === 3, 'the message for the judge');
     const judge = p.copied[2]!;
-    // The judge pastes the prompt into a new chat, never one that listed scenarios or read the review queue: those answers
-    // carry the rubric's weights, level values and pass rule (and the queue's, every judgment's levels), which neither
-    // step of the prompt shows the assistant.
+    // No answer to a chat carries the weights or the pass mark (chat-stakes.test.ts), and the message says so. It still asks
+    // for a new chat, not one where the judge reviewed sessions: that chat has read other assessments' levels (the review
+    // queue's every judgment), which neither step of the prompt shows the assistant.
     expect(judge.split('\n').slice(0, 3)).toEqual([
       `Hi, could you assess my practice session in Practice Evidence? Session: ${attemptIri}. Workspace: ${nm.base}/`,
-      "Don't reuse a chat where you reviewed sessions or listed scenarios: it has already seen the scoring. "
-        + 'Paste everything between the lines into a new chat in Claude or ChatGPT, with the Interego connector on:',
+      'Practice Evidence leaves the weights and the pass mark out of what it sends your assistant through the Interego connector. '
+        + "Paste everything between the lines into a new chat in Claude or ChatGPT, with the Interego connector on, not one where you reviewed sessions: it has seen other assessments' levels.",
       '---',
     ]);
     // Its nonce example is its own first signed step, at turn 0: judging has no turn, and the rule says "or 0".
@@ -1636,7 +1663,7 @@ describe('your own AI assistant: connect Claude or ChatGPT, or copy and paste; n
     const readme = readFileSync(fileURLToPath(new URL('../README.md', import.meta.url)), 'utf8');
     for (const says of [
       "`record-judgment` tells the judge that the save was kept, the attempt's state and how many judgments it now has, and how their own levels and quotes were checked, but never",
-      'So the message asks for a new chat, not one used to review sessions or list scenarios, and the guide says the same.',
+      'So the message still asks for a new chat, not one used to review sessions, and the guide says the same.',
       "says the assessment may already be saved only if it sent a save of this attempt in that chat or can't tell whether it did",
     ]) expect(readme).toContain(says);
     expect(readme).not.toContain('tells the judge only that the save was kept');
@@ -1862,6 +1889,14 @@ describe('your own AI assistant: connect Claude or ChatGPT, or copy and paste; n
     await p.until(() => p.q('article.scenario'), 'the scenarios');
     p.q('#connect-wallet')!.click();
     await p.until(() => p.text('#acting-as').startsWith('Signed in with wallet'), 'the wallet');
+    // A wallet nobody registered asks for the weights and pass mark and gets none: where this workspace offers Interego
+    // sign-in, the note offers it beside registering the address; on the person's own session it is registering alone,
+    // since signed in with Interego they would be another person, whose sessions are not this address's.
+    const scored = await p.until(() => p.all('article.scenario').find((a) => (a.textContent ?? '').includes('Scored · pass mark')), 'a scored scenario');
+    scored.querySelector<HTMLElement>('.stakes-note button')!.click();
+    const noRole = await p.until(() => p.all('article.scenario .stakes-note').find((x) => (x.textContent ?? '').includes('no role')), 'the no-role note');
+    expect(noRole.textContent).toBe("How much each criterion counts, the points for each level and the pass mark aren't shown to an address that holds no role in this workspace. Sign in with Interego to see them, or ask your admin to register this address.");
+    expect(p.w.eval('noRoleStakes(true)')).toBe("How much each criterion counts, the points for each level and the pass mark aren't shown to an address that holds no role in this workspace. Ask your admin to register this address to see them.");
     const card = await p.until(() => p.q('article.scenario'), 'the scenarios, again');
     card.querySelector<HTMLInputElement>('input[type=radio][value=no]')!.checked = true;
     card.querySelector<HTMLElement>(`button[data-action="${PEV_ACTION.startAttempt}"]`)!.click();
@@ -2096,6 +2131,10 @@ describe('server.ts: the client address the web UI\'s sign-in limits count by', 
     // The web UI's sign-in names the person a token signs for with the handlers' own policy, and so through the same DID-document cache.
     expect(server).toContain('...(relayDelegation !== undefined ? { relayDelegation, adminDids } : {}),');
     expect(server).toContain('relayFetch: relayCallFetch(baseFetch, { privateRelay: relayIsLoopback }), ...(relayDelegation !== undefined ? { relayDelegation } : {})');
+    // And the web UI's own client ids, which its sign-in adds a registered id to, are the ones the handlers read a signed client_id against.
+    expect(server).toContain('const webApp = webAppClients(base);');
+    expect(server).toContain('isWebAppClient: webApp.has');
+    expect(server).toContain('...(relayDelegation !== undefined ? { relayDelegation } : {}), webAppClients: webApp }');
 
     const signIn = { PEV_TRUSTED_RELAY_ADDRESSES: '0x276e11d2229d3a96dc96356c15c03c7f83201ebc', PEV_IDENTITY_HOST: 'identity.interego.xwisee.com', PEV_RELAY_URL: 'https://relay.interego.xwisee.com' };
     const cases: readonly (readonly [Record<string, string>, string | null, string | null])[] = [
@@ -2145,4 +2184,74 @@ describe('the relay\'s account-token routes', () => {
     expect(all.filter((c) => c.url.startsWith(`${RELAY}/mcp`)).length).toBeGreaterThan(20);
     expect(all.filter((c) => /^\/(identity-token|tool\/)/.test(new URL(c.url).pathname)).map((c) => `${c.method} ${c.url}`)).toEqual([]);
   });
+});
+
+describe('a relay that signs which OAuth client asked: this web app is its own client, by its metadata document or the id it registered', () => {
+  /** One payload signed through the bridge's /ui/relay/sign with `token`: the relay's pair. */
+  async function signAs(l: TestListener, token: string, payload: Out): Promise<Out> {
+    const r = await fetch(`${l.base}/ui/relay/sign`, {
+      method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` }, body: JSON.stringify({ payload }),
+    });
+    expect(r.status).toBe(200);
+    return (await r.json()) as Out;
+  }
+  const listRead = (): Out => ({ v: 1, action: PEV_ACTION.listScenarios, nonce: nonce(), podUrl: DEMO_POD });
+  const stakesOf = (r: Out): readonly [unknown, boolean] => [r['kind'], typeof r['stakesWithheld'] === 'string'];
+
+  it('an https deployment: its own sign-in reads the stakes and decides; a token another client named "Practice Evidence" was issued does neither', async () => {
+    const cimdRelay = stubRelay({ cimd: true, signsClientId: true });
+    const own = webAppClients(DEPLOY);
+    const h = createPevHandlers({ ...handlerDeps, isWebAppClient: own.has }) as Handlers;
+    const l = await serve({ relayUrl: RELAY, deploymentUrl: DEPLOY, relayFetch: cimdRelay.fetchFn, webAppClients: own }, { handlers: h });
+    const ex = await exchangeDirect(l, cimdRelay);
+    const token = String(ex.json['accessToken']);
+    const mine = await signAs(l, token, listRead());
+    // The relay signed the client the token was issued to: this web app's metadata document.
+    expect(JSON.parse(String(mine['_signed_payload']))).toMatchObject({ agent_id: `did:web:${IDH}:agents:${WEB_UI_AGENT_PREFIX}${USER}`, client_id: `${DEPLOY}/ui/oauth/client.json` });
+    expect(stakesOf((await h['pev.list_scenarios']!(mine)) as Out)).toEqual([undefined, false]);
+    // Another app registered under this web app's name: the relay names its agent the same, and signs its own client id.
+    const other = cimdRelay.mint(USER);
+    const theirs = await signAs(l, other, listRead());
+    expect(JSON.parse(String(theirs['_signed_payload']))['agent_id']).toBe(`did:web:${IDH}:agents:${WEB_UI_AGENT_PREFIX}${USER}`);
+    expect(stakesOf((await h['pev.list_scenarios']!(theirs)) as Out)).toEqual([undefined, true]);
+    const role = (t: string): Promise<Out> => signAs(l, t, { v: 1, action: PEV_ACTION.registerRole, nonce: nonce(), podUrl: DEMO_POD, address: OTHER, role: 'learner', change: 'add' });
+    const refusedRole = (await h['pev.register_role']!(await role(other))) as Out;
+    expect([refusedRole['iep:refusalReason'], typeof refusedRole['clientId']]).toEqual(['chat-agent-may-not-decide', 'string']);
+    expect(((await h['pev.register_role']!(await role(token))) as Out)['kind']).toBeUndefined();
+  }, SLOW);
+
+  it('an http deployment registers by DCR: the id it registered is its own on that process, and another process reads it as a chat until the person signs in again', async () => {
+    const dcrRelay = stubRelay({ cimd: true, signsClientId: true });
+    const own = webAppClients('http://127.0.0.1:6110');
+    const h = createPevHandlers({ ...handlerDeps, isWebAppClient: own.has }) as Handlers;
+    const l = await serve({ relayUrl: RELAY, deploymentUrl: 'http://127.0.0.1:6110', relayFetch: dcrRelay.fetchFn, webAppClients: own }, { handlers: h });
+    const start = (await (await fetch(`${l.base}/ui/oauth/start`)).json()) as Out;
+    expect(start['registration']).toBe('dynamic-registration');
+    const verifier = b64url(randomBytes(32));
+    const state = b64url(randomBytes(24));
+    const authorize = new URL(String(start['authorizationEndpoint']));
+    for (const [k, v] of Object.entries({
+      response_type: 'code', client_id: String(start['clientId']), redirect_uri: String(start['redirectUri']),
+      code_challenge: b64url(createHash('sha256').update(verifier).digest()), code_challenge_method: 'S256', state, scope: 'mcp', resource: String(start['resource']),
+    })) authorize.searchParams.set(k, v);
+    const code = new URL(await dcrRelay.signIn(authorize.href, (u) => u)).searchParams.get('code') ?? '';
+    const ex = await fetch(`${l.base}/ui/oauth/exchange`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ code, code_verifier: verifier, state }) });
+    const token = String(((await ex.json()) as Out)['accessToken']);
+    const signed = await signAs(l, token, listRead());
+    expect(JSON.parse(String(signed['_signed_payload']))['client_id']).toBe(start['clientId']);
+    expect(stakesOf((await h['pev.list_scenarios']!(signed)) as Out)).toEqual([undefined, false]);
+    // A restart, or another replica, that has not registered that id: a chat, until the person signs in there again.
+    const restarted = createPevHandlers({ ...handlerDeps, isWebAppClient: webAppClients('http://127.0.0.1:6110').has }) as Handlers;
+    expect(stakesOf((await restarted['pev.list_scenarios']!(await signAs(l, token, listRead()))) as Out)).toEqual([undefined, true]);
+  }, SLOW);
+
+  it('a relay that signs no client id: the agent rule, as before', async () => {
+    const plainRelay = stubRelay({ cimd: true });
+    const h = createPevHandlers({ ...handlerDeps, isWebAppClient: webAppClients(DEPLOY).has }) as Handlers;
+    const l = await serve({ relayUrl: RELAY, deploymentUrl: DEPLOY, relayFetch: plainRelay.fetchFn }, { handlers: h });
+    const token = String((await exchangeDirect(l, plainRelay)).json['accessToken']);
+    const signed = await signAs(l, token, listRead());
+    expect('client_id' in (JSON.parse(String(signed['_signed_payload'])) as Out)).toBe(false);
+    expect(stakesOf((await h['pev.list_scenarios']!(signed)) as Out)).toEqual([undefined, false]);
+  }, SLOW);
 });

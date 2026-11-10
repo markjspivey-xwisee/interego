@@ -168,6 +168,16 @@ const hitRate = (rows: readonly OutcomeRow[]): number | null => ratio(rows.filte
 const distinctPeople = (rows: readonly OutcomeRow[]): number =>
   new Set(rows.filter((r) => r.loopOutcome.confirmedByKind === 'human').map((r) => principalKey(principalOfDid(r.reviewerDid)))).size;
 
+/**
+ * A standing's reason with its decision kind named in words: the kind (`pev/<16 hex>/<criterion>`)
+ * holds the rubric hash's first 16 hex, and this bridge writes no fingerprint into text. An answer
+ * that leaves the stakes out keys a fingerprint in the fields it writes one into and replaces one
+ * in text with a stand-in that the same fingerprint in a caller's own text would match (`maskText`,
+ * src/stakes.ts), so a kind in this text, beside a criterion title an author's chat wrote, would
+ * check a guess at the rubric.
+ */
+const kindInWords = (why: string, kind: DecisionKind): string => why.split(kind.kind).join('this criterion');
+
 /** Standing for one (judge × prompt × rubric version × criterion). It is reported and changes nothing. */
 export function standingFor(
   rows: readonly OutcomeRow[], kind: DecisionKind, judge: { cellJudge: string; kind: 'model' | 'agent' | 'person'; route: InferenceRoute },
@@ -181,7 +191,7 @@ export function standingFor(
   }
   const counted = rows.filter((r) => !r.demo && !r.repeat);
   if (counted.length < STANDING_POLICY.minSamples) {
-    return { evaluated: true, clears: false, why: `${counted.length} outcome(s) of ${kind.kind}, below ${STANDING_POLICY.minSamples}`, effect };
+    return { evaluated: true, clears: false, why: `${counted.length} outcome(s) of this criterion, below ${STANDING_POLICY.minSamples}`, effect };
   }
   const cells = calibration(counted.map((r) => r.loopOutcome), [kind], STANDING_POLICY.minSamples);
   const at = o.now.toISOString();
@@ -191,11 +201,11 @@ export function standingFor(
   const snap = reputations(a ? [a] : [], 'pev-judge-standing', at).get(judge.cellJudge) ?? null;
   const d = autonomy({ kind: kind.kind, floor: STANDING_POLICY.floor, minSamples: STANDING_POLICY.minSamples, minHumanConfirmers: STANDING_POLICY.minHumanConfirmers }, kind, snap, a);
   const distinct = distinctPeople(counted);
-  if (!d.granted) return { evaluated: true, clears: false, why: d.why, effect };
+  if (!d.granted) return { evaluated: true, clears: false, why: kindInWords(d.why, kind), effect };
   if (distinct < STANDING_POLICY.minDistinctHumanConfirmers) {
     return { evaluated: true, clears: false, why: `${distinct} distinct people confirmed these outcomes, below ${STANDING_POLICY.minDistinctHumanConfirmers}`, effect };
   }
-  return { evaluated: true, clears: true, why: d.why, effect };
+  return { evaluated: true, clears: true, why: kindInWords(d.why, kind), effect };
 }
 
 /**
@@ -324,8 +334,12 @@ function cellNeedOf(cell: CalibrationCellView | undefined): number {
   return 0.25 * (1 - (cell.agreementRate ?? 0));
 }
 
-/** The factors for one candidate, each 0..1, returned so a reviewer can dispute the weights, not the arithmetic. */
-export function queueFactors(c: QueueCandidate, cells: readonly CalibrationCellView[]): QueueWhy {
+/**
+ * The factors for one candidate, each 0..1, returned so a reviewer can dispute the weights, not the
+ * arithmetic. `stakes: false` (a queue read for a chat assistant) leaves `nearThreshold` at 0: it is
+ * worked out from the percent and the pass mark, so its value, or a priority it is in, would carry them.
+ */
+export function queueFactors(c: QueueCandidate, cells: readonly CalibrationCellView[], o: { readonly stakes?: boolean } = {}): QueueWhy {
   const primary = c.judgments[0];
   if (!primary) {
     return { unverified: 0, notQuoted: 0, disagreement: 0, nearThreshold: 0, uncertainty: 0, uncertaintyDeclared: false, cellNeed: 1, learnerControlled: 0, auditSample: 0 };
@@ -333,7 +347,7 @@ export function queueFactors(c: QueueCandidate, cells: readonly CalibrationCellV
   const spreads = agreementOf(c.scenarioSpec, c.judgments).map((x) => x.normalisedSpread);
   const disagreement = c.judgments.length > 1 && spreads.length > 0 ? Math.max(...spreads) : 0;
   const p = primary.provisional;
-  const nearThreshold = p.use === 'pass-gate' ? Math.max(0, 1 - Math.abs(p.percentTenths / 10 - p.minPercent) / 10) : 0;
+  const nearThreshold = p.use === 'pass-gate' && o.stakes !== false ? Math.max(0, 1 - Math.abs(p.percentTenths / 10 - p.minPercent) / 10) : 0;
   const confidences = primary.criteria.map((x) => x.confidence);
   const uncertainty = confidences.length === 0 ? UNDECLARED_UNCERTAINTY
     : Math.max(...confidences.map((x) => (x === null ? UNDECLARED_UNCERTAINTY : 1 - x)));
@@ -368,10 +382,11 @@ export function priorityOf(w: QueueWhy): number {
 
 /**
  * The queue for one reviewer: judged attempts no person has reviewed, plus contested and retracted
- * ones (a person asked for another look). Reopened first, then priority, then oldest.
+ * ones (a person asked for another look). Reopened first, then priority, then oldest. With
+ * `stakes: false` closeness to the pass mark counts for nothing, in the priority and the order alike.
  */
 export function reviewQueue(
-  candidates: readonly QueueCandidate[], cells: readonly CalibrationCellView[], o: { limit: number; reviewer: string },
+  candidates: readonly QueueCandidate[], cells: readonly CalibrationCellView[], o: { limit: number; reviewer: string; stakes?: boolean },
 ): { readonly entries: readonly QueueEntry[]; readonly awaitingReview: number; readonly excludedAsConflicted: number; readonly weights: typeof QUEUE_WEIGHTS } {
   const reviewer = principalKey(o.reviewer);
   let excludedAsConflicted = 0;
@@ -389,7 +404,7 @@ export function reviewQueue(
       if (awaitingAPerson(loop, []).length === 0) continue;
     }
     if (c.excludedReviewers.some((x) => principalKey(x) === reviewer)) { excludedAsConflicted += 1; continue; }
-    const why = queueFactors(c, cells);
+    const why = queueFactors(c, cells, { stakes: o.stakes !== false });
     const primary = c.judgments[0];
     entries.push({
       ...c, priority: priorityOf(why), why, reopened: c.state !== 'judged', blindFirst: inAuditSample(c.attemptIri),
