@@ -52,6 +52,74 @@ to be shown from, so it is shown as before, with every run of 16 or 64 hex
 digits in it as a stand-in. So is a quote an answer shows without its
 session's lines, which no answer does today.
 
+## 2026-11-10 — Practice Evidence and Work Redesign: fixes from a live run through a chat assistant
+
+A run of a whole practice session through a real chat assistant, with the
+Interego connector, on the live Practice Evidence site found that the
+messages people copy into their assistant called the workspace's storage
+"My storage address". That storage belongs to the workspace, and everyone in
+it acts on it, so an assistant could offer it to the person as their own. The
+shared helper that writes these messages can now say "This workspace's
+storage address", the same for everyone in it and not the person's own, and
+every Practice Evidence message (workspace details, the start-up message, the
+message for a judge, the drafting message) and both Work Redesign messages
+(workspace details and the map message) now say that. A message that names a
+person's own storage still says "My storage address".
+
+Not covered: nothing checks which storage a message names; each site says
+which it is when it builds the message.
+
+Two smaller mismatches from the same run. The learner's start-up message tells
+the assistant to stop when an answer says "ended": true, but ending the
+conversation answered with its state alone. Ending it now says "ended": true
+too, as a save that ends the conversation already did. And the practice and
+judging instructions an assistant fetches showed a save in a different form
+from the one its copied message showed (podUrl, issuedAt and any nonce, where
+the message says pod_url, no issuedAt and a nonce made of the step, the turn
+and 16 random characters). For a request the Interego relay signs, they now
+show the message's form; for someone who signs with their own key they show
+the form they need, as before. Practice Evidence takes both forms through the
+relay, as it did.
+
+Not covered: someone who signs with their own key still sends podUrl and
+issuedAt; the message's form is taken only through the relay.
+
+The same run showed a learner's own assistant being pointed at assessing the
+learner's own practice. Once the conversation was over, Practice Evidence
+offered that assistant the judging instructions ("an independent judge agent
+can judge this attempt") and answered it with them in full, although saving an
+assessment of one's own session is refused. Now the learner's next step is a
+hand-off: the assistant is told that an appointed judge assesses the session
+with their own assistant, and that the learner sends it to them with Send to
+your judge in the web app. The judging instructions are refused to the
+learner's own assistant, with the same words. The web app's own Send to your
+judge, and its hand-off on a workspace without Interego sign-in, work as
+before.
+
+The run also found that a learner could not tell whether their workspace had
+a judge at all, and that only an admin could see who holds which role. Reading
+a session (or the list of one's sessions) now says the reader's own roles,
+whether they are an admin, and whether anyone else in the workspace is a judge
+or a reviewer. It says yes or no, never who or how many, and it carries none
+of the weights or the pass mark. The session page warns beside Send to your
+judge when the workspace has no judge yet, and asks the learner to have their
+admin add one. The message for a judge, the guide and a refused judge now say
+that a judge's own Interego account must be registered, by its Member ID (the
+ID with :users: in it), not by the ID of the assistant that acts for them.
+
+Not covered: whether anyone else is a judge is read from the role list as it
+is now, so it does not say whether that judge is willing or able to assess
+this session. A learner who signs with their own key, or uses the web app,
+still fetches the judging instructions, to hand to their judge; only their
+chat assistant is refused them.
+
+On a workspace whose bridge has a model of its own (the live one has none), a
+learner's assistant can have the session judged by that model. Its answer
+offered no judging instructions, as it should not, but did not say the
+hand-off either, so the assistant was told neither step. That answer now
+carries the same hand-off as reading the session does, while there is room
+for another judgment.
+
 ## 2026-11-10 — Practice Evidence: where a stand-in is the same, said exactly
 
 The scenario list's description said a fingerprint's stand-in in text is the

@@ -1385,6 +1385,10 @@ describe('your own AI assistant: connect Claude or ChatGPT, or copy and paste; n
       // A chat app whose act tool shows no sign_payload signs a signed step in two calls and leaves sign_payload out of a plain one.
       FALLBACK.both]) expect(details).toContain(says);
     expect(details.split(FALLBACK.both)).toHaveLength(2);
+    // The pod is the workspace's, which everyone in it acts on: the details never call it the person's own storage.
+    expect(details).toContain(`This workspace's storage address (pod_url), the same for everyone in it and not my own: "${DEMO_POD}"`);
+    expect(details).toContain('"pod_url" (this workspace\'s storage address)');
+    expect(details).not.toMatch(/my storage address/i);
     // The signing rule says that sign_payload true or false names the kind of step, here and in any example, and points to
     // where the prompt says what to do with each kind when the act tool has no such option: the last line of How to do
     // each step, which is that fallback. The condition is said there and nowhere else.
@@ -1490,6 +1494,12 @@ describe('your own AI assistant: connect Claude or ChatGPT, or copy and paste; n
       "Sam Okafor's last line was: \"You wanted to see me?", 'For example counterpart-packet-4-q8Xr2mVp7LkA9dTz,', FALLBACK.signed]) expect(startup, says).toContain(says);
     // Every step of it is signed: nothing about leaving sign_payload out.
     expect(startup).not.toContain(PLAIN_RULE);
+    // Once it ends, the learner's own assistant assesses nothing: the answer's handOff says how the learner sends it to their judge.
+    expect(startup).toContain('- If a result says "ended": true, tell me the conversation is over and stop. Don\'t assess it or fetch anything to assess it with: '
+      + 'my appointed judge does that with their own assistant, and the result\'s handOff says how I send it to them.');
+    // The session is kept on the workspace's storage, not the learner's own.
+    expect(startup).toContain(`This workspace's storage address (pod_url), the same for everyone in it and not my own: "${DEMO_POD}"`);
+    expect(startup).not.toMatch(/my storage address/i);
     expect(startup).not.toContain('read-items');
     // A refused or lost step is reconciled from what is saved, with the read step, before any reply is written or saved again.
     expect(startup).toContain('again only if we carry on in a new chat or a rule below says so');
@@ -1541,21 +1551,29 @@ describe('your own AI assistant: connect Claude or ChatGPT, or copy and paste; n
     p.q('#check-lines')!.click();
     await p.until(() => p.text('#state') === 'Finished: not assessed yet', 'the finished session');
     expect(p.text('#view .judgments')).toContain('Waiting for a judge.');
-    expect(p.text('#view .judgments')).toContain('If you don\'t have one yet, ask your admin.');
+    // No one holds the judge role yet (the session's own read says so, signedAs.teamBesidesYou): the page says so, and who to ask.
+    expect(p.text('#view .judgments')).toContain('Your workspace has no judge yet: ask your admin to add one.');
     // Nothing assessed yet, and the Feedback card says so: no Provisional pill over an empty card.
     expect(p.text('#view .judgments .card__header .status')).toBe('Not assessed yet');
 
     // Send to your judge: the session's ID and what to paste, never the conversation.
     const send = await p.until(() => p.q('#copy-judge-message'), 'Send to your judge');
     expect(p.text('#view .card.actions')).toContain('Not sure who your judge is? Ask your admin.');
+    // Beside it, before anything is sent: there is no judge yet, so no one can assess the session until the admin adds one,
+    // by the judge's own account, not an assistant's.
+    const noJudge = p.q('#view .card.actions #no-judge-yet');
+    expect([noJudge?.closest('.list__item')?.contains(send), p.text('#no-judge-yet .callout__title')]).toEqual([true, 'Your workspace has no judge yet']);
+    expect(p.text('#no-judge-yet .callout__body')).toBe("No one can assess this session until there is one. Ask your admin to add a judge under Team, by their Member ID: the ID of the judge's own Interego account, not of an assistant that acts for them. Your session is saved, and you can send it once they have.");
     send.click();
     await p.until(() => p.copied.length === 3, 'the message for the judge');
     const judge = p.copied[2]!;
     // No answer to a chat carries the weights or the pass mark (chat-stakes.test.ts), and the message says so. It still asks
     // for a new chat, not one where the judge reviewed sessions: that chat has read other assessments' levels (the review
     // queue's every judgment), which neither step of the prompt shows the assistant.
-    expect(judge.split('\n').slice(0, 3)).toEqual([
+    expect(judge.split('\n').slice(0, 4)).toEqual([
       `Hi, could you assess my practice session in Practice Evidence? Session: ${attemptIri}. Workspace: ${nm.base}/`,
+      // The judge's own account is the one registered, by its Member ID: an admin given the assistant's ID registers no one.
+      "Your Interego account has to be registered as a judge in this workspace first. If it isn't, send the workspace's admin your Member ID: sign in to the workspace with Interego and copy it from the account menu. It names your own account (it has :users: in it), not your assistant.",
       'Practice Evidence leaves the weights and the pass mark out of what it sends your assistant through the Interego connector. '
         + "Paste everything between the lines into a new chat in Claude or ChatGPT, with the Interego connector on, not one where you reviewed sessions: it has seen other assessments' levels.",
       '---',
@@ -1563,8 +1581,13 @@ describe('your own AI assistant: connect Claude or ChatGPT, or copy and paste; n
     // Its nonce example is its own first signed step, at turn 0: judging has no turn, and the rule says "or 0".
     for (const says of [attemptIri, PEV_ACTION.judgePacket, PEV_ACTION.recordJudgment, 'usedPacketPrompt', 'wait for my go-ahead', `Workspace: ${nm.base}/`,
       'For example judge-packet-0-q8Xr2mVp7LkA9dTz,', FALLBACK.signed,
-      "If this is my own practice session, stop: I can't assess it, in any chat or role."]) expect(judge, says).toContain(says);
+      "If this is my own practice session, stop: I can't assess it, in any chat or role.",
+      // A judge nobody registered yet is told which ID to send: the refusal names it (chat-live-run.test.ts).
+      "- If the first step is refused with not-entitled, tell me my Interego account isn't registered as a judge in this workspace yet: the admin registers my Member ID, the one with :users: in it that the refusal names, not the :agents: ID you sign as. Then stop."]) expect(judge, says).toContain(says);
     expect(judge).not.toContain(PLAIN_RULE);
+    // The workspace's storage, not the judge's own: the live judge message called it "My storage address".
+    expect(judge).toContain(`This workspace's storage address (pod_url), the same for everyone in it and not my own: "${DEMO_POD}"`);
+    expect(judge).not.toMatch(/my storage address/i);
     // Whether a save was kept is asked of the workspace, never judged from what the chat saw: assessing again after a save
     // that was kept saves a second one, and a save the chat app answered with an error, or not at all, may have been kept.
     // The first step asks it: the judge packet ends with yourAssessment, which says whether the caller has a saved
@@ -1778,6 +1801,9 @@ describe('your own AI assistant: connect Claude or ChatGPT, or copy and paste; n
     expect(msg).not.toContain('\\"');
     expect(msg).toContain('For example author-scenario-0-q8Xr2mVp7LkA9dTz,');
     expect(msg).toContain('"nonce":"author-scenario-<turn number, or 0>-<16 new random letters or digits>"');
+    // The draft is saved to the workspace's storage, not the author's own.
+    expect(msg).toContain(`This workspace's storage address (pod_url), the same for everyone in it and not my own: "${DEMO_POD}"`);
+    expect(msg).not.toMatch(/my storage address/i);
     expect(p.errors).toEqual([]);
   }, SLOW);
 
