@@ -3445,10 +3445,17 @@ async function viewResults(root, scenarioIri) {
     : `${t(x.criterionId)}: changed in ${x.changed} of ${x.reviewedAttempts} reviewed sessions` }))));
   root.append(resultCard('What reviewers changed', changes));
   root.append(h('details', { class: 'disclosure' }, h('summary', { text: 'How small numbers are protected' }), h('div', { class: 'disclosure__body', text: r.suppressionRule })));
-  if (r.personJudgeCells && r.personJudgeCells.length) {
-    root.append(resultCard('People who assessed sessions', [calibrationSimple(r.personJudgeCells),
-      h('details', { class: 'disclosure' }, h('summary', { text: 'All measures' }), calibrationNote(), calibrationTable(r.personJudgeCells))]));
-  }
+  if (r.personJudgeCells && r.personJudgeCells.length) root.append(personJudgeCard(r));
+}
+
+/**
+ * The results page's table of people who judged. Its rubric fingerprints are calibration's own only in
+ * an answer that left the stakes out; a reader of the stakes (every reviewer and admin here) is shown
+ * the plain fingerprint, the one a scenario shows, so the note is left off for them.
+ */
+function personJudgeCard(r) {
+  return resultCard('People who assessed sessions', [calibrationSimple(r.personJudgeCells),
+    h('details', { class: 'disclosure' }, h('summary', { text: 'All measures' }), r.stakesWithheld ? calibrationNote() : null, calibrationTable(r.personJudgeCells))]);
 }
 
 function calibrationSimple(cells) {
@@ -3468,7 +3475,7 @@ function calibrationSimple(cells) {
         h('span', { class: 'table__secondary', text: `${c.status === 'Asserted' ? '' : 'Fewer than 20 reviewed sessions. '}Track record: ${c.standing && c.standing.evaluated ? (c.standing.clears ? 'meets the bar (for information only)' : 'not yet') : 'not evaluated'}` })]))))));
 }
 
-/** Beside every calibration table: its rubric fingerprints are keyed for calibration, so they match none shown elsewhere. */
+/** Beside a calibration table whose rubric fingerprints are keyed for calibration (the calibration page, a results answer without the stakes): they match none shown elsewhere. */
 function calibrationNote() {
   return para("The rubric fingerprints in this table are calibration's own: they don't match the fingerprints shown with a scenario or a session.", 'text-sm text-secondary calibration-note');
 }

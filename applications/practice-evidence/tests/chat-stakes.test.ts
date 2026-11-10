@@ -36,7 +36,7 @@ import { rubricHash, scenarioHash, coerceScenario } from '../src/practice.js';
 import { DEMO_LINES, demoKey, demoScenarioInput, inMemoryPod, scriptedPracticeModel } from '../demo/run.js';
 import { PEV_ACTION, toolNameOf } from '../src/ontology.js';
 import { signEnvelope } from '../src/records.js';
-import { STAKES_WITHHELD } from '../src/stakes.js';
+import { hashMask, maskAnswerHashes, STAKES_WITHHELD } from '../src/stakes.js';
 import { pevAffordances, STAKES_LEFT_OUT_FOR } from '../affordances.js';
 import { readFileSync } from 'node:fs';
 
@@ -663,6 +663,149 @@ describe('answers to a chat assistant leave out the scoring stakes; the web app 
   }, SLOW);
 });
 
+// ── A fingerprint a caller writes into text ─────────────────────────────────────────────────────
+
+/** A rubric hash a caller could guess, written as text: as a rubric IRI and as a calibration kind's prefix. */
+const asText = (hashes: readonly string[]): string => hashes.map((h) => `urn:pev:rubric:${h} pev/${h.slice(0, 16)}/x`).join(' ');
+
+/**
+ * The hashes in an answer, split by where they sit: `keyed`, the fields this bridge writes a hash into (`rubricHash`,
+ * `scenarioHash`, `rubricIri`, a calibration `kind`), each value and its first 16 hex; `inText`, every rubric IRI's hash and
+ * kind prefix inside any other string.
+ */
+function hashesIn(r: unknown): { keyed: Set<string>; inText: string[] } {
+  const keyed = new Set<string>();
+  const inText: string[] = [];
+  const keep = (h: string): void => { keyed.add(h); keyed.add(h.slice(0, 16)); };
+  const walk = (x: unknown, key?: string): void => {
+    if (typeof x === 'string') {
+      const iri = /^urn:pev:rubric:([0-9a-f]{64})$/.exec(x);
+      const kind = /^pev\/([0-9a-f]{16})\/[a-z0-9-]{1,40}$/.exec(x);
+      if ((key === 'rubricHash' || key === 'scenarioHash') && /^[0-9a-f]{64}$/.test(x)) keep(x);
+      else if (key === 'rubricIri' && iri) keep(iri[1]!);
+      else if (key === 'kind' && kind) keep(kind[1]!);
+      else {
+        for (const m of x.matchAll(/urn:pev:rubric:([0-9a-f]{64})/g)) inText.push(m[1]!);
+        for (const m of x.matchAll(/\bpev\/([0-9a-f]{16})\//g)) inText.push(m[1]!);
+      }
+    } else if (Array.isArray(x)) x.forEach((y) => walk(y));
+    else if (x !== null && typeof x === 'object') for (const [k, y] of Object.entries(x)) walk(y, k);
+  };
+  walk(r);
+  return { keyed, inText };
+}
+
+/**
+ * An answer a caller who reads no stakes got back with `atLeast` hashes it wrote into text: none of them equals a value in a
+ * field this bridge keyed, or the first 16 hex of one, or any other hash in the answer's text, or a bare hash it wrote.
+ */
+function noGuessCheckable(r: Out, atLeast: number, bare: readonly string[], what: string): void {
+  ok(r);
+  const { keyed, inText } = hashesIn(r);
+  expect(inText.length, `${what}: the hashes written into text came back`).toBeGreaterThanOrEqual(atLeast);
+  expect(inText.filter((h) => keyed.has(h)), `${what}: a hash in text equal to a keyed one`).toEqual([]);
+  expect(new Set(inText).size, `${what}: two hashes in text equal to each other`).toBe(inText.length);
+  expect(inText.filter((h) => bare.some((b) => b.startsWith(h))), `${what}: a bare hash echoed`).toEqual([]);
+}
+
+describe('a rubric fingerprint a caller writes into text comes back as a random value, never keyed beside the answer\'s own', () => {
+  it('maskAnswerHashes keys only the fields this bridge writes a hash into, and replaces every other occurrence with a value of its own', () => {
+    const m = hashMask(Buffer.alloc(32, 7));
+    const h = RAW.rubric;
+    const scope = { scenarioIri: 'urn:pev:scenario:unit', version: 1 };
+    const answer = {
+      scenarioIri: scope.scenarioIri, version: 1, rubricHash: h, rubricIri: `urn:pev:rubric:${h}`,
+      turns: [{ text: asText([h, h]) }], why: `urn:pev:rubric:${h}#criterion-x`, attempt: { kind: `pev/${h.slice(0, 16)}/x` },
+      cells: [{ grouping: 'rubric-version', criterionContentHash: 'c', judgeId: 'j', rubricHash: h, kind: `pev/${h.slice(0, 16)}/asks-their-view`, criterionTitle: asText([h]) }],
+    };
+    const out = maskAnswerHashes(answer, m, scope) as typeof answer;
+    const k = m.version(scope.scenarioIri, 1).full(h);
+    // The bridge's own fields: keyed for their scope, the same each time.
+    expect([out.rubricHash, out.rubricIri, out.cells[0]!.rubricHash, out.cells[0]!.kind])
+      .toEqual([k, `urn:pev:rubric:${k}`, m.cells.full(h), `pev/${m.cells.prefix(h.slice(0, 16))}/asks-their-view`]);
+    expect((maskAnswerHashes(answer, m, scope) as typeof answer).rubricHash).toBe(k);
+    // Text, and an IRI that is not a bare rubric IRI: a fresh value for each occurrence.
+    const { keyed, inText } = hashesIn(out);
+    expect(inText).toHaveLength(7);
+    expect(inText.filter((x) => keyed.has(x) || h.startsWith(x) || x === k || m.cells.full(h) === x || m.cells.prefix(h.slice(0, 16)) === x)).toEqual([]);
+    expect(new Set(inText).size).toBe(inText.length);
+    expect(hashesIn(maskAnswerHashes(answer, m, scope)).inText.some((x) => inText.includes(x))).toBe(false);
+    // A kind outside a calibration cell is no kind this bridge wrote there: replaced too, and differently each time.
+    const kinds = [out, maskAnswerHashes(answer, m, scope) as typeof answer].map((o) => o.attempt.kind.slice(4, 20));
+    expect([kinds[0] === kinds[1], kinds.some((x) => x === m.version(scope.scenarioIri, 1).prefix(h.slice(0, 16)) || x === m.cells.prefix(h.slice(0, 16)) || x === h.slice(0, 16))])
+      .toEqual([false, false]);
+  });
+
+  it('a turn, a judge\'s quotes and rationale, a reviewer\'s reasons, a contest, a redaction and a scored scenario\'s words: read back as a chat, a key nobody registered, or unsigned', async () => {
+    // A scored scenario whose first criterion's title holds the scored scenario's rubric IRI, as an author may write it.
+    const input = demoScenarioInput('missed-deadline', 2);
+    const rubric = input['rubric'] as { criteria: Out[] };
+    const withTitle = {
+      ...input, scenarioKey: 'fingerprint-in-text', title: 'A fingerprint in the text',
+      rubric: { ...rubric, criteria: [{ ...rubric.criteria[0]!, title: `Names what happened urn:pev:rubric:${RAW.rubric}` }, ...rubric.criteria.slice(1)] },
+    };
+    const G = coerceScenario(withTitle);
+    if (!('value' in G)) throw new Error('the scenario does not coerce');
+    const own = rubricHash(G.value.rubric);
+    const bare = [own, scenarioHash(G.value), RAW.rubric, RAW.scenario];
+    // The caller's guesses: a wrong one, the scenario's own rubric hash, and the scored scenario's.
+    const wrong = sha256('a wrong guess');
+    const guess = asText([wrong, own, RAW.rubric]);
+    const pub = ok(await ract(H, 'pev.author_scenario', P.author.web, { scenario: withTitle, status: 'published', draftAssistance: { used: false } }));
+    expect(pub['rubricHash']).toBe(own);
+    const sc = String(pub['scenarioIri']);
+    ok(await ract(H, 'pev.ratify_scenario', P.reviewer.web, { scenarioIri: sc, version: 1, scenarioHash: pub['scenarioHash'] }));
+
+    // A key nobody registered says the guesses, and reads its attempt back.
+    const fresh = ok(await kact(H, 'pev.start_attempt', FRESH, { scenarioIri: sc, scenarioVersion: 1, coached: false }));
+    noGuessCheckable(ok(await kact(H, 'pev.say', FRESH, { attemptIri: fresh['attemptIri'], turnIndex: 1, text: guess })), 0, bare, 'say with a fresh key');
+    noGuessCheckable(await kact(H, 'pev.get_attempt', FRESH, { attemptIri: fresh['attemptIri'] }), 7, bare, 'the turn read with a fresh key');
+
+    // The learner's chat says them, ends, and has the bridge's model judge.
+    const start = ok(await ract(H, 'pev.start_attempt', P.learner.claude, { scenarioIri: sc, scenarioVersion: 1, coached: false }));
+    const a = String(start['attemptIri']);
+    const said = ok(await ract(H, 'pev.say', P.learner.claude, { attemptIri: a, turnIndex: 1, text: `I want to talk about Thursday's report. ${guess}` }));
+    ok(await ract(H, 'pev.end_conversation', P.learner.claude, { attemptIri: a, turnIndex: said['nextTurnIndex'] }));
+    ok(await ract(H, 'pev.judge_attempt', P.learner.claude, { attemptIri: a }));
+    noGuessCheckable(await ract(H, 'pev.get_attempt', P.learner.claude, { attemptIri: a }), 7, bare, 'the turn read from the learner\'s Claude');
+
+    // An appointed judge's chat writes them into its quotes and rationale.
+    const packet = ok(await ract(H, 'pev.judge_packet', P.judge.claude, { attemptIri: a }));
+    noGuessCheckable(packet, 7, bare, 'the judge packet');
+    const judgment = { criteria: G.value.rubric.criteria.map((c) => ({ criterionId: c.id, level: c.levels[1]!.id, quotes: [{ text: guess, turnIndex: 1 }], rationale: `As quoted: ${guess}` })) };
+    ok(await ract(H, 'pev.record_judgment', P.judge.claude, { attemptIri: a, ...(packet['binding'] as Out), judgment, judgeDisclosure: { provider: 'Example', model: 'example-judge', usedPacketPrompt: true } }));
+    noGuessCheckable(await ract(H, 'pev.get_attempt', P.judge.claude, { attemptIri: a }), 40, bare, 'the judgment read from the judge\'s Claude');
+
+    // A reviewer's reasons, set in the web app, read back from chats and in the results and calibration.
+    const view = ok(await ract(H, 'pev.get_attempt', P.reviewer2.web, { attemptIri: a }));
+    const levels = G.value.rubric.criteria.map((c) => ({ criterionId: c.id, levelId: c.levels[2]!.id, why: `Raised; see urn:pev:rubric:${own}` }));
+    ok(await ract(H, 'pev.override_attempt', P.reviewer2.web, { attemptIri: a, target: view['currentTarget'], levels, sawJudgeLevelsFirst: true }));
+    noGuessCheckable(await ract(H, 'pev.get_attempt', P.learner.claude, { attemptIri: a }), 40, bare, 'the reviewed attempt from the learner\'s Claude');
+    noGuessCheckable(await ract(H, 'pev.scenario_results', P.reviewer2.claude, { scenarioIri: sc }), 1, bare, 'results from a reviewer\'s Claude');
+    noGuessCheckable((await H['pev.calibration']!({})) as Out, 1, bare, 'calibration, unsigned');
+
+    // The learner's chat contests with them, and removes the transcript with them as its reason.
+    const before = ok(await ract(H, 'pev.get_attempt', P.learner.claude, { attemptIri: a }));
+    const why = `Please read it again: ${asText([wrong, own])}`;
+    noGuessCheckable(await ract(H, 'pev.contest_review', P.learner.chatgpt, { attemptIri: a, target: before['currentTarget'], why }), 0, bare, 'the contest');
+    noGuessCheckable(await ract(H, 'pev.get_attempt', P.learner.claude, { attemptIri: a }), 44, bare, 'the contested attempt from the learner\'s Claude');
+    const again = ok(await ract(H, 'pev.get_attempt', P.learner.claude, { attemptIri: a }));
+    noGuessCheckable(await ract(H, 'pev.redact_attempt', P.learner.claude, { attemptIri: a, target: again['currentTarget'], why }), 0, bare, 'the redaction');
+    noGuessCheckable(await ract(H, 'pev.get_attempt', P.learner.claude, { attemptIri: a }), 8, bare, 'the redacted attempt from the learner\'s Claude');
+
+    // The author's chat edits only the scored scenario's words, keeping its stakes, and reads them back.
+    const listed = ok(await ract(H, 'pev.list_scenarios', P.author.claude, { scenarioIri: sc }));
+    const head = listed['scenario'] as Out;
+    const sent = withoutStakes({ ...withTitle, situation: `${String(input['situation'])} ${guess}` });
+    const { passGateWhy: _w, ...plain } = sent;
+    const edited = ok(await ract(H, 'pev.author_scenario', P.author.claude, { scenario: plain, status: 'draft', basedOnVersion: head['version'], draftAssistance: { used: false } }));
+    expect((edited['stakesKept'] as Out)['fromVersion']).toBe(1);
+    noGuessCheckable(edited, 0, bare, 'the edit saved from the author\'s Claude');
+    noGuessCheckable(await ract(H, 'pev.list_scenarios', P.author.claude, { scenarioIri: sc, includeDrafts: true }), 7, bare, 'the edited scenario from the author\'s Claude');
+    noGuessCheckable((await H['pev.list_scenarios']!({ scenario_iri: sc })) as Out, 1, bare, 'the scenario, unsigned');
+  }, SLOW);
+});
+
 describe('a relay that signs which OAuth client asked: only this bridge\'s own client is its web app', () => {
   it('the web app\'s own client id with its agent reads the stakes and decides; any other client id is a chat, whatever its agent is called', async () => {
     const id = P.reviewer.did.slice(P.reviewer.did.lastIndexOf(':') + 1);
@@ -732,6 +875,9 @@ describe('what the descriptions and the README say about who reads the stakes', 
     const readme = readFileSync(new URL('../README.md', import.meta.url), 'utf8');
     expect(readme).toContain('changing `PEV_PLATFORM_KEY`, or setting or changing `PEV_RECORD_KEY`, keys every hash anew, so a fingerprint handed out before');
     expect(readme).toContain('so it can be checked against the record\'s `pev:rubricHash` only by this bridge, not by an offline reader of the record');
+    // A hash a caller writes into text comes back random, and the README and the answers' own mark say so.
+    expect(readme).toContain('inside any text, is replaced with a random value made for that one occurrence, never keyed');
+    expect(STAKES_WITHHELD).toContain('one written into any text is replaced with a random value, so none can be checked against a guess');
     // No named character appears in the README, so every person in it is they.
     expect(readme.match(/\b(she|her|hers|herself|he|him|his|himself)\b/gi)).toBeNull();
   });

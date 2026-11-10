@@ -17,7 +17,11 @@
  * answer, so only a few small integers are unknown and a bare hash would confirm a guess offline.
  * The key covers the scenario and the version a hash belongs to as well as the hash, so the same
  * rubric keys differently in any other scenario or version: a scenario an author's chat saves with
- * stakes it chose shows a keyed value no other scenario's matches, its right guess included.
+ * stakes it chose shows a keyed value no other scenario's matches, its right guess included. Only
+ * the fields this bridge writes a hash into are keyed; a hash inside any other text, which a caller
+ * may have written there, is replaced with a random value of its own, so a guess written into a
+ * turn, a reason or a scenario's words never comes back keyed beside the hash it would be checked
+ * against.
  *
  * Pure: no I/O.
  */
@@ -28,7 +32,7 @@ import type { ReviewResult } from './records.js';
 /** What every answer that left a scored scenario's stakes out says, at its top level. */
 export const STAKES_WITHHELD = 'This answer leaves out a scored scenario\'s stakes: each criterion\'s weight, each level\'s points, the pass rule, '
   + 'and any points, percent or pass result worked out from them; its rubric and scenario fingerprints are keyed to their own scenario version, '
-  + 'so they match no other scenario\'s or version\'s and cannot be checked against a guess. Practice Evidence leaves the stakes out of every answer to a chat assistant the Interego relay signs for, a key '
+  + 'so they match no other scenario\'s or version\'s, and one written into any text is replaced with a random value, so none can be checked against a guess. Practice Evidence leaves the stakes out of every answer to a chat assistant the Interego relay signs for, a key '
   + 'no admin registered or one registered as an agent, or a request nobody signed; people see them in the Practice Evidence '
   + 'web app, signed in with Interego or with an address an admin registered.';
 
@@ -36,13 +40,14 @@ export const STAKES_WITHHELD = 'This answer leaves out a scored scenario\'s stak
 export interface Keyer { readonly full: (hex: string) => string; readonly prefix: (hex16: string) => string }
 
 /**
- * The keyed stand-ins for rubric and scenario hashes. Each is an HMAC-SHA256 under a key only the
- * bridge holds, over the hash and the scope it is shown in:
+ * The keyed stand-ins for rubric and scenario hashes, in the fields this bridge writes them into
+ * (`maskAnswerHashes`). Each is an HMAC-SHA256 under a key only the bridge holds, over the hash and
+ * the scope it is shown in:
  *   · `version`: one scenario version (its IRI and number), for every answer about a scenario, an
  *     attempt or a judgment. The same rubric keys differently in any other scenario or version, so
  *     no answer about a scenario a caller saved can be compared with one about another.
  *   · `cells`: calibration cells, which group judgments by a rubric's content across scenarios;
- *     no caller chooses what a cell shows, and its values match no scenario's.
+ *     no caller chooses the hashes a cell shows, and its values match no scenario's.
  *   · `loose()`: a salt of its own each time it is called, for a hash an answer does not tie to a
  *     scenario version (none should): it is equal to nothing outside that one answer.
  */
@@ -81,8 +86,14 @@ const HASH_KEYS: ReadonlySet<string> = new Set(['rubricHash', 'scenarioHash']);
  */
 const SIGNED_KEYS: ReadonlySet<string> = new Set(['graphTrig', 'descriptorTurtle', 'statement']);
 const RUBRIC_IRI = /urn:pev:rubric:([0-9a-f]{64})/g;
-/** A calibration decision kind, `pev/<first 16 hex of the rubric hash>/<criterion>`. */
+/** A calibration decision kind's hash prefix, `pev/<first 16 hex of the rubric hash>/`, wherever it sits. */
 const KIND_PREFIX = /\bpev\/([0-9a-f]{16})\//g;
+/** A rubric IRI as this bridge writes it under `rubricIri` (`records.ts` `rubricIriOf`): that and nothing else. */
+const RUBRIC_IRI_FIELD = /^urn:pev:rubric:([0-9a-f]{64})$/;
+/** A calibration kind as `calibration.ts` writes it under a cell's `kind`: `pev/<16 hex>/<criterion id>`, and nothing else. */
+const KIND_FIELD = /^pev\/([0-9a-f]{16})\/([a-z0-9-]{1,40})$/;
+/** A random stand-in of `bytes` bytes, in hex: made fresh for each hash found in text, so it equals nothing else. */
+const fresh = (bytes: number): string => randomBytes(bytes).toString('hex');
 
 type Version = { readonly scenarioIri: string; readonly version: number };
 const isVersionNumber = (v: unknown): v is number => typeof v === 'number' && Number.isInteger(v) && v >= 1;
@@ -114,13 +125,22 @@ const isCalibrationCell = (o: Record<string, unknown>): boolean =>
   (o['grouping'] === 'rubric-version' || o['grouping'] === 'criterion-content') && typeof o['criterionContentHash'] === 'string' && typeof o['judgeId'] === 'string';
 
 /**
- * An answer with every rubric and scenario hash keyed: the value of a `rubricHash` or
- * `scenarioHash`, the hash inside a rubric IRI (`urn:pev:rubric:<hash>`, its criteria's and levels'
- * IRIs too), and the hash prefix inside a calibration kind (`pev/<16 hex>/`), wherever they sit,
- * apart from signed bytes (`SIGNED_KEYS`). Each is keyed for the scenario version it belongs to
- * (`versionIn`, starting from `scope`), for calibration cells (`scope` `cells`, or inside a cell
- * wherever it sits), or, where nothing names its version, with a salt of this answer's own
+ * An answer with every rubric and scenario hash keyed or replaced, apart from signed bytes
+ * (`SIGNED_KEYS`).
+ *
+ * Keyed: the fields this bridge writes a hash into, and only those: the value of a `rubricHash` or
+ * `scenarioHash` (64 hex), of a `rubricIri` (`urn:pev:rubric:<hash>`, exactly), and of a calibration
+ * cell's `kind` (`pev/<16 hex>/<criterion id>`, exactly). Each is keyed for the scenario version it
+ * belongs to (`versionIn`, starting from `scope`), for calibration cells (`scope` `cells`, or inside a
+ * cell wherever it sits), or, where nothing names its version, with a salt of this answer's own
  * (`loose`).
+ *
+ * Replaced: a rubric IRI's hash or a kind's prefix inside any other string. Such text may be a
+ * caller's (a turn, a contest or redaction reason, a judge's quote or rationale, a scenario's words
+ * or a criterion's title), and keyed in the same scope as the answer's own `rubricHash` it would let
+ * a caller write the bare hash of a guessed rubric and read it back keyed, to compare. So each one is
+ * replaced with a random value made for it alone (`fresh`), equal to nothing else in the answer, the
+ * same text's other hashes included.
  */
 export function maskAnswerHashes(v: unknown, m: HashMask, scope: HashScope = null): unknown {
   let loose: Keyer | null = null;
@@ -132,8 +152,11 @@ export function maskAnswerHashes(v: unknown, m: HashMask, scope: HashScope = nul
   const walk = (x: unknown, at: Version | 'cells' | null, key?: string): unknown => {
     if (typeof x === 'string') {
       if (key !== undefined && HASH_KEYS.has(key) && HEX64.test(x)) return keyerFor(at).full(x);
-      return x.replace(RUBRIC_IRI, (_, h: string) => `urn:pev:rubric:${keyerFor(at).full(h)}`)
-        .replace(KIND_PREFIX, (_, p: string) => `pev/${keyerFor(at).prefix(p)}/`);
+      const iri = key === 'rubricIri' ? RUBRIC_IRI_FIELD.exec(x) : null;
+      if (iri !== null) return `urn:pev:rubric:${keyerFor(at).full(iri[1]!)}`;
+      const kind = key === 'kind' && at === 'cells' ? KIND_FIELD.exec(x) : null;
+      if (kind !== null) return `pev/${keyerFor(at).prefix(kind[1]!)}/${kind[2]!}`;
+      return x.replace(RUBRIC_IRI, () => `urn:pev:rubric:${fresh(32)}`).replace(KIND_PREFIX, () => `pev/${fresh(8)}/`);
     }
     if (Array.isArray(x)) return x.map((y) => walk(y, at));
     if (isRecord(x)) {
