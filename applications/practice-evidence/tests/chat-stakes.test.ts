@@ -945,6 +945,41 @@ describe('a rubric fingerprint a caller writes into text comes back as a stand-i
     expect(r.verified).toBe(false);
   });
 
+  it('a quote shown the same in two learner turns, written out in one and a fingerprint\'s stand-in in the other, is checked in the turn the judge named first, as sent or read back', () => {
+    const m = hashMask(Buffer.alloc(32, 41));
+    const k = m.version('urn:pev:scenario:unit', 1);
+    const h = RAW.rubric;
+    const s = k.inText.full(h);
+    const tail = 'for this step and we should agree a new date';
+    // As the peer review found it: T1 holds the stand-in written out, copied from an earlier view of this scenario version,
+    // with nothing around it, which every view shows as written; T3 holds the fingerprint framed, which every view shows as
+    // that stand-in. So both turns show the same stretch, and only T1 holds it as sent.
+    const turns = [
+      { index: 1, speaker: 'learner' as const, text: `I noted ${s} ${tail}.` },
+      { index: 2, speaker: 'counterpart' as const, text: 'Go on.' },
+      { index: 3, speaker: 'learner' as const, text: `Then I read urn:pev:rubric:${h} ${tail}.` },
+    ];
+    const back = quoteReadingsAsStored(k, turns);
+    const t3 = maskText(turns[2]!.text, k);
+    const copied = t3.slice(t3.indexOf('urn:pev:rubric:') + 15, -1);
+    expect([copied, maskText(turns[0]!.text, k).includes(copied), copied.includes(h)]).toEqual([`${s} ${tail}`, true, false]);
+    const place = (q: ReturnType<typeof verifyQuoteAsShown>): unknown => [q.verified, q.readBack ?? null, q.turnIndex, q.declaredTurnIndex ?? null, q.text];
+    // The judge names T3: checked there as read back and saved as the stored words there, though the words as sent sit in T1.
+    const named = verifyQuoteAsShown({ text: copied, turnIndex: 3 }, turns, back);
+    expect(place(named)).toEqual([true, true, 3, null, `${h} ${tail}`]);
+    expect([named.normalised, normaliseForQuote(turns[2]!.text).slice(named.start!, named.end!)]).toEqual([`${h} ${tail}`, `${h} ${tail}`]);
+    // The judge names T1: checked there as sent, the stand-in as the learner wrote it.
+    expect(place(verifyQuoteAsShown({ text: copied, turnIndex: 1 }, turns, back))).toEqual([true, null, 1, null, copied]);
+    // No turn named: as before, the first place it checks out as sent.
+    expect(place(verifyQuoteAsShown({ text: copied }, turns, back))).toEqual([true, null, 1, null, copied]);
+    // A turn named where it checks out in no view (the other person's, or a learner turn that does not hold it): as before,
+    // as sent where it checks out, saying which turn was named.
+    const longer = [...turns, { index: 4, speaker: 'counterpart' as const, text: 'Right.' }, { index: 5, speaker: 'learner' as const, text: 'Then we agreed a date.' }];
+    for (const turnIndex of [2, 5]) {
+      expect(place(verifyQuoteAsShown({ text: copied, turnIndex }, longer, quoteReadingsAsStored(k, longer))), `T${turnIndex}`).toEqual([true, null, 1, turnIndex, copied]);
+    }
+  });
+
   it('a quote copied from a line\'s own text, where a mark follows a fingerprint\'s last digit, and changed by normalising on the way, reads back by its place in the normalised line, whichever of that digit and the stand-in\'s takes the mark', () => {
     const m = hashMask(Buffer.alloc(32, 37));
     const k = m.version('urn:pev:scenario:unit', 1);
@@ -1503,6 +1538,64 @@ describe('a rubric fingerprint a caller writes into text comes back as a stand-i
     const sessionQuote = (session['judgments'] as J[])[0]!.criteria[0]!.quotes[0]!;
     expect([savedQuote.start, savedQuote.end]).toEqual([sessionQuote.start, sessionQuote.end]);
     expect(JSON.stringify(saved).includes(own16)).toBe(false);
+  }, SLOW);
+
+  it('a judge\'s chat that names the turn whose fingerprint it quotes as shown has the quote saved and highlighted there, though another turn holds the same words written out', async () => {
+    const input = { ...demoScenarioInput('missed-deadline', 2), scenarioKey: 'quoted-named-turn-first', title: 'The same stretch shown in two turns' };
+    const S = coerceScenario(input);
+    if (!('value' in S)) throw new Error('the scenario does not coerce');
+    const own = rubricHash(S.value.rubric);
+    const pub = ok(await ract(H, 'pev.author_scenario', P.author.web, { scenario: input, status: 'published', draftAssistance: { used: false } }));
+    const sc = String(pub['scenarioIri']);
+    ok(await ract(H, 'pev.ratify_scenario', P.reviewer.web, { scenarioIri: sc, version: 1, scenarioHash: pub['scenarioHash'] }));
+    const start = ok(await ract(H, 'pev.start_attempt', P.learner.claude, { scenarioIri: sc, scenarioVersion: 1, coached: false }));
+    const a = String(start['attemptIri']);
+    // As the peer review found it: the learner's chat reads the stand-in its first line is shown with and writes it out in the
+    // next line with nothing around it, which every view shows as written; a later line holds the fingerprint framed, which
+    // every view shows as that stand-in. So the two lines show the same stretch.
+    const said = ok(await ract(H, 'pev.say', P.learner.claude, { attemptIri: a, turnIndex: 1, text: `I traced urn:pev:rubric:${own} first.` }));
+    const mine = chatAnswer(await ract(H, 'pev.get_attempt', P.learner.claude, { attemptIri: a }), 'the session from the learner\'s chat');
+    const t1 = String((mine['turns'] as Out[]).find((t) => t['index'] === 1)!['text']);
+    const standIn = t1.slice(t1.indexOf('urn:pev:rubric:') + 15, t1.indexOf(' first.'));
+    expect([standIn.length, standIn === own]).toEqual([64, false]);
+    const tail = 'for this step and we should agree a new date';
+    const writtenAt = Number(said['nextTurnIndex']);
+    const written = ok(await ract(H, 'pev.say', P.learner.claude, { attemptIri: a, turnIndex: writtenAt, text: `I noted ${standIn} ${tail}.` }));
+    const framedAt = Number(written['nextTurnIndex']);
+    const framed = `Then I read urn:pev:rubric:${own} ${tail}.`;
+    const last = ok(await ract(H, 'pev.say', P.learner.claude, { attemptIri: a, turnIndex: framedAt, text: framed }));
+    ok(await ract(H, 'pev.end_conversation', P.learner.claude, { attemptIri: a, turnIndex: last['nextTurnIndex'] }));
+    // The judge's chat quotes the framed line from the packet, from the stand-in on, and names that line's turn.
+    const packet = ok(await ract(H, 'pev.judge_packet', P.judge.claude, { attemptIri: a }));
+    const lines = String((packet['request'] as Out)['user']).split('\n');
+    const shown = lines.find((l) => l.startsWith(`[T${framedAt} LEARNER] `))!;
+    const fromPacket = shown.slice(shown.indexOf('urn:pev:rubric:') + 15, -1);
+    expect([fromPacket, lines.find((l) => l.startsWith(`[T${writtenAt} LEARNER] `))!.includes(fromPacket)]).toEqual([`${standIn} ${tail}`, true]);
+    type Q = { text: string; verified: boolean; readBack?: true; turnIndex?: number };
+    type J = { criteria: { status: string; quotes: Q[] }[]; unverifiedCriteria: string[] };
+    const saved = chatAnswer(await ract(H, 'pev.record_judgment', P.judge.claude, {
+      attemptIri: a, ...(packet['binding'] as Out), judgeDisclosure: { provider: 'Example', model: 'example-judge', usedPacketPrompt: true },
+      judgment: { criteria: S.value.rubric.criteria.map((c) => ({ criterionId: c.id, level: c.levels[c.levels.length - 1]!.id, quotes: [{ text: fromPacket, turnIndex: framedAt }], rationale: 'The quoted line shows it.' })) },
+    }), 'the judgment saved from a judge\'s chat', false);
+    const place = (q: Q): unknown => [q.text, q.verified, q.readBack ?? null, q.turnIndex ?? null];
+    // Saved from the turn the judge named, read back as the fingerprint there, and shown as that turn shows it.
+    const j = saved['judgment'] as J;
+    expect([j.unverifiedCriteria, j.criteria.map((c) => [c.status, c.quotes.map(place)])])
+      .toEqual([[], S.value.rubric.criteria.map(() => ['verified', [[fromPacket, true, true, framedAt]]])]);
+    // Nothing a chat reads names this scenario's own fingerprint, whole or its first 16 hex: not the saved judgment, not the
+    // judged session from the learner's chat, not the review queue from the reviewer's chat.
+    const leaks = (r: unknown): boolean[] => [JSON.stringify(r).includes(own), JSON.stringify(r).includes(own.slice(0, 16))];
+    expect(leaks(saved), 'the saved judgment').toEqual([false, false]);
+    const after = chatAnswer(await ract(H, 'pev.get_attempt', P.learner.claude, { attemptIri: a }), 'the judged session from the learner\'s chat');
+    expect(leaks(after), 'the judged session from the learner\'s chat').toEqual([false, false]);
+    const queue = chatAnswer(await ract(H, 'pev.review_queue', P.reviewer.claude), 'the review queue from the reviewer\'s chat');
+    expect([JSON.stringify(queue).includes(a), ...leaks(queue)], 'the review queue from the reviewer\'s chat').toEqual([true, false, false]);
+    // The web app keeps the learner's words in that turn, and every highlight marks them there.
+    const web = webAnswer(await ract(H, 'pev.get_attempt', P.reviewer.web, { attemptIri: a }), 'the judged session in the web app');
+    expect((web['judgments'] as J[])[0]!.criteria.map((c) => c.quotes.map(place))).toEqual(S.value.rubric.criteria.map(() => [[`${own} ${tail}`, true, true, framedAt]]));
+    const norm = normaliseForQuote(framed);
+    expect((web['highlights'] as { turnIndex: number; start: number; end: number }[]).map((x) => [x.turnIndex, norm.slice(x.start, x.end)]))
+      .toEqual(S.value.rubric.criteria.map(() => [framedAt, `${own} ${tail}`]));
   }, SLOW);
 
   it('a judge\'s chat that quotes a line holding a fingerprint and the stand-in it is shown as, written out by the learner, has the quote read back and credited', async () => {
