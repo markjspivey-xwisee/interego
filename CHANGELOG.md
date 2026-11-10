@@ -1,5 +1,29 @@
 # Changelog
 
+## 2026-11-10 — Practice Evidence: a quote of a stand-in the learner wrote out reads back
+
+A peer review, run on fictional data, found one kind of quote that still failed
+to read back. A learner can copy a stand-in from an earlier view of the same
+scenario version and write it out in a later line, beside the fingerprint it
+stands for. Every view then shows the two the same way. A judge who quoted both
+had every run of hex digits that stands for a fingerprint read back as that
+fingerprint, the one the learner wrote out included, so the quote was "not
+found verbatim in any learner turn" and the criterion was counted at its
+lowest level.
+
+Now, when the quote with every stand-in read back is not found, it is also
+read with some of the runs of hex digits that have nothing around them kept as
+written, fewest first. A stand-in with `urn:pev:rubric:` or `pev/` around it is
+always read back, since no view shows such a run as written. Only readings
+that some stored line holds are checked. The first that checks out in the turn
+the judge named is kept, otherwise the first that checks out anywhere. A quote
+no reading finds is saved as before, with every stand-in read back, and says
+why.
+
+Not covered: with more than four such runs in one quote, only two readings
+are tried, every run read back and every run kept as written, so a quote that
+needs some of them read back and others kept is still not found.
+
 ## 2026-11-10 — Practice Evidence: a fingerprint an accent follows is masked in the normalised form too
 
 A peer review, run on fictional data, found that a rubric fingerprint written

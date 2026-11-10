@@ -280,6 +280,15 @@ function readBackAsShown(q: Record<string, unknown>, k: Keyer, turns: readonly Q
 }
 
 /**
+ * At most this many whole runs of hex in one quote that stand for a hash are each tried as written
+ * as well as read back (`quoteReadingsAsStored`): 2 to that power readings, few enough to try each.
+ */
+const RUNS_TRIED_AS_WRITTEN = 4;
+
+/** One stand-in in a quote, from `at` to `end`, and the stored text it is read back as (`to`). */
+interface ReadBack { readonly at: number; readonly end: number; readonly to: string }
+
+/**
  * Reads a quote copied from a view of `stored` masked for scope `k` (`maskText`) as the stored text
  * it was copied from: each stand-in in it that stands for a hash in `stored` is put back as that
  * hash; anything else is left as it is. A stand-in is read back as a view shows it
@@ -288,8 +297,16 @@ function readBackAsShown(q: Record<string, unknown>, k: Keyer, turns: readonly Q
  * `urn:pev:rubric:`, `pev/` or the closing `/`. It names no hash that is not already in `stored`,
  * which the caller's own view showed as that stand-in. A quote that cuts a run of hex is not read
  * back; it cuts a word of the line, which the quote rule refuses anyway.
+ *
+ * The first reading has every such stand-in read back. A view shows a stand-in a learner wrote out
+ * (copied from an earlier view of the same scenario version) as written, the same as the hash it
+ * stands for, so where a whole run of hex could be either, the readings after the first keep some of
+ * those runs as written, fewest first: each of them, while there are at most
+ * `RUNS_TRIED_AS_WRITTEN`, otherwise all of them at once. A framed one (`urn:pev:rubric:`, `pev/`) is
+ * always read back: a view never shows a framed run of hex as written. Only readings that some
+ * stored line, normalised, holds are given after the first.
  */
-export function quoteAsStored(k: Keyer, stored: readonly string[]): (quote: string) => string {
+export function quoteReadingsAsStored(k: Keyer, stored: readonly string[]): (quote: string) => readonly string[] {
   // Each stand-in as a view shows it, to the stored text it stands for: from a line and from its
   // normalised form, which writes a hash a mark follows otherwise (`hashIn`) and is shown so.
   const full = new Map<string, string>();
@@ -301,12 +318,48 @@ export function quoteAsStored(k: Keyer, stored: readonly string[]): (quote: stri
       for (const m of form.matchAll(KIND_PREFIX)) prefix.set(k.inText.prefix(m[1]!), m[1]!);
     }
   }
-  if (full.size === 0 && prefix.size === 0) return (quote) => quote;
-  return (quote) => quote.replace(HASH_OR_RUN, (m, iri?: string, kind?: string, run64?: string, run16?: string) => {
-    if (iri !== undefined) { const raw = full.get(iri); return raw === undefined ? m : `urn:pev:rubric:${raw}`; }
-    if (kind !== undefined) { const raw = prefix.get(kind); return raw === undefined ? m : `pev/${raw}/`; }
-    return (run64 !== undefined ? full.get(run64) : prefix.get(run16!)) ?? m;
-  });
+  if (full.size === 0 && prefix.size === 0) return (quote) => [quote];
+  const lines = stored.map(normaliseForQuote);
+  return (quote) => {
+    const framed: ReadBack[] = [];
+    const runs: ReadBack[] = [];
+    for (const m of quote.matchAll(HASH_OR_RUN)) {
+      const [whole, iri, kind, run64, run16] = m;
+      const raw = iri !== undefined ? full.get(iri) : kind !== undefined ? prefix.get(kind) : run64 !== undefined ? full.get(run64) : prefix.get(run16!);
+      if (raw === undefined) continue;
+      const at = m.index;
+      if (iri !== undefined) framed.push({ at, end: at + whole.length, to: `urn:pev:rubric:${raw}` });
+      else if (kind !== undefined) framed.push({ at, end: at + whole.length, to: `pev/${raw}/` });
+      else runs.push({ at, end: at + whole.length, to: raw });
+    }
+    const write = (asWritten: ReadonlySet<ReadBack>): string => {
+      let out = '';
+      let from = 0;
+      for (const r of [...framed, ...runs].filter((x) => !asWritten.has(x)).sort((a, b) => a.at - b.at)) {
+        out += quote.slice(from, r.at) + r.to;
+        from = r.end;
+      }
+      return out + quote.slice(from);
+    };
+    const first = write(new Set());
+    const kept = runs.length <= RUNS_TRIED_AS_WRITTEN
+      ? Array.from({ length: 2 ** runs.length - 1 }, (_, i) => runs.filter((_r, j) => ((i + 1) >> j) & 1))
+        .sort((a, b) => a.length - b.length)
+      : [runs];
+    const readings = [first];
+    for (const asWritten of kept) {
+      const r = write(new Set(asWritten));
+      const n = normaliseForQuote(r);
+      if (!readings.includes(r) && lines.some((l) => l.includes(n))) readings.push(r);
+    }
+    return readings;
+  };
+}
+
+/** The first of `quoteReadingsAsStored`'s readings: every stand-in in the quote that stands for a hash in `stored` read back. */
+export function quoteAsStored(k: Keyer, stored: readonly string[]): (quote: string) => string {
+  const readings = quoteReadingsAsStored(k, stored);
+  return (quote) => readings(quote)[0]!;
 }
 
 type Version = { readonly scenarioIri: string; readonly version: number };

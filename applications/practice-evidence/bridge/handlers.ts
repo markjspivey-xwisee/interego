@@ -81,7 +81,7 @@ import {
   type CalibrationCellView, type QueueCandidate,
 } from '../src/calibration.js';
 import {
-  assessmentWithoutStakes, hashMask, judgmentWithoutStakes, maskAnswerHashes, quoteAsStored, reviewWithoutStakes, rubricWithoutStakes, sameRubricShape,
+  assessmentWithoutStakes, hashMask, judgmentWithoutStakes, maskAnswerHashes, quoteReadingsAsStored, reviewWithoutStakes, rubricWithoutStakes, sameRubricShape,
   scoredWithoutStakes, withStakesOf, STAKES_WITHHELD, type HashMask, type HashScope, type QuotedTurn,
 } from '../src/stakes.js';
 import { buildStatement, statementProblems, LOSSY, LRS_REQUEST_NOTE, PROJECTION_FORMATS, type ProjectionFormat } from '../src/projections.js';
@@ -418,11 +418,12 @@ function scopeTo(call: Call, a: { readonly scenarioIri: string; readonly version
  * reads no stakes shows a fingerprint inside a line with a stand-in keyed for the attempt's scenario
  * version (`maskAnswerHashes`), the scope of every answer that shows the attempt's turns (the judge
  * packet, the attempt, the conversation's own acts) or quotes from them (the review queue). A quote
- * copied from any of them is read as the stored line it was copied from, whoever sends it.
+ * copied from any of them is read as the stored line it was copied from, whoever sends it: each
+ * reading `quoteReadingsAsStored` gives, in turn, until one checks out.
  */
-async function quotesAsStoredFor(call: Call, a: AttemptBody): Promise<(quote: string) => string> {
+async function quotesAsStoredFor(call: Call, a: AttemptBody): Promise<(quote: string) => readonly string[]> {
   const k = (await call.ctx.hashMask()).version(a.scenario.scenarioIri, a.scenario.version);
-  return quoteAsStored(k, a.turns.flatMap((t) => (t.text !== undefined ? [t.text] : [])));
+  return quoteReadingsAsStored(k, a.turns.flatMap((t) => (t.text !== undefined ? [t.text] : [])));
 }
 
 /**
