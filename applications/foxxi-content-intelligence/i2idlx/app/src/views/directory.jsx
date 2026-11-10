@@ -131,7 +131,9 @@ function ActionRow({ a, live }) {
   const fieldError = Object.values(fieldErrors).join(" ");
   const [result, setResult] = useState(null), [busy, setBusy] = useState(false);
   // A row's body is built the first time it opens: with every body built up front, the
-  // directory held about ninety elements per operation that no one could see.
+  // directory held about ninety elements per operation that no one could see. A click on the
+  // summary builds it within the click, before the row is seen open; the toggle event, which
+  // fires later, covers a row opened from a link or by the Orchestrate presenter.
   const [opened, setOpened] = useState(false);
   const id = actionId(a), description = describeCapability(a), fields = actionInputs(a);
   const parsed = parsePayload(text), secretPaths = parsed.value ? credentialPaths(parsed.value, "", true) : [];
@@ -160,7 +162,7 @@ function ActionRow({ a, live }) {
   };
   return (
     <details className="port" id={id} data-action-iri={a.iri} onToggle={(e) => { if (e.currentTarget.open) setOpened(true); }}>
-      <summary>
+      <summary onClick={() => setOpened(true)}>
         <MethodTag m={a.m} /><span className="pt">{a.t || a.n}</span>
         <span className="row" style={{ gap: 6 }}><span className="tag">{result ? resultLabel(result, a) : description.label}</span>{a.enacts.length ? <span className="tag post">enacts {a.enacts.length}</span> : null}<span className="tag">{systemLabel(a.sys)}</span><Icon name="down" /></span>
         <span className="pu">{a.n} · {a.u}</span>
