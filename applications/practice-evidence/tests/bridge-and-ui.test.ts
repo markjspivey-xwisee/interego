@@ -406,6 +406,13 @@ describe('the web UI is served under a strict content policy', () => {
     expect(section(on.help, 'judges')).toContain('<li class="step"><p class="step__text">Paste the message a learner sends you into a new chat with the Interego connector on, '
       + 'not one where you reviewed sessions: your assistant saw other assessments\' levels there. Practice Evidence leaves the weights and the pass mark out of what it sends your assistant. Your assistant fetches the session,');
     expect(section(on.help, 'claude-chatgpt')).toContain('<li>Paste the message a learner sent you into a new chat. Your assistant shows you the levels and quotes and waits for your go-ahead.</li>');
+    // A judge is registered by their own account's Member ID, never their assistant's; a learner's own assistant hands the
+    // session on rather than assess it; and a learner whose workspace has no judge yet is told whom to ask.
+    expect(section(on.help, 'judges')).toContain('To be appointed, send your admin your Member ID: sign in here with Interego and copy it from the account menu. '
+      + 'It names your own account (it has :users: in it), not the assistant that acts for you.');
+    expect(section(on.help, 'admins')).toContain("The Member ID is the ID of the judge's own account (it has :users: in it), never the ID of an assistant that acts for them");
+    expect(section(on.help, 'learners')).toContain("Your own assistant doesn't assess your session: when the conversation ends, it tells you to send it to your judge.");
+    for (const page of [on.help, off.help]) expect(section(page, 'learners')).toContain('If the session page says your workspace has no judge yet, ask your admin to add one.');
     expect(section(on.help, 'claude-chatgpt')).toContain('It doesn\'t get the weights, the points for each level, the pass mark, or any score or pass result: Practice Evidence leaves them out of what it sends a chat assistant through the connector, and the web app shows them to you. An AI tool you give your own signing key to reads what you read.');
     // An author's assistant edits a scored scenario's words and keeps its stakes; the stakes are changed in the web app.
     // Only the words: a chat that changes which criteria or levels there are, or their order, is refused (chat-stakes.test.ts).

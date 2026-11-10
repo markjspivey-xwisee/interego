@@ -1442,14 +1442,86 @@ function nextStepsOf(a: AttemptBody): NextLevelGuidance[] {
 /**
  * The acts this caller may take next. `stakes` is whether the caller reads the stakes
  * (`showsStakes`): one who does not is not offered a learning record of a scored attempt or a copy
- * of its graphs, which hold them, and which `project_attempt` and `holder_copy` refuse it.
+ * of its graphs, which hold them, and which `project_attempt` and `holder_copy` refuse it. The
+ * learner's own chat assistant is not offered the judge packet, which `judge_packet` refuses it
+ * (`handOffRefusal`): its answer says the learner hands the session to an appointed judge instead
+ * (`handOffMark`).
  */
-function nextFor(ctx: Ctx, a: AttemptBody, caller: string, roles: ReadonlySet<Role>, eligible: boolean, stakes: boolean): NextAction[] {
+function nextFor(ctx: Ctx, a: AttemptBody, s: Signed, roles: ReadonlySet<Role>, eligible: boolean, stakes: boolean): NextAction[] {
+  const caller = s.signer;
+  const isLearner = samePrincipal(a.learner.address, caller);
   const all = nextActionsFor(nextActionView(a, caller), roles, {
-    bridgeHasModel: ctx.deps.model !== undefined, isLearner: samePrincipal(a.learner.address, caller), isAdmin: isAdmin(ctx, caller), eligible,
-  });
+    bridgeHasModel: ctx.deps.model !== undefined, isLearner, isAdmin: isAdmin(ctx, caller), eligible,
+  }).filter((x) => !(isLearner && x.action === A.judgePacket && viaChat(ctx, s)));
   if (stakes || !scoredUse(a.scenarioSpec)) return all;
   return all.filter((x) => x.action !== A.projectAttempt && x.action !== A.holderCopy);
+}
+
+/** True when the Interego relay signed this act for a chat agent (`isChatAgent`): any agent but this bridge's own web UI. */
+const viaChat = (ctx: Ctx, s: Signed): boolean => isChatAgent(ctx, s.relay, s.payload);
+
+/**
+ * What a signed read tells the caller about their own standing on this workspace: the roles they
+ * hold, as its role registry holds them, whether they are an admin, and whether someone other than
+ * them holds the judge role, and the reviewer role as a person (one registered as an agent, or the
+ * platform key, cannot sign off). So a learner, or their assistant, can tell whether their session
+ * can be assessed and signed off here, and that their admin is the one to ask when it cannot.
+ * Booleans about the others, never who they are or how many: and no stakes, which no role changes.
+ */
+function standingOf(ctx: Ctx, reg: Roles, principal: string): Out {
+  const me = principalKey(principal);
+  let judge = false;
+  let reviewer = false;
+  for (const [who, held] of reg.view.roles) {
+    if (who === me) continue;
+    if (held.has('judge')) judge = true;
+    if (held.has('reviewer') && !held.has('agent') && !ctx.trusted.addresses.has(who)) reviewer = true;
+  }
+  const mine = reg.of(principal);
+  return { roles: ROLES.filter((r) => mine.has(r)), admin: isAdmin(ctx, principal), teamBesidesYou: { judge, reviewer } };
+}
+
+/** Whether anyone but `principal` holds the judge role here (`standingOf`). */
+function judgeBesides(reg: Roles, principal: string): boolean {
+  const me = principalKey(principal);
+  for (const [who, held] of reg.view.roles) if (who !== me && held.has('judge')) return true;
+  return false;
+}
+
+/** The web app's page of one session, when this bridge knows its own address. */
+function sessionPageOf(ctx: Ctx, iri: string): Out {
+  const base = ctx.deps.deploymentUrl;
+  return base === undefined ? {} : { sessionPage: `${base.replace(/\/+$/, '')}/ui#/attempt/${encodeURIComponent(iri)}` };
+}
+
+/**
+ * The words that send a learner's own assistant to an appointed judge: an appointed judge assesses
+ * the session, with their own assistant, and the learner sends them its ID from the web app. When
+ * no one else holds the judge role yet, they also say to ask the admin to register one, by the
+ * judge's own account (a person's user DID: `register_role` takes no agent DID).
+ */
+function handOffWords(ctx: Ctx, judge: boolean): string {
+  const send = 'Your own assistant does not assess your own practice: an appointed judge does, with their own AI assistant. '
+    + 'In the Practice Evidence web app, open this session and, under Send to your judge, copy the message for your judge and send it to them: it carries the session\'s ID, not the conversation.';
+  if (judge) return send;
+  const host = ctx.identityHost ?? '<identity host>';
+  return `${send} No one in this workspace is registered as a judge yet, so ask your admin to register your judge first, by the Member ID of the judge's own Interego account `
+    + `(did:web:${host}:users:…), never the ID of an assistant that acts for them (did:web:${host}:agents:…).`;
+}
+
+/**
+ * The learner's next step, said to their own chat assistant once the conversation is over and the
+ * session can be judged (ended, or judged with room for another judgment): hand it to an appointed
+ * judge. Said in place of the judge packet, which that assistant is not offered (`nextFor`): a
+ * learner's assistant acts as the learner, who may not judge their own session
+ * (`judge-is-the-learner`). `judgeBesidesYou` is whether anyone else here holds the judge role.
+ * Nothing for anyone else, or through this bridge's web app, which offers Send to your judge itself.
+ */
+function handOffMark(ctx: Ctx, s: Signed, a: AttemptBody, reg: Roles): Out {
+  if (!samePrincipal(a.learner.address, s.signer) || !viaChat(ctx, s)) return {};
+  if (!(a.state === 'ended' || (a.state === 'judged' && a.judgments.length < MAX_JUDGMENTS))) return {};
+  const judge = judgeBesides(reg, s.signer);
+  return { handOff: { to: 'appointed-judge', words: handOffWords(ctx, judge), judgeBesidesYou: judge, ...sessionPageOf(ctx, a.attemptIri) } };
 }
 
 function bridgeRoute(ctx: Ctx): Out {
@@ -1931,7 +2003,7 @@ async function startAttempt(call: Call, args: Record<string, unknown>): Promise<
       authorTest: body.authorTest, learnerKind: body.learner.kind, assessmentUse: spec.assessmentUse,
       rubricRatified: sb.status === 'ratified', scenario: body.scenario, turns: body.turns, nextTurnIndex: 1, turnLimit: spec.turnLimit,
       routes: { bridgeModel: ctx.deps.model !== undefined, counterpartPacket: true },
-      nextActions: nextFor(ctx, body, s.signer, roles.of(s.signer), false, stakes), recorded: true,
+      nextActions: nextFor(ctx, body, s, roles.of(s.signer), false, stakes), recorded: true,
     };
   });
 }
@@ -1994,8 +2066,9 @@ function withExchange(a: AttemptBody, learner: Turn, counterpart: Turn, endAfter
   } as AttemptBody;
 }
 
-function exchangeOut(ctx: Ctx, s: Signed, body: AttemptBody, w: Written, learner: Turn, counterpart: Turn, roles: ReadonlySet<Role>, stakes: boolean): Out {
+function exchangeOut(ctx: Ctx, s: Signed, body: AttemptBody, w: Written, learner: Turn, counterpart: Turn, reg: Roles, stakes: boolean): Out {
   const ended = body.state === 'ended';
+  const roles = reg.of(s.signer);
   return {
     attemptIri: body.attemptIri, descriptorUrl: w.descriptorUrl, state: body.state,
     learnerTurn: { index: learner.index, text: learner.text },
@@ -2003,7 +2076,7 @@ function exchangeOut(ctx: Ctx, s: Signed, body: AttemptBody, w: Written, learner
     endProposed: body.endProposedAtTurn !== undefined, nextTurnIndex: body.turns.length, ended,
     ...(ended ? { endedBy: body.endedBy, transcriptHash: body.transcriptHash } : {}),
     counterpartControlledBy: body.counterpartControlledBy, currentTarget: { recordId: w.recordId, descriptorUrl: w.descriptorUrl, graphDigest: w.graphDigest },
-    nextActions: nextFor(ctx, body, s.signer, roles, false, stakes), recorded: true,
+    nextActions: nextFor(ctx, body, s, roles, false, stakes), ...handOffMark(ctx, s, body, reg), recorded: true,
   };
 }
 
@@ -2024,7 +2097,8 @@ async function say(call: Call, args: Record<string, unknown>): Promise<Out> {
   const iri = needAttemptIri(s.payload);
   return locked(call, `${s.pod}|${iri}`, async () => {
     const h = await conversationHead(call, s, iri, turnIndex);
-    const roles = (await rolesOn(call, s.pod)).of(s.signer);
+    const reg = await rolesOn(call, s.pod);
+    const roles = reg.of(s.signer);
     const stakes = await showsStakes(call, s);
     const model = routeFor(call, args, { action: A.counterpartPacket, then: A.recordTurns }, { signer: s.signer, roles });
     const r = await callModel(model, counterpartRequest(h.body.scenarioSpec, h.body.turns, text), ctx.timeouts.counterpart);
@@ -2041,7 +2115,7 @@ async function say(call: Call, args: Record<string, unknown>): Promise<Out> {
     };
     const body = withExchange(h.body, learner, counterpart, endAfter, actOf(s, 'say'), at);
     const w = await writeRecord(call, { pod: s.pod, body, seq: h.seq, prev: h.rec, nonce: s.nonce, disclosure });
-    return exchangeOut(ctx, s, body, w, learner, counterpart, roles, stakes);
+    return exchangeOut(ctx, s, body, w, learner, counterpart, reg, stakes);
   });
 }
 
@@ -2057,7 +2131,8 @@ async function counterpartPacketAct(call: Call, args: Record<string, unknown>): 
   });
   const iri = needAttemptIri(s.payload);
   const h = await conversationHead(call, s, iri, turnIndex);
-  return { ...counterpartPacket(h.body.scenarioSpec, h.body.turns, learnerText, { podUrl: s.pod, attemptIri: iri, turnIndex }) };
+  // The record template in the form this caller signs in: a chat's copied prompt sends pod_url and no issuedAt.
+  return { ...counterpartPacket(h.body.scenarioSpec, h.body.turns, learnerText, { podUrl: s.pod, attemptIri: iri, turnIndex, signing: s.relay ? 'relay-delegated' : 'key-held' }) };
 }
 
 async function recordTurns(call: Call, args: Record<string, unknown>): Promise<Out> {
@@ -2092,7 +2167,7 @@ async function recordTurns(call: Call, args: Record<string, unknown>): Promise<O
   const iri = needAttemptIri(s.payload);
   return locked(call, `${s.pod}|${iri}`, async () => {
     const h = await conversationHead(call, s, iri, turnIndex);
-    const roles = (await rolesOn(call, s.pod)).of(s.signer);
+    const reg = await rolesOn(call, s.pod);
     const stakes = await showsStakes(call, s);
     const learner: Turn = { index: turnIndex, speaker: 'learner', text: learnerText, textSha256: sha256(learnerText), at: s.at, source: 'learner-signed', envelope: s.stored };
     const disclosure: InferenceDisclosure = {
@@ -2104,7 +2179,7 @@ async function recordTurns(call: Call, args: Record<string, unknown>): Promise<O
     };
     const body = withExchange(h.body, learner, counterpart, endAfter, actOf(s, 'recordTurns'), iso(ctx));
     const w = await writeRecord(call, { pod: s.pod, body, seq: h.seq, prev: h.rec, nonce: s.nonce });
-    return exchangeOut(ctx, s, body, w, learner, counterpart, roles, stakes);
+    return exchangeOut(ctx, s, body, w, learner, counterpart, reg, stakes);
   });
 }
 
@@ -2121,7 +2196,7 @@ async function endConversation(call: Call, args: Record<string, unknown>): Promi
     if (learnerTurnCount(h.body.turns) === 0) {
       throw decline(409, 'Say something first; an attempt with no learner line has nothing to judge.', 'no-learner-turns');
     }
-    const roles = (await rolesOn(call, s.pod)).of(s.signer);
+    const reg = await rolesOn(call, s.pod);
     const stakes = await showsStakes(call, s);
     const last = h.body.turns[h.body.turns.length - 1];
     const endedBy = h.body.endProposedAtTurn !== undefined && last !== undefined && h.body.endProposedAtTurn === last.index
@@ -2132,10 +2207,11 @@ async function endConversation(call: Call, args: Record<string, unknown>): Promi
       ...rest, at, state: 'ended', endedBy, endedAt: at, transcriptHash: transcriptHash(h.body.turns), acts: [...h.body.acts, actOf(s, 'endConversation')],
     };
     const w = await writeRecord(call, { pod: s.pod, body, seq: h.seq, prev: h.rec, nonce: s.nonce });
+    // ended: true, as record_turns and say answer once the conversation is over, which a chat's start-up message stops on.
     return {
-      attemptIri: iri, descriptorUrl: w.descriptorUrl, state: 'ended', endedBy, transcriptHash: body.transcriptHash,
+      attemptIri: iri, descriptorUrl: w.descriptorUrl, state: 'ended', ended: true, endedBy, transcriptHash: body.transcriptHash,
       currentTarget: { recordId: w.recordId, descriptorUrl: w.descriptorUrl, graphDigest: w.graphDigest },
-      nextActions: nextFor(ctx, body, s.signer, roles, false, stakes), recorded: true,
+      nextActions: nextFor(ctx, body, s, reg.of(s.signer), false, stakes), ...handOffMark(ctx, s, body, reg), recorded: true,
     };
   });
 }
@@ -2174,8 +2250,9 @@ async function writeJudgment(call: Call, s: Signed, h: AttemptHead, j: JudgmentR
  * judgment and the provisional result are the levels alone (`showsStakes`). `roles` are the
  * signer's, read before: nothing after the write can refuse.
  */
-async function recordJudgmentOn(call: Call, s: Signed, h: AttemptHead, j: JudgmentResult, key: PevActionKey, roles: ReadonlySet<Role>, disclosure?: InferenceDisclosure): Promise<Out> {
+async function recordJudgmentOn(call: Call, s: Signed, h: AttemptHead, j: JudgmentResult, key: PevActionKey, reg: Roles, disclosure?: InferenceDisclosure): Promise<Out> {
   const { ctx } = call;
+  const roles = reg.of(s.signer);
   scopeTo(call, h.body.scenario);
   const stakes = await showsStakes(call, s);
   const { body, w } = await writeJudgment(call, s, h, j, key, disclosure);
@@ -2188,7 +2265,9 @@ async function recordJudgmentOn(call: Call, s: Signed, h: AttemptHead, j: Judgme
     provisional: stakes ? primary.provisional : assessmentWithoutStakes(primary.provisional, rubric),
     provisionalLabel: PROVISIONAL_LABEL, unverifiedCriteria: primary.unverifiedCriteria, nextSteps: nextStepsOf(body),
     currentTarget: { recordId: w.recordId, descriptorUrl: w.descriptorUrl, graphDigest: w.graphDigest },
-    nextActions: nextFor(ctx, body, s.signer, roles, false, stakes), recorded: true, ...withheldMark(stakes, scoredUse(body.scenarioSpec)),
+    // The learner's own chat, which asked this bridge to judge, is offered no judge packet for the
+    // judgment there is still room for; it is told to hand the session on, as get_attempt says.
+    nextActions: nextFor(ctx, body, s, roles, false, stakes), ...handOffMark(ctx, s, body, reg), recorded: true, ...withheldMark(stakes, scoredUse(body.scenarioSpec)),
   };
 }
 
@@ -2225,7 +2304,8 @@ async function judgeAttempt(call: Call, args: Record<string, unknown>): Promise<
   return locked(call, `${s.pod}|${iri}`, async () => {
     const h = await attemptHead(call, s.pod, iri);
     const isLearner = samePrincipal(h.body.learner.address, s.signer);
-    const roles = (await rolesOn(call, s.pod)).of(s.signer);
+    const reg = await rolesOn(call, s.pod);
+    const roles = reg.of(s.signer);
     if (!isLearner && !roles.has('reviewer')) throw decline(403, 'Only the learner or a reviewer may ask this bridge to judge an attempt.', 'not-learner-or-reviewer');
     notReplayed(h.body, s);
     judgeable(h.body);
@@ -2250,7 +2330,7 @@ async function judgeAttempt(call: Call, args: Record<string, unknown>): Promise<
       repeatOf: repeatOf(h.body, judgeId, JUDGE_PROMPT_TEMPLATE_HASH), rubricHash: h.body.scenario.rubricHash,
       transcriptHash: h.body.transcriptHash ?? transcriptHash(h.body.turns),
     }, await quotesAsStoredFor(call, h.body));
-    return recordJudgmentOn(call, s, h, j, 'judgeAttempt', roles, disclosure);
+    return recordJudgmentOn(call, s, h, j, 'judgeAttempt', reg, disclosure);
   });
 }
 
@@ -2280,20 +2360,54 @@ function yourAssessmentOf(a: AttemptBody, caller: string): { readonly saved: tru
   return latest === undefined ? null : { saved: true, judgedAt: latest.judgedAt };
 }
 
+/**
+ * How a person signed in through the relay becomes a judge here: an admin registers their own
+ * account's user DID, the principal they were read as, never the agent DID of the assistant that
+ * signs for them (`register_role` takes no agent DID). Nothing for a key-held caller, who is
+ * registered by the address they signed with.
+ */
+function judgeRegistrationHint(ctx: Ctx, s: Signed): { readonly words: string; readonly extra: Out } {
+  if (s.relay === undefined) return { words: '', extra: {} };
+  return {
+    words: ` You are signed in as ${s.signer}, which holds no judge role on this workspace: to assess sessions here, ask an admin to register that Member ID as a judge. `
+      + `register_role takes a person's own account ID (did:web:${ctx.identityHost ?? '<identity host>'}:users:…), never the ID of the assistant that signs for them (${s.relay.agentId}).`,
+    extra: { principal: s.signer },
+  };
+}
+
+/**
+ * The refusal of the judge packet to the learner's own chat assistant. That assistant acts as the
+ * learner, who may not judge their own session (`record_judgment` refuses it: `judge-is-the-learner`),
+ * so it is told to hand the session to an appointed judge (`handOffWords`), with whether anyone else
+ * holds the judge role yet. The web app's own Send to your judge fetches no packet, and its hand-off
+ * on a workspace without Interego sign-in is signed with the learner's key: neither is refused.
+ */
+function handOffRefusal(ctx: Ctx, s: Signed, a: AttemptBody, reg: Roles): Declined {
+  const judge = judgeBesides(reg, s.signer);
+  return decline(403, `This is your own practice session, so your own assistant does not fetch its judge packet, and you cannot assess it yourself. ${handOffWords(ctx, judge)}`,
+    'hand-off-to-judge', undefined, { remedy: 'send-to-judge', judgeBesidesYou: judge, ...sessionPageOf(ctx, a.attemptIri) });
+}
+
 async function judgePacketAct(call: Call, args: Record<string, unknown>): Promise<Out> {
+  const { ctx } = call;
   const s = await signedAct(call, args, 'judgePacket', { checks: (p) => { needAttemptIri(p); } });
   const iri = needAttemptIri(s.payload);
   const h = await attemptHead(call, s.pod, iri);
-  const roles = (await rolesOn(call, s.pod)).of(s.signer);
-  if (!samePrincipal(h.body.learner.address, s.signer) && !roles.has('reviewer') && !roles.has('judge')) {
-    throw decline(403, 'Only the learner, a reviewer or a registered judge may fetch the judge packet.', 'not-entitled');
+  const reg = await rolesOn(call, s.pod);
+  const roles = reg.of(s.signer);
+  const isLearner = samePrincipal(h.body.learner.address, s.signer);
+  if (!isLearner && !roles.has('reviewer') && !roles.has('judge')) {
+    const hint = judgeRegistrationHint(ctx, s);
+    throw decline(403, `Only the learner, a reviewer or a registered judge may fetch the judge packet.${hint.words}`, 'not-entitled', undefined, hint.extra);
   }
   judgeable(h.body);
+  if (isLearner && viaChat(ctx, s)) throw handOffRefusal(ctx, s, h.body, reg);
   scopeTo(call, h.body.scenario);
   return {
     ...judgePacket(h.body.scenarioSpec, h.body.turns, {
       podUrl: s.pod, attemptIri: iri, attemptHeadUrl: h.rec.descriptorUrl,
       transcriptHash: h.body.transcriptHash ?? transcriptHash(h.body.turns), rubricHash: h.body.scenario.rubricHash,
+      signing: s.relay ? 'relay-delegated' : 'key-held',
     }),
     // Last, so an answer a chat app cut short has none, and reads as no answer rather than as nothing saved.
     yourAssessment: yourAssessmentOf(h.body, s.signer),
@@ -2320,7 +2434,10 @@ async function recordJudgment(call: Call, args: Record<string, unknown>): Promis
     const h = await attemptHead(call, s.pod, iri);
     const roles = (await rolesOn(call, s.pod)).of(s.signer);
     if (samePrincipal(h.body.learner.address, s.signer)) throw decline(403, 'The learner cannot judge their own attempt.', 'judge-is-the-learner');
-    if (!roles.has('judge')) throw decline(403, 'Only an address registered as a judge may record a judgment.', 'not-a-judge');
+    if (!roles.has('judge')) {
+      const hint = judgeRegistrationHint(ctx, s);
+      throw decline(403, `Only an address registered as a judge may record a judgment.${hint.words}`, 'not-a-judge', undefined, hint.extra);
+    }
     notReplayed(h.body, s);
     judgeable(h.body);
     const a = h.body;
@@ -2540,7 +2657,7 @@ async function writeReview(call: Call, s: Signed, h: AttemptHead, primary: Judgm
     outcomesRecorded: a.scenarioSpec.rubric.criteria.length * nonRepeat,
     projectable: rat.ratified, projectableWhy: rat.ratified ? EVIDENCE_WHY.ready : EVIDENCE_WHY.notRatified,
     currentTarget: { recordId: w.recordId, descriptorUrl: w.descriptorUrl, graphDigest: w.graphDigest },
-    nextActions: nextFor(ctx, body, s.signer, roles, rat.ratified, stakes), recorded: true,
+    nextActions: nextFor(ctx, body, s, roles, rat.ratified, stakes), recorded: true,
   };
 }
 
@@ -2637,7 +2754,7 @@ async function contestReview(call: Call, args: Record<string, unknown>): Promise
     return {
       attemptIri: iri, descriptorUrl: w.descriptorUrl, state: 'contested', modalStatus: 'Hypothetical', reopening,
       currentTarget: { recordId: w.recordId, descriptorUrl: w.descriptorUrl, graphDigest: w.graphDigest },
-      nextActions: nextFor(ctx, body, s.signer, roles, false, stakes), recorded: true,
+      nextActions: nextFor(ctx, body, s, roles, false, stakes), recorded: true,
     };
   });
 }
@@ -3014,11 +3131,13 @@ function percentOf(x: { readonly use: string; readonly percent?: string } | unde
  * or the Interego relay signing for their agent), and for a relay-delegated read the agent and the
  * relay address. The web UI shows a person signed in with their Interego account this principal,
  * the DID they give an admin to be given a role, from this answer and from nothing it guessed.
+ * `standing`, where the read gives it (`standingOf`), adds the caller's own roles, whether they are
+ * an admin, and whether anyone else holds the judge and reviewer roles.
  */
-function signedAsOf(s: Signed): Out {
+function signedAsOf(s: Signed, standing: Out = {}): Out {
   return s.relay
-    ? { principal: s.signer, authority: 'relay-delegated', agentId: s.relay.agentId, relaySigner: s.relay.relaySigner }
-    : { principal: s.signer, authority: 'key-held' };
+    ? { principal: s.signer, authority: 'relay-delegated', agentId: s.relay.agentId, relaySigner: s.relay.relaySigner, ...standing }
+    : { principal: s.signer, authority: 'key-held', ...standing };
 }
 
 async function getAttempt(call: Call, args: Record<string, unknown>): Promise<Out> {
@@ -3026,8 +3145,11 @@ async function getAttempt(call: Call, args: Record<string, unknown>): Promise<Ou
   const s = await signedAct(call, args, 'getAttempt', {
     checks: (p) => { if (p['attemptIri'] !== undefined) needAttemptIri(p); },
   });
-  const roles = (await rolesOn(call, s.pod)).of(s.signer);
+  const reg = await rolesOn(call, s.pod);
+  const roles = reg.of(s.signer);
   const admin = isAdmin(ctx, s.signer);
+  // Who the caller is here, and whether anyone else can assess and sign off: never who, and no stakes.
+  const signedAs = signedAsOf(s, standingOf(ctx, reg, s.signer));
   // For a chat agent, whatever the person's roles: levels, quotes, reasons and states, no stakes.
   const stakes = await showsStakes(call, s);
   if (s.payload['attemptIri'] === undefined) {
@@ -3054,7 +3176,7 @@ async function getAttempt(call: Call, args: Record<string, unknown>): Promise<Ou
         };
       });
     return {
-      podUrl: s.pod, attempts: list, untrustedRecordsSkipped: read.untrusted, complete: read.complete, ...read.limit, signedAs: signedAsOf(s),
+      podUrl: s.pod, attempts: list, untrustedRecordsSkipped: read.untrusted, complete: read.complete, ...read.limit, signedAs,
       ...withheldMark(stakes, listed.some((a) => scoredUse(a.scenarioSpec))),
     };
   }
@@ -3113,8 +3235,8 @@ async function getAttempt(call: Call, args: Record<string, unknown>): Promise<Ou
         ? { descriptorUrl: v.descriptorUrl, recordId: v.recordId, state: null, modalStatus: null, contentDeleted: false, trusted: false }
         : { descriptorUrl: v.descriptorUrl, recordId: v.recordId, state: v.body.kind === 'attempt' ? v.body.state : null, modalStatus: v.modalStatus, contentDeleted: false })),
     authorship: h.rec.authorship, keyKind: a.keyKind, evidenceKind: a.evidenceKind, label: PRACTICE_LABEL, provisionalLabel: PROVISIONAL_LABEL,
-    nextActions: nextFor(ctx, a, s.signer, roles, e.eligible, stakes),
-    signedAs: signedAsOf(s),
+    nextActions: nextFor(ctx, a, s, roles, e.eligible, stakes), ...handOffMark(ctx, s, a, reg),
+    signedAs,
   };
 }
 

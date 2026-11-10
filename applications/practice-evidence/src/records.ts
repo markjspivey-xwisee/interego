@@ -811,7 +811,9 @@ const NEXT: Readonly<Partial<Record<PevActionKey, { label: string; why: string }
   recordTurns: { label: 'Record a line from your agent', why: 'Record your line together with the line your own agent wrote for the other person.' },
   endConversation: { label: 'End the conversation', why: 'Stop here; the transcript is then fixed and can be judged.' },
   judgeAttempt: { label: 'Ask this bridge to judge', why: 'A model chooses levels and quotes; the platform checks every quote and computes the result.' },
-  judgePacket: { label: 'Get a judge packet', why: 'An independent judge agent can judge this attempt from the packet.' },
+  // Offered only to the learner (nextActionsFor), whose next step is a hand-off: their appointed judge assesses from the
+  // packet, never the learner or their own assistant (record_judgment: judge-is-the-learner).
+  judgePacket: { label: 'Hand off to your appointed judge', why: 'Your appointed judge assesses this session from the judge packet, with their own assistant or tool; you cannot assess your own session.' },
   exportRecord: { label: 'Download my record', why: 'Every version of this record with its platform signature, checkable offline.' },
   holderCopy: { label: 'Copy to my pod', why: 'Writes a copy of every version to a pod you name.' },
   redactAttempt: { label: 'Remove the transcript from this pod', why: 'Deletes the text from the operator pod; hashes stay, so copies you hold can still be checked.' },
