@@ -663,8 +663,11 @@ function charFrom(s: string, i: number): string {
   return cp === undefined ? '' : String.fromCodePoint(cp);
 }
 
-/** True when a match at [start, end) of `turn` cuts a word at either end. */
-function cutsAWord(turn: string, start: number, end: number): boolean {
+/**
+ * True when a match at [start, end) of `turn` cuts a word at either end. Exported for reading a quote
+ * back from where it sits in a line as shown (stakes.ts `quoteReadingsAsStored`), by the same rule.
+ */
+export function cutsAWord(turn: string, start: number, end: number): boolean {
   const cut = (outside: string, inside: string): boolean => WORD_CHAR.test(outside) && WORD_CHAR.test(inside);
   return cut(charBefore(turn, start), charFrom(turn, start)) || cut(charFrom(turn, end), charBefore(turn, end));
 }
@@ -714,34 +717,52 @@ export function verifyQuote(q: JudgeQuoteInput, turns: readonly Pick<Turn, 'inde
 }
 
 /**
- * How a quote copied from a view of the transcript is read back as the stored text it stands for:
- * one reading, or several to try in order (stakes.ts `quoteReadingsAsStored`).
+ * How a quote copied from a view of the transcript is read back as the stored text (stakes.ts
+ * `quoteReadingsAsStored`): the stretches of the learner's stored lines it was found at, as a view
+ * shows them (`matched`, in order), and the quote with every stand-in in it read back (`otherwise`).
  */
-export type QuoteReader = (quote: string) => string | readonly string[];
+export interface QuoteReadings {
+  readonly matched: readonly string[];
+  readonly otherwise: string;
+}
+
+/**
+ * How a quote copied from a view of the transcript is read back as the stored text it stands for: one
+ * reading, or `QuoteReadings`. `turnIndex` is the turn the judge named, if any, to look in first.
+ */
+export type QuoteReader = (quote: string, turnIndex?: number) => string | QuoteReadings;
 
 /**
  * Check a quote a judge may have copied from a view of the transcript that shows some of its text
  * otherwise than stored (an answer that replaced a fingerprint in a line with a stand-in, say):
  * `asStored` reads such a quote back as the stored text it stands for. The quote is checked as sent
- * first; when it is not found, and `asStored` reads it differently, it is checked as read back, and
- * that check is kept, its text the stored text and marked `readBack`, so a recorded quote is always
- * one of the stored lines' own and says when it is not the text the judge sent. Where `asStored`
- * gives several readings, the first that checks out in the turn the judge named is kept, else the
- * first that checks out, else the first reading's check. Without `asStored`, exactly `verifyQuote`.
+ * first; when it is not found, it is checked as read back, and that check is kept, its text the
+ * stored text and marked `readBack`, so a recorded quote is always one of the stored lines' own and
+ * says when it is not the text the judge sent. Each stretch `asStored` matched is checked in turn
+ * (`QuoteReadings.matched`), then the quote with every stand-in read back (`otherwise`, or the one
+ * reading): the first that checks out in the turn the judge named is kept, else the first that checks
+ * out, else the check of `otherwise`. So a quote no reading finds is saved with every stand-in read
+ * back and says why, never as a stretch that did not check out. Without `asStored`, exactly
+ * `verifyQuote`.
  */
 export function verifyQuoteAsShown(
   q: JudgeQuoteInput, turns: readonly Pick<Turn, 'index' | 'speaker' | 'text'>[], asStored?: QuoteReader,
 ): QuoteCheck {
   const sent = verifyQuote(q, turns);
   if (sent.verified || asStored === undefined) return sent;
-  const read = asStored(q.text);
-  let kept: QuoteCheck | undefined;
-  for (const text of (typeof read === 'string' ? [read] : read).filter((t) => t !== q.text)) {
+  const read = asStored(q.text, q.turnIndex);
+  const { matched, otherwise } = typeof read === 'string' ? { matched: [] as readonly string[], otherwise: read } : read;
+  let elsewhere: QuoteCheck | undefined;
+  for (const text of matched) {
+    if (text === q.text) continue;
     const c = verifyQuote({ ...q, text }, turns);
-    if (c.verified && c.declaredTurnIndex === undefined) return { ...c, readBack: true };
-    if (kept === undefined || (c.verified && !kept.verified)) kept = c;
+    if (!c.verified) continue;
+    if (c.declaredTurnIndex === undefined) return { ...c, readBack: true };
+    elsewhere ??= c;
   }
-  return kept === undefined ? sent : { ...kept, readBack: true };
+  const last = otherwise === q.text ? sent : { ...verifyQuote({ ...q, text: otherwise }, turns), readBack: true as const };
+  if (last.verified && last.declaredTurnIndex === undefined) return last;
+  return elsewhere === undefined ? last : { ...elsewhere, readBack: true };
 }
 
 export type CriterionStatus = 'verified' | 'unverified' | 'no-quote-needed';

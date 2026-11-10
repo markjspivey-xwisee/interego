@@ -1,5 +1,54 @@
 # Changelog
 
+## 2026-11-10 — Practice Evidence: a quote is read back by where it sits in the line as shown
+
+The same peer review found a limit in how a judge's quote is read back. A
+learner's line held one rubric fingerprint, written as `urn:pev:rubric:` and
+its hex, then four copies of the stand-in every view shows for it, which the
+learner had copied from an earlier view and written out, with ordinary words
+between. A judge copied the stretch the judge packet shows, starting after
+`urn:pev:rubric:`, so the quote held five runs of hex that read the same. The
+first had to be read back as the fingerprint and the other four kept as
+written. With up to four such runs every mix was tried, but with five or more
+only two were: every run read back, or every run kept. So the quote, copied
+exactly, was "not found verbatim in any learner turn", and the criterion was
+counted at its lowest level.
+
+Now nothing is tried in turn. The quote is looked for in each of the learner's
+lines as the views show it: the line as an attempt's text shows it, and its
+normalised form as the judge packet and normalisedText show it, the quote
+normalised as the quote rule normalises it. Where it is found, the stored
+line's words at the same place are what it is read back as. A stand-in is as
+long as what it replaces, so the places line up. Where a mark after a
+fingerprint's last hex digit makes NFC fold the two into one letter that the
+stand-in's digit does not take, the line's text, normalised, shows the digit
+and the mark, and it is lined up with the normalised line letter by letter.
+So which runs stand for a fingerprint and which the learner wrote out is read
+from the line, however many there are. The quote rule still holds: the turn
+the judge named is kept where the words sit there, and a place where the quote
+starts or ends inside a word of the stored line is not read back, so no part
+of a fingerprint is. A quote found nowhere is saved as before, with every
+stand-in read back, and says why. The saved quote, its fingerprint, the
+highlights and the transcript's fingerprint are still the stored words', a
+quote shown from its line and copied again reads back again, and no stand-in
+equals a fingerprint Practice Evidence keys in a field, or the start of one.
+A fingerprint followed by more hex in a line is shown as a stand-in with that
+hex after it; a read-back quote of it shown without its line now masks the
+first 64 hex of such a run too.
+
+Tests: the peer review's case with five runs, and with four and ten; a
+fingerprint and a calibration kind mixed with written-out stand-ins of both;
+quotes starting inside `urn:pev:rubric:` and at the kind's hex; the turn the
+judge named; quotes that cut a word, and the other person's lines; the folded
+letter copied from the text and changed on the way; and the same through the
+bridge, from the packet, with a second judge copying the first's quote.
+
+Not covered: where the line's text, normalised, differs from the normalised
+line in more than those folded letters (more marks after the letter than NFC
+folds into it, say), the quote is not looked for in that view; copied as sent
+from the text, or from the normalised form, it is still found. A quote a chat
+app changed in a way normalising does not undo is not found, as before.
+
 ## 2026-11-10 — Practice Evidence: a reopened session is handed to a judge as a finished one is
 
 A peer review, run on fictional data, found that a session reopened by a
@@ -61,10 +110,6 @@ that some stored line holds are checked. The first that checks out in the turn
 the judge named is kept, otherwise the first that checks out anywhere. A quote
 no reading finds is saved as before, with every stand-in read back, and says
 why.
-
-Not covered: with more than four such runs in one quote, only two readings
-are tried, every run read back and every run kept as written, so a quote that
-needs some of them read back and others kept is still not found.
 
 ## 2026-11-10 — Practice Evidence: a fingerprint an accent follows is masked in the normalised form too
 

@@ -61,7 +61,7 @@ import {
   rubricHash, scenarioHash, splitEndSignal, transcriptHash,
   draftReviewNote, BRIEF_MAX, COUNTERPART_PROMPT_TEMPLATE_HASH, DRAFT_PROMPT_TEMPLATE_HASH, JUDGE_PROMPT_TEMPLATE_HASH,
   MAX_CONTESTS, MAX_JUDGMENTS, PRACTICE_LABEL, PROVISIONAL_LABEL, SOURCE_TEXT_MAX, TURN_TEXT_MAX,
-  type JudgeChosenBy, type JudgmentResult, type NextLevelGuidance, type ScenarioSpec, type Turn,
+  type JudgeChosenBy, type JudgmentResult, type NextLevelGuidance, type QuoteReadings, type ScenarioSpec, type Turn,
 } from '../src/practice.js';
 import {
   actorOf, applyRoleChange, attemptIri as attemptIriOf, attemptIriSecret, attemptKey, buildRecordDescriptor, checkEnvelope, checkRelayPayload, conflictedReviewersOf,
@@ -418,12 +418,13 @@ function scopeTo(call: Call, a: { readonly scenarioIri: string; readonly version
  * reads no stakes shows a fingerprint inside a line with a stand-in keyed for the attempt's scenario
  * version (`maskAnswerHashes`), the scope of every answer that shows the attempt's turns (the judge
  * packet, the attempt, the conversation's own acts) or quotes from them (the review queue). A quote
- * copied from any of them is read as the stored line it was copied from, whoever sends it: each
- * reading `quoteReadingsAsStored` gives, in turn, until one checks out.
+ * copied from any of them is read as the stored line it was copied from, whoever sends it: found in
+ * each learner line as those answers show it, and read back by its place there
+ * (`quoteReadingsAsStored`).
  */
-async function quotesAsStoredFor(call: Call, a: AttemptBody): Promise<(quote: string) => readonly string[]> {
+async function quotesAsStoredFor(call: Call, a: AttemptBody): Promise<(quote: string, turnIndex?: number) => QuoteReadings> {
   const k = (await call.ctx.hashMask()).version(a.scenario.scenarioIri, a.scenario.version);
-  return quoteReadingsAsStored(k, a.turns.flatMap((t) => (t.text !== undefined ? [t.text] : [])));
+  return quoteReadingsAsStored(k, a.turns);
 }
 
 /**
