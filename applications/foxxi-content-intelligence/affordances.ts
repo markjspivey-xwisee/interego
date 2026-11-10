@@ -1452,7 +1452,7 @@ export const foxxiAffordances: ReadonlyArray<Affordance> = [
     mediaType: 'application/json', externallyRouted: true,
     annotations: { title: 'Keep private personal activity', readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     inputs: [
-      { name: '_signed_payload', type: 'string', required: true, description: 'sign_request({subject_did:<verified controlling user DID>,purpose:"personal-performance",statements:[{id,actor,verb,object,timestamp,result?,context?}]}). The relay supplies agent_id, subject_pod_url and fresh signature timestamp. Statement timestamps describe observed events.' },
+      { name: '_signed_payload', type: 'string', required: true, description: 'sign_request({subject_did:<verified controlling user DID>,purpose:"personal-performance",statements:[{id,actor,verb,object,timestamp,result?,context?}]}). The relay supplies agent_id, subject_pod_url and fresh signature timestamp, and may add client_id (the OAuth client its session token was issued to), which is accepted and not read. Statement timestamps describe observed events.' },
       { name: '_signature', type: 'string', required: true, description: 'The complete fresh signature returned by sign_request.' },
     ],
     appliesTo: { collections: ['profiles'] },
@@ -1471,7 +1471,7 @@ export const foxxiAffordances: ReadonlyArray<Affordance> = [
     mediaType: 'application/json', externallyRouted: true,
     annotations: { title: 'Read private personal activity', readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     inputs: [
-      { name: '_signed_payload', type: 'string', required: true, description: 'sign_request({subject_did:<verified controlling user DID>,purpose:"personal-performance",query:{statementId}}), or query filters verb/activity/registration/since/until/ascending/limit/cursor. The relay supplies agent_id, own pod stamp and fresh timestamp.' },
+      { name: '_signed_payload', type: 'string', required: true, description: 'sign_request({subject_did:<verified controlling user DID>,purpose:"personal-performance",query:{statementId}}), or query filters verb/activity/registration/since/until/ascending/limit/cursor. The relay supplies agent_id, own pod stamp and fresh timestamp, and may add client_id (the OAuth client its session token was issued to), which is accepted and not read.' },
       { name: '_signature', type: 'string', required: true, description: 'The complete fresh signature returned by sign_request.' },
     ],
     appliesTo: { collections: ['profiles'] },

@@ -21,7 +21,7 @@ import { join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { JSDOM, VirtualConsole } from 'jsdom';
 import { Parser } from 'n3';
-import { canonicalJson, importWallet, sha256, sha256Hex, signMessageRaw, type Wallet } from '@interego/core';
+import { canonicalJson, importWallet, parseHypermediaMarkdown, sha256, sha256Hex, signMessageRaw, type Wallet } from '@interego/core';
 import type { Express, NextFunction, Request as ExpressRequest, Response as ExpressResponse } from 'express';
 import { chatAgentJs } from '../../_shared/chat-agent/index.js';
 import { createVerticalBridge } from '../../_shared/vertical-bridge/index.js';
@@ -45,6 +45,13 @@ const HERE = fileURLToPath(new URL('.', import.meta.url));
 const VERTICAL = join(HERE, '..');
 const REPO = join(VERTICAL, '..', '..');
 const read = (p: string): string => readFileSync(join(VERTICAL, p), 'utf8');
+/**
+ * The stylesheet as a screen `px` wide applies it, for jsdom, which lays nothing out and applies an `@media screen` rule but
+ * no width query: each min-width or max-width query (every one this stylesheet has is in em, alone) is kept, as `screen`,
+ * where that width meets it, and set aside, as `print`, where it does not. Real Chromium from 300 px up is the QA's check.
+ */
+const atWidth = (css: string, px: number): string =>
+  css.replace(/@media \((min|max)-width: ([\d.]+)em\)/g, (_m, k: string, em: string) => `@media ${(k === 'min' ? px >= Number(em) * 16 : px <= Number(em) * 16) ? 'screen' : 'print'}`);
 
 // ═════════════════════════════════════════════════════════════════════════════════════════════
 //  The world: one pod, demo role wallets, three bridges
@@ -1145,6 +1152,28 @@ describe('the web UI works, driven in a DOM against the real handlers', () => {
     expect(paste.errors).toEqual([]);
   }, SLOW);
 
+  it('signing manually as the only way keeps its header on one line down to 360 px, saying what it said, and below takes a second line under the brand', async () => {
+    // No Interego sign-in and no wallet: Connect your AI, the "Signing manually" badge and Other ways to sign in. At 300 px they
+    // ran 87 px past the screen (13 at 375); from 360 px the brand and the badge give way instead, and nothing else changes.
+    const p = await openUi(plain);
+    await p.until(() => p.q('.app-header #acting-as.badge') && p.q('article.scenario'), 'the header, signing manually');
+    expect(p.all('.app-header__actions > :not(.menu)').map((el) => el.id || el.className)).toEqual(['product-switch', 'connect-ai-button', 'acting-as', 'signin-other']);
+    const css = await (await fetch(`${plain.base}/ui/app.css`)).text();
+    const sheet = p.d.createElement('style');
+    p.d.head.append(sheet);
+    const cs = (sel: string): CSSStyleDeclaration => p.w.getComputedStyle(p.q(sel) ?? p.d.querySelector(sel)!);
+    for (const px of [1280, 768, 600, 360, 344, 300]) {
+      sheet.textContent = atWidth(css, px);
+      const two = px < 360;
+      // Below 360 px the second line keeps room for a label on two lines, so --header-h is the same whichever it is.
+      expect([px, cs('.app-header__inner').flexWrap, cs('.app-header__actions').flexBasis, cs('html').getPropertyValue('--header-h')]).toEqual([px, two ? 'wrap' : '', two ? '100%' : '', two ? '7.3125rem' : '4rem']);
+      // Connect your AI says so from 30em, as it always did: shortening it is only for a header holding another way to sign in too.
+      expect([px, cs('#connect-ai-button > .hide-below-sm').display === 'none', cs('#acting-as').flexShrink, cs('.app-header .brand').flexShrink]).toEqual([px, px < 480, '10000', '10000']);
+    }
+    sheet.remove();
+    expect(p.errors).toEqual([]);
+  }, SLOW);
+
   it('a workspace with no AI of its own and no Interego sign-in: copy and paste in plain words, no chat hand-off, no connector address, and no key outside Advanced', async () => {
     const ana = W.learner;
     const asked: string[] = [];
@@ -1632,4 +1661,60 @@ describe('server.ts composes and listens; every other file keeps to its rules', 
     expect([...terms].filter((t) => !html.includes(`id="${t}"`))).toEqual([]);
     expect(html).toContain('<link rel="alternate" type="text/turtle" href="pev.ttl" />');
   });
+});
+
+// ═════════════════════════════════════════════════════════════════════════════════════════════
+//  What a judge packet weighs on the wire
+// ═════════════════════════════════════════════════════════════════════════════════════════════
+
+describe('a judge packet over HTTP is its JSON and the bridge\'s envelope, not copies of it', () => {
+  it('answers the packet with no Markdown copy (it offers no next-step control), keeps the full snapshot for a Markdown reader, and a refusal stays small', async () => {
+    // A world of its own: one pod, the roles a judging needs, an attempt of three exchanges that has ended.
+    const own = inMemoryPod();
+    const h = createPevHandlers({ ...base, fetchFn: own.fetchFn, holderFetchFn: own.fetchFn, model: scriptedPracticeModel() }) as Handlers;
+    for (const [who, role] of [['author', 'author'], ['reviewer', 'reviewer'], ['judge-agent', 'judge']] as const) {
+      expect((await direct(h, 'pev.register_role', W.admin, PEV_ACTION.registerRole, { address: W[who].address, role, change: 'add' }))['changed']).toBe(true);
+    }
+    const pub = await direct(h, 'pev.author_scenario', W.author, PEV_ACTION.authorScenario, { scenario: demoScenarioInput('missed-deadline', 2), status: 'published', draftAssistance: { used: false } });
+    expect((await direct(h, 'pev.ratify_scenario', W.reviewer, PEV_ACTION.ratifyScenario, { scenarioIri: pub['scenarioIri'], version: 1, scenarioHash: pub['scenarioHash'] }))['status']).toBe('ratified');
+    const started = await direct(h, 'pev.start_attempt', W.learner, PEV_ACTION.startAttempt, { scenarioIri: pub['scenarioIri'], scenarioVersion: 1, coached: false });
+    for (let i = 0; i < 3; i += 1) {
+      const r = await direct(h, 'pev.record_turns', W.learner, PEV_ACTION.recordTurns, {
+        attemptIri: started['attemptIri'], turnIndex: 2 * i + 1, learnerText: DEMO_LINES.ana[i], counterpartText: DEMO_LINES.sam[i], endAfter: i === 2,
+        counterpartDisclosure: { provider: 'scripted', model: 'demo-learner-agent' },
+      });
+      expect(r['kind']).toBeUndefined();
+    }
+    const l = await serve(h);
+    const ask = async (w: Wallet, accept: string): Promise<{ status: number; type: string; text: string }> => {
+      const r = await fetch(`${l.base}/pev/judge_packet`, { method: 'POST', headers: { 'content-type': 'application/json', accept },
+        body: JSON.stringify({ envelope: await envelope(w, PEV_ACTION.judgePacket, { attemptIri: started['attemptIri'] }) }) });
+      return { status: r.status, type: r.headers.get('content-type') ?? '', text: await r.text() };
+    };
+    const got = await ask(W['judge-agent'], 'application/json');
+    expect(got.status).toBe(200);
+    const packet = JSON.parse(got.text) as Out;
+    expect(packet['https://schema.org/encoding']).toBeUndefined();
+    expect(packet['execution']).toBe('client-required');
+    // The transcript travels once. What the bridge adds is its JSON-LD envelope: the context, the types and two affordances.
+    const { '@context': _ctx, '@type': _type, conformsToShape: _shape, affordances: _aff, ...payload } = packet;
+    expect(Buffer.byteLength(got.text) - Buffer.byteLength(JSON.stringify(payload))).toBeLessThan(3_500);
+    expect(got.text.split(DEMO_LINES.ana[1]!).length - 1).toBe(1);
+    // Escaped once more inside a relay's act result, it stays far below a chat client's tool-result limit.
+    expect(JSON.stringify(got.text).length).toBeLessThan(20_000);
+    // Asked for as Markdown, the one document still carries the whole packet, losslessly.
+    const md = await ask(W['judge-agent'], 'text/markdown');
+    expect([md.status, md.type]).toEqual([200, expect.stringContaining('text/markdown')]);
+    const snapshot = JSON.parse(String(parseHypermediaMarkdown(md.text).fields?.['schema:text'])) as Out;
+    expect([snapshot['request'], snapshot['binding'], snapshot['recordWith']]).toEqual([packet['request'], packet['binding'], packet['recordWith']]);
+    expect(md.text).toContain('```json\n');
+    // A one-sentence refusal arrives as that sentence in the envelope.
+    const stranger = await ask(W['second-learner'], 'application/json');
+    expect(stranger.status).toBe(403);
+    expect((JSON.parse(stranger.text) as Out)['https://schema.org/encoding']).toBeUndefined();
+    expect(Buffer.byteLength(stranger.text)).toBeLessThan(4_000);
+    // The action manifest says which pod the bridge writes to, as its entry point does.
+    const manifest = await (await fetch(`${l.base}/affordances`, { headers: { accept: 'text/turtle' } })).text();
+    expect(manifest).toContain(`rdfs:comment "Capabilities exposed by the practice-evidence vertical bridge. It is configured to write to the pod ${DEMO_POD}.`);
+  }, SLOW);
 });

@@ -80,8 +80,10 @@ describe('signed own-LTI reconciliation HTTP boundary', () => {
 
   it('requests write authority only for apply and strips only authenticated transport fields', async () => {
     const f = await fixture();
+    // client_id: the OAuth client the relay signs for, set by the relay like subject_pod_url.
     const transport = { subject_did: f.authority.subjectDid, subject_pod_url: f.authority.podUrl,
-      purpose: 'personal-performance', timestamp: '2026-11-01T02:00:00.000Z', agent_id: f.authority.callerDid };
+      purpose: 'personal-performance', timestamp: '2026-11-01T02:00:00.000Z', agent_id: f.authority.callerDid,
+      client_id: 'https://bridge.example/ui/oauth/client.json' };
     const ids = ['00000000-0000-4000-8000-000000000001', '00000000-0000-4000-8000-000000000002'];
     f.authority.payload = { ...transport, originalStatementIds: ids };
     const preview = await f.request('preview', { _signed_payload: 'signed', untrusted_outer_field: 'ignored by signature port' });

@@ -13,7 +13,9 @@ artifacts that compose cleanly with the rest of the Interego substrate.
 actions for the person who controls a native session agent. A write signs
 `{subject_did, purpose: "personal-performance", statements: [...]}`; a read signs
 the same subject/purpose with `query: {statementId}` or supported filters. The
-relay supplies the session agent, own-pod stamp and fresh signature timestamp.
+relay supplies the session agent, own-pod stamp and fresh signature timestamp,
+and may add `client_id` (the OAuth client its session token was issued to),
+which is accepted and not read.
 Foxxi independently verifies the configured native identity controller, storage,
 owner registry, signed delegation, current relay anchor and owner encryption key.
 The existing own-agent xAPI actions keep their separate actor semantics.

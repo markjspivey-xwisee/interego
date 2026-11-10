@@ -293,6 +293,22 @@ describe('private transport and scope binding', () => {
       expect((await post('/agent/performance/outcomes', { agent_id: ACTOR, timestamp: time(2), subject_pod_url: POD })).body.outcomes).toHaveLength(1);
       expect((await post('/agent/performance/calibration', { agent_id: ACTOR, timestamp: time(2), subject_pod_url: POD })).body.seed_samples).toBe(0);
       expect((await post('/agent/performance/outcomes', { agent_id: ACTOR, timestamp: time(2), subject_pod_url: 'https://victim.example/' })).status).toBe(403);
+      // The relay also signs client_id (the OAuth client its session's token was issued to): accepted as transport, like subject_pod_url.
+      const relayClient = 'https://bridge.example/ui/oauth/client.json';
+      expect((await post('/agent/performance/outcomes', { agent_id: ACTOR, timestamp: time(2), subject_pod_url: POD, client_id: relayClient })).body.outcomes).toHaveLength(1);
+      expect((await post('/agent/performance/calibration', { agent_id: ACTOR, timestamp: time(2), subject_pod_url: POD, client_id: relayClient })).status).toBe(200);
+      // Any other unlisted field is still refused.
+      expect((await post('/agent/performance/calibration', { agent_id: ACTOR, timestamp: time(2), subject_pod_url: POD, pod_name: 'u-pk-123456789abc' })).status).toBe(400);
+      // A plan retried through another client is the same plan: client_id is not part of its logical input.
+      const viaOtherClient = await post('/agent/contextualize-and-plan', { ...payload, timestamp: time(3), client_id: relayClient });
+      expect(viaOtherClient.status).toBe(200); expect(viaOtherClient.body.privatePlan).toEqual(first.body.privatePlan);
+      // The schema these routes serve as the payload shape names what they accept: client_id beside the relay's other fields.
+      const served = await (await fetch(base + '/agent/performance/schema')).json() as { transport: string; actionPayloads: Record<'record' | 'read' | 'calibration', string> };
+      const declared = (shape: string): string[] => shape.replace(/^\{|\}$/g, '').split(',').map(k => k.replace(/\?$/, ''));
+      expect(declared(served.actionPayloads.record)).toEqual(['agent_id', 'timestamp', 'subject_pod_url', 'client_id', 'outcome']);
+      expect(declared(served.actionPayloads.read)).toEqual(['agent_id', 'timestamp', 'subject_pod_url', 'client_id', 'episode_id']);
+      expect(declared(served.actionPayloads.calibration)).toEqual(['agent_id', 'timestamp', 'subject_pod_url', 'client_id']);
+      expect(served.transport).toMatch(/client_id[^.]*accepted/);
       for (const a of privatePerformanceAffordances) { expect(a.externallyRouted).toBe(true); expect((await fetch(base + a.targetTemplate.replace('{base}', '') + '/affordance')).status).toBe(200); }
     } finally { await new Promise<void>((resolve, reject) => server.close(e => e ? reject(e) : resolve())); }
   });

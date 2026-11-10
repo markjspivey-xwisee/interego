@@ -162,6 +162,231 @@ for a new chat, because one used for reviewing has seen other assessments'
 levels. A new test asks every read from each role's chat assistants and web
 app agent, and tries claims that a request is the web app's.
 
+## 2026-11-09 — Relay: a signed request can say which OAuth client asked
+
+When the relay signs a request for someone (`sign_request`, or `act` with
+`sign_payload: true`), it can now put `client_id` in the signed payload: the id
+of the OAuth client whose access token made the call. For a web app that signs
+in with a Client ID Metadata Document that is the URL of its `client.json`; for
+a dynamically registered client it is the id the relay gave it. Until now a
+site could only read the agent's name, which comes from the name a client chose
+for itself, so any app could register under a site's own name and look like
+it. The id cannot be chosen that way. A caller cannot set `client_id` either:
+one it sends, at the top level or inside `payload`, is dropped, and the session
+field it comes from is stripped on every transport.
+
+**It is off until the relay's operator turns it on** with
+`RELAY_SIGN_CLIENT_ID=1` (the relay's `/health` reports it as
+`signsClientId`). Several sites refuse a signed payload holding a field they do
+not list. The ones in this repository accept `client_id` from this release, but
+Foxxi (which also serves the Agentic Performance Practice routes) ships in its
+own image and rolls out separately from the relay. Had the relay signed the
+field as soon as its image went live, every chat agent's request to Foxxi's
+directory actions, workbench agent sessions, own-LTI reconciliation, telemetry
+settings and queries, and private performance routes would have been refused
+until the new Foxxi image was serving, and for as long as a failed Foxxi rollout
+kept the old one. Turn it on only after the Foxxi bridge runs this release.
+**If you verify relay-signed requests outside this repository and refuse fields
+you do not list, accept `client_id` before the relay enables it.**
+
+The field is left out when no OAuth client is known: the REST `/tool` and
+`/messages` routes (an identity-server bearer or a wallet signature), the
+legacy API key, and a follow-up act a deployment-installed observer makes. Left
+out means the relay does not say which client asked; it never means "the web
+UI". It names the client whose token was used; it does not prove that a person,
+or the site's own page, made the request. No site reads it yet; the Practice
+Evidence bridge is the first that will. A site that compares it with its own
+client id should accept every id it has used within a token's lifetime (an
+hour), not only its current one: an id from dynamic registration changes when
+the site registers again, after a restart for example, while tokens issued to
+the earlier id are still live. A Client ID Metadata Document id does not
+change, so prefer that, or keep the registration. The Practice Evidence page
+registers once per process today and keeps the id only in memory, so it must
+keep its ids or its registration before it starts checking the field.
+
+A caller's own `client_id` is still dropped, but no longer silently:
+`sign_request`'s result says it was not signed (`notSigned`), so a site whose
+own input happens to be called `client_id` finds out on its first try instead
+of quietly receiving the relay's value or none. Through `act` with
+`sign_payload: true` the drop is still silent, because `act` passes on only the
+signed pair.
+
+Sites that refused any field they did not list now accept `client_id` as the
+relay's, like `subject_pod_url`: Foxxi's directory actions, workbench agent
+sessions, own-LTI reconciliation and telemetry settings and queries, and the
+private performance routes, which also keep it out of a plan's retry identity.
+Foxxi's telemetry settings and query routes now set the relay's fields aside
+through one shared list, with a test that sends them a relay-signed payload
+holding `client_id`. Work Redesign's web page refuses a payload holding
+`client_id`, as it does the relay's other fields. The descriptions of what the
+relay adds (Provisional Play, Foxxi's own-subject activity actions and README,
+and the payload shapes the private performance routes serve) now mention
+`client_id`.
+
+A repository-wide test (`integrations/tests/relay-signed-client-id-is-transport.test.ts`,
+with the cross-vertical tests, since it reads the verticals' sources) reads every
+tracked JavaScript and TypeScript source file outside tests and build output that names `subject_pod_url`. It fails when
+an array or argument list naming `agent_id`, `timestamp` and `subject_pod_url`
+leaves `client_id` out (in any quote style, on one line or across several), when
+a destructuring sets `subject_pod_url` aside before a rest element without
+`client_id`, and when a sentence saying what the relay adds names the pod stamp
+without `client_id`. It does not see a list built from pieces, a chain of
+comparisons, source in other languages, or prose worded another way.
+
+The `sign_request` result's hint no longer tells an assistant to prefer the
+URL form of an action over the one a site gave it: `act` takes the
+`urn:iep:action:…` form and the URL form alike, and the hint now says to use
+the action as the site or the descriptor gives it.
+
+Not covered: `act` still fetches a target's whole affordance manifest on every
+call; caching it is left for later. Nothing turns `RELAY_SIGN_CLIENT_ID` on for
+the hosted deployment; that is an operator step once the Foxxi bridge is live.
+
+## 2026-11-09 — Smaller action answers from the vertical bridges; the task-map packet names the chat route
+
+An action answer from a vertical bridge carried a Markdown copy of itself
+under schema:encoding, so that an MCP client that cannot ask for Markdown
+still got the typed next-step controls. That copy also held the whole answer
+twice more, escaped in its front matter and again in a json block, so answers
+came to about four times their content: a Work Redesign task-map packet, a
+Practice Evidence judge packet sent through the relay's act (past a chat
+client's tool-result limit), and even a one-sentence refusal, about 14 KB.
+A JSON answer now carries that Markdown only when it has a next-step control
+to offer, and then only the controls and their links, never the answer again.
+An answer with no next step is the JSON alone: every Work Redesign and
+Practice Evidence answer today, and every refusal. Measured on local bridges:
+the task-map packet for a 1,358-character document went from 25,479 to 6,221
+bytes (9,064 with the chat-route step below), a judge packet for three
+exchanges from 38,907 to 9,539 bytes, and a refusal from about 14,000 to about
+2,700. Asked for as Markdown (Accept: text/markdown or ?format=markdown), an
+answer is still one document holding all of it, as before. An answer that names
+no next step of its own (Foxxi's answers when a composition has nothing to play
+or has just finished) keeps a Markdown copy of about 4 KB holding only its
+links, the list of actions among them, so it still points somewhere; it is the
+same size whatever the answer holds.
+
+Work Redesign's task-map packet said only how the web app records a reviewed
+draft. It now also says how a chat does it (next.relaySigned), as the app's
+copied message already told assistants: read who is registered first, show the
+person the draft and ask who does each task, then fill in the payload template
+and have the relay sign it, with the document's text inside the signed payload
+and document.storeText true. The packet's first instruction points to both
+routes, and the action's description of what it returns says so too. The
+action manifest's comment now names the pod a bridge is configured to write to.
+
+That chat route carries the document's text inside the payload the relay
+signs, and the bridge takes that payload only up to 64 KiB, so it keeps to the
+limit the web app already keeps: documents of up to 20,000 characters. For a
+longer document the packet now offers no payload to fill: it says the document
+is too long to record from a chat, and that the person records the draft in
+the web app instead, where it works at any length. Before, an assistant with
+only the packet could draft a long document's map, ask who does each task, and
+then be refused at the last step.
+
+Asking for the task map's payload template from a chat now gives the chat's
+version: the document's text among the payload's fields, and storeText true.
+It used to give the web app's version, whose storeText false is refused from
+a chat, so an assistant that followed the template exactly was turned away.
+A malformed map sent from a chat is answered with the chat's version too. The
+web app, signed in with Interego or with a wallet, still gets its own version.
+
+Not covered: the relay's act still escapes an answer once more inside its own
+result; the 20,000-character limit is a cautious figure, not a measured one
+(a document full of line breaks or quote marks takes more room once escaped,
+and so do many long quotes), and no round trip through a real chat assistant
+has measured it; a revision's template from a chat still does not list the
+document's text, which a chat sends inside the payload with new quotes; a
+JSON answer from a vertical bridge that offers no next step names the list of
+actions but not the bridge's own pages (its web app, its ontology), which only
+the Markdown forms list; and the manifest names only a bridge's default pod,
+not every pod it serves.
+
+## 2026-11-09 — Work Redesign and Practice Evidence: the narrow-phone fix, corrected
+
+A second look at the change below found that it moved things on wide screens that it
+said it left alone, and that a few places still ran past a narrow phone's screen.
+
+- Practice Evidence's status pills could wrap at every width, so in My practice
+  "Confirmed by a reviewer" and "Conversation text deleted" took two lines at 1280 px,
+  and from 768 px up the table's columns moved. A status now wraps only below 768 px,
+  where it is needed. From 768 px up, My practice and the session page are again
+  exactly as they were before either change.
+- Practice Evidence's sign-in page, and the sign-in card on a view that needs you to
+  sign in (My practice, for one), still ran 18 px past a 300 px screen: "Sign in with
+  Interego" needs 236 px and the card had 220. A button in that card now wraps its
+  label onto a second line when the line is too short for it.
+- In Work Redesign, on a workspace open to read (WRD_PUBLIC_READS=1) with a wallet in
+  the browser and Interego sign-in off, the round Refresh button was squeezed to 32 px
+  wide at 300 px and 38 px at 320 px. It keeps its 44 px now, and "Connect wallet"
+  wraps instead.
+- The offline demo's "Demo time ... weeks Skip ahead" ran 16 px past a 300 px screen,
+  and its weeks box was too narrow to show its number. That line now wraps between its
+  parts; the persona picker beside it is unchanged.
+- Signing manually in Practice Evidence with a wallet and no Interego sign-in: below
+  360 px "Use a wallet" took two lines, the header grew to 118 px, and the side
+  navigation slid 6 px under it when the page scrolled. Below 360 px the header now
+  always leaves room for that second line, and the navigation sits below it.
+- On a touch screen, Practice Evidence's "Connect your AI" button is at least 44 px
+  wide where it shows only its icon (it was 42 px).
+
+The header breakpoints stay at fixed widths, as designed. Between them, a header can
+take a second line, or use its shorter labels, where one line would just fit (for
+example from 480 to 767 px). Both sites use each device's own fonts, so how much room a
+header needs changes from one phone to the next, and the fixed widths leave room for
+that.
+
+New tests check that a status in a table cell stays on one line from 768 px, that the
+sign-in card's buttons wrap, that Refresh keeps its size, that the demo clock wraps,
+the header height below 360 px, the touch-screen width of "Connect your AI", and the
+left-aligned label of "Copy the start-up message". Each one fails when its rule is
+taken out, except one: jsdom does not rank selectors with :has() the way a browser
+does, so the second selector on the narrow header-height rule is checked in Chromium
+only.
+
+Measured again in Chromium against the master branch: 97 page states of both sites, at
+nine widths from 300 to 1280 px, in light and dark, with a mouse and with a touch
+screen. None of them scrolls sideways.
+
+## 2026-11-09 — Work Redesign and Practice Evidence: nothing runs past a narrow phone's screen
+
+On phones from 300 to 414 px wide, parts of both sites were wider than the
+screen, so the whole page could be dragged sideways. Measured in Chromium,
+signed in and out, with Interego sign-in on and off, in light and dark:
+
+- Work Redesign's app header was 28 px too wide at 320 px and 48 px at 300 px.
+  At 300 px the squeezed Refresh button covered the account button, so a tap
+  on it pressed Refresh. The landing page's header was 16 px too wide
+  at 300 px. After a process map was signed, each task's "Copy link for the
+  people named" ran up to 145 px past the screen (32 px at 414 px).
+- On a workspace open to read (WRD_PUBLIC_READS=1), "Sign in with your
+  Interego account" in the header ran 215 px past a 320 px screen and 38 px
+  past a 768 px one. With a wallet in the browser, Connect wallet beside it,
+  351 and 173 px.
+- Practice Evidence's header was 15 px too wide signed in at 320 px and 47 to
+  67 px signed out; the guide's "Open the app" 12 px. Signing manually where
+  another way to sign in is offered put four things in the header: up to
+  203 px too wide at 300 px and 88 px at 768 px. On the session page,
+  "Signature verified: unchanged since it was signed" ran 37 px past a 320 px
+  screen. At 300 px "Copy the start-up message", "Copy the message for my AI"
+  in Write a scenario and Work Redesign's "Draft a map with copy and paste"
+  did too.
+
+Now, in every header, the product name breaks onto two lines when the buttons
+need the room, and only then. A badge gives way next, then a button's label,
+and round buttons keep their full size (44 px on a touch screen). Work
+Redesign's Refresh shows an icon below 480 px, and "Refresh" is still its name
+for a screen reader. The small Sign in button says "Sign in" alone where its
+whole label does not fit. Two ways to sign in, or signing manually beside
+another way, put the header's buttons on a line of their own under the brand
+below 768 px, and the navigation below moves down to match; signing manually
+as the only way does so below 360 px. Beside another way, signing manually
+also shortens the header's button labels below 1024 px, as on a phone. The
+other long buttons and statuses wrap inside their space. At 768 and 1280 px
+nothing moves except what was too wide there: the headers above, and at 768 px
+a recorded task's link, which ran into its row's edge and now sits under its
+badge. New tests check each rule as the stylesheet applies it at a phone's
+width, and each fails with its rule taken out.
+
 ## 2026-11-09 — Foxxi keeps finalized LTI grades during retakes
 
 A scored LTI retake marked NotReady appears separately in the learner's
