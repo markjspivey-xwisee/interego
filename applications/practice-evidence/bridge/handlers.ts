@@ -2209,7 +2209,7 @@ function judgmentSavedOut(body: AttemptBody, w: Written, j: JudgmentResult): Out
       index: j.index, judgedAt: j.judgedAt, judge: { kind: j.judge.kind },
       criteria: j.criteria.map((c) => ({
         criterionId: c.criterionId, levelId: c.levelId, status: c.status, ...(c.why !== undefined ? { why: c.why } : {}),
-        quotes: c.quotes.map((q) => ({ text: q.text, verified: q.verified, ...(q.why !== undefined ? { why: q.why } : {}) })),
+        quotes: c.quotes.map((q) => ({ text: q.text, verified: q.verified, ...(q.why !== undefined ? { why: q.why } : {}), ...(q.readBack ? { readBack: true } : {}) })),
       })),
       unverifiedCriteria: j.unverifiedCriteria,
     },

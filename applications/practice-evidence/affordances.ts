@@ -216,7 +216,7 @@ export const pevAffordances: ReadonlyArray<Affordance> = [
     action: PEV_ACTION.recordJudgment as IRI,
     toolName: 'pev.record_judgment',
     title: 'Record a judgment from a registered judge',
-    description: 'A registered judge (never the learner) records a judgment made from the packet. Payload: {attemptIri, attemptHeadUrl, transcriptHash, rubricHash, judgment: {criteria}, judgeDisclosure: {provider, model, usedPacketPrompt}}. The platform still checks every quote and computes the result. A quote copied from the packet\'s transcript or from the attempt as it was shown, a fingerprint in a line included, is checked against the learner\'s words as stored.',
+    description: 'A registered judge (never the learner) records a judgment made from the packet. Payload: {attemptIri, attemptHeadUrl, transcriptHash, rubricHash, judgment: {criteria}, judgeDisclosure: {provider, model, usedPacketPrompt}}. The platform still checks every quote and computes the result. A quote copied from the packet\'s transcript or from the attempt as it was shown, a fingerprint in a line included, is checked against the learner\'s words as stored (a stand-in whole, or its hex alone) and saved as them, marked readBack.',
     method: 'POST',
     targetTemplate: '{base}/pev/record_judgment',
     annotations: hints('Record a judgment', false, false, false, true),

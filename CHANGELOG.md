@@ -1,5 +1,31 @@
 # Changelog
 
+## 2026-11-10 — Practice Evidence: a judge's quote that leaves out part of a stand-in checks out
+
+The same review found the quote fix below incomplete. Practice Evidence put a
+fingerprint back into a judge's quote only when the quote held the whole
+stand-in, from `urn:pev:rubric:` or `pev/` to the end. But a quote may start or
+end at a colon or a slash, so a judge could quote just the stand-in's digits,
+or start at `rubric:`, or stop before the closing slash. Such a quote did not
+check out, and the criteria it supported were counted at their lowest level.
+
+Now a run of 64 or 16 hex digits in a quote that is a stand-in for a
+fingerprint in the session's lines is read back too. The saved quote is
+marked `readBack`, because the judge's signed request held the stand-in and
+not the learner's words. Answers to a chat show such a quote as the judge
+copied it, so the fingerprint stays hidden there too.
+
+Two smaller fixes. A line starting with a character that normalising turns
+into a letter (the Kelvin sign becomes a K) showed a calibration kind as a
+stand-in in the session's text but bare in its normalised form and in the
+judge packet. Both now show the stand-in. And `record_judgment`'s answer says
+which quotes were read back.
+
+Not covered: in a quote that was read back, a run of 16 or 64 hex digits the
+learner wrote with nothing around it is shown to a chat as a stand-in, while
+the line shows it as written. A quote that cuts into a run of digits is not
+read back; it cuts a word, which the quote rule refuses anyway.
+
 ## 2026-11-10 — Practice Evidence: a signed request's payload no longer checks a guess
 
 A fourth review found another way to check a guess at a scored scenario's
@@ -47,9 +73,9 @@ a criterion title and compared the two in the calibration table. The reason
 now says "this criterion" instead, so nothing Practice Evidence writes into
 text holds a fingerprint.
 
-Not covered: a quote that copies only part of a stand-in (leaving out the
-`urn:pev:rubric:` before it, say) is not read back, so it does not check out.
-Two equal stand-ins show that two texts hold the same fingerprint. That tells a
+A quote that copied only part of a stand-in (leaving out the
+`urn:pev:rubric:` before it, say) was not read back at first; the entry two
+above fixes that. Not covered: two equal stand-ins show that two texts hold the same fingerprint. That tells a
 chat something only when a real fingerprint is already in some text, which
 only someone who reads the stakes can have put there.
 

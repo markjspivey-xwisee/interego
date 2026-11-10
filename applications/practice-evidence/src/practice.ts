@@ -594,6 +594,12 @@ export interface QuoteCheck {
   readonly occurrences?: number;
   readonly declaredTurnIndex?: number;
   readonly why?: string;
+  /**
+   * Set when the quote as sent was not found and was checked as read back (`verifyQuoteAsShown`):
+   * `text` is then the stored words it was copied from, not the words the judge's signed request
+   * held, which showed a stand-in where the stored line holds a fingerprint.
+   */
+  readonly readBack?: true;
 }
 
 export interface JudgeQuoteInput { readonly text: string; readonly turnIndex?: number }
@@ -682,8 +688,9 @@ export function verifyQuote(q: JudgeQuoteInput, turns: readonly Pick<Turn, 'inde
  * otherwise than stored (an answer that replaced a fingerprint in a line with a stand-in, say):
  * `asStored` reads such a quote back as the stored text it stands for. The quote is checked as sent
  * first; when it is not found, and `asStored` reads it differently, it is checked as read back, and
- * that check is kept, its text the stored text, so a recorded quote is always one of the stored
- * lines' own. Without `asStored`, exactly `verifyQuote`.
+ * that check is kept, its text the stored text and marked `readBack`, so a recorded quote is always
+ * one of the stored lines' own and says when it is not the text the judge sent. Without `asStored`,
+ * exactly `verifyQuote`.
  */
 export function verifyQuoteAsShown(
   q: JudgeQuoteInput, turns: readonly Pick<Turn, 'index' | 'speaker' | 'text'>[], asStored?: (quote: string) => string,
@@ -691,7 +698,7 @@ export function verifyQuoteAsShown(
   const sent = verifyQuote(q, turns);
   if (sent.verified || asStored === undefined) return sent;
   const text = asStored(q.text);
-  return text === q.text ? sent : verifyQuote({ ...q, text }, turns);
+  return text === q.text ? sent : { ...verifyQuote({ ...q, text }, turns), readBack: true };
 }
 
 export type CriterionStatus = 'verified' | 'unverified' | 'no-quote-needed';
