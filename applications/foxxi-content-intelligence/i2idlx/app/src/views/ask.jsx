@@ -232,6 +232,7 @@ export function Ask({ engine }) {
   if (!available) {
     return (
       <div className="page" style={{ maxWidth: 720 }}>
+        <h1 className="sr">Ask</h1>
         <div className="empty"><Icon name="sparkle" /><div><b>Connect an AI agent to ask here</b></div>
           <div className="small">Use Connect in the toolbar to pair an active agent with this workbench. Your questions, glossary lookups and answers then stay together here, using that agent's own available model. Existing host adapters remain supported. Browsing, exports and local packs work before you connect.</div></div>
         {course.panel}

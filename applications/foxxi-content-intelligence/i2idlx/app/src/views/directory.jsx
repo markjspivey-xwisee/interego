@@ -130,6 +130,9 @@ function ActionRow({ a, live }) {
   const text = draftText ?? exampleText;
   const fieldError = Object.values(fieldErrors).join(" ");
   const [result, setResult] = useState(null), [busy, setBusy] = useState(false);
+  // A row's body is built the first time it opens: with every body built up front, the
+  // directory held about ninety elements per operation that no one could see.
+  const [opened, setOpened] = useState(false);
   const id = actionId(a), description = describeCapability(a), fields = actionInputs(a);
   const parsed = parsePayload(text), secretPaths = parsed.value ? credentialPaths(parsed.value, "", true) : [];
   const invalid = secretPaths.length ? "Raw credential values stay with your connected client. Remove credential fields before sending a request." : parsed.error || (parsed.value && validatePayload(a, parsed.value));
@@ -156,13 +159,13 @@ function ActionRow({ a, live }) {
     finally { setBusy(false); }
   };
   return (
-    <details className="port" id={id} data-action-iri={a.iri}>
+    <details className="port" id={id} data-action-iri={a.iri} onToggle={(e) => { if (e.currentTarget.open) setOpened(true); }}>
       <summary>
         <MethodTag m={a.m} /><span className="pt">{a.t || a.n}</span>
         <span className="row" style={{ gap: 6 }}><span className="tag">{result ? resultLabel(result, a) : description.label}</span>{a.enacts.length ? <span className="tag post">enacts {a.enacts.length}</span> : null}<span className="tag">{systemLabel(a.sys)}</span><Icon name="down" /></span>
         <span className="pu">{a.n} · {a.u}</span>
       </summary>
-      <div className="pb stack" style={{ gap: 14 }}>
+      {opened ? <div className="pb stack" style={{ gap: 14 }}>
         {a.d ? <p className="small">{a.d}</p> : null}
         <div className="note small"><b>{description.label}</b><p>{description.reason}</p></div>
         <div className="stack" style={{ gap: 8 }}>
@@ -194,7 +197,7 @@ function ActionRow({ a, live }) {
         {a.input_schema ? <details className="small"><summary>Advertised JSON input schema</summary><CodeBlock title="Input schema" code={pretty(a.input_schema)} /></details> : null}
         {a.signing ? <SigningPayload signing={a.signing} name={a.n} /> : null}
         {call ? <CodeBlock title={a.sys === "relay" ? "Prepared Interego tool call · executes in your connected client" : "Prepared Interego act arguments · executes in your connected client"} code={call} /> : null}
-      </div>
+      </div> : null}
     </details>
   );
 }

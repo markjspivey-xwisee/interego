@@ -1,5 +1,21 @@
 # Changelog
 
+## 2026-11-10 — I2IDL-X workbench: a capability's details are built when its row is opened
+
+The Agents view's capability directory built every operation's inputs, buttons
+and details up front, inside rows that start closed: about ninety elements for
+each of some two hundred operations, on the Agents view and again in the
+workbench pane beside an Orchestrate run. A row's body is now built the first
+time the row opens and is kept after that, so edits in an opened row stay.
+
+Map, Insights and the Ask view before an agent is connected each gain a
+heading that screen readers announce. Nothing visible changes on them.
+
+Not covered: a closed row's details no longer match the browser's find-in-page.
+The directory's own filter still searches every operation's title, name,
+description and IRI. Small touch targets on Semantics and Review, and field
+labels overlapping nodes on the map, are unchanged.
+
 ## 2026-11-10 — Practice Evidence: the old wording of the demo rubric's top level is gone from the tests
 
 The same peer review found one test that still repeated the demo rubric's old

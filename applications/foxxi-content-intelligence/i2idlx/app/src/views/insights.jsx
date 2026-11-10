@@ -62,6 +62,7 @@ export function Insights({ route }) {
   return (
     <div className="page stack" style={{ gap: 28 }}>
       <div className="stack" style={{ gap: 6 }}>
+        <h1 className="sr">Insights</h1>
         <div className="eyebrow">Insights · {META.scheme.title} {META.release}</div>
         <div className="row wrap" style={{ alignItems: "flex-end", gap: 18 }}>
           <div><div className="hero-fig">{C.length}</div><div className="muted">published concepts</div></div>
