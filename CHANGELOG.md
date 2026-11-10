@@ -1,5 +1,46 @@
 # Changelog
 
+## 2026-11-10 — Work Redesign: the registry schema says what a registry change needs
+
+The published schema for a Work Redesign registry change (`wrd:update-registry`:
+served by the envelope template, summarised in the action's description, and
+attached to a refused change as `expectedPayload`) marked each entry's label,
+softwareAgent and personRef as optional, while the bridge refused an entry
+without them, one field per signed attempt. An assistant that built its change
+from the schema failed two or three times before it got through. The schema now
+publishes the three shapes the bridge takes, each with what it needs: a person
+(address, roles from approver, operator and worker, label, softwareAgent false,
+personRef), an agent (its key's address, the agent role alone, label,
+softwareAgent true, principal, model) and a removal (address and an empty roles
+list). It also says a change carries at least one of entries, taskKinds and
+podPolicy, that a label, a model and a task kind's definition cannot be blank,
+and that a definition is one line. The bridge's own checks did not change; the
+person reference's pattern now comes from one shared constant. The envelope
+template's entry is a person's, so its softwareAgent is filled as false and the
+fields left to fill are the address, a role, the label and the person reference.
+The action's one-line summary names the three shapes.
+
+New tests build an entry from each shape's required fields alone (a person by
+Interego ID, a person by wallet address, an agent, a removal), check it against
+the schema and send it to the bridge, which takes it; fill the template the same
+way; check that each entry the bridge refuses for its own sake is refused by the
+schema too; and drive the web app's People & roles page to add a person and an
+AI agent and remove someone, each change in one of the schema's shapes and
+taken. The page already built those shapes and is unchanged.
+
+Not covered: what depends on the pod or the bridge's settings stays the
+bridge's to check, so a payload can match the schema and still be refused when
+an agent's principal is not a registered person, when a person who is an
+agent's principal is removed, when an address appears twice in one change, when
+a new task kind has no label or definition, or when a user DID is not on the
+bridge's identity host. The schema counts a length in characters, as JSON
+Schema does, and the bridge counts a character outside the basic range (an
+emoji, for example) twice, so a label, model or definition near its limit that
+holds such characters can match the schema and still be refused. The schema for
+a pod policy is unchanged. On the People & roles page, saving a person with no
+role ticked still sends what the bridge reads as a removal (for someone not yet
+added, a change that changes nothing), as before.
+
 ## 2026-11-09 — Relay: a signed request can say which OAuth client asked
 
 When the relay signs a request for someone (`sign_request`, or `act` with

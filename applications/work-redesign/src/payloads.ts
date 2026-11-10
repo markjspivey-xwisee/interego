@@ -17,9 +17,9 @@ import {
   ALLOCATION_LEVELS, COMPARISON_BASES, FREED_HOURS_DISPOSITIONS, INPUT_BASES, OUTCOME_DISPOSITIONS, OUTCOME_METRICS,
   PROBE_SIGNALS, REGISTRY_ROLES,
 } from './ontology.js';
-import { CHAT_DOCUMENT_MAX_CHARS, CLASSIFICATION_QUESTIONS, LIMITS } from './work.js';
+import { CHAT_DOCUMENT_MAX_CHARS, CLASSIFICATION_QUESTIONS, LIMITS, TASK_KIND_SLUG } from './work.js';
 import { MAX_INPUT, RUN_ALTERNATIVES, STATE_FIELDS } from './valuation.js';
-import { ENTITY_IRI_PATTERN, USER_PRINCIPAL_PATTERN, type EnvelopeIntent } from './records.js';
+import { ENTITY_IRI_PATTERN, PERSON_REF_PATTERN, USER_PRINCIPAL_PATTERN, type EnvelopeIntent } from './records.js';
 
 export type JsonSchema = Readonly<Record<string, unknown>>;
 
@@ -30,6 +30,8 @@ const obj = (properties: Record<string, JsonSchema>, required: readonly string[]
 const list = (items: JsonSchema, min: number, max: number, description?: string): JsonSchema =>
   ({ type: 'array', items, minItems: min, maxItems: max, ...(description ? { description } : {}) });
 const keyed = (values: JsonSchema, description: string): JsonSchema => ({ type: 'object', additionalProperties: values, description });
+/** Text with at least one character that is not white space, as a handler's `trim() !== ''` asks. */
+const filled = (description: string, maxLength: number): JsonSchema => ({ type: 'string', minLength: 1, maxLength, pattern: '\\S', description });
 
 const iriOf = (what: string): JsonSchema => ({ type: 'string', pattern: ENTITY_IRI_PATTERN, description: `the ${what} IRI (urn:wrd:…), from wrd.read_records` });
 const ADDRESS: JsonSchema = { type: 'string', pattern: '^0x[0-9a-fA-F]{40}$', description: 'a 0x address registered on the pod' };
@@ -99,21 +101,77 @@ const VALUATION_INPUTS: JsonSchema = obj({
     'keyed by task IRI: every changed task with current AND proposed (oversight costed where a person decides or audits); unchanged tasks without proposed, required for all when unitsPerWeek.proposed is given'),
 }, ['currency', 'unitsPerWeek', 'valuePerUnit', 'hourlyCost', 'oneOffCost', 'horizonMonths', 'rampMonths', 'annualDiscountRate', 'criticalFailureCeiling', 'freedHours', 'tasks']);
 
+/**
+ * A registry entry is one of three shapes, and the handler (mergeRegistry in bridge/handlers.ts)
+ * takes nothing in between: a person (softwareAgent false, a personRef, no principal or model), an
+ * agent (a 0x key, the agent role alone, softwareAgent true, a principal and a model, no
+ * personRef), or a removal (an empty roles list; the handler reads nothing else in it). What the
+ * schema cannot state is the pod's: an agent's principal must be a person the registry holds after
+ * the change, a person who is an agent's principal is removed only once the agent has another,
+ * and a user DID must be on this bridge's identity host.
+ */
+const MEMBER_LABEL = filled('the name shown for this member, 1 to 80 characters', 80);
+const PERSON_ENTRY: JsonSchema = {
+  title: 'PersonEntry',
+  ...obj({
+    address: { ...PERSON, description: 'the key (0x address) the person signs with, or, for a person who signs in with their Interego account, their user DID did:web:<identity host>:users:<id>' },
+    roles: { type: 'array', items: oneOf(REGISTRY_ROLES.filter((r) => r !== 'agent'), ''), minItems: 1, maxItems: 3, uniqueItems: true, description: "the person's roles: approver, operator, worker" },
+    label: MEMBER_LABEL,
+    softwareAgent: { type: 'boolean', const: false, description: 'false: a person' },
+    personRef: {
+      type: 'string', pattern: PERSON_REF_PATTERN,
+      description: "the admin's stable reference for the person who holds this key or user DID, 1 to 80 of A-Z a-z 0-9 _ . : -; give one person's key and user DID the same reference to make them one person",
+    },
+  }, ['address', 'roles', 'label', 'softwareAgent', 'personRef'], 'a person: adds them, or replaces their entry'),
+};
+const AGENT_ENTRY: JsonSchema = {
+  title: 'AgentEntry',
+  ...obj({
+    address: { ...ADDRESS, description: 'the key (0x address) the agent signs its runs with; an agent is never a user DID' },
+    roles: { type: 'array', const: ['agent'], description: 'the agent role, alone' },
+    label: MEMBER_LABEL,
+    softwareAgent: { type: 'boolean', const: true, description: 'true: software' },
+    principal: { ...PERSON, description: 'the person accountable for the agent: a 0x address or a user DID registered as a person, on the pod or in this same change' },
+    model: filled('the model the agent runs on, 1 to 120 characters; a grant holds for this model only', 120),
+  }, ['address', 'roles', 'label', 'softwareAgent', 'principal', 'model'], 'an agent: adds it, or replaces its entry'),
+};
+const REMOVAL_ENTRY: JsonSchema = {
+  title: 'RemovalEntry',
+  type: 'object',
+  properties: {
+    address: { ...PERSON, description: 'the member to remove: their 0x address or user DID' },
+    roles: { type: 'array', const: [], description: 'empty: removes the address' },
+  },
+  required: ['address', 'roles'],
+  description: "removes a member and is read for nothing else; a person who is an agent's principal is removed only once the agent has another",
+};
+const REGISTRY_ENTRY: JsonSchema = { oneOf: [PERSON_ENTRY, AGENT_ENTRY, REMOVAL_ENTRY] };
+
 const WINDOW = { windowStart: text('ISO-8601; at or after the countersign'), windowEnd: text('ISO-8601; ended, and at least measurementPlan.windowWeeks after windowStart unless stopped early or reverted') };
 
-const FIELDS: Readonly<Record<EnvelopeIntent, { readonly properties: Record<string, JsonSchema>; readonly required: readonly string[]; readonly description: string }>> = {
+interface IntentFields {
+  readonly properties: Record<string, JsonSchema>;
+  readonly required: readonly string[];
+  readonly description: string;
+  /** Fields of which the handler needs at least one (published as anyOf: one `required` each). */
+  readonly atLeastOneOf?: readonly string[];
+}
+
+const FIELDS: Readonly<Record<EnvelopeIntent, IntentFields>> = {
   'wrd:update-registry': {
-    description: 'Admin only. At least one of entries, taskKinds, podPolicy.',
+    description: "Admin only. At least one of entries, taskKinds, podPolicy. Each entry is a PersonEntry, an AgentEntry or a RemovalEntry, with each address at most once in a change; an agent's principal must be a person the registry holds once the change is made.",
     properties: {
-      entries: list(obj({
-        address: { ...PERSON, description: 'the key (0x address) or, for a person who signs in with their Interego account, their user DID; agents are always a key' }, roles: list(oneOf(REGISTRY_ROLES, ''), 0, 4, 'empty removes the address'), label: text('', 80), softwareAgent: { type: 'boolean' },
-        personRef: text("people only: the admin's stable reference for the person behind this key", 80),
-        principal: { ...PERSON, description: 'agents only: the registered person accountable for the agent (an address or a user DID)' }, model: text('agents only: the model the agent runs on', 120),
-      }, ['address', 'roles']), 0, 50),
-      taskKinds: list(obj({ slug: { type: 'string', pattern: '^[a-z0-9][a-z0-9-]{1,62}$' }, label: text('', 80), definition: text('one sentence', 300), retire: { type: 'boolean', enum: [true] } }, ['slug']), 0, 100),
+      entries: list(REGISTRY_ENTRY, 0, 50, 'people and agents to add or change, and members to remove'),
+      taskKinds: list(obj({
+        slug: { type: 'string', pattern: TASK_KIND_SLUG.source, description: 'lowercase letters, digits and hyphens: a new slug adds a kind, a registered one changes it' },
+        label: filled('1 to 80 characters; required for a new kind, and a registered kind keeps its own when it is left out', 80),
+        definition: { type: 'string', minLength: 1, maxLength: 300, pattern: '^[^\\r\\n]*\\S[^\\r\\n]*$', description: 'one sentence on one line, at most 300 characters; required for a new kind, and a registered kind keeps its own when it is left out' },
+        retire: { type: 'boolean', enum: [true] },
+      }, ['slug']), 0, 100),
       podPolicy: { type: ['object', 'null'], description: 'tightens the published policy: maxLevel, floor, minSamples, minHumanConfirmations, minDistinctConfirmers; null clears' },
     },
     required: [],
+    atLeastOneOf: ['entries', 'taskKinds', 'podPolicy'],
   },
   'wrd:capture-workflow': { description: 'A registered operator or agent.', properties: { workflow: WORKFLOW, tasks: list(CAPTURE_TASK(false), 1, LIMITS.tasks) }, required: ['workflow', 'tasks'] },
   'wrd:record-task-map': {
@@ -230,7 +288,7 @@ const FIELDS: Readonly<Record<EnvelopeIntent, { readonly properties: Record<stri
  * map's document_text, which the record then keeps (document.storeText true, or it is refused).
  * The schema for that route says so, rather than "beside", for anyone who asks with a relay-signed read.
  */
-const RELAY_SIGNED_FIELDS: Partial<Record<EnvelopeIntent, (typeof FIELDS)[EnvelopeIntent]>> = {
+const RELAY_SIGNED_FIELDS: Partial<Record<EnvelopeIntent, IntentFields>> = {
   'wrd:record-task-map': {
     description: `A registered operator or agent. Relay-signed, document_text goes inside this payload, the same text whose sha256 is document.sha256, and document.storeText is true: the record keeps the text the relay signed. A chat records a map for a document of up to ${CHAT_DOCUMENT_MAX_CHARS.toLocaleString('en-US')} characters; a longer one is recorded from this bridge's web app.`,
     properties: {
@@ -262,6 +320,7 @@ export function payloadSchema(intent: EnvelopeIntent, opts: { readonly relaySign
     properties: { intent: { const: intent }, ...COMMON, ...f.properties },
     required: ['intent', 'podUrl', 'issuedAt', 'nonce', ...f.required],
     additionalProperties: false,
+    ...(f.atLeastOneOf ? { anyOf: f.atLeastOneOf.map((k) => ({ required: [k] })) } : {}),
   };
 }
 
@@ -279,6 +338,8 @@ function summarise(s: unknown, depth = 0, named?: Map<string, unknown>): string 
   }
   if (Array.isArray(o['enum'])) return (o['enum'] as unknown[]).map(String).join('|');
   if ('const' in o) return JSON.stringify(o['const']);
+  // Alternatives (a registry entry: PersonEntry|AgentEntry|RemovalEntry), each by its title.
+  if (Array.isArray(o['oneOf'])) return (o['oneOf'] as unknown[]).map((x) => summarise(x, depth + 1, named)).join('|');
   if (o['type'] === 'array') return `[${summarise(o['items'], depth + 1, named)}]`;
   const props = o['properties'];
   if (typeof props === 'object' && props !== null) {
@@ -289,7 +350,12 @@ function summarise(s: unknown, depth = 0, named?: Map<string, unknown>): string 
       const name = `${k}${required.has(k) ? '' : '?'}`;
       return inner === '' ? name : `${name}: ${inner}`;
     });
-    return `{${parts.join(', ')}}`;
+    // anyOf of one required field each: the optional fields of which at least one must be given.
+    const atLeastOne = Array.isArray(o['anyOf']) ? (o['anyOf'] as unknown[]).flatMap((a) => {
+      const r = typeof a === 'object' && a !== null ? (a as Record<string, unknown>)['required'] : undefined;
+      return Array.isArray(r) && r.length === 1 ? [String(r[0])] : [];
+    }) : [];
+    return `{${parts.join(', ')}}${atLeastOne.length > 0 ? ` with at least one of ${atLeastOne.join(', ')}` : ''}`;
   }
   if (typeof o['additionalProperties'] === 'object') return `{<taskIri>: ${summarise(o['additionalProperties'], depth + 1, named)}}`;
   if (o['type'] === 'number' || o['type'] === 'integer' || o['type'] === 'boolean') return String(o['type']);

@@ -71,7 +71,7 @@ import {
   openEnvelope, verifyStoredEnvelope, bindRelayDelegated, NonceLedger, envelopeSha256, didOf, isAddress, isUserPrincipal, principalKey, principalOfDid,
   isIsoInstant, entityIri, entityIriKey, scopePrefix, graphIriOf,
   recordIdFor, normalisePodUrl, illFormedTextPath, iriKeyFingerprint, fingerprintOfIri, fingerprintOfRecord, kindOfIri, DEFAULT_ENVELOPE_WINDOW, ENTITY_IRI_PATTERN,
-  UNKEYED_RECORD_URL,
+  UNKEYED_RECORD_URL, PERSON_REF_PATTERN,
   type DecisionPayload, type DescriptorSpec, type EntityKind, type EnvelopeIntent, type ExpertEvidenceBasis, type MeasuredValue,
   type MeasurementPlan, type OpenedEnvelope, type PartyVerdict, type PlanTaskRow, type PlatformRef, type PolicyRef, type RecordKind, type RecordOf,
   type RecordSigner, type RegistryMember, type RegistryTaskKind, type SignedEnvelope, type StoredRelayCheck, type TaskPayload, type WrdRecord,
@@ -1630,7 +1630,7 @@ export function createWrdHandlers(deps: WrdDeps = {}): Record<string, WrdHandler
 
   // ── Registry change validation ───────────────────────────────────────────────────────
 
-  const PERSON_REF = /^[A-Za-z0-9_.:-]{1,80}$/;
+  const PERSON_REF = new RegExp(PERSON_REF_PATTERN);
   function mergeRegistry(reg: Registry, p: Obj): { members: RegistryMember[]; taskKinds: RegistryTaskKind[]; podPolicy: PodPolicy | null } {
     const bad = (why: string): Declined => decline(400, 'The registry change is malformed.', why);
     if (p['entries'] === undefined && p['taskKinds'] === undefined && p['podPolicy'] === undefined) throw bad('a change carries at least one of entries, taskKinds or podPolicy');
@@ -1877,7 +1877,10 @@ export function createWrdHandlers(deps: WrdDeps = {}): Record<string, WrdHandler
     const captureTask = (quotes: boolean): Obj => ({ name: null, description: null, currentLevel: null, personAddress: null, taskKind: null, ...(quotes ? { sourceQuotes: [null] } : {}) });
     switch (intent) {
       case 'wrd:update-registry':
-        Object.assign(t, { entries: [{ address: null, roles: [null], label: null, softwareAgent: null, personRef: null }] });
+        // A person's entry (PersonEntry in the schema): softwareAgent is false wherever personRef is
+        // given. An agent's entry has softwareAgent true, principal and model, and no personRef; a
+        // removal is {address, roles: []}. The schema states all three.
+        Object.assign(t, { entries: [{ address: null, roles: [null], label: null, softwareAgent: false, personRef: null }] });
         if (reg) Object.assign(context, { members: [...reg.members.values()], taskKinds: [...reg.kinds.values()], podPolicy: reg.podPolicy });
         break;
       case 'wrd:capture-workflow':
