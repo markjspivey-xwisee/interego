@@ -17,7 +17,11 @@ the task-map packet for a 1,358-character document went from 25,479 to 6,221
 bytes (9,064 with the chat-route step below), a judge packet for three
 exchanges from 38,907 to 9,539 bytes, and a refusal from about 14,000 to about
 2,700. Asked for as Markdown (Accept: text/markdown or ?format=markdown), an
-answer is still one document holding all of it, as before.
+answer is still one document holding all of it, as before. An answer that names
+no next step of its own (Foxxi's answers when a composition has nothing to play
+or has just finished) keeps a Markdown copy of about 4 KB holding only its
+links, the list of actions among them, so it still points somewhere; it is the
+same size whatever the answer holds.
 
 Work Redesign's task-map packet said only how the web app records a reviewed
 draft. It now also says how a chat does it (next.relaySigned), as the app's
@@ -28,11 +32,32 @@ and document.storeText true. The packet's first instruction points to both
 routes, and the action's description of what it returns says so too. The
 action manifest's comment now names the pod a bridge is configured to write to.
 
+That chat route carries the document's text inside the payload the relay
+signs, and the bridge takes that payload only up to 64 KiB, so it keeps to the
+limit the web app already keeps: documents of up to 20,000 characters. For a
+longer document the packet now offers no payload to fill: it says the document
+is too long to record from a chat, and that the person records the draft in
+the web app instead, where it works at any length. Before, an assistant with
+only the packet could draft a long document's map, ask who does each task, and
+then be refused at the last step.
+
+Asking for the task map's payload template from a chat now gives the chat's
+version: the document's text among the payload's fields, and storeText true.
+It used to give the web app's version, whose storeText false is refused from
+a chat, so an assistant that followed the template exactly was turned away.
+A malformed map sent from a chat is answered with the chat's version too. The
+web app, signed in with Interego or with a wallet, still gets its own version.
+
 Not covered: the relay's act still escapes an answer once more inside its own
-result; the envelope template's schema for a task map still says to send
-document_text beside the envelope and does not list it among the payload's
-fields; and the manifest names only a bridge's default pod, not every pod it
-serves.
+result; the 20,000-character limit is a cautious figure, not a measured one
+(a document full of line breaks or quote marks takes more room once escaped,
+and so do many long quotes), and no round trip through a real chat assistant
+has measured it; a revision's template from a chat still does not list the
+document's text, which a chat sends inside the payload with new quotes; a
+JSON answer from a vertical bridge that offers no next step names the list of
+actions but not the bridge's own pages (its web app, its ontology), which only
+the Markdown forms list; and the manifest names only a bridge's default pod,
+not every pod it serves.
 
 ## 2026-11-09 — Foxxi keeps finalized LTI grades during retakes
 

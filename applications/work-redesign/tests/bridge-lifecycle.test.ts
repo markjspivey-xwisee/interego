@@ -35,7 +35,7 @@ import { LINKS_MORE_THAN_ONE } from '../bridge/descriptor-rdf.js';
 import { memoryPod, demoClock, DEMO_POD, DEMO_HOLDER_POD, type MemoryPod, type DemoClock } from '../demo/run.js';
 import { envelopeSha256, entityIri, entityIriKey, iriKeyFingerprint, recordKeyFingerprint, graphIriOf, buildDescriptor, recordIdFor, illFormedTextPath, parseRecordGraph, type WrdRecord } from '../src/records.js';
 import { parseEveryQueryPair } from '../bridge/ui.js';
-import { normaliseForQuote } from '../src/work.js';
+import { normaliseForQuote, CHAT_DOCUMENT_MAX_CHARS } from '../src/work.js';
 import { meanRampFactor, monthsBetween, DEMO_LABEL } from '../src/valuation.js';
 import { WRD_NS } from '../src/ontology.js';
 
@@ -3488,7 +3488,9 @@ describe('work-redesign bridge', () => {
     const chat = obj(next['relaySigned']);
     const how = String(chat['instructions']);
     for (const s of ['act sends only the signed pair, whether made with sign_payload: true or passed on as returned by sign_request with payload as its only argument',
-      'document_text goes inside the payload', 'request.documentSha256', 'document.storeText is true', 'only after the person confirms the draft', 'never invent them']) expect(how).toContain(s);
+      'document_text goes inside the payload', 'request.documentSha256', 'document.storeText is true', 'only after the person confirms the draft', 'never invent them',
+      'A chat records a map for a document of up to 20,000 characters']) expect(how).toContain(s);
+    expect(chat['maxDocumentChars']).toBe(CHAT_DOCUMENT_MAX_CHARS);
     expect(String(packet['instructions']).split('\n')[0]).toMatch(/^This bridge sampled no model and wrote nothing\. .*next\.relaySigned/);
     // First the read it names, relay-signed: who is registered.
     const read = obj(chat['readRegistry']);
@@ -3515,6 +3517,76 @@ describe('work-redesign bridge', () => {
     const row = must(arr((await list(w))['workflows']).find((x) => x['workflowIri'] === workflowIri), 'the recorded workflow');
     expect(row['documentText']).toBe(SOP);
     expect(JSON.stringify(row)).toContain('Supplier invoice processing');
+  }, 120_000);
+
+  it('the task-map packet for a document longer than a chat can record offers no payload to fill: it says why, and that the person records the map in the web app, where it goes beside the signed payload', async () => {
+    const idh = identityHost([OLU]);
+    const w = await world(relayDeps(idh));
+    await register(w);
+    ok(await act(w, ADMIN, 'update_registry', { entries: [didPerson(OLU, ['operator'], 'p-olu', 'Olu')] }));
+    const long = `${SOP}\n${'Each further step of the procedure is written out at length here. '.repeat(1_500)}`;
+    expect(long.length).toBeGreaterThan(CHAT_DOCUMENT_MAX_CHARS * 4);
+    const packet = ok(await http(w, 'POST', 'task_map_packet', { document_title: 'AP SOP', document_text: long, workflow_title: 'Supplier invoice processing', pod_url: POD }));
+    const next = obj(packet['next']);
+    expect(String(next['review'])).toMatch(/capture table/);
+    const chat = obj(next['relaySigned']);
+    expect(Object.keys(chat).sort()).toEqual(['instructions', 'maxDocumentChars']);
+    expect(chat['maxDocumentChars']).toBe(CHAT_DOCUMENT_MAX_CHARS);
+    expect(String(chat['instructions'])).toContain(`This document is ${long.length.toLocaleString('en-US')} characters, more than the 20,000 a map recorded from a chat can carry`);
+    expect(String(chat['instructions'])).toMatch(/Do not try to record it from the chat\..*this bridge's web app \(next\.review\)/);
+    // What it warns of: the same map relay-signed, the document inside, is more than the bridge takes from the relay.
+    const map = { intent: 'wrd:record-task-map', workflow: { title: 'Supplier invoice processing', unitLabel: 'invoice' }, tasks: AP_TASKS().slice(0, 1),
+      document: { title: 'AP SOP', sha256: sha256Hex(long), storeText: true }, document_text: long, draftedBy: { kind: 'agent', agent: 'test fixture standing in for the client agent' } };
+    refused(await http(w, 'POST', 'record_task_map', await relaySigned(w, 'claude', OLU, map)), 400, /.+/, /_signed_payload is over 65536 characters/);
+    // And the route it names takes it: the web app sends the text beside the signed payload.
+    const { intent: _intent, document_text: _text, ...fields } = map;
+    ok(await act(w, ANA, 'record_task_map', fields, { document_text: long }), 'the long map recorded from the web app\'s route');
+  }, 120_000);
+
+  it('the task-map template read relay-signed from a chat is the chat\'s payload: document_text inside and storeText true, so filled in as it stands the map is recorded; the web UI\'s own relay-signed read keeps the beside-the-envelope template', async () => {
+    const idh = identityHost([OLU]);
+    const w = await world(relayDeps(idh));
+    await register(w);
+    ok(await act(w, ADMIN, 'update_registry', { entries: [didPerson(OLU, ['operator'], 'p-olu', 'Olu')] }));
+    const read = ok(await http(w, 'POST', 'read_envelope_template', await relaySigned(w, 'claude', OLU, { intent: 'wrd:read-records', template: { intent: 'wrd:record-task-map' } })));
+    const tpl = obj(read['template']);
+    expect(obj(tpl['document'])).toEqual({ title: null, sha256: null, storeText: true });
+    expect(tpl['document_text']).toBeNull();
+    expect(arr(read['fill'])).toContain('document_text');
+    const schema = obj(read['schema']);
+    expect(String(schema['description'])).not.toMatch(/beside/);
+    expect(String(schema['description'])).toContain('Relay-signed, document_text goes inside this payload');
+    expect(obj(schema['properties'])['document_text']).toMatchObject({ type: 'string' });
+    expect(arr(schema['required'])).toContain('document_text');
+    expect(obj(obj(obj(obj(schema['properties'])['document'])['properties'])['storeText'])).toMatchObject({ const: true });
+    // Filled in where it says fill, and relay-signed: recorded. storeText false, as the key-held template has it, is refused here.
+    const { podUrl: _pod, issuedAt: _at, nonce: _nonce, ...fields } = tpl;
+    const filled = {
+      ...fields, workflow: { title: 'Supplier invoice processing', unitLabel: 'invoice' }, tasks: AP_TASKS().slice(0, 1),
+      document: { ...obj(tpl['document']), title: 'AP SOP', sha256: sha256Hex(SOP) }, document_text: SOP,
+      draftedBy: { kind: 'agent', agent: 'test fixture standing in for the client agent', model: 'not-declared' },
+    };
+    refused(await http(w, 'POST', 'record_task_map', await relaySigned(w, 'claude', OLU, { ...filled, document: { ...filled.document, storeText: false } })), 400, /would be stored with the record/);
+    ok(await http(w, 'POST', 'record_task_map', await relaySigned(w, 'claude', OLU, filled)), 'the map recorded from the relay-signed template');
+    // Read with a key-held signature, it is the key-held payload: document_text beside the envelope, storeText the signer's choice.
+    const keyHeld = ok(await template(w, 'intent=wrd:record-task-map'));
+    expect(obj(obj(keyHeld['template'])['document'])['storeText']).toBe(false);
+    expect(obj(keyHeld['template'])['document_text']).toBeUndefined();
+    expect(String(obj(keyHeld['schema'])['description'])).toMatch(/send document_text beside the envelope/);
+    expect(arr(obj(keyHeld['schema'])['required'])).not.toContain('document_text');
+    // So does this bridge's own web UI, signed in with Interego: the relay signs its read too, but its page sends the document beside the pair.
+    const fromUi = ok(await http(w, 'POST', 'read_envelope_template', { intent: 'wrd:record-task-map', read_envelope: await relaySigned(w, 'work-redesign', OLU, { intent: 'wrd:read-records' }) }));
+    expect(obj(obj(fromUi['template'])['document'])['storeText']).toBe(false);
+    expect(obj(fromUi['template'])['document_text']).toBeUndefined();
+    expect(String(obj(fromUi['schema'])['description'])).toMatch(/send document_text beside the envelope/);
+    // A malformed relay-signed map is answered with the relay-signed schema; a key-held one with the key-held schema.
+    const bad = refused(await http(w, 'POST', 'record_task_map', await relaySigned(w, 'claude', OLU, { ...filled, workflow: {} })), 400, /malformed/);
+    expect(arr(obj(bad['expectedPayload'])['required'])).toContain('document_text');
+    const { document_text: _inside, ...uiFields } = filled;
+    const badFromUi = refused(await http(w, 'POST', 'record_task_map', { ...(await relaySigned(w, 'work-redesign', OLU, { ...uiFields, workflow: {} })), document_text: SOP }), 400, /malformed/);
+    expect(arr(obj(badFromUi['expectedPayload'])['required'])).not.toContain('document_text');
+    const badKeyHeld = refused(await act(w, ANA, 'record_task_map', { workflow: {}, tasks: AP_TASKS().slice(0, 1), document: { title: 'AP SOP', sha256: sha256Hex(SOP), storeText: false }, draftedBy: { kind: 'not-declared' } }, { document_text: SOP }), 400, /malformed/);
+    expect(arr(obj(badKeyHeld['expectedPayload'])['required'])).not.toContain('document_text');
   }, 120_000);
 
   it('answers 502, not 200, when the pod refuses a write with 403', async () => {

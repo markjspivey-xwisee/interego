@@ -19,7 +19,7 @@ import {
 import {
   classifyTask, coerceAnswers, checkParties, checkAllocation, checkActingUnderGrant, currentAllocationNote, planKindOf, performerOf, namedPartiesOf, coerceChange,
   normaliseForQuote, verifyQuote, verifyTaskQuotes, quoteStatusOf, coerceCapture, coerceRevision, applyTaskChanges, taskTextSha256,
-  buildTaskMapPacket, MIN_QUOTE_CHARS,
+  buildTaskMapPacket, CHAT_DOCUMENT_MAX_CHARS, MIN_QUOTE_CHARS,
   type ClassificationAnswers, type TaskForAllocation, type GrantState, type AllocationChange, type Allocation,
 } from '../src/work.js';
 import {
@@ -416,10 +416,27 @@ describe('quotes', () => {
     expect(packet.instructions).toMatch(/The capture refuses a map without draftedBy; "not-declared" is recorded as "not declared"/);
     // Two routes to record the reviewed draft: the web app's capture table, and a chat's relay-signed payload, which carries the text itself.
     expect(packet.next.review).toMatch(/capture table/);
-    expect(packet.next.relaySigned.payloadTemplate).toMatchObject({ intent: 'wrd:record-task-map', document: { title: 'AP SOP', sha256: sha256Hex(SOP), storeText: true } });
-    expect(packet.next.relaySigned.payloadTemplate['document_text']).toEqual(expect.any(String));
-    expect(packet.next.relaySigned.instructions).toMatch(/document_text goes inside the payload/);
-    expect(JSON.stringify(packet.next.relaySigned)).not.toContain('agent-acts-within-grant');
+    const chat = packet.next.relaySigned;
+    if (!('payloadTemplate' in chat)) throw new Error('a short document is offered the chat route');
+    expect(chat.payloadTemplate).toMatchObject({ intent: 'wrd:record-task-map', document: { title: 'AP SOP', sha256: sha256Hex(SOP), storeText: true } });
+    expect(chat.payloadTemplate['document_text']).toEqual(expect.any(String));
+    expect(chat.instructions).toMatch(/document_text goes inside the payload/);
+    expect(JSON.stringify(chat)).not.toContain('agent-acts-within-grant');
+    // The chat route carries the document inside a payload the relay signs, which the bridge takes only up to 64 KiB:
+    // the packet says so, and for a document over the chat limit it offers no payload to fill, only why and where instead.
+    expect(CHAT_DOCUMENT_MAX_CHARS).toBe(20_000);
+    expect(chat.maxDocumentChars).toBe(CHAT_DOCUMENT_MAX_CHARS);
+    expect(chat.instructions).toContain('A chat records a map for a document of up to 20,000 characters: the payload the relay signs is taken only up to 65,536 characters');
+    expect(packet.instructions.split('\n')[0]).toMatch(/next\.relaySigned how from a chat with the Interego connector, for a document of up to 20,000 characters\.$/);
+    expect('payloadTemplate' in buildTaskMapPacket({ documentTitle: 'At the limit', documentText: 'x'.repeat(CHAT_DOCUMENT_MAX_CHARS) }).next.relaySigned).toBe(true);
+    const long = buildTaskMapPacket({ documentTitle: 'Long SOP', documentText: `${SOP}\n${'y'.repeat(CHAT_DOCUMENT_MAX_CHARS)}` });
+    expect(long.request.documentChars).toBeGreaterThan(CHAT_DOCUMENT_MAX_CHARS);
+    expect(Object.keys(long.next.relaySigned).sort()).toEqual(['instructions', 'maxDocumentChars']);
+    expect(long.next.relaySigned.maxDocumentChars).toBe(CHAT_DOCUMENT_MAX_CHARS);
+    expect(long.next.relaySigned.instructions).toContain(`This document is ${long.request.documentChars.toLocaleString('en-US')} characters, more than the 20,000 a map recorded from a chat can carry`);
+    expect(long.next.relaySigned.instructions).toMatch(/Do not try to record it from the chat\..*next\.review/);
+    // The web app's route is unchanged for it.
+    expect(long.next.review).toBe(packet.next.review);
     expect(coerceCapture({ workflow: { title: 'x', unitLabel: 'y' }, tasks: [{ name: 'a', description: 'b', currentLevel: 'person', taskKind: 'invoice-matching', sourceQuotes: ['Match each invoice to its'] }], document: { title: 'd', sha256: sha256Hex(SOP), storeText: false } }, 'document'))
       .toMatchObject({ ok: false, why: expect.stringMatching(/^draftedBy is required/) });
   });

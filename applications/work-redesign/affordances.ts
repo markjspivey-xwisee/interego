@@ -22,6 +22,7 @@
 import type { IRI } from '@interego/core';
 import type { Affordance, AffordanceInput, AffordanceOutput } from '../_shared/affordance-mcp/index.js';
 import { payloadSummary, ENVELOPE_INTENTS } from './src/payloads.js';
+import { CHAT_DOCUMENT_MAX_CHARS } from './src/work.js';
 import type { EnvelopeIntent } from './src/records.js';
 
 const POD_INPUT: AffordanceInput = {
@@ -151,7 +152,7 @@ export const wrdAffordances: ReadonlyArray<Affordance> = [
       POD_INPUT,
     ],
     outputs: {
-      description: 'execution "client-required", sampling_performed false, writes_performed false, the instructions, the quote rule, the document, a draft template, and next: how the reviewed draft is recorded, from this bridge\'s web app (review) or from a chat with the Interego connector (relaySigned: the registry read to make first and the payload to have the relay sign, which carries document_text inside it with document.storeText true).',
+      description: `execution "client-required", sampling_performed false, writes_performed false, the instructions, the quote rule, the document, a draft template, and next: how the reviewed draft is recorded, from this bridge's web app (review) or from a chat with the Interego connector (relaySigned: for a document of up to ${CHAT_DOCUMENT_MAX_CHARS.toLocaleString('en-US')} characters, the registry read to make first and the payload to have the relay sign, which carries document_text inside it with document.storeText true; for a longer one, why not and where the map is recorded instead).`,
       properties: { execution: { type: 'string' }, sampling_performed: { type: 'boolean' }, writes_performed: { type: 'boolean' }, instructions: { type: 'string' }, quoteRule: { type: 'object' }, draftTemplate: { type: 'object' }, next: { type: 'object' } },
       required: ['execution', 'instructions'],
     },
