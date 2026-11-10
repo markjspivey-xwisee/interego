@@ -24,6 +24,7 @@ import { chatAgentJs } from '../../_shared/chat-agent/index.js';
 import { listenLoopback, type TestListener } from '../../_shared/vertical-bridge/listen-loopback.js';
 import { wrdAffordances, wrdDemoAffordances } from '../affordances.js';
 import { createWrdHandlers } from '../bridge/handlers.js';
+import { CHAT_DOCUMENT_MAX_CHARS } from '../src/work.js';
 import { attachUi, hostAllowlistGuard, parseEveryQueryPair, servedHostNames, UI_CSP, type UiReads, type UiSignIn } from '../bridge/ui.js';
 import { designSystemCss } from '../../_shared/design-system/index.js';
 import { SIBLING, INTEREGO_DEFAULTS, connectorUrlOf, renderSitePage, siteValues, type LandingOptions } from '../bridge/landing.js';
@@ -297,9 +298,11 @@ describe('work-redesign customer site', () => {
     const l = await production({ signIn: trusted() });
     const landing = await (await fetch(`${l.base}/`, { headers: { accept: BROWSER } })).text();
     const help = await (await fetch(`${l.base}/ui/help`)).text();
-    // The limit the app enforces (app.js CHAT_DOC_MAX) is the one every page and the README state.
+    // The limit the app enforces (app.js CHAT_DOC_MAX) is the one every page and the README state, and the one
+    // the task-map packet's own chat route (next.relaySigned) is offered up to.
     const max = Number(/^const CHAT_DOC_MAX = (\d+);$/m.exec(APP_JS)?.[1]);
     expect(max).toBe(20_000);
+    expect(max).toBe(CHAT_DOCUMENT_MAX_CHARS);
     const limit = `${max.toLocaleString('en-US')} characters`;
     for (const [page, html] of [['landing', landing], ['help', help]] as const) {
       for (const s of [
