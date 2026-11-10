@@ -52,6 +52,25 @@ that the fingerprint in a judge's signed request can be checked only by this
 bridge, not by someone reading the record on their own. The README and the
 tests now speak of a person as they.
 
+The web app is now known by its OAuth client, where the relay says which
+client asked. The relay can sign the id of the OAuth client whose access
+token made a request, and Practice Evidence now reads a request as its own
+web app's only when that client is the web app's own: the address of its
+client metadata document, or, on a deployment that registers dynamically,
+the id the relay gave it. Any other client is a chat, whatever it calls
+itself, so an app that registers under the name "Practice Evidence" no
+longer reads the weights and the pass mark or takes the decisive acts. Where
+the relay does not say which client asked, the agent's name decides, as
+before.
+
+Not covered: the client id shows whose sign-in token was presented, not that
+the web page or a person made the request, so whatever holds the web app's
+token is read as the web app. A deployment that registers dynamically knows
+only the id it registered since it started, so after a restart, or on another
+copy of the bridge, a person signed in before is read as a chat until they
+sign in again. With a relay that does not sign the client id, an app named
+"Practice Evidence" is still read as the web app.
+
 ## 2026-11-09 — Practice Evidence: closing the other ways the stakes reached a chat
 
 A review of the change below found that the weights and the pass mark still

@@ -131,7 +131,7 @@ import {
   type DemoRoleName, type DemoSigner, type HourlyLimit, type PevDeps,
 } from './handlers.js';
 import { didDocumentFetch, operatorPodFetch } from './pod-helpers.js';
-import { attachUi, contactUrlOf, hostAllowlistGuard, relayCallFetch } from './ui.js';
+import { attachUi, contactUrlOf, hostAllowlistGuard, relayCallFetch, webAppClients } from './ui.js';
 
 const say = (line: string): void => { process.stdout.write(`${line}\n`); };
 const warn = (line: string): void => { process.stderr.write(`${line}\n`); };
@@ -353,13 +353,17 @@ async function main(): Promise<void> {
     relayAddresses: relayAddresses.map((x) => x.toLowerCase()), identityHost,
     fetchDidDocument: cachedDidDocuments(didDocumentFetch(globalThis.fetch.bind(globalThis))),
   } : undefined;
+  // This web app's own OAuth client ids at the relay: its metadata document URL, and an id a dynamic
+  // registration gives it here. The handlers read a relay-signed `client_id` against them; the web
+  // UI's sign-in adds a registered id.
+  const webApp = webAppClients(base);
   const deps: PevDeps = {
     platformWallet, platformKeyKind,
     trustedPlatformAddresses: trusted.filter((x) => isAddress(x)),
     ...(recordKey ? { recordKey } : {}),
     adminAddresses: [...admins.filter((x) => isAddress(x)), ...(demoAdmin ? [demoAdmin.address] : [])],
     ...(relayDelegation !== undefined ? { relayDelegation, adminDids } : {}),
-    chatAgentsDecide,
+    chatAgentsDecide, isWebAppClient: webApp.has,
     ...(relayUrl !== undefined ? { relayUrl } : {}),
     fetchFn: operatorPodFetch(defaultPodUrl, writeSecret, baseFetch),
     holderFetchFn: baseFetch,
@@ -402,7 +406,7 @@ async function main(): Promise<void> {
         ontologyTurtle: readOntologyTurtle, shapesTurtle: readShapesTurtle,
       });
       attachUi(a, uiSignIn && relayUrl !== undefined
-        ? { interego: { relayUrl, deploymentUrl: base, relayFetch: relayCallFetch(baseFetch, { privateRelay: relayIsLoopback }), ...(relayDelegation !== undefined ? { relayDelegation } : {}) }, ...contact }
+        ? { interego: { relayUrl, deploymentUrl: base, relayFetch: relayCallFetch(baseFetch, { privateRelay: relayIsLoopback }), ...(relayDelegation !== undefined ? { relayDelegation } : {}), webAppClients: webApp }, ...contact }
         : contact);
     },
   });
@@ -428,7 +432,7 @@ async function main(): Promise<void> {
   say(`  admins: ${deps.adminAddresses?.length ?? 0} address(es), ${relayAddresses.length > 0 ? adminDids.length : 0} Interego DID(s)`);
   const decisive = `${[...DECISIVE_ACTS].join(', ')}, and ${[...DECISIVE_ON_ANOTHERS_ATTEMPT].join(', ')} on another learner's attempt`;
   say(relayAddresses.length > 0 && identityHost !== undefined
-    ? `  Interego sign-in: ON, relay-attested, not user-held. A request the relay (${relayAddresses.join(', ')}) signs for an agent on ${identityHost} acts as that agent's controller there, a did:web:${identityHost}:users:… person; whoever holds that relay delegation key, or controls ${identityHost}, can act as any person on this bridge. Records made this way carry authority relay-delegated. ${chatAgentsDecide ? `Chat agents may take ${decisive} (PEV_CHAT_AGENTS_DECIDE=1).` : `Only this bridge's web UI (${WEB_UI_AGENT_PREFIX}… agents) may take ${decisive}; PEV_CHAT_AGENTS_DECIDE=1 lets chat agents.`} Relay: ${relayUrl ?? 'PEV_RELAY_URL not set'}`
+    ? `  Interego sign-in: ON, relay-attested, not user-held. A request the relay (${relayAddresses.join(', ')}) signs for an agent on ${identityHost} acts as that agent's controller there, a did:web:${identityHost}:users:… person; whoever holds that relay delegation key, or controls ${identityHost}, can act as any person on this bridge. Records made this way carry authority relay-delegated. ${chatAgentsDecide ? `Chat agents may take ${decisive} (PEV_CHAT_AGENTS_DECIDE=1).` : `Only this bridge's web UI (its own OAuth client, ${base}/ui/oauth/client.json or the id it registered, where the relay signs which client asked, and a ${WEB_UI_AGENT_PREFIX}… agent) may take ${decisive}; PEV_CHAT_AGENTS_DECIDE=1 lets chat agents.`} Relay: ${relayUrl ?? 'PEV_RELAY_URL not set'}`
     : `  Interego sign-in: off (PEV_TRUSTED_RELAY_ADDRESSES is empty): only keys a person holds sign acts${adminDids.length > 0 ? `; the ${adminDids.length} admin DID(s) in PEV_ADMIN_DIDS cannot act until it is on` : ''}`);
   if (relayAddresses.length > 0) {
     say(uiSignIn

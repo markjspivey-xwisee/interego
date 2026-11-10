@@ -31,6 +31,7 @@
 import { describe, it, expect } from 'vitest';
 import { importWallet, sha256, sha256Hex, signMessageRaw, type Wallet } from '@interego/core';
 import { createPevHandlers, type PevDeps } from '../bridge/handlers.js';
+import { webAppClients } from '../bridge/ui.js';
 import { rubricHash, scenarioHash, coerceScenario } from '../src/practice.js';
 import { DEMO_LINES, demoKey, demoScenarioInput, inMemoryPod, scriptedPracticeModel } from '../demo/run.js';
 import { PEV_ACTION, toolNameOf } from '../src/ontology.js';
@@ -100,17 +101,29 @@ const actionOf = (tool: string): string => {
   return a;
 };
 
-/** What the relay posts for an agent: the caller's fields (its own agent_id and underscore keys dropped), then the session's. */
-async function relayPair(agentId: string, tool: string, fields: Out = {}, by: Wallet = RELAY): Promise<Out> {
+/**
+ * What the relay posts for an agent: the caller's fields (its own agent_id and client_id and underscore keys dropped),
+ * then the session's: its agent, its pod and, when the session's access token names an OAuth client, that client's id
+ * (`client`; `undefined`, the key left out, as on a relay that does not sign it or a request with no OAuth client).
+ */
+async function relayPair(agentId: string, tool: string, fields: Out = {}, by: Wallet = RELAY, client?: unknown): Promise<Out> {
   const payload: Out = { v: 1, action: actionOf(tool), nonce: nonce(), pod_url: POD, ...fields };
-  const reserved = new Set(['agent_id', 'timestamp', 'subject_pod_url', 'payload']);
+  const reserved = new Set(['agent_id', 'timestamp', 'subject_pod_url', 'payload', 'client_id']);
   const safe = Object.fromEntries(Object.entries(payload).filter(([k]) => !k.startsWith('_') && !reserved.has(k)));
-  const sp = JSON.stringify({ ...safe, agent_id: agentId, subject_pod_url: 'https://pods.example.test/self/', timestamp: new Date().toISOString() });
+  const sp = JSON.stringify({
+    ...safe, agent_id: agentId, subject_pod_url: 'https://pods.example.test/self/', ...(client !== undefined ? { client_id: client } : {}), timestamp: new Date().toISOString(),
+  });
   return { _signed_payload: sp, _signature: await signMessageRaw(by, `sha256:${sha256Hex(sp)}`) };
 }
 async function ract(h: Handlers, tool: string, agentId: string, fields: Out = {}, extra: Out = {}): Promise<Out> {
   return (await h[tool]!({ ...(await relayPair(agentId, tool, fields)), ...extra })) as Out;
 }
+/** As `ract`, by a relay that signs which OAuth client asked (`client`). */
+async function cact(h: Handlers, tool: string, agentId: string, client: unknown, fields: Out = {}): Promise<Out> {
+  return (await h[tool]!(await relayPair(agentId, tool, fields, RELAY, client))) as Out;
+}
+/** This bridge's web app's own client id: its Client ID Metadata Document on the deployment URL. */
+const OWN_CLIENT = 'https://bridge.example.test/ui/oauth/client.json';
 async function kact(h: Handlers, tool: string, w: Wallet, fields: Out = {}): Promise<Out> {
   const envelope = await signEnvelope(w, { v: 1, action: actionOf(tool), issuedAt: new Date().toISOString(), nonce: nonce(), podUrl: POD, ...fields });
   return (await h[tool]!({ envelope })) as Out;
@@ -647,6 +660,50 @@ describe('answers to a chat assistant leave out the scoring stakes; the web app 
     expect((one['scenario'] as Out)['assessmentUse']).toBe('feedback-only');
     // A list that holds a scored scenario too still says so.
     chatAnswer(await ract(H, 'pev.list_scenarios', P.learner.claude), 'the list from Claude');
+  }, SLOW);
+});
+
+describe('a relay that signs which OAuth client asked: only this bridge\'s own client is its web app', () => {
+  it('the web app\'s own client id with its agent reads the stakes and decides; any other client id is a chat, whatever its agent is called', async () => {
+    const id = P.reviewer.did.slice(P.reviewer.did.lastIndexOf(':') + 1);
+    // This bridge's own client (its Client ID Metadata Document), with the web app's agent: the web app.
+    webAnswer(await cact(H, 'pev.list_scenarios', P.reviewer.web, OWN_CLIENT), 'the list from the web app\'s own client');
+    ok(await cact(H, 'pev.register_role', P.admin.web, OWN_CLIENT, { address: userDid('u-pk-00000000ab10'), role: 'learner', change: 'add' }));
+    // Any other client with the web app's agent name: another app that registered as "Practice Evidence", a dynamically
+    // registered client, the web app of another deployment, and a client id that is not a usable one.
+    const others: unknown[] = ['0123456789abcdef0123456789abcdef', 'https://other-app.example.test/client.json', 'https://bridge.example.test/ui/oauth/client.json#x',
+      'https://bridge.example.test.evil.example/ui/oauth/client.json', '', null, 42];
+    for (const client of others) {
+      chatAnswer(await cact(H, 'pev.list_scenarios', P.reviewer.web, client), `the list from client ${JSON.stringify(client)}`);
+      const decided = refused(await cact(H, 'pev.register_role', P.admin.web, client, { address: userDid('u-pk-00000000ab11'), role: 'learner', change: 'add' }),
+        'chat-agent-may-not-decide', `a decisive act from client ${JSON.stringify(client)}`);
+      if (typeof client === 'string') expect(decided['clientId']).toBe(client);
+    }
+    // The web app's own client with another agent: both must hold, so a relay that signed a caller's own client_id
+    // (before the relay reserved it) reads no wider than the agent rule.
+    for (const chat of [P.reviewer.claude, agent(`practice-evidence-helper-${id}`, P.reviewer.did)]) {
+      chatAnswer(await cact(H, 'pev.list_scenarios', chat, OWN_CLIENT), `the list from ${chat} with the web app's client id`);
+    }
+    // A relay that does not say which client asked: the agent rule, as before.
+    webAnswer(await ract(H, 'pev.list_scenarios', P.reviewer.web), 'the list from the web app\'s agent, no client id');
+    chatAnswer(await ract(H, 'pev.list_scenarios', P.reviewer.claude), 'the list from Claude, no client id');
+    // A signed payload that carries a client id is read as any other: the person is the agent's controller.
+    const listed = ok(await cact(H, 'pev.get_attempt', P.learner.web, OWN_CLIENT));
+    expect(listed['signedAs']).toMatchObject({ principal: P.learner.did });
+  }, SLOW);
+
+  it('an id the web app registered by dynamic registration is its own on the bridge that registered it, and only there', async () => {
+    const registered = webAppClients('http://127.0.0.1:6110');
+    const H2 = createPevHandlers({ ...base, deploymentUrl: 'http://127.0.0.1:6110', isWebAppClient: registered.has }) as Handlers;
+    const dcr = 'fedcba9876543210fedcba9876543210';
+    chatAnswer(await cact(H2, 'pev.list_scenarios', P.reviewer.web, dcr), 'the list before the bridge registered that id');
+    registered.add(dcr);
+    webAnswer(await cact(H2, 'pev.list_scenarios', P.reviewer.web, dcr), 'the list from the id it registered');
+    // Its metadata document's URL on its own deployment is its own too; the https bridge's is not.
+    webAnswer(await cact(H2, 'pev.list_scenarios', P.reviewer.web, 'http://127.0.0.1:6110/ui/oauth/client.json'), 'its own CIMD URL');
+    chatAnswer(await cact(H2, 'pev.list_scenarios', P.reviewer.web, OWN_CLIENT), 'another deployment\'s CIMD URL');
+    // Another process (a restart, a replica) that has not registered it reads it as a chat until the person signs in again.
+    chatAnswer(await cact(H, 'pev.list_scenarios', P.reviewer.web, dcr), 'the id another bridge registered');
   }, SLOW);
 });
 

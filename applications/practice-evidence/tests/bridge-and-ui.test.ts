@@ -1481,7 +1481,8 @@ describe('server.ts composes and listens; every other file keeps to its rules', 
     // The landing page and the guide follow that sign-in and nothing else, as the web app's Connect dialog does:
     // no separate connector option, so a relay trusted without PEV_RELAY_URL gets copy and paste on all three.
     expect(server).not.toMatch(/chatConnector|connector:/);
-    expect(server).toMatch(/\.\.\.\(relayDelegation !== undefined \? \{ relayDelegation \} : \{\}\) \}, \.\.\.contact \}\n\s*: contact\);/);
+    // The sign-in carries the web app's own client ids, which the handlers read a relay-signed client_id against.
+    expect(server).toMatch(/\.\.\.\(relayDelegation !== undefined \? \{ relayDelegation \} : \{\}\), webAppClients: webApp \}, \.\.\.contact \}\n\s*: contact\);/);
     expect(server).toContain("but the web app, the landing page and the guide offer no Interego sign-in and no connector, only copy and paste. Set PEV_RELAY_URL");
     expect(server).toContain("const uiSignIn = relayUrl !== undefined && relayAddresses.length > 0 && identityHost !== undefined;");
     expect(server).toContain('relayFetch: relayCallFetch(baseFetch, { privateRelay: relayIsLoopback })');

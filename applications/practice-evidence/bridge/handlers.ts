@@ -139,14 +139,23 @@ export interface PevDeps {
    */
   readonly relayDelegation?: RelayDelegationPolicy;
   /**
-   * Whether a chat agent signed in through the relay (any agent whose slug does not start with
-   * `practice-evidence-`, this bridge's own web UI) may take the decisive acts (`DECISIVE_ACTS`:
+   * Whether a chat agent signed in through the relay (any agent but this bridge's own web UI, see
+   * `isWebAppAgent`: its own OAuth client where the relay signs which client asked, and the agent
+   * `practice-evidence-<user id>`) may take the decisive acts (`DECISIVE_ACTS`:
    * register_role, ratify_scenario, countersign_attempt, override_attempt, retract_review) and
    * redact_attempt on another learner's attempt. Default false (PEV_CHAT_AGENTS_DECIDE=1 sets it).
    */
   readonly chatAgentsDecide?: boolean;
   /** The relay a person signs in through (PEV_RELAY_URL), reported to the web UI with the sign-in route. */
   readonly relayUrl?: string;
+  /**
+   * Whether an OAuth client id is this bridge's own web app's at the relay, read when a payload the
+   * relay signed says which client's access token asked (`client_id`, see `isWebAppAgent`).
+   * server.ts passes ui.ts `webAppClients`: the web app's Client ID Metadata Document URL,
+   * `<deploymentUrl>/ui/oauth/client.json`, or an id a dynamic registration gave it in this process.
+   * Default: that URL on `deploymentUrl`, when there is one; otherwise no client id is this web app's.
+   */
+  readonly isWebAppClient?: (clientId: string) => boolean;
   /** Operator pod transport. server.ts passes operatorWriteFetch(…); tests pass an in-memory pod. */
   readonly fetchFn?: typeof fetch;
   /** Holder-copy writes. Never carries the operator's credential. Defaults to `fetchFn`. */
@@ -360,6 +369,13 @@ interface Ctx {
   readonly assertPublicPod: (podUrl: string) => Promise<void>;
   /** The keyed stand-ins for rubric and scenario hashes in an answer without the stakes (`answerHashKey`). */
   readonly hashMask: () => Promise<HashMask>;
+  /** `PevDeps.isWebAppClient`, or its default. */
+  readonly isWebAppClient: (clientId: string) => boolean;
+}
+
+/** This web app's Client ID Metadata Document URL on `deploymentUrl` (ui.ts serves it at that path). */
+export function webAppClientIdUrl(deploymentUrl: string): string {
+  return `${deploymentUrl.replace(/\/+$/, '')}/ui/oauth/client.json`;
 }
 
 /**
@@ -455,6 +471,10 @@ function makeContext(deps: PevDeps): Ctx {
     writes: { n: 0 },
     actReadBudgetBytes: deps.actReadBudgetBytes ?? ACT_READ_BUDGET_BYTES,
     assertPublicPod: deps.assertPublicPod ?? assertSafeFetchTarget,
+    isWebAppClient: deps.isWebAppClient ?? ((): ((id: string) => boolean) => {
+      const own = deps.deploymentUrl !== undefined ? webAppClientIdUrl(deps.deploymentUrl) : null;
+      return (id) => own !== null && id === own;
+    })(),
     hashMask: ((): (() => Promise<HashMask>) => {
       let kept: Promise<HashMask> | null = null;
       return () => (kept ??= answerHashKey(deps.platformWallet, deps.recordKey).then(hashMask));
@@ -619,20 +639,38 @@ export const DECISIVE_ON_ANOTHERS_ATTEMPT: ReadonlySet<PevActionKey> = new Set<P
  * The agent slug prefix of this bridge's own web UI: the relay names an OAuth client's agent
  * `<client name>-<userId>`, and the UI registers as `practice-evidence`, so its agent is exactly
  * `practice-evidence-<the person's user id>` (`isWebAppAgent`). Another client can register under
- * the same name, so this keeps a chat agent a person connected for other work from deciding here
- * or reading the stakes unasked; it does not prove the page made the request.
+ * the same name, so the name alone does not tell the web app from it; the client id the relay signs
+ * does, where it signs one.
  */
 export const WEB_UI_AGENT_PREFIX = 'practice-evidence-';
 
 /**
- * Whether the Interego relay signed this request for this bridge's own web UI: the agent is
- * exactly `practice-evidence-<user id>`, the user id being the person's own (the controller the
- * agent's DID document names, which `openRelayDelegated` checked). A longer slug that starts the
- * same way (`practice-evidence-helper-<user id>`, a client registered as "Practice Evidence
- * Helper") is another client's agent.
+ * The OAuth client the relay says asked, from the payload it signed: `client_id`, the client its
+ * session's access token was issued to, which the relay sets and a caller cannot (it drops a
+ * caller's own and strips the session field it comes from). Absent when the relay does not say: a
+ * relay without that change, or a request not made with an OAuth access token (REST, the legacy
+ * key, an observer's follow-up act). Never read as "the web app".
  */
-function isWebAppAgent(ctx: Ctx, relay: RelayAttestation): boolean {
+function signedClientOf(signed: Readonly<Record<string, unknown>>): { readonly said: false } | { readonly said: true; readonly clientId: unknown } {
+  return Object.prototype.hasOwnProperty.call(signed, 'client_id') ? { said: true, clientId: signed['client_id'] } : { said: false };
+}
+
+/**
+ * Whether the Interego relay signed this request for this bridge's own web UI. When the signed
+ * payload says which OAuth client asked (`client_id`), that client must be this bridge's own
+ * (`isWebAppClient`, compared exactly): any other client is a chat, whatever its agent is called.
+ * And the agent is exactly `practice-evidence-<user id>`, the user id being the person's own (the
+ * controller the agent's DID document names, which `openRelayDelegated` checked): with no client
+ * id that is the whole test, as before, and with one it still holds, so a relay that signed a
+ * caller's own `client_id` (before the relay reserved it) reads no wider than the agent rule. A
+ * longer slug that starts the same way (`practice-evidence-helper-<user id>`, a client registered
+ * as "Practice Evidence Helper") is another client's agent. It shows which client's token was
+ * presented, not that the page itself or a person made the request.
+ */
+function isWebAppAgent(ctx: Ctx, relay: RelayAttestation, signed: Readonly<Record<string, unknown>>): boolean {
   if (ctx.relay === null) return false;
+  const client = signedClientOf(signed);
+  if (client.said && !(typeof client.clientId === 'string' && client.clientId !== '' && ctx.isWebAppClient(client.clientId))) return false;
   const slug = agentSlugOf(relay.agentId, ctx.relay.identityHost);
   const user = userIdOfUserDid(relay.principal, ctx.relay.identityHost);
   return slug !== null && user !== null && slug === `${WEB_UI_AGENT_PREFIX}${user}`;
@@ -645,9 +683,9 @@ function isWebAppAgent(ctx: Ctx, relay: RelayAttestation): boolean {
  * `agent_id` a caller sends is dropped before it signs), and which `openRelayDelegated` checked
  * against that agent's DID document. Nothing a caller adds to a request, signed or not, changes it.
  */
-function isChatAgent(ctx: Ctx, relay: RelayAttestation | undefined): boolean {
+function isChatAgent(ctx: Ctx, relay: RelayAttestation | undefined, signed: Readonly<Record<string, unknown>>): boolean {
   if (relay === undefined || ctx.relay === null) return false;
-  return !isWebAppAgent(ctx, relay);
+  return !isWebAppAgent(ctx, relay, signed);
 }
 
 /**
@@ -666,7 +704,7 @@ async function showsStakes(call: Call, s: Signed | null): Promise<boolean> {
   const { ctx } = call;
   call.stakesShown = false;
   let reading: StakesReading = 'unsigned';
-  if (s !== null && s.relay !== undefined) reading = isChatAgent(ctx, s.relay) ? 'chat-agent' : 'reads';
+  if (s !== null && s.relay !== undefined) reading = isChatAgent(ctx, s.relay, s.payload) ? 'chat-agent' : 'reads';
   else if (s !== null) {
     const roles = (await rolesOn(call, s.pod)).of(s.signer);
     if (roles.has('agent')) reading = 'agent-key';
@@ -747,11 +785,13 @@ function stakesNotHere(call: Call, what: string): Declined {
  * chat agents decide: null when the act may go on (a key-held signer, this bridge's web UI, or
  * PEV_CHAT_AGENTS_DECIDE=1).
  */
-function chatAgentRefusal(ctx: Ctx, relay: RelayAttestation | undefined): Declined | null {
-  if (relay === undefined || ctx.deps.chatAgentsDecide === true || !isChatAgent(ctx, relay)) return null;
+function chatAgentRefusal(ctx: Ctx, relay: RelayAttestation | undefined, signed: Readonly<Record<string, unknown>>): Declined | null {
+  if (relay === undefined || ctx.deps.chatAgentsDecide === true || !isChatAgent(ctx, relay, signed)) return null;
+  const client = signedClientOf(signed);
+  const clientId = client.said && typeof client.clientId === 'string' ? client.clientId : null;
   return decline(403,
-    `This act is decisive here (it changes who may do what, puts a reviewer's name behind a rubric or an attempt, withdraws a review, or removes another learner's transcript), and the Interego relay signed it for ${relay.agentId}, a chat agent. Such acts are taken from this bridge's own web UI (an agent named ${WEB_UI_AGENT_PREFIX}…) unless the operator sets PEV_CHAT_AGENTS_DECIDE=1. Sign in on this bridge's web UI and take it there.`,
-    'chat-agent-may-not-decide', { env: 'PEV_CHAT_AGENTS_DECIDE' }, { agentId: relay.agentId });
+    `This act is decisive here (it changes who may do what, puts a reviewer's name behind a rubric or an attempt, withdraws a review, or removes another learner's transcript), and the Interego relay signed it for ${relay.agentId}${clientId !== null ? ` at the request of the OAuth client ${clientId.slice(0, 200)}` : ''}, a chat agent. Such acts are taken from this bridge's own web UI (its own OAuth client, whose agent is named ${WEB_UI_AGENT_PREFIX}…) unless the operator sets PEV_CHAT_AGENTS_DECIDE=1. Sign in on this bridge's web UI and take it there.`,
+    'chat-agent-may-not-decide', { env: 'PEV_CHAT_AGENTS_DECIDE' }, { agentId: relay.agentId, ...(clientId !== null ? { clientId: clientId.slice(0, 200) } : {}) });
 }
 
 /**
@@ -773,7 +813,7 @@ async function openEnvelope(ctx: Ctx, args: Record<string, unknown>, key: PevAct
       const opened = await openRelayDelegated(found.signedPayload, found.signature, relay);
       if (!opened.ok) throw decline(opened.status, opened.message, opened.code);
       const limited = DECISIVE_ACTS.has(key)
-        ? chatAgentRefusal(ctx, { authority: 'relay-delegated', principal: opened.principal, agentId: opened.agentId, relaySigner: opened.relaySigner })
+        ? chatAgentRefusal(ctx, { authority: 'relay-delegated', principal: opened.principal, agentId: opened.agentId, relaySigner: opened.relaySigner }, opened.payload)
         : null;
       if (limited !== null) throw limited;
       return relayDelegatedEnvelope(opened, checked);
@@ -2917,7 +2957,7 @@ async function redactAttempt(call: Call, args: Record<string, unknown>): Promise
     const isLearner = samePrincipal(a.learner.address, s.signer);
     if (!isLearner && !isAdmin(ctx, s.signer)) throw decline(403, 'Only the learner or an admin may remove the transcript.', 'not-learner-or-admin');
     // Removing another learner's transcript is permanent, so decisive (DECISIVE_ON_ANOTHERS_ATTEMPT): not from a chat agent unasked.
-    const limited = isLearner ? null : chatAgentRefusal(ctx, s.relay);
+    const limited = isLearner ? null : chatAgentRefusal(ctx, s.relay, s.payload);
     if (limited !== null) throw limited;
     if (!isLearner && why === undefined) throw decline(400, 'An admin removing a learner\'s transcript says why (10 to 1000 characters).', 'why-required-for-admin');
     const kept = { transcriptHash: a.transcriptHash ?? null, turns: a.turns.length, quotes: a.judgments.reduce((n, j) => n + j.criteria.reduce((m, c) => m + c.quotes.length, 0), 0) };
