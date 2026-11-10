@@ -179,7 +179,8 @@ function shownWhere(line: string, shown: string, s: string): string[] {
 /**
  * A read-back quote that checked out, as an answer that masks text shows it: the stretch of the
  * learner's line it was matched against (its `turnIndex`, `start` and `end`, or, where an answer
- * leaves those out, found again as `verifyQuote` found it), as every view of that line shows it
+ * leaves those out, found again as `verifyQuote` found it, in its `turnIndex` when the answer gives
+ * that alone), as every view of that line shows it
  * (`maskText`). `normalised` is that stretch of the normalised line, which the judge packet and an
  * attempt's `normalisedText` show; `text` is the same stretch of the line as stored, which an
  * attempt's `text` shows, where the saved words sit there and are shown the same way, and otherwise
@@ -195,7 +196,7 @@ function readBackAsShown(q: Record<string, unknown>, k: Keyer, turns: readonly Q
   const normalised = normaliseForQuote(text);
   const found = isOffset(q['turnIndex']) && isOffset(q['start']) && isOffset(q['end'])
     ? { verified: true, turnIndex: q['turnIndex'], start: q['start'], end: q['end'] }
-    : verifyQuote({ text }, turns);
+    : verifyQuote({ text, ...(isOffset(q['turnIndex']) ? { turnIndex: q['turnIndex'] } : {}) }, turns);
   if (!found.verified || found.turnIndex === undefined || found.start === undefined || found.end === undefined) return null;
   const { turnIndex, start, end } = found;
   const line = turns.find((t) => t.speaker === 'learner' && t.index === turnIndex)?.text;

@@ -1,5 +1,30 @@
 # Changelog
 
+## 2026-11-10 — Practice Evidence: a judge's saved answer shows a quote from the turn it was found in
+
+A peer review, run on fictional data, found that a judge's own answer after
+saving and the session could show one saved quote two ways. A learner's first
+line held 16 hex digits written out on their own, and a later line held the
+same digits as part of a calibration kind, which every view shows as a
+stand-in. A judge copied a quote from the later line, stand-in included, and
+said it came from that turn. It was read back and checked out there, and the
+session showed it as that line shows it. But the judge's answer after saving
+gave the quote without its place, so it was looked for again, found first in
+the earlier line, and shown as that line shows it: with the hex digits the
+stand-in stands for. Nothing was shown that the earlier line does not show
+anyway, but the two answers disagreed, and the saved answer showed which
+digits that stand-in stands for.
+
+Now the judge's answer after saving gives each quote's place: the turn it was
+found in and where it starts and ends there. These carry none of the stakes,
+and the judge chose the turn. A quote that was read back is shown from that
+place, as the session and the review queue show it. An answer that gives a
+quote's turn but not where in it is shown from the first place in that turn.
+
+Not covered: an answer that gives a read-back quote with no place at all is
+still shown from the first turn that holds those words. No answer does that
+today.
+
 ## 2026-11-10 — Practice Evidence: the demo rubric's top level for asking their view
 
 The same peer review found a gap in the demo scenario's rubric. The criterion

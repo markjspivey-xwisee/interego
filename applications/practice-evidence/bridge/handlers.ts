@@ -2290,7 +2290,8 @@ async function recordJudgmentOn(call: Call, s: Signed, h: AttemptHead, j: Judgme
 
 /**
  * What a judge's own assistant is told once it saved from the packet: that the save was kept,
- * where, and how the platform checked the levels and quotes it sent. Nothing else. Not the
+ * where, and how the platform checked the levels and quotes it sent, each quote with the place in
+ * the learner's lines it was matched against. Nothing else. Not the
  * judgment's provisional result, which holds the stakes the packet's rubric leaves out (each
  * criterion's weight and level value, the percent, the pass mark and the levels a pass needs);
  * not another judge's levels (the agreement, or the first judgment's result); not what the next
@@ -2305,7 +2306,14 @@ function judgmentSavedOut(body: AttemptBody, w: Written, j: JudgmentResult): Out
       index: j.index, judgedAt: j.judgedAt, judge: { kind: j.judge.kind },
       criteria: j.criteria.map((c) => ({
         criterionId: c.criterionId, levelId: c.levelId, status: c.status, ...(c.why !== undefined ? { why: c.why } : {}),
-        quotes: c.quotes.map((q) => ({ text: q.text, verified: q.verified, ...(q.why !== undefined ? { why: q.why } : {}), ...(q.readBack ? { readBack: true } : {}) })),
+        // A quote's place in the learner's lines (its turn, and its start and end in that turn normalised) holds no stake,
+        // and the judge chose the turn: with it, a quote that was read back is shown from the stretch it was matched
+        // against (`maskAnswerHashes`), as the session shows it, and not from the first turn that holds the same words.
+        quotes: c.quotes.map((q) => ({
+          text: q.text, verified: q.verified,
+          ...(q.turnIndex !== undefined ? { turnIndex: q.turnIndex } : {}), ...(q.start !== undefined ? { start: q.start } : {}), ...(q.end !== undefined ? { end: q.end } : {}),
+          ...(q.why !== undefined ? { why: q.why } : {}), ...(q.readBack ? { readBack: true } : {}),
+        })),
       })),
       unverifiedCriteria: j.unverifiedCriteria,
     },

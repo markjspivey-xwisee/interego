@@ -1166,6 +1166,67 @@ describe('a rubric fingerprint a caller writes into text comes back as a stand-i
     }
     for (const r of [chat, queue]) expect([JSON.stringify(r).includes(own), JSON.stringify(r).includes(own16)]).toEqual([false, false]);
   }, SLOW);
+
+  it('a read-back quote whose words sit in two turns is shown from the turn it was matched in, also where an answer gives that turn alone', () => {
+    const m = hashMask(Buffer.alloc(32, 17));
+    const scope = { scenarioIri: 'urn:pev:scenario:unit', version: 1 };
+    const k = m.version(scope.scenarioIri, scope.version);
+    const h16 = RAW.rubric.slice(0, 16);
+    // T1 holds the kind's hex as written, with nothing around it; T3 the kind itself, which every view shows as a stand-in.
+    const turns = [
+      { index: 1, speaker: 'learner' as const, text: `I noted ${h16}/ for this step and we should agree a new date.` },
+      { index: 2, speaker: 'counterpart' as const, text: 'Go on.' },
+      { index: 3, speaker: 'learner' as const, text: `Then I read pev/${h16}/ for this step and we should agree a new date.` },
+    ];
+    const attemptIri = 'urn:pev:attempt:unit-two-turns';
+    const shownT3 = maskText(turns[2]!.text, k);
+    const copied = shownT3.slice(shownT3.indexOf('pev/') + 4, shownT3.indexOf(' and we'));
+    const r = verifyQuoteAsShown({ text: copied, turnIndex: 3 }, turns, quoteAsStored(k, turns.map((t) => t.text)));
+    expect([r.verified, r.readBack, r.turnIndex, r.text]).toEqual([true, true, 3, `${h16}/ for this step`]);
+    const shown = (q: Out): string => (maskAnswerHashes({ ...scope, attemptIri, quotes: [q] }, m, scope, new Map([[attemptIri, turns]])) as { quotes: { text: string }[] }).quotes[0]!.text;
+    // Its place in full, or its turn alone: shown as T3 shows it, never as the bare hex T1 holds.
+    expect(shown({ text: r.text, verified: true, readBack: true, turnIndex: 3, start: r.start, end: r.end })).toBe(copied);
+    expect(shown({ text: r.text, verified: true, readBack: true, turnIndex: 3 })).toBe(copied);
+  });
+
+  it('a judge\'s own saved answer shows a read-back quote from the turn it was matched in, as the session does, when the same words sit in another turn', async () => {
+    // Version 1's rubric, so the kind's hex T1 holds as written is not the scored demo rubric's, which no chat answer holds bare.
+    const input = { ...demoScenarioInput('missed-deadline', 1), scenarioKey: 'quoted-in-two-turns', title: 'The same words in two turns' };
+    const S = coerceScenario(input);
+    if (!('value' in S)) throw new Error('the scenario does not coerce');
+    const own16 = rubricHash(S.value.rubric).slice(0, 16);
+    const pub = ok(await ract(H, 'pev.author_scenario', P.author.web, { scenario: input, status: 'published', draftAssistance: { used: false } }));
+    const sc = String(pub['scenarioIri']);
+    ok(await ract(H, 'pev.ratify_scenario', P.reviewer.web, { scenarioIri: sc, version: 1, scenarioHash: pub['scenarioHash'] }));
+    const start = ok(await ract(H, 'pev.start_attempt', P.learner.claude, { scenarioIri: sc, scenarioVersion: 1, coached: false }));
+    const a = String(start['attemptIri']);
+    // As the peer review found it: T1 holds the kind's hex as written, with nothing around it; T3 the kind itself.
+    const first = ok(await ract(H, 'pev.say', P.learner.claude, { attemptIri: a, turnIndex: 1, text: `I noted ${own16}/ for this step and we should agree a new date.` }));
+    expect(first['nextTurnIndex']).toBe(3);
+    const third = ok(await ract(H, 'pev.say', P.learner.claude, { attemptIri: a, turnIndex: 3, text: `Then I read pev/${own16}/ for this step and we should agree a new date.` }));
+    ok(await ract(H, 'pev.end_conversation', P.learner.claude, { attemptIri: a, turnIndex: third['nextTurnIndex'] }));
+    // The judge's chat copies the kind's stand-in on from T3 as the packet shows it, and says it is from T3.
+    const packet = ok(await ract(H, 'pev.judge_packet', P.judge.claude, { attemptIri: a }));
+    const t3 = String((packet['request'] as Out)['user']).split('\n').find((l) => l.startsWith('[T3 LEARNER] '))!;
+    const fromPacket = t3.slice(t3.indexOf('pev/') + 4, t3.indexOf(' and we'));
+    expect([fromPacket.includes(own16), fromPacket.endsWith('/ for this step')]).toEqual([false, true]);
+    type Q = { text: string; verified: boolean; readBack?: true; turnIndex?: number; start?: number; end?: number };
+    type J = { criteria: { quotes: Q[] }[] };
+    const saved = chatAnswer(await ract(H, 'pev.record_judgment', P.judge.claude, {
+      attemptIri: a, ...(packet['binding'] as Out), judgeDisclosure: { provider: 'Example', model: 'example-judge', usedPacketPrompt: true },
+      judgment: { criteria: S.value.rubric.criteria.map((c) => ({ criterionId: c.id, level: c.levels[c.levels.length - 1]!.id, quotes: [{ text: fromPacket, turnIndex: 3 }], rationale: 'The quoted line shows it.' })) },
+    }), 'the judgment saved from a judge\'s chat', false);
+    const session = chatAnswer(await ract(H, 'pev.get_attempt', P.judge.claude, { attemptIri: a }), 'the judged session from a judge\'s chat');
+    const place = (q: Q): unknown => [q.text, q.verified, q.readBack ?? null, q.turnIndex ?? null];
+    // The saved answer and the session show the quote alike: as T3 shows it, from T3, the hex it stands for nowhere.
+    for (const [what, j] of [['the saved answer', saved['judgment']], ['the session', (session['judgments'] as J[])[0]]] as const) {
+      expect((j as J).criteria.map((c) => c.quotes.map(place)), what).toEqual(S.value.rubric.criteria.map(() => [[fromPacket, true, true, 3]]));
+    }
+    const savedQuote = (saved['judgment'] as J).criteria[0]!.quotes[0]!;
+    const sessionQuote = (session['judgments'] as J[])[0]!.criteria[0]!.quotes[0]!;
+    expect([savedQuote.start, savedQuote.end]).toEqual([sessionQuote.start, sessionQuote.end]);
+    expect(JSON.stringify(saved).includes(own16)).toBe(false);
+  }, SLOW);
 });
 
 /** A signed request as a record keeps it, wherever an answer holds one. */
