@@ -24,6 +24,14 @@ judge whose assistant quotes such a line quotes words the session does not
 hold, and that quote does not check out. People in the web app, and keys an
 admin registered, read the text as it was written.
 
+A smaller fix from the same review: a scenario's results page showed, under
+the table of people who assessed sessions, the note that the table's rubric
+fingerprints are calibration's own and match none shown with a scenario. For
+reviewers and admins in the web app that was not true: they read the plain
+fingerprint there, the same one the scenario shows. The note now appears there
+only when the results left the stakes out, and on the calibration page, as
+before.
+
 ## 2026-11-09 — Practice Evidence: second review of keeping the stakes out of a chat
 
 A second review found that the keyed fingerprints could still check a guess at

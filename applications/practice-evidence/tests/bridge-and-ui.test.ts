@@ -1039,6 +1039,18 @@ describe('the web UI works, driven in a DOM against the real handlers', () => {
     const note = "The rubric fingerprints in this table are calibration's own: they don't match the fingerprints shown with a scenario or a session.";
     expect((p.w.eval('calibrationNote()') as HTMLElement).textContent).toBe(note);
     for (const table of p.all('#view .calibration-all')) expect(table.closest('details')?.querySelector('.calibration-note')?.textContent).toBe(note);
+    // A results page's table of people who judged says so only when its answer left the stakes out: a reader of the stakes
+    // is shown the plain fingerprint, the same one a scenario shows.
+    const cell = {
+      judgeId: 'did:example:judge', judgeKind: 'person', promptTemplateHash: 'own-prompt', grouping: 'rubric-version', rubricHash: 'ab'.repeat(32),
+      criterionId: 'asks-their-view', criterionTitle: 'Asks for their view', criterionContentHash: 'cd'.repeat(32), kind: 'pev/abababababababab/asks-their-view',
+      samples: 1, humanSamples: 1, distinctHumanConfirmers: 1, demoOutcomes: 0, agreementRate: null, meanBrier: null, meanLevelDistance: null, normalisedLevelDistance: null,
+      unverifiedRate: null, blindSamples: 0, blindAgreementRate: null, repeatSamples: 0, repeatAgreement: null, auditSampleSamples: 0, auditSampleAgreementRate: null,
+      auditSampleCoverage: null, auditSamplePartial: false, status: 'Hypothetical', standing: { evaluated: false, clears: false, why: 'a person', effect: 'None.' },
+    };
+    const judgeCard = (r: Out): HTMLElement => p.w.eval(`personJudgeCard(${JSON.stringify(r)})`) as HTMLElement;
+    expect(judgeCard({ personJudgeCells: [cell] }).querySelector('.calibration-note')).toBeNull();
+    expect(judgeCard({ personJudgeCells: [cell], stakesWithheld: 'left out' }).querySelector('.calibration-note')?.textContent).toBe(note);
     expect(p.errors).toEqual([]);
   }, SLOW);
 
