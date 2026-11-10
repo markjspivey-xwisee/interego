@@ -1,5 +1,29 @@
 # Changelog
 
+## 2026-11-10 — Practice Evidence: a fingerprint written into text no longer checks a guess
+
+A third review found one more way to check a guess at a scored scenario's
+weights and pass mark. Practice Evidence keyed every rubric fingerprint it
+found in an answer, those inside text included, and keyed them all the same
+way within one scenario version. So someone who reads no stakes could write
+the plain fingerprint of each guess into something the workspace keeps (a line
+of their practice session, a reason for contesting a review or for removing a
+transcript, a judge's quotes and reasons, or the words of a scored scenario,
+which an author's chat may edit while keeping its stakes), read it back keyed,
+and see which guess matched the scenario's own keyed fingerprint. Now only the
+fingerprints Practice Evidence writes itself are keyed: a scenario's and a
+rubric's fingerprint, a rubric's address and a calibration row's kind. A
+fingerprint anywhere else, inside any text, comes back as a random value made
+for that one place, which matches nothing else in the answer, the same
+fingerprint written twice included. The note every such answer carries, the
+scenario list's description and the README say so.
+
+Not covered: a chat assistant, a key nobody registered or a request nobody
+signed sees those random values where the fingerprints were written, so a
+judge whose assistant quotes such a line quotes words the session does not
+hold, and that quote does not check out. People in the web app, and keys an
+admin registered, read the text as it was written.
+
 ## 2026-11-09 — Practice Evidence: second review of keeping the stakes out of a chat
 
 A second review found that the keyed fingerprints could still check a guess at
