@@ -15,7 +15,7 @@
  */
 import {
   ALLOCATION_LEVELS, COMPARISON_BASES, FREED_HOURS_DISPOSITIONS, INPUT_BASES, OUTCOME_DISPOSITIONS, OUTCOME_METRICS,
-  PROBE_SIGNALS, REGISTRY_ROLES,
+  POD_POLICY_FIELDS, POD_POLICY_MAX_COUNT, PROBE_SIGNALS, REGISTRY_ROLES, type PodPolicy,
 } from './ontology.js';
 import { CHAT_DOCUMENT_MAX_CHARS, CLASSIFICATION_QUESTIONS, LIMITS, TASK_KIND_SLUG } from './work.js';
 import { MAX_INPUT, RUN_ALTERNATIVES, STATE_FIELDS } from './valuation.js';
@@ -105,10 +105,18 @@ const VALUATION_INPUTS: JsonSchema = obj({
  * A registry entry is one of three shapes, and the handler (mergeRegistry in bridge/handlers.ts)
  * takes nothing in between: a person (softwareAgent false, a personRef, no principal or model), an
  * agent (a 0x key, the agent role alone, softwareAgent true, a principal and a model, no
- * personRef), or a removal (an empty roles list; the handler reads nothing else in it). What the
- * schema cannot state is the pod's: an agent's principal must be a person the registry holds after
- * the change, a person who is an agent's principal is removed only once the agent has another,
- * and a user DID must be on this bridge's identity host.
+ * personRef), or a removal (an empty roles list). What the schema cannot state is the pod's: an
+ * agent's principal must be a person the registry holds after the change, a person who is an
+ * agent's principal is removed only once the agent has another, and a user DID must be on this
+ * bridge's identity host.
+ *
+ * In a few places the schema is stricter than the handler, on purpose, so that a builder sends
+ * exactly the fields that count: the person and agent shapes are closed, though the handler
+ * ignores a field it does not read on them; a role may not be listed twice, though the handler
+ * drops the repeat; and a registered task kind's label or definition may not be null, though the
+ * handler then keeps the kind's own. A removal is left open for another reason: the handler reads
+ * any entry whose roles are empty as a removal, whatever else it carries, and the People & roles
+ * page sends a person saved with no role ticked in that form, label and personRef included.
  */
 const MEMBER_LABEL = filled('the name shown for this member, 1 to 80 characters', 80);
 const PERSON_ENTRY: JsonSchema = {
@@ -147,13 +155,38 @@ const REMOVAL_ENTRY: JsonSchema = {
 };
 const REGISTRY_ENTRY: JsonSchema = { oneOf: [PERSON_ENTRY, AGENT_ENTRY, REMOVAL_ENTRY] };
 
+/**
+ * A pod policy, as coercePodPolicy (src/ontology.ts) checks it: every check it makes is
+ * independent of the pod, so all of them are here. What the schema cannot state is the published
+ * policy the bridge reads from its ontology: a value below it would loosen it, and is refused with
+ * a 400 of its own (not as malformed).
+ */
+const POD_POLICY_COUNT = (what: string): JsonSchema => ({ type: 'integer', minimum: 1, maximum: POD_POLICY_MAX_COUNT, description: `${what}, a whole number from 1 to ${POD_POLICY_MAX_COUNT}; at least the published value` });
+const POD_POLICY_FIELD: Readonly<Record<keyof PodPolicy, JsonSchema>> = {
+  maxLevel: oneOf(ALLOCATION_LEVELS, 'the highest level a task may be put at on this pod: levels above it are no longer permitted'),
+  floor: { type: 'number', exclusiveMinimum: 0, maximum: 1, description: 'the share of person-reviewed runs a person must have accepted, above 0 and at most 1; at least the published floor' },
+  minSamples: POD_POLICY_COUNT('person-reviewed runs an agent needs on its model'),
+  minHumanConfirmations: POD_POLICY_COUNT('person confirmations an agent needs'),
+  minDistinctConfirmers: POD_POLICY_COUNT('distinct people those confirmations come from'),
+};
+const POD_POLICY: JsonSchema = {
+  type: ['object', 'null'],
+  properties: Object.fromEntries(POD_POLICY_FIELDS.map((k) => [k, POD_POLICY_FIELD[k]])),
+  additionalProperties: false,
+  description: 'tightens the published grant policy only: a value below the published one is refused, and a field left out keeps the published value; null clears the pod policy',
+};
+
 const WINDOW = { windowStart: text('ISO-8601; at or after the countersign'), windowEnd: text('ISO-8601; ended, and at least measurementPlan.windowWeeks after windowStart unless stopped early or reverted') };
 
 interface IntentFields {
   readonly properties: Record<string, JsonSchema>;
   readonly required: readonly string[];
   readonly description: string;
-  /** Fields of which the handler needs at least one (published as anyOf: one `required` each). */
+  /**
+   * Fields of which the handler needs at least one, published as anyOf: one branch each, which
+   * declares its field (as `true`) beside requiring it, so a validator in strict mode, which
+   * refuses a required field its own schema does not declare, compiles the schema.
+   */
   readonly atLeastOneOf?: readonly string[];
 }
 
@@ -168,7 +201,7 @@ const FIELDS: Readonly<Record<EnvelopeIntent, IntentFields>> = {
         definition: { type: 'string', minLength: 1, maxLength: 300, pattern: '^[^\\r\\n]*\\S[^\\r\\n]*$', description: 'one sentence on one line, at most 300 characters; required for a new kind, and a registered kind keeps its own when it is left out' },
         retire: { type: 'boolean', enum: [true] },
       }, ['slug']), 0, 100),
-      podPolicy: { type: ['object', 'null'], description: 'tightens the published policy: maxLevel, floor, minSamples, minHumanConfirmations, minDistinctConfirmers; null clears' },
+      podPolicy: POD_POLICY,
     },
     required: [],
     atLeastOneOf: ['entries', 'taskKinds', 'podPolicy'],
@@ -320,7 +353,7 @@ export function payloadSchema(intent: EnvelopeIntent, opts: { readonly relaySign
     properties: { intent: { const: intent }, ...COMMON, ...f.properties },
     required: ['intent', 'podUrl', 'issuedAt', 'nonce', ...f.required],
     additionalProperties: false,
-    ...(f.atLeastOneOf ? { anyOf: f.atLeastOneOf.map((k) => ({ required: [k] })) } : {}),
+    ...(f.atLeastOneOf ? { anyOf: f.atLeastOneOf.map((k) => ({ properties: { [k]: true }, required: [k] })) } : {}),
   };
 }
 
@@ -355,7 +388,9 @@ function summarise(s: unknown, depth = 0, named?: Map<string, unknown>): string 
       const r = typeof a === 'object' && a !== null ? (a as Record<string, unknown>)['required'] : undefined;
       return Array.isArray(r) && r.length === 1 ? [String(r[0])] : [];
     }) : [];
-    return `{${parts.join(', ')}}${atLeastOne.length > 0 ? ` with at least one of ${atLeastOne.join(', ')}` : ''}`;
+    // An object that may also be null (a pod policy, which null clears).
+    const orNull = Array.isArray(o['type']) && (o['type'] as unknown[]).includes('null') ? '|null' : '';
+    return `{${parts.join(', ')}}${orNull}${atLeastOne.length > 0 ? ` with at least one of ${atLeastOne.join(', ')}` : ''}`;
   }
   if (typeof o['additionalProperties'] === 'object') return `{<taskIri>: ${summarise(o['additionalProperties'], depth + 1, named)}}`;
   if (o['type'] === 'number' || o['type'] === 'integer' || o['type'] === 'boolean') return String(o['type']);

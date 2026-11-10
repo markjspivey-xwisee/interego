@@ -78,9 +78,11 @@ export function schemaErrors(schema: unknown, value: unknown, path = '$'): strin
   }
   if (isObj(value)) {
     const props = isObj(s['properties']) ? s['properties'] : {};
-    if (Array.isArray(s['required'])) for (const k of s['required'].map(String)) if (!(k in value)) out.push(`${path}: ${k} is required`);
+    // Own keys only, on both sides: a field named like an Object.prototype member (toString,
+    // constructor) is the payload's own or absent, never the inherited function.
+    if (Array.isArray(s['required'])) for (const k of s['required'].map(String)) if (!Object.hasOwn(value, k)) out.push(`${path}: ${k} is required`);
     for (const [k, v] of Object.entries(value)) {
-      if (k in props) out.push(...schemaErrors(props[k], v, `${path}.${k}`));
+      if (Object.hasOwn(props, k)) out.push(...schemaErrors(props[k], v, `${path}.${k}`));
       else if (s['additionalProperties'] !== undefined) out.push(...schemaErrors(s['additionalProperties'], v, `${path}.${k}`));
     }
   }

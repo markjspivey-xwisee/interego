@@ -14,19 +14,43 @@ personRef), an agent (its key's address, the agent role alone, label,
 softwareAgent true, principal, model) and a removal (address and an empty roles
 list). It also says a change carries at least one of entries, taskKinds and
 podPolicy, that a label, a model and a task kind's definition cannot be blank,
-and that a definition is one line. The bridge's own checks did not change; the
-person reference's pattern now comes from one shared constant. The envelope
-template's entry is a person's, so its softwareAgent is filled as false and the
-fields left to fill are the address, a role, the label and the person reference.
-The action's one-line summary names the three shapes.
+and that a definition is one line. A pod policy used to be published as any
+object, so a policy-only change built from the schema could be refused as
+malformed, with the same loose schema attached. Its schema now lists its fields
+and their limits as the bridge checks them: `null`, or an object holding any of
+a highest allowed level (one of the allocation levels), a floor above 0 and at
+most 1, and three whole-number counts from 1 to 100,000, and nothing else. The
+bridge's own checks did not change; the person reference's pattern, the pod
+policy's fields and its largest count now each come from one shared constant.
+The envelope template's entry is a person's, so its softwareAgent is filled as
+false and the fields left to fill are the address, a role, the label and the
+person reference. The action's one-line summary names the three shapes and the
+pod policy's fields. A validator in strict mode (Ajv's `strict` option, for
+example) can now compile the schema: it refused the "at least one of" rule,
+whose branches each required a field they did not declare.
+
+The schema is stricter than the bridge in a few places, on purpose, so that a
+change built from it holds exactly the fields that count: it refuses a role
+listed twice (the bridge drops the repeat), a field the bridge does not read on
+a person's or an agent's entry (the bridge ignores it), and a null label or
+definition for a kind of task already registered (the bridge keeps the kind's
+own). A removal is the one open shape, because the bridge reads any entry whose
+roles are empty as a removal, whatever else it carries.
 
 New tests build an entry from each shape's required fields alone (a person by
 Interego ID, a person by wallet address, an agent, a removal), check it against
 the schema and send it to the bridge, which takes it; fill the template the same
-way; check that each entry the bridge refuses for its own sake is refused by the
-schema too; and drive the web app's People & roles page to add a person and an
+way; check that each entry and pod policy the bridge refuses for its own sake is
+refused by the schema too; send a change holding only a pod policy, with every
+field the schema names, which both take; check that each place the schema is
+stricter than the bridge is one the bridge takes and reads as the stricter form
+would say; check that every part of every payload's schema declares each field
+it requires; and drive the web app's People & roles page to add a person and an
 AI agent and remove someone, each change in one of the schema's shapes and
-taken. The page already built those shapes and is unchanged.
+taken. The page already built those shapes and is unchanged. The tests' own
+schema check now reads a field named like a built-in object member (`toString`,
+`constructor`) as the payload's own; it used to fail on such a payload instead
+of reporting it.
 
 Not covered: what depends on the pod or the bridge's settings stays the
 bridge's to check, so a payload can match the schema and still be refused when
@@ -36,10 +60,13 @@ a new task kind has no label or definition, or when a user DID is not on the
 bridge's identity host. The schema counts a length in characters, as JSON
 Schema does, and the bridge counts a character outside the basic range (an
 emoji, for example) twice, so a label, model or definition near its limit that
-holds such characters can match the schema and still be refused. The schema for
-a pod policy is unchanged. On the People & roles page, saving a person with no
-role ticked still sends what the bridge reads as a removal (for someone not yet
-added, a change that changes nothing), as before.
+holds such characters can match the schema and still be refused. A pod policy
+value that would loosen the published policy (a floor or a count below the
+published one) matches the schema and is still refused, with a refusal of its
+own that does not call the change malformed: the published values are the
+bridge's to read, not the schema's to state. On the People & roles page, saving
+a person with no role ticked still sends what the bridge reads as a removal
+(for someone not yet added, a change that changes nothing), as before.
 
 ## 2026-11-09 — Relay: a signed request can say which OAuth client asked
 
