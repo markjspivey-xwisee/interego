@@ -197,7 +197,7 @@ export function demoScenarioInput(key: 'missed-deadline' | 'renegotiate-scope', 
           {
             id: 'asks-their-view', title: 'Asks for their view', description: 'Invites the colleague\'s account before deciding anything.', weight: version === 2 ? 2 : 1,
             levels: [lvl('no', 'Not asked', 'Never asks for their side.', 0), lvl('late', 'Late', 'Asks only after deciding what happens next.', 50),
-              lvl('first', 'First', 'Asks for their side before saying anything else about it.', 100)],
+              lvl('first', 'First', 'Asks for their side before deciding anything.', 100)],
           },
           {
             id: 'agrees-next-step', title: 'Agrees a next step', description: 'Leaves with a concrete step, an owner and a date.', weight: 2,
@@ -336,7 +336,7 @@ function judgeAnswer(user: string, nth: number): string {
         ? { criterionId: id, level: 'first', quotes: [{ text: 'what got in the way this time from your side?', turnIndex: 3 }],
           rationale: 'Asks for his side before deciding anything.', probabilities: { no: 0.05, late: 0.25, first: 0.7 } }
         : { criterionId: id, level: 'late', quotes: [{ text: 'what got in the way this time from your side?', turnIndex: 3 }],
-          rationale: 'Asks for his side, but only after stating the facts of the miss; asking before anything else would reach First.', probabilities: { no: 0.1, late: 0.6, first: 0.3 } });
+          rationale: 'Asks for his side, but reads the question as coming once the next step was settled; asking before deciding anything would reach First.', probabilities: { no: 0.1, late: 0.6, first: 0.3 } });
     } else if (id === 'agrees-next-step') {
       criteria.push({ criterionId: id, level: 'owner-and-date',
         quotes: [{ text: 'send me a status note by Tuesday at 10am', turnIndex: 5 }, { text: FABRICATED_QUOTE, turnIndex: 5 }],

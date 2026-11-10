@@ -81,8 +81,8 @@ import {
   type CalibrationCellView, type QueueCandidate,
 } from '../src/calibration.js';
 import {
-  assessmentWithoutStakes, hashMask, judgmentWithoutStakes, maskAnswerHashes, quoteAsStored, reviewWithoutStakes, rubricWithoutStakes, sameRubricShape,
-  scoredWithoutStakes, withStakesOf, STAKES_WITHHELD, type HashMask, type HashScope,
+  assessmentWithoutStakes, hashMask, judgmentWithoutStakes, maskAnswerHashes, quoteReadingsAsStored, reviewWithoutStakes, rubricWithoutStakes, sameRubricShape,
+  scoredWithoutStakes, withStakesOf, STAKES_WITHHELD, type HashMask, type HashScope, type QuotedTurn,
 } from '../src/stakes.js';
 import { buildStatement, statementProblems, LOSSY, LRS_REQUEST_NOTE, PROJECTION_FORMATS, type ProjectionFormat } from '../src/projections.js';
 import {
@@ -400,6 +400,12 @@ interface Call {
    * after that is keyed the same way.
    */
   hashScope: HashScope;
+  /**
+   * The stored turns of each attempt whose judges' quotes this act's answer shows, by the attempt
+   * IRI the answer names (`showsQuotesOf`): a quote read back is shown from its line
+   * (`maskAnswerHashes`).
+   */
+  readonly quotedLines: Map<string, readonly QuotedTurn[]>;
 }
 
 /** Key this act's answer, a refusal included, for the scenario version of `a` (an attempt's `scenario`, or a scenario head). */
@@ -412,11 +418,22 @@ function scopeTo(call: Call, a: { readonly scenarioIri: string; readonly version
  * reads no stakes shows a fingerprint inside a line with a stand-in keyed for the attempt's scenario
  * version (`maskAnswerHashes`), the scope of every answer that shows the attempt's turns (the judge
  * packet, the attempt, the conversation's own acts) or quotes from them (the review queue). A quote
- * copied from any of them is read as the stored line it was copied from, whoever sends it.
+ * copied from any of them is read as the stored line it was copied from, whoever sends it: each
+ * reading `quoteReadingsAsStored` gives, in turn, until one checks out.
  */
-async function quotesAsStoredFor(call: Call, a: AttemptBody): Promise<(quote: string) => string> {
+async function quotesAsStoredFor(call: Call, a: AttemptBody): Promise<(quote: string) => readonly string[]> {
   const k = (await call.ctx.hashMask()).version(a.scenario.scenarioIri, a.scenario.version);
-  return quoteAsStored(k, a.turns.flatMap((t) => (t.text !== undefined ? [t.text] : [])));
+  return quoteReadingsAsStored(k, a.turns.flatMap((t) => (t.text !== undefined ? [t.text] : [])));
+}
+
+/**
+ * This act's answer shows judges' quotes from attempt `a`, named `iri` in it. To a caller who reads no
+ * stakes, a quote that was read back (`verifyQuoteAsShown`) is shown as the stretch of the learner's
+ * line it was matched against, as every view of that line shows it (`maskAnswerHashes`), so a judge
+ * who copies it from this answer has it read back and checked out again.
+ */
+function showsQuotesOf(call: Call, a: AttemptBody, iri: string = a.attemptIri): void {
+  call.quotedLines.set(iri, a.turns);
 }
 
 /**
@@ -2256,6 +2273,7 @@ async function recordJudgmentOn(call: Call, s: Signed, h: AttemptHead, j: Judgme
   scopeTo(call, h.body.scenario);
   const stakes = await showsStakes(call, s);
   const { body, w } = await writeJudgment(call, s, h, j, key, disclosure);
+  showsQuotesOf(call, body);
   const primary = body.judgments[0]!;
   const rubric = body.scenarioSpec.rubric;
   return {
@@ -2273,7 +2291,8 @@ async function recordJudgmentOn(call: Call, s: Signed, h: AttemptHead, j: Judgme
 
 /**
  * What a judge's own assistant is told once it saved from the packet: that the save was kept,
- * where, and how the platform checked the levels and quotes it sent. Nothing else. Not the
+ * where, and how the platform checked the levels and quotes it sent, each quote with the place in
+ * the learner's lines it was matched against. Nothing else. Not the
  * judgment's provisional result, which holds the stakes the packet's rubric leaves out (each
  * criterion's weight and level value, the percent, the pass mark and the levels a pass needs);
  * not another judge's levels (the agreement, or the first judgment's result); not what the next
@@ -2288,7 +2307,14 @@ function judgmentSavedOut(body: AttemptBody, w: Written, j: JudgmentResult): Out
       index: j.index, judgedAt: j.judgedAt, judge: { kind: j.judge.kind },
       criteria: j.criteria.map((c) => ({
         criterionId: c.criterionId, levelId: c.levelId, status: c.status, ...(c.why !== undefined ? { why: c.why } : {}),
-        quotes: c.quotes.map((q) => ({ text: q.text, verified: q.verified, ...(q.why !== undefined ? { why: q.why } : {}), ...(q.readBack ? { readBack: true } : {}) })),
+        // A quote's place in the learner's lines (its turn, and its start and end in that turn normalised) holds no stake,
+        // and the judge chose the turn: with it, a quote that was read back is shown from the stretch it was matched
+        // against (`maskAnswerHashes`), as the session shows it, and not from the first turn that holds the same words.
+        quotes: c.quotes.map((q) => ({
+          text: q.text, verified: q.verified,
+          ...(q.turnIndex !== undefined ? { turnIndex: q.turnIndex } : {}), ...(q.start !== undefined ? { start: q.start } : {}), ...(q.end !== undefined ? { end: q.end } : {}),
+          ...(q.why !== undefined ? { why: q.why } : {}), ...(q.readBack ? { readBack: true } : {}),
+        })),
       })),
       unverifiedCriteria: j.unverifiedCriteria,
     },
@@ -2460,6 +2486,7 @@ async function recordJudgment(call: Call, args: Record<string, unknown>): Promis
       repeatOf: repeatOf(a, judge.id, promptTemplateHash), rubricHash: a.scenario.rubricHash, transcriptHash: tHash,
     }, await quotesAsStoredFor(call, a));
     const { body, w } = await writeJudgment(call, s, h, j, 'recordJudgment');
+    showsQuotesOf(call, body);
     return judgmentSavedOut(body, w, j);
   });
 }
@@ -2549,6 +2576,7 @@ async function reviewQueueAct(call: Call, args: Record<string, unknown>): Promis
     }];
   });
   const q = reviewQueue(candidates, cells, { limit, reviewer: s.signer, stakes });
+  for (const a of read.bodies) showsQuotesOf(call, a);
   // Each entry names the scenario version it is on, which its rubric hash is keyed for (`maskAnswerHashes`).
   const versionOf = new Map(read.bodies.map((a) => [a.attemptIri, { scenarioIri: a.scenario.scenarioIri, scenarioVersion: a.scenario.version }]));
   const entries = q.entries.map((e) => {
@@ -3193,6 +3221,7 @@ async function getAttempt(call: Call, args: Record<string, unknown>): Promise<Ou
   const review = standingReview(a);
   const judged = a.judgments.length > 0;
   const r = a.scenarioSpec.rubric;
+  showsQuotesOf(call, a, iri);
   return {
     attemptIri: iri, podUrl: s.pod, state: a.state, modalStatus: h.rec.modalStatus, headDescriptorUrl: h.rec.descriptorUrl, recordId: h.rec.recordId,
     scenario: { ...a.scenario, rubricRatified: rat.ratified, ...(rat.ratifiedBy ? { ratifiedBy: rat.ratifiedBy } : {}) },
@@ -3277,14 +3306,14 @@ export function createPevHandlers(deps: PevDeps): Record<string, AffordanceHandl
   // would confirm a guess at its weights, level values and pass rule offline.
   const run = (act: Act): AffordanceHandler => async (args: Record<string, unknown>) => {
     const budget = new ReadBudget(ctx.actReadBudgetBytes);
-    const call: Call = { ctx, cache: readCache(ctx.verified), budget, read: withReadBudget(ctx.fetchFn, budget), writesAtStart: ctx.writes.n, stakesShown: false, stakesReading: 'unsigned', hashScope: null };
+    const call: Call = { ctx, cache: readCache(ctx.verified), budget, read: withReadBudget(ctx.fetchFn, budget), writesAtStart: ctx.writes.n, stakesShown: false, stakesReading: 'unsigned', hashScope: null, quotedLines: new Map() };
     let out: Out;
     try {
       out = await act(call, args ?? {});
     } catch (e) {
       out = refusalFor(e);
     }
-    return call.stakesShown ? out : maskAnswerHashes(out, await ctx.hashMask(), call.hashScope) as Out;
+    return call.stakesShown ? out : maskAnswerHashes(out, await ctx.hashMask(), call.hashScope, call.quotedLines) as Out;
   };
   return {
     'pev.register_role': run(registerRole),

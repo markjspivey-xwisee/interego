@@ -49,6 +49,7 @@ import {
 import {
   buildStatement, deterministicUuid, statementProblems, CMI5_CATEGORY_PREFIX, LOSSY, PRACTICE_MARKER, VERB_COMPLETED,
 } from '../src/projections.js';
+import { demoScenarioInput } from '../demo/run.js';
 
 // ═════════════════════════════════════════════════════════════════════════════════════════════
 //  Fixtures
@@ -102,7 +103,7 @@ function missedDeadlineInput(weights: readonly [number, number, number] = [2, 1,
         {
           id: 'asks-their-view', title: 'Asks for their view', description: 'Invites the colleague\'s account before deciding anything.', weight: weights[1],
           levels: [lvl('no', 'Not asked', 'Never asks for their side.', 0), lvl('late', 'Late', 'Asks only after deciding what happens next.', 50),
-            lvl('first', 'First', 'Asks for their side before saying anything else about it.', 100)],
+            lvl('first', 'First', 'Asks for their side before deciding anything.', 100)],
         },
         {
           id: 'agrees-next-step', title: 'Agrees a next step', description: 'Leaves with a concrete step, an owner and a date.', weight: weights[2],
@@ -431,9 +432,38 @@ describe('assess: platform arithmetic only', () => {
     expect(g.map((x) => x.criterionId)).toEqual(['asks-their-view', 'agrees-next-step']);
     expect(g[0]).toEqual({
       criterionId: 'asks-their-view', currentLevelId: 'late', nextLevelId: 'first', nextLevelLabel: 'First',
-      nextLevelDescriptor: 'Asks for their side before saying anything else about it.', basis: 'provisional',
+      nextLevelDescriptor: 'Asks for their side before deciding anything.', basis: 'provisional',
     });
     expect(nextLevelGuidance(MD1.rubric, { 'specific-observation': 'none' }, 'final')[0]?.basis).toBe('final');
+  });
+
+  it('the demo rubric\'s top level for asking their view reads as its criterion does, so stating the facts, asking, then deciding reaches it; its stakes unchanged', () => {
+    for (const version of [1, 2] as const) {
+      const demo = specOf(demoScenarioInput('missed-deadline', version));
+      const c = demo.rubric.criteria.find((x) => x.id === 'asks-their-view')!;
+      // The criterion and its levels name one moment, deciding: before it is the top level, after it the middle one.
+      expect([c.description, c.weight, c.levels.map((l) => [l.id, l.label, l.descriptor, l.value])]).toEqual([
+        'Invites the colleague\'s account before deciding anything.', version === 2 ? 2 : 1,
+        [['no', 'Not asked', 'Never asks for their side.', 0], ['late', 'Late', 'Asks only after deciding what happens next.', 50],
+          ['first', 'First', 'Asks for their side before deciding anything.', 100]],
+      ]);
+      expect(demo.rubric.passRule).toEqual({ minPercent: 70, requiredLevels: { 'agrees-next-step': 'partial' } });
+      // This file's copy of the demo scenario is the same rubric, given the demo's weights.
+      expect(rubricHash(specOf(missedDeadlineInput([2, version === 2 ? 2 : 1, 2])).rubric)).toBe(rubricHash(demo.rubric));
+    }
+    // The old top level's words are left nowhere in this vertical: not in its code, its README, or a free-text reason or
+    // rationale in a test that copies the level. (Put together here, so this file does not hold them.)
+    const old = ['before saying anything', 'else about it'].join(' ');
+    const files: string[] = [];
+    const walk = (d: string): void => {
+      for (const e of readdirSync(d)) {
+        const f = join(d, e);
+        if (statSync(f).isDirectory()) { if (e !== 'node_modules' && e !== 'dist') walk(f); } else if (/\.(ts|js|md|html)$/.test(e)) files.push(f);
+      }
+    };
+    walk(VERTICAL);
+    expect(files.length).toBeGreaterThan(20);
+    expect(files.filter((f) => readFileSync(f, 'utf8').includes(old)).map((f) => f.slice(VERTICAL.length + 1))).toEqual([]);
   });
 });
 

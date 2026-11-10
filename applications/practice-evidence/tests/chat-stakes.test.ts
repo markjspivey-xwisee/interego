@@ -36,7 +36,7 @@ import { rubricHash, scenarioHash, coerceScenario, normaliseForQuote, verifyQuot
 import { DEMO_LINES, demoKey, demoScenarioInput, inMemoryPod, scriptedPracticeModel } from '../demo/run.js';
 import { PEV_ACTION, toolNameOf } from '../src/ontology.js';
 import { signEnvelope } from '../src/records.js';
-import { hashMask, maskAnswerHashes, maskReadBackQuote, maskText, quoteAsStored, STAKES_WITHHELD } from '../src/stakes.js';
+import { hashMask, maskAnswerHashes, maskReadBackQuote, maskText, quoteAsStored, quoteReadingsAsStored, STAKES_WITHHELD } from '../src/stakes.js';
 import { pevAffordances, STAKES_LEFT_OUT_FOR } from '../affordances.js';
 import { readFileSync } from 'node:fs';
 
@@ -805,6 +805,97 @@ describe('a rubric fingerprint a caller writes into text comes back as a stand-i
     expect(quoteAsStored(k, [kelvin])(maskText(norm, k))).toBe(norm);
   });
 
+  it('a quote of a line that holds a fingerprint and, written out beside it, the stand-in it is shown as reads back with the written one kept as written', () => {
+    const m = hashMask(Buffer.alloc(32, 23));
+    const scope = { scenarioIri: 'urn:pev:scenario:unit', version: 1 };
+    const k = m.version(scope.scenarioIri, scope.version);
+    const h = RAW.rubric;
+    const s = k.inText.full(h);
+    const s16 = k.inText.prefix(h.slice(0, 16));
+    // As the peer review found it: the learner copied the stand-in from an earlier view of this scenario version and wrote it out.
+    const line = `So now urn:pev:rubric:${h} equals ${s} indeed, and pev/${h.slice(0, 16)}/asks-their-view is ${s16} too, I said.`;
+    const turns = [{ index: 1, speaker: 'learner' as const, text: line }, { index: 2, speaker: 'counterpart' as const, text: 'Go on.' }];
+    const view = maskText(line, k);
+    // The view shows the fingerprint and the written stand-in alike.
+    expect([view.includes(h), view.split(s).length - 1, view.split(s16).length - 1]).toEqual([false, 2, 2]);
+    // How the bridge reads a judge's quote back: every reading to try, the first with every stand-in read back.
+    const back = quoteReadingsAsStored(k, [line]);
+    const ends = view.indexOf(', I said');
+    for (const from of [view.indexOf('urn:pev:rubric:'), view.indexOf('urn:pev:rubric:') + 15, view.indexOf(' equals ') + 8, view.indexOf('pev/')]) {
+      const copied = view.slice(from, ends);
+      const r = verifyQuoteAsShown({ text: copied, turnIndex: 1 }, turns, back);
+      // Read back with the fingerprint put back and the written stand-in kept as the learner wrote it, and checked out.
+      expect([r.verified, r.readBack, r.turnIndex, r.text], copied).toEqual([true, true, 1, line.slice(from, ends)]);
+      // Shown as the view shows that stretch, so a copy of it reads back again.
+      const out = (maskAnswerHashes({ ...scope, attemptIri: 'urn:pev:attempt:unit', quotes: [r] }, m, scope, new Map([['urn:pev:attempt:unit', turns]])) as { quotes: { text: string }[] }).quotes[0]!;
+      expect([out.text, JSON.stringify(out).includes(h)], copied).toEqual([copied, false]);
+    }
+    // A stand-in with nothing around it that stands for a hash in a line, as before: read back, whatever else is tried.
+    const hexOnly = view.slice(view.indexOf('urn:pev:rubric:') + 15, view.indexOf(' equals '));
+    expect(verifyQuoteAsShown({ text: `${hexOnly} equals`, turnIndex: 1 }, turns, back).text).toBe(`${h} equals`);
+    // A quote no reading finds is saved as the reading with every stand-in read back, as before, and says why.
+    const absent = verifyQuoteAsShown({ text: `${hexOnly} equals ${s} never`, turnIndex: 1 }, turns, back);
+    expect([absent.verified, absent.readBack, absent.text]).toEqual([false, true, `${h} equals ${h} never`]);
+  });
+
+  it('a rubric IRI whose last hex digit a combining mark follows is masked alike in a line and its normalised form, where NFC folds the two into one letter, and a quote from either reads back', () => {
+    const m = hashMask(Buffer.alloc(32, 21));
+    const scope = { scenarioIri: 'urn:pev:scenario:unit', version: 1 };
+    const k = m.version(scope.scenarioIri, scope.version);
+    // A mark NFC puts together with each hex letter: an acute accent with a, c and e (á, ć, é), a dot above with b, d and f.
+    const markFor = (d: string): string => ('ace'.includes(d) ? '́' : '̇');
+    // Fictional hashes that end in a hex letter, enough of them that a stand-in's own last digit both takes the mark and not.
+    const hashes = Array.from({ length: 400 }, (_, i) => sha256(`a fictional rubric to fold ${i}`)).filter((x) => /[a-f]$/.test(x)).slice(0, 48);
+    let ownTakes = 0;
+    for (const h of hashes) {
+      const mark = markFor(h[63]!);
+      const line = `Then urn:pev:rubric:${h}${mark} came up and I asked what they thought.`;
+      const norm = normaliseForQuote(line);
+      // NFC folds the last digit and the mark into one letter: the normalised form holds 63 hex and that letter.
+      expect([norm.includes(h), norm.includes(h.slice(0, 63)), norm.length], h).toEqual([false, true, line.length - 1]);
+      const views = { line: maskText(line, k), normalised: maskText(norm, k) };
+      // Neither form shows any of the hash: not the 64 hex, not the first 63, not the first 16; and each keeps its length.
+      for (const [form, v] of Object.entries(views)) {
+        expect([v.includes(h.slice(0, 63)), v.includes(h.slice(0, 16)), v.length], `${form} ${h}`).toEqual([false, false, (form === 'line' ? line : norm).length]);
+      }
+      // The folded letter is the stand-in's own last digit with the mark, where those fold into one: the normalised form of the
+      // masked line is then the masked normalised form. Otherwise it is another hex letter that takes the mark, chosen by the stand-in.
+      const s = k.inText.full(h);
+      const shownLetter = views.normalised.slice(views.normalised.indexOf('urn:pev:rubric:') + 15 + 63)[0]!;
+      expect([views.normalised.includes(`urn:pev:rubric:${s.slice(0, 63)}`), shownLetter.normalize('NFD').slice(1)], h).toEqual([true, mark]);
+      if (`${s[63]!}${mark}`.normalize('NFC').length === 1) {
+        ownTakes++;
+        expect(normaliseForQuote(views.line), h).toBe(views.normalised);
+      }
+      // The same hash written with the letter itself, as NFC writes it: masked the same way in both forms.
+      const precomposed = `Then urn:pev:rubric:${h.slice(0, 63)}${`${h[63]!}${mark}`.normalize('NFC')} came up and I asked what they thought.`;
+      expect([maskText(precomposed, k), maskText(normaliseForQuote(precomposed), k)], h).toEqual([views.normalised, views.normalised]);
+      // A quote copied from either view, with or without `urn:pev:rubric:`, reads back as the stored words and checks out.
+      const turns = [{ index: 1, speaker: 'learner' as const, text: line }];
+      const back = quoteAsStored(k, [line]);
+      for (const [form, v] of Object.entries(views)) {
+        for (const from of [v.indexOf('urn:pev:rubric:'), v.indexOf('urn:pev:rubric:') + 15]) {
+          const copied = v.slice(from, v.indexOf(' and I asked'));
+          const r = verifyQuoteAsShown({ text: copied, turnIndex: 1 }, turns, back);
+          expect([r.verified, r.readBack, r.turnIndex], `${form} from ${from}: ${h}`).toEqual([true, true, 1]);
+          // Shown from its line, or with no line to show it from: none of the hash in its words or its normalised form.
+          for (const lines of [new Map([['urn:pev:attempt:unit', turns]]), new Map()]) {
+            const out = JSON.stringify(maskAnswerHashes({ ...scope, attemptIri: 'urn:pev:attempt:unit', quotes: [r] }, m, scope, lines));
+            expect([out.includes(h.slice(0, 63)), out.includes(h.slice(0, 16))], `${form} from ${from}: ${h}`).toEqual([false, false]);
+          }
+          expect(maskReadBackQuote(r.normalised!, k).includes(h.slice(0, 16)), h).toBe(false);
+        }
+      }
+    }
+    // Both ways the folded letter is chosen were met.
+    expect([ownTakes > 0, ownTakes < hashes.length, hashes.length]).toEqual([true, true, 48]);
+    // A run of 16 hex with nothing around it that a mark follows, in a read-back quote with no line to show it from: a stand-in
+    // in both forms too.
+    const h16 = hashes[0]!.slice(0, 15) + hashes[0]![63];
+    const bare = `I noted ${h16}${markFor(h16[15]!)} for this step.`;
+    for (const form of [bare, normaliseForQuote(bare)]) expect(maskReadBackQuote(form, k).includes(h16.slice(0, 15)), form).toBe(false);
+  });
+
   it('a quote read back is checked as the stored words, saved as them and marked readBack, and shown as the judge copied it', () => {
     const m = hashMask(Buffer.alloc(32, 5));
     const scope = { scenarioIri: 'urn:pev:scenario:unit', version: 1 };
@@ -1056,6 +1147,260 @@ describe('a rubric fingerprint a caller writes into text comes back as a stand-i
     expect([String(t1['text']).includes(own16), String(t1['normalisedText']).includes(own16), t1['normalisedText'] === shown]).toEqual([false, false, true]);
     expect([JSON.stringify(chat).includes(own), JSON.stringify(chat).includes(own16)]).toEqual([false, false]);
     expect(asSaved((chat['judgments'] as J[])[0]!)).toEqual(each(quotes));
+  }, SLOW);
+
+  it('a quote read back from a line holding a fingerprint and an unrelated bare run of hex is shown as that line shows its stretch, normal or normalised, and a copy of it reads back again and again', () => {
+    const m = hashMask(Buffer.alloc(32, 13));
+    const scope = { scenarioIri: 'urn:pev:scenario:unit', version: 1 };
+    const k = m.version(scope.scenarioIri, scope.version);
+    const h = RAW.rubric;
+    const h16 = h.slice(0, 16);
+    // Runs of 64 and 16 hex that are no rubric's: a fictional build and ticket reference the learner read out.
+    const b = sha256('a fictional build reference');
+    const b16 = sha256('a fictional ticket reference').slice(0, 16);
+    // A double space and a curly apostrophe inside the stretch quoted, so the line and its normalised form differ there.
+    const line = `It was urn:pev:rubric:${h} beside  build ${b}’s ticket ${b16} and pev/${h16}/asks-their-view, I said.`;
+    const attemptIri = 'urn:pev:attempt:unit';
+    const turns = [{ index: 1, speaker: 'learner' as const, text: line }, { index: 2, speaker: 'counterpart' as const, text: 'Go on.' }];
+    const lines = new Map([[attemptIri, turns]]);
+    const back = quoteAsStored(k, [line]);
+    const norm = normaliseForQuote(line);
+    const views = { line: maskText(line, k), normalised: maskText(norm, k) };
+    // The transcript masks the fingerprints and leaves the bare runs as written.
+    for (const v of Object.values(views)) expect([v.includes(h), v.includes(h16), v.includes(b), v.includes(b16)]).toEqual([false, false, true, true]);
+    type Shown = { text: string; normalised?: string };
+    for (const [form, view] of Object.entries(views)) {
+      // From the rubric IRI's stand-in, without its frame, to the kind's stand-in, without `pev/` or the closing `/`.
+      const copied = view.slice(view.indexOf('urn:pev:rubric:') + 15, view.indexOf('/asks-their-view'));
+      let quote = copied;
+      for (let round = 1; round <= 3; round++) {
+        const what = `copied from the ${form}, round ${round}`;
+        const r = verifyQuoteAsShown({ text: quote, turnIndex: 1 }, turns, back);
+        expect([r.verified, r.readBack, r.turnIndex], what).toEqual([true, true, 1]);
+        // Saved as the learner's words, the fingerprints in them bare, as the transcript hash and highlights read them.
+        expect([r.text!.includes(h), r.normalised, norm.slice(r.start!, r.end!)], what).toEqual([true, normaliseForQuote(r.text!), r.normalised]);
+        const out = (maskAnswerHashes({ ...scope, attemptIri, quotes: [r] }, m, scope, lines) as { quotes: Shown[] }).quotes[0]!;
+        // Shown exactly as the view it was copied from shows that stretch of the line: the bare runs as written, nothing bare that is not.
+        expect([out.text, out.normalised], what).toEqual([copied, views.normalised.slice(r.start!, r.end!)]);
+        expect([JSON.stringify(out).includes(h), JSON.stringify(out).includes(h16), out.text.includes(b), out.text.includes(b16)], what).toEqual([false, false, true, true]);
+        quote = out.text;
+      }
+      // A judge's own saved answer holds the quote without its place in the line: shown the same, found again in the line.
+      const r = verifyQuoteAsShown({ text: copied, turnIndex: 1 }, turns, back);
+      const saved = maskAnswerHashes({ attemptIri, ...scope, judgment: { criteria: [{ quotes: [{ text: r.text, verified: true, readBack: true }] }] } }, m, scope, lines) as { judgment: { criteria: { quotes: Shown[] }[] } };
+      expect(saved.judgment.criteria[0]!.quotes[0]!.text, form).toBe(copied);
+    }
+    // A read-back quote that did not check out, or one shown with no line to project it from: every run of hex in it a stand-in.
+    const unverified = verifyQuoteAsShown({ text: `${views.normalised.slice(views.normalised.indexOf('urn:pev:rubric:') + 15, views.normalised.indexOf(' beside'))} was never said`, turnIndex: 1 }, turns, back);
+    expect([unverified.verified, unverified.readBack]).toEqual([false, true]);
+    const r = verifyQuoteAsShown({ text: views.normalised.slice(views.normalised.indexOf('urn:pev:rubric:') + 15, views.normalised.indexOf('/asks-their-view')), turnIndex: 1 }, turns, back);
+    for (const [q, at] of [[unverified, attemptIri], [r, 'urn:pev:attempt:not-shown']] as const) {
+      const out = JSON.stringify(maskAnswerHashes({ ...scope, attemptIri: at, quotes: [q] }, m, scope, lines));
+      expect([out.includes(h), out.includes(h16)]).toEqual([false, false]);
+    }
+  });
+
+  it('a judge\'s chat that quotes a line holding a fingerprint and an unrelated bare run of hex sees the quote as the packet shows it, and another judge\'s copy of that checks out', async () => {
+    const input = { ...demoScenarioInput('missed-deadline', 2), scenarioKey: 'quoted-mixed-hex', title: 'A quoted fingerprint beside a bare run of hex' };
+    const S = coerceScenario(input);
+    if (!('value' in S)) throw new Error('the scenario does not coerce');
+    const own = rubricHash(S.value.rubric);
+    const own16 = own.slice(0, 16);
+    const pub = ok(await ract(H, 'pev.author_scenario', P.author.web, { scenario: input, status: 'published', draftAssistance: { used: false } }));
+    const sc = String(pub['scenarioIri']);
+    ok(await ract(H, 'pev.ratify_scenario', P.reviewer.web, { scenarioIri: sc, version: 1, scenarioHash: pub['scenarioHash'] }));
+    const start = ok(await ract(H, 'pev.start_attempt', P.learner.claude, { scenarioIri: sc, scenarioVersion: 1, coached: false }));
+    const a = String(start['attemptIri']);
+    // As the peer review found it: a framed rubric IRI, and a run of 64 hex that is no rubric's (a fictional build reference).
+    const build = sha256('a fictional build reference the learner read out');
+    const line = `I traced urn:pev:rubric:${own} to build ${build} and I would like us to agree a new date for the report.`;
+    const said = ok(await ract(H, 'pev.say', P.learner.claude, { attemptIri: a, turnIndex: 1, text: line }));
+    ok(await ract(H, 'pev.end_conversation', P.learner.claude, { attemptIri: a, turnIndex: said['nextTurnIndex'] }));
+    const top = S.value.rubric.criteria.map((c) => c.levels[c.levels.length - 1]!.id);
+    type Q = { text: string; normalised?: string; verified: boolean; readBack?: true; why?: string };
+    type J = { criteria: { levelId: string; status: string; quotes: Q[] }[]; unverifiedCriteria: string[] };
+    const judgeWith = async (judge: Person, quote: string): Promise<J> => {
+      const packet = ok(await ract(H, 'pev.judge_packet', judge.claude, { attemptIri: a }));
+      return chatAnswer(await ract(H, 'pev.record_judgment', judge.claude, {
+        attemptIri: a, ...(packet['binding'] as Out), judgeDisclosure: { provider: 'Example', model: 'example-judge', usedPacketPrompt: true },
+        judgment: { criteria: S.value.rubric.criteria.map((c, i) => ({ criterionId: c.id, level: top[i], quotes: [{ text: quote, turnIndex: 1 }], rationale: 'The quoted line shows it.' })) },
+      }), `the judgment saved from ${judge.claude}`, false)['judgment'] as J;
+    };
+    const asSaved = (j: J): unknown => [j.unverifiedCriteria, j.criteria.map((c) => [c.levelId, c.status, c.quotes.map((q) => [q.text, q.verified, q.readBack ?? null, q.why ?? null])])];
+    const credited = (quote: string): unknown => [[], top.map((l) => [l, 'verified', [[quote, true, true, null]]])];
+
+    // The packet shows the fingerprint as a stand-in and the build reference as written.
+    const packet = ok(await ract(H, 'pev.judge_packet', P.judge.claude, { attemptIri: a }));
+    const shown = String((packet['request'] as Out)['user']).split('\n').find((l) => l.startsWith('[T1 LEARNER] '))!.slice('[T1 LEARNER] '.length);
+    expect([shown.includes(own), shown.includes(build), shown.length]).toEqual([false, true, line.length]);
+    const fromPacket = shown.slice(shown.indexOf('urn:pev:rubric:'), shown.indexOf(' and I would'));
+
+    // The first judge's chat copies it from the packet: read back, credited, and shown as the packet shows it.
+    const first = await judgeWith(P.judge, fromPacket);
+    expect(asSaved(first)).toEqual(credited(fromPacket));
+    // A second judge's chat copies the quote as the first one's answer shows it: it reads back and checks out too.
+    const copied = first.criteria[0]!.quotes[0]!.text;
+    expect(asSaved(await judgeWith(P.judgeReviewer, copied))).toEqual(credited(fromPacket));
+
+    // The web app keeps both as the learner's words.
+    const web = webAnswer(await ract(H, 'pev.get_attempt', P.reviewer.web, { attemptIri: a }), 'the judged session in the web app');
+    const stored = line.slice(line.indexOf('urn:pev:rubric:'), line.indexOf(' and I would'));
+    for (const j of web['judgments'] as J[]) expect(asSaved(j)).toEqual(credited(stored));
+    // Every chat view of the session, and the review queue, shows each quote as the packet shows that stretch of the line.
+    const chat = chatAnswer(await ract(H, 'pev.get_attempt', P.judge.claude, { attemptIri: a }), 'the judged session from a judge\'s chat');
+    expect((chat['turns'] as Out[]).find((t) => t['index'] === 1)!['normalisedText']).toBe(shown);
+    const queue = chatAnswer(await ract(H, 'pev.review_queue', P.reviewer.claude, { limit: 100 }), 'the review queue from a reviewer\'s chat');
+    const entry = (queue['entries'] as Out[]).find((e) => e['attemptIri'] === a)!;
+    for (const [what, js] of [['the session', chat['judgments']], ['the review queue', entry['judgments']]] as const) {
+      expect((js as J[]).map(asSaved), what).toEqual([credited(fromPacket), credited(fromPacket)]);
+      expect([...new Set((js as J[]).flatMap((j) => j.criteria.flatMap((c) => c.quotes.map((q) => q.normalised))))], what).toEqual([fromPacket]);
+    }
+    for (const r of [chat, queue]) expect([JSON.stringify(r).includes(own), JSON.stringify(r).includes(own16)]).toEqual([false, false]);
+  }, SLOW);
+
+  it('a read-back quote whose words sit in two turns is shown from the turn it was matched in, also where an answer gives that turn alone', () => {
+    const m = hashMask(Buffer.alloc(32, 17));
+    const scope = { scenarioIri: 'urn:pev:scenario:unit', version: 1 };
+    const k = m.version(scope.scenarioIri, scope.version);
+    const h16 = RAW.rubric.slice(0, 16);
+    // T1 holds the kind's hex as written, with nothing around it; T3 the kind itself, which every view shows as a stand-in.
+    const turns = [
+      { index: 1, speaker: 'learner' as const, text: `I noted ${h16}/ for this step and we should agree a new date.` },
+      { index: 2, speaker: 'counterpart' as const, text: 'Go on.' },
+      { index: 3, speaker: 'learner' as const, text: `Then I read pev/${h16}/ for this step and we should agree a new date.` },
+    ];
+    const attemptIri = 'urn:pev:attempt:unit-two-turns';
+    const shownT3 = maskText(turns[2]!.text, k);
+    const copied = shownT3.slice(shownT3.indexOf('pev/') + 4, shownT3.indexOf(' and we'));
+    const r = verifyQuoteAsShown({ text: copied, turnIndex: 3 }, turns, quoteAsStored(k, turns.map((t) => t.text)));
+    expect([r.verified, r.readBack, r.turnIndex, r.text]).toEqual([true, true, 3, `${h16}/ for this step`]);
+    const shown = (q: Out): string => (maskAnswerHashes({ ...scope, attemptIri, quotes: [q] }, m, scope, new Map([[attemptIri, turns]])) as { quotes: { text: string }[] }).quotes[0]!.text;
+    // Its place in full, or its turn alone: shown as T3 shows it, never as the bare hex T1 holds.
+    expect(shown({ text: r.text, verified: true, readBack: true, turnIndex: 3, start: r.start, end: r.end })).toBe(copied);
+    expect(shown({ text: r.text, verified: true, readBack: true, turnIndex: 3 })).toBe(copied);
+  });
+
+  it('a judge\'s own saved answer shows a read-back quote from the turn it was matched in, as the session does, when the same words sit in another turn', async () => {
+    // Version 1's rubric, so the kind's hex T1 holds as written is not the scored demo rubric's, which no chat answer holds bare.
+    const input = { ...demoScenarioInput('missed-deadline', 1), scenarioKey: 'quoted-in-two-turns', title: 'The same words in two turns' };
+    const S = coerceScenario(input);
+    if (!('value' in S)) throw new Error('the scenario does not coerce');
+    const own16 = rubricHash(S.value.rubric).slice(0, 16);
+    const pub = ok(await ract(H, 'pev.author_scenario', P.author.web, { scenario: input, status: 'published', draftAssistance: { used: false } }));
+    const sc = String(pub['scenarioIri']);
+    ok(await ract(H, 'pev.ratify_scenario', P.reviewer.web, { scenarioIri: sc, version: 1, scenarioHash: pub['scenarioHash'] }));
+    const start = ok(await ract(H, 'pev.start_attempt', P.learner.claude, { scenarioIri: sc, scenarioVersion: 1, coached: false }));
+    const a = String(start['attemptIri']);
+    // As the peer review found it: T1 holds the kind's hex as written, with nothing around it; T3 the kind itself.
+    const first = ok(await ract(H, 'pev.say', P.learner.claude, { attemptIri: a, turnIndex: 1, text: `I noted ${own16}/ for this step and we should agree a new date.` }));
+    expect(first['nextTurnIndex']).toBe(3);
+    const third = ok(await ract(H, 'pev.say', P.learner.claude, { attemptIri: a, turnIndex: 3, text: `Then I read pev/${own16}/ for this step and we should agree a new date.` }));
+    ok(await ract(H, 'pev.end_conversation', P.learner.claude, { attemptIri: a, turnIndex: third['nextTurnIndex'] }));
+    // The judge's chat copies the kind's stand-in on from T3 as the packet shows it, and says it is from T3.
+    const packet = ok(await ract(H, 'pev.judge_packet', P.judge.claude, { attemptIri: a }));
+    const t3 = String((packet['request'] as Out)['user']).split('\n').find((l) => l.startsWith('[T3 LEARNER] '))!;
+    const fromPacket = t3.slice(t3.indexOf('pev/') + 4, t3.indexOf(' and we'));
+    expect([fromPacket.includes(own16), fromPacket.endsWith('/ for this step')]).toEqual([false, true]);
+    type Q = { text: string; verified: boolean; readBack?: true; turnIndex?: number; start?: number; end?: number };
+    type J = { criteria: { quotes: Q[] }[] };
+    const saved = chatAnswer(await ract(H, 'pev.record_judgment', P.judge.claude, {
+      attemptIri: a, ...(packet['binding'] as Out), judgeDisclosure: { provider: 'Example', model: 'example-judge', usedPacketPrompt: true },
+      judgment: { criteria: S.value.rubric.criteria.map((c) => ({ criterionId: c.id, level: c.levels[c.levels.length - 1]!.id, quotes: [{ text: fromPacket, turnIndex: 3 }], rationale: 'The quoted line shows it.' })) },
+    }), 'the judgment saved from a judge\'s chat', false);
+    const session = chatAnswer(await ract(H, 'pev.get_attempt', P.judge.claude, { attemptIri: a }), 'the judged session from a judge\'s chat');
+    const place = (q: Q): unknown => [q.text, q.verified, q.readBack ?? null, q.turnIndex ?? null];
+    // The saved answer and the session show the quote alike: as T3 shows it, from T3, the hex it stands for nowhere.
+    for (const [what, j] of [['the saved answer', saved['judgment']], ['the session', (session['judgments'] as J[])[0]]] as const) {
+      expect((j as J).criteria.map((c) => c.quotes.map(place)), what).toEqual(S.value.rubric.criteria.map(() => [[fromPacket, true, true, 3]]));
+    }
+    const savedQuote = (saved['judgment'] as J).criteria[0]!.quotes[0]!;
+    const sessionQuote = (session['judgments'] as J[])[0]!.criteria[0]!.quotes[0]!;
+    expect([savedQuote.start, savedQuote.end]).toEqual([sessionQuote.start, sessionQuote.end]);
+    expect(JSON.stringify(saved).includes(own16)).toBe(false);
+  }, SLOW);
+
+  it('a judge\'s chat that quotes a line holding a fingerprint and the stand-in it is shown as, written out by the learner, has the quote read back and credited', async () => {
+    const input = { ...demoScenarioInput('missed-deadline', 2), scenarioKey: 'quoted-written-stand-in', title: 'A stand-in written out beside its fingerprint' };
+    const S = coerceScenario(input);
+    if (!('value' in S)) throw new Error('the scenario does not coerce');
+    const own = rubricHash(S.value.rubric);
+    const pub = ok(await ract(H, 'pev.author_scenario', P.author.web, { scenario: input, status: 'published', draftAssistance: { used: false } }));
+    const sc = String(pub['scenarioIri']);
+    ok(await ract(H, 'pev.ratify_scenario', P.reviewer.web, { scenarioIri: sc, version: 1, scenarioHash: pub['scenarioHash'] }));
+    const start = ok(await ract(H, 'pev.start_attempt', P.learner.claude, { scenarioIri: sc, scenarioVersion: 1, coached: false }));
+    const a = String(start['attemptIri']);
+    const said = ok(await ract(H, 'pev.say', P.learner.claude, { attemptIri: a, turnIndex: 1, text: `I traced urn:pev:rubric:${own} first.` }));
+    // The learner's chat reads the session, copies the stand-in its first line is shown with, and writes it out beside the fingerprint.
+    const mine = chatAnswer(await ract(H, 'pev.get_attempt', P.learner.claude, { attemptIri: a }), 'the session from the learner\'s chat');
+    const t1 = String((mine['turns'] as Out[]).find((t) => t['index'] === 1)!['text']);
+    const standIn = t1.slice(t1.indexOf('urn:pev:rubric:') + 15, t1.indexOf(' first.'));
+    expect([standIn.length, standIn === own]).toEqual([64, false]);
+    const line = `So urn:pev:rubric:${own} equals ${standIn} and I would like us to agree a new date for the report.`;
+    const third = ok(await ract(H, 'pev.say', P.learner.claude, { attemptIri: a, turnIndex: said['nextTurnIndex'], text: line }));
+    ok(await ract(H, 'pev.end_conversation', P.learner.claude, { attemptIri: a, turnIndex: third['nextTurnIndex'] }));
+    // The packet shows both as the stand-in; the judge's chat quotes them from it.
+    const packet = ok(await ract(H, 'pev.judge_packet', P.judge.claude, { attemptIri: a }));
+    const shown = String((packet['request'] as Out)['user']).split('\n').find((l) => l.startsWith(`[T${String(said['nextTurnIndex'])} LEARNER] `))!;
+    const fromPacket = shown.slice(shown.indexOf('urn:pev:rubric:'), shown.indexOf(' and I would'));
+    expect(fromPacket).toBe(`urn:pev:rubric:${standIn} equals ${standIn}`);
+    type Q = { text: string; verified: boolean; readBack?: true };
+    type J = { criteria: { status: string; quotes: Q[] }[]; unverifiedCriteria: string[] };
+    const saved = chatAnswer(await ract(H, 'pev.record_judgment', P.judge.claude, {
+      attemptIri: a, ...(packet['binding'] as Out), judgeDisclosure: { provider: 'Example', model: 'example-judge', usedPacketPrompt: true },
+      judgment: { criteria: S.value.rubric.criteria.map((c) => ({ criterionId: c.id, level: c.levels[c.levels.length - 1]!.id, quotes: [{ text: fromPacket, turnIndex: said['nextTurnIndex'] }], rationale: 'The quoted line shows it.' })) },
+    }), 'the judgment saved from a judge\'s chat', false);
+    const j = saved['judgment'] as J;
+    expect([j.unverifiedCriteria, j.criteria.map((c) => [c.status, c.quotes.map((q) => [q.text, q.verified, q.readBack ?? null])])])
+      .toEqual([[], S.value.rubric.criteria.map(() => ['verified', [[fromPacket, true, true]]])]);
+    // The web app keeps it as the learner's words: the fingerprint put back, the stand-in they wrote out as they wrote it.
+    const web = webAnswer(await ract(H, 'pev.get_attempt', P.reviewer.web, { attemptIri: a }), 'the judged session in the web app');
+    expect((web['judgments'] as J[])[0]!.criteria[0]!.quotes[0]!.text).toBe(`urn:pev:rubric:${own} equals ${standIn}`);
+  }, SLOW);
+
+  it('a judge\'s chat sees none of a fingerprint whose last hex digit a combining mark follows, in the packet or the session, and its quote of it is read back and credited', async () => {
+    // A copy of the demo scenario whose rubric fingerprint ends in a hex letter, so that NFC folds it and a mark after it into one.
+    const variant = (i: number): Out => {
+      const base = demoScenarioInput('missed-deadline', 1);
+      const rubric = base['rubric'] as Out;
+      const criteria = (rubric['criteria'] as Out[]).map((c, j) => (j === 0 && i > 0 ? { ...c, title: `${String(c['title'])} (${i})` } : c));
+      return { ...base, scenarioKey: 'quoted-folded-hex', title: 'A fingerprint a mark follows', rubric: { ...rubric, criteria } };
+    };
+    const i = Array.from({ length: 64 }, (_, n) => n).find((n) => { const x = coerceScenario(variant(n)); return 'value' in x && /[a-f]$/.test(rubricHash(x.value.rubric)); });
+    if (i === undefined) throw new Error('no copy of the scenario has a fingerprint ending in a hex letter');
+    const input = variant(i);
+    const S = coerceScenario(input);
+    if (!('value' in S)) throw new Error('the scenario does not coerce');
+    const own = rubricHash(S.value.rubric);
+    const mark = 'ace'.includes(own[63]!) ? '́' : '̇';
+    const pub = ok(await ract(H, 'pev.author_scenario', P.author.web, { scenario: input, status: 'published', draftAssistance: { used: false } }));
+    const sc = String(pub['scenarioIri']);
+    ok(await ract(H, 'pev.ratify_scenario', P.reviewer.web, { scenarioIri: sc, version: 1, scenarioHash: pub['scenarioHash'] }));
+    const start = ok(await ract(H, 'pev.start_attempt', P.learner.claude, { scenarioIri: sc, scenarioVersion: 1, coached: false }));
+    const a = String(start['attemptIri']);
+    const line = `I traced urn:pev:rubric:${own}${mark} and I would like us to agree a new date for the report.`;
+    const said = ok(await ract(H, 'pev.say', P.learner.claude, { attemptIri: a, turnIndex: 1, text: line }));
+    ok(await ract(H, 'pev.end_conversation', P.learner.claude, { attemptIri: a, turnIndex: said['nextTurnIndex'] }));
+    const none = (r: unknown): unknown => [JSON.stringify(r).includes(own.slice(0, 63)), JSON.stringify(r).includes(own.slice(0, 16))];
+    // The packet shows the line normalised, the last digit and the mark one letter there: none of the fingerprint, the same length.
+    const packet = ok(await ract(H, 'pev.judge_packet', P.judge.claude, { attemptIri: a }));
+    const shown = String((packet['request'] as Out)['user']).split('\n').find((l) => l.startsWith('[T1 LEARNER] '))!.slice('[T1 LEARNER] '.length);
+    expect([none(shown), shown.length]).toEqual([[false, false], normaliseForQuote(line).length]);
+    // The judge's chat copies the stand-in from the packet: read back, checked out and credited.
+    const fromPacket = shown.slice(shown.indexOf('urn:pev:rubric:'), shown.indexOf(' and I would'));
+    type Q = { text: string; normalised?: string; verified: boolean; readBack?: true };
+    type J = { criteria: { status: string; quotes: Q[] }[]; unverifiedCriteria: string[] };
+    const saved = chatAnswer(await ract(H, 'pev.record_judgment', P.judge.claude, {
+      attemptIri: a, ...(packet['binding'] as Out), judgeDisclosure: { provider: 'Example', model: 'example-judge', usedPacketPrompt: true },
+      judgment: { criteria: S.value.rubric.criteria.map((c) => ({ criterionId: c.id, level: c.levels[c.levels.length - 1]!.id, quotes: [{ text: fromPacket, turnIndex: 1 }], rationale: 'The quoted line shows it.' })) },
+    }), 'the judgment saved from a judge\'s chat', false);
+    const j = saved['judgment'] as J;
+    expect([j.unverifiedCriteria, j.criteria.map((c) => [c.status, c.quotes.map((q) => [q.verified, q.readBack ?? null])])])
+      .toEqual([[], S.value.rubric.criteria.map(() => ['verified', [[true, true]]])]);
+    // The session as a judge's chat reads it: the line and its normalised form, the quote and its normalised form, none of it.
+    const session = chatAnswer(await ract(H, 'pev.get_attempt', P.judge.claude, { attemptIri: a }), 'the judged session from a judge\'s chat');
+    const t1 = (session['turns'] as Out[]).find((t) => t['index'] === 1)!;
+    expect([none(t1['text']), none(t1['normalisedText']), t1['normalisedText']]).toEqual([[false, false], [false, false], shown]);
+    for (const r of [packet, saved, session]) expect(none(r)).toEqual([false, false]);
   }, SLOW);
 });
 

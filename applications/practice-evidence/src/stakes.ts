@@ -23,13 +23,15 @@
  * words never comes back equal to the hash it would be checked against. The stand-in is the same
  * each time the same hash is shown in the same scope, so a judge who quotes a line holding one
  * quotes what every view of that transcript shows, and the quote is read back as the stored text
- * it stands for (`quoteAsStored`). A signed request a record keeps is shown without what it signed:
- * that is the signer's own object, which could hold a guess under a field name this bridge keys.
+ * it stands for (`quoteAsStored`). Such a quote is shown as the stretch of the line it was matched
+ * against, as that line is shown (`readBackAsShown`), so a copy of it reads back again. A signed
+ * request a record keeps is shown without what it signed: that is the signer's own object, which
+ * could hold a guess under a field name this bridge keys.
  *
  * Pure: no I/O.
  */
 import { createHmac, randomBytes } from 'node:crypto';
-import type { Assessment, JudgmentResult, Rubric, ScenarioSpec } from './practice.js';
+import { normaliseForQuote, verifyQuote, type Assessment, type JudgmentResult, type Rubric, type ScenarioSpec, type Turn } from './practice.js';
 import type { ReviewResult } from './records.js';
 
 /** What every answer that left a scored scenario's stakes out says, at its top level. */
@@ -102,7 +104,11 @@ const HASH_KEYS: ReadonlySet<string> = new Set(['rubricHash', 'scenarioHash']);
  * them carries no stake.
  */
 const SIGNED_KEYS: ReadonlySet<string> = new Set(['graphTrig', 'descriptorTurtle', 'statement']);
-const RUBRIC_IRI = /urn:pev:rubric:([0-9a-f]{64})/g;
+/**
+ * A rubric IRI, its hash as `hashIn` reads it: `urn:pev:rubric:`, 63 hex, and the hash's last digit, or the one letter
+ * NFC folded that digit and the combining marks after it into (`foldedDigit`).
+ */
+const RUBRIC_IRI = /urn:pev:rubric:([0-9a-f]{63}(?:[0-9a-f]|[\u0080-\uffff]))/g;
 /**
  * A calibration decision kind's hash prefix, `pev/<first 16 hex of the rubric hash>/`, wherever it sits,
  * whatever comes before it. No word boundary: `\b` reads only ASCII as word characters, and NFC folds
@@ -111,9 +117,59 @@ const RUBRIC_IRI = /urn:pev:rubric:([0-9a-f]{64})/g;
  * would be masked differently.
  */
 const KIND_PREFIX = /pev\/([0-9a-f]{16})\//g;
-/** A whole run of 64 hex, or of 16, with no hex digit on either side: a stand-in copied without its frame. */
-const HEX64_RUN = /(?<![0-9a-f])[0-9a-f]{64}(?![0-9a-f])/g;
-const HEX16_RUN = /(?<![0-9a-f])[0-9a-f]{16}(?![0-9a-f])/g;
+const HEX_DIGIT = /^[0-9a-f]$/;
+
+/**
+ * The hex digit a letter was folded from, and the combining marks folded with it: NFC writes a hex
+ * digit a mark follows as one letter where Unicode has one (`e` and U+0301 as `é`, `b` and U+0307 as
+ * `ḃ`), so `normaliseForQuote`, whose form the judge packet and an attempt's `normalisedText` show,
+ * writes a run of hex whose last digit a mark follows with one hex digit fewer. Null for any other
+ * character.
+ */
+function foldedDigit(c: string): { readonly digit: string; readonly marks: string } | null {
+  const d = c.normalize('NFD');
+  return d.length > 1 && HEX_DIGIT.test(d[0]!) ? { digit: d[0]!, marks: d.slice(1) } : null;
+}
+
+/**
+ * The hash in `run` (`n` - 1 hex and one more character, as `RUBRIC_IRI` and `HASH_OR_RUN` take it):
+ * its `n` hex, the last a digit or the letter it was folded into (`foldedDigit`), and the marks folded
+ * with it ('' when none were). Null when the last character is neither.
+ */
+function hashIn(run: string): { readonly hash: string; readonly marks: string } | null {
+  const last = run.slice(-1);
+  if (HEX_DIGIT.test(last)) return { hash: run, marks: '' };
+  const f = foldedDigit(last);
+  return f === null ? null : { hash: run.slice(0, -1) + f.digit, marks: f.marks };
+}
+
+/**
+ * The letter a stand-in's last digit is shown as where the hash's was folded with `marks`: that digit
+ * with those marks, when NFC folds them into one letter, so the normalised form of the masked line is
+ * the masked normalised form; otherwise a hex letter that takes them, chosen by the stand-in's digit.
+ * One character either way, so every offset keeps. Which letter tells nothing of the hash's own last
+ * digit beyond that it takes those marks, which a line and its normalised form shown side by side
+ * already tell.
+ */
+function refolded(digit: string, marks: string, was: string): string {
+  const own = `${digit}${marks}`.normalize('NFC');
+  if (own.length === 1) return own;
+  const takers = [...'abcdef'].map((b) => `${b}${marks}`.normalize('NFC')).filter((c) => c.length === 1);
+  return takers[parseInt(digit, 16) % takers.length] ?? was;
+}
+
+/**
+ * `run` (a hash as `hashIn` reads it) with its hash's stand-in in text for `k` in its place, the same
+ * length: the stand-in's hex, its last digit refolded where the hash's was folded (`refolded`). `run`
+ * as it is when it holds no hash.
+ */
+function standInFor(run: string, k: Keyer): string {
+  const at = hashIn(run);
+  if (at === null) return run;
+  const s = at.hash.length === 64 ? k.inText.full(at.hash) : k.inText.prefix(at.hash);
+  return at.marks === '' ? s : s.slice(0, -1) + refolded(s.slice(-1), at.marks, run.slice(-1));
+}
+
 /** A rubric IRI as this bridge writes it under `rubricIri` (`records.ts` `rubricIriOf`): that and nothing else. */
 const RUBRIC_IRI_FIELD = /^urn:pev:rubric:([0-9a-f]{64})$/;
 /** A calibration kind as `calibration.ts` writes it under a cell's `kind`: `pev/<16 hex>/<criterion id>`, and nothing else. */
@@ -124,30 +180,42 @@ const mayHoldHash = (s: string): boolean => s.includes('urn:pev:rubric:') || s.i
 /**
  * `s` with every rubric IRI's hash and every calibration-kind prefix inside it replaced by its
  * stand-in in text for scope `k` (`Keyer.inText`), each the same length as what it replaces, so an
- * offset into the stored text is the same offset into this one.
+ * offset into the stored text is the same offset into this one. A rubric IRI's hash is found in a
+ * line and in its normalised form alike: where a combining mark follows its last digit, NFC folds the
+ * two into one letter (`hashIn`), and the 63 hex before that letter are replaced as well, the letter
+ * refolded onto the stand-in's last digit (`standInFor`).
  */
 export function maskText(s: string, k: Keyer): string {
   if (!mayHoldHash(s)) return s;
-  return s.replace(RUBRIC_IRI, (_m, h: string) => `urn:pev:rubric:${k.inText.full(h)}`)
+  return s.replace(RUBRIC_IRI, (_m, run: string) => `urn:pev:rubric:${standInFor(run, k)}`)
     .replace(KIND_PREFIX, (_m, p: string) => `pev/${k.inText.prefix(p)}/`);
 }
 
-/** A rubric IRI's hash, a kind's prefix, or a whole run of 64 or 16 hex: one pass, so nothing is replaced twice. */
-const HASH_OR_RUN = /urn:pev:rubric:([0-9a-f]{64})|pev\/([0-9a-f]{16})\/|(?<![0-9a-f])([0-9a-f]{64})(?![0-9a-f])|(?<![0-9a-f])([0-9a-f]{16})(?![0-9a-f])/g;
+/**
+ * A rubric IRI's hash, a kind's prefix, or a whole run of 64 or 16 hex, each run's last digit possibly
+ * folded with the marks after it into one letter (`hashIn`): one pass, so nothing is replaced twice.
+ */
+const HASH_OR_RUN = new RegExp([
+  RUBRIC_IRI.source, KIND_PREFIX.source,
+  '(?<![0-9a-f])([0-9a-f]{63}(?:[0-9a-f](?![0-9a-f])|[\\u0080-\\uffff]))',
+  '(?<![0-9a-f])([0-9a-f]{15}(?:[0-9a-f](?![0-9a-f])|[\\u0080-\\uffff]))',
+].join('|'), 'g');
 
 /**
- * A quote that was read back (`QuoteCheck.readBack`) as an answer that masks text shows it: `maskText`,
- * and each whole run of 64 or 16 hex replaced with its stand-in in text as well. A judge may have
- * copied a stand-in's hex alone (`quoteAsStored`), so the saved quote can hold a hash with no
- * `urn:pev:rubric:` or `pev/` around it; shown this way it reads as the judge copied it and as the line
- * it was copied from shows it. A run of hex the learner wrote bare in such a quote is shown as a
- * stand-in too, where the line shows it as written.
+ * A quote that was read back (`QuoteCheck.readBack`) as an answer that masks text shows it when there
+ * is no line to show it from (`readBackAsShown`): one that did not check out, or one an answer shows
+ * without its attempt's lines. `maskText`, and each whole run of 64 or 16 hex replaced with its
+ * stand-in in text as well: a judge may have copied a stand-in's hex alone (`quoteAsStored`), so the
+ * saved quote can hold a hash with no `urn:pev:rubric:` or `pev/` around it, and no hash read back
+ * into it is shown bare. A run of hex the learner or the judge wrote bare is shown as a stand-in too,
+ * and a run whose last digit NFC folded with a mark after it (`hashIn`) as well, in `normalised` as
+ * in `text`.
  */
 export function maskReadBackQuote(s: string, k: Keyer): string {
   return s.replace(HASH_OR_RUN, (_m, iri?: string, kind?: string, run64?: string, run16?: string) => (
-    iri !== undefined ? `urn:pev:rubric:${k.inText.full(iri)}`
+    iri !== undefined ? `urn:pev:rubric:${standInFor(iri, k)}`
       : kind !== undefined ? `pev/${k.inText.prefix(kind)}/`
-        : run64 !== undefined ? k.inText.full(run64) : k.inText.prefix(run16!)));
+        : standInFor(run64 ?? run16!, k)));
 }
 
 /**
@@ -155,6 +223,70 @@ export function maskReadBackQuote(s: string, k: Keyer): string {
  * holds one, whole or cut down to its words and whether it checked out (`record_judgment`'s answer).
  */
 const isReadBackQuote = (o: Record<string, unknown>): boolean => o['readBack'] === true && typeof o['verified'] === 'boolean';
+
+/** A turn as a read-back quote is shown from it (`readBackAsShown`). */
+export type QuotedTurn = Pick<Turn, 'index' | 'speaker' | 'text'>;
+/**
+ * The stored turns of each attempt whose read-back quotes an answer shows, by the attempt's IRI as the
+ * answer names it (`attemptIri`, on the answer or on the entry that holds the quotes).
+ */
+export type QuotedLines = ReadonlyMap<string, readonly QuotedTurn[]>;
+const NO_LINES: QuotedLines = new Map();
+
+const isOffset = (v: unknown): v is number => typeof v === 'number' && Number.isInteger(v) && v >= 0;
+
+/** Each place `s` sits in `line`, as `shown` (`line` masked, which keeps every offset) shows it there. */
+function shownWhere(line: string, shown: string, s: string): string[] {
+  const out: string[] = [];
+  for (let at = line.indexOf(s); s !== '' && at >= 0; at = line.indexOf(s, at + 1)) out.push(shown.slice(at, at + s.length));
+  return out;
+}
+
+/**
+ * A read-back quote that checked out, as an answer that masks text shows it: the stretch of the
+ * learner's line it was matched against (its `turnIndex`, `start` and `end`, or, where an answer
+ * leaves those out, found again as `verifyQuote` found it, in its `turnIndex` when the answer gives
+ * that alone), as every view of that line shows it
+ * (`maskText`). `normalised` is that stretch of the normalised line, which the judge packet and an
+ * attempt's `normalisedText` show; `text` is the same stretch of the line as stored, which an
+ * attempt's `text` shows, where the saved words sit there and are shown the same way, and otherwise
+ * the normalised stretch too. So only what the line's own views mask is masked: a stand-in the
+ * line shows is shown, and a run of hex the line shows as written is shown as written. A copy of it
+ * is one of those views' own words, so it reads back (`quoteAsStored`) and checks out at the same
+ * place, as often as it is copied. Null when there is no such line: the quote did not check out,
+ * or the answer was given no lines for its attempt (`maskReadBackQuote` then).
+ */
+function readBackAsShown(q: Record<string, unknown>, k: Keyer, turns: readonly QuotedTurn[] | undefined): { readonly text: string; readonly normalised: string } | null {
+  const text = q['text'];
+  if (turns === undefined || q['verified'] !== true || typeof text !== 'string') return null;
+  const normalised = normaliseForQuote(text);
+  const found = isOffset(q['turnIndex']) && isOffset(q['start']) && isOffset(q['end'])
+    ? { verified: true, turnIndex: q['turnIndex'], start: q['start'], end: q['end'] }
+    : verifyQuote({ text, ...(isOffset(q['turnIndex']) ? { turnIndex: q['turnIndex'] } : {}) }, turns);
+  if (!found.verified || found.turnIndex === undefined || found.start === undefined || found.end === undefined) return null;
+  const { turnIndex, start, end } = found;
+  const line = turns.find((t) => t.speaker === 'learner' && t.index === turnIndex)?.text;
+  if (line === undefined) return null;
+  const norm = normaliseForQuote(line);
+  if (norm.slice(start, end) !== normalised) return null;
+  const normShown = maskText(norm, k);
+  const shownNormalised = normShown.slice(start, end);
+  if (text === normalised) return { text: shownNormalised, normalised: shownNormalised };
+  // Words saved as the stored line holds them (a judge who copied an attempt's `text`): that line's
+  // view of them, where it masks them as the matched stretch is masked.
+  const asCopied = [...shownWhere(line, maskText(line, k), text), ...shownWhere(norm, normShown, text)]
+    .find((c) => normaliseForQuote(c) === shownNormalised);
+  return { text: asCopied ?? shownNormalised, normalised: shownNormalised };
+}
+
+/**
+ * At most this many whole runs of hex in one quote that stand for a hash are each tried as written
+ * as well as read back (`quoteReadingsAsStored`): 2 to that power readings, few enough to try each.
+ */
+const RUNS_TRIED_AS_WRITTEN = 4;
+
+/** One stand-in in a quote, from `at` to `end`, and the stored text it is read back as (`to`). */
+interface ReadBack { readonly at: number; readonly end: number; readonly to: string }
 
 /**
  * Reads a quote copied from a view of `stored` masked for scope `k` (`maskText`) as the stored text
@@ -165,21 +297,69 @@ const isReadBackQuote = (o: Record<string, unknown>): boolean => o['readBack'] =
  * `urn:pev:rubric:`, `pev/` or the closing `/`. It names no hash that is not already in `stored`,
  * which the caller's own view showed as that stand-in. A quote that cuts a run of hex is not read
  * back; it cuts a word of the line, which the quote rule refuses anyway.
+ *
+ * The first reading has every such stand-in read back. A view shows a stand-in a learner wrote out
+ * (copied from an earlier view of the same scenario version) as written, the same as the hash it
+ * stands for, so where a whole run of hex could be either, the readings after the first keep some of
+ * those runs as written, fewest first: each of them, while there are at most
+ * `RUNS_TRIED_AS_WRITTEN`, otherwise all of them at once. A framed one (`urn:pev:rubric:`, `pev/`) is
+ * always read back: a view never shows a framed run of hex as written. Only readings that some
+ * stored line, normalised, holds are given after the first.
  */
-export function quoteAsStored(k: Keyer, stored: readonly string[]): (quote: string) => string {
+export function quoteReadingsAsStored(k: Keyer, stored: readonly string[]): (quote: string) => readonly string[] {
+  // Each stand-in as a view shows it, to the stored text it stands for: from a line and from its
+  // normalised form, which writes a hash a mark follows otherwise (`hashIn`) and is shown so.
   const full = new Map<string, string>();
   const prefix = new Map<string, string>();
   for (const t of stored) {
     if (!mayHoldHash(t)) continue;
-    for (const m of t.matchAll(RUBRIC_IRI)) full.set(k.inText.full(m[1]!), m[1]!);
-    for (const m of t.matchAll(KIND_PREFIX)) prefix.set(k.inText.prefix(m[1]!), m[1]!);
+    for (const form of [t, normaliseForQuote(t)]) {
+      for (const m of form.matchAll(RUBRIC_IRI)) if (hashIn(m[1]!) !== null) full.set(standInFor(m[1]!, k), m[1]!);
+      for (const m of form.matchAll(KIND_PREFIX)) prefix.set(k.inText.prefix(m[1]!), m[1]!);
+    }
   }
-  if (full.size === 0 && prefix.size === 0) return (quote) => quote;
-  return (quote) => quote
-    .replace(RUBRIC_IRI, (m, h: string) => { const raw = full.get(h); return raw === undefined ? m : `urn:pev:rubric:${raw}`; })
-    .replace(KIND_PREFIX, (m, p: string) => { const raw = prefix.get(p); return raw === undefined ? m : `pev/${raw}/`; })
-    .replace(HEX64_RUN, (m) => full.get(m) ?? m)
-    .replace(HEX16_RUN, (m) => prefix.get(m) ?? m);
+  if (full.size === 0 && prefix.size === 0) return (quote) => [quote];
+  const lines = stored.map(normaliseForQuote);
+  return (quote) => {
+    const framed: ReadBack[] = [];
+    const runs: ReadBack[] = [];
+    for (const m of quote.matchAll(HASH_OR_RUN)) {
+      const [whole, iri, kind, run64, run16] = m;
+      const raw = iri !== undefined ? full.get(iri) : kind !== undefined ? prefix.get(kind) : run64 !== undefined ? full.get(run64) : prefix.get(run16!);
+      if (raw === undefined) continue;
+      const at = m.index;
+      if (iri !== undefined) framed.push({ at, end: at + whole.length, to: `urn:pev:rubric:${raw}` });
+      else if (kind !== undefined) framed.push({ at, end: at + whole.length, to: `pev/${raw}/` });
+      else runs.push({ at, end: at + whole.length, to: raw });
+    }
+    const write = (asWritten: ReadonlySet<ReadBack>): string => {
+      let out = '';
+      let from = 0;
+      for (const r of [...framed, ...runs].filter((x) => !asWritten.has(x)).sort((a, b) => a.at - b.at)) {
+        out += quote.slice(from, r.at) + r.to;
+        from = r.end;
+      }
+      return out + quote.slice(from);
+    };
+    const first = write(new Set());
+    const kept = runs.length <= RUNS_TRIED_AS_WRITTEN
+      ? Array.from({ length: 2 ** runs.length - 1 }, (_, i) => runs.filter((_r, j) => ((i + 1) >> j) & 1))
+        .sort((a, b) => a.length - b.length)
+      : [runs];
+    const readings = [first];
+    for (const asWritten of kept) {
+      const r = write(new Set(asWritten));
+      const n = normaliseForQuote(r);
+      if (!readings.includes(r) && lines.some((l) => l.includes(n))) readings.push(r);
+    }
+    return readings;
+  };
+}
+
+/** The first of `quoteReadingsAsStored`'s readings: every stand-in in the quote that stands for a hash in `stored` read back. */
+export function quoteAsStored(k: Keyer, stored: readonly string[]): (quote: string) => string {
+  const readings = quoteReadingsAsStored(k, stored);
+  return (quote) => readings(quote)[0]!;
 }
 
 type Version = { readonly scenarioIri: string; readonly version: number };
@@ -249,8 +429,7 @@ const isCalibrationCell = (o: Record<string, unknown>): boolean =>
  * cell wherever it sits), or, where nothing names its version, with a salt of this answer's own
  * (`loose`).
  *
- * Replaced: a rubric IRI's hash or a kind's prefix inside any other string (`maskText`), and in a
- * read-back quote's words every whole run of 64 or 16 hex as well (`maskReadBackQuote`). Such text
+ * Replaced: a rubric IRI's hash or a kind's prefix inside any other string (`maskText`). Such text
  * may be a caller's (a turn, a contest or redaction reason, a judge's quote or rationale, a
  * scenario's words or a criterion's title), and keyed like the answer's own `rubricHash` it would let
  * a caller write the bare hash of a guessed rubric and read it back keyed, to compare. So each one is
@@ -259,19 +438,26 @@ const isCalibrationCell = (o: Record<string, unknown>): boolean =>
  * every view of one attempt's transcript shows a line the same way and a quote copied from any of
  * them reads back as the stored line (`quoteAsStored`).
  *
+ * Shown from its line: a read-back quote's words, which are the stored line's and can hold a hash
+ * with nothing around it, are shown as the stretch of the learner's line they were matched against,
+ * as that line is shown (`readBackAsShown`). The line comes from `lines`: the stored turns of the
+ * attempt the answer, or the entry holding the quote, names by `attemptIri`. With no line to show
+ * them from, every whole run of 64 or 16 hex in them is replaced as well (`maskReadBackQuote`).
+ *
  * Two stand-ins in text are equal when their hashes are, which tells a caller only that two texts
  * hold the same hash. A caller who reads no stakes can learn something from that only if a real
  * rubric hash already sits in some text, and this bridge writes none there: only a person who reads
  * the stakes can have put it there, and such a person could as well pass the stakes on.
  */
-export function maskAnswerHashes(v: unknown, m: HashMask, scope: HashScope = null): unknown {
+export function maskAnswerHashes(v: unknown, m: HashMask, scope: HashScope = null, lines: QuotedLines = NO_LINES): unknown {
   let loose: Keyer | null = null;
   const keyerFor = (at: Version | 'cells' | null): Keyer => {
     if (at === 'cells') return m.cells;
     if (at !== null) return m.version(at.scenarioIri, at.version);
     return (loose ??= m.loose());
   };
-  const walk = (x: unknown, at: Version | 'cells' | null, key?: string): unknown => {
+  // `attempt`: the attempt whose quotes `x` may hold, as the object it sits in names it.
+  const walk = (x: unknown, at: Version | 'cells' | null, attempt: string | null, key?: string): unknown => {
     if (typeof x === 'string') {
       if (key !== undefined && HASH_KEYS.has(key) && HEX64.test(x)) return keyerFor(at).full(x);
       const iri = key === 'rubricIri' ? RUBRIC_IRI_FIELD.exec(x) : null;
@@ -280,19 +466,21 @@ export function maskAnswerHashes(v: unknown, m: HashMask, scope: HashScope = nul
       if (kind !== null) return `pev/${keyerFor(at).prefix(kind[1]!)}/${kind[2]!}`;
       return mayHoldHash(x) ? maskText(x, keyerFor(at)) : x;
     }
-    if (Array.isArray(x)) return x.map((y) => walk(y, at));
+    if (Array.isArray(x)) return x.map((y) => walk(y, at, attempt));
     if (isRecord(x)) {
       const o = isStoredEnvelope(x) ? withoutPayload(x) : x;
       const here = at === 'cells' || isCalibrationCell(o) ? 'cells' : versionIn(o, at);
+      const within = typeof o['attemptIri'] === 'string' ? o['attemptIri'] : attempt;
       const readBack = isReadBackQuote(o);
+      const shown = readBack ? readBackAsShown(o, keyerFor(here), within === null ? undefined : lines.get(within)) : null;
       return Object.fromEntries(Object.entries(o).map(([k, y]) => [k,
         SIGNED_KEYS.has(k) ? y
-          : readBack && (k === 'text' || k === 'normalised') && typeof y === 'string' ? maskReadBackQuote(y, keyerFor(here))
-            : walk(y, here, k)]));
+          : readBack && (k === 'text' || k === 'normalised') && typeof y === 'string' ? (shown?.[k] ?? maskReadBackQuote(y, keyerFor(here)))
+            : walk(y, here, within, k)]));
     }
     return x;
   };
-  return walk(v, scope);
+  return walk(v, scope, null);
 }
 
 /** A rubric as an answer without the stakes carries it: criteria and levels, in words. */

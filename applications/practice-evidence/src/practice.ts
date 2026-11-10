@@ -714,21 +714,34 @@ export function verifyQuote(q: JudgeQuoteInput, turns: readonly Pick<Turn, 'inde
 }
 
 /**
+ * How a quote copied from a view of the transcript is read back as the stored text it stands for:
+ * one reading, or several to try in order (stakes.ts `quoteReadingsAsStored`).
+ */
+export type QuoteReader = (quote: string) => string | readonly string[];
+
+/**
  * Check a quote a judge may have copied from a view of the transcript that shows some of its text
  * otherwise than stored (an answer that replaced a fingerprint in a line with a stand-in, say):
  * `asStored` reads such a quote back as the stored text it stands for. The quote is checked as sent
  * first; when it is not found, and `asStored` reads it differently, it is checked as read back, and
  * that check is kept, its text the stored text and marked `readBack`, so a recorded quote is always
- * one of the stored lines' own and says when it is not the text the judge sent. Without `asStored`,
- * exactly `verifyQuote`.
+ * one of the stored lines' own and says when it is not the text the judge sent. Where `asStored`
+ * gives several readings, the first that checks out in the turn the judge named is kept, else the
+ * first that checks out, else the first reading's check. Without `asStored`, exactly `verifyQuote`.
  */
 export function verifyQuoteAsShown(
-  q: JudgeQuoteInput, turns: readonly Pick<Turn, 'index' | 'speaker' | 'text'>[], asStored?: (quote: string) => string,
+  q: JudgeQuoteInput, turns: readonly Pick<Turn, 'index' | 'speaker' | 'text'>[], asStored?: QuoteReader,
 ): QuoteCheck {
   const sent = verifyQuote(q, turns);
   if (sent.verified || asStored === undefined) return sent;
-  const text = asStored(q.text);
-  return text === q.text ? sent : { ...verifyQuote({ ...q, text }, turns), readBack: true };
+  const read = asStored(q.text);
+  let kept: QuoteCheck | undefined;
+  for (const text of (typeof read === 'string' ? [read] : read).filter((t) => t !== q.text)) {
+    const c = verifyQuote({ ...q, text }, turns);
+    if (c.verified && c.declaredTurnIndex === undefined) return { ...c, readBack: true };
+    if (kept === undefined || (c.verified && !kept.verified)) kept = c;
+  }
+  return kept === undefined ? sent : { ...kept, readBack: true };
 }
 
 export type CriterionStatus = 'verified' | 'unverified' | 'no-quote-needed';
@@ -1005,7 +1018,7 @@ const round4 = (n: number): number => Math.round(n * 1e4) / 1e4;
  */
 export function assembleJudgment(
   s: ScenarioSpec, turns: readonly Turn[], parsed: { readonly criteria: readonly JudgeCriterionInput[] },
-  meta: Omit<JudgmentResult, 'criteria' | 'unverifiedCriteria' | 'provisional'>, asStored?: (quote: string) => string,
+  meta: Omit<JudgmentResult, 'criteria' | 'unverifiedCriteria' | 'provisional'>, asStored?: QuoteReader,
 ): JudgmentResult {
   const criteria: CriterionJudgment[] = s.rubric.criteria.map((c) => {
     const input = parsed.criteria.find((x) => x.criterionId === c.id);

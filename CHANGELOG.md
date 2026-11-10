@@ -1,5 +1,147 @@
 # Changelog
 
+## 2026-11-10 — Practice Evidence: the old wording of the demo rubric's top level is gone from the tests
+
+The same peer review found one test that still repeated the demo rubric's old
+top level for asking their view: a reviewer's reason for overriding a level
+read "before saying anything else about it". It was free text, not a copy of
+the rubric, so nothing broke, but the demo rubric and the scripted judge now
+say "before deciding anything", and the reason now does too. A test now checks
+that the old words appear in no file of Practice Evidence: its code, its
+README, its pages, or its tests.
+
+Not covered: the check looks only inside Practice Evidence. The changelog
+still quotes the old wording, as it should, to say what changed.
+
+## 2026-11-10 — Practice Evidence: a quote of a stand-in the learner wrote out reads back
+
+A peer review, run on fictional data, found one kind of quote that still failed
+to read back. A learner can copy a stand-in from an earlier view of the same
+scenario version and write it out in a later line, beside the fingerprint it
+stands for. Every view then shows the two the same way. A judge who quoted both
+had every run of hex digits that stands for a fingerprint read back as that
+fingerprint, the one the learner wrote out included, so the quote was "not
+found verbatim in any learner turn" and the criterion was counted at its
+lowest level.
+
+Now, when the quote with every stand-in read back is not found, it is also
+read with some of the runs of hex digits that have nothing around them kept as
+written, fewest first. A stand-in with `urn:pev:rubric:` or `pev/` around it is
+always read back, since no view shows such a run as written. Only readings
+that some stored line holds are checked. The first that checks out in the turn
+the judge named is kept, otherwise the first that checks out anywhere. A quote
+no reading finds is saved as before, with every stand-in read back, and says
+why.
+
+Not covered: with more than four such runs in one quote, only two readings
+are tried, every run read back and every run kept as written, so a quote that
+needs some of them read back and others kept is still not found.
+
+## 2026-11-10 — Practice Evidence: a fingerprint an accent follows is masked in the normalised form too
+
+A peer review, run on fictional data, found that a rubric fingerprint written
+into a learner's line as `urn:pev:rubric:` and its 64 hex digits, with a
+combining mark (an accent) right after the last digit, was masked in the line
+as stored but not in its normalised form. Normalising puts a hex letter and an
+accent after it together into one letter (`e` and an acute accent become `é`),
+so the normalised form held 63 hex digits and that letter, which was not taken
+for a fingerprint. The judge packet, an attempt's normalisedText and a quote's
+normalised form then showed the first 63 hex digits of the fingerprint as
+written. This needs someone who reads the stakes to have written a real
+fingerprint into a line, which the design already accepts, but a line and its
+normalised form are meant to be masked the same way.
+
+Now both forms are read alike: 63 hex digits and a letter made from a hex
+digit and the marks after it count as a fingerprint too. The 63 digits are
+replaced with the stand-in's, and the letter with the stand-in's last digit
+and the same marks where those make one letter, or otherwise with another hex
+letter that takes those marks, picked by the stand-in. Every view keeps its
+length, so a quote's place in a line still holds. A judge's quote copied from
+either form is read back and checks out. A read-back quote shown with no line
+to show it from masks such a run as well, of 64 hex digits or of 16.
+
+Not covered: the letter shown tells that the fingerprint's last digit takes
+those marks, which the line and its normalised form shown side by side already
+tell. A mark inside the run of hex digits, rather than after it, splits the
+run in both forms, so neither form takes it for a fingerprint, as before.
+
+## 2026-11-10 — Practice Evidence: a judge's saved answer shows a quote from the turn it was found in
+
+A peer review, run on fictional data, found that a judge's own answer after
+saving and the session could show one saved quote two ways. A learner's first
+line held 16 hex digits written out on their own, and a later line held the
+same digits as part of a calibration kind, which every view shows as a
+stand-in. A judge copied a quote from the later line, stand-in included, and
+said it came from that turn. It was read back and checked out there, and the
+session showed it as that line shows it. But the judge's answer after saving
+gave the quote without its place, so it was looked for again, found first in
+the earlier line, and shown as that line shows it: with the hex digits the
+stand-in stands for. Nothing was shown that the earlier line does not show
+anyway, but the two answers disagreed, and the saved answer showed which
+digits that stand-in stands for.
+
+Now the judge's answer after saving gives each quote's place: the turn it was
+found in and where it starts and ends there. These carry none of the stakes,
+and the judge chose the turn. A quote that was read back is shown from that
+place, as the session and the review queue show it. An answer that gives a
+quote's turn but not where in it is shown from the first place in that turn.
+
+Not covered: an answer that gives a read-back quote with no place at all is
+still shown from the first turn that holds those words. No answer does that
+today.
+
+## 2026-11-10 — Practice Evidence: the demo rubric's top level for asking their view
+
+The same peer review found a gap in the demo scenario's rubric. The criterion
+"Asks for their view" reads "Invites the colleague's account before deciding
+anything", and its middle level reads "Asks only after deciding what happens
+next". But its top level read "Asks for their side before saying anything
+else about it". So a learner who states the facts, then asks, then decides fit
+no level above the lowest. The top level now reads "Asks for their side before
+deciding anything", the same moment the criterion names. Ids, level values,
+weights and the pass rule are unchanged, so the demo's levels, and the tests
+that check them, still hold. The test copy of the demo scenario changes the
+same way, and a new test checks that it stays the same rubric as the demo's.
+The scripted demo judge's second, lower rationale, which repeated the old
+wording, now uses the new one.
+
+Not covered: a rubric's words are part of its fingerprint, so the demo
+scenario as this code writes it has a new rubric fingerprint. The live
+workspace's published copy of the demo scenario is a separate published
+record and is not changed by this; its author would publish it again to pick
+up the new wording. Sessions and judgments already recorded keep the rubric
+they were made against.
+
+## 2026-11-10 — Practice Evidence: a quote that was read back is shown as the line shows it
+
+A peer review, run on fictional data, found the quote fix below still broke in
+one case. A learner's line held a rubric fingerprint in its usual form and,
+apart from it, a run of 64 hex digits that was no rubric's (a build reference,
+say). The session shows such a run as written. A judge's quote copied from the
+line was read back and checked out. But answers to a chat showed the saved
+quote with every run of 16 or 64 hex digits as a stand-in, the unrelated one
+included, so it no longer matched the line. A second judge who copied the quote
+from that answer had it fail as "not found verbatim in any learner turn", and
+the criterion was counted at its lowest level.
+
+Now an answer to someone who reads no stakes shows a read-back quote that
+checked out as the stretch of the learner's line it was matched against,
+exactly as the line's own views show it: its normalised form as the judge
+packet shows that stretch, and its words as the session shows the line when
+they were copied from there. A stand-in there stays a stand-in, and a run of
+digits the line shows as written stays as written. Copied into another
+judgment, the shown quote is read back and checks out again, as often as it is
+copied. The session, the review queue and a judge's own answer after saving
+all show it this way. Nothing stored changes: the saved quote, its
+fingerprint, the highlights and the transcript's fingerprint are still worked
+out from the learner's words as stored, and no stand-in equals a fingerprint
+Practice Evidence keys in a field, or the start of one.
+
+Not covered: a read-back quote that did not check out has no stretch of a line
+to be shown from, so it is shown as before, with every run of 16 or 64 hex
+digits in it as a stand-in. So is a quote an answer shows without its
+session's lines, which no answer does today.
+
 ## 2026-11-10 — Work Redesign: a copied message is the one for the form as it is
 
 A reviewer found that Map a process could copy a message for a process name
