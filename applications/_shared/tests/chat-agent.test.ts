@@ -40,7 +40,7 @@ const FALLBACK = {
 } as const;
 /** How many times `part` occurs in `text`. */
 const timesIn = (text: string, part: string): number => text.split(part).length - 1;
-const EXPORTS = ['actPrompt', 'agentAppName', 'extractJsonObject', 'nonceRule', 'requestAsText'];
+const EXPORTS = ['actPrompt', 'agentAppName', 'extractJsonObject', 'noncePlaceholder', 'nonceRule', 'requestAsText'];
 
 type Extracted = { readonly ok: true; readonly value: Record<string, unknown> } | { readonly ok: false; readonly why: string };
 interface ChatAgent {
@@ -48,6 +48,7 @@ interface ChatAgent {
   requestAsText(request: unknown, options?: unknown): string;
   extractJsonObject(text: unknown): Extracted;
   agentAppName(agentId: unknown, ownPrefix?: string, ownName?: string): string;
+  noncePlaceholder(actionIri: unknown): string;
   readonly nonceRule: string;
 }
 
@@ -103,10 +104,10 @@ describe('chat-agent.js: one global, valid as a classic script and as a module',
     expect(declaredInside()).toEqual(expect.arrayContaining(['actPrompt', 'requestAsText', 'extractJsonObject', 'agentAppName', 'NONCE_RULE']));
   });
 
-  it('publishes a frozen object with exactly the five helpers', () => {
+  it('publishes a frozen object with exactly the six helpers', () => {
     expect(Object.keys(A).sort()).toEqual(EXPORTS);
     expect(Object.isFrozen(A)).toBe(true);
-    for (const k of ['actPrompt', 'requestAsText', 'extractJsonObject', 'agentAppName'] as const) expect(typeof A[k]).toBe('function');
+    for (const k of ['actPrompt', 'requestAsText', 'extractJsonObject', 'agentAppName', 'noncePlaceholder'] as const) expect(typeof A[k]).toBe('function');
     expect(typeof A.nonceRule).toBe('string');
   });
 
@@ -472,6 +473,14 @@ describe('the nonce rule', () => {
     expect(stepOf('urn:example:action#fragment-step')).toBe('fragment-step');
     expect(stepOf(`urn:example:${'a'.repeat(80)}`)).toBe('a'.repeat(32));
     expect(stepOf('urn:example:---')).toBe('step');
+  });
+
+  it('noncePlaceholder is the nonce actPrompt writes into a signed step for the same action, so an app writing one elsewhere writes the same', () => {
+    for (const actionIri of [...NONCE_IRIS, 'urn:example:action:save-lines', '  urn:example:action:save-lines  ', 'urn:example:action#fragment-step', `urn:example:${'a'.repeat(80)}`, 'urn:example:---']) {
+      const [payload] = payloadsOf(A.actPrompt({ affordancesUrl: 'https://s.example/a', steps: [{ actionIri, signed: true, payload: { nonce: 'replaced' } }] }));
+      expect([actionIri, A.noncePlaceholder(actionIri)]).toEqual([actionIri, payload?.nonce]);
+    }
+    expect(A.noncePlaceholder('urn:example:action:save-lines')).toBe('save-lines-<turn number, or 0>-<16 new random letters or digits>');
   });
 });
 

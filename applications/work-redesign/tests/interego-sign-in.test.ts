@@ -2059,8 +2059,14 @@ describe('work-redesign web UI: sign in with your Interego account', () => {
       } else {
         expect(message).toContain('3. Once I have confirmed the draft, record the map.');
       }
-      // The template rule's nonce is made as every other signed payload's.
-      expect(message).toContain('"nonce":"read-envelope-template-<turn number, or 0>-<16 new random letters or digits>"');
+      // The template rule's nonce is made as every other signed payload's: the one the shared helper the page is served with
+      // writes into a signed step for that action, so a change to the helper's placeholders reaches this rule too.
+      const helper = new Function(`${chatAgentJs()}\nreturn InteregoChatAgent;`)() as { actPrompt(spec: unknown): string };
+      const helperNonce = String(objOf(JSON.parse(must(helper.actPrompt({
+        affordancesUrl: `${DEPLOYED}/affordances`, steps: [{ say: 'A step.', actionIri: 'urn:iep:action:wrd:read-envelope-template', signed: true, payload: {} }],
+      }).split('\n').find((l) => l.startsWith('   payload: ')), 'the helper\'s payload line').slice('   payload: '.length)))['nonce']);
+      expect(helperNonce).toBe('read-envelope-template-<turn number, or 0>-<16 new random letters or digits>');
+      expect(message).toContain(`"template":{"intent":"wrd:record-task-map"},"nonce":${JSON.stringify(helperNonce)}}`);
       expect(message).not.toContain('"nonce": a new one');
       expect(urnsRunningIntoPunctuation(message)).toEqual([]);
       expect(page.errors).toEqual([]);

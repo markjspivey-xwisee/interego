@@ -17,7 +17,8 @@
  *   - the template's subject, shared by a ratification and a registry change, is refused for either
  *     when it is not that intent's own;
  *   - tasks come back in their process's order, and a recorded map echoes the document it keeps;
- *   - the packet's nonce wording and placeholders are the shared chat helper's, word for word.
+ *   - the packet's nonce wording and placeholders are the shared chat helper's, word for word, and
+ *     the web app writes no placeholder of its own.
  *
  * Handlers are called directly, on an in-memory pod; the relay's form is built as
  * deploy/mcp-relay/server.ts builds it, and the identity host is a map. No network.
@@ -44,7 +45,7 @@ const arr = (v: unknown, what = 'a value'): Obj[] => {
 
 /** The shared chat helpers, evaluated as chat-agent.test.ts evaluates them. */
 const CHAT_JS = readFileSync(new URL('../../_shared/chat-agent/chat-agent.js', import.meta.url), 'utf8');
-interface ChatAgent { actPrompt(spec: unknown): string; readonly nonceRule: string }
+interface ChatAgent { actPrompt(spec: unknown): string; noncePlaceholder(actionIri: string): string; readonly nonceRule: string }
 const A = new Function(`${CHAT_JS}\nreturn InteregoChatAgent;`)() as ChatAgent;
 /** The nonce actPrompt writes into a signed step's payload for this action. */
 function promptNonce(actionIri: string): string {
@@ -152,6 +153,15 @@ describe('the chat route after a live run', () => {
   it('teaches the shared chat helper\'s nonce rule word for word, and writes each signed step\'s nonce as the copied messages do', () => {
     expect(CHAT_NONCE_RULE).toBe(A.nonceRule);
     for (const step of ['read-records', 'update-registry', 'record-task-map']) expect(chatNonce(step)).toBe(promptNonce(`urn:iep:action:wrd:${step}`));
+  });
+
+  it('the web app writes no nonce placeholder of its own: each comes from the shared chat helper, so none can drift from it', () => {
+    // app.js alone, without the shared helper the bridge puts in front of it.
+    const app = readFileSync(new URL('../bridge/ui/app.js', import.meta.url), 'utf8');
+    expect(['<turn number', '16 new random letters'].filter((p) => app.includes(p))).toEqual([]);
+    // The one signed payload it writes outside a step (the template rule) takes the helper's placeholder for that action.
+    expect(app).toContain("nonce: InteregoChatAgent.noncePlaceholder('urn:iep:action:wrd:read-envelope-template')");
+    expect(A.noncePlaceholder('urn:iep:action:wrd:read-envelope-template')).toBe(promptNonce('urn:iep:action:wrd:read-envelope-template'));
   });
 
   it('the packet\'s chat route: one nonce wording, a read of the registry alone, what to do on a workspace with no type of task, and the capture table\'s fields grouped with its own route', async () => {

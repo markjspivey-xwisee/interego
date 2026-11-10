@@ -75,7 +75,12 @@ change and also what a ratification is about, and a ratification's template
 copied any value it was given, a registry part among them, into a payload the
 bridge then refused; it now refuses (400) any value but description,
 classification or assignment, as a registry change's template refuses any but
-its parts.
+its parts. Last, the copied message's rule for asking for a template wrote its
+own copy of the placeholder nonce, which would have gone stale without notice
+if the shared chat helper changed its placeholder. The helper now publishes
+the placeholder it writes into each signed step (`noncePlaceholder`, beside
+`actPrompt`), the rule takes it from there, and a test holds that the web app
+writes no placeholder of its own.
 
 New tests check each of these, and each fails with its fix taken out.
 

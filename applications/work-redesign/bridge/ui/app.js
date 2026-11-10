@@ -2977,7 +2977,8 @@ function taskMapChatMessage(st) {
       `Every task needs a type of task that step 2 lists. If step 2 lists none, or none fits a task, tell me, and ask me to add the types in Work Redesign (People & roles, then Types of task, where an admin adds them), then do step 2 again. Never invent a type of task or its slug.${addKinds ? ' Or offer to add the types I name yourself, with step 3: show me each one\'s slug, label and definition first, and add them only once I confirm.' : ''}`,
       `currentLevel is one of: ${levels}. Leave out personAddress or agentAddress when the level doesn't need it.`,
       'Record only after I say the draft is right. document.storeText is true: recording from a chat stores the document\'s text with the map.',
-      `If you are unsure of a field, ask for the template in a signed step, with urn:iep:action:wrd:read-envelope-template as the action and payload ${JSON.stringify({ intent: 'wrd:read-records', podUrl: pod, template: { intent: 'wrd:record-task-map' }, nonce: 'read-envelope-template-<turn number, or 0>-<16 new random letters or digits>' })}.`,
+      // The nonce placeholder is the shared helper's, as actPrompt writes it into each signed step.
+      `If you are unsure of a field, ask for the template in a signed step, with urn:iep:action:wrd:read-envelope-template as the action and payload ${JSON.stringify({ intent: 'wrd:read-records', podUrl: pod, template: { intent: 'wrd:record-task-map' }, nonce: InteregoChatAgent.noncePlaceholder('urn:iep:action:wrd:read-envelope-template') })}.`,
     ],
     outro: 'When the map is recorded, tell me, and I will check it under Processes in Work Redesign.',
   });
