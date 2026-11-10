@@ -955,7 +955,7 @@ export async function runDemo(opts: DemoOptions = {}): Promise<DemoReport> {
           ...want([...scripted, ...agent].every((c) => c['status'] === 'Hypothetical'), 'a cell is not Hypothetical'),
           ...want(scripted.every((c) => obj(c['standing'])['evaluated'] === false), 'a scripted fixture was evaluated for standing'),
           ...want(agent.every((c) => obj(c['standing'])['evaluated'] === true && obj(c['standing'])['clears'] === false
-            && /^\d+ outcome\(s\) of pev\/[0-9a-f]{16}\/[a-z0-9-]+, below 20$/.test(str(obj(c['standing'])['why']))), 'the agent judge\'s standing is not "below 20"'),
+            && /^\d+ outcome\(s\) of this criterion, below 20$/.test(str(obj(c['standing'])['why']))), 'the agent judge\'s standing is not "below 20"'),
           ...want(r.body['personJudgeCellsWithheld'] === 0, 'person-judge cells were withheld'),
           ...want(scripted.some((c) => typeof c['repeatSamples'] === 'number' && (c['repeatSamples'] as number) >= 1 && c['repeatAgreement'] !== undefined), 'no test-retest figures for the scripted judge'),
           ...want(scripted.every((c) => 'auditSampleCoverage' in c && 'auditSamplePartial' in c), 'audit coverage is not reported'),

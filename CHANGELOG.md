@@ -1,5 +1,37 @@
 # Changelog
 
+## 2026-11-10 — Practice Evidence: a judge's quote of a line holding a fingerprint checks out
+
+A review found that the change below broke judging in one case. When a
+learner's line held a rubric fingerprint (a rubric's address, or a calibration
+row's kind), every answer to a chat assistant showed it as a random value made
+for that one answer. A judge's assistant that copied a quote from the judge
+packet character for character, as the packet asks, sent words the stored line
+did not hold, so the quote did not check out and that criterion was counted at
+its lowest level.
+
+Now a fingerprint inside text is replaced with a stand-in keyed with Practice
+Evidence's own key under a label of its own. It never equals a fingerprint
+Practice Evidence writes in a field, or the start of one, so it still checks
+no guess. The same fingerprint shows the same stand-in in every answer about
+the same scenario version: the judge packet, the session, the review queue and
+the conversation's own answers all show a line the same way. A quote copied
+from any of them is read back as the learner's words as stored, checked
+against them, and kept as them. The transcript's fingerprint is unchanged.
+
+The same review found one more thing to close. A calibration row's standing
+reason named the row's kind, which holds the start of the rubric's
+fingerprint. With stand-ins that repeat, a chat could have written a guess into
+a criterion title and compared the two in the calibration table. The reason
+now says "this criterion" instead, so nothing Practice Evidence writes into
+text holds a fingerprint.
+
+Not covered: a quote that copies only part of a stand-in (leaving out the
+`urn:pev:rubric:` before it, say) is not read back, so it does not check out.
+Two equal stand-ins show that two texts hold the same fingerprint. That tells a
+chat something only when a real fingerprint is already in some text, which
+only someone who reads the stakes can have put there.
+
 ## 2026-11-10 — Practice Evidence: a fingerprint written into text no longer checks a guess
 
 A third review found one more way to check a guess at a scored scenario's
@@ -18,10 +50,8 @@ for that one place, which matches nothing else in the answer, the same
 fingerprint written twice included. The note every such answer carries, the
 scenario list's description and the README say so.
 
-Not covered: a chat assistant, a key nobody registered or a request nobody
-signed sees those random values where the fingerprints were written, so a
-judge whose assistant quotes such a line quotes words the session does not
-hold, and that quote does not check out. People in the web app, and keys an
+A judge whose assistant quoted such a line, copying the random value, had the
+quote fail; the entry above fixes that. People in the web app, and keys an
 admin registered, read the text as it was written.
 
 A smaller fix from the same review: a scenario's results page showed, under
