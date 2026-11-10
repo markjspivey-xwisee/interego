@@ -1,5 +1,29 @@
 # Changelog
 
+## 2026-11-10 — Practice Evidence: contesting a review hands the learner's chat on in its own answer
+
+A peer review, run on fictional data, found that contesting a review, the act
+that reopens judging, answered the learner's own chat with no hand-off note.
+The session could be judged again, and the chat was rightly not offered the
+judge packet, but nothing in that answer said what to do instead: the note came
+only with a later read of the session. Ending the conversation, the act that
+first opens judging, already carried it.
+
+The contest's answer now carries the same `handOff` a read of the session
+carries: to the learner's own chat, while there is room for another judgment.
+The README's list of answers that carry it, and the contest action's
+description, now name it.
+
+Tests: the live-run test checks the contest's answer from the learner's chat:
+contested, handed on to an appointed judge with the session page, no judge
+packet offered, and the same hand-off a read of the session then carries.
+Without the change, that answer has no hand-off and the test fails.
+
+Not covered: withdrawing a review is an admin's act, so its answer goes to the
+admin, never to the learner's chat, and carries no hand-off; the learner's chat
+gets it on its next read of the session, as before. A contest sent from the web
+app gets none, as before, since the page shows Send to your judge itself.
+
 ## 2026-11-10 — Practice Evidence: a quote is read back by where it sits in the line as shown
 
 The same peer review found a limit in how a judge's quote is read back. A

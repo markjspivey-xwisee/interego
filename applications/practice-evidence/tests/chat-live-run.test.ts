@@ -347,9 +347,9 @@ describe('every state a judge can still assess the session in: the learner\'s ch
     const target = async (): Promise<unknown> => ok(await ract('pev.get_attempt', P.learner.web, { attemptIri: a }))['currentTarget'];
     /**
      * What the learner's chat, the web app's own agent and the chat's judge_packet get in the session's state now: `open` when a
-     * judge can still assess it, else the code judge_packet is refused with for anyone.
+     * judge can still assess it, else the code judge_packet is refused with for anyone. Returns the chat's hand-off, if any.
      */
-    const check = async (state: string, open: true | string): Promise<void> => {
+    const check = async (state: string, open: true | string): Promise<Out | undefined> => {
       const chat = chatAnswer(await ract('pev.get_attempt', P.learner.claude, { attemptIri: a }), `the ${state} session from the learner's Claude`);
       const web = ok(await ract('pev.get_attempt', P.learner.web, { attemptIri: a }));
       expect([chat['state'], web['state']], state).toEqual([state, state]);
@@ -362,7 +362,7 @@ describe('every state a judge can still assess the session in: the learner\'s ch
       if (open !== true) {
         refused(r, open, `judge_packet from the learner's Claude, ${state}`);
         refused(await ract('pev.judge_packet', P.learner.web, { attemptIri: a }), open, `judge_packet from the web app, ${state}`);
-        return;
+        return handOff;
       }
       // The refusal names the web app's Send to your judge, with the hand-off's own words, and that control is there: the web
       // app's own agent is offered the packet (above) and fetches it.
@@ -371,6 +371,7 @@ describe('every state a judge can still assess the session in: the learner\'s ch
       expect(String(r['error']), state).toContain(String(handOff!['words']));
       expect(String(handOff!['words']), state).toContain('In the Practice Evidence web app, open this session and, under Send to your judge, copy the message for your judge');
       ok(await ract('pev.judge_packet', P.learner.web, { attemptIri: a }));
+      return handOff;
     };
     const judge = async (): Promise<void> => {
       const packet = ok(await ract('pev.judge_packet', P.judge.claude, { attemptIri: a }));
@@ -389,8 +390,13 @@ describe('every state a judge can still assess the session in: the learner\'s ch
       .criteria.map((c) => ({ criterionId: c.criterionId, levelId: c.levelId }));
     ok(await ract('pev.countersign_attempt', P.reviewer.web, { attemptIri: a, target: await target(), levels, sawJudgeLevelsFirst: true }));
     await check('countersigned', 'attempt-already-reviewed');
-    ok(await ract('pev.contest_review', P.learner.claude, { attemptIri: a, target: await target(), why: 'The deadline I named was the one we had agreed on.' }));
-    await check('contested', true);
+    // The contest is the act that reopens judging, as ending the conversation is the one that opens it: its own answer hands the
+    // chat on, the same hand-off a read of the session then carries, and offers it no packet.
+    const contested = chatAnswer(await ract('pev.contest_review', P.learner.claude, { attemptIri: a, target: await target(), why: 'The deadline I named was the one we had agreed on.' }), 'the contest from the learner\'s Claude');
+    const contestHandOff = contested['handOff'] as Out | undefined;
+    expect([contested['state'], contestHandOff?.['to'] ?? null, contestHandOff?.['sessionPage'] ?? null, actionsOf(contested).includes('pev.judge_packet')])
+      .toEqual(['contested', 'appointed-judge', page, false]);
+    expect(contestHandOff).toEqual(await check('contested', true));
     ok(await ract('pev.retract_review', P.admin.web, { attemptIri: a, target: await target(), why: 'The reviewer was the learner\'s line manager.' }));
     await check('review-retracted', true);
     // Judged again until the limit: still review-retracted, and no judge can assess it any more.

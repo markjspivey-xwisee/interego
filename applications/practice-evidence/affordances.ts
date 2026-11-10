@@ -265,7 +265,7 @@ export const pevAffordances: ReadonlyArray<Affordance> = [
     targetTemplate: '{base}/pev/contest_review',
     annotations: hints('Contest a review', false, false, false, true),
     inputs: [...ENVELOPE],
-    outputs: out('The contested attempt.', ['attemptIri', 'state', 'descriptorUrl']),
+    outputs: out('The contested attempt. To the learner\'s own chat assistant, while there is room for another judgment, handOff says how the learner sends the session to an appointed judge, in place of the judge packet, which it is not offered.', ['attemptIri', 'state', 'descriptorUrl']),
   },
   {
     action: PEV_ACTION.retractReview as IRI,

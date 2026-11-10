@@ -2778,7 +2778,8 @@ async function contestReview(call: Call, args: Record<string, unknown>): Promise
     }
     notReplayed(a, s);
     checkTarget(needTarget(s.payload), h.rec);
-    const roles = (await rolesOn(call, s.pod)).of(s.signer);
+    const reg = await rolesOn(call, s.pod);
+    const roles = reg.of(s.signer);
     const stakes = await showsStakes(call, s);
     const at = iso(ctx);
     const reopening: Reopening = {
@@ -2790,7 +2791,8 @@ async function contestReview(call: Call, args: Record<string, unknown>): Promise
     return {
       attemptIri: iri, descriptorUrl: w.descriptorUrl, state: 'contested', modalStatus: 'Hypothetical', reopening,
       currentTarget: { recordId: w.recordId, descriptorUrl: w.descriptorUrl, graphDigest: w.graphDigest },
-      nextActions: nextFor(ctx, body, s, roles, false, stakes), recorded: true,
+      // The act that reopens judging, as end_conversation is the one that opens it: the learner's chat is handed on here.
+      nextActions: nextFor(ctx, body, s, roles, false, stakes), ...handOffMark(ctx, s, body, reg), recorded: true,
     };
   });
 }
