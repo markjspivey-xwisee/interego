@@ -154,9 +154,14 @@ const InteregoChatAgent = (() => {
    * step is plain says nothing of sign_request; one whose every step is signed says nothing of
    * leaving sign_payload out, since it has no plain step to leave it out of.
    *
-   * spec: { intro?, affordancesUrl, podUrl?, steps?: [{ say, actionIri, signed, payload }],
-   *         rules?: string[], outro? }. Throws TypeError on a malformed spec: that is a bug in the
-   * calling app, never something a person typed.
+   * The pod line says whose storage podUrl is. By default it is the person's own ("My storage
+   * address"). With `podOwner: 'workspace'` it is the workspace's, which every member of it acts
+   * on, so an assistant is never told that a shared workspace's storage is the person's own and
+   * never offers it as theirs ("This workspace's storage address").
+   *
+   * spec: { intro?, affordancesUrl, podUrl?, podOwner?: 'me' | 'workspace',
+   *         steps?: [{ say, actionIri, signed, payload }], rules?: string[], outro? }. Throws
+   * TypeError on a malformed spec: that is a bug in the calling app, never something a person typed.
    */
   function actPrompt(spec) {
     const o = isPlainObject(spec) ? spec : {};
@@ -167,6 +172,8 @@ const InteregoChatAgent = (() => {
     const rules = o.rules === undefined ? [] : o.rules;
     if (!Array.isArray(rules)) throw new TypeError('actPrompt: rules must be an array');
     const podUrl = textOf(o.podUrl);
+    const podOwner = o.podOwner === undefined ? 'me' : o.podOwner;
+    if (podOwner !== 'me' && podOwner !== 'workspace') throw new TypeError('actPrompt: podOwner must be \'me\' or \'workspace\'');
     // The nonce example names the first signed step this prompt really has (a malformed step is
     // refused below, when its text is built).
     const firstSigned = steps.find((s) => isPlainObject(s) && s.signed === true && textOf(s.actionIri));
@@ -181,7 +188,11 @@ const InteregoChatAgent = (() => {
       '- sign_payload: true or false, exactly as the step says',
       '- payload: the JSON object the step shows, with every <...> replaced by the real value',
     ];
-    if (podUrl) how.push(`My storage address (pod_url): "${podUrl}"`);
+    if (podUrl) {
+      how.push(podOwner === 'workspace'
+        ? `This workspace's storage address (pod_url), the same for everyone in it and not my own: "${podUrl}"`
+        : `My storage address (pod_url): "${podUrl}"`);
+    }
     const firstHasTurn = Boolean(firstSigned && isPlainObject(firstSigned.payload) && Object.prototype.hasOwnProperty.call(firstSigned.payload, 'turnIndex'));
     how.push(`Every signed payload carries a nonce: ${nonceRuleFor(firstSigned ? stepNameOf(textOf(firstSigned.actionIri)) : '', firstHasTurn)}`);
     const appRules = rules.map(textOf).filter((r) => r.length > 0);

@@ -1378,6 +1378,10 @@ describe('your own AI assistant: connect Claude or ChatGPT, or copy and paste; n
       // A chat app whose act tool shows no sign_payload signs a signed step in two calls and leaves sign_payload out of a plain one.
       FALLBACK.both]) expect(details).toContain(says);
     expect(details.split(FALLBACK.both)).toHaveLength(2);
+    // The pod is the workspace's, which everyone in it acts on: the details never call it the person's own storage.
+    expect(details).toContain(`This workspace's storage address (pod_url), the same for everyone in it and not my own: "${DEMO_POD}"`);
+    expect(details).toContain('"pod_url" (this workspace\'s storage address)');
+    expect(details).not.toMatch(/my storage address/i);
     // The signing rule says that sign_payload true or false names the kind of step, here and in any example, and points to
     // where the prompt says what to do with each kind when the act tool has no such option: the last line of How to do
     // each step, which is that fallback. The condition is said there and nowhere else.
@@ -1483,6 +1487,9 @@ describe('your own AI assistant: connect Claude or ChatGPT, or copy and paste; n
       "Sam Okafor's last line was: \"You wanted to see me?", 'For example counterpart-packet-4-q8Xr2mVp7LkA9dTz,', FALLBACK.signed]) expect(startup, says).toContain(says);
     // Every step of it is signed: nothing about leaving sign_payload out.
     expect(startup).not.toContain(PLAIN_RULE);
+    // The session is kept on the workspace's storage, not the learner's own.
+    expect(startup).toContain(`This workspace's storage address (pod_url), the same for everyone in it and not my own: "${DEMO_POD}"`);
+    expect(startup).not.toMatch(/my storage address/i);
     expect(startup).not.toContain('read-items');
     // A refused or lost step is reconciled from what is saved, with the read step, before any reply is written or saved again.
     expect(startup).toContain('again only if we carry on in a new chat or a rule below says so');
@@ -1558,6 +1565,9 @@ describe('your own AI assistant: connect Claude or ChatGPT, or copy and paste; n
       'For example judge-packet-0-q8Xr2mVp7LkA9dTz,', FALLBACK.signed,
       "If this is my own practice session, stop: I can't assess it, in any chat or role."]) expect(judge, says).toContain(says);
     expect(judge).not.toContain(PLAIN_RULE);
+    // The workspace's storage, not the judge's own: the live judge message called it "My storage address".
+    expect(judge).toContain(`This workspace's storage address (pod_url), the same for everyone in it and not my own: "${DEMO_POD}"`);
+    expect(judge).not.toMatch(/my storage address/i);
     // Whether a save was kept is asked of the workspace, never judged from what the chat saw: assessing again after a save
     // that was kept saves a second one, and a save the chat app answered with an error, or not at all, may have been kept.
     // The first step asks it: the judge packet ends with yourAssessment, which says whether the caller has a saved
@@ -1771,6 +1781,9 @@ describe('your own AI assistant: connect Claude or ChatGPT, or copy and paste; n
     expect(msg).not.toContain('\\"');
     expect(msg).toContain('For example author-scenario-0-q8Xr2mVp7LkA9dTz,');
     expect(msg).toContain('"nonce":"author-scenario-<turn number, or 0>-<16 new random letters or digits>"');
+    // The draft is saved to the workspace's storage, not the author's own.
+    expect(msg).toContain(`This workspace's storage address (pod_url), the same for everyone in it and not my own: "${DEMO_POD}"`);
+    expect(msg).not.toMatch(/my storage address/i);
     expect(p.errors).toEqual([]);
   }, SLOW);
 

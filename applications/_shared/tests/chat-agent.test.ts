@@ -385,6 +385,21 @@ describe('actPrompt', () => {
     expect(() => A.actPrompt({ affordancesUrl, steps: [null] })).toThrow(/step 1 must be an object/);
     expect(() => A.actPrompt({ affordancesUrl, steps: [{ say: 'x' }] })).toThrow(/step 1 needs an actionIri/);
     expect(() => A.actPrompt({ affordancesUrl, steps: [{ actionIri: 'urn:example:action:a', payload: [] }] })).toThrow(/payload must be a JSON object/);
+    expect(() => A.actPrompt({ affordancesUrl, podUrl, podOwner: 'team' })).toThrow(/podOwner must be/);
+  });
+
+  // A shared workspace's storage is not the person's own: a chat told it is would offer it as theirs.
+  it("says whose storage pod_url is: the person's own by default, or the workspace's", () => {
+    const mine = A.actPrompt({ affordancesUrl, podUrl });
+    expect(mine).toContain(`My storage address (pod_url): "${podUrl}"`);
+    expect(A.actPrompt({ affordancesUrl, podUrl, podOwner: 'me' })).toBe(mine);
+    const shared = A.actPrompt({ affordancesUrl, podUrl, podOwner: 'workspace' });
+    expect(shared).toContain(`This workspace's storage address (pod_url), the same for everyone in it and not my own: "${podUrl}"`);
+    expect(shared).not.toContain('My storage address');
+    // Only that line differs.
+    expect(shared.replace(/^This workspace's storage address.*$/m, 'X')).toBe(mine.replace(/^My storage address.*$/m, 'X'));
+    // With no podUrl there is no line to word either way.
+    expect(A.actPrompt({ affordancesUrl, podOwner: 'workspace' })).not.toMatch(/storage address/);
   });
 });
 

@@ -1,5 +1,22 @@
 # Changelog
 
+## 2026-11-10 — Practice Evidence and Work Redesign: fixes from a live run through a chat assistant
+
+A run of a whole practice session through a real chat assistant, with the
+Interego connector, on the live Practice Evidence site found that the
+messages people copy into their assistant called the workspace's storage
+"My storage address". That storage belongs to the workspace, and everyone in
+it acts on it, so an assistant could offer it to the person as their own. The
+shared helper that writes these messages can now say "This workspace's
+storage address", the same for everyone in it and not the person's own, and
+every Practice Evidence message (workspace details, the start-up message, the
+message for a judge, the drafting message) and both Work Redesign messages
+(workspace details and the map message) now say that. A message that names a
+person's own storage still says "My storage address".
+
+Not covered: nothing checks which storage a message names; each site says
+which it is when it builds the message.
+
 ## 2026-11-09 — Practice Evidence: second review of keeping the stakes out of a chat
 
 A second review found that the keyed fingerprints could still check a guess at
