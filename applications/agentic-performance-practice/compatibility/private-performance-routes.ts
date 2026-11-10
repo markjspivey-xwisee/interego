@@ -18,7 +18,8 @@ export function attachPrivatePerformanceRoutes(app: Express, config: { base: str
         const auth = await config.verify(req.body, path === 'outcome');
         if (!auth.ok) { res.status(auth.status).json({ error: auth.error }); return; }
         const p = auth.payload;
-        const allowed = ['agent_id', 'timestamp', 'subject_pod_url', ...(path === 'outcome' ? ['outcome'] : path === 'outcomes' ? ['episode_id'] : [])];
+        // client_id is the relay's, like subject_pod_url: the OAuth client its session's token was issued to.
+        const allowed = ['agent_id', 'timestamp', 'subject_pod_url', 'client_id', ...(path === 'outcome' ? ['outcome'] : path === 'outcomes' ? ['episode_id'] : [])];
         if (Object.keys(p).some(k => !allowed.includes(k))) throw new EvidenceError('Unsupported payload fields; caller-selected pod/actor overrides are not accepted.');
         if (p.episode_id !== undefined && (typeof p.episode_id !== 'string' || p.episode_id.length > 160)) throw new EvidenceError('episode_id must be a string (max 160).');
         const body = path === 'outcome' ? await config.store.record(auth.callerDid, p.outcome) : path === 'outcomes' ? await config.store.outcomes(auth.callerDid, p.episode_id as string | undefined) : await config.store.profile(auth.callerDid);

@@ -492,6 +492,7 @@ import {
 import { resolveAgentEncryptionKey } from '@interego/solid';
 import { makePrivatePerformanceVerifier } from '../src/private-performance-auth.js';
 import { DirectoryActions, DirectoryActionError, makeDirectoryActionAuthorizer, configuredLmsFromEnv } from '../src/directory-actions.js';
+import { withoutRelaySignedFields } from '../src/relay-signed-fields.js';
 import { attachCapabilityDirectoryRoutes } from '../src/i2idlx-capability-runner.js';
 import { FOXXI_CAPABILITY_ANNOTATIONS } from '../src/capability-annotations.js';
 import { validateCoverageQueryInput } from '../src/coverage-query-input.js';
@@ -9869,7 +9870,8 @@ const signedXapiHandler = (operation: 'read' | 'write' | 'telemetry-ingest' | 't
         return;
       }
       if (operation === 'telemetry-capture-read' || operation === 'telemetry-capture-update') {
-        const { agent_id: _agent, subject_pod_url: _pod, timestamp: _time, ...settings } = bound.payload;
+        // The signer's own fields are not settings; the settings validator refuses any key it does not know.
+        const settings = withoutRelaySignedFields(bound.payload);
         const preferences = operation === 'telemetry-capture-read'
           ? await readCapturePreferences(bound.callerDid, captureStore)
           : await updateCapturePreferences(bound.callerDid, settings, captureStore);
@@ -9941,9 +9943,9 @@ const signedXapiHandler = (operation: 'read' | 'write' | 'telemetry-ingest' | 't
         } else if (operation === 'telemetry-query') {
           let query;
           try {
-            // The signature binder adds identity/time fields; only the query options
-            // supplied by the caller are passed to its closed schema.
-            const { agent_id: _agent, subject_pod_url: _pod, timestamp: _time, ...options } = bound.payload;
+            // The signature binder adds identity/time fields (and the relay its pod stamp and client_id);
+            // only the query options supplied by the caller are passed to its closed schema.
+            const options = withoutRelaySignedFields(bound.payload);
             query = normalizeQuery(options.query ?? options);
           } catch (error) { res.status(400).json({ error: (error as Error).message }); return; }
           const report = telemetryReport(bound.callerDid, await deps.snapshot(), query, deps.now());
