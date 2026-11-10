@@ -451,6 +451,19 @@ describe('assess: platform arithmetic only', () => {
       // This file's copy of the demo scenario is the same rubric, given the demo's weights.
       expect(rubricHash(specOf(missedDeadlineInput([2, version === 2 ? 2 : 1, 2])).rubric)).toBe(rubricHash(demo.rubric));
     }
+    // The old top level's words are left nowhere in this vertical: not in its code, its README, or a free-text reason or
+    // rationale in a test that copies the level. (Put together here, so this file does not hold them.)
+    const old = ['before saying anything', 'else about it'].join(' ');
+    const files: string[] = [];
+    const walk = (d: string): void => {
+      for (const e of readdirSync(d)) {
+        const f = join(d, e);
+        if (statSync(f).isDirectory()) { if (e !== 'node_modules' && e !== 'dist') walk(f); } else if (/\.(ts|js|md|html)$/.test(e)) files.push(f);
+      }
+    };
+    walk(VERTICAL);
+    expect(files.length).toBeGreaterThan(20);
+    expect(files.filter((f) => readFileSync(f, 'utf8').includes(old)).map((f) => f.slice(VERTICAL.length + 1))).toEqual([]);
   });
 });
 

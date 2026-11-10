@@ -2402,7 +2402,7 @@ describe('with a record key, operator-pod records are sealed to it, still verify
       ok(await act(plainW, 'pev.end_conversation', w, { attemptIri: iri, turnIndex: 1 + 2 * lines.length }, {}, onWin));
       return ok(await act(plainW, 'pev.judge_attempt', w, { attemptIri: iri }, {}, onWin));
     };
-    const lv = levels([['specific-observation', 'specific'], ['asks-their-view', 'first', 'Asks for his side before saying anything else about it.'],
+    const lv = levels([['specific-observation', 'specific'], ['asks-their-view', 'first', 'Asks for his side before deciding anything.'],
       ['agrees-next-step', 'owner-and-date', 'Sam owns the status note and Tuesday 10am is the date; the second quote is not in the transcript.']]);
     const ana = await startOn(W.ana, 'missed-deadline');
     const ja = await judged(W.ana, ana, DEMO_LINES.ana);

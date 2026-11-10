@@ -1,5 +1,18 @@
 # Changelog
 
+## 2026-11-10 — Practice Evidence: the old wording of the demo rubric's top level is gone from the tests
+
+The same peer review found one test that still repeated the demo rubric's old
+top level for asking their view: a reviewer's reason for overriding a level
+read "before saying anything else about it". It was free text, not a copy of
+the rubric, so nothing broke, but the demo rubric and the scripted judge now
+say "before deciding anything", and the reason now does too. A test now checks
+that the old words appear in no file of Practice Evidence: its code, its
+README, its pages, or its tests.
+
+Not covered: the check looks only inside Practice Evidence. The changelog
+still quotes the old wording, as it should, to say what changed.
+
 ## 2026-11-10 — Practice Evidence: a quote of a stand-in the learner wrote out reads back
 
 A peer review, run on fictional data, found one kind of quote that still failed
