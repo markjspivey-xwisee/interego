@@ -672,11 +672,28 @@ export function createWrdHandlers(deps: WrdDeps = {}): Record<string, WrdHandler
    */
   function refuseChatDecision(opened: Extract<OpenedEnvelope, { ok: true }>, intent: EnvelopeIntent): void {
     if (opened.authority !== 'relay-delegated' || !DECISIVE_INTENTS.has(intent) || relay?.chatAgentsDecide === true) return;
-    const slug = identityHost === null ? null : agentSlugOf(opened.agentId ?? '', identityHost);
-    if (slug !== null && slug.startsWith(UI_AGENT_PREFIX)) return;
+    if (isUiAgent(opened.agentId)) return;
     throw decline(403, CHAT_AGENT_DECIDES,
       `${intent} was signed by the relay for ${opened.signer} through the agent ${opened.agentId ?? '(none)'}, whose slug does not start ${UI_AGENT_PREFIX} (this bridge's web UI); the operator sets WRD_CHAT_AGENTS_DECIDE=1 to take decisive acts from chat agents too`,
       { env: 'WRD_CHAT_AGENTS_DECIDE' });
+  }
+  /** True for this bridge's own web UI agent (its slug starts UI_AGENT_PREFIX); any other relay agent is a chat's. */
+  function isUiAgent(agentId: string | undefined): boolean {
+    const slug = identityHost === null ? null : agentSlugOf(agentId ?? '', identityHost);
+    return slug !== null && slug.startsWith(UI_AGENT_PREFIX);
+  }
+  /**
+   * True when a request came in the shape the relay's act sends for a chat: the relay-signed pair,
+   * through an agent that is not this bridge's web UI (whose page sends a document beside the pair).
+   * Read from the signed text before it is verified, so it only chooses which payload schema a
+   * refusal shows; it authorises nothing.
+   */
+  function chatRelayShaped(args: Obj): boolean {
+    const r = relayEnvelopeOf(args);
+    if (r === null || typeof r.signedPayload !== 'string') return false;
+    let agent: unknown;
+    try { agent = (JSON.parse(r.signedPayload) as Obj)['agent_id']; } catch { return false; }
+    return !isUiAgent(typeof agent === 'string' ? agent : undefined);
   }
   /** The envelope that authorises a call, by either route: relay-delegated when relayFormIn found a trusted relay form, else key-held. */
   async function openAuthorising(call: Call, form: RelayForm | null, raw: unknown, intent: EnvelopeIntent, win = window): Promise<OpenedEnvelope> {
@@ -1834,7 +1851,11 @@ export function createWrdHandlers(deps: WrdDeps = {}): Record<string, WrdHandler
     if (!isEnvelopeIntent(intent)) return { ...refuse(400, 'Unknown intent.', `intent must be one of ${Object.keys(TOOL_OF_INTENT).join(', ')}${relayRead ? ' (relay-signed: under template in the payload the relay signs)' : ''}`) };
     const signedRead = signed && !relayRead ? readEnvelopeArg(args) : undefined;
     const call = await openCall(args, relayRead ? relayPodCarrier(relayRead) : signedRead, false);
-    if (signed) await authoriseRead(call, await openAuthorising(call, relayRead, signedRead, 'wrd:read-records'), 'read_envelope_template');
+    const opened = signed ? await openAuthorising(call, relayRead, signedRead, 'wrd:read-records') : null;
+    if (opened) await authoriseRead(call, opened, 'read_envelope_template');
+    // A chat's relay-signed read (the relay's act, through an agent that is not this bridge's web UI)
+    // gets the template for a chat's relay-signed write, where that differs: see payloadSchema.
+    const forChat = opened?.ok === true && opened.authority === 'relay-delegated' && !isUiAgent(opened.agentId);
     const full = publicReads || signed;
     // The registry is read only to fill context, which an unsigned call does not get.
     const reg = full ? await registryForRead(call) : null;
@@ -1862,7 +1883,11 @@ export function createWrdHandlers(deps: WrdDeps = {}): Record<string, WrdHandler
       case 'wrd:capture-workflow':
       case 'wrd:record-task-map':
         Object.assign(t, { workflow: { title: null, unitLabel: null }, tasks: [captureTask(intent === 'wrd:record-task-map')] });
-        if (intent === 'wrd:record-task-map') Object.assign(t, { document: { title: null, sha256: null, storeText: false }, draftedBy: { kind: null } });
+        // For a chat, the template for a map the relay signs: the document's text goes inside the
+        // payload, and the record keeps it, so storeText is true (capture refuses false there).
+        if (intent === 'wrd:record-task-map') {
+          Object.assign(t, { document: { title: null, sha256: null, storeText: forChat }, ...(forChat ? { document_text: null } : {}), draftedBy: { kind: null } });
+        }
         if (reg) Object.assign(context, { people, agents, taskKinds: kinds, levels: [...reg.policy.levels.keys()].filter((l) => l !== 'agent-acts-within-grant') });
         break;
       case 'wrd:revise-task': {
@@ -2045,7 +2070,7 @@ export function createWrdHandlers(deps: WrdDeps = {}): Record<string, WrdHandler
         });
         break;
     }
-    const answer = { intent, toolName: TOOL_OF_INTENT[intent], schema: payloadSchema(intent), template: t, fill: nullPaths(t) };
+    const answer = { intent, toolName: TOOL_OF_INTENT[intent], schema: payloadSchema(intent, { relaySigned: forChat }), template: t, fill: nullPaths(t) };
     // Unsigned, with reads closed: the allowlisted template only, and no context (some of it is read out of graphs).
     if (!full) return { ...answer, context: {}, contextWithheld: CONTEXT_WITHHELD, signing: SIGNING_RULE, status: 'templated', computed: true };
     return { ...answer, context, signing: SIGNING_RULE, status: 'templated', computed: true };
@@ -3683,7 +3708,7 @@ export function createWrdHandlers(deps: WrdDeps = {}): Record<string, WrdHandler
       } catch (e) {
         result = failureOf(e);
       }
-      return withExpectedPayload(name, result);
+      return withExpectedPayload(name, result, chatRelayShaped(args));
     };
   }
   return out;
@@ -3696,10 +3721,10 @@ INTENTS_OF_TOOL.set('wrd.read_calibration', ['wrd:read-records']);
 
 /**
  * A malformed payload is answered with the whole shape it should have had, not only the first
- * field that was wrong: the refusal carries `expectedPayload` (the intent's JSON Schema) and
- * points at wrd.envelope_template.
+ * field that was wrong: the refusal carries `expectedPayload` (the intent's JSON Schema, a chat's
+ * relay-signed one when the call came from a chat through the relay) and points at wrd.envelope_template.
  */
-function withExpectedPayload(toolName: string, result: unknown): unknown {
+function withExpectedPayload(toolName: string, result: unknown, relaySigned: boolean): unknown {
   if (!isObj(result) || result['kind'] !== 'refusal' || result['iep:refusalStatus'] !== 400) return result;
   if (!/malformed/i.test(String(result['error'] ?? ''))) return result;
   const intents = INTENTS_OF_TOOL.get(toolName);
@@ -3708,7 +3733,7 @@ function withExpectedPayload(toolName: string, result: unknown): unknown {
   const intent = intents.length > 1 && /^review/.test(reason) ? intents.find((i) => i === 'wrd:review-agent-run') ?? intents[0] : intents[0];
   if (!intent) return result;
   return {
-    ...result, expectedPayload: payloadSchema(intent),
+    ...result, expectedPayload: payloadSchema(intent, { relaySigned }),
     ...(result['iep:resolvedBy'] === undefined ? { 'iep:resolvedBy': { action: 'urn:iep:action:wrd:envelope-template', toolName: 'wrd.envelope_template', intent } } : {}),
   };
 }

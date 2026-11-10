@@ -57,7 +57,8 @@ export type RelayDelegated =
 
 const SIGNATURE = /^0x[0-9a-fA-F]{130}$/;
 const SLUG = /^[A-Za-z0-9._-]{1,128}$/;
-const MAX_SIGNED_PAYLOAD = 64 * 1024;
+/** The longest `_signed_payload` taken, in characters (String.length): what a relay-signed request can carry, everything in it counted. */
+export const MAX_SIGNED_PAYLOAD = 64 * 1024;
 
 const escapeHost = (h: string): string => h.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
