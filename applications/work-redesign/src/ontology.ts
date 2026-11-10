@@ -305,11 +305,16 @@ export interface PodPolicy {
   readonly minDistinctConfirmers?: number;
 }
 
-/** Shape check of a pod policy as it arrives in a registry envelope. */
+/** The fields a pod policy may hold, in the order the payload schema publishes them. */
+export const POD_POLICY_FIELDS: readonly (keyof PodPolicy)[] = ['maxLevel', 'floor', 'minSamples', 'minHumanConfirmations', 'minDistinctConfirmers'];
+/** The largest count a pod policy may ask for (minSamples, minHumanConfirmations, minDistinctConfirmers). */
+export const POD_POLICY_MAX_COUNT = 100_000;
+
+/** Shape check of a pod policy as it arrives in a registry envelope. Nothing here depends on the pod, so the payload schema states all of it. */
 export function coercePodPolicy(v: unknown): { readonly ok: true; readonly value: PodPolicy } | { readonly ok: false; readonly why: string } {
   if (typeof v !== 'object' || v === null || Array.isArray(v)) return { ok: false, why: 'podPolicy must be an object or null' };
   const o = v as Record<string, unknown>;
-  const allowed = new Set(['maxLevel', 'floor', 'minSamples', 'minHumanConfirmations', 'minDistinctConfirmers']);
+  const allowed: ReadonlySet<string> = new Set(POD_POLICY_FIELDS);
   for (const k of Object.keys(o)) if (!allowed.has(k)) return { ok: false, why: `podPolicy.${k} is not a pod policy field` };
   const out: { -readonly [K in keyof PodPolicy]: PodPolicy[K] } = {};
   if (o['maxLevel'] !== undefined) {
@@ -324,7 +329,7 @@ export function coercePodPolicy(v: unknown): { readonly ok: true; readonly value
   for (const k of ['minSamples', 'minHumanConfirmations', 'minDistinctConfirmers'] as const) {
     const n = o[k];
     if (n === undefined) continue;
-    if (typeof n !== 'number' || !Number.isInteger(n) || n < 1 || n > 100_000) return { ok: false, why: `podPolicy.${k} must be a positive integer` };
+    if (typeof n !== 'number' || !Number.isInteger(n) || n < 1 || n > POD_POLICY_MAX_COUNT) return { ok: false, why: `podPolicy.${k} must be a positive integer` };
     out[k] = n;
   }
   return { ok: true, value: out };

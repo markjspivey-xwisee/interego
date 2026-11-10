@@ -1770,6 +1770,99 @@ describe('work-redesign web UI: sign in with your Interego account', () => {
     expect(page.errors).toEqual([]);
   }, 60_000);
 
+  /**
+   * On a capture page: a clipboard that keeps every text it is given, in order (the last is what it holds), holding back
+   * its answer on demand (`clip.hold` writes); the text of every toast with a title, as it is added (a toast goes by itself
+   * after 5 s); and Card A's message for the form as it is now, as the page itself makes it.
+   */
+  function heldClipboard(win: JSDOM['window'], d: Document) {
+    const copied: string[] = [];
+    const clip = { hold: 0, held: [] as Array<() => void> };
+    Object.defineProperty(win.navigator, 'clipboard', {
+      value: { writeText: async (t: string) => { copied.push(t); if (clip.hold > 0) { clip.hold -= 1; await new Promise<void>((r) => { clip.held.push(r); }); } } }, configurable: true,
+    });
+    const said: Array<readonly [string, string]> = [];
+    new win.MutationObserver((records) => {
+      for (const r of records) for (const t of r.addedNodes) if (t instanceof win.HTMLElement) said.push([t.querySelector('.toast__title')?.textContent ?? '', t.querySelector('.toast__text')?.textContent ?? '']);
+    }).observe(must(d.getElementById('toasts'), 'the toast region'), { childList: true });
+    const toasts = (title: string): string[] => said.filter(([t]) => t === title).map(([, text]) => text);
+    const value = (s: string): string => (must(d.querySelector(s), s) as HTMLInputElement).value;
+    const messageNow = (): string => String((win.eval('taskMapChatMessage') as (st: unknown) => string)({
+      doc: { title: value('[data-path="document.title"]'), text: value('[data-path="document.text"]') }, workflow: { title: value('[data-path="workflow.title"]') },
+    }));
+    return { copied, clip, toasts, messageNow };
+  }
+
+  for (const [what, sel, to] of [
+    ['a rename', '[data-path="workflow.title"]', 'Supplier payments'],
+    ['a document edit', '[data-path="document.text"]', 'Supplier invoices arrive by email or by post. The clerk matches each invoice to its purchase order.'],
+    ['a title edit', '[data-path="document.title"]', 'AP-SOP-015'],
+  ] as const) {
+    it(`copies the chat route's message again after ${what} while the clipboard is taking it: the clipboard is left holding the message for the form as it is, "Copied" is said once, and no packet is asked for`, async () => {
+      const { page, win, d } = await heldPacketCapture('Supplier invoices arrive by email. The clerk matches each invoice to its purchase order.');
+      const { copied, clip, toasts, messageNow } = heldClipboard(win, d);
+      page.fill(must(d.querySelector('[data-path="workflow.title"]'), 'the process name'), 'Invoice intake');
+      clip.hold = 1;
+      page.click('Copy the message for my assistant');
+      await page.until(() => clip.held.length === 1, 'the clipboard taking the message');
+      const before = messageNow();
+      expect(copied).toEqual([before]);
+      page.fill(must(d.querySelector(sel), sel), to);
+      const now = messageNow();
+      expect(now).not.toBe(before);
+      must(clip.held.pop(), 'the held clipboard write')();
+      await page.until(() => copied.length === 2, 'the message copied again for the form as it is', 5_000);
+      await new Promise((r) => setTimeout(r, 300));
+      expect([copied, toasts('Copied').length]).toEqual([[before, now], 1]);
+      expect(page.log.filter((l) => l.path === '/wrd/task_map_packet')).toEqual([]);
+      expect(page.errors).toEqual([]);
+    }, 60_000);
+  }
+
+  it('takes the chat route\'s message off the clipboard again when the document grows past what a chat can record while the clipboard is taking it, and says nothing was copied', async () => {
+    const { page, win, d } = await heldPacketCapture('Supplier invoices arrive by email. The clerk matches each invoice to its purchase order.');
+    const { copied, clip, toasts, messageNow } = heldClipboard(win, d);
+    clip.hold = 1;
+    page.click('Copy the message for my assistant');
+    await page.until(() => clip.held.length === 1, 'the clipboard taking the message');
+    const before = messageNow();
+    const text = must(d.querySelector('[data-path="document.text"]'), 'the text field') as HTMLTextAreaElement;
+    page.fill(text, `${text.value}\n${'The clerk files each invoice. '.repeat(700)}`);
+    expect(text.value.length).toBeGreaterThan(20_000);
+    must(clip.held.pop(), 'the held clipboard write')();
+    await page.until(() => toasts('Not copied').length === 1, 'the note that nothing was copied', 5_000);
+    await new Promise((r) => setTimeout(r, 300));
+    // (Before, the message for the shorter document stayed on the clipboard while the page said nothing was copied.)
+    expect([copied, toasts('Copied'), toasts('Not copied')]).toEqual([[before, ''], [], ['The document or the process name changed while the message was being made. Copy it again.']]);
+    expect(page.errors).toEqual([]);
+  }, 60_000);
+
+  it('leaves on the clipboard the message a later press of the chat route\'s button copied, when an earlier press gives up on a form that kept changing while the clipboard took its messages', async () => {
+    const { page, win, d } = await heldPacketCapture('Supplier invoices arrive by email. The clerk matches each invoice to its purchase order.');
+    const { copied, clip, toasts, messageNow } = heldClipboard(win, d);
+    const name = must(d.querySelector('[data-path="workflow.title"]'), 'the process name');
+    page.fill(name, 'Invoice intake');
+    clip.hold = 3;
+    page.click('Copy the message for my assistant');
+    const names = ['Supplier payments', 'Supplier invoice processing', 'Supplier payments and refunds'];
+    for (const [i, renamed] of names.entries()) {
+      await page.until(() => clip.held.length === 1, `the clipboard taking a message, then the process renamed "${renamed}"`, 5_000);
+      page.fill(name, renamed);
+      // The last rename is followed by a press of its own, which copies the message for the form as it is now.
+      if (i === names.length - 1) {
+        page.click('Copy the message for my assistant');
+        await page.until(() => toasts('Copied').length === 1, 'the later press copied');
+      }
+      must(clip.held.pop(), 'the held clipboard write')();
+    }
+    await page.until(() => toasts('Not copied').length === 1, 'the earlier press giving up', 5_000);
+    await new Promise((r) => setTimeout(r, 300));
+    // The earlier press takes nothing off: the later one has written since, and what is there is its message for the form
+    // as it is. (Taking it off would leave the clipboard empty after "Copied".)
+    expect([copied.length, copied.at(-1), toasts('Copied').length]).toEqual([4, messageNow(), 1]);
+    expect(page.errors).toEqual([]);
+  }, 60_000);
+
   /** A signed-in lead (and admin) on Home. */
   async function signedInLead() {
     const w = await world({ lead: true });
@@ -2037,4 +2130,44 @@ describe('work-redesign web UI: sign in with your Interego account', () => {
     expect(urnsRunningIntoPunctuation(String(copied[0]))).toEqual([]);
     expect(page.errors).toEqual([]);
   }, 60_000);
+
+  it('the map message says what to do when step 2 lists no type of task that fits, and offers a step that adds the types the person names, types of task only, only where chat agents decide here and the person is an admin', async () => {
+    const NO_KIND = 'Every task needs a type of task that step 2 lists. If step 2 lists none, or none fits a task, tell me, and ask me to add the types in Work Redesign (People & roles, then Types of task, where an admin adds them), then do step 2 again. Never invent a type of task or its slug.';
+    const OFFER = ' Or offer to add the types I name yourself, with step 3: show me each one\'s slug, label and definition first, and add them only once I confirm.';
+    const doc = { title: 'Fictional procedure', text: 'The clerk saves every new supplier invoice to the intake folder each morning.' };
+    for (const [decide, admin] of [[true, true], [false, true], [true, false]] as const) {
+      const w = await world({ lead: true, chatAgentsDecide: decide, admin });
+      const page = await openPage(w.bridge, '/ui', { [SESSION_KEY]: JSON.stringify({ token: w.relay.mint(), expiresAt: new Date(Date.now() + 3600_000).toISOString() }) });
+      await page.until(() => page.text().includes(`Signed in as ${PERSON} via ${agentOf('work-redesign')}`) && page.text().includes('Map and change your process'), 'the signed-in lead');
+      const message = String((page.window.eval('taskMapChatMessage') as (st: unknown) => string)({ doc, workflow: { title: '' } }));
+      const where = `chatAgentsDecide ${decide}, admin ${admin}`;
+      // Step 2 reads the registry alone: who is registered, nothing else.
+      expect([where, message]).toEqual([where, expect.stringContaining('"intent":"wrd:read-records","podUrl":"' + DEMO_POD + '","kind":"registry","nonce":"read-records-<turn number, or 0>-<16 new random letters or digits>"')]);
+      expect([where, message]).toEqual([where, expect.stringContaining(`- ${NO_KIND}`)]);
+      const offered = decide && admin;
+      expect([where, message.includes(OFFER), message.includes('urn:iep:action:wrd:update-registry')]).toEqual([where, offered, offered]);
+      if (offered) {
+        // Step 3 adds types of task only, with the copied messages' nonce; recording the map is step 4.
+        expect(message).toContain('3. Only if I ask you to add types of task, and only once I have confirmed each one: add them. Types of task only, never people, roles or rules.\n   action_iri: "urn:iep:action:wrd:update-registry"\n   sign_payload: true');
+        const line = must(message.split('\n').find((l) => l.startsWith('   payload: {"intent":"wrd:update-registry"')), 'step 3\'s payload');
+        const payload = objOf(JSON.parse(line.slice('   payload: '.length)));
+        expect(Object.keys(payload).sort()).toEqual(['intent', 'nonce', 'podUrl', 'taskKinds']);
+        expect(payload['nonce']).toBe('update-registry-<turn number, or 0>-<16 new random letters or digits>');
+        expect(message).toContain('4. Once I have confirmed the draft, record the map.');
+      } else {
+        expect(message).toContain('3. Once I have confirmed the draft, record the map.');
+      }
+      // The template rule's nonce is made as every other signed payload's: the one the shared helper the page is served with
+      // writes into a signed step for that action, so a change to the helper's placeholders reaches this rule too.
+      const helper = new Function(`${chatAgentJs()}\nreturn InteregoChatAgent;`)() as { actPrompt(spec: unknown): string };
+      const helperNonce = String(objOf(JSON.parse(must(helper.actPrompt({
+        affordancesUrl: `${DEPLOYED}/affordances`, steps: [{ say: 'A step.', actionIri: 'urn:iep:action:wrd:read-envelope-template', signed: true, payload: {} }],
+      }).split('\n').find((l) => l.startsWith('   payload: ')), 'the helper\'s payload line').slice('   payload: '.length)))['nonce']);
+      expect(helperNonce).toBe('read-envelope-template-<turn number, or 0>-<16 new random letters or digits>');
+      expect(message).toContain(`"template":{"intent":"wrd:record-task-map"},"nonce":${JSON.stringify(helperNonce)}}`);
+      expect(message).not.toContain('"nonce": a new one');
+      expect(urnsRunningIntoPunctuation(message)).toEqual([]);
+      expect(page.errors).toEqual([]);
+    }
+  }, 120_000);
 });

@@ -142,6 +142,239 @@ to be shown from, so it is shown as before, with every run of 16 or 64 hex
 digits in it as a stand-in. So is a quote an answer shows without its
 session's lines, which no answer does today.
 
+## 2026-11-10 — Work Redesign: a copied message is the one for the form as it is
+
+A reviewer found that Map a process could copy a message for a process name
+the person had already changed. Copy and paste's button asks the bridge for
+the drafting instructions for the document, and while that answer was on its
+way the person could rename the process, or edit the document or its title.
+When the answer came, the page copied the message made for the form as it had
+been, showed it under "Show the message", and kept it for the next press,
+while the form said something else.
+
+The page now reads the document's title, its text and the process name
+together when it asks, and reads them again when the answer comes. If any of
+them changed, it asks again for what is there now and copies that, so one
+press copies what the person sees. An answer is kept under the title, text and
+name it was asked for (one that comes after the form changed is not kept), and
+the preview and the next press use it only while the form says those, so they
+never use an answer made for another form; a name changed and changed back
+uses it again. The same holds while the browser puts the message on the
+clipboard: if the form changes then, the message for the form as it is is
+copied after it, and "Copied" is said once. If the browser refuses the
+clipboard, "Copy this" offers the message for the form as it is once the
+browser has answered. If the form is still changing after three tries, or has
+changed into one that cannot be copied (the title cleared, or the document
+grown past what a chat can record), the page says the form changed and asks
+the person to copy again. A message an earlier try put on the clipboard for
+the form as it was is then taken off again, and so it is when the answer for
+the changed form is refused or "Copy this" opens; a message copied since, by a
+later press or another copy button, is left alone. Only a write the browser took
+counts as this copy's, so a later try the browser refused never takes off text
+another copy put there in between (found by an automated review). Taking a
+message off is a wait too: a form changed while it happens is copied again, so
+"Copy this" and a failed packet's message never speak for a form no longer shown. Where the browser will not empty the clipboard,
+the page says it still holds the message for the form as it was before the
+last change. The chat route's button ("Copy the message for my assistant")
+makes its message on the spot and asks the bridge for nothing, so only the
+clipboard step could go wrong there; it follows the same rule now. A draft
+pasted in step 3 can rename the process too: "Show the message" now goes when
+it does, where it used to stay, naming the old process. Reuse is as before:
+the same title, text and process name copy again without a new request. The
+page now compares the title, text and name themselves to decide that, instead
+of a hash of the text, so reuse also works on a page that cannot compute one.
+
+New tests hold an answer back and, while it waits, rename the process, edit
+the document, edit its title, or rename after the view was drawn again; they
+also rename while the clipboard is taking the message (on both buttons), keep
+the form changing past three answers, and rename from a pasted draft. Each
+checks the clipboard, the preview and the next press against the form as it
+is, and each fails with the fix taken out.
+
+A review of the first version found three gaps, closed as described above.
+When the form changed while the clipboard was taking the message, rather than
+while the answer was on its way, the page said nothing was copied while a
+paste still gave the message for the form before the last change. A browser
+that refused the clipboard after a rename got "Copy this" with the message for
+the old name. And renaming the process and renaming it back while the
+clipboard took the message dropped the answer kept for it: "Show the message"
+went missing, and the next press asked the bridge for the same answer again. A
+change to the form now only takes "Show the message" away. Further tests hold
+the clipboard through three renames (with the browser emptying the clipboard
+afterwards, and refusing to), clear the title or grow the document past a
+chat's limit while the clipboard takes the message, have the answer for a
+renamed process refused, have the browser refuse the clipboard after a rename,
+rename and rename back, and press again while an earlier press is still
+copying; each fails with its fix taken out.
+
+Not covered: these were checked in a test browser (jsdom), not a real one.
+Signing a map hashes the document first; an edit made in that moment is still
+sent with the hash of the text before it, and the bridge refuses the pair (the
+hash does not match) rather than record it, as before.
+
+## 2026-11-10 — Work Redesign: what a live run through a chat assistant found
+
+A live run through Claude, with the Interego connector, recorded a fictional
+process map on the live Work Redesign site from a chat. It passed, and showed
+five things to fix on the chat route.
+
+A new workspace has no types of task, and every task needs one, so a chat
+drafting a map had nothing to choose from and no word on what to do. The
+message the app copies for the assistant, and the drafting instructions the
+bridge hands back, now say: if the workspace lists no type of task, or none
+fits, tell the person and ask them to add the types in Work Redesign (People &
+roles, Types of task, where an admin adds them), then read again, and never
+make one up. Where the
+operator lets chat assistants take every action and the person is an admin,
+the message adds a step, and the instructions a ready payload, for the
+assistant to add the types the person names: types of task only, never people,
+roles or rules, each one shown to the person and added once they confirm.
+Elsewhere the bridge refuses that change from a chat, as before.
+
+A template a chat asked for still listed `issuedAt` as required and filled in
+a time and a nonce made by the bridge, while the copied message says a chat's
+payload has no `issuedAt` and teaches its own way of making a nonce. For a
+chat, every template now leaves `issuedAt` out of the template and the schema
+(the relay adds its own time), and shows the nonce as the copied message
+writes it, for example `record-task-map-<turn number, or 0>-<16 new random
+letters or digits>`. Templates for a key-held signature, and the web app's,
+are unchanged.
+
+The template for a registry change filled in one person's entry, so an
+assistant filling it in as told sent a change to people and roles when it only
+meant to add types of task. It now fills no part until one is named (`subject`
+entries, taskKinds or podPolicy), with a note to send only the part being
+changed; named, it is that part alone. A part that is not one is refused. The
+People & roles page builds its own changes and works as before.
+
+A chat's reads were large: each repeated about 8,500 characters of text that
+is the same in every read. A chat's read now leaves that text out unless it
+asks for it (`fixedText: true` in the payload the relay signs), names each
+field it left out, and can ask for the registry alone (`kind: "registry"`, in
+the same payload, since the relay sends nothing beside it). It keeps the
+workspace's own rules for AI permissions, which differ from one workspace to
+the next: the workspace's pod policy, and the grant policy with it applied.
+The copied message and the drafting instructions read the registry alone.
+Measured on a test bridge without a record key: a read of one five-task map
+went from 20,033 characters to 14,405, and the registry read from 8,322 to
+2,694. The web app's reads keep all of it.
+
+Smaller fixes: tasks come back in their process's order rather than the order
+of their identifiers; a recorded map's answer says which document text the
+record keeps, its length and whether the text is stored; the capture table's
+own fields in the drafting instructions are grouped under its route, apart
+from the chat's; and the instructions, the templates and the copied messages
+use one wording for making a nonce, the shared chat helper's, which a test
+holds equal. The drafting instructions grew by about 1,300 characters with the
+nonce rule and the step that adds types of task, and the size check on them
+was raised to match.
+
+A review of this work found more, now fixed. A chat's read had left out the
+workspace's own AI permission rules with the rest of the fixed text, so a chat
+never saw a workspace's stricter rules and nothing said they were in the part
+left out; it now keeps them, as above. The template a chat gets now lists its
+nonce first among the paths to fill, since the chat makes that nonce itself: a
+chat's payload filled exactly as the list said kept the placeholder nonce and
+was refused. A chat's malformed change, answered with the chat's schema, now
+points at the signed template read with the change's intent under `template`,
+which answers the chat's shape; it pointed at the unsigned template, which
+answers the shape of a change signed with the signer's own key. And a test now
+holds that the
+pod policy template carries every rule the pod holds, for a key holder and for
+a chat, so a change sent from it with one rule raised keeps the others; no test
+covered that before. The template's `subject` names the part of a registry
+change and also what a ratification is about, and a ratification's template
+copied any value it was given, a registry part among them, into a payload the
+bridge then refused; it now refuses (400) any value but description,
+classification or assignment, as a registry change's template refuses any but
+its parts. Last, the copied message's rule for asking for a template wrote its
+own copy of the placeholder nonce, which would have gone stale without notice
+if the shared chat helper changed its placeholder. The helper now publishes
+the placeholder it writes into each signed step (`noncePlaceholder`, beside
+`actPrompt`), the rule takes it from there, and a test holds that the web app
+writes no placeholder of its own.
+
+New tests check each of these, and each fails with its fix taken out.
+
+Not covered: no second live run has been made with these changes. The chat
+route's 20,000-character limit is still unmeasured: the live run's document was
+734 characters. Read sizes were measured on a test bridge, not the live one. A
+chat's read names one section (`kind`) or takes them all; it cannot pick
+several. The bridge does not check that a type of task a
+chat adds was confirmed by the person; the message and the instructions ask
+the assistant to, and the bridge checks only who may make the change. A pod
+policy change replaces the whole policy, so one built without the template
+still returns each field it leaves out to the published value; the template
+and its note guard against that, the bridge does not.
+
+## 2026-11-10 — Work Redesign: the registry schema says what a registry change needs
+
+The published schema for a Work Redesign registry change (`wrd:update-registry`:
+served by the envelope template, summarised in the action's description, and
+attached to a refused change as `expectedPayload`) marked each entry's label,
+softwareAgent and personRef as optional, while the bridge refused an entry
+without them, one field per signed attempt. An assistant that built its change
+from the schema failed two or three times before it got through. The schema now
+publishes the three shapes the bridge takes, each with what it needs: a person
+(address, roles from approver, operator and worker, label, softwareAgent false,
+personRef), an agent (its key's address, the agent role alone, label,
+softwareAgent true, principal, model) and a removal (address and an empty roles
+list). It also says a change carries at least one of entries, taskKinds and
+podPolicy, that a label, a model and a task kind's definition cannot be blank,
+and that a definition is one line. A pod policy used to be published as any
+object, so a policy-only change built from the schema could be refused as
+malformed, with the same loose schema attached. Its schema now lists its fields
+and their limits as the bridge checks them: `null`, or an object holding any of
+a highest allowed level (one of the allocation levels), a floor above 0 and at
+most 1, and three whole-number counts from 1 to 100,000, and nothing else. The
+bridge's own checks did not change; the person reference's pattern, the pod
+policy's fields and its largest count now each come from one shared constant.
+The envelope template's entry is a person's, so its softwareAgent is filled as
+false and the fields left to fill are the address, a role, the label and the
+person reference. The action's one-line summary names the three shapes and the
+pod policy's fields. A validator in strict mode (Ajv's `strict` option, for
+example) can now compile the schema: it refused the "at least one of" rule,
+whose branches each required a field they did not declare.
+
+The schema is stricter than the bridge in a few places, on purpose, so that a
+change built from it holds exactly the fields that count: it refuses a role
+listed twice (the bridge drops the repeat), a field the bridge does not read on
+a person's or an agent's entry (the bridge ignores it), and a null label or
+definition for a kind of task already registered (the bridge keeps the kind's
+own). A removal is the one open shape, because the bridge reads any entry whose
+roles are empty as a removal, whatever else it carries.
+
+New tests build an entry from each shape's required fields alone (a person by
+Interego ID, a person by wallet address, an agent, a removal), check it against
+the schema and send it to the bridge, which takes it; fill the template the same
+way; check that each entry and pod policy the bridge refuses for its own sake is
+refused by the schema too; send a change holding only a pod policy, with every
+field the schema names, which both take; check that each place the schema is
+stricter than the bridge is one the bridge takes and reads as the stricter form
+would say; check that every part of every payload's schema declares each field
+it requires; and drive the web app's People & roles page to add a person and an
+AI agent and remove someone, each change in one of the schema's shapes and
+taken. The page already built those shapes and is unchanged. The tests' own
+schema check now reads a field named like a built-in object member (`toString`,
+`constructor`) as the payload's own; it used to fail on such a payload instead
+of reporting it.
+
+Not covered: what depends on the pod or the bridge's settings stays the
+bridge's to check, so a payload can match the schema and still be refused when
+an agent's principal is not a registered person, when a person who is an
+agent's principal is removed, when an address appears twice in one change, when
+a new task kind has no label or definition, or when a user DID is not on the
+bridge's identity host. The schema counts a length in characters, as JSON
+Schema does, and the bridge counts a character outside the basic range (an
+emoji, for example) twice, so a label, model or definition near its limit that
+holds such characters can match the schema and still be refused. A pod policy
+value that would loosen the published policy (a floor or a count below the
+published one) matches the schema and is still refused, with a refusal of its
+own that does not call the change malformed: the published values are the
+bridge's to read, not the schema's to state. On the People & roles page, saving
+a person with no role ticked still sends what the bridge reads as a removal
+(for someone not yet added, a change that changes nothing), as before.
+
 ## 2026-11-10 — Practice Evidence and Work Redesign: fixes from a live run through a chat assistant
 
 A run of a whole practice session through a real chat assistant, with the
@@ -243,10 +476,8 @@ which quotes were read back.
 
 Not covered: in a quote that was read back, a run of 16 or 64 hex digits the
 learner wrote with nothing around it is shown to a chat as a stand-in, while
-the line shows it as written (the entry "a quote that was read back is shown
-as the line shows it" fixes that for a quote that checked out). A quote that
-cuts into a run of digits is not read back; it cuts a word, which the quote
-rule refuses anyway.
+the line shows it as written. A quote that cuts into a run of digits is not
+read back; it cuts a word, which the quote rule refuses anyway.
 
 ## 2026-11-10 — Practice Evidence: a signed request's payload no longer checks a guess
 

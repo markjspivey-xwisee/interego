@@ -74,6 +74,12 @@ export const isUserPrincipal = (v: unknown): v is string => typeof v === 'string
 /** isUserPrincipal for a string already known to be one, without narrowing the other branch away. */
 const userPrincipalText = (v: string): boolean => USER_PRINCIPAL.test(v);
 export const isAddress = (v: unknown): v is string => typeof v === 'string' && /^0x[0-9a-fA-F]{40}$/.test(v);
+/**
+ * A person reference in the registry: the admin's stable name for the human behind a key or a
+ * user DID (one person's key and user DID share it). The handler checks it and the payload schema
+ * publishes it, from this one pattern.
+ */
+export const PERSON_REF_PATTERN = '^[A-Za-z0-9_.:-]{1,80}$';
 /** Who a record names as a person: the 0x address of a key they hold, or their Interego user DID (relay-attested). */
 export const isPersonId = (v: unknown): v is string => isAddress(v) || isUserPrincipal(v);
 /**
