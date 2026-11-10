@@ -22,6 +22,13 @@ import type { IRI } from '@interego/core';
 import type { Affordance, AffordanceInput } from '../_shared/affordance-mcp/index.js';
 import { PEV_ACTION } from './src/ontology.js';
 
+/**
+ * Who reads no scored scenario's stakes, in the words every description that names them uses: the
+ * callers bridge/handlers.ts `showsStakes` leaves them out for. One phrase, so no description
+ * names fewer of them.
+ */
+export const STAKES_LEFT_OUT_FOR = 'a chat assistant the Interego relay signs for, a key no admin registered or one registered as an agent, or a request nobody signed';
+
 const ENVELOPE: readonly AffordanceInput[] = [
   {
     name: 'envelope', type: 'object', required: false,
@@ -69,7 +76,7 @@ export const pevAffordances: ReadonlyArray<Affordance> = [
     action: PEV_ACTION.authorScenario as IRI,
     toolName: 'pev.author_scenario',
     title: 'Save or publish a practice scenario',
-    description: 'An author saves a scenario as a draft or publishes it. Payload: {scenario, status: draft|published, basedOnVersion?, draftAssistance? | draftReceipt?}. The scenario must say how it will be used (feedback-only or pass-gate) and how knowable the work is; a pass gate on work not read as evident or knowable needs a reason. A content change is a new version that supersedes the old one; the rubric version is identified by its hash.',
+    description: 'An author saves a scenario as a draft or publishes it. Payload: {scenario, status: draft|published, basedOnVersion?, draftAssistance? | draftReceipt?}. The scenario must say how it will be used (feedback-only or pass-gate) and how knowable the work is; a pass gate on work not read as evident or knowable needs a reason. A content change is a new version that supersedes the old one; the rubric version is identified by its hash. From ' + STAKES_LEFT_OUT_FOR + ': a scored scenario whose latest version is scored is sent without weights, level values and passRule, which it does not read, and the new version keeps that version\'s (stakesKept says so) when its criteria and levels are that version\'s, by id and in order; sending them, or other criteria, is refused (stakes-not-in-chat, with what to do in remedy: a chat changes the stakes of a scored scenario in the web app).',
     method: 'POST',
     targetTemplate: '{base}/pev/author_scenario',
     annotations: hints('Author a scenario', false, false, false, true),
@@ -116,16 +123,17 @@ export const pevAffordances: ReadonlyArray<Affordance> = [
     action: PEV_ACTION.listScenarios as IRI,
     toolName: 'pev.list_scenarios',
     title: 'List practice scenarios',
-    description: 'The latest published version of each scenario on the pod, with its full rubric (the rule a learner is judged by is public), its use, how knowable the work is, and whether a reviewer ratified it. With scenario_iri: one scenario with every version. Also reports which model route this bridge has.',
-    method: 'GET',
+    description: 'The latest published version of each scenario on the pod, with its rubric\'s criteria and levels, its use (feedback only or scored), how knowable the work is, and whether a reviewer ratified it. With scenario_iri: one scenario with every version. Also reports which model route this bridge has. Plain or signed. A scored scenario\'s stakes (each criterion\'s weight, each level\'s points, the pass rule and the author\'s reason for it) come only in an answer to this bridge\'s web app (its own Interego sign-in) or to a key an admin registered on this workspace (an admin\'s, a demo key, or one holding a role here). An answer to ' + STAKES_LEFT_OUT_FOR + ' leaves them out and says so (stakesWithheld), and keys its rubric and scenario hashes for their own scenario version, so they match no other scenario\'s or version\'s; a hash inside any text (a scenario\'s words, a turn, a reason) comes back as a stand-in keyed apart from them, the same wherever it is shown for the same scenario version (a scenario\'s results and calibration show stand-ins of their own), so none can be checked against a guess.',
+    method: 'POST',
     targetTemplate: '{base}/pev/list_scenarios',
     annotations: hints('List scenarios', true, false, true, true),
     inputs: [
+      ...ENVELOPE.filter((i) => i.name !== 'pod_url'),
       ...POD_ONLY,
-      { name: 'scenario_iri', type: 'string', required: false, description: 'One scenario, with its versions.' },
-      { name: 'include_drafts', type: 'string', required: false, description: 'true to list drafts too.', enum: ['true', 'false'] },
+      { name: 'scenario_iri', type: 'string', required: false, description: 'One scenario, with its versions. In a signed request it may be in the payload instead (scenarioIri).' },
+      { name: 'include_drafts', type: 'string', required: false, description: 'true to list drafts too. In a signed request it may be in the payload instead (includeDrafts).', enum: ['true', 'false'] },
     ],
-    outputs: out('The scenarios and the bridge\'s routes.', ['podUrl']),
+    outputs: out('The scenarios (without their stakes for ' + STAKES_LEFT_OUT_FOR + ', where stakesWithheld says what was left out) and the bridge\'s routes.', ['podUrl']),
   },
   {
     action: PEV_ACTION.startAttempt as IRI,
@@ -158,7 +166,7 @@ export const pevAffordances: ReadonlyArray<Affordance> = [
     targetTemplate: '{base}/pev/counterpart_packet',
     annotations: hints('Other-person packet', true, false, true, true),
     inputs: [...ENVELOPE],
-    outputs: out('A client-required packet.', ['execution', 'promptTemplateHash']),
+    outputs: out('A client-required packet. Its recordWith.payloadTemplate is in the form the caller signs in: for a request the Interego relay signed, pod_url, no issuedAt and a nonce of the step name, the turn and 16 random letters or digits; otherwise podUrl, issuedAt and any nonce of 16 to 128 letters, digits, - or _. Through the relay either form is taken.', ['execution', 'promptTemplateHash']),
   },
   {
     action: PEV_ACTION.recordTurns as IRI,
@@ -180,7 +188,7 @@ export const pevAffordances: ReadonlyArray<Affordance> = [
     targetTemplate: '{base}/pev/end_conversation',
     annotations: hints('End the conversation', false, false, false, true),
     inputs: [...ENVELOPE],
-    outputs: out('The ended attempt and its transcript hash.', ['attemptIri', 'transcriptHash', 'descriptorUrl']),
+    outputs: out('The ended attempt and its transcript hash, with ended: true, as pev.record_turns and pev.say answer once a conversation is over. To the learner\'s own chat assistant, handOff says how the learner sends the session to an appointed judge, in place of the judge packet, which it is not offered.', ['attemptIri', 'transcriptHash', 'descriptorUrl']),
   },
   {
     action: PEV_ACTION.judgeAttempt as IRI,
@@ -191,24 +199,24 @@ export const pevAffordances: ReadonlyArray<Affordance> = [
     targetTemplate: '{base}/pev/judge_attempt',
     annotations: hints('Judge an attempt', false, false, false, true),
     inputs: [...ENVELOPE, ...BYOK],
-    outputs: out('The judgment, the provisional result and what the next level asks for.', ['attemptIri', 'state', 'descriptorUrl']),
+    outputs: out('The judgment, the provisional result and what the next level asks for. Asked by ' + STAKES_LEFT_OUT_FOR + ': the levels the result counted, never its points, percent or pass result (stakesWithheld says so). To the learner\'s own chat assistant, while there is room for another judgment, handOff says how the learner sends the session to an appointed judge, in place of the judge packet, which it is not offered.', ['attemptIri', 'state', 'descriptorUrl']),
   },
   {
     action: PEV_ACTION.judgePacket as IRI,
     toolName: 'pev.judge_packet',
     title: 'Get a judge packet for an independent judge agent',
-    description: 'The learner, a reviewer or a registered judge gets the judging request, output schema and binding (head URL, transcript hash, rubric hash). Payload: {attemptIri}. Samples nothing and writes nothing; record the result with pev.record_judgment.',
+    description: 'A registered judge or a reviewer gets the judging request, output schema and binding (head URL, transcript hash, rubric hash); so does the learner, to hand to their appointed judge, but not through their own chat assistant, which acts as them (403 hand-off-to-judge, saying how to send the session to a judge). Payload: {attemptIri}. Samples nothing and writes nothing; record the result with pev.record_judgment. Refused to anyone else (not-entitled), naming, for a person signed in through the relay, the Member ID an admin registers as a judge.',
     method: 'POST',
     targetTemplate: '{base}/pev/judge_packet',
     annotations: hints('Judge packet', true, false, true, true),
     inputs: [...ENVELOPE],
-    outputs: out('A client-required packet. Its last field, yourAssessment, is null, or {saved: true, judgedAt} when the caller signed a judgment of this attempt made since it was last reopened; it says nothing else about any judgment or review.', ['execution', 'promptTemplateHash']),
+    outputs: out('A client-required packet, its record template in the form the caller signs in, as pev.counterpart_packet\'s is. Its last field, yourAssessment, is null, or {saved: true, judgedAt} when the caller signed a judgment of this attempt made since it was last reopened; it says nothing else about any judgment or review.', ['execution', 'promptTemplateHash']),
   },
   {
     action: PEV_ACTION.recordJudgment as IRI,
     toolName: 'pev.record_judgment',
     title: 'Record a judgment from a registered judge',
-    description: 'A registered judge (never the learner) records a judgment made from the packet. Payload: {attemptIri, attemptHeadUrl, transcriptHash, rubricHash, judgment: {criteria}, judgeDisclosure: {provider, model, usedPacketPrompt}}. The platform still checks every quote and computes the result.',
+    description: 'A registered judge (never the learner) records a judgment made from the packet. Payload: {attemptIri, attemptHeadUrl, transcriptHash, rubricHash, judgment: {criteria}, judgeDisclosure: {provider, model, usedPacketPrompt}}. The platform still checks every quote and computes the result. A quote copied from the packet\'s transcript or from the attempt as it was shown, a fingerprint in a line included, is checked against the learner\'s words as stored (a stand-in whole, or its hex alone) and saved as them, marked readBack.',
     method: 'POST',
     targetTemplate: '{base}/pev/record_judgment',
     annotations: hints('Record a judgment', false, false, false, true),
@@ -219,12 +227,12 @@ export const pevAffordances: ReadonlyArray<Affordance> = [
     action: PEV_ACTION.reviewQueue as IRI,
     toolName: 'pev.review_queue',
     title: 'The review queue',
-    description: 'A reviewer reads the attempts awaiting review, reopened ones first, ranked by a priority whose factors are returned (unverified quotes, judge disagreement, closeness to the pass threshold, uncertainty, calibration need, learner-controlled routes, audit sample). Attempts the reviewer is conflicted on are left out and counted. Payload: {limit?}.',
+    description: 'A reviewer reads the attempts awaiting review, reopened ones first, ranked by a priority whose factors are returned (unverified quotes, judge disagreement, closeness to the pass threshold, uncertainty, calibration need, learner-controlled routes, audit sample). Attempts the reviewer is conflicted on are left out and counted. Payload: {limit?}. Read by ' + STAKES_LEFT_OUT_FOR + ', each entry carries its rubric, judgments and provisional result without the scoring stakes, and the queue is ranked without closeness to the pass threshold, which is worked out from them.',
     method: 'POST',
     targetTemplate: '{base}/pev/review_queue',
     annotations: hints('Review queue', true, false, true, true),
     inputs: [...ENVELOPE],
-    outputs: out('Queue entries with their factors and the weights.', ['podUrl']),
+    outputs: out('Queue entries with their factors and the weights, each naming its scenario version (for ' + STAKES_LEFT_OUT_FOR + ': without the scoring stakes, which stakesWithheld names).', ['podUrl']),
   },
   {
     action: PEV_ACTION.countersignAttempt as IRI,
@@ -235,7 +243,7 @@ export const pevAffordances: ReadonlyArray<Affordance> = [
     targetTemplate: '{base}/pev/countersign_attempt',
     annotations: hints('Countersign', false, false, false, true),
     inputs: [...ENVELOPE],
-    outputs: out('The reviewed attempt and the final result.', ['attemptIri', 'state', 'descriptorUrl']),
+    outputs: out('The reviewed attempt and the final result (to ' + STAKES_LEFT_OUT_FOR + ': the final levels without the score; a chat assistant reviews only where the operator lets one decide).', ['attemptIri', 'state', 'descriptorUrl']),
   },
   {
     action: PEV_ACTION.overrideAttempt as IRI,
@@ -246,7 +254,7 @@ export const pevAffordances: ReadonlyArray<Affordance> = [
     targetTemplate: '{base}/pev/override_attempt',
     annotations: hints('Override', false, false, false, true),
     inputs: [...ENVELOPE],
-    outputs: out('The reviewed attempt and the final result.', ['attemptIri', 'state', 'descriptorUrl']),
+    outputs: out('The reviewed attempt and the final result (to ' + STAKES_LEFT_OUT_FOR + ': the final levels without the score; a chat assistant reviews only where the operator lets one decide).', ['attemptIri', 'state', 'descriptorUrl']),
   },
   {
     action: PEV_ACTION.contestReview as IRI,
@@ -280,7 +288,7 @@ export const pevAffordances: ReadonlyArray<Affordance> = [
     annotations: hints('Calibration', true, false, true, true),
     inputs: [
       ...POD_ONLY,
-      { name: 'rubric_hash', type: 'string', required: false, description: 'Only cells of this rubric version.' },
+      { name: 'rubric_hash', type: 'string', required: false, description: 'Only cells of this rubric version, its hash as these cells show it: keyed for calibration, so it matches no rubric fingerprint shown with a scenario, an attempt or a judgment.' },
       { name: 'judge', type: 'string', required: false, description: 'Only cells of this judge id.' },
       { name: 'group_by', type: 'string', required: false, description: 'rubric-version (default) or criterion-content (pooled, information only).', enum: ['rubric-version', 'criterion-content'] },
     ],
@@ -290,7 +298,7 @@ export const pevAffordances: ReadonlyArray<Affordance> = [
     action: PEV_ACTION.scenarioResults as IRI,
     toolName: 'pev.scenario_results',
     title: 'Results for one scenario',
-    description: 'A reviewer, author or admin reads what happened in practice on a scenario: counts by state, final and provisional level distributions, coached and attempt-number splits, and where reviewers changed the judge. A row with any count from 1 to 4 shows only its total, and a split is withheld when either side has such a row. Reviewers and admins see each change with its reason; authors see suppressed counts. Payload: {scenarioIri, versions?}.',
+    description: 'A reviewer, author or admin reads what happened in practice on a scenario: counts by state, final and provisional level distributions, how many met the pass mark, coached and attempt-number splits, and where reviewers changed the judge. A row with any count from 1 to 4 shows only its total, and a split is withheld when either side has such a row. Reviewers and admins see each change with its reason; authors see suppressed counts. Payload: {scenarioIri, versions?}. Read by ' + STAKES_LEFT_OUT_FOR + ', how many met the pass mark is left out (stakesWithheld).',
     method: 'POST',
     targetTemplate: '{base}/pev/scenario_results',
     annotations: hints('Scenario results', true, false, true, true),
@@ -306,13 +314,13 @@ export const pevAffordances: ReadonlyArray<Affordance> = [
     targetTemplate: '{base}/pev/project_attempt',
     annotations: hints('Project to xAPI', false, false, false, true),
     inputs: [...ENVELOPE],
-    outputs: out('The statement, what it leaves out, and the audit descriptor.', ['statementId', 'auditDescriptorUrl']),
+    outputs: out('The statement, what it leaves out, and the audit descriptor. A scored statement carries the score, so a scored attempt is refused, before anything is written, to ' + STAKES_LEFT_OUT_FOR + ' (stakes-not-in-chat, with what to do in remedy).', ['statementId', 'auditDescriptorUrl']),
   },
   {
     action: PEV_ACTION.holderCopy as IRI,
     toolName: 'pev.holder_copy',
     title: 'Copy your record to your own pod',
-    description: 'The learner copies every version of their attempt record, with the platform\'s signatures, to a pod they name. Payload: {attemptIri, targetPodUrl}. Works for pods that accept this bridge\'s writes; otherwise use pev.export_record and write the bytes with your own credentials.',
+    description: 'The learner copies every version of their attempt record, with the platform\'s signatures, to a pod they name. Payload: {attemptIri, targetPodUrl}. Works for pods that accept this bridge\'s writes; otherwise use pev.export_record and write the bytes with your own credentials. A scored attempt\'s graphs hold the scoring stakes, unencrypted on the copy, so its copy is refused to ' + STAKES_LEFT_OUT_FOR + ' (stakes-not-in-chat, with what to do in remedy).',
     method: 'POST',
     targetTemplate: '{base}/pev/holder_copy',
     annotations: hints('Copy to my pod', false, false, true, true),
@@ -328,7 +336,7 @@ export const pevAffordances: ReadonlyArray<Affordance> = [
     targetTemplate: '{base}/pev/export_record',
     annotations: hints('Export my record', true, false, true, true),
     inputs: [...ENVELOPE],
-    outputs: out('Every version\'s bytes and the verification steps.', ['attemptIri', 'exportedAt']),
+    outputs: out('Every version\'s bytes and the verification steps. A scored attempt\'s graphs hold the scoring stakes, so to ' + STAKES_LEFT_OUT_FOR + ' only the descriptors are returned, and graphsLeftOut says so (stakesWithheld).', ['attemptIri', 'exportedAt']),
   },
   {
     action: PEV_ACTION.redactAttempt as IRI,
@@ -345,12 +353,12 @@ export const pevAffordances: ReadonlyArray<Affordance> = [
     action: PEV_ACTION.getAttempt as IRI,
     toolName: 'pev.get_attempt',
     title: 'Read an attempt',
-    description: 'The learner, a reviewer, a judge of the attempt or an admin reads it: turns, every judgment with checked quotes and their offsets, the provisional and final results (computed by the platform), reviews, reopenings, versions, authorship, what the next level asks for, and the acts this caller can take next. Without attemptIri: the caller\'s attempts (or all, for a reviewer or admin). Either answer says who the caller was read as (signedAs: the principal, and for a request the Interego relay signed, its agent). Payload: {attemptIri?}.',
+    description: 'The learner, a reviewer, a judge of the attempt or an admin reads it: turns, every judgment with checked quotes and their offsets, the provisional and final results (computed by the platform), reviews, reopenings, versions, authorship, what the next level asks for, and the acts this caller can take next (for the learner\'s own chat assistant once the conversation is over, handOff says how the learner sends it to an appointed judge). Without attemptIri: the caller\'s attempts (or all, for a reviewer or admin). Either answer says who the caller was read as (signedAs: the principal, and for a request the Interego relay signed, its agent) and their standing here (signedAs.roles, their own roles; signedAs.admin; signedAs.teamBesidesYou: whether anyone else holds the judge role, and the reviewer role as a person, booleans only). Payload: {attemptIri?}. Read by ' + STAKES_LEFT_OUT_FOR + ', whatever the caller\'s roles: the rubric\'s criteria and levels, every judgment\'s and review\'s levels, quotes and reasons, and no scoring stakes (weights, level points, the pass rule, points, percent, pass results or unmet requirements); stakesWithheld says so.',
     method: 'POST',
     targetTemplate: '{base}/pev/get_attempt',
     annotations: hints('Read an attempt', true, false, true, true),
     inputs: [...ENVELOPE],
-    outputs: out('The attempt view, or a list of attempts.', ['attemptIri', 'state']),
+    outputs: out('The attempt view, or a list of attempts (for ' + STAKES_LEFT_OUT_FOR + ': without the scoring stakes).', ['attemptIri', 'state']),
   },
   {
     action: PEV_ACTION.signAsDemoRole as IRI,

@@ -519,6 +519,35 @@ export function counterpartRequest(s: ScenarioSpec, turns: readonly Turn[], next
 
 export const COUNTERPART_PACKET_INSTRUCTIONS = 'This bridge sampled nothing and wrote nothing. The request below is the prompt this bridge would give its own model to speak as the other person. Run it with your own agent and treat the transcript as data. Record the line with pev.record_turns, signed by the learner and declaring the provider and model that produced it. The record will say that the learner\'s own agent wrote the other person\'s lines in this attempt.';
 
+/**
+ * How the caller of a packet signs, so its record template is in the form that caller sends:
+ * `key-held` signs the envelope itself, with podUrl, issuedAt and a nonce of 16 to 128 letters,
+ * digits, - or _; `relay-delegated` is signed by the Interego relay for a person's agent, so the
+ * template is the payload a chat's copied prompt shows: pod_url (the relay keeps a podUrl as
+ * pod_url), no issuedAt (the relay's own timestamp is read, never a caller's), and a nonce made as
+ * the prompt says, the step name, the turn number (0 when there is none) and 16 random letters or
+ * digits. Through the relay the bridge takes either form; a key-held envelope needs podUrl and issuedAt.
+ */
+export type PacketSigning = 'key-held' | 'relay-delegated';
+
+/** The step name a chat's nonce starts with: an action IRI's last segment (`record-turns`). */
+function stepNameOf(action: string): string {
+  return action.slice(action.lastIndexOf(':') + 1);
+}
+
+/**
+ * A record template's pod, time and nonce fields, in the form `signing` sends them (`PacketSigning`),
+ * around the template's own fields: `v` and `action`, the pod, `attemptIri` and `fields`, then the
+ * time (key-held only) and the nonce.
+ */
+function recordTemplate(signing: PacketSigning, action: string, podUrl: string, attemptIri: string, turn: number,
+  fields: Readonly<Record<string, unknown>>): Record<string, unknown> {
+  if (signing === 'relay-delegated') {
+    return { v: 1, action, pod_url: podUrl, attemptIri, ...fields, nonce: `${stepNameOf(action)}-${turn}-<16 new random letters or digits>` };
+  }
+  return { v: 1, action, podUrl, attemptIri, ...fields, issuedAt: '<now, ISO 8601>', nonce: '<16 to 128 letters, digits, - or _>' };
+}
+
 export interface CounterpartPacket {
   readonly execution: 'client-required'; readonly sampling_performed: false; readonly writes_performed: false;
   readonly request: TextModelRequest; readonly promptTemplateHash: string; readonly instructions: string;
@@ -526,10 +555,13 @@ export interface CounterpartPacket {
   readonly recordWith: { readonly tool: 'pev.record_turns'; readonly action: string; readonly payloadTemplate: Readonly<Record<string, unknown>> };
 }
 
-/** The client-required packet that lets the learner's own agent play the other person. */
+/**
+ * The client-required packet that lets the learner's own agent play the other person. Its record
+ * template is in the form the caller signs in (`signing`, key-held unless said).
+ */
 export function counterpartPacket(
   s: ScenarioSpec, turns: readonly Turn[], nextLearnerText: string,
-  binding: { podUrl: string; attemptIri: string; turnIndex: number },
+  binding: { podUrl: string; attemptIri: string; turnIndex: number; signing?: PacketSigning },
 ): CounterpartPacket {
   return {
     execution: 'client-required', sampling_performed: false, writes_performed: false,
@@ -539,12 +571,10 @@ export function counterpartPacket(
     expected: { turnIndex: binding.turnIndex, endSignal: END_SIGNAL },
     recordWith: {
       tool: 'pev.record_turns', action: PEV_ACTION.recordTurns,
-      payloadTemplate: {
-        v: 1, action: PEV_ACTION.recordTurns, podUrl: binding.podUrl, attemptIri: binding.attemptIri,
+      payloadTemplate: recordTemplate(binding.signing ?? 'key-held', PEV_ACTION.recordTurns, binding.podUrl, binding.attemptIri, binding.turnIndex, {
         turnIndex: binding.turnIndex, learnerText: nextLearnerText, counterpartText: '<the other person\'s line>',
         counterpartDisclosure: { provider: '<provider>', model: '<model as your provider returned it>' },
-        issuedAt: '<now, ISO 8601>', nonce: '<16 to 128 letters, digits, - or _>',
-      },
+      }),
     },
   };
 }
@@ -594,6 +624,12 @@ export interface QuoteCheck {
   readonly occurrences?: number;
   readonly declaredTurnIndex?: number;
   readonly why?: string;
+  /**
+   * Set when the quote as sent was not found and was checked as read back (`verifyQuoteAsShown`):
+   * `text` is then the stored words it was copied from, not the words the judge's signed request
+   * held, which showed a stand-in where the stored line holds a fingerprint.
+   */
+  readonly readBack?: true;
 }
 
 export interface JudgeQuoteInput { readonly text: string; readonly turnIndex?: number }
@@ -675,6 +711,24 @@ export function verifyQuote(q: JudgeQuoteInput, turns: readonly Pick<Turn, 'inde
     ...base, verified: false, why: cutOnly ? WHY_CUTS_WORD : theirs ? WHY_THEIRS : WHY_ABSENT,
     ...(q.turnIndex !== undefined ? { declaredTurnIndex: q.turnIndex } : {}),
   };
+}
+
+/**
+ * Check a quote a judge may have copied from a view of the transcript that shows some of its text
+ * otherwise than stored (an answer that replaced a fingerprint in a line with a stand-in, say):
+ * `asStored` reads such a quote back as the stored text it stands for. The quote is checked as sent
+ * first; when it is not found, and `asStored` reads it differently, it is checked as read back, and
+ * that check is kept, its text the stored text and marked `readBack`, so a recorded quote is always
+ * one of the stored lines' own and says when it is not the text the judge sent. Without `asStored`,
+ * exactly `verifyQuote`.
+ */
+export function verifyQuoteAsShown(
+  q: JudgeQuoteInput, turns: readonly Pick<Turn, 'index' | 'speaker' | 'text'>[], asStored?: (quote: string) => string,
+): QuoteCheck {
+  const sent = verifyQuote(q, turns);
+  if (sent.verified || asStored === undefined) return sent;
+  const text = asStored(q.text);
+  return text === q.text ? sent : { ...verifyQuote({ ...q, text }, turns), readBack: true };
 }
 
 export type CriterionStatus = 'verified' | 'unverified' | 'no-quote-needed';
@@ -794,10 +848,14 @@ export interface JudgePacket {
   readonly recordWith: { readonly tool: 'pev.record_judgment'; readonly action: string; readonly payloadTemplate: Readonly<Record<string, unknown>> };
 }
 
-/** The client-required packet that lets an independent judge agent judge the attempt. */
+/**
+ * The client-required packet that lets an independent judge agent judge the attempt. Its record
+ * template is in the form the caller signs in (`signing`, key-held unless said); judging has no turn,
+ * so a chat's nonce has turn 0.
+ */
 export function judgePacket(
   s: ScenarioSpec, turns: readonly Turn[],
-  binding: { podUrl: string; attemptIri: string; attemptHeadUrl: string; transcriptHash: string; rubricHash: string },
+  binding: { podUrl: string; attemptIri: string; attemptHeadUrl: string; transcriptHash: string; rubricHash: string; signing?: PacketSigning },
 ): JudgePacket {
   return {
     execution: 'client-required', sampling_performed: false, writes_performed: false,
@@ -808,13 +866,11 @@ export function judgePacket(
     instructions: JUDGE_PACKET_INSTRUCTIONS,
     recordWith: {
       tool: 'pev.record_judgment', action: PEV_ACTION.recordJudgment,
-      payloadTemplate: {
-        v: 1, action: PEV_ACTION.recordJudgment, podUrl: binding.podUrl, attemptIri: binding.attemptIri,
+      payloadTemplate: recordTemplate(binding.signing ?? 'key-held', PEV_ACTION.recordJudgment, binding.podUrl, binding.attemptIri, 0, {
         attemptHeadUrl: binding.attemptHeadUrl, transcriptHash: binding.transcriptHash, rubricHash: binding.rubricHash,
         judgment: { criteria: '<as the output schema describes>' },
         judgeDisclosure: { provider: '<provider>', model: '<model as your provider returned it>', usedPacketPrompt: true },
-        issuedAt: '<now, ISO 8601>', nonce: '<16 to 128 letters, digits, - or _>',
-      },
+      }),
     },
   };
 }
@@ -943,18 +999,20 @@ const round4 = (n: number): number => Math.round(n * 1e4) / 1e4;
 /**
  * Turn a parsed judgment into the recorded one: every quote verified by the platform, each
  * criterion's status, and the provisional result with unverified criteria at their lowest level
- * ("credit only where the quote checked out"). The judge's own level stays visible.
+ * ("credit only where the quote checked out"). The judge's own level stays visible. `asStored`
+ * reads a quote copied from a view that showed the transcript otherwise than stored back as the
+ * stored text (`verifyQuoteAsShown`).
  */
 export function assembleJudgment(
   s: ScenarioSpec, turns: readonly Turn[], parsed: { readonly criteria: readonly JudgeCriterionInput[] },
-  meta: Omit<JudgmentResult, 'criteria' | 'unverifiedCriteria' | 'provisional'>,
+  meta: Omit<JudgmentResult, 'criteria' | 'unverifiedCriteria' | 'provisional'>, asStored?: (quote: string) => string,
 ): JudgmentResult {
   const criteria: CriterionJudgment[] = s.rubric.criteria.map((c) => {
     const input = parsed.criteria.find((x) => x.criterionId === c.id);
     if (!input) throw new Error(`assembleJudgment: no judgment for criterion ${c.id}`);
     const idx = levelIndex(c, input.level);
     if (idx < 0) throw new Error(`assembleJudgment: unknown level ${input.level} for ${c.id}`);
-    const quotes = input.quotes.map((q) => verifyQuote(q, turns));
+    const quotes = input.quotes.map((q) => verifyQuoteAsShown(q, turns, asStored));
     const st = criterionStatus(idx, quotes);
     let probabilities: Record<string, number> | null = null;
     if (input.probabilities) {

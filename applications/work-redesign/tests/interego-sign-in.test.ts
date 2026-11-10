@@ -1255,7 +1255,7 @@ describe('work-redesign web UI: sign in with your Interego account', () => {
     page.click('Copy workspace details');
     await page.until(() => copied.length === 2, 'the workspace details copied');
     const details = String(copied[1]);
-    for (const s of [`My Work Redesign workspace: ${DEPLOYED}`, `descriptor_url: "${DEPLOYED}/affordances"`, `My storage address (pod_url): "${DEMO_POD}"`, `"podUrl":"${DEMO_POD}"`, 'urn:iep:action:wrd:read-records', 'urn:iep:action:wrd:read-envelope-template',
+    for (const s of [`My Work Redesign workspace: ${DEPLOYED}`, `descriptor_url: "${DEPLOYED}/affordances"`, `This workspace's storage address (pod_url), the same for everyone in it and not my own: "${DEMO_POD}"`, `"podUrl":"${DEMO_POD}"`, 'urn:iep:action:wrd:read-records', 'urn:iep:action:wrd:read-envelope-template',
       'except one that takes plain arguments (sign_payload false): urn:iep:action:wrd:task-map-packet\n', 'nonce = the step name', 'done in the Work Redesign app, not from a chat',
       // Which actions are signed and which plain, and nothing more: what to do where the act tool has no sign_payload option
       // is the shared helper's sentence, said once (below). Changed: this rule no longer repeats the sign_request way.
@@ -1269,6 +1269,8 @@ describe('work-redesign web UI: sign in with your Interego account', () => {
       '  - instead of urn:iep:action:wrd:calibration use urn:iep:action:wrd:read-calibration\n',
       'all take "intent": "wrd:read-records"', '"intent": "wrd:review-agent-run"']) expect(details, s).toContain(s);
     expect(details).not.toContain('Every action here is signed');
+    // The pod line names the workspace's storage, never the person's own.
+    expect(details).not.toContain('My storage address');
     // An act tool with no sign_payload option: a plain step leaves it out, and a signed step goes through the connector's
     // sign_request with the step's payload as its only argument (what is passed beside it is signed too), then act with
     // the pair unchanged. Each said once.
@@ -1352,6 +1354,9 @@ describe('work-redesign web UI: sign in with your Interego account', () => {
       // Its own rule names a signed step, not one way of signing it: the step text says how, sign_payload or sign_request.
       'If you are unsure of a field, ask for the template in a signed step, with urn:iep:action:wrd:read-envelope-template as the action and payload',
       `----- DOCUMENT: AP-SOP-014 -----\n${docText}\n----- END OF DOCUMENT -----`]) expect(message, s).toContain(s);
+    // The pod is the workspace's, which everyone in it acts on: never called the person's own storage.
+    expect(message).toContain(`This workspace's storage address (pod_url), the same for everyone in it and not my own: "${DEMO_POD}"`);
+    expect(message).not.toContain('My storage address');
     // Its plain first step and its signed steps alike: what to do without sign_payload is said once, for both kinds.
     saysEachFallbackOnce('the map message', message);
     // Each level the map may name, exactly as the bridge takes it.

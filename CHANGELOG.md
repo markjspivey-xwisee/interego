@@ -229,6 +229,324 @@ bridge's to read, not the schema's to state. On the People & roles page, saving
 a person with no role ticked still sends what the bridge reads as a removal
 (for someone not yet added, a change that changes nothing), as before.
 
+## 2026-11-10 — Practice Evidence and Work Redesign: fixes from a live run through a chat assistant
+
+A run of a whole practice session through a real chat assistant, with the
+Interego connector, on the live Practice Evidence site found that the
+messages people copy into their assistant called the workspace's storage
+"My storage address". That storage belongs to the workspace, and everyone in
+it acts on it, so an assistant could offer it to the person as their own. The
+shared helper that writes these messages can now say "This workspace's
+storage address", the same for everyone in it and not the person's own, and
+every Practice Evidence message (workspace details, the start-up message, the
+message for a judge, the drafting message) and both Work Redesign messages
+(workspace details and the map message) now say that. A message that names a
+person's own storage still says "My storage address".
+
+Not covered: nothing checks which storage a message names; each site says
+which it is when it builds the message.
+
+Two smaller mismatches from the same run. The learner's start-up message tells
+the assistant to stop when an answer says "ended": true, but ending the
+conversation answered with its state alone. Ending it now says "ended": true
+too, as a save that ends the conversation already did. And the practice and
+judging instructions an assistant fetches showed a save in a different form
+from the one its copied message showed (podUrl, issuedAt and any nonce, where
+the message says pod_url, no issuedAt and a nonce made of the step, the turn
+and 16 random characters). For a request the Interego relay signs, they now
+show the message's form; for someone who signs with their own key they show
+the form they need, as before. Practice Evidence takes both forms through the
+relay, as it did.
+
+Not covered: someone who signs with their own key still sends podUrl and
+issuedAt; the message's form is taken only through the relay.
+
+The same run showed a learner's own assistant being pointed at assessing the
+learner's own practice. Once the conversation was over, Practice Evidence
+offered that assistant the judging instructions ("an independent judge agent
+can judge this attempt") and answered it with them in full, although saving an
+assessment of one's own session is refused. Now the learner's next step is a
+hand-off: the assistant is told that an appointed judge assesses the session
+with their own assistant, and that the learner sends it to them with Send to
+your judge in the web app. The judging instructions are refused to the
+learner's own assistant, with the same words. The web app's own Send to your
+judge, and its hand-off on a workspace without Interego sign-in, work as
+before.
+
+The run also found that a learner could not tell whether their workspace had
+a judge at all, and that only an admin could see who holds which role. Reading
+a session (or the list of one's sessions) now says the reader's own roles,
+whether they are an admin, and whether anyone else in the workspace is a judge
+or a reviewer. It says yes or no, never who or how many, and it carries none
+of the weights or the pass mark. The session page warns beside Send to your
+judge when the workspace has no judge yet, and asks the learner to have their
+admin add one. The message for a judge, the guide and a refused judge now say
+that a judge's own Interego account must be registered, by its Member ID (the
+ID with :users: in it), not by the ID of the assistant that acts for them.
+
+Not covered: whether anyone else is a judge is read from the role list as it
+is now, so it does not say whether that judge is willing or able to assess
+this session. A learner who signs with their own key, or uses the web app,
+still fetches the judging instructions, to hand to their judge; only their
+chat assistant is refused them.
+
+On a workspace whose bridge has a model of its own (the live one has none), a
+learner's assistant can have the session judged by that model. Its answer
+offered no judging instructions, as it should not, but did not say the
+hand-off either, so the assistant was told neither step. That answer now
+carries the same hand-off as reading the session does, while there is room
+for another judgment.
+
+## 2026-11-10 — Practice Evidence: where a stand-in is the same, said exactly
+
+The scenario list's description said a fingerprint's stand-in in text is the
+same wherever that text is shown. It is the same only within one scenario
+version. A scenario's results and the calibration table show stand-ins of
+their own, so one criterion title can show three. The description now says
+"for the same scenario version" and names the two that differ. The README and
+an entry below listed the review queue among the views of a session's lines;
+it shows the judges' quotes, not the lines, and they now say so.
+
+## 2026-11-10 — Practice Evidence: a judge's quote that leaves out part of a stand-in checks out
+
+The same review found the quote fix below incomplete. Practice Evidence put a
+fingerprint back into a judge's quote only when the quote held the whole
+stand-in, from `urn:pev:rubric:` or `pev/` to the end. But a quote may start or
+end at a colon or a slash, so a judge could quote just the stand-in's digits,
+or start at `rubric:`, or stop before the closing slash. Such a quote did not
+check out, and the criteria it supported were counted at their lowest level.
+
+Now a run of 64 or 16 hex digits in a quote that is a stand-in for a
+fingerprint in the session's lines is read back too. The saved quote is
+marked `readBack`, because the judge's signed request held the stand-in and
+not the learner's words. Answers to a chat show such a quote as the judge
+copied it, so the fingerprint stays hidden there too.
+
+Two smaller fixes. A line starting with a character that normalising turns
+into a letter (the Kelvin sign becomes a K) showed a calibration kind as a
+stand-in in the session's text but bare in its normalised form and in the
+judge packet. Both now show the stand-in. And `record_judgment`'s answer says
+which quotes were read back.
+
+Not covered: in a quote that was read back, a run of 16 or 64 hex digits the
+learner wrote with nothing around it is shown to a chat as a stand-in, while
+the line shows it as written. A quote that cuts into a run of digits is not
+read back; it cuts a word, which the quote rule refuses anyway.
+
+## 2026-11-10 — Practice Evidence: a signed request's payload no longer checks a guess
+
+A fourth review found another way to check a guess at a scored scenario's
+weights and pass mark, older than the changes below. A record keeps each signed
+request as it was sent: a turn, a review, a contest, a transcript removal. A
+request signed with a key can carry fields of the signer's choosing beside the
+act's own. Answers to someone who reads no stakes showed those payloads, and
+keyed a field there named like Practice Evidence's own rubric fingerprint the
+same way as the real one. So a key nobody registered could write guesses into
+one contest or removal, then read the session back and see which guess matched.
+An object in the payload could even name another scenario to compare against.
+
+Now an answer to someone who reads no stakes shows a signed request without
+what it signed, and says so (`payloadLeftOut`). The signature, the fingerprint
+of what was signed, and who signed it stay. The web app, and keys an admin
+registered for a role other than agent, still see the whole request. The note every such answer carries,
+and the README, say so.
+
+Not covered: a request may still carry fields the act does not use. They are
+kept in the record, shown only to readers of the stakes, and never acted on.
+
+## 2026-11-10 — Practice Evidence: a judge's quote of a line holding a fingerprint checks out
+
+A review found that the change below broke judging in one case. When a
+learner's line held a rubric fingerprint (a rubric's address, or a calibration
+row's kind), every answer to a chat assistant showed it as a random value made
+for that one answer. A judge's assistant that copied a quote from the judge
+packet character for character, as the packet asks, sent words the stored line
+did not hold, so the quote did not check out and that criterion was counted at
+its lowest level.
+
+Now a fingerprint inside text is replaced with a stand-in keyed with Practice
+Evidence's own key under a label of its own. It never equals a fingerprint
+Practice Evidence writes in a field, or the start of one, so it still checks
+no guess. The same fingerprint shows the same stand-in in every answer about
+the same scenario version: the judge packet, the session and the
+conversation's own answers all show a line the same way, and the review queue
+shows the judges' quotes from it the same way. A quote copied
+from any of them is read back as the learner's words as stored, checked
+against them, and kept as them. The transcript's fingerprint is unchanged.
+
+The same review found one more thing to close. A calibration row's standing
+reason named the row's kind, which holds the start of the rubric's
+fingerprint. With stand-ins that repeat, a chat could have written a guess into
+a criterion title and compared the two in the calibration table. The reason
+now says "this criterion" instead, so nothing Practice Evidence writes into
+text holds a fingerprint.
+
+A quote that copied only part of a stand-in (leaving out the
+`urn:pev:rubric:` before it, say) was not read back at first; the entry two
+above fixes that. Not covered: two equal stand-ins show that two texts hold the same fingerprint. That tells a
+chat something only when a real fingerprint is already in some text, which
+only someone who reads the stakes can have put there.
+
+## 2026-11-10 — Practice Evidence: a fingerprint written into text no longer checks a guess
+
+A third review found one more way to check a guess at a scored scenario's
+weights and pass mark. Practice Evidence keyed every rubric fingerprint it
+found in an answer, those inside text included, and keyed them all the same
+way within one scenario version. So someone who reads no stakes could write
+the plain fingerprint of each guess into something the workspace keeps (a line
+of their practice session, a reason for contesting a review or for removing a
+transcript, a judge's quotes and reasons, or the words of a scored scenario,
+which an author's chat may edit while keeping its stakes), read it back keyed,
+and see which guess matched the scenario's own keyed fingerprint. Now only the
+fingerprints Practice Evidence writes itself are keyed: a scenario's and a
+rubric's fingerprint, a rubric's address and a calibration row's kind. A
+fingerprint anywhere else, inside any text, comes back as a random value made
+for that one place, which matches nothing else in the answer, the same
+fingerprint written twice included. The note every such answer carries, the
+scenario list's description and the README say so.
+
+A judge whose assistant quoted such a line, copying the random value, had the
+quote fail; the entry above fixes that. People in the web app, and keys an
+admin registered, read the text as it was written.
+
+A smaller fix from the same review: a scenario's results page showed, under
+the table of people who assessed sessions, the note that the table's rubric
+fingerprints are calibration's own and match none shown with a scenario. For
+reviewers and admins in the web app that was not true: they read the plain
+fingerprint there, the same one the scenario shows. The note now appears there
+only when the results left the stakes out, and on the calibration page, as
+before.
+
+## 2026-11-09 — Practice Evidence: second review of keeping the stakes out of a chat
+
+A second review found that the keyed fingerprints could still check a guess at
+a scored scenario's weights and pass mark. Two rubrics with the same content
+had the same keyed fingerprint everywhere, so an author's chat could save a
+scratch scenario holding a copy of the rubric with stakes it guessed, and
+compare the fingerprint the save answered with to the one the scenario list
+showed it. Each fingerprint is now keyed to its own scenario and version as
+well as to the rubric, so a scenario a chat saves, or a new version of the same
+scenario, never shows a fingerprint that matches another scenario's or
+version's, a right guess included. The judge's hand-off and the approval of a
+rubric take the fingerprint shown for that scenario version, and the review
+queue now names each entry's scenario version. Calibration's table keys its
+fingerprints its own way, so they match none shown elsewhere.
+
+Not covered: calibration still counts judgments of the same rubric together
+across scenarios, so once enough sessions on two scenarios have been judged,
+its table can show that their rubrics, stakes included, are the same.
+
+A wallet nobody registered, which is what open enrolment gives every learner
+who does not sign in with Interego, cannot download the content of a scored
+session of their own, copy it to their own storage, or build a learning record
+from it: those hold the score and the pass mark, which go only to an address
+an admin registered. The web app hid this. Now the learning-record panel says
+why its buttons are off and asks the person to have their admin register the
+address, and a download says it holds each version's signatures without the
+session's content, and why. A refusal tells a wallet to ask an admin to
+register its address, a chat to use the web app signed in with Interego, and
+an agent's key that it is not a person's, instead of sending someone already
+in the web app to the web app. The note where the weights would be offers
+Interego sign-in only where the workspace offers it, and never on the person's
+own session, where signing in with Interego would make them another person;
+there it asks for the address to be registered. The guide and the Connect
+dialog say the same.
+
+Not covered: such a learner cannot keep a whole copy of a scored session of
+their own until an admin registers their address.
+
+Smaller fixes from the same review. Every tool description that says the
+stakes are left out now names everyone they are left out for: a chat
+assistant the Interego relay signs for, a key no admin registered or one
+registered as an agent, or a request nobody signed. The guide says an
+assistant may edit the words of a scored scenario and of its criteria and
+levels, not which criteria and levels there are or their order. The
+calibration tables say their fingerprints are calibration's own and match
+none shown with a scenario or a session. The README says that changing the
+platform key, or setting or changing the record key, changes every keyed
+fingerprint, so a judge's hand-off copied before has to be fetched again, and
+that the fingerprint in a judge's signed request can be checked only by this
+bridge, not by someone reading the record on their own. The README and the
+tests now speak of a person as they.
+
+The web app is now known by its OAuth client, where the relay says which
+client asked. The relay can sign the id of the OAuth client whose access
+token made a request, and Practice Evidence now reads a request as its own
+web app's only when that client is the web app's own: the address of its
+client metadata document, or, on a deployment that registers dynamically,
+the id the relay gave it. Any other client is a chat, whatever it calls
+itself, so an app that registers under the name "Practice Evidence" no
+longer reads the weights and the pass mark or takes the decisive acts. Where
+the relay does not say which client asked, the agent's name decides, as
+before.
+
+Not covered: the client id shows whose sign-in token was presented, not that
+the web page or a person made the request, so whatever holds the web app's
+token is read as the web app. A deployment that registers dynamically knows
+only the id it registered since it started, so after a restart, or on another
+copy of the bridge, a person signed in before is read as a chat until they
+sign in again. With a relay that does not sign the client id, an app named
+"Practice Evidence" is still read as the web app.
+
+## 2026-11-09 — Practice Evidence: closing the other ways the stakes reached a chat
+
+A review of the change below found that the weights and the pass mark still
+reached a chat assistant in four ways, and this closes them. A key anyone can
+make, a coding assistant's own included, read them: now a key reads them only
+once an admin has registered it, and not if it is registered as an agent. A
+wallet that holds no role sees the levels and is told how to see the rest.
+Every answer that leaves them out also hid the rubric's fingerprint in plain
+sha256, and with the rubric's words beside it a guess at the weights could be
+checked in under a minute: those fingerprints are now keyed, so they cannot
+be checked against a guess, and the judge's binding, the approval of a rubric
+and the calibration filter take them in that form. A chat could copy a
+scored record, unencrypted, to a pod it named and read it back, and could
+build its learning record: both are now refused to a chat and done in the
+web app. An author's chat that fixed one line of a scored scenario had to
+send weights it could not read, and a guess replaced the author's: now it
+sends the scenario without them and the new version keeps the old ones. The
+web app's own sign-in must also be exactly its own agent, so an app that
+names itself "Practice Evidence Helper" is a chat. An answer about
+feedback-only scenarios alone no longer says it left something out, and an
+author's wallet is asked to sign only to edit a scored scenario. The landing
+page, the guide and the Connect dialog now say what is enforced: what
+Practice Evidence sends a chat through the connector leaves the stakes out,
+and an AI tool given a person's own registered key reads what that person
+reads.
+
+## 2026-11-09 — Practice Evidence: no chat assistant receives the weights or the pass mark
+
+Before, listing scenarios, reading a session and the review queue gave any
+signed-in person's chat assistant a scored scenario's weights, the points for
+each level and the pass mark, and the judge message could only ask for a new
+chat. Now no answer Practice Evidence gives a chat assistant carries them,
+whatever roles the person holds: not the weights, level points, pass rule or
+the author's reason for it, nor any points, percent, pass result, unmet
+requirement or closeness to the pass mark worked out from them. A chat still
+gets the criteria and levels in words, every level chosen, the quotes, the
+reasons, the states and the counts. A judge who reuses a chat has not read
+the stakes through the connector.
+
+The workspace tells a chat from its own web app by the agent the Interego
+relay signed for. The relay takes that agent from the signed-in session and
+drops any agent a caller names, so nothing a chat adds to a request changes
+it. The web app's own agent, and a key an admin registered, still read the
+stakes; a request nobody signed does not. The scenario list is now a POST
+that may be signed: the web app signs one list read when Interego sign-in
+signs it without asking, and otherwise shows "Show the weights and pass mark",
+which a wallet or manual signing confirms once. Editing a scored scenario
+needs that signed read, or a sign-in. The queue a chat reads is ranked without
+closeness to the pass mark. A chat gets a scored record's descriptors but
+not its graphs.
+
+The landing page, the guide, the Connect dialog, the judge message and the
+README now say this, and what it does not cover: a record a person downloads
+or copies to their own storage from the web app holds everything, and a
+workspace without a record key keeps its records in plain text. The judge message still asks
+for a new chat, because one used for reviewing has seen other assessments'
+levels. A new test asks every read from each role's chat assistants and web
+app agent, and tries claims that a request is the web app's.
+
 ## 2026-11-09 — Relay: a signed request can say which OAuth client asked
 
 When the relay signs a request for someone (`sign_request`, or `act` with

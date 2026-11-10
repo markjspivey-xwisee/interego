@@ -783,6 +783,16 @@ export const EXPORT_VERIFY_STEPS: readonly string[] = [
   'An envelope kept in a record with authority relay-delegated was signed by the Interego relay for agentId, not by the person: recoverMessageSigner(\'sha256:\' + sha256Hex(signedPayload), signature), from @interego/core, must be its relaySigner and one of relayAddresses, and the signed payload\'s agent_id must be agentId (did:web:<identityHost>:agents:…). principal (did:web:<identityHost>:users:…) is who the identity host said controlled that agent when the act was taken, as this platform signed it into the record; a reader who wants it asked again fetches https://<identityHost>/agents/<slug>/did.json, whose controller may have changed since.',
 ];
 
+/**
+ * What an export without graphs can be checked for: a scored session's export to a caller who does
+ * not read its stakes (export_record `graphsLeftOut`). It shows which versions there are and that
+ * this platform signed each descriptor, not what the record holds.
+ */
+export const EXPORT_VERIFY_STEPS_WITHOUT_GRAPHS: readonly string[] = [
+  'This export holds no graph (graphTrig is null in every version), so it shows which versions there are and what each descriptor says, not what the record holds, and the platform proof cannot be checked against the content it signed.',
+  'parseAuthorshipProofFromDescriptorTurtle(descriptorTurtle), from @interego/solid, gives the platform proof; proof.signerAddress must be one of platformAddresses.',
+];
+
 // ═════════════════════════════════════════════════════════════════════════════════════════════
 //  Next actions (§12.26, A4): what this caller can do next, from the record's own state
 // ═════════════════════════════════════════════════════════════════════════════════════════════
@@ -801,7 +811,9 @@ const NEXT: Readonly<Partial<Record<PevActionKey, { label: string; why: string }
   recordTurns: { label: 'Record a line from your agent', why: 'Record your line together with the line your own agent wrote for the other person.' },
   endConversation: { label: 'End the conversation', why: 'Stop here; the transcript is then fixed and can be judged.' },
   judgeAttempt: { label: 'Ask this bridge to judge', why: 'A model chooses levels and quotes; the platform checks every quote and computes the result.' },
-  judgePacket: { label: 'Get a judge packet', why: 'An independent judge agent can judge this attempt from the packet.' },
+  // Offered only to the learner (nextActionsFor), whose next step is a hand-off: their appointed judge assesses from the
+  // packet, never the learner or their own assistant (record_judgment: judge-is-the-learner).
+  judgePacket: { label: 'Hand off to your appointed judge', why: 'Your appointed judge assesses this session from the judge packet, with their own assistant or tool; you cannot assess your own session.' },
   exportRecord: { label: 'Download my record', why: 'Every version of this record with its platform signature, checkable offline.' },
   holderCopy: { label: 'Copy to my pod', why: 'Writes a copy of every version to a pod you name.' },
   redactAttempt: { label: 'Remove the transcript from this pod', why: 'Deletes the text from the operator pod; hashes stay, so copies you hold can still be checked.' },

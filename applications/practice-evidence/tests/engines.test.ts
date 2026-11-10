@@ -716,6 +716,41 @@ describe('conversation', () => {
     expect(p.instructions).toBe(COUNTERPART_PACKET_INSTRUCTIONS);
   });
 
+  // A live run through a chat: the packet's template said podUrl, issuedAt and any nonce, while the copied prompt said
+  // pod_url, no issuedAt and a nonce of the step, the turn and 16 random letters. The template now follows the caller.
+  it('words each packet\'s record template in the form its caller signs in: key-held as before, relay-delegated as a chat\'s prompt', () => {
+    const binding = { podUrl: POD, attemptIri: 'urn:pev:attempt:x-1', turnIndex: 5 };
+    const fields = {
+      turnIndex: 5, learnerText: 'Line.', counterpartText: '<the other person\'s line>',
+      counterpartDisclosure: { provider: '<provider>', model: '<model as your provider returned it>' },
+    };
+    const keyHeld = counterpartPacket(MD2, ATTEMPT1.slice(0, 5), 'Line.', binding).recordWith.payloadTemplate;
+    expect(counterpartPacket(MD2, ATTEMPT1.slice(0, 5), 'Line.', { ...binding, signing: 'key-held' }).recordWith.payloadTemplate).toEqual(keyHeld);
+    expect(Object.entries(keyHeld)).toEqual(Object.entries({
+      v: 1, action: PEV_ACTION.recordTurns, podUrl: POD, attemptIri: 'urn:pev:attempt:x-1', ...fields,
+      issuedAt: '<now, ISO 8601>', nonce: '<16 to 128 letters, digits, - or _>',
+    }));
+    const relayed = counterpartPacket(MD2, ATTEMPT1.slice(0, 5), 'Line.', { ...binding, signing: 'relay-delegated' }).recordWith.payloadTemplate;
+    expect(Object.entries(relayed)).toEqual(Object.entries({
+      v: 1, action: PEV_ACTION.recordTurns, pod_url: POD, attemptIri: 'urn:pev:attempt:x-1', ...fields,
+      nonce: 'record-turns-5-<16 new random letters or digits>',
+    }));
+    const jb = { podUrl: POD, attemptIri: 'urn:pev:attempt:x-1', attemptHeadUrl: `${POD}h.ttl`, transcriptHash: 't', rubricHash: H_MD2 };
+    const judging = {
+      attemptHeadUrl: `${POD}h.ttl`, transcriptHash: 't', rubricHash: H_MD2, judgment: { criteria: '<as the output schema describes>' },
+      judgeDisclosure: { provider: '<provider>', model: '<model as your provider returned it>', usedPacketPrompt: true },
+    };
+    expect(Object.entries(judgePacket(MD2, ATTEMPT1, jb).recordWith.payloadTemplate)).toEqual(Object.entries({
+      v: 1, action: PEV_ACTION.recordJudgment, podUrl: POD, attemptIri: 'urn:pev:attempt:x-1', ...judging,
+      issuedAt: '<now, ISO 8601>', nonce: '<16 to 128 letters, digits, - or _>',
+    }));
+    // Judging has no turn: the chat's nonce has turn 0, as the judge message's own example does.
+    expect(Object.entries(judgePacket(MD2, ATTEMPT1, { ...jb, signing: 'relay-delegated' }).recordWith.payloadTemplate)).toEqual(Object.entries({
+      v: 1, action: PEV_ACTION.recordJudgment, pod_url: POD, attemptIri: 'urn:pev:attempt:x-1', ...judging,
+      nonce: 'record-judgment-0-<16 new random letters or digits>',
+    }));
+  });
+
   it('hashes only index, speaker and text, so one character changes the transcript hash', () => {
     const plain = ATTEMPT1.map((t) => ({ index: t.index, speaker: t.speaker, text: t.text }));
     expect(transcriptHash(ATTEMPT1)).toBe(transcriptHash(plain));
@@ -1049,7 +1084,9 @@ describe('standing (reported; it changes nothing)', () => {
 
   it('answers the vertical pre-check below 20 outcomes', () => {
     const c = cellFor(reviewedAttempts(19, { reviewers: 5 }));
-    expect(c.standing.why).toBe(`19 outcome(s) of ${criterionKind(H_MD2, MD2.rubric.criteria[0]!).kind}, below 20`);
+    // The kind in words: it holds the rubric hash's first 16 hex, and no text this bridge writes carries a fingerprint.
+    expect(c.standing.why).toBe('19 outcome(s) of this criterion, below 20');
+    expect(c.standing.why).not.toContain(criterionKind(H_MD2, MD2.rubric.criteria[0]!).kind);
     expect(c.status).toBe('Hypothetical');
   });
 
