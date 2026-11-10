@@ -1742,6 +1742,62 @@ describe('your own AI assistant: connect Claude or ChatGPT, or copy and paste; n
     expect(p.errors).toEqual([]);
   }, SLOW);
 
+  it('the session page shows Send to your judge in every state a judge can still assess it in, where a refusal to the person\'s Claude points them, and nowhere else', async () => {
+    // As the peer review found it: a judge could assess a contested or withdrawn-review session, and the person's Claude was
+    // told to use Send to your judge, but the page drew it only for a finished or judged session.
+    const pub = await direct('pev.author_scenario', W.author, PEV_ACTION.authorScenario, {
+      scenario: { ...demoScenarioInput('missed-deadline', 2), scenarioKey: 'send-to-judge-in-every-state', title: 'Send to your judge in every state' },
+      status: 'published', draftAssistance: { used: false },
+    }, noModelHandlers);
+    const started = ok(await fromChat(noModelHandlers, 'pev.start_attempt', PEV_ACTION.startAttempt, { scenarioIri: pub['scenarioIri'], scenarioVersion: 1, coached: false }));
+    const attemptIri = String(started['attemptIri']);
+    ok(await fromChat(noModelHandlers, 'pev.record_turns', PEV_ACTION.recordTurns, {
+      attemptIri, turnIndex: 1, learnerText: 'Thanks for coming in. The report was due Thursday.', counterpartText: 'The feed was late again.',
+      counterpartDisclosure: { provider: 'Anthropic', model: 'not shown' }, endAfter: true,
+    }));
+    const judgeUser = 'u-pk-0000000000fa';
+    ok(await direct('pev.register_role', W.admin, PEV_ACTION.registerRole, { address: `did:web:${IDH}:users:${judgeUser}`, role: 'judge', change: 'add' }, noModelHandlers));
+    const rubric = ((await readHead(DEMO_POD, attemptIri, TRUSTED, pod.fetchFn)).head!.body as Extract<PevRecordBody, { kind: 'attempt' }>).scenarioSpec.rubric;
+    const judge = async (): Promise<void> => {
+      const packet = ok(await fromChat(noModelHandlers, 'pev.judge_packet', PEV_ACTION.judgePacket, { attemptIri }, judgeUser));
+      ok(await fromChat(noModelHandlers, 'pev.record_judgment', PEV_ACTION.recordJudgment, {
+        attemptIri, ...(packet['binding'] as Out), judgeDisclosure: { provider: 'Anthropic', model: 'not shown', usedPacketPrompt: true },
+        judgment: { criteria: rubric.criteria.map((c) => ({ criterionId: c.id, level: c.levels[0]!.id, quotes: [], rationale: 'Nothing reaches a higher level.' })) },
+      }, judgeUser));
+    };
+    const target = async (): Promise<unknown> => ok(await direct('pev.get_attempt', W.reviewer, PEV_ACTION.getAttempt, { attemptIri }, noModelHandlers))['currentTarget'];
+    const p = await signedInPage(nm);
+    /** The session page drawn afresh in `state`: whether it shows Send to your judge, and what the person's Claude is told. */
+    const check = async (state: string, open: boolean): Promise<void> => {
+      p.w.location.hash = '#/practice';
+      await p.until(() => !p.q('#view .attempt'), `the practice page before the ${state} session`);
+      p.w.location.hash = `#/attempt/${encodeURIComponent(attemptIri)}`;
+      await p.until(() => p.q(`#view .attempt[data-state="${state}"] .card.actions`) ?? p.q(`#view .attempt[data-state="${state}"]`), `the ${state} session`);
+      const send = p.q('#view #copy-judge-message');
+      expect([send !== null, send?.closest('.list__item')?.textContent?.includes('Send to your judge') ?? false], state).toEqual([open, open]);
+      const refusal = await fromChat(noModelHandlers, 'pev.judge_packet', PEV_ACTION.judgePacket, { attemptIri });
+      if (open) {
+        expect([refusalOf(refusal), refusal['remedy']], state).toEqual([[403, 'hand-off-to-judge'], 'send-to-judge']);
+        expect(String(refusal['error']), state).toContain('under Send to your judge, copy the message for your judge');
+      } else {
+        expect(refusalOf(refusal)[0], state).toBe(409);
+      }
+    };
+    await check('ended', true);
+    await judge();
+    await check('judged', true);
+    ok(await direct('pev.countersign_attempt', W.reviewer, PEV_ACTION.countersignAttempt,
+      { attemptIri, target: await target(), levels: rubric.criteria.map((c) => ({ criterionId: c.id, levelId: c.levels[0]!.id })), sawJudgeLevelsFirst: true }, noModelHandlers));
+    await check('countersigned', false);
+    ok(await fromChat(noModelHandlers, 'pev.contest_review', PEV_ACTION.contestReview, { attemptIri, target: await target(), why: 'The deadline I named was the one we agreed on.' }));
+    await check('contested', true);
+    ok(await direct('pev.retract_review', W.admin, PEV_ACTION.retractReview, { attemptIri, target: await target(), why: 'The reviewer was the learner\'s line manager.' }, noModelHandlers));
+    await check('review-retracted', true);
+    for (let i = 0; i < 4; i += 1) await judge();
+    await check('review-retracted', false);
+    expect(p.errors).toEqual([]);
+  }, SLOW);
+
   it('coming back to the tab after the page\'s signed read is old still shows lines saved from the chat: the relay signs a new read, and no person is asked', async () => {
     const p = await signedInPage(nm);
     const card = await p.until(() => p.q('article.scenario'), 'the scenarios');

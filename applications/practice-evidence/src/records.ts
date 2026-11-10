@@ -798,6 +798,24 @@ export const EXPORT_VERIFY_STEPS_WITHOUT_GRAPHS: readonly string[] = [
 // ═════════════════════════════════════════════════════════════════════════════════════════════
 
 export interface NextAction { readonly action: string; readonly toolName: string; readonly label: string; readonly why: string }
+
+/**
+ * The states a judge can assess an attempt in: the conversation is over and no review stands, so it
+ * was never reviewed, or a contest or a withdrawn review reopened it. The handlers' `judgeable`
+ * refuses every other state.
+ */
+const JUDGING_STATES: ReadonlySet<LifecycleState> = new Set(['ended', 'judged', 'contested', 'review-retracted']);
+
+/**
+ * Whether a judge can assess an attempt now: one of the states judging is open in, with room for
+ * another judgment (`MAX_JUDGMENTS`). What the handlers' `judgeable` lets through, so every place
+ * that offers the learner a way to hand the session to a judge (the judge packet among their next
+ * actions, the `handOff` a learner's own chat assistant is given) offers it exactly then.
+ */
+export function judgingOpen(state: LifecycleState, judgmentCount: number): boolean {
+  return JUDGING_STATES.has(state) && judgmentCount < MAX_JUDGMENTS;
+}
+
 export interface NextActionView {
   readonly state: LifecycleState; readonly authorTest: boolean; readonly judgmentCount: number; readonly contestCount: number;
   readonly learnerTurns: number; readonly mayCountersignAsIs: boolean;
@@ -858,6 +876,8 @@ export function nextActionsFor(
       if (view.contestCount < MAX_CONTESTS) add('contestReview');
       add('exportRecord'); add('holderCopy'); add('redactAttempt');
     } else if (s === 'contested' || s === 'review-retracted') {
+      // Reopened: judging starts again, so the learner hands it to a judge as after a judgment (`judgingOpen`).
+      if (judgingOpen(s, view.judgmentCount)) add('judgePacket');
       add('exportRecord'); add('holderCopy'); add('redactAttempt');
     } else if (s === 'redacted') {
       add('exportRecord');
