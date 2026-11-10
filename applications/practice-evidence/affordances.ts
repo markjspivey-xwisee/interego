@@ -199,7 +199,7 @@ export const pevAffordances: ReadonlyArray<Affordance> = [
     targetTemplate: '{base}/pev/judge_attempt',
     annotations: hints('Judge an attempt', false, false, false, true),
     inputs: [...ENVELOPE, ...BYOK],
-    outputs: out('The judgment, the provisional result and what the next level asks for. Asked by ' + STAKES_LEFT_OUT_FOR + ': the levels the result counted, never its points, percent or pass result (stakesWithheld says so).', ['attemptIri', 'state', 'descriptorUrl']),
+    outputs: out('The judgment, the provisional result and what the next level asks for. Asked by ' + STAKES_LEFT_OUT_FOR + ': the levels the result counted, never its points, percent or pass result (stakesWithheld says so). To the learner\'s own chat assistant, while there is room for another judgment, handOff says how the learner sends the session to an appointed judge, in place of the judge packet, which it is not offered.', ['attemptIri', 'state', 'descriptorUrl']),
   },
   {
     action: PEV_ACTION.judgePacket as IRI,

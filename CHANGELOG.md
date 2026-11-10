@@ -61,6 +61,13 @@ this session. A learner who signs with their own key, or uses the web app,
 still fetches the judging instructions, to hand to their judge; only their
 chat assistant is refused them.
 
+On a workspace whose bridge has a model of its own (the live one has none), a
+learner's assistant can have the session judged by that model. Its answer
+offered no judging instructions, as it should not, but did not say the
+hand-off either, so the assistant was told neither step. That answer now
+carries the same hand-off as reading the session does, while there is room
+for another judgment.
+
 ## 2026-11-10 — Practice Evidence: a fingerprint written into text no longer checks a guess
 
 A third review found one more way to check a guess at a scored scenario's

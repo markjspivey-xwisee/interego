@@ -25,7 +25,7 @@
 import { describe, it, expect } from 'vitest';
 import { importWallet, sha256, sha256Hex, signMessageRaw, type Wallet } from '@interego/core';
 import { createPevHandlers, type PevDeps } from '../bridge/handlers.js';
-import { demoKey, demoScenarioInput, inMemoryPod } from '../demo/run.js';
+import { demoKey, demoScenarioInput, inMemoryPod, scriptedPracticeModel } from '../demo/run.js';
 import { PEV_ACTION, toolNameOf } from '../src/ontology.js';
 import { signEnvelope } from '../src/records.js';
 
@@ -310,5 +310,22 @@ describe('a whole session through a chat assistant, as the live run had it', () 
     expect([after['state'], actionsOf(after).includes('pev.judge_packet'), (after['handOff'] as Out)['judgeBesidesYou']]).toEqual(['judged', false, true]);
     refused(await ract('pev.judge_packet', P.learner.claude, { attemptIri: X['a'] }), 'hand-off-to-judge', 'judge_packet from the learner\'s Claude, once judged');
     // A key-held judge's packet would have the key-held template: the same packet code, the caller's form (engines.test.ts).
+  }, SLOW);
+
+  it('on a bridge with a model, the learner\'s chat that has it judge the session is handed on in that answer, as a read of it is', async () => {
+    // The same workspace, served by a bridge with a model of its own (the scripted fixture), which the live one has not.
+    const M = createPevHandlers({ ...base, model: scriptedPracticeModel() }) as Handlers;
+    const mact = async (tool: string, agentId: string, fields: Out = {}): Promise<Out> =>
+      (await M[tool]!(await relayed(agentId, { v: 1, action: actionOf(tool), pod_url: POD, nonce: nonce(), ...fields }))) as Out;
+    const start = ok(await mact('pev.start_attempt', P.learner.claude, { scenarioIri: X['sc'], scenarioVersion: 1, coached: false }));
+    const iri = String(start['attemptIri']);
+    const said = ok(await mact('pev.say', P.learner.claude, { attemptIri: iri, turnIndex: 1, text: 'Thanks for coming in. Can we talk about Thursday?' }));
+    ok(await mact('pev.end_conversation', P.learner.claude, { attemptIri: iri, turnIndex: said['nextTurnIndex'] }));
+    const judged = chatAnswer(await mact('pev.judge_attempt', P.learner.claude, { attemptIri: iri }), 'judge_attempt from the learner\'s Claude');
+    // Judged, with room for another judgment: no judge packet offered, and the hand-off a read in the same state carries.
+    expect([judged['state'], actionsOf(judged).includes('pev.judge_packet')]).toEqual(['judged', false]);
+    const read = chatAnswer(await mact('pev.get_attempt', P.learner.claude, { attemptIri: iri }), 'the session read after it');
+    expect([(judged['handOff'] as Out | undefined)?.['to'], (judged['handOff'] as Out | undefined)?.['judgeBesidesYou']]).toEqual(['appointed-judge', true]);
+    expect(judged['handOff']).toEqual(read['handOff']);
   }, SLOW);
 });

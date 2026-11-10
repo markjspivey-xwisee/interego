@@ -2236,8 +2236,9 @@ async function writeJudgment(call: Call, s: Signed, h: AttemptHead, j: JudgmentR
  * judgment and the provisional result are the levels alone (`showsStakes`). `roles` are the
  * signer's, read before: nothing after the write can refuse.
  */
-async function recordJudgmentOn(call: Call, s: Signed, h: AttemptHead, j: JudgmentResult, key: PevActionKey, roles: ReadonlySet<Role>, disclosure?: InferenceDisclosure): Promise<Out> {
+async function recordJudgmentOn(call: Call, s: Signed, h: AttemptHead, j: JudgmentResult, key: PevActionKey, reg: Roles, disclosure?: InferenceDisclosure): Promise<Out> {
   const { ctx } = call;
+  const roles = reg.of(s.signer);
   scopeTo(call, h.body.scenario);
   const stakes = await showsStakes(call, s);
   const { body, w } = await writeJudgment(call, s, h, j, key, disclosure);
@@ -2250,7 +2251,9 @@ async function recordJudgmentOn(call: Call, s: Signed, h: AttemptHead, j: Judgme
     provisional: stakes ? primary.provisional : assessmentWithoutStakes(primary.provisional, rubric),
     provisionalLabel: PROVISIONAL_LABEL, unverifiedCriteria: primary.unverifiedCriteria, nextSteps: nextStepsOf(body),
     currentTarget: { recordId: w.recordId, descriptorUrl: w.descriptorUrl, graphDigest: w.graphDigest },
-    nextActions: nextFor(ctx, body, s, roles, false, stakes), recorded: true, ...withheldMark(stakes, scoredUse(body.scenarioSpec)),
+    // The learner's own chat, which asked this bridge to judge, is offered no judge packet for the
+    // judgment there is still room for; it is told to hand the session on, as get_attempt says.
+    nextActions: nextFor(ctx, body, s, roles, false, stakes), ...handOffMark(ctx, s, body, reg), recorded: true, ...withheldMark(stakes, scoredUse(body.scenarioSpec)),
   };
 }
 
@@ -2287,7 +2290,8 @@ async function judgeAttempt(call: Call, args: Record<string, unknown>): Promise<
   return locked(call, `${s.pod}|${iri}`, async () => {
     const h = await attemptHead(call, s.pod, iri);
     const isLearner = samePrincipal(h.body.learner.address, s.signer);
-    const roles = (await rolesOn(call, s.pod)).of(s.signer);
+    const reg = await rolesOn(call, s.pod);
+    const roles = reg.of(s.signer);
     if (!isLearner && !roles.has('reviewer')) throw decline(403, 'Only the learner or a reviewer may ask this bridge to judge an attempt.', 'not-learner-or-reviewer');
     notReplayed(h.body, s);
     judgeable(h.body);
@@ -2312,7 +2316,7 @@ async function judgeAttempt(call: Call, args: Record<string, unknown>): Promise<
       repeatOf: repeatOf(h.body, judgeId, JUDGE_PROMPT_TEMPLATE_HASH), rubricHash: h.body.scenario.rubricHash,
       transcriptHash: h.body.transcriptHash ?? transcriptHash(h.body.turns),
     });
-    return recordJudgmentOn(call, s, h, j, 'judgeAttempt', roles, disclosure);
+    return recordJudgmentOn(call, s, h, j, 'judgeAttempt', reg, disclosure);
   });
 }
 
