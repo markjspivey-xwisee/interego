@@ -538,6 +538,8 @@ const S = {
   invalid: new Map(),           // fields to fix, by payload path: found before signing, or named by the bridge's refusal
   scrollToResult: false,        // the answer to the person's last action is brought into view (and focused) when drawn
   pasteCopying: 0,              // when Map a process's "Copy the message for my AI" began the copy still on its way (0: none)
+  packetFor: null,              // the document title, text and process name the held packet (packet) was asked for, as sent
+  captureForm: null,            // Map a process's draft as last drawn: the one its fields write to, which a copy on its way reads again
 };
 
 // ── Who is who, from the read model ─────────────────────────────────────────────────────
@@ -1805,15 +1807,20 @@ function view() {
 }
 
 const COPY_BY_HAND = 'This browser didn\'t let the page copy it. Select all of the text below and copy it yourself.';
+/** Put `s` on the clipboard: true once the browser took it, false where it refused (or has no clipboard here). */
+async function writeClipboard(s) {
+  try { await navigator.clipboard.writeText(s); return true; } catch { return false; }
+}
 /**
- * Copy to the clipboard and say so; where the browser will not, show the text to copy by hand, in a panel that, closed,
- * goes back to the panel it was opened from (the AI assistant's set-up keeps its place).
+ * Where the browser will not copy: the text to copy by hand, in a panel that, closed, goes back to the panel it was
+ * opened from (the AI assistant's set-up keeps its place).
  */
+function showCopyThis(s) {
+  openPanel('Copy this', [hint(COPY_BY_HAND), h('textarea', { value: s, readOnly: true, class: 'textarea textarea--tall', 'aria-label': 'The text to copy' })], panelToReturnTo());
+}
+/** Copy to the clipboard and say so; where the browser will not, show the text to copy by hand. */
 async function copyText(s, what = 'Copied to your clipboard') {
-  try { await navigator.clipboard.writeText(s); toast('Copied', what); }
-  catch {
-    openPanel('Copy this', [hint(COPY_BY_HAND), h('textarea', { value: s, readOnly: true, class: 'textarea textarea--tall', 'aria-label': 'The text to copy' })], panelToReturnTo());
-  }
+  if (await writeClipboard(s)) toast('Copied', what); else showCopyThis(s);
 }
 
 // ── Results, refusals and errors ──────────────────────────────────────────────────────────
@@ -3006,10 +3013,47 @@ function pasteMessage(packet) {
   ].filter(Boolean).join('\n\n');
 }
 
+/**
+ * What both routes' messages are made from, read together: the document's title and text, and the process name (Card B's
+ * packet carries it in its draft template, and Card A's message passes it on).
+ */
+const docBasis = (form) => ({ title: String(form?.doc?.title ?? ''), text: String(form?.doc?.text ?? ''), processName: String(form?.workflow?.title ?? '') });
+const sameBasis = (a, b) => !!a && !!b && a.title === b.title && a.text === b.text && a.processName === b.processName;
+/** Map a process's draft as the page shows it now: the one its last drawing made, which every field typed in since writes to. */
+const captureNow = () => S.captureForm ?? captureDraft();
+const FORM_KEPT_CHANGING = 'The document or the process name changed while the message was being made. Copy it again.';
+/**
+ * Copy a message made from Map a process's document and process name, so that what is copied is the message for the form
+ * as it is when the copy completes. Each round reads them together (docBasis); `ready(basis, say)` says whether they can
+ * be copied, and, where `say`, says why not; `make(basis)` makes the message from them and may wait (Card B asks the
+ * bridge for its packet), answering { message } or { refused } (a function that says why, called only while the form is
+ * still the one asked about). After each wait the form is read again: a message made from a form that changed meanwhile,
+ * or that changed while the message was being put on the clipboard, is made and copied again from the form as it is then,
+ * so a person who goes on typing gets what they now see without pressing again. A form still changing after three rounds,
+ * or changed into one that can't be copied (a title cleared, or the map signed and the form emptied), is not copied, and
+ * the person is told so and asked to copy again.
+ * Answers 'copied', 'shown' (the browser refused the clipboard, and "Copy this" shows the message) or '' (nothing copied).
+ */
+async function copyForForm({ ready, make, what }) {
+  for (let round = 0; round < 3; round += 1) {
+    const basis = docBasis(captureNow());
+    if (!ready(basis, round === 0)) { if (round === 0) return ''; break; }
+    const made = await make(basis);
+    if (!sameBasis(basis, docBasis(captureNow()))) continue;
+    if (typeof made?.message !== 'string') { made?.refused?.(); return ''; }
+    if (!(await writeClipboard(made.message))) { showCopyThis(made.message); return 'shown'; }
+    if (sameBasis(basis, docBasis(captureNow()))) { toast('Copied', what); return 'copied'; }
+  }
+  toast('Not copied', FORM_KEPT_CHANGING, 'warning');
+  return '';
+}
+
 // ── Map a process ─────────────────────────────────────────────────────────────────────────
 
 function captureView() {
   const st = captureDraft();
+  // Each drawing reads the draft afresh, so a copy still on its way when the view is drawn again reads the form from here.
+  S.captureForm = st;
   const save = () => store.set(CAPTURE_KEY, st);
   const normDoc = normaliseForQuote(st.doc.text || '');
   const docMode = st.mode === 'document';
@@ -3064,27 +3108,24 @@ function captureView() {
       : { kind: 'not-declared' };
     rerender();
   };
-  // What a document route needs before anything is copied: its title and its text (read now: typing in step 1 redraws nothing).
-  const docProblems = () => [
-    ...(String(st.doc.title ?? '').trim() ? [] : [['document.title', `${pathFieldLabel('document.title')} is required`]]),
-    ...(String(st.doc.text ?? '').trim() ? [] : [['document.text', 'Add the document: load a file or paste its text']]),
+  // What a document route needs before anything is copied: its title and its text, as docBasis read them.
+  const docProblems = (b) => [
+    ...(b.title.trim() ? [] : [['document.title', `${pathFieldLabel('document.title')} is required`]]),
+    ...(b.text.trim() ? [] : [['document.text', 'Add the document: load a file or paste its text']]),
   ];
   /**
-   * The packet for the document as it stands now: the one held when it was made from this title, text and process name,
-   * else a new one (null when refused). The process name is part of the key because the packet's draft template carries
-   * it, and a draft that follows the template writes it back over the name the person chose.
+   * Card B's message for `basis` (docBasis: the title, text and process name, read together): from the packet held for
+   * exactly these, else from a new one asked for with exactly these. The process name is part of it because the packet's
+   * draft template carries it, and a draft that follows the template writes it back over the name the person chose.
+   * A new packet is held under what it was asked for, and only while the form still is that: one that comes after the form
+   * changed is not held, so the packet held (and "Show the message") is always the one for the form as it is.
    */
-  const packetNow = async () => {
-    let sha = '';
-    try { sha = await sha256Hex(st.doc.text); } catch { sha = ''; }
-    const processName = String(st.workflow.title ?? '');
-    const held = S.packet;
-    if (held && sha && held.request?.documentSha256 === sha && held.context?.document?.title === st.doc.title && S.packetProcessName === processName) return held;
-    const r = await call('wrd.task_map_packet', { document_title: st.doc.title, document_text: st.doc.text, workflow_title: processName || undefined, pod_url: data().podUrl });
-    if (!r.ok) { showResult('wrd.task_map_packet', r); return null; }
-    S.packet = r.body;
-    S.packetProcessName = processName;
-    return r.body;
+  const packetMessage = async (basis) => {
+    if (S.packet && sameBasis(S.packetFor, basis)) return { message: pasteMessage(S.packet) };
+    const r = await call('wrd.task_map_packet', { document_title: basis.title, document_text: basis.text, workflow_title: basis.processName || undefined, pod_url: data().podUrl });
+    if (!r.ok) return { refused: () => showResult('wrd.task_map_packet', r) };
+    if (sameBasis(basis, docBasis(captureNow()))) { S.packet = r.body; S.packetFor = basis; }
+    return { message: pasteMessage(r.body) };
   };
   /** Card B's Copy button's lasting name (returnKey), so focus finds it again after the redraw copying it makes. */
   const PASTE_COPY = ['document', 'copy-paste-message'];
@@ -3095,7 +3136,7 @@ function captureView() {
     // add none (and the button's keydown takes no repeat of Enter held down). A copy still waiting after 10 s no longer
     // holds the button: a press then tries again, as a person whose request stalled would.
     if ((S.pasteCopying && Date.now() - S.pasteCopying < 10_000) || e?.detail > 1) return;
-    if (formProblems(docProblems())) return;
+    if (formProblems(docProblems(docBasis(st)))) return;
     const began = Date.now();
     S.pasteCopying = began;
     // The first press always fetches a packet, and a person may go on while it comes: scroll on toward step 3, open the
@@ -3103,13 +3144,15 @@ function captureView() {
     // not going on) decides below whether the page comes back to this button.
     const person = watchMovingOn((ev) => isPasteCopy(ev.target) && (ev.type === 'pointerdown' || ev.key === 'Enter' || ev.key === ' '));
     try {
-      const p = await packetNow();
-      if (!p) return;
-      const shown = S.panel;
-      await copyText(pasteMessage(p), 'The message for your AI. Paste it into your chat app.');
+      // The message for the document and process name as they are when it is copied: a rename or an edit while the packet
+      // is on its way asks for a packet for what is there now (copyForForm), rather than copying the one for what was.
+      const copied = await copyForForm({
+        ready: (b, say) => !(say ? formProblems(docProblems(b)) : docProblems(b).length), make: packetMessage, what: 'The message for your AI. Paste it into your chat app.',
+      });
+      if (!copied) return;
       // Where the browser refused the clipboard, "Copy this" has opened instead: focus goes to its title, and closing it
       // comes back here by this button's name (PASTE_COPY).
-      const refused = S.panel && S.panel !== shown;
+      const refused = copied === 'shown';
       if (refused) S.panel.focus = true;
       // The redraw adds "Show the message" and builds this button again. It gives focus back to whatever had it, built
       // again: this button (the one pressed, or the one an earlier copy's redraw built), or a field the person went on to
@@ -3134,11 +3177,19 @@ function captureView() {
       if (S.pasteCopying === began) S.pasteCopying = 0;
     }
   };
+  // Card A's message carries the document and the process name too, made on the spot; held to the same rule: what lands
+  // on the clipboard is the message for the form as it is once the clipboard has taken it.
   const copyChatMessage = () => {
     if (!op) return;
-    if (formProblems(docProblems())) return;
-    if (String(st.doc.text ?? '').length > CHAT_DOC_MAX) { gateChat(); return; }
-    copyText(taskMapChatMessage(st), 'The message for your assistant. Paste it into a chat with Interego turned on.');
+    copyForForm({
+      ready: (b, say) => {
+        if (say ? formProblems(docProblems(b)) : docProblems(b).length) return false;
+        if (b.text.length > CHAT_DOC_MAX) { if (say) gateChat(); return false; }
+        return true;
+      },
+      make: (b) => ({ message: taskMapChatMessage({ doc: { title: b.title, text: b.text }, workflow: { title: b.processName } }) }),
+      what: 'The message for your assistant. Paste it into a chat with Interego turned on.',
+    });
   };
   // Card A's length gate, set again each time the text in step 1 changes: typing there redraws nothing,
   // and a disabled button gets no click that could re-check it, so a shortened document turns it back on here.
@@ -3217,7 +3268,7 @@ function captureView() {
     } else {
       out = await act('wrd.capture_workflow', 'wrd:capture-workflow', { workflow, tasks: taskPayload });
     }
-    if (out) { store.drop(CAPTURE_KEY); S.workflow = out.workflowIri; S.packet = null; render(); }
+    if (out) { store.drop(CAPTURE_KEY); S.workflow = out.workflowIri; S.packet = null; S.packetFor = null; render(); }
   };
   const closed = data().bridge?.reads === 'signed';
   // The chat route (Card A) only where it works: signed in with Interego on a workspace that names a connector.
@@ -3225,10 +3276,11 @@ function captureView() {
   // Card B's button. Enter held down would press it again and again, a copy and a toast each time: it presses once.
   const pasteButton = btn('Copy the message for my AI', { variant: chat ? 'secondary' : 'primary', icon: 'clipboard', on: copyPasteMessage, attrs: returnKey(...PASTE_COPY) });
   pasteButton.addEventListener('keydown', (e) => { if (e.repeat && e.key === 'Enter') e.preventDefault(); });
-  // Card B's "Show the message" holds the message made from the title and text as they were. Once either changes it is out
-  // of date, so it goes (and the held packet with it): Copy makes the message again from what is there now.
-  let preview = S.packet ? disclosure('Show the message', h('pre', { class: 'chat-preview', text: pasteMessage(S.packet) })) : null;
-  function docChanged() { if (!S.packet) return; S.packet = null; preview?.remove(); preview = null; }
+  // Card B's "Show the message" holds the message made from the title, text and process name as they were, and is shown
+  // only while the form still is that (a draft filled from step 3 can rename the process). Once any of them changes it is
+  // out of date, so it goes (and the held packet with it): Copy makes the message again from what is there now.
+  let preview = S.packet && sameBasis(S.packetFor, docBasis(st)) ? disclosure('Show the message', h('pre', { class: 'chat-preview', text: pasteMessage(S.packet) })) : null;
+  function docChanged() { if (!S.packet) return; S.packet = null; S.packetFor = null; preview?.remove(); preview = null; }
   // Step 1's count, kept up to date as the text is typed (typing redraws nothing): how long the document is, "Loaded"
   // only while the text is the file's, and, where a chat can record the map, how much of a chat's limit it takes.
   const docCount = () => {

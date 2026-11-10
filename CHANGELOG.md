@@ -1,5 +1,46 @@
 # Changelog
 
+## 2026-11-10 — Work Redesign: a copied message is the one for the form as it is
+
+A reviewer found that Map a process could copy a message for a process name
+the person had already changed. Copy and paste's button asks the bridge for
+the drafting instructions for the document, and while that answer was on its
+way the person could rename the process, or edit the document or its title.
+When the answer came, the page copied the message made for the form as it had
+been, showed it under "Show the message", and kept it for the next press,
+while the form said something else.
+
+The page now reads the document's title, its text and the process name
+together when it asks, and reads them again when the answer comes. If any of
+them changed, it asks again for what is there now and copies that, so one
+press copies what the person sees. An answer is kept only for the title, text
+and name it was asked for, and only while the form still says those, so the
+preview and the next press never use an answer made for another form. The
+same holds while the browser puts the message on the clipboard: if the form
+changes then, the message for the form as it is is copied after it, and
+"Copied" is said once. If the form is still changing after three tries,
+nothing is copied, and the page says the form changed and asks the person to
+copy again. The chat route's button ("Copy the message for my assistant")
+makes its message on the spot and asks the bridge for nothing, so only the
+clipboard step could go wrong there; it follows the same rule now. A draft
+pasted in step 3 can rename the process too: "Show the message" now goes when
+it does, where it used to stay, naming the old process. Reuse is as before:
+the same title, text and process name copy again without a new request. The
+page now compares the title, text and name themselves to decide that, instead
+of a hash of the text, so reuse also works on a page that cannot compute one.
+
+New tests hold an answer back and, while it waits, rename the process, edit
+the document, edit its title, or rename after the view was drawn again; they
+also rename while the clipboard is taking the message (on both buttons), keep
+the form changing past three answers, and rename from a pasted draft. Each
+checks the clipboard, the preview and the next press against the form as it
+is, and each fails with the fix taken out.
+
+Not covered: these were checked in a test browser (jsdom), not a real one.
+Signing a map hashes the document first; an edit made in that moment is still
+sent with the hash of the text before it, and the bridge refuses the pair (the
+hash does not match) rather than record it, as before.
+
 ## 2026-11-10 — Work Redesign: what a live run through a chat assistant found
 
 A live run through Claude, with the Interego connector, recorded a fictional

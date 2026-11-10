@@ -1765,6 +1765,47 @@ describe('work-redesign web UI: sign in with your Interego account', () => {
     expect(page.errors).toEqual([]);
   }, 60_000);
 
+  for (const [what, sel, to] of [
+    ['a rename', '[data-path="workflow.title"]', 'Supplier payments'],
+    ['a document edit', '[data-path="document.text"]', 'Supplier invoices arrive by email or by post. The clerk matches each invoice to its purchase order.'],
+    ['a title edit', '[data-path="document.title"]', 'AP-SOP-015'],
+  ] as const) {
+    it(`copies the chat route's message again after ${what} while the clipboard is taking it: the clipboard is left holding the message for the form as it is, "Copied" is said once, and no packet is asked for`, async () => {
+      const { page, win, d } = await heldPacketCapture('Supplier invoices arrive by email. The clerk matches each invoice to its purchase order.');
+      // The clipboard keeps every text it is given, in order (the last is what it holds), and holds its answer back on demand.
+      const copied: string[] = [];
+      const clip = { hold: 0, held: [] as Array<() => void> };
+      Object.defineProperty(win.navigator, 'clipboard', {
+        value: { writeText: async (t: string) => { copied.push(t); if (clip.hold > 0) { clip.hold -= 1; await new Promise<void>((r) => { clip.held.push(r); }); } } }, configurable: true,
+      });
+      // Every "Copied" toast, as it is added (a toast goes by itself after 5 s).
+      let announced = 0;
+      new win.MutationObserver((records) => {
+        for (const r of records) for (const t of r.addedNodes) if (t instanceof win.HTMLElement && t.querySelector('.toast__title')?.textContent === 'Copied') announced += 1;
+      }).observe(must(d.getElementById('toasts'), 'the toast region'), { childList: true });
+      const value = (s: string): string => (must(d.querySelector(s), s) as HTMLInputElement).value;
+      /** Card A's message for the form as it is now, as the page itself makes it. */
+      const messageNow = (): string => String((win.eval('taskMapChatMessage') as (st: unknown) => string)({
+        doc: { title: value('[data-path="document.title"]'), text: value('[data-path="document.text"]') }, workflow: { title: value('[data-path="workflow.title"]') },
+      }));
+      page.fill(must(d.querySelector('[data-path="workflow.title"]'), 'the process name'), 'Invoice intake');
+      clip.hold = 1;
+      page.click('Copy the message for my assistant');
+      await page.until(() => clip.held.length === 1, 'the clipboard taking the message');
+      const before = messageNow();
+      expect(copied).toEqual([before]);
+      page.fill(must(d.querySelector(sel), sel), to);
+      const now = messageNow();
+      expect(now).not.toBe(before);
+      must(clip.held.pop(), 'the held clipboard write')();
+      await page.until(() => copied.length === 2, 'the message copied again for the form as it is', 5_000);
+      await new Promise((r) => setTimeout(r, 300));
+      expect([copied, announced]).toEqual([[before, now], 1]);
+      expect(page.log.filter((l) => l.path === '/wrd/task_map_packet')).toEqual([]);
+      expect(page.errors).toEqual([]);
+    }, 60_000);
+  }
+
   /** A signed-in lead (and admin) on Home. */
   async function signedInLead() {
     const w = await world({ lead: true });
