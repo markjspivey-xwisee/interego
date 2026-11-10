@@ -1,5 +1,35 @@
 # Changelog
 
+## 2026-11-10 — Practice Evidence: a quote that was read back is shown as the line shows it
+
+A peer review, run on fictional data, found the quote fix below still broke in
+one case. A learner's line held a rubric fingerprint in its usual form and,
+apart from it, a run of 64 hex digits that was no rubric's (a build reference,
+say). The session shows such a run as written. A judge's quote copied from the
+line was read back and checked out. But answers to a chat showed the saved
+quote with every run of 16 or 64 hex digits as a stand-in, the unrelated one
+included, so it no longer matched the line. A second judge who copied the quote
+from that answer had it fail as "not found verbatim in any learner turn", and
+the criterion was counted at its lowest level.
+
+Now an answer to someone who reads no stakes shows a read-back quote that
+checked out as the stretch of the learner's line it was matched against,
+exactly as the line's own views show it: its normalised form as the judge
+packet shows that stretch, and its words as the session shows the line when
+they were copied from there. A stand-in there stays a stand-in, and a run of
+digits the line shows as written stays as written. Copied into another
+judgment, the shown quote is read back and checks out again, as often as it is
+copied. The session, the review queue and a judge's own answer after saving
+all show it this way. Nothing stored changes: the saved quote, its
+fingerprint, the highlights and the transcript's fingerprint are still worked
+out from the learner's words as stored, and no stand-in equals a fingerprint
+Practice Evidence keys in a field, or the start of one.
+
+Not covered: a read-back quote that did not check out has no stretch of a line
+to be shown from, so it is shown as before, with every run of 16 or 64 hex
+digits in it as a stand-in. So is a quote an answer shows without its
+session's lines, which no answer does today.
+
 ## 2026-11-10 — Practice Evidence: where a stand-in is the same, said exactly
 
 The scenario list's description said a fingerprint's stand-in in text is the
@@ -33,8 +63,10 @@ which quotes were read back.
 
 Not covered: in a quote that was read back, a run of 16 or 64 hex digits the
 learner wrote with nothing around it is shown to a chat as a stand-in, while
-the line shows it as written. A quote that cuts into a run of digits is not
-read back; it cuts a word, which the quote rule refuses anyway.
+the line shows it as written (the entry "a quote that was read back is shown
+as the line shows it" fixes that for a quote that checked out). A quote that
+cuts into a run of digits is not read back; it cuts a word, which the quote
+rule refuses anyway.
 
 ## 2026-11-10 — Practice Evidence: a signed request's payload no longer checks a guess
 

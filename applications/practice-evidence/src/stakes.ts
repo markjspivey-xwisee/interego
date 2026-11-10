@@ -23,13 +23,15 @@
  * words never comes back equal to the hash it would be checked against. The stand-in is the same
  * each time the same hash is shown in the same scope, so a judge who quotes a line holding one
  * quotes what every view of that transcript shows, and the quote is read back as the stored text
- * it stands for (`quoteAsStored`). A signed request a record keeps is shown without what it signed:
- * that is the signer's own object, which could hold a guess under a field name this bridge keys.
+ * it stands for (`quoteAsStored`). Such a quote is shown as the stretch of the line it was matched
+ * against, as that line is shown (`readBackAsShown`), so a copy of it reads back again. A signed
+ * request a record keeps is shown without what it signed: that is the signer's own object, which
+ * could hold a guess under a field name this bridge keys.
  *
  * Pure: no I/O.
  */
 import { createHmac, randomBytes } from 'node:crypto';
-import type { Assessment, JudgmentResult, Rubric, ScenarioSpec } from './practice.js';
+import { normaliseForQuote, verifyQuote, type Assessment, type JudgmentResult, type Rubric, type ScenarioSpec, type Turn } from './practice.js';
 import type { ReviewResult } from './records.js';
 
 /** What every answer that left a scored scenario's stakes out says, at its top level. */
@@ -136,12 +138,12 @@ export function maskText(s: string, k: Keyer): string {
 const HASH_OR_RUN = /urn:pev:rubric:([0-9a-f]{64})|pev\/([0-9a-f]{16})\/|(?<![0-9a-f])([0-9a-f]{64})(?![0-9a-f])|(?<![0-9a-f])([0-9a-f]{16})(?![0-9a-f])/g;
 
 /**
- * A quote that was read back (`QuoteCheck.readBack`) as an answer that masks text shows it: `maskText`,
- * and each whole run of 64 or 16 hex replaced with its stand-in in text as well. A judge may have
- * copied a stand-in's hex alone (`quoteAsStored`), so the saved quote can hold a hash with no
- * `urn:pev:rubric:` or `pev/` around it; shown this way it reads as the judge copied it and as the line
- * it was copied from shows it. A run of hex the learner wrote bare in such a quote is shown as a
- * stand-in too, where the line shows it as written.
+ * A quote that was read back (`QuoteCheck.readBack`) as an answer that masks text shows it when there
+ * is no line to show it from (`readBackAsShown`): one that did not check out, or one an answer shows
+ * without its attempt's lines. `maskText`, and each whole run of 64 or 16 hex replaced with its
+ * stand-in in text as well: a judge may have copied a stand-in's hex alone (`quoteAsStored`), so the
+ * saved quote can hold a hash with no `urn:pev:rubric:` or `pev/` around it, and no hash read back
+ * into it is shown bare. A run of hex the learner or the judge wrote bare is shown as a stand-in too.
  */
 export function maskReadBackQuote(s: string, k: Keyer): string {
   return s.replace(HASH_OR_RUN, (_m, iri?: string, kind?: string, run64?: string, run16?: string) => (
@@ -155,6 +157,60 @@ export function maskReadBackQuote(s: string, k: Keyer): string {
  * holds one, whole or cut down to its words and whether it checked out (`record_judgment`'s answer).
  */
 const isReadBackQuote = (o: Record<string, unknown>): boolean => o['readBack'] === true && typeof o['verified'] === 'boolean';
+
+/** A turn as a read-back quote is shown from it (`readBackAsShown`). */
+export type QuotedTurn = Pick<Turn, 'index' | 'speaker' | 'text'>;
+/**
+ * The stored turns of each attempt whose read-back quotes an answer shows, by the attempt's IRI as the
+ * answer names it (`attemptIri`, on the answer or on the entry that holds the quotes).
+ */
+export type QuotedLines = ReadonlyMap<string, readonly QuotedTurn[]>;
+const NO_LINES: QuotedLines = new Map();
+
+const isOffset = (v: unknown): v is number => typeof v === 'number' && Number.isInteger(v) && v >= 0;
+
+/** Each place `s` sits in `line`, as `shown` (`line` masked, which keeps every offset) shows it there. */
+function shownWhere(line: string, shown: string, s: string): string[] {
+  const out: string[] = [];
+  for (let at = line.indexOf(s); s !== '' && at >= 0; at = line.indexOf(s, at + 1)) out.push(shown.slice(at, at + s.length));
+  return out;
+}
+
+/**
+ * A read-back quote that checked out, as an answer that masks text shows it: the stretch of the
+ * learner's line it was matched against (its `turnIndex`, `start` and `end`, or, where an answer
+ * leaves those out, found again as `verifyQuote` found it), as every view of that line shows it
+ * (`maskText`). `normalised` is that stretch of the normalised line, which the judge packet and an
+ * attempt's `normalisedText` show; `text` is the same stretch of the line as stored, which an
+ * attempt's `text` shows, where the saved words sit there and are shown the same way, and otherwise
+ * the normalised stretch too. So only what the line's own views mask is masked: a stand-in the
+ * line shows is shown, and a run of hex the line shows as written is shown as written. A copy of it
+ * is one of those views' own words, so it reads back (`quoteAsStored`) and checks out at the same
+ * place, as often as it is copied. Null when there is no such line: the quote did not check out,
+ * or the answer was given no lines for its attempt (`maskReadBackQuote` then).
+ */
+function readBackAsShown(q: Record<string, unknown>, k: Keyer, turns: readonly QuotedTurn[] | undefined): { readonly text: string; readonly normalised: string } | null {
+  const text = q['text'];
+  if (turns === undefined || q['verified'] !== true || typeof text !== 'string') return null;
+  const normalised = normaliseForQuote(text);
+  const found = isOffset(q['turnIndex']) && isOffset(q['start']) && isOffset(q['end'])
+    ? { verified: true, turnIndex: q['turnIndex'], start: q['start'], end: q['end'] }
+    : verifyQuote({ text }, turns);
+  if (!found.verified || found.turnIndex === undefined || found.start === undefined || found.end === undefined) return null;
+  const { turnIndex, start, end } = found;
+  const line = turns.find((t) => t.speaker === 'learner' && t.index === turnIndex)?.text;
+  if (line === undefined) return null;
+  const norm = normaliseForQuote(line);
+  if (norm.slice(start, end) !== normalised) return null;
+  const normShown = maskText(norm, k);
+  const shownNormalised = normShown.slice(start, end);
+  if (text === normalised) return { text: shownNormalised, normalised: shownNormalised };
+  // Words saved as the stored line holds them (a judge who copied an attempt's `text`): that line's
+  // view of them, where it masks them as the matched stretch is masked.
+  const asCopied = [...shownWhere(line, maskText(line, k), text), ...shownWhere(norm, normShown, text)]
+    .find((c) => normaliseForQuote(c) === shownNormalised);
+  return { text: asCopied ?? shownNormalised, normalised: shownNormalised };
+}
 
 /**
  * Reads a quote copied from a view of `stored` masked for scope `k` (`maskText`) as the stored text
@@ -249,8 +305,7 @@ const isCalibrationCell = (o: Record<string, unknown>): boolean =>
  * cell wherever it sits), or, where nothing names its version, with a salt of this answer's own
  * (`loose`).
  *
- * Replaced: a rubric IRI's hash or a kind's prefix inside any other string (`maskText`), and in a
- * read-back quote's words every whole run of 64 or 16 hex as well (`maskReadBackQuote`). Such text
+ * Replaced: a rubric IRI's hash or a kind's prefix inside any other string (`maskText`). Such text
  * may be a caller's (a turn, a contest or redaction reason, a judge's quote or rationale, a
  * scenario's words or a criterion's title), and keyed like the answer's own `rubricHash` it would let
  * a caller write the bare hash of a guessed rubric and read it back keyed, to compare. So each one is
@@ -259,19 +314,26 @@ const isCalibrationCell = (o: Record<string, unknown>): boolean =>
  * every view of one attempt's transcript shows a line the same way and a quote copied from any of
  * them reads back as the stored line (`quoteAsStored`).
  *
+ * Shown from its line: a read-back quote's words, which are the stored line's and can hold a hash
+ * with nothing around it, are shown as the stretch of the learner's line they were matched against,
+ * as that line is shown (`readBackAsShown`). The line comes from `lines`: the stored turns of the
+ * attempt the answer, or the entry holding the quote, names by `attemptIri`. With no line to show
+ * them from, every whole run of 64 or 16 hex in them is replaced as well (`maskReadBackQuote`).
+ *
  * Two stand-ins in text are equal when their hashes are, which tells a caller only that two texts
  * hold the same hash. A caller who reads no stakes can learn something from that only if a real
  * rubric hash already sits in some text, and this bridge writes none there: only a person who reads
  * the stakes can have put it there, and such a person could as well pass the stakes on.
  */
-export function maskAnswerHashes(v: unknown, m: HashMask, scope: HashScope = null): unknown {
+export function maskAnswerHashes(v: unknown, m: HashMask, scope: HashScope = null, lines: QuotedLines = NO_LINES): unknown {
   let loose: Keyer | null = null;
   const keyerFor = (at: Version | 'cells' | null): Keyer => {
     if (at === 'cells') return m.cells;
     if (at !== null) return m.version(at.scenarioIri, at.version);
     return (loose ??= m.loose());
   };
-  const walk = (x: unknown, at: Version | 'cells' | null, key?: string): unknown => {
+  // `attempt`: the attempt whose quotes `x` may hold, as the object it sits in names it.
+  const walk = (x: unknown, at: Version | 'cells' | null, attempt: string | null, key?: string): unknown => {
     if (typeof x === 'string') {
       if (key !== undefined && HASH_KEYS.has(key) && HEX64.test(x)) return keyerFor(at).full(x);
       const iri = key === 'rubricIri' ? RUBRIC_IRI_FIELD.exec(x) : null;
@@ -280,19 +342,21 @@ export function maskAnswerHashes(v: unknown, m: HashMask, scope: HashScope = nul
       if (kind !== null) return `pev/${keyerFor(at).prefix(kind[1]!)}/${kind[2]!}`;
       return mayHoldHash(x) ? maskText(x, keyerFor(at)) : x;
     }
-    if (Array.isArray(x)) return x.map((y) => walk(y, at));
+    if (Array.isArray(x)) return x.map((y) => walk(y, at, attempt));
     if (isRecord(x)) {
       const o = isStoredEnvelope(x) ? withoutPayload(x) : x;
       const here = at === 'cells' || isCalibrationCell(o) ? 'cells' : versionIn(o, at);
+      const within = typeof o['attemptIri'] === 'string' ? o['attemptIri'] : attempt;
       const readBack = isReadBackQuote(o);
+      const shown = readBack ? readBackAsShown(o, keyerFor(here), within === null ? undefined : lines.get(within)) : null;
       return Object.fromEntries(Object.entries(o).map(([k, y]) => [k,
         SIGNED_KEYS.has(k) ? y
-          : readBack && (k === 'text' || k === 'normalised') && typeof y === 'string' ? maskReadBackQuote(y, keyerFor(here))
-            : walk(y, here, k)]));
+          : readBack && (k === 'text' || k === 'normalised') && typeof y === 'string' ? (shown?.[k] ?? maskReadBackQuote(y, keyerFor(here)))
+            : walk(y, here, within, k)]));
     }
     return x;
   };
-  return walk(v, scope);
+  return walk(v, scope, null);
 }
 
 /** A rubric as an answer without the stakes carries it: criteria and levels, in words. */
