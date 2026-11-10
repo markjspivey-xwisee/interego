@@ -401,7 +401,8 @@ describe('the web UI is served under a strict content policy', () => {
     expect(section(on.help, 'claude-chatgpt')).toContain('<li>Paste the message a learner sent you into a new chat. Your assistant shows you the levels and quotes and waits for your go-ahead.</li>');
     expect(section(on.help, 'claude-chatgpt')).toContain('It doesn\'t get the weights, the points for each level, the pass mark, or any score or pass result: Practice Evidence leaves them out of what it sends a chat assistant through the connector, and the web app shows them to you. An AI tool you give your own signing key to reads what you read.');
     // An author's assistant edits a scored scenario's words and keeps its stakes; the stakes are changed in the web app.
-    expect(section(on.help, 'authors')).toContain('Your AI assistant can edit a scored scenario\'s words, criteria and levels, and the new version keeps the weights, points and pass mark as they were: it doesn\'t get them, so change those here.');
+    // Only the words: a chat that changes which criteria or levels there are, or their order, is refused (chat-stakes.test.ts).
+    expect(section(on.help, 'authors')).toContain('Your AI assistant can edit the words of a scored scenario and of its criteria and levels (not which criteria and levels there are, or their order), and the new version keeps the weights, points and pass mark as they were: it doesn\'t get them, so change those here.');
     expect(section(off.help, 'authors')).not.toContain('Your AI assistant can edit a scored scenario');
     // A scored session's signed record and statement carry the score, so a chat is not sent to fetch them.
     expect(section(on.help, 'claude-chatgpt')).not.toContain('Download my signed record');
@@ -1034,6 +1035,10 @@ describe('the web UI works, driven in a DOM against the real handlers', () => {
     p.w.location.hash = '#/calibration';
     await p.until(() => p.text('#view h1') === 'AI judge quality', 'the calibration view');
     await p.until(() => p.text('#view').includes('This is not accuracy against a known answer.'), 'the metric note');
+    // Calibration's fingerprints are its own, and every table of them says so, so nobody looks for a scenario's there.
+    const note = "The rubric fingerprints in this table are calibration's own: they don't match the fingerprints shown with a scenario or a session.";
+    expect((p.w.eval('calibrationNote()') as HTMLElement).textContent).toBe(note);
+    for (const table of p.all('#view .calibration-all')) expect(table.closest('details')?.querySelector('.calibration-note')?.textContent).toBe(note);
     expect(p.errors).toEqual([]);
   }, SLOW);
 

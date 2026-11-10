@@ -28,8 +28,8 @@ import type { ReviewResult } from './records.js';
 /** What every answer that left a scored scenario's stakes out says, at its top level. */
 export const STAKES_WITHHELD = 'This answer leaves out a scored scenario\'s stakes: each criterion\'s weight, each level\'s points, the pass rule, '
   + 'and any points, percent or pass result worked out from them; its rubric and scenario fingerprints are keyed to their own scenario version, '
-  + 'so they match no other scenario\'s or version\'s and cannot be checked against a guess. Practice Evidence leaves the stakes out of every answer to a chat assistant the Interego connector signs for, to a key '
-  + 'no admin registered on this workspace (or registered as an agent), and to a request nobody signed; people see them in the Practice Evidence '
+  + 'so they match no other scenario\'s or version\'s and cannot be checked against a guess. Practice Evidence leaves the stakes out of every answer to a chat assistant the Interego relay signs for, a key '
+  + 'no admin registered or one registered as an agent, or a request nobody signed; people see them in the Practice Evidence '
   + 'web app, signed in with Interego or with an address an admin registered.';
 
 /** The keyed stand-ins for a hash (`full`, 64 hex) and for a 16-hex prefix of one (`prefix`), in one scope. */

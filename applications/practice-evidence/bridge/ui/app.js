@@ -3420,7 +3420,7 @@ async function viewResults(root, scenarioIri) {
   root.append(h('details', { class: 'disclosure' }, h('summary', { text: 'How small numbers are protected' }), h('div', { class: 'disclosure__body', text: r.suppressionRule })));
   if (r.personJudgeCells && r.personJudgeCells.length) {
     root.append(resultCard('People who assessed sessions', [calibrationSimple(r.personJudgeCells),
-      h('details', { class: 'disclosure' }, h('summary', { text: 'All measures' }), calibrationTable(r.personJudgeCells))]));
+      h('details', { class: 'disclosure' }, h('summary', { text: 'All measures' }), calibrationNote(), calibrationTable(r.personJudgeCells))]));
   }
 }
 
@@ -3439,6 +3439,11 @@ function calibrationSimple(cells) {
       td("Quote didn't match", rate(c.unverifiedRate), 'num'),
       td('Status', [c.status === 'Asserted' ? statusPill('Established', 'success') : h('span', { title: 'Early: fewer than 20 reviewed sessions' }, statusPill('Early', 'pending')),
         h('span', { class: 'table__secondary', text: `${c.status === 'Asserted' ? '' : 'Fewer than 20 reviewed sessions. '}Track record: ${c.standing && c.standing.evaluated ? (c.standing.clears ? 'meets the bar (for information only)' : 'not yet') : 'not evaluated'}` })]))))));
+}
+
+/** Beside every calibration table: its rubric fingerprints are keyed for calibration, so they match none shown elsewhere. */
+function calibrationNote() {
+  return para("The rubric fingerprints in this table are calibration's own: they don't match the fingerprints shown with a scenario or a session.", 'text-sm text-secondary calibration-note');
 }
 
 function calibrationTable(cells) {
@@ -3468,7 +3473,7 @@ async function viewCalibration(root) {
     root.append(emptyState({ icon: 'chart', title: 'No data yet', text: "Once reviewers sign off on sessions, you'll see how often each AI judge's levels matched theirs." }));
   }
   root.append(para(r.metricNote, 'text-sm text-secondary'));
-  if (r.cells.length) root.append(h('details', { class: 'disclosure' }, h('summary', { text: 'All measures (technical)' }), calibrationTable(r.cells)));
+  if (r.cells.length) root.append(h('details', { class: 'disclosure' }, h('summary', { text: 'All measures (technical)' }), calibrationNote(), calibrationTable(r.cells)));
   root.append(h('details', { class: 'disclosure' }, h('summary', { text: 'How to read this' }), h('div', { class: 'disclosure__body' },
     h('p', { text: `Each row is one AI judge on one criterion. Agreement is how often the reviewer kept the AI's level. A row is Early until it rests on ${r.minSamplesForAsserted} reviewed sessions. The track record asks for agreement of at least ${pct(r.policy.floor)} over at least ${r.policy.minSamples} reviewed sessions, from at least ${r.policy.minDistinctHumanConfirmers} different reviewers. It is shown for information only and never lets an AI skip a human review.` }),
     h('p', { text: `Figures that rest on fewer than ${r.k} reviewed sessions are hidden, so no one review can be read back. ${r.attemptsRead} sessions were read for this page.` }),

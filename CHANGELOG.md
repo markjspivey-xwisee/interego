@@ -38,6 +38,20 @@ dialog say the same.
 Not covered: such a learner cannot keep a whole copy of a scored session of
 their own until an admin registers their address.
 
+Smaller fixes from the same review. Every tool description that says the
+stakes are left out now names everyone they are left out for: a chat
+assistant the Interego relay signs for, a key no admin registered or one
+registered as an agent, or a request nobody signed. The guide says an
+assistant may edit the words of a scored scenario and of its criteria and
+levels, not which criteria and levels there are or their order. The
+calibration tables say their fingerprints are calibration's own and match
+none shown with a scenario or a session. The README says that changing the
+platform key, or setting or changing the record key, changes every keyed
+fingerprint, so a judge's hand-off copied before has to be fetched again, and
+that the fingerprint in a judge's signed request can be checked only by this
+bridge, not by someone reading the record on their own. The README and the
+tests now speak of a person as they.
+
 ## 2026-11-09 — Practice Evidence: closing the other ways the stakes reached a chat
 
 A review of the change below found that the weights and the pass mark still

@@ -36,6 +36,8 @@ import { DEMO_LINES, demoKey, demoScenarioInput, inMemoryPod, scriptedPracticeMo
 import { PEV_ACTION, toolNameOf } from '../src/ontology.js';
 import { signEnvelope } from '../src/records.js';
 import { STAKES_WITHHELD } from '../src/stakes.js';
+import { pevAffordances, STAKES_LEFT_OUT_FOR } from '../affordances.js';
+import { readFileSync } from 'node:fs';
 
 type Out = Record<string, unknown>;
 type Handlers = Record<string, (args: Record<string, unknown>) => Promise<unknown>>;
@@ -47,7 +49,7 @@ const pod = inMemoryPod();
 const wallet = (name: string, type: 'human' | 'agent' = 'human'): Wallet => importWallet(`0x${sha256(`pev-stakes-test:${name}`)}`, type, name);
 const RELAY = wallet('relay', 'agent');
 const MALLORY = wallet('mallory');
-/** A person who signs with a key she holds (a wallet in the web app, or her own script), registered as a reviewer. */
+/** A person who signs with a key they hold (a wallet in the web app, or their own script), registered as a reviewer. */
 const KEY_REVIEWER = wallet('key-reviewer');
 /** A key registered as a learner. */
 const KEY_LEARNER = wallet('key-learner');
@@ -241,7 +243,7 @@ describe('answers to a chat assistant leave out the scoring stakes; the web app 
     const view = ok(await ract(H, 'pev.get_attempt', P.learner.web, { attemptIri: X['a'] }));
     if (view['state'] === 'in-conversation') ok(await ract(H, 'pev.end_conversation', P.learner.claude, { attemptIri: X['a'], turnIndex: turn }));
 
-    // The bridge's model judges at the learner's request from her chat: the judgment's levels and quotes, no result.
+    // The bridge's model judges at the learner's request from their chat: the judgment's levels and quotes, no result.
     const judged = chatAnswer(await ract(H, 'pev.judge_attempt', P.learner.claude, { attemptIri: X['a'] }), 'judge_attempt from Claude');
     const counted = judged['provisional'] as Out;
     expect([counted['use'], Array.isArray(counted['levels'])]).toEqual(['pass-gate', true]);
@@ -294,7 +296,7 @@ describe('answers to a chat assistant leave out the scoring stakes; the web app 
       expect((((s['rubric'] as Out)['criteria'] as Out[])[0]!)['weight']).toBe(2);
       webAnswer(await ract(H, 'pev.list_scenarios', p.web, {}, { scenario_iri: X['sc'] }), `one scenario from ${p.web}`);
     }
-    // A key an admin registered (a wallet in the web app, or a script of her own) is read as that person, with the bare hashes.
+    // A key an admin registered (a wallet in the web app, or a script of their own) is read as that person, with the bare hashes.
     for (const k of [KEY_REVIEWER, KEY_LEARNER]) {
       const keyed = webAnswer(await kact(H, 'pev.list_scenarios', k), `list signed with a ${k === KEY_LEARNER ? 'learner\'s' : 'reviewer\'s'} key`);
       expect(JSON.stringify(keyed).includes(RAW.rubric)).toBe(true);
@@ -385,10 +387,10 @@ describe('answers to a chat assistant leave out the scoring stakes; the web app 
   it('the review queue, for a reviewer and a judge who reviews: ranked without closeness to the pass mark', async () => {
     for (const p of [P.reviewer, P.judgeReviewer]) {
       for (const chat of chats(p)) {
-        // The judge who reviews judged this attempt, so her queue holds nothing scored, and says nothing was left out.
+        // The judge who reviews judged this attempt, so their queue holds nothing scored, and says nothing was left out.
         const q = chatAnswer(await ract(H, 'pev.review_queue', chat), `queue from ${chat}`, p === P.reviewer);
         const entries = q['entries'] as Out[];
-        // The judge who reviews judged this attempt, so it is not hers to review; the reviewer's queue holds it.
+        // The judge who reviews judged this attempt, so it is not theirs to review; the reviewer's queue holds it.
         if (p === P.reviewer) {
           const e = entries.find((x) => x['attemptIri'] === X['a'])!;
           expect(e['state']).toBe('judged');
@@ -646,4 +648,34 @@ describe('answers to a chat assistant leave out the scoring stakes; the web app 
     // A list that holds a scored scenario too still says so.
     chatAnswer(await ract(H, 'pev.list_scenarios', P.learner.claude), 'the list from Claude');
   }, SLOW);
+});
+
+describe('what the descriptions and the README say about who reads the stakes', () => {
+  it('every description that names the stakes left out names every caller they are left out for, in one phrase', () => {
+    // showsStakes leaves them out for a chat agent, a key no admin registered, a key registered as an agent, and a request nobody signed.
+    expect(STAKES_LEFT_OUT_FOR).toBe('a chat assistant the Interego relay signs for, a key no admin registered or one registered as an agent, or a request nobody signed');
+    const naming = pevAffordances.filter((a) => /stakesWithheld|stakes-not-in-chat|scoring stakes|without the score/.test(JSON.stringify(a)));
+    expect(naming.map((a) => a.toolName).sort()).toEqual([
+      'pev.author_scenario', 'pev.countersign_attempt', 'pev.export_record', 'pev.get_attempt', 'pev.holder_copy', 'pev.judge_attempt', 'pev.list_scenarios',
+      'pev.override_attempt', 'pev.project_attempt', 'pev.review_queue', 'pev.scenario_results',
+    ]);
+    for (const a of naming) {
+      expect(JSON.stringify(a), a.toolName).toContain(STAKES_LEFT_OUT_FOR);
+      // Never a narrower name for the same callers.
+      expect(JSON.stringify(a), a.toolName).not.toMatch(/a key not registered here|for a chat assistant:|to a chat assistant,|(?:Read|Asked) from a chat assistant/);
+    }
+    // The answers' own mark names the same callers.
+    expect(STAKES_WITHHELD).toContain(STAKES_LEFT_OUT_FOR);
+    // Calibration's filter takes calibration's own fingerprints, which match none shown elsewhere.
+    const cal = pevAffordances.find((a) => a.toolName === 'pev.calibration')!;
+    expect(JSON.stringify(cal)).toContain('keyed for calibration, so it matches no rubric fingerprint shown with a scenario, an attempt or a judgment');
+  });
+
+  it('the README says a key change makes fingerprints handed out before stop matching, and that a judge\'s signed binding is keyed; and speaks of a person as they', () => {
+    const readme = readFileSync(new URL('../README.md', import.meta.url), 'utf8');
+    expect(readme).toContain('changing `PEV_PLATFORM_KEY`, or setting or changing `PEV_RECORD_KEY`, keys every hash anew, so a fingerprint handed out before');
+    expect(readme).toContain('so it can be checked against the record\'s `pev:rubricHash` only by this bridge, not by an offline reader of the record');
+    // No named character appears in the README, so every person in it is they.
+    expect(readme.match(/\b(she|her|hers|herself|he|him|his|himself)\b/gi)).toBeNull();
+  });
 });

@@ -22,6 +22,13 @@ import type { IRI } from '@interego/core';
 import type { Affordance, AffordanceInput } from '../_shared/affordance-mcp/index.js';
 import { PEV_ACTION } from './src/ontology.js';
 
+/**
+ * Who reads no scored scenario's stakes, in the words every description that names them uses: the
+ * callers bridge/handlers.ts `showsStakes` leaves them out for. One phrase, so no description
+ * names fewer of them.
+ */
+export const STAKES_LEFT_OUT_FOR = 'a chat assistant the Interego relay signs for, a key no admin registered or one registered as an agent, or a request nobody signed';
+
 const ENVELOPE: readonly AffordanceInput[] = [
   {
     name: 'envelope', type: 'object', required: false,
@@ -69,7 +76,7 @@ export const pevAffordances: ReadonlyArray<Affordance> = [
     action: PEV_ACTION.authorScenario as IRI,
     toolName: 'pev.author_scenario',
     title: 'Save or publish a practice scenario',
-    description: 'An author saves a scenario as a draft or publishes it. Payload: {scenario, status: draft|published, basedOnVersion?, draftAssistance? | draftReceipt?}. The scenario must say how it will be used (feedback-only or pass-gate) and how knowable the work is; a pass gate on work not read as evident or knowable needs a reason. A content change is a new version that supersedes the old one; the rubric version is identified by its hash. From a chat assistant the Interego relay signs for: a scored scenario whose latest version is scored is sent without weights, level values and passRule, which it does not read, and the new version keeps that version\'s (stakesKept says so) when its criteria and levels are that version\'s, by id and in order; sending them, or other criteria, is refused (stakes-not-in-chat: the stakes of a scored scenario are changed in the web app).',
+    description: 'An author saves a scenario as a draft or publishes it. Payload: {scenario, status: draft|published, basedOnVersion?, draftAssistance? | draftReceipt?}. The scenario must say how it will be used (feedback-only or pass-gate) and how knowable the work is; a pass gate on work not read as evident or knowable needs a reason. A content change is a new version that supersedes the old one; the rubric version is identified by its hash. From ' + STAKES_LEFT_OUT_FOR + ': a scored scenario whose latest version is scored is sent without weights, level values and passRule, which it does not read, and the new version keeps that version\'s (stakesKept says so) when its criteria and levels are that version\'s, by id and in order; sending them, or other criteria, is refused (stakes-not-in-chat, with what to do in remedy: a chat changes the stakes of a scored scenario in the web app).',
     method: 'POST',
     targetTemplate: '{base}/pev/author_scenario',
     annotations: hints('Author a scenario', false, false, false, true),
@@ -116,7 +123,7 @@ export const pevAffordances: ReadonlyArray<Affordance> = [
     action: PEV_ACTION.listScenarios as IRI,
     toolName: 'pev.list_scenarios',
     title: 'List practice scenarios',
-    description: 'The latest published version of each scenario on the pod, with its rubric\'s criteria and levels, its use (feedback only or scored), how knowable the work is, and whether a reviewer ratified it. With scenario_iri: one scenario with every version. Also reports which model route this bridge has. Plain or signed. A scored scenario\'s stakes (each criterion\'s weight, each level\'s points, the pass rule and the author\'s reason for it) come only in an answer to this bridge\'s web app (its own Interego sign-in) or to a key registered on this workspace. An answer to a request nobody signed, to one the Interego relay signed for a chat assistant, or to a key that holds no role here (or is registered as an agent) leaves them out and says so (stakesWithheld), and keys its rubric and scenario hashes for their own scenario version, so they match no other scenario\'s or version\'s and cannot be checked against a guess.',
+    description: 'The latest published version of each scenario on the pod, with its rubric\'s criteria and levels, its use (feedback only or scored), how knowable the work is, and whether a reviewer ratified it. With scenario_iri: one scenario with every version. Also reports which model route this bridge has. Plain or signed. A scored scenario\'s stakes (each criterion\'s weight, each level\'s points, the pass rule and the author\'s reason for it) come only in an answer to this bridge\'s web app (its own Interego sign-in) or to a key an admin registered on this workspace (an admin\'s, a demo key, or one holding a role here). An answer to ' + STAKES_LEFT_OUT_FOR + ' leaves them out and says so (stakesWithheld), and keys its rubric and scenario hashes for their own scenario version, so they match no other scenario\'s or version\'s and cannot be checked against a guess.',
     method: 'POST',
     targetTemplate: '{base}/pev/list_scenarios',
     annotations: hints('List scenarios', true, false, true, true),
@@ -126,7 +133,7 @@ export const pevAffordances: ReadonlyArray<Affordance> = [
       { name: 'scenario_iri', type: 'string', required: false, description: 'One scenario, with its versions. In a signed request it may be in the payload instead (scenarioIri).' },
       { name: 'include_drafts', type: 'string', required: false, description: 'true to list drafts too. In a signed request it may be in the payload instead (includeDrafts).', enum: ['true', 'false'] },
     ],
-    outputs: out('The scenarios (their stakes only for this bridge\'s web app or a registered key; otherwise stakesWithheld says what was left out) and the bridge\'s routes.', ['podUrl']),
+    outputs: out('The scenarios (without their stakes for ' + STAKES_LEFT_OUT_FOR + ', where stakesWithheld says what was left out) and the bridge\'s routes.', ['podUrl']),
   },
   {
     action: PEV_ACTION.startAttempt as IRI,
@@ -192,7 +199,7 @@ export const pevAffordances: ReadonlyArray<Affordance> = [
     targetTemplate: '{base}/pev/judge_attempt',
     annotations: hints('Judge an attempt', false, false, false, true),
     inputs: [...ENVELOPE, ...BYOK],
-    outputs: out('The judgment, the provisional result and what the next level asks for. Asked from a chat assistant the Interego relay signed for: the levels the result counted, never its points, percent or pass result (stakesWithheld says so).', ['attemptIri', 'state', 'descriptorUrl']),
+    outputs: out('The judgment, the provisional result and what the next level asks for. Asked by ' + STAKES_LEFT_OUT_FOR + ': the levels the result counted, never its points, percent or pass result (stakesWithheld says so).', ['attemptIri', 'state', 'descriptorUrl']),
   },
   {
     action: PEV_ACTION.judgePacket as IRI,
@@ -220,12 +227,12 @@ export const pevAffordances: ReadonlyArray<Affordance> = [
     action: PEV_ACTION.reviewQueue as IRI,
     toolName: 'pev.review_queue',
     title: 'The review queue',
-    description: 'A reviewer reads the attempts awaiting review, reopened ones first, ranked by a priority whose factors are returned (unverified quotes, judge disagreement, closeness to the pass threshold, uncertainty, calibration need, learner-controlled routes, audit sample). Attempts the reviewer is conflicted on are left out and counted. Payload: {limit?}. Read from a chat assistant the Interego relay signed for, each entry carries its rubric, judgments and provisional result without the scoring stakes, and the queue is ranked without closeness to the pass threshold, which is worked out from them.',
+    description: 'A reviewer reads the attempts awaiting review, reopened ones first, ranked by a priority whose factors are returned (unverified quotes, judge disagreement, closeness to the pass threshold, uncertainty, calibration need, learner-controlled routes, audit sample). Attempts the reviewer is conflicted on are left out and counted. Payload: {limit?}. Read by ' + STAKES_LEFT_OUT_FOR + ', each entry carries its rubric, judgments and provisional result without the scoring stakes, and the queue is ranked without closeness to the pass threshold, which is worked out from them.',
     method: 'POST',
     targetTemplate: '{base}/pev/review_queue',
     annotations: hints('Review queue', true, false, true, true),
     inputs: [...ENVELOPE],
-    outputs: out('Queue entries with their factors and the weights (for a chat assistant: without the scoring stakes, which stakesWithheld names).', ['podUrl']),
+    outputs: out('Queue entries with their factors and the weights, each naming its scenario version (for ' + STAKES_LEFT_OUT_FOR + ': without the scoring stakes, which stakesWithheld names).', ['podUrl']),
   },
   {
     action: PEV_ACTION.countersignAttempt as IRI,
@@ -236,7 +243,7 @@ export const pevAffordances: ReadonlyArray<Affordance> = [
     targetTemplate: '{base}/pev/countersign_attempt',
     annotations: hints('Countersign', false, false, false, true),
     inputs: [...ENVELOPE],
-    outputs: out('The reviewed attempt and the final result (to a chat assistant, where the operator lets one decide: the final levels without the score).', ['attemptIri', 'state', 'descriptorUrl']),
+    outputs: out('The reviewed attempt and the final result (to ' + STAKES_LEFT_OUT_FOR + ': the final levels without the score; a chat assistant reviews only where the operator lets one decide).', ['attemptIri', 'state', 'descriptorUrl']),
   },
   {
     action: PEV_ACTION.overrideAttempt as IRI,
@@ -247,7 +254,7 @@ export const pevAffordances: ReadonlyArray<Affordance> = [
     targetTemplate: '{base}/pev/override_attempt',
     annotations: hints('Override', false, false, false, true),
     inputs: [...ENVELOPE],
-    outputs: out('The reviewed attempt and the final result (to a chat assistant, where the operator lets one decide: the final levels without the score).', ['attemptIri', 'state', 'descriptorUrl']),
+    outputs: out('The reviewed attempt and the final result (to ' + STAKES_LEFT_OUT_FOR + ': the final levels without the score; a chat assistant reviews only where the operator lets one decide).', ['attemptIri', 'state', 'descriptorUrl']),
   },
   {
     action: PEV_ACTION.contestReview as IRI,
@@ -281,7 +288,7 @@ export const pevAffordances: ReadonlyArray<Affordance> = [
     annotations: hints('Calibration', true, false, true, true),
     inputs: [
       ...POD_ONLY,
-      { name: 'rubric_hash', type: 'string', required: false, description: 'Only cells of this rubric version, its hash as these cells show it (keyed).' },
+      { name: 'rubric_hash', type: 'string', required: false, description: 'Only cells of this rubric version, its hash as these cells show it: keyed for calibration, so it matches no rubric fingerprint shown with a scenario, an attempt or a judgment.' },
       { name: 'judge', type: 'string', required: false, description: 'Only cells of this judge id.' },
       { name: 'group_by', type: 'string', required: false, description: 'rubric-version (default) or criterion-content (pooled, information only).', enum: ['rubric-version', 'criterion-content'] },
     ],
@@ -291,7 +298,7 @@ export const pevAffordances: ReadonlyArray<Affordance> = [
     action: PEV_ACTION.scenarioResults as IRI,
     toolName: 'pev.scenario_results',
     title: 'Results for one scenario',
-    description: 'A reviewer, author or admin reads what happened in practice on a scenario: counts by state, final and provisional level distributions, how many met the pass mark, coached and attempt-number splits, and where reviewers changed the judge. A row with any count from 1 to 4 shows only its total, and a split is withheld when either side has such a row. Reviewers and admins see each change with its reason; authors see suppressed counts. Payload: {scenarioIri, versions?}. Read from a chat assistant the Interego relay signed for, how many met the pass mark is left out (stakesWithheld).',
+    description: 'A reviewer, author or admin reads what happened in practice on a scenario: counts by state, final and provisional level distributions, how many met the pass mark, coached and attempt-number splits, and where reviewers changed the judge. A row with any count from 1 to 4 shows only its total, and a split is withheld when either side has such a row. Reviewers and admins see each change with its reason; authors see suppressed counts. Payload: {scenarioIri, versions?}. Read by ' + STAKES_LEFT_OUT_FOR + ', how many met the pass mark is left out (stakesWithheld).',
     method: 'POST',
     targetTemplate: '{base}/pev/scenario_results',
     annotations: hints('Scenario results', true, false, true, true),
@@ -307,13 +314,13 @@ export const pevAffordances: ReadonlyArray<Affordance> = [
     targetTemplate: '{base}/pev/project_attempt',
     annotations: hints('Project to xAPI', false, false, false, true),
     inputs: [...ENVELOPE],
-    outputs: out('The statement, what it leaves out, and the audit descriptor. A scored statement carries the score, so a scored attempt is refused, before anything is written, to a chat assistant the Interego relay signs for or a key not registered here (stakes-not-in-chat).', ['statementId', 'auditDescriptorUrl']),
+    outputs: out('The statement, what it leaves out, and the audit descriptor. A scored statement carries the score, so a scored attempt is refused, before anything is written, to ' + STAKES_LEFT_OUT_FOR + ' (stakes-not-in-chat, with what to do in remedy).', ['statementId', 'auditDescriptorUrl']),
   },
   {
     action: PEV_ACTION.holderCopy as IRI,
     toolName: 'pev.holder_copy',
     title: 'Copy your record to your own pod',
-    description: 'The learner copies every version of their attempt record, with the platform\'s signatures, to a pod they name. Payload: {attemptIri, targetPodUrl}. Works for pods that accept this bridge\'s writes; otherwise use pev.export_record and write the bytes with your own credentials. A scored attempt\'s graphs hold the scoring stakes, unencrypted on the copy, so its copy is refused to a chat assistant the Interego relay signs for and to a key not registered here (stakes-not-in-chat).',
+    description: 'The learner copies every version of their attempt record, with the platform\'s signatures, to a pod they name. Payload: {attemptIri, targetPodUrl}. Works for pods that accept this bridge\'s writes; otherwise use pev.export_record and write the bytes with your own credentials. A scored attempt\'s graphs hold the scoring stakes, unencrypted on the copy, so its copy is refused to ' + STAKES_LEFT_OUT_FOR + ' (stakes-not-in-chat, with what to do in remedy).',
     method: 'POST',
     targetTemplate: '{base}/pev/holder_copy',
     annotations: hints('Copy to my pod', false, false, true, true),
@@ -329,7 +336,7 @@ export const pevAffordances: ReadonlyArray<Affordance> = [
     targetTemplate: '{base}/pev/export_record',
     annotations: hints('Export my record', true, false, true, true),
     inputs: [...ENVELOPE],
-    outputs: out('Every version\'s bytes and the verification steps. A scored attempt\'s graphs hold the scoring stakes, so to a chat assistant the Interego relay signed for, or a key not registered here, only the descriptors are returned (stakesWithheld).', ['attemptIri', 'exportedAt']),
+    outputs: out('Every version\'s bytes and the verification steps. A scored attempt\'s graphs hold the scoring stakes, so to ' + STAKES_LEFT_OUT_FOR + ' only the descriptors are returned, and graphsLeftOut says so (stakesWithheld).', ['attemptIri', 'exportedAt']),
   },
   {
     action: PEV_ACTION.redactAttempt as IRI,
@@ -346,12 +353,12 @@ export const pevAffordances: ReadonlyArray<Affordance> = [
     action: PEV_ACTION.getAttempt as IRI,
     toolName: 'pev.get_attempt',
     title: 'Read an attempt',
-    description: 'The learner, a reviewer, a judge of the attempt or an admin reads it: turns, every judgment with checked quotes and their offsets, the provisional and final results (computed by the platform), reviews, reopenings, versions, authorship, what the next level asks for, and the acts this caller can take next. Without attemptIri: the caller\'s attempts (or all, for a reviewer or admin). Either answer says who the caller was read as (signedAs: the principal, and for a request the Interego relay signed, its agent). Payload: {attemptIri?}. Read from a chat assistant the Interego relay signed for, whatever the caller\'s roles, or with a key not registered here: the rubric\'s criteria and levels, every judgment\'s and review\'s levels, quotes and reasons, and no scoring stakes (weights, level points, the pass rule, points, percent, pass results or unmet requirements); stakesWithheld says so.',
+    description: 'The learner, a reviewer, a judge of the attempt or an admin reads it: turns, every judgment with checked quotes and their offsets, the provisional and final results (computed by the platform), reviews, reopenings, versions, authorship, what the next level asks for, and the acts this caller can take next. Without attemptIri: the caller\'s attempts (or all, for a reviewer or admin). Either answer says who the caller was read as (signedAs: the principal, and for a request the Interego relay signed, its agent). Payload: {attemptIri?}. Read by ' + STAKES_LEFT_OUT_FOR + ', whatever the caller\'s roles: the rubric\'s criteria and levels, every judgment\'s and review\'s levels, quotes and reasons, and no scoring stakes (weights, level points, the pass rule, points, percent, pass results or unmet requirements); stakesWithheld says so.',
     method: 'POST',
     targetTemplate: '{base}/pev/get_attempt',
     annotations: hints('Read an attempt', true, false, true, true),
     inputs: [...ENVELOPE],
-    outputs: out('The attempt view, or a list of attempts (for a chat assistant: without the scoring stakes).', ['attemptIri', 'state']),
+    outputs: out('The attempt view, or a list of attempts (for ' + STAKES_LEFT_OUT_FOR + ': without the scoring stakes).', ['attemptIri', 'state']),
   },
   {
     action: PEV_ACTION.signAsDemoRole as IRI,
