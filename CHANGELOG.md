@@ -1,5 +1,15 @@
 # Changelog
 
+## 2026-11-10 — Practice Evidence: where a stand-in is the same, said exactly
+
+The scenario list's description said a fingerprint's stand-in in text is the
+same wherever that text is shown. It is the same only within one scenario
+version. A scenario's results and the calibration table show stand-ins of
+their own, so one criterion title can show three. The description now says
+"for the same scenario version" and names the two that differ. The README and
+an entry below listed the review queue among the views of a session's lines;
+it shows the judges' quotes, not the lines, and they now say so.
+
 ## 2026-11-10 — Practice Evidence: a judge's quote that leaves out part of a stand-in checks out
 
 The same review found the quote fix below incomplete. Practice Evidence put a
@@ -61,8 +71,9 @@ Now a fingerprint inside text is replaced with a stand-in keyed with Practice
 Evidence's own key under a label of its own. It never equals a fingerprint
 Practice Evidence writes in a field, or the start of one, so it still checks
 no guess. The same fingerprint shows the same stand-in in every answer about
-the same scenario version: the judge packet, the session, the review queue and
-the conversation's own answers all show a line the same way. A quote copied
+the same scenario version: the judge packet, the session and the
+conversation's own answers all show a line the same way, and the review queue
+shows the judges' quotes from it the same way. A quote copied
 from any of them is read back as the learner's words as stored, checked
 against them, and kept as them. The transcript's fingerprint is unchanged.
 

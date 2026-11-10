@@ -1232,4 +1232,20 @@ describe('what the descriptions and the README say about who reads the stakes', 
     // No named character appears in the README, so every person in it is they.
     expect(readme.match(/\b(she|her|hers|herself|he|him|his|himself)\b/gi)).toBeNull();
   });
+
+  it('a stand-in is said to be the same only for the same scenario version, and the review queue is named for its quotes, not lines', () => {
+    const list = pevAffordances.find((a) => a.toolName === 'pev.list_scenarios')!;
+    expect(list.description).toContain('the same wherever it is shown for the same scenario version (a scenario\'s results and calibration show stand-ins of their own)');
+    expect(list.description).not.toContain('the same wherever that text is shown');
+    const readme = readFileSync(new URL('../README.md', import.meta.url), 'utf8');
+    expect(readme).toContain('the review queue shows the judges\' quotes from it the same way (it shows no lines)');
+    expect(readme).not.toMatch(/view of a session's transcript \([^)]*review queue/);
+    // As said: the same title holds another stand-in in an answer with no scenario version (each its own) and in calibration's cells.
+    const m = hashMask(Buffer.alloc(32, 3));
+    const title = { title: `Names it urn:pev:rubric:${RAW.rubric}` };
+    const shownFor = (scope: Parameters<typeof maskAnswerHashes>[2]): string => (maskAnswerHashes(title, m, scope) as { title: string }).title;
+    const v = { scenarioIri: 'urn:pev:scenario:unit', version: 1 };
+    expect(new Set([shownFor(v), shownFor(v)]).size).toBe(1);
+    expect(new Set([shownFor(v), shownFor(null), shownFor(null), shownFor('cells')]).size).toBe(4);
+  });
 });

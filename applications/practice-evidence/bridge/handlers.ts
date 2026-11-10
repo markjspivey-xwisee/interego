@@ -410,9 +410,9 @@ function scopeTo(call: Call, a: { readonly scenarioIri: string; readonly version
 /**
  * How a quote sent for attempt `a` is read back (`verifyQuoteAsShown`). An answer to a caller who
  * reads no stakes shows a fingerprint inside a line with a stand-in keyed for the attempt's scenario
- * version (`maskAnswerHashes`), the scope of every answer that shows the attempt's turns: the judge
- * packet, the attempt, the review queue, the conversation's own acts. A quote copied from any of
- * them is read as the stored line it was copied from, whoever sends it.
+ * version (`maskAnswerHashes`), the scope of every answer that shows the attempt's turns (the judge
+ * packet, the attempt, the conversation's own acts) or quotes from them (the review queue). A quote
+ * copied from any of them is read as the stored line it was copied from, whoever sends it.
  */
 async function quotesAsStoredFor(call: Call, a: AttemptBody): Promise<(quote: string) => string> {
   const k = (await call.ctx.hashMask()).version(a.scenario.scenarioIri, a.scenario.version);
