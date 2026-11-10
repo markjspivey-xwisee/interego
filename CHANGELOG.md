@@ -1,5 +1,26 @@
 # Changelog
 
+## 2026-11-10 — Practice Evidence: a signed request's payload no longer checks a guess
+
+A fourth review found another way to check a guess at a scored scenario's
+weights and pass mark, older than the changes below. A record keeps each signed
+request as it was sent: a turn, a review, a contest, a transcript removal. A
+request signed with a key can carry fields of the signer's choosing beside the
+act's own. Answers to someone who reads no stakes showed those payloads, and
+keyed a field there named like Practice Evidence's own rubric fingerprint the
+same way as the real one. So a key nobody registered could write guesses into
+one contest or removal, then read the session back and see which guess matched.
+An object in the payload could even name another scenario to compare against.
+
+Now an answer to someone who reads no stakes shows a signed request without
+what it signed, and says so (`payloadLeftOut`). The signature, the fingerprint
+of what was signed, and who signed it stay. The web app, and keys an admin
+registered for a role other than agent, still see the whole request. The note every such answer carries,
+and the README, say so.
+
+Not covered: a request may still carry fields the act does not use. They are
+kept in the record, shown only to readers of the stakes, and never acted on.
+
 ## 2026-11-10 — Practice Evidence: a judge's quote of a line holding a fingerprint checks out
 
 A review found that the change below broke judging in one case. When a

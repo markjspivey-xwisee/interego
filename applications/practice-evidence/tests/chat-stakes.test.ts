@@ -840,7 +840,8 @@ describe('a rubric fingerprint a caller writes into text comes back as a stand-i
     noGuessCheckable(await ract(H, 'pev.get_attempt', P.learner.claude, { attemptIri: a }), 44, bare, 'the contested attempt from the learner\'s Claude');
     const again = ok(await ract(H, 'pev.get_attempt', P.learner.claude, { attemptIri: a }));
     noGuessCheckable(await ract(H, 'pev.redact_attempt', P.learner.claude, { attemptIri: a, target: again['currentTarget'], why }), 0, bare, 'the redaction');
-    noGuessCheckable(await ract(H, 'pev.get_attempt', P.learner.claude, { attemptIri: a }), 8, bare, 'the redacted attempt from the learner\'s Claude');
+    // The reason, once, and the criterion's title: the removal's signed request is shown without what it signed.
+    noGuessCheckable(await ract(H, 'pev.get_attempt', P.learner.claude, { attemptIri: a }), 5, bare, 'the redacted attempt from the learner\'s Claude');
 
     // The author's chat edits only the scored scenario's words, keeping its stakes, and reads them back.
     const listed = ok(await ract(H, 'pev.list_scenarios', P.author.claude, { scenarioIri: sc }));
@@ -944,6 +945,97 @@ describe('a rubric fingerprint a caller writes into text comes back as a stand-i
     const norm = String((chat['turns'] as Out[]).find((t) => t['index'] === 1)!['normalisedText']);
     const marks = (chat['highlights'] as { turnIndex: number; start: number; end: number }[]).filter((h) => h.turnIndex === 1).map((h) => norm.slice(h.start, h.end));
     expect(marks.sort()).toEqual([...top.map(() => fromPacket), ...top.map(() => fromView)].sort());
+  }, SLOW);
+});
+
+/** A signed request as a record keeps it, wherever an answer holds one. */
+const isStoredEnvelope = (o: Out): boolean =>
+  (o['form'] === 'pev-canonical' || o['form'] === 'signed-request') && typeof o['signature'] === 'string' && typeof o['payloadSha256'] === 'string';
+
+/** An answer split in two: every stored signed request in it, and the answer with each of them taken out. */
+function splitEnvelopes(r: unknown): { envelopes: Out[]; rest: unknown } {
+  const envelopes: Out[] = [];
+  const walk = (x: unknown): unknown => {
+    if (Array.isArray(x)) return x.map(walk);
+    if (x === null || typeof x !== 'object') return x;
+    if (isStoredEnvelope(x as Out)) { envelopes.push(x as Out); return null; }
+    return Object.fromEntries(Object.entries(x).map(([k, y]) => [k, walk(y)]));
+  };
+  return { envelopes, rest: walk(r) };
+}
+
+describe('a signed request a record keeps is shown to a caller who reads no stakes without what it signed', () => {
+  it('a key nobody registered writes the bridge\'s own field names into its contest and removal: none of it comes back keyed, to compare', async () => {
+    // A scored scenario of its own. The other scored scenario (X['sc'], version 1) is never practised on here.
+    const input = { ...demoScenarioInput('missed-deadline', 2), scenarioKey: 'payload-fields', title: 'Fields in a payload' };
+    const S = coerceScenario(input);
+    if (!('value' in S)) throw new Error('the scenario does not coerce');
+    const own = rubricHash(S.value.rubric);
+    const pub = ok(await ract(H, 'pev.author_scenario', P.author.web, { scenario: input, status: 'published', draftAssistance: { used: false } }));
+    expect(pub['rubricHash']).toBe(own);
+    const sc = String(pub['scenarioIri']);
+    // Beside each act's own fields: a wrong guess and the right ones, bare, under every field name this bridge keys a hash
+    // in (rubricHash, scenarioHash, rubricIri, a cell's kind), in objects naming the other scenario's version, and in
+    // objects shaped like calibration cells.
+    const wrong = sha256('a wrong guess');
+    const extras: Out = {
+      guesses: [wrong, own].map((h) => ({ rubricHash: h, scenarioHash: h, rubricIri: `urn:pev:rubric:${h}` })),
+      other: [
+        { scenarioIri: X['sc'], version: 1, rubricHash: RAW.rubric, scenarioHash: RAW.scenario, rubricIri: `urn:pev:rubric:${RAW.rubric}` },
+        { scenario: { scenarioIri: X['sc'], version: 1 }, rubricHash: RAW.rubric },
+        { scenarioIri: X['sc'], scenarioVersion: 1, items: [{ rubricHash: RAW.rubric }] },
+      ],
+      cells: [own, RAW.rubric].map((h) => ({
+        grouping: 'rubric-version', criterionContentHash: sha256('a criterion'), judgeId: 'a-judge', rubricHash: h, kind: `pev/${h.slice(0, 16)}/asks-their-view`,
+      })),
+    };
+
+    const start = ok(await kact(H, 'pev.start_attempt', FRESH, { scenarioIri: sc, scenarioVersion: 1, coached: false }));
+    const a = String(start['attemptIri']);
+    const said = ok(await kact(H, 'pev.say', FRESH, { attemptIri: a, turnIndex: 1, text: 'I would like us to agree a new date for the report before Friday.' }));
+    ok(await kact(H, 'pev.end_conversation', FRESH, { attemptIri: a, turnIndex: said['nextTurnIndex'] }));
+    ok(await kact(H, 'pev.judge_attempt', FRESH, { attemptIri: a }));
+    const seen = ok(await ract(H, 'pev.get_attempt', P.reviewer2.web, { attemptIri: a }));
+    const levels = S.value.rubric.criteria.map((c) => ({ criterionId: c.id, levelId: c.levels[2]!.id, why: 'Set by the reviewer, who read the whole transcript.' }));
+    ok(await ract(H, 'pev.override_attempt', P.reviewer2.web, { attemptIri: a, target: seen['currentTarget'], levels, sawJudgeLevelsFirst: true }));
+
+    // The key contests the review, and then removes the transcript, each with the fields above in its signed payload.
+    const before = ok(await kact(H, 'pev.get_attempt', FRESH, { attemptIri: a }));
+    const contest = ok(await kact(H, 'pev.contest_review', FRESH, { attemptIri: a, target: before['currentTarget'], why: 'The second criterion missed what I asked first.', ...extras }));
+    const contested = ok(await kact(H, 'pev.get_attempt', FRESH, { attemptIri: a }));
+    const queue = ok(await kact(H, 'pev.review_queue', KEY_AGENT));
+    const removed = ok(await kact(H, 'pev.redact_attempt', FRESH, { attemptIri: a, target: contested['currentTarget'], why: 'I would rather this text were not kept.', ...extras }));
+    const after = ok(await kact(H, 'pev.get_attempt', FRESH, { attemptIri: a }));
+    const answers: [string, Out][] = [
+      ['the contest', contest], ['the contested attempt', contested], ['the review queue of a key registered as an agent', queue], ['the removal', removed],
+      ['the attempt after the removal', after],
+      ['the scenario', ok(await kact(H, 'pev.list_scenarios', FRESH, { scenarioIri: sc }))],
+      ['the other scenario', ok(await kact(H, 'pev.list_scenarios', FRESH, { scenarioIri: X['sc'] }))],
+      ['every scenario', ok(await kact(H, 'pev.list_scenarios', FRESH))],
+      ['calibration, unsigned', (await H['pev.calibration']!({})) as Out],
+    ];
+    for (const [what, r] of answers) expect(stakesIn(r), what).toEqual([]);
+
+    // Each stored request the key reads, its own included, keeps its signature and payload hash and shows no payload.
+    const reopening = ((contested['reopenings'] as Out[]).at(-1)!)['envelope'] as Out;
+    const removal = (after['redaction'] as Out)['envelope'] as Out;
+    for (const [what, e] of [['the contest\'s request', reopening], ['the removal\'s request', removal], ['the contest\'s own answer', (contest['reopening'] as Out)['envelope'] as Out]] as const) {
+      expect([e['form'], typeof e['signature'], typeof e['payloadSha256'], 'payload' in e, 'signedPayload' in e, e['payloadLeftOut']], what)
+        .toEqual(['pev-canonical', 'string', 'string', false, false, true]);
+    }
+    // No value this bridge keyed, in any of those answers, appears in a stored request in any of them, nor its first 16 hex.
+    const keyed = new Set(answers.flatMap(([, r]) => [...hashesIn(splitEnvelopes(r).rest).keyed]));
+    expect(keyed.size).toBeGreaterThan(4);
+    for (const [what, r] of answers) {
+      const stored = JSON.stringify(splitEnvelopes(r).envelopes);
+      expect([...keyed].filter((k) => stored.includes(k)), `${what}: a keyed value in a stored request`).toEqual([]);
+      noBareHash(r, what);
+    }
+
+    // The web app reads the requests as signed, the key's fields in them included.
+    const web = webAnswer(await ract(H, 'pev.get_attempt', P.reviewer.web, { attemptIri: a }), 'the attempt in the web app');
+    const signed = ((web['redaction'] as Out)['envelope'] as Out)['payload'] as Out;
+    expect([(signed['guesses'] as Out[])[1]!['rubricHash'], (signed['other'] as Out[])[0]!['rubricHash']]).toEqual([own, RAW.rubric]);
   }, SLOW);
 });
 

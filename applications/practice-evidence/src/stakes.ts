@@ -23,7 +23,8 @@
  * words never comes back equal to the hash it would be checked against. The stand-in is the same
  * each time the same hash is shown in the same scope, so a judge who quotes a line holding one
  * quotes what every view of that transcript shows, and the quote is read back as the stored text
- * it stands for (`quoteAsStored`).
+ * it stands for (`quoteAsStored`). A signed request a record keeps is shown without what it signed:
+ * that is the signer's own object, which could hold a guess under a field name this bridge keys.
  *
  * Pure: no I/O.
  */
@@ -34,7 +35,8 @@ import type { ReviewResult } from './records.js';
 /** What every answer that left a scored scenario's stakes out says, at its top level. */
 export const STAKES_WITHHELD = 'This answer leaves out a scored scenario\'s stakes: each criterion\'s weight, each level\'s points, the pass rule, '
   + 'and any points, percent or pass result worked out from them; its rubric and scenario fingerprints are keyed to their own scenario version, '
-  + 'so they match no other scenario\'s or version\'s, and one written into any text is replaced with a stand-in keyed apart from them, so none can be checked against a guess. Practice Evidence leaves the stakes out of every answer to a chat assistant the Interego relay signs for, a key '
+  + 'so they match no other scenario\'s or version\'s, and one written into any text is replaced with a stand-in keyed apart from them, so none can be checked against a guess. '
+  + 'A signed request a record keeps is shown without its payload; its signature and the payload\'s hash stay. Practice Evidence leaves the stakes out of every answer to a chat assistant the Interego relay signs for, a key '
   + 'no admin registered or one registered as an agent, or a request nobody signed; people see them in the Practice Evidence '
   + 'web app, signed in with Interego or with an address an admin registered.';
 
@@ -163,6 +165,26 @@ function versionIn(o: Record<string, unknown>, under: Version | null): Version |
   return under;
 }
 
+/** The forms a record keeps a signed request in (records.ts `EnvelopeForm`). */
+const ENVELOPE_FORMS: ReadonlySet<unknown> = new Set(['pev-canonical', 'signed-request']);
+/**
+ * A signed request as a record keeps it (records.ts `StoredEnvelope`), wherever an answer holds one: a
+ * turn's, a review's, a contest's or a withdrawal's, a removal's, a scenario's draft receipt.
+ */
+const isStoredEnvelope = (o: Record<string, unknown>): boolean =>
+  ENVELOPE_FORMS.has(o['form']) && typeof o['signature'] === 'string' && typeof o['payloadSha256'] === 'string';
+
+/**
+ * A stored signed request without what was signed (`payload`, or the signed JSON text,
+ * `signedPayload`), saying so (`payloadLeftOut`); its signature, its payload's sha256 and who stood
+ * behind it stay. An envelope whose payload redaction already removed is returned as it is.
+ */
+function withoutPayload(o: Record<string, unknown>): Record<string, unknown> {
+  if (!('payload' in o) && !('signedPayload' in o)) return o;
+  const { payload: _p, signedPayload: _s, ...rest } = o;
+  return { ...rest, payloadLeftOut: true };
+}
+
 /**
  * A calibration cell (calibration.ts `CalibrationCellView`), wherever an answer holds one (the
  * calibration read, a scenario's results): it groups judgments by a rubric's content across
@@ -173,7 +195,14 @@ const isCalibrationCell = (o: Record<string, unknown>): boolean =>
 
 /**
  * An answer with every rubric and scenario hash keyed or replaced, apart from signed bytes
- * (`SIGNED_KEYS`).
+ * (`SIGNED_KEYS`), and every stored signed request's payload left out.
+ *
+ * Left out: what a signed request kept in a record signed (`payload`, `signedPayload`), wherever the
+ * answer holds one (`withoutPayload`). A payload is the signer's own object, with any fields it chose
+ * beside the act's: walked like this bridge's own, a `rubricHash` or `rubricIri` written there would be
+ * keyed as the answer's own is, in a scenario version an object inside it could name, or for cells
+ * inside an object shaped like one, so a guess written there would come back keyed, to compare. The
+ * signature, the payload's sha256 and who stood behind it stay.
  *
  * Keyed: the fields this bridge writes a hash into, and only those: the value of a `rubricHash` or
  * `scenarioHash` (64 hex), of a `rubricIri` (`urn:pev:rubric:<hash>`, exactly), and of a calibration
@@ -214,8 +243,9 @@ export function maskAnswerHashes(v: unknown, m: HashMask, scope: HashScope = nul
     }
     if (Array.isArray(x)) return x.map((y) => walk(y, at));
     if (isRecord(x)) {
-      const here = at === 'cells' || isCalibrationCell(x) ? 'cells' : versionIn(x, at);
-      return Object.fromEntries(Object.entries(x).map(([k, y]) => [k, SIGNED_KEYS.has(k) ? y : walk(y, here, k)]));
+      const o = isStoredEnvelope(x) ? withoutPayload(x) : x;
+      const here = at === 'cells' || isCalibrationCell(o) ? 'cells' : versionIn(o, at);
+      return Object.fromEntries(Object.entries(o).map(([k, y]) => [k, SIGNED_KEYS.has(k) ? y : walk(y, here, k)]));
     }
     return x;
   };
