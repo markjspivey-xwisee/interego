@@ -21,7 +21,7 @@
  */
 import type { IRI } from '@interego/core';
 import type { Affordance, AffordanceInput, AffordanceOutput } from '../_shared/affordance-mcp/index.js';
-import { payloadSummary, ENVELOPE_INTENTS, READ_SECTIONS, REGISTRY_PARTS } from './src/payloads.js';
+import { payloadSummary, ENVELOPE_INTENTS, READ_SECTIONS, REGISTRY_PARTS, RATIFICATION_SUBJECTS } from './src/payloads.js';
 import { CHAT_DOCUMENT_MAX_CHARS } from './src/work.js';
 import type { EnvelopeIntent } from './src/records.js';
 
@@ -113,7 +113,7 @@ const TEMPLATE_INPUTS: AffordanceInput[] = [
   { name: 'plan_iri', type: 'string', required: false, description: 'The plan (value, submit, acknowledge an assignment).' },
   { name: 'decision_iri', type: 'string', required: false, description: 'The decision (countersign, record an outcome).' },
   { name: 'grant_iri', type: 'string', required: false, description: 'The grant (revoke).' },
-  { name: 'subject', type: 'string', required: false, description: 'For wrd:ratify-task: what is ratified. For wrd:update-registry: the one part of the change to template (entries, taskKinds or podPolicy); without it the template fills no part.', enum: ['description', 'classification', 'assignment', ...REGISTRY_PARTS] },
+  { name: 'subject', type: 'string', required: false, description: `For wrd:ratify-task: what is ratified (${RATIFICATION_SUBJECTS.join(', ')}; description when left out). For wrd:update-registry: the one part of the change to template (${REGISTRY_PARTS.join(', ')}); without it the template fills no part. Either intent refuses (400) a value from the other's list; any other intent ignores subject.`, enum: [...RATIFICATION_SUBJECTS, ...REGISTRY_PARTS] },
 ];
 const TEMPLATE_OUTPUTS: AffordanceOutput = {
   description: 'The schema, the template, the paths still to fill, the tool to send it to, the context read from the pod, and for a registry change a note on its parts. Asked for by a chat\'s relay-signed read, the template is the chat\'s payload: no issuedAt, and its nonce a placeholder made as the copied messages teach, listed first among the paths to fill.',

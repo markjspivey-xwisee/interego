@@ -14,6 +14,8 @@
  *   - a chat's read leaves out the text that is the same in every read unless asked, and can ask for
  *     the registry alone, inside the payload the relay signs (sizes measured below); it keeps this
  *     pod's own AI-permission rules, and the pod policy template carries every rule the pod holds;
+ *   - the template's subject, shared by a ratification and a registry change, is refused for either
+ *     when it is not that intent's own;
  *   - tasks come back in their process's order, and a recorded map echoes the document it keeps;
  *   - the packet's nonce wording and placeholders are the shared chat helper's, word for word.
  *
@@ -25,7 +27,7 @@ import { readFileSync } from 'node:fs';
 import { canonicalJson, importWallet, sha256Hex, signMessageRaw, type Wallet } from '@interego/core';
 import { createWrdHandlers } from '../bridge/handlers.js';
 import { wrdAffordances } from '../affordances.js';
-import { ENVELOPE_INTENTS } from '../src/payloads.js';
+import { ENVELOPE_INTENTS, RATIFICATION_SUBJECTS, REGISTRY_PARTS } from '../src/payloads.js';
 import { CHAT_NONCE_RULE, chatNonce } from '../src/work.js';
 import { memoryPod, demoClock, DEMO_POD } from '../demo/run.js';
 import { schemaErrors } from './json-schema.js';
@@ -376,5 +378,27 @@ describe('the chat route after a live run', () => {
     const keyRefused = await b.call('wrd.update_registry', { envelope: await b.keySign({ intent: 'wrd:update-registry', podUrl: DEMO_POD, issuedAt, nonce: 'chat-route-key-malformed-1' }) });
     expect([keyRefused['iep:refusalStatus'], keyRefused['iep:resolvedBy']]).toEqual([400, { action: 'urn:iep:action:wrd:envelope-template', toolName: 'wrd.envelope_template', intent: 'wrd:update-registry' }]);
     expect(obj(keyRefused['expectedPayload'])['required']).toContain('issuedAt');
+  }, 60_000);
+  it('the template\'s subject, shared by a ratification and a registry change, is refused for either when it is not that intent\'s own, unsigned and from a chat', async () => {
+    const b = await bridge({ kinds: true });
+    const subjectInput = wrdAffordances.find((a) => a.toolName === 'wrd.envelope_template')?.inputs.find((i) => i.name === 'subject');
+    expect(subjectInput?.enum).toEqual([...RATIFICATION_SUBJECTS, ...REGISTRY_PARTS]);
+    const unsigned = async (intent: string, subject?: string): Promise<Obj> => b.call('wrd.envelope_template', { intent, ...(subject === undefined ? {} : { subject }) });
+    const fromChat = async (intent: string, subject: string): Promise<Obj> => b.call('wrd.read_envelope_template', await b.relay('claude', { intent: 'wrd:read-records', template: { intent, subject } }));
+    // Its own: templated, as named (a ratification of the description when none is named).
+    for (const subject of RATIFICATION_SUBJECTS) expect([subject, obj((await unsigned('wrd:ratify-task', subject))['template'])['subject']]).toEqual([subject, subject]);
+    expect(obj((await unsigned('wrd:ratify-task'))['template'])['subject']).toBe('description');
+    // The other's, or neither's: refused before anything is read, unsigned and from a chat.
+    for (const subject of [...REGISTRY_PARTS, 'everything']) {
+      for (const [who, t] of [['unsigned', await unsigned('wrd:ratify-task', subject)], ['a chat', await fromChat('wrd:ratify-task', subject)]] as const) {
+        expect([who, subject, t['iep:refusalStatus'], t['error'], t['iep:refusalReason']]).toEqual([who, subject, 400, 'Unknown subject of a ratification.',
+          `subject must be one of description, classification, assignment for wrd:ratify-task${who === 'a chat' ? ' (relay-signed: under template in the payload the relay signs)' : ''}`]);
+      }
+    }
+    for (const subject of RATIFICATION_SUBJECTS) {
+      for (const [who, t] of [['unsigned', await unsigned('wrd:update-registry', subject)], ['a chat', await fromChat('wrd:update-registry', subject)]] as const) {
+        expect([who, subject, t['iep:refusalStatus'], t['error']]).toEqual([who, subject, 400, 'Unknown part of a registry change.']);
+      }
+    }
   }, 60_000);
 });

@@ -27,6 +27,8 @@ export type JsonSchema = Readonly<Record<string, unknown>>;
 export const READ_SECTIONS: readonly string[] = ['registry', 'workflows', 'tasks', 'plans', 'valuations', 'decisions', 'grants', 'runs'];
 /** The parts of a registry change, each of which a template may be asked for alone (template subject). */
 export const REGISTRY_PARTS: readonly string[] = ['entries', 'taskKinds', 'podPolicy'];
+/** What a ratification is about (wrd:ratify-task's subject, and its template's). */
+export const RATIFICATION_SUBJECTS: readonly string[] = ['description', 'classification', 'assignment'];
 
 const text = (description: string, maxLength?: number): JsonSchema => ({ type: 'string', description, ...(maxLength ? { maxLength } : {}) });
 const oneOf = (values: readonly string[], description: string): JsonSchema => ({ type: 'string', enum: [...values], description });
@@ -246,7 +248,7 @@ const FIELDS: Readonly<Record<EnvelopeIntent, IntentFields>> = {
   'wrd:ratify-task': {
     description: 'description/classification: a party named on the task (or owed ratification); assignment: the person the plan names. The head is the task, the classification or the plan you read.',
     properties: {
-      subject: oneOf(['description', 'classification', 'assignment'], ''), taskIri: iriOf('task'), ...HEAD,
+      subject: oneOf(RATIFICATION_SUBJECTS, ''), taskIri: iriOf('task'), ...HEAD,
       verdict: oneOf(['ratify', 'dispute', 'acknowledge', 'object'], 'ratify|dispute for description and classification; acknowledge|object for assignment'),
       note: { ...NOTE, description: 'required with dispute or object' }, answers: { ...ANSWERS, description: 'classification dispute only: your own answers' }, planIri: iriOf('plan (assignment only)'),
     },

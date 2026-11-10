@@ -65,7 +65,7 @@ import {
   DRAWS, DEMO_LABEL, DISTINCT_PEOPLE_NOTE, NOMINAL_BAND_COVERAGE, NO_COMPARISON_GROUP, RUN_ALTERNATIVES, REPORTED_COST_BASIS,
   type DecisionForCalibration, type GrantEvaluation, type ProbeOutcome, type ReviewedRun, type RunAnswer, type ValuationResult,
 } from '../src/valuation.js';
-import { payloadSchema, isEnvelopeIntent, RELAY_SIGNING, RELAY_SIGNED_HOW, READ_SECTIONS, REGISTRY_PARTS } from '../src/payloads.js';
+import { payloadSchema, isEnvelopeIntent, RELAY_SIGNING, RELAY_SIGNED_HOW, READ_SECTIONS, REGISTRY_PARTS, RATIFICATION_SUBJECTS } from '../src/payloads.js';
 import { openRelayDelegated, relayEnvelopeOf, agentSlugOf, isUserDid, type RelayDelegationPolicy } from '../src/relay-delegated.js';
 import {
   openEnvelope, verifyStoredEnvelope, bindRelayDelegated, NonceLedger, envelopeSha256, didOf, isAddress, isUserPrincipal, principalKey, principalOfDid,
@@ -1967,7 +1967,12 @@ export function createWrdHandlers(deps: WrdDeps = {}): Record<string, WrdHandler
         break;
       }
       case 'wrd:ratify-task': {
+        // The template's subject is shared with wrd:update-registry's parts: one of those, or any
+        // other value, is refused here rather than copied into a template the handler would refuse.
         const subject = arg('subject') ?? 'description';
+        if (!RATIFICATION_SUBJECTS.includes(subject)) {
+          return { ...refuse(400, 'Unknown subject of a ratification.', `subject must be one of ${RATIFICATION_SUBJECTS.join(', ')} for wrd:ratify-task${relayRead ? ' (relay-signed: under template in the payload the relay signs)' : ''}`) };
+        }
         const task = await found('task_iri', 'Task', 'task');
         Object.assign(t, { subject, taskIri: task?.iri ?? null, verdict: null });
         if (subject === 'assignment') {
@@ -2287,8 +2292,8 @@ export function createWrdHandlers(deps: WrdDeps = {}): Record<string, WrdHandler
       const call = await openSigned(args, 'wrd:ratify-task');
       const p = call.payload;
       const subject = p['subject'];
-      if (subject !== 'description' && subject !== 'classification' && subject !== 'assignment') {
-        return { ...refuse(400, BAD_PAYLOAD, 'payload.subject must be description, classification or assignment') };
+      if (typeof subject !== 'string' || !RATIFICATION_SUBJECTS.includes(subject)) {
+        return { ...refuse(400, BAD_PAYLOAD, `payload.subject must be ${RATIFICATION_SUBJECTS.slice(0, -1).join(', ')} or ${RATIFICATION_SUBJECTS.at(-1) ?? ''}`) };
       }
       const taskIri = needIri(p, 'taskIri');
       const verdict = p['verdict'];

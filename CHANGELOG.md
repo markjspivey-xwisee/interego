@@ -70,7 +70,12 @@ answers the shape of a change signed with the signer's own key. And a test now
 holds that the
 pod policy template carries every rule the pod holds, for a key holder and for
 a chat, so a change sent from it with one rule raised keeps the others; no test
-covered that before.
+covered that before. The template's `subject` names the part of a registry
+change and also what a ratification is about, and a ratification's template
+copied any value it was given, a registry part among them, into a payload the
+bridge then refused; it now refuses (400) any value but description,
+classification or assignment, as a registry change's template refuses any but
+its parts.
 
 New tests check each of these, and each fails with its fix taken out.
 
