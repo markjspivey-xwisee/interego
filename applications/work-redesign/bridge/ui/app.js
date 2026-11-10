@@ -3071,6 +3071,8 @@ async function copyForForm({ ready, make, what }) {
     if (!sameBasis(basis, docBasis(captureNow()))) continue;
     if (typeof made?.message !== 'string') {
       const off = await takeOff();
+      // Taking it off is a wait too: a form changed meanwhile is made and copied again rather than refused as it was.
+      if (!sameBasis(basis, docBasis(captureNow()))) continue;
       made?.refused?.();
       if (!off) toast('Not copied', OLD_MESSAGE_ON_CLIPBOARD, 'warning');
       return '';
@@ -3081,6 +3083,8 @@ async function copyForForm({ ready, make, what }) {
       // The refusal is a wait too: "Copy this" offers the message for the form as it is once the browser has answered.
       if (!sameBasis(basis, docBasis(captureNow()))) continue;
       await takeOff();
+      // So is taking an earlier round's message off: "Copy this" never offers a message for a form changed meanwhile.
+      if (!sameBasis(basis, docBasis(captureNow()))) continue;
       showCopyThis(made.message);
       return 'shown';
     }

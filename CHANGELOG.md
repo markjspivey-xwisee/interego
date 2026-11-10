@@ -29,7 +29,9 @@ the form as it was is then taken off again, and so it is when the answer for
 the changed form is refused or "Copy this" opens; a message copied since, by a
 later press or another copy button, is left alone. Only a write the browser took
 counts as this copy's, so a later try the browser refused never takes off text
-another copy put there in between (found by an automated review). Where the browser will not empty the clipboard,
+another copy put there in between (found by an automated review). Taking a
+message off is a wait too: a form changed while it happens is copied again, so
+"Copy this" and a failed packet's message never speak for a form no longer shown. Where the browser will not empty the clipboard,
 the page says it still holds the message for the form as it was before the
 last change. The chat route's button ("Copy the message for my assistant")
 makes its message on the spot and asks the bridge for nothing, so only the
