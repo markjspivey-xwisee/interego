@@ -1,5 +1,17 @@
 # Changelog
 
+## 2026-11-10 — I2IDL-X workbench: the stale-directory check opens a row before counting its controls
+
+Since a capability's details are built when its row opens, the check that a
+directory shown from its build snapshot cannot run requests counted enabled
+Validate buttons while every row was closed, so it found none whatever the
+rows would have held. It now opens one row first and requires that row's
+Validate button to be there and disabled, then counts as before. Found in peer
+review of the change that defers the details.
+
+Not covered: only the first row is opened, so a snapshot row further down that
+enabled its button would not be seen.
+
 ## 2026-11-10 — I2IDL-X workbench: a capability's details are built when its row is opened
 
 The Agents view's capability directory built every operation's inputs, buttons
