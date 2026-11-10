@@ -1,5 +1,18 @@
 # Changelog
 
+## 2026-11-10 — Foxxi keeps a finalized LTI grade beside any scored retake that is not final
+
+A scored LTI retake marked Pending, PendingManual or Failed now appears
+separately in the learner's gradebook while the last finalized grade stays in
+place, as a NotReady retake already did. Before, such a post replaced the
+reported grade, and a later NotReady post brought the finalized grade back. A
+newer finalized grade still replaces it, and a post with no score still clears
+the grade.
+
+Not covered: stored gradebooks need no migration, since the finalized grade
+was already kept with these posts. No live tool was observed sending these
+three statuses; the change is tested locally only.
+
 ## 2026-11-10 — Practice Evidence: the old wording of the demo rubric's top level is gone from the tests
 
 The same peer review found one test that still repeated the demo rubric's old

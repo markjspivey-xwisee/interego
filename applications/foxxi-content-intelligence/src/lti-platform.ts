@@ -178,8 +178,11 @@ export interface GradebookRow {
   readonly retake?: GradebookScore;
 }
 
+/** The finalized grade a later scored, not-yet-final post stands beside. acceptScore keeps
+ * lastFinalized only on such a post, whatever its grading progress, so a Pending, PendingManual
+ * or Failed retake leaves the reported grade alone exactly as a NotReady one does. */
 function retainedFinal(row: ResultRow): PostedScore | undefined {
-  return row.gradingProgress === 'NotReady' ? row.lastFinalized : undefined;
+  return row.lastFinalized;
 }
 
 const trimSlash = (s: string): string => s.replace(/\/+$/, '');
