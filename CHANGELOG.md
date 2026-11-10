@@ -15,6 +15,165 @@ Not covered: a closed row's details no longer match the browser's find-in-page.
 The directory's own filter still searches every operation's title, name,
 description and IRI. Small touch targets on Semantics and Review, and field
 labels overlapping nodes on the map, are unchanged.
+## 2026-11-10 — Practice Evidence: a quote reads back whichever of a fingerprint's last digit and its stand-in's takes a mark
+
+The same peer review found a case that reading a quote back by its place
+missed. Sometimes a combining mark follows a rubric fingerprint's last hex
+digit that the digit does not take, but the stand-in's last digit does: a
+fingerprint ending in a decimal digit, a stand-in ending in a letter, and a dot
+above, say. The judge packet and `normalisedText` then show the stand-in's
+letter and the mark as two characters, which NFC would fold into one. The quote
+rule normalises a quote with NFC, so an exact copy from the packet was not
+found as the packet shows it, and the line's text, normalised, was lined up
+with the normalised line only in the other direction. Where the stretch also
+held a curly apostrophe or a doubled space, the quote was found nowhere and was
+read back with every stand-in put back, the one the learner wrote out
+included, so it was "not found verbatim in any learner turn". The readings
+tried before had kept some runs as written and found it. A copy from the text
+or the packet that a chat app normalised on the way failed the same way, both
+before that change and after it, even with a single fingerprint and nothing
+written out.
+
+Now the line's text and its normalised form, each as shown, are normalised as
+a quote is and lined up with the normalised line in whichever direction NFC
+folds at a fingerprint's last digit: the letter or digit and the marks after it
+in one are taken as one place against the same in the other, when both start
+with a hex digit and hold the same marks. The quote is looked for in both. So
+a quote copied exactly from the packet or the text, normalised on the way, or
+copied again from how an answer shows a read-back quote, is found at its place
+and read back as the stored words there. More marks after the letter than NFC
+folds into it line up the same way. Nothing else changed: a place that starts
+or ends inside a word is still skipped, and a quote is never read back by
+offsets that do not line up.
+
+Tests: over fictional fingerprints ending in decimal digits and in hex
+letters, with one mark, another, and two marks that NFC puts in order and folds
+in part, meeting all four ways the two last digits take them; with and without
+the stand-in written out, with a doubled space and a curly apostrophe; each
+copy from the packet and from the text, as shown, straightened and normalised,
+and each way an answer shows the read-back quote, copied again as it is and
+normalised. The earlier fold test now uses fingerprints ending in decimal
+digits too. Through the bridge: a fingerprint ending in a decimal digit, a
+stand-in ending in a letter, the stand-in written out and a curly apostrophe;
+a judge quotes the packet as shown, a second judge copies the first's quote as
+shown, and the packet's stretch and the session's text are quoted normalised on
+the way. Each is credited, and the web app keeps the learner's words. All
+three tests fail without the change. The earlier entry's "Not covered" now
+says what it missed.
+
+Not covered: a quote a chat app changed in a way the quote rule's normalising
+does not undo (an apostrophe it does not straighten, say) is not found, as
+before. Where the two views differ anywhere but at a fingerprint's last digit
+and the marks after it, which the tests did not meet, that view normalised is
+not looked in.
+
+## 2026-11-10 — Practice Evidence: contesting a review hands the learner's chat on in its own answer
+
+A peer review, run on fictional data, found that contesting a review, the act
+that reopens judging, answered the learner's own chat with no hand-off note.
+The session could be judged again, and the chat was rightly not offered the
+judge packet, but nothing in that answer said what to do instead: the note came
+only with a later read of the session. Ending the conversation, the act that
+first opens judging, already carried it.
+
+The contest's answer now carries the same `handOff` a read of the session
+carries: to the learner's own chat, while there is room for another judgment.
+The README's list of answers that carry it, and the contest action's
+description, now name it.
+
+Tests: the live-run test checks the contest's answer from the learner's chat:
+contested, handed on to an appointed judge with the session page, no judge
+packet offered, and the same hand-off a read of the session then carries.
+Without the change, that answer has no hand-off and the test fails.
+
+Not covered: withdrawing a review is an admin's act, so its answer goes to the
+admin, never to the learner's chat, and carries no hand-off; the learner's chat
+gets it on its next read of the session, as before. A contest sent from the web
+app gets none, as before, since the page shows Send to your judge itself.
+
+## 2026-11-10 — Practice Evidence: a quote is read back by where it sits in the line as shown
+
+The same peer review found a limit in how a judge's quote is read back. A
+learner's line held one rubric fingerprint, written as `urn:pev:rubric:` and
+its hex, then four copies of the stand-in every view shows for it, which the
+learner had copied from an earlier view and written out, with ordinary words
+between. A judge copied the stretch the judge packet shows, starting after
+`urn:pev:rubric:`, so the quote held five runs of hex that read the same. The
+first had to be read back as the fingerprint and the other four kept as
+written. With up to four such runs every mix was tried, but with five or more
+only two were: every run read back, or every run kept. So the quote, copied
+exactly, was "not found verbatim in any learner turn", and the criterion was
+counted at its lowest level.
+
+Now nothing is tried in turn. The quote is looked for in each of the learner's
+lines as the views show it: the line as an attempt's text shows it, and its
+normalised form as the judge packet and normalisedText show it, the quote
+normalised as the quote rule normalises it. Where it is found, the stored
+line's words at the same place are what it is read back as. A stand-in is as
+long as what it replaces, so the places line up. Where a mark after a
+fingerprint's last hex digit makes NFC fold the two into one letter that the
+stand-in's digit does not take, the line's text, normalised, shows the digit
+and the mark, and it is lined up with the normalised line letter by letter.
+So which runs stand for a fingerprint and which the learner wrote out is read
+from the line, however many there are. The quote rule still holds: the turn
+the judge named is kept where the words sit there, and a place where the quote
+starts or ends inside a word of the stored line is not read back, so no part
+of a fingerprint is. A quote found nowhere is saved as before, with every
+stand-in read back, and says why. The saved quote, its fingerprint, the
+highlights and the transcript's fingerprint are still the stored words', a
+quote shown from its line and copied again reads back again, and no stand-in
+equals a fingerprint Practice Evidence keys in a field, or the start of one.
+A fingerprint followed by more hex in a line is shown as a stand-in with that
+hex after it; a read-back quote of it shown without its line now masks the
+first 64 hex of such a run too.
+
+Tests: the peer review's case with five runs, and with four and ten; a
+fingerprint and a calibration kind mixed with written-out stand-ins of both;
+quotes starting inside `urn:pev:rubric:` and at the kind's hex; the turn the
+judge named; quotes that cut a word, and the other person's lines; the folded
+letter copied from the text and changed on the way; and the same through the
+bridge, from the packet, with a second judge copying the first's quote.
+
+Not covered: the line's text, normalised, was lined up with the normalised
+line only where NFC folds the fingerprint's last digit and a mark into a letter
+the stand-in's digit does not take. The other way round, where the stand-in's
+digit takes the mark and the fingerprint's does not, the normalised form as
+shown is not in NFC, and a quote copied exactly from the judge packet, of a
+stretch the text shows otherwise (with a curly apostrophe or a doubled space),
+was not found, nor was one normalised on the way by a chat app; the readings
+tried before had found the first. The entry "a quote reads back whichever of a fingerprint's last digit
+and its stand-in's takes a mark" covers both. A quote a chat app changed in a
+way normalising does not undo is not found, as before.
+
+## 2026-11-10 — Practice Evidence: a reopened session is handed to a judge as a finished one is
+
+A peer review, run on fictional data, found that a session reopened by a
+contest or a withdrawn review could still be judged, but the learner was not
+shown how to send it to a judge. An appointed judge could fetch its judge
+packet while it had room for another judgment. The learner's own chat
+assistant got no hand-off note for it, though, and the web app did not show
+Send to your judge. When that assistant asked for the judge packet, the
+refusal told the learner to use Send to your judge, which the session page did
+not show in those states.
+
+Now every state a judge can assess a session in is treated alike: finished,
+judged, contested and review withdrawn, each while the session has fewer than
+five judgments. In each, the learner's chat gets the hand-off note, the web
+app shows Send to your judge (the judge packet is offered to the web app's own
+agent and to a key the learner holds, as for a finished or judged session),
+and the refusal to the learner's chat points to it. Once a reviewer has signed
+off, or the session has five judgments, none of them is offered, and the
+refusal says why. Tests check each of those states: what a read tells the
+learner's chat and the web app, the refusal's words and where they point, and
+whether the session page shows Send to your judge.
+
+Not covered: in a contested or withdrawn-review session the learner is still
+not offered Get a second opinion (a bridge's own model), though they may ask
+for it there; that was so before. On a workspace whose web app has no
+Interego sign-in, the hand-off still names Send to your judge, where that page
+says Get the hand-off; such a page cannot sign in as the Interego account a
+chat's session belongs to.
+
 ## 2026-11-10 — Foxxi keeps a finalized LTI grade beside any scored retake that is not final
 
 A scored LTI retake marked Pending, PendingManual or Failed now appears
@@ -60,10 +219,6 @@ that some stored line holds are checked. The first that checks out in the turn
 the judge named is kept, otherwise the first that checks out anywhere. A quote
 no reading finds is saved as before, with every stand-in read back, and says
 why.
-
-Not covered: with more than four such runs in one quote, only two readings
-are tried, every run read back and every run kept as written, so a quote that
-needs some of them read back and others kept is still not found.
 
 ## 2026-11-10 — Practice Evidence: a fingerprint an accent follows is masked in the normalised form too
 

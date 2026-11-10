@@ -23,7 +23,7 @@
  * words never comes back equal to the hash it would be checked against. The stand-in is the same
  * each time the same hash is shown in the same scope, so a judge who quotes a line holding one
  * quotes what every view of that transcript shows, and the quote is read back as the stored text
- * it stands for (`quoteAsStored`). Such a quote is shown as the stretch of the line it was matched
+ * at the place a view shows it (`quoteReadingsAsStored`). Such a quote is shown as the stretch of the line it was matched
  * against, as that line is shown (`readBackAsShown`), so a copy of it reads back again. A signed
  * request a record keeps is shown without what it signed: that is the signer's own object, which
  * could hold a guess under a field name this bridge keys.
@@ -31,7 +31,7 @@
  * Pure: no I/O.
  */
 import { createHmac, randomBytes } from 'node:crypto';
-import { normaliseForQuote, verifyQuote, type Assessment, type JudgmentResult, type Rubric, type ScenarioSpec, type Turn } from './practice.js';
+import { cutsAWord, normaliseForQuote, verifyQuote, type Assessment, type JudgmentResult, type QuoteReadings, type Rubric, type ScenarioSpec, type Turn } from './practice.js';
 import type { ReviewResult } from './records.js';
 
 /** What every answer that left a scored scenario's stakes out says, at its top level. */
@@ -192,24 +192,27 @@ export function maskText(s: string, k: Keyer): string {
 }
 
 /**
- * A rubric IRI's hash, a kind's prefix, or a whole run of 64 or 16 hex, each run's last digit possibly
- * folded with the marks after it into one letter (`hashIn`): one pass, so nothing is replaced twice.
+ * A rubric IRI's hash, a kind's prefix, the first 64 hex of a run of 64 or more with no hex before it,
+ * or a whole run of 16 hex, each run's last digit possibly folded with the marks after it into one
+ * letter (`hashIn`): one pass, so nothing is replaced twice. A run of 64 may go on: a rubric IRI's
+ * hash is masked whatever follows it (`RUBRIC_IRI`), so a quote that leaves out `urn:pev:rubric:` can
+ * hold a hash with more hex after it. A kind's 16 hex always have a `/` after them.
  */
 const HASH_OR_RUN = new RegExp([
   RUBRIC_IRI.source, KIND_PREFIX.source,
-  '(?<![0-9a-f])([0-9a-f]{63}(?:[0-9a-f](?![0-9a-f])|[\\u0080-\\uffff]))',
+  '(?<![0-9a-f])([0-9a-f]{63}(?:[0-9a-f]|[\\u0080-\\uffff]))',
   '(?<![0-9a-f])([0-9a-f]{15}(?:[0-9a-f](?![0-9a-f])|[\\u0080-\\uffff]))',
 ].join('|'), 'g');
 
 /**
  * A quote that was read back (`QuoteCheck.readBack`) as an answer that masks text shows it when there
  * is no line to show it from (`readBackAsShown`): one that did not check out, or one an answer shows
- * without its attempt's lines. `maskText`, and each whole run of 64 or 16 hex replaced with its
- * stand-in in text as well: a judge may have copied a stand-in's hex alone (`quoteAsStored`), so the
- * saved quote can hold a hash with no `urn:pev:rubric:` or `pev/` around it, and no hash read back
- * into it is shown bare. A run of hex the learner or the judge wrote bare is shown as a stand-in too,
- * and a run whose last digit NFC folded with a mark after it (`hashIn`) as well, in `normalised` as
- * in `text`.
+ * without its attempt's lines. `maskText`, and each run of hex `HASH_OR_RUN` takes (the first 64 of a
+ * run of 64 or more, a whole run of 16) replaced with its stand-in in text as well: a judge may have
+ * copied a stand-in's hex alone (`quoteReadingsAsStored`), so the saved quote can hold a hash with no
+ * `urn:pev:rubric:` or `pev/` around it, and more hex after it, and no hash read back into it is shown
+ * bare. A run of hex the learner or the judge wrote bare is shown as a stand-in too, and a run whose
+ * last digit NFC folded with a mark after it (`hashIn`) as well, in `normalised` as in `text`.
  */
 export function maskReadBackQuote(s: string, k: Keyer): string {
   return s.replace(HASH_OR_RUN, (_m, iri?: string, kind?: string, run64?: string, run16?: string) => (
@@ -252,7 +255,7 @@ function shownWhere(line: string, shown: string, s: string): string[] {
  * attempt's `text` shows, where the saved words sit there and are shown the same way, and otherwise
  * the normalised stretch too. So only what the line's own views mask is masked: a stand-in the
  * line shows is shown, and a run of hex the line shows as written is shown as written. A copy of it
- * is one of those views' own words, so it reads back (`quoteAsStored`) and checks out at the same
+ * is one of those views' own words, so it reads back (`quoteReadingsAsStored`) and checks out at the same
  * place, as often as it is copied. Null when there is no such line: the quote did not check out,
  * or the answer was given no lines for its attempt (`maskReadBackQuote` then).
  */
@@ -279,87 +282,206 @@ function readBackAsShown(q: Record<string, unknown>, k: Keyer, turns: readonly Q
   return { text: asCopied ?? shownNormalised, normalised: shownNormalised };
 }
 
-/**
- * At most this many whole runs of hex in one quote that stand for a hash are each tried as written
- * as well as read back (`quoteReadingsAsStored`): 2 to that power readings, few enough to try each.
- */
-const RUNS_TRIED_AS_WRITTEN = 4;
-
 /** One stand-in in a quote, from `at` to `end`, and the stored text it is read back as (`to`). */
 interface ReadBack { readonly at: number; readonly end: number; readonly to: string }
 
 /**
- * Reads a quote copied from a view of `stored` masked for scope `k` (`maskText`) as the stored text
- * it was copied from: each stand-in in it that stands for a hash in `stored` is put back as that
- * hash; anything else is left as it is. A stand-in is read back as a view shows it
- * (`urn:pev:rubric:<64 hex>`, `pev/<16 hex>/`), and also as its hex alone, a whole run of 64 or 16
- * hex digits: the quote rule lets a quote start or end at a `:` or a `/`, so a quote may leave out
- * `urn:pev:rubric:`, `pev/` or the closing `/`. It names no hash that is not already in `stored`,
- * which the caller's own view showed as that stand-in. A quote that cuts a run of hex is not read
- * back; it cuts a word of the line, which the quote rule refuses anyway.
- *
- * The first reading has every such stand-in read back. A view shows a stand-in a learner wrote out
- * (copied from an earlier view of the same scenario version) as written, the same as the hash it
- * stands for, so where a whole run of hex could be either, the readings after the first keep some of
- * those runs as written, fewest first: each of them, while there are at most
- * `RUNS_TRIED_AS_WRITTEN`, otherwise all of them at once. A framed one (`urn:pev:rubric:`, `pev/`) is
- * always read back: a view never shows a framed run of hex as written. Only readings that some
- * stored line, normalised, holds are given after the first.
+ * A learner's line as the answers that mask text show it, for finding a quote copied from one of
+ * them (`quoteReadingsAsStored`). Each view either keeps the stored text's offsets or maps them back
+ * exactly, so a stretch found in a view is read back as the stored stretch at the same place.
  */
-export function quoteReadingsAsStored(k: Keyer, stored: readonly string[]): (quote: string) => readonly string[] {
+interface ShownLine {
+  /** The turn's index, when the line was given as a turn. */
+  readonly index?: number;
+  /** The line as stored, and as an attempt's `text` shows it (`maskText`): one length, the same offsets. */
+  readonly raw: string;
+  readonly rawShown: string;
+  /**
+   * The line normalised (`normaliseForQuote`), and as the judge packet and `normalisedText` show it:
+   * one length, the same offsets. `normShown` need not be in NFC: where a mark follows a fingerprint's
+   * last digit that does not take it, the stand-in's last digit may, and is shown with the mark after it.
+   */
+  readonly norm: string;
+  readonly normShown: string;
+  /**
+   * `rawShown` and `normShown` normalised as a quote is (`normaliseForQuote`), the forms a quote copied
+   * from them and normalised, by the quote rule or on the way, is found in, where they are not
+   * `normShown`: each with the offset in `norm` of each of its offsets and of its end, -1 inside a
+   * letter or its marks where they stand for more or fewer characters there (`linedUp`). One that
+   * cannot be lined up with `normShown` is left out, so a quote is never read back by offsets that do
+   * not hold.
+   */
+  readonly normalised: readonly { readonly shown: string; readonly at: readonly number[] }[];
+}
+
+const MARK = /\p{M}/u;
+
+/** The end of the letter at `from` in `s` and the combining marks after it. */
+function marksEnd(s: string, from: number): number {
+  let at = from + 1;
+  for (let cp = s.codePointAt(at); cp !== undefined && MARK.test(String.fromCodePoint(cp)); cp = s.codePointAt(at)) at += cp > 0xffff ? 2 : 1;
+  return at;
+}
+
+/**
+ * `alt` (`rawShown` or `normShown` normalised, `ShownLine.normalised`) lined up with `normShown`, the
+ * masked normalised line: the offset in the normalised line of each offset of `alt`, and of its end.
+ * The two differ only at a rubric IRI's last hex digit and the combining marks after it, where NFC
+ * folds the hash's digit and the stand-in's differently (`refolded`): one shows a letter the digit and
+ * some marks were folded into, the other the digit with those marks after it. Such a place is lined
+ * up whole, the letter with the marks after it in one against the same in the other, when both start
+ * with a hex digit and hold the same marks: its first character maps to that place, any character
+ * after it in `alt` to -1. Null when anything else differs.
+ */
+function linedUp(alt: string, normShown: string, norm: string): { readonly shown: string; readonly at: readonly number[] } | null {
+  const lastDigits = new Set<number>();
+  for (const m of norm.matchAll(RUBRIC_IRI)) if (hashIn(m[1]!) !== null) lastDigits.add(m.index + 'urn:pev:rubric:'.length + 63);
+  const map: number[] = [];
+  let i = 0;
+  let j = 0;
+  while (j < alt.length) {
+    if (lastDigits.has(i)) {
+      const ni = marksEnd(normShown, i);
+      const nj = marksEnd(alt, j);
+      const ours = normShown.slice(i, ni);
+      const theirs = alt.slice(j, nj);
+      if (ours !== theirs) {
+        const [a, b] = [ours.normalize('NFD'), theirs.normalize('NFD')];
+        if (!HEX_DIGIT.test(a[0]!) || !HEX_DIGIT.test(b[0]!) || a.slice(1) !== b.slice(1)) return null;
+        map.push(i, ...Array.from({ length: nj - j - 1 }, () => -1));
+        i = ni;
+        j = nj;
+        continue;
+      }
+    }
+    if (i < normShown.length && alt[j] === normShown[i]) {
+      map.push(i);
+      i += 1;
+      j += 1;
+    } else {
+      return null;
+    }
+  }
+  if (i !== normShown.length) return null;
+  map.push(norm.length);
+  return { shown: alt, at: map };
+}
+
+function shownLine(raw: string, k: Keyer, index?: number): ShownLine {
+  const norm = normaliseForQuote(raw);
+  const normShown = maskText(norm, k);
+  const rawShown = maskText(raw, k);
+  const normalised = [...new Set([normaliseForQuote(rawShown), normaliseForQuote(normShown)])].filter((alt) => alt !== normShown)
+    .flatMap((alt) => linedUp(alt, normShown, norm) ?? []);
+  return { ...(index !== undefined ? { index } : {}), raw, rawShown, norm, normShown, normalised };
+}
+
+/** Each offset `needle` starts at in `haystack`, overlapping ones included. */
+function startsOf(haystack: string, needle: string): number[] {
+  const out: number[] = [];
+  for (let at = haystack.indexOf(needle); needle !== '' && at >= 0; at = haystack.indexOf(needle, at + 1)) out.push(at);
+  return out;
+}
+
+/** A turn, or a stored line given alone: a learner's when given alone. */
+type StoredLine = string | QuotedTurn;
+
+/**
+ * Reads a quote copied from a view of `stored` masked for scope `k` (`maskText`) as the stored text
+ * it was copied from (practice.ts `QuoteReadings`).
+ *
+ * `matched`: the quote is looked for in each learner line as each view shows it, and every place it
+ * is found is read back as the stored stretch at that place. Every view keeps the stored line's
+ * offsets, or maps them back exactly (`ShownLine`): an attempt's `text` shows the line masked, a
+ * stand-in the length of the hash or kind it replaces, and the quote is looked for there as sent; the
+ * judge packet and `normalisedText` show the normalised line masked, and the quote is looked for there
+ * normalised as `verifyQuote` normalises it. That view need not be in NFC: where a mark follows a
+ * fingerprint's last digit, the stand-in's digit may take it where the fingerprint's did not, or the
+ * other way round. So the quote, which the quote rule normalises and a chat app may have normalised on
+ * the way, is also looked for in each view normalised, lined up with the normalised line in whichever
+ * direction NFC folds there (`linedUp`), and an exact copy of the packet is found that way too. So which runs
+ * of hex are stand-ins and which are written out (a stand-in the learner copied from an earlier view
+ * and wrote out reads the same as the hash it stands for) is read from the line itself, however many
+ * there are. A place where the quote starts or ends inside a word of the stored line is skipped: such
+ * a match cuts a word (the quote rule's `cutsAWord`), and a stretch that cut a run of hex would hold
+ * part of a hash. Only learner lines are looked in; a line given alone is taken as one. The turn the
+ * judge named, when given, is looked in first, so its stretch is the first checked.
+ *
+ * `otherwise`: each stand-in in the quote that stands for a hash in `stored` put back as that hash,
+ * as a view shows it (`urn:pev:rubric:<64 hex>`, `pev/<16 hex>/`) or as its hex alone, a run of 64 hex
+ * digits (the first 64 of a longer one) or a whole run of 16 (the quote rule lets a quote start or end at
+ * a `:` or a `/`, so a quote may leave out `urn:pev:rubric:`, `pev/` or the closing `/`); anything else
+ * as it is. It names no hash that is
+ * not already in `stored`. A quote that cuts a run of hex is not read back. This is what a quote no
+ * matched stretch checks out for is saved as, and says why.
+ */
+export function quoteReadingsAsStored(k: Keyer, stored: readonly StoredLine[]): (quote: string, turnIndex?: number) => QuoteReadings {
+  const texts = stored.flatMap((t) => (typeof t === 'string' ? [t] : t.text !== undefined ? [t.text] : []));
   // Each stand-in as a view shows it, to the stored text it stands for: from a line and from its
   // normalised form, which writes a hash a mark follows otherwise (`hashIn`) and is shown so.
   const full = new Map<string, string>();
   const prefix = new Map<string, string>();
-  for (const t of stored) {
+  for (const t of texts) {
     if (!mayHoldHash(t)) continue;
     for (const form of [t, normaliseForQuote(t)]) {
       for (const m of form.matchAll(RUBRIC_IRI)) if (hashIn(m[1]!) !== null) full.set(standInFor(m[1]!, k), m[1]!);
       for (const m of form.matchAll(KIND_PREFIX)) prefix.set(k.inText.prefix(m[1]!), m[1]!);
     }
   }
-  if (full.size === 0 && prefix.size === 0) return (quote) => [quote];
-  const lines = stored.map(normaliseForQuote);
-  return (quote) => {
-    const framed: ReadBack[] = [];
-    const runs: ReadBack[] = [];
+  if (full.size === 0 && prefix.size === 0) return (quote) => ({ matched: [], otherwise: quote });
+  // A line no view masks is shown as stored: a quote found there was found as sent.
+  const lines = stored.flatMap((t) => (typeof t === 'string' ? (mayHoldHash(t) ? [shownLine(t, k)] : [])
+    : t.speaker === 'learner' && t.text !== undefined && mayHoldHash(t.text) ? [shownLine(t.text, k, t.index)] : []));
+  const everyStandInBack = (quote: string): string => {
+    const back: ReadBack[] = [];
     for (const m of quote.matchAll(HASH_OR_RUN)) {
       const [whole, iri, kind, run64, run16] = m;
       const raw = iri !== undefined ? full.get(iri) : kind !== undefined ? prefix.get(kind) : run64 !== undefined ? full.get(run64) : prefix.get(run16!);
       if (raw === undefined) continue;
-      const at = m.index;
-      if (iri !== undefined) framed.push({ at, end: at + whole.length, to: `urn:pev:rubric:${raw}` });
-      else if (kind !== undefined) framed.push({ at, end: at + whole.length, to: `pev/${raw}/` });
-      else runs.push({ at, end: at + whole.length, to: raw });
+      back.push({ at: m.index, end: m.index + whole.length, to: iri !== undefined ? `urn:pev:rubric:${raw}` : kind !== undefined ? `pev/${raw}/` : raw });
     }
-    const write = (asWritten: ReadonlySet<ReadBack>): string => {
-      let out = '';
-      let from = 0;
-      for (const r of [...framed, ...runs].filter((x) => !asWritten.has(x)).sort((a, b) => a.at - b.at)) {
-        out += quote.slice(from, r.at) + r.to;
-        from = r.end;
-      }
-      return out + quote.slice(from);
+    let out = '';
+    let from = 0;
+    for (const r of back) {
+      out += quote.slice(from, r.at) + r.to;
+      from = r.end;
+    }
+    return out + quote.slice(from);
+  };
+  return (quote, turnIndex) => {
+    const q = normaliseForQuote(quote);
+    const matched = new Set<string>();
+    const keep = (line: string, start: number, end: number, as: string): void => {
+      const r = line.slice(start, end);
+      if (r !== as && !cutsAWord(line, start, end)) matched.add(r);
     };
-    const first = write(new Set());
-    const kept = runs.length <= RUNS_TRIED_AS_WRITTEN
-      ? Array.from({ length: 2 ** runs.length - 1 }, (_, i) => runs.filter((_r, j) => ((i + 1) >> j) & 1))
-        .sort((a, b) => a.length - b.length)
-      : [runs];
-    const readings = [first];
-    for (const asWritten of kept) {
-      const r = write(new Set(asWritten));
-      const n = normaliseForQuote(r);
-      if (!readings.includes(r) && lines.some((l) => l.includes(n))) readings.push(r);
+    const named = turnIndex === undefined ? [] : lines.filter((l) => l.index === turnIndex);
+    for (const l of [...named, ...lines.filter((x) => !named.includes(x))]) {
+      // Copied from an attempt's `text`: the stored line's own words at that place, as they are stored.
+      for (const at of startsOf(l.rawShown, quote)) keep(l.raw, at, at + quote.length, quote);
+      // Copied from the normalised line, normalised as the quote rule normalises it: the normalised line's words at that place.
+      for (const at of startsOf(l.normShown, q)) keep(l.norm, at, at + q.length, q);
+      // Copied from either view, normalised by the quote rule or on the way, where that view normalised is not the normalised
+      // line as shown (which need not be in NFC: `ShownLine.normShown`): the normalised line's words at the place it lines up with.
+      for (const alt of l.normalised) {
+        for (const at of startsOf(alt.shown, q)) {
+          const from = alt.at[at]!;
+          const to = alt.at[at + q.length]!;
+          if (from >= 0 && to > from) keep(l.norm, from, to, q);
+        }
+      }
     }
-    return readings;
+    return { matched: [...matched], otherwise: everyStandInBack(quote) };
   };
 }
 
-/** The first of `quoteReadingsAsStored`'s readings: every stand-in in the quote that stands for a hash in `stored` read back. */
-export function quoteAsStored(k: Keyer, stored: readonly string[]): (quote: string) => string {
+/**
+ * A quote with every stand-in in it that stands for a hash in `stored` read back
+ * (`quoteReadingsAsStored`'s `otherwise`): the reading of a quote copied whole from a view.
+ */
+export function quoteAsStored(k: Keyer, stored: readonly StoredLine[]): (quote: string) => string {
   const readings = quoteReadingsAsStored(k, stored);
-  return (quote) => readings(quote)[0]!;
+  return (quote) => readings(quote).otherwise;
 }
 
 type Version = { readonly scenarioIri: string; readonly version: number };
@@ -436,7 +558,7 @@ const isCalibrationCell = (o: Record<string, unknown>): boolean =>
  * replaced with its stand-in in text for the same scope (`Keyer.inText`), keyed under a label of its
  * own: equal to no field's value, and the same wherever the same hash is shown in that scope, so
  * every view of one attempt's transcript shows a line the same way and a quote copied from any of
- * them reads back as the stored line (`quoteAsStored`).
+ * them reads back as the stored line (`quoteReadingsAsStored`).
  *
  * Shown from its line: a read-back quote's words, which are the stored line's and can hold a hash
  * with nothing around it, are shown as the stretch of the learner's line they were matched against,

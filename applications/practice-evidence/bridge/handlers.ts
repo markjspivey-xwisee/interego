@@ -61,11 +61,11 @@ import {
   rubricHash, scenarioHash, splitEndSignal, transcriptHash,
   draftReviewNote, BRIEF_MAX, COUNTERPART_PROMPT_TEMPLATE_HASH, DRAFT_PROMPT_TEMPLATE_HASH, JUDGE_PROMPT_TEMPLATE_HASH,
   MAX_CONTESTS, MAX_JUDGMENTS, PRACTICE_LABEL, PROVISIONAL_LABEL, SOURCE_TEXT_MAX, TURN_TEXT_MAX,
-  type JudgeChosenBy, type JudgmentResult, type NextLevelGuidance, type ScenarioSpec, type Turn,
+  type JudgeChosenBy, type JudgmentResult, type NextLevelGuidance, type QuoteReadings, type ScenarioSpec, type Turn,
 } from '../src/practice.js';
 import {
   actorOf, applyRoleChange, attemptIri as attemptIriOf, attemptIriSecret, attemptKey, buildRecordDescriptor, checkEnvelope, checkRelayPayload, conflictedReviewersOf,
-  didOf, freshNonce, graphIriOf, iriKeyFingerprint, isAddress, isPrincipal, isWellFormedText, judgeSignersOf, modalFor, modelAgentIri, nextActionsFor, nextActionView,
+  didOf, freshNonce, graphIriOf, iriKeyFingerprint, isAddress, isPrincipal, isWellFormedText, judgeSignersOf, judgingOpen, modalFor, modelAgentIri, nextActionsFor, nextActionView,
   NonceLedger, podBase, principalDid, principalKey, principalOfDid, projectionIri, recordGraphTurtle, recordIdFor, recordLocal, recordSalt, redactBody, registryIri,
   relayDelegatedEnvelope, reverifyStoredEnvelope, rubricIriOf, samePrincipal, scenarioIri as scenarioIriOf, signDraftReceipt, signEnvelope,
   signedRequestOf, signedRequestSigner, slugFor, standingReview, toWellFormedText, verifyDraftReceipt,
@@ -418,12 +418,13 @@ function scopeTo(call: Call, a: { readonly scenarioIri: string; readonly version
  * reads no stakes shows a fingerprint inside a line with a stand-in keyed for the attempt's scenario
  * version (`maskAnswerHashes`), the scope of every answer that shows the attempt's turns (the judge
  * packet, the attempt, the conversation's own acts) or quotes from them (the review queue). A quote
- * copied from any of them is read as the stored line it was copied from, whoever sends it: each
- * reading `quoteReadingsAsStored` gives, in turn, until one checks out.
+ * copied from any of them is read as the stored line it was copied from, whoever sends it: found in
+ * each learner line as those answers show it, and read back by its place there
+ * (`quoteReadingsAsStored`).
  */
-async function quotesAsStoredFor(call: Call, a: AttemptBody): Promise<(quote: string) => readonly string[]> {
+async function quotesAsStoredFor(call: Call, a: AttemptBody): Promise<(quote: string, turnIndex?: number) => QuoteReadings> {
   const k = (await call.ctx.hashMask()).version(a.scenario.scenarioIri, a.scenario.version);
-  return quoteReadingsAsStored(k, a.turns.flatMap((t) => (t.text !== undefined ? [t.text] : [])));
+  return quoteReadingsAsStored(k, a.turns);
 }
 
 /**
@@ -1527,16 +1528,18 @@ function handOffWords(ctx: Ctx, judge: boolean): string {
 }
 
 /**
- * The learner's next step, said to their own chat assistant once the conversation is over and the
- * session can be judged (ended, or judged with room for another judgment): hand it to an appointed
- * judge. Said in place of the judge packet, which that assistant is not offered (`nextFor`): a
- * learner's assistant acts as the learner, who may not judge their own session
- * (`judge-is-the-learner`). `judgeBesidesYou` is whether anyone else here holds the judge role.
- * Nothing for anyone else, or through this bridge's web app, which offers Send to your judge itself.
+ * The learner's next step, said to their own chat assistant whenever a judge can assess the session
+ * (`judgingOpen`: ended, judged, or reopened by a contest or a withdrawn review, with room for
+ * another judgment): hand it to an appointed judge. Said in place of the judge packet, which that
+ * assistant is not offered (`nextFor`): a learner's assistant acts as the learner, who may not judge
+ * their own session (`judge-is-the-learner`). In the same states the web app's own agent is offered
+ * the packet, which the page draws as Send to your judge, so the words point to a control that is
+ * there. `judgeBesidesYou` is whether anyone else here holds the judge role. Nothing for anyone
+ * else, or through this bridge's web app, which offers Send to your judge itself.
  */
 function handOffMark(ctx: Ctx, s: Signed, a: AttemptBody, reg: Roles): Out {
   if (!samePrincipal(a.learner.address, s.signer) || !viaChat(ctx, s)) return {};
-  if (!(a.state === 'ended' || (a.state === 'judged' && a.judgments.length < MAX_JUDGMENTS))) return {};
+  if (!judgingOpen(a.state, a.judgments.length)) return {};
   const judge = judgeBesides(reg, s.signer);
   return { handOff: { to: 'appointed-judge', words: handOffWords(ctx, judge), judgeBesidesYou: judge, ...sessionPageOf(ctx, a.attemptIri) } };
 }
@@ -2237,7 +2240,11 @@ async function endConversation(call: Call, args: Record<string, unknown>): Promi
 //  Judging: the bridge's model, the packet, a judge agent's record
 // ═════════════════════════════════════════════════════════════════════════════════════════════
 
-/** The state refusals shared by every judging act. */
+/**
+ * The state refusals shared by every judging act. It lets through exactly the attempts `judgingOpen`
+ * holds for, where the learner is offered a way to hand the session to a judge (`nextFor`,
+ * `handOffMark`).
+ */
 function judgeable(a: AttemptBody): void {
   if (a.state === 'in-conversation') throw decline(409, 'End the conversation first.', 'attempt-not-ended');
   if (a.state === 'countersigned' || a.state === 'overridden') {
@@ -2427,6 +2434,7 @@ async function judgePacketAct(call: Call, args: Record<string, unknown>): Promis
     throw decline(403, `Only the learner, a reviewer or a registered judge may fetch the judge packet.${hint.words}`, 'not-entitled', undefined, hint.extra);
   }
   judgeable(h.body);
+  // Only where a judge can assess it (`judgeable`), so the web app the refusal points to offers Send to your judge there.
   if (isLearner && viaChat(ctx, s)) throw handOffRefusal(ctx, s, h.body, reg);
   scopeTo(call, h.body.scenario);
   return {
@@ -2770,7 +2778,8 @@ async function contestReview(call: Call, args: Record<string, unknown>): Promise
     }
     notReplayed(a, s);
     checkTarget(needTarget(s.payload), h.rec);
-    const roles = (await rolesOn(call, s.pod)).of(s.signer);
+    const reg = await rolesOn(call, s.pod);
+    const roles = reg.of(s.signer);
     const stakes = await showsStakes(call, s);
     const at = iso(ctx);
     const reopening: Reopening = {
@@ -2782,7 +2791,8 @@ async function contestReview(call: Call, args: Record<string, unknown>): Promise
     return {
       attemptIri: iri, descriptorUrl: w.descriptorUrl, state: 'contested', modalStatus: 'Hypothetical', reopening,
       currentTarget: { recordId: w.recordId, descriptorUrl: w.descriptorUrl, graphDigest: w.graphDigest },
-      nextActions: nextFor(ctx, body, s, roles, false, stakes), recorded: true,
+      // The act that reopens judging, as end_conversation is the one that opens it: the learner's chat is handed on here.
+      nextActions: nextFor(ctx, body, s, roles, false, stakes), ...handOffMark(ctx, s, body, reg), recorded: true,
     };
   });
 }

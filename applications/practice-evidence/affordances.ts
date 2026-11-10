@@ -265,7 +265,7 @@ export const pevAffordances: ReadonlyArray<Affordance> = [
     targetTemplate: '{base}/pev/contest_review',
     annotations: hints('Contest a review', false, false, false, true),
     inputs: [...ENVELOPE],
-    outputs: out('The contested attempt.', ['attemptIri', 'state', 'descriptorUrl']),
+    outputs: out('The contested attempt. To the learner\'s own chat assistant, while there is room for another judgment, handOff says how the learner sends the session to an appointed judge, in place of the judge packet, which it is not offered.', ['attemptIri', 'state', 'descriptorUrl']),
   },
   {
     action: PEV_ACTION.retractReview as IRI,
@@ -353,7 +353,7 @@ export const pevAffordances: ReadonlyArray<Affordance> = [
     action: PEV_ACTION.getAttempt as IRI,
     toolName: 'pev.get_attempt',
     title: 'Read an attempt',
-    description: 'The learner, a reviewer, a judge of the attempt or an admin reads it: turns, every judgment with checked quotes and their offsets, the provisional and final results (computed by the platform), reviews, reopenings, versions, authorship, what the next level asks for, and the acts this caller can take next (for the learner\'s own chat assistant once the conversation is over, handOff says how the learner sends it to an appointed judge). Without attemptIri: the caller\'s attempts (or all, for a reviewer or admin). Either answer says who the caller was read as (signedAs: the principal, and for a request the Interego relay signed, its agent) and their standing here (signedAs.roles, their own roles; signedAs.admin; signedAs.teamBesidesYou: whether anyone else holds the judge role, and the reviewer role as a person, booleans only). Payload: {attemptIri?}. Read by ' + STAKES_LEFT_OUT_FOR + ', whatever the caller\'s roles: the rubric\'s criteria and levels, every judgment\'s and review\'s levels, quotes and reasons, and no scoring stakes (weights, level points, the pass rule, points, percent, pass results or unmet requirements); stakesWithheld says so.',
+    description: 'The learner, a reviewer, a judge of the attempt or an admin reads it: turns, every judgment with checked quotes and their offsets, the provisional and final results (computed by the platform), reviews, reopenings, versions, authorship, what the next level asks for, and the acts this caller can take next (for the learner\'s own chat assistant, whenever a judge can still assess the session, a contested or withdrawn review included, handOff says how the learner sends it to an appointed judge). Without attemptIri: the caller\'s attempts (or all, for a reviewer or admin). Either answer says who the caller was read as (signedAs: the principal, and for a request the Interego relay signed, its agent) and their standing here (signedAs.roles, their own roles; signedAs.admin; signedAs.teamBesidesYou: whether anyone else holds the judge role, and the reviewer role as a person, booleans only). Payload: {attemptIri?}. Read by ' + STAKES_LEFT_OUT_FOR + ', whatever the caller\'s roles: the rubric\'s criteria and levels, every judgment\'s and review\'s levels, quotes and reasons, and no scoring stakes (weights, level points, the pass rule, points, percent, pass results or unmet requirements); stakesWithheld says so.',
     method: 'POST',
     targetTemplate: '{base}/pev/get_attempt',
     annotations: hints('Read an attempt', true, false, true, true),

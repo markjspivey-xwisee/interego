@@ -33,11 +33,11 @@ import {
 } from '../src/practice.js';
 import {
   actorOf, applyRoleChange, attemptIri, attemptIriSecret, attemptKey, buildRecordDescriptor, checkEnvelope, checkRelayPayload, didOf, fingerprintOfAttemptIri, fingerprintOfRecordUrl, iriKeyFingerprint,
-  isPrincipal, isWellFormedText, modalFor, principalDid, principalKey, principalOfDid, relayDelegatedEnvelope, reverifyStoredEnvelope, samePrincipal,
+  isPrincipal, isWellFormedText, judgingOpen, modalFor, principalDid, principalKey, principalOfDid, relayDelegatedEnvelope, reverifyStoredEnvelope, samePrincipal,
   signedRequestOf, signedRequestSigner, toWellFormedText,
   modelAgentIri, NonceLedger, nextActionsFor, nextActionView, recordBodyFromGraph, recordGraphTurtle, recordIdFor,
   redactBody, registryIri, rubricIriOf, scenarioIri, signDraftReceipt, signEnvelope, signedRequestEnvelope, slugFor,
-  standingReview, verifyDraftReceipt, REDACTION_NOTE, EXPORT_VERIFY_STEPS,
+  standingReview, verifyDraftReceipt, LIFECYCLE_STATES, REDACTION_NOTE, EXPORT_VERIFY_STEPS,
   type AttemptBody, type EnvelopeOk, type LifecycleState, type NextActionView, type ProjectionAuditBody,
   type ReviewResult, type RoleRegistryBody, type ScenarioBody, type StoredEnvelope,
 } from '../src/records.js';
@@ -1859,8 +1859,26 @@ describe('next actions', () => {
     expect(names(view('judged', { judgmentCount: 5 }), [], L)).toEqual(['pev.export_record', 'pev.holder_copy', 'pev.redact_attempt']);
     expect(names(view('countersigned'), [], { ...L, eligible: true })).toEqual(['pev.project_attempt', 'pev.contest_review', 'pev.export_record', 'pev.holder_copy', 'pev.redact_attempt']);
     expect(names(view('overridden', { contestCount: 2 }), [], L)).toEqual(['pev.export_record', 'pev.holder_copy', 'pev.redact_attempt']);
-    expect(names(view('contested'), [], L)).toEqual(['pev.export_record', 'pev.holder_copy', 'pev.redact_attempt']);
+    // Reopened by a contest or a withdrawn review, judging starts again: the learner hands it to a judge, until the limit.
+    for (const state of ['contested', 'review-retracted'] as const) {
+      expect(names(view(state), [], L), state).toEqual(['pev.judge_packet', 'pev.export_record', 'pev.holder_copy', 'pev.redact_attempt']);
+      expect(names(view(state, { judgmentCount: 5 }), [], L), state).toEqual(['pev.export_record', 'pev.holder_copy', 'pev.redact_attempt']);
+    }
     expect(names(view('redacted'), [], L)).toEqual(['pev.export_record']);
+  });
+
+  it('offers the learner the judge packet in exactly the states and counts a judge can still assess the attempt in', () => {
+    for (const state of LIFECYCLE_STATES) {
+      for (const judgmentCount of [0, 1, 4, 5]) {
+        // Only counts an attempt can have: none before a judgment, one at least once judged (a redacted one either way).
+        const before = state === 'in-conversation' || state === 'ended';
+        if ((before && judgmentCount > 0) || (!before && state !== 'redacted' && judgmentCount === 0)) continue;
+        const offered = names(view(state, { judgmentCount }), [], { isLearner: true, bridgeHasModel: false }).includes('pev.judge_packet');
+        expect(offered, `${state} with ${judgmentCount}`).toBe(judgingOpen(state, judgmentCount));
+        expect(judgingOpen(state, judgmentCount), `${state} with ${judgmentCount}`)
+          .toBe(['ended', 'judged', 'contested', 'review-retracted'].includes(state) && judgmentCount < 5);
+      }
+    }
   });
 
   it('offers a reviewer review acts only when not conflicted and not on an author test', () => {
