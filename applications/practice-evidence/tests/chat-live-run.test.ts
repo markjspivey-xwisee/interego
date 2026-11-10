@@ -329,3 +329,73 @@ describe('a whole session through a chat assistant, as the live run had it', () 
     expect(judged['handOff']).toEqual(read['handOff']);
   }, SLOW);
 });
+
+describe('every state a judge can still assess the session in: the learner\'s chat is handed on, and the web app offers Send to your judge', () => {
+  it('ended, judged with room, contested and review-retracted hand the chat on and offer the web app the packet; once reviewed, or at the judgment limit, neither', async () => {
+    // As the peer review found it: a judge could assess a contested or withdrawn-review session, but the learner's chat
+    // got no hand-off there, and the web app no Send to your judge, while the chat's refusal pointed to it.
+    for (const [who, role] of [[P.learner.did, 'learner'], [P.judge.did, 'judge'], [P.reviewer.did, 'reviewer']] as const) {
+      ok(await ract('pev.register_role', P.admin.web, { address: who, role, change: 'add' }));
+    }
+    const start = ok(await ract('pev.start_attempt', P.learner.claude, { scenarioIri: X['sc'], scenarioVersion: 1, coached: false }));
+    const a = String(start['attemptIri']);
+    ok(await ract('pev.record_turns', P.learner.claude, {
+      attemptIri: a, turnIndex: 1, learnerText: 'Thanks for coming in. The report reached me on Friday afternoon.', counterpartText: 'The finance feed was late again.',
+      counterpartDisclosure: { provider: 'Example AI', model: 'not shown' }, endAfter: true,
+    }));
+    const page = `https://bridge.example.test/ui#/attempt/${encodeURIComponent(a)}`;
+    const target = async (): Promise<unknown> => ok(await ract('pev.get_attempt', P.learner.web, { attemptIri: a }))['currentTarget'];
+    /**
+     * What the learner's chat, the web app's own agent and the chat's judge_packet get in the session's state now: `open` when a
+     * judge can still assess it, else the code judge_packet is refused with for anyone.
+     */
+    const check = async (state: string, open: true | string): Promise<void> => {
+      const chat = chatAnswer(await ract('pev.get_attempt', P.learner.claude, { attemptIri: a }), `the ${state} session from the learner's Claude`);
+      const web = ok(await ract('pev.get_attempt', P.learner.web, { attemptIri: a }));
+      expect([chat['state'], web['state']], state).toEqual([state, state]);
+      // The chat is never offered the packet. The web app's own agent is, exactly when a judge can still assess the session:
+      // its next action is what the page draws Send to your judge from.
+      expect([actionsOf(chat).includes('pev.judge_packet'), actionsOf(web).includes('pev.judge_packet')], state).toEqual([false, open === true]);
+      const handOff = chat['handOff'] as Out | undefined;
+      expect([handOff?.['to'] ?? null, handOff?.['sessionPage'] ?? null, web['handOff'] ?? null], state).toEqual(open === true ? ['appointed-judge', page, null] : [null, null, null]);
+      const r = await ract('pev.judge_packet', P.learner.claude, { attemptIri: a });
+      if (open !== true) {
+        refused(r, open, `judge_packet from the learner's Claude, ${state}`);
+        refused(await ract('pev.judge_packet', P.learner.web, { attemptIri: a }), open, `judge_packet from the web app, ${state}`);
+        return;
+      }
+      // The refusal names the web app's Send to your judge, with the hand-off's own words, and that control is there: the web
+      // app's own agent is offered the packet (above) and fetches it.
+      refused(r, 'hand-off-to-judge', `judge_packet from the learner's Claude, ${state}`);
+      expect([r['remedy'], r['sessionPage']], state).toEqual(['send-to-judge', page]);
+      expect(String(r['error']), state).toContain(String(handOff!['words']));
+      expect(String(handOff!['words']), state).toContain('In the Practice Evidence web app, open this session and, under Send to your judge, copy the message for your judge');
+      ok(await ract('pev.judge_packet', P.learner.web, { attemptIri: a }));
+    };
+    const judge = async (): Promise<void> => {
+      const packet = ok(await ract('pev.judge_packet', P.judge.claude, { attemptIri: a }));
+      const user = String((packet['request'] as Out)['user']);
+      const rubric = JSON.parse(user.slice(user.indexOf('\n') + 1, user.indexOf('\n\nThe transcript:'))) as { criteria: { criterionId: string; levels: { id: string }[] }[] };
+      ok(await ract('pev.record_judgment', P.judge.claude, {
+        attemptIri: a, ...(packet['binding'] as Out), judgeDisclosure: { provider: 'Example AI', model: 'not shown', usedPacketPrompt: true },
+        judgment: { criteria: rubric.criteria.map((c) => ({ criterionId: c.criterionId, level: c.levels[0]!.id, quotes: [], rationale: 'Nothing the learner said reaches a higher level.' })) },
+      }));
+    };
+
+    await check('ended', true);
+    await judge();
+    await check('judged', true);
+    const levels = (ok(await ract('pev.get_attempt', P.reviewer.web, { attemptIri: a }))['judgments'] as { criteria: { criterionId: string; levelId: string }[] }[])[0]!
+      .criteria.map((c) => ({ criterionId: c.criterionId, levelId: c.levelId }));
+    ok(await ract('pev.countersign_attempt', P.reviewer.web, { attemptIri: a, target: await target(), levels, sawJudgeLevelsFirst: true }));
+    await check('countersigned', 'attempt-already-reviewed');
+    ok(await ract('pev.contest_review', P.learner.claude, { attemptIri: a, target: await target(), why: 'The deadline I named was the one we had agreed on.' }));
+    await check('contested', true);
+    ok(await ract('pev.retract_review', P.admin.web, { attemptIri: a, target: await target(), why: 'The reviewer was the learner\'s line manager.' }));
+    await check('review-retracted', true);
+    // Judged again until the limit: still review-retracted, and no judge can assess it any more.
+    for (let i = 0; i < 4; i += 1) await judge();
+    expect((ok(await ract('pev.get_attempt', P.learner.web, { attemptIri: a }))['judgments'] as unknown[]).length).toBe(5);
+    await check('review-retracted', 'judgment-limit');
+  }, SLOW);
+});

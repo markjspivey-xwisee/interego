@@ -1,5 +1,34 @@
 # Changelog
 
+## 2026-11-10 — Practice Evidence: a reopened session is handed to a judge as a finished one is
+
+A peer review, run on fictional data, found that a session reopened by a
+contest or a withdrawn review could still be judged, but the learner was not
+shown how to send it to a judge. An appointed judge could fetch its judge
+packet while it had room for another judgment. The learner's own chat
+assistant got no hand-off note for it, though, and the web app did not show
+Send to your judge. When that assistant asked for the judge packet, the
+refusal told the learner to use Send to your judge, which the session page did
+not show in those states.
+
+Now every state a judge can assess a session in is treated alike: finished,
+judged, contested and review withdrawn, each while the session has fewer than
+five judgments. In each, the learner's chat gets the hand-off note, the web
+app shows Send to your judge (the judge packet is offered to the web app's own
+agent and to a key the learner holds, as for a finished or judged session),
+and the refusal to the learner's chat points to it. Once a reviewer has signed
+off, or the session has five judgments, none of them is offered, and the
+refusal says why. Tests check each of those states: what a read tells the
+learner's chat and the web app, the refusal's words and where they point, and
+whether the session page shows Send to your judge.
+
+Not covered: in a contested or withdrawn-review session the learner is still
+not offered Get a second opinion (a bridge's own model), though they may ask
+for it there; that was so before. On a workspace whose web app has no
+Interego sign-in, the hand-off still names Send to your judge, where that page
+says Get the hand-off; such a page cannot sign in as the Interego account a
+chat's session belongs to.
+
 ## 2026-11-10 — Practice Evidence: the old wording of the demo rubric's top level is gone from the tests
 
 The same peer review found one test that still repeated the demo rubric's old
