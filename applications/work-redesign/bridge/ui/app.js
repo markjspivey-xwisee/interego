@@ -1807,8 +1807,14 @@ function view() {
 }
 
 const COPY_BY_HAND = 'This browser didn\'t let the page copy it. Select all of the text below and copy it yourself.';
+/**
+ * How many writes to the clipboard this page has begun. The browser takes them in the order they are begun, so a copy that
+ * notes the count as it begins a write knows, while the count is still that, that no write begun since can have replaced it.
+ */
+let clipboardWrites = 0;
 /** Put `s` on the clipboard: true once the browser took it, false where it refused (or has no clipboard here). */
 async function writeClipboard(s) {
+  clipboardWrites += 1;
   try { await navigator.clipboard.writeText(s); return true; } catch { return false; }
 }
 /**
@@ -3022,29 +3028,53 @@ const sameBasis = (a, b) => !!a && !!b && a.title === b.title && a.text === b.te
 /** Map a process's draft as the page shows it now: the one its last drawing made, which every field typed in since writes to. */
 const captureNow = () => S.captureForm ?? captureDraft();
 const FORM_KEPT_CHANGING = 'The document or the process name changed while the message was being made. Copy it again.';
+const OLD_MESSAGE_ON_CLIPBOARD = 'Your clipboard still holds the message for the document and process name as they were before the last change. Don\'t paste it: copy again.';
 /**
  * Copy a message made from Map a process's document and process name, so that what is copied is the message for the form
  * as it is when the copy completes. Each round reads them together (docBasis); `ready(basis, say)` says whether they can
  * be copied, and, where `say`, says why not; `make(basis)` makes the message from them and may wait (Card B asks the
  * bridge for its packet), answering { message } or { refused } (a function that says why, called only while the form is
  * still the one asked about). After each wait the form is read again: a message made from a form that changed meanwhile,
- * or that changed while the message was being put on the clipboard, is made and copied again from the form as it is then,
- * so a person who goes on typing gets what they now see without pressing again. A form still changing after three rounds,
- * or changed into one that can't be copied (a title cleared, or the map signed and the form emptied), is not copied, and
- * the person is told so and asked to copy again.
+ * or that changed while the message was being put on the clipboard (or refused there), is made and copied again from the
+ * form as it is then, so a person who goes on typing gets what they now see without pressing again. A form still changing
+ * after three rounds, or changed into one that can't be copied (a title cleared, a document grown past what a chat can
+ * record, or the map signed and the form emptied), is not copied, and the person is told so and asked to copy again.
+ * A copy that ends without the message for the form as it is on the clipboard (not copied, the packet refused, or the
+ * browser refusing a later round's message) takes off again any message an earlier round put there, made for a form that
+ * has since changed, so a paste never gives it; unless the page has begun another write since (what is there is that
+ * one's). Where the browser won't take it off either, the person is told the clipboard still holds it.
  * Answers 'copied', 'shown' (the browser refused the clipboard, and "Copy this" shows the message) or '' (nothing copied).
  */
 async function copyForForm({ ready, make, what }) {
+  // Whether a round's message reached the clipboard, and the count (clipboardWrites) as this copy began its last write.
+  let landed = false;
+  let mine = 0;
+  /** This copy's message off the clipboard again, where it may still be there: true once it is not (or never was). */
+  const takeOff = async () => !landed || mine !== clipboardWrites || writeClipboard('');
   for (let round = 0; round < 3; round += 1) {
     const basis = docBasis(captureNow());
     if (!ready(basis, round === 0)) { if (round === 0) return ''; break; }
     const made = await make(basis);
     if (!sameBasis(basis, docBasis(captureNow()))) continue;
-    if (typeof made?.message !== 'string') { made?.refused?.(); return ''; }
-    if (!(await writeClipboard(made.message))) { showCopyThis(made.message); return 'shown'; }
+    if (typeof made?.message !== 'string') {
+      const off = await takeOff();
+      made?.refused?.();
+      if (!off) toast('Not copied', OLD_MESSAGE_ON_CLIPBOARD, 'warning');
+      return '';
+    }
+    const writing = writeClipboard(made.message);
+    mine = clipboardWrites;
+    if (!(await writing)) {
+      // The refusal is a wait too: "Copy this" offers the message for the form as it is once the browser has answered.
+      if (!sameBasis(basis, docBasis(captureNow()))) continue;
+      await takeOff();
+      showCopyThis(made.message);
+      return 'shown';
+    }
+    landed = true;
     if (sameBasis(basis, docBasis(captureNow()))) { toast('Copied', what); return 'copied'; }
   }
-  toast('Not copied', FORM_KEPT_CHANGING, 'warning');
+  toast('Not copied', (await takeOff()) ? FORM_KEPT_CHANGING : `${FORM_KEPT_CHANGING} ${OLD_MESSAGE_ON_CLIPBOARD}`, 'warning');
   return '';
 }
 
@@ -3117,8 +3147,9 @@ function captureView() {
    * Card B's message for `basis` (docBasis: the title, text and process name, read together): from the packet held for
    * exactly these, else from a new one asked for with exactly these. The process name is part of it because the packet's
    * draft template carries it, and a draft that follows the template writes it back over the name the person chose.
-   * A new packet is held under what it was asked for, and only while the form still is that: one that comes after the form
-   * changed is not held, so the packet held (and "Show the message") is always the one for the form as it is.
+   * A new packet is held under what it was asked for, and only where the form still is that when it comes: one that comes
+   * after the form changed is not held (the one held before stays). The packet held is used, and shown under "Show the
+   * message", only while the form is the one it was made for, so neither is ever one for another form.
    */
   const packetMessage = async (basis) => {
     if (S.packet && sameBasis(S.packetFor, basis)) return { message: pasteMessage(S.packet) };
@@ -3278,9 +3309,11 @@ function captureView() {
   pasteButton.addEventListener('keydown', (e) => { if (e.repeat && e.key === 'Enter') e.preventDefault(); });
   // Card B's "Show the message" holds the message made from the title, text and process name as they were, and is shown
   // only while the form still is that (a draft filled from step 3 can rename the process). Once any of them changes it is
-  // out of date, so it goes (and the held packet with it): Copy makes the message again from what is there now.
+  // out of date, so it goes. The packet stays held under the form it was made for (S.packetFor), which is used and shown
+  // only while the form says that again: a name changed and changed back reuses it, and Copy makes the message again
+  // from what is there now otherwise.
   let preview = S.packet && sameBasis(S.packetFor, docBasis(st)) ? disclosure('Show the message', h('pre', { class: 'chat-preview', text: pasteMessage(S.packet) })) : null;
-  function docChanged() { if (!S.packet) return; S.packet = null; S.packetFor = null; preview?.remove(); preview = null; }
+  function docChanged() { preview?.remove(); preview = null; }
   // Step 1's count, kept up to date as the text is typed (typing redraws nothing): how long the document is, "Loaded"
   // only while the text is the file's, and, where a chat can record the map, how much of a chat's limit it takes.
   const docCount = () => {

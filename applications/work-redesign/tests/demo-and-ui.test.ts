@@ -1117,8 +1117,9 @@ describe('work-redesign offline demo and web UI', () => {
 
   /**
    * Map a process, from a document, on a demo-composed bridge, filled in with a title, a text and a process name: copy and
-   * paste's packet requests are held back on demand (`net.hold` of them, as a slow network holds them), and the clipboard
-   * keeps every text it is given, in order (the last is what it holds), holding back its answer on demand (`clip.hold`).
+   * paste's packet requests are held back on demand (`net.hold` of them, as a slow network holds them) or fail (`net.fail`
+   * of them, as a dropped connection does), and the clipboard keeps every text it takes, in order (the last is what it
+   * holds), holding back its answer on demand (`clip.hold`) and refusing, taking nothing, each write `clip.refuse` names.
    */
   async function heldPasteRoute() {
     const pod = memoryPod();
@@ -1145,14 +1146,27 @@ describe('work-redesign offline demo and web UI', () => {
     Object.defineProperty(w.crypto, 'subtle', { value: globalThis.crypto.subtle, configurable: true });
     (w as unknown as { TextEncoder: typeof TextEncoder }).TextEncoder = TextEncoder;
     const copied: string[] = [];
-    const clip = { hold: 0, held: [] as Array<() => void> };
+    /** `refuse(text, n)`: whether the browser refuses the page's `n`th write (from 0), of `text`; it answers once `hold` lets it. */
+    const clip = { hold: 0, held: [] as Array<() => void>, writes: 0, refuse: null as null | ((text: string, n: number) => boolean) };
     Object.defineProperty(w.navigator, 'clipboard', {
-      value: { writeText: async (t: string) => { copied.push(t); if (clip.hold > 0) { clip.hold -= 1; await new Promise<void>((r) => { clip.held.push(r); }); } } }, configurable: true,
+      value: {
+        writeText: async (t: string) => {
+          const refused = clip.refuse?.(t, clip.writes) ?? false;
+          clip.writes += 1;
+          if (!refused) copied.push(t);
+          if (clip.hold > 0) { clip.hold -= 1; await new Promise<void>((r) => { clip.held.push(r); }); }
+          if (refused) throw new Error('Write permission denied.');
+        },
+      },
+      configurable: true,
     });
-    const net = { hold: 0, held: [] as Array<() => void> };
+    const net = { hold: 0, held: [] as Array<() => void>, fail: 0 };
     const inner = w.fetch;
     w.fetch = (async (input: unknown, init?: RequestInit) => {
-      if (net.hold > 0 && new URL(String(input), w.location.href).pathname === '/wrd/task_map_packet') { net.hold -= 1; await new Promise<void>((r) => { net.held.push(r); }); }
+      if (new URL(String(input), w.location.href).pathname === '/wrd/task_map_packet') {
+        if (net.hold > 0) { net.hold -= 1; await new Promise<void>((r) => { net.held.push(r); }); }
+        if (net.fail > 0) { net.fail -= 1; throw new TypeError('Failed to fetch'); }
+      }
       return inner(input as string, init);
     }) as typeof w.fetch;
     const fill = (sel: string, value: string): void => {
@@ -1176,6 +1190,8 @@ describe('work-redesign offline demo and web UI', () => {
     };
     /** "Show the message": the message it shows, if it is there. */
     const previews = (): string[] => page.all('pre.chat-preview').map((x) => x.textContent ?? '');
+    /** "Copy this", where the browser refused the clipboard: the text it offers to copy by hand, if it is open. */
+    const copyThis = (): string | undefined => (d.querySelector('textarea[aria-label="The text to copy"]') as HTMLTextAreaElement | null)?.value;
     // Every toast the page shows, as it is added (a toast goes by itself after 5 s, so counting those on the screen won't do).
     const said: Array<readonly [string, string]> = [];
     new w.MutationObserver((records) => {
@@ -1193,7 +1209,7 @@ describe('work-redesign offline demo and web UI', () => {
     fill('[data-path="document.title"]', 'AP-SOP-014');
     fill('[data-path="document.text"]', 'Supplier invoices arrive by email.\nThe clerk matches each invoice to its purchase order and the goods receipt before approval.');
     fill('[data-path="workflow.title"]', 'Invoice intake');
-    return { page, w, d, copied, clip, net, fill, form, asked, messageFor, previews, toasts, settle };
+    return { page, w, d, copied, clip, net, fill, form, asked, messageFor, previews, copyThis, toasts, settle };
   }
 
   /**
@@ -1311,6 +1327,119 @@ describe('work-redesign offline demo and web UI', () => {
     page.click('Copy the message for my AI');
     await page.until(() => copied.length === 1 && previews().length > 0, 'the message copied once the form stays still');
     expect([copied.at(-1), previews(), asked().length, asked().at(-1)]).toEqual([await messageFor(form()), [await messageFor(form())], 4, form()]);
+    expect(page.errors).toEqual([]);
+  }, 90_000);
+
+  const KEPT_CHANGING = 'The document or the process name changed while the message was being made. Copy it again.';
+  const STILL_ON_CLIPBOARD = 'Your clipboard still holds the message for the document and process name as they were before the last change. Don\'t paste it: copy again.';
+
+  /** Whether the browser takes the empty text that takes a message off the clipboard again: it does, or it refuses. */
+  for (const [what, refuse] of [['and the clipboard is emptied', null], ['and, where the browser will not empty it, says the clipboard still holds it', (t: string) => t === '']] as const) {
+    it(`takes copy and paste's message off the clipboard again when the process is renamed while the clipboard takes each of three: nothing a paste gives is a message for a name no longer shown ${what}, and the next press copies the form as it is`, async () => {
+      const { page, copied, clip, fill, form, asked, messageFor, previews, toasts, settle } = await heldPasteRoute();
+      clip.hold = 3;
+      clip.refuse = refuse;
+      const made: string[] = [];
+      page.click('Copy the message for my AI');
+      for (const name of ['Supplier payments', 'Supplier invoice processing', 'Supplier payments and refunds']) {
+        await page.until(() => clip.held.length === 1, `the clipboard taking a message, then the process renamed "${name}"`, 5_000);
+        made.push(await messageFor(form()));
+        fill('[data-path="workflow.title"]', name);
+        must(clip.held.pop(), 'the held clipboard write')();
+      }
+      await page.until(() => toasts('Not copied').length === 1, 'the note that nothing was copied', 5_000);
+      await settle();
+      // Each round's message reached the clipboard, each for a name changed while it did. (Before, the last of them stayed
+      // there while the page said nothing was copied: a paste gave the message for "Supplier invoice processing".)
+      expect([copied, asked().length, previews(), toasts('Copied')]).toEqual([refuse ? made : [...made, ''], 3, [], []]);
+      expect(toasts('Not copied')).toEqual([refuse ? `${KEPT_CHANGING} ${STILL_ON_CLIPBOARD}` : KEPT_CHANGING]);
+      clip.refuse = null;
+      const n = copied.length;
+      page.click('Copy the message for my AI');
+      await page.until(() => copied.length > n && previews().length > 0, 'the message copied once the form stays still');
+      expect([copied.at(-1), previews()]).toEqual([await messageFor(form()), [await messageFor(form())]]);
+      expect(page.errors).toEqual([]);
+    }, 90_000);
+  }
+
+  it('takes copy and paste\'s message off the clipboard again when the document\'s title is cleared while the clipboard takes it, and says nothing was copied', async () => {
+    const { page, copied, clip, fill, form, messageFor, previews, toasts, settle } = await heldPasteRoute();
+    clip.hold = 1;
+    page.click('Copy the message for my AI');
+    await page.until(() => clip.held.length === 1, 'the clipboard taking the message');
+    const before = await messageFor(form());
+    fill('[data-path="document.title"]', '');
+    must(clip.held.pop(), 'the held clipboard write')();
+    await page.until(() => toasts('Not copied').length === 1, 'the note that nothing was copied', 5_000);
+    await settle();
+    // (Before, the message for "AP-SOP-014" stayed on the clipboard after the title was cleared.)
+    expect([copied, previews(), toasts('Copied'), toasts('Not copied')]).toEqual([[before, ''], [], [], [KEPT_CHANGING]]);
+    expect(page.errors).toEqual([]);
+  }, 90_000);
+
+  for (const [what, refuse] of [['and the clipboard is emptied', null], ['and, where the browser will not empty it, the person is told the clipboard still holds it', (t: string) => t === '']] as const) {
+    it(`takes copy and paste's message off the clipboard again when the packet for a name changed while the clipboard took it is refused: the refusal is shown ${what}`, async () => {
+      const { page, copied, clip, net, fill, form, messageFor, previews, toasts, settle } = await heldPasteRoute();
+      clip.hold = 1;
+      clip.refuse = refuse;
+      page.click('Copy the message for my AI');
+      await page.until(() => clip.held.length === 1, 'the clipboard taking the message');
+      const before = await messageFor(form());
+      fill('[data-path="workflow.title"]', 'Supplier payments');
+      net.fail = 1;
+      must(clip.held.pop(), 'the held clipboard write')();
+      await page.until(() => page.text().includes('The bridge could not be reached.'), 'the refusal of the packet for the new name', 5_000);
+      await settle();
+      // (Before, the message for "Invoice intake" stayed on the clipboard, and nothing said so.)
+      expect([copied, previews(), toasts('Copied'), toasts('Not copied')]).toEqual(refuse ? [[before], [], [], [STILL_ON_CLIPBOARD]] : [[before, ''], [], [], []]);
+      expect(page.errors).toEqual([]);
+    }, 90_000);
+  }
+
+  /** Each: which writes the browser refuses (the page's `n`th, from 0), and whether it took the first. */
+  for (const [what, refused, tookFirst] of [
+    ['each write', () => true, false],
+    ['the second write, after it took the first', (_t: string, n: number) => n === 1, true],
+  ] as const) {
+    it(`offers in "Copy this" the message for the process name as it is once the browser has refused ${what}, the process renamed while it answered: no message for the old name is offered or left on the clipboard`, async () => {
+      const { page, copied, clip, fill, form, asked, messageFor, copyThis, toasts, settle } = await heldPasteRoute();
+      clip.hold = 1;
+      clip.refuse = refused;
+      page.click('Copy the message for my AI');
+      await page.until(() => clip.held.length === 1, 'the browser answering the clipboard write');
+      const before = form();
+      fill('[data-path="workflow.title"]', 'Supplier payments');
+      const now = form();
+      must(clip.held.pop(), 'the held clipboard write')();
+      await page.until(() => copyThis() !== undefined, '"Copy this" open', 5_000);
+      await settle();
+      // (Before, "Copy this" offered the message for "Invoice intake", made before the rename; and a message for it the
+      // browser took stayed on the clipboard.)
+      expect([copyThis(), asked()]).toEqual([await messageFor(now), [before, now]]);
+      expect(copied).toEqual(tookFirst ? [await messageFor(before), ''] : []);
+      expect([toasts('Copied'), toasts('Not copied')]).toEqual([[], []]);
+      expect(page.errors).toEqual([]);
+    }, 90_000);
+  }
+
+  it('keeps copy and paste\'s packet when the process is renamed and renamed back while the clipboard takes its message: "Copied", "Show the message" shown, and the next press copies it again without asking for another', async () => {
+    const { page, copied, clip, fill, form, asked, messageFor, previews, toasts, settle } = await heldPasteRoute();
+    clip.hold = 1;
+    page.click('Copy the message for my AI');
+    await page.until(() => clip.held.length === 1, 'the clipboard taking the message');
+    const first = form();
+    const message = await messageFor(first);
+    fill('[data-path="workflow.title"]', 'Supplier payments');
+    fill('[data-path="workflow.title"]', first.name);
+    must(clip.held.pop(), 'the held clipboard write')();
+    await page.until(() => toasts('Copied').length === 1, 'the message copied', 5_000);
+    await settle();
+    // (Before, the rename dropped the packet: "Show the message" was missing, and the next press asked for it again.)
+    expect([copied, previews(), asked()]).toEqual([[message], [message], [first]]);
+    page.click('Copy the message for my AI');
+    await page.until(() => copied.length === 2, 'the message copied again');
+    await settle();
+    expect([copied, previews(), asked(), toasts('Copied').length]).toEqual([[message, message], [message], [first], 2]);
     expect(page.errors).toEqual([]);
   }, 90_000);
 

@@ -13,14 +13,23 @@ while the form said something else.
 The page now reads the document's title, its text and the process name
 together when it asks, and reads them again when the answer comes. If any of
 them changed, it asks again for what is there now and copies that, so one
-press copies what the person sees. An answer is kept only for the title, text
-and name it was asked for, and only while the form still says those, so the
-preview and the next press never use an answer made for another form. The
-same holds while the browser puts the message on the clipboard: if the form
-changes then, the message for the form as it is is copied after it, and
-"Copied" is said once. If the form is still changing after three tries,
-nothing is copied, and the page says the form changed and asks the person to
-copy again. The chat route's button ("Copy the message for my assistant")
+press copies what the person sees. An answer is kept under the title, text and
+name it was asked for (one that comes after the form changed is not kept), and
+the preview and the next press use it only while the form says those, so they
+never use an answer made for another form; a name changed and changed back
+uses it again. The same holds while the browser puts the message on the
+clipboard: if the form changes then, the message for the form as it is is
+copied after it, and "Copied" is said once. If the browser refuses the
+clipboard, "Copy this" offers the message for the form as it is once the
+browser has answered. If the form is still changing after three tries, or has
+changed into one that cannot be copied (the title cleared, or the document
+grown past what a chat can record), the page says the form changed and asks
+the person to copy again. A message an earlier try put on the clipboard for
+the form as it was is then taken off again, and so it is when the answer for
+the changed form is refused or "Copy this" opens; a message copied since, by a
+later press, is left alone. Where the browser will not empty the clipboard,
+the page says it still holds the message for the form as it was before the
+last change. The chat route's button ("Copy the message for my assistant")
 makes its message on the spot and asks the bridge for nothing, so only the
 clipboard step could go wrong there; it follows the same rule now. A draft
 pasted in step 3 can rename the process too: "Show the message" now goes when
@@ -35,6 +44,22 @@ also rename while the clipboard is taking the message (on both buttons), keep
 the form changing past three answers, and rename from a pasted draft. Each
 checks the clipboard, the preview and the next press against the form as it
 is, and each fails with the fix taken out.
+
+A review of the first version found three gaps, closed as described above.
+When the form changed while the clipboard was taking the message, rather than
+while the answer was on its way, the page said nothing was copied while a
+paste still gave the message for the form before the last change. A browser
+that refused the clipboard after a rename got "Copy this" with the message for
+the old name. And renaming the process and renaming it back while the
+clipboard took the message dropped the answer kept for it: "Show the message"
+went missing, and the next press asked the bridge for the same answer again. A
+change to the form now only takes "Show the message" away. Further tests hold
+the clipboard through three renames (with the browser emptying the clipboard
+afterwards, and refusing to), clear the title or grow the document past a
+chat's limit while the clipboard takes the message, have the answer for a
+renamed process refused, have the browser refuse the clipboard after a rename,
+rename and rename back, and press again while an earlier press is still
+copying; each fails with its fix taken out.
 
 Not covered: these were checked in a test browser (jsdom), not a real one.
 Signing a map hashes the document first; an edit made in that moment is still
