@@ -5,7 +5,17 @@
  *   - a packet's record template said podUrl, issuedAt and any nonce, while the prompt the chat was
  *     given said pod_url, no issuedAt and a nonce of the step, the turn and 16 random letters: for a
  *     request the relay signed, the template is now the prompt's, and the bridge takes both forms;
- *   - the start-up message stops on "ended": true, and ending the conversation did not say it.
+ *   - the start-up message stops on "ended": true, and ending the conversation did not say it;
+ *   - once the conversation was over, the learner's own assistant was offered the judge packet ("an
+ *     independent judge agent can judge this attempt") and was answered with it in full: an
+ *     assistant that acts as the learner, pointed at assessing the learner's own practice, which
+ *     record_judgment then refuses (judge-is-the-learner). Now it is told to hand the session to an
+ *     appointed judge, and the packet is refused to it; the web app's own hand-offs keep working;
+ *   - a learner could not find out whether the workspace has a judge at all, and nobody but an admin
+ *     could see roles: a signed read of a session now says the caller's own roles and whether anyone
+ *     else holds the judge and reviewer roles (booleans, never who), and carries no stakes for it;
+ *   - a judge not registered yet was told only that they were not entitled: now the refusal names the
+ *     account an admin registers (a user DID, never the agent DID the relay signs as).
  *
  * The relay is played by a generated wallet signing the way its `sign_request` does (an EIP-191
  * signature over `sha256:<hex sha256 of the exact JSON text>`), as chat-stakes.test.ts does. No
@@ -46,7 +56,12 @@ const person = (id: string): Person => {
   const did = userDid(id);
   return { did, web: agent(`practice-evidence-${id}`, did), claude: agent(`claude-${id}`, did) };
 };
-const P = { admin: person('u-pk-0000000011a1'), author: person('u-pk-0000000022b2'), learner: person('u-pk-0000000033c3'), judge: person('u-pk-0000000044d4') };
+const P = {
+  admin: person('u-pk-0000000011a1'), author: person('u-pk-0000000022b2'), learner: person('u-pk-0000000033c3'), judge: person('u-pk-0000000044d4'),
+  reviewer: person('u-pk-0000000055e5'),
+};
+/** A key registered as a reviewer and as an agent: software, which cannot sign off, so it is no reviewer for a learner. */
+const KEY_AGENT = wallet('key-agent', 'agent');
 
 const base: PevDeps = {
   platformWallet: importWallet(demoKey('platform'), 'agent', 'pev-platform'), platformKeyKind: 'demo-fixture',
@@ -93,6 +108,38 @@ function ok(r: Out): Out {
   return r;
 }
 
+function refused(r: Out, code: string, what: string): Out {
+  expect([r['kind'], r['iep:refusalReason']], `${what}: ${JSON.stringify(r).slice(0, 300)}`).toEqual(['refusal', code]);
+  return r;
+}
+
+/** Keys that carry a scored scenario's stakes, wherever they sit (chat-stakes.test.ts has the whole account of them). */
+const STAKE_KEYS = new Set([
+  'weight', 'value', 'passRule', 'minPercent', 'requiredLevels', 'passGateWhy', 'points', 'maxPoints', 'percent', 'percentTenths',
+  'meetsPassRule', 'unmetRequirements', 'provisionalPercent', 'finalPercent', 'finalMeetsPassRule', 'nearThreshold', 'score', 'success',
+]);
+function stakesIn(v: unknown, at = '$', found: string[] = []): string[] {
+  if (Array.isArray(v)) v.forEach((x, i) => stakesIn(x, `${at}[${i}]`, found));
+  else if (v !== null && typeof v === 'object') {
+    for (const [k, x] of Object.entries(v)) {
+      if (STAKE_KEYS.has(k)) found.push(`${at}.${k}`);
+      stakesIn(x, `${at}.${k}`, found);
+    }
+  }
+  return found;
+}
+/** An answer to a chat: a success with no stake anywhere in it. */
+function chatAnswer(r: Out, what: string): Out {
+  ok(r);
+  expect(stakesIn(r), what).toEqual([]);
+  return r;
+}
+const actionsOf = (r: Out): string[] => ((r['nextActions'] ?? []) as Out[]).map((x) => String(x['toolName']));
+const standing = (r: Out): Out => {
+  const { roles, admin, teamBesidesYou } = r['signedAs'] as Out;
+  return { roles, admin, teamBesidesYou };
+};
+
 /** A template's `<...>` placeholders replaced: the nonce as the prompt composes it, the rest from `values`. */
 function filled(template: Out, values: Out): Out {
   const out: Out = { ...template, ...values };
@@ -107,7 +154,8 @@ const X: Record<string, string> = {};
 
 describe('a whole session through a chat assistant, as the live run had it', () => {
   it('sets up a workspace: roles from the web app, a scored scenario published', async () => {
-    for (const [who, role] of [[P.author.did, 'author'], [P.learner.did, 'learner'], [KEY_LEARNER.address, 'learner'], [P.judge.did, 'judge']] as const) {
+    // No judge and no reviewer yet, as on the live workspace: the hand-off below says so.
+    for (const [who, role] of [[P.author.did, 'author'], [P.learner.did, 'learner'], [KEY_LEARNER.address, 'learner']] as const) {
       ok(await ract('pev.register_role', P.admin.web, { address: who, role, change: 'add' }));
     }
     const scenario = demoScenarioInput('missed-deadline', 2);
@@ -164,14 +212,80 @@ describe('a whole session through a chat assistant, as the live run had it', () 
     X['keyAttempt'] = iri;
   }, SLOW);
 
-  it('ending the conversation says ended: true, as the start-up message\'s stop rule reads it', async () => {
-    const end = ok(await ract('pev.end_conversation', P.learner.claude, { attemptIri: X['a'], turnIndex: Number(X['turn']) }));
+  it('ending the conversation says ended: true, and hands the learner\'s own assistant to an appointed judge, of whom there is none yet', async () => {
+    const end = chatAnswer(await ract('pev.end_conversation', P.learner.claude, { attemptIri: X['a'], turnIndex: Number(X['turn']) }), 'end_conversation from Claude');
     expect([end['state'], end['ended'], end['endedBy']]).toEqual(['ended', true, 'learner']);
+    // Not offered the judge packet: the next step is the learner's, a hand-off, not an act of their own assistant.
+    expect(actionsOf(end)).not.toContain('pev.judge_packet');
+    const handOff = end['handOff'] as Out;
+    expect([handOff['to'], handOff['judgeBesidesYou'], handOff['sessionPage']])
+      .toEqual(['appointed-judge', false, `https://bridge.example.test/ui#/attempt/${encodeURIComponent(X['a']!)}`]);
+    const words = String(handOff['words']);
+    for (const says of ['Your own assistant does not assess your own practice: an appointed judge does', 'Send to your judge',
+      'No one in this workspace is registered as a judge yet, so ask your admin to register your judge first',
+      `(did:web:${IDH}:users:…), never the ID of an assistant that acts for them (did:web:${IDH}:agents:…)`]) expect(words, says).toContain(says);
     // A save that ends it says so the same way.
     const k = ok(await kact('pev.record_turns', KEY_LEARNER, {
       attemptIri: X['keyAttempt'], turnIndex: 3, learnerText: 'That is all from me.', counterpartText: 'Thanks.', counterpartDisclosure: { provider: 'Example AI', model: 'not shown' }, endAfter: true,
     }));
     expect([k['state'], k['ended']]).toEqual(['ended', true]);
+    // A key the learner holds is not a chat: no hand-off note, and the judge packet is still offered (the web app's hand-off
+    // on a workspace without Interego sign-in fetches it with the learner's key).
+    expect([k['handOff'], actionsOf(k).includes('pev.judge_packet')]).toEqual([undefined, true]);
+  }, SLOW);
+
+  it('the judge packet is refused to the learner\'s own assistant, with the hand-off; the web app and a key the learner holds still fetch it', async () => {
+    const r = refused(await ract('pev.judge_packet', P.learner.claude, { attemptIri: X['a'] }), 'hand-off-to-judge', 'judge_packet from the learner\'s Claude');
+    expect([r['iep:refusalStatus'], r['remedy'], r['judgeBesidesYou'], r['sessionPage']])
+      .toEqual([403, 'send-to-judge', false, `https://bridge.example.test/ui#/attempt/${encodeURIComponent(X['a']!)}`]);
+    expect(String(r['error'])).toContain('This is your own practice session, so your own assistant does not fetch its judge packet');
+    expect(stakesIn(r)).toEqual([]);
+    expect(JSON.stringify(r)).not.toContain('"request"');
+    // Read through the relay as the web app's own agent: Send to your judge is offered, and no hand-off note (the page says it).
+    const web = ok(await ract('pev.get_attempt', P.learner.web, { attemptIri: X['a'] }));
+    expect([actionsOf(web).includes('pev.judge_packet'), web['handOff']]).toEqual([true, undefined]);
+    ok(await ract('pev.judge_packet', P.learner.web, { attemptIri: X['a'] }));
+    // A key the learner holds fetches it, as the web app's hand-off without Interego sign-in does.
+    ok(await kact('pev.judge_packet', KEY_LEARNER, { attemptIri: X['keyAttempt'] }));
+    // Reading the session from the chat: no judge packet offered, the same hand-off, and the learner's standing.
+    const read = chatAnswer(await ract('pev.get_attempt', P.learner.claude, { attemptIri: X['a'] }), 'get_attempt from the learner\'s Claude');
+    expect(actionsOf(read)).not.toContain('pev.judge_packet');
+    expect((read['handOff'] as Out)['judgeBesidesYou']).toBe(false);
+    expect(standing(read)).toEqual({ roles: ['learner'], admin: false, teamBesidesYou: { judge: false, reviewer: false } });
+  }, SLOW);
+
+  it('a signed read says the caller\'s own roles and whether anyone else is a judge or a reviewer: booleans, never who, and no stakes', async () => {
+    // A judge nobody registered yet is told which ID an admin registers: their own account's, not their assistant's.
+    const no = refused(await ract('pev.judge_packet', P.judge.claude, { attemptIri: X['a'] }), 'not-entitled', 'judge_packet from a judge not registered yet');
+    expect(String(no['error'])).toContain(`You are signed in as ${P.judge.did}, which holds no judge role on this workspace: to assess sessions here, ask an admin to register that Member ID as a judge.`);
+    expect(String(no['error'])).toContain(`never the ID of the assistant that signs for them (${P.judge.claude})`);
+    expect(no['principal']).toBe(P.judge.did);
+    // register_role takes no agent DID, as the refusal says.
+    refused(await ract('pev.register_role', P.admin.web, { address: P.judge.claude, role: 'judge', change: 'add' }), 'address-format', 'an agent DID as a judge');
+    // A reviewer registered as an agent is software: it cannot sign off, so it is no reviewer for the learner.
+    for (const role of ['reviewer', 'agent']) ok(await ract('pev.register_role', P.admin.web, { address: KEY_AGENT.address, role, change: 'add' }));
+    expect((ok(await ract('pev.get_attempt', P.learner.claude))['signedAs'] as Out)['teamBesidesYou']).toEqual({ judge: false, reviewer: false });
+    ok(await ract('pev.register_role', P.admin.web, { address: P.judge.did, role: 'judge', change: 'add' }));
+    ok(await ract('pev.register_role', P.admin.web, { address: P.reviewer.did, role: 'reviewer', change: 'add' }));
+    // The learner, from the chat and from the web app alike: the same standing, in the list read and the session read.
+    for (const a of [P.learner.claude, P.learner.web]) {
+      const list = ok(await ract('pev.get_attempt', a));
+      expect(standing(list), a).toEqual({ roles: ['learner'], admin: false, teamBesidesYou: { judge: true, reviewer: true } });
+      expect(standing(ok(await ract('pev.get_attempt', a, { attemptIri: X['a'] }))), a).toEqual(standing(list));
+    }
+    const read = chatAnswer(await ract('pev.get_attempt', P.learner.claude, { attemptIri: X['a'] }), 'the session from Claude, with a judge');
+    const handOff = read['handOff'] as Out;
+    expect([handOff['judgeBesidesYou'], String(handOff['words']).includes('No one in this workspace')]).toEqual([true, false]);
+    // The only judge is not "anyone else" to themself; nor is the only reviewer. Their own roles say what they hold.
+    expect(standing(ok(await ract('pev.get_attempt', P.judge.claude)))).toEqual({ roles: ['judge'], admin: false, teamBesidesYou: { judge: false, reviewer: true } });
+    expect(standing(ok(await ract('pev.get_attempt', P.reviewer.claude)))).toEqual({ roles: ['reviewer'], admin: false, teamBesidesYou: { judge: true, reviewer: false } });
+    expect(standing(ok(await ract('pev.get_attempt', P.admin.claude)))).toEqual({ roles: [], admin: true, teamBesidesYou: { judge: true, reviewer: true } });
+    // A key reads its own standing too.
+    expect(standing(ok(await kact('pev.get_attempt', KEY_LEARNER)))).toEqual({ roles: ['learner'], admin: false, teamBesidesYou: { judge: true, reviewer: true } });
+    // Never who: no other member of the registry, by address or DID, anywhere in the learner's answer.
+    const text = JSON.stringify(read);
+    for (const other of [P.judge.did, P.reviewer.did, KEY_AGENT.address, KEY_AGENT.address.toLowerCase()]) expect(text, other).not.toContain(other);
+    expect(Object.keys((read['signedAs'] as Out)['teamBesidesYou'] as Out).sort()).toEqual(['judge', 'reviewer']);
   }, SLOW);
 
   it('the judge packet\'s record template follows the judge\'s signing too: a chat\'s, at turn 0, filled in and taken', async () => {
@@ -191,6 +305,10 @@ describe('a whole session through a chat assistant, as the live run had it', () 
     });
     const saved = ok((await H['pev.record_judgment']!(await relayed(P.judge.claude, payload))) as Out);
     expect(saved['recorded']).toBe(true);
+    // Judged, with room for another judgment: the learner's assistant is still handed off, never offered the packet.
+    const after = chatAnswer(await ract('pev.get_attempt', P.learner.claude, { attemptIri: X['a'] }), 'the judged session from Claude');
+    expect([after['state'], actionsOf(after).includes('pev.judge_packet'), (after['handOff'] as Out)['judgeBesidesYou']]).toEqual(['judged', false, true]);
+    refused(await ract('pev.judge_packet', P.learner.claude, { attemptIri: X['a'] }), 'hand-off-to-judge', 'judge_packet from the learner\'s Claude, once judged');
     // A key-held judge's packet would have the key-held template: the same packet code, the caller's form (engines.test.ts).
   }, SLOW);
 });

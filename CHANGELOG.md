@@ -32,6 +32,35 @@ relay, as it did.
 Not covered: someone who signs with their own key still sends podUrl and
 issuedAt; the message's form is taken only through the relay.
 
+The same run showed a learner's own assistant being pointed at assessing the
+learner's own practice. Once the conversation was over, Practice Evidence
+offered that assistant the judging instructions ("an independent judge agent
+can judge this attempt") and answered it with them in full, although saving an
+assessment of one's own session is refused. Now the learner's next step is a
+hand-off: the assistant is told that an appointed judge assesses the session
+with their own assistant, and that the learner sends it to them with Send to
+your judge in the web app. The judging instructions are refused to the
+learner's own assistant, with the same words. The web app's own Send to your
+judge, and its hand-off on a workspace without Interego sign-in, work as
+before.
+
+The run also found that a learner could not tell whether their workspace had
+a judge at all, and that only an admin could see who holds which role. Reading
+a session (or the list of one's sessions) now says the reader's own roles,
+whether they are an admin, and whether anyone else in the workspace is a judge
+or a reviewer. It says yes or no, never who or how many, and it carries none
+of the weights or the pass mark. The session page warns beside Send to your
+judge when the workspace has no judge yet, and asks the learner to have their
+admin add one. The message for a judge, the guide and a refused judge now say
+that a judge's own Interego account must be registered, by its Member ID (the
+ID with :users: in it), not by the ID of the assistant that acts for them.
+
+Not covered: whether anyone else is a judge is read from the role list as it
+is now, so it does not say whether that judge is willing or able to assess
+this session. A learner who signs with their own key, or uses the web app,
+still fetches the judging instructions, to hand to their judge; only their
+chat assistant is refused them.
+
 ## 2026-11-09 — Practice Evidence: second review of keeping the stakes out of a chat
 
 A second review found that the keyed fingerprints could still check a guess at
