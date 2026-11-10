@@ -412,21 +412,25 @@ it('updates the separate retake until a new final and still honors omitted and n
 
   score(100, 'FullyGraded', 0);
   const final = row().result;
-  score(25, 'Pending', 1);
-  expect(row().result?.resultScore).toBe(25);
-  score(0, 'NotReady', 2);
+  // Every scored post short of FullyGraded stands beside the final, whatever its progress.
+  for (const [index, progress] of ['Pending', 'PendingManual', 'Failed'].entries()) {
+    score(25 + index, progress, 1 + index);
+    expect(row()).toMatchObject({ result: final, retake: { resultScore: 25 + index, gradingProgress: progress } });
+    expect(gradebook.listResults(gradebook.context.id, item, learner.sub)).toEqual([expect.objectContaining({ resultScore: 100 })]);
+  }
+  score(0, 'NotReady', 4);
   expect(row()).toMatchObject({ result: final, retake: { resultScore: 0 } });
-  score(100, 'NotReady', 3);
+  score(100, 'NotReady', 5);
   expect(row()).toMatchObject({ result: final, retake: { resultScore: 100, gradingProgress: 'NotReady' } });
-  score(75, 'FullyGraded', 4);
+  score(75, 'FullyGraded', 6);
   expect(row().result).toMatchObject({ resultScore: 75, gradingProgress: 'FullyGraded' });
   expect(row()).not.toHaveProperty('retake');
   for (const [index, cleared] of [undefined, null].entries()) {
-    score(75, 'FullyGraded', 5 + 3 * index);
-    score(cleared, 'NotReady', 6 + 3 * index);
+    score(75, 'FullyGraded', 7 + 3 * index);
+    score(cleared, 'NotReady', 8 + 3 * index);
     expect(row().result).not.toHaveProperty('resultScore');
     expect(row()).not.toHaveProperty('retake');
-    score(0, 'NotReady', 7 + 3 * index);
+    score(0, 'NotReady', 9 + 3 * index);
     expect(row().result).toMatchObject({ resultScore: 0, gradingProgress: 'NotReady' });
     expect(row()).not.toHaveProperty('retake');
   }
