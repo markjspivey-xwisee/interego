@@ -218,8 +218,14 @@ const CHAT_SIGNING_RULE = `${RELAY_SIGNED_HOW} The nonce: ${CHAT_NONCE_RULE}`;
 const stepOfTool = (tool: string): string => tool.replace(/^wrd\./, '').replace(/_/g, '-');
 /** Why a template for a registry change fills no part until one is named: an assistant that fills it as told sends exactly the part it means to change. */
 const REGISTRY_ONE_PART = 'Send only the part you change, and leave the others out: entries (people and AI agents; a change to people and roles), taskKinds (types of task) or podPolicy (the workspace rules). A part left out stays as it is. Ask again with subject entries, taskKinds or podPolicy (relay-signed: under template) for that part\'s template.';
-/** How a chat's read asks for the text it leaves out. */
-const FIXED_TEXT_INCLUDE = 'The same in every read, so a chat\'s read leaves them out: add "fixedText": true to the payload the relay signs to include them.';
+/**
+ * What a chat's read keeps of vocabulary: this pod's own AI-permission rules, which are not the
+ * same on every pod (the pod's policy, and the grant policy with it applied).
+ */
+const POD_RULES_KEPT = ['grantPolicy', 'podPolicy'] as const;
+/** How a chat's read asks for the text it leaves out, and what of vocabulary it keeps. */
+const FIXED_TEXT_INCLUDE = 'The same in every read, so a chat\'s read leaves them out: add "fixedText": true to the payload the relay signs to include them. '
+  + 'vocabulary keeps this pod\'s own AI-permission rules: podPolicy, and grantPolicy with it applied (its maxLevel caps each regime\'s levels).';
 const POD_POLICY_REPLACED = 'What you send replaces the whole pod policy: keep each field shown that you still want, add or raise only the ones you tighten, never below the published values given below; a field left out takes the published value, and null clears the pod policy.';
 /**
  * Acts that change who may do what: the registry (roles, admins' attestations, agents'
@@ -1851,7 +1857,8 @@ export function createWrdHandlers(deps: WrdDeps = {}): Record<string, WrdHandler
 
   /**
    * The payload a write intent needs: its JSON Schema and a template, with the fields the bridge
-   * may fill filled and the rest null and listed in `fill`. Reads only.
+   * may fill filled and the rest null and listed in `fill`; a chat's template lists its nonce in
+   * `fill` as well, since that nonce is a placeholder the chat makes anew. Reads only.
    *
    * WHAT IT FILLS DEPENDS ON WHO ASKS. Through wrd.read_envelope_template, with a valid signed read
    * (`read_envelope` in the POST body: the wrd:read-records envelope wrd.read_records takes, from an
@@ -2119,7 +2126,10 @@ export function createWrdHandlers(deps: WrdDeps = {}): Record<string, WrdHandler
         });
         break;
     }
-    const answer = { intent, toolName: TOOL_OF_INTENT[intent], schema: payloadSchema(intent, { relaySigned: forChat }), template: t, fill: nullPaths(t), ...(note !== null ? { note } : {}) };
+    // A chat's nonce is a placeholder the chat makes anew (CHAT_NONCE_RULE), so it is a path to fill
+    // too: a chat's payload filled exactly as fill lists then meets the schema's nonce pattern.
+    const fill = forChat ? ['nonce', ...nullPaths(t)] : nullPaths(t);
+    const answer = { intent, toolName: TOOL_OF_INTENT[intent], schema: payloadSchema(intent, { relaySigned: forChat }), template: t, fill, ...(note !== null ? { note } : {}) };
     const signing = forChat ? CHAT_SIGNING_RULE : SIGNING_RULE;
     // Unsigned, with reads closed: the allowlisted template only, and no context (some of it is read out of graphs).
     if (!full) return { ...answer, context: {}, contextWithheld: CONTEXT_WITHHELD, signing, status: 'templated', computed: true };
@@ -3177,6 +3187,7 @@ export function createWrdHandlers(deps: WrdDeps = {}): Record<string, WrdHandler
       if (badInside) return badInside;
       // A chat's read leaves out the text that is the same in every read unless it asks for it
       // (fixedText true): a chat carries every answer in full, and that text was most of a registry read.
+      // It keeps this pod's own AI-permission rules (vocabulary.podPolicy and vocabulary.grantPolicy).
       const listed = await listRecords(call, asked, { fixedText: !chat || asked['fixedText'] === true });
       // Who read: whether the signer is an admin, so a client offers registry changes only to one (every change is checked again).
       return listed['status'] === 'listed' ? { ...listed, reader: { admin: isAdmin(signer) } } : listed;
@@ -3267,7 +3278,9 @@ export function createWrdHandlers(deps: WrdDeps = {}): Record<string, WrdHandler
 
   /**
    * The read model. `fixedText` false (a chat's read, unless it asks) leaves out readExposure and
-   * vocabulary, the text that is the same in every read, and says so under omitted.
+   * the published part of vocabulary, the text that is the same in every read, and names each
+   * field it left out under omitted; it keeps this pod's own AI-permission rules
+   * (vocabulary.podPolicy and the effective vocabulary.grantPolicy), which differ from pod to pod.
    */
   async function listRecords(call: Call, args: Obj, opts: { readonly fixedText: boolean } = { fixedText: true }): Promise<Obj> {
     const kind = kindArg(args);
@@ -3397,9 +3410,20 @@ export function createWrdHandlers(deps: WrdDeps = {}): Record<string, WrdHandler
       (workflowOrder.get(a.record.payload.workflowIri) ?? workflowsRec.length) - (workflowOrder.get(b.record.payload.workflowIri) ?? workflowsRec.length)
       || byText(a.record.payload.workflowIri, b.record.payload.workflowIri) || placeOf(a) - placeOf(b) || byText(a.record.entityIri, b.record.entityIri);
 
+    const vocabulary: Obj = {
+      questions: CLASSIFICATION_QUESTIONS,
+      regimes: [...policy.regimes.values()].map((r) => ({ regime: r.regime, method: r.method, permitsChange: r.permitsChange, requiresProbe: r.requiresProbe, pointValuation: r.pointValuation, requiresExpertEvidence: r.requiresExpertEvidence, permittedLevels: r.permittedLevels, note: r.note })),
+      levels: [...policy.levels.values()].sort((x, y) => x.autonomyRank - y.autonomyRank).map((l) => ({ level: l.level, requiresAgent: l.requiresAgent, requiresPerson: l.requiresPerson, requiresGrant: l.requiresGrant, requiresCheckability: l.requiresCheckability })),
+      rules: [...policy.rules.values()].map((r) => ({ id: r.id, iri: r.iri, condition: r.condition })),
+      grantPolicy: policy.grantPolicy, podPolicy: reg.podPolicy, comparisonBases: COMPARISON_BASES, metrics: OUTCOME_METRICS, inputBases: INPUT_BASES,
+      dispositions: { freedHours: FREED_HOURS_DISPOSITIONS, outcome: OUTCOME_DISPOSITIONS }, distinctPeopleNote: DISTINCT_PEOPLE_NOTE, ontologySha256: published.ontologySha256,
+    };
+    const kept = (k: string): boolean => (POD_RULES_KEPT as readonly string[]).includes(k);
     const out: Obj = {
       podUrl: call.podUrl, complete: snap.complete, status: 'listed',
-      ...(opts.fixedText ? { readExposure: readExposureOf(Number(plaintext?.['versions'] ?? 0)) } : { omitted: { fields: ['readExposure', 'vocabulary'], include: FIXED_TEXT_INCLUDE } }),
+      // A chat's read names each field it leaves out, by path, and keeps this pod's own rules (POD_RULES_KEPT).
+      ...(opts.fixedText ? { readExposure: readExposureOf(Number(plaintext?.['versions'] ?? 0)) }
+        : { omitted: { fields: ['readExposure', ...Object.keys(vocabulary).filter((k) => !kept(k)).map((k) => `vocabulary.${k}`)], include: FIXED_TEXT_INCLUDE } }),
       records, demoRecords, demoLabel: demoRecords > 0 ? DEMO_LABEL : null,
       ...(plaintext ? { plaintext } : {}),
       bridge: {
@@ -3409,14 +3433,7 @@ export function createWrdHandlers(deps: WrdDeps = {}): Record<string, WrdHandler
           : { enabled: true, trustedRelays: relayPolicy.relayAddresses, retiredRelays: [...retiredRelays], identityHost, relayUrl: relay?.relayUrl ?? null, uiAgentPrefix: UI_AGENT_PREFIX, chatAgentsDecide: relay?.chatAgentsDecide === true, decisiveIntents: [...DECISIVE_INTENTS] },
         demo: { enabled: demo !== null, personas: demo ? [...demo.values()].map((d) => ({ id: d.id, label: d.label, address: lower(d.wallet.address) })) : [] },
       },
-      ...(opts.fixedText ? { vocabulary: {
-        questions: CLASSIFICATION_QUESTIONS,
-        regimes: [...policy.regimes.values()].map((r) => ({ regime: r.regime, method: r.method, permitsChange: r.permitsChange, requiresProbe: r.requiresProbe, pointValuation: r.pointValuation, requiresExpertEvidence: r.requiresExpertEvidence, permittedLevels: r.permittedLevels, note: r.note })),
-        levels: [...policy.levels.values()].sort((x, y) => x.autonomyRank - y.autonomyRank).map((l) => ({ level: l.level, requiresAgent: l.requiresAgent, requiresPerson: l.requiresPerson, requiresGrant: l.requiresGrant, requiresCheckability: l.requiresCheckability })),
-        rules: [...policy.rules.values()].map((r) => ({ id: r.id, iri: r.iri, condition: r.condition })),
-        grantPolicy: policy.grantPolicy, podPolicy: reg.podPolicy, comparisonBases: COMPARISON_BASES, metrics: OUTCOME_METRICS, inputBases: INPUT_BASES,
-        dispositions: { freedHours: FREED_HOURS_DISPOSITIONS, outcome: OUTCOME_DISPOSITIONS }, distinctPeopleNote: DISTINCT_PEOPLE_NOTE, ontologySha256: published.ontologySha256,
-      } } : {}),
+      vocabulary: opts.fixedText ? vocabulary : Object.fromEntries(Object.entries(vocabulary).filter(([k]) => kept(k))),
     };
     if (want('registry')) {
       out['registry'] = { members: [...reg.members.values()], taskKinds: [...reg.kinds.values()], head: reg.head ? headInfo(reg.head.loaded) : null };
@@ -3804,7 +3821,10 @@ INTENTS_OF_TOOL.set('wrd.read_calibration', ['wrd:read-records']);
 /**
  * A malformed payload is answered with the whole shape it should have had, not only the first
  * field that was wrong: the refusal carries `expectedPayload` (the intent's JSON Schema, a chat's
- * relay-signed one when the call came from a chat through the relay) and points at wrd.envelope_template.
+ * relay-signed one when the call came from a chat through the relay) and points at the template
+ * that answers the same shape: wrd.envelope_template for a key-held call, and for a chat's the
+ * signed read wrd.read_envelope_template, with the intent under template in the payload the relay
+ * signs (the unsigned template answers the key-held shape, and act passes it no arguments).
  */
 function withExpectedPayload(toolName: string, result: unknown, relaySigned: boolean): unknown {
   if (!isObj(result) || result['kind'] !== 'refusal' || result['iep:refusalStatus'] !== 400) return result;
@@ -3814,9 +3834,11 @@ function withExpectedPayload(toolName: string, result: unknown, relaySigned: boo
   const reason = String(result['iep:refusalReason'] ?? '');
   const intent = intents.length > 1 && /^review/.test(reason) ? intents.find((i) => i === 'wrd:review-agent-run') ?? intents[0] : intents[0];
   if (!intent) return result;
+  const resolvedBy = relaySigned ? { ...readVia('read_envelope_template'), template: { intent } }
+    : { action: 'urn:iep:action:wrd:envelope-template', toolName: 'wrd.envelope_template', intent };
   return {
     ...result, expectedPayload: payloadSchema(intent, { relaySigned }),
-    ...(result['iep:resolvedBy'] === undefined ? { 'iep:resolvedBy': { action: 'urn:iep:action:wrd:envelope-template', toolName: 'wrd.envelope_template', intent } } : {}),
+    ...(result['iep:resolvedBy'] === undefined ? { 'iep:resolvedBy': resolvedBy } : {}),
   };
 }
 

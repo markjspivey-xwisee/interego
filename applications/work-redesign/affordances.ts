@@ -116,7 +116,7 @@ const TEMPLATE_INPUTS: AffordanceInput[] = [
   { name: 'subject', type: 'string', required: false, description: 'For wrd:ratify-task: what is ratified. For wrd:update-registry: the one part of the change to template (entries, taskKinds or podPolicy); without it the template fills no part.', enum: ['description', 'classification', 'assignment', ...REGISTRY_PARTS] },
 ];
 const TEMPLATE_OUTPUTS: AffordanceOutput = {
-  description: 'The schema, the template, the paths still to fill, the tool to send it to, the context read from the pod, and for a registry change a note on its parts. Asked for by a chat\'s relay-signed read, the template is the chat\'s payload: no issuedAt, and its nonce a placeholder made as the copied messages teach.',
+  description: 'The schema, the template, the paths still to fill, the tool to send it to, the context read from the pod, and for a registry change a note on its parts. Asked for by a chat\'s relay-signed read, the template is the chat\'s payload: no issuedAt, and its nonce a placeholder made as the copied messages teach, listed first among the paths to fill.',
   properties: { intent: { type: 'string' }, toolName: { type: 'string' }, schema: { type: 'object' }, template: { type: 'object' }, fill: { type: 'array', items: { type: 'string' } }, context: { type: 'object' }, note: { type: 'string' }, signing: { type: 'string' }, status: { type: 'string' }, computed: { type: 'boolean' } },
   required: ['intent', 'schema', 'template', 'fill'],
 };
@@ -443,7 +443,7 @@ export const wrdAffordances: ReadonlyArray<Affordance> = [
     toolName: 'wrd.read_records',
     targetTemplate: '{base}/wrd/read_records',
     title: 'Read the records on a pod (signed read)',
-    description: `${LIST_DESCRIPTION} For an admin or a key in the pod's registry, by a signed read; anyone else is refused (403). Relay-signed, kind, subject and workflow go inside the payload the relay signs, beside intent, podUrl and nonce, since act sends nothing beside that payload: kind registry is who is registered. A chat's read leaves out readExposure and vocabulary, the text that is the same in every read, unless that payload says fixedText: true.`,
+    description: `${LIST_DESCRIPTION} For an admin or a key in the pod's registry, by a signed read; anyone else is refused (403). Relay-signed, kind, subject and workflow go inside the payload the relay signs, beside intent, podUrl and nonce, since act sends nothing beside that payload: kind registry is who is registered. A chat's read leaves out readExposure and the published part of vocabulary, the text that is the same in every read, unless that payload says fixedText: true; it keeps vocabulary.podPolicy and vocabulary.grantPolicy, this pod's own AI-permission rules, and names what it left out under omitted.`,
     method: 'POST',
     annotations: { title: 'Read records', ...READ_ANNOTATIONS },
     reads: READS,

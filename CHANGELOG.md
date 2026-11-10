@@ -37,12 +37,15 @@ People & roles page builds its own changes and works as before.
 
 A chat's reads were large: each repeated about 8,500 characters of text that
 is the same in every read. A chat's read now leaves that text out unless it
-asks for it (`fixedText: true` in the payload the relay signs), and can ask for
-the registry alone (`kind: "registry"`, in the same payload, since the relay
-sends nothing beside it). The copied message and the drafting instructions
-read the registry alone. Measured on a test bridge without a record key: a
-read of one five-task map went from 20,033 characters to 13,696, and the
-registry read from 8,322 to 1,985. The web app's reads keep all of it.
+asks for it (`fixedText: true` in the payload the relay signs), names each
+field it left out, and can ask for the registry alone (`kind: "registry"`, in
+the same payload, since the relay sends nothing beside it). It keeps the
+workspace's own rules for AI permissions, which differ from one workspace to
+the next: the workspace's pod policy, and the grant policy with it applied.
+The copied message and the drafting instructions read the registry alone.
+Measured on a test bridge without a record key: a read of one five-task map
+went from 20,033 characters to 14,405, and the registry read from 8,322 to
+2,694. The web app's reads keep all of it.
 
 Smaller fixes: tasks come back in their process's order rather than the order
 of their identifiers; a recorded map's answer says which document text the
@@ -54,6 +57,21 @@ holds equal. The drafting instructions grew by about 1,300 characters with the
 nonce rule and the step that adds types of task, and the size check on them
 was raised to match.
 
+A review of this work found more, now fixed. A chat's read had left out the
+workspace's own AI permission rules with the rest of the fixed text, so a chat
+never saw a workspace's stricter rules and nothing said they were in the part
+left out; it now keeps them, as above. The template a chat gets now lists its
+nonce first among the paths to fill, since the chat makes that nonce itself: a
+chat's payload filled exactly as the list said kept the placeholder nonce and
+was refused. A chat's malformed change, answered with the chat's schema, now
+points at the signed template read with the change's intent under `template`,
+which answers the chat's shape; it pointed at the unsigned template, which
+answers the shape of a change signed with the signer's own key. And a test now
+holds that the
+pod policy template carries every rule the pod holds, for a key holder and for
+a chat, so a change sent from it with one rule raised keeps the others; no test
+covered that before.
+
 New tests check each of these, and each fails with its fix taken out.
 
 Not covered: no second live run has been made with these changes. The chat
@@ -62,7 +80,10 @@ route's 20,000-character limit is still unmeasured: the live run's document was
 chat's read names one section (`kind`) or takes them all; it cannot pick
 several. The bridge does not check that a type of task a
 chat adds was confirmed by the person; the message and the instructions ask
-the assistant to, and the bridge checks only who may make the change.
+the assistant to, and the bridge checks only who may make the change. A pod
+policy change replaces the whole policy, so one built without the template
+still returns each field it leaves out to the published value; the template
+and its note guard against that, the bridge does not.
 
 ## 2026-11-10 — Work Redesign: the registry schema says what a registry change needs
 

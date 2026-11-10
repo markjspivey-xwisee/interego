@@ -8,9 +8,12 @@
  *     then (tell the person, who adds them in the app), and offers the chat a registry change of
  *     types of task only where the read says chat agents decide here and the reader is an admin;
  *   - a chat's templates are a chat's payloads: no issuedAt (the relay adds its own time) and the
- *     nonce the copied messages teach, for every intent; a key-held template is unchanged;
+ *     nonce the copied messages teach, listed first in fill, for every intent; a key-held template
+ *     is unchanged; a chat's malformed write points at the signed template read, which answers the
+ *     chat's shape;
  *   - a chat's read leaves out the text that is the same in every read unless asked, and can ask for
- *     the registry alone, inside the payload the relay signs (sizes measured below);
+ *     the registry alone, inside the payload the relay signs (sizes measured below); it keeps this
+ *     pod's own AI-permission rules, and the pod policy template carries every rule the pod holds;
  *   - tasks come back in their process's order, and a recorded map echoes the document it keeps;
  *   - the packet's nonce wording and placeholders are the shared chat helper's, word for word.
  *
@@ -25,6 +28,7 @@ import { wrdAffordances } from '../affordances.js';
 import { ENVELOPE_INTENTS } from '../src/payloads.js';
 import { CHAT_NONCE_RULE, chatNonce } from '../src/work.js';
 import { memoryPod, demoClock, DEMO_POD } from '../demo/run.js';
+import { schemaErrors } from './json-schema.js';
 
 type Obj = Record<string, unknown>;
 const obj = (v: unknown, what = 'a value'): Obj => {
@@ -82,11 +86,13 @@ interface Bridge {
   relay(surface: string, fields: Obj): Promise<Obj>;
   /** A read signed with the key admin's own key: the key-held route, unchanged by this file. */
   keyRead(): Promise<Obj>;
+  /** Any payload signed with the key admin's own key, as {payload, signature}. */
+  keySign(payload: Obj): Promise<Obj>;
   /** Call a tool with a body. */
   call(tool: string, body: Obj): Promise<Obj>;
 }
 /** A bridge on an empty pod: a key admin registers Lee by their user DID as a process lead, with no type of task. */
-async function bridge(o: { readonly chatAgentsDecide?: boolean; readonly leeIsAdmin?: boolean; readonly kinds?: boolean } = {}): Promise<Bridge> {
+async function bridge(o: { readonly chatAgentsDecide?: boolean; readonly leeIsAdmin?: boolean; readonly kinds?: boolean; readonly podPolicy?: Obj } = {}): Promise<Bridge> {
   const pod = memoryPod();
   const clock = demoClock();
   const docs = new Map<string, unknown>(['claude', 'chatgpt', 'work-redesign'].map((s) => [`https://${IDENTITY}/agents/${s}-${USER_ID}/did.json`, { id: agentDid(s), controller: LEE }]));
@@ -107,7 +113,7 @@ async function bridge(o: { readonly chatAgentsDecide?: boolean; readonly leeIsAd
   };
   const registered = await call('wrd.update_registry', { envelope: await keyEnvelope({
     intent: 'wrd:update-registry', entries: [{ address: LEE, roles: ['operator', 'worker'], label: 'Lee', softwareAgent: false, personRef: 'p-lee' }],
-    ...(o.kinds === true ? { taskKinds: [KIND] } : {}),
+    ...(o.kinds === true ? { taskKinds: [KIND] } : {}), ...(o.podPolicy ? { podPolicy: o.podPolicy } : {}),
   }) });
   expect(registered['status']).toBe('registered');
   return {
@@ -123,11 +129,22 @@ async function bridge(o: { readonly chatAgentsDecide?: boolean; readonly leeIsAd
       return { _signed_payload: text, _signature: await signMessageRaw(RELAY, `sha256:${sha256Hex(text)}`) };
     },
     keyRead: async () => keyEnvelope({ intent: 'wrd:read-records' }),
+    keySign: async (payload) => ({ payload, signature: await signMessageRaw(KEY_ADMIN, canonicalJson(payload)) }),
   };
 }
 /** A placeholder nonce, as a chat makes it from the rule. */
 const made = (placeholder: string, n: number): string => placeholder.replace('<turn number, or 0>', '0').replace('<16 new random letters or digits>', `Fx${String(n).padStart(14, '0')}`);
 const size = (v: unknown): number => JSON.stringify(v).length;
+/** Set the value at one of a template's fill paths (`taskKinds[0].slug`), in place. */
+function setPath(root: Obj, path: string, value: unknown): void {
+  const keys = path.match(/[^.[\]]+/g) ?? [];
+  const last = keys.pop();
+  if (last === undefined) throw new Error(`an empty path: ${path}`);
+  let at: unknown = root;
+  for (const k of keys) at = Array.isArray(at) ? at[Number(k)] : obj(at, path)[k];
+  if (Array.isArray(at)) at[Number(last)] = value;
+  else obj(at, path)[last] = value;
+}
 
 describe('the chat route after a live run', () => {
   it('teaches the shared chat helper\'s nonce rule word for word, and writes each signed step\'s nonce as the copied messages do', () => {
@@ -203,6 +220,9 @@ describe('the chat route after a live run', () => {
       expect([intent, String(obj(obj(schema['properties'])['nonce'])['description'])]).toEqual([intent, expect.stringContaining(A.nonceRule)]);
       expect([intent, String(t['signing'])]).toEqual([intent, expect.stringContaining(`The nonce: ${A.nonceRule}`)]);
       expect([intent, String(t['signing'])]).toEqual([intent, expect.stringContaining('It carries no issuedAt: the relay adds its own time')]);
+      // The nonce is a placeholder the chat makes anew, so it is the first path to fill, and listed once.
+      const fill = (t['fill'] as unknown[]).map(String);
+      expect([intent, fill[0], fill.filter((p) => p === 'nonce').length]).toEqual([intent, 'nonce', 1]);
     }
     // Key-held, and through this bridge's own web UI: issuedAt filled, a fresh nonce from the bridge, and issuedAt required.
     for (const [who, body] of [['key-held', { intent: 'wrd:record-task-map', read_envelope: await b.keyRead() }], ['the web UI', { intent: 'wrd:record-task-map', read_envelope: await b.relay('work-redesign', { intent: 'wrd:read-records' }) }]] as const) {
@@ -210,6 +230,8 @@ describe('the chat route after a live run', () => {
       const tpl = obj(t['template']);
       expect([who, typeof tpl['issuedAt'], /^[0-9a-f]{32}$/.test(String(tpl['nonce']))]).toEqual([who, 'string', true]);
       expect([who, (obj(t['schema'])['required'] as unknown[]).includes('issuedAt')]).toEqual([who, true]);
+      // The bridge made this nonce: nothing to fill.
+      expect([who, (t['fill'] as unknown[]).includes('nonce')]).toEqual([who, false]);
     }
   }, 60_000);
 
@@ -226,12 +248,22 @@ describe('the chat route after a live run', () => {
     const withFixed = await chatRead({ fixedText: true });
     const plain = await chatRead();
     const registryOnly = await chatRead({ kind: 'registry' });
-    // Asked for, it is all there, as before; not asked for, it is named, with how to ask.
+    // Asked for, it is all there, as before; not asked for, each field left out is named, with how to ask, and this pod's own
+    // AI-permission rules stay under vocabulary (they differ from pod to pod: see the stricter pod's test below).
     expect([typeof withFixed['readExposure'], typeof withFixed['vocabulary']]).toEqual(['string', 'object']);
-    expect(['readExposure' in plain, 'vocabulary' in plain]).toEqual([false, false]);
-    expect(obj(plain['omitted'])).toEqual({ fields: ['readExposure', 'vocabulary'], include: expect.stringContaining('"fixedText": true') });
+    const fullVocabulary = obj(withFixed['vocabulary'], 'the full vocabulary');
+    expect('readExposure' in plain).toBe(false);
+    expect(obj(plain['vocabulary'], 'a chat\'s vocabulary')).toEqual({ grantPolicy: fullVocabulary['grantPolicy'], podPolicy: fullVocabulary['podPolicy'] });
+    const omitted = obj(plain['omitted'], 'omitted');
+    expect(omitted).toEqual({ fields: expect.any(Array), include: expect.stringContaining('"fixedText": true') });
+    expect(String(omitted['include'])).toContain('vocabulary keeps this pod\'s own AI-permission rules: podPolicy, and grantPolicy with it applied');
+    // What is left out and what is kept are the whole of the full read, each once.
+    const fields = (omitted['fields'] as unknown[]).map(String);
+    expect(fields[0]).toBe('readExposure');
+    expect([...fields.slice(1).map((f) => f.replace(/^vocabulary\./, '')), ...Object.keys(obj(plain['vocabulary']))].sort()).toEqual(Object.keys(fullVocabulary).sort());
+    expect(fields.slice(1).every((f) => f.startsWith('vocabulary.'))).toBe(true);
     const { readExposure: _x, vocabulary: _v, ...rest } = withFixed;
-    const { omitted: _o, ...plainRest } = plain;
+    const { omitted: _o, vocabulary: _pv, ...plainRest } = plain;
     expect(plainRest).toEqual(rest);
     // The registry alone: who is registered, whether this reader is an admin, and what the bridge allows; no other section.
     expect(Object.keys(registryOnly).filter((k) => ['workflows', 'tasks', 'plans', 'valuations', 'decisions', 'grants', 'runs'].includes(k))).toEqual([]);
@@ -239,12 +271,14 @@ describe('the chat route after a live run', () => {
     expect(arr(obj(registryOnly['registry'])['members']).map((m) => m['address'])).toEqual([LEE]);
     expect(obj(registryOnly['reader'])).toEqual({ admin: true });
     // Measured here (characters of JSON, a bridge with no record key): the whole read of one five-task map 20,033 with the
-    // fixed text and 13,696 without; the registry read 8,322 with it and 1,985 alone. The live run's bridge, which holds a
-    // record key, said more in readExposure: about 8,500 characters of fixed text in every read.
+    // fixed text and 14,405 without; the registry read 8,322 with it and 2,694 alone. A chat's read keeps this pod's own
+    // AI-permission rules and names each field it leaves out, about 700 characters more than leaving all of vocabulary
+    // out. The live run's bridge, which holds a record key, said more in readExposure: about 8,500 characters of fixed
+    // text in every read.
     const sizes = { full: size(withFixed), chat: size(plain), registry: size(registryOnly), fullRegistry: size(await chatRead({ kind: 'registry', fixedText: true })) };
-    expect(sizes.full - sizes.chat).toBeGreaterThan(6_000);
+    expect(sizes.full - sizes.chat).toBeGreaterThan(5_000);
     expect(sizes.registry).toBeLessThan(sizes.fullRegistry / 3);
-    expect(sizes.registry).toBeLessThan(2_500);
+    expect(sizes.registry).toBeLessThan(3_000);
     // A kind it does not know is refused, inside the signed payload as beside it.
     expect(obj(await chatRead({ kind: 'everything' }))).toMatchObject({ 'iep:refusalStatus': 400, error: 'Unknown kind.' });
     // The key-held read and the web UI's are unchanged: the fixed text stays, whatever they sign.
@@ -272,5 +306,75 @@ describe('the chat route after a live run', () => {
     expect(got).toEqual(expected);
     // Not the IRIs' own order, or this would show nothing.
     expect([...got].sort()).not.toEqual(got);
+  }, 60_000);
+  it('on a pod with stricter AI-permission rules, a chat\'s read shows them, and the pod policy template, key-held and a chat\'s, carries every rule the pod holds, so one sent with a rule raised keeps the others', async () => {
+    const STRICT = { floor: 0.97, minSamples: 60 };
+    const b = await bridge({ chatAgentsDecide: true, podPolicy: STRICT });
+    const chatRead = async (fields: Obj = {}): Promise<Obj> => b.call('wrd.read_records', await b.relay('claude', { intent: 'wrd:read-records', ...fields }));
+    const published = obj(obj((await b.call('wrd.read_records', { envelope: await b.keyRead() }))['vocabulary'])['grantPolicy']);
+    // A chat's read, whole or the registry alone, without the fixed text: the pod's policy, and the grant policy with it applied.
+    for (const fields of [{}, { kind: 'registry' }]) {
+      const v = obj((await chatRead(fields))['vocabulary'], 'a chat\'s vocabulary');
+      const grant = obj(v['grantPolicy'], 'grantPolicy');
+      expect([fields, Object.keys(v).sort(), v['podPolicy'], grant['floor'], grant['minSamples']]).toEqual([fields, ['grantPolicy', 'podPolicy'], STRICT, 0.97, 60]);
+      // The counts the pod leaves alone are the published ones.
+      expect([fields, grant['minHumanConfirmations'], grant['minDistinctConfirmers']]).toEqual([fields, published['minHumanConfirmations'], published['minDistinctConfirmers']]);
+    }
+
+    // The pod policy template, key-held and a chat's (under template in the read the relay signs): every rule the pod holds now.
+    const policyTemplate = async (who: 'key-held' | 'a chat'): Promise<Obj> => b.call('wrd.read_envelope_template', who === 'key-held'
+      ? { intent: 'wrd:update-registry', subject: 'podPolicy', read_envelope: await b.keyRead() }
+      : await b.relay('claude', { intent: 'wrd:read-records', template: { intent: 'wrd:update-registry', subject: 'podPolicy' } }));
+    for (const who of ['key-held', 'a chat'] as const) {
+      const t = await policyTemplate(who);
+      expect([who, t['status'], obj(t['template'])['podPolicy'], String(t['note'])]).toEqual([who, 'templated', STRICT, expect.stringMatching(/^What you send replaces the whole pod policy: keep each field shown/)]);
+    }
+    // Sent with one rule raised, the others stay: the key admin raises minSamples, then the chat, reading its template again, raises the floor.
+    const keyTpl = obj((await policyTemplate('key-held'))['template']);
+    const byKey = await b.call('wrd.update_registry', { envelope: await b.keySign({ ...keyTpl, podPolicy: { ...obj(keyTpl['podPolicy']), minSamples: 80 } }) });
+    expect([byKey['status'], byKey['podPolicy']]).toEqual(['registered', { floor: 0.97, minSamples: 80 }]);
+    const chatT = await policyTemplate('a chat');
+    const chatTpl = obj(chatT['template']);
+    expect([chatT['fill'], chatTpl['podPolicy']]).toEqual([['nonce'], { floor: 0.97, minSamples: 80 }]);
+    const byChat = await b.call('wrd.update_registry', await b.relay('claude', { ...chatTpl, nonce: made(String(chatTpl['nonce']), 3), podPolicy: { ...obj(chatTpl['podPolicy']), floor: 0.98 } }));
+    expect([byChat['status'], byChat['podPolicy']]).toEqual(['registered', { floor: 0.98, minSamples: 80 }]);
+    expect(obj((await chatRead({ kind: 'registry' }))['vocabulary'])['podPolicy']).toEqual({ floor: 0.98, minSamples: 80 });
+  }, 60_000);
+
+  it('a chat\'s template filled exactly as its fill lists, nonce first, meets its schema and is taken; with no part named, or the pod policy, it still lists its nonce to fill', async () => {
+    const b = await bridge({ chatAgentsDecide: true });
+    const template = async (t: Obj): Promise<Obj> => b.call('wrd.read_envelope_template', await b.relay('claude', { intent: 'wrd:read-records', template: { intent: 'wrd:update-registry', ...t } }));
+    const kinds = await template({ subject: 'taskKinds' });
+    expect(kinds['fill']).toEqual(['nonce', 'taskKinds[0].slug', 'taskKinds[0].label', 'taskKinds[0].definition']);
+    const tpl = obj(kinds['template']);
+    // As it comes, the placeholder nonce is one thing the schema refuses: it is to be filled like the nulls.
+    expect(schemaErrors(kinds['schema'], tpl).filter((e) => e.startsWith('$.nonce'))).toEqual(['$.nonce: does not match ^[A-Za-z0-9_-]{16,64}$']);
+    const values: Readonly<Record<string, unknown>> = { nonce: made(String(tpl['nonce']), 7), 'taskKinds[0].slug': KIND.slug, 'taskKinds[0].label': KIND.label, 'taskKinds[0].definition': KIND.definition };
+    for (const path of (kinds['fill'] as unknown[]).map(String)) setPath(tpl, path, values[path]);
+    expect(schemaErrors(kinds['schema'], tpl)).toEqual([]);
+    const sent = await b.call('wrd.update_registry', await b.relay('claude', tpl));
+    expect([sent['status'], arr(sent['taskKinds']).map((k) => k['slug'])]).toEqual(['registered', [KIND.slug]]);
+    for (const subject of [null, 'podPolicy']) {
+      const t = await template(subject === null ? {} : { subject });
+      expect([subject, t['fill']]).toEqual([subject, ['nonce']]);
+    }
+  }, 60_000);
+
+  it('a chat\'s malformed write points at the signed template read, with the intent under template, which answers the chat\'s shape; a key-held one still points at the unsigned template', async () => {
+    const b = await bridge({ chatAgentsDecide: true });
+    const refused = await b.call('wrd.update_registry', await b.relay('claude', { intent: 'wrd:update-registry', podUrl: DEMO_POD, nonce: made(chatNonce('update-registry'), 9) }));
+    expect([refused['iep:refusalStatus'], refused['error']]).toEqual([400, 'The registry change is malformed.']);
+    expect(obj(refused['expectedPayload'])['required']).toEqual(['intent', 'podUrl', 'nonce']);
+    const resolvedBy = obj(refused['iep:resolvedBy'], 'iep:resolvedBy');
+    expect(resolvedBy).toEqual({ action: 'urn:iep:action:wrd:read-envelope-template', toolName: 'wrd.read_envelope_template', intent: 'wrd:read-records', template: { intent: 'wrd:update-registry' } });
+    // Followed as it says, it answers the chat's shape: no issuedAt, the copied messages' nonce.
+    const followed = await b.call(String(resolvedBy['toolName']), await b.relay('claude', { intent: resolvedBy['intent'], template: resolvedBy['template'] }));
+    expect([followed['status'], 'issuedAt' in obj(followed['template']), obj(followed['template'])['nonce'], obj(followed['schema'])['required']])
+      .toEqual(['templated', false, chatNonce('update-registry'), obj(refused['expectedPayload'])['required']]);
+    // Key-held: the unsigned template, which answers the key-held shape.
+    const issuedAt = obj((await b.keyRead())['payload'])['issuedAt'];
+    const keyRefused = await b.call('wrd.update_registry', { envelope: await b.keySign({ intent: 'wrd:update-registry', podUrl: DEMO_POD, issuedAt, nonce: 'chat-route-key-malformed-1' }) });
+    expect([keyRefused['iep:refusalStatus'], keyRefused['iep:resolvedBy']]).toEqual([400, { action: 'urn:iep:action:wrd:envelope-template', toolName: 'wrd.envelope_template', intent: 'wrd:update-registry' }]);
+    expect(obj(keyRefused['expectedPayload'])['required']).toContain('issuedAt');
   }, 60_000);
 });

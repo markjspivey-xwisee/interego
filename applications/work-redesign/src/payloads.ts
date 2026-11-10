@@ -344,7 +344,7 @@ const RELAY_SIGNED_FIELDS: Partial<Record<EnvelopeIntent, IntentFields>> = {
       kind: oneOf(READ_SECTIONS, 'wrd.read_records only: just this section; registry is who is registered (people, AI agents and types of task)'),
       subject: text('wrd.read_records only: just the records about this entity IRI'),
       workflow: text('wrd.read_records only: just the records of this workflow IRI'),
-      fixedText: { type: 'boolean', description: 'wrd.read_records only: true adds readExposure and vocabulary, the text that is the same in every read, which a chat\'s read leaves out' },
+      fixedText: { type: 'boolean', description: 'wrd.read_records only: true adds readExposure and the published part of vocabulary, the text that is the same in every read, which a chat\'s read leaves out; a chat\'s read keeps vocabulary.podPolicy and vocabulary.grantPolicy, this pod\'s own AI-permission rules, either way' },
       template: {
         type: 'object', description: 'wrd.read_envelope_template only: the template asked for, {intent, and the task_iri, workflow_iri, plan_iri, decision_iri, grant_iri or subject that intent takes}; for wrd:update-registry, subject entries, taskKinds or podPolicy names the one part you change',
       },
