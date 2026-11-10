@@ -61,8 +61,9 @@ relay adds (Provisional Play, Foxxi's own-subject activity actions and README,
 and the payload shapes the private performance routes serve) now mention
 `client_id`.
 
-A repository-wide test reads every tracked JavaScript and TypeScript source
-file outside tests and build output that names `subject_pod_url`. It fails when
+A repository-wide test (`integrations/tests/relay-signed-client-id-is-transport.test.ts`,
+with the cross-vertical tests, since it reads the verticals' sources) reads every
+tracked JavaScript and TypeScript source file outside tests and build output that names `subject_pod_url`. It fails when
 an array or argument list naming `agent_id`, `timestamp` and `subject_pod_url`
 leaves `client_id` out (in any quote style, on one line or across several), when
 a destructuring sets `subject_pod_url` aside before a rest element without
