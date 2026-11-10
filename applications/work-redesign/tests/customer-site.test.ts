@@ -25,12 +25,14 @@ import { listenLoopback, type TestListener } from '../../_shared/vertical-bridge
 import { wrdAffordances, wrdDemoAffordances } from '../affordances.js';
 import { createWrdHandlers } from '../bridge/handlers.js';
 import { CHAT_DOCUMENT_MAX_CHARS } from '../src/work.js';
+import { payloadSchema } from '../src/payloads.js';
 import { attachUi, hostAllowlistGuard, parseEveryQueryPair, servedHostNames, UI_CSP, type UiReads, type UiSignIn } from '../bridge/ui.js';
 import { designSystemCss } from '../../_shared/design-system/index.js';
 import { SIBLING, INTEREGO_DEFAULTS, connectorUrlOf, renderSitePage, siteValues, type LandingOptions } from '../bridge/landing.js';
 import { demoClock, memoryPod, DEMO_POD, DEMO_RECORD_KEY } from '../demo/run.js';
 // The plain-words guard (JARGON, ALLOWED = [], visibleText), shared with every other DOM test of the UI.
 import { ALLOWED, jargonIn, urnsRunningIntoPunctuation, visibleText } from './plain-words.js';
+import { schemaErrors } from './json-schema.js';
 
 /** /ui/app.js as the bridge serves it: the shared chat-agent helpers, then the app (bridge/ui.ts). */
 const APP_JS = `${chatAgentJs()}\n${readFileSync(new URL('../bridge/ui/app.js', import.meta.url), 'utf8')}`;
@@ -770,6 +772,101 @@ describe('work-redesign customer site', () => {
     page.click('Cancel');
     await page.until(() => !page.doc.getElementById('panel-title'), 'the panel closed');
     expect(page.log.slice(before).filter((r) => r.method === 'POST')).toEqual([]);
+    expect(page.errors).toEqual([]);
+  }, 60_000);
+
+  it('signs each People & roles change in a shape the update-registry schema publishes, and each is taken: a person, an AI agent, and a removal', async () => {
+    const l = await minimalDemo();
+    const page = await openUi(l.base);
+    const d = page.doc;
+    // Every payload the page signs for wrd.update_registry, read from the request it sends.
+    const signed: Array<Record<string, unknown>> = [];
+    const w = page.window as unknown as { fetch: (input: unknown, init?: RequestInit) => Promise<globalThis.Response> };
+    const inner = w.fetch;
+    w.fetch = async (input, init) => {
+      if (new URL(String(input), page.window.location.href).pathname.endsWith('/wrd/update_registry') && typeof init?.body === 'string') {
+        signed.push((JSON.parse(init.body) as { envelope: { payload: Record<string, unknown> } }).envelope.payload);
+      }
+      return inner(input, init);
+    };
+    const buttons = (label: string, within = 'main'): HTMLButtonElement[] => [...d.querySelectorAll(`${within} button`)].filter((b) => b.textContent === label) as HTMLButtonElement[];
+    const panelTitle = (): string | null => d.getElementById('panel-title')?.textContent ?? null;
+    /** The panel's control whose label starts with `label`. */
+    const control = (label: string): HTMLInputElement | HTMLSelectElement => {
+      const lab = [...d.querySelectorAll('.panel label.label')].find((x) => (x.textContent ?? '').startsWith(label));
+      return must(d.getElementById(must(lab, `the ${label} label`).getAttribute('for') ?? ''), `the ${label} field`) as HTMLInputElement | HTMLSelectElement;
+    };
+    const type = (label: string, value: string): void => {
+      const el = control(label);
+      el.value = value;
+      el.dispatchEvent(new page.window.Event(el.tagName === 'SELECT' ? 'change' : 'input', { bubbles: true }));
+    };
+    const tick = (label: string): void => {
+      const box = [...d.querySelectorAll('.panel label.choice')].find((x) => x.textContent?.startsWith(label))?.querySelector('input');
+      must(box, `the ${label} box`).click();
+    };
+    const answered = (): number => page.log.filter((r) => r.path.endsWith('/wrd/update_registry')).length;
+    /** Press the panel's button, then wait for the signed change's answer and the panel to close (it closes only on success). */
+    const save = async (label: string, what: string): Promise<Record<string, unknown>> => {
+      const [n, a] = [signed.length, answered()];
+      must(buttons(label, '.panel')[0], `${what}: ${label}`).click();
+      await page.until(() => answered() > a && !panelTitle(), `${what} signed, answered and the panel closed`);
+      return must(signed[n], what);
+    };
+    const schema = payloadSchema('wrd:update-registry');
+    /** The titles of the entry shapes the schema publishes that `entry` meets: exactly one, for a payload the handler takes. */
+    const shapesMet = (entry: unknown): string[] => {
+      const items = ((schema['properties'] as Record<string, Record<string, unknown>>)['entries'] ?? {})['items'] as Record<string, unknown>;
+      return (Array.isArray(items['oneOf']) ? items['oneOf'] as Array<Record<string, unknown>> : []).filter((s) => schemaErrors(s, entry).length === 0).map((s) => String(s['title']));
+    };
+    await page.until(() => page.text().includes('Match invoices'), 'the demo');
+    page.click('People & roles');
+    await page.until(() => page.text().includes('Types of task'), 'the roles view');
+    page.select('#persona', 'admin');
+    await page.until(() => buttons('Add a person').length === 1, 'the admin\'s roles view');
+
+    // A person, by their wallet address, with one role and a person ID.
+    const bo = importWallet(`0x${sha256Hex('wrd-customer-site:people-page-bo')}`, 'human', 'bo').address;
+    must(buttons('Add a person')[0], 'Add a person').click();
+    await page.until(() => panelTitle() === 'Add a person', 'the person panel');
+    type('Name', 'Bo');
+    type('Interego ID or wallet address', bo);
+    tick('Team member');
+    type('Person ID', 'p-bo');
+    const person = await save('Sign and save', 'the person');
+    expect(person['entries']).toEqual([{ address: bo, roles: ['worker'], label: 'Bo', softwareAgent: false, personRef: 'p-bo' }]);
+    expect(schemaErrors(schema, person)).toEqual([]);
+    expect(shapesMet((person['entries'] as unknown[])[0])).toEqual(['PersonEntry']);
+    await page.until(() => page.text().includes('Person ID p-bo'), 'Bo in the People table');
+
+    // An AI agent, with Ana as its accountable owner and the model it runs on.
+    const agent = importWallet(`0x${sha256Hex('wrd-customer-site:people-page-agent')}`, 'agent', 'agent').address;
+    must(buttons('Add an AI agent')[0], 'Add an AI agent').click();
+    await page.until(() => panelTitle() === 'Add an AI agent', 'the agent panel');
+    type('Name', 'Matching agent');
+    type('Wallet address', agent);
+    const owner = [...(control('Accountable owner') as HTMLSelectElement).options].find((o) => o.text.startsWith('Ana'));
+    type('Accountable owner', must(owner, 'Ana among the owners').value);
+    type('AI model in use', 'fixture-model');
+    const added = await save('Sign and save', 'the agent');
+    expect(added['entries']).toEqual([{ address: agent, roles: ['agent'], label: 'Matching agent', softwareAgent: true, principal: must(owner, 'Ana').value, model: 'fixture-model' }]);
+    expect(schemaErrors(schema, added)).toEqual([]);
+    expect(shapesMet((added['entries'] as unknown[])[0])).toEqual(['AgentEntry']);
+    await page.until(() => page.text().includes('fixture-model'), 'the agent in the AI agents table');
+
+    // A removal, once the admin confirms it.
+    const boRow = [...d.querySelectorAll('main tr')].find((tr) => tr.querySelector('.table__primary')?.textContent === 'Bo');
+    must([...(boRow?.querySelectorAll('button') ?? [])].find((b) => b.textContent === 'Remove'), 'Bo\'s Remove').click();
+    await page.until(() => /^Remove /.test(panelTitle() ?? ''), 'the removal\'s confirmation');
+    const removal = await save('Remove', 'the removal');
+    expect(removal['entries']).toEqual([{ address: bo.toLowerCase(), roles: [] }]);
+    expect(schemaErrors(schema, removal)).toEqual([]);
+    expect(shapesMet((removal['entries'] as unknown[])[0])).toEqual(['RemovalEntry']);
+    await page.until(() => !page.text().includes('Person ID p-bo'), 'Bo gone from the People table');
+
+    // Each was taken: three signed changes, three answers of 200.
+    expect(signed).toHaveLength(3);
+    expect(page.log.filter((r) => r.path.endsWith('/wrd/update_registry')).map((r) => r.status)).toEqual([200, 200, 200]);
     expect(page.errors).toEqual([]);
   }, 60_000);
 

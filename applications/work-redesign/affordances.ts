@@ -21,7 +21,7 @@
  */
 import type { IRI } from '@interego/core';
 import type { Affordance, AffordanceInput, AffordanceOutput } from '../_shared/affordance-mcp/index.js';
-import { payloadSummary, ENVELOPE_INTENTS } from './src/payloads.js';
+import { payloadSummary, ENVELOPE_INTENTS, READ_SECTIONS, REGISTRY_PARTS, RATIFICATION_SUBJECTS } from './src/payloads.js';
 import { CHAT_DOCUMENT_MAX_CHARS } from './src/work.js';
 import type { EnvelopeIntent } from './src/records.js';
 
@@ -81,7 +81,7 @@ const READ_ENVELOPE: AffordanceInput = {
 };
 const LIST_INPUTS: AffordanceInput[] = [
   POD_INPUT,
-  { name: 'kind', type: 'string', required: false, description: 'Only one section.', enum: ['registry', 'workflows', 'tasks', 'plans', 'valuations', 'decisions', 'grants', 'runs'] },
+  { name: 'kind', type: 'string', required: false, description: 'Only one section; registry is who is registered (people, AI agents and types of task).', enum: [...READ_SECTIONS] },
   { name: 'subject', type: 'string', required: false, description: 'Only records about this entity IRI.' },
   { name: 'workflow', type: 'string', required: false, description: 'Only records of this workflow IRI.' },
 ];
@@ -113,11 +113,11 @@ const TEMPLATE_INPUTS: AffordanceInput[] = [
   { name: 'plan_iri', type: 'string', required: false, description: 'The plan (value, submit, acknowledge an assignment).' },
   { name: 'decision_iri', type: 'string', required: false, description: 'The decision (countersign, record an outcome).' },
   { name: 'grant_iri', type: 'string', required: false, description: 'The grant (revoke).' },
-  { name: 'subject', type: 'string', required: false, description: 'For wrd:ratify-task: what is ratified.', enum: ['description', 'classification', 'assignment'] },
+  { name: 'subject', type: 'string', required: false, description: `For wrd:ratify-task: what is ratified (${RATIFICATION_SUBJECTS.join(', ')}; description when left out). For wrd:update-registry: the one part of the change to template (${REGISTRY_PARTS.join(', ')}); without it the template fills no part. Either intent refuses (400) a value from the other's list; any other intent ignores subject.`, enum: [...RATIFICATION_SUBJECTS, ...REGISTRY_PARTS] },
 ];
 const TEMPLATE_OUTPUTS: AffordanceOutput = {
-  description: 'The schema, the template, the paths still to fill, the tool to send it to, and the context read from the pod.',
-  properties: { intent: { type: 'string' }, toolName: { type: 'string' }, schema: { type: 'object' }, template: { type: 'object' }, fill: { type: 'array', items: { type: 'string' } }, context: { type: 'object' }, signing: { type: 'string' }, status: { type: 'string' }, computed: { type: 'boolean' } },
+  description: 'The schema, the template, the paths still to fill, the tool to send it to, the context read from the pod, and for a registry change a note on its parts. Asked for by a chat\'s relay-signed read, the template is the chat\'s payload: no issuedAt, and its nonce a placeholder made as the copied messages teach, listed first among the paths to fill.',
+  properties: { intent: { type: 'string' }, toolName: { type: 'string' }, schema: { type: 'object' }, template: { type: 'object' }, fill: { type: 'array', items: { type: 'string' } }, context: { type: 'object' }, note: { type: 'string' }, signing: { type: 'string' }, status: { type: 'string' }, computed: { type: 'boolean' } },
   required: ['intent', 'schema', 'template', 'fill'],
 };
 
@@ -152,7 +152,7 @@ export const wrdAffordances: ReadonlyArray<Affordance> = [
       POD_INPUT,
     ],
     outputs: {
-      description: `execution "client-required", sampling_performed false, writes_performed false, the instructions, the quote rule, the document, a draft template, and next: how the reviewed draft is recorded, from this bridge's web app (review) or from a chat with the Interego connector (relaySigned: for a document of up to ${CHAT_DOCUMENT_MAX_CHARS.toLocaleString('en-US')} characters, the registry read to make first and the payload to have the relay sign, which carries document_text inside it with document.storeText true; for a longer one, why not and where the map is recorded instead).`,
+      description: `execution "client-required", sampling_performed false, writes_performed false, the instructions, the quote rule, the document, a draft template, and next: how the reviewed draft is recorded, by one of two routes, each with only its own fields: from this bridge's web app (review: the capture table, the tool to send the envelope to, and document_text beside it) or from a chat with the Interego connector (relaySigned: for a document of up to ${CHAT_DOCUMENT_MAX_CHARS.toLocaleString('en-US')} characters, the nonce rule, the registry read to make first, the types of task a chat may add only where the person may and confirms, and the payload to have the relay sign, which carries document_text inside it with document.storeText true; for a longer one, why not and where the map is recorded instead).`,
       properties: { execution: { type: 'string' }, sampling_performed: { type: 'boolean' }, writes_performed: { type: 'boolean' }, instructions: { type: 'string' }, quoteRule: { type: 'object' }, draftTemplate: { type: 'object' }, next: { type: 'object' } },
       required: ['execution', 'instructions'],
     },
@@ -172,8 +172,8 @@ export const wrdAffordances: ReadonlyArray<Affordance> = [
       POD_INPUT,
     ],
     outputs: {
-      description: 'The workflow and each task with its quote status and a link for the people named on it.',
-      properties: { workflowIri: { type: 'string' }, taskIris: { type: 'array', items: { type: 'string' } }, tasks: { type: 'array' }, quotes: { type: 'object' }, ...RECORDED },
+      description: 'The workflow and each task with its quote status and a link for the people named on it, and the document as the record keeps it: {sha256, chars, textStored}.',
+      properties: { workflowIri: { type: 'string' }, taskIris: { type: 'array', items: { type: 'string' } }, tasks: { type: 'array' }, document: { type: 'object' }, quotes: { type: 'object' }, ...RECORDED },
       required: ['workflowIri', 'tasks'],
     },
   },
@@ -443,7 +443,7 @@ export const wrdAffordances: ReadonlyArray<Affordance> = [
     toolName: 'wrd.read_records',
     targetTemplate: '{base}/wrd/read_records',
     title: 'Read the records on a pod (signed read)',
-    description: `${LIST_DESCRIPTION} For an admin or a key in the pod's registry, by a signed read; anyone else is refused (403).`,
+    description: `${LIST_DESCRIPTION} For an admin or a key in the pod's registry, by a signed read; anyone else is refused (403). Relay-signed, kind, subject and workflow go inside the payload the relay signs, beside intent, podUrl and nonce, since act sends nothing beside that payload: kind registry is who is registered. A chat's read leaves out readExposure and the published part of vocabulary, the text that is the same in every read, unless that payload says fixedText: true; it keeps vocabulary.podPolicy and vocabulary.grantPolicy, this pod's own AI-permission rules, and names what it left out under omitted.`,
     method: 'POST',
     annotations: { title: 'Read records', ...READ_ANNOTATIONS },
     reads: READS,

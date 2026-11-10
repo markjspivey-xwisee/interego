@@ -52,6 +52,17 @@ const InteregoChatAgent = (() => {
   const STEP_NAME_MAX = 32;
 
   /**
+   * A signed payload's nonce as a prompt writes it: the step name of the action it is sent to
+   * (stepNameOf), then placeholders for the turn and the random letters, which the assistant
+   * replaces as the nonce rule says. actPrompt writes it into every signed step's payload; an app
+   * that shows a signed payload anywhere else (in a rule, say) writes it with this too, so the two
+   * never differ.
+   */
+  function noncePlaceholder(actionIri) {
+    return `${stepNameOf(textOf(actionIri))}-<turn number, or 0>-<16 new random letters or digits>`;
+  }
+
+  /**
    * What to do when the person's chat app shows an act tool with no sign_payload option (an app can
    * keep a stale copy of the connector's tools). Each prompt says it once, in one sentence that
    * names only the kinds of step the prompt can lead to (fallbackFor):
@@ -123,7 +134,7 @@ const InteregoChatAgent = (() => {
     const payload = Object.assign({}, step.payload || {});
     const namesAction = Object.prototype.hasOwnProperty.call(payload, 'action');
     if (namesAction) payload.action = actionIri;
-    if (signed) payload.nonce = `${stepNameOf(actionIri)}-<turn number, or 0>-<16 new random letters or digits>`;
+    if (signed) payload.nonce = noncePlaceholder(actionIri);
     const isUrn = /^urn:/i.test(actionIri);
     const lines = [
       `${n}. ${textOf(step.say) || 'Call this action.'}`,
@@ -347,5 +358,5 @@ const InteregoChatAgent = (() => {
     return 'another app';
   }
 
-  return Object.freeze({ actPrompt, requestAsText, extractJsonObject, agentAppName, nonceRule: NONCE_RULE });
+  return Object.freeze({ actPrompt, requestAsText, extractJsonObject, agentAppName, noncePlaceholder, nonceRule: NONCE_RULE });
 })();

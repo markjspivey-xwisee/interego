@@ -415,7 +415,10 @@ describe('quotes', () => {
     expect(packet.draftTemplate.tasks).toEqual([{ name: '', description: '', sourceQuotes: [] }]);
     expect(packet.instructions).toMatch(/The capture refuses a map without draftedBy; "not-declared" is recorded as "not declared"/);
     // Two routes to record the reviewed draft: the web app's capture table, and a chat's relay-signed payload, which carries the text itself.
-    expect(packet.next.review).toMatch(/capture table/);
+    expect(packet.next.review.instructions).toMatch(/capture table/);
+    // The capture table's own fields go with its route, not beside the chat's.
+    expect(packet.next.review).toMatchObject({ toolName: 'wrd.record_task_map', action: 'urn:iep:action:wrd:record-task-map', sendAlso: 'document_text' });
+    expect(Object.keys(packet.next).sort()).toEqual(['relaySigned', 'review']);
     const chat = packet.next.relaySigned;
     if (!('payloadTemplate' in chat)) throw new Error('a short document is offered the chat route');
     expect(chat.payloadTemplate).toMatchObject({ intent: 'wrd:record-task-map', document: { title: 'AP SOP', sha256: sha256Hex(SOP), storeText: true } });
@@ -436,7 +439,7 @@ describe('quotes', () => {
     expect(long.next.relaySigned.instructions).toContain(`This document is ${long.request.documentChars.toLocaleString('en-US')} characters, more than the 20,000 a map recorded from a chat can carry`);
     expect(long.next.relaySigned.instructions).toMatch(/Do not try to record it from the chat\..*next\.review/);
     // The web app's route is unchanged for it.
-    expect(long.next.review).toBe(packet.next.review);
+    expect(long.next.review).toEqual(packet.next.review);
     expect(coerceCapture({ workflow: { title: 'x', unitLabel: 'y' }, tasks: [{ name: 'a', description: 'b', currentLevel: 'person', taskKind: 'invoice-matching', sourceQuotes: ['Match each invoice to its'] }], document: { title: 'd', sha256: sha256Hex(SOP), storeText: false } }, 'document'))
       .toMatchObject({ ok: false, why: expect.stringMatching(/^draftedBy is required/) });
   });
