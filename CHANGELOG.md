@@ -1,5 +1,27 @@
 # Changelog
 
+## 2026-11-10 — Practice Evidence: the demo rubric's top level for asking their view
+
+The same peer review found a gap in the demo scenario's rubric. The criterion
+"Asks for their view" reads "Invites the colleague's account before deciding
+anything", and its middle level reads "Asks only after deciding what happens
+next". But its top level read "Asks for their side before saying anything
+else about it". So a learner who states the facts, then asks, then decides fit
+no level above the lowest. The top level now reads "Asks for their side before
+deciding anything", the same moment the criterion names. Ids, level values,
+weights and the pass rule are unchanged, so the demo's levels, and the tests
+that check them, still hold. The test copy of the demo scenario changes the
+same way, and a new test checks that it stays the same rubric as the demo's.
+The scripted demo judge's second, lower rationale, which repeated the old
+wording, now uses the new one.
+
+Not covered: a rubric's words are part of its fingerprint, so the demo
+scenario as this code writes it has a new rubric fingerprint. The live
+workspace's published copy of the demo scenario is a separate published
+record and is not changed by this; its author would publish it again to pick
+up the new wording. Sessions and judgments already recorded keep the rubric
+they were made against.
+
 ## 2026-11-10 — Practice Evidence: a quote that was read back is shown as the line shows it
 
 A peer review, run on fictional data, found the quote fix below still broke in
