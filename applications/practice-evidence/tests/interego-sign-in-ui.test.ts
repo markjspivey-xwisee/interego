@@ -50,6 +50,13 @@ const IDH = 'identity.ui.test';
 const SESSION_KEY = 'pev.interego.session';
 const PENDING_KEY = 'pev.interego.pending';
 const NAVIGATION = 'jsdomError: Not implemented: navigation (except hash changes)';
+/**
+ * The stylesheet as a screen `px` wide applies it, for jsdom, which lays nothing out and applies an `@media screen` rule but
+ * no width query: each min-width or max-width query (every one this stylesheet has is in em, alone) is kept, as `screen`,
+ * where that width meets it, and set aside, as `print`, where it does not. Real Chromium from 300 px up is the QA's check.
+ */
+const atWidth = (css: string, px: number): string =>
+  css.replace(/@media \((min|max)-width: ([\d.]+)em\)/g, (_m, k: string, em: string) => `@media ${(k === 'min' ? px >= Number(em) * 16 : px <= Number(em) * 16) ? 'screen' : 'print'}`);
 
 const pod = inMemoryPod();
 const W = Object.fromEntries(DEMO_ROLE_NAMES.map((r) => [r, demoWallet(r)])) as Record<DemoRoleName, Wallet>;
@@ -1744,6 +1751,99 @@ describe('your own AI assistant: connect Claude or ChatGPT, or copy and paste; n
     expect(msg).not.toContain('\\"');
     expect(msg).toContain('For example author-scenario-0-q8Xr2mVp7LkA9dTz,');
     expect(msg).toContain('"nonce":"author-scenario-<turn number, or 0>-<16 new random letters or digits>"');
+    expect(p.errors).toEqual([]);
+  }, SLOW);
+
+  it('keeps the header and the session page inside a 300 px screen: the brand gives way first, signing manually puts the buttons on a line of their own, and a long status or the start-up button wraps', async () => {
+    // At 320 px the header ran 15 px past the screen signed in, 47 signed out and 175 signing manually (88 at 768); the
+    // session page's "Signature verified: unchanged since it was signed" 37 px, and at 300 "Copy the start-up message" too.
+    const css = await (await fetch(`${nm.base}/ui/app.css`)).text();
+    // `touch`: as a touch screen applies it too (jsdom matches no pointer query), each `(pointer: coarse)` rule kept.
+    const styled = (p: Page): { at(px: number, touch?: boolean): void; cs(sel: string): CSSStyleDeclaration } => {
+      const sheet = p.w.document.createElement('style');
+      p.w.document.head.append(sheet);
+      return {
+        at: (px, touch = false) => { const t = atWidth(css, px); sheet.textContent = touch ? t.replaceAll('@media (pointer: coarse)', '@media screen') : t; },
+        cs: (sel) => { const el = p.q(sel) ?? p.w.document.querySelector(sel); if (!el) throw new Error(`nothing at ${sel}`); return p.w.getComputedStyle(el); },
+      };
+    };
+    const out = await openPage(nm, '/ui');
+    await out.until(() => out.q('#interego-sign-in') && out.q('article.scenario'), 'the signed-out header');
+    const o = styled(out);
+    for (const px of [1280, 360, 300]) {
+      o.at(px);
+      // The brand gives way first, then a button's label; Other ways to sign in, a round button, never does.
+      expect([px, o.cs('.app-header .brand').flexShrink, o.cs('.app-header .brand__name').whiteSpace, o.cs('#interego-sign-in').whiteSpace, o.cs('#signin-other').flexShrink])
+        .toEqual([px, '10000', 'normal', 'normal', '0']);
+      // "Sign in" without its icon below 360 px; the header one line high, as it always was.
+      expect([px, o.cs('#interego-sign-in > .icon').display === 'none', o.cs('.app-header__inner').flexWrap, o.cs('html').getPropertyValue('--header-h')]).toEqual([px, px < 360, '', '4rem']);
+    }
+    // The sign-in page and a view's sign-in card: a button whose label is longer than the card's line wraps inside it ("Sign in
+    // with Interego" needs 236 px, and at 300 px the card has 220), at every width, since with room it keeps its one line.
+    for (const [hash, title] of [['#/signin', 'Sign in to Practice Evidence'], ['#/mine', 'Sign in to see your practice sessions']] as const) {
+      out.w.location.hash = hash;
+      await out.until(() => out.text('.auth__card .auth__title') === title && out.q('.auth__card .btn'), title);
+      for (const px of [1280, 300]) {
+        o.at(px);
+        expect([hash, px, out.all('.auth__card .btn').map((b) => [b.textContent, out.w.getComputedStyle(b).whiteSpace])])
+          .toEqual([hash, px, [['Sign in with Interego', 'normal'], ['Sign manually (advanced)', 'normal']]]);
+      }
+    }
+    out.w.location.hash = '#/practice';
+    await out.until(() => out.q('article.scenario'), 'the scenarios again');
+    // Signing manually, chosen from Other ways to sign in: a badge, Connect your AI and Sign in, with the menu's button.
+    out.q('#sign-manually')!.click();
+    await out.until(() => out.q('.app-header #acting-as.badge'), 'the badge');
+    expect(out.all('.app-header__actions > :not(.menu)').map((el) => el.id || el.className)).toEqual(['product-switch', 'connect-ai-button', 'acting-as', 'interego-sign-in', 'signin-other']);
+    for (const px of [1280, 1000, 800, 600, 300]) {
+      o.at(px);
+      const below = (em: number): boolean => px < em * 16;
+      // Below 64em each says less (its whole name kept for a screen reader); below 48em they take a line of their own under
+      // the brand, and the navigation's place under the header (--header-h) moves down to match: below 360 px with room on
+      // that line for a label on two lines.
+      expect([px, o.cs('#connect-ai-button > .hide-below-sm').display === 'none', o.cs('#interego-sign-in .hide-below-md').display === 'none', out.q('#connect-ai-button')?.getAttribute('aria-label')])
+        .toEqual([px, below(64), below(64), 'Connect your AI']);
+      expect([px, o.cs('.app-header__inner').flexWrap, o.cs('.app-header__actions').flexBasis, o.cs('.app-header__actions').minHeight, o.cs('html').getPropertyValue('--header-h'), o.cs('#acting-as').flexShrink])
+        .toEqual([px, below(48) ? 'wrap' : '', below(48) ? '100%' : '', below(48) ? 'var(--target)' : '', below(22.5) ? '7.3125rem' : below(48) ? '7rem' : '4rem', '10000']);
+      // Connect your AI, its icon alone here, is 42 px wide; on a touch screen it is still 44 px (--target) wide.
+      o.at(px, true);
+      expect([px, o.cs('#connect-ai-button').minWidth]).toEqual([px, 'var(--target)']);
+      o.at(px);
+      expect([px, o.cs('#connect-ai-button').minWidth]).toEqual([px, '']);
+    }
+    expect(out.errors).toEqual([]);
+
+    // Signed in: Connect your AI says so from 30em, as it did; the account button keeps its size.
+    const p = await signedInPage(nm);
+    const card = await p.until(() => p.q('article.scenario'), 'the scenarios');
+    const s = styled(p);
+    s.at(600);
+    expect([s.cs('#connect-ai-button > .hide-below-sm').display === 'none', s.cs('.app-header .user-button').flexShrink]).toEqual([false, '0']);
+    card.querySelector<HTMLInputElement>('input[type=radio][value=no]')!.checked = true;
+    card.querySelector<HTMLElement>(`button[data-action="${PEV_ACTION.startAttempt}"]`)!.click();
+    await p.until(() => p.q('#view .chat-handoff #copy-startup') && p.q('#view .versions .status'), 'the session page');
+    s.at(300);
+    // "Copy the start-up message" wraps in its step, which may shrink, its lines starting at its left; a status too long for its
+    // line wraps inside itself on a phone, and from 48em, where every status has its room, stays on one line, as it was.
+    expect([s.cs('#copy-startup').whiteSpace, s.cs('#copy-startup').maxWidth, s.cs('#copy-startup').textAlign, p.w.getComputedStyle(p.q('#copy-startup')!.closest('li')!).minWidth]).toEqual(['normal', '100%', 'left', '0']);
+    for (const px of [300, 767, 768, 1280]) {
+      s.at(px);
+      for (const sel of ['#state', '#view .versions .status']) expect([px, sel, s.cs(sel).whiteSpace, s.cs(sel).maxWidth]).toEqual(px < 768 ? [px, sel, 'normal', '100%'] : [px, sel, 'nowrap', '']);
+    }
+    expect(p.text('#view .versions .status')).toBe('Signature verified: unchanged since it was signed');
+    // My practice: a status in a table's cell. Wrapping there from 48em let the table squeeze its column, breaking "Confirmed by a
+    // reviewer" over two lines at 1280 px and moving the columns; on a phone, where the table stacks, it wraps as above.
+    p.w.location.hash = '#/mine';
+    const pill = await p.until(() => p.q('#view table .status'), 'a status in My practice');
+    for (const px of [1280, 1024, 768, 300]) {
+      s.at(px);
+      expect([px, pill.closest('td') !== null, p.w.getComputedStyle(pill).whiteSpace, p.w.getComputedStyle(pill).maxWidth]).toEqual(px < 768 ? [px, true, 'normal', '100%'] : [px, true, 'nowrap', '']);
+    }
+    s.at(300);
+    // Write a scenario: a callout's button wraps its label where the line is too short for it.
+    p.w.location.hash = '#/author';
+    await p.until(() => p.q('#copy-draft-message'), 'Draft it in Claude or ChatGPT');
+    expect([p.q('#copy-draft-message')?.parentElement?.className, s.cs('#copy-draft-message').whiteSpace, s.cs('#copy-draft-message').maxWidth]).toEqual(['callout__actions', 'normal', '100%']);
     expect(p.errors).toEqual([]);
   }, SLOW);
 

@@ -37,6 +37,13 @@ const APP_JS = `${chatAgentJs()}\n${readFileSync(new URL('../bridge/ui/app.js', 
 const PLAN_CLAIM = /(Claude|ChatGPT) plans?\b|plans? that allows?|on a plan that|on your plan\?|plan must allow|plans can(?:'|’)?t/i;
 const must = <T>(v: T | null | undefined, what: string): T => { if (v === null || v === undefined) throw new Error(`missing ${what}`); return v; };
 const BROWSER = 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8';
+/**
+ * The stylesheet as a screen `px` wide applies it, for jsdom, which lays nothing out and applies an `@media screen` rule but
+ * no width query: each min-width or max-width query (every one this stylesheet has is in em, alone) is kept, as `screen`,
+ * where that width meets it, and set aside, as `print`, where it does not. Real Chromium from 300 px up is the QA's check.
+ */
+const atWidth = (css: string, px: number): string =>
+  css.replace(/@media \((min|max)-width: ([\d.]+)em\)/g, (_m, k: string, em: string) => `@media ${(k === 'min' ? px >= Number(em) * 16 : px <= Number(em) * 16) ? 'screen' : 'print'}`);
 const listeners: TestListener[] = [];
 afterAll(async () => { for (const l of listeners) await l.close(); });
 
@@ -881,6 +888,62 @@ describe('work-redesign customer site', () => {
     const summary = fillSummary(['inputs.currency', 'inputs.unitsPerWeek.current.low', 'inputs.tasks.urn:wrd:task:k1:a:b.runsPerUnit.low', 'note', 'answers.q1']);
     expect(summary).toEqual(['Your business case inputs: 3 values you enter on this page', 'Your note', 'Your answers']);
     expect(summary.join(' ')).not.toMatch(/urn:|inputs\./);
+    expect(page.errors).toEqual([]);
+  }, 60_000);
+
+  it('keeps the app\'s header and a recorded map inside a 300 px screen: the brand gives way first, Refresh is its icon on a phone with its word still its name, and a recorded task\'s link wraps under it', async () => {
+    // At 300 px the header ran 48 px past the screen (28 at 320), and "Copy link for the people named" 145 px (32 at 414).
+    const l = await minimalDemo();
+    const page = await openUi(l.base);
+    await page.until(() => page.text().includes('Match invoices'), 'the demo');
+    const d = page.doc;
+    const css = await (await fetch(`${l.base}/ui/app.css`)).text();
+    const sheet = d.createElement('style');
+    d.head.append(sheet);
+    const cs = (el: Element): CSSStyleDeclaration => page.window.getComputedStyle(el);
+    const header = must(d.querySelector('.app-header'), 'the header');
+    const refresh = must([...header.querySelectorAll('button')].find((b) => b.textContent === 'Refresh'), 'Refresh');
+    const label = must(refresh.querySelector('.header-refresh__label'), 'its word');
+    const account = must(header.querySelector('.user-button'), 'the account button');
+    // Its text is still exactly "Refresh" (a test clicks it by that), its icon adding none.
+    expect([refresh.classList.contains('header-refresh'), refresh.querySelector('svg.icon')?.getAttribute('aria-hidden'), label.textContent]).toEqual([true, 'true', 'Refresh']);
+    for (const px of [1280, 768, 480, 300]) {
+      sheet.textContent = atWidth(css, px);
+      const phone = px < 480;
+      // The brand gives way first, then a button's label; the round account button never does.
+      expect([px, cs(must(header.querySelector('.brand'), 'the brand')).flexShrink, cs(must(header.querySelector('.brand__name'), 'its name')).whiteSpace]).toEqual([px, '10000', 'normal']);
+      expect([px, cs(refresh).whiteSpace, cs(account).flexShrink]).toEqual([px, 'normal', '0']);
+      // Refresh is its word from 30em, as it was; below, its icon in a 44 px button that keeps its size (beside Connect wallet it
+      // was squeezed to 32 px at 300 px), the word kept off the screen but still its name.
+      expect([px, cs(must(refresh.querySelector('.icon'), 'its icon')).display, cs(refresh).width, cs(refresh).flexShrink, cs(label).position, cs(label).clipPath])
+        .toEqual(phone ? [px, 'inline-block', 'var(--target)', '0', 'absolute', 'inset(50%)'] : [px, 'none', '', '', '', '']);
+    }
+    // The demo clock ("Demo time … weeks Skip ahead") wraps between its parts where its line is too short (its button ran 16 px
+    // past a 300 px screen); the persona picker beside it keeps to one line, as it did.
+    const clock = must(d.querySelector('.env-banner .env-banner__clock'), 'the demo clock');
+    expect([clock.classList.contains('env-banner__field'), clock.querySelector('button')?.textContent, cs(clock).flexWrap, cs(must(d.querySelector('.env-banner__field:not(.env-banner__clock)'), 'the persona picker')).flexWrap])
+      .toEqual([true, 'Skip ahead', 'wrap', '']);
+    // Map a process, signed: each task the record holds, with its link to send, which wraps under the task's name on a phone.
+    sheet.textContent = '';
+    page.click('Map a process');
+    await page.until(() => d.querySelector('[data-path="workflow.title"]'), 'the capture form');
+    page.fill('[data-path="workflow.title"]', 'Supplier invoices');
+    page.fill('[data-path="workflow.unitLabel"]', 'invoice');
+    page.fill('[data-path="tasks[0].name"]', 'Approve each invoice exception');
+    page.fill('[data-path="tasks[0].description"]', 'Approve or reject.');
+    for (const sel of ['[data-path="tasks[0].personAddress"]', '[data-path="tasks[0].taskKind"]']) page.select(sel, must(d.querySelectorAll<HTMLOptionElement>(`${sel} option`)[1], `an option of ${sel}`).value);
+    page.click('Sign and record the process');
+    const result = await page.until(() => d.querySelector('.capture-result'), 'what the capture recorded');
+    sheet.textContent = atWidth(css, 300);
+    const end = must(result.querySelector('.list__end'), 'the task\'s link and badge');
+    const copy = must([...end.querySelectorAll('button')].find((b) => b.textContent === 'Copy link for the people named'), 'the link\'s button');
+    expect([cs(end).flexShrink, cs(end).flexWrap, cs(end).minWidth]).toEqual(['1', 'wrap', '0']);
+    expect([cs(copy).whiteSpace, cs(copy).maxWidth, cs(copy).textAlign]).toEqual(['normal', '100%', 'left']);
+    // The assistant panel's buttons keep to it: "Draft a map with copy and paste" ran past a 300 px screen.
+    page.click('Use your AI assistant');
+    const draft = await page.until(() => [...d.querySelectorAll('.chat-panel button')].find((b) => b.textContent === 'Draft a map with copy and paste'), 'the panel\'s copy and paste');
+    expect([cs(draft).whiteSpace, cs(draft).maxWidth]).toEqual(['normal', '100%']);
+    sheet.remove();
     expect(page.errors).toEqual([]);
   }, 60_000);
 
