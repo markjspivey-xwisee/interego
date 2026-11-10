@@ -1084,7 +1084,9 @@ describe('standing (reported; it changes nothing)', () => {
 
   it('answers the vertical pre-check below 20 outcomes', () => {
     const c = cellFor(reviewedAttempts(19, { reviewers: 5 }));
-    expect(c.standing.why).toBe(`19 outcome(s) of ${criterionKind(H_MD2, MD2.rubric.criteria[0]!).kind}, below 20`);
+    // The kind in words: it holds the rubric hash's first 16 hex, and no text this bridge writes carries a fingerprint.
+    expect(c.standing.why).toBe('19 outcome(s) of this criterion, below 20');
+    expect(c.standing.why).not.toContain(criterionKind(H_MD2, MD2.rubric.criteria[0]!).kind);
     expect(c.status).toBe('Hypothetical');
   });
 

@@ -95,7 +95,8 @@ describe('the offline demo runs end to end', () => {
     expect(cells.length).toBe(5);
     expect(cells.every((c) => c['status'] === 'Hypothetical')).toBe(true);
     const agent = cells.filter((c) => String(c['judgeId']).startsWith('did:ethr:'));
-    expect(agent.map((c) => obj(c['standing'])['why'])).toEqual(agent.map(() => expect.stringMatching(/^1 outcome\(s\) of pev\/[0-9a-f]{16}\/[a-z0-9-]+, below 20$/)));
+    // The reason names the kind in words: a kind holds the start of the rubric's fingerprint, which no text carries.
+    expect(agent.map((c) => obj(c['standing'])['why'])).toEqual(agent.map(() => '1 outcome(s) of this criterion, below 20'));
     const results = obj(report.results);
     expect(obj(results['counts'])['authorTestExcluded']).toBe(1);
     const levels = arr(obj(results['final'])['perCriterion']).flatMap((c) => arr(obj(c)['levels']).map(obj));

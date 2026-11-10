@@ -68,6 +68,96 @@ hand-off either, so the assistant was told neither step. That answer now
 carries the same hand-off as reading the session does, while there is room
 for another judgment.
 
+## 2026-11-10 — Practice Evidence: where a stand-in is the same, said exactly
+
+The scenario list's description said a fingerprint's stand-in in text is the
+same wherever that text is shown. It is the same only within one scenario
+version. A scenario's results and the calibration table show stand-ins of
+their own, so one criterion title can show three. The description now says
+"for the same scenario version" and names the two that differ. The README and
+an entry below listed the review queue among the views of a session's lines;
+it shows the judges' quotes, not the lines, and they now say so.
+
+## 2026-11-10 — Practice Evidence: a judge's quote that leaves out part of a stand-in checks out
+
+The same review found the quote fix below incomplete. Practice Evidence put a
+fingerprint back into a judge's quote only when the quote held the whole
+stand-in, from `urn:pev:rubric:` or `pev/` to the end. But a quote may start or
+end at a colon or a slash, so a judge could quote just the stand-in's digits,
+or start at `rubric:`, or stop before the closing slash. Such a quote did not
+check out, and the criteria it supported were counted at their lowest level.
+
+Now a run of 64 or 16 hex digits in a quote that is a stand-in for a
+fingerprint in the session's lines is read back too. The saved quote is
+marked `readBack`, because the judge's signed request held the stand-in and
+not the learner's words. Answers to a chat show such a quote as the judge
+copied it, so the fingerprint stays hidden there too.
+
+Two smaller fixes. A line starting with a character that normalising turns
+into a letter (the Kelvin sign becomes a K) showed a calibration kind as a
+stand-in in the session's text but bare in its normalised form and in the
+judge packet. Both now show the stand-in. And `record_judgment`'s answer says
+which quotes were read back.
+
+Not covered: in a quote that was read back, a run of 16 or 64 hex digits the
+learner wrote with nothing around it is shown to a chat as a stand-in, while
+the line shows it as written. A quote that cuts into a run of digits is not
+read back; it cuts a word, which the quote rule refuses anyway.
+
+## 2026-11-10 — Practice Evidence: a signed request's payload no longer checks a guess
+
+A fourth review found another way to check a guess at a scored scenario's
+weights and pass mark, older than the changes below. A record keeps each signed
+request as it was sent: a turn, a review, a contest, a transcript removal. A
+request signed with a key can carry fields of the signer's choosing beside the
+act's own. Answers to someone who reads no stakes showed those payloads, and
+keyed a field there named like Practice Evidence's own rubric fingerprint the
+same way as the real one. So a key nobody registered could write guesses into
+one contest or removal, then read the session back and see which guess matched.
+An object in the payload could even name another scenario to compare against.
+
+Now an answer to someone who reads no stakes shows a signed request without
+what it signed, and says so (`payloadLeftOut`). The signature, the fingerprint
+of what was signed, and who signed it stay. The web app, and keys an admin
+registered for a role other than agent, still see the whole request. The note every such answer carries,
+and the README, say so.
+
+Not covered: a request may still carry fields the act does not use. They are
+kept in the record, shown only to readers of the stakes, and never acted on.
+
+## 2026-11-10 — Practice Evidence: a judge's quote of a line holding a fingerprint checks out
+
+A review found that the change below broke judging in one case. When a
+learner's line held a rubric fingerprint (a rubric's address, or a calibration
+row's kind), every answer to a chat assistant showed it as a random value made
+for that one answer. A judge's assistant that copied a quote from the judge
+packet character for character, as the packet asks, sent words the stored line
+did not hold, so the quote did not check out and that criterion was counted at
+its lowest level.
+
+Now a fingerprint inside text is replaced with a stand-in keyed with Practice
+Evidence's own key under a label of its own. It never equals a fingerprint
+Practice Evidence writes in a field, or the start of one, so it still checks
+no guess. The same fingerprint shows the same stand-in in every answer about
+the same scenario version: the judge packet, the session and the
+conversation's own answers all show a line the same way, and the review queue
+shows the judges' quotes from it the same way. A quote copied
+from any of them is read back as the learner's words as stored, checked
+against them, and kept as them. The transcript's fingerprint is unchanged.
+
+The same review found one more thing to close. A calibration row's standing
+reason named the row's kind, which holds the start of the rubric's
+fingerprint. With stand-ins that repeat, a chat could have written a guess into
+a criterion title and compared the two in the calibration table. The reason
+now says "this criterion" instead, so nothing Practice Evidence writes into
+text holds a fingerprint.
+
+A quote that copied only part of a stand-in (leaving out the
+`urn:pev:rubric:` before it, say) was not read back at first; the entry two
+above fixes that. Not covered: two equal stand-ins show that two texts hold the same fingerprint. That tells a
+chat something only when a real fingerprint is already in some text, which
+only someone who reads the stakes can have put there.
+
 ## 2026-11-10 — Practice Evidence: a fingerprint written into text no longer checks a guess
 
 A third review found one more way to check a guess at a scored scenario's
@@ -86,10 +176,8 @@ for that one place, which matches nothing else in the answer, the same
 fingerprint written twice included. The note every such answer carries, the
 scenario list's description and the README say so.
 
-Not covered: a chat assistant, a key nobody registered or a request nobody
-signed sees those random values where the fingerprints were written, so a
-judge whose assistant quotes such a line quotes words the session does not
-hold, and that quote does not check out. People in the web app, and keys an
+A judge whose assistant quoted such a line, copying the random value, had the
+quote fail; the entry above fixes that. People in the web app, and keys an
 admin registered, read the text as it was written.
 
 A smaller fix from the same review: a scenario's results page showed, under

@@ -168,6 +168,16 @@ const hitRate = (rows: readonly OutcomeRow[]): number | null => ratio(rows.filte
 const distinctPeople = (rows: readonly OutcomeRow[]): number =>
   new Set(rows.filter((r) => r.loopOutcome.confirmedByKind === 'human').map((r) => principalKey(principalOfDid(r.reviewerDid)))).size;
 
+/**
+ * A standing's reason with its decision kind named in words: the kind (`pev/<16 hex>/<criterion>`)
+ * holds the rubric hash's first 16 hex, and this bridge writes no fingerprint into text. An answer
+ * that leaves the stakes out keys a fingerprint in the fields it writes one into and replaces one
+ * in text with a stand-in that the same fingerprint in a caller's own text would match (`maskText`,
+ * src/stakes.ts), so a kind in this text, beside a criterion title an author's chat wrote, would
+ * check a guess at the rubric.
+ */
+const kindInWords = (why: string, kind: DecisionKind): string => why.split(kind.kind).join('this criterion');
+
 /** Standing for one (judge × prompt × rubric version × criterion). It is reported and changes nothing. */
 export function standingFor(
   rows: readonly OutcomeRow[], kind: DecisionKind, judge: { cellJudge: string; kind: 'model' | 'agent' | 'person'; route: InferenceRoute },
@@ -181,7 +191,7 @@ export function standingFor(
   }
   const counted = rows.filter((r) => !r.demo && !r.repeat);
   if (counted.length < STANDING_POLICY.minSamples) {
-    return { evaluated: true, clears: false, why: `${counted.length} outcome(s) of ${kind.kind}, below ${STANDING_POLICY.minSamples}`, effect };
+    return { evaluated: true, clears: false, why: `${counted.length} outcome(s) of this criterion, below ${STANDING_POLICY.minSamples}`, effect };
   }
   const cells = calibration(counted.map((r) => r.loopOutcome), [kind], STANDING_POLICY.minSamples);
   const at = o.now.toISOString();
@@ -191,11 +201,11 @@ export function standingFor(
   const snap = reputations(a ? [a] : [], 'pev-judge-standing', at).get(judge.cellJudge) ?? null;
   const d = autonomy({ kind: kind.kind, floor: STANDING_POLICY.floor, minSamples: STANDING_POLICY.minSamples, minHumanConfirmers: STANDING_POLICY.minHumanConfirmers }, kind, snap, a);
   const distinct = distinctPeople(counted);
-  if (!d.granted) return { evaluated: true, clears: false, why: d.why, effect };
+  if (!d.granted) return { evaluated: true, clears: false, why: kindInWords(d.why, kind), effect };
   if (distinct < STANDING_POLICY.minDistinctHumanConfirmers) {
     return { evaluated: true, clears: false, why: `${distinct} distinct people confirmed these outcomes, below ${STANDING_POLICY.minDistinctHumanConfirmers}`, effect };
   }
-  return { evaluated: true, clears: true, why: d.why, effect };
+  return { evaluated: true, clears: true, why: kindInWords(d.why, kind), effect };
 }
 
 /**

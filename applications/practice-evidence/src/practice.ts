@@ -624,6 +624,12 @@ export interface QuoteCheck {
   readonly occurrences?: number;
   readonly declaredTurnIndex?: number;
   readonly why?: string;
+  /**
+   * Set when the quote as sent was not found and was checked as read back (`verifyQuoteAsShown`):
+   * `text` is then the stored words it was copied from, not the words the judge's signed request
+   * held, which showed a stand-in where the stored line holds a fingerprint.
+   */
+  readonly readBack?: true;
 }
 
 export interface JudgeQuoteInput { readonly text: string; readonly turnIndex?: number }
@@ -705,6 +711,24 @@ export function verifyQuote(q: JudgeQuoteInput, turns: readonly Pick<Turn, 'inde
     ...base, verified: false, why: cutOnly ? WHY_CUTS_WORD : theirs ? WHY_THEIRS : WHY_ABSENT,
     ...(q.turnIndex !== undefined ? { declaredTurnIndex: q.turnIndex } : {}),
   };
+}
+
+/**
+ * Check a quote a judge may have copied from a view of the transcript that shows some of its text
+ * otherwise than stored (an answer that replaced a fingerprint in a line with a stand-in, say):
+ * `asStored` reads such a quote back as the stored text it stands for. The quote is checked as sent
+ * first; when it is not found, and `asStored` reads it differently, it is checked as read back, and
+ * that check is kept, its text the stored text and marked `readBack`, so a recorded quote is always
+ * one of the stored lines' own and says when it is not the text the judge sent. Without `asStored`,
+ * exactly `verifyQuote`.
+ */
+export function verifyQuoteAsShown(
+  q: JudgeQuoteInput, turns: readonly Pick<Turn, 'index' | 'speaker' | 'text'>[], asStored?: (quote: string) => string,
+): QuoteCheck {
+  const sent = verifyQuote(q, turns);
+  if (sent.verified || asStored === undefined) return sent;
+  const text = asStored(q.text);
+  return text === q.text ? sent : { ...verifyQuote({ ...q, text }, turns), readBack: true };
 }
 
 export type CriterionStatus = 'verified' | 'unverified' | 'no-quote-needed';
@@ -975,18 +999,20 @@ const round4 = (n: number): number => Math.round(n * 1e4) / 1e4;
 /**
  * Turn a parsed judgment into the recorded one: every quote verified by the platform, each
  * criterion's status, and the provisional result with unverified criteria at their lowest level
- * ("credit only where the quote checked out"). The judge's own level stays visible.
+ * ("credit only where the quote checked out"). The judge's own level stays visible. `asStored`
+ * reads a quote copied from a view that showed the transcript otherwise than stored back as the
+ * stored text (`verifyQuoteAsShown`).
  */
 export function assembleJudgment(
   s: ScenarioSpec, turns: readonly Turn[], parsed: { readonly criteria: readonly JudgeCriterionInput[] },
-  meta: Omit<JudgmentResult, 'criteria' | 'unverifiedCriteria' | 'provisional'>,
+  meta: Omit<JudgmentResult, 'criteria' | 'unverifiedCriteria' | 'provisional'>, asStored?: (quote: string) => string,
 ): JudgmentResult {
   const criteria: CriterionJudgment[] = s.rubric.criteria.map((c) => {
     const input = parsed.criteria.find((x) => x.criterionId === c.id);
     if (!input) throw new Error(`assembleJudgment: no judgment for criterion ${c.id}`);
     const idx = levelIndex(c, input.level);
     if (idx < 0) throw new Error(`assembleJudgment: unknown level ${input.level} for ${c.id}`);
-    const quotes = input.quotes.map((q) => verifyQuote(q, turns));
+    const quotes = input.quotes.map((q) => verifyQuoteAsShown(q, turns, asStored));
     const st = criterionStatus(idx, quotes);
     let probabilities: Record<string, number> | null = null;
     if (input.probabilities) {

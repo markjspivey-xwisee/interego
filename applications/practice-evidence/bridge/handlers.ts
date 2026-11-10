@@ -81,8 +81,8 @@ import {
   type CalibrationCellView, type QueueCandidate,
 } from '../src/calibration.js';
 import {
-  assessmentWithoutStakes, hashMask, judgmentWithoutStakes, maskAnswerHashes, reviewWithoutStakes, rubricWithoutStakes, sameRubricShape, scoredWithoutStakes,
-  withStakesOf, STAKES_WITHHELD, type HashMask, type HashScope,
+  assessmentWithoutStakes, hashMask, judgmentWithoutStakes, maskAnswerHashes, quoteAsStored, reviewWithoutStakes, rubricWithoutStakes, sameRubricShape,
+  scoredWithoutStakes, withStakesOf, STAKES_WITHHELD, type HashMask, type HashScope,
 } from '../src/stakes.js';
 import { buildStatement, statementProblems, LOSSY, LRS_REQUEST_NOTE, PROJECTION_FORMATS, type ProjectionFormat } from '../src/projections.js';
 import {
@@ -405,6 +405,18 @@ interface Call {
 /** Key this act's answer, a refusal included, for the scenario version of `a` (an attempt's `scenario`, or a scenario head). */
 function scopeTo(call: Call, a: { readonly scenarioIri: string; readonly version: number }): void {
   call.hashScope = { scenarioIri: a.scenarioIri, version: a.version };
+}
+
+/**
+ * How a quote sent for attempt `a` is read back (`verifyQuoteAsShown`). An answer to a caller who
+ * reads no stakes shows a fingerprint inside a line with a stand-in keyed for the attempt's scenario
+ * version (`maskAnswerHashes`), the scope of every answer that shows the attempt's turns (the judge
+ * packet, the attempt, the conversation's own acts) or quotes from them (the review queue). A quote
+ * copied from any of them is read as the stored line it was copied from, whoever sends it.
+ */
+async function quotesAsStoredFor(call: Call, a: AttemptBody): Promise<(quote: string) => string> {
+  const k = (await call.ctx.hashMask()).version(a.scenario.scenarioIri, a.scenario.version);
+  return quoteAsStored(k, a.turns.flatMap((t) => (t.text !== undefined ? [t.text] : [])));
 }
 
 /**
@@ -2024,6 +2036,8 @@ async function notAStartedEnvelope(call: Call, s: Signed, all: readonly Manifest
 /** Steps 5–7 shared by every learner act during the conversation. */
 async function conversationHead(call: Call, s: Signed, iri: string, turnIndex: number): Promise<AttemptHead> {
   const h = await attemptHead(call, s.pod, iri);
+  // Its lines are shown as every other view of the attempt shows them (`quotesAsStoredFor`).
+  scopeTo(call, h.body.scenario);
   if (!samePrincipal(h.body.learner.address, s.signer)) throw decline(403, 'Only the learner of this attempt may do this.', 'not-the-learner');
   notReplayed(h.body, s);
   if (h.body.state !== 'in-conversation') {
@@ -2274,7 +2288,7 @@ function judgmentSavedOut(body: AttemptBody, w: Written, j: JudgmentResult): Out
       index: j.index, judgedAt: j.judgedAt, judge: { kind: j.judge.kind },
       criteria: j.criteria.map((c) => ({
         criterionId: c.criterionId, levelId: c.levelId, status: c.status, ...(c.why !== undefined ? { why: c.why } : {}),
-        quotes: c.quotes.map((q) => ({ text: q.text, verified: q.verified, ...(q.why !== undefined ? { why: q.why } : {}) })),
+        quotes: c.quotes.map((q) => ({ text: q.text, verified: q.verified, ...(q.why !== undefined ? { why: q.why } : {}), ...(q.readBack ? { readBack: true } : {}) })),
       })),
       unverifiedCriteria: j.unverifiedCriteria,
     },
@@ -2315,7 +2329,7 @@ async function judgeAttempt(call: Call, args: Record<string, unknown>): Promise<
       promptTemplateHash: JUDGE_PROMPT_TEMPLATE_HASH, chosenBy, requestedBy: { did: s.signerDid, role: isLearner ? 'learner' : 'reviewer' },
       repeatOf: repeatOf(h.body, judgeId, JUDGE_PROMPT_TEMPLATE_HASH), rubricHash: h.body.scenario.rubricHash,
       transcriptHash: h.body.transcriptHash ?? transcriptHash(h.body.turns),
-    });
+    }, await quotesAsStoredFor(call, h.body));
     return recordJudgmentOn(call, s, h, j, 'judgeAttempt', reg, disclosure);
   });
 }
@@ -2444,7 +2458,7 @@ async function recordJudgment(call: Call, args: Record<string, unknown>): Promis
       index: a.judgments.length, judgedAt: iso(ctx), judge, disclosure, route: 'client-packet', promptTemplateHash,
       chosenBy: 'judge-registry', requestedBy: { did: s.signerDid, role: 'judge' },
       repeatOf: repeatOf(a, judge.id, promptTemplateHash), rubricHash: a.scenario.rubricHash, transcriptHash: tHash,
-    });
+    }, await quotesAsStoredFor(call, a));
     const { body, w } = await writeJudgment(call, s, h, j, 'recordJudgment');
     return judgmentSavedOut(body, w, j);
   });

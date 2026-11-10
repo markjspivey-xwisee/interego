@@ -17,11 +17,14 @@
  * answer, so only a few small integers are unknown and a bare hash would confirm a guess offline.
  * The key covers the scenario and the version a hash belongs to as well as the hash, so the same
  * rubric keys differently in any other scenario or version: a scenario an author's chat saves with
- * stakes it chose shows a keyed value no other scenario's matches, its right guess included. Only
- * the fields this bridge writes a hash into are keyed; a hash inside any other text, which a caller
- * may have written there, is replaced with a random value of its own, so a guess written into a
- * turn, a reason or a scenario's words never comes back keyed beside the hash it would be checked
- * against.
+ * stakes it chose shows a keyed value no other scenario's matches, its right guess included. A hash
+ * inside any other text, which a caller may have written there, is replaced with a stand-in keyed
+ * apart from those fields (`Keyer.inText`), so a guess written into a turn, a reason or a scenario's
+ * words never comes back equal to the hash it would be checked against. The stand-in is the same
+ * each time the same hash is shown in the same scope, so a judge who quotes a line holding one
+ * quotes what every view of that transcript shows, and the quote is read back as the stored text
+ * it stands for (`quoteAsStored`). A signed request a record keeps is shown without what it signed:
+ * that is the signer's own object, which could hold a guess under a field name this bridge keys.
  *
  * Pure: no I/O.
  */
@@ -32,12 +35,22 @@ import type { ReviewResult } from './records.js';
 /** What every answer that left a scored scenario's stakes out says, at its top level. */
 export const STAKES_WITHHELD = 'This answer leaves out a scored scenario\'s stakes: each criterion\'s weight, each level\'s points, the pass rule, '
   + 'and any points, percent or pass result worked out from them; its rubric and scenario fingerprints are keyed to their own scenario version, '
-  + 'so they match no other scenario\'s or version\'s, and one written into any text is replaced with a random value, so none can be checked against a guess. Practice Evidence leaves the stakes out of every answer to a chat assistant the Interego relay signs for, a key '
+  + 'so they match no other scenario\'s or version\'s, and one written into any text is replaced with a stand-in keyed apart from them, so none can be checked against a guess. '
+  + 'A signed request a record keeps is shown without its payload; its signature and the payload\'s hash stay. Practice Evidence leaves the stakes out of every answer to a chat assistant the Interego relay signs for, a key '
   + 'no admin registered or one registered as an agent, or a request nobody signed; people see them in the Practice Evidence '
   + 'web app, signed in with Interego or with an address an admin registered.';
 
-/** The keyed stand-ins for a hash (`full`, 64 hex) and for a 16-hex prefix of one (`prefix`), in one scope. */
-export interface Keyer { readonly full: (hex: string) => string; readonly prefix: (hex16: string) => string }
+/**
+ * The keyed stand-ins for a hash (`full`, 64 hex) and for a 16-hex prefix of one (`prefix`), in one
+ * scope: `full` and `prefix` for the fields this bridge writes a hash into, `inText` for a hash
+ * inside any other text. The two are keyed under different labels, so a hash's stand-in in text
+ * never equals any field's value, in this scope or another, nor the first 16 hex of one.
+ */
+export interface Keyer {
+  readonly full: (hex: string) => string;
+  readonly prefix: (hex16: string) => string;
+  readonly inText: { readonly full: (hex: string) => string; readonly prefix: (hex16: string) => string };
+}
 
 /**
  * The keyed stand-ins for rubric and scenario hashes, in the fields this bridge writes them into
@@ -50,6 +63,7 @@ export interface Keyer { readonly full: (hex: string) => string; readonly prefix
  *     no caller chooses the hashes a cell shows, and its values match no scenario's.
  *   · `loose()`: a salt of its own each time it is called, for a hash an answer does not tie to a
  *     scenario version (none should): it is equal to nothing outside that one answer.
+ * Each scope keys a field's hash under one label and a hash in text under another (`Keyer.inText`).
  */
 export interface HashMask {
   readonly version: (scenarioIri: string, version: number) => Keyer;
@@ -61,7 +75,10 @@ export function hashMask(key: Buffer): HashMask {
   const keyer = (scope: readonly unknown[]): Keyer => {
     const mac = (label: string, v: string): string =>
       createHmac('sha256', key).update(JSON.stringify([label, ...scope, v]), 'utf8').digest('hex');
-    return { full: (hex) => mac('hash', hex), prefix: (hex16) => mac('prefix', hex16).slice(0, 16) };
+    return {
+      full: (hex) => mac('hash', hex), prefix: (hex16) => mac('prefix', hex16).slice(0, 16),
+      inText: { full: (hex) => mac('in-text-hash', hex), prefix: (hex16) => mac('in-text-prefix', hex16).slice(0, 16) },
+    };
   };
   return {
     version: (scenarioIri, version) => keyer(['scenario-version', scenarioIri, version]),
@@ -86,14 +103,84 @@ const HASH_KEYS: ReadonlySet<string> = new Set(['rubricHash', 'scenarioHash']);
  */
 const SIGNED_KEYS: ReadonlySet<string> = new Set(['graphTrig', 'descriptorTurtle', 'statement']);
 const RUBRIC_IRI = /urn:pev:rubric:([0-9a-f]{64})/g;
-/** A calibration decision kind's hash prefix, `pev/<first 16 hex of the rubric hash>/`, wherever it sits. */
-const KIND_PREFIX = /\bpev\/([0-9a-f]{16})\//g;
+/**
+ * A calibration decision kind's hash prefix, `pev/<first 16 hex of the rubric hash>/`, wherever it sits,
+ * whatever comes before it. No word boundary: `\b` reads only ASCII as word characters, and NFC folds
+ * some characters that are not (the Kelvin sign) into ASCII letters that are, so a line and its
+ * normalised form (`normaliseForQuote`, which the judge packet and an attempt's `normalisedText` show)
+ * would be masked differently.
+ */
+const KIND_PREFIX = /pev\/([0-9a-f]{16})\//g;
+/** A whole run of 64 hex, or of 16, with no hex digit on either side: a stand-in copied without its frame. */
+const HEX64_RUN = /(?<![0-9a-f])[0-9a-f]{64}(?![0-9a-f])/g;
+const HEX16_RUN = /(?<![0-9a-f])[0-9a-f]{16}(?![0-9a-f])/g;
 /** A rubric IRI as this bridge writes it under `rubricIri` (`records.ts` `rubricIriOf`): that and nothing else. */
 const RUBRIC_IRI_FIELD = /^urn:pev:rubric:([0-9a-f]{64})$/;
 /** A calibration kind as `calibration.ts` writes it under a cell's `kind`: `pev/<16 hex>/<criterion id>`, and nothing else. */
 const KIND_FIELD = /^pev\/([0-9a-f]{16})\/([a-z0-9-]{1,40})$/;
-/** A random stand-in of `bytes` bytes, in hex: made fresh for each hash found in text, so it equals nothing else. */
-const fresh = (bytes: number): string => randomBytes(bytes).toString('hex');
+/** Whether `s` may hold a rubric IRI or a kind prefix: the cheap test before the patterns. */
+const mayHoldHash = (s: string): boolean => s.includes('urn:pev:rubric:') || s.includes('pev/');
+
+/**
+ * `s` with every rubric IRI's hash and every calibration-kind prefix inside it replaced by its
+ * stand-in in text for scope `k` (`Keyer.inText`), each the same length as what it replaces, so an
+ * offset into the stored text is the same offset into this one.
+ */
+export function maskText(s: string, k: Keyer): string {
+  if (!mayHoldHash(s)) return s;
+  return s.replace(RUBRIC_IRI, (_m, h: string) => `urn:pev:rubric:${k.inText.full(h)}`)
+    .replace(KIND_PREFIX, (_m, p: string) => `pev/${k.inText.prefix(p)}/`);
+}
+
+/** A rubric IRI's hash, a kind's prefix, or a whole run of 64 or 16 hex: one pass, so nothing is replaced twice. */
+const HASH_OR_RUN = /urn:pev:rubric:([0-9a-f]{64})|pev\/([0-9a-f]{16})\/|(?<![0-9a-f])([0-9a-f]{64})(?![0-9a-f])|(?<![0-9a-f])([0-9a-f]{16})(?![0-9a-f])/g;
+
+/**
+ * A quote that was read back (`QuoteCheck.readBack`) as an answer that masks text shows it: `maskText`,
+ * and each whole run of 64 or 16 hex replaced with its stand-in in text as well. A judge may have
+ * copied a stand-in's hex alone (`quoteAsStored`), so the saved quote can hold a hash with no
+ * `urn:pev:rubric:` or `pev/` around it; shown this way it reads as the judge copied it and as the line
+ * it was copied from shows it. A run of hex the learner wrote bare in such a quote is shown as a
+ * stand-in too, where the line shows it as written.
+ */
+export function maskReadBackQuote(s: string, k: Keyer): string {
+  return s.replace(HASH_OR_RUN, (_m, iri?: string, kind?: string, run64?: string, run16?: string) => (
+    iri !== undefined ? `urn:pev:rubric:${k.inText.full(iri)}`
+      : kind !== undefined ? `pev/${k.inText.prefix(kind)}/`
+        : run64 !== undefined ? k.inText.full(run64) : k.inText.prefix(run16!)));
+}
+
+/**
+ * A judge's quote that was read back (practice.ts `QuoteCheck` with `readBack`), wherever an answer
+ * holds one, whole or cut down to its words and whether it checked out (`record_judgment`'s answer).
+ */
+const isReadBackQuote = (o: Record<string, unknown>): boolean => o['readBack'] === true && typeof o['verified'] === 'boolean';
+
+/**
+ * Reads a quote copied from a view of `stored` masked for scope `k` (`maskText`) as the stored text
+ * it was copied from: each stand-in in it that stands for a hash in `stored` is put back as that
+ * hash; anything else is left as it is. A stand-in is read back as a view shows it
+ * (`urn:pev:rubric:<64 hex>`, `pev/<16 hex>/`), and also as its hex alone, a whole run of 64 or 16
+ * hex digits: the quote rule lets a quote start or end at a `:` or a `/`, so a quote may leave out
+ * `urn:pev:rubric:`, `pev/` or the closing `/`. It names no hash that is not already in `stored`,
+ * which the caller's own view showed as that stand-in. A quote that cuts a run of hex is not read
+ * back; it cuts a word of the line, which the quote rule refuses anyway.
+ */
+export function quoteAsStored(k: Keyer, stored: readonly string[]): (quote: string) => string {
+  const full = new Map<string, string>();
+  const prefix = new Map<string, string>();
+  for (const t of stored) {
+    if (!mayHoldHash(t)) continue;
+    for (const m of t.matchAll(RUBRIC_IRI)) full.set(k.inText.full(m[1]!), m[1]!);
+    for (const m of t.matchAll(KIND_PREFIX)) prefix.set(k.inText.prefix(m[1]!), m[1]!);
+  }
+  if (full.size === 0 && prefix.size === 0) return (quote) => quote;
+  return (quote) => quote
+    .replace(RUBRIC_IRI, (m, h: string) => { const raw = full.get(h); return raw === undefined ? m : `urn:pev:rubric:${raw}`; })
+    .replace(KIND_PREFIX, (m, p: string) => { const raw = prefix.get(p); return raw === undefined ? m : `pev/${raw}/`; })
+    .replace(HEX64_RUN, (m) => full.get(m) ?? m)
+    .replace(HEX16_RUN, (m) => prefix.get(m) ?? m);
+}
 
 type Version = { readonly scenarioIri: string; readonly version: number };
 const isVersionNumber = (v: unknown): v is number => typeof v === 'number' && Number.isInteger(v) && v >= 1;
@@ -116,6 +203,26 @@ function versionIn(o: Record<string, unknown>, under: Version | null): Version |
   return under;
 }
 
+/** The forms a record keeps a signed request in (records.ts `EnvelopeForm`). */
+const ENVELOPE_FORMS: ReadonlySet<unknown> = new Set(['pev-canonical', 'signed-request']);
+/**
+ * A signed request as a record keeps it (records.ts `StoredEnvelope`), wherever an answer holds one: a
+ * turn's, a review's, a contest's or a withdrawal's, a removal's, a scenario's draft receipt.
+ */
+const isStoredEnvelope = (o: Record<string, unknown>): boolean =>
+  ENVELOPE_FORMS.has(o['form']) && typeof o['signature'] === 'string' && typeof o['payloadSha256'] === 'string';
+
+/**
+ * A stored signed request without what was signed (`payload`, or the signed JSON text,
+ * `signedPayload`), saying so (`payloadLeftOut`); its signature, its payload's sha256 and who stood
+ * behind it stay. An envelope whose payload redaction already removed is returned as it is.
+ */
+function withoutPayload(o: Record<string, unknown>): Record<string, unknown> {
+  if (!('payload' in o) && !('signedPayload' in o)) return o;
+  const { payload: _p, signedPayload: _s, ...rest } = o;
+  return { ...rest, payloadLeftOut: true };
+}
+
 /**
  * A calibration cell (calibration.ts `CalibrationCellView`), wherever an answer holds one (the
  * calibration read, a scenario's results): it groups judgments by a rubric's content across
@@ -126,7 +233,14 @@ const isCalibrationCell = (o: Record<string, unknown>): boolean =>
 
 /**
  * An answer with every rubric and scenario hash keyed or replaced, apart from signed bytes
- * (`SIGNED_KEYS`).
+ * (`SIGNED_KEYS`), and every stored signed request's payload left out.
+ *
+ * Left out: what a signed request kept in a record signed (`payload`, `signedPayload`), wherever the
+ * answer holds one (`withoutPayload`). A payload is the signer's own object, with any fields it chose
+ * beside the act's: walked like this bridge's own, a `rubricHash` or `rubricIri` written there would be
+ * keyed as the answer's own is, in a scenario version an object inside it could name, or for cells
+ * inside an object shaped like one, so a guess written there would come back keyed, to compare. The
+ * signature, the payload's sha256 and who stood behind it stay.
  *
  * Keyed: the fields this bridge writes a hash into, and only those: the value of a `rubricHash` or
  * `scenarioHash` (64 hex), of a `rubricIri` (`urn:pev:rubric:<hash>`, exactly), and of a calibration
@@ -135,12 +249,20 @@ const isCalibrationCell = (o: Record<string, unknown>): boolean =>
  * cell wherever it sits), or, where nothing names its version, with a salt of this answer's own
  * (`loose`).
  *
- * Replaced: a rubric IRI's hash or a kind's prefix inside any other string. Such text may be a
- * caller's (a turn, a contest or redaction reason, a judge's quote or rationale, a scenario's words
- * or a criterion's title), and keyed in the same scope as the answer's own `rubricHash` it would let
+ * Replaced: a rubric IRI's hash or a kind's prefix inside any other string (`maskText`), and in a
+ * read-back quote's words every whole run of 64 or 16 hex as well (`maskReadBackQuote`). Such text
+ * may be a caller's (a turn, a contest or redaction reason, a judge's quote or rationale, a
+ * scenario's words or a criterion's title), and keyed like the answer's own `rubricHash` it would let
  * a caller write the bare hash of a guessed rubric and read it back keyed, to compare. So each one is
- * replaced with a random value made for it alone (`fresh`), equal to nothing else in the answer, the
- * same text's other hashes included.
+ * replaced with its stand-in in text for the same scope (`Keyer.inText`), keyed under a label of its
+ * own: equal to no field's value, and the same wherever the same hash is shown in that scope, so
+ * every view of one attempt's transcript shows a line the same way and a quote copied from any of
+ * them reads back as the stored line (`quoteAsStored`).
+ *
+ * Two stand-ins in text are equal when their hashes are, which tells a caller only that two texts
+ * hold the same hash. A caller who reads no stakes can learn something from that only if a real
+ * rubric hash already sits in some text, and this bridge writes none there: only a person who reads
+ * the stakes can have put it there, and such a person could as well pass the stakes on.
  */
 export function maskAnswerHashes(v: unknown, m: HashMask, scope: HashScope = null): unknown {
   let loose: Keyer | null = null;
@@ -156,12 +278,17 @@ export function maskAnswerHashes(v: unknown, m: HashMask, scope: HashScope = nul
       if (iri !== null) return `urn:pev:rubric:${keyerFor(at).full(iri[1]!)}`;
       const kind = key === 'kind' && at === 'cells' ? KIND_FIELD.exec(x) : null;
       if (kind !== null) return `pev/${keyerFor(at).prefix(kind[1]!)}/${kind[2]!}`;
-      return x.replace(RUBRIC_IRI, () => `urn:pev:rubric:${fresh(32)}`).replace(KIND_PREFIX, () => `pev/${fresh(8)}/`);
+      return mayHoldHash(x) ? maskText(x, keyerFor(at)) : x;
     }
     if (Array.isArray(x)) return x.map((y) => walk(y, at));
     if (isRecord(x)) {
-      const here = at === 'cells' || isCalibrationCell(x) ? 'cells' : versionIn(x, at);
-      return Object.fromEntries(Object.entries(x).map(([k, y]) => [k, SIGNED_KEYS.has(k) ? y : walk(y, here, k)]));
+      const o = isStoredEnvelope(x) ? withoutPayload(x) : x;
+      const here = at === 'cells' || isCalibrationCell(o) ? 'cells' : versionIn(o, at);
+      const readBack = isReadBackQuote(o);
+      return Object.fromEntries(Object.entries(o).map(([k, y]) => [k,
+        SIGNED_KEYS.has(k) ? y
+          : readBack && (k === 'text' || k === 'normalised') && typeof y === 'string' ? maskReadBackQuote(y, keyerFor(here))
+            : walk(y, here, k)]));
     }
     return x;
   };
