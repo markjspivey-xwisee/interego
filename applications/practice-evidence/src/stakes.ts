@@ -296,42 +296,65 @@ interface ShownLine {
   /** The line as stored, and as an attempt's `text` shows it (`maskText`): one length, the same offsets. */
   readonly raw: string;
   readonly rawShown: string;
-  /** The line normalised (`normaliseForQuote`), and as the judge packet and `normalisedText` show it: one length, the same offsets. */
+  /**
+   * The line normalised (`normaliseForQuote`), and as the judge packet and `normalisedText` show it:
+   * one length, the same offsets. `normShown` need not be in NFC: where a mark follows a fingerprint's
+   * last digit that does not take it, the stand-in's last digit may, and is shown with the mark after it.
+   */
   readonly norm: string;
   readonly normShown: string;
   /**
-   * `rawShown` normalised, the form a quote copied from it is checked in, where that is not `normShown`:
-   * with the offset in `norm` of each of its offsets (-1 inside letters that stand for one there), or
-   * null where it is `normShown` or cannot be lined up with it (`linedUp`).
+   * `rawShown` and `normShown` normalised as a quote is (`normaliseForQuote`), the forms a quote copied
+   * from them and normalised, by the quote rule or on the way, is found in, where they are not
+   * `normShown`: each with the offset in `norm` of each of its offsets and of its end, -1 inside a
+   * letter or its marks where they stand for more or fewer characters there (`linedUp`). One that
+   * cannot be lined up with `normShown` is left out, so a quote is never read back by offsets that do
+   * not hold.
    */
-  readonly rawNormalised: { readonly shown: string; readonly at: readonly number[] } | null;
+  readonly normalised: readonly { readonly shown: string; readonly at: readonly number[] }[];
+}
+
+const MARK = /\p{M}/u;
+
+/** The end of the letter at `from` in `s` and the combining marks after it. */
+function marksEnd(s: string, from: number): number {
+  let at = from + 1;
+  for (let cp = s.codePointAt(at); cp !== undefined && MARK.test(String.fromCodePoint(cp)); cp = s.codePointAt(at)) at += cp > 0xffff ? 2 : 1;
+  return at;
 }
 
 /**
- * `rawShown` normalised (`alt`) lined up with `normShown`, the masked normalised line: the offset in
- * the normalised line of each offset of `alt`, and of its end. The two differ only where a rubric
- * IRI's last hex digit was folded with the marks after it into one letter and the stand-in's last
- * digit does not take those marks (`refolded`): `normShown` shows another hex letter that takes them,
- * the same length, and `alt` shows the stand-in's digit with the marks after it, longer. Those letters
- * map to the folded letter's offset, and -1 inside them. Null when anything else differs, so a quote
- * is never read back by offsets that do not hold.
+ * `alt` (`rawShown` or `normShown` normalised, `ShownLine.normalised`) lined up with `normShown`, the
+ * masked normalised line: the offset in the normalised line of each offset of `alt`, and of its end.
+ * The two differ only at a rubric IRI's last hex digit and the combining marks after it, where NFC
+ * folds the hash's digit and the stand-in's differently (`refolded`): one shows a letter the digit and
+ * some marks were folded into, the other the digit with those marks after it. Such a place is lined
+ * up whole, the letter with the marks after it in one against the same in the other, when both start
+ * with a hex digit and hold the same marks: its first character maps to that place, any character
+ * after it in `alt` to -1. Null when anything else differs.
  */
-function linedUp(alt: string, normShown: string, norm: string, k: Keyer): { readonly shown: string; readonly at: readonly number[] } | null {
-  const writtenOut = new Map<number, string>();
-  for (const m of norm.matchAll(RUBRIC_IRI)) {
-    const at = hashIn(m[1]!);
-    if (at !== null && at.marks !== '') writtenOut.set(m.index + 'urn:pev:rubric:'.length + 63, `${k.inText.full(at.hash).slice(-1)}${at.marks}`.normalize('NFC'));
-  }
+function linedUp(alt: string, normShown: string, norm: string): { readonly shown: string; readonly at: readonly number[] } | null {
+  const lastDigits = new Set<number>();
+  for (const m of norm.matchAll(RUBRIC_IRI)) if (hashIn(m[1]!) !== null) lastDigits.add(m.index + 'urn:pev:rubric:'.length + 63);
   const map: number[] = [];
   let i = 0;
   let j = 0;
   while (j < alt.length) {
-    const u = writtenOut.get(i);
-    if (u !== undefined && u.length > 1 && alt.startsWith(u, j)) {
-      map.push(i, ...Array.from({ length: u.length - 1 }, () => -1));
-      i += 1;
-      j += u.length;
-    } else if (i < normShown.length && alt[j] === normShown[i]) {
+    if (lastDigits.has(i)) {
+      const ni = marksEnd(normShown, i);
+      const nj = marksEnd(alt, j);
+      const ours = normShown.slice(i, ni);
+      const theirs = alt.slice(j, nj);
+      if (ours !== theirs) {
+        const [a, b] = [ours.normalize('NFD'), theirs.normalize('NFD')];
+        if (!HEX_DIGIT.test(a[0]!) || !HEX_DIGIT.test(b[0]!) || a.slice(1) !== b.slice(1)) return null;
+        map.push(i, ...Array.from({ length: nj - j - 1 }, () => -1));
+        i = ni;
+        j = nj;
+        continue;
+      }
+    }
+    if (i < normShown.length && alt[j] === normShown[i]) {
       map.push(i);
       i += 1;
       j += 1;
@@ -348,8 +371,9 @@ function shownLine(raw: string, k: Keyer, index?: number): ShownLine {
   const norm = normaliseForQuote(raw);
   const normShown = maskText(norm, k);
   const rawShown = maskText(raw, k);
-  const alt = normaliseForQuote(rawShown);
-  return { ...(index !== undefined ? { index } : {}), raw, rawShown, norm, normShown, rawNormalised: alt === normShown ? null : linedUp(alt, normShown, norm, k) };
+  const normalised = [...new Set([normaliseForQuote(rawShown), normaliseForQuote(normShown)])].filter((alt) => alt !== normShown)
+    .flatMap((alt) => linedUp(alt, normShown, norm) ?? []);
+  return { ...(index !== undefined ? { index } : {}), raw, rawShown, norm, normShown, normalised };
 }
 
 /** Each offset `needle` starts at in `haystack`, overlapping ones included. */
@@ -371,8 +395,11 @@ type StoredLine = string | QuotedTurn;
  * offsets, or maps them back exactly (`ShownLine`): an attempt's `text` shows the line masked, a
  * stand-in the length of the hash or kind it replaces, and the quote is looked for there as sent; the
  * judge packet and `normalisedText` show the normalised line masked, and the quote is looked for there
- * normalised as `verifyQuote` normalises it; and a quote copied from `text` and normalised on the way
- * is looked for in that view normalised, lined up with the normalised line (`linedUp`). So which runs
+ * normalised as `verifyQuote` normalises it. That view need not be in NFC: where a mark follows a
+ * fingerprint's last digit, the stand-in's digit may take it where the fingerprint's did not, or the
+ * other way round. So the quote, which the quote rule normalises and a chat app may have normalised on
+ * the way, is also looked for in each view normalised, lined up with the normalised line in whichever
+ * direction NFC folds there (`linedUp`), and an exact copy of the packet is found that way too. So which runs
  * of hex are stand-ins and which are written out (a stand-in the learner copied from an earlier view
  * and wrote out reads the same as the hash it stands for) is read from the line itself, however many
  * there are. A place where the quote starts or ends inside a word of the stored line is skipped: such
@@ -432,10 +459,11 @@ export function quoteReadingsAsStored(k: Keyer, stored: readonly StoredLine[]): 
     for (const l of [...named, ...lines.filter((x) => !named.includes(x))]) {
       // Copied from an attempt's `text`: the stored line's own words at that place, as they are stored.
       for (const at of startsOf(l.rawShown, quote)) keep(l.raw, at, at + quote.length, quote);
-      // Copied from the normalised line, or normalised on the way: the normalised line's words at that place.
+      // Copied from the normalised line, normalised as the quote rule normalises it: the normalised line's words at that place.
       for (const at of startsOf(l.normShown, q)) keep(l.norm, at, at + q.length, q);
-      const alt = l.rawNormalised;
-      if (alt !== null) {
+      // Copied from either view, normalised by the quote rule or on the way, where that view normalised is not the normalised
+      // line as shown (which need not be in NFC: `ShownLine.normShown`): the normalised line's words at the place it lines up with.
+      for (const alt of l.normalised) {
         for (const at of startsOf(alt.shown, q)) {
           const from = alt.at[at]!;
           const to = alt.at[at + q.length]!;

@@ -945,13 +945,15 @@ describe('a rubric fingerprint a caller writes into text comes back as a stand-i
     expect(r.verified).toBe(false);
   });
 
-  it('a quote copied from a line\'s own text, where a mark follows a fingerprint\'s last digit, and changed by normalising on the way, reads back by its place in the normalised line', () => {
+  it('a quote copied from a line\'s own text, where a mark follows a fingerprint\'s last digit, and changed by normalising on the way, reads back by its place in the normalised line, whichever of that digit and the stand-in\'s takes the mark', () => {
     const m = hashMask(Buffer.alloc(32, 37));
     const k = m.version('urn:pev:scenario:unit', 1);
     const markFor = (d: string): string => ('ace'.includes(d) ? '\u0301' : '\u0307');
-    // Fictional hashes that end in a hex letter, enough that a stand-in's own last digit both takes the mark and not.
-    const hashes = Array.from({ length: 400 }, (_, i) => sha256(`a fictional rubric to fold, quoted ${i}`)).filter((x) => /[a-f]$/.test(x)).slice(0, 40);
-    let writtenOut = 0;
+    const folds = (d: string, mark: string): boolean => `${d}${mark}`.normalize('NFC').length === 1;
+    // Fictional hashes ending in hex letters and in decimal digits, which take no mark: enough that the stand-in's last digit
+    // takes the mark where the fingerprint's does not, the other way round, and both.
+    const hashes = Array.from({ length: 60 }, (_, i) => sha256(`a fictional rubric to fold, quoted ${i}`));
+    const met = new Set<string>();
     for (const h of hashes) {
       const mark = markFor(h[63]!);
       const s = k.inText.full(h);
@@ -966,10 +968,60 @@ describe('a rubric fingerprint a caller writes into text comes back as a stand-i
       const norm = normaliseForQuote(line);
       expect([r.verified, r.readBack, r.turnIndex, r.normalised, r.normalised?.split(s).length], h).toEqual([true, true, 1, norm.slice(r.start!, r.end!), 5]);
       expect(r.normalised!.startsWith(norm.slice(norm.indexOf('urn:pev:rubric:') + 15, norm.indexOf(' came up'))), h).toBe(true);
-      if (`${s[63]!}${mark}`.normalize('NFC').length > 1) writtenOut++;
+      met.add(`${folds(h[63]!, mark) ? 'fingerprint' : '-'} ${folds(s[63]!, mark) ? 'stand-in' : '-'}`);
     }
-    // Both ways the view shows the stand-in's last digit were met: with the mark folded into it, and written after it.
-    expect([writtenOut > 0, writtenOut < hashes.length]).toEqual([true, true]);
+    // Every way the two last digits take the mark was met: the fingerprint's alone (the view normalised shows the stand-in's
+    // digit and the mark where the normalised line shows a letter), the stand-in's alone (the other way round), both and neither.
+    expect([...met].sort()).toEqual(['- -', '- stand-in', 'fingerprint -', 'fingerprint stand-in']);
+  });
+
+  it('a quote of a line where marks follow a fingerprint\'s last digit reads back from either view, copied as shown, normalised on the way, or copied again as an answer shows it, whichever last digit takes them', () => {
+    const m = hashMask(Buffer.alloc(32, 39));
+    const scope = { scenarioIri: 'urn:pev:scenario:unit', version: 1 };
+    const k = m.version(scope.scenarioIri, scope.version);
+    const attemptIri = 'urn:pev:attempt:unit-either-fold';
+    const folds = (d: string, marks: string): boolean => `${d}${marks}`.normalize('NFC').length < 1 + marks.length;
+    const met = new Set<string>();
+    // Fictional fingerprints ending in decimal digits and in hex letters; one mark, another, and two that NFC puts in order and
+    // folds in part.
+    for (const h of Array.from({ length: 24 }, (_, i) => sha256(`a fictional rubric, folded either way ${i}`))) {
+      const s = k.inText.full(h);
+      for (const marks of ['\u0301', '\u0307', '\u0307\u0323']) {
+        met.add(`${folds(h[63]!, marks) ? 'fingerprint' : '-'} ${folds(s[63]!, marks) ? 'stand-in' : '-'}`);
+        for (const copies of [0, 2]) {
+          // As the peer review found it: the fingerprint with the marks after it, its stand-in written out, a doubled space and a
+          // curly apostrophe, which the normalised line shows otherwise.
+          const line = `Then  urn:pev:rubric:${h}${marks} came up${` and ${s}`.repeat(copies)}, and I’d asked what they thought.`;
+          const turns = [{ index: 1, speaker: 'learner' as const, text: line }];
+          const back = quoteReadingsAsStored(k, turns);
+          const lines = new Map([[attemptIri, turns]]);
+          const norm = normaliseForQuote(line);
+          const between = (v: string): string => v.slice(v.indexOf('urn:pev:rubric:') + 15, v.indexOf(' what they'));
+          const stored = between(norm);
+          const packet = between(maskText(norm, k));
+          const text = between(maskText(line, k));
+          // From the packet (the normalised line as shown, which need not be in NFC) and from the attempt's text, each as shown,
+          // straightened and NFC'd as a chat app may.
+          for (const copied of [packet, packet.normalize('NFC'), text, text.replace(/\s+/g, ' ').replace('’', '\''), text.normalize('NFC')]) {
+            const what = `${h.slice(-1)}/${s.slice(-1)} ${JSON.stringify(marks)} ${copies}: ${JSON.stringify(copied.slice(60, 90))}`;
+            expect(copied.includes(h.slice(0, 63)), what).toBe(false);
+            const r = verifyQuoteAsShown({ text: copied, turnIndex: 1 }, turns, back);
+            // Read back as the stored words: the fingerprint where it was framed, every stand-in written out kept as written.
+            expect([r.verified, r.readBack, r.turnIndex, r.normalised, norm.slice(r.start!, r.end!)], what).toEqual([true, true, 1, stored, stored]);
+            // Shown from its line with none of the fingerprint, and each way it is shown, copied as it is or normalised on the
+            // way, reads back again.
+            const out = (maskAnswerHashes({ ...scope, attemptIri, quotes: [r] }, m, scope, lines) as { quotes: { text: string; normalised: string }[] }).quotes[0]!;
+            expect([JSON.stringify(out).includes(h.slice(0, 16)), JSON.stringify(out).includes(h.slice(40, 63))], what).toEqual([false, false]);
+            for (const again of [out.text, out.normalised, out.text.normalize('NFC'), out.normalised.normalize('NFC')]) {
+              const r2 = verifyQuoteAsShown({ text: again, turnIndex: 1 }, turns, back);
+              expect([r2.verified, r2.readBack, r2.normalised], `${what}, copied again`).toEqual([true, true, stored]);
+            }
+          }
+        }
+      }
+    }
+    // Every way the two last digits take the marks was met: the fingerprint's alone, the stand-in's alone, both and neither.
+    expect([...met].sort()).toEqual(['- -', '- stand-in', 'fingerprint -', 'fingerprint stand-in']);
   });
 
   it('a rubric IRI whose last hex digit a combining mark follows is masked alike in a line and its normalised form, where NFC folds the two into one letter, and a quote from either reads back', () => {
@@ -1581,6 +1633,76 @@ describe('a rubric fingerprint a caller writes into text comes back as a stand-i
     const t1 = (session['turns'] as Out[]).find((t) => t['index'] === 1)!;
     expect([none(t1['text']), none(t1['normalisedText']), t1['normalisedText']]).toEqual([[false, false], [false, false], shown]);
     for (const r of [packet, saved, session]) expect(none(r)).toEqual([false, false]);
+  }, SLOW);
+
+  it('a judge\'s chat that quotes a line where a mark follows a fingerprint\'s last decimal digit, which the stand-in\'s last digit takes, has the quote read back and credited: from the packet as shown, normalised on the way, and copied again', async () => {
+    // As the peer review found it: a fingerprint ending in a decimal digit, which takes no mark, and a stand-in ending in a hex
+    // letter, which does. The packet shows the stand-in's letter and the mark as two characters, which NFC would fold into one.
+    const base = demoScenarioInput('missed-deadline', 2);
+    const variant = (i: number): Out => {
+      const rubric = base['rubric'] as Out;
+      const criteria = (rubric['criteria'] as Out[]).map((c, j) => (j === 0 && i > 0 ? { ...c, title: `${String(c['title'])} (${i})` } : c));
+      return { ...base, title: 'A fingerprint ending in a digit a mark follows', rubric: { ...rubric, criteria } };
+    };
+    const i = Array.from({ length: 64 }, (_, n) => n).find((n) => { const x = coerceScenario(variant(n)); return 'value' in x && /[0-9]$/.test(rubricHash(x.value.rubric)); });
+    if (i === undefined) throw new Error('no copy of the scenario has a fingerprint ending in a decimal digit');
+    const S = coerceScenario(variant(i));
+    if (!('value' in S)) throw new Error('the scenario does not coerce');
+    const own = rubricHash(S.value.rubric);
+    const mark = '\u0307';
+    // The stand-in is keyed to the scenario version: the first scenario of its own whose stand-in ends in a hex letter.
+    let found: { a: string; standIn: string; t: number } | undefined;
+    for (let n = 0; n < 24 && found === undefined; n += 1) {
+      const pub = ok(await ract(H, 'pev.author_scenario', P.author.web, { scenario: { ...variant(i), scenarioKey: `quoted-digit-fold-${n}` }, status: 'published', draftAssistance: { used: false } }));
+      const sc = String(pub['scenarioIri']);
+      ok(await ract(H, 'pev.ratify_scenario', P.reviewer.web, { scenarioIri: sc, version: 1, scenarioHash: pub['scenarioHash'] }));
+      const start = ok(await ract(H, 'pev.start_attempt', P.learner.claude, { scenarioIri: sc, scenarioVersion: 1, coached: false }));
+      const a = String(start['attemptIri']);
+      const said = ok(await ract(H, 'pev.say', P.learner.claude, { attemptIri: a, turnIndex: 1, text: `I traced urn:pev:rubric:${own} first.` }));
+      const mine = chatAnswer(await ract(H, 'pev.get_attempt', P.learner.claude, { attemptIri: a }), 'the session from the learner\'s chat');
+      const t1 = String((mine['turns'] as Out[]).find((t) => t['index'] === 1)!['text']);
+      const standIn = t1.slice(t1.indexOf('urn:pev:rubric:') + 15, t1.indexOf(' first.'));
+      if (/[a-f]$/.test(standIn)) found = { a, standIn, t: Number(said['nextTurnIndex']) };
+    }
+    if (found === undefined) throw new Error('no scenario of its own has a stand-in ending in a hex letter');
+    const { a, standIn, t } = found;
+    expect([`${own.slice(-1)}${mark}`.normalize('NFC').length, `${standIn.slice(-1)}${mark}`.normalize('NFC').length]).toEqual([2, 1]);
+    // The fingerprint with the mark after it, its stand-in written out, and a curly apostrophe.
+    const line = `So urn:pev:rubric:${own}${mark} equals ${standIn}, and I’d like us to agree a new date for the report.`;
+    const third = ok(await ract(H, 'pev.say', P.learner.claude, { attemptIri: a, turnIndex: t, text: line }));
+    ok(await ract(H, 'pev.end_conversation', P.learner.claude, { attemptIri: a, turnIndex: third['nextTurnIndex'] }));
+    type Q = { text: string; verified: boolean; readBack?: true };
+    type J = { criteria: { status: string; quotes: Q[] }[]; unverifiedCriteria: string[] };
+    const judgeWith = async (judge: Person, quote: string): Promise<J> => {
+      const packet = ok(await ract(H, 'pev.judge_packet', judge.claude, { attemptIri: a }));
+      return chatAnswer(await ract(H, 'pev.record_judgment', judge.claude, {
+        attemptIri: a, ...(packet['binding'] as Out), judgeDisclosure: { provider: 'Example', model: 'example-judge', usedPacketPrompt: true },
+        judgment: { criteria: S.value.rubric.criteria.map((c) => ({ criterionId: c.id, level: c.levels[c.levels.length - 1]!.id, quotes: [{ text: quote, turnIndex: t }], rationale: 'The quoted line shows it.' })) },
+      }), `the judgment saved from ${judge.claude}`, false)['judgment'] as J;
+    };
+    const credited = (j: J): unknown => [j.unverifiedCriteria, j.criteria.map((c) => [c.status, c.quotes.map((q) => [q.verified, q.readBack ?? null])])];
+    const asCredited = [[], S.value.rubric.criteria.map(() => ['verified', [[true, true]]])];
+    // The packet's line, from urn:pev:rubric: to just before " like us": the stand-in's letter and the mark as two characters.
+    const packet = ok(await ract(H, 'pev.judge_packet', P.judge.claude, { attemptIri: a }));
+    const shown = String((packet['request'] as Out)['user']).split('\n').find((l) => l.startsWith(`[T${t} LEARNER] `))!;
+    const fromPacket = shown.slice(shown.indexOf('urn:pev:rubric:'), shown.indexOf(' like us'));
+    expect(fromPacket).toBe(`urn:pev:rubric:${standIn}${mark} equals ${standIn}, and I'd`);
+    const first = await judgeWith(P.judge, fromPacket);
+    expect(credited(first)).toEqual(asCredited);
+    // Another judge's chat copies the quote as the first one's answer shows it; then each chat's copy of the packet's stretch
+    // normalised on the way, and of the session's text as a judge's chat reads it, curly apostrophe and all.
+    expect(credited(await judgeWith(P.judgeReviewer, first.criteria[0]!.quotes[0]!.text))).toEqual(asCredited);
+    expect(credited(await judgeWith(P.judge, fromPacket.normalize('NFC')))).toEqual(asCredited);
+    const session = chatAnswer(await ract(H, 'pev.get_attempt', P.judgeReviewer.claude, { attemptIri: a }), 'the judged session from a judge\'s chat');
+    const text = String((session['turns'] as Out[]).find((x) => x['index'] === t)!['text']);
+    expect(credited(await judgeWith(P.judgeReviewer, text.slice(text.indexOf('urn:pev:rubric:'), text.indexOf(' like us')).normalize('NFC')))).toEqual(asCredited);
+    // The web app keeps every one as the learner's words: the fingerprint put back where it was framed, the stand-in they wrote
+    // out kept as written.
+    const stored = normaliseForQuote(line.slice(line.indexOf('urn:pev:rubric:'), line.indexOf(' like us')));
+    const web = webAnswer(await ract(H, 'pev.get_attempt', P.reviewer.web, { attemptIri: a }), 'the judged session in the web app');
+    const saved = (web['judgments'] as J[]).flatMap((j) => j.criteria.flatMap((c) => c.quotes.map((q) => [normaliseForQuote(q.text), q.verified])));
+    expect([saved.length, new Set(saved.map((x) => JSON.stringify(x))).size, saved[0]]).toEqual([4 * S.value.rubric.criteria.length, 1, [stored, true]]);
+    expect([stored.split(own).length - 1, stored.split(standIn).length - 1]).toEqual([1, 1]);
   }, SLOW);
 });
 

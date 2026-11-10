@@ -1,5 +1,57 @@
 # Changelog
 
+## 2026-11-10 — Practice Evidence: a quote reads back whichever of a fingerprint's last digit and its stand-in's takes a mark
+
+The same peer review found a case that reading a quote back by its place
+missed. Sometimes a combining mark follows a rubric fingerprint's last hex
+digit that the digit does not take, but the stand-in's last digit does: a
+fingerprint ending in a decimal digit, a stand-in ending in a letter, and a dot
+above, say. The judge packet and `normalisedText` then show the stand-in's
+letter and the mark as two characters, which NFC would fold into one. The quote
+rule normalises a quote with NFC, so an exact copy from the packet was not
+found as the packet shows it, and the line's text, normalised, was lined up
+with the normalised line only in the other direction. Where the stretch also
+held a curly apostrophe or a doubled space, the quote was found nowhere and was
+read back with every stand-in put back, the one the learner wrote out
+included, so it was "not found verbatim in any learner turn". The readings
+tried before had kept some runs as written and found it. A copy from the text
+or the packet that a chat app normalised on the way failed the same way, both
+before that change and after it, even with a single fingerprint and nothing
+written out.
+
+Now the line's text and its normalised form, each as shown, are normalised as
+a quote is and lined up with the normalised line in whichever direction NFC
+folds at a fingerprint's last digit: the letter or digit and the marks after it
+in one are taken as one place against the same in the other, when both start
+with a hex digit and hold the same marks. The quote is looked for in both. So
+a quote copied exactly from the packet or the text, normalised on the way, or
+copied again from how an answer shows a read-back quote, is found at its place
+and read back as the stored words there. More marks after the letter than NFC
+folds into it line up the same way. Nothing else changed: a place that starts
+or ends inside a word is still skipped, and a quote is never read back by
+offsets that do not line up.
+
+Tests: over fictional fingerprints ending in decimal digits and in hex
+letters, with one mark, another, and two marks that NFC puts in order and folds
+in part, meeting all four ways the two last digits take them; with and without
+the stand-in written out, with a doubled space and a curly apostrophe; each
+copy from the packet and from the text, as shown, straightened and normalised,
+and each way an answer shows the read-back quote, copied again as it is and
+normalised. The earlier fold test now uses fingerprints ending in decimal
+digits too. Through the bridge: a fingerprint ending in a decimal digit, a
+stand-in ending in a letter, the stand-in written out and a curly apostrophe;
+a judge quotes the packet as shown, a second judge copies the first's quote as
+shown, and the packet's stretch and the session's text are quoted normalised on
+the way. Each is credited, and the web app keeps the learner's words. All
+three tests fail without the change. The earlier entry's "Not covered" now
+says what it missed.
+
+Not covered: a quote a chat app changed in a way the quote rule's normalising
+does not undo (an apostrophe it does not straighten, say) is not found, as
+before. Where the two views differ anywhere but at a fingerprint's last digit
+and the marks after it, which the tests did not meet, that view normalised is
+not looked in.
+
 ## 2026-11-10 — Practice Evidence: contesting a review hands the learner's chat on in its own answer
 
 A peer review, run on fictional data, found that contesting a review, the act
@@ -67,11 +119,16 @@ judge named; quotes that cut a word, and the other person's lines; the folded
 letter copied from the text and changed on the way; and the same through the
 bridge, from the packet, with a second judge copying the first's quote.
 
-Not covered: where the line's text, normalised, differs from the normalised
-line in more than those folded letters (more marks after the letter than NFC
-folds into it, say), the quote is not looked for in that view; copied as sent
-from the text, or from the normalised form, it is still found. A quote a chat
-app changed in a way normalising does not undo is not found, as before.
+Not covered: the line's text, normalised, was lined up with the normalised
+line only where NFC folds the fingerprint's last digit and a mark into a letter
+the stand-in's digit does not take. The other way round, where the stand-in's
+digit takes the mark and the fingerprint's does not, the normalised form as
+shown is not in NFC, and a quote copied exactly from the judge packet, of a
+stretch the text shows otherwise (with a curly apostrophe or a doubled space),
+was not found, nor was one normalised on the way by a chat app; the readings
+tried before had found the first. The entry "a quote reads back whichever of a fingerprint's last digit
+and its stand-in's takes a mark" covers both. A quote a chat app changed in a
+way normalising does not undo is not found, as before.
 
 ## 2026-11-10 — Practice Evidence: a reopened session is handed to a judge as a finished one is
 
