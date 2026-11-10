@@ -1422,6 +1422,32 @@ describe('work-redesign offline demo and web UI', () => {
     }, 90_000);
   }
 
+  it('leaves another copy\'s text on the clipboard when a later round of copy and paste is refused: the browser took this copy\'s first message, the process was renamed, another copy put its own text there, and the browser refused the message for the new name', async () => {
+    const { page, w, copied, clip, net, fill, form, asked, messageFor, copyThis, toasts, settle } = await heldPasteRoute();
+    clip.hold = 1;
+    page.click('Copy the message for my AI');
+    await page.until(() => clip.held.length === 1, 'the clipboard taking the first message');
+    const before = form();
+    fill('[data-path="workflow.title"]', 'Supplier payments');
+    const now = form();
+    // The packet for the new name is held, so the other copy's text reaches the clipboard between this copy's two writes;
+    // the browser then refuses this copy's second write, of the message for the new name.
+    net.hold = 1;
+    clip.refuse = (_t: string, n: number) => n === 2;
+    must(clip.held.pop(), 'the held clipboard write')();
+    await page.until(() => net.held.length === 1, 'the packet for the new name on its way');
+    const other = 'A link another copy put on the clipboard';
+    await (w.eval('copyText') as (s: string, what?: string) => Promise<void>)(other, 'Link copied');
+    must(net.held.pop(), 'the held packet')();
+    await page.until(() => copyThis() !== undefined, '"Copy this" open', 5_000);
+    await settle();
+    // (Before, the refused round counted as this copy's write, so the copy took the other copy's text off the clipboard.)
+    expect(copied).toEqual([await messageFor(before), other]);
+    expect([copyThis(), asked()]).toEqual([await messageFor(now), [before, now]]);
+    expect(toasts('Not copied')).toEqual([]);
+    expect(page.errors).toEqual([]);
+  }, 90_000);
+
   it('keeps copy and paste\'s packet when the process is renamed and renamed back while the clipboard takes its message: "Copied", "Show the message" shown, and the next press copies it again without asking for another', async () => {
     const { page, copied, clip, fill, form, asked, messageFor, previews, toasts, settle } = await heldPasteRoute();
     clip.hold = 1;

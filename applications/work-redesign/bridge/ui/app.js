@@ -1812,10 +1812,18 @@ const COPY_BY_HAND = 'This browser didn\'t let the page copy it. Select all of t
  * notes the count as it begins a write knows, while the count is still that, that no write begun since can have replaced it.
  */
 let clipboardWrites = 0;
+/**
+ * The number (as clipboardWrites counted it) of the latest write the browser took, 0 for none: the write whose text the
+ * clipboard holds, as far as this page knows. A write the browser refused leaves it as it was.
+ */
+let clipboardHolder = 0;
 /** Put `s` on the clipboard: true once the browser took it, false where it refused (or has no clipboard here). */
 async function writeClipboard(s) {
   clipboardWrites += 1;
-  try { await navigator.clipboard.writeText(s); return true; } catch { return false; }
+  const n = clipboardWrites;
+  try { await navigator.clipboard.writeText(s); } catch { return false; }
+  if (n > clipboardHolder) clipboardHolder = n;
+  return true;
 }
 /**
  * Where the browser will not copy: the text to copy by hand, in a panel that, closed, goes back to the panel it was
@@ -3042,16 +3050,20 @@ const OLD_MESSAGE_ON_CLIPBOARD = 'Your clipboard still holds the message for the
  * record, or the map signed and the form emptied), is not copied, and the person is told so and asked to copy again.
  * A copy that ends without the message for the form as it is on the clipboard (not copied, the packet refused, or the
  * browser refusing a later round's message) takes off again any message an earlier round put there, made for a form that
- * has since changed, so a paste never gives it; unless the page has begun another write since (what is there is that
- * one's). Where the browser won't take it off either, the person is told the clipboard still holds it.
+ * has since changed, so a paste never gives it; unless the browser has since taken another write (what is there is that
+ * one's: another copy's text, say, which a later round of this copy the browser refused must not take off). Where the
+ * browser won't take it off either, the person is told the clipboard still holds it.
  * Answers 'copied', 'shown' (the browser refused the clipboard, and "Copy this" shows the message) or '' (nothing copied).
  */
 async function copyForForm({ ready, make, what }) {
-  // Whether a round's message reached the clipboard, and the count (clipboardWrites) as this copy began its last write.
-  let landed = false;
+  // The number of this copy's latest write the browser took (0 for none). Only a write that reached the clipboard counts,
+  // so a later round the browser refused never makes this copy the holder of what another copy put there since.
   let mine = 0;
-  /** This copy's message off the clipboard again, where it may still be there: true once it is not (or never was). */
-  const takeOff = async () => !landed || mine !== clipboardWrites || writeClipboard('');
+  /**
+   * This copy's message off the clipboard again, where it may still be there: true once it is not (or never was). It is
+   * there only while this copy's latest taken write is still the latest the browser took (clipboardHolder).
+   */
+  const takeOff = async () => mine === 0 || mine !== clipboardHolder || writeClipboard('');
   for (let round = 0; round < 3; round += 1) {
     const basis = docBasis(captureNow());
     if (!ready(basis, round === 0)) { if (round === 0) return ''; break; }
@@ -3064,7 +3076,7 @@ async function copyForForm({ ready, make, what }) {
       return '';
     }
     const writing = writeClipboard(made.message);
-    mine = clipboardWrites;
+    const n = clipboardWrites;
     if (!(await writing)) {
       // The refusal is a wait too: "Copy this" offers the message for the form as it is once the browser has answered.
       if (!sameBasis(basis, docBasis(captureNow()))) continue;
@@ -3072,7 +3084,7 @@ async function copyForForm({ ready, make, what }) {
       showCopyThis(made.message);
       return 'shown';
     }
-    landed = true;
+    mine = n;
     if (sameBasis(basis, docBasis(captureNow()))) { toast('Copied', what); return 'copied'; }
   }
   toast('Not copied', (await takeOff()) ? FORM_KEPT_CHANGING : `${FORM_KEPT_CHANGING} ${OLD_MESSAGE_ON_CLIPBOARD}`, 'warning');
