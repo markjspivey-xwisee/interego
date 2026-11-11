@@ -307,7 +307,7 @@ function stageReceipts(response: WireResponse, items: readonly StageItem[], crea
     assert.equal(value.created, created[position]);
     assert.equal(value.bodyDigest, `sha256:${createHash('sha256').update(item.bytes).digest('hex')}`, 'a receipt states the digest of the bytes it confirms');
     assert.equal(value.size, item.bytes.length);
-    assert.equal(value.contentType, 'application/json');
+    assert.equal(value.contentType, item.contentType);
     assert.match(value.revision, revisionPattern);
   });
   return answer.receipts;
@@ -379,6 +379,12 @@ async function batchedStagingContract(left: Worker, right: Worker, baseUrl: stri
   await refused(container, Array.from({ length: 65 }, () => stageItem('artifact')), 400, 'more items than one request may stage');
   await refused(container + 'document', [good], 400, 'a target that is not a container');
   await refused(container, [{ ...items[0]!, contentType: 'text/plain' }], 409, 'a taken name under another media type');
+  // Parameters are part of the media type: the same bytes under another charset are not confirmed.
+  const text = { ...stageItem('artifact', Buffer.from('caf\u00e9')), contentType: 'text/plain; charset=utf-8' };
+  stageReceipts(await stageRequest(left, container, [text]), [text], [true]).forEach(value => assert.equal(value.contentType, 'text/plain; charset=utf-8'));
+  assert.equal((await stageRequest(right, container, [text])).status, 200, 'the identical parameterized type is confirmed');
+  await refused(container, [{ ...text, contentType: 'text/plain; charset=iso-8859-1' }], 409, 'a taken name under another charset');
+  await refused(container, [{ ...text, contentType: 'text/plain' }], 409, 'a taken name without its parameters');
   for (const name of [good.name, 'head', `${good.name}.acl`]) assert.equal((await wire(right, container + name)).status, 404, 'a refused request stages nothing it refused');
   // A request refused part-way keeps what it had already confirmed; it is not a transaction.
   const before = stageItem('artifact');

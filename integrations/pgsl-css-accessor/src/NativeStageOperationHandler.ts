@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { Readable } from 'node:stream';
 import {
   BadRequestHttpError, BasicConditions, BasicRepresentation, ConflictHttpError, HttpError, InternalServerError,
-  OkResponseDescription, PostOperationHandler, PreconditionFailedHttpError, RepresentationMetadata, guardStream, toNamedTerm,
+  OkResponseDescription, PostOperationHandler, PreconditionFailedHttpError, RepresentationMetadata, guardStream, parseContentType, toNamedTerm,
   type ETagHandler, type OperationHandlerInput, type ResourceIdentifier, type ResourceStore, type ResponseDescription,
 } from '@solid/community-server';
 import {
@@ -81,8 +81,11 @@ export class NativeStageOperationHandler extends PostOperationHandler {
       existing.data.once('end', () => resolve(Buffer.concat(chunks)));
     });
     const revision = existing.metadata.get(toNamedTerm(NATIVE_REVISION_PREDICATE))?.value;
-    const bare = (value: string | undefined): string | undefined => value?.split(';', 1)[0]?.trim().toLowerCase();
-    if (!stored.equals(item.bytes) || bare(existing.metadata.contentType) !== bare(item.contentType) || !isNativeRevision(revision)) {
+    // The whole media type, parameters included: the same bytes under another charset are another
+    // representation. Both sides go through CSS's parser, as the stored one did when it was read.
+    const full = (value: string): string => { try { return parseContentType(value).toHeaderValueString(); } catch { return value.trim(); } };
+    const storedType = existing.metadata.contentTypeObject?.toHeaderValueString() ?? existing.metadata.contentType;
+    if (!stored.equals(item.bytes) || storedType === undefined || storedType !== full(item.contentType) || !isNativeRevision(revision)) {
       throw new ConflictHttpError('A staged name already holds a different representation');
     }
     return { name: item.name, status: 'staged', created: false, revision, bodyDigest, contentType: item.contentType, size: stored.length };
