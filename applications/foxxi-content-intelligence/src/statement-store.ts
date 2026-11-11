@@ -289,6 +289,22 @@ export function residentStatementCount(): number { return residentStatements; }
 export function setResidentStatementBudget(n?: number): void {
   residentBudget = n === undefined ? defaultResidentBudget() : n;
 }
+/**
+ * The resident count and its budget as Prometheus gauges, for GET /metrics: how much of the
+ * process's memory is statements held in hand, at about 1 KiB each.
+ */
+export function residentStatementMetricLines(): string[] {
+  return [
+    '# HELP foxxi_bridge_lrs_resident_statements Statements held in memory across every in-memory store',
+    '# TYPE foxxi_bridge_lrs_resident_statements gauge',
+    `foxxi_bridge_lrs_resident_statements ${residentStatements}`,
+    '',
+    '# HELP foxxi_bridge_lrs_resident_statements_budget Statements the process may hold in memory before it evicts',
+    '# TYPE foxxi_bridge_lrs_resident_statements_budget gauge',
+    `foxxi_bridge_lrs_resident_statements_budget ${residentBudget}`,
+  ];
+}
+
 /** Test seam: forget every registered store. A store left registered by an earlier test is
  *  otherwise a candidate victim for a later test's eviction in the same process (since
  *  vitest 4, the same file), and its assertions would depend on run order. Fix the polluter. */

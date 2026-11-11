@@ -12,6 +12,9 @@ how much of that is the processes' own memory, file cache or shared memory.
 Those tell live data from a heap left grown and from memory that is not the
 process's.
 
+They also carry how many xAPI statements the bridge holds in memory and the
+budget it may hold before evicting, at about 1 KiB a statement.
+
 Not covered: this measures and changes nothing else. The figures are read when
 asked for; no history is kept. Read against the deployed bridge only after it
 is deployed.

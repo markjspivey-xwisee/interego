@@ -9,6 +9,8 @@
 import { describe, expect, it } from 'vitest';
 import { containerMemory, memoryMetricLines, processMemory } from '../src/process-memory.js';
 import { metricsJson, renderMetrics } from '../src/observability.js';
+import { readFileSync } from 'node:fs';
+import { residentStatementBudget, residentStatementCount, residentStatementMetricLines } from '../src/statement-store.js';
 
 const files = (m: Record<string, string>) => (path: string): string => {
   const text = m[path];
@@ -78,5 +80,20 @@ describe('what the bridge serves', () => {
 
   it('carries them at /metrics.json too', () => {
     expect(metricsJson().memory.rssBytes).toBeGreaterThan(0);
+  });
+});
+
+describe('the statements held in hand', () => {
+  it('are reported with their budget, as the store counts them', () => {
+    const lines = residentStatementMetricLines();
+    expect(lines).toContain(`foxxi_bridge_lrs_resident_statements ${residentStatementCount()}`);
+    expect(lines).toContain(`foxxi_bridge_lrs_resident_statements_budget ${residentStatementBudget()}`);
+    expect(residentStatementBudget()).toBeGreaterThanOrEqual(10_000);
+  });
+
+  it('are served at /metrics and /metrics.json beside the memory figures', () => {
+    const server = readFileSync(new URL('../bridge/server.ts', import.meta.url), 'utf8');
+    expect(server).toContain("res.send(renderMetrics() + '\\n' + residentStatementMetricLines().join('\\n') + '\\n');");
+    expect(server).toContain('res.json({ ...metricsJson(), lrsResidentStatements: residentStatementCount(), lrsResidentStatementsBudget: residentStatementBudget() });');
   });
 });
