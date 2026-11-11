@@ -86,6 +86,10 @@ describe('Railway resource-limit floors', () => {
     // lowering it re-opens the bogus "issuer seed unset" bug.
     expect(LIMIT_FLOORS.relay).toEqual({ cpu: 1, memoryBytes: 2 * GIB });
     expect(LIMIT_FLOORS['foxxi-bridge']).toEqual({ cpu: 2, memoryBytes: 2 * GIB });
+    // health-bridge's floor is the cap it runs at on the live service: an override at it passes.
+    expect(LIMIT_FLOORS['health-bridge']).toEqual({ cpu: 0.25, memoryBytes: 500_000_000 });
+    expect(classifyLimit('health-bridge', limit(0.25, 500_000_000)).verdict).toBe('ok');
+    expect(classifyLimit('health-bridge', limit(0.25, 400_000_000)).verdict).toBe('BELOW-FLOOR');
     for (const name of Object.keys(LIMIT_FLOORS)) expect(serviceNames()).toContain(name);
   });
 
