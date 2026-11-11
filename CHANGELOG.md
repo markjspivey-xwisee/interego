@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-11-11 — Foxxi test: the compression test's server binds loopback
+
+`linked-data-answers-are-compressed.test.ts` started its Express app with
+`.listen(0)`, which binds every interface. The relay-invariants check requires
+every test server to name `127.0.0.1`, and has failed on master since that test
+merged. It now does.
 ## 2026-11-11 — Railway: health-bridge is a tracked service
 
 The fleet audit reported `health-bridge` as a service nobody knows about, and its
