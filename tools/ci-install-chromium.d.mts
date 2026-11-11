@@ -9,7 +9,7 @@ export declare const DOWNLOAD_ATTEMPTS: number;
 
 export interface ChromiumInstallSteps {
   /** `npx playwright <args>`: true when it exited 0 within `timeout` ms. */
-  run(args: string[], timeout: number): boolean;
+  run(args: string[], timeout: number): boolean | Promise<boolean>;
   /** Resolves once a headless Chromium has rendered a page; rejects otherwise. */
   launch(): Promise<void>;
   pause(ms: number): Promise<void>;
@@ -17,3 +17,8 @@ export interface ChromiumInstallSteps {
 }
 export type ChromiumInstallOutcome = { ok: true; deps: boolean } | { ok: false; deps: boolean; reason: string };
 export declare function installChromium(steps: ChromiumInstallSteps): Promise<ChromiumInstallOutcome>;
+/**
+ * Run `command`; true when it exited 0 within `timeout` ms. At the limit its whole process group is
+ * killed, and the promise resolves once the command has exited.
+ */
+export declare function runBounded(command: string, args: string[], timeout: number): Promise<boolean>;

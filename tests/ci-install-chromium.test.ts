@@ -8,7 +8,8 @@
  */
 import { describe, expect, it } from 'vitest';
 import { readFileSync, readdirSync } from 'node:fs';
-import { DEPS_TIMEOUT_MS, DOWNLOAD_ATTEMPTS, installChromium } from '../tools/ci-install-chromium.mjs';
+import { execFileSync } from 'node:child_process';
+import { DEPS_TIMEOUT_MS, DOWNLOAD_ATTEMPTS, installChromium, runBounded } from '../tools/ci-install-chromium.mjs';
 
 function steps(answers: { deps?: boolean; downloads?: boolean[]; launch?: Error }) {
   const calls: string[] = [];
@@ -62,6 +63,28 @@ describe('CI Chromium install', () => {
     expect(never.calls.filter(call => call.startsWith('install chromium'))).toHaveLength(DOWNLOAD_ATTEMPTS);
     expect(never.calls).not.toContain('launch');
     expect(never.pauses).toHaveLength(DOWNLOAD_ATTEMPTS - 1);
+  });
+
+  it.skipIf(process.platform === 'win32')('an attempt that times out is killed with everything it started, and is over when it returns', async () => {
+    // A wrapper that starts a grandchild and waits, as `npx` starts the Playwright CLI, which starts
+    // apt or the download. The marker makes the grandchild findable; it must be gone on return.
+    const marker = `ci-install-chromium-test-${process.pid}-${Date.now()}`;
+    const survivors = () => {
+      try { return execFileSync('pgrep', ['-f', marker], { encoding: 'utf8' }).trim().split('\n').filter(Boolean); }
+      catch { return []; }   // pgrep exits 1 when nothing matches
+    };
+    const started = Date.now();
+    const result = await runBounded('sh', ['-c', `sh -c 'sleep 300; : ${marker}' & sleep 300; : ${marker}`], 500);
+    expect(result).toBe(false);
+    expect(Date.now() - started).toBeLessThan(10_000);
+    await new Promise(resolve => setTimeout(resolve, 200));
+    expect(survivors()).toEqual([]);
+  });
+
+  it('a command that exits 0 in time is true, one that exits non-zero or cannot be started is false', async () => {
+    expect(await runBounded('sh', ['-c', 'exit 0'], 5000)).toBe(true);
+    expect(await runBounded('sh', ['-c', 'exit 3'], 5000)).toBe(false);
+    expect(await runBounded('no-such-command-ci-install-chromium', [], 5000)).toBe(false);
   });
 
   it('every workflow that installs Chromium through npx goes through the script, inside its job\'s time limit', () => {
