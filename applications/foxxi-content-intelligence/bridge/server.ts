@@ -39,6 +39,7 @@ import { composeOwnSubjectXapiVerifier } from '../src/own-subject-xapi-auth.js';
 import { OwnSubjectXapiWriteBudget, OwnSubjectXapiRequestBudget } from '../src/own-subject-xapi.js';
 import { createOwnSubjectActivityStore } from '../src/own-subject-activity-store.js';
 import { rateLimit } from 'express-rate-limit';
+import { SignerHourlyLimit, openHostingRequest, openHostingSettings } from '../src/open-hosting.js';
 import { createOwnLtiReconciliation, validateRecoveryEntry, type RecoveryEntry } from '../src/lti-own-reconciliation.js';
 import { createOwnLtiReconciliationStore } from '../src/lti-own-reconciliation-store.js';
 import { createRecoveryAttestation, ownLtiReconciliationHandler, ownLtiReconciliationRateLimitOptions } from '../src/lti-own-reconciliation-http.js';
@@ -11102,6 +11103,44 @@ attachHostedPackageRoutes(app, {
     return getCmi5Course(DEFAULT_TENANT, courseId);
   },
   onError: sendServerError,
+});
+
+// ── A package brought by anyone who signs ──────────────────────────────────────────────────────
+//
+// foxxi.upload_scorm_package is the operator's, by directory role. This is the same upload for a
+// wallet or a delegated agent with no account here, bounded as src/open-hosting.ts says: parsed and
+// kept the same way, the signer named as the uploader on its receipt, and played by the launch below.
+
+const openHosting = openHostingSettings(process.env);
+const openHostingBySigner = new SignerHourlyLimit(openHosting.perSignerHourly);
+const openHostingRateLimit = rateLimit({
+  windowMs: 3_600_000, limit: 20, ipv6Subnet: 56, identifier: 'open-hosting',
+  standardHeaders: 'draft-8', legacyHeaders: false, message: { error: 'too_many_requests' },
+});
+app.post('/agent/scorm/host', openHostingRateLimit, async (req, res) => {
+  try {
+    if (!openHosting.enabled) { res.status(404).json({ error: 'hosting a package by signed request is closed on this bridge; an operator hosts with foxxi.upload_scorm_package' }); return; }
+    const auth = await verifyDelegatedCaller(req.body);
+    if (!auth.ok) { res.status(auth.status).json({ error: auth.error }); return; }
+    const asked = openHostingRequest(auth.payload, openHosting);
+    if (!asked.ok) { res.status(asked.status).json({ error: asked.error }); return; }
+    const admitted = openHostingBySigner.admit(auth.callerDid);
+    if (!admitted.ok) {
+      res.setHeader('Retry-After', String(admitted.retryAfterSeconds));
+      res.status(429).json({ error: `this signer has brought ${openHosting.perSignerHourly} packages in the last hour; try again later`, retryAfterSeconds: admitted.retryAfterSeconds });
+      return;
+    }
+    const result = await uploadScormPackage({
+      tenantPodUrl: tenantPodUrl,
+      zipBase64: asked.zipBase64,
+      ...(asked.hintedTitle ? { hintedTitle: asked.hintedTitle } : {}),
+      uploaderDid: auth.callerDid,
+      host: (bytes, parsed) => hostUploadedPackage(bytes, parsed.packageTitle, parsed.launchable),
+      keepExport: (bytes, exported) => hostProjectExport(bytes, exported),
+    });
+    const refused = result.kind === 'refusal' && typeof result['iep:refusalStatus'] === 'number' ? result['iep:refusalStatus'] : undefined;
+    res.status(refused ?? 200).json({ ...result, uploader: auth.callerDid });
+  } catch (err) { sendServerError(res, err, 'open-hosting'); }
 });
 
 // ── cmi5 for a signed learner ─────────────────────────────────────────────────────────────────

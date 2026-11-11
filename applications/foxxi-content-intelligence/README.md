@@ -214,7 +214,7 @@ glue references them but does NOT re-implement them.
 
 ## Hosted SCORM packages
 
-An uploaded SCORM package (`foxxi.upload_scorm_package`) is played from the bridge itself, with no second origin ([`src/scorm-hosting.ts`](src/scorm-hosting.ts)):
+An uploaded SCORM package (an operator's with `foxxi.upload_scorm_package`, or anyone's who signs with `foxxi.host_package_signed`) is played from the bridge itself, with no second origin ([`src/scorm-hosting.ts`](src/scorm-hosting.ts)):
 - it is kept on the tenant pod under its sha-256, and read back only while its bytes still hash to it;
 - each of its files is served from `/scorm/packages/<sha-256>/files/<path>` with `Content-Security-Policy: sandbox` and no `allow-same-origin`, so every document runs in an opaque origin of its own and cannot reach anything of the bridge's;
 - each HTML document gets the SCORM runtime put into it (the player's own `scorm-rte.js`), after a bootstrap that stands in for web storage and takes the cmi5 launch's auth-token. The content's commits become that AU's cmi5 statements, sent with a credential bound to one registration;
@@ -322,6 +322,9 @@ PORT=6080 \
 | `FOXXI_DASHBOARD_ORIGIN` | Origins (comma-separated) the bridge allows through CORS for the dashboard's `fetch` calls. Their hosts are also the pages a session-key grant may be asked from. |
 | `FOXXI_SESSION_KEYS` | Optional. `off` takes no session keys. Otherwise a wallet may grant a key a tab makes the right to sign this bridge's requests as it (`src/session-key.ts`): the grant is an EIP-4361 message naming a dashboard host, this bridge, the key and an expiry; it travels with each request as `_session`, and is checked in full each time. The policy is published at `GET /.well-known/foxxi-session-key`. |
 | `FOXXI_SESSION_KEY_MAX_TTL_S` | Optional. The longest a session-key grant may run, in seconds: twelve hours unless set, a week at most. |
+| `FOXXI_OPEN_HOSTING` | Optional. `off` closes `POST /agent/scorm/host`, the signed route by which any wallet or delegated agent brings a package to be hosted (`src/open-hosting.ts`); it then answers 404 and only an operator hosts, with `foxxi.upload_scorm_package`. Open unless set. Anything but `on` or `off` stops the bridge at startup. |
+| `FOXXI_OPEN_HOSTING_MAX_ZIP_MB` | Optional. The largest package a signer may bring, in MB: 25 unless set, a whole number from 1 to 37 (what the 50 MB request body carries once base64-encoded). |
+| `FOXXI_OPEN_HOSTING_PER_SIGNER_HOURLY` | Optional. How many packages one signer may bring in an hour, counted in this process: 5 unless set, from 1 to 1000. The route also allows 20 an hour per address. |
 | `FOXXI_POD_WRITE_SECRET` | Bearer token the bridge sends on every pod write. The css-gate ([`deploy/css-gate/`](../../deploy/css-gate/)) gates all `POST`/`PUT`/`PATCH`/`DELETE` behind `Authorization: Bearer <WRITE_SECRET>` — without this the bridge can read but every write 401s. Reads stay anonymous. Must match the gate's `WRITE_SECRET`. Omit when pointing at a local CSS that accepts anonymous writes. |
 | `FOXXI_BRIDGE_PRIVATE_KEY` | 0x-prefixed 32-byte hex. The bridge derives a stable `did:key:0x<addr>#bridge` from it and signs bridge-originated descriptors (snapshots, calibration-flip records) so federated readers admit them as `CryptographicallyVerified`. If unset, the bridge generates an ephemeral key at startup — the signing identity rotates on every restart and older descriptors fail signature recovery. Generate one with `node -e "const{Wallet}=require('ethers');console.log(Wallet.createRandom().privateKey)"`. |
 | `FOXXI_LLM_API_KEY` | Optional. Lets the bridge call an LLM for `foxxi.ask_course_question_agentic`. Retrieval works without it. |

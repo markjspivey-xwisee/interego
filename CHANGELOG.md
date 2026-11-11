@@ -1,5 +1,26 @@
 # Changelog
 
+## 2026-11-11 — Foxxi: anyone who signs may bring a package to be hosted
+
+Only an admin could host a SCORM or cmi5 package on the bridge. A person or an
+agent with no account could play what was hosted, as a wallet their browser
+made, but could bring nothing. `POST /agent/scorm/host` (affordance
+`foxxi.host_package_signed`) now takes the same upload from any wallet, or any
+agent holding a delegation. The package is parsed and kept as an operator's
+is, its receipt names the signer as the uploader, and it is listed and played
+the same way.
+
+The route is bounded where the operator's upload is not: a 25 MB package, five
+packages per signer per hour and twenty per address, each changeable in the
+environment, and `FOXXI_OPEN_HOSTING=off` closes it. A value the bridge cannot
+honor stops it at startup.
+
+Not covered: the per-signer count is kept in the running process, so a restart
+clears it, and no cumulative storage budget is kept. There is no route to take
+a package down; an operator removes its two resources from the tenant pod. A
+hosted package still earns no credential, since it grades itself. The route
+was not exercised against the live bridge.
+
 ## 2026-11-10 — I2IDL-X workbench: the stale-directory check opens a row before counting its controls
 
 Since a capability's details are built when its row opens, the check that a

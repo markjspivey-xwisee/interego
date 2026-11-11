@@ -1,11 +1,11 @@
 ---
 name: interego-foxxi
-description: "Foxxi content intelligence, learner surface as Interego affordances: 84 tools (i2idlx-classify, i2idlx-validate, i2idlx-peer-term, i2idlx-source-version, i2idlx-authored-catalog, i2idlx-authored-rdf, and more). Use when a learner or an agent acting for one needs their assigned courses, a course's concept map or context, an answer grounded in course content, a credential, a learner record, a SCORM or cmi5 session, or private performance feedback on an Interego pod."
+description: "Foxxi content intelligence, learner surface as Interego affordances: 85 tools (i2idlx-classify, i2idlx-validate, i2idlx-peer-term, i2idlx-source-version, i2idlx-authored-catalog, i2idlx-authored-rdf, and more). Use when a learner or an agent acting for one needs their assigned courses, a course's concept map or context, an answer grounded in course content, a credential, a learner record, a SCORM or cmi5 session, or private performance feedback on an Interego pod."
 license: MIT
 metadata:
   vertical: foxxi-content-intelligence
   source: applications/foxxi-content-intelligence/affordances.ts
-  affordances: 84
+  affordances: 85
   manifest: "https://foxxi-bridge.interego.xwisee.com/affordances"
   generator: tools/build-skills.ts
 ---
@@ -56,6 +56,7 @@ Every answer is a JSON object; a refusal is typed `iep:Refusal` with `iep:refusa
 | `foxxi.earned_credentials_signed` | foxxi.earned_credentials for the courses this bridge's SCORM engine grades, signed the way the engine's own routes are: by your wallet, or by an agent holding… | `POST https://foxxi-bridge.interego.xwisee.com/agent/credentials/earned` *(HTTP only)* |
 | `foxxi.claim_credential_signed` | foxxi.claim_credential for a course this bridge's SCORM engine grades, signed by your wallet or by an agent holding your delegation (a relay connection, such a… | `POST https://foxxi-bridge.interego.xwisee.com/agent/credentials/claim` *(HTTP only)* |
 | `foxxi.cmi5_launch_signed` | Launch an Assignable Unit of a cmi5 course published on this bridge, for yourself, signed by your wallet or by an agent holding your delegation (a relay connec… | `POST https://foxxi-bridge.interego.xwisee.com/agent/cmi5/launch` *(HTTP only)* |
+| `foxxi.host_package_signed` | Bring a SCORM or cmi5 .zip, or an authoring tool's own export, to be hosted on this bridge, signed by your wallet or by an agent holding your delegation. | `POST https://foxxi-bridge.interego.xwisee.com/agent/scorm/host` *(HTTP only)* |
 | `foxxi.lti_launch_signed` | Launch a course this bridge's SCORM engine grades from Foxxi's own LMS, the LTI 1.3 Platform this bridge runs beside its Tool, for yourself, signed by your wal… | `POST https://foxxi-bridge.interego.xwisee.com/agent/lti/launch` *(HTTP only)* |
 | `foxxi.lti_gradebook_signed` | Your row of the gradebook in Foxxi's own LMS, signed by your wallet or by an agent holding your delegation: every course in the LMS course context, and the gra… | `POST https://foxxi-bridge.interego.xwisee.com/agent/lti/gradebook` *(HTTP only)* |
 | `foxxi.lti_reconciliation_contract` | Public version 1.0.0 contract for signed preview, explicit new-entry creation and fresh own-account readback. | `GET https://foxxi-bridge.interego.xwisee.com/agent/lti/reconciliation/affordance` *(HTTP only)* |
