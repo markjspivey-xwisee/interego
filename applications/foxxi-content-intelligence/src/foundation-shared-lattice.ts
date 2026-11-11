@@ -391,6 +391,8 @@ export type ProjectionKind = 'rdf' | 'vc' | 'activity';
  */
 export type TermTree = string | readonly TermTree[];
 /** Prefix marking a lossless full-content atom (filtered out of dereference). */
+/** The most sub-holons one holon is composed of directly; more are folded a level deeper. */
+const MAX_HOLON_WIDTH = 8;
 const ARTIFACT_SENTINEL = '__fxa__:';
 function isContentAtom(value: string): boolean { return value.startsWith(ARTIFACT_SENTINEL); }
 
@@ -514,7 +516,21 @@ export async function composeIntoSharedLattice(args: {
       const parts = t.map(composeTree);
       return parts.length ? ingest(pgsl, parts, prov) : '';
     };
-    const groupUris = (args.termGroups ?? []).map(composeTree).filter(Boolean);
+    // The top of the holon must stay narrow too. One sub-holon per subject made the
+    // final ingest hundreds of items wide for an ontology, and ingest's ~n^2/2
+    // fragments over that one sequence held the bridge's whole 2.5 GB at boot. Past
+    // MAX_HOLON_WIDTH the sub-holons fold into holons of holons until few enough
+    // remain; at or under it nothing changes, so a holon composed before this (a
+    // memory's single group) keeps its uri.
+    let groupUris = (args.termGroups ?? []).map(composeTree).filter(Boolean);
+    while (groupUris.length > MAX_HOLON_WIDTH) {
+      const folded: string[] = [];
+      for (let i = 0; i < groupUris.length; i += MAX_HOLON_WIDTH) {
+        const part = groupUris.slice(i, i + MAX_HOLON_WIDTH);
+        folded.push(part.length === 1 ? part[0]! : ingest(pgsl, part, prov));
+      }
+      groupUris = folded;
+    }
     // The holon = its sub-holons + reusable spine terms + a lossless content atom
     // (sentinel-marked so dereference filters it out). PGSL is canonical: the exact
     // artifact (ANY content type, not just RDF) is recoverable from the content atom.
