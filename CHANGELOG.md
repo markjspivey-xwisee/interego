@@ -1,5 +1,22 @@
 # Changelog
 
+## 2026-11-11 — Foxxi bridge: a front door at /start
+
+Everything on the bridge can be done with no account, by a person or by an
+agent, but nothing said so where a newcomer lands: the root answers with every
+affordance at once. `GET /start` is one description of what can be done here,
+in the order a newcomer would do it: start as a guest, play a hosted package,
+read your own record, bring a package. A browser gets a page; anything else
+gets the same steps as JSON, each with the affordance to call, where its
+request goes and where its input contract is. It also says how a request is
+signed by an agent holding only a key.
+
+The page names only what the deployment offers: bringing a package is left out
+when that route is closed, and so is any step whose affordance is not active.
+It loads no script and no outside resource.
+
+Not covered: nothing links to `/start` yet, from the dashboard or the root.
+
 ## 2026-11-11 — Foxxi dashboard: bring a package from the Learn page
 
 Anyone who signs may bring a SCORM or cmi5 package to the bridge, but only by
