@@ -92,6 +92,42 @@ with, which can be lower; nothing counts them again. The session page shows no
 number beside a line, so the line the note names is found by its highlight, as
 with the note on the line the AI named.
 
+## 2026-11-11 — Foxxi dashboard: start as a guest, on a key the tab makes
+
+The dashboard's sign-in page offered a demo roster, a wallet extension or a
+pasted key, so someone arriving with none of those had no way in, although the
+bridge already takes any key's signature for that key's own identity. The page
+now leads with "Start as a guest": the tab makes a key, signs in as it, and
+lands on Learn, where the guest can play what is hosted and read their own
+record.
+
+The key is kept in the tab's memory only. The Learn page says so, and shows
+the key's recovery phrase when asked, to be written down: pasted into "connect
+a self-sovereign identity", it signs the guest back in as the same identity.
+Neither the key nor the phrase is written to browser storage.
+
+Not covered: a guest who closes the tab without the phrase cannot come back as
+that identity. The pages that read with a tenant-directory session (the
+profile, my activity) answer a guest as they do any wallet outside the
+directory.
+## 2026-11-11 — Foxxi: the bridge reports what memory it holds
+
+The deployed bridge sits near 3 GB of memory from the moment it starts, on a
+host that bills for memory held. Started with no pod behind it, the same code
+needs about 210 MB. Nothing the bridge reported could say what the rest is.
+`GET /metrics` and `/metrics.json` now carry the process's resident memory,
+its JavaScript heap in use and reserved, and memory held outside the heap, and,
+where the process runs in a container, what the container is charged for and
+how much of that is the processes' own memory, file cache or shared memory.
+Those tell live data from a heap left grown and from memory that is not the
+process's.
+
+They also carry how many xAPI statements the bridge holds in memory and the
+budget it may hold before evicting, at about 1 KiB a statement.
+
+Not covered: this measures and changes nothing else. The figures are read when
+asked for; no history is kept. Read against the deployed bridge only after it
+is deployed.
 ## 2026-11-11 — Foxxi: anyone who signs may bring a package to be hosted
 
 Only an admin could host a SCORM or cmi5 package on the bridge. A person or an

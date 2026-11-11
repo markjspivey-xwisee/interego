@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { Card, Button, Pill } from './common.js';
 import {
-  adminSessionOption, learnerSessionOptions, connectFromExtension, connectFromPrivateKey, sessionFromOption,
+  adminSessionOption, learnerSessionOptions, connectAsGuest, connectFromExtension, connectFromPrivateKey, sessionFromOption,
   type SessionRole, type FoxxiSession,
 } from '../auth/session.js';
 import { walletExtension } from '../auth/signer.js';
@@ -13,6 +13,8 @@ export function Login({ onSignIn }: { onSignIn: (s: FoxxiSession) => void }) {
   const [connectErr, setConnectErr] = useState<string | null>(null);
   const [walletErr, setWalletErr] = useState<string | null>(null);
   const [walletBusy, setWalletBusy] = useState(false);
+  const [guestErr, setGuestErr] = useState<string | null>(null);
+  const [guestBusy, setGuestBusy] = useState(false);
   const hasExtension = !!walletExtension();
   const learners = learnerSessionOptions();
   const admin = adminSessionOption();
@@ -25,6 +27,21 @@ export function Login({ onSignIn }: { onSignIn: (s: FoxxiSession) => void }) {
           Acme Training Co · Interego-grounded learning & development
         </div>
       </div>
+
+      <Card title="Start now, with no account">
+        <div style={{ color: 'var(--text-dim)', fontSize: 12, marginBottom: 10 }}>
+          This tab makes a key of its own and signs in as it. You can play what is hosted here, bring a
+          package of your own, and read your own record straight away. The key is your identity and stays
+          in this tab; you will be shown a recovery phrase to come back as yourself.
+        </div>
+        <Button primary disabled={guestBusy} onClick={() => { void (async () => {
+          setGuestBusy(true); setGuestErr(null);
+          try { onSignIn(await connectAsGuest(SAMPLE_TENANT_POD_URL)); }
+          catch (e) { setGuestErr((e as Error).message); }
+          finally { setGuestBusy(false); }
+        })(); }}>{guestBusy ? 'Making your key…' : 'Start as a guest'}</Button>
+        {guestErr && <div style={{ color: 'var(--bad)', fontSize: 12, marginTop: 6 }}>✗ {guestErr}</div>}
+      </Card>
 
       <Card title="Choose an audience">
         <div style={{ display: 'flex', gap: 10, marginBottom: 16 }}>
