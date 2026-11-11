@@ -100,6 +100,13 @@ export interface NativeCommitStoreOptions {
   readonly cacheImmutableReads?: boolean;
   /** Opt-in immediate-child prefetch. One limiter is shared by this client's full-index materializations. */
   readonly indexReadConcurrency?: number;
+  /** Opt-in: how many immutable representations one commit may stage at once (1 to 8; default 1,
+   * which stages them one after another exactly as before). A commit stages each changed record,
+   * its operation record and every index node on the changed paths before the one head
+   * compare-and-set, and each is a write and a read-back. They are content-addressed and nothing
+   * refers to them until that head is published, so the order they land in does not matter;
+   * a failed commit leaves the same unreferenced representations either way. */
+  readonly stageConcurrency?: number;
   /** Opt-in reuse of decoded index nodes within this client, bounded by the
    * total number of entries retained (least recently used nodes leave first).
    * An index node is immutable and content addressed: it is kept only after it
@@ -282,6 +289,9 @@ export class NativeCommitStore implements NativeCommitClient {
   private readonly limit: number;
   private readonly artifactCacheNamespace = {};
   private readonly indexReadConcurrency: number;
+  private readonly stageConcurrency: number;
+  private stagesActive = 0;
+  private readonly stageQueue: Array<() => void> = [];
   private indexReadsActive = 0;
   private readonly indexReadQueue: IndexReadJob[] = [];
   private headReadSequence = 0;
@@ -294,6 +304,8 @@ export class NativeCommitStore implements NativeCommitClient {
     if (!Number.isSafeInteger(this.indexNodeCacheLimit) || this.indexNodeCacheLimit < 0 || this.indexNodeCacheLimit > 4_000_000) fail('Invalid native index node cache capacity.', 400);
     this.indexReadConcurrency = options.indexReadConcurrency ?? 1;
     if (!Number.isSafeInteger(this.indexReadConcurrency) || this.indexReadConcurrency < 1 || this.indexReadConcurrency > 8) fail('Invalid native index read concurrency.', 400);
+    this.stageConcurrency = options.stageConcurrency ?? 1;
+    if (!Number.isSafeInteger(this.stageConcurrency) || this.stageConcurrency < 1 || this.stageConcurrency > 8) fail('Invalid native stage concurrency.', 400);
     const pod = uri(options.scope.pod), head = uri(options.scope.headUrl), container = uri(options.scope.artifactContainer);
     if (!pod.pathname.endsWith('/') || !container.pathname.endsWith('/') || head.origin !== pod.origin || container.origin !== pod.origin
       || !head.pathname.startsWith(pod.pathname) || !container.pathname.startsWith(pod.pathname)) fail('Native resources must remain in the authorized pod scope.', 400);
@@ -407,10 +419,23 @@ export class NativeCommitStore implements NativeCommitClient {
   }
   /** Every immutable representation is independently native CP-rooted before publication. */
   private async stage(url: string, bytes: Uint8Array, topUri: IRI): Promise<void> {
+    if (this.stagesActive >= this.stageConcurrency) await new Promise<void>(resume => this.stageQueue.push(resume));
+    else this.stagesActive++;
+    // A waiter is handed the slot it was queued for, so the count never exceeds the limit.
+    try { await this.stageNow(url, bytes, topUri); }
+    finally { const next = this.stageQueue.shift(); if (next) next(); else this.stagesActive--; }
+  }
+  private async stageNow(url: string, bytes: Uint8Array, topUri: IRI): Promise<void> {
     try { await this.put(url, bytes, null); } catch (error) { if (!(error instanceof NativeCommitConflictError)) throw error; }
     const existing = await this.readRepresentation(url);
     if (!existing || !Buffer.from(existing.bytes).equals(Buffer.from(bytes))) fail('Native immutable artifact could not be read back unchanged.');
     this.decrypt(existing.bytes, topUri);
+  }
+  /** Independent staging tasks: in order when staging is one at a time, together otherwise
+   * (stage() bounds what is in flight). Results keep the order of `items`. */
+  private async stagedTogether<T, R>(items: readonly T[], task: (item: T) => Promise<R>): Promise<R[]> {
+    if (this.stageConcurrency === 1) { const results: R[] = []; for (const item of items) results.push(await task(item)); return results; }
+    return Promise.all(items.map(task));
   }
   private async persist(artifact: NativeArtifactInput): Promise<NativeArtifactReference> {
     return this.persistPlaintext(artifact.topUri, serializeArtifact({ topUri: artifact.topUri, nodes: artifact.pgsl.nodes }));
@@ -524,7 +549,9 @@ export class NativeCommitStore implements NativeCommitClient {
       groups.get(nibble)!.set(key, value);
     }
     const children = new Map<string, NativeArtifactReference>();
-    for (const [nibble, group] of [...groups].sort(([a], [b]) => compareStrings(a, b))) children.set(nibble, (await this.buildIndex(group, prefix + nibble))!);
+    const ordered = [...groups].sort(([a], [b]) => compareStrings(a, b));
+    const built = await this.stagedTogether(ordered, ([nibble, group]) => this.buildIndex(group, prefix + nibble));
+    ordered.forEach(([nibble], position) => children.set(nibble, built[position]!));
     return this.saveIndex({ kind: 'branch', children }, prefix);
   }
   private async updateIndex(root: NativeArtifactReference | null, changes: Map<string, NativeArtifactReference | null>, prefix = ''): Promise<NativeArtifactReference | null> {
@@ -540,10 +567,9 @@ export class NativeCommitStore implements NativeCommitClient {
       const nibble = hashKey(key)[prefix.length]!;
       if (!groups.has(nibble)) groups.set(nibble, new Map()); groups.get(nibble)!.set(key, value);
     }
-    for (const [nibble, group] of [...groups].sort(([a], [b]) => compareStrings(a, b))) {
-      const child = await this.updateIndex(children.get(nibble) ?? null, group, prefix + nibble);
-      if (child) children.set(nibble, child); else children.delete(nibble);
-    }
+    const ordered = [...groups].sort(([a], [b]) => compareStrings(a, b));
+    const updated = await this.stagedTogether(ordered, ([nibble, group]) => this.updateIndex(children.get(nibble) ?? null, group, prefix + nibble));
+    ordered.forEach(([nibble], position) => { const child = updated[position]; if (child) children.set(nibble, child); else children.delete(nibble); });
     return children.size ? this.saveIndex({ kind: 'branch', children }, prefix) : null;
   }
   private async lookup(root: NativeArtifactReference | null, key: string): Promise<NativeArtifactReference | null> {
@@ -815,21 +841,43 @@ export class NativeCommitStore implements NativeCommitClient {
     const indexChanges = new Map<string, NativeArtifactReference | null>();
     // Digest reuse is local to this commit's fixed scope, encryption keys and recipients.
     const staged = new Map<string, NativeArtifactReference>();
-    for (const change of changes) {
-      let reference: NativeArtifactReference | null = null;
-      if (change.artifact) {
-        const plaintext = serializeArtifact(change.artifact);
-        if (digest(plaintext) !== change.artifact.plaintextDigest) fail('Native artifact changed during commit.', 400);
-        reference = staged.get(change.artifact.plaintextDigest) ?? await this.persistPlaintext(change.artifact.topUri, plaintext);
-        staged.set(change.artifact.plaintextDigest, reference);
-      }
-      indexChanges.set('record:' + change.key, reference);
-    }
-    if (current.reference) {
+    const operationRecord = async (): Promise<NativeArtifactReference | null> => {
+      if (!current.reference) return null;
       const pgsl = createPGSL({ wasAttributedTo: this.scope.owner, generatedAtTime: new Date().toISOString() });
       const topUri = tuple(pgsl, [OPERATION, current.operationId!, current.logicalDigest, current.reference.revision, current.reference.commitUrl, current.reference.topUri]);
-      indexChanges.set('operation:' + current.operationId!, await this.persist({ pgsl, topUri }));
+      return this.persist({ pgsl, topUri });
+    };
+    let previousOperation: NativeArtifactReference | null;
+    if (this.stageConcurrency === 1) {
+      for (const change of changes) {
+        let reference: NativeArtifactReference | null = null;
+        if (change.artifact) {
+          const plaintext = serializeArtifact(change.artifact);
+          if (digest(plaintext) !== change.artifact.plaintextDigest) fail('Native artifact changed during commit.', 400);
+          reference = staged.get(change.artifact.plaintextDigest) ?? await this.persistPlaintext(change.artifact.topUri, plaintext);
+          staged.set(change.artifact.plaintextDigest, reference);
+        }
+        indexChanges.set('record:' + change.key, reference);
+      }
+      previousOperation = await operationRecord();
+    } else {
+      // One staging per distinct plaintext, as above, and the operation record beside them.
+      const distinct = new Map<string, { topUri: IRI; plaintext: Uint8Array }>();
+      for (const change of changes) {
+        if (!change.artifact) continue;
+        const plaintext = serializeArtifact(change.artifact);
+        if (digest(plaintext) !== change.artifact.plaintextDigest) fail('Native artifact changed during commit.', 400);
+        if (!distinct.has(change.artifact.plaintextDigest)) distinct.set(change.artifact.plaintextDigest, { topUri: change.artifact.topUri, plaintext });
+      }
+      const [references, operation] = await Promise.all([
+        Promise.all([...distinct].map(async ([plaintextDigest, row]) => [plaintextDigest, await this.persistPlaintext(row.topUri, row.plaintext)] as const)),
+        operationRecord(),
+      ]);
+      for (const [plaintextDigest, reference] of references) staged.set(plaintextDigest, reference);
+      for (const change of changes) indexChanges.set('record:' + change.key, change.artifact ? staged.get(change.artifact.plaintextDigest)! : null);
+      previousOperation = operation;
     }
+    if (previousOperation) indexChanges.set('operation:' + current.operationId!, previousOperation);
     const index = indexChanges.size ? await this.updateIndex(current.index, indexChanges) : current.index;
     const createdAt = new Date().toISOString(), pgsl = createPGSL({ wasAttributedTo: this.scope.owner, generatedAtTime: createdAt });
     const previous = current.reference ? tuple(pgsl, [PREVIOUS, current.reference.revision, current.reference.commitUrl, current.reference.topUri]) : literal(pgsl, EMPTY);

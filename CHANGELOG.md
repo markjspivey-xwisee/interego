@@ -1,5 +1,25 @@
 # Changelog
 
+## 2026-11-11 — Native commits: stage a commit's representations together (opt-in), on for the Foxxi LRS
+
+Measured on the live Foxxi bridge with a nearly empty record store: a read
+answers in 0.2 to 0.3 s, and every write takes about 2.7 s (a signed launch
+3.1 s, a `passed` statement that also records `satisfied` 5.1 s). The head read
+is about 0.1 s of that. The rest is the commit staging each changed record, its
+operation record and every index node on the changed paths one after another,
+each a write and a read-back, before the one head compare-and-set.
+
+`NativeCommitStore` takes a `stageConcurrency` option (1 to 8). At the default
+of 1 nothing changes. Above it, the representations of one commit are staged
+together, at most that many in flight: they are content-addressed and nothing
+refers to them until the head is published, so their order does not matter, and
+a failed commit leaves the same unreferenced representations as before. The
+Foxxi record store sets 8, as it already does for index reads.
+
+Not measured: the gain on the live bridge. Writes are also admitted one at a
+time inside the pod's database, so the saving is in the round trips, not in the
+database work, and may be less than the round-trip count suggests.
+
 ## 2026-11-11 — Deploy gate: a fleet audit run no longer counts as a check on the commit it lands on
 
 The auto-deploy gate (`tools/ci-green-for-sha.mjs`) reads every workflow run

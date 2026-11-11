@@ -1065,3 +1065,70 @@ describe('native index reads at scale', () => {
     for (const indexNodeCacheEntries of [-1, 1.5, 4_000_001]) expect(() => transport.client({ indexNodeCacheEntries })).toThrow('Invalid native index node cache capacity.');
   }, 60_000);
 });
+
+describe('staging the representations of one commit together', () => {
+  /** The transport with every request held for a turn, counting what is in flight at once. */
+  function slowed(transport: NativeTransport) {
+    const seen = { inFlight: 0, peak: 0, stagedPuts: 0 };
+    const fetch: typeof globalThis.fetch = async (input, init) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+      const staging = (init?.method ?? 'GET') === 'PUT' && url !== scope.headUrl;
+      if (staging) { seen.stagedPuts++; seen.inFlight++; seen.peak = Math.max(seen.peak, seen.inFlight); }
+      await new Promise(resume => setTimeout(resume, 2));
+      try { return await transport.fetch(input, init); } finally { if (staging) seen.inFlight--; }
+    };
+    return { seen, fetch };
+  }
+  const changes = (count: number, tag: string) => Array.from({ length: count }, (_, i) => ({ key: `statement:${tag}-${i}`, artifact: artifact(`${tag} ${i}`) }));
+
+  it('stages one at a time unless asked, and never more than asked for', async () => {
+    const plain = new NativeTransport(), a = slowed(plain), one = plain.client({ fetch: a.fetch });
+    await one.commit({ operationId: 'seq', expected: await one.readHead(), changes: changes(40, 'seq') });
+    expect(a.seen.peak).toBe(1);
+
+    const wide = new NativeTransport(), b = slowed(wide), many = wide.client({ fetch: b.fetch, stageConcurrency: 4 });
+    await many.commit({ operationId: 'par', expected: await many.readHead(), changes: changes(40, 'par') });
+    expect(b.seen.peak).toBeGreaterThan(1);
+    expect(b.seen.peak).toBeLessThanOrEqual(4);
+    expect(wide.headWrites()).toBe(1);
+  });
+
+  it('commits the same records, readable by a client that stages one at a time', async () => {
+    const transport = new NativeTransport(), together = transport.client({ stageConcurrency: 8 });
+    await together.commit({ operationId: 'first', expected: await together.readHead(), changes: changes(40, 'a') });
+    // A second commit changes paths in an index that now has branches, and records its predecessor.
+    await together.commit({ operationId: 'second', expected: await together.readHead(),
+      changes: [...changes(5, 'b'), { key: 'statement:a-3', artifact: null }, { key: 'statement:a-7', artifact: artifact('rewritten') }] });
+    const head = await transport.client().readHead();
+    expect(head.records.size).toBe(44);
+    expect(head.records.has('statement:a-3')).toBe(false);
+    expect(await textAt(transport, head, 'statement:a-7')).toBe('rewritten');
+    expect(await textAt(transport, head, 'statement:a-39')).toBe('a 39');
+    expect(await textAt(transport, head, 'statement:b-4')).toBe('b 4');
+  });
+
+  it('stages one representation for records with the same content, as before', async () => {
+    const count = async (stageConcurrency: number) => {
+      const transport = new NativeTransport(), s = slowed(transport), client = transport.client({ fetch: s.fetch, stageConcurrency });
+      await client.commit({ operationId: 'same', expected: await client.readHead(),
+        changes: Array.from({ length: 6 }, (_, i) => ({ key: `statement:same-${i}`, artifact: artifact('identical') })) });
+      return s.seen.stagedPuts;
+    };
+    expect(await count(8)).toBe(await count(1));
+  });
+
+  it('leaves the head where it was when a staging fails', async () => {
+    const transport = new NativeTransport(), client = transport.client({ stageConcurrency: 8 });
+    await client.commit({ operationId: 'kept', expected: await client.readHead(), changes: changes(3, 'kept') });
+    transport.failStage = true;
+    await expect(client.commit({ operationId: 'lost', expected: await client.readHead(), changes: changes(20, 'lost') })).rejects.toThrow();
+    transport.failStage = false;
+    expect(transport.headWrites()).toBe(1);
+    expect((await transport.client().readHead()).records.size).toBe(3);
+  });
+
+  it('refuses a concurrency it cannot honor', () => {
+    const transport = new NativeTransport();
+    for (const value of [0, 9, 1.5, -1]) expect(() => transport.client({ stageConcurrency: value })).toThrow(/stage concurrency/);
+  });
+});

@@ -623,7 +623,7 @@ export function createConfiguredNativeLrsDatabase(env: NodeJS.ProcessEnv = proce
     // Index nodes are immutable and content addressed. Keeping the verified
     // ones means a head changed by one write is re-read along that write's
     // paths only; the head itself is still fetched and verified on every read.
-    cacheImmutableReads: true, indexReadConcurrency: 8, indexNodeCacheEntries: 262_144,
+    cacheImmutableReads: true, indexReadConcurrency: 8, stageConcurrency: 8, indexNodeCacheEntries: 262_144,
     onHeadRead: event => {
       // Numeric projection only; operation/event/phase/outcome codes are documented
       // by NativeHeadReadDiagnostic. No scope, URL, record, query or error text.
