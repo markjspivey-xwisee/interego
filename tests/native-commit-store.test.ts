@@ -1132,3 +1132,37 @@ describe('staging the representations of one commit together', () => {
     for (const value of [0, 9, 1.5, -1]) expect(() => transport.client({ stageConcurrency: value })).toThrow(/stage concurrency/);
   });
 });
+
+describe('staging together holds only what is in flight', () => {
+  it('encrypts a record only when a worker takes it', async () => {
+    const transport = new NativeTransport();
+    let inFlight = 0, encryptedAhead = 0;
+    const fetch: typeof globalThis.fetch = async (input, init) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+      const staging = (init?.method ?? 'GET') === 'PUT' && url !== scope.headUrl;
+      if (staging) inFlight++;
+      await new Promise(resume => setTimeout(resume, 2));
+      try { return await transport.fetch(input, init); } finally { if (staging) inFlight--; }
+    };
+    const client = transport.client({ fetch, stageConcurrency: 2 });
+    const encrypt = vi.spyOn(client as unknown as { encryptPlaintext(bytes: Uint8Array): Uint8Array }, 'encryptPlaintext');
+    const original = encrypt.getMockImplementation();
+    let encrypted = 0, staged = 0;
+    // Only the records are large; index nodes and the commit are counted out by size.
+    const LARGE = 100_000;
+    encrypt.mockImplementation(function (this: unknown, bytes: Uint8Array) {
+      if (bytes.length > LARGE) { encrypted++; encryptedAhead = Math.max(encryptedAhead, encrypted - staged); }
+      return (original ?? (NativeCommitStore.prototype as unknown as { encryptPlaintext(bytes: Uint8Array): Uint8Array }).encryptPlaintext).call(this, bytes);
+    });
+    const stage = vi.spyOn(client as unknown as { stageNow(...args: unknown[]): Promise<void> }, 'stageNow');
+    const realStage = (NativeCommitStore.prototype as unknown as { stageNow(...args: unknown[]): Promise<void> }).stageNow;
+    stage.mockImplementation(async function (this: unknown, ...args: unknown[]) {
+      try { return await realStage.apply(this, args); } finally { if ((args[1] as Uint8Array).length > LARGE) staged++; }
+    });
+    await client.commit({ operationId: 'bounded', expected: await client.readHead(),
+      changes: Array.from({ length: 30 }, (_, i) => ({ key: `statement:big-${i}`, artifact: artifact(`payload ${i} ` + 'x'.repeat(200_000)) })) });
+    // Thirty large records at a concurrency of two: never more than two encrypted and not yet staged.
+    expect(encryptedAhead).toBeLessThanOrEqual(2);
+    expect((await transport.client().readHead()).records.size).toBe(30);
+  });
+});

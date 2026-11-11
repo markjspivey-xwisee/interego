@@ -862,15 +862,16 @@ export class NativeCommitStore implements NativeCommitClient {
       previousOperation = await operationRecord();
     } else {
       // One staging per distinct plaintext, as above, and the operation record beside them.
-      const distinct = new Map<string, { topUri: IRI; plaintext: Uint8Array }>();
-      for (const change of changes) {
-        if (!change.artifact) continue;
-        const plaintext = serializeArtifact(change.artifact);
-        if (digest(plaintext) !== change.artifact.plaintextDigest) fail('Native artifact changed during commit.', 400);
-        if (!distinct.has(change.artifact.plaintextDigest)) distinct.set(change.artifact.plaintextDigest, { topUri: change.artifact.topUri, plaintext });
-      }
+      // Workers, not one promise per artifact: a record is serialized and encrypted only when a
+      // worker takes it, so what is held in memory follows the concurrency, not the batch.
+      const distinct = new Map<string, NonNullable<(typeof changes)[number]['artifact']>>();
+      for (const change of changes) if (change.artifact && !distinct.has(change.artifact.plaintextDigest)) distinct.set(change.artifact.plaintextDigest, change.artifact);
       const [references, operation] = await Promise.all([
-        Promise.all([...distinct].map(async ([plaintextDigest, row]) => [plaintextDigest, await this.persistPlaintext(row.topUri, row.plaintext)] as const)),
+        mapBounded([...distinct], this.stageConcurrency, async ([plaintextDigest, artifact]) => {
+          const plaintext = serializeArtifact(artifact);
+          if (digest(plaintext) !== plaintextDigest) fail('Native artifact changed during commit.', 400);
+          return [plaintextDigest, await this.persistPlaintext(artifact.topUri, plaintext)] as const;
+        }),
         operationRecord(),
       ]);
       for (const [plaintextDigest, reference] of references) staged.set(plaintextDigest, reference);
