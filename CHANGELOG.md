@@ -29,6 +29,15 @@ calls neither identity nor the relay.
 `MIN_FILES` in `tools/lint-gate.mjs` goes from 670 to 673, the number the gate
 named when the new files took the linted count past its slack.
 
+## 2026-11-11 — CLAUDE.md: an agent's own pull requests are opened ready and merged when green
+
+Sessions kept stopping to ask the owner to merge: they opened pull requests as
+drafts, which disarms the repository's auto-merge, and treated the review
+gate's `needs-human-review` as a stop although it has been advisory since
+2026-09-21. `CLAUDE.md` now says what to do: open ready, merge when the checks
+are green, read the gate as advice, and still ask before anything that cannot
+be undone outside the repository.
+
 ## 2026-11-11 — Provisional Play: a guest's write surface is per application, not Hallowmarch's
 
 Provisional Play was already keyed by application origin

@@ -260,6 +260,29 @@ the failure it exists to catch. Two consequences worth knowing before you trust 
 - Read **its** exit code, not a pipe's. `npm run -s lint | tail -1` shows the eslint summary line
   while the gate's own verdict is further up, and `rc` comes from `tail`.
 
+## Pull requests an agent opens
+
+The owner does not want to be waited on (said again on 2026-11-11). For a pull request an agent
+session opened itself:
+
+- **Open it ready for review, not as a draft.** The gated auto-merge in `.github/workflows/jev-harness.yml`
+  is disarmed for a draft, and that workflow does not run again when a draft is marked ready: only a
+  new push re-arms it.
+- **Merge it when its checks are green.** If the auto-merge has not landed it, the session merges it.
+  Fix what is red first; a red check is never merged over.
+- **Label it `jev-harness:auto-merged` before merging it yourself.** The close-time job reads that
+  label and nothing else: an unlabelled merge is recorded as a person's approval
+  (`applications/jev-harness/src/outcomes-on-close.ts`), which teaches the review gate from a decision
+  no person made. If the label cannot be applied, do not merge; say so.
+- **The review gate's verdict is advisory.** `needs-human-review` is recorded and scored but nothing
+  waits on it (`applications/jev-harness/src/auto-merge.ts`: the person was turned off on 2026-09-21).
+  Read what Codex or another reviewer finds, fix what is real, and carry on.
+- **Still ask first** before anything that cannot be undone outside the repository: deleting stored
+  data, pods, Railway services or projects, and changes to the identity service's sign-in paths.
+
+Every pull request adds a CHANGELOG entry at the top, so open ones conflict whenever another merges.
+Merge `origin/master` in and keep both entries; do not rebase a pushed branch.
+
 ## Test expectations
 
 - **Hundreds of test modules**, not one file. `vitest.config.ts`'s `include` spans `tests/`,
