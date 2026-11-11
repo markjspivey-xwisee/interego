@@ -467,6 +467,31 @@ export const foxxiAffordances: ReadonlyArray<Affordance> = [
     },
   },
   {
+    action: 'urn:iep:action:foxxi:host-package-signed' as IRI,
+    toolName: 'foxxi.host_package_signed',
+    title: 'Bring a package to be hosted here',
+    description: 'Bring a SCORM or cmi5 .zip, or an authoring tool\'s own export, to be hosted on this bridge, signed by your wallet or by an agent holding your delegation. No account or directory role is needed: any key may sign. It is parsed on arrival and kept by its sha-256 exactly as foxxi.upload_scorm_package keeps an operator\'s, with you named as the uploader on its receipt. A package with something to launch is listed at /scorm/packages and anyone may play it with foxxi.cmi5_launch_signed, each of its documents in a sandbox of its own. What a package reports is experience, not graded evidence. The deployment bounds this route: a largest package, a number per signer per hour, and it may be closed, in which case it answers 404.',
+    method: 'POST',
+    targetTemplate: '{base}/agent/scorm/host',
+    mediaType: 'application/json',
+    externallyRouted: true,
+    annotations: { title: 'Bring a package to be hosted', readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+    inputs: [
+      { name: '_signed_payload', type: 'string', required: true, description: 'JSON.stringify({ agent_id, timestamp, zip_base64, hinted_title? }): the package, base64-encoded, and optionally a display name.' },
+      { name: '_signature', type: 'string', required: true, description: 'sign_request signature (secp256k1 over sha256 of _signed_payload).' },
+    ],
+    outputs: {
+      description: 'What the upload answers, with who brought it. 400 without a package; 401 on auth failure; 404 when the deployment has closed this route; 413 for a package larger than a signer may bring; 429 when the signer or the address has brought too many.',
+      properties: {
+        status: { type: 'string', description: 'parsed, or failed when the package could not be read.' },
+        hosted: { type: 'boolean', description: 'Whether the package is kept here to be played or folded.' },
+        packageSha256: { type: 'string', description: 'The sha-256 the package is kept and served under.' },
+        course: { type: 'object', description: 'The cmi5 course made of the package: its id, title and AUs. Launch it with foxxi.cmi5_launch_signed.', additionalProperties: true },
+        uploader: { type: 'string', description: 'Who brought it: your wallet DID, or the agent that signed.' },
+      },
+    },
+  },
+  {
     action: 'urn:iep:action:foxxi:lti-launch-signed' as IRI,
     toolName: 'foxxi.lti_launch_signed',
     title: 'Launch a course from Foxxi\'s own LMS over LTI 1.3',
@@ -2830,6 +2855,18 @@ export const foxxiAdminAffordances: ReadonlyArray<Affordance> = [
       { name: 'learner_first_name', type: 'string', required: false, description: 'Given name of the learner, forwarded to the SCORM Cloud registration record.' },
       { name: 'learner_last_name', type: 'string', required: false, description: 'Family name of the learner, forwarded to the SCORM Cloud registration record.' },
       { name: 'learner_email', type: 'string', required: false, description: 'Email address of the learner; SCORM Cloud keys the registration on it.' },
+    ],
+  },
+  {
+    action: 'urn:iep:action:foxxi:remove-hosted-package' as IRI,
+    toolName: 'foxxi.remove_hosted_package',
+    title: 'Take a hosted package down',
+    description: 'Take a package hosted on this bridge down, by its sha-256: an operator\'s upload or one a signer brought with foxxi.host_package_signed. Its bytes and what describes it are removed from the tenant pod and from this bridge, and its course is forgotten, so it is no longer listed at /scorm/packages, launched or served. What learners already recorded of it stays in their own records. Admin or delegated admin only.',
+    method: 'POST',
+    targetTemplate: '{base}/foxxi/remove_hosted_package',
+    annotations: { title: 'Take a hosted package down', readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: true },
+    inputs: [
+      { name: 'package_sha256', type: 'string', required: true, description: 'The sha-256 the package is listed under at /scorm/packages, 64 hex characters.' },
     ],
   },
   {

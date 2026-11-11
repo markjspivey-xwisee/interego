@@ -435,6 +435,34 @@ export class HostedPackages {
   }
 
   /**
+   * Take a package down: its bytes and what is kept beside it leave the pod, and nothing of it stays
+   * in hand, so it is no longer listed, opened or served. `removed` is whether the pod no longer
+   * keeps the package (it took the delete, or never had it); when the pod refused, the package is
+   * still dropped from memory and `why` says what the pod answered, so the caller can try again.
+   */
+  async remove(sha256: string): Promise<{ removed: boolean; why?: string }> {
+    if (!PACKAGE_SHA.test(sha256)) return { removed: false, why: 'not a package id: a sha-256, in lowercase hex' };
+    const had = this.held.get(sha256);
+    if (had) { this.held.delete(sha256); this.heldBytes -= had.bytes; }
+    this.abouts.delete(sha256);
+    this.undescribed.delete(sha256);
+    const queued = this.queue.indexOf(sha256);
+    if (queued >= 0) this.queue.splice(queued, 1);
+    const fetchFn = this.opts.fetch ?? globalThis.fetch;
+    let status: number;
+    try { status = (await fetchFn(this.urlOf(sha256), { method: 'DELETE' })).status; }
+    catch (e) { return { removed: false, why: `the pod could not be reached: ${(e as Error).message}` }; }
+    // What describes it goes too, best effort: without the package it describes nothing.
+    try { await fetchFn(this.aboutUrlOf(sha256), { method: 'DELETE' }); } catch { /* best effort */ }
+    // A read begun before the delete may have put it back in hand: drop it again.
+    const again = this.held.get(sha256);
+    if (again) { this.held.delete(sha256); this.heldBytes -= again.bytes; }
+    this.abouts.delete(sha256);
+    if ((status >= 200 && status < 300) || status === 404 || status === 410) return { removed: true };
+    return { removed: false, why: `the pod did not remove the package (HTTP ${status})` };
+  }
+
+  /**
    * The packages kept here: those the pod's package container lists, and any held in memory, at most
    * `max`. A pod that cannot be read gives the held ones.
    */
