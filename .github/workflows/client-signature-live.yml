@@ -40,7 +40,7 @@ jobs:
           EXPECTED_RELAY_BUILD: ${{ inputs.expected_build || '' }}
         run: node --import tsx tools/client-signature-canary.mjs
       - name: Install Chromium for live passkey signing
-        run: npx playwright install --with-deps chromium
+        run: node tools/ci-install-chromium.mjs
       - name: Verify the deployed passkey page and OAuth identity renewal
         working-directory: deploy/mcp-relay
         env:

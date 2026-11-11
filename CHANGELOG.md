@@ -1,5 +1,29 @@
 # Changelog
 
+## 2026-11-11 — CI: the Chromium install decides on whether the browser launches
+
+On 2026-11-11 the "Passkey login and single-prompt receipt signing (Chromium)"
+job failed for about two hours on `master` and on every pull request. The
+runners could not resolve the Ubuntu package mirror, so
+`npx playwright install --with-deps chromium` failed on nine optional font
+packages after ten minutes of apt's own retries. Every library Chromium needs
+was already on the runner image, the browser was never downloaded, and no test
+ran.
+
+`tools/ci-install-chromium.mjs` replaces that command in the three workflows
+that used it through npx (`identity-tests.yml`, `e2e-passkey.yml`,
+`client-signature-live.yml`). It installs the system packages within three
+minutes and treats a failure there as a warning, downloads the browser with up
+to three attempts, then launches Chromium headless and renders a page. The
+launch decides the step: a runner that really lacks a library fails there, with
+the launcher's message. No test is skipped or changed.
+
+The two workflows that install Chromium through Python's Playwright
+(`i2idlx-ui-oracle.yml`, `i2idlx-v93-release.yml`) are unchanged.
+
+`MIN_FILES` in `tools/lint-gate.mjs` goes from 670 to 673, the number the gate
+named when the new files took the linted count past its slack.
+
 ## 2026-11-11 — Provisional Play: a guest's write surface is per application, not Hallowmarch's
 
 Provisional Play was already keyed by application origin
