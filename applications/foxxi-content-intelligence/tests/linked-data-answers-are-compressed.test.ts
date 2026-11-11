@@ -19,6 +19,8 @@ async function withApp<T>(run: (base: string) => Promise<T>): Promise<T> {
   app.get('/json', (_req, res) => { res.json({ items: TURTLE.split('\n') }); });
   app.get('/fixed', (_req, res) => { res.setHeader('Cache-Control', 'no-transform'); res.type('text/turtle').send(TURTLE); });
   const server = app.listen(0, '127.0.0.1');
+  // With an address named, the port is known only once the server is listening.
+  await new Promise<void>(ready => server.once('listening', () => ready()));
   try { return await run(`http://127.0.0.1:${(server.address() as AddressInfo).port}`); }
   finally { await new Promise(done => server.close(done)); }
 }
