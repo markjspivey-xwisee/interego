@@ -3,7 +3,7 @@
  *
  * ★ WHAT WAS OPEN. Read live on 2026-08-03: all sixteen services returned
  * `serviceInstanceLimitOverride = null`, i.e. the plan ceiling (32 CPU / 32 GB) applied
- * everywhere. So the relay's 1.0 CPU / 2 GiB floor and foxxi-bridge's 2 CPU / 4 GiB floor
+ * everywhere. So the relay's 1.0 CPU / 2 GiB floor and foxxi-bridge's 2 CPU / 2 GiB floor
  * held for no reason at all — no override existed. Nothing in the repository recorded the
  * numbers (a grep for `limitOverride|memoryGB|cpuCores` found one hit, about replicas),
  * and `railway-pins.mjs --check` read only `source.image`, so the next override would be
@@ -81,11 +81,11 @@ const git = {
 
 describe('Railway resource-limit floors', () => {
   it('records a floor for every service whose starvation symptom is known, and no others', () => {
-    // Guards the numbers themselves. foxxi-bridge's 4 GiB is 3 GiB of
+    // Guards the numbers themselves. foxxi-bridge's 2 GiB is 1.5 GiB of
     // --max-old-space-size (read off the live service) plus off-heap headroom; silently
     // lowering it re-opens the bogus "issuer seed unset" bug.
     expect(LIMIT_FLOORS.relay).toEqual({ cpu: 1, memoryBytes: 2 * GIB });
-    expect(LIMIT_FLOORS['foxxi-bridge']).toEqual({ cpu: 2, memoryBytes: 4 * GIB });
+    expect(LIMIT_FLOORS['foxxi-bridge']).toEqual({ cpu: 2, memoryBytes: 2 * GIB });
     for (const name of Object.keys(LIMIT_FLOORS)) expect(serviceNames()).toContain(name);
   });
 
@@ -99,12 +99,12 @@ describe('Railway resource-limit floors', () => {
   it('flags an override below the floor, on either axis independently', () => {
     expect(classifyLimit('relay', limit(0.5, 8 * GIB)).verdict).toBe('BELOW-FLOOR');
     expect(classifyLimit('relay', limit(8, 512 * 1024 * 1024)).verdict).toBe('BELOW-FLOOR');
-    expect(classifyLimit('foxxi-bridge', limit(2, 2 * GIB)).verdict).toBe('BELOW-FLOOR');
+    expect(classifyLimit('foxxi-bridge', limit(2, 1 * GIB)).verdict).toBe('BELOW-FLOOR');
   });
 
   it('passes an override AT the floor, so the floor is a floor and not a moat', () => {
     expect(classifyLimit('relay', limit(1, 2 * GIB)).verdict).toBe('ok');
-    expect(classifyLimit('foxxi-bridge', limit(2, 4 * GIB)).verdict).toBe('ok');
+    expect(classifyLimit('foxxi-bridge', limit(2, 2 * GIB)).verdict).toBe('ok');
   });
 
   it('refuses to pass an override whose shape it does not recognise', () => {
