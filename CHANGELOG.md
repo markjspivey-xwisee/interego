@@ -1,5 +1,23 @@
 # Changelog
 
+## 2026-11-11 — Foxxi dashboard: start as a guest, on a key the tab makes
+
+The dashboard's sign-in page offered a demo roster, a wallet extension or a
+pasted key, so someone arriving with none of those had no way in, although the
+bridge already takes any key's signature for that key's own identity. The page
+now leads with "Start as a guest": the tab makes a key, signs in as it, and
+lands on Learn, where the guest can play what is hosted and read their own
+record.
+
+The key is kept in the tab's memory only. The Learn page says so, and shows
+the key's recovery phrase when asked, to be written down: pasted into "connect
+a self-sovereign identity", it signs the guest back in as the same identity.
+Neither the key nor the phrase is written to browser storage.
+
+Not covered: a guest who closes the tab without the phrase cannot come back as
+that identity. The pages that read with a tenant-directory session (the
+profile, my activity) answer a guest as they do any wallet outside the
+directory.
 ## 2026-11-11 — Foxxi: the bridge reports what memory it holds
 
 The deployed bridge sits near 3 GB of memory from the moment it starts, on a

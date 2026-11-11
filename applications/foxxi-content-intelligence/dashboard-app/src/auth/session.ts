@@ -48,6 +48,12 @@ export interface FoxxiSession {
    */
   signingMode?: 'extension';
   extensionAddress?: string;
+  /**
+   * For a guest session: the recovery phrase of the key this tab made (connectAsGuest). It is the
+   * only way back to the guest's own record after this tab closes, so the Learn page offers it to
+   * be written down. Held in memory beside `connectedPrivateKey` and, like it, never stored.
+   */
+  guestRecoveryPhrase?: string;
 }
 
 export interface SessionOption {
@@ -116,6 +122,7 @@ export function saveSession(s: FoxxiSession): void {
   // only; on reload the user re-connects.
   const safe = { ...s };
   delete safe.connectedPrivateKey;
+  delete safe.guestRecoveryPhrase;
   localStorage.setItem(STORAGE_KEY, JSON.stringify(safe));
 }
 
@@ -218,6 +225,27 @@ export async function connectFromPrivateKey(input: string, tenantPodUrl: string)
     bearerToken,
     bearerExpiresAt: new Date(Date.now() + ttlMs).toISOString(),
     connectedPrivateKey: wallet.privateKey,
+  };
+}
+
+/**
+ * "Guest" login: no account, no extension, nothing to paste. This tab makes a key of its own and
+ * signs in as it, exactly as a pasted key does (connectFromPrivateKey): the bridge takes any key's
+ * signature for that key's own identity, so a guest can play what is hosted, bring a package, and
+ * read their own record at once. The key is the guest's identity and theirs alone. It lives in
+ * this tab's memory; its recovery phrase is how they come back as themselves, pasted into "connect
+ * a self-sovereign identity", so the session carries it to be shown once and written down.
+ */
+export async function connectAsGuest(tenantPodUrl: string, make: () => ethers.HDNodeWallet = () => ethers.Wallet.createRandom()): Promise<FoxxiSession> {
+  const wallet = make();
+  const phrase = wallet.mnemonic?.phrase;
+  if (!phrase) throw new Error('This browser could not make a key with a recovery phrase.');
+  const session = await connectFromPrivateKey(wallet.privateKey, tenantPodUrl);
+  return {
+    ...session,
+    name: `Guest ${wallet.address.slice(0, 6)}…${wallet.address.slice(-4)}`,
+    audienceTags: ['connected-wallet', 'guest'],
+    guestRecoveryPhrase: phrase,
   };
 }
 

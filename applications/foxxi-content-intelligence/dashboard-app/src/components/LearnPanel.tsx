@@ -18,6 +18,7 @@ import { compositionRefFrom, hashOfComposition } from '../learn/composition-ref.
 import { readRecents, recentsKey, type RecentComposition } from '../learn/recents.js';
 import type { AuthoredComposition, Mine, PlayedComposition } from '../learn/play.js';
 import { HostedPackagesCard } from './HostedPackagesCard.js';
+import { GuestKeyNotice } from './GuestKeyNotice.js';
 
 const row: React.CSSProperties = {
   display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap', padding: '8px 10px',
@@ -71,6 +72,7 @@ export function LearnPanel({ session }: { session: FoxxiSession }) {
 
   return (
     <div style={{ display: 'grid', gap: 14 }}>
+      <GuestKeyNotice session={session} />
       <Card title="Open a composition">
         <div style={{ color: 'var(--text-dim)', fontSize: 14, marginBottom: 10 }}>
           Paste a composition's link or IRI (from any bridge), or its hash. What you are shown is resolved for you from your own record.
