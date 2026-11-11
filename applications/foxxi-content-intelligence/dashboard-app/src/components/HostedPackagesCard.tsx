@@ -21,7 +21,8 @@ const row: React.CSSProperties = {
   border: '1px solid var(--border)', borderRadius: 4, background: 'var(--panel-2)', marginBottom: 6,
 };
 
-export function HostedPackagesCard({ session }: { session: FoxxiSession }) {
+/** `refresh` changes when the list should be read again: a package was just brought (BringPackageCard). */
+export function HostedPackagesCard({ session, refresh = 0 }: { session: FoxxiSession; refresh?: number }) {
   const { entry } = useHypermedia();
   const listHref = linkOf(entry, 'scorm-packages');
   const launcher = useAffordance('foxxi.cmi5_launch_signed');
@@ -39,7 +40,7 @@ export function HostedPackagesCard({ session }: { session: FoxxiSession }) {
       .then(body => { if (!cancel) { setPackages(hostedPackagesFrom(body)); setUnlisted(unlistedFrom(body)); } })
       .catch((e: unknown) => { if (!cancel) setListError((e as Error).message); });
     return () => { cancel = true; };
-  }, [listHref]);
+  }, [listHref, refresh]);
 
   async function launch(p: HostedPackage): Promise<void> {
     if (!launcher) return;

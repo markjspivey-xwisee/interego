@@ -1,5 +1,19 @@
 # Changelog
 
+## 2026-11-11 — Foxxi dashboard: bring a package from the Learn page
+
+Anyone who signs may bring a SCORM or cmi5 package to the bridge, but only by
+composing the signed request themselves. The Learn page now has a "Bring a
+package" card: choose a file, and it is read in the browser, signed as whoever
+is signed in, a guest included, and sent with `foxxi.host_package_signed`. The
+page says what the bridge answered, and the list of hosted packages is read
+again so the new one can be launched. The card says that what is brought is
+public. It is not shown on a bridge that does not offer the affordance.
+
+Not covered: the card checks the file against the bridge's default size only;
+a bridge set to take less refuses in its own words, which the page shows. Not
+exercised against the live bridge from a browser.
+
 ## 2026-11-11 — Foxxi dashboard: start as a guest, on a key the tab makes
 
 The dashboard's sign-in page offered a demo roster, a wallet extension or a
