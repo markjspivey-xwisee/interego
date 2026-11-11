@@ -1,5 +1,12 @@
 # Changelog
 
+## 2026-11-11 — Foxxi test: the compression test's server binds loopback
+
+`linked-data-answers-are-compressed.test.ts` started its Express app with
+`.listen(0)`, which binds every interface. The relay-invariants check requires
+every test server to name `127.0.0.1`, and has failed on master since that test
+merged. It now does.
+
 ## 2026-11-11 — Deploy gate: a fleet audit run no longer counts as a check on the commit it lands on
 
 The auto-deploy gate (`tools/ci-green-for-sha.mjs`) reads every workflow run
