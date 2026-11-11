@@ -1,5 +1,59 @@
 # Changelog
 
+## 2026-11-11 — Practice Evidence: a repeated quote says which place is highlighted, and counts every place it shows
+
+The previous entry left two gaps in how a quote found more than once is shown.
+The web app's note on such a quote said "Found N times; the first is
+highlighted." The highlight is at the place the quote was saved, which, since a
+quote is checked in the turn the judge named first, need not be the first place
+it was found. The note now names that line: "Found N times; the one highlighted
+is in line T." A line is numbered by its turn, as the note beside it numbers the
+line the AI named and as the judge packet numbers it. The README, the guide, the
+landing page and the action descriptions never said which place is highlighted,
+so nothing there was wrong.
+
+A quote's count (`occurrences`) counted only the places of the check it was
+saved by. Where one learner line held a rubric fingerprint, which every view
+shows as its stand-in, and another held that stand-in written out, a quote read
+back and saved in the fingerprint's line counted 1, leaving out the line that
+showed it written out; and a quote saved as sent in the written-out line counted
+1, leaving out the fingerprint's line. Now a quote that checks out counts each
+place any check of it checks out at, once: the quote as sent, each stretch read
+back, and the quote with every stand-in read back. A place is a turn and where
+the stretch starts in that turn normalised; every reading of one stretch starts
+there, as a view keeps the stored line's offsets, so two readings that check out
+at one place count once. Only the count changes: the saved text, place,
+fingerprint, why, `readBack`, the turn the judge named and the highlight are
+those of the check that was kept, a quote that does not check out has no count,
+and with no stand-in to read back the count is the same as before.
+
+The count is stored in a judgment's body, under the body's sha256 and the
+record's signature, and nothing counts it again or compares it: a judgment saved
+before keeps the count it was saved with, and still verifies. It is not one of
+the record's typed triples. A chat reads the count as before; each place counted
+is in a line the quote would have been saved in had the judge named that line,
+so it tells a chat nothing that naming each line in turn would not.
+
+Tests: a quote that shows in two learner lines, the stand-in written out in one
+and a fingerprint shown as it in the other, is saved where it was before with
+the judge naming either line, no line or a line that does not hold it, and
+counted 2 each time; a quote in one place counts 1, read back or as sent; words
+with no stand-in count as before; a quote that does not check out has no count;
+with no reader the check is exactly the one before; and where a doubled space
+and a curly apostrophe make two readings check out at one place, that place
+counts once. Through the bridge, the judge's chat of the previous entry has its
+quote counted 2 in the web app's answer. In the web app, driven in a DOM, a quote
+found in two lines and saved in the second says the highlight is in line 3; one
+saved in the first, because the AI named a line that does not hold it, says
+line 1 beside the note on the line it named; and each highlight is in the line
+its note names. The two named-line counts, the bridge's count and the web app's
+note fail without the change.
+
+Not covered: judgments saved before this change keep the counts they were saved
+with, which can be lower; nothing counts them again. The session page shows no
+number beside a line, so the line the note names is found by its highlight, as
+with the note on the line the AI named.
+
 ## 2026-11-10 — Practice Evidence: a quote is checked in the turn the judge named before a match elsewhere
 
 A peer review, run on fictional data, found that the turn a judge names for a
@@ -36,7 +90,8 @@ Not covered: the web app's note on a quote found more than once still says the
 first place is highlighted, which has not been so since the named turn was
 preferred; it is unchanged. A quote read back in the named turn counts how
 often the stored words occur, so a copy written out in another line, which
-reads differently as stored, is not counted.
+reads differently as stored, is not counted. Both are covered by the 2026-11-11
+entry on a repeated quote.
 
 ## 2026-11-10 — I2IDL-X workbench: a capability's details are built when its row is opened
 

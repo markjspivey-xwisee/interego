@@ -2888,7 +2888,8 @@ function judgmentsPanel(v) {
           h('q', { text: q.text !== undefined ? q.text : '(deleted with the conversation text)' }),
           q.verified
             ? (q.occurrences > 1 || q.declaredTurnIndex !== undefined
-              ? h('span', { class: 'text-tertiary', text: [q.occurrences > 1 ? `Found ${q.occurrences} times; the first is highlighted.` : '',
+              // The highlight is at the place the quote was saved (its turnIndex), which need not be the first place it was found.
+              ? h('span', { class: 'text-tertiary', text: [q.occurrences > 1 ? `Found ${q.occurrences} times; the one highlighted is in line ${q.turnIndex}.` : '',
                 q.declaredTurnIndex !== undefined ? `The AI named line ${q.declaredTurnIndex}; it was found in line ${q.turnIndex}.` : ''].filter(Boolean).join(' ') }) : null)
             : h('span', { class: 'quote__why', text: `Didn't match: ${q.why || ''}` })))));
       } else block.append(para('No quote given.'));
