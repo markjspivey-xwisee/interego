@@ -14,17 +14,29 @@ uses; otherwise it says "Found N times; it was saved from line T." The note on
 the line the AI named is unchanged, as it never spoke of a highlight. The
 README's sentence on the note says the same.
 
+The same review found the count can name a place this page shows otherwise. The
+count is of the lines as a chat's views show them, a fingerprint as its
+stand-in. The web app shows a fingerprint bare and a stand-in the learner wrote
+out as written, so where a learner wrote out a stand-in the page could say
+"Found 2 times" with the quoted words in one line only. The note now says
+"Found N times in the lines as the AI was shown them", and the README says why
+one of the places can show other characters on the page.
+
 Tests: in the web app, driven in a DOM, the session of the previous entry's test
 is deleted by the learner and opened again. It draws no highlight; the quote
 found in lines 1 and 3 and saved in line 3 says "Found 2 times; it was saved
 from line 3.", the one saved in line 1 says so beside the note on the line the
 AI named, the quote found once has no note, and nothing in the feedback is
-called highlighted. The two notes fail without the change.
+called highlighted. The two notes fail without the change. Every note checked
+by the tests now reads "Found 2 times in the lines as the AI was shown them;".
 
 Not covered: the session page still shows no number beside a line, so once the
 text is deleted the line a note names is found only by counting the
 conversation's lines from 0, the other person's opening line first, as the
-judge packet numbers them.
+judge packet numbers them. A check of a quote as sent is made against the stored
+lines, as before, so a line holding the copied words where its views show them
+otherwise (a stand-in written into a rubric IRI, which the views mask again) is
+counted, and with no line named the quote is saved there as sent, as before.
 
 ## 2026-11-11 — Practice Evidence: a repeated quote says which place is highlighted, and counts every place it shows
 

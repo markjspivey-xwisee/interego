@@ -1531,9 +1531,9 @@ describe('the web UI works, driven in a DOM against the real handlers', () => {
     expect(p.all('.bubble.me').map((b) => b.dataset['turn'])).toEqual(['1', '3', '5']);
     const note = (criterion: string): string | null => p.q(`.criterion-feedback[data-criterion="${criterion}"] .quote.ok .text-tertiary`)?.textContent ?? null;
     // Found in lines 1 and 3, saved in line 3 where the AI named it: the note names line 3, not the first.
-    expect(note('specific-observation')).toBe('Found 2 times; the one highlighted is in line 3.');
+    expect(note('specific-observation')).toBe('Found 2 times in the lines as the AI was shown them; the one highlighted is in line 3.');
     // Found in lines 1 and 3, the AI named line 5: saved in the first place it was found, and the note says so.
-    expect(note('asks-their-view')).toBe('Found 2 times; the one highlighted is in line 1. The AI named line 5; it was found in line 1.');
+    expect(note('asks-their-view')).toBe('Found 2 times in the lines as the AI was shown them; the one highlighted is in line 1. The AI named line 5; it was found in line 1.');
     // Found once, where the AI named it: no note.
     expect(note('agrees-next-step')).toBeNull();
     // The highlights are where the notes say: each quote marked in the line it was saved in, and nowhere else.
@@ -1552,8 +1552,8 @@ describe('the web UI works, driven in a DOM against the real handlers', () => {
     await p.until(() => p.text('#state') === 'Conversation text deleted' && p.all('.judgments .quote.ok').length === 3, 'the session, its text deleted');
     expect(p.all('.transcript mark')).toEqual([]);
     expect(p.all('.judgments .quote.ok q').map((x) => x.textContent)).toEqual(Array(3).fill('(deleted with the conversation text)'));
-    expect(note('specific-observation')).toBe('Found 2 times; it was saved from line 3.');
-    expect(note('asks-their-view')).toBe('Found 2 times; it was saved from line 1. The AI named line 5; it was found in line 1.');
+    expect(note('specific-observation')).toBe('Found 2 times in the lines as the AI was shown them; it was saved from line 3.');
+    expect(note('asks-their-view')).toBe('Found 2 times in the lines as the AI was shown them; it was saved from line 1. The AI named line 5; it was found in line 1.');
     expect(note('agrees-next-step')).toBeNull();
     expect(p.text('.judgments')).not.toContain('highlighted');
     expect(p.errors).toEqual([]);

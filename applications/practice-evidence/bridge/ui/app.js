@@ -2893,10 +2893,12 @@ function judgmentsPanel(v) {
             ? (q.occurrences > 1 || q.declaredTurnIndex !== undefined
               // The highlight is at the place the quote was saved (its turnIndex), which need not be the first place it was found;
               // once the conversation text is deleted nothing is highlighted, so the note names the line without calling it so.
+              // The count is of the lines as a chat's views show them, a fingerprint as its stand-in, so this page, which shows a
+              // fingerprint bare and a stand-in the learner wrote out as written, can show one of those places in other characters.
               ? h('span', { class: 'text-tertiary', text: [q.occurrences > 1
                 ? (v.turns.some((t) => t.index === q.turnIndex && drawsHighlights(t))
-                  ? `Found ${q.occurrences} times; the one highlighted is in line ${q.turnIndex}.`
-                  : `Found ${q.occurrences} times; it was saved from line ${q.turnIndex}.`)
+                  ? `Found ${q.occurrences} times in the lines as the AI was shown them; the one highlighted is in line ${q.turnIndex}.`
+                  : `Found ${q.occurrences} times in the lines as the AI was shown them; it was saved from line ${q.turnIndex}.`)
                 : '',
                 q.declaredTurnIndex !== undefined ? `The AI named line ${q.declaredTurnIndex}; it was found in line ${q.turnIndex}.` : ''].filter(Boolean).join(' ') }) : null)
             : h('span', { class: 'quote__why', text: `Didn't match: ${q.why || ''}` })))));
