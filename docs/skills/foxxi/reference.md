@@ -1,6 +1,6 @@
 # Foxxi content intelligence, learner surface: every affordance
 
-Derived from `applications/foxxi-content-intelligence/affordances.ts` by `tools/build-skills.ts`; the skill is [SKILL.md](SKILL.md). 84 affordances.
+Derived from `applications/foxxi-content-intelligence/affordances.ts` by `tools/build-skills.ts`; the skill is [SKILL.md](SKILL.md). 85 affordances.
 
 ## `foxxi.i2idlx_classify`
 
@@ -387,6 +387,21 @@ Launch an Assignable Unit of a cmi5 course published on this bridge, for yoursel
 | Input | Type | Required | Description |
 | --- | --- | --- | --- |
 | `_signed_payload` | string | yes | JSON.stringify({ agent_id, timestamp, course_id, au_id?, return_url? }): the published course, optionally the AU, optionally where the AU returns you. |
+| `_signature` | string | yes | sign_request signature (secp256k1 over sha256 of _signed_payload). |
+
+## `foxxi.host_package_signed`
+
+**Bring a package to be hosted here**
+
+Bring a SCORM or cmi5 .zip, or an authoring tool's own export, to be hosted on this bridge, signed by your wallet or by an agent holding your delegation. No account or directory role is needed: any key may sign. It is parsed on arrival and kept by its sha-256 exactly as foxxi.upload_scorm_package keeps an operator's, with you named as the uploader on its receipt. A package with something to launch is listed at /scorm/packages and anyone may play it with foxxi.cmi5_launch_signed, each of its documents in a sandbox of its own. What a package reports is experience, not graded evidence. The deployment bounds this route: a largest package, a number per signer per hour, and it may be closed, in which case it answers 404.
+
+- Action: `urn:iep:action:foxxi:host-package-signed`
+- HTTP: `POST https://foxxi-bridge.interego.xwisee.com/agent/scorm/host` (served by a bespoke route; not through the bridge's MCP endpoint)
+- Media type: `application/json`
+
+| Input | Type | Required | Description |
+| --- | --- | --- | --- |
+| `_signed_payload` | string | yes | JSON.stringify({ agent_id, timestamp, zip_base64, hinted_title? }): the package, base64-encoded, and optionally a display name. |
 | `_signature` | string | yes | sign_request signature (secp256k1 over sha256 of _signed_payload). |
 
 ## `foxxi.lti_launch_signed`

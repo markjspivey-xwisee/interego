@@ -224,6 +224,11 @@ export function registerCmi5Course(tenant: TenantId, course: Cmi5Course): void {
   m.set(course.id, course);
 }
 
+/** Forget a registered course structure; whether there was one. What learners already recorded of it stays. */
+export function unregisterCmi5Course(tenant: TenantId, courseId: string): boolean {
+  return courseRegistry.for(tenant).delete(courseId);
+}
+
 export function getCmi5Course(tenant: TenantId, courseId: string): Cmi5Course | undefined {
   return courseRegistry.for(tenant).get(courseId);
 }

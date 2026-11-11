@@ -1853,6 +1853,32 @@ export const FOXXI_CAPABILITY_ANNOTATIONS: Record<string, CapabilityAnnotation> 
       "Generic handler instrumentation may record an operation observation separately from the requested result."
     ]
   },
+  "foxxi.host_package_signed": {
+    "implementation": "implemented",
+    "mode": "write",
+    "authorization": "signed",
+    "requires": [
+      "A request signed by any wallet, or by an agent holding a delegation",
+      "Open hosting left on for this deployment (FOXXI_OPEN_HOSTING)"
+    ],
+    "notes": [
+      "Bounded by package size and by a count per signer and per address each hour.",
+      "Generic handler instrumentation may record an operation observation separately from the requested result."
+    ]
+  },
+  "foxxi.remove_hosted_package": {
+    "implementation": "implemented",
+    "mode": "write",
+    "authorization": "role-gated",
+    "requires": [
+      "An authenticated own-account signed request or supported Foxxi bearer session",
+      "An admin or delegated-admin role"
+    ],
+    "notes": [
+      "Removes the package and what describes it from the tenant pod; learners' own records of it stay.",
+      "Generic handler instrumentation may record an operation observation separately from the requested result."
+    ]
+  },
   "foxxi.upload_scorm_package": {
     "implementation": "implemented",
     "mode": "write",
