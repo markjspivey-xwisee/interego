@@ -75,7 +75,7 @@ jobs:
         run: npm test
 
       - name: Install Playwright Chromium
-        run: npx playwright install --with-deps chromium
+        run: node "$GITHUB_WORKSPACE/tools/ci-install-chromium.mjs"
 
       - name: Wait for the relay to be reachable
         # Poll /health so a manual run kicked off right after a deploy

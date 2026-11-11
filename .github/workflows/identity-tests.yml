@@ -89,7 +89,12 @@ jobs:
         with:
           node-version: '22'
       - run: npm ci --no-audit --no-fund
-      - run: npx playwright install --with-deps chromium
+      # Not `npx playwright install --with-deps chromium`: when the Ubuntu package mirror cannot be
+      # resolved that fails on optional font packages before the browser is downloaded, and no test
+      # runs (2026-11-11, on master and every pull request). The script decides on whether Chromium
+      # launches.
+      - name: Install Chromium and check that it launches
+        run: node tools/ci-install-chromium.mjs
       - name: Build workspace packages for the runtime and typecheck gate
         run: npm run build
       - run: node --import tsx tools/passkey-signing-browser.mjs
