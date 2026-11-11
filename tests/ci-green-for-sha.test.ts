@@ -149,7 +149,7 @@ describe('the gate excludes its own run, or it waits for itself forever', () => 
     expect(deploy, 'a uses: of the check inside auto-deploy.yml holds the rollout lock for the whole test').not.toMatch(/uses:\s*\.\/\.github\/workflows\/client-signature-live\.yml/);
   });
   it('★ drops the fleet audit: run on a schedule or by hand onto whatever master is, a red audit must not hold that commit\'s deploy', async () => {
-    // 2026-11-11, run 43042832069: a dispatched audit on 3d974242 reported the services behind
+    // 2026-11-11, run 43042832069: a scheduled audit filed on 3d974242 reported the services behind
     // master, and the gate then refused the rollout that would have brought them up to it.
     const got = await runsForSha('a'.repeat(40), {
       repo: 'o/r', token: 't', self: 'Auto-deploy master',

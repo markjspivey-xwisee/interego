@@ -83,7 +83,7 @@ export const POST_DEPLOY_WORKFLOWS = ['Client signature live check'];
  * header says so ("Nothing here gates a deploy"): railway-fleet-audit.yml runs on a schedule or when
  * dispatched, and GitHub files either run under the branch head of that moment. Counted here, a red
  * audit (a service behind master, an untracked service) held that commit's deploy: on 2026-11-11 a
- * dispatched run on 3d974242 refused the rollout that would have brought the services it reported as
+ * scheduled run filed on 3d974242 refused the rollout that would have brought the services it reported as
  * behind up to master, the drift blocking its own fix. Dropped from the listing like the post-deploy
  * check; read in the Actions tab. Keep the names in step with the workflows' `name:`.
  */

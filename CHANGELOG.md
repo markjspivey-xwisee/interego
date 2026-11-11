@@ -10,14 +10,14 @@ a deploy. It runs on a daily schedule or when dispatched by hand, and GitHub
 files either run under whatever master's head is at that moment. So the gate
 counted it anyway.
 
-On 2026-11-11 a dispatched audit on 3d974242 failed because the services were
-five commits behind master (and one Railway service is not in the repository's
-service table). The gate then refused that commit's deploy, which was the
-rollout that would have brought the services up to master: the drift the audit
-reported blocked its own fix. That deploy was already late: on 86eb7389, the
-identity tests' Chromium job had failed three times installing system packages,
-because the runner could not resolve Ubuntu's package mirror. That failure is
-outside this repository and is still counted, as it should be.
+On 2026-11-11 a scheduled audit run, filed under 3d974242 at 14:53, failed
+because the services were five commits behind master (and one Railway service is
+not in the repository's service table). The gate then refused that commit's
+deploy, which was the rollout that would have brought the services up to master:
+the drift the audit reported blocked its own fix. That deploy was already late:
+on 86eb7389, the identity tests' Chromium job had failed three times installing
+system packages, because the runner could not resolve Ubuntu's package mirror.
+That failure is outside this repository and is still counted, as it should be.
 
 `FLEET_AUDIT_WORKFLOWS` (`Railway fleet audit`) now joins the post-deploy check
 in `NON_GATING_WORKFLOWS`, the gate's default ignore list. A test checks that
