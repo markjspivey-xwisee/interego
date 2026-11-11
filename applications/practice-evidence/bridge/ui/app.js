@@ -2816,12 +2816,15 @@ function marked(text, ranges) {
   return frag;
 }
 
+// A line's highlights are drawn only over its tidied text, which a deleted conversation no longer has.
+const drawsHighlights = (t) => t.speaker === 'learner' && t.normalisedText !== undefined;
+
 function transcriptPanel(v, o) {
   const shown = S.judgmentShown.get(v.attemptIri) || 0;
   const hl = o.hideJudge ? [] : (v.highlights || []).filter((x) => x.judgmentIndex === shown);
   const chat = h('div', { class: 'chat' });
   for (const t of v.turns) {
-    const own = t.speaker === 'learner' && t.normalisedText !== undefined;
+    const own = drawsHighlights(t);
     const node = own ? marked(t.normalisedText, hl.filter((x) => x.turnIndex === t.index)) : null;
     chat.append(bubble(v, t, node));
   }
@@ -2888,7 +2891,15 @@ function judgmentsPanel(v) {
           h('q', { text: q.text !== undefined ? q.text : '(deleted with the conversation text)' }),
           q.verified
             ? (q.occurrences > 1 || q.declaredTurnIndex !== undefined
-              ? h('span', { class: 'text-tertiary', text: [q.occurrences > 1 ? `Found ${q.occurrences} times; the first is highlighted.` : '',
+              // The highlight is at the place the quote was saved (its turnIndex), which need not be the first place it was found;
+              // once the conversation text is deleted nothing is highlighted, so the note names the line without calling it so.
+              // The count is of the lines as a chat's views show them, a fingerprint as its stand-in, so this page, which shows a
+              // fingerprint bare and a stand-in the learner wrote out as written, can show one of those places in other characters.
+              ? h('span', { class: 'text-tertiary', text: [q.occurrences > 1
+                ? (v.turns.some((t) => t.index === q.turnIndex && drawsHighlights(t))
+                  ? `Found ${q.occurrences} times in the lines as the AI was shown them; the one highlighted is in line ${q.turnIndex}.`
+                  : `Found ${q.occurrences} times in the lines as the AI was shown them; it was saved from line ${q.turnIndex}.`)
+                : '',
                 q.declaredTurnIndex !== undefined ? `The AI named line ${q.declaredTurnIndex}; it was found in line ${q.turnIndex}.` : ''].filter(Boolean).join(' ') }) : null)
             : h('span', { class: 'quote__why', text: `Didn't match: ${q.why || ''}` })))));
       } else block.append(para('No quote given.'));

@@ -32,7 +32,7 @@ import { describe, it, expect } from 'vitest';
 import { importWallet, sha256, sha256Hex, signMessageRaw, type Wallet } from '@interego/core';
 import { createPevHandlers, type PevDeps } from '../bridge/handlers.js';
 import { webAppClients } from '../bridge/ui.js';
-import { rubricHash, scenarioHash, coerceScenario, normaliseForQuote, verifyQuoteAsShown } from '../src/practice.js';
+import { rubricHash, scenarioHash, coerceScenario, normaliseForQuote, verifyQuote, verifyQuoteAsShown, type QuoteCheck } from '../src/practice.js';
 import { DEMO_LINES, demoKey, demoScenarioInput, inMemoryPod, scriptedPracticeModel } from '../demo/run.js';
 import { PEV_ACTION, toolNameOf } from '../src/ontology.js';
 import { signEnvelope } from '../src/records.js';
@@ -980,6 +980,67 @@ describe('a rubric fingerprint a caller writes into text comes back as a stand-i
     }
   });
 
+  it('a quote counts each place in the learner\'s lines it checks out at, as sent or read back, once, wherever it is saved', () => {
+    const m = hashMask(Buffer.alloc(32, 43));
+    const k = m.version('urn:pev:scenario:unit', 1);
+    const h = RAW.rubric;
+    const s = k.inText.full(h);
+    const tail = 'for this step and we should agree a new date';
+    // T1 holds the stand-in written out, which every view shows as written; T3 holds the fingerprint framed, which every view
+    // shows as that stand-in. So the quote shows in both lines: as sent in T1, read back in T3.
+    const turns = [
+      { index: 1, speaker: 'learner' as const, text: `I noted ${s} ${tail}.` },
+      { index: 2, speaker: 'counterpart' as const, text: 'Go on.' },
+      { index: 3, speaker: 'learner' as const, text: `Then I read urn:pev:rubric:${h} ${tail}.` },
+      { index: 4, speaker: 'counterpart' as const, text: 'Right.' },
+      { index: 5, speaker: 'learner' as const, text: 'Then we agreed a date.' },
+    ];
+    const back = quoteReadingsAsStored(k, turns);
+    const t3 = maskText(turns[2]!.text, k);
+    const copied = t3.slice(t3.indexOf('urn:pev:rubric:') + 15, -1);
+    expect([copied, maskText(turns[0]!.text, k).includes(copied)]).toEqual([`${s} ${tail}`, true]);
+    const counted = (q: QuoteCheck): unknown => [q.verified, q.readBack ?? null, q.turnIndex, q.declaredTurnIndex ?? null, q.occurrences];
+    // The judge names T3: read back and saved there, as before, and the place in T1 is counted too.
+    expect(counted(verifyQuoteAsShown({ text: copied, turnIndex: 3 }, turns, back))).toEqual([true, true, 3, null, 2]);
+    // The judge names T1: saved there as sent, as before, and the fingerprint's place in T3 is counted too.
+    expect(counted(verifyQuoteAsShown({ text: copied, turnIndex: 1 }, turns, back))).toEqual([true, null, 1, null, 2]);
+    // No turn named, or a turn where it checks out in no view: saved where it was before, both places counted.
+    expect(counted(verifyQuoteAsShown({ text: copied }, turns, back))).toEqual([true, null, 1, null, 2]);
+    expect(counted(verifyQuoteAsShown({ text: copied, turnIndex: 5 }, turns, back))).toEqual([true, null, 1, 5, 2]);
+    // Only the count changes: the saved text, place, fingerprint and why are those of the check that was kept.
+    const named = verifyQuoteAsShown({ text: copied, turnIndex: 3 }, turns, back);
+    expect(named).toEqual({ ...verifyQuote({ text: `${h} ${tail}`, turnIndex: 3 }, turns), readBack: true, occurrences: 2 });
+    // A quote that shows in one place only counts one, read back or as sent.
+    const once = t3.slice(0, t3.indexOf(' for this step'));
+    expect(counted(verifyQuoteAsShown({ text: once, turnIndex: 3 }, turns, back))).toEqual([true, true, 3, null, 1]);
+    expect(counted(verifyQuoteAsShown({ text: 'Then we agreed a date.', turnIndex: 5 }, turns, back))).toEqual([true, null, 5, null, 1]);
+    // Words the learner said in both lines, with no stand-in in them: counted as `verifyQuote` counts them.
+    expect(counted(verifyQuoteAsShown({ text: tail, turnIndex: 3 }, turns, back))).toEqual([true, null, 3, null, 2]);
+    // A quote that does not check out has no count, as before.
+    expect(verifyQuoteAsShown({ text: `${copied} on Monday`, turnIndex: 3 }, turns, back).occurrences).toBeUndefined();
+    // With no reader, exactly `verifyQuote`, count included.
+    for (const q of [{ text: copied }, { text: copied, turnIndex: 3 }, { text: `${h} ${tail}`, turnIndex: 1 }, { text: tail }, { text: 'we never said this' }]) {
+      expect(verifyQuoteAsShown(q, turns), q.text).toEqual(verifyQuote(q, turns));
+    }
+    // A place where more than one reading checks out is counted once. Copied from an attempt's text where the line holds a
+    // doubled space and a curly apostrophe after the fingerprint, the quote reads back as the stored stretch and as the
+    // normalised one, two readings that check out at the same place; the stand-in written out the same way in T1 is a
+    // second place, found as sent.
+    const spaced = [
+      { index: 1, speaker: 'learner' as const, text: `I noted ${s}  isn’t what we agreed on.` },
+      { index: 2, speaker: 'counterpart' as const, text: 'Go on.' },
+      { index: 3, speaker: 'learner' as const, text: `Later urn:pev:rubric:${h}  isn’t what we agreed on.` },
+    ];
+    const backSpaced = quoteReadingsAsStored(k, spaced);
+    const v3 = maskText(spaced[2]!.text, k);
+    const quoted = v3.slice(v3.indexOf('urn:pev:rubric:') + 15, -1);
+    const readings = backSpaced(quoted, 3).matched;
+    const places = readings.map((text) => verifyQuote({ text, turnIndex: 3 }, spaced)).map((c) => [c.verified, c.turnIndex, c.start]);
+    expect([readings.length, new Set(places.map((x) => JSON.stringify(x))).size, places[0]]).toEqual([2, 1, [true, 3, normaliseForQuote(spaced[2]!.text).indexOf(h)]]);
+    expect(counted(verifyQuoteAsShown({ text: quoted, turnIndex: 3 }, spaced, backSpaced))).toEqual([true, true, 3, null, 2]);
+    expect(counted(verifyQuoteAsShown({ text: quoted, turnIndex: 3 }, spaced.slice(1), quoteReadingsAsStored(k, spaced.slice(1))))).toEqual([true, true, 3, null, 1]);
+  });
+
   it('a quote copied from a line\'s own text, where a mark follows a fingerprint\'s last digit, and changed by normalising on the way, reads back by its place in the normalised line, whichever of that digit and the stand-in\'s takes the mark', () => {
     const m = hashMask(Buffer.alloc(32, 37));
     const k = m.version('urn:pev:scenario:unit', 1);
@@ -1593,6 +1654,9 @@ describe('a rubric fingerprint a caller writes into text comes back as a stand-i
     // The web app keeps the learner's words in that turn, and every highlight marks them there.
     const web = webAnswer(await ract(H, 'pev.get_attempt', P.reviewer.web, { attemptIri: a }), 'the judged session in the web app');
     expect((web['judgments'] as J[])[0]!.criteria.map((c) => c.quotes.map(place))).toEqual(S.value.rubric.criteria.map(() => [[`${own} ${tail}`, true, true, framedAt]]));
+    // Counted in both lines that show it, the one with the stand-in written out included.
+    expect((web['judgments'] as { criteria: { quotes: { occurrences?: number }[] }[] }[])[0]!.criteria.map((c) => c.quotes.map((q) => q.occurrences)))
+      .toEqual(S.value.rubric.criteria.map(() => [2]));
     const norm = normaliseForQuote(framed);
     expect((web['highlights'] as { turnIndex: number; start: number; end: number }[]).map((x) => [x.turnIndex, norm.slice(x.start, x.end)]))
       .toEqual(S.value.rubric.criteria.map(() => [framedAt, `${own} ${tail}`]));

@@ -621,6 +621,14 @@ export interface QuoteCheck {
   /** Offsets (UTF-16 code units) into the NORMALISED learner turn. */
   readonly start?: number;
   readonly end?: number;
+  /**
+   * On a quote that checked out, how many places in the learner's lines it checks out at, each counted once: a place is a
+   * turn and the offset its stretch starts at in that turn normalised (`placesOf`). `verifyQuote` counts each place the
+   * quote's normalised text sits at without cutting a word; `verifyQuoteAsShown` counts each place any of its checks
+   * checks out at, as sent or read back, so a line that shows the same stretch stored otherwise is counted too. The place
+   * it was saved at (`turnIndex`, `start`, `end`) is one of them, and need not be the first. Kept as counted when the
+   * judgment was saved: nothing counts again.
+   */
   readonly occurrences?: number;
   readonly declaredTurnIndex?: number;
   readonly why?: string;
@@ -645,6 +653,9 @@ const WHY_NEEDS_QUOTE = 'a level above the lowest needs at least one learner quo
 /** A letter, digit or combining mark: the characters a quote may not cut between. */
 const WORD_CHAR = /[\p{L}\p{N}\p{M}]/u;
 const WORD_RUN = /[\p{L}\p{N}\p{M}]+/gu;
+
+/** A place a quote sits in the learner's lines: its turn, and where it starts in that turn normalised. */
+interface QuotePlace { readonly turnIndex: number; readonly start: number }
 
 function hitsIn(haystack: string, needle: string): number[] {
   const out: number[] = [];
@@ -680,20 +691,13 @@ function enoughWords(s: string): boolean {
 }
 
 /**
- * Check one quote against the learner's own turns. The quote text is never altered; the offsets
- * point into the normalised turn so a reader can highlight exactly what matched. A match that
- * starts or ends inside a word does not count: "acceptable" inside "unacceptable" is not
- * something the learner said.
+ * Each place `normalised` (a quote normalised) sits in the learner's lines, in the order of `turns`, and whether a place
+ * was passed over because the match there starts or ends inside a word.
  */
-export function verifyQuote(q: JudgeQuoteInput, turns: readonly Pick<Turn, 'index' | 'speaker' | 'text'>[]): QuoteCheck {
-  const normalised = normaliseForQuote(q.text);
-  const base = { text: q.text, normalised, quoteSha256: sha256(normalised) };
-  if (Array.from(normalised).length < QUOTE_MIN_CHARS) return { ...base, verified: false, why: WHY_SHORT };
-  if (!enoughWords(normalised)) return { ...base, verified: false, why: WHY_FEW_WORDS };
-  const ordered = [...turns].sort((a, b) => a.index - b.index);
-  const located: { turnIndex: number; start: number }[] = [];
+function placesOf(normalised: string, turns: readonly Pick<Turn, 'index' | 'speaker' | 'text'>[]): { readonly located: readonly QuotePlace[]; readonly cutOnly: boolean } {
+  const located: QuotePlace[] = [];
   let cutOnly = false;
-  for (const t of ordered) {
+  for (const t of turns) {
     if (t.speaker !== 'learner' || t.text === undefined) continue;
     const turn = normaliseForQuote(t.text);
     for (const start of hitsIn(turn, normalised)) {
@@ -701,6 +705,23 @@ export function verifyQuote(q: JudgeQuoteInput, turns: readonly Pick<Turn, 'inde
       else located.push({ turnIndex: t.index, start });
     }
   }
+  return { located, cutOnly };
+}
+
+/**
+ * Check one quote against the learner's own turns. The quote text is never altered; the offsets
+ * point into the normalised turn so a reader can highlight exactly what matched. A match that
+ * starts or ends inside a word does not count: "acceptable" inside "unacceptable" is not
+ * something the learner said. The place kept is the first in the turn the judge named, else the
+ * first; `occurrences` counts them all.
+ */
+export function verifyQuote(q: JudgeQuoteInput, turns: readonly Pick<Turn, 'index' | 'speaker' | 'text'>[]): QuoteCheck {
+  const normalised = normaliseForQuote(q.text);
+  const base = { text: q.text, normalised, quoteSha256: sha256(normalised) };
+  if (Array.from(normalised).length < QUOTE_MIN_CHARS) return { ...base, verified: false, why: WHY_SHORT };
+  if (!enoughWords(normalised)) return { ...base, verified: false, why: WHY_FEW_WORDS };
+  const ordered = [...turns].sort((a, b) => a.index - b.index);
+  const { located, cutOnly } = placesOf(normalised, ordered);
   if (located.length > 0) {
     const inDeclared = q.turnIndex === undefined ? undefined : located.find((l) => l.turnIndex === q.turnIndex);
     const pick = inDeclared ?? located[0]!;
@@ -745,28 +766,30 @@ export type QuoteReader = (quote: string, turnIndex?: number) => string | QuoteR
  * of the stretch the judge named; else the first that checks out in another turn; else the check of
  * `otherwise`. With no turn named, the first that checks out anywhere, so a quote found as sent is
  * kept as sent. A quote no check finds is saved with every stand-in read back and says why, never as
- * a stretch that did not check out. Without `asStored`, exactly `verifyQuote`.
+ * a stretch that did not check out. A quote that checks out counts every place any check checks out
+ * at, each once (`QuoteCheck.occurrences`): where it shows as sent, and where it is read back, in the
+ * turn it is saved in and in any other. Nothing else differs from the check that was kept. Without
+ * `asStored`, exactly `verifyQuote`.
  */
 export function verifyQuoteAsShown(
   q: JudgeQuoteInput, turns: readonly Pick<Turn, 'index' | 'speaker' | 'text'>[], asStored?: QuoteReader,
 ): QuoteCheck {
-  // Checked out in the turn the judge named, or anywhere when none was named (`verifyQuote` then sets no `declaredTurnIndex`).
-  const inNamedTurn = (c: QuoteCheck): boolean => c.verified && c.declaredTurnIndex === undefined;
   const sent = verifyQuote(q, turns);
-  if (inNamedTurn(sent) || asStored === undefined) return sent;
+  if (asStored === undefined) return sent;
   const read = asStored(q.text, q.turnIndex);
   const { matched, otherwise } = typeof read === 'string' ? { matched: [] as readonly string[], otherwise: read } : read;
-  // The first check that checked out only in another turn: the quote as sent, else the first reading that did.
-  let elsewhere: QuoteCheck | undefined = sent.verified ? sent : undefined;
-  for (const text of matched) {
-    if (text === q.text) continue;
-    const c: QuoteCheck = { ...verifyQuote({ ...q, text }, turns), readBack: true };
-    if (inNamedTurn(c)) return c;
-    if (c.verified) elsewhere ??= c;
-  }
-  const last = otherwise === q.text ? sent : { ...verifyQuote({ ...q, text: otherwise }, turns), readBack: true as const };
-  if (inNamedTurn(last)) return last;
-  return elsewhere ?? last;
+  const readBack = (text: string): QuoteCheck => ({ ...verifyQuote({ ...q, text }, turns), readBack: true });
+  // Every check, in order: the quote as sent, each stretch matched, then the quote with every stand-in read back.
+  const checks = [sent, ...matched.filter((text) => text !== q.text).map(readBack), otherwise === q.text ? sent : readBack(otherwise)];
+  // The first that checked out in the turn the judge named, or anywhere when none was named (`verifyQuote` then sets no
+  // `declaredTurnIndex`); else the first that checked out in another turn; else the last.
+  const kept = checks.find((c) => c.verified && c.declaredTurnIndex === undefined) ?? checks.find((c) => c.verified) ?? checks[checks.length - 1]!;
+  if (!kept.verified) return kept;
+  // A place is a turn and where its stretch starts in that turn normalised. Every check that checks out at the same stretch
+  // starts there, whichever view it was read from (a view keeps the stored line's offsets), so it is counted once.
+  const places = new Set(checks.flatMap((c) => (c.verified && c.normalised !== undefined
+    ? placesOf(c.normalised, turns).located.map((p) => `${p.turnIndex}:${p.start}`) : [])));
+  return { ...kept, occurrences: places.size };
 }
 
 export type CriterionStatus = 'verified' | 'unverified' | 'no-quote-needed';
