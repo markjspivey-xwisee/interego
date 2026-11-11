@@ -18,7 +18,10 @@ async function withApp<T>(run: (base: string) => Promise<T>): Promise<T> {
   app.get('/small', (_req, res) => { res.type('text/turtle').send('<a> <b> <c> .'); });
   app.get('/json', (_req, res) => { res.json({ items: TURTLE.split('\n') }); });
   app.get('/fixed', (_req, res) => { res.setHeader('Cache-Control', 'no-transform'); res.type('text/turtle').send(TURTLE); });
-  const server = app.listen(0);
+  // Loopback only, as deploy/mcp-relay/tests/listen-loopback.test.ts requires. With a host named the
+  // bind is asynchronous, so the port is read once the server is listening.
+  const server = app.listen(0, '127.0.0.1');
+  await new Promise<void>((resolve, reject) => { server.once('listening', resolve); server.once('error', reject); });
   try { return await run(`http://127.0.0.1:${(server.address() as AddressInfo).port}`); }
   finally { await new Promise(done => server.close(done)); }
 }
