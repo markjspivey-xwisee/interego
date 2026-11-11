@@ -369,3 +369,24 @@ test('the exchange carries identity\'s namespace into the relay principal', asyn
   await assert.rejects(verifyProvisionalExchange(request, { identityUrl: 'https://id.example',
     fetch: provider({ ...me, provisionalPlay: { ...play, namespace: '../x' } }).fetch }), code('invalid_provisional_authority'));
 });
+
+test('a guest bound under one namespace binds nothing under another: refused before any write, the record unchanged', async () => {
+  const store = pod(); let invoked = 0;
+  const guard = createProvisionalToolGuard({ podUrl: 'https://store.example/oauth/', fetch: store.fetch, withMutex: mutex, assertUnpublished: async () => {} });
+  const ok = async () => { invoked++; return JSON.stringify({ ok: true }); };
+  await guard('register_agent', recipient, principal, ok);
+  for (const graph of provisionalGraphs(principal)) await guard('publish_context', binding(graph), principal, ok);
+  assert.equal(invoked, 3);
+  const before = JSON.stringify([...store.files.values()].map(file => file.body));
+  // The operator then names a namespace for the application: the same owner, a marker that names it.
+  const moved = { ...principal, provisionalPlay: { ...play, namespace: 'foxxi' } };
+  for (const graph of provisionalGraphs(moved)) {
+    await assert.rejects(guard('publish_context', binding(graph), moved, ok), code('provisional_namespace_changed'));
+  }
+  await assert.rejects(guard('register_agent', recipient, moved, ok), code('provisional_namespace_changed'));
+  assert.equal(invoked, 3);
+  assert.equal(JSON.stringify([...store.files.values()].map(file => file.body)), before, 'no fourth entry is ever written');
+  // Under its original namespace the guest's cached bindings still answer.
+  assert.equal(await guard('publish_context', binding(provisionalGraphs(principal)[0]), principal, ok), JSON.stringify({ ok: true }));
+  assert.equal(invoked, 3);
+});

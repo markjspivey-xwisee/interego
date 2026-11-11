@@ -35,6 +35,10 @@ under any well-formed namespace as game data (names a guest pod uses for
 something else, such as `context-graphs`, are excluded), so an application
 taken out of configuration does not strand its guests' saves.
 
+Do not change the namespace of an application that has live guests: a guest
+that already bound its graphs under the old one has spent its two bindings, and
+the relay refuses any under the new one (`409 provisional_namespace_changed`).
+
 Rollout: deploy the relay and gate, then identity, and only then configure a
 namespace. A gate from before this change ignores the field and would let a
 second application's guest write the two `hallowmarch/` documents of its own

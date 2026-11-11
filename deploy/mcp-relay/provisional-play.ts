@@ -280,6 +280,12 @@ export function createProvisionalToolGuard(cfg: {
       if (!r.ok && r.status !== 404) refuse(503, 'provisional_limits_unavailable');
       const record: LimitRecord = r.status === 404 ? { expiresAt: p.provisionalPlay.expiresAt, entries: {} } : await r.json() as LimitRecord;
       if (record.expiresAt !== p.provisionalPlay.expiresAt || !record.entries || Object.keys(record.entries).length > 3) refuse(403, 'provisional_limits_mismatch');
+      // A binding made under another application namespace (the operator changed the application's
+      // since): the guest's two bindings are spent, and none is made under the new one. Refused here,
+      // before anything is written, so the record never takes a fourth entry and the guest is not
+      // left with one graph bound and the other refused (provisional_limits_mismatch from then on).
+      const graphs = provisionalGraphs(p);
+      if (Object.keys(record.entries).some(key => key.startsWith('graph:') && !graphs.includes(key.slice('graph:'.length)))) refuse(409, 'provisional_namespace_changed');
       const publicArgs = Object.fromEntries(Object.entries(args).filter(([k]) => !k.startsWith('_')
         && !['pod_name','pod_url','owner_webid'].includes(k) && !(name === 'publish_context' && k === 'agent_id')).sort(([a],[b])=>a.localeCompare(b)));
       const fingerprint = playHash(JSON.stringify(publicArgs));
