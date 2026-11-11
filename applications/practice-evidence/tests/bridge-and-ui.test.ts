@@ -1482,6 +1482,82 @@ describe('the web UI works, driven in a DOM against the real handlers', () => {
     }
     expect(p.errors).toEqual([]);
   }, SLOW);
+
+  it('a quote found in more than one line says which line is highlighted: the one it was saved in, which need not be the first; with the text deleted, nothing is called highlighted', async () => {
+    // A world of its own: one pod, the roles a judging needs, and an ended session whose first and second lines share words.
+    const own = inMemoryPod();
+    const h = createPevHandlers({ ...base, fetchFn: own.fetchFn, holderFetchFn: own.fetchFn, model: scriptedPracticeModel(), demoSigner: demoSignerOf(W) }) as Handlers;
+    for (const [who, role] of [['author', 'author'], ['reviewer', 'reviewer'], ['judge-agent', 'judge']] as const) {
+      expect((await direct(h, 'pev.register_role', W.admin, PEV_ACTION.registerRole, { address: W[who].address, role, change: 'add' }))['changed']).toBe(true);
+    }
+    const pub = await direct(h, 'pev.author_scenario', W.author, PEV_ACTION.authorScenario, { scenario: demoScenarioInput('missed-deadline', 2), status: 'published', draftAssistance: { used: false } });
+    expect((await direct(h, 'pev.ratify_scenario', W.reviewer, PEV_ACTION.ratifyScenario, { scenarioIri: pub['scenarioIri'], version: 1, scenarioHash: pub['scenarioHash'] }))['status']).toBe('ratified');
+    const started = await direct(h, 'pev.start_attempt', W.learner, PEV_ACTION.startAttempt, { scenarioIri: pub['scenarioIri'], scenarioVersion: 1, coached: false });
+    const attemptIri = String(started['attemptIri']);
+    const mine = [
+      'Thanks for coming in. I would like us to agree a new date today, once I hear what got in the way.',
+      'I see. So I would like us to agree a new date today, once I hear what got in the way from your side.',
+      'Let us write it down before Friday so we both remember it.',
+    ];
+    for (let i = 0; i < mine.length; i += 1) {
+      const r = await direct(h, 'pev.record_turns', W.learner, PEV_ACTION.recordTurns, {
+        attemptIri, turnIndex: 2 * i + 1, learnerText: mine[i], counterpartText: DEMO_LINES.sam[i], endAfter: i === mine.length - 1,
+        counterpartDisclosure: { provider: 'scripted', model: 'demo-learner-agent' },
+      });
+      expect(r['kind']).toBeUndefined();
+    }
+    const packet = await direct(h, 'pev.judge_packet', W['judge-agent'], PEV_ACTION.judgePacket, { attemptIri });
+    const binding = packet['binding'] as Out;
+    // The judge names the second line for one quote, a line that does not hold the other, and the third line for a quote said once.
+    const quotes: Record<string, { text: string; turnIndex: number }> = {
+      'specific-observation': { text: 'agree a new date today', turnIndex: 3 },
+      'asks-their-view': { text: 'hear what got in the way', turnIndex: 5 },
+      'agrees-next-step': { text: 'write it down before Friday', turnIndex: 5 },
+    };
+    const rubric = (demoScenarioInput('missed-deadline', 2)['rubric'] as { criteria: { id: string; levels: { id: string }[] }[] }).criteria;
+    const saved = await direct(h, 'pev.record_judgment', W['judge-agent'], PEV_ACTION.recordJudgment, {
+      attemptIri, attemptHeadUrl: binding['attemptHeadUrl'], transcriptHash: binding['transcriptHash'], rubricHash: binding['rubricHash'],
+      judgeDisclosure: { provider: 'Example', model: 'example-judge', usedPacketPrompt: true },
+      judgment: { criteria: rubric.map((c) => ({ criterionId: c.id, level: c.levels[c.levels.length - 1]!.id, quotes: [quotes[c.id]!], rationale: 'The quoted words show it.' })) },
+    });
+    expect(saved['kind']).toBeUndefined();
+    const l = await serve(h);
+    const p = await openUi(l);
+    await p.until(() => p.text('#bar').includes('DEMO MODE'), 'the demo banner');
+    await asRole(p, 'learner');
+    p.w.location.hash = `#/attempt/${encodeURIComponent(attemptIri)}`;
+    await p.until(() => p.all('.judgments .quote.ok').length === 3, 'the three quotes that checked out');
+    // Each line as the page draws it, by its turn: the learner's lines are turns 1, 3 and 5.
+    expect(p.all('.bubble.me').map((b) => b.dataset['turn'])).toEqual(['1', '3', '5']);
+    const note = (criterion: string): string | null => p.q(`.criterion-feedback[data-criterion="${criterion}"] .quote.ok .text-tertiary`)?.textContent ?? null;
+    // Found in lines 1 and 3, saved in line 3 where the AI named it: the note names line 3, not the first.
+    expect(note('specific-observation')).toBe('Found 2 times in the lines as the AI was shown them; the one highlighted is in line 3.');
+    // Found in lines 1 and 3, the AI named line 5: saved in the first place it was found, and the note says so.
+    expect(note('asks-their-view')).toBe('Found 2 times in the lines as the AI was shown them; the one highlighted is in line 1. The AI named line 5; it was found in line 1.');
+    // Found once, where the AI named it: no note.
+    expect(note('agrees-next-step')).toBeNull();
+    // The highlights are where the notes say: each quote marked in the line it was saved in, and nowhere else.
+    expect(p.all('.transcript mark').map((m) => [m.closest<HTMLElement>('[data-turn]')?.dataset['turn'], m.title, m.textContent])).toEqual([
+      ['1', 'asks-their-view', 'hear what got in the way'],
+      ['3', 'specific-observation', 'agree a new date today'],
+      ['5', 'agrees-next-step', 'write it down before Friday'],
+    ]);
+    // Once the learner deletes the conversation text, the page draws no highlight: the note names the line the quote was saved from, and calls nothing highlighted.
+    const v = await direct(h, 'pev.get_attempt', W.learner, PEV_ACTION.getAttempt, { attemptIri });
+    const red = await direct(h, 'pev.redact_attempt', W.learner, PEV_ACTION.redactAttempt, { attemptIri, target: v['currentTarget'], why: 'The learner deleted the words of their practice.' });
+    expect(red['state']).toBe('redacted');
+    p.w.location.hash = '#/mine';
+    await p.until(() => p.text('#view h1') === 'My practice', 'my practice');
+    p.w.location.hash = `#/attempt/${encodeURIComponent(attemptIri)}`;
+    await p.until(() => p.text('#state') === 'Conversation text deleted' && p.all('.judgments .quote.ok').length === 3, 'the session, its text deleted');
+    expect(p.all('.transcript mark')).toEqual([]);
+    expect(p.all('.judgments .quote.ok q').map((x) => x.textContent)).toEqual(Array(3).fill('(deleted with the conversation text)'));
+    expect(note('specific-observation')).toBe('Found 2 times in the lines as the AI was shown them; it was saved from line 3.');
+    expect(note('asks-their-view')).toBe('Found 2 times in the lines as the AI was shown them; it was saved from line 1. The AI named line 5; it was found in line 1.');
+    expect(note('agrees-next-step')).toBeNull();
+    expect(p.text('.judgments')).not.toContain('highlighted');
+    expect(p.errors).toEqual([]);
+  }, SLOW);
 });
 
 // ═════════════════════════════════════════════════════════════════════════════════════════════
