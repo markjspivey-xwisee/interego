@@ -3,7 +3,22 @@ import * as crypto from 'node:crypto';
 import { hostedPrivacyUrl, type HostedTermsPolicy, type TermsAcceptance } from './hosted-terms.js';
 
 export type PublicPlayKey = { kty: 'EC'; crv: 'P-256'; x: string; y: string };
-export type PlayClient = { agentDid: string; podUrl: string };
+/**
+ * `namespace`: the application's slug, the one pod directory and graph family its guests may write
+ * (the css-gate's `<namespace>/checkpoints/`, the relay's `urn:graph:<namespace>:`). Absent means
+ * DEFAULT_PLAY_NAMESPACE. `maxPods`: this application's own lifetime admission cap, inside the
+ * deployment's (PlayDependencies.maxPods). Absent means only the deployment's cap applies.
+ */
+export type PlayClient = { agentDid: string; podUrl: string; namespace?: string; maxPods?: number };
+/** The namespace of an application that configures none: the first application's, kept byte-identical. */
+export const DEFAULT_PLAY_NAMESPACE = 'hallowmarch';
+/** Names a guest pod already uses (the relay's descriptors and registry, the pod's profile), never an application's. */
+const RESERVED_PLAY_NAMESPACES: ReadonlySet<string> = new Set(['context-graphs', 'agents', 'profile', 'settings', 'inbox', 'play-budget',
+  'play-exchanges', 'play-exchange-limits', 'play-limits', 'auth-methods']);
+/** Whether `value` is a well-formed application namespace: a lowercase slug of 2 to 32 characters, not a reserved name. */
+export function isPlayNamespace(value: unknown): value is string {
+  return typeof value === 'string' && /^[a-z][a-z0-9-]{1,31}$/.test(value) && !RESERVED_PLAY_NAMESPACES.has(value);
+}
 export type PlayGrant = { _signed_payload: string; _signature: string };
 export interface PlayClaims {
   version: 1;
@@ -80,7 +95,12 @@ export function parsePlayClients(raw: string | undefined): ReadonlyMap<string, P
     const pod = new URL(value.podUrl);
     if (pod.protocol !== 'https:' || pod.username || pod.password || pod.search || pod.hash || !pod.pathname.endsWith('/'))
       throw new Error('Invalid provisional Play pod');
-    clients.set(audience, { agentDid: value.agentDid, podUrl: pod.href });
+    if (value.namespace !== undefined && !isPlayNamespace(value.namespace)) throw new Error('Invalid provisional Play namespace');
+    if (value.maxPods !== undefined && (!Number.isInteger(value.maxPods) || value.maxPods < 1 || value.maxPods > 1000))
+      throw new Error('Invalid provisional Play application limit');
+    clients.set(audience, { agentDid: value.agentDid, podUrl: pod.href,
+      ...(value.namespace !== undefined && value.namespace !== DEFAULT_PLAY_NAMESPACE ? { namespace: value.namespace } : {}),
+      ...(value.maxPods !== undefined ? { maxPods: value.maxPods } : {}) });
   }
   return clients;
 }
@@ -113,6 +133,24 @@ export class ProvisionalPlay {
     this.ttlSeconds = Math.min(604800, Math.max(3600, Math.floor(deps.ttlSeconds || 86400)));
     this.maxPods = Math.min(1000, Math.max(1, Math.floor(deps.maxPods || 100)));
     this.now = deps.now ?? (() => Math.floor(Date.now() / 1000));
+  }
+  /**
+   * The namespace a guest token for `audience` carries in its marker: the configured application's,
+   * or undefined for the default one (whose marker stays as it always was) and for an audience that
+   * is not configured.
+   */
+  namespaceFor(audience: string): string | undefined {
+    return this.deps.clients.get(audience)?.namespace;
+  }
+  /**
+   * The marker a guest token for `claims` carries (server.ts ProvisionalTokenGrant). `namespace` is
+   * read from this deployment's configuration for the owner's application, never from the request,
+   * and is left out for the default application, whose marker is unchanged.
+   */
+  tokenGrant(claims: PlayClaims): { audience: string; proofKeyThumbprint: string; expiresAt: number; namespace?: string } {
+    const namespace = this.namespaceFor(claims.audience);
+    return { audience: claims.audience, proofKeyThumbprint: claims.proofKeyThumbprint, expiresAt: claims.expiresAt,
+      ...(namespace !== undefined ? { namespace } : {}) };
   }
   private seal(claims: PlayClaims): string {
     const encoded = Buffer.from(JSON.stringify(claims)).toString('base64url');

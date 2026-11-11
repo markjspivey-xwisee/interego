@@ -1,5 +1,53 @@
 # Changelog
 
+## 2026-11-11 — Provisional Play: a guest's write surface is per application, not Hallowmarch's
+
+Provisional Play was already keyed by application origin
+(`PROVISIONAL_PLAY_CLIENTS`), but what a guest could write was the literal
+`hallowmarch` in three services: the css-gate's two checkpoint paths, the
+relay's two graphs, and the identity janitor's game-data patterns. A second
+application could be admitted and then had nowhere of its own to save.
+
+Each client entry now takes two optional fields (deployment composition only;
+no protocol or ontology change):
+
+- `namespace`, a slug matching `^[a-z][a-z0-9-]{1,31}$`. It replaces the
+  literal in the gate's `<namespace>/checkpoints/<sha256>.json` paths and the
+  relay's `urn:graph:<namespace>:<kind>:<owner>` graphs. The two document kinds
+  are unchanged. Identity reads it from its own configuration, never from a
+  request, and puts it in the signed guest token marker
+  (`provisionalPlay.namespace`) only when it is not `hallowmarch`; a token whose
+  namespace is not the one configured now for its application does not verify.
+  The gate and the relay read it only from that marker, check its shape again,
+  and refuse a credential whose namespace is present and malformed. The relay's
+  persisted OAuth record keeps the field, which its strict parser would
+  otherwise have dropped, turning the guest into a Hallowmarch one after a
+  restart.
+- `maxPods`, that application's own lifetime admission cap, counted from the
+  origins inside the admission ledger's existing attestations.
+  `PROVISIONAL_PLAY_MAX_PODS` still bounds the total and is checked first. The
+  ledger's format is unchanged. New refusal:
+  `503 provisional_play_application_capacity`.
+
+An entry with neither field behaves byte-identically: same marker, same paths,
+same graphs. The janitor now treats `<namespace>/checkpoints/<64 hex>.json`
+under any well-formed namespace as game data (names a guest pod uses for
+something else, such as `context-graphs`, are excluded), so an application
+taken out of configuration does not strand its guests' saves.
+
+Do not change the namespace of an application that has live guests: a guest
+that already bound its graphs under the old one has spent its two bindings, and
+the relay refuses any under the new one (`409 provisional_namespace_changed`).
+
+Rollout: deploy the relay and gate, then identity, and only then configure a
+namespace. A gate from before this change ignores the field and would let a
+second application's guest write the two `hallowmarch/` documents of its own
+pod. See `deploy/identity/PROVISIONAL-PLAY.md`, "More than one application".
+
+Not in this change: Foxxi is not configured as an application, no production
+variable is set, and Foxxi's learner sign-in still refuses provisional
+accounts. Its dashboard guest remains the tab-made wallet account.
+
 ## 2026-11-11 — Foxxi test: the compression test's server binds loopback
 
 `linked-data-answers-are-compressed.test.ts` started its Express app with

@@ -110,3 +110,36 @@ test('budget marker changes, corrupt records, contention and unavailable storage
     error => error.code === 'provisional_play_budget_busy');
   await assert.rejects(reserveProvisionalWrite(guest, 1, limits, { read: async () => { throw new Error('storage offline'); } }), /storage offline/);
 });
+
+test('a marker\'s namespace selects the application\'s own two paths; none means the first application\'s, unchanged', () => {
+  const hash = value => createHash('sha256').update(value).digest('hex');
+  const plain = claims();
+  assert.equal(plain.namespace, 'hallowmarch');
+  const named = data(); named.provisionalPlay.namespace = 'hallowmarch';
+  assert.deepEqual(provisionalCheckpointPaths(verifiedProvisional(named)), provisionalCheckpointPaths(plain));
+  const other = data(); other.provisionalPlay.namespace = 'foxxi';
+  const guest = verifiedProvisional(other);
+  assert.equal(guest.namespace, 'foxxi');
+  const paths = provisionalCheckpointPaths(guest);
+  assert.deepEqual(paths, ['player-profile', 'player-profile-index'].map(kind =>
+    `/${userId}/foxxi/checkpoints/${hash(`urn:graph:foxxi:${kind}:` + hash(ownerDid))}.json`));
+  assert.equal(paths.some(path => provisionalCheckpointPaths(plain).includes(path)), false);
+  assert.equal(checkProvisionalTarget(guest, 'PUT', new URL(paths[0], 'https://gate.example'), initial), null);
+  // Neither application's guest reaches the other's paths, in the same pod.
+  for (const path of provisionalCheckpointPaths(plain)) {
+    assert.throws(() => checkProvisionalTarget(guest, 'PUT', new URL(path, 'https://gate.example'), initial), error => error.status === 403);
+  }
+  for (const path of paths) {
+    assert.throws(() => checkProvisionalTarget(plain, 'PUT', new URL(path, 'https://gate.example'), initial), error => error.status === 403);
+  }
+});
+
+test('a namespace that is present and malformed refuses the credential, and never becomes the default application', () => {
+  for (const namespace of ['', 'F', 'Foxxi', 'f', '1foxxi', '../hallowmarch', 'hallowmarch/checkpoints', 'foxxi/../hallowmarch', '%2e%2e', 'foxxi ',
+    'a'.repeat(33), null, 7, true, ['foxxi'], { toString: () => 'foxxi' }]) {
+    const value = data(); value.provisionalPlay.namespace = namespace;
+    assert.throws(() => verifiedProvisional(value), error => error.status === 401 && error.code === 'provisional_play_invalid', String(namespace));
+  }
+  // Claims that did not come through verifiedProvisional are refused as well, not spelled into a path.
+  assert.throws(() => provisionalCheckpointPaths({ userId, ownerDid, namespace: '../x' }), error => error.status === 401);
+});

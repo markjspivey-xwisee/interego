@@ -2,6 +2,7 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { test } from 'node:test';
+import { parseProvisionalPlay } from '../provisional-play.js';
 import { bootstrapProvisionalPod, chargeProvisionalExchange, claimProvisionalExchange, createProvisionalToolGuard, playHash, provisionalGraphs,
   PROVISIONAL_EXCHANGE_LIMIT,
   ProvisionalPlayError, validateProvisionalTool, verifyProvisionalExchange, type PlayFetchInit } from '../provisional-play.js';
@@ -326,4 +327,66 @@ test('public and internal resource spellings reject traversal before URL normali
     ]) assert.throws(() => validateProvisionalTool('get_descriptor', { url: origin + path }, principal, storeAliases),
       code('provisional_resource_forbidden'));
   }
+});
+
+// A second application (identity's PROVISIONAL_PLAY_CLIENTS `namespace`): the marker names it, and
+// the guest's two graphs are that application's.
+const foxxiPrincipal = { ...principal, provisionalPlay: { ...play, audience: 'https://learn.example', namespace: 'foxxi' } };
+test('a marker without a namespace is the first application\'s, its graphs unchanged', () => {
+  const suffix = playHash(principal.ownerDid);
+  assert.deepEqual(provisionalGraphs(principal), ['urn:graph:hallowmarch:player-profile:' + suffix, 'urn:graph:hallowmarch:player-profile-index:' + suffix]);
+  assert.deepEqual(Object.keys(parseProvisionalPlay(play)!), ['audience', 'proofKeyThumbprint', 'expiresAt']);
+});
+test('a second application\'s guest binds and reads only its own two graphs, never the first application\'s', () => {
+  const suffix = playHash(foxxiPrincipal.ownerDid);
+  const graphs = provisionalGraphs(foxxiPrincipal);
+  assert.deepEqual(graphs, ['urn:graph:foxxi:player-profile:' + suffix, 'urn:graph:foxxi:player-profile-index:' + suffix]);
+  for (const graph of graphs) {
+    assert.equal(validateProvisionalTool('publish_context', binding(graph), foxxiPrincipal), 'graph:' + graph);
+    assert.equal(validateProvisionalTool('get_current_head', { urn: graph }, foxxiPrincipal), undefined);
+    assert.throws(() => validateProvisionalTool('publish_context', binding(graph), principal), code('provisional_checkpoint_only'));
+    assert.throws(() => validateProvisionalTool('get_current_head', { urn: graph }, principal), code('provisional_graph_forbidden'));
+  }
+  for (const graph of provisionalGraphs(principal)) {
+    assert.throws(() => validateProvisionalTool('publish_context', binding(graph), foxxiPrincipal), code('provisional_checkpoint_only'));
+    assert.throws(() => validateProvisionalTool('get_current_head', { urn: graph }, foxxiPrincipal), code('provisional_graph_forbidden'));
+  }
+});
+test('the namespace survives parsing, and a malformed one refuses the authority instead of becoming the default', () => {
+  assert.deepEqual(parseProvisionalPlay({ ...play, namespace: 'foxxi', extra: 1 }), { ...play, namespace: 'foxxi' });
+  for (const namespace of ['', 'f', 'Foxxi', '1foxxi', '../hallowmarch', 'foxxi:player-profile', 'foxxi/x', 'a'.repeat(33), null, 7, ['foxxi']]) {
+    assert.throws(() => parseProvisionalPlay({ ...play, namespace }), code('invalid_provisional_authority'), String(namespace));
+    const forged = { ...principal, provisionalPlay: { ...play, namespace } as unknown as typeof play };
+    assert.throws(() => validateProvisionalTool('get_pod_status', {}, forged), code('invalid_provisional_authority'), String(namespace));
+  }
+});
+test('the exchange carries identity\'s namespace into the relay principal', async () => {
+  const marked = { ...play, namespace: 'foxxi' };
+  const p = provider({ ...me, provisionalPlay: marked });
+  const identity = await verifyProvisionalExchange(request, { identityUrl: 'https://id.example', fetch: p.fetch });
+  assert.deepEqual(identity.provisionalPlay, marked);
+  assert.deepEqual(provisionalGraphs(identity), provisionalGraphs({ ...principal, provisionalPlay: marked }));
+  await assert.rejects(verifyProvisionalExchange(request, { identityUrl: 'https://id.example',
+    fetch: provider({ ...me, provisionalPlay: { ...play, namespace: '../x' } }).fetch }), code('invalid_provisional_authority'));
+});
+
+test('a guest bound under one namespace binds nothing under another: refused before any write, the record unchanged', async () => {
+  const store = pod(); let invoked = 0;
+  const guard = createProvisionalToolGuard({ podUrl: 'https://store.example/oauth/', fetch: store.fetch, withMutex: mutex, assertUnpublished: async () => {} });
+  const ok = async () => { invoked++; return JSON.stringify({ ok: true }); };
+  await guard('register_agent', recipient, principal, ok);
+  for (const graph of provisionalGraphs(principal)) await guard('publish_context', binding(graph), principal, ok);
+  assert.equal(invoked, 3);
+  const before = JSON.stringify([...store.files.values()].map(file => file.body));
+  // The operator then names a namespace for the application: the same owner, a marker that names it.
+  const moved = { ...principal, provisionalPlay: { ...play, namespace: 'foxxi' } };
+  for (const graph of provisionalGraphs(moved)) {
+    await assert.rejects(guard('publish_context', binding(graph), moved, ok), code('provisional_namespace_changed'));
+  }
+  await assert.rejects(guard('register_agent', recipient, moved, ok), code('provisional_namespace_changed'));
+  assert.equal(invoked, 3);
+  assert.equal(JSON.stringify([...store.files.values()].map(file => file.body)), before, 'no fourth entry is ever written');
+  // Under its original namespace the guest's cached bindings still answer.
+  assert.equal(await guard('publish_context', binding(provisionalGraphs(principal)[0]), principal, ok), JSON.stringify({ ok: true }));
+  assert.equal(invoked, 3);
 });
