@@ -356,3 +356,38 @@ test('a close that fails changes nothing more', async () => {
 test('cleanup never accepts non-Play owner identifiers', async () => {
   await assert.rejects(purgeProvisionalPlayPod({ userId: 'canonical-owner', cssUrl, close: async () => 'purge' }), /non-Play/);
 });
+
+test('a second application\'s guest is cleaned up as the first\'s: its saves and budget by native delete, then its two containers', async () => {
+  const foxxi = `foxxi/checkpoints/${sha('save')}.json`;
+  const index = `foxxi/checkpoints/${sha('index')}.json`;
+  const pod = fakePod({ 'auth-methods.jsonld': 'plain', agents: 'plain', [foxxi]: 'native', [index]: 'native', [budget]: 'native' });
+  const purge = await purgeProvisionalPlayPod({ userId, cssUrl, fetcher: pod.fetcher, close: async () => 'purge' });
+  assert.deepEqual(purge, { outcome: 'purged', retained: [] });
+  assert.ok(pod.has('auth-methods.jsonld'));
+  for (const gone of [foxxi, index, budget, 'foxxi/', 'foxxi/checkpoints/', 'agents']) assert.equal(pod.has(gone), false, gone);
+  assert.deepEqual(pod.events.filter(event => event.startsWith('NATIVE-DELETE')).map(event => event.split(' ')[1]).sort(), [foxxi, index, budget].sort());
+});
+
+test('game data is an application namespace\'s checkpoints only: a name a guest pod uses for something else, or a malformed one, is none', () => {
+  const digest = sha('save');
+  const at = (...paths: string[]) => paths.map(path => `${root}${path}`);
+  for (const namespace of ['hallowmarch', 'foxxi', 'foxxi-learning', 'a1']) {
+    assert.equal(isPlayGameData(new URL(root), `${root}${namespace}/checkpoints/${digest}.json`), true, namespace);
+    assert.deepEqual(playGameDataResidue(new URL(root), at(`${namespace}/`, `${namespace}/checkpoints/`, `${namespace}/checkpoints/${digest}.json`)),
+      { gameData: [`${namespace}/checkpoints/${digest}.json`], outside: [], record: false }, namespace);
+  }
+  for (const namespace of ['context-graphs', 'agents', 'profile', 'play-limits', 'Foxxi', 'f', '1foxxi', 'foxxi_x', 'a'.repeat(33), 'fo%78xi']) {
+    const path = `${namespace}/checkpoints/${digest}.json`;
+    assert.equal(isPlayGameData(new URL(root), `${root}${path}`), false, namespace);
+    assert.deepEqual(playGameDataResidue(new URL(root), at(`${namespace}/`, `${namespace}/checkpoints/`, path)),
+      { gameData: [], outside: [`${namespace}/`, `${namespace}/checkpoints/`, path], record: false }, namespace);
+  }
+});
+
+test('the native delete is refused under a name that is no application namespace, before anything is sent', async () => {
+  const digest = sha('save');
+  const pod = fakePod({ 'auth-methods.jsonld': 'plain', [`context-graphs/checkpoints/${digest}.json`]: 'native' });
+  const request = (url: string, init?: RequestInit) => pod.fetcher(url, init);
+  await assert.rejects(deleteGameData(new URL(root), request)(`${root}context-graphs/checkpoints/${digest}.json`), /outside the Play game data/);
+  assert.deepEqual(pod.events, []);
+});

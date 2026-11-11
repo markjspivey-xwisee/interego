@@ -327,6 +327,25 @@ async function run() {
       'gate introspection preserves the provisional marker');
     const through = await loadAccessTokenByRaw(tokens.access_token, cfg);
     ok(through?.extra?.provisionalPlay?.expiresAt === deadline, 'single-record read-through preserves provisional deadline');
+    ok(restored.extra?.provisionalPlay?.namespace === undefined && !('namespace' in (restored.extra?.provisionalPlay ?? {})),
+      'a marker without an application namespace is persisted without one');
+    // A second application's marker keeps its namespace through persistence, restart and introspection:
+    // dropped, the guest would be taken for the first application's.
+    {
+      const foxxiPod = makeStubPod();
+      const foxxiCfg: OAuthTokenStoreConfig = { podUrl: POD, fetch: foxxiPod.fetch, log: () => {} };
+      const foxxi = { ...identity, provisionalPlay: { ...identity.provisionalPlay, audience: 'https://learn.example', namespace: 'foxxi' } };
+      const issuer = new InteregoOAuthProvider({ identityUrl: 'https://identity.invalid', resourceIdentifier: 'https://relay.invalid',
+        persistAccessToken: (token, info) => persistAccessToken(token, info, foxxiCfg) });
+      const granted = await issuer.issueProvisionalAccessToken(foxxi);
+      const again = new InteregoOAuthProvider({ identityUrl: 'https://identity.invalid',
+        resourceIdentifier: 'https://relay.invalid', initialAccessTokensBySha: await loadAccessTokens(foxxiCfg) });
+      const back = await again.verifyAccessToken(granted.access_token) as InteregoAuthInfo;
+      ok(back.extra?.provisionalPlay?.namespace === 'foxxi', 'an application namespace survives persisted-token restart');
+      ok(again.introspectAccessToken(granted.access_token)?.provisionalPlay?.namespace === 'foxxi', 'gate introspection carries the application namespace');
+      ok((await loadAccessTokenByRaw(granted.access_token, foxxiCfg))?.extra?.provisionalPlay?.namespace === 'foxxi',
+        'single-record read-through carries the application namespace');
+    }
 
     let rejectedToken = '';
     const failing = new InteregoOAuthProvider({ identityUrl: 'https://identity.invalid',

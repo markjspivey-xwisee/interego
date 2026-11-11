@@ -576,6 +576,12 @@ interface ProvisionalTokenGrant {
   audience: string;
   proofKeyThumbprint: string;
   expiresAt: number;
+  /**
+   * The application's namespace (PROVISIONAL_PLAY_CLIENTS), only where it configures one that is not
+   * the default: the relay and the css-gate read what the guest may write from it, and take a marker
+   * without it for the default application's. Never a caller's value.
+   */
+  namespace?: string;
 }
 
 // In-memory stores. `identities` and `keys` are cheap-to-rebuild bookkeeping
@@ -2673,7 +2679,10 @@ async function verifyToken(token: string): Promise<{ valid: boolean; record?: To
       const owner = provisionalPlay.open(methods.provisionalPlayAnchor);
       if (owner.userId !== payload.userId || owner.authenticatedAgentId !== payload.agentId
         || owner.audience !== payload.provisionalPlay.audience || owner.proofKeyThumbprint !== payload.provisionalPlay.proofKeyThumbprint
-        || owner.expiresAt !== payload.provisionalPlay.expiresAt) return { valid: false, reason: 'Provisional owner binding mismatch' };
+        || owner.expiresAt !== payload.provisionalPlay.expiresAt
+        // The marker's namespace is the one configured for the owner's application now: a token
+        // issued before an operator changed it does not carry the old write surface on.
+        || provisionalPlay.namespaceFor(owner.audience) !== payload.provisionalPlay.namespace) return { valid: false, reason: 'Provisional owner binding mismatch' };
       // The record just read decides, not this server's copy, which can be behind it: the copy made
       // the tombstone above (a deletion this process answered 503) stays one after the other
       // instance's provisioning puts the owner back over it, keeping its session epoch. Decided on
@@ -5231,9 +5240,7 @@ const provisionalPlay = createProvisionalPlayProvider({
   issueCredential: async claims => {
     const user = identities.get(claims.userId);
     if (!user || user.type !== 'user') throw new Error('Provisional owner unavailable');
-    return { ...await issueTokenResponse(user, undefined, {
-      audience: claims.audience, proofKeyThumbprint: claims.proofKeyThumbprint, expiresAt: claims.expiresAt,
-    }), podUrl: claims.podUrl };
+    return { ...await issueTokenResponse(user, undefined, provisionalPlay.tokenGrant(claims)), podUrl: claims.podUrl };
   },
   recoverSigner: async (message, signature) => (await loadEthers()).verifyMessage(message, signature),
 });

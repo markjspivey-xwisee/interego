@@ -36,7 +36,18 @@ export function createProvisionalWriteLimiter() {
   };
 }
 
-/** Only a trusted verifier can supply this marker. A malformed marker never becomes ordinary ownership. */
+/** The application namespace of a marker that names none: the first application's, unchanged. */
+export const DEFAULT_PLAY_NAMESPACE = 'hallowmarch';
+const NAMESPACE = /^[a-z][a-z0-9-]{1,31}$/;
+
+/**
+ * Only a trusted verifier can supply this marker. A malformed marker never becomes ordinary ownership.
+ *
+ * `marker.namespace` is the application's slug, set by identity from its own configuration
+ * (PROVISIONAL_PLAY_CLIENTS) inside the signed token: it selects the one directory and graph family
+ * the guest may write. Absent means DEFAULT_PLAY_NAMESPACE. One that is present and malformed
+ * refuses the credential; it never falls back to the default application's paths.
+ */
 export function verifiedProvisional(data, now = Date.now()) {
   if (data.provisionalPlay === undefined) return undefined;
   const marker = data.provisionalPlay;
@@ -49,18 +60,22 @@ export function verifiedProvisional(data, now = Date.now()) {
     || !/^did:web:[a-zA-Z0-9.:%-]+:users:u-try-play-[a-f0-9]{32}$/.test(data.ownerDid)
     || !audience || audience.protocol !== 'https:' || audience.origin !== marker.audience
     || !/^[A-Za-z0-9_-]{43}$/.test(marker.proofKeyThumbprint)
+    || (marker.namespace !== undefined && (typeof marker.namespace !== 'string' || !NAMESPACE.test(marker.namespace)))
     || !Number.isSafeInteger(marker.expiresAt) || marker.expiresAt * 1000 <= now
     || marker.expiresAt * 1000 > now + 7 * 24 * 60 * 60 * 1000 + 60_000) {
     throw refusal(401, 'provisional_play_invalid', 'provisional play credential is invalid or expired');
   }
   return Object.freeze({ audience: marker.audience, proofKeyThumbprint: marker.proofKeyThumbprint,
-    expiresAt: marker.expiresAt, userId: data.userId, ownerDid: data.ownerDid });
+    expiresAt: marker.expiresAt, userId: data.userId, ownerDid: data.ownerDid,
+    namespace: marker.namespace ?? DEFAULT_PLAY_NAMESPACE });
 }
 
 export function provisionalCheckpointPaths(claims) {
   const owner = sha256(claims.ownerDid);
+  const namespace = claims.namespace ?? DEFAULT_PLAY_NAMESPACE;
+  if (typeof namespace !== 'string' || !NAMESPACE.test(namespace)) throw refusal(401, 'provisional_play_invalid', 'provisional play credential is invalid or expired');
   return ['player-profile', 'player-profile-index'].map(kind =>
-    `/${claims.userId}/hallowmarch/checkpoints/${sha256(`urn:graph:hallowmarch:${kind}:${owner}`)}.json`);
+    `/${claims.userId}/${namespace}/checkpoints/${sha256(`urn:graph:${namespace}:${kind}:${owner}`)}.json`);
 }
 
 export function checkProvisionalTarget(claims, method, target, headers) {

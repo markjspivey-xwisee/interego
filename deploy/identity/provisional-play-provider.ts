@@ -105,7 +105,8 @@ export function createProvisionalPlayProvider(options: PlayProviderOptions): Pro
               return true;
             },
             validate: value => play.open(value),
-          }, owner, anchor, limit),
+            audienceOf: value => { try { return play.open(value, true).audience; } catch { return null; } },
+          }, owner, anchor, limit, clients.get(owner.audience)?.maxPods),
           empty: options.empty, validate: anchor => play.open(anchor), committed: options.committed,
         }, claims, attestation, maxPods, receipt,
         options.hostedTerms && { requiredVersion: options.hostedTerms.version, acceptance }));

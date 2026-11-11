@@ -1,3 +1,4 @@
+import { isPlayNamespace } from './provisional-play.js';
 /**
  * Bounded, own-pod-only cleanup; physical PGSL history reclamation is separate.
  *
@@ -25,7 +26,7 @@
  * If-Match: * fails there), so a purge that deleted the record (it used to, last but the root) let
  * such a write re-create the owner afterwards.
  *
- * A guest's game data (PLAY_GAME_DATA: its saves, `hallowmarch/checkpoints/<64 hex>.json`, and its
+ * A guest's game data (PLAY_GAME_DATA: its saves, `<namespace>/checkpoints/<64 hex>.json`, and its
  * write budget, `play-budget.json`) is written by the css-gate only as native commits, which the
  * production store (CSS 7.2 with the PGSL accessor) keeps as native-managed heads: no plain DELETE
  * removes one (with or without If-Match, it is a 409 every time). Each is deleted by the store's
@@ -73,11 +74,24 @@ export interface PlayPodPurge {
 
 /**
  * A Play pod's game data, by path relative to the pod's root: the css-gate's checkpoints
- * (`hallowmarch/checkpoints/<sha256 hex>.json`) and its write budget (`play-budget.json`), the only
+ * (`<namespace>/checkpoints/<sha256 hex>.json`) and its write budget (`play-budget.json`), the only
  * documents a guest's token can write (deploy/css-gate/provisional-play.mjs). Nothing else is ever
  * sent a native delete.
+ *
+ * `<namespace>` is any well-formed application namespace (isPlayNamespace: `hallowmarch`, the
+ * default, among them), not only one configured now: the pod is a guest's and already closed for
+ * the purge, and an application taken out of PROVISIONAL_PLAY_CLIENTS before its guests are purged
+ * must not leave their saves on the store. A name a guest pod uses for something else
+ * (`context-graphs`, `agents`, ...) is not a namespace, and nothing under it is game data.
  */
-const PLAY_GAME_DATA: readonly RegExp[] = [/^hallowmarch\/checkpoints\/[0-9a-f]{64}\.json$/, /^play-budget\.json$/];
+const PLAY_GAME_DATA: readonly RegExp[] = [/^([a-z][a-z0-9-]{1,31})\/checkpoints\/[0-9a-f]{64}\.json$/, /^play-budget\.json$/];
+/** The two containers that hold an application's saves: `<namespace>/` and `<namespace>/checkpoints/`. */
+const PLAY_GAME_CONTAINER = /^([a-z][a-z0-9-]{1,31})\/(?:checkpoints\/)?$/;
+/** Whether `relative` matches `pattern`, its first group (where it has one) an application namespace. */
+function matchesGameData(pattern: RegExp, relative: string): boolean {
+  const match = pattern.exec(relative);
+  return !!match && (match[1] === undefined || isPlayNamespace(match[1]));
+}
 
 /** The path of `url` relative to the pod's root `root`, or null where `url` is not a plain URL inside it. */
 function inPod(root: URL, url: string): string | null {
@@ -96,7 +110,7 @@ function decoded(path: string): string {
 /** Whether `url` is one of the game data (PLAY_GAME_DATA) of the pod whose root is `root`. */
 export function isPlayGameData(root: URL, url: string): boolean {
   const relative = inPod(root, url);
-  return relative !== null && PLAY_GAME_DATA.some(pattern => pattern.test(relative));
+  return relative !== null && PLAY_GAME_DATA.some(pattern => matchesGameData(pattern, relative));
 }
 
 /** What a listing of a Play pod holds (playGameDataResidue), by path relative to the pod's root. */
@@ -113,13 +127,13 @@ export interface PlayGameDataResidue {
  * What `listed` (purgeProvisionalPlayPod's listing of the pod whose root is `root`, as close() is given
  * it) holds: the game-data backfill (server.ts reopenFinishedPlayPurge) re-opens only a purge whose pod
  * holds game data and nothing `outside` it. Only those exact spellings count as the root, the record
- * and the containers `hallowmarch/` and `hallowmarch/checkpoints/`.
+ * and the containers `<namespace>/` and `<namespace>/checkpoints/` of an application namespace.
  */
 export function playGameDataResidue(root: URL, listed: readonly string[]): PlayGameDataResidue {
   const residue: PlayGameDataResidue = { gameData: [], outside: [], record: false };
   for (const url of listed) {
     const relative = inPod(root, url);
-    if (relative === '' || relative === 'hallowmarch/' || relative === 'hallowmarch/checkpoints/') continue;
+    if (relative === '' || (relative !== null && matchesGameData(PLAY_GAME_CONTAINER, relative))) continue;
     if (relative === 'auth-methods.jsonld') residue.record = true;
     else if (relative !== null && isPlayGameData(root, url)) residue.gameData.push(relative);
     else residue.outside.push(relative ?? url);

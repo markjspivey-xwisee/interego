@@ -6,7 +6,16 @@ export interface ProvisionalPlay {
   proofKeyThumbprint: string;
   /** Unix seconds, fixed at guest creation. Never extended by an exchange. */
   expiresAt: number;
+  /**
+   * The application's namespace, set by identity from its own configuration inside the signed token,
+   * only for an application that is not the default one. It selects the two graphs the guest may
+   * bind (provisionalGraphs). Absent means DEFAULT_PLAY_NAMESPACE.
+   */
+  namespace?: string;
 }
+/** The application namespace of a marker that names none: the first application's, unchanged. */
+export const DEFAULT_PLAY_NAMESPACE = 'hallowmarch';
+const PLAY_NAMESPACE = /^[a-z][a-z0-9-]{1,31}$/;
 export interface ProvisionalPrincipal {
   userId: string; agentId: string; ownerWebId: string; ownerDid: string; podUrl: string;
   provisionalPlay: ProvisionalPlay;
@@ -47,8 +56,11 @@ export function parseProvisionalPlay(value: unknown): ProvisionalPlay | undefine
   const p = value as ProvisionalPlay;
   if (!p || typeof p.audience !== 'string' || !p.audience || p.audience.length > 256
     || typeof p.proofKeyThumbprint !== 'string' || !/^[A-Za-z0-9_-]{43}$/.test(p.proofKeyThumbprint)
-    || !Number.isSafeInteger(p.expiresAt) || p.expiresAt <= 0) refuse(401, 'invalid_provisional_authority');
-  return { audience: p.audience, proofKeyThumbprint: p.proofKeyThumbprint, expiresAt: p.expiresAt };
+    || !Number.isSafeInteger(p.expiresAt) || p.expiresAt <= 0
+    // A namespace that is present and malformed refuses the authority: it never becomes the default application's.
+    || (p.namespace !== undefined && (typeof p.namespace !== 'string' || !PLAY_NAMESPACE.test(p.namespace)))) refuse(401, 'invalid_provisional_authority');
+  return { audience: p.audience, proofKeyThumbprint: p.proofKeyThumbprint, expiresAt: p.expiresAt,
+    ...(p.namespace !== undefined ? { namespace: p.namespace } : {}) };
 }
 export function assertLivePlay(play: ProvisionalPlay, now = Date.now()): void {
   parseProvisionalPlay(play);
@@ -185,7 +197,9 @@ function samePodSelector(args: Record<string, unknown>, p: ProvisionalPrincipal)
 }
 export function provisionalGraphs(p: ProvisionalPrincipal): string[] {
   const suffix = playHash(p.ownerDid);
-  return ['urn:graph:hallowmarch:player-profile:' + suffix, 'urn:graph:hallowmarch:player-profile-index:' + suffix];
+  const namespace = p.provisionalPlay.namespace ?? DEFAULT_PLAY_NAMESPACE;
+  if (!PLAY_NAMESPACE.test(namespace)) refuse(401, 'invalid_provisional_authority');
+  return ['urn:graph:' + namespace + ':player-profile:' + suffix, 'urn:graph:' + namespace + ':player-profile-index:' + suffix];
 }
 export interface ProvisionalStoreAliases { internalStoreUrl: string; publicStoreUrl: string }
 /** Only a configured store alias may change spelling; the own-pod check still decides access. */
