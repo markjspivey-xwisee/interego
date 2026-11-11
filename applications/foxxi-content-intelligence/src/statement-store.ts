@@ -252,8 +252,8 @@ function statementBodyEqual(a: Record<string, unknown>, b: Record<string, unknow
 //   round-38  TenantPartition.MAX        = 20_000  tenant partitions
 // What exhausts the heap is the PRODUCT — 20_000 × 50_000 = 1_000_000_000 resident
 // statements. Measured against these exact classes a representative xAPI 2.0 statement
-// costs ~845 B of heap, so the bridge's 3072 MiB heap (NODE_OPTIONS
-// --max-old-space-size=3072) is gone at ~3.8 M statements: 262x BELOW what the caps
+// costs ~845 B of heap, so a 3072 MiB heap (the NODE_OPTIONS
+// --max-old-space-size the bridge then ran with) is gone at ~3.8 M statements: 262x BELOW what the caps
 // allow. Neither cap can fire first — 20_000 tenants x 191 statements OOMs the process
 // with the per-tenant cap untouched, and 77 tenants x 50_000 OOMs it with the tenant cap
 // untouched. Both guards were unreachable on the path they were written for, which is why

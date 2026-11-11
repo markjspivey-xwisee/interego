@@ -1,5 +1,25 @@
 # Changelog
 
+## 2026-11-11 — Foxxi bridge: linked-data answers are compressed, and its memory floor follows its heap
+
+The edge in front of the bridge compresses JSON and HTML but not JSON-LD or
+Turtle, which are the bridge's largest answers. The bridge now compresses those
+itself, with brotli or gzip as the client accepts: the entry point goes from
+269 KB to 60 KB, the Turtle affordance manifest from 652 KB to 80 KB and an
+ontology from 122 KB to 14 KB (measured on a local run). Each encoding has its
+own ETag and the answer varies on `Accept-Encoding`. Streams, files, small
+answers, plain JSON and `no-transform` answers are left as they are.
+
+The bridge's heap setting on the live service was lowered from 3072 MiB to
+1536 MiB on 2026-11-11, after the process settled at about 350 MiB. The
+recorded memory floor for `foxxi-bridge` in `tools/railway-services.mjs`
+follows it: 2 GiB, from 4 GiB. No limit override is set on the service, so this
+changes what the guard would flag, not what the service is given.
+
+The dashboard's sign-in card links to the bridge's `/start` page.
+
+Not covered: the workbench page at `/i2idlx/` (2.1 MB, 514 KB as the edge
+gzips it) is served as a file and is not touched by this.
 ## 2026-11-11 — Dependencies: fixed releases of the MCP SDK and minimatch under claude-code-acp, by an npm override
 
 `@zed-industries/claude-code-acp` 0.16.2, a root dev dependency and its newest
