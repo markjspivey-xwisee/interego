@@ -24,7 +24,7 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { verdict, runsForSha, nextStep, retryable, MIN_RUNS, REQUIRED_RUNS, POST_DEPLOY_WORKFLOWS } from '../tools/ci-green-for-sha.mjs';
+import { verdict, runsForSha, nextStep, retryable, MIN_RUNS, REQUIRED_RUNS, POST_DEPLOY_WORKFLOWS, FLEET_AUDIT_WORKFLOWS, NON_GATING_WORKFLOWS } from '../tools/ci-green-for-sha.mjs';
 
 const done = (name: string, conclusion: string) => ({ name, status: 'completed', conclusion });
 /** The run every push starts, whose presence proves the listing is real. */
@@ -147,6 +147,45 @@ describe('the gate excludes its own run, or it waits for itself forever', () => 
     const deploy = readFileSync(fileURLToPath(new URL('../.github/workflows/auto-deploy.yml', import.meta.url)), 'utf8');
     expect(deploy).toMatch(/gh workflow run client-signature-live\.yml/);
     expect(deploy, 'a uses: of the check inside auto-deploy.yml holds the rollout lock for the whole test').not.toMatch(/uses:\s*\.\/\.github\/workflows\/client-signature-live\.yml/);
+  });
+  it('★ drops the fleet audit: run on a schedule or by hand onto whatever master is, a red audit must not hold that commit\'s deploy', async () => {
+    // 2026-11-11, run 43042832069: a dispatched audit on 3d974242 reported the services behind
+    // master, and the gate then refused the rollout that would have brought them up to it.
+    const got = await runsForSha('a'.repeat(40), {
+      repo: 'o/r', token: 't', self: 'Auto-deploy master',
+      fetchFn: async () => reply([
+        { name: 'Railway fleet audit', status: 'completed', conclusion: 'failure' },
+        { name: 'ESLint', status: 'completed', conclusion: 'success' },
+        { name: 'Bridge Typecheck', status: 'completed', conclusion: 'success' },
+      ]),
+    });
+    expect(got.map((r) => r.name)).toEqual(['ESLint', 'Bridge Typecheck']);
+    expect(verdict(got).state, 'a red fleet audit read as red CI for the commit it landed on').toBe('green');
+    expect(NON_GATING_WORKFLOWS).toEqual([...POST_DEPLOY_WORKFLOWS, ...FLEET_AUDIT_WORKFLOWS]);
+  });
+
+  it('★ only the audit is dropped: a failed test workflow on the same commit still refuses', async () => {
+    const got = await runsForSha('a'.repeat(40), {
+      repo: 'o/r', token: 't', self: 'Auto-deploy master',
+      fetchFn: async () => reply([
+        { name: 'Railway fleet audit', status: 'completed', conclusion: 'failure' },
+        { name: 'ESLint', status: 'completed', conclusion: 'success' },
+        { name: 'Identity Server Tests', status: 'completed', conclusion: 'failure' },
+      ]),
+    });
+    const v = verdict([...got, { name: 'Bridge Typecheck', status: 'completed', conclusion: 'success' }]);
+    expect(v.state).toBe('red');
+    expect(v.failed).toEqual(['Identity Server Tests: failure']);
+  });
+
+  it('★ the audit it drops is named as the workflow names itself, and that workflow never runs on a push', () => {
+    const workflow = readFileSync(fileURLToPath(new URL('../.github/workflows/railway-fleet-audit.yml', import.meta.url)), 'utf8');
+    const name = /^name:\s*(.+?)\s*$/m.exec(workflow)?.[1];
+    expect(name).toBeDefined();
+    expect(FLEET_AUDIT_WORKFLOWS).toContain(name);
+    const on = /^on:\n((?:[ \t].*\n|\n)+)/m.exec(workflow)?.[1] ?? '';
+    expect(on, 'the audit gained a trigger; a push or pull_request run is a check on that commit and must gate it').not.toMatch(/^\s{2}(push|pull_request|pull_request_target)\s*:/m);
+    expect(on).toMatch(/^\s{2}schedule\s*:/m);
   });
   it('★ refuses when GitHub does not answer, rather than reporting an empty list', async () => {
     await expect(runsForSha('a'.repeat(40), {

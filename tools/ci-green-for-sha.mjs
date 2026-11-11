@@ -78,17 +78,31 @@ export const REQUIRED_RUNS = ['ESLint'];
  */
 export const POST_DEPLOY_WORKFLOWS = ['Client signature live check'];
 
+/**
+ * Workflows that audit the fleet rather than test a commit, and never gate a deploy. Their own
+ * header says so ("Nothing here gates a deploy"): railway-fleet-audit.yml runs on a schedule or when
+ * dispatched, and GitHub files either run under the branch head of that moment. Counted here, a red
+ * audit (a service behind master, an untracked service) held that commit's deploy: on 2026-11-11 a
+ * dispatched run on 3d974242 refused the rollout that would have brought the services it reported as
+ * behind up to master, the drift blocking its own fix. Dropped from the listing like the post-deploy
+ * check; read in the Actions tab. Keep the names in step with the workflows' `name:`.
+ */
+export const FLEET_AUDIT_WORKFLOWS = ['Railway fleet audit'];
+
+/** Every workflow this gate leaves out of a commit's runs by default, besides its own and Dependabot's. */
+export const NON_GATING_WORKFLOWS = [...POST_DEPLOY_WORKFLOWS, ...FLEET_AUDIT_WORKFLOWS];
+
 /** A conclusion that does not stop a deploy. `cancelled` is absent on purpose — see the header. */
 const PASSING = new Set(['success', 'skipped', 'neutral']);
 
 /**
- * Runs for `sha`, excluding this workflow's own, its post-deploy checks and GitHub's dependency updater.
+ * Runs for `sha`, excluding this workflow's own, its post-deploy checks, the fleet audit and GitHub's dependency updater.
  *
  * ★ EXCLUDING SELF IS NOT OPTIONAL: this tool runs INSIDE one of the runs it would otherwise wait
  * for, so counting itself deadlocks until the timeout and then reports a failure that is only the
  * gate waiting for the gate.
  */
-export async function runsForSha(sha, { repo, token, self, ignore = POST_DEPLOY_WORKFLOWS, fetchFn = fetch }) {
+export async function runsForSha(sha, { repo, token, self, ignore = NON_GATING_WORKFLOWS, fetchFn = fetch }) {
   const url = `${API}/repos/${repo}/actions/runs?head_sha=${sha}&per_page=100`;
   const res = await fetchFn(url, {
     headers: {
