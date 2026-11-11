@@ -71,8 +71,50 @@ jobs:
             let id = nativeId || goldenId;
             const expectedSha = context.payload.pull_request?.head.sha;
             const expectedPr = context.payload.pull_request?.number;
+            const expectedBranch = context.payload.pull_request?.head.ref;
+            const NATIVE = 'I2IDL-X bounded native diagnostic';
+            const GOLDEN = 'I2IDL-X complete golden parity';
+            // One eligibility predicate for the candidate loop and the final validation, so
+            // they cannot drift. It returns the first check that excludes a run, or null.
+            // Identity checks come first; a manual dispatch has no PR head or number.
+            const exclusion = run => {
+              const nativeRun = run.name === NATIVE;
+              const path = nativeRun ? '.github/workflows/i2idlx-native-diagnostic.yml' : '.github/workflows/i2idlx-golden-parity.yml';
+              const foreign = (check, detail) => ({ check, detail, identity: true });
+              const unfinished = (check, detail) => ({ check, detail, identity: false });
+              if (!nativeRun && run.name !== GOLDEN) return foreign('name', run.name + ' is neither build workflow');
+              if (run.path !== path) return foreign('path', run.path + ', expected ' + path);
+              if (run.repository?.full_name !== repository) return foreign('repository', (run.repository?.full_name || 'none') + ', expected ' + repository);
+              if (run.head_repository?.full_name !== repository) return foreign('head_repository', (run.head_repository?.full_name || 'none') + ', expected ' + repository);
+              if (expectedSha && run.head_sha !== expectedSha) return foreign('head_sha', run.head_sha + ', expected ' + expectedSha);
+              if (expectedPr && run.event !== 'pull_request') return foreign('event', run.event + ', expected pull_request');
+              if (expectedPr && (!expectedBranch || run.head_branch !== expectedBranch)) {
+                return foreign('head_branch', run.head_branch + ', expected ' + expectedBranch);
+              }
+              // GitHub lists only open pull requests on a run, so the list is empty once this one is
+              // merged or closed. The head repository, commit, event and branch above still bind the
+              // run to it; a list naming only other pull requests still excludes it.
+              const prs = run.pull_requests || [];
+              if (expectedPr && prs.length && !prs.some(pr => pr.number === expectedPr)) {
+                return foreign('pull_requests', prs.map(pr => '#' + pr.number).join(' ') + ', expected #' + expectedPr);
+              }
+              if (run.status !== 'completed') return unfinished('status', run.status + ', expected completed');
+              if (nativeRun && run.conclusion !== 'success') return unfinished('conclusion', run.conclusion + ', expected success');
+              return null;
+            };
+            const artifactName = (run, runId) => (run.name === NATIVE ? 'i2idlx-native-diagnostic-' : 'i2idlx-golden-parity-') + runId;
+            const retainedArtifact = async (run, runId) => {
+              const { data: listing } = await github.rest.actions.listWorkflowRunArtifacts({ owner, repo, run_id: Number(runId), per_page: 100 });
+              return listing.artifacts.find(item => item.name === artifactName(run, runId) && !item.expired);
+            };
             if (!id) {
               if (!expectedSha) throw new Error('Select a completed native or golden workflow run ID.');
+              // Every build run of a head in another repository fails head_repository, so say so now.
+              const headRepository = context.payload.pull_request.head.repo?.full_name;
+              if (headRepository !== repository) {
+                throw new Error("This pull request's head repository is " + (headRepository || 'missing') + ', not ' + repository +
+                  '. The UI oracle uses build outputs only from heads in ' + repository + ', so a retry will not help.');
+              }
               // Only automatic PR selection waits. Explicit manual IDs require
               // their named build to be eligible immediately.
               const waitForPr = Boolean(context.payload.pull_request);
@@ -82,26 +124,33 @@ jobs:
                 const listing = await github.rest.actions.listWorkflowRunsForRepo({
                   owner, repo, head_sha: expectedSha, event: 'pull_request', per_page: 100
                 });
-                const runs = listing.data.workflow_runs.filter(run => run.head_sha === expectedSha);
-                const eligible = [
-                  ...runs.filter(run => run.name === 'I2IDL-X bounded native diagnostic' &&
-                    run.status === 'completed' && run.conclusion === 'success'),
-                  ...runs.filter(run => run.name === 'I2IDL-X complete golden parity' && run.status === 'completed')
-                ];
-                for (const candidate of eligible) {
-                  const prefix = candidate.name === 'I2IDL-X bounded native diagnostic' ?
-                    'i2idlx-native-diagnostic-' : 'i2idlx-golden-parity-';
-                  const { data: artifacts } = await github.rest.actions.listWorkflowRunArtifacts({
-                    owner, repo, run_id: candidate.id, per_page: 100
-                  });
-                  if (artifacts.artifacts.some(artifact => artifact.name === prefix + candidate.id && !artifact.expired)) {
+                const runs = listing.data.workflow_runs;
+                // Native outputs keep priority; completed golden outputs are the fallback.
+                const candidates = [...runs.filter(run => run.name === NATIVE), ...runs.filter(run => run.name === GOLDEN)];
+                const passedOver = [];
+                for (const candidate of candidates) {
+                  // A run excluded by its own fields needs no artifact listing.
+                  const reason = exclusion(candidate) || (await retainedArtifact(candidate, candidate.id) ? null :
+                    { check: 'artifact', detail: 'no unexpired ' + artifactName(candidate, candidate.id), identity: false });
+                  if (!reason) {
                     selected = candidate;
                     break;
                   }
+                  passedOver.push({ text: 'run ' + candidate.id + ' by ' + reason.check, identity: reason.identity });
+                  core.info('Candidate run ' + candidate.id + ' (' + candidate.name + ') excluded by ' + reason.check + ': ' + reason.detail + '.');
                 }
                 if (selected) break;
                 const remaining = deadline - Date.now();
-                if (!waitForPr || remaining <= 0) throw new Error('No completed native or golden outputs are available for this exact head within the bounded wait. Retry only this UI job after native outputs are uploaded.');
+                if (!waitForPr || remaining <= 0) {
+                  // Identity checks read fields a retry of this job does not change, so say so when they are all.
+                  const advice = passedOver.length && passedOver.every(item => item.identity) ?
+                    ' Retrying only this UI job will not help: every run found fails an identity check.' :
+                    ' Retry only this UI job after native outputs are uploaded.';
+                  const reasons = !passedOver.length ? ' Last check found no native or golden build runs for this head.' :
+                    ' Last check excluded ' + passedOver.slice(0, 10).map(item => item.text).join(', ') +
+                    (passedOver.length > 10 ? ', and ' + (passedOver.length - 10) + ' more' : '') + '.';
+                  throw new Error('No completed native or golden outputs are available for this exact head within the bounded wait.' + advice + reasons);
+                }
                 const delay = Math.min(30 * 1000, remaining);
                 core.info('Waiting for completed outputs from source ' + expectedSha +
                   '; ' + Math.ceil(remaining / 1000) + ' seconds remain. Rechecking in ' + Math.ceil(delay / 1000) + ' seconds.');
@@ -111,22 +160,19 @@ jobs:
             }
             if (!/^[0-9]+$/.test(String(id))) throw new Error('A real build workflow run ID is required.');
             const { data: run } = await github.rest.actions.getWorkflowRun({ owner, repo, run_id: Number(id) });
-            const native = run.name === 'I2IDL-X bounded native diagnostic';
-            const golden = run.name === 'I2IDL-X complete golden parity';
-            const expectedPath = native ? '.github/workflows/i2idlx-native-diagnostic.yml' : '.github/workflows/i2idlx-golden-parity.yml';
-            if ((!native && !golden) || run.path !== expectedPath ||
-                run.repository?.full_name !== repository || run.head_repository?.full_name !== repository ||
-                (expectedSha && run.head_sha !== expectedSha) ||
-                (expectedPr && !run.pull_requests.some(pr => pr.number === expectedPr))) {
+            const native = run.name === NATIVE;
+            const golden = run.name === GOLDEN;
+            // The final validation repeats the predicate for every run, automatic or manual.
+            const excluded = exclusion(run);
+            if (excluded) core.info('Selected run ' + id + ' excluded by ' + excluded.check + ': ' + excluded.detail + '.');
+            if (excluded?.identity) {
               throw new Error('Selected build run does not belong to the expected repository, workflow and source head.');
             }
             if ((nativeId && !native) || (goldenId && !golden)) throw new Error('The selected input names a different build workflow.');
-            if (run.status !== 'completed' || (native && run.conclusion !== 'success')) {
+            if (excluded) {
               throw new Error('The selected build has no complete eligible outputs yet. Retry only this UI job after its artifact upload; do not restart ontology generation.');
             }
-            const name = (native ? 'i2idlx-native-diagnostic-' : 'i2idlx-golden-parity-') + id;
-            const { data: listing } = await github.rest.actions.listWorkflowRunArtifacts({ owner, repo, run_id: Number(id), per_page: 100 });
-            const artifact = listing.artifacts.find(item => item.name === name && !item.expired);
+            const artifact = await retainedArtifact(run, id);
             if (!artifact) throw new Error('The selected run has no retained generated outputs. Retry only this UI job after artifact upload.');
             core.setOutput('run_id', String(id));
             core.setOutput('artifact_name', artifact.name);

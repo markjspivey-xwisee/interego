@@ -121,6 +121,7 @@ import { courseHmd, memoryHmd, collectionHmd, xapiCourseHmd } from '../src/hyper
 import { authorXapiCourse, xapiCourseArtifact, xapiCourseLinks } from '../src/xapi-course.js';
 import { affordancesManifestTurtle, type Affordance } from '../../_shared/affordance-mcp/index.js';
 import { foxxiAffordances, foxxiAdminAffordances } from '../affordances.js';
+import { frontDoor, frontDoorHtml } from '../src/front-door.js';
 
 /**
  * THE ONE DECLARATION of an affordance, looked up by its action IRI.
@@ -11133,6 +11134,26 @@ const openHostingRateLimit = rateLimit({
   windowMs: 3_600_000, limit: 20, ipv6Subnet: 56, identifier: 'open-hosting',
   standardHeaders: 'draft-8', legacyHeaders: false, message: { error: 'too_many_requests' },
 });
+// ── The front door: what a newcomer can do here, as a page for a person and as data for an agent.
+// It names only what this deployment offers (src/front-door.ts).
+app.get('/start', (req, res) => {
+  const dashboardUrl = process.env.FOXXI_DASHBOARD_URL ?? process.env.FOXXI_DASHBOARD_ORIGIN?.split(',')[0]?.trim();
+  const door = frontDoor({
+    bridgeUrl: bridgeBaseUrl.replace(/\/+$/, ''),
+    ...(dashboardUrl ? { dashboardUrl } : {}),
+    offered: new Set(activeAffordances.map(a => a.toolName)),
+    openHosting: { enabled: openHosting.enabled, maxZipMb: Math.floor(openHosting.maxZipBytes / (1024 * 1024)), perSignerHourly: openHosting.perSignerHourly },
+  });
+  res.vary('Accept');
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  if (req.accepts(['application/json', 'text/html']) === 'text/html') {
+    res.setHeader('Content-Security-Policy', "default-src 'none'; style-src 'unsafe-inline'");
+    res.type('text/html').send(frontDoorHtml(door));
+    return;
+  }
+  res.json(door);
+});
+
 app.post('/agent/scorm/host', openHostingRateLimit, async (req, res) => {
   try {
     if (!openHosting.enabled) { res.status(404).json({ error: 'hosting a package by signed request is closed on this bridge; an operator hosts with foxxi.upload_scorm_package' }); return; }
